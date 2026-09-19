@@ -1,5 +1,13 @@
 {
   "Version": 1,
+  "Derivation": {
+    "ProcessLibrarySHA256": null,
+    "SlotConductorSource": "mesh signature Slot / Conductor pairs (no process library is bound)",
+    "PlanViewBoundarySHA256": "9cf1eacc3b3bc857e39e7c1725af5aac97ea56d2e5db21747c1957683ff0ea89",
+    "SignatureSHA256": "de2cafed831862cdef0029813e8543c0d2288843d8913ab96710ecafdebeffed",
+    "Rules": "materials and physical label families follow the frozen fabricated spatial-coupon producer (substrate 1 / vacuum 2; matching surface 1; substrate-vacuum interface 3000 + slot in the metal plane (un-etched) and 3100 + slot recessed; MS 5000 + 100 slot + conductor; MA 6000 + 100 slot + conductor); slots/conductors come from Models[0].Edges and agree with the signature (from the signature alone when no process library is bound); semantic corners are plan-view vertices classified Physical; the un-etched plane labels present are those of the recorded gmsh-build census of the same inputs (a producer outcome of the etch footprint and the coupon box), every census label belonging to a derived family",
+    "Provisional": "un-etched plane labels unconfirmed: rebuild this contract with --build-census before freezing it"
+  },
   "VolumeMaterials": [
     {
       "Attribute": 1,
@@ -113,24 +121,54 @@
   ],
   "SemanticCorners": [
     [
-      -1,
+      -6.5,
+      -4.5,
+      0.0
+    ],
+    [
+      -6.5,
       -0.5,
-      0
+      0.0
     ],
     [
-      -1,
-      0.5,
-      0
-    ],
-    [
-      0,
+      -1.0,
       -0.5,
-      0
+      0.0
     ],
     [
-      0,
+      -1.0,
       0.5,
-      0
+      0.0
+    ],
+    [
+      -6.5,
+      0.5,
+      0.0
+    ],
+    [
+      5.5,
+      -0.5,
+      0.0
+    ],
+    [
+      5.5,
+      4.5,
+      0.0
+    ],
+    [
+      5.5,
+      0.5,
+      0.0
+    ],
+    [
+      0.0,
+      0.5,
+      0.0
+    ],
+    [
+      0.0,
+      -0.5,
+      0.0
     ]
   ],
   "ProtectedSupports": [

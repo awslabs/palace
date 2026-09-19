@@ -30,7 +30,14 @@ executable):
   alternative must be present, otherwise the derivation fails closed.  The census
   digest and its labels are recorded under Derivation.
 
+The inputs are SOURCE_DIR/mesh-signature.csv, plan-view-boundary.csv and
+process-library.json unless the case binds other file names (--signature,
+--boundary, --process-library).  A case without a process library (the synthetic
+repository fixtures) takes its slot / conductor pairs from the signature alone and
+records that source under Derivation.SlotConductorSource.
+
 usage: derive_semantic_contract.py SOURCE_DIR OUTPUT [--build-census CENSUS]
+       [--signature PATH] [--boundary PATH] [--process-library PATH]
 """
 import argparse
 import csv
@@ -49,7 +56,8 @@ RULES = ("materials and physical label families follow the frozen fabricated spa
          "producer (substrate 1 / vacuum 2; matching surface 1; substrate-vacuum interface "
          "3000 + slot in the metal plane (un-etched) and 3100 + slot recessed; MS 5000 + 100 slot "
          "+ conductor; MA 6000 + 100 slot + conductor); slots/conductors come from "
-         "Models[0].Edges and agree with the signature; semantic corners are plan-view vertices "
+         "Models[0].Edges and agree with the signature (from the signature alone when no "
+         "process library is bound); semantic corners are plan-view vertices "
          "classified Physical; the un-etched plane labels present are those of the recorded "
          "gmsh-build census of the same inputs (a producer outcome of the etch footprint and "
          "the coupon box), every census label belonging to a derived family")
@@ -59,23 +67,34 @@ def sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def slot_conductor_pairs(source):
-    library = json.loads((source / PROCESS_LIBRARY).read_text())
-    edges = library["Models"][0]["Edges"]
-    pairs = sorted({(int(edge["InterfaceSlot"]), int(edge["Conductor"])) for edge in edges})
-    with (source / SIGNATURE).open(newline="") as stream:
+PROCESS_LIBRARY_PAIR_SOURCE = "process-library.json Models[0].Edges, equal to the signature's Slot / Conductor pairs"
+SIGNATURE_PAIR_SOURCE = "mesh signature Slot / Conductor pairs (no process library is bound)"
+
+
+def slot_conductor_pairs(signature, process_library):
+    """Sorted (slot, conductor) pairs: Models[0].Edges of the process library when one is
+    bound (it must agree with the signature), the signature's own pairs otherwise."""
+    with Path(signature).open(newline="") as stream:
         signature_pairs = sorted({(int(row["Slot"]), int(row["Conductor"]))
                                   for row in csv.DictReader(stream)})
-    if pairs != signature_pairs:
-        raise ValueError(f"Models[0].Edges slots/conductors {pairs} differ from the signature's "
-                         f"{signature_pairs}")
+    if process_library is None:
+        pairs = signature_pairs
+    else:
+        library = json.loads(Path(process_library).read_text())
+        edges = library["Models"][0]["Edges"]
+        pairs = sorted({(int(edge["InterfaceSlot"]), int(edge["Conductor"])) for edge in edges})
+        if pairs != signature_pairs:
+            raise ValueError(f"Models[0].Edges slots/conductors {pairs} differ from the signature's "
+                             f"{signature_pairs}")
+    if not pairs:
+        raise ValueError("the signature has no rows")
     if any(slot < 0 or slot > 99 or conductor < 1 or conductor > 99 for slot, conductor in pairs):
         raise ValueError("slot must lie in 0..99 and conductor in 1..99 for the label families")
     return pairs
 
 
-def semantic_corners(source):
-    with (source / BOUNDARY).open(newline="") as stream:
+def semantic_corners(boundary):
+    with Path(boundary).open(newline="") as stream:
         rows = list(csv.DictReader(stream))
     if not rows or not {"Class", "X", "Y", "Plane"} <= set(rows[0]):
         raise ValueError("plan-view boundary lacks Class / X / Y / Plane columns")
@@ -110,9 +129,13 @@ def census_labels(census_path):
     return sorted({int(item["Attribute"]) for item in areas})
 
 
-def derive(source, build_census=None):
+def derive(source, build_census=None, *, signature=None, boundary=None, process_library=None):
     source = Path(source)
-    pairs = slot_conductor_pairs(source)
+    signature = Path(signature) if signature is not None else source / SIGNATURE
+    boundary = Path(boundary) if boundary is not None else source / BOUNDARY
+    if process_library is None and (source / PROCESS_LIBRARY).exists():
+        process_library = source / PROCESS_LIBRARY
+    pairs = slot_conductor_pairs(signature, process_library)
     families = label_families(pairs)
     required = {attribute for attribute, (_, _, optional) in families.items() if not optional}
     if build_census is not None:
@@ -136,10 +159,13 @@ def derive(source, build_census=None):
             item["AdjacentMaterialSets"] = [[1], [2]]
         boundary_labels.append(item)
     roles = [item["Role"] for item in boundary_labels]
-    corners = semantic_corners(source)
-    derivation = {"ProcessLibrarySHA256": sha256(source / PROCESS_LIBRARY),
-                  "PlanViewBoundarySHA256": sha256(source / BOUNDARY),
-                  "SignatureSHA256": sha256(source / SIGNATURE),
+    corners = semantic_corners(boundary)
+    derivation = {"ProcessLibrarySHA256": (sha256(process_library) if process_library is not None
+                                           else None),
+                  "SlotConductorSource": (PROCESS_LIBRARY_PAIR_SOURCE if process_library is not None
+                                          else SIGNATURE_PAIR_SOURCE),
+                  "PlanViewBoundarySHA256": sha256(boundary),
+                  "SignatureSHA256": sha256(signature),
                   "Rules": RULES}
     if build_census is not None:
         derivation["BuildCensusSHA256"] = sha256(build_census)
@@ -158,7 +184,7 @@ def derive(source, build_census=None):
         "MetricSurfaceRoles": [role for role in roles if role.endswith(("-ms", "-ma"))],
         "UnmatchedPolicy": "Error",
         "CutSurfaceRoles": ["matching-surface"],
-        "FeatureTopology": derive_feature_topology(source / SIGNATURE, source / BOUNDARY, corners),
+        "FeatureTopology": derive_feature_topology(signature, boundary, corners),
     }
     return validate_semantic_contract(contract)
 
@@ -169,8 +195,13 @@ def main():
     parser.add_argument("source", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--build-census", type=Path)
+    parser.add_argument("--signature", type=Path, help="default SOURCE_DIR/mesh-signature.csv")
+    parser.add_argument("--boundary", type=Path, help="default SOURCE_DIR/plan-view-boundary.csv")
+    parser.add_argument("--process-library", type=Path,
+                        help="default SOURCE_DIR/process-library.json when it exists")
     args = parser.parse_args()
-    contract = derive(args.source, args.build_census)
+    contract = derive(args.source, args.build_census, signature=args.signature,
+                      boundary=args.boundary, process_library=args.process_library)
     args.output.write_text(json.dumps(contract, indent=2) + "\n")
     print(f"{args.output}: {len(contract['BoundaryLabels'])} labels, "
           f"{len(contract['SemanticCorners'])} semantic corners"

@@ -72,6 +72,25 @@ class DeriveSemanticContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "records no InterfaceAreas"):
             derive(FOUR_EDGE, census_file(self.tmp, []))
 
+    def test_fixture_without_process_library_takes_its_pairs_from_the_signature(self):
+        # The synthetic six-edge fixture binds named files in the shared testdata
+        # directory and no process library: two slots x two conductors from the
+        # signature, ten Physical corners, the source recorded, provisional without a census.
+        derived = derive(HERE / "testdata", signature=HERE / "testdata" / "six-edge-cluster-signature.csv",
+                         boundary=HERE / "testdata" / "six-edge-cluster-boundary.csv")
+        self.assertEqual([item["Attribute"] for item in derived["BoundaryLabels"]],
+                         [1, 3100, 3101, 5001, 5002, 5101, 5102, 6001, 6002, 6101, 6102])
+        self.assertEqual(len(derived["SemanticCorners"]), 10)
+        self.assertEqual(derived["FeatureTopology"]["BoundaryPhysicalVertexCount"], 10)
+        self.assertIsNone(derived["Derivation"]["ProcessLibrarySHA256"])
+        self.assertIn("no process library", derived["Derivation"]["SlotConductorSource"])
+        self.assertIn("Provisional", derived["Derivation"])
+        frozen = json.loads((HERE / "testdata" / "six-edge-semantic.json").read_text())
+        self.assertEqual({k: v for k, v in derived.items() if k != "Derivation"},
+                         {k: v for k, v in frozen.items() if k != "Derivation"})
+        with self.assertRaisesRegex(FileNotFoundError, "mesh-signature.csv"):
+            derive(HERE / "testdata")
+
     def test_signature_and_process_library_pairs_must_agree(self):
         broken = self.tmp / "source"
         shutil.copytree(FOUR_EDGE, broken)

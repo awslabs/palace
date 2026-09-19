@@ -699,6 +699,100 @@ discover -s . -p "test_*.py"` ran 251 tests, OK (33 skipped);
 binaries (1.70 GB: the four decision-42 roots and the three probe meshes) are listed
 in `/tmp/coupon-sliver-fix-20260919/deleted-binaries.txt`.
 
+### Coupon-scale size bound (decision 45(b), 2026-09-19): TangentialSize = min(--lc-tangent, FarSize)
+
+The recipe fixes the tangential spacing in absolute units (`--lc-tangent` 0.05 um:
+the tube extrusion spacing and the metal ridge grid) while `FarSize =
+FarSizeOverRadius x Radius` scales with the coupon. On the Radius-0.5 synthetic
+coupons FarSize is 0.04 um and the mesher used to fail closed ("tangential mesh
+size must lie between fine and far sizes"). The rule, implemented in
+`mesh_spatial_coupon.jl` (`SIZE_BOUND_RULE`) and nowhere else: **every coarsening
+size prescription that exceeds the coupon-scale FarSize is bounded by it** -
+`TangentialSize = min(--lc-tangent, FarSize)`. Rationale: FarSize is the coarsest
+size the coupon admits (the size prescribed at its matching surface), so the
+along-edge spacing of the metal-edge tubes can never legitimately exceed it; the
+bound is dimensionless (it acts exactly when `Radius < --lc-tangent /
+FarSizeOverRadius` = 0.625 um at the production values) and is the identity for
+every production coupon (Radius 2, FarSize 0.16). The resolution sizes - NormalSize
+(0.25 x MetalThickness) and EdgeSize = CornerSize - are never bounded: a fine size
+above FarSize is a contradictory recipe and still fails closed. No new parameter and
+no case constant. Recorded: census `SizeBounds` (`Rule`, `FarSize`,
+`RequestedTangentialSize` = `--lc-tangent`, `TangentialSize`,
+`TangentialSizeBoundByFarSize`); bound: `mesh_stage_contract.validate_size_bounds`
+(called by `validate_gmsh_build_census`) requires the record to follow the command
+exactly and the tube record's TangentialSize to equal the bound value; the recipe
+binding still requires the command to execute `--lc-tangent` at 0.05 (the request is
+the recipe, the bound is the coupon's). Manifest `ProductionRecipe.Parameters.
+TangentialSize` states the rule. Tests: `GmshOnlyPipelineTest.
+test_gmsh_build_census_contract_negatives` (record present, flag, request, bound value,
+tube TangentialSize; a bounded command accepted); the fixture producer records the same
+rule.
+
+### Synthetic matrix under the Gmsh-only recipe (decision 45(b), 2026-09-19)
+
+The 2026-09-17 record (below, under the retired recipe) found ten of the twelve
+then-registered cases unbuildable. Under the Gmsh-only production recipe every one
+was re-examined; contracts are now derived, never authored:
+
+- **Contracts regenerated with `derive_semantic_contract.py`** (no hand-edited
+  number): `one-edge-semantic.json`, `one-edge-subdivided-semantic.json`,
+  `two-edge-transition-semantic.json`, `two-edge-multislot-semantic.json`,
+  `six-edge-semantic.json`, `three-edge-semantic.json` (the six whose corners
+  contradicted their boundaries) and `concave-multislot/semantic-contract.json`.
+  The tool now accepts the case's bound file names (`--signature`, `--boundary`,
+  `--process-library`) and, when no process library is bound (every synthetic
+  fixture), takes the slot / conductor pairs from the signature and records
+  `Derivation.SlotConductorSource`. Semantic corners are now exactly the boundary's
+  `Physical` vertices (1 / 1 / 5 / 3 / 10 / 5 / 6), so the canonical-source
+  validation ("Transformed physical boundary differs from semantic corners") passes
+  for all; label families are the producer's (`etched-substrate-vacuum-slot-s`,
+  `conductor-c-slot-s-ms/-ma`; the un-etched 3000 + s plane only where a build
+  census shows it). `three-edge-semantic.json` and `concave-multislot` are bound to
+  the gmsh-build census of a production-option probe build (`Derivation.
+  BuildCensusSHA256`); the five Radius-12.5 fixtures cannot be built (below), so
+  their contracts carry `Derivation.Provisional` (un-etched plane unconfirmed) and
+  their required label set. Preflight passes for all 15 cases; the six-edge
+  fixture's contract still drives the rigid-transform and multislot-census tests.
+- **The two "seed-gate failures" (two-edge-transition, six-edge-cluster)** were
+  MMG-era seed-side failures (required-region optimization gates); under the
+  Gmsh-only builder those gates do not exist as a separate stage, and both cases
+  fail earlier, for the same frozen-input reason as the other Radius-12.5 fixtures
+  (next item). No generic mesher bug was found: the mesher's fail-closed message is
+  correct for the inputs.
+- **Five Radius-12.5 fixtures are unbuildable with their frozen inputs**
+  (`one-edge-straight`, `one-edge-cad-subdivided`, `two-edge-transition`,
+  `two-edge-multislot`, `six-edge-cluster`): gmsh-build stops at "Metal edge end
+  (x, y) is neither a semantic corner nor on the box". Their plan-view boundary
+  loops were authored on the Radius-2 coupon box - every `Continuation` vertex lies
+  exactly on the box the signature spans at Radius 2 (one-edge: box x +-4 / y +-8,
+  loop vertices (-4, +-8), (0, 8); two-edge-transition: box [-8, 6] x [-8, 8];
+  two-edge-multislot: [-8, 8] x [-4, 8]; six-edge: [-9.9167, 8.9167] x [-4.5, 4.5];
+  one-edge-cad-subdivided binds the same loop to a signature whose Radius-2 box is
+  only +-4, so it is inconsistent at either radius) - but the cases bind
+  `generality-sharp-process.toml` (Radius 12.5: boxes +-25 x +-14.5 and larger), so
+  the metal loops close in the coupon interior without a Physical edge. A
+  Continuation vertex means "the metal continues past the box"; a loop vertex inside
+  the coupon that is not a semantic corner is a contradiction between two frozen
+  inputs (process vs boundary), not a contract or mesher defect. Repairing it means
+  re-binding those cases to a Radius-2 process (or re-authoring the loops): a
+  frozen-input rewrite, left as a decision. Evidence: the probe roots
+  `/tmp/coupon-matrix-case05-20260919/probe-root-<case>/gmsh-build.log` and the
+  box / loop numbers above.
+- **Three Radius-0.5 fixtures are outside the production recipe's stated scope**:
+  `hole` ("Prism edge tubes support exterior conductor loops only" - its loop is a
+  hole), `rounded-strip` ("Prism tubes require sharp vertical fabricated geometry" -
+  TopRounding 0.005), `opposed-layers` ("Prism tubes support upward process layers
+  only" - four of its eight edges have Nz = -1). Each is the prism-tube recipe's
+  own fail-closed scope statement (decision 38); extending the tubes to hole loops,
+  rounded edges or downward layers is producer feature work, not a repair. The size
+  bound above did act on all three before they stopped (their probe logs show no
+  tangential-size error), so nothing else hides behind these messages. Their
+  contracts were not in the contradictory six and are unchanged.
+- **Built**: `three-edge-current-calibration` (Radius 2, the 06 inputs without a
+  trace basis) and `concave-multislot` (Radius 0.5, the first production build
+  with `TangentialSizeBoundByFarSize true`: TangentialSize 0.05 -> 0.04), plus the
+  new gallery case `two-edge-3f8992613e95` (input 05): evidence below.
+
 ## Retired production recipe (supervisor decision 34B, 2026-09-17; legacy MMG pipeline)
 
 Retired from production by decision 38; recorded as
@@ -1396,12 +1490,18 @@ and a fixed comparison pair. Concave/multislot, hole, rounded/filleted, and
 opposed-layer controls are ordinary required cases. Feature-scaling and
 CAD-subdivision-sensitivity comparisons are declared in the manifest.
 
-The matrix contains 14 cases and 28 required case/variant entries. All 14 cases
+The matrix contains 15 cases and 30 required case/variant entries. All 15 cases
 have hash-frozen local source contracts. A bounded read-only assessment on
 `soca-green` copied only the approved source-contract files from campaign inputs
 `07` and `09` (2026-09-14) and, under decision 42 (2026-09-19, `soca-green-job`),
 from the graded_v2 gallery inputs `06` and `10`, which have completed references
-(`reference-library/models/007-...-419576fdab24` and `010-...-8dd4bc70f183`); it
+(`reference-library/models/007-...-419576fdab24` and `010-...-8dd4bc70f183`), and
+under decision 45(b) from input `05` (`two-edge-3f8992613e95`:
+`spatialedgecluster_edgecount-2_3f8992613e95`, one 2 um wide metal strip of one
+conductor spanning the coupon, two signature rows, two Physical vertices on the box,
+125 trace files, Order-4 reference on `production-meshes/05-fabricated/coupon.msh`
+`591e7183...`; no `retained-etch.csv`, producer-default footprint recorded as the same
+risk); it
 copied no mesh, field, solution, response matrix, or source bank (the per-source
 `traces/` directories are referenced by count only). Campaign input `07` maps to
 `spatialedgecluster_edgecount-4_9d2cb9bbb3fe` and has exactly four signature
@@ -1448,7 +1548,7 @@ python3 run_general_mesh_suite.py \
   --root /tmp/coupon-generality-preflight
 ```
 
-This now succeeds for all 14 source cases and verifies the four-/ten-edge row
+This now succeeds for all 15 source cases and verifies the four-/ten-edge row
 counts as four and ten. `--input CASE=DIRECTORY` cannot bypass a mismatched
 hash.
 

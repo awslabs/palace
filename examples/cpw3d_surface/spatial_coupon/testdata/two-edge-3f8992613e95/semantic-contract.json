@@ -1,12 +1,17 @@
 {
   "Version": 1,
   "Derivation": {
-    "ProcessLibrarySHA256": null,
-    "SlotConductorSource": "mesh signature Slot / Conductor pairs (no process library is bound)",
-    "PlanViewBoundarySHA256": "65b533f709eacbe36ec12a1f8e9a04f949aeaefd359564521779f91f99f0da30",
-    "SignatureSHA256": "3c9bc97ae0b92c542bf37b65fb4966f68572ff618e4fc7a16baed2bbe16e14ec",
-    "Rules": "materials and physical label families follow the frozen fabricated spatial-coupon producer (substrate 1 / vacuum 2; matching surface 1; substrate-vacuum interface 3000 + slot in the metal plane (un-etched) and 3100 + slot recessed; MS 5000 + 100 slot + conductor; MA 6000 + 100 slot + conductor); slots/conductors come from Models[0].Edges and agree with the signature (from the signature alone when no process library is bound); semantic corners are plan-view vertices classified Physical; the un-etched plane labels present are those of the recorded gmsh-build census of the same inputs (a producer outcome of the etch footprint and the coupon box), every census label belonging to a derived family",
-    "Provisional": "un-etched plane labels unconfirmed: rebuild this contract with --build-census before freezing it"
+    "ProcessLibrarySHA256": "ad0967cda1d2130926ecd1d92539510f1d86e287c98ffb61f9dd68a8802d1543",
+    "PlanViewBoundarySHA256": "4103fce55ae119d17d592228974ef898d67e12fe21a109914ad4fa8ba0f75acc",
+    "SignatureSHA256": "90298d7148cbba516de2dfd497dd5a4601b83c7f9c46c9bd36f406470cd12bf6",
+    "Rules": "materials and physical label families follow the frozen fabricated spatial-coupon producer (substrate 1 / vacuum 2; matching surface 1; substrate-vacuum interface 3000 + slot in the metal plane (un-etched) and 3100 + slot recessed; MS 5000 + 100 slot + conductor; MA 6000 + 100 slot + conductor); slots/conductors come from Models[0].Edges and agree with the signature; semantic corners are plan-view vertices classified Physical; the un-etched plane labels present are those of the recorded gmsh-build census of the same inputs (a producer outcome of the etch footprint and the coupon box), every census label belonging to a derived family",
+    "BuildCensusSHA256": "05efd86822586c68b7cd3c2dd5f9d4ead65d827a395007f882f642db3354a1b9",
+    "BuildCensusInterfaceLabels": [
+      1,
+      3100,
+      5001,
+      6001
+    ]
   },
   "VolumeMaterials": [
     {
@@ -64,28 +69,13 @@
   ],
   "SemanticCorners": [
     [
-      -6.0,
-      -8.0,
-      0.0
-    ],
-    [
-      -6.0,
-      -6.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0,
-      0.0
-    ],
-    [
       2.0,
       -8.0,
       0.0
     ],
     [
-      -8.0,
       0.0,
+      8.0,
       0.0
     ]
   ],
@@ -106,13 +96,18 @@
   "FeatureTopology": {
     "PhysicalFeatureCount": 2,
     "CADSubdivisionCount": 0,
-    "BoundaryPhysicalVertexCount": 5,
-    "BoundaryContinuationVertexCount": 5,
+    "BoundaryPhysicalVertexCount": 2,
+    "BoundaryContinuationVertexCount": 2,
     "CADSubdivisionEndpoints": [],
     "CutEndpoints": [
       [
-        -2.0,
         0.0,
+        -2.0,
+        0.0
+      ],
+      [
+        0.0,
+        2.0,
         0.0
       ],
       [

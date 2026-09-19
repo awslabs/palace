@@ -318,7 +318,7 @@
           },
           "SemanticContract": {
             "Name": "one-edge-semantic.json",
-            "SHA256": "0fe1eaec66239564ff224b17df4b270df179f823f7fbb0e90304216e4e45c286"
+            "SHA256": "ebab2ebec32d64f86a5ac02dd13c2c7c7680a844ca977b02ff8055ffb6432d31"
           },
           "MeshRecipe": {
             "Name": "generality-mesh-recipe.json",
@@ -429,7 +429,7 @@
           },
           "SemanticContract": {
             "Name": "one-edge-subdivided-semantic.json",
-            "SHA256": "0ca075723a7d1c9c0380b3a8779453acfc1d05cf95ce0d5e53f49dbf023a841f"
+            "SHA256": "5dd2769528bcfdaca5919bdf675b43428ead2fc561eb56c79968be7c5c98e032"
           },
           "MeshRecipe": {
             "Name": "generality-mesh-recipe.json",
@@ -540,7 +540,7 @@
           },
           "SemanticContract": {
             "Name": "two-edge-transition-semantic.json",
-            "SHA256": "ad785c7c8adef7efdae0aacd2f21a5b6d777a496449d35260a821cbd9d43e0b8"
+            "SHA256": "e21c497f860f0aa5f1b5bcb1886f0655825ec8aa88d6a24b146dae94eeb28e3e"
           },
           "MeshRecipe": {
             "Name": "generality-mesh-recipe.json",
@@ -651,7 +651,7 @@
           },
           "SemanticContract": {
             "Name": "two-edge-multislot-semantic.json",
-            "SHA256": "9f43b5a5816bbc54a261d832c21f6364d0294a416106c3d12b8563babeac458a"
+            "SHA256": "4b4b0a7f58a3cc3651cbcac8eb06ca6981ed106782052b027921f65fe013638f"
           },
           "MeshRecipe": {
             "Name": "generality-mesh-recipe.json",
@@ -762,7 +762,7 @@
           },
           "SemanticContract": {
             "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/three-edge-semantic.json",
-            "SHA256": "1051b1d141746d7083bc7829ee23a40c5693884651e059feda3d977295824da6"
+            "SHA256": "a45791f4d2c96a6b5c0e7d9a20a2309a86a2f234a3740fa70157a777ec846c5c"
           },
           "MeshRecipe": {
             "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
@@ -1011,7 +1011,7 @@
           },
           "SemanticContract": {
             "Name": "six-edge-semantic.json",
-            "SHA256": "2b5b704f91277167070dc6e8a9e7c3b587c2d1ec1469a7294a9b2e8caba221e7"
+            "SHA256": "09f54f09402715b358f0b0ec34b2922e7156e01d6d5972c2b6af55674fd4219c"
           },
           "MeshRecipe": {
             "Name": "generality-mesh-recipe.json",
@@ -1423,6 +1423,140 @@
       "Provenance": "RemoteVerified: bounded read-only copy from soca-green-job /data/home/simlap/transmon_library_graded_v2_20260911/inputs/10 (2026-09-19); campaign.json maps input 10 to spatialedgecluster_edgecount-2_8dd4bc70f183 with a completed graded_v2 reference (reference-library/models); 2 signature rows, 77 trace files (referenced by count, not copied), model/process semantics, all copied hashes (remote sha256sum = local) verified; the semantic contract is derived by derive_semantic_contract.py from the copied inputs and the gmsh-build census of a production-option probe build (no un-etched 3000 plane under the producer-default footprint); no retained-etch.csv exists for this input (producer-default footprint recorded, a risk for the physics preflight's interface-area invariants); no jobs, meshes, fields, solutions, response matrices, or source banks copied"
     },
     {
+      "Id": "two-edge-3f8992613e95",
+      "InventoryStatus": "RemoteVerified",
+      "Frozen": true,
+      "Features": [
+        "2-edge",
+        "single-slot",
+        "single-conductor",
+        "spanning-strip"
+      ],
+      "Variants": [
+        {
+          "Id": "identity",
+          "Transform": [
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        },
+        {
+          "Id": "rotate-z-0.63",
+          "Transform": [
+            0.8080275083121519,
+            -0.5891447579422695,
+            0,
+            0,
+            0.5891447579422695,
+            0.8080275083121519,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        }
+      ],
+      "TransformComparison": {
+        "Reference": "identity",
+        "Transformed": "rotate-z-0.63",
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
+      },
+      "Source": {
+        "Directory": "examples/cpw3d_surface/spatial_coupon/testdata/two-edge-3f8992613e95",
+        "SignatureRole": "Signature",
+        "SignatureColumns": [
+          "Index",
+          "Slot",
+          "Conductor",
+          "Px",
+          "Py",
+          "Pz",
+          "Gx",
+          "Gy",
+          "Gz",
+          "Tx",
+          "Ty",
+          "Tz",
+          "S0",
+          "S1"
+        ],
+        "Files": {
+          "Signature": {
+            "Name": "mesh-signature.csv",
+            "SHA256": "90298d7148cbba516de2dfd497dd5a4601b83c7f9c46c9bd36f406470cd12bf6"
+          },
+          "Boundary": {
+            "Name": "plan-view-boundary.csv",
+            "SHA256": "4103fce55ae119d17d592228974ef898d67e12fe21a109914ad4fa8ba0f75acc"
+          },
+          "Mask": {
+            "Name": "plan-view-mask.csv",
+            "SHA256": "ed0377432e7d82bf09f9b07b203d5b7e84b30c391975986b294b4cf29c0b38a4"
+          },
+          "Process": {
+            "Name": "process.toml",
+            "SHA256": "883b8b345d4943faaf498fdaaea14a54a9be3e7dbf520210b4fcd475ac5bc569"
+          },
+          "ProcessLibrary": {
+            "Name": "process-library.json",
+            "SHA256": "ad0967cda1d2130926ecd1d92539510f1d86e287c98ffb61f9dd68a8802d1543"
+          },
+          "BasisContract": {
+            "Name": "basis-contract.json",
+            "SHA256": "9db4fe96f460c746c083d6d73b5c2b2a1487de37bbba45111ecda126534c3a55"
+          },
+          "TraceVertices": {
+            "Name": "trace-vertices.csv",
+            "SHA256": "4fe6b221e433d29309abd7139a16c10484c4fc8fe224c7238e1f9caeb12be2ba"
+          },
+          "TraceTriangles": {
+            "Name": "trace-triangles.csv",
+            "SHA256": "ad59a589a2c674b6ee85cece29d747352f2dcdd065cab842d7ab3928e0c86f5f"
+          },
+          "Provenance": {
+            "Name": "provenance.json",
+            "SHA256": "cdd2bbff5962b53b4024e56f765f198745f69683fea4c53485818def8ddb704f"
+          },
+          "SemanticContract": {
+            "Name": "semantic-contract.json",
+            "SHA256": "dd39f3e4785c4328dd9440fc9644fad6bb1af527d6fa4df7a6bf2ede8386b9db"
+          },
+          "MeshRecipe": {
+            "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
+            "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
+          }
+        },
+        "EtchFootprint": "producer-default"
+      },
+      "Provenance": "RemoteVerified: bounded read-only copy from soca-green-job /data/home/simlap/transmon_library_graded_v2_20260911/inputs/05 (2026-09-19); campaign.json maps input 05 to spatialedgecluster_edgecount-2_3f8992613e95 with a completed graded_v2 reference (reference-library/models/005-...; production-meshes/05-fabricated/coupon.msh, Order 4, 125 sources); 2 signature rows, 125 trace files (referenced by count, not copied), model/process semantics, all copied hashes (remote sha256sum = local) verified; the semantic contract is derived by derive_semantic_contract.py from the copied inputs and the gmsh-build census of a production-option probe build (no un-etched 3000 plane under the producer-default footprint); no retained-etch.csv exists for this input (producer-default footprint recorded, a risk for the physics preflight's interface-area invariants); no jobs, meshes, fields, solutions, response matrices, or source banks copied"
+    },
+    {
       "Id": "concave-multislot",
       "InventoryStatus": "RepositoryAssessmentFixture",
       "Frozen": true,
@@ -1523,7 +1657,7 @@
           },
           "SemanticContract": {
             "Name": "semantic-contract.json",
-            "SHA256": "749d77301d5d8c0f4bad3d539c2a88e79141e0e5fcf8e4df2735704898498320"
+            "SHA256": "0506244c105aaa1687a9918152f115a740c7d8f7f13692d4c3e3ce0ca97a2969"
           },
           "MeshRecipe": {
             "Name": "mesh-recipe.json",

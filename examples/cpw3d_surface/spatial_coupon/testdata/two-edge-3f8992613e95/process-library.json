@@ -1,0 +1,283 @@
+{
+  "Version": 3,
+  "TraceLiftVersion": 3,
+  "Name": "spatialedgecluster_edgecount-2_3f8992613e95",
+  "MatchingRadius": 2.0,
+  "Fabrication": {
+    "LengthUnit": "um",
+    "MetalThickness": 0.1,
+    "OveretchDepth": 0.05,
+    "SidewallAngleDegrees": 90.0,
+    "TopRoundingRadius": 0.0,
+    "BottomRoundingRadius": 0.0,
+    "SubstratePermittivity": 11.47,
+    "InterfaceLayers": {
+      "SA": {
+        "Thickness": 0.002,
+        "Permittivity": 4.0
+      },
+      "MS": {
+        "Thickness": 0.002,
+        "Permittivity": 11.47
+      },
+      "MA": {
+        "Thickness": 0.002,
+        "Permittivity": 10.0
+      }
+    }
+  },
+  "Models": [
+    {
+      "Name": "spatialedgecluster_edgecount-2_3f8992613e95",
+      "Topology": "SpatialEdgeCluster",
+      "FabricatedMatrix": "generated/fabricated/domain-response-matrix.csv",
+      "ThinMatrix": "generated/thin/domain-response-matrix.csv",
+      "FabricatedSurfaceMatrix": "generated/fabricated/surface-response-matrix.csv",
+      "ThinSurfaceMatrix": "generated/thin/surface-response-matrix.csv",
+      "BasisPoints": "basis-points.csv",
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Type": "MA",
+          "Coupon": 1
+        },
+        {
+          "Slot": 0,
+          "Type": "MS",
+          "Coupon": 2
+        },
+        {
+          "Slot": 0,
+          "Type": "SA",
+          "Coupon": 3
+        }
+      ],
+      "SupportPoints": [
+        [
+          4.0,
+          -2.05,
+          -8.0
+        ],
+        [
+          4.0,
+          2.1,
+          -8.0
+        ],
+        [
+          4.0,
+          -2.05,
+          8.0
+        ],
+        [
+          4.0,
+          2.1,
+          8.0
+        ],
+        [
+          -6.0,
+          -2.05,
+          -8.0
+        ],
+        [
+          -6.0,
+          2.1,
+          -8.0
+        ],
+        [
+          -6.0,
+          -2.05,
+          8.0
+        ],
+        [
+          -6.0,
+          2.1,
+          8.0
+        ]
+      ],
+      "Edges": [
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 1,
+          "GapDirection": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "InterfaceSlot": 0,
+          "Interval": [
+            -2.0,
+            2.0
+          ],
+          "Point": [
+            -2.0,
+            0.0,
+            0.0
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 1,
+          "GapDirection": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "InterfaceSlot": 0,
+          "Interval": [
+            -2.0,
+            2.0
+          ],
+          "Point": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        }
+      ],
+      "EdgePositionTolerance": 2e-06,
+      "EdgeAngleTolerance": 1e-06,
+      "Reference": [
+        -0.2,
+        0.0,
+        0.0
+      ],
+      "PlanViewBoundary": [
+        {
+          "Conductor": 1,
+          "ContinuationSegments": [
+            [
+              [
+                -1000000000,
+                0,
+                -4000000000
+              ],
+              [
+                0,
+                0,
+                -4000000000
+              ]
+            ],
+            [
+              [
+                -1000000000,
+                0,
+                4000000000
+              ],
+              [
+                0,
+                0,
+                4000000000
+              ]
+            ]
+          ],
+          "Segments": [
+            [
+              [
+                -1000000000,
+                0,
+                -4000000000
+              ],
+              [
+                -1000000000,
+                0,
+                4000000000
+              ]
+            ],
+            [
+              [
+                -1000000000,
+                0,
+                -4000000000
+              ],
+              [
+                0,
+                0,
+                -4000000000
+              ]
+            ],
+            [
+              [
+                -1000000000,
+                0,
+                4000000000
+              ],
+              [
+                0,
+                0,
+                4000000000
+              ]
+            ],
+            [
+              [
+                0,
+                0,
+                -4000000000
+              ],
+              [
+                0,
+                0,
+                4000000000
+              ]
+            ]
+          ]
+        }
+      ],
+      "MaskRegularization": {
+        "Version": 1,
+        "PhysicalBoundary": "TaperAndRound",
+        "ContinuationBoundary": "Vertical"
+      },
+      "ContourGroups": [
+        25,
+        25,
+        25,
+        25,
+        25
+      ],
+      "ZeroTraceIndices": [
+        52,
+        53,
+        54,
+        55,
+        56,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        77,
+        78,
+        79,
+        80,
+        81,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94
+      ],
+      "TraceMesh": {
+        "Vertices": "trace-vertices.csv",
+        "Triangles": "trace-triangles.csv"
+      }
+    }
+  ],
+  "TraceCapVersion": 2,
+  "MatchingBoxVersion": 2
+}

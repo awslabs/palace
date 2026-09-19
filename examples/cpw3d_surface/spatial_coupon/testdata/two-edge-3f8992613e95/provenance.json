@@ -1,0 +1,65 @@
+{
+  "Version": 1,
+  "Copyright": "Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
+  "SPDX-License-Identifier": "Apache-2.0",
+  "TargetRepositoryLicense": "LICENSE",
+  "RemoteHost": "soca-green-job",
+  "RemoteInput": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/05",
+  "CampaignModel": "spatialedgecluster_edgecount-2_3f8992613e95",
+  "SignatureRows": 2,
+  "TraceFiles": 125,
+  "CopiedSourceFiles": [
+    "mesh-signature.csv",
+    "plan-view-boundary.csv",
+    "plan-view-mask.csv",
+    "process.toml",
+    "process-library.json",
+    "basis-contract.json",
+    "basis-points.csv",
+    "trace-triangles.csv",
+    "trace-vertices.csv",
+    "zero-trace.csv",
+    "spatial_fabricated.json"
+  ],
+  "CopiedSourceSHA256": {
+    "mesh-signature.csv": "90298d7148cbba516de2dfd497dd5a4601b83c7f9c46c9bd36f406470cd12bf6",
+    "plan-view-boundary.csv": "4103fce55ae119d17d592228974ef898d67e12fe21a109914ad4fa8ba0f75acc",
+    "plan-view-mask.csv": "ed0377432e7d82bf09f9b07b203d5b7e84b30c391975986b294b4cf29c0b38a4",
+    "process.toml": "883b8b345d4943faaf498fdaaea14a54a9be3e7dbf520210b4fcd475ac5bc569",
+    "process-library.json": "ad0967cda1d2130926ecd1d92539510f1d86e287c98ffb61f9dd68a8802d1543",
+    "basis-contract.json": "9db4fe96f460c746c083d6d73b5c2b2a1487de37bbba45111ecda126534c3a55",
+    "basis-points.csv": "bf8a0d2f375571e18ceb5679744b9d3b4093c0e652455f36553b37f8b4524797",
+    "trace-triangles.csv": "ad59a589a2c674b6ee85cece29d747352f2dcdd065cab842d7ab3928e0c86f5f",
+    "trace-vertices.csv": "4fe6b221e433d29309abd7139a16c10484c4fc8fe224c7238e1f9caeb12be2ba",
+    "zero-trace.csv": "ebf9d2bb3707c9dc5927a4597890eeea486d4e247b8cecd9a9df6f42159a19c3",
+    "spatial_fabricated.json": "432d5d2e29e7af248b4fadc7dcf1ff80854016229dc995208e4f4c8768304f75"
+  },
+  "ExcludedArtifacts": [
+    "traces/ (125 per-source basis CSVs, referenced by count only)",
+    "spatial_thin.json",
+    "meshes",
+    "fields",
+    "solutions",
+    "response matrices",
+    "source banks"
+  ],
+  "CompletedReference": "reference-library/models/005-spatialedgecluster-edgecount-2-3f8992613e95 (fabricated-/thin-domain- and surface-response-matrix.csv; campaign.json 05-fabricated / 05-thin, Order 4, 125 sources; production-meshes/05-fabricated/coupon.msh sha256 591e7183d1a24702668d4610afda732d382a9dfb22cc9e0adca05d9f30a95e06)",
+  "SemanticsReview": {
+    "ProcessLibraryModel": "spatialedgecluster_edgecount-2_3f8992613e95",
+    "Topology": "SpatialEdgeCluster",
+    "EdgeCount": 2,
+    "Slots": [
+      0
+    ],
+    "Conductors": [
+      1
+    ],
+    "Geometry": "one 2 um wide metal strip of conductor 1 spanning the coupon (x in [0, 2], loop vertices at y = -8 / 8); its two long sides are the signature edges; the two Physical vertices (2, -8) and (0, 8) lie on the coupon box",
+    "DerivedSemanticContract": "semantic-contract.json (derive_semantic_contract.py from the copied inputs and the gmsh-build census of the production-option probe build of the same inputs; no hand-edited number)"
+  },
+  "EtchFootprint": {
+    "Declared": "producer-default",
+    "Reason": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/05 carries no retained-etch.csv (re-listed 2026-09-19); campaign.json binds EtchBoundary for 07-fabricated only (05-fabricated EtchBoundary null), so the graded_v2 reference of this model used the producer default too",
+    "Risk": "the producer-default etch footprint (3R collars around every conductor loop, cut by the retained mask) is a producer outcome, not a bound device footprint; the physics preflight must check the interface-area invariants (mesh InterfaceAreas per label against the reference mesh) before any accuracy comparison"
+  }
+}
