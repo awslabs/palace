@@ -2632,6 +2632,14 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             rejected(lambda c: c["CornerGrading"].__setitem__("CornerSize", .002),
                      "corner grading differs from the build command")
             rejected(lambda c: c["PrismTubes"]["SizeLaws"].pop("BandRule"), "size laws are not recorded")
+            rejected(lambda c: c["PrismTubes"]["BandCurves"].__setitem__("Spacing", .05),
+                     "Band curves are not 1D-meshed at NormalSize")
+            rejected(lambda c: c["PrismTubes"]["Bands"]["JunctionFirstLayer"]["CutSurface"].pop("TransverseP90"),
+                     "Junction first layer CutSurface lacks a finite TransverseP90")
+            rejected(lambda c: c["PrismTubes"]["Bands"]["JunctionFirstLayer"].pop("Tetrahedra"),
+                     "achieved junction first-layer sizes")
+            rejected(lambda c: c["PrismTubes"]["Bands"].__setitem__("Prescribed", .05),
+                     "achieved junction first-layer sizes")
             rejected(lambda c: c["InterfaceAreas"].pop(), "interface-area labels differ")
             # A legacy six-stage report set cannot be verified under the Gmsh-only manifest,
             # and the Gmsh-only stage set cannot be mistaken for the legacy one.

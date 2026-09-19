@@ -150,3 +150,56 @@ end
     empty!(TUBE_AXIS_SEGMENTS); empty!(BAND_SEGMENTS)
     @test tube_band_size(0.5, 5.0, 0.0, 1.0) ≈ 1.0
 end
+
+@testset "junction band: first-layer transverse size and footprint sides" begin
+    # A junction line along x on the plane y = 0 (the cut face z = 0 carries the
+    # matching label 1): two surface triangles with an edge on the line and heights
+    # 0.025 (the band law) and 0.05 (the ridge grid), one triangle touching the
+    # line at a vertex only (height 0.03), one triangle away from the line; two
+    # tetrahedra on the line with apex heights 0.02 and 0.05.
+    points = hcat([0.0, 0.0, 0.0], [0.025, 0.0, 0.0], [0.05, 0.0, 0.0],
+                  [0.0125, 0.025, 0.0], [0.0375, 0.05, 0.0], [0.025, 0.03, 0.0],
+                  [0.2, 0.2, 0.0], [0.3, 0.2, 0.0], [0.25, 0.3, 0.0],
+                  [0.0125, 0.01, 0.02], [0.0375, 0.01, 0.05])
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    gmsh.model.add("junction")
+    surface = gmsh.model.addDiscreteEntity(2)
+    volume = gmsh.model.addDiscreteEntity(3)
+    gmsh.model.mesh.addNodes(2, surface, collect(1:size(points, 2)), vec(points))
+    gmsh.model.mesh.addElementsByType(surface, 2, Int[],
+                                      vec(hcat([1, 2, 4], [2, 3, 5], [2, 6, 3], [7, 8, 9])))
+    gmsh.model.mesh.addElementsByType(volume, 4, Int[], vec(hcat([1, 2, 4, 10], [2, 3, 5, 11])))
+    gmsh.model.addPhysicalGroup(2, [surface], 1)
+    node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
+    xyz = reshape(coordinates, 3, :)
+    index = Dict(tag => i for (i, tag) in enumerate(node_tags))
+    segments = [([-1.0, 0.0, 0.0], [1.0, 0.0, 0.0])]
+    surface_layer = first_layer_transverse_statistics(xyz, index, segments, 0.025, 2, 1)
+    @test surface_layer["Elements"] == 3 && surface_layer["Prescribed"] == 0.025
+    @test surface_layer["TransverseP50"] ≈ 0.03 && surface_layer["TransverseMaximum"] ≈ 0.05
+    @test surface_layer["TransverseP10"] ≈ 0.025
+    @test surface_layer["AchievedOverPrescribedP50"] ≈ 1.2
+    @test surface_layer["AchievedOverPrescribedP90"] ≈ 2.0
+    tet_layer = first_layer_transverse_statistics(xyz, index, segments, 0.025, 3, 0)
+    # The tetrahedra's largest node distances to the line y = z = 0 are 0.025 (the
+    # surface node) and sqrt(0.01^2 + 0.05^2) (the apex).
+    @test tet_layer["Elements"] == 2
+    @test tet_layer["TransverseP50"] ≈ 0.025 && tet_layer["TransverseMaximum"] ≈ hypot(0.01, 0.05)
+    # A line no element touches, and a line whose segment ends before the elements
+    # (the node on the line must lie within the segment span).
+    @test first_layer_transverse_statistics(xyz, index, [([0.0, 1.0, 0.0], [1.0, 1.0, 0.0])],
+                                            0.025, 2, 1)["Elements"] == 0
+    @test first_layer_transverse_statistics(xyz, index, [([-1.0, 0.0, 0.0], [-0.5, 0.0, 0.0])],
+                                            0.025, 2, 1)["Elements"] == 0
+    # The band tetrahedron statistic reports the segment count.
+    band = band_tetrahedron_statistics(xyz, index, segments, 0.025)
+    @test band["Cells"] == 2 && band["Segments"] == 1
+    gmsh.finalize()
+    # Footprint sides on the outer box are separated from the interior (feature) sides.
+    polygons = [Dict{String, Any}("Plane" => -0.05,
+                                  "Points" => [[-6.0, -8.0], [-6.0, 8.0], [2.0, 8.0], [2.0, -8.0]])]
+    interior, on_box = footprint_polygon_segments(polygons, [-6.0, -8.0, -1.0], [10.0, 8.0, 1.0], 1.0e-9)
+    @test length(on_box) == 3 && length(interior) == 1
+    @test interior[1] == ([2.0, 8.0, -0.05], [2.0, -8.0, -0.05])
+end

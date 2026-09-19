@@ -1247,7 +1247,9 @@ def validate_gmsh_build_census(build_report, census, semantic):
     polygons, the junction segments, the trace basis sizing (iff bound), positive
     per-label interface areas over exactly the contract labels, the prism tube
     record (sizes equal to the command options, one tube per recorded row, spacing
-    within the tangential size, geometric rings), the per-type quality computed by
+    within the tangential size, geometric rings, the band curves 1D-meshed at
+    NormalSize with the achieved junction first-layer transverse sizes recorded),
+    the per-type quality computed by
     the mesher within the command's gates for every volume type (orientation and
     Jacobian condition; scaled Jacobian for the tetrahedra), the cap regions within
     the scaled-Jacobian gate, the corner aspects within the corner gate and the
@@ -1339,6 +1341,21 @@ def validate_gmsh_build_census(build_report, census, semantic):
             not all(isinstance(laws.get(name), str) and laws[name]
                     for name in ("TubeRule", "BandRule", "Composition"))):
         raise ValueError("Prism tube size laws are not recorded")
+    band_curves = tubes.get("BandCurves")
+    if (not isinstance(band_curves, dict) or
+            _census_number(band_curves, "Spacing", "Band curves") != tubes["NormalSize"] or
+            _count(band_curves.get("Count"), "Band curves") < 0):
+        raise ValueError("Band curves are not 1D-meshed at NormalSize")
+    bands = tubes.get("Bands")
+    first_layer = bands.get("JunctionFirstLayer") if isinstance(bands, dict) else None
+    if (not isinstance(first_layer, dict) or
+            _census_number(bands, "Prescribed", "Bands") != tubes["NormalSize"] or
+            any(not isinstance(first_layer.get(name), dict) or
+                _count(first_layer[name].get("Elements"), f"Junction first layer {name}") <= 0 or
+                any(_census_number(first_layer[name], statistic, f"Junction first layer {name}") <= 0
+                    for statistic in ("TransverseP50", "TransverseP90", "AchievedOverPrescribedP50"))
+                for name in ("CutSurface", "Tetrahedra"))):
+        raise ValueError("Build census does not record the achieved junction first-layer sizes")
     gates = {name: _option_or_default(command, option, None)
              for option, name in GMSH_BUILD_GATE_OPTIONS.items()}
     if any(not math.isfinite(value) or value <= 0 for value in gates.values()):

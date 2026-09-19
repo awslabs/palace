@@ -3701,7 +3701,7 @@ end
 # Size statistics of the tetrahedra whose centroid lies within `reach` of a
 # segment set: mean edge length percentiles (the junction / footprint band sizes).
 function band_tetrahedron_statistics(points, index, segments, reach)
-    isempty(segments) && return Dict{String, Any}("Cells" => 0)
+    isempty(segments) && return Dict{String, Any}("Cells" => 0, "Segments" => 0)
     sizes = Float64[]
     types, element_tags, element_nodes = gmsh.model.mesh.getElements(3)
     for (type, tags, block) in zip(types, element_tags, element_nodes)
@@ -3713,12 +3713,79 @@ function band_tetrahedron_statistics(points, index, segments, reach)
             push!(sizes, sum(norm(nodes[i] .- nodes[j]) for i in 1:4 for j in (i + 1):4) / 6)
         end
     end
-    isempty(sizes) && return Dict{String, Any}("Cells" => 0)
+    isempty(sizes) && return Dict{String, Any}("Cells" => 0, "Segments" => length(segments))
     sort!(sizes)
     at(q) = sizes[clamp(ceil(Int, q * length(sizes)), 1, length(sizes))]
-    return Dict{String, Any}("Cells" => length(sizes), "Reach" => reach,
+    return Dict{String, Any}("Cells" => length(sizes), "Segments" => length(segments),
+                             "Reach" => reach,
                              "MeanEdgeP10" => at(0.1), "MeanEdgeP50" => at(0.5),
                              "MeanEdgeP90" => at(0.9), "MeanEdgeMaximum" => sizes[end])
+end
+
+# Distance of a point to the infinite line through a segment.
+function line_point_distance(point, start, stop)
+    v = stop .- start
+    return norm(cross(point .- start, v)) / norm(v)
+end
+
+# Achieved first-layer transverse size against a segment set (the junction lines):
+# for every element of one dimension (the matching-surface elements of a physical
+# label, or every tetrahedron) with a node on a segment, the largest distance of
+# its nodes to the line through that segment - the thickness of the first cell
+# layer against the line, which the band law prescribes as `prescribed`
+# (NormalSize at r = 0). Percentiles and achieved-over-prescribed ratios are
+# reported; nothing is gated.
+function first_layer_transverse_statistics(points, index, segments, prescribed, dim, attribute)
+    on_line = 1.0e-6 * prescribed
+    thickness = Float64[]
+    entities = dim == 3 ? [-1] : gmsh.model.getEntitiesForPhysicalGroup(dim, attribute)
+    for entity in entities
+        types, element_tags, element_nodes = gmsh.model.mesh.getElements(dim, entity)
+        for (type, tags, block) in zip(types, element_tags, element_nodes)
+            isempty(tags) && continue
+            dim == 3 && Int(type) != GMSH_LINEAR_ELEMENT_TYPE[3] && continue
+            width = length(block) ÷ length(tags)
+            for start in 0:width:(length(block) - 1)
+                nodes = [points[:, index[block[start + i]]] for i in 1:width]
+                nearest = 0
+                for (k, (a, b)) in enumerate(segments)
+                    any(span_point_distance(node, a, b) <= on_line for node in nodes) || continue
+                    nearest = k
+                    break
+                end
+                nearest == 0 && continue
+                a, b = segments[nearest]
+                push!(thickness, maximum(line_point_distance(node, a, b) for node in nodes))
+            end
+        end
+    end
+    isempty(thickness) && return Dict{String, Any}("Elements" => 0, "Prescribed" => prescribed)
+    sort!(thickness)
+    at(q) = thickness[clamp(ceil(Int, q * length(thickness)), 1, length(thickness))]
+    return Dict{String, Any}("Elements" => length(thickness), "Prescribed" => prescribed,
+                             "TransverseP10" => at(0.1), "TransverseP50" => at(0.5),
+                             "TransverseP90" => at(0.9), "TransverseMaximum" => thickness[end],
+                             "AchievedOverPrescribedP50" => at(0.5) / prescribed,
+                             "AchievedOverPrescribedP90" => at(0.9) / prescribed)
+end
+
+# The segments of the footprint polygons split into the sides on the outer box
+# (box sides, not feature curves) and the interior sides (feature curves carrying
+# the band law).
+function footprint_polygon_segments(footprint_polygons, lower, upper, tolerance)
+    interior = Tuple{Vector{Float64}, Vector{Float64}}[]
+    on_box = Tuple{Vector{Float64}, Vector{Float64}}[]
+    for polygon in footprint_polygons
+        polygon_points = polygon["Points"]
+        plane = Float64(polygon["Plane"])
+        for i in eachindex(polygon_points)
+            a = polygon_points[i]; b = polygon_points[mod1(i + 1, length(polygon_points))]
+            segment = ([a[1], a[2], plane], [b[1], b[2], plane])
+            bounds = [min(a[1], b[1]), min(a[2], b[2]), plane, max(a[1], b[1]), max(a[2], b[2]), plane]
+            push!(on_outer_box(bounds, lower, upper, tolerance) ? on_box : interior, segment)
+        end
+    end
+    return interior, on_box
 end
 
 # Quality of the tetrahedra with a vertex within `reach` of a point (the cap
@@ -3744,9 +3811,9 @@ end
 # gate_mixed_volume_quality and the element budget).
 function prism_tube_census(tubes, segments, description, states, volume_census, face_meshes,
                            curve_meshes, timings, band_record, quality, graded_points,
-                           semantic_corners, junction_curves, footprint_polygons, lc_fine,
-                           lc_tangent, lc_far, far_growth, trace_basis_record, max_elements,
-                           element_count)
+                           semantic_corners, junction_curves, band_curves, footprint_polygons,
+                           box, lc_fine, lc_tangent, lc_far, far_growth, trace_basis_record,
+                           max_elements, element_count)
     node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
     points = reshape(coordinates, 3, :)
     index = Dict(tag => i for (i, tag) in enumerate(node_tags))
@@ -3769,15 +3836,9 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
     cap_scaled = filter(!isnothing, [cap["MinimumScaledJacobian"] for cap in caps])
     cap_condition = filter(!isnothing, [cap["MaximumJacobianCondition"] for cap in caps])
     junction_segments = curve_segments(junction_curves)
-    footprint_segments = Tuple{Vector{Float64}, Vector{Float64}}[]
-    for polygon in footprint_polygons
-        polygon_points = polygon["Points"]
-        plane = Float64(polygon["Plane"])
-        for i in eachindex(polygon_points)
-            a = polygon_points[i]; b = polygon_points[mod1(i + 1, length(polygon_points))]
-            push!(footprint_segments, ([a[1], a[2], plane], [b[1], b[2], plane]))
-        end
-    end
+    footprint_segments, footprint_box_segments =
+        footprint_polygon_segments(footprint_polygons, box...)
+    band_curve_segments = curve_segments(band_curves)
     return Dict{String, Any}(
         "Rule" => "every straight metal edge (top and bottom edge of every metal segment) " *
                   "carries a prism tube on its dielectric side: geometric rings of size " *
@@ -3820,9 +3881,30 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
                            trace_basis_achieved_sizes(points, index, 1, trace_basis_record)),
         "Bands" => Dict{String, Any}(
             "Rule" => "mean edge length of the tetrahedra whose centroid lies within NormalSize " *
-                      "of the junction lines / the footprint edges",
+                      "of the junction lines / the footprint edges (Footprint: the footprint " *
+                      "sides not on the outer box, the feature curves; FootprintOnBox: the box " *
+                      "sides, a far-field sample); FirstLayer: the achieved first-layer transverse " *
+                      "size against the junction lines (matching-surface elements and tetrahedra " *
+                      "with a node on a line) over the prescribed NormalSize (BandRule at r = 0)",
+            "Prescribed" => lc_fine,
             "Junction" => band_tetrahedron_statistics(points, index, junction_segments, lc_fine),
-            "Footprint" => band_tetrahedron_statistics(points, index, footprint_segments, lc_fine)),
+            "JunctionFirstLayer" => Dict{String, Any}(
+                "CutSurface" => first_layer_transverse_statistics(points, index, junction_segments,
+                                                                  lc_fine, 2, 1),
+                "Tetrahedra" => first_layer_transverse_statistics(points, index, junction_segments,
+                                                                  lc_fine, 3, 0)),
+            "Footprint" => band_tetrahedron_statistics(points, index, footprint_segments, lc_fine),
+            "FootprintOnBox" => band_tetrahedron_statistics(points, index, footprint_box_segments,
+                                                            lc_fine)),
+        "BandCurves" => Dict{String, Any}(
+            "Rule" => "the non-metal longitudinal feature curves (junction lines and footprint " *
+                      "edges parallel to a metal edge) are 1D-meshed at Spacing = NormalSize, the " *
+                      "band law on the line, composed with the corner law; the metal ridges keep " *
+                      "the TangentialSize grid (they carry the tubes)",
+            "Count" => length(band_curves),
+            "TotalLength" => sum(norm(b .- a) for (a, b) in band_curve_segments; init=0.0),
+            "Spacing" => lc_fine,
+            "Segments" => [vcat(a, b) for (a, b) in band_curve_segments]),
         "FarFieldBudgetPolicy" => Dict{String, Any}(
             "Name" => "gmsh-only-fail-closed-cap",
             "Rule" => "the requested far size is used as is (Pressure 1); the element budget " *
@@ -4501,6 +4583,16 @@ function generate_spatial_coupon(;
     ridge_parameters = Dict{Int32, Vector{Float64}}()
     ridge_nodes = Dict{Int32, Matrix{Float64}}()
     transfinite_curves = Set{Int32}()
+    # Band curves (Gmsh-only recipe): the non-metal longitudinal feature curves -
+    # the cut-surface / material-interface junction lines and the footprint edges
+    # parallel to a metal edge - are 1D-meshed at the band law's size on the line,
+    # NormalSize (BandRule at r = 0; the growth away from the line is the size
+    # callback's), composed with the corner law, so that the first cell layer
+    # against the line is NormalSize transversally: on the lc_tangent ridge grid
+    # the first layer was TangentialSize (the surface mesher cannot refine a curve's
+    # nodes). The metal ridges keep the lc_tangent grid: they carry the tubes.
+    junction_set = Set(junction_curves)
+    band_curves = Int32[]
     if lc_tangent > 0.0
         for curve in feature_curves
             curve in tube_curves && continue
@@ -4512,12 +4604,17 @@ function generate_spatial_coupon(;
             tangent ./= norm(tangent)
             if any(abs(dot(tangent, edge.tangent)) >= 1.0 - 1.0e-6 for edge in edges)
                 push!(longitudinal_curves, curve)
+                band_curve = prism_tubes && (curve in junction_set ||
+                    !any(surface_family(first(record)) in METAL_SURFACE_FAMILIES
+                         for record in get(curve_surfaces, curve, Tuple{Int, Int32}[])))
+                band_curve && push!(band_curves, curve)
+                curve_spacing = band_curve ? lc_fine : lc_tangent
                 placed = corner_isotropy ? corner_isotropic_curve_nodes(
-                    curve, graded_points, corner_grading, lc_tangent,
+                    curve, graded_points, corner_grading, curve_spacing,
                     corner_grading_slope) : nothing
                 if placed === nothing
                     curve_length = gmsh.model.occ.getMass(1, curve)
-                    point_count = max(2, ceil(Int, curve_length / lc_tangent) + 1)
+                    point_count = max(2, ceil(Int, curve_length / curve_spacing) + 1)
                     grid = collect(range(lower_parameter[1], upper_parameter[1];
                                          length=point_count))[2:(end - 1)]
                     ridge_parameters[curve] = grid
@@ -4560,7 +4657,6 @@ function generate_spatial_coupon(;
             for k in eachindex(edge_layer_offsets)]
         edge_layer_taper = layer_to_ball ? Int[] :
             [2^j for j in 1:(round(Int, log2(edge_layer_subdivision)) - 1)]
-        junction_set = Set(junction_curves)
         for curve in longitudinal_curves
             curve in junction_set && continue
             records = get(curve_surfaces, curve, Tuple{Int, Int32}[])
@@ -4706,6 +4802,7 @@ function generate_spatial_coupon(;
         "physical=$(length(feature_curves)), " *
         "junction=$(length(junction_curves)) (length $junction_length), " *
         "longitudinal=$(length(longitudinal_curves)), " *
+        "band_curves=$(length(band_curves)), " *
         "corner_isotropic_longitudinal=$(length(corner_curves)), " *
         "discarded_coplanar_seams=$(length(discarded_seams)), " *
         "fine_width=$process_fine_width, core_width=$process_core_width, " *
@@ -4903,7 +5000,8 @@ function generate_spatial_coupon(;
         prism_tube_census(tubes, tube_segments, tube_sections, tube_states, tube_volume_census,
                           tube_face_meshes, tube_curve_meshes, tube_timings, tube_band_record,
                           mixed_quality, graded_points, semantic_corners, junction_curves,
-                          footprint_polygons, lc_fine, lc_tangent, lc_far, far_growth,
+                          band_curves, footprint_polygons, (lower, upper, outer_tolerance),
+                          lc_fine, lc_tangent, lc_far, far_growth,
                           trace_basis_record, max_elements, element_count_after_generation) :
         nothing
     if transform != IDENTITY_RIGID_TRANSFORM
