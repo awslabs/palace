@@ -455,6 +455,51 @@ rotate-z `5b000119...`); the mesher-only probe meshes were deleted. Physics-11/1
 adjudicated E at 74/10, SA at 48/47/35 and MS against physics-10 (table above):
 V-a adopted (decision 42), V-b rejected.
 
+### Evidence (decision 42 production roots: four-edge and ten-edge at TraceBasisSizeRatio 0.5, commit f6efe6367, 2026-09-19)
+
+Both production cases were rebuilt by `run_gmsh_only_case.py` under the adopted
+recipe (production manifest with `--trace-basis-size-ratio 0.5`) and verified
+identity + rotate-z-0.63 with empty failure lists (`per-entry-verification.json`:
+`Passed true`, `Failures []`, `TransformComparisonFailures []`,
+`CanonicalReuseFailures []`). The roots were launched from the f6efe6367 working
+tree before that commit was recorded, so their directory names carry the parent
+21cf534ff; the evidence is bound to f6efe6367 by content: the verification
+reports record the manifest SHA-256 `04f8df72434eb08c5089805510918c504a7f5a74
+32762bae240cd19f958c00b5` (= `geometry-independence-suite.json` at f6efe6367) and
+the refrozen tool digests (`general_mesh_manifest.py` `212bcf44...`). The
+four-edge identity mesh is byte-identical to the V-a calibration mesh
+(SHA-256 `80966c7db44dabc49ac7bb068bbaee0e0828e413b115cee8c066c886866b6108`,
+the mesh physics-11 ran on; rotate-z `97bfb753...` identical too, CanonicalBuildId
+`41e4f243...` shared with the calibration roots because the cache key does not
+encode recipe options), so physics-11 binds to the production root.
+
+| case | elements (tets + prisms + pyramids) | nodes = H1 p1 (H1 p4) | tubes / layers / thickness min-P50-max (nm) / max neighbour ratio | caps min SJ / max cond | tets min SJ / max cond | prisms / pyramids max cond | corners | protected (measure / vertex) | closure (points) | diagonal bands | trace-apex shells 0-25 / 25-50 / 50-100 nm (cells; longest edge P50 nm) | junction first layer cut P50 / tets P50 (nm) | stage s / GiB (build; publication; placement) | audits s / GiB (identity; rotate-z) | verification s / GiB |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| four-edge-9d2cb9bbb3fe | **1,869,209** = 1,683,863 + 172,107 + 13,239 (= V-a; +7.3% vs 083874fee's 1,742,434; 0.54x the 34B production 3,471,480) | 414,758 (24,827,674) | 8 / 1,471 / 10.85 - 49.75 - 50.0 / 1.93 | 12: 0.0305 / 67.6 | 0.0296 / 118.1 | 668.6 / 8.74 | 3.13 / 3.44 / 3.47 / 3.54 | 0 / 9.9e-16 | 2.5e-13 (653,577; owners 3000/3100/5001/6001) | 0 | 54 apexes: 2,802 / 2,260 / 5,949 cells at 6.4 / 32.1 / 41.3 (083874fee 4.9 / 32.6 / 42.7) | 21.6 / 25.5 | 115.6 / 4.25; 29.7 / 3.34; 96.9-111.8 / 3.8 | 284.6 / 2.88; 346.1 / 2.85 | 991 / 2.95 |
+| ten-edge-6791f1c84123 | **2,673,691** = 2,383,387 + 269,568 + 20,736 (+8.5% vs 083874fee's 2,465,185; 0.75x the 34B production 3,570,533) | 611,846 (35,774,961) | 20 / 2,304 / 15.9 - 49.82 - 50.0 / 1.83 | 36: 0.0274 / 82.8 | 0.0200 / 173.9 | 589.5 / 8.74 | 3.34-3.80 (10 corners) | 0 / 1.3e-15 | 1.1e-13 (1,031,142; 10 owner labels 3100/3101, 5001/5002, 5101/5102, 6001/6002, 6101/6102) | 0 | 204 apexes (180 at ratio 1.0: more basis triangles fall below FarSize at 0.5): 3,155 / 3,788 / 10,360 cells at 8.9 / 46.1 / 56.2 | 21.7 / 25.3 | 194.3 / 5.04; 36.4 / 4.34; 148.7-151.8 / 5.26 | 344.0 / 3.85; 496.1 / 3.83 | 1,396 / 4.35 |
+
+Every physical gate passed at its production value (positive orientation and
+condition <= 1000 for every element type; tetrahedra SJ >= 0.01; corner aspect <=
+4.0; protected <= 1e-8; closure <= 1e-12; <= 4M elements; 1800 s / 8 GiB per
+stage). The ten-edge tetrahedra minimum scaled Jacobian 0.0200 sits at 2x the gate
+(083874fee: 0.0217); the trace-apex shell statistic of the ten-edge is not
+comparable with the ratio-1.0 build because the apex set grew from 180 to 204
+(the wider basis triangles now requesting sizes below FarSize join the set). Roots
+(binaries kept; the physics-11 mesh is the four-edge identity):
+`/tmp/coupon-gmsh-only-four-edge-9d2cb9bbb3fe-21cf534ff-20260919-050014`
+(identity.msh `80966c7db44dabc49ac7bb068bbaee0e0828e413b115cee8c066c886866b6108`,
+rotate-z `97bfb753c7148c421ebb1fe7be89811e7d88ebbd6309d8a3a24a42e4cedd94bc`,
+CanonicalBuildId `41e4f24391f99725716443a2eea578c00f419f0471c3af075c9d806990a55b1e`),
+`/tmp/coupon-gmsh-only-ten-edge-6791f1c84123-21cf534ff-20260919-050014`
+(identity.msh `082cf7d432c983ad3a489a1c3d4d9c13c80a9c117194d65c03c342b54899a1ee`,
+rotate-z `d2424ec8c3aeb10f205c90633112512d181bc5184e3b679123d0e346e842fbbb`,
+CanonicalBuildId `2c47ef1224af3660a96fbaf800752df4fc928e463ae72f0aa52f0b36d01f37c7`).
+The superseded 083874fee roots (four `647b2079...`, the physics-10 mesh; ten
+`eb9986a4...`) and the V-b calibration root (`7db360be...`, physics-12) keep their
+records; their mesh binaries were removed once these roots verified. The V-a
+calibration root keeps its records and its (identical) binaries were removed in
+favour of the production root above.
+
 ## Retired production recipe (supervisor decision 34B, 2026-09-17; legacy MMG pipeline)
 
 Retired from production by decision 38; recorded as
