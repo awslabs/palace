@@ -80,6 +80,20 @@ build census (`build-census`, the bound build report):
   the background attractor / graded-point fields; the far field FarSize with the
   fail-closed element cap (no far-budget pressure: the requested far size is used
   as is and the build fails above `--max-elements`);
+- volume size laws of supervisor decision 39 (physics-09 localized the E/SA/MS
+  regressions of the Gmsh-only mesh to volume sizing next to the narrow-hat apexes,
+  the corner balls and the junction lines): (a) the trace rule is a volume law,
+  size <= TraceBasisSizeRatio x the local basis edge + FarGrowth x the distance to
+  the basis triangle (`TraceBasisSizing.GradingSlope` = FarGrowth; before: the
+  process-band slope 0.675); (b) the corner-ball exterior, size = NormalSize +
+  FarGrowth x the distance beyond CornerIsotropyRadius from the nearest graded
+  point (`SizeLaws.CornerExteriorRule`); (c) the junction lines carry the band law
+  throughout the volume (`SizeLaws.JunctionVolumeRule`, the BandRule) and are
+  1D-meshed at NormalSize (below). All three compose by `min` in the size callback
+  and are measured in NormalSize shells (`SizeLaws.Achieved`: mean / longest edge
+  percentiles and achieved-over-prescribed around the trace apexes within
+  CornerIsotropyRadius, outside the corner balls, around the junction lines;
+  report, not gate);
 - band curves 1D-meshed at the band law (review P1 of the phase-3 evidence): the
   non-metal longitudinal feature curves - the cut-surface / material-interface
   junction lines and the footprint edges parallel to a metal edge - are placed at
@@ -115,7 +129,9 @@ CornerSize, GrowthRatio, TangentialSize = `--lc-tangent`, NormalSize = `--lc-fin
 FarSize = `--lc-far`, FarGrowth, `--prism-tubes true`, rings geometric, the sector
 angle = `--tube-sector-degrees` or its default 30, PyramidHeight = 0.5 x the
 outermost ring (PyramidHeightOverOuterRing), the band law's RadialGrowth 1 and
-ProtectedDistance 2 x NormalSize, band curves at NormalSize spacing with the
+ProtectedDistance 2 x NormalSize, the decision-39 volume laws growing with
+FarGrowth (trace GradingSlope, CornerExteriorGrowth, CornerIsotropyRadius, the
+achieved shells recorded), band curves at NormalSize spacing with the
 junction first-layer records present, every tube
 spacing within the tangential size, per-type quality within the command's gates,
 cap regions within the tetrahedral gates, corner aspects within the corner gate,

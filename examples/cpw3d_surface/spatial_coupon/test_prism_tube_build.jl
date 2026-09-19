@@ -147,7 +147,19 @@ end
     @test tube_band_size(0.5, 5.0, 0.03, 1.0) ≈ 0.055
     @test tube_band_size(0.5, 5.0, 0.15, 1.0) ≈ 0.025 + 0.05 + 0.5 * 0.1
     @test tube_band_size(0.5, 5.0, 3.0, 1.0) ≈ 0.16
-    empty!(TUBE_AXIS_SEGMENTS); empty!(BAND_SEGMENTS)
+    @test band_law_size(0.03, 0.025, 0.16, 0.5) ≈ 0.055
+    # Corner-ball exterior law (decision 39b): NormalSize at the ball radius, then
+    # FarGrowth, up to FarSize; the interior is left to the background law.
+    record = prepare_tube_band_sizing!([([0.0, 0.0, 0.0], [1.0, 0.0, 0.0])], [],
+                                       0.04, 0.025, 0.16, 0.5, [(0.0, 10.0, 0.0)], 0.1)
+    @test record["CornerExteriorPoints"] == 1 && record["CornerExteriorGrowth"] ≈ 0.5
+    @test record["CornerIsotropyRadius"] ≈ 0.1 && record["TraceBasisVolumeGrowth"] ≈ 0.5
+    @test tube_band_size(0.0, 10.05, 0.0, 1.0) ≈ 0.025
+    @test tube_band_size(0.0, 10.1, 0.0, 1.0) ≈ 0.025
+    @test tube_band_size(0.0, 10.3, 0.0, 1.0) ≈ 0.025 + 0.5 * 0.2
+    @test tube_band_size(0.0, 11.0, 0.0, 1.0) ≈ 0.16
+    @test corner_exterior_size(0.2, 0.025, 0.16, 0.5) ≈ 0.075
+    empty!(TUBE_AXIS_SEGMENTS); empty!(BAND_SEGMENTS); empty!(CORNER_EXTERIOR_POINTS)
     @test tube_band_size(0.5, 5.0, 0.0, 1.0) ≈ 1.0
 end
 
@@ -195,6 +207,22 @@ end
     # The band tetrahedron statistic reports the segment count.
     band = band_tetrahedron_statistics(xyz, index, segments, 0.025)
     @test band["Cells"] == 2 && band["Segments"] == 1
+    # Shell statistics against a law: both tetrahedra have their centroid within
+    # the first NormalSize shell of the line (0.009 and 0.015); a constant law of
+    # 0.025 gives the ratio mean edge / 0.025; an empty shell reports nothing.
+    shells = shell_size_statistics(xyz, index, c -> hypot(c[2], c[3]), 0.0, [0.025, 0.05],
+                                   (c, d) -> 0.025)
+    @test length(shells) == 2 && shells[1]["Cells"] == 2 && shells[2]["Cells"] == 0
+    @test shells[1]["Lower"] == 0.0 && shells[1]["Upper"] == 0.025 && shells[2]["Lower"] == 0.025
+    mean_edges = sort([sum(norm(points[:, i] .- points[:, j]) for (i, j) in
+                           ((a, b) for a in cell for b in cell if a < b)) / 6
+                       for cell in ([1, 2, 4, 10], [2, 3, 5, 11])])
+    @test shells[1]["MeanEdgeP50"] ≈ mean_edges[1] && shells[1]["MeanEdgeP90"] ≈ mean_edges[2]
+    @test shells[1]["AchievedOverPrescribedP50"] ≈ mean_edges[1] / 0.025
+    @test shells[1]["LongestEdgeMaximum"] ≈ maximum(norm(points[:, i] .- points[:, j])
+                                                    for cell in ([1, 2, 4, 10], [2, 3, 5, 11])
+                                                    for i in cell for j in cell)
+    @test shells[2]["MeanEdgeP50"] === nothing
     gmsh.finalize()
     # Footprint sides on the outer box are separated from the interior (feature) sides.
     polygons = [Dict{String, Any}("Plane" => -0.05,

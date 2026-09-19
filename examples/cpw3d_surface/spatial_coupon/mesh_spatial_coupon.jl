@@ -3053,6 +3053,7 @@ end
 # unsupported on aarch64), hence the module-level state.
 const TRACE_BASIS_TRIANGLES = NTuple{9, Float64}[]  # narrow triangles (requested < lc_far)
 const TRACE_BASIS_SIZES = Float64[]                 # ratio x shortest edge of each
+const TRACE_BASIS_APEXES = NTuple{3, Float64}[]     # endpoints of the shortest edge of each
 const TRACE_BASIS_FAR = Ref(Inf)
 const TRACE_BASIS_SLOPE = Ref(0.0)
 const TRACE_BASIS_CALLBACK_ROOTS = Any[]
@@ -3201,6 +3202,11 @@ const TUBE_BAND_FAR = Ref(Inf)
 const TUBE_BAND_FAR_GROWTH = Ref(0.0)
 const BAND_RADIAL_GROWTH = 1.0
 const BAND_PROTECTED_DISTANCE_OVER_NORMAL = 2.0
+# Corner-ball exterior law (decision 39b): NormalSize (the ball boundary size) +
+# FarGrowth x the distance beyond CornerIsotropyRadius from the nearest graded
+# point (semantic corners and tube cap centres), up to FarSize.
+const CORNER_EXTERIOR_POINTS = NTuple{3, Float64}[]
+const CORNER_EXTERIOR_RADIUS = Ref(0.0)
 
 function segment_point_distance(x, y, z, segment)
     ax, ay, az, bx, by, bz = segment
@@ -3228,15 +3234,35 @@ function tube_band_size(x, y, z, lc)
         band_distance = min(band_distance, segment_point_distance(x, y, z, segment))
     end
     if isfinite(band_distance)
-        protected = BAND_PROTECTED_DISTANCE_OVER_NORMAL * normal
-        size = min(size, min(far, normal + BAND_RADIAL_GROWTH * min(band_distance, protected) +
-                                  growth * max(band_distance - protected, 0.0)))
+        size = min(size, band_law_size(band_distance, normal, far, growth))
+    end
+    corner_distance = Inf
+    @inbounds for point in CORNER_EXTERIOR_POINTS
+        corner_distance = min(corner_distance, sqrt((x - point[1])^2 + (y - point[2])^2 + (z - point[3])^2))
+    end
+    if isfinite(corner_distance)
+        size = min(size, corner_exterior_size(corner_distance, normal, far, growth))
     end
     return size
 end
 
-function prepare_tube_band_sizing!(axis_segments, band_segments, offset, normal, far, far_growth)
-    empty!(TUBE_AXIS_SEGMENTS); empty!(BAND_SEGMENTS)
+# The band law at distance r from a feature curve outside the tubes.
+function band_law_size(r, normal, far, growth)
+    protected = BAND_PROTECTED_DISTANCE_OVER_NORMAL * normal
+    return min(far, normal + BAND_RADIAL_GROWTH * min(r, protected) + growth * max(r - protected, 0.0))
+end
+
+# The corner-ball exterior law at distance d from a graded point.
+corner_exterior_size(d, normal, far, growth) =
+    min(far, normal + growth * max(d - CORNER_EXTERIOR_RADIUS[], 0.0))
+
+function prepare_tube_band_sizing!(axis_segments, band_segments, offset, normal, far, far_growth,
+                                   graded_points=NTuple{3, Float64}[], corner_radius=0.0)
+    empty!(TUBE_AXIS_SEGMENTS); empty!(BAND_SEGMENTS); empty!(CORNER_EXTERIOR_POINTS)
+    for point in graded_points
+        push!(CORNER_EXTERIOR_POINTS, (point[1], point[2], point[3]))
+    end
+    CORNER_EXTERIOR_RADIUS[] = corner_radius
     for (a, b) in axis_segments
         push!(TUBE_AXIS_SEGMENTS, (a[1], a[2], a[3], b[1], b[2], b[3]))
     end
@@ -3260,8 +3286,24 @@ function prepare_tube_band_sizing!(axis_segments, band_segments, offset, normal,
                       "FarGrowth x max(r - ProtectedDistance, 0)), r the distance to the nearest " *
                       "feature curve outside the tubes (junction lines, footprint edges, un-tubed " *
                       "metal edge parts); ProtectedDistance = 2 x NormalSize",
+        "JunctionVolumeRule" => "the junction lines carry the band law throughout the volume " *
+                                "(BandRule, exact segment distance in the size callback) and are " *
+                                "1D-meshed at NormalSize (BandCurves) - decision 39c",
+        "CornerExteriorPoints" => length(CORNER_EXTERIOR_POINTS),
+        "CornerIsotropyRadius" => corner_radius,
+        "CornerExteriorGrowth" => far_growth,
+        "CornerExteriorRule" => "size = min(FarSize, NormalSize + FarGrowth x max(d - " *
+                                "CornerIsotropyRadius, 0)), d the distance to the nearest graded " *
+                                "point (semantic corner or tube cap centre); the ball interior is " *
+                                "the background graded-point law - decision 39b",
+        "TraceBasisVolumeGrowth" => far_growth,
+        "TraceBasisVolumeRule" => "size = min(FarSize, TraceBasisSizeRatio x the shortest basis " *
+                                  "edge + FarGrowth x the distance to the basis triangle) " *
+                                  "throughout the volume (TraceBasisSizing.GradingSlope = " *
+                                  "FarGrowth) - decision 39a",
         "Composition" => "min(background field [anisotropic curve attractor, graded-point law], " *
-                         "trace rule, tube rule, band rule) in the Gmsh size callback")
+                         "trace rule, tube rule, band rule, corner exterior rule) in the Gmsh " *
+                         "size callback")
 end
 
 function trace_basis_size_callback(dim, tag, x, y, z, lc, data)::Cdouble
@@ -3282,7 +3324,7 @@ end
 # Loads the narrow basis triangles into the callback state; returns the census record.
 function prepare_trace_basis_sizing!(basis, ratio, lc_far, slope)
     isfinite(ratio) && ratio > 0.0 || error("Trace basis size ratio must be a positive finite number")
-    empty!(TRACE_BASIS_TRIANGLES); empty!(TRACE_BASIS_SIZES)
+    empty!(TRACE_BASIS_TRIANGLES); empty!(TRACE_BASIS_SIZES); empty!(TRACE_BASIS_APEXES)
     TRACE_BASIS_FAR[] = lc_far; TRACE_BASIS_SLOPE[] = slope
     requested = Float64[]
     edges = Dict{Tuple{Int, Int}, Float64}()
@@ -3296,17 +3338,26 @@ function prepare_trace_basis_sizing!(basis, ratio, lc_far, slope)
         if requested[end] < lc_far
             push!(TRACE_BASIS_TRIANGLES, ntuple(i -> basis.points[triangle[(i - 1) ÷ 3 + 1]][mod1(i, 3)], 9))
             push!(TRACE_BASIS_SIZES, requested[end])
+            # The narrow hat's apexes: the endpoints of the shortest edge, where the
+            # hat gradient across the sliver is steepest.
+            shortest = argmin(lengths)
+            for vertex in (triangle[shortest], triangle[mod1(shortest + 1, 3)])
+                apex = Tuple(Float64.(basis.points[vertex]))
+                apex in TRACE_BASIS_APEXES || push!(TRACE_BASIS_APEXES, apex)
+            end
         end
     end
     edge_lengths = collect(values(edges))
     return Dict{String, Any}(
         "Ratio" => ratio,
         "RatioIsDimensionless" => true,
-        "Rule" => "cut-surface element size <= TraceBasisSizeRatio x the shortest edge of " *
-                  "the basis triangle containing the point (per-triangle rule: the hat " *
-                  "varies over the whole triangle), graded away from the surface with the " *
-                  "process-band slope up to FarSize; the only parameter is the dimensionless " *
-                  "ratio, applied through the Gmsh size callback on top of the background field",
+        "Rule" => "element size <= TraceBasisSizeRatio x the shortest edge of the basis " *
+                  "triangle nearest the point (per-triangle rule: the hat varies over the " *
+                  "whole triangle) + GradingSlope x the distance to that triangle, up to " *
+                  "FarSize, throughout the volume (GradingSlope = FarGrowth under the prism " *
+                  "tube recipe, decision 39a; the process-band slope otherwise); the only " *
+                  "size parameter is the dimensionless ratio, applied through the Gmsh size " *
+                  "callback on top of the background field",
         "Model" => basis.model,
         "Frame" => [collect(basis.frame[r, :]) for r in 1:3],
         "InputSHA256" => basis.hashes,
@@ -3318,6 +3369,7 @@ function prepare_trace_basis_sizing!(basis, ratio, lc_far, slope)
         "TrianglesBelowFarSize" => length(TRACE_BASIS_TRIANGLES),
         "MinimumRequestedSize" => minimum(requested),
         "FarSize" => lc_far, "GradingSlope" => slope,
+        "Apexes" => length(TRACE_BASIS_APEXES),
         "MeshFrameTriangles" => [[collect(basis.points[v]) for v in triangle] for triangle in basis.triangles])
 end
 
@@ -3722,6 +3774,45 @@ function band_tetrahedron_statistics(points, index, segments, reach)
                              "MeanEdgeP90" => at(0.9), "MeanEdgeMaximum" => sizes[end])
 end
 
+# Achieved volume size against a prescribed law in distance shells (decision 39):
+# every tetrahedron whose centroid lies at distance `distance(centroid)` within
+# the last shell bound is binned into the shells (lower bound `lower`, then the
+# `bounds`); per shell the mean and longest edge percentiles and the ratio of the
+# mean edge to `law(centroid, distance)` are reported. Nothing is gated.
+function shell_size_statistics(points, index, distance, lower, bounds, law)
+    shells = [Dict{String, Any}("Lower" => a, "Upper" => b, "Mean" => Float64[],
+                                "Longest" => Float64[], "Ratio" => Float64[])
+              for (a, b) in zip(vcat(lower, bounds[1:(end - 1)]), bounds)]
+    types, element_tags, element_nodes = gmsh.model.mesh.getElements(3)
+    for (type, tags, block) in zip(types, element_tags, element_nodes)
+        Int(type) == GMSH_LINEAR_ELEMENT_TYPE[3] || continue
+        for start in 0:4:(length(block) - 1)
+            nodes = [points[:, index[block[start + i]]] for i in 1:4]
+            centroid = sum(nodes) ./ 4
+            d = distance(centroid)
+            lower <= d <= bounds[end] || continue
+            shell = shells[something(findfirst(>=(d), bounds))]
+            lengths = [norm(nodes[i] .- nodes[j]) for i in 1:4 for j in (i + 1):4]
+            push!(shell["Mean"], sum(lengths) / 6)
+            push!(shell["Longest"], maximum(lengths))
+            push!(shell["Ratio"], sum(lengths) / 6 / law(centroid, d))
+        end
+    end
+    rows = Dict{String, Any}[]
+    for shell in shells
+        at(values, q) = isempty(values) ? nothing :
+            sort(values)[clamp(ceil(Int, q * length(values)), 1, length(values))]
+        push!(rows, Dict{String, Any}(
+            "Lower" => shell["Lower"], "Upper" => shell["Upper"], "Cells" => length(shell["Mean"]),
+            "MeanEdgeP50" => at(shell["Mean"], 0.5), "MeanEdgeP90" => at(shell["Mean"], 0.9),
+            "LongestEdgeP50" => at(shell["Longest"], 0.5), "LongestEdgeP90" => at(shell["Longest"], 0.9),
+            "LongestEdgeMaximum" => at(shell["Longest"], 1.0),
+            "AchievedOverPrescribedP50" => at(shell["Ratio"], 0.5),
+            "AchievedOverPrescribedP90" => at(shell["Ratio"], 0.9)))
+    end
+    return rows
+end
+
 # Distance of a point to the infinite line through a segment.
 function line_point_distance(point, start, stop)
     v = stop .- start
@@ -3839,6 +3930,37 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
     footprint_segments, footprint_box_segments =
         footprint_polygon_segments(footprint_polygons, box...)
     band_curve_segments = curve_segments(band_curves)
+    # Achieved volume sizes against the three volume laws of decision 39, in
+    # NormalSize shells: around the trace-basis apexes (within CornerIsotropyRadius),
+    # outside the corner balls (semantic corners) and around the junction lines.
+    corner_radius = band_record["CornerIsotropyRadius"]
+    band_record["Achieved"] = Dict{String, Any}(
+        "Rule" => "tetrahedra binned by centroid distance in NormalSize shells; the mean edge " *
+                  "over the law evaluated at the centroid (AchievedOverPrescribed); " *
+                  "LongestEdgeP50 is the physics-09 observable (median longest edge within " *
+                  "CornerIsotropyRadius of the narrow-hat apexes)",
+        "TraceApexes" => isempty(TRACE_BASIS_APEXES) ? nothing : Dict{String, Any}(
+            "Apexes" => length(TRACE_BASIS_APEXES), "Reach" => corner_radius,
+            "Law" => "TraceBasisSizing (volume rule)",
+            "Shells" => shell_size_statistics(
+                points, index,
+                c -> minimum(norm(c .- collect(apex)) for apex in TRACE_BASIS_APEXES),
+                0.0, [lc_fine, 2lc_fine, corner_radius],
+                (c, d) -> trace_basis_size(c[1], c[2], c[3], lc_far))),
+        "CornerExterior" => Dict{String, Any}(
+            "Corners" => length(semantic_corners), "Law" => "CornerExteriorRule",
+            "Shells" => shell_size_statistics(
+                points, index,
+                c -> minimum(norm(c .- collect(corner)) for corner in semantic_corners),
+                corner_radius, corner_radius .+ [2lc_fine, 4lc_fine, 8lc_fine],
+                (c, d) -> corner_exterior_size(d, lc_fine, lc_far, far_growth))),
+        "JunctionLines" => Dict{String, Any}(
+            "Segments" => length(junction_segments), "Law" => "BandRule",
+            "Shells" => shell_size_statistics(
+                points, index,
+                c -> minimum(span_point_distance(c, a, b) for (a, b) in junction_segments),
+                0.0, [lc_fine, 2lc_fine, 4lc_fine, 8lc_fine],
+                (c, d) -> band_law_size(d, lc_fine, lc_far, far_growth))))
     return Dict{String, Any}(
         "Rule" => "every straight metal edge (top and bottom edge of every metal segment) " *
                   "carries a prism tube on its dielectric side: geometric rings of size " *
@@ -4767,8 +4889,12 @@ function generate_spatial_coupon(;
     end
     isempty(corner_curves) && !prism_tubes || gmsh.option.setNumber("Mesh.MeshOnlyEmpty", 1)
     prism_tubes && gmsh.option.setNumber("Mesh.Renumber", 0)
+    # Under the prism tube recipe the trace rule is a volume law growing with
+    # FarGrowth from the cut surface (decision 39a); the legacy seed keeps the
+    # process-band slope.
     trace_basis_record = trace_basis === nothing ? nothing :
-        prepare_trace_basis_sizing!(trace_basis, trace_basis_size_ratio, lc_far, corner_grading_slope)
+        prepare_trace_basis_sizing!(trace_basis, trace_basis_size_ratio, lc_far,
+                                    prism_tubes ? far_growth : corner_grading_slope)
     # The sizes below lc_fine a field can ask for are the trace rule's and the corner
     # grading's, so the Gmsh floor follows the smallest requested trace size
     # (recorded in the census) and CornerSize.
@@ -4784,7 +4910,8 @@ function generate_spatial_coupon(;
                                   curve_segments([curve for curve in feature_curves
                                                   if !(curve in tube_curves)]),
                                   tube_sections["Radius"] + tube_sections["PyramidHeight"],
-                                  lc_fine, lc_far, far_growth) :
+                                  lc_fine, lc_far, far_growth, graded_points,
+                                  corner_isotropy_radius) :
         nothing
     if trace_basis_record !== nothing || tube_band_record !== nothing
         install_trace_basis_callback!()

@@ -129,7 +129,16 @@ def prism_tube_record(mesh, tubes):
             "SizeLaws": {"NormalSize": tubes["lc_fine"], "FarSize": tubes["lc_far"],
                          "FarGrowth": tubes["far_growth"], "RadialGrowth": 1.0,
                          "ProtectedDistance": 2.0 * tubes["lc_fine"], "TubeRule": "fixture tube rule",
-                         "BandRule": "fixture band rule", "Composition": "fixture composition"},
+                         "BandRule": "fixture band rule", "Composition": "fixture composition",
+                         "CornerExteriorGrowth": tubes["far_growth"],
+                         "TraceBasisVolumeGrowth": tubes["far_growth"],
+                         "CornerIsotropyRadius": tubes["radius"],
+                         "JunctionVolumeRule": "fixture", "CornerExteriorRule": "fixture",
+                         "TraceBasisVolumeRule": "fixture",
+                         "Achieved": {"CornerExterior": {"Shells": [{"Cells": 1}]},
+                                      "JunctionLines": {"Shells": [{"Cells": 1}]},
+                                      "TraceApexes": ({"Shells": [{"Cells": 1}]}
+                                                      if tubes["trace_basis"] else None)}},
             "Quality": per_type,
             "CapRegions": {"Caps": 1, "MinimumScaledJacobian": .5, "MaximumJacobianCondition": 2.0},
             "CutSurface": {"All": {"Elements": 7}},
@@ -162,7 +171,7 @@ def junction_curves(scale):
             "Segments": segments, "CurvedCurves": 0, "Rule": "fixture"}
 
 
-def trace_basis_sizing(basis_paths, ratio, scale):
+def trace_basis_sizing(basis_paths, ratio, scale, slope=1.0):
     """Fixture record of the trace-basis cut-surface size rule (schema of the production
     seeder): the bound input digests, the dimensionless ratio and one mesh-frame basis
     triangle on the fixture's cut face."""
@@ -175,7 +184,7 @@ def trace_basis_sizing(basis_paths, ratio, scale):
             "InputSHA256": digests, "Lower": [0.0, 0.0, -.001 * scale],
             "Upper": [10.001 * scale, .001 * scale, .001 * scale],
             "Triangles": 1, "BasisEdgesBelowFarSize": 1, "MinimumRequestedSize": ratio * .001 * scale,
-            "MeshSizeMinimum": min(ratio * .001 * scale, .1), "GradingSlope": 1.0,
+            "MeshSizeMinimum": min(ratio * .001 * scale, .1), "GradingSlope": slope,
             "MeshFrameTriangles": [[[0.0, 0.0, 0.0], [.08 * scale, 0.0, 0.0], [0.0, 0.0, .001 * scale]]]}
 
 
@@ -238,7 +247,8 @@ def corner_census(output, contract_path, radius, isotropic_size, etch_boundary=N
                                                   "MaximumRelativeDeviation": 0.0,
                                                   "Tolerance": 1e-6}}],
         "JunctionCurves": junction_curves(scale),
-        "TraceBasisSizing": trace_basis_sizing(basis_paths, ratio, scale),
+        "TraceBasisSizing": trace_basis_sizing(basis_paths, ratio, scale,
+                                               1.0 if tubes is None else tubes["far_growth"]),
         "SeedQualityOptimization": quality,
         "InterfaceAreaUnits": "um^2",
         # One row per contract boundary label, as written in the fixture seed.
@@ -300,6 +310,8 @@ def main():
         if any(value is None for value in tubes.values()) or args.edge_size != args.corner_size:
             parser.error("prism tubes need --lc-tangent, --lc-far, --edge-size == --corner-size, "
                          "--far-growth and --max-elements")
+        tubes["radius"] = args.corner_isotropy_radius
+        tubes["trace_basis"] = args.trace_basis_contract is not None
     gates = (args.maximum_corner_aspect, args.minimum_scaled_jacobian,
              args.maximum_jacobian_condition, args.maximum_quality_displacement_over_normal)
     if any(value is not None for value in gates):

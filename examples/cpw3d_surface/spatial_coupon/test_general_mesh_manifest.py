@@ -2646,6 +2646,17 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
                      "band law growth or protected distance")
             rejected(lambda c: c["PrismTubes"]["SizeLaws"].__setitem__("ProtectedDistance", .1),
                      "band law growth or protected distance")
+            # Decision 39 volume laws: growth bound to FarGrowth, achieved shells recorded.
+            rejected(lambda c: c["PrismTubes"]["SizeLaws"].__setitem__("CornerExteriorGrowth", .7),
+                     "volume size laws .* not bound to FarGrowth")
+            rejected(lambda c: c["PrismTubes"]["SizeLaws"].pop("CornerExteriorRule"),
+                     "volume size laws .* not bound to FarGrowth")
+            rejected(lambda c: c["PrismTubes"]["SizeLaws"]["Achieved"].__setitem__("JunctionLines", {"Shells": []}),
+                     "achieved volume sizes")
+            # The fixture binds no trace basis: a trace-apex record would be unbound evidence.
+            self.assertIsNone(census.get("TraceBasisSizing"))
+            rejected(lambda c: c["PrismTubes"]["SizeLaws"]["Achieved"].__setitem__("TraceApexes", {"Shells": [{}]}),
+                     "achieved volume sizes")
             rejected(lambda c: c["PrismTubes"]["BandCurves"].__setitem__("Spacing", .05),
                      "Band curves are not 1D-meshed at NormalSize")
             rejected(lambda c: c["PrismTubes"]["Bands"]["JunctionFirstLayer"]["CutSurface"].pop("TransverseP90"),

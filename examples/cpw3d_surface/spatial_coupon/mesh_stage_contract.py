@@ -1261,7 +1261,8 @@ def validate_gmsh_build_census(build_report, census, semantic):
     --tube-sector-degrees or its default, the pyramid height 0.5 x the outermost
     ring, the band law's RadialGrowth 1 and ProtectedDistance 2 x NormalSize, the
     band curves 1D-meshed at NormalSize with the achieved junction first-layer
-    transverse sizes recorded), the per-type quality computed by
+    transverse sizes recorded, the decision-39 volume laws growing with FarGrowth
+    with their achieved shell statistics), the per-type quality computed by
     the mesher within the command's gates for every volume type (orientation and
     Jacobian condition; scaled Jacobian for the tetrahedra), the cap regions within
     the scaled-Jacobian gate, the corner aspects within the corner gate and the
@@ -1365,6 +1366,28 @@ def validate_gmsh_build_census(build_report, census, semantic):
             _census_number(laws, "ProtectedDistance", "Size laws") !=
             GMSH_BUILD_BAND_PROTECTED_DISTANCE_OVER_NORMAL * tubes["NormalSize"]):
         raise ValueError("Prism tube band law growth or protected distance differs from the recipe")
+    # Decision 39 volume laws: the trace rule and the corner-ball exterior grow with
+    # FarGrowth (the trace record's GradingSlope is that growth), the corner radius
+    # is the command's, the junction lines carry the band law in the volume, and the
+    # achieved shell statistics are recorded (trace apexes iff a basis is bound).
+    trace_record = census.get("TraceBasisSizing")
+    achieved = laws.get("Achieved")
+    if (_census_number(laws, "CornerExteriorGrowth", "Size laws") != tubes["FarGrowth"] or
+            _census_number(laws, "TraceBasisVolumeGrowth", "Size laws") != tubes["FarGrowth"] or
+            _census_number(laws, "CornerIsotropyRadius", "Size laws") != radius or
+            not all(isinstance(laws.get(name), str) and laws[name]
+                    for name in ("JunctionVolumeRule", "CornerExteriorRule", "TraceBasisVolumeRule")) or
+            (trace_record is not None and
+             _census_number(trace_record, "GradingSlope", "Trace basis sizing") != tubes["FarGrowth"])):
+        raise ValueError("Prism tube volume size laws (trace, corner exterior, junction) are not bound to FarGrowth")
+    if (not isinstance(achieved, dict) or
+            any(not isinstance(achieved.get(name), dict) or
+                not isinstance(achieved[name].get("Shells"), list) or not achieved[name]["Shells"]
+                for name in ("CornerExterior", "JunctionLines")) or
+            (trace_record is None) != (achieved.get("TraceApexes") is None) or
+            (trace_record is not None and
+             (not isinstance(achieved["TraceApexes"], dict) or not achieved["TraceApexes"].get("Shells")))):
+        raise ValueError("Build census does not record the achieved volume sizes of the size laws")
     band_curves = tubes.get("BandCurves")
     if (not isinstance(band_curves, dict) or
             _census_number(band_curves, "Spacing", "Band curves") != tubes["NormalSize"] or
