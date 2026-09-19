@@ -500,6 +500,49 @@ records; their mesh binaries were removed once these roots verified. The V-a
 calibration root keeps its records and its (identical) binaries were removed in
 favour of the production root above.
 
+### Evidence (real gallery cases three-edge-419576fdab24 and two-edge-8dd4bc70f183, commit a22b471c1 tools, 2026-09-19)
+
+The two graded_v2 gallery inputs with completed references (`06`, `10`; above)
+were built through `run_gmsh_only_case.py` under the production recipe
+(TraceBasisSizeRatio 0.5, every option and gate at its production value, no
+case-specific constant) and verified identity + rotate-z-0.63 with empty failure
+lists (`Passed true`, `Failures []`, `TransformComparisonFailures []`,
+`CanonicalReuseFailures []`; the verification reports bind the manifest SHA-256
+`1c99aced64fe7235dd1a87b81a2d8d558ebf43f11fd09b19689deba9625e24ca`, the manifest
+carrying both cases). The semantic contracts were derived by
+`derive_semantic_contract.py` from the copied inputs and the census of a
+production-option probe build of the same inputs (`Derivation.BuildCensusSHA256`);
+the probe meshes were byte-identical to the production builds' `gmsh-build.msh`
+(same inputs, options and corners; the contract enters the build through its
+SemanticCorners only).
+
+| case | elements (tets + prisms + pyramids) | nodes = H1 p1 (H1 p4) | tubes / layers / thickness min-P50-max (nm) / max neighbour ratio | caps min SJ / max cond | tets min SJ / max cond | prisms / pyramids max cond | corners | protected (measure / vertex) | closure (points; owners) | diagonal bands | interface areas um^2 | trace-apex shells 0-25 / 25-50 / 50-100 nm (cells; longest edge P50 nm) | trace rule achieved/requested P50 / max (narrow triangles) | junction first layer cut / tets P50 (nm) | stage s / GiB (build; publication; placement) | audits s / GiB | verification s / GiB |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| three-edge-419576fdab24 (input 06, 135 traces) | **1,693,002** = 1,507,026 + 172,692 + 13,284 | 390,906 (22,737,354) | 10 / 1,476 / 15.65 - 49.85 - 50.0 / 1.94 | 14: 0.0412 / 27.7 | 0.0259 / 71.5 | 589.5 / 8.74 | 3.56 / 2.71 / 3.44 / 3.41 / 3.56 (5 corners, two on the box at the island loop) | 0 / 1.3e-15 | 2.7e-13 (637,170; 3100 / 5001 / 6001) | 0 | 1: 694.6, 3100: 125.8, 5001: 100.0, 6001: 103.6 | 97 apexes: 4,084 / 3,106 / 8,439 at 5.8 / 35.6 / 45.8 | 0.98 / 1.15 (132) | 21.7 / 25.2 | 108.0 / 4.32; 26.4 / 3.15; 102.5-107.5 / 3.7 | 223 / 2.67; 289 / 2.69 | 775 / 2.70 |
+| two-edge-8dd4bc70f183 (input 10, 77 traces) | **516,662** = 420,902 + 88,920 + 6,840 | 133,763 (7,764,541) | 12 / 760 / 15.82 - 49.43 - 50.0 / 1.82 | 20: 0.0483 / 19.6 | 0.0276 / 70.5 | 589.5 / 8.74 | 3.70 / 3.49 / 3.39 / 3.04 / 3.04 / 3.64 (6 corners, two at the strip ends inside the box) | 0 / 4.9e-16 | 4.7e-14 (277,578; 3100 / 5001 / 5002 / 6001 / 6002) | 0 | 1: 206.0, 3100: 37.9, 5001: 4.0, 5002: 4.0, 6001: 4.9, 6002: 4.9 | 75 apexes: 3,147 / 2,026 / 5,797 at 4.3 / 36.9 / 45.5 | 0.86 / 1.08 (112) | 21.7 / 25.6 | 45.5 / 2.37; 14.3 / 1.39; 34.6-35.5 / 1.6 | 65 / 1.00; 85 / 0.92 | 265 / 0.92 |
+
+Both are far under the caps (4M elements, 1800 s, 8 GiB) and pass every physical
+gate at its production value; no gate, option or rule was changed or tuned for
+them. The two-edge case exercises two conductors in one slot with finite metal
+strips (their far ends at x = -5 and x = 4 are Physical metal edges without a
+signature row: they get tubes and graded corners like every Physical side) and
+the three-edge case a metal island loop whose Physical vertices lie on the coupon
+box. Recorded risk (both): the etch footprint is the producer default (no
+`retained-etch.csv` exists for these inputs); the `InterfaceAreas` above are the
+mesh's per-label areas to be checked against the reference meshes by the physics
+preflight's area invariants before any accuracy comparison. Roots (binaries kept
+for the physics preflight):
+`/tmp/coupon-gmsh-only-three-edge-419576fdab24-a22b471c1-20260919-053602`
+(identity.msh `f55095d80c42c7e2709ff22f82e4ea4eef57cc908f723e7dc3ef29aba2e51728`,
+rotate-z `9e78545ab4582e2cc5c06d6d2538d8c142ed4d8df7694dbf24545eef001a3af3`,
+CanonicalBuildId `6d6a2e8e4e75b4cbbdc63eb6fb869418ae1323784bb5a47bf994c415eadead66`),
+`/tmp/coupon-gmsh-only-two-edge-8dd4bc70f183-a22b471c1-20260919-053602`
+(identity.msh `15e9386589150c5dbfc3428063a6bee186898f4c5ecb9000af315aa0e9a74233`,
+rotate-z `36a640bfef0382ae775f1a71e3e5b0517f05d53c79290337a9b60e30cc00c29c`,
+CanonicalBuildId `61d7a9564b5c46e7fc36103bb43d0c6651e8a3522ead0fa81dee86d0d71bb672`).
+The probe roots keep their censuses (bound by the contracts' Derivation); their
+mesh binaries were removed.
+
 ## Retired production recipe (supervisor decision 34B, 2026-09-17; legacy MMG pipeline)
 
 Retired from production by decision 38; recorded as
@@ -1196,18 +1239,48 @@ and a fixed comparison pair. Concave/multislot, hole, rounded/filleted, and
 opposed-layer controls are ordinary required cases. Feature-scaling and
 CAD-subdivision-sensitivity comparisons are declared in the manifest.
 
-The matrix contains 12 cases and 24 required case/variant entries. All 12 cases
-now have hash-frozen local source contracts. A bounded read-only assessment on
+The matrix contains 14 cases and 28 required case/variant entries. All 14 cases
+have hash-frozen local source contracts. A bounded read-only assessment on
 `soca-green` copied only the approved source-contract files from campaign inputs
-`07` and `09`; it copied no mesh, field, solution, response matrix, or source
-bank. Campaign input `07` maps to
+`07` and `09` (2026-09-14) and, under decision 42 (2026-09-19, `soca-green-job`),
+from the graded_v2 gallery inputs `06` and `10`, which have completed references
+(`reference-library/models/007-...-419576fdab24` and `010-...-8dd4bc70f183`); it
+copied no mesh, field, solution, response matrix, or source bank (the per-source
+`traces/` directories are referenced by count only). Campaign input `07` maps to
 `spatialedgecluster_edgecount-4_9d2cb9bbb3fe` and has exactly four signature
 rows. Input `09` maps to `spatialedgecluster_edgecount-10_6791f1c84123` and has
-exactly ten. The process-library model names, local/remote SHA-256 values, trace
-mesh references, slots, conductors, topology, and target-repository Apache-2.0
-license were reviewed. Their semantic contracts derive label families and
-slot/conductor coverage from the source process model and semantic corners from
-plan-view vertices explicitly classified `Physical`.
+exactly ten. Input `06` maps to `spatialedgecluster_edgecount-3_419576fdab24`
+(`three-edge-419576fdab24`: three signature rows, one slot / one conductor, a metal
+island loop in the plan view whose two Physical vertices sit on the coupon box;
+135 trace files) and input `10` to `spatialedgecluster_edgecount-2_8dd4bc70f183`
+(`two-edge-8dd4bc70f183`: two signature rows, one slot / two conductors - two
+finite metal strips whose far ends are Physical metal edges without a signature
+row; 77 trace files). The process-library model names, local/remote SHA-256
+values (remote `sha256sum` = local for every copied file, recorded in each
+`provenance.json` with the copied `basis-points.csv`, `zero-trace.csv` and
+`spatial_fabricated.json`), trace mesh references, slots, conductors, topology,
+and target-repository Apache-2.0 license were reviewed. Neither `06` nor `10`
+carries a `retained-etch.csv`, so both declare `EtchFootprint:
+"producer-default"` - recorded as a risk: the producer-default collars are a
+producer outcome, not a bound device footprint, and the physics preflight must
+check the interface-area invariants against the reference mesh before any
+accuracy comparison.
+
+Semantic contracts are derived, never authored: `derive_semantic_contract.py
+SOURCE_DIR OUTPUT [--build-census CENSUS]` derives label families and
+slot/conductor coverage from `Models[0].Edges` (checked against the signature),
+semantic corners from the plan-view vertices classified `Physical`, and
+`FeatureTopology` from the finite signature segments. Whether a slot's un-etched
+plane (3000 + slot) exists is a producer outcome of the etch footprint and the
+coupon box, so the tool takes the label set from the `InterfaceAreas` of a
+gmsh-build census of the same inputs (a production-option probe built with the
+provisional contract the tool writes without a census), requires every census
+label to belong to a derived family and every non-optional family to be present,
+and records the census digest and labels under `Derivation`. It reproduces the
+frozen ten-edge contract exactly and the four-edge contract up to the two older
+substrate-vacuum role strings (`test_derive_semantic_contract.py`). The `06` /
+`10` probes recorded labels 1 / 3100 / 5001 / 6001 and 1 / 3100 / 5001 / 5002 /
+6001 / 6002: no un-etched plane under the producer-default footprint.
 
 ## Preflight
 
@@ -1218,7 +1291,7 @@ python3 run_general_mesh_suite.py \
   --root /tmp/coupon-generality-preflight
 ```
 
-This now succeeds for all 12 source cases and verifies the four-/ten-edge row
+This now succeeds for all 14 source cases and verifies the four-/ten-edge row
 counts as four and ten. `--input CASE=DIRECTORY` cannot bypass a mismatched
 hash.
 

@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Derive a coupon's frozen semantic mesh contract (semantic-contract.json) from its
+immutable source inputs; no number is authored by hand.
+
+Rules (the ones the four-edge / ten-edge contracts were derived with, made
+executable):
+
+- materials and label families follow the frozen fabricated spatial-coupon producer
+  (mesh_spatial_coupon.jl): substrate 1 / vacuum 2; matching surface 1; the
+  substrate-vacuum interface of slot s is 3000 + s where it lies in the metal plane
+  (un-etched) and 3100 + s where it is recessed (trench floor and walls); the
+  metal-substrate (MS) surface of conductor c in slot s is 5000 + 100 s + c and the
+  metal-vacuum (MA) surface 6000 + 100 s + c;
+- slots and conductors come from Models[0].Edges of process-library.json
+  (InterfaceSlot, Conductor) and must agree with the signature's Slot / Conductor
+  columns;
+- semantic corners are the plan-view boundary vertices classified Physical, in
+  file order, at the vertex's Plane height;
+- FeatureTopology is semantic_mesh_contract.derive_feature_topology (the finite
+  oriented signature segments against the corners and the boundary classes);
+- whether a slot's un-etched plane (3000 + s) exists is a producer outcome of the
+  bound etch footprint (a device footprint or the producer-default collars) and
+  the coupon box, not of the inputs alone: it is taken from the InterfaceAreas
+  labels of a gmsh-build census of the same inputs (--build-census; a probe build
+  with the provisional contract this tool writes without it).  Every census label
+  must belong to a derived family and every family without an un-etched
+  alternative must be present, otherwise the derivation fails closed.  The census
+  digest and its labels are recorded under Derivation.
+
+usage: derive_semantic_contract.py SOURCE_DIR OUTPUT [--build-census CENSUS]
+"""
+import argparse
+import csv
+import hashlib
+import json
+from pathlib import Path
+
+from semantic_mesh_contract import derive_feature_topology, validate_semantic_contract
+
+SIGNATURE = "mesh-signature.csv"
+BOUNDARY = "plan-view-boundary.csv"
+PROCESS_LIBRARY = "process-library.json"
+MATCHING_SURFACE = 1
+UNETCHED_BASE, ETCHED_BASE, MS_BASE, MA_BASE = 3000, 3100, 5000, 6000
+RULES = ("materials and physical label families follow the frozen fabricated spatial-coupon "
+         "producer (substrate 1 / vacuum 2; matching surface 1; substrate-vacuum interface "
+         "3000 + slot in the metal plane (un-etched) and 3100 + slot recessed; MS 5000 + 100 slot "
+         "+ conductor; MA 6000 + 100 slot + conductor); slots/conductors come from "
+         "Models[0].Edges and agree with the signature; semantic corners are plan-view vertices "
+         "classified Physical; the un-etched plane labels present are those of the recorded "
+         "gmsh-build census of the same inputs (a producer outcome of the etch footprint and "
+         "the coupon box), every census label belonging to a derived family")
+
+
+def sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def slot_conductor_pairs(source):
+    library = json.loads((source / PROCESS_LIBRARY).read_text())
+    edges = library["Models"][0]["Edges"]
+    pairs = sorted({(int(edge["InterfaceSlot"]), int(edge["Conductor"])) for edge in edges})
+    with (source / SIGNATURE).open(newline="") as stream:
+        signature_pairs = sorted({(int(row["Slot"]), int(row["Conductor"]))
+                                  for row in csv.DictReader(stream)})
+    if pairs != signature_pairs:
+        raise ValueError(f"Models[0].Edges slots/conductors {pairs} differ from the signature's "
+                         f"{signature_pairs}")
+    if any(slot < 0 or slot > 99 or conductor < 1 or conductor > 99 for slot, conductor in pairs):
+        raise ValueError("slot must lie in 0..99 and conductor in 1..99 for the label families")
+    return pairs
+
+
+def semantic_corners(source):
+    with (source / BOUNDARY).open(newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    if not rows or not {"Class", "X", "Y", "Plane"} <= set(rows[0]):
+        raise ValueError("plan-view boundary lacks Class / X / Y / Plane columns")
+    if any(row["Class"] not in ("Physical", "Continuation") for row in rows):
+        raise ValueError("plan-view boundary has an unknown vertex class")
+    corners = [[float(row["X"]), float(row["Y"]), float(row["Plane"])]
+               for row in rows if row["Class"] == "Physical"]
+    if not corners:
+        raise ValueError("plan-view boundary classifies no Physical vertex")
+    return corners
+
+
+def label_families(pairs):
+    """Attribute -> (role, adjacent materials, optional) of every derivable label."""
+    slots = sorted({slot for slot, _ in pairs})
+    families = {MATCHING_SURFACE: ("matching-surface", [1, 2], False)}
+    for slot in slots:
+        families[UNETCHED_BASE + slot] = (f"un-etched-substrate-vacuum-slot-{slot}", [1, 2], True)
+        families[ETCHED_BASE + slot] = (f"etched-substrate-vacuum-slot-{slot}", [1, 2], False)
+    for slot, conductor in pairs:
+        families[MS_BASE + 100 * slot + conductor] = (f"conductor-{conductor}-slot-{slot}-ms", [1], False)
+    for slot, conductor in pairs:
+        families[MA_BASE + 100 * slot + conductor] = (f"conductor-{conductor}-slot-{slot}-ma", [2], False)
+    return families
+
+
+def census_labels(census_path):
+    census = json.loads(Path(census_path).read_text())
+    areas = census.get("InterfaceAreas")
+    if not isinstance(areas, list) or not areas:
+        raise ValueError("build census records no InterfaceAreas")
+    return sorted({int(item["Attribute"]) for item in areas})
+
+
+def derive(source, build_census=None):
+    source = Path(source)
+    pairs = slot_conductor_pairs(source)
+    families = label_families(pairs)
+    required = {attribute for attribute, (_, _, optional) in families.items() if not optional}
+    if build_census is not None:
+        labels = census_labels(build_census)
+        unknown = sorted(set(labels) - set(families))
+        missing = sorted(required - set(labels))
+        if unknown or missing:
+            raise ValueError(f"build census labels outside the derived families {unknown} or "
+                             f"required labels missing {missing}")
+        present = set(labels)
+    else:
+        present = required
+    boundary_labels = []
+    for attribute in sorted(families):
+        if attribute not in present:
+            continue
+        role, adjacent, _ = families[attribute]
+        item = {"Attribute": attribute, "Role": role, "AdjacentMaterials": adjacent,
+                "Protected": True}
+        if attribute == MATCHING_SURFACE:
+            item["AdjacentMaterialSets"] = [[1], [2]]
+        boundary_labels.append(item)
+    roles = [item["Role"] for item in boundary_labels]
+    corners = semantic_corners(source)
+    derivation = {"ProcessLibrarySHA256": sha256(source / PROCESS_LIBRARY),
+                  "PlanViewBoundarySHA256": sha256(source / BOUNDARY),
+                  "SignatureSHA256": sha256(source / SIGNATURE),
+                  "Rules": RULES}
+    if build_census is not None:
+        derivation["BuildCensusSHA256"] = sha256(build_census)
+        derivation["BuildCensusInterfaceLabels"] = labels
+    else:
+        derivation["Provisional"] = ("un-etched plane labels unconfirmed: rebuild this contract "
+                                     "with --build-census before freezing it")
+    contract = {
+        "Version": 1,
+        "Derivation": derivation,
+        "VolumeMaterials": [{"Attribute": 1, "Material": "substrate"},
+                            {"Attribute": 2, "Material": "vacuum"}],
+        "BoundaryLabels": boundary_labels,
+        "SemanticCorners": corners,
+        "ProtectedSupports": roles,
+        "MetricSurfaceRoles": [role for role in roles if role.endswith(("-ms", "-ma"))],
+        "UnmatchedPolicy": "Error",
+        "CutSurfaceRoles": ["matching-surface"],
+        "FeatureTopology": derive_feature_topology(source / SIGNATURE, source / BOUNDARY, corners),
+    }
+    return validate_semantic_contract(contract)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("source", type=Path)
+    parser.add_argument("output", type=Path)
+    parser.add_argument("--build-census", type=Path)
+    args = parser.parse_args()
+    contract = derive(args.source, args.build_census)
+    args.output.write_text(json.dumps(contract, indent=2) + "\n")
+    print(f"{args.output}: {len(contract['BoundaryLabels'])} labels, "
+          f"{len(contract['SemanticCorners'])} semantic corners"
+          + (" (PROVISIONAL)" if args.build_census is None else ""))
+
+
+if __name__ == "__main__":
+    main()

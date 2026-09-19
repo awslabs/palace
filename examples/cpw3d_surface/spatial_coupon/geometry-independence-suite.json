@@ -1154,6 +1154,274 @@
       "Provenance": "RemoteVerified: bounded read-only copy from soca-green /data/home/simlap/transmon_library_graded_v2_20260911/inputs/09; campaign.json maps input 09 to spatialedgecluster_edgecount-10_6791f1c84123; 10 signature rows, model/process semantics, all copied hashes, and local copies verified; no jobs, meshes, fields, solutions, response matrices, or source banks copied"
     },
     {
+      "Id": "three-edge-419576fdab24",
+      "InventoryStatus": "RemoteVerified",
+      "Frozen": true,
+      "Features": [
+        "3-edge",
+        "single-slot",
+        "single-conductor",
+        "metal-island"
+      ],
+      "Variants": [
+        {
+          "Id": "identity",
+          "Transform": [
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        },
+        {
+          "Id": "rotate-z-0.63",
+          "Transform": [
+            0.8080275083121519,
+            -0.5891447579422695,
+            0,
+            0,
+            0.5891447579422695,
+            0.8080275083121519,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        }
+      ],
+      "TransformComparison": {
+        "Reference": "identity",
+        "Transformed": "rotate-z-0.63",
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
+      },
+      "Source": {
+        "Directory": "examples/cpw3d_surface/spatial_coupon/testdata/three-edge-419576fdab24",
+        "SignatureRole": "Signature",
+        "SignatureColumns": [
+          "Index",
+          "Slot",
+          "Conductor",
+          "Px",
+          "Py",
+          "Pz",
+          "Gx",
+          "Gy",
+          "Gz",
+          "Tx",
+          "Ty",
+          "Tz",
+          "S0",
+          "S1"
+        ],
+        "Files": {
+          "Signature": {
+            "Name": "mesh-signature.csv",
+            "SHA256": "18993d7d7c3494a1b57848df425615041c485edf35ba9ecba312380d8ee70fd2"
+          },
+          "Boundary": {
+            "Name": "plan-view-boundary.csv",
+            "SHA256": "2dad464db23421fb428218b12052a625cfe6d2159498163047021de82c352d95"
+          },
+          "Mask": {
+            "Name": "plan-view-mask.csv",
+            "SHA256": "330754beb0c8e8d7554188e95b927d8292373d7a4e4b9b6b481873d33733e816"
+          },
+          "Process": {
+            "Name": "process.toml",
+            "SHA256": "883b8b345d4943faaf498fdaaea14a54a9be3e7dbf520210b4fcd475ac5bc569"
+          },
+          "ProcessLibrary": {
+            "Name": "process-library.json",
+            "SHA256": "b02dba6c52062c16e2bc2cef6cef989d4800c05ad91ccf389378c392f6b80de3"
+          },
+          "BasisContract": {
+            "Name": "basis-contract.json",
+            "SHA256": "05e38400cd18cd2d595b2d0adffdafaa16216afa9a5c6e3f2000e1cab2bcfde3"
+          },
+          "TraceVertices": {
+            "Name": "trace-vertices.csv",
+            "SHA256": "c52d6a1a457db30a9ac80c28d2726f80de41a557f98cf91c22e515d7594164c3"
+          },
+          "TraceTriangles": {
+            "Name": "trace-triangles.csv",
+            "SHA256": "47a72da90b17f0b5d3018c109e9a327ba9e92f254f8334019209458ec90b66ce"
+          },
+          "Provenance": {
+            "Name": "provenance.json",
+            "SHA256": "34b8233b4f62ea3d32ea31b9ec226a6d1f1dc1b60e23b9175b52215d2edb2c42"
+          },
+          "SemanticContract": {
+            "Name": "semantic-contract.json",
+            "SHA256": "2f8e718440744b4819f30e89a7ec69ae541034f2b2450d5c8ebfdcbc2e65a825"
+          },
+          "MeshRecipe": {
+            "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
+            "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
+          }
+        },
+        "EtchFootprint": "producer-default"
+      },
+      "Provenance": "RemoteVerified: bounded read-only copy from soca-green-job /data/home/simlap/transmon_library_graded_v2_20260911/inputs/06 (2026-09-19); campaign.json maps input 06 to spatialedgecluster_edgecount-3_419576fdab24 with a completed graded_v2 reference (reference-library/models); 3 signature rows, 135 trace files (referenced by count, not copied), model/process semantics, all copied hashes (remote sha256sum = local) verified; the semantic contract is derived by derive_semantic_contract.py from the copied inputs and the gmsh-build census of a production-option probe build (no un-etched 3000 plane under the producer-default footprint); no retained-etch.csv exists for this input (producer-default footprint recorded, a risk for the physics preflight's interface-area invariants); no jobs, meshes, fields, solutions, response matrices, or source banks copied"
+    },
+    {
+      "Id": "two-edge-8dd4bc70f183",
+      "InventoryStatus": "RemoteVerified",
+      "Frozen": true,
+      "Features": [
+        "2-edge",
+        "single-slot",
+        "multiple-conductors",
+        "finite-strips"
+      ],
+      "Variants": [
+        {
+          "Id": "identity",
+          "Transform": [
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        },
+        {
+          "Id": "rotate-z-0.63",
+          "Transform": [
+            0.8080275083121519,
+            -0.5891447579422695,
+            0,
+            0,
+            0.5891447579422695,
+            0.8080275083121519,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        }
+      ],
+      "TransformComparison": {
+        "Reference": "identity",
+        "Transformed": "rotate-z-0.63",
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
+      },
+      "Source": {
+        "Directory": "examples/cpw3d_surface/spatial_coupon/testdata/two-edge-8dd4bc70f183",
+        "SignatureRole": "Signature",
+        "SignatureColumns": [
+          "Index",
+          "Slot",
+          "Conductor",
+          "Px",
+          "Py",
+          "Pz",
+          "Gx",
+          "Gy",
+          "Gz",
+          "Tx",
+          "Ty",
+          "Tz",
+          "S0",
+          "S1"
+        ],
+        "Files": {
+          "Signature": {
+            "Name": "mesh-signature.csv",
+            "SHA256": "389982d17eb28513b9900ee8ae8be37f7583ebac09a3493b033c5cd4697f8d20"
+          },
+          "Boundary": {
+            "Name": "plan-view-boundary.csv",
+            "SHA256": "0a926635709754e14771c12323548a3ca97688650dcec621bd23139e074db98d"
+          },
+          "Mask": {
+            "Name": "plan-view-mask.csv",
+            "SHA256": "2070d684e43e29d816273666afe65104f41d70c9ed49eb2094e85346243f09bc"
+          },
+          "Process": {
+            "Name": "process.toml",
+            "SHA256": "883b8b345d4943faaf498fdaaea14a54a9be3e7dbf520210b4fcd475ac5bc569"
+          },
+          "ProcessLibrary": {
+            "Name": "process-library.json",
+            "SHA256": "7d9052ca0df35a9edd464b2d06a4b1c84af93e205ac3b3b5c5de7bde2df74b8f"
+          },
+          "BasisContract": {
+            "Name": "basis-contract.json",
+            "SHA256": "9bcbd95c82c0ebc2f5aa58692028814ebebf334fd0ec6d631729375509dc4691"
+          },
+          "TraceVertices": {
+            "Name": "trace-vertices.csv",
+            "SHA256": "bd698b85dd3ed1b41165a8f839a6b13919ddca3d88fc4d8952424058fa30b765"
+          },
+          "TraceTriangles": {
+            "Name": "trace-triangles.csv",
+            "SHA256": "6a19c6d838b2288896dc63cd21ec884ab39b3c0eb88488bc6a5d0297b6528441"
+          },
+          "Provenance": {
+            "Name": "provenance.json",
+            "SHA256": "ad0e49052dbf174c0372e3f9cd20d9d8363312ec990de6062cc72c19b97be19c"
+          },
+          "SemanticContract": {
+            "Name": "semantic-contract.json",
+            "SHA256": "f2f5fbe5ff36d414ff5d9231835aed43191e8a4ffb00e4afd4ffe6d00449b336"
+          },
+          "MeshRecipe": {
+            "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
+            "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
+          }
+        },
+        "EtchFootprint": "producer-default"
+      },
+      "Provenance": "RemoteVerified: bounded read-only copy from soca-green-job /data/home/simlap/transmon_library_graded_v2_20260911/inputs/10 (2026-09-19); campaign.json maps input 10 to spatialedgecluster_edgecount-2_8dd4bc70f183 with a completed graded_v2 reference (reference-library/models); 2 signature rows, 77 trace files (referenced by count, not copied), model/process semantics, all copied hashes (remote sha256sum = local) verified; the semantic contract is derived by derive_semantic_contract.py from the copied inputs and the gmsh-build census of a production-option probe build (no un-etched 3000 plane under the producer-default footprint); no retained-etch.csv exists for this input (producer-default footprint recorded, a risk for the physics preflight's interface-area invariants); no jobs, meshes, fields, solutions, response matrices, or source banks copied"
+    },
+    {
       "Id": "concave-multislot",
       "InventoryStatus": "RepositoryAssessmentFixture",
       "Frozen": true,

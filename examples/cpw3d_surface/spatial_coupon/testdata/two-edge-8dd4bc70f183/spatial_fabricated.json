@@ -1,0 +1,687 @@
+{
+  "Problem": {
+    "Type": "Electrostatic",
+    "Verbose": 1,
+    "Output": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/reference-fabricated",
+    "OutputFormats": {
+      "Paraview": false,
+      "GridFunction": false
+    }
+  },
+  "Model": {
+    "Mesh": "/data/home/simlap/transmon_closure_models_20260830/8dd4bc70f183/mesh-n2/fabricated.msh",
+    "L0": 1e-06,
+    "Refinement": {
+      "MaxIts": 0
+    }
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [
+          1
+        ],
+        "Permittivity": 11.47
+      },
+      {
+        "Attributes": [
+          2
+        ],
+        "Permittivity": 1.0
+      }
+    ],
+    "Postprocessing": {
+      "Energy": [
+        {
+          "Index": 1,
+          "Attributes": [
+            1
+          ]
+        },
+        {
+          "Index": 2,
+          "Attributes": [
+            2
+          ]
+        }
+      ]
+    }
+  },
+  "Boundaries": {
+    "Ground": {
+      "Attributes": [
+        5001,
+        6001,
+        5002,
+        6002
+      ]
+    },
+    "PrescribedPotential": [
+      {
+        "Index": 1,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0001.csv"
+      },
+      {
+        "Index": 2,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0002.csv"
+      },
+      {
+        "Index": 3,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0003.csv"
+      },
+      {
+        "Index": 4,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0004.csv"
+      },
+      {
+        "Index": 5,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0005.csv"
+      },
+      {
+        "Index": 6,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0006.csv"
+      },
+      {
+        "Index": 7,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0007.csv"
+      },
+      {
+        "Index": 8,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0008.csv"
+      },
+      {
+        "Index": 9,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0009.csv"
+      },
+      {
+        "Index": 10,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0010.csv"
+      },
+      {
+        "Index": 11,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0011.csv"
+      },
+      {
+        "Index": 12,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0012.csv"
+      },
+      {
+        "Index": 13,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0013.csv"
+      },
+      {
+        "Index": 14,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0014.csv"
+      },
+      {
+        "Index": 15,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0015.csv"
+      },
+      {
+        "Index": 16,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0016.csv"
+      },
+      {
+        "Index": 17,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0017.csv"
+      },
+      {
+        "Index": 18,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0018.csv"
+      },
+      {
+        "Index": 19,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0019.csv"
+      },
+      {
+        "Index": 20,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0020.csv"
+      },
+      {
+        "Index": 21,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0021.csv"
+      },
+      {
+        "Index": 22,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0022.csv"
+      },
+      {
+        "Index": 23,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0023.csv"
+      },
+      {
+        "Index": 24,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0024.csv"
+      },
+      {
+        "Index": 25,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0025.csv"
+      },
+      {
+        "Index": 26,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0026.csv"
+      },
+      {
+        "Index": 27,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0027.csv"
+      },
+      {
+        "Index": 28,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0028.csv"
+      },
+      {
+        "Index": 29,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0029.csv"
+      },
+      {
+        "Index": 30,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0030.csv"
+      },
+      {
+        "Index": 31,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0031.csv"
+      },
+      {
+        "Index": 32,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0032.csv"
+      },
+      {
+        "Index": 33,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0033.csv"
+      },
+      {
+        "Index": 34,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0034.csv"
+      },
+      {
+        "Index": 35,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0035.csv"
+      },
+      {
+        "Index": 36,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0036.csv"
+      },
+      {
+        "Index": 37,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0037.csv"
+      },
+      {
+        "Index": 38,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0038.csv"
+      },
+      {
+        "Index": 39,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0039.csv"
+      },
+      {
+        "Index": 40,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0040.csv"
+      },
+      {
+        "Index": 41,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0041.csv"
+      },
+      {
+        "Index": 42,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0042.csv"
+      },
+      {
+        "Index": 43,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0043.csv"
+      },
+      {
+        "Index": 44,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0044.csv"
+      },
+      {
+        "Index": 45,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0045.csv"
+      },
+      {
+        "Index": 46,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0046.csv"
+      },
+      {
+        "Index": 47,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0047.csv"
+      },
+      {
+        "Index": 48,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0048.csv"
+      },
+      {
+        "Index": 49,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0049.csv"
+      },
+      {
+        "Index": 50,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0050.csv"
+      },
+      {
+        "Index": 51,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0051.csv"
+      },
+      {
+        "Index": 52,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0052.csv"
+      },
+      {
+        "Index": 53,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0053.csv"
+      },
+      {
+        "Index": 54,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0054.csv"
+      },
+      {
+        "Index": 55,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0055.csv"
+      },
+      {
+        "Index": 56,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0056.csv"
+      },
+      {
+        "Index": 57,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0057.csv"
+      },
+      {
+        "Index": 58,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0058.csv"
+      },
+      {
+        "Index": 59,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0059.csv"
+      },
+      {
+        "Index": 60,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0060.csv"
+      },
+      {
+        "Index": 61,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0061.csv"
+      },
+      {
+        "Index": 62,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0062.csv"
+      },
+      {
+        "Index": 63,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0063.csv"
+      },
+      {
+        "Index": 64,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0064.csv"
+      },
+      {
+        "Index": 65,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0065.csv"
+      },
+      {
+        "Index": 66,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0066.csv"
+      },
+      {
+        "Index": 67,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0067.csv"
+      },
+      {
+        "Index": 68,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0068.csv"
+      },
+      {
+        "Index": 69,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0069.csv"
+      },
+      {
+        "Index": 70,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0070.csv"
+      },
+      {
+        "Index": 71,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0071.csv"
+      },
+      {
+        "Index": 72,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0072.csv"
+      },
+      {
+        "Index": 73,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0073.csv"
+      },
+      {
+        "Index": 74,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0074.csv"
+      },
+      {
+        "Index": 75,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0075.csv"
+      },
+      {
+        "Index": 76,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0076.csv"
+      },
+      {
+        "Index": 77,
+        "Attributes": [
+          1
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/traces/basis-0077.csv"
+      },
+      {
+        "Index": 78,
+        "Attributes": [
+          1
+        ],
+        "TerminalAttributes": [
+          5002,
+          6002
+        ],
+        "DataFile": "/data/home/simlap/transmon_library_graded_v2_20260911/inputs/10/conductor-2.csv"
+      }
+    ],
+    "Postprocessing": {
+      "Dielectric": [
+        {
+          "Index": 1,
+          "Attributes": [
+            6001,
+            6002
+          ],
+          "Type": "MA",
+          "Thickness": 0.002,
+          "Permittivity": 10.0,
+          "LossTan": 0.03,
+          "LocalizeEdgeEnergy": true,
+          "SaveLocalEdgeEnergy": false,
+          "EdgeAttributes": [
+            3100
+          ],
+          "EdgeDistances": [
+            2.0
+          ],
+          "EdgeFrameNormal": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "EdgeExcludeAttributes": [
+            1
+          ]
+        },
+        {
+          "Index": 2,
+          "Attributes": [
+            5001,
+            5002
+          ],
+          "Type": "MS",
+          "Thickness": 0.002,
+          "Permittivity": 11.47,
+          "LossTan": 0.0003,
+          "LocalizeEdgeEnergy": true,
+          "SaveLocalEdgeEnergy": false,
+          "EdgeAttributes": [
+            3100
+          ],
+          "EdgeDistances": [
+            2.0
+          ],
+          "EdgeFrameNormal": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "EdgeExcludeAttributes": [
+            1
+          ]
+        }
+      ]
+    }
+  },
+  "Solver": {
+    "Order": 5,
+    "Electrostatic": {
+      "Save": 0,
+      "ResponseMatrix": true,
+      "AggregateResponseMatrix": true
+    },
+    "Linear": {
+      "Type": "BoomerAMG",
+      "KSPType": "CG",
+      "Tol": 1e-08,
+      "MaxIts": 1000,
+      "EstimatorTol": 0.5,
+      "EstimatorMaxIts": 5,
+      "EstimatorMG": true
+    }
+  }
+}
