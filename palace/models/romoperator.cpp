@@ -745,6 +745,10 @@ void RomOperator::PrepareOnlineExcitations()
     RHS1r_online.emplace(excitation_idx, std::move(projected));
   }
   excitation_idx_cache = 0;
+  // The wave-port state feeding Aᵣ(ω) (kₙ, modal correction) may have been re-solved since
+  // the last offline assembly (synthesis tolerances, reduced port models), so do not reuse
+  // it.
+  Ar_omega = std::numeric_limits<double>::quiet_NaN();
 }
 
 void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
@@ -2231,9 +2235,19 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       const Eigen::MatrixXcd P1 = unpack_matrix(coeff.row(1));
       const Eigen::MatrixXcd P2 = unpack_matrix(coeff.row(2));
 
-      const Eigen::MatrixXcd P0_full = Q * P0 * Q.transpose();
-      const Eigen::MatrixXcd P1_full = Q * P1 * Q.transpose();
-      const Eigen::MatrixXcd P2_full = Q * P2 * Q.transpose();
+      // Q·X·Qᵀ is complex symmetric for symmetric X, but the residue of a far pole can be
+      // O(10-100)× the correction (near-cancellation with the polynomial part), so the
+      // product carries roundoff skew well above machine precision relative to the small
+      // in-band result. Symmetrize explicitly so the downstream residue factorization sees
+      // the analytic symmetric matrix rather than that noise.
+      auto lift_symmetric = [&Q](const Eigen::MatrixXcd &X)
+      {
+        const Eigen::MatrixXcd X_full = Q * X * Q.transpose();
+        return (0.5 * (X_full + X_full.transpose())).eval();
+      };
+      const Eigen::MatrixXcd P0_full = lift_symmetric(P0);
+      const Eigen::MatrixXcd P1_full = lift_symmetric(P1);
+      const Eigen::MatrixXcd P2_full = lift_symmetric(P2);
       Kr_total_corr += P0_full;
       Cr_total_corr += std::complex<double>(0.0, -1.0) * P1_full;
       Mr_total_corr -= P2_full;
@@ -2271,7 +2285,7 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       for (int k = 0; k < n_poles; k++)
       {
         const Eigen::MatrixXcd R = unpack_matrix(coeff.row(3 + k));
-        const Eigen::MatrixXcd R_full = Q * R * Q.transpose();
+        const Eigen::MatrixXcd R_full = lift_symmetric(R);
         const double residue_norm = R_full.norm();
         const std::array<std::pair<Eigen::MatrixXd, std::complex<double>>, 2> parts = {
             std::make_pair(R_full.real(), std::complex<double>(0.0, -1.0)),
