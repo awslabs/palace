@@ -27,9 +27,9 @@ the axis with the surface layer at on-box ends, explicit pyramids), isotropic co
 balls graded to the tube inner size, the etch footprint, junction-line and
 footprint bands, the decision-39 volume laws growing with FarGrowth 0.5, the
 trace-basis cut-surface / volume law at **TraceBasisSizeRatio 0.5** (decision 42:
-size <= 0.5 x the shortest edge of the nearest bound-basis triangle + FarGrowth x
-the distance to it; dimensionless, contract-derived, 1.0 before) and the far field
-by size fields. `ProductionRecipe.BuildCommandOptions` = `--lc-tangent 0.05
+size <= 0.5 x the minimum altitude of the nearest bound-basis triangle + FarGrowth x
+the distance to it; dimensionless, contract-derived, 1.0 before; the measure was the
+shortest edge until decision 43, below) and the far field by size fields. `ProductionRecipe.BuildCommandOptions` = `--lc-tangent 0.05
 --edge-size 0.00025 --edge-growth-ratio 2.0 --corner-size 0.00025 --far-growth 0.5
 --trace-basis-size-ratio 0.5`; `validate_production_recipe_commands` requires the
 recorded `gmsh-build` command of every production case to execute each option
@@ -67,6 +67,85 @@ under `geometry-independence-suite.json` reproduces the V-a identity mesh
 binds to the production root (evidence below). Residuals recorded by physics-11: MA
 movers 47 -4.2% / 74 +3.2% and the alternating MA at 35; p_MS at 26 alternates with
 p on every mesh; the reference is a p4 anchor.
+
+### Trace rule measure and composed curve spacing (supervisor decision 43, 2026-09-19)
+
+Physics on the real gallery case `three-edge-419576fdab24` (input 06; evidence
+below) transferred the recipe at EL4c level or better on every class except four
+isolated 0.05 um slivers (sources 25 / 26 / 133 / 134 at (-8, -0.5) / (-8, -0.55) on
+the bottom / top box edges: E +4..+8%, MA / MS / SA -3..-10%), while the same sliver
+at z = -0.05 (52 / 53) was accurate. The diagnosis on the verified root refuted the
+first hypothesis (box-edge curve spacing): the outer-box edges are not explicitly
+1D-meshed (they are excluded from the feature curves and Gmsh meshes them from the
+composed callback field), and at the four supports the box-edge nodes were at
+24.8 nm against 24.9 nm prescribed (achieved / prescribed P50 0.99 within 0.3 um),
+the cut triangles at mean-edge / prescribed 0.90 on both faces (0.96 at 52 / 53)
+and the tetrahedra within 0.1 um at longest-edge / prescribed 1.49 (1.45 at 52 /
+53) - the realization was the same at the bad and the good supports. The cause was
+the prescription's measure: the four sources are the endpoints of the 49.8 nm
+shortest edge of two needle basis triangles on the bottom / top faces
+([(-8, -0.55), (-8, -0.5), (-6, 8)]: edges 0.0498 / 8.73 / 8.78 um) whose minimum
+altitude is 11.3 nm, so their hats vary at 1 / 11.3 nm across an 8.7 um needle
+while the rule "ratio x shortest edge" prescribed 24.9 nm = 2.2x that scale. Exactly
+the four free sources whose own hat altitude is below 0.6 x their shortest adjacent
+edge were the four outliers (every other source has an altitude >= 0.11 um); the
+four-edge basis has no such needle (its 22 nm slivers 74 / 10 are right triangles,
+altitude = shortest edge, and are accurate).
+
+Decision 43 (no new parameter; the recorded rules change):
+
+- **Trace rule measure = the basis triangle's minimum altitude** (2 x area /
+  longest edge = 1 / the largest gradient of its three vertex hats), ratio 0.5
+  unchanged: the quantity the mesh must resolve is the Dirichlet datum's variation,
+  and the shortest edge is a proxy that coincides with the altitude for right
+  slivers (where 0.5 was calibrated) and overstates it for needles. The census
+  `TraceBasisSizing` records `SizeMeasure`, `MinimumBasisAltitude`,
+  `MinimumRequestedSize` = Ratio x it, and the report-only needle counts
+  `NeedleTriangles` / `NeedleTrianglesBelowFarSize` (altitude < 0.6 x shortest edge,
+  `NeedleRule`); `mesh_stage_contract.validate_trace_basis_size_measure` (called by
+  `validate_gmsh_build_census`) recomputes all of them from the recorded mesh-frame
+  triangles. The Python metric rule (`trace_basis.requested_sizes`,
+  `basis_statistics`, `cut_surface_size_report` - now measured across the minimum
+  altitude, `MaximumExtentAcrossMinimumAltitude`) and the Julia seed rule are the
+  same measure (`test_trace_basis.py`). Needle basis triangles are a property of
+  the reference basis triangulation, not of the coupon mesh: avoiding them in the
+  library's own basis construction is a future design item, not part of this
+  change. Basis statistics under the altitude measure: four-edge minimum altitude
+  15.3 nm (shortest edge 21.7 nm; 4 needles, none below the far size), ten-edge
+  5.5 nm (49.2 nm; 50 needles, 34 below the far size, the worst a 19.4 um needle),
+  three-edge 06 11.3 nm (32.7 nm; 18 / 6), two-edge 10 48.2 nm (50.0 nm; 12 / 2).
+- **Every explicitly 1D-meshed curve follows the composed size field** (the
+  decision-40 principle applied to the curves, `CURVE_SPACING_RULE`): the band
+  curves (NormalSize) and the un-tubed metal ridge parts (TangentialSize) take
+  min(their explicit spacing, the composed field on the curve: corner law of the
+  graded points, trace rule, band rule, corner exterior rule), sampled along the
+  curve and gradient-limited to (GrowthRatio - 1) / GrowthRatio exactly as the tube
+  axes are (`graded_tube_stations`); the spacing grid is kept on every grid interval
+  where the limited law equals the spacing (ridge alignment across faces), the
+  remaining gaps are equidistributed in the arclength integral of the reciprocal
+  law with ceil(integral) intervals (every node interval <= the size it spans). The
+  census `CurveSpacing` records the rule, the growth cap and one row per curve
+  (kind junction / band / metal, segment, length, spacing, graded flag, grid
+  intervals kept, interior nodes, node spacing min / P50 / max, prescribed minimum,
+  achieved-over-prescribed min / P50 / max); `validate_curve_spacing` binds the rows
+  (spacing = NormalSize on band / junction rows and TangentialSize on metal rows,
+  statistics ordered and within the spacing, achieved-over-prescribed <= 1 within
+  roundoff, kept grid within the grid, the band curves covered). Before this the
+  band curves ignored the trace rule along their length (a basis sliver crossing a
+  junction line saw 25 nm curve nodes at a 11 nm request; the surface mesher cannot
+  refine a curve's nodes), the most plausible remaining cause of the junction-source
+  SA residual of physics-11 (47 / 35 / 31 at +1.8 / +1.9 / +0.8%, 0.6-1.4 points
+  above EL4c) - recorded as such, to be adjudicated by the next physics run.
+  `corner_isotropic_curve_nodes` (the corner-law-only placement of the prism-tube
+  spike and the face-census tests) is now the composed rule without the trace and
+  band laws.
+
+Cost of the altitude measure (probe builds before adoption, identical otherwise):
+case 06 1,693,002 -> 1,843,365 elements (+8.9%; the bottom-face needle at source 25
+from 116 triangles at 36 nm mean edge within 0.3 um to 868 at 6.9 nm, the
+tetrahedra within 0.1 um from 136 to 940); ten-edge 2,673,691 -> 3,495,791 (+30.7%,
+87% of the unchanged 4M cap, accepted by the supervisor; the cap fails closed).
+The production roots are rebuilt below.
 
 ### Gmsh-only sizing calibration manifest (supervisor decision 41, 2026-09-19)
 
@@ -816,13 +895,14 @@ of the first edge); the basis box must equal the coupon box and every vertex
 must lie on the seed's cut-surface planes. Rule (`TraceBasisSizeRatio`, the
 only new parameter, dimensionless, default 1.0 = at least one element per basis
 edge; `--trace-basis-size-ratio`, passed identically by both stages): on the
-cut surface the element size must not exceed the ratio times the shortest edge
-of the basis triangle containing the point - a per-triangle rule, because the
+cut surface the element size must not exceed the ratio times the minimum
+altitude of the basis triangle containing the point (the shortest edge until
+decision 43, above) - a per-triangle rule, because the
 hat of a basis vertex varies linearly over the whole incident triangle, so its
 support is resolved where the hat varies only when the whole triangle is
 discretized at that scale (the per-edge alternative resolves only the edges).
 The seed applies it through the Gmsh size callback on top of the scalar
-corner-isotropy background (`min(background, ratio x shortest edge + slope x
+corner-isotropy background (`min(background, ratio x minimum altitude + slope x
 distance to the triangle)` with the process-band grading slope, capped by
 `lc_far`; `Mesh.MeshSizeMin` follows the smallest requested size, the only
 sub-`lc_fine` request any field can make) and records `TraceBasisSizing` in the
@@ -830,14 +910,14 @@ census (ratio, rule, frame, input digests, box, counts, basis edges below the
 far size, minimum requested size, mesh-frame triangles, mesh size minimum,
 slope). The metric stage binds the same files, requires the census record to
 match (digests, ratio, triangles), caps the volume metric isotropically by
-`min(FarSize, ratio x shortest edge + FarGrowth x distance)` so the existing
+`min(FarSize, ratio x minimum altitude + FarGrowth x distance)` so the existing
 far/grading law is kept away from narrow hats (MMG's hmin = NormalSize still
 floors the volume metric; the frozen cut triangles keep the seed's sizes), and
 records `TraceBasisSizing` in the recipe with the statistics: unique basis
 edges, edges below the far size, triangles below it, minimum requested size,
 and `CutSurfaceSize` (min/median/max longest edge of the seed's cut triangles;
 per narrow basis triangle the largest extent of the cut triangles centred in it
-along its shortest-edge direction over the requested size - reported, not
+across its minimum altitude over the requested size - reported, not
 gated). The stage contract requires both stages to bind the same basis or
 none, the same ratio in both commands and both records, equal input digests,
 equal mesh-frame triangles and the statistics; the manifest requires the seed

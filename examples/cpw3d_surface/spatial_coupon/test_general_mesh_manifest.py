@@ -2799,6 +2799,29 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
                      "achieved volume sizes")
             rejected(lambda c: c["PrismTubes"]["BandCurves"].__setitem__("Spacing", .05),
                      "Band curves are not 1D-meshed at NormalSize")
+            # Decision 43: every explicitly 1D-meshed curve records its spacing against the
+            # composed size field (kept grid or graded), within its spacing and the growth cap.
+            self.assertEqual(census["CurveSpacing"]["Count"], census["PrismTubes"]["BandCurves"]["Count"])
+            rejected(lambda c: c.pop("CurveSpacing"), "composed curve spacing rule")
+            rejected(lambda c: c["CurveSpacing"].__setitem__("Rule", "fixture"), "composed curve spacing rule")
+            rejected(lambda c: c["CurveSpacing"].__setitem__("GrowthRatio", 3.0), "composed curve spacing rule")
+            rejected(lambda c: c["CurveSpacing"].__setitem__("GradedCurves", 7), "composed curve spacing rule")
+            rejected(lambda c: c["CurveSpacing"]["Curves"].pop(), "composed curve spacing rule")
+            rejected(lambda c: c["CurveSpacing"]["Curves"][0].__setitem__("Kind", "tube"), "Curve spacing row is invalid")
+            rejected(lambda c: c["CurveSpacing"]["Curves"][0].__setitem__("Spacing", .05),
+                     "does not follow the composed size field")
+            rejected(lambda c: c["CurveSpacing"]["Curves"][0]["NodeSpacing"].__setitem__("Maximum", 1.0),
+                     "does not follow the composed size field")
+            rejected(lambda c: c["CurveSpacing"]["Curves"][0]["AchievedOverPrescribed"].__setitem__("Maximum", 1.5),
+                     "does not follow the composed size field")
+            rejected(lambda c: c["CurveSpacing"]["Curves"][0].__setitem__("PrescribedMinimum", 0.0),
+                     "does not follow the composed size field")
+            rejected(lambda c: c["CurveSpacing"]["Curves"][0].__setitem__("GridIntervalsKept", 0),
+                     "does not follow the composed size field")
+            rejected(lambda c: c["CurveSpacing"]["Curves"][0].update(
+                         {"Kind": "metal", "Spacing": c["PrismTubes"]["TangentialSize"],
+                          "PrescribedMinimum": c["PrismTubes"]["TangentialSize"]}),
+                     "do not cover the band curves")
             rejected(lambda c: c["PrismTubes"]["Bands"]["JunctionFirstLayer"]["CutSurface"].pop("TransverseP90"),
                      "Junction first layer CutSurface lacks a finite TransverseP90")
             rejected(lambda c: c["PrismTubes"]["Bands"]["JunctionFirstLayer"].pop("Tetrahedra"),
@@ -2814,6 +2837,49 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
                 pipeline_of(list(manifest["StageToolSHA256"]) + ["metric-preparation"])
             with self.assertRaisesRegex(ValueError, "declares pipeline"):
                 validate_manifest({**manifest, "Pipeline": "legacy-mmg"}, manifest_path)
+
+
+class TraceBasisSizeMeasureTest(unittest.TestCase):
+    """Decision 43: the census trace rule is measured by the basis triangle's minimum
+    altitude; the validator recomputes it, the requested size and the needle counts."""
+
+    def record(self):
+        # A right sliver (altitude = shortest edge) and a needle 0.05 x 8.78 with an 11.3 nm
+        # altitude behind a 49.8 nm shortest edge.
+        triangles = [[[0.0, 0.0, 0.0], [0.05, 0.0, 0.0], [0.0, 0.0, 2.0]],
+                     [[-8.0, -0.5498, -2.05], [-8.0, -0.5, -2.05], [-6.0, 8.0, -2.05]]]
+        from mesh_stage_contract import trace_basis_altitudes_and_shortest_edges
+        rows = trace_basis_altitudes_and_shortest_edges(triangles)
+        altitude = min(a for a, _ in rows)
+        self.assertAlmostEqual(rows[0][0], 0.05 * 2.0 / math.hypot(0.05, 2.0))
+        self.assertAlmostEqual(rows[1][0], 0.0113432, places=6)
+        return {"MeshFrameTriangles": triangles, "FarSize": 0.16, "SizeMeasure": "minimum altitude ...",
+                "NeedleRule": "report-only ...", "NeedleAltitudeOverShortestEdge": 0.6,
+                "NeedleTriangles": 1, "NeedleTrianglesBelowFarSize": 1,
+                "MinimumBasisAltitude": altitude, "MinimumRequestedSize": 0.5 * altitude}
+
+    def test_measure_is_recomputed_and_bound(self):
+        from mesh_stage_contract import validate_trace_basis_size_measure
+        record = self.record()
+        self.assertIs(validate_trace_basis_size_measure(record, 0.5), record)
+        # A needle at a far size below its requested size is a needle but not a narrow one.
+        wide = {**record, "FarSize": 0.005, "NeedleTrianglesBelowFarSize": 0}
+        self.assertIs(validate_trace_basis_size_measure(wide, 0.5), wide)
+        for changes, message in (
+                ({"MinimumRequestedSize": 0.5 * 0.0498}, "minimum altitude"),   # the shortest-edge proxy
+                ({"MinimumBasisAltitude": 0.0498}, "minimum altitude"),
+                ({"NeedleTriangles": 0}, "minimum altitude"),
+                ({"NeedleTrianglesBelowFarSize": 0}, "minimum altitude"),
+                ({"NeedleAltitudeOverShortestEdge": 0.5}, "minimum altitude"),
+                ({"SizeMeasure": "shortest edge"}, "minimum altitude"),
+                ({"NeedleRule": "gated"}, "minimum altitude")):
+            with self.assertRaisesRegex(ValueError, message):
+                validate_trace_basis_size_measure({**record, **changes}, 0.5)
+        with self.assertRaisesRegex(ValueError, "minimum altitude"):
+            validate_trace_basis_size_measure(record, 1.0)   # ratio differs from the recorded request
+        with self.assertRaisesRegex(ValueError, "degenerate"):
+            validate_trace_basis_size_measure(
+                {**record, "MeshFrameTriangles": record["MeshFrameTriangles"] + [[[0.0] * 3] * 3]}, 0.5)
 
 
 class MixedMeshTest(unittest.TestCase):

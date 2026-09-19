@@ -17,8 +17,8 @@
     "MaximumProtectedMeasureError": 1e-08
   },
   "ProductionRecipe": {
-    "Label": "Gmsh-only production recipe (supervisor decisions 38-42, 2026-09-18/19): the coupon mesh is the Gmsh build alone - prism edge tubes on every straight metal edge (inner ring EdgeSize 0.25 nm, ring ratio 2 up to the transverse bound, extruded in layers following the size field on the axis within the tangential spacing, explicit pyramids), isotropic corner balls graded to the tube inner size (CornerSize = EdgeSize), trace-basis cut-surface / volume sizing at TraceBasisSizeRatio 0.5 (decision 42, calibrated by physics-11), junction-line / footprint band and tube-band volume size laws with FarGrowth 0.5 to FarSize; no MMG, no tetrahedral edge layer, no metric / adaptation / restoration stages; every physical gate (Gates) unchanged and re-expressed per element type",
-    "Decision": "SUPERVISOR-DECISIONS.md items 37 (prism tube spike), 38 (Gmsh-only pipeline), 39 (volume size laws), 40 (tube layers follow the size field), 41 (surface layer at on-box tube ends; two-variant sizing calibration) and 42 (TraceBasisSizeRatio 0.5 adopted)",
+    "Label": "Gmsh-only production recipe (supervisor decisions 38-42, 2026-09-18/19): the coupon mesh is the Gmsh build alone - prism edge tubes on every straight metal edge (inner ring EdgeSize 0.25 nm, ring ratio 2 up to the transverse bound, extruded in layers following the size field on the axis within the tangential spacing, explicit pyramids), isotropic corner balls graded to the tube inner size (CornerSize = EdgeSize), trace-basis cut-surface / volume sizing at TraceBasisSizeRatio 0.5 x the minimum altitude of the basis triangle (decision 42, calibrated by physics-11; the altitude measure and the composed spacing of every explicitly 1D-meshed curve since decision 43), junction-line / footprint band and tube-band volume size laws with FarGrowth 0.5 to FarSize; no MMG, no tetrahedral edge layer, no metric / adaptation / restoration stages; every physical gate (Gates) unchanged and re-expressed per element type",
+    "Decision": "SUPERVISOR-DECISIONS.md items 37 (prism tube spike), 38 (Gmsh-only pipeline), 39 (volume size laws), 40 (tube layers follow the size field), 41 (surface layer at on-box tube ends; two-variant sizing calibration), 42 (TraceBasisSizeRatio 0.5 adopted) and 43 (trace rule measured by the basis triangle's minimum altitude; every explicitly 1D-meshed curve follows the composed size field)",
     "Pipeline": "gmsh-only",
     "BuildCommandOptions": {
       "--lc-tangent": 0.05,
@@ -28,7 +28,7 @@
       "--far-growth": 0.5,
       "--trace-basis-size-ratio": 0.5
     },
-    "Binding": "verify_canonical_case_entries.py and run_general_mesh_suite.py (general_mesh_manifest.validate_production_recipe_commands) require the recorded gmsh-build command of every production case to execute each option exactly once at its value - --trace-basis-size-ratio exactly once at 0.5 when the case binds a trace basis and never otherwise (run_gmsh_only_case.py takes the ratio from these options alone, no default) - and mesh_stage_contract.validate_gmsh_build_census requires --prism-tubes true; the tube record (InnerSize = --edge-size = CornerSize, GrowthRatio, TangentialSize = --lc-tangent, NormalSize = --lc-fine, FarSize = --lc-far, FarGrowth, rings, spacing, SectorDegrees = --tube-sector-degrees or its default 30, PyramidHeight = 0.5 x the outermost ring, prisms, pyramids, the decision-40 layer records within GrowthRatio with the decision-41 surface layer at every tube end on the box, size laws with RadialGrowth 1 and ProtectedDistance 2 x NormalSize, the decision-39 volume laws growing with FarGrowth with their achieved shell statistics, band curves at NormalSize spacing with the recorded junction first-layer sizes), the corner grading, the etch footprint, the junction segments, the trace basis sizing and the per-type quality gates are bound by mesh_stage_contract.validate_gmsh_build_census; the canonical cache key (CanonicalBuildId) does not encode recipe options",
+    "Binding": "verify_canonical_case_entries.py and run_general_mesh_suite.py (general_mesh_manifest.validate_production_recipe_commands) require the recorded gmsh-build command of every production case to execute each option exactly once at its value - --trace-basis-size-ratio exactly once at 0.5 when the case binds a trace basis and never otherwise (run_gmsh_only_case.py takes the ratio from these options alone, no default) - and mesh_stage_contract.validate_gmsh_build_census requires --prism-tubes true; the tube record (InnerSize = --edge-size = CornerSize, GrowthRatio, TangentialSize = --lc-tangent, NormalSize = --lc-fine, FarSize = --lc-far, FarGrowth, rings, spacing, SectorDegrees = --tube-sector-degrees or its default 30, PyramidHeight = 0.5 x the outermost ring, prisms, pyramids, the decision-40 layer records within GrowthRatio with the decision-41 surface layer at every tube end on the box, size laws with RadialGrowth 1 and ProtectedDistance 2 x NormalSize, the decision-39 volume laws growing with FarGrowth with their achieved shell statistics, band curves at NormalSize spacing with the recorded junction first-layer sizes, the decision-43 CurveSpacing rows of every explicitly 1D-meshed curve within their spacing and the growth cap), the corner grading, the etch footprint, the junction segments, the trace basis sizing (with its minimum-altitude measure, MinimumBasisAltitude and needle counts recomputed from the recorded triangles) and the per-type quality gates are bound by mesh_stage_contract.validate_gmsh_build_census; the canonical cache key (CanonicalBuildId) does not encode recipe options",
     "Parameters": {
       "EdgeSize": "0.25 nm: the tube's innermost ring size and the corner ball's CornerSize (one graded law)",
       "GrowthRatio": "2: ring ratio of the tube cross-section and of the corner shells",
@@ -45,11 +45,12 @@
       "FarGrowth": "0.5: growth of the tube band and of the feature-curve bands beyond ProtectedDistance = 2 x NormalSize",
       "RadialGrowth": "1.0: growth of the feature-curve band inside ProtectedDistance (mesher constant BAND_RADIAL_GROWTH; census SizeLaws.RadialGrowth)",
       "ProtectedDistance": "2 x NormalSize (mesher constant BAND_PROTECTED_DISTANCE_OVER_NORMAL; census SizeLaws.ProtectedDistance)",
-      "TraceBasisVolumeGrowth": "= FarGrowth (decision 39a): the trace rule is a volume law, size <= TraceBasisSizeRatio x the local basis edge + FarGrowth x the distance to the basis triangle (census TraceBasisSizing.GradingSlope and SizeLaws.TraceBasisVolumeGrowth; achieved shells in SizeLaws.Achieved.TraceApexes)",
+      "TraceBasisVolumeGrowth": "= FarGrowth (decision 39a): the trace rule is a volume law, size <= TraceBasisSizeRatio x the minimum altitude of the local basis triangle (decision 43) + FarGrowth x the distance to the basis triangle (census TraceBasisSizing.GradingSlope and SizeLaws.TraceBasisVolumeGrowth; achieved shells in SizeLaws.Achieved.TraceApexes)",
       "CornerExteriorGrowth": "= FarGrowth (decision 39b): outside a corner ball the size is NormalSize + FarGrowth x the distance beyond CornerIsotropyRadius from the nearest graded point (census SizeLaws.CornerExteriorGrowth / CornerExteriorRule; achieved shells in SizeLaws.Achieved.CornerExterior)",
       "JunctionVolumeLaw": "the band law (NormalSize + RadialGrowth x min(r, ProtectedDistance) + FarGrowth beyond) on the junction lines throughout the volume (decision 39c; census SizeLaws.JunctionVolumeRule; achieved shells in SizeLaws.Achieved.JunctionLines)",
-      "BandCurveSpacing": "NormalSize: the non-metal longitudinal feature curves (junction lines, footprint edges parallel to a metal edge) are 1D-meshed at the band law's size on the line (census BandCurves.Spacing; achieved first-layer transverse sizes in Bands.JunctionFirstLayer, report only)",
-      "TraceBasisSizeRatio": "0.5 (--trace-basis-size-ratio, decision 42; 1.0 before): cut-surface and volume trace law at half the local bound-basis edge (size <= 0.5 x the shortest edge of the nearest basis triangle + FarGrowth x the distance to it); dimensionless and contract-derived; calibrated by physics-11 (V-a) against physics-10 (ratio 1.0) and physics-12 (V-b TangentialSize 25 nm, rejected): E 60/60 within 1%, p_SA within 1/2/5% 35/44/58, p_MS median -0.60% worst -1.70%, p_MA converged (+0.76%), 0.508 node-h per coupon"
+      "BandCurveSpacing": "NormalSize: the non-metal longitudinal feature curves (junction lines, footprint edges parallel to a metal edge) are 1D-meshed at the band law's size on the line (census BandCurves.Spacing; achieved first-layer transverse sizes in Bands.JunctionFirstLayer, report only); since decision 43 every explicitly 1D-meshed curve (band curves at NormalSize, un-tubed metal ridge parts at TangentialSize) follows min(its spacing, the composed size field along the curve: corner law, trace rule, band rule, corner exterior rule), gradient-limited within GrowthRatio as the tube axes are (decision 40) - per-curve node spacing and achieved-over-prescribed statistics in census CurveSpacing, bound by validate_gmsh_build_census",
+      "TraceBasisSizeMeasure": "minimum altitude of the basis triangle = 2 x area / longest edge = 1 / the largest gradient of its three vertex hats (decision 43; census TraceBasisSizing.SizeMeasure / MinimumBasisAltitude / MinimumRequestedSize = Ratio x it, bound by validate_gmsh_build_census): the Dirichlet datum the mesh must resolve varies at 1 / altitude; the shortest edge (the measure before decision 43) equals it for right slivers, where the ratio 0.5 was calibrated, and overstates it for needles (case 06: two 0.05 x 8.7 um needles with an 11.3 nm altitude behind a 49.8 nm shortest edge gave E +8% / SA -10% at their four apex sources under the shortest-edge measure). Needle triangles (altitude < 0.6 x shortest edge, report-only census NeedleTriangles / NeedleTrianglesBelowFarSize) are a property of the reference basis triangulation, not of the coupon mesh",
+      "TraceBasisSizeRatio": "0.5 (--trace-basis-size-ratio, decision 42; 1.0 before): cut-surface and volume trace law at half the local bound-basis hat scale (size <= 0.5 x the minimum altitude of the nearest basis triangle + FarGrowth x the distance to it; the measure was the shortest edge until decision 43, identical for the right slivers the ratio was calibrated on); dimensionless and contract-derived; calibrated by physics-11 (V-a) against physics-10 (ratio 1.0) and physics-12 (V-b TangentialSize 25 nm, rejected): E 60/60 within 1%, p_SA within 1/2/5% 35/44/58, p_MS median -0.60% worst -1.70%, p_MA converged (+0.76%), 0.508 node-h per coupon"
     },
     "UnchangedParameters": {
       "build": {
@@ -119,7 +120,7 @@
     {
       "Name": "trace_basis.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/trace_basis.py",
-      "SHA256": "6226884a7384d5e53c066873980f87b57829f8f405682c9d55f82dc2a436d4c8"
+      "SHA256": "1c5127672ad538d40b77bb78416baaa63cc100360e581606914a4db184130cde"
     },
     {
       "Name": "audit_edge_metric_mesh.py",
@@ -154,7 +155,7 @@
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "c23a21cdf02ae0383ba4ab1dddd3df4fb411834ae558cd37d5cd50c50f1c63c9"
+      "SHA256": "9fa046c4f3a11b44eb11de77799682e3811ecb97bad798526e9f1b81ac2c429d"
     },
     {
       "Name": "canonical_mesh_build.py",
@@ -1877,7 +1878,7 @@
     },
     "gmsh-build": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "c839089f2f79dd40386c6e438b69a731e42c8892f77f07c61e9a3a7faa5ccba2"
+      "mesher": "a28b12cdc4ce743450884247c58e7fddd88a05f421b456faa7b597cdae8e7653"
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",

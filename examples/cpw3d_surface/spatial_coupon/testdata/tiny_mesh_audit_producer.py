@@ -166,7 +166,8 @@ def prism_tube_record(mesh, tubes):
                                          "TransverseP50": tubes["lc_fine"],
                                          "TransverseP90": tubes["lc_fine"],
                                          "AchievedOverPrescribedP50": 1.0}}},
-            "BandCurves": {"Count": 0, "TotalLength": 0.0, "Spacing": tubes["lc_fine"],
+            "BandCurves": {"Count": len(tubes["junction_lengths"]),
+                           "TotalLength": sum(tubes["junction_lengths"]), "Spacing": tubes["lc_fine"],
                            "Segments": [], "Rule": "fixture"},
             "FarFieldBudgetPolicy": {"Name": "gmsh-only-fail-closed-cap", "Pressure": 1.0,
                                      "RequestedFarSize": tubes["lc_far"],
@@ -185,21 +186,51 @@ def junction_curves(scale):
             "Segments": segments, "CurvedCurves": 0, "Rule": "fixture"}
 
 
-def trace_basis_sizing(basis_paths, ratio, scale, slope=1.0):
+def trace_basis_sizing(basis_paths, ratio, scale, slope=1.0, far_size=0.16):
     """Fixture record of the trace-basis cut-surface size rule (schema of the production
     seeder): the bound input digests, the dimensionless ratio and one mesh-frame basis
-    triangle on the fixture's cut face."""
+    triangle on the fixture's cut face, sized by its minimum altitude (decision 43: a
+    right triangle with legs .08 and .001, altitude .001 x .08 / hypot, no needle)."""
     if basis_paths is None:
         return None
     digests = {role: hashlib.sha256(path.read_bytes()).hexdigest()
                for role, path in zip(("BasisContract", "TraceVertices", "TraceTriangles",
                                       "ProcessLibrary"), basis_paths)}
+    legs = (.08 * scale, .001 * scale)
+    altitude = legs[0] * legs[1] / math.hypot(*legs)
     return {"Ratio": ratio, "RatioIsDimensionless": True, "Rule": "fixture",
+            "SizeMeasure": "fixture: minimum altitude of the basis triangle",
+            "NeedleRule": "fixture: report-only needle count",
+            "NeedleAltitudeOverShortestEdge": 0.6, "NeedleTriangles": 0,
+            "NeedleTrianglesBelowFarSize": 0, "MinimumBasisAltitude": altitude,
             "InputSHA256": digests, "Lower": [0.0, 0.0, -.001 * scale],
             "Upper": [10.001 * scale, .001 * scale, .001 * scale],
-            "Triangles": 1, "BasisEdgesBelowFarSize": 1, "MinimumRequestedSize": ratio * .001 * scale,
-            "MeshSizeMinimum": min(ratio * .001 * scale, .1), "GradingSlope": slope,
-            "MeshFrameTriangles": [[[0.0, 0.0, 0.0], [.08 * scale, 0.0, 0.0], [0.0, 0.0, .001 * scale]]]}
+            "Triangles": 1, "BasisEdgesBelowFarSize": 1, "MinimumRequestedSize": ratio * altitude,
+            "FarSize": far_size,
+            "MeshSizeMinimum": min(ratio * altitude, .1), "GradingSlope": slope,
+            "MeshFrameTriangles": [[[0.0, 0.0, 0.0], [legs[0], 0.0, 0.0], [0.0, 0.0, legs[1]]]]}
+
+
+def curve_spacing(tubes):
+    """Fixture record of the composed curve spacing (decision 43): the production
+    mesher's per-curve statistics for the fixture's three junction curves, kept on
+    the NormalSize grid (no trace or corner law lowers the field on them)."""
+    normal = tubes["lc_fine"]
+    def row(curve, length):
+        intervals = max(1, math.ceil(length / normal))
+        uniform = length / intervals
+        return {"Curve": curve, "Kind": "junction", "Segment": [0.0] * 6, "Length": length,
+                "Spacing": normal, "Graded": False, "GridIntervals": intervals,
+                "GridIntervalsKept": intervals, "InteriorNodes": intervals - 1,
+                "NodeSpacing": {"Minimum": uniform, "P50": uniform, "Maximum": uniform},
+                "PrescribedMinimum": normal,
+                "AchievedOverPrescribed": {"Minimum": uniform / normal, "P50": uniform / normal,
+                                           "Maximum": uniform / normal}}
+    rows = [row(index + 1, length) for index, length in enumerate(tubes["junction_lengths"])]
+    return {"Rule": "fixture: composed size field along every explicitly 1D-meshed curve, "
+                    "gradient-limited within the growth ratio",
+            "GrowthRatio": tubes["ratio"], "Count": len(rows),
+            "GradedCurves": sum(1 for r in rows if r["Graded"]), "Curves": rows}
 
 
 def corner_census(output, contract_path, radius, isotropic_size, etch_boundary=None,
@@ -232,6 +263,8 @@ def corner_census(output, contract_path, radius, isotropic_size, etch_boundary=N
                    "MaximumDisplacementOverBound": 0.0}
     tube_records = {}
     if tubes is not None:
+        tubes["junction_lengths"] = [math.dist(segment[:3], segment[3:])
+                                     for segment in junction_curves(scale)["Segments"]]
         tube_records = {"PrismTubes": prism_tube_record(mesh, tubes),
                         "CornerGrading": corner_grading(tubes["corner_size"], tubes["ratio"],
                                                         isotropic_size, radius),
@@ -262,7 +295,9 @@ def corner_census(output, contract_path, radius, isotropic_size, etch_boundary=N
                                                   "Tolerance": 1e-6}}],
         "JunctionCurves": junction_curves(scale),
         "TraceBasisSizing": trace_basis_sizing(basis_paths, ratio, scale,
-                                               1.0 if tubes is None else tubes["far_growth"]),
+                                               1.0 if tubes is None else tubes["far_growth"],
+                                               0.16 if tubes is None else tubes["lc_far"]),
+        **({"CurveSpacing": curve_spacing(tubes)} if tubes is not None else {}),
         "SeedQualityOptimization": quality,
         "InterfaceAreaUnits": "um^2",
         # One row per contract boundary label, as written in the fixture seed.

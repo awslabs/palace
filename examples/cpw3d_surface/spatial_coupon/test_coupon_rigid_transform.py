@@ -502,13 +502,24 @@ class RigidProducerIntegrationTest(unittest.TestCase):
                                          if c.type == "triangle"])
                 return cut_surface_size_report(mesh.points, triangles[labels == 1], basis, 4.0, 0.6)
             before, after = cut_report(plain), cut_report(sized)
-            # The far size is kept where no narrow hat is: the median cut size is unchanged
-            # in kind (coarse), while every narrow basis triangle is now resolved to the
-            # requested size (Gmsh honours a size field to within a modest overshoot).
+            # The far size is kept where no narrow hat is (the largest cut triangles stay at
+            # the far size), while every narrow basis triangle is now resolved to the
+            # requested size (Gmsh honours a size field to within a modest overshoot). The
+            # junction curves follow the trace rule along their length (decision 43: the
+            # 0.05 um basis rows at the trench prescribe 4 x 0.05 = 0.2 on them), so the
+            # median cut size is no longer the far size on this coarse seed.
             self.assertGreater(before["MaximumExtentOverRequested"], 2.0)
             self.assertLess(after["MaximumExtentOverRequested"], 1.5)
-            self.assertGreater(after["Median"], 0.5 * before["Median"])
+            self.assertGreater(after["Maximum"], 0.9 * before["Maximum"])
             self.assertGreater(after["CutTriangles"], before["CutTriangles"])
+            curves = census["CurveSpacing"]
+            self.assertEqual(curves["Count"], len(curves["Curves"]))
+            self.assertTrue(all(row["Kind"] in ("junction", "metal") for row in curves["Curves"]))
+            self.assertTrue(all(row["NodeSpacing"]["Maximum"] <= row["Spacing"] * (1 + 1e-9)
+                                for row in curves["Curves"]))
+            self.assertTrue(any(row["Graded"] and row["PrescribedMinimum"] < row["Spacing"]
+                                for row in curves["Curves"] if row["Kind"] == "junction"))
+            self.assertEqual(rotated_census["CurveSpacing"]["Count"], curves["Count"])
             # Fail closed: partial options, no contract, invalid ratio, another coupon's basis.
             self.produce(root, "partial", IDENTITY,
                          corner_isotropy=self.corner_isotropy(root, "partial") + basis_options[:6],

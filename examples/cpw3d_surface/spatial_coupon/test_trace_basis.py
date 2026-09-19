@@ -125,8 +125,25 @@ class TraceBasisTest(unittest.TestCase):
         self.assertEqual(statistics["UniqueEdges"], 234)
         self.assertEqual(statistics["BasisEdgesBelowFarSize"], 46)
         self.assertAlmostEqual(statistics["MinimumBasisEdge"], 0.0217069561, places=9)
+        # The four-edge basis has no needle below the far size: its narrowest triangles are
+        # right slivers whose minimum altitude is close to the shortest edge (15.3 nm vs
+        # 21.7 nm at worst); its four needles are 8 um wide-hat triangles (altitude 3.58).
+        self.assertAlmostEqual(statistics["MinimumBasisAltitude"], 0.0153491359, places=9)
+        self.assertEqual(statistics["NeedleTriangles"], 4)
+        self.assertEqual(statistics["NeedleTrianglesBelowFarSize"], 0)
+        self.assertEqual(statistics["NeedleAltitudeOverShortestEdge"], 0.6)
         self.assertEqual(statistics["TrianglesBelowFarSize"], 76)
         requested = requested_sizes(basis["Points"], basis["Triangles"], 1.0)
+        self.assertAlmostEqual(requested.min(), statistics["MinimumBasisAltitude"])
+        # A needle: 0.05 x 8.78 with an 11.3 nm altitude is sized by the altitude, not the edge.
+        needle = np.array([[-8.0, -0.5498, 0.0], [-8.0, -0.5, 0.0], [-6.0, 8.0, 0.0]])
+        self.assertAlmostEqual(requested_sizes(needle, [[0, 1, 2]], 0.5)[0],
+                               0.5 * np.linalg.norm(np.cross(needle[1] - needle[0], needle[2] - needle[0]))
+                               / np.linalg.norm(needle[2] - needle[0]))
+        needle_statistics = basis_statistics({"Points": needle, "Triangles": np.array([[0, 1, 2]])}, 0.5, 0.16)
+        self.assertEqual(needle_statistics["NeedleTriangles"], 1)
+        self.assertEqual(needle_statistics["NeedleTrianglesBelowFarSize"], 1)
+        self.assertLess(needle_statistics["MinimumRequestedSize"], 0.5 * 0.0498 / 2)
         narrow = int(np.argmin(requested))
         centroid = basis["Points"][basis["Triangles"][narrow]].mean(axis=0)
         normal = np.zeros(3); face = np.flatnonzero(np.abs(basis["Points"][basis["Triangles"][narrow]] - centroid).max(axis=0) < 1e-12)
@@ -155,9 +172,10 @@ class TraceBasisTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             trace_basis_sizes(query, basis, 1.0, 0.16, 0.0)
 
-    def test_cut_surface_report_measures_compliance_across_the_shortest_edge(self):
+    def test_cut_surface_report_measures_compliance_across_the_minimum_altitude(self):
         # One box face z=0 over [0,4]x[0,1] as two basis triangles split by the diagonal;
-        # shortest edges are the x=0 / x=4 sides (length 1), so extents are measured along y.
+        # the minimum altitude is the height over the diagonal (4 / sqrt(17) = 0.970, below
+        # the shortest edge 1), so extents are measured perpendicular to the diagonal.
         points = np.array([[0., 0., 0.], [4., 0., 0.], [4., 1., 0.], [0., 1., 0.]])
         basis = {"Points": points, "Triangles": np.array([[0, 1, 2], [0, 2, 3]]),
                  "Lower": np.array([0., 0., 0.]), "Upper": np.array([4., 1., 3.])}
@@ -173,13 +191,15 @@ class TraceBasisTest(unittest.TestCase):
         self.assertEqual(report["CutTriangles"], 64)
         self.assertAlmostEqual(report["Minimum"], np.hypot(.5, .25))
         rows = report["BasisTrianglesBelowFarSize"]
-        self.assertEqual([row["RequestedSize"] for row in rows], [0.5, 0.5])
+        altitude = 4.0 / np.sqrt(17.0)
+        np.testing.assert_allclose([row["RequestedSize"] for row in rows], [0.5 * altitude] * 2)
         # Every cut triangle is centred in a basis triangle (those centred on the shared
         # diagonal count for both).
         self.assertGreaterEqual(sum(row["CutTriangles"] for row in rows), 64)
         self.assertTrue(all(row["CutTriangles"] >= 24 for row in rows))
+        # A 0.5 x 0.25 right cell spans 1 / sqrt(17) across the diagonal's normal (-1, 4).
         for row in rows:
-            self.assertAlmostEqual(row["MaximumExtentAlongShortestEdge"], 0.25)
+            self.assertAlmostEqual(row["MaximumExtentAcrossMinimumAltitude"], 1.0 / np.sqrt(17.0))
             self.assertAlmostEqual(row["ExtentOverRequested"], 0.5)
         self.assertAlmostEqual(report["MaximumExtentOverRequested"], 0.5)
 
@@ -228,9 +248,13 @@ open({j(str(root / 'record.json'))}, "w") do io; write_json(io, record); end
         np.testing.assert_array_equal(np.asarray(record["Frame"]), basis["Frame"])
         self.assertEqual(record["InputSHA256"], basis["InputSHA256"])
         statistics = basis_statistics(basis, ratio, far)
-        for key in ("UniqueEdges", "BasisEdgesBelowFarSize", "TrianglesBelowFarSize", "Triangles", "Vertices"):
+        for key in ("UniqueEdges", "BasisEdgesBelowFarSize", "TrianglesBelowFarSize", "Triangles", "Vertices",
+                    "NeedleTriangles", "NeedleTrianglesBelowFarSize", "NeedleAltitudeOverShortestEdge"):
             self.assertEqual(record[key], statistics[key], key)
         self.assertAlmostEqual(record["MinimumRequestedSize"], statistics["MinimumRequestedSize"])
+        self.assertAlmostEqual(record["MinimumBasisAltitude"], statistics["MinimumBasisAltitude"])
+        self.assertAlmostEqual(record["MinimumRequestedSize"], ratio * record["MinimumBasisAltitude"])
+        self.assertIn("minimum altitude", record["SizeMeasure"]); self.assertIn("report-only", record["NeedleRule"])
         self.assertTrue(record["RatioIsDimensionless"]); self.assertEqual(record["Ratio"], ratio)
 
 

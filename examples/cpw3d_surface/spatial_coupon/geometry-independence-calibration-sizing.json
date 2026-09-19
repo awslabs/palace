@@ -54,7 +54,7 @@
     {
       "Name": "trace_basis.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/trace_basis.py",
-      "SHA256": "6226884a7384d5e53c066873980f87b57829f8f405682c9d55f82dc2a436d4c8"
+      "SHA256": "1c5127672ad538d40b77bb78416baaa63cc100360e581606914a4db184130cde"
     },
     {
       "Name": "audit_edge_metric_mesh.py",
@@ -89,7 +89,7 @@
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "c23a21cdf02ae0383ba4ab1dddd3df4fb411834ae558cd37d5cd50c50f1c63c9"
+      "SHA256": "9fa046c4f3a11b44eb11de77799682e3811ecb97bad798526e9f1b81ac2c429d"
     },
     {
       "Name": "canonical_mesh_build.py",
@@ -129,7 +129,7 @@
     },
     "gmsh-build": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "c839089f2f79dd40386c6e438b69a731e42c8892f77f07c61e9a3a7faa5ccba2"
+      "mesher": "a28b12cdc4ce743450884247c58e7fddd88a05f421b456faa7b597cdae8e7653"
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",

@@ -481,47 +481,19 @@ function corner_curve_size(point, corners, grading::CornerGrading, lc_tangent, s
                            slope * max(distance - grading.radius, 0.0))
 end
 
-# Samples per fine length for the size-weighted arclength quadrature that places
-# longitudinal curve nodes; a resolution constant, not a mesh target.
+# Samples per spacing of the chord polyline that tabulates the arclength of a
+# longitudinal curve span; a resolution constant, not a mesh target.
 const CURVE_SIZE_SAMPLES_PER_FINE_LENGTH = 16
 
-# Interior node parameters of a longitudinal curve that reaches a corner ball. The
-# transfinite lc_tangent grid is kept wherever the corner size law equals
-# lc_tangent, so the ridge nodes of one process edge stay aligned across its
-# faces away from the corners exactly as without the corner ball (misaligned
-# ridge rows were measured to remove the sidewall interior nodes). Each gap
-# between kept grid nodes, or between a curve end and the first kept grid node,
-# is filled by size-weighted arclength quadrature of the law: the corner law
-# inside the ball (lc_fine, or the geometric grading from CornerSize), the
-# process-band grading slope up to lc_tangent. Where a corner ball is graded the
-# ball boundary itself is a node of every curve crossing it
-# (ball_boundary_parameters), so an edge layer span can start exactly at the
-# ball radius. Returns nothing when the curve is out of reach of every ball, so
-# the caller keeps the ordinary transfinite spacing unchanged.
+# Interior node parameters of a longitudinal curve under the corner law alone
+# (the pre-decision-43 rule of the spike and the face-census tests): the
+# composed rule without the trace and band laws. Returns nothing when the curve
+# is out of reach of every ball.
 function corner_isotropic_curve_nodes(curve, corners, grading::CornerGrading, lc_tangent, slope)
-    lower, upper = gmsh.model.getParametrizationBounds(1, curve)
-    intervals = max(1, ceil(Int, gmsh.model.occ.getMass(1, curve) / lc_tangent))
-    grid = collect(range(lower[1], upper[1]; length=intervals + 1))
-    xyz = reshape(gmsh.model.getValue(1, curve, grid), 3, :)
-    at_tangent = [corner_curve_size(Tuple(xyz[:, i]), corners, grading, lc_tangent,
-                                    slope) >= lc_tangent for i in axes(xyz, 2)]
-    all(at_tangent) && return nothing
-    anchors = [i for i in 1:(intervals + 1) if at_tangent[i] || i == 1 || i == intervals + 1]
-    interior = Float64[]
-    for (a, b) in zip(anchors[1:(end - 1)], anchors[2:end])
-        if !(b == a + 1 && at_tangent[a] && at_tangent[b])
-            bounds = grading.corner_size > 0.0 ?
-                ball_boundary_parameters(curve, grid[a], grid[b], corners, grading) : Float64[]
-            stops = vcat(grid[a], bounds, grid[b])
-            for (from, to) in zip(stops[1:(end - 1)], stops[2:end])
-                append!(interior, graded_curve_parameters(curve, from, to, corners, grading,
-                                                          lc_tangent, slope))
-                to < grid[b] && push!(interior, to)
-            end
-        end
-        b <= intervals && push!(interior, grid[b])
-    end
-    return interior, gmsh.model.getValue(1, curve, interior)
+    placed = composed_curve_nodes(
+        curve, lc_tangent, point -> corner_curve_size(point, corners, grading, lc_tangent, slope),
+        grading.ratio, corners, grading)
+    return placed === nothing ? nothing : (placed[1], placed[2])
 end
 
 # Parameters in (from, to) where the curve crosses a corner ball boundary
@@ -560,32 +532,121 @@ function ball_boundary_parameters(curve, from, to, corners, grading::CornerGradi
     return crossings
 end
 
-# Interior parameters of the curve span [from, to] equidistributed in the
-# arclength integral of 1 / corner size law.
-function graded_curve_parameters(curve, from, to, corners, grading::CornerGrading, lc_tangent,
-                                 slope)
-    finest = grading.corner_size > 0.0 ? grading.corner_size : grading.lc_fine
-    samples = max(64, ceil(Int, CURVE_SIZE_SAMPLES_PER_FINE_LENGTH *
-                              norm(gmsh.model.getValue(1, curve, [to]) .-
-                                   gmsh.model.getValue(1, curve, [from])) / finest))
+# Samples of the composed law per explicit-spacing grid interval when deciding
+# whether the interval keeps the grid; a resolution constant, not a mesh target.
+const CURVE_LAW_SAMPLES_PER_INTERVAL = 8
+
+const CURVE_SPACING_RULE =
+    "every explicitly 1D-meshed longitudinal curve (band curves at NormalSize, un-tubed " *
+    "metal ridge parts at TangentialSize) follows min(its explicit Spacing, the composed " *
+    "size field on the curve: corner-ball law of the graded points, trace-basis rule, band " *
+    "rule, corner exterior rule), sampled along the curve and gradient-limited to " *
+    "(GrowthRatio - 1) / GrowthRatio as on the tube axes (graded_tube_stations, the " *
+    "decision-40 rule); the Spacing grid is kept on every grid interval where the limited " *
+    "law equals the Spacing (ridge alignment across faces), each remaining gap between kept " *
+    "grid nodes (split at the corner ball boundaries) is equidistributed in the arclength " *
+    "integral of the reciprocal limited law with ceil(integral) intervals, so every node " *
+    "interval is <= the size it spans; AchievedOverPrescribed = each node interval over the " *
+    "limited law at its midpoint - decision 43"
+
+# Chord-polyline arclength table of the curve span [from, to] at
+# CURVE_SIZE_SAMPLES_PER_FINE_LENGTH samples per spacing (exact for the straight
+# feature curves): parameter_at(s) and arclength_at(t) by linear interpolation.
+function curve_arclength_table(curve, from, to, spacing)
+    to > from || error("Longitudinal curve span is not increasing")
+    chord = norm(gmsh.model.getValue(1, curve, [to]) .- gmsh.model.getValue(1, curve, [from]))
+    samples = max(16, ceil(Int, CURVE_SIZE_SAMPLES_PER_FINE_LENGTH * chord / spacing))
     parameters = collect(range(from, to; length=samples + 1))
     xyz = reshape(gmsh.model.getValue(1, curve, parameters), 3, :)
-    sizes = [corner_curve_size(Tuple(xyz[:, i]), corners, grading, lc_tangent, slope)
-             for i in axes(xyz, 2)]
-    cumulative = zeros(samples + 1)
+    arclength = zeros(samples + 1)
     for i in 1:samples
-        cumulative[i + 1] = cumulative[i] + norm(xyz[:, i + 1] .- xyz[:, i]) *
-                                            0.5 * (1.0 / sizes[i] + 1.0 / sizes[i + 1])
+        arclength[i + 1] = arclength[i] + norm(xyz[:, i + 1] .- xyz[:, i])
     end
-    intervals = max(1, round(Int, cumulative[end]))
+    arclength[end] > 0.0 || error("Longitudinal curve span has no length")
+    function parameter_at(s)
+        i = clamp(searchsortedlast(arclength, s), 1, samples)
+        fraction = (s - arclength[i]) / (arclength[i + 1] - arclength[i])
+        return parameters[i] + fraction * (parameters[i + 1] - parameters[i])
+    end
+    function arclength_at(t)
+        i = clamp(searchsortedlast(parameters, t), 1, samples)
+        fraction = (t - parameters[i]) / (parameters[i + 1] - parameters[i])
+        return arclength[i] + fraction * (arclength[i + 1] - arclength[i])
+    end
+    return (; parameters, arclength, parameter_at, arclength_at)
+end
+
+# Linear interpolation of the sampled (positions, sizes) law.
+function sampled_size_at(positions, sizes, s)
+    i = clamp(searchsortedlast(positions, s), 1, length(positions) - 1)
+    fraction = (s - positions[i]) / (positions[i + 1] - positions[i])
+    return sizes[i] + fraction * (sizes[i + 1] - sizes[i])
+end
+
+# Interior node parameters of an explicitly 1D-meshed longitudinal curve under the
+# composed size law (CURVE_SPACING_RULE): `size_at(point)` is the law already
+# capped at `spacing`, `growth` the layer growth ratio, `corners`/`grading` the
+# graded points and corner grading for the ball boundary nodes (nothing without
+# corner isotropy). Returns nothing when the limited law is the spacing on every
+# grid interval (the caller keeps the transfinite grid), otherwise (parameters,
+# coordinates, record) with the per-curve spacing statistics.
+function composed_curve_nodes(curve, spacing, size_at, growth, corners, grading)
+    lower, upper = gmsh.model.getParametrizationBounds(1, curve)
+    curve_length = gmsh.model.occ.getMass(1, curve)
+    intervals = max(1, ceil(Int, curve_length / spacing))
+    grid = collect(range(lower[1], upper[1]; length=intervals + 1))
+    table = curve_arclength_table(curve, lower[1], upper[1], spacing)
+    law_at(s) = size_at(Tuple(gmsh.model.getValue(1, curve, [table.parameter_at(s)])))
+    # The whole-curve sampled and gradient-limited law (graded_tube_stations
+    # returns its adaptive samples), so the neighbour ratio bound holds across
+    # kept grid intervals and graded gaps alike.
+    _, positions, sizes = graded_tube_stations(0.0, table.arclength[end], law_at, spacing, growth)
+    limited(s) = sampled_size_at(positions, sizes, s)
+    threshold = spacing * (1.0 - 1.0e-9)
+    grid_s = [table.arclength_at(t) for t in grid]
+    # A grid interval keeps the grid when the limited law is the spacing at its ends
+    # and every sample inside; a grid node stays a node when the law is the spacing
+    # there (a dip strictly inside an interval is graded between its two grid nodes).
+    at_spacing = [limited(grid_s[i]) >= threshold && limited(grid_s[i + 1]) >= threshold &&
+                  all(sizes[j] >= threshold for j in searchsortedfirst(positions, grid_s[i]):
+                                                     searchsortedlast(positions, grid_s[i + 1]))
+                  for i in 1:intervals]
+    all(at_spacing) && return nothing
+    anchors = [i for i in 1:(intervals + 1)
+               if i == 1 || i == intervals + 1 || limited(grid_s[i]) >= threshold]
     interior = Float64[]
-    for k in 1:(intervals - 1)
-        target = k * cumulative[end] / intervals
-        i = clamp(searchsortedlast(cumulative, target), 1, samples)
-        fraction = (target - cumulative[i]) / (cumulative[i + 1] - cumulative[i])
-        push!(interior, parameters[i] + fraction * (parameters[i + 1] - parameters[i]))
+    for (a, b) in zip(anchors[1:(end - 1)], anchors[2:end])
+        if !(b == a + 1 && at_spacing[a])
+            bounds = corners !== nothing && grading.corner_size > 0.0 ?
+                ball_boundary_parameters(curve, grid[a], grid[b], corners, grading) : Float64[]
+            stops = vcat(grid[a], bounds, grid[b])
+            for (from, to) in zip(stops[1:(end - 1)], stops[2:end])
+                stations, _, _ = graded_tube_stations(table.arclength_at(from), table.arclength_at(to),
+                                                      limited, spacing, growth)
+                append!(interior, table.parameter_at(s) for s in stations[2:(end - 1)])
+                to < grid[b] && push!(interior, to)
+            end
+        end
+        b <= intervals && push!(interior, grid[b])
     end
-    return interior
+    coordinates = gmsh.model.getValue(1, curve, interior)
+    node_s = vcat(0.0, [table.arclength_at(t) for t in interior], table.arclength[end])
+    achieved = diff(node_s)
+    all(achieved .> 0.0) || error("Longitudinal curve $curve received a coincident node")
+    prescribed = [limited(0.5 * (node_s[i] + node_s[i + 1])) for i in eachindex(achieved)]
+    ratios = achieved ./ prescribed
+    record = Dict{String, Any}(
+        "Length" => curve_length, "Spacing" => spacing, "Graded" => true,
+        "GridIntervals" => intervals, "GridIntervalsKept" => count(at_spacing),
+        "InteriorNodes" => length(interior),
+        "NodeSpacing" => Dict{String, Any}("Minimum" => minimum(achieved),
+                                           "P50" => sorted_median(achieved),
+                                           "Maximum" => maximum(achieved)),
+        "PrescribedMinimum" => minimum(sizes),
+        "AchievedOverPrescribed" => Dict{String, Any}("Minimum" => minimum(ratios),
+                                                     "P50" => sorted_median(ratios),
+                                                     "Maximum" => maximum(ratios)))
+    return interior, coordinates, record
 end
 
 # Install an explicit curve mesh (endpoints, interior nodes, line elements) so
@@ -3043,17 +3104,36 @@ end
 # mapped to the mesh frame exactly as the campaign producer does (local z = the
 # process normal, local x = the gap direction of the first edge). The size rule
 # has one parameter, TraceBasisSizeRatio (dimensionless): on the cut surface the
-# element size must not exceed the ratio times the shortest edge of the basis
-# triangle containing the point (the hat of a basis vertex varies linearly over
-# the whole triangle, so its support is resolved where it varies only when the
-# whole triangle is discretized at that scale). Away from the surface the size
-# grows with the process-band grading slope up to lc_far, so far from narrow hats
-# the far size stays. It composes with the scalar background field through
-# Gmsh's size callback, which needs a named function (closure trampolines are
-# unsupported on aarch64), hence the module-level state.
+# element size must not exceed the ratio times the minimum altitude of the basis
+# triangle containing the point. The hat of a basis vertex varies linearly over
+# the whole triangle with gradient 1 / (its altitude: the distance from the
+# vertex to the opposite edge), so the Dirichlet datum's variation scale in a
+# triangle is its minimum altitude = 2 x area / longest edge (the altitude of the
+# vertex opposite the longest edge); the shortest edge equals it for right
+# slivers but overstates it by longest / shortest x sin(angle) for a needle (a
+# 0.05 x 8.7 um triangle with an 11 nm altitude: decision 43). The support is
+# resolved where the hat varies only when the whole triangle is discretized at
+# that scale. Away from the surface the size grows with the process-band grading
+# slope up to lc_far, so far from narrow hats the far size stays. It composes
+# with the scalar background field through Gmsh's size callback, which needs a
+# named function (closure trampolines are unsupported on aarch64), hence the
+# module-level state.
 const TRACE_BASIS_TRIANGLES = NTuple{9, Float64}[]  # narrow triangles (requested < lc_far)
-const TRACE_BASIS_SIZES = Float64[]                 # ratio x shortest edge of each
+const TRACE_BASIS_SIZES = Float64[]                 # ratio x minimum altitude of each
 const TRACE_BASIS_APEXES = NTuple{3, Float64}[]     # endpoints of the shortest edge of each
+# Report-only classification of a basis triangle as a needle: its minimum altitude
+# below this fraction of its shortest edge (the shortest-edge proxy overstated the
+# hat scale by more than 1 / 0.6). Not a mesh parameter.
+const NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE = 0.6
+const TRACE_BASIS_SIZE_MEASURE =
+    "minimum altitude of the basis triangle (2 x area / longest edge = 1 / the largest " *
+    "gradient of its three vertex hats); the shortest edge equals it for right slivers " *
+    "(where TraceBasisSizeRatio 0.5 was calibrated, physics-11) and overstates it for " *
+    "needles - decision 43"
+const TRACE_BASIS_NEEDLE_RULE =
+    "a basis triangle whose minimum altitude is below NeedleAltitudeOverShortestEdge x " *
+    "its shortest edge (report-only: needles are a property of the reference basis " *
+    "triangulation, not of the coupon mesh)"
 const TRACE_BASIS_FAR = Ref(Inf)
 const TRACE_BASIS_SLOPE = Ref(0.0)
 const TRACE_BASIS_CALLBACK_ROOTS = Any[]
@@ -3142,6 +3222,15 @@ end
 
 trace_basis_edge_lengths(points, triangle) = ntuple(
     k -> norm(collect(points[triangle[mod1(k + 1, 3)]] .- points[triangle[k]])), 3)
+
+# Minimum altitude of a basis triangle: 2 x area / longest edge, the smallest
+# distance from a vertex to its opposite edge = 1 / the largest hat gradient.
+function trace_basis_minimum_altitude(points, triangle, lengths)
+    a = collect(points[triangle[1]]); b = collect(points[triangle[2]]); c = collect(points[triangle[3]])
+    doubled_area = norm(cross(b .- a, c .- a))
+    doubled_area > 0.0 || error("Degenerate trace basis triangle")
+    return doubled_area / maximum(lengths)
+end
 
 # Euclidean distance from a point to the triangle (a, b, c): the plane projection
 # when it falls inside, otherwise the nearest edge.
@@ -3344,10 +3433,10 @@ function prepare_tube_band_sizing!(axis_segments, band_segments, offset, normal,
                                 "point (semantic corner or tube cap centre); the ball interior is " *
                                 "the background graded-point law - decision 39b",
         "TraceBasisVolumeGrowth" => far_growth,
-        "TraceBasisVolumeRule" => "size = min(FarSize, TraceBasisSizeRatio x the shortest basis " *
-                                  "edge + FarGrowth x the distance to the basis triangle) " *
-                                  "throughout the volume (TraceBasisSizing.GradingSlope = " *
-                                  "FarGrowth) - decision 39a",
+        "TraceBasisVolumeRule" => "size = min(FarSize, TraceBasisSizeRatio x the minimum " *
+                                  "altitude of the basis triangle + FarGrowth x the distance " *
+                                  "to the basis triangle) throughout the volume " *
+                                  "(TraceBasisSizing.GradingSlope = FarGrowth) - decisions 39a, 43",
         "Composition" => "min(background field [anisotropic curve attractor, graded-point law], " *
                          "trace rule, tube rule, band rule, corner exterior rule) in the Gmsh " *
                          "size callback")
@@ -3374,10 +3463,19 @@ function prepare_trace_basis_sizing!(basis, ratio, lc_far, slope)
     empty!(TRACE_BASIS_TRIANGLES); empty!(TRACE_BASIS_SIZES); empty!(TRACE_BASIS_APEXES)
     TRACE_BASIS_FAR[] = lc_far; TRACE_BASIS_SLOPE[] = slope
     requested = Float64[]
+    altitudes = Float64[]
+    needles = 0
+    narrow_needles = 0
     edges = Dict{Tuple{Int, Int}, Float64}()
     for triangle in basis.triangles
         lengths = trace_basis_edge_lengths(basis.points, triangle)
-        push!(requested, ratio * minimum(lengths))
+        altitude = trace_basis_minimum_altitude(basis.points, triangle, lengths)
+        push!(altitudes, altitude)
+        push!(requested, ratio * altitude)
+        if altitude < NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE * minimum(lengths)
+            needles += 1
+            requested[end] < lc_far && (narrow_needles += 1)
+        end
         for k in 1:3
             key = minmax(triangle[k], triangle[mod1(k + 1, 3)])
             edges[key] = lengths[k]
@@ -3385,8 +3483,8 @@ function prepare_trace_basis_sizing!(basis, ratio, lc_far, slope)
         if requested[end] < lc_far
             push!(TRACE_BASIS_TRIANGLES, ntuple(i -> basis.points[triangle[(i - 1) ÷ 3 + 1]][mod1(i, 3)], 9))
             push!(TRACE_BASIS_SIZES, requested[end])
-            # The narrow hat's apexes: the endpoints of the shortest edge, where the
-            # hat gradient across the sliver is steepest.
+            # The narrow hat's apexes: the endpoints of the shortest edge, the two
+            # vertices opposite the two longest edges, whose hats are the steepest.
             shortest = argmin(lengths)
             for vertex in (triangle[shortest], triangle[mod1(shortest + 1, 3)])
                 apex = Tuple(Float64.(basis.points[vertex]))
@@ -3398,13 +3496,19 @@ function prepare_trace_basis_sizing!(basis, ratio, lc_far, slope)
     return Dict{String, Any}(
         "Ratio" => ratio,
         "RatioIsDimensionless" => true,
-        "Rule" => "element size <= TraceBasisSizeRatio x the shortest edge of the basis " *
+        "Rule" => "element size <= TraceBasisSizeRatio x the minimum altitude of the basis " *
                   "triangle nearest the point (per-triangle rule: the hat varies over the " *
                   "whole triangle) + GradingSlope x the distance to that triangle, up to " *
                   "FarSize, throughout the volume (GradingSlope = FarGrowth under the prism " *
                   "tube recipe, decision 39a; the process-band slope otherwise); the only " *
                   "size parameter is the dimensionless ratio, applied through the Gmsh size " *
                   "callback on top of the background field",
+        "SizeMeasure" => TRACE_BASIS_SIZE_MEASURE,
+        "NeedleRule" => TRACE_BASIS_NEEDLE_RULE,
+        "NeedleAltitudeOverShortestEdge" => NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE,
+        "NeedleTriangles" => needles,
+        "NeedleTrianglesBelowFarSize" => narrow_needles,
+        "MinimumBasisAltitude" => minimum(altitudes),
         "Model" => basis.model,
         "Frame" => [collect(basis.frame[r, :]) for r in 1:3],
         "InputSHA256" => basis.hashes,
@@ -3794,7 +3898,7 @@ function trace_basis_achieved_sizes(points, index, matching_attribute, basis_rec
         "AchievedOverRequestedP50" => isempty(covered) ? nothing : sorted_median(covered),
         "Rule" => "mean edge length of the matching-surface elements whose centroid lies " *
                   "in a narrow basis triangle over the triangle's requested size " *
-                  "(TraceBasisSizeRatio x its shortest edge)")
+                  "(TraceBasisSizeRatio x its minimum altitude)")
 end
 
 # Size statistics of the tetrahedra whose centroid lies within `reach` of a
@@ -4101,8 +4205,9 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
         "BandCurves" => Dict{String, Any}(
             "Rule" => "the non-metal longitudinal feature curves (junction lines and footprint " *
                       "edges parallel to a metal edge) are 1D-meshed at Spacing = NormalSize, the " *
-                      "band law on the line, composed with the corner law; the metal ridges keep " *
-                      "the TangentialSize grid (they carry the tubes)",
+                      "band law on the line, composed with the corner law and, since decision 43, " *
+                      "the whole size field along the curve (census CurveSpacing); the metal " *
+                      "ridges keep the TangentialSize grid (they carry the tubes)",
             "Count" => length(band_curves),
             "TotalLength" => sum(norm(b .- a) for (a, b) in band_curve_segments; init=0.0),
             "Spacing" => lc_fine,
@@ -4833,8 +4938,22 @@ function generate_spatial_coupon(;
     # against the line is NormalSize transversally: on the lc_tangent ridge grid
     # the first layer was TangentialSize (the surface mesher cannot refine a curve's
     # nodes). The metal ridges keep the lc_tangent grid: they carry the tubes.
+    # Every explicitly placed curve follows min(its spacing, the composed size
+    # field on the curve) - CURVE_SPACING_RULE (decision 43): a basis sliver
+    # crossing a band curve is resolved at the trace rule along the curve too.
     junction_set = Set(junction_curves)
     band_curves = Int32[]
+    curve_spacing_records = Dict{String, Any}[]
+    function curve_size_law(point, spacing)
+        size = corner_isotropy ?
+            corner_curve_size(point, graded_points, corner_grading, spacing, corner_grading_slope) :
+            spacing
+        trace_basis_record === nothing ||
+            (size = trace_basis_size(point[1], point[2], point[3], size))
+        tube_band_record === nothing ||
+            (size = feature_band_size(point[1], point[2], point[3], size))
+        return size
+    end
     if lc_tangent > 0.0
         for curve in feature_curves
             curve in tube_curves && continue
@@ -4851,9 +4970,14 @@ function generate_spatial_coupon(;
                          for record in get(curve_surfaces, curve, Tuple{Int, Int32}[])))
                 band_curve && push!(band_curves, curve)
                 curve_spacing = band_curve ? lc_fine : lc_tangent
-                placed = corner_isotropy ? corner_isotropic_curve_nodes(
-                    curve, graded_points, corner_grading, curve_spacing,
-                    corner_grading_slope) : nothing
+                placed = composed_curve_nodes(
+                    curve, curve_spacing, point -> curve_size_law(point, curve_spacing),
+                    edge_growth_ratio, corner_isotropy ? graded_points : nothing, corner_grading)
+                curve_record = Dict{String, Any}(
+                    "Curve" => Int(curve),
+                    "Kind" => curve in junction_set ? "junction" : band_curve ? "band" : "metal",
+                    "Segment" => vcat(gmsh.model.getValue(1, curve, [lower_parameter[1]]),
+                                      gmsh.model.getValue(1, curve, [upper_parameter[1]])))
                 if placed === nothing
                     curve_length = gmsh.model.occ.getMass(1, curve)
                     point_count = max(2, ceil(Int, curve_length / curve_spacing) + 1)
@@ -4862,10 +4986,23 @@ function generate_spatial_coupon(;
                     ridge_parameters[curve] = grid
                     ridge_nodes[curve] = reshape(gmsh.model.getValue(1, curve, grid), 3, :)
                     push!(transfinite_curves, curve)
+                    uniform = curve_length / (point_count - 1)
+                    merge!(curve_record, Dict{String, Any}(
+                        "Length" => curve_length, "Spacing" => curve_spacing, "Graded" => false,
+                        "GridIntervals" => point_count - 1, "GridIntervalsKept" => point_count - 1,
+                        "InteriorNodes" => length(grid),
+                        "NodeSpacing" => Dict{String, Any}("Minimum" => uniform, "P50" => uniform,
+                                                           "Maximum" => uniform),
+                        "PrescribedMinimum" => curve_spacing,
+                        "AchievedOverPrescribed" => Dict{String, Any}(
+                            "Minimum" => uniform / curve_spacing, "P50" => uniform / curve_spacing,
+                            "Maximum" => uniform / curve_spacing)))
                 else
                     ridge_parameters[curve] = placed[1]
                     ridge_nodes[curve] = reshape(placed[2], 3, :)
+                    merge!(curve_record, placed[3])
                 end
+                push!(curve_spacing_records, curve_record)
             end
         end
     end
@@ -5262,6 +5399,12 @@ function generate_spatial_coupon(;
                 "GradingTransitionWidth" => process_core_width - process_fine_width,
                 "LongitudinalCurves" => length(longitudinal_curves),
                 "CornerIsotropicLongitudinalCurves" => length(corner_curves),
+                "CurveSpacing" => Dict{String, Any}(
+                    "Rule" => CURVE_SPACING_RULE,
+                    "GrowthRatio" => edge_growth_ratio,
+                    "Count" => length(curve_spacing_records),
+                    "GradedCurves" => count(record["Graded"] for record in curve_spacing_records),
+                    "Curves" => curve_spacing_records),
                 "JunctionCurves" => Dict{String, Any}(
                     "Count" => length(junction_curves),
                     "TotalLength" => junction_length,

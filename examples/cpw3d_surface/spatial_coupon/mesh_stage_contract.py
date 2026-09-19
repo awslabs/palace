@@ -1086,6 +1086,8 @@ def validate_edge_layer_quality_rule(seed_report, restoration_report, layer, qua
 
 
 TRACE_BASIS_RATIO_OPTION = "--trace-basis-size-ratio"
+# Report-only needle classification fraction recorded by the census (decision 43).
+TRACE_BASIS_NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE = 0.6
 
 
 def bound_trace_basis(report):
@@ -1434,6 +1436,8 @@ def validate_gmsh_build_census(build_report, census, semantic):
             _census_number(band_curves, "Spacing", "Band curves") != tubes["NormalSize"] or
             _count(band_curves.get("Count"), "Band curves") < 0):
         raise ValueError("Band curves are not 1D-meshed at NormalSize")
+    validate_curve_spacing(census, tubes["NormalSize"], tubes["TangentialSize"], ratio,
+                           band_curves["Count"])
     bands = tubes.get("Bands")
     first_layer = bands.get("JunctionFirstLayer") if isinstance(bands, dict) else None
     if (not isinstance(first_layer, dict) or
@@ -1492,6 +1496,52 @@ def validate_gmsh_build_census(build_report, census, semantic):
     return census
 
 
+def validate_curve_spacing(census, normal, tangential, growth, band_count):
+    """Decision 43: every explicitly 1D-meshed longitudinal curve records its spacing
+    against the composed size field: Count rows (the band curves among them, at
+    Spacing = NormalSize; metal parts at TangentialSize), each with positive
+    node-spacing statistics ordered Minimum <= P50 <= Maximum <= Spacing, a positive
+    PrescribedMinimum <= Spacing, AchievedOverPrescribed statistics with the maximum
+    within roundoff of 1 (every node interval <= the limited law it spans), a kept-grid
+    count within the grid intervals, and GradedCurves = the rows marked Graded; the
+    growth cap is the recipe's GrowthRatio."""
+    record = census.get("CurveSpacing")
+    if (not isinstance(record, dict) or not isinstance(record.get("Rule"), str) or
+            "composed" not in record["Rule"] or "gradient-limited" not in record["Rule"] or
+            _census_number(record, "GrowthRatio", "Curve spacing") != growth or
+            not isinstance(record.get("Curves"), list) or
+            _count(record.get("Count"), "Curve spacing rows") != len(record["Curves"]) or
+            _count(record.get("GradedCurves"), "Graded curves") !=
+            sum(1 for row in record["Curves"] if isinstance(row, dict) and row.get("Graded") is True)):
+        raise ValueError("Build census does not record the composed curve spacing rule")
+    kinds = {"junction": 0, "band": 0, "metal": 0}
+    for row in record["Curves"]:
+        if not isinstance(row, dict) or row.get("Kind") not in kinds or not isinstance(row.get("Graded"), bool):
+            raise ValueError("Curve spacing row is invalid")
+        kinds[row["Kind"]] += 1
+        spacing = _census_number(row, "Spacing", "Curve spacing row")
+        expected = normal if row["Kind"] in ("junction", "band") else tangential
+        nodes = row.get("NodeSpacing")
+        achieved = row.get("AchievedOverPrescribed")
+        if (spacing != expected or _census_number(row, "Length", "Curve spacing row") <= 0.0 or
+                not isinstance(nodes, dict) or not isinstance(achieved, dict) or
+                not 0.0 < _census_number(nodes, "Minimum", "Curve node spacing") <=
+                _census_number(nodes, "P50", "Curve node spacing") <=
+                _census_number(nodes, "Maximum", "Curve node spacing") <= spacing * (1.0 + 1e-9) or
+                not 0.0 < _census_number(row, "PrescribedMinimum", "Curve spacing row") <= spacing * (1.0 + 1e-9) or
+                not 0.0 < _census_number(achieved, "Minimum", "Curve achieved spacing") <=
+                _census_number(achieved, "P50", "Curve achieved spacing") <=
+                _census_number(achieved, "Maximum", "Curve achieved spacing") <= 1.0 + 1e-8 or
+                _count(row.get("GridIntervalsKept"), "Kept grid intervals") >
+                _count(row.get("GridIntervals"), "Grid intervals") or
+                _count(row.get("InteriorNodes"), "Curve interior nodes") < 0 or
+                (not row["Graded"] and row["GridIntervalsKept"] != row["GridIntervals"])):
+            raise ValueError("Curve spacing row does not follow the composed size field within its spacing")
+    if kinds["junction"] + kinds["band"] != band_count:
+        raise ValueError("Curve spacing rows do not cover the band curves")
+    return record
+
+
 def gmsh_build_junction_segments(census):
     """The census junction curves as straight segments [x0 y0 z0 x1 y1 z1]: Count
     finite nondegenerate segments whose total length is the recorded one and none
@@ -1537,6 +1587,51 @@ def validate_build_trace_basis(build_report, census):
                     any(isinstance(x, bool) or not isinstance(x, (int, float)) or not math.isfinite(x)
                         for x in v) for v in t) for t in triangles)):
         raise ValueError("Build census trace basis sizing differs from the bound trace basis")
+    validate_trace_basis_size_measure(record, ratio)
+    return record
+
+
+def trace_basis_altitudes_and_shortest_edges(triangles):
+    """(minimum altitude, shortest edge) of every mesh-frame basis triangle: the
+    altitude is 2 x area / longest edge, the hat-gradient scale of decision 43."""
+    rows = []
+    for triangle in triangles:
+        a, b, c = (tuple(float(x) for x in v) for v in triangle)
+        lengths = [math.dist(a, b), math.dist(b, c), math.dist(c, a)]
+        ab = [b[i] - a[i] for i in range(3)]
+        ac = [c[i] - a[i] for i in range(3)]
+        cross = [ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]]
+        doubled_area = math.sqrt(sum(x * x for x in cross))
+        if doubled_area <= 0.0 or min(lengths) <= 0.0:
+            raise ValueError("Build census trace basis triangle is degenerate")
+        rows.append((doubled_area / max(lengths), min(lengths)))
+    return rows
+
+
+def validate_trace_basis_size_measure(record, ratio):
+    """Decision 43: the trace rule's size measure is the basis triangle's minimum
+    altitude (named in SizeMeasure); MinimumBasisAltitude is the minimum over the
+    recorded mesh-frame triangles, MinimumRequestedSize = Ratio x it, and the
+    report-only needle counts (altitude < NeedleAltitudeOverShortestEdge x shortest
+    edge; all, and those below FarSize) are the recomputed ones."""
+    rows = trace_basis_altitudes_and_shortest_edges(record["MeshFrameTriangles"])
+    minimum_altitude = min(altitude for altitude, _ in rows)
+    fraction = _census_number(record, "NeedleAltitudeOverShortestEdge", "Trace basis sizing")
+    far = _census_number(record, "FarSize", "Trace basis sizing")
+    needles = [altitude < fraction * shortest for altitude, shortest in rows]
+    narrow_needles = [needle and ratio * altitude < far for needle, (altitude, _) in zip(needles, rows)]
+    if (fraction != TRACE_BASIS_NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE or
+            not isinstance(record.get("SizeMeasure"), str) or
+            "minimum altitude" not in record["SizeMeasure"] or
+            not isinstance(record.get("NeedleRule"), str) or "report-only" not in record["NeedleRule"] or
+            abs(_census_number(record, "MinimumBasisAltitude", "Trace basis sizing") - minimum_altitude) >
+            1e-12 * minimum_altitude or
+            abs(_census_number(record, "MinimumRequestedSize", "Trace basis sizing") - ratio * minimum_altitude) >
+            1e-12 * ratio * minimum_altitude or
+            _count(record.get("NeedleTriangles"), "Needle triangles") != sum(needles) or
+            _count(record.get("NeedleTrianglesBelowFarSize"), "Needle triangles below far") != sum(narrow_needles)):
+        raise ValueError("Build census trace basis size measure is not the minimum altitude of the "
+                         "recorded basis triangles (decision 43)")
     return record
 
 

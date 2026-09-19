@@ -86,18 +86,20 @@ end
         @test placed !== nothing
         parameters, coordinates = placed
         xyz = reshape(coordinates, 3, :)
-        # Beyond the law's reach every node sits on the transfinite lc_tangent grid.
+        # Beyond the first grid node past the law's reach (within one grid interval of
+        # it) every node sits on the transfinite lc_tangent grid.
         lower, upper = gmsh.model.getParametrizationBounds(1, curve)
         intervals = ceil(Int, gmsh.model.occ.getMass(1, curve) / LC_TANGENT)
         grid = collect(range(lower[1], upper[1]; length=intervals + 1))
         for (parameter, i) in zip(parameters, axes(xyz, 2))
-            norm(xyz[:, i] .- CORNER) > reach || continue
+            norm(xyz[:, i] .- CORNER) > reach + LC_TANGENT || continue
             @test minimum(abs.(grid .- parameter)) <= 1.0e-12 * (upper[1] - lower[1])
         end
-        # Inside the ball the spacing is the isotropic size.
+        # Inside the ball the spacing is the isotropic size, never above it (the gap
+        # is equidistributed with ceil(integral) intervals, decision 43).
         inside = sort!([xyz[1, i] for i in axes(xyz, 2) if norm(xyz[:, i] .- CORNER) <= RADIUS])
         if length(inside) >= 2
-            @test all(isapprox.(diff(inside), LC_FINE; rtol=0.05))
+            @test all(0.8 * LC_FINE .<= diff(inside) .<= LC_FINE * (1.0 + 1.0e-9))
         end
         add_explicit_curve_mesh!(curve, parameters, coordinates, next_node, point_nodes)
     end
@@ -108,6 +110,56 @@ end
     @test row["FullHeightTrianglesAwayFromCorners"] == 0
     @test row["InteriorNodesAwayFromCorners"] > row["Triangles"] ÷ 8
     @test all(>(0), row["InteriorNodeHistogramAlongEdge"][2:end])
+end
+
+@testset "Composed curve law grades a dip strictly inside a grid interval (decision 43)" begin
+    longitudinal = sidewall_face(8.0, 0.1)
+    curve = longitudinal[1]
+    lower, upper = gmsh.model.getParametrizationBounds(1, curve)
+    intervals = ceil(Int, gmsh.model.occ.getMass(1, curve) / LC_TANGENT)
+    grid = collect(range(lower[1], upper[1]; length=intervals + 1))
+    grid_x = [gmsh.model.getValue(1, curve, [g])[1] for g in grid]
+    # A trace-like dip: 20 nm at x = 3.05 growing at slope 4 back to the spacing
+    # within 20 nm, entirely inside the grid interval [3.0, 3.1]; the limiter
+    # (slope 0.5 at growth 2) widens the graded region to 3.05 +/- 0.16 = within
+    # the neighbouring intervals [2.8, 3.3], whose grid nodes keep the law < spacing.
+    dip = 3.05
+    law(point) = min(LC_TANGENT, 0.02 + 4.0 * abs(point[1] - dip))
+    grading = CornerGrading(0.0, 2.0, LC_FINE, RADIUS)
+    far_corner = [(100.0, 0.0, 0.0)]
+    @test composed_curve_nodes(curve, LC_TANGENT, p -> LC_TANGENT, 2.0, far_corner, grading) === nothing
+    placed = composed_curve_nodes(curve, LC_TANGENT, law, 2.0, far_corner, grading)
+    @test placed !== nothing
+    parameters, coordinates, record = placed
+    xyz = reshape(coordinates, 3, :)
+    x = sort!(collect(xyz[1, :]))
+    @test issorted(parameters)
+    # Every grid node outside the limiter's reach stays a node; the grid nodes at
+    # 2.9 / 3.0 / 3.1 / 3.2 lie under the limited law and are replaced (five grid
+    # intervals graded).
+    for g in grid_x[2:(end - 1)]
+        if abs(g - dip) > 0.16 + 1.0e-9
+            @test minimum(abs.(x .- g)) <= 1.0e-9
+        end
+    end
+    nodes = vcat(grid_x[1], x, grid_x[end])
+    spacings = diff(nodes)
+    @test record["GridIntervalsKept"] == intervals - 5
+    @test count(3.0 < xi < 3.1 for xi in x) >= 3
+    @test all(s -> s <= LC_TANGENT * (1.0 + 1.0e-9), spacings)
+    @test minimum(spacings) <= 0.03
+    # Each interval is no longer than the (unlimited) law at its midpoint, and the
+    # neighbour ratio stays within the growth cap along the whole curve.
+    midpoints = 0.5 .* (nodes[1:(end - 1)] .+ nodes[2:end])
+    @test all(spacings[i] <= law((midpoints[i], 0.0, 0.0)) * (1.0 + 1.0e-9) for i in eachindex(spacings))
+    ratios = spacings[2:end] ./ spacings[1:(end - 1)]
+    @test max(maximum(ratios), 1.0 / minimum(ratios)) <= 2.0 * (1.0 + 1.0e-9)
+    @test record["Graded"] && record["Spacing"] == LC_TANGENT && record["GridIntervals"] == intervals
+    @test record["NodeSpacing"]["Minimum"] == minimum(spacings)
+    @test record["NodeSpacing"]["Maximum"] <= LC_TANGENT * (1.0 + 1.0e-9)
+    @test record["AchievedOverPrescribed"]["Maximum"] <= 1.0 + 1.0e-8
+    @test record["PrescribedMinimum"] <= 0.03
+    gmsh.finalize()
 end
 
 @testset "Curves out of the law's reach keep the transfinite spacing" begin

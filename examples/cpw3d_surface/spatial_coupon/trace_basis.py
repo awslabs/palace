@@ -14,8 +14,12 @@ normal, local x the gap direction of the first edge.
 
 Size rule (TraceBasisSizeRatio, the only parameter, dimensionless): on the cut
 surface the local element size must not exceed TraceBasisSizeRatio times the
-shortest edge of the basis triangle containing the point.  The hat of a basis
-vertex varies linearly over every incident triangle, so its support is resolved
+minimum altitude of the basis triangle containing the point (2 x area / longest
+edge).  The hat of a basis vertex varies linearly over every incident triangle
+with gradient 1 / (its altitude), so the Dirichlet datum's variation scale in a
+triangle is the minimum altitude - the shortest edge equals it for right slivers
+(where the ratio 0.5 was calibrated) and overstates it for needles (an 11 nm
+altitude behind a 50 nm shortest edge, decision 43); the support is resolved
 where the hat actually varies only when the whole triangle is discretized at
 that scale; the per-edge alternative would resolve only the edges.  Away from
 the surface the size grows with the recipe's own grading law up to the far
@@ -156,11 +160,26 @@ def unique_edge_lengths(points, triangles):
     return np.linalg.norm(edges[:, 0] - edges[:, 1], axis=1)
 
 
+# Report-only classification of a basis triangle as a needle: minimum altitude below
+# this fraction of its shortest edge (the same constant as the Julia census).
+NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE = 0.6
+
+
+def triangle_minimum_altitudes(points, triangles):
+    """Minimum altitude of every basis triangle: 2 x area / longest edge, the
+    smallest vertex-to-opposite-edge distance = 1 / the largest hat gradient."""
+    xyz = np.asarray(points, dtype=float)[np.asarray(triangles, dtype=int)]
+    doubled_area = np.linalg.norm(np.cross(xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0]), axis=1)
+    if np.any(doubled_area <= 0):
+        raise ValueError("Degenerate trace basis triangle")
+    return doubled_area / triangle_edge_lengths(points, triangles).max(axis=1)
+
+
 def requested_sizes(points, triangles, ratio):
-    """TraceBasisSizeRatio times the shortest edge of every basis triangle."""
+    """TraceBasisSizeRatio times the minimum altitude of every basis triangle."""
     if not np.isfinite(ratio) or ratio <= 0:
         raise ValueError("TraceBasisSizeRatio must be a positive finite dimensionless number")
-    return ratio * triangle_edge_lengths(points, triangles).min(axis=1)
+    return ratio * triangle_minimum_altitudes(points, triangles)
 
 
 def point_triangle_distances(query, triangle):
@@ -196,8 +215,8 @@ def point_triangle_distances(query, triangle):
 def trace_basis_sizes(query, basis, ratio, far_size, growth):
     """Isotropic size prescribed by the trace basis at every query point.
 
-    size(x) = min(far_size, min over basis triangles T with ratio * minedge(T) <
-    far_size of ratio * minedge(T) + growth * distance(x, T)): the surface rule
+    size(x) = min(far_size, min over basis triangles T with ratio * minalt(T) <
+    far_size of ratio * minalt(T) + growth * distance(x, T)): the surface rule
     inside each narrow triangle, the recipe's grading law away from it, and the
     far size everywhere else (`growth` is the metric stage's effective far
     growth, so the blend is the existing far/grading law).
@@ -226,12 +245,18 @@ def basis_statistics(basis, ratio, far_size):
     points, triangles = basis["Points"], basis["Triangles"]
     edges = unique_edge_lengths(points, triangles)
     requested = requested_sizes(points, triangles, ratio)
+    altitudes = triangle_minimum_altitudes(points, triangles)
+    shortest = triangle_edge_lengths(points, triangles).min(axis=1)
     xyz = np.asarray(points)[np.asarray(triangles)]
     areas = 0.5 * np.linalg.norm(np.cross(xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0]), axis=1)
     narrow = requested < far_size
     return {"Vertices": int(len(points)), "Triangles": int(len(triangles)),
             "UniqueEdges": int(len(edges)),
             "MinimumBasisEdge": float(edges.min()), "MedianBasisEdge": float(np.median(edges)),
+            "MinimumBasisAltitude": float(altitudes.min()),
+            "NeedleTriangles": int(np.sum(altitudes < NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE * shortest)),
+            "NeedleTrianglesBelowFarSize": int(np.sum((altitudes < NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE * shortest) & narrow)),
+            "NeedleAltitudeOverShortestEdge": NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE,
             "BasisEdgesBelowFarSize": int(np.sum(edges < far_size)),
             "TrianglesBelowFarSize": int(narrow.sum()),
             "AreaBelowFarSize": float(areas[narrow].sum()),
@@ -244,9 +269,10 @@ def cut_surface_size_report(mesh_points, cut_triangles, basis, ratio, far_size, 
 
     The size of a cut triangle is its longest edge; for every basis triangle
     with a requested size below the far size, the cut triangles whose centroid
-    lies in it are measured along the direction of the basis triangle's
-    shortest edge (the direction across which its hats vary fastest), and the
-    largest extent over the requested size is the compliance ratio.  A basis
+    lies in it are measured across the basis triangle's minimum altitude (the
+    in-plane direction perpendicular to its longest edge, along which its
+    steepest hat varies), and the largest extent over the requested size is the
+    compliance ratio.  A basis
     triangle narrower than its requested size may centre no cut triangle; then
     only the count of cut triangles touching it is recorded.
     """
@@ -265,23 +291,26 @@ def cut_surface_size_report(mesh_points, cut_triangles, basis, ratio, far_size, 
         inside = np.flatnonzero(point_triangle_distances(centroids, corners) <= tolerance * scale)
         touching = np.stack([point_triangle_distances(xyz[:, k], corners) <= tolerance * scale
                              for k in range(3)], axis=1).any(axis=1)
-        shortest = int(np.argmin(lengths[index]))
-        first, last = corners[shortest], corners[(shortest + 1) % 3]
-        direction = (last - first) / np.linalg.norm(last - first)
+        longest_edge = int(np.argmax(lengths[index]))
+        first, last = corners[longest_edge], corners[(longest_edge + 1) % 3]
+        apex = corners[(longest_edge + 2) % 3]
+        edge = (last - first) / np.linalg.norm(last - first)
+        direction = (apex - first) - np.dot(apex - first, edge) * edge
+        direction /= np.linalg.norm(direction)
         extent = np.ptp(xyz[inside] @ direction, axis=1) if len(inside) else np.zeros(0)
         achieved = float(extent.max()) if len(inside) else None
         compliance = None if achieved is None else achieved / float(requested[index])
         worst = max(worst, compliance or 0.0)
         rows.append({"BasisTriangle": int(index) + 1, "RequestedSize": float(requested[index]),
                      "CutTriangles": int(len(inside)), "CutTrianglesTouching": int(touching.sum()),
-                     "MaximumExtentAlongShortestEdge": achieved,
+                     "MaximumExtentAcrossMinimumAltitude": achieved,
                      "ExtentOverRequested": compliance})
     return {"CutTriangles": int(len(cut_triangles)),
             "SizeMeasure": "longest edge of each cut-surface triangle",
             "Minimum": float(longest.min()), "Median": float(np.median(longest)),
             "Maximum": float(longest.max()),
             "ComplianceMeasure": "largest extent of the cut triangles centred in a basis "
-                                 "triangle along its shortest edge direction over the "
-                                 "requested size (reported, not gated)",
+                                 "triangle across its minimum altitude (perpendicular to its "
+                                 "longest edge) over the requested size (reported, not gated)",
             "MaximumExtentOverRequested": worst,
             "BasisTrianglesBelowFarSize": rows}
