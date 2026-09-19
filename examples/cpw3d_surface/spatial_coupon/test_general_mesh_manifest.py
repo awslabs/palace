@@ -2568,7 +2568,11 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
                            {**statement, "LayerThickness": {**layers, "MaximumNeighbourRatio": 2.5}},
                            {**statement, "LayerThickness": {**layers, "Minimum": layers["Minimum"] * .5}},
                            {**statement, "LayerThickness": {**layers, "Maximum": statement["TangentialSize"] * 2},
-                            "SpacingMaximum": statement["TangentialSize"] * 2}):
+                            "SpacingMaximum": statement["TangentialSize"] * 2},
+                           {**statement, "LayerThickness": {**layers, "LayersBelowTangentialSizeOverGrowthRatio":
+                                                            statement["Layers"] + 1}},
+                           {**statement, "LayerThickness": {k: v for k, v in layers.items()
+                                                            if k != "LayersBelowTangentialSizeOverGrowthRatio"}}):
                 self.assertFalse(tube_design_statement(broken))
             contract = load_semantic_contract(root / "base" / "semantic.json")
             binding = {"CaseId": "base", "Variant": "identity", "TransformSHA256": evidence["TransformSHA256"],
@@ -2641,6 +2645,21 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             rejected(lambda c: c["PrismTubes"]["Tubes"][0]["LayerThickness"].__setitem__("Maximum", .001),
                      "layer thickness record")
             rejected(lambda c: c["PrismTubes"]["Tubes"][0].pop("LayerThickness"), "layer thickness record")
+            rejected(lambda c: c["PrismTubes"]["LayerThickness"].__setitem__(
+                         "LayersBelowTangentialSizeOverGrowthRatio", c["PrismTubes"]["Layers"] + 1),
+                     "size-field layer rule")
+            rejected(lambda c: c["PrismTubes"]["LayerThickness"].pop("LayersBelowTangentialSizeOverGrowthRatio"),
+                     "non-negative integer count")
+            # Decision 41: an end on the box carries the surface layer (AtStart / AtEnd
+            # within the prescribed size); the end flags are recorded per row.
+            rejected(lambda c: c["PrismTubes"]["Tubes"][0].pop("EndsOnBox"), "surface layer at an end on the box")
+            surfaced = copy.deepcopy(census)
+            surfaced["PrismTubes"]["Tubes"][0]["EndsOnBox"] = [True, True]
+            self.assertIs(validate_gmsh_build_census(report, surfaced, semantic), surfaced)
+            rejected(lambda c: c["PrismTubes"]["Tubes"][0].__setitem__("EndsOnBox", [True, False]) or
+                     c["PrismTubes"]["Tubes"][0]["LayerThickness"].__setitem__(
+                         "AtStart", 1.5 * c["PrismTubes"]["Tubes"][0]["LayerThickness"]["PrescribedAtStart"]),
+                     "surface layer at an end on the box")
             rejected(lambda c: c["PrismTubes"]["Tubes"][0].__setitem__("Spacing", 1.0),
                      "exceed the tangential spacing")
             rejected(lambda c: c["PrismTubes"]["Section"].__setitem__("RingSizes", [.001, .003, .004]),

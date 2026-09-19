@@ -3280,8 +3280,10 @@ const TUBE_LAYER_RULE =
     "layer thickness = the composed size field on the tube axis (TubeAxisSizeLaw), " *
     "gradient-limited along the axis to (GrowthRatio - 1) / GrowthRatio and " *
     "equidistributed in the arclength integral of its reciprocal with ceil(integral) " *
-    "layers, so every layer is <= the size it spans (<= TangentialSize) and consecutive " *
-    "layers differ by at most GrowthRatio (MaximumNeighbourRatio, fail closed) - decision 40"
+    "layers, so every layer is <= the size it spans (<= TangentialSize); at a tube end on " *
+    "the outer box the end layer is the field at the surface (its minimum over the layer " *
+    "span) - decision 41; consecutive layers differ by at most GrowthRatio " *
+    "(MaximumNeighbourRatio, fail closed) - decision 40"
 const TUBE_AXIS_SIZE_LAW =
     "min(TangentialSize, corner-ball law of the semantic corners along the edge [CornerSize " *
     "with GrowthRatio to NormalSize inside CornerIsotropyRadius, the process-band slope " *
@@ -4042,17 +4044,22 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
         "LayerGrowthCap" => description["RingSizes"][2] / description["RingSizes"][1],
         "LayerThickness" => Dict{String, Any}(
             "Rule" => "over every layer of every tube: Minimum / P50 / Maximum thickness, the " *
-                      "largest neighbour ratio and the per-tube P50 achieved-over-prescribed " *
-                      "(layer thickness over the gradient-limited axis size at its midpoint); " *
+                      "largest neighbour ratio, the per-tube P50 achieved-over-prescribed " *
+                      "(layer thickness over the gradient-limited axis size at its midpoint) and " *
+                      "the number of layers below TangentialSize / GrowthRatio (the layers the " *
+                      "axis field refines beyond the tangential grid); " *
                       "per tube in Tubes[].LayerThickness (ends: AtStart / AtEnd against " *
-                      "PrescribedAtStart / PrescribedAtEnd)",
+                      "PrescribedAtStart / PrescribedAtEnd; at an end on the outer box, EndsOnBox, " *
+                      "the end layer is the surface value: AtStart / AtEnd <= the prescribed size)",
             "Minimum" => minimum(thicknesses),
             "P50" => sort(thicknesses)[cld(length(thicknesses), 2)],
             "Maximum" => maximum(thicknesses),
             "MaximumNeighbourRatio" => maximum(neighbour_ratios),
             "AchievedOverPrescribedP50Range" => [minimum(achieved_over_prescribed),
                                                  maximum(achieved_over_prescribed)],
-            "LayersBelowTangentialSize" => count(<(lc_tangent * (1.0 - 1.0e-6)), thicknesses)),
+            "LayersBelowTangentialSizeOverGrowthRatio" =>
+                count(<(lc_tangent / (description["RingSizes"][2] / description["RingSizes"][1])),
+                      thicknesses)),
         "InnermostArc" => inner_arc,
         "MaximumPrismEdgeAspect" => maximum(spacings) / min(inner_arc, description["RingSizes"][1]),
         "Volumes" => volume_census,
@@ -4788,15 +4795,20 @@ function generate_spatial_coupon(;
         nothing
     # Tube layers follow the composed size field on the axis (decision 40): the
     # tubes are re-stationed with the laws prepared above before their mesh is
-    # installed; the cross-section rings are unchanged.
+    # installed; the cross-section rings are unchanged. At an end on the outer box
+    # the end layer is the size at the surface (decision 41: the narrow hats decay
+    # from the cut surface at the trace rule's size there).
     tube_layer_records = Dict{String, Any}[]
     if prism_tubes
         for (k, (tube, section)) in enumerate(tubes)
+            on_box(s) = on_outer_box(vcat(tube_point(tube, 0.0, 0.0, s), tube_point(tube, 0.0, 0.0, s)),
+                                     lower, upper, outer_tolerance)
             stations, axis_positions, axis_sizes = graded_tube_stations(
                 tube.s_start, tube.s_end,
                 s -> tube_axis_size(tube_point(tube, 0.0, 0.0, s), lc_tangent, semantic_corners,
                                     corner_grading, corner_grading_slope),
-                lc_tangent, edge_growth_ratio)
+                lc_tangent, edge_growth_ratio;
+                surface_start=on_box(tube.s_start), surface_end=on_box(tube.s_end))
             graded = EdgeTube(tube, stations)
             tubes[k] = (graded, section)
             push!(tube_layer_records, tube_layer_statistics(graded, axis_positions, axis_sizes))

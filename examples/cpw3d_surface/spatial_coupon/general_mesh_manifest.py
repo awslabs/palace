@@ -958,7 +958,8 @@ def tube_design_statement(widths):
     positive prism and pyramid counts, the decision-40 layer record: the layer rule
     and axis size law named, LayerGrowthCap equal to the growth ratio, the layer
     thickness Minimum <= P50 <= Maximum <= TangentialSize equal to the spacing
-    extremes and the neighbour ratio within the cap) and the mesh's prism and pyramid
+    extremes, the neighbour ratio within the cap and the count of layers below
+    TangentialSize / GrowthRatio within the layer count) and the mesh's prism and pyramid
     counts equal to the census (CensusMatchesMesh).  Anything less is judged by the
     anisotropy gate as an ordinary band sample (and fails on Samples 0)."""
     from general_mesh_audit_producer import TUBE_DESIGN_GATE, TUBE_DESIGN_RULE
@@ -990,7 +991,10 @@ def tube_design_statement(widths):
                 for name in ("Minimum", "P50", "Maximum", "MaximumNeighbourRatio")) or
             not layers["Minimum"] <= layers["P50"] <= layers["Maximum"] <= widths["TangentialSize"] or
             layers["Minimum"] != widths["SpacingMinimum"] or layers["Maximum"] != widths["SpacingMaximum"] or
-            layers["MaximumNeighbourRatio"] > widths["LayerGrowthCap"]):
+            layers["MaximumNeighbourRatio"] > widths["LayerGrowthCap"] or
+            isinstance(layers.get("LayersBelowTangentialSizeOverGrowthRatio"), bool) or
+            not isinstance(layers.get("LayersBelowTangentialSizeOverGrowthRatio"), int) or
+            not 0 <= layers["LayersBelowTangentialSizeOverGrowthRatio"] <= widths["Layers"]):
         return False
     return True
 

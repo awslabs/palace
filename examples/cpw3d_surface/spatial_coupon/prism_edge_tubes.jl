@@ -161,6 +161,20 @@ end
 # boundaries (a resolution constant, not a mesh target).
 const TUBE_LAYER_SAMPLES_PER_SIZE = 8
 
+# The minimum of the sampled, piecewise-linear size over the axis interval [a, b].
+function sampled_size_minimum(positions, sizes, a, b)
+    function size_at(s)
+        i = clamp(searchsortedlast(positions, s), 1, length(positions) - 1)
+        fraction = (s - positions[i]) / (positions[i + 1] - positions[i])
+        return sizes[i] + fraction * (sizes[i + 1] - sizes[i])
+    end
+    lowest = min(size_at(a), size_at(b))
+    for i in searchsortedfirst(positions, a):searchsortedlast(positions, b)
+        lowest = min(lowest, sizes[i])
+    end
+    return lowest
+end
+
 # Layer boundaries following a size field along the tube axis (supervisor decision
 # 40): `size_at(s)` is the composed size prescribed at axis coordinate s, capped at
 # `spacing`; the field is sampled adaptively (TUBE_LAYER_SAMPLES_PER_SIZE samples
@@ -169,11 +183,21 @@ const TUBE_LAYER_SAMPLES_PER_SIZE = 8
 # 1 / size with ceil(integral) layers, so every layer is at most the largest size
 # it spans (strictly below spacing: the cap is spacing x (1 - 1e-9), a tube whose
 # length is an exact multiple of a uniform spacing takes one more layer than the
-# uniform constructor) and consecutive layers differ by a factor of at most
-# exp((growth - 1) / growth) < growth (the recorded MaximumNeighbourRatio is
-# checked against `growth`, fail closed). Returns the stations and the sampled
-# (s, limited size) pairs for the census.
-function graded_tube_stations(s_start, s_end, size_at, spacing, growth)
+# uniform constructor). At an end that lies on a surface (`surface_start` /
+# `surface_end`: the tube ends on the outer box) the end layer is instead the
+# size evaluated at the surface, at most the limited field over the layer span
+# (iterated t <- min over [s, s + t] from the surface value until stationary), so
+# that a field growing away from the surface is resolved from the surface, not
+# from the layer midpoint; the remaining interval is equidistributed as above
+# (decision 41). The neighbour ratio of consecutive layers is checked against
+# `growth` (fail closed; the recorded MaximumNeighbourRatio): with the limited
+# slope k a layer against a field growing at k spans at most 2 (e^k - 1) / k
+# times the size at its start, so an equidistributed layer is at most that
+# factor (1.30 at growth 2) above its predecessor of the same law, and at most
+# (1 + k) x that factor (1.95 at growth 2) above a surface layer.
+# Returns the stations and the sampled (s, limited size) pairs for the census.
+function graded_tube_stations(s_start, s_end, size_at, spacing, growth;
+                              surface_start::Bool=false, surface_end::Bool=false)
     s_end > s_start || error("tube interval must be increasing")
     spacing > 0.0 || error("tube spacing must be positive")
     growth > 1.0 || error("tube layer growth must exceed 1")
@@ -224,19 +248,45 @@ function graded_tube_stations(s_start, s_end, size_at, spacing, growth)
         sizes = refined_sizes
         limit!()
     end
+    # A surface layer: t <- min of the limited field over [s, s + t] from the
+    # surface value until stationary (non-increasing, bounded below by the field).
+    function surface_layer(s, direction)
+        thickness = sampled_size_minimum(positions, sizes, s, s)
+        for _ in 1:1000
+            span = sort([s, s + direction * thickness])
+            lowest = sampled_size_minimum(positions, sizes, span[1], span[2])
+            lowest >= thickness * (1.0 - 1.0e-9) && return thickness
+            thickness = lowest
+        end
+        error("tube surface layer at $s did not converge")
+    end
+    start_layer = surface_start ? surface_layer(Float64(s_start), 1.0) : 0.0
+    end_layer = surface_end ? surface_layer(Float64(s_end), -1.0) : 0.0
+    interior_start = s_start + start_layer
+    interior_end = s_end - end_layer
+    interior_end > interior_start ||
+        error("tube of length $(s_end - s_start) is shorter than its surface layers")
     cumulative = zeros(length(positions))
     for i in 2:length(positions)
         cumulative[i] = cumulative[i - 1] + (positions[i] - positions[i - 1]) *
                                             0.5 * (1.0 / sizes[i - 1] + 1.0 / sizes[i])
     end
-    layers = max(1, ceil(Int, cumulative[end]))
+    function cumulative_at(s)
+        i = clamp(searchsortedlast(positions, s), 1, length(positions) - 1)
+        fraction = (s - positions[i]) / (positions[i + 1] - positions[i])
+        return cumulative[i] + fraction * (cumulative[i + 1] - cumulative[i])
+    end
+    interior_integral = cumulative_at(interior_end) - cumulative_at(interior_start)
+    layers = max(1, ceil(Int, interior_integral))
     stations = [Float64(s_start)]
+    surface_start && push!(stations, interior_start)
     for k in 1:(layers - 1)
-        target = k * cumulative[end] / layers
+        target = cumulative_at(interior_start) + k * interior_integral / layers
         i = clamp(searchsortedlast(cumulative, target), 1, length(positions) - 1)
         fraction = (target - cumulative[i]) / (cumulative[i + 1] - cumulative[i])
         push!(stations, positions[i] + fraction * (positions[i + 1] - positions[i]))
     end
+    surface_end && push!(stations, interior_end)
     push!(stations, Float64(s_end))
     thicknesses = diff(stations)
     all(thicknesses .> 0.0) || error("tube layer placement produced an empty layer")

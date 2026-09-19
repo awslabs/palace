@@ -121,13 +121,22 @@ build census (`build-census`, the bound build report):
   P50 / maximum, the thickness and the prescribed size at both ends, the
   achieved-over-prescribed range (layer over the gradient-limited size at its
   midpoint) and the neighbour ratio, the tube end points with `EndsOnBox`, and over
-  all tubes `PrismTubes.LayerThickness`; `validate_gmsh_build_census` requires the
+  all tubes `PrismTubes.LayerThickness` (with
+  `LayersBelowTangentialSizeOverGrowthRatio`, the layers the axis field refines
+  below TangentialSize / GrowthRatio); `validate_gmsh_build_census` requires the
   rule strings, `LayerGrowthCap` = `--edge-growth-ratio`, every neighbour ratio
   within it, the thickness order Minimum <= P50 <= Maximum <= TangentialSize with
-  `SpacingMinimum` / `SpacingMaximum` equal to the extremes, and every row's record
-  with its Maximum equal to the row's Spacing. Four-edge (probe): layers at the
+  `SpacingMinimum` / `SpacingMaximum` equal to the extremes, the below-count within
+  the layer count, and every row's record with its Maximum equal to the row's
+  Spacing and, at an end on the box, the end layer within the prescribed size.
+  Decision 41 (surface layer): at a tube end on the outer box the end layer is the
+  field evaluated at the surface (at most the gradient-limited field over the layer
+  span, iterated from the surface value), not the size at the layer midpoint, so
+  that a field growing away from the cut surface (the trace rule at FarGrowth) is
+  resolved from the surface; the rest of the tube is equidistributed as before. No
+  new parameter. Four-edge (probe, 083874fee): layers at the
   (2,8) box end 28.2 nm (prescribed 21.7 nm by the trace rule, growing at
-  FarGrowth), 25 nm at the corner ends, 16 nm at the bottom-tube ends 16 nm before
+  FarGrowth; 21.7 nm under decision 41), 25 nm at the corner ends, 16 nm at the bottom-tube ends 16 nm before
   the on-box corners (10,0) / (0,8), 49.9 nm mid-tube; 1436 -> 1466 layers;
 - band curves 1D-meshed at the band law (review P1 of the phase-3 evidence): the
   non-metal longitudinal feature curves - the cut-surface / material-interface
@@ -235,7 +244,9 @@ corners (10,0) / (0,8) (the corner-ball shell size there; the top tubes are
 sqrt(16^2 + 100^2) nm from those corners, 25 nm); 49.9 nm mid-tube; per tube 162-205
 layers (before 159-200). Ten-edge: 40 tube ends - 4 on the box at 49.8 nm (50 nm
 prescribed), 34 corner ends at 24.9-25.0 nm, 2 at 15.9 nm (16 nm); per tube 23-165
-layers. Every layer is below TangentialSize (`LayersBelowTangentialSize` = all).
+layers. (The census field `LayersBelowTangentialSize` of these builds counted every
+layer - every layer is strictly below the cap by construction - and was replaced by
+`LayersBelowTangentialSizeOverGrowthRatio`, the field-refined layers.)
 Trace-apex shells (below) tightened: four-edge 25-50 / 50-100 nm longest edge P50
 38.6 -> 32.6 nm / 49.3 -> 42.7 nm, ten-edge 49.0 -> 35.8 nm / 62.9 -> 54.0 nm; the
 four-edge tetrahedra minimum scaled Jacobian rose from 0.027 to 0.044 (25 nm layers

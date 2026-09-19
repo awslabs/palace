@@ -152,6 +152,43 @@ end
     @test maximum(thickness[2:end] ./ thickness[1:(end - 1)]) <= 2.0
     @test minimum(thickness[2:end] ./ thickness[1:(end - 1)]) >= 0.5
     @test minimum(thickness) ≈ 0.001 rtol = 0.15
+    # A surface end (decision 41): the trace rule prescribes 0.0217 on the cut
+    # surface at s = 0 growing at FarGrowth 0.5 into the volume. Equidistribution
+    # puts the first layer at its midpoint size (1.3 x the surface value); with
+    # `surface_start` the first layer is the surface value, the second layer within
+    # the growth, the rest equidistributed and the length preserved.
+    surface_field(s) = min(0.05, 0.0217 + 0.5 * s)
+    midpoint, _, _ = graded_tube_stations(0.0, 1.0, surface_field, 0.05, 2.0)
+    @test 1.2 * 0.0217 <= diff(midpoint)[1] <= 1.4 * 0.0217
+    surfaced, positions, sizes = graded_tube_stations(0.0, 1.0, surface_field, 0.05, 2.0;
+                                                      surface_start=true)
+    thickness = diff(surfaced)
+    @test thickness[1] ≈ 0.0217 atol = 1.0e-12
+    @test 1.0 < thickness[2] / thickness[1] <= 2.0
+    @test all(thickness .> 0.0) && all(thickness .< 0.05) && surfaced[end] == 1.0
+    @test length(surfaced) in (length(midpoint), length(midpoint) + 1)
+    statistics = tube_layer_statistics(EdgeTube(tube, surfaced), positions, sizes)
+    @test statistics["AtStart"] <= statistics["PrescribedAtStart"] ≈ 0.0217
+    @test statistics["AchievedOverPrescribed"]["Minimum"] < 0.9      # the surface layer
+    @test statistics["MaximumNeighbourRatio"] <= 2.0
+    # A surface end where the field dips below the surface value within the first
+    # layer: the layer is at most the field over its span (0.04 at the surface, 0.02
+    # at s = 0.04: the iteration 0.04 -> 0.02 stops at 0.02, the field over
+    # [0, 0.02] being >= 0.03); both ends on a surface; the end layer at the far end.
+    dip_field(s) = min(0.05, 0.02 + 0.5 * abs(s - 0.04))
+    dipped, positions, sizes = graded_tube_stations(0.0, 1.0, dip_field, 0.05, 2.0;
+                                                    surface_start=true)
+    @test diff(dipped)[1] ≈ 0.02 rtol = 0.05                 # (sampled field minimum)
+    @test diff(dipped)[1] <= minimum(dip_field.(range(0.0, diff(dipped)[1]; length=201)))
+    both, _, _ = graded_tube_stations(0.0, 1.0, s -> min(0.05, 0.0217 + 0.5 * min(s, 1.0 - s)),
+                                      0.05, 2.0; surface_start=true, surface_end=true)
+    @test diff(both)[1] ≈ 0.0217 atol = 1.0e-12
+    @test diff(both)[end] ≈ 0.0217 atol = 1.0e-12
+    @test maximum(diff(both)[2:end] ./ diff(both)[1:(end - 1)]) <= 2.0
+    @test_throws ErrorException graded_tube_stations(0.0, 0.03, surface_field, 0.05, 2.0;
+                                                     surface_start=true, surface_end=true)
+    # Without the flags the stations are unchanged by the surface option.
+    @test graded_tube_stations(0.0, 1.0, surface_field, 0.05, 2.0)[1] == midpoint
     # Guards: a non-positive field, a non-increasing station list, wrong ends.
     @test_throws ErrorException graded_tube_stations(0.0, 1.0, s -> 0.0, 0.05, 2.0)
     @test_throws ErrorException graded_tube_stations(0.0, 1.0, s -> 0.05, 0.05, 1.0)

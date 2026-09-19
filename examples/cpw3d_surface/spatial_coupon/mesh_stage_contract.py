@@ -1342,7 +1342,10 @@ def validate_gmsh_build_census(build_report, census, semantic):
     # Decision 40: the layers follow the composed size field on the tube axis. Every
     # tube records its layer thickness statistics (the largest layer is its Spacing,
     # the neighbour ratio within the growth ratio), the record names the layer rule
-    # and the axis size law, and the growth cap is the ring growth ratio.
+    # and the axis size law, and the growth cap is the ring growth ratio; the count
+    # of layers below TangentialSize / GrowthRatio is a count within the layers.
+    # Decision 41: at a tube end on the outer box (EndsOnBox) the end layer is the
+    # surface value of the field, at most the prescribed size there.
     layer_statistics = tubes.get("LayerThickness")
     if (not all(isinstance(tubes.get(name), str) and tubes[name]
                 for name in ("LayerRule", "TubeAxisSizeLaw")) or
@@ -1353,10 +1356,13 @@ def validate_gmsh_build_census(build_report, census, semantic):
             _census_number(layer_statistics, "P50", "Tube layer thickness") <=
             _census_number(layer_statistics, "Maximum", "Tube layer thickness") <= tubes["TangentialSize"] or
             _census_number(tubes, "SpacingMinimum", "Prism tube record") != layer_statistics["Minimum"] or
-            _census_number(tubes, "SpacingMaximum", "Prism tube record") != layer_statistics["Maximum"]):
+            _census_number(tubes, "SpacingMaximum", "Prism tube record") != layer_statistics["Maximum"] or
+            _count(layer_statistics.get("LayersBelowTangentialSizeOverGrowthRatio"),
+                   "Tube layers below TangentialSize / GrowthRatio") > _count(tubes.get("Layers"), "Tube layers")):
         raise ValueError("Prism tube layers do not record the size-field layer rule within the growth ratio")
     for row in rows:
         layers = row.get("LayerThickness")
+        ends_on_box = row.get("EndsOnBox")
         if (not isinstance(layers, dict) or
                 any(_census_number(layers, name, "Tube row layer thickness") <= 0.0
                     for name in ("Minimum", "P50", "Maximum", "AtStart", "AtEnd",
@@ -1365,8 +1371,13 @@ def validate_gmsh_build_census(build_report, census, semantic):
                 _census_number(layers, "MaximumNeighbourRatio", "Tube row layer thickness") > ratio or
                 not isinstance(layers.get("AchievedOverPrescribed"), dict) or
                 any(_census_number(layers["AchievedOverPrescribed"], name, "Tube row achieved layers") <= 0.0
-                    for name in ("Minimum", "P50", "Maximum"))):
-            raise ValueError("Prism tube row lacks its layer thickness record within the growth ratio")
+                    for name in ("Minimum", "P50", "Maximum")) or
+                not isinstance(ends_on_box, list) or len(ends_on_box) != 2 or
+                not all(isinstance(flag, bool) for flag in ends_on_box) or
+                (ends_on_box[0] and layers["AtStart"] > layers["PrescribedAtStart"] * (1.0 + 1e-9)) or
+                (ends_on_box[1] and layers["AtEnd"] > layers["PrescribedAtEnd"] * (1.0 + 1e-9))):
+            raise ValueError("Prism tube row lacks its layer thickness record within the growth ratio "
+                             "with the surface layer at an end on the box")
     section = tubes.get("Section")
     rings = _count(section.get("Rings") if isinstance(section, dict) else None, "Tube rings")
     sizes = section.get("RingSizes") if isinstance(section, dict) else None
