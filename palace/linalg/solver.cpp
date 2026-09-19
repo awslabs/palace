@@ -203,7 +203,7 @@ void MfemWrapperSolver<OperType>::DropSmallEntries()
   num_dropped_entries = nnz_before - nnz_after;
   Mpi::Print(" Dropping {} small entries in sparse matrix out of {} ({:.1f}%)\n",
              num_dropped_entries, nnz_before,
-             (double)(num_dropped_entries) / nnz_before * 100.0);
+             static_cast<double>(num_dropped_entries) / nnz_before * 100.0);
 }
 
 }  // namespace palace

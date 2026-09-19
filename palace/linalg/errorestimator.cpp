@@ -191,7 +191,7 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
   // (recovery) and populate the corresponding grid functions.
   BlockTimer bt(Timer::ESTIMATION);
   projector.Mult(F, G);
-  if constexpr (std::is_same<VecType, ComplexVector>::value)
+  if constexpr (std::is_same_v<VecType, ComplexVector>)
   {
     fespace.GetProlongationMatrix()->Mult(F.Real(), F_gf.Real());
     fespace.GetProlongationMatrix()->Mult(F.Imag(), F_gf.Imag());
@@ -230,7 +230,7 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
       PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &F_gf_vec));
       PalaceCeedCall(ceed, CeedOperatorGetFieldByName(sub_ops[0], "u_2", &field));
       PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &G_gf_vec));
-      if constexpr (std::is_same<VecType, ComplexVector>::value)
+      if constexpr (std::is_same_v<VecType, ComplexVector>)
       {
         ceed::InitCeedVector(F_gf.Real(), ceed, &F_gf_vec, false);
         ceed::InitCeedVector(G_gf.Real(), ceed, &G_gf_vec, false);
@@ -251,7 +251,7 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
     PalaceCeedCall(ceed,
                    CeedOperatorApplyAdd(integ_op[utils::GetThreadNum()], CEED_VECTOR_NONE,
                                         estimates_vec, CEED_REQUEST_IMMEDIATE));
-    if constexpr (std::is_same<VecType, ComplexVector>::value)
+    if constexpr (std::is_same_v<VecType, ComplexVector>)
     {
       ceed::InitCeedVector(F_gf.Imag(), ceed, &F_gf_vec, false);
       ceed::InitCeedVector(G_gf.Imag(), ceed, &G_gf_vec, false);
@@ -301,7 +301,7 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
 
       // Create libCEED vector wrappers for use with libCEED operators.
       CeedVector E_gf_vec, D_gf_vec;
-      if constexpr (std::is_same<VecType, ComplexVector>::value)
+      if constexpr (std::is_same_v<VecType, ComplexVector>)
       {
         ceed::InitCeedVector(E_gf.Real(), ceed, &E_gf_vec);
         ceed::InitCeedVector(D_gf.Real(), ceed, &D_gf_vec);
@@ -419,7 +419,7 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
 
       // Create libCEED vector wrappers for use with libCEED operators.
       CeedVector B_gf_vec, H_gf_vec;
-      if constexpr (std::is_same<VecType, ComplexVector>::value)
+      if constexpr (std::is_same_v<VecType, ComplexVector>)
       {
         ceed::InitCeedVector(B_gf.Real(), ceed, &B_gf_vec);
         ceed::InitCeedVector(H_gf.Real(), ceed, &H_gf_vec);

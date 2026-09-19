@@ -27,9 +27,8 @@ class IterativeSolver : public Solver<OperType>
 {
 protected:
   using RealType = double;
-  using ScalarType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                std::complex<RealType>, RealType>::type;
+  using ScalarType = std::conditional_t<std::is_same_v<OperType, ComplexOperator>,
+                                        std::complex<RealType>, RealType>;
 
   // MPI communicator associated with the solver.
   MPI_Comm comm;

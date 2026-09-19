@@ -703,7 +703,7 @@ int SlepcEPSSolverBase::Solve()
 
   // Compute and store the eigenpair residuals.
   RescaleEigenvectors(num_conv);
-  return (int)num_conv;
+  return static_cast<int>(num_conv);
 }
 
 std::complex<double> SlepcEPSSolverBase::GetEigenvalue(int i) const
@@ -1184,7 +1184,7 @@ int SlepcPEPSolverBase::Solve()
 
   // Compute and store the eigenpair residuals.
   RescaleEigenvectors(num_conv);
-  return (int)num_conv;
+  return static_cast<int>(num_conv);
 }
 
 std::complex<double> SlepcPEPSolverBase::GetEigenvalue(int i) const
@@ -1528,7 +1528,7 @@ int SlepcNEPSolverBase::Solve()
   }
 
   // Compute and store the ordered eigenpair residuals.
-  const int nev = (int)num_conv;
+  const int nev = static_cast<int>(num_conv);
   perm = std::make_unique<int[]>(nev);
   std::vector<std::complex<double>> eig(nev);
   for (int i = 0; i < nev; i++)
