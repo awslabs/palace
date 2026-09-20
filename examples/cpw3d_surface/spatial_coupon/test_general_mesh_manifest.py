@@ -12,6 +12,7 @@ import subprocess
 import sys
 from types import SimpleNamespace
 import tempfile
+import tomllib
 import unittest
 
 import meshio
@@ -84,10 +85,13 @@ TRACE_BASIS_BINDINGS = {"BasisContract": ("source-basis-contract", "--trace-basi
 TRACE_BASIS_SIZE_RATIO = 1.0
 # Fixture Gmsh-only build options (decision 38): the tube inner size equals the corner
 # size, the extrusion spacing is the tangential size, the far size and growth close the
-# band laws, the element cap is the fixture manifest's.
+# band laws, the element cap is the fixture manifest's; the sharp vertical process values
+# the recipe scope classifies the input by (decision 48).
 GMSH_BUILD_OPTIONS = ("--prism-tubes", "true", "--lc-tangent", str(CORNER_ISOTROPY_RADIUS),
                       "--lc-far", "1.0", "--edge-size", "0.001", "--edge-growth-ratio", "2",
-                      "--corner-size", "0.001", "--far-growth", "0.5", "--max-elements", "1000")
+                      "--corner-size", "0.001", "--far-growth", "0.5", "--max-elements", "1000",
+                      "--sidewall-angle", "90", "--top-radius", "0", "--bottom-radius", "0",
+                      "--overetch", "0.002")
 ANGLE = 0.63
 ROTATION = [math.cos(ANGLE), -math.sin(ANGLE), 0, 0,
             math.sin(ANGLE), math.cos(ANGLE), 0, 0,
@@ -112,15 +116,23 @@ class FixtureMatrixMixin:
                 writer.writerow([i + 1, slot, conductor, (i + .5) * scale,
                                  y * scale, 0, 0, 1, 0, 1, 0, 0, 1,
                                  -.5 * scale, .5 * scale])
+        # A closed metal loop: the side (10s, 0) -> (2s, 0) lies on the fixture box face
+        # y = 0 and (2s, .001s) -> (10s, .001s) on y = .001s; the two other sides are
+        # straight metal edges (two tubes each, decision 48).
         (directory / "boundary.csv").write_text(
             "Loop,Vertex,Conductor,Plane,Hole,Class,X,Y\n"
             f"1,1,1,0,0,Physical,{10 * scale},0\n"
-            f"1,2,1,0,0,Continuation,{2 * scale},0\n")
+            f"1,2,1,0,0,Continuation,{2 * scale},0\n"
+            f"1,3,1,0,0,Continuation,{2 * scale},{.001 * scale}\n"
+            f"1,4,1,0,0,Continuation,{10 * scale},{.001 * scale}\n")
         (directory / "mask.csv").write_text(
             "Facet,Vertex,Conductor,Plane,X,Y\n"
             f"1,1,1,0,0,0\n1,2,1,0,{10 * scale},0\n1,3,1,0,0,{10 * scale}\n")
+        # The sharp vertical process values of the fixture (the recipe scope classifies
+        # a case by them, decision 48) match the fixture build command's options.
         (directory / "process.toml").write_text(
-            f'Units = "um"\nMetalThickness = {0.004 * scale}\n')
+            f'Units = "um"\nMetalThickness = {0.004 * scale}\nOveretch = 0.002\n'
+            'SidewallAngle = 90.0\nTopRounding = 0.0\nTrenchRounding = 0.0\n')
         recipe = {"Version": 1, "GeometryOrder": 1,
                   "NormalSizeOverThickness": .25,
                   "TangentialSizeOverNormalSize": 4.0}
@@ -2571,8 +2583,21 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
             output = Path(temporary) / "preflight"
             self.assertTrue(run_manifest(self.args(manifest_path, output, preflight=True)))
             summary = json.loads((output / "summary.json").read_text())
+            # Decision 48: a case outside the recipe scope is recorded as an unsupported
+            # class (not a preflight failure of the matrix), distinctly from any other error.
+            self.assertEqual(summary["UnsupportedClassCases"],
+                             {"hole": "HoleLoops", "rounded-strip": "TopRounding",
+                              "opposed-layers": "DownwardLayers"})
+            self.assertTrue(summary["PreflightPassed"])
             self.assertEqual({case["Id"] for case in summary["Cases"] if not case["Passed"]},
-                             set())
+                             set(summary["UnsupportedClassCases"]))
+            for case in summary["Cases"]:
+                self.assertIn("ExteriorLoops", case["Scope"]["ExhibitedClasses"], case["Id"])
+                if case["Id"] in summary["UnsupportedClassCases"]:
+                    self.assertEqual(case["Error"], f"unsupported class {case['UnsupportedClass']}")
+                    self.assertNotIn("BuildCostEstimate", case)
+                else:
+                    self.assertEqual(case["Scope"]["UnsupportedClasses"], [])
             remote = {case["Id"]: case for case in summary["Cases"]
                       if case["Id"] in {"four-edge-9d2cb9bbb3fe",
                                         "ten-edge-6791f1c84123"}}
@@ -2708,6 +2733,43 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             self.assertTrue(any("binding changed" in failure or "differ" in failure
                                 for failure in report["Failures"]), report["Failures"])
 
+    def test_recipe_scope_classification_and_guard_ids(self):
+        """Decision 48: the input classes are read from the frozen inputs alone, the
+        guarded classes are the mesher's ScopeGuard ids, and a guard id is parsed from a
+        mesher message distinctly from any other failure text."""
+        from mesh_stage_contract import (RECIPE_SCOPE_GUARDS, RECIPE_SCOPE_SUPPORTED_CLASSES,
+                                         scope_classes, scope_classes_of_case_inputs,
+                                         scope_guard_in_text, unsupported_scope_classes)
+        self.assertFalse(set(RECIPE_SCOPE_GUARDS) & set(RECIPE_SCOPE_SUPPORTED_CLASSES))
+        signature = [{"Slot": "0", "Conductor": "1", "Pz": "0", "Nz": "1"}]
+        boundary = [{"Loop": "1", "Hole": "0", "Class": "Physical"}]
+        self.assertEqual(scope_classes(signature, boundary, overetch=.03), ["ExteriorLoops"])
+        holed = boundary + [{"Loop": "2", "Hole": "1", "Class": "Physical"}]
+        self.assertEqual(scope_classes(signature, holed, overetch=.03), ["ExteriorLoops", "HoleLoops"])
+        opposed = signature + [{"Slot": "1", "Conductor": "1", "Pz": "0.6", "Nz": "-1"}]
+        self.assertEqual(scope_classes(opposed, boundary, overetch=.03),
+                         ["DownwardLayers", "ExteriorLoops", "MultipleLayers", "MultipleSlots"])
+        self.assertEqual(scope_classes(signature, boundary, fabricated=False, sidewall_angle=80.0,
+                                       top_rounding=.005, trench_rounding=.001, overetch=0.0,
+                                       device_footprint=True, trace_basis=True),
+                         ["DeviceFootprint", "ExteriorLoops", "NoTrench", "SlopedSidewalls", "ThinMetal",
+                          "TopRounding", "TraceBasis", "TrenchRounding"])
+        self.assertEqual(unsupported_scope_classes(["ExteriorLoops", "TopRounding", "HoleLoops"]),
+                         ["HoleLoops", "TopRounding"])
+        testdata = HERE / "testdata"
+        for case, expected in (("hole", ["HoleLoops"]), ("opposed-layers", ["DownwardLayers"]),
+                               ("rounded-strip", ["TopRounding"]), ("concave-multislot", [])):
+            process = tomllib.loads((testdata / case / "process.toml").read_text())
+            classes = scope_classes_of_case_inputs(testdata / case / "mesh-signature.csv",
+                                                  testdata / case / "plan-view-boundary.csv", process,
+                                                  device_footprint=False, trace_basis=False)
+            self.assertEqual(unsupported_scope_classes(classes), expected, case)
+        self.assertEqual(scope_guard_in_text("ERROR: ScopeGuard[HoleLoops]: interior conductor loops ..."),
+                         "HoleLoops")
+        self.assertIsNone(scope_guard_in_text("ERROR: Semantic corner is absent from the seed CAD"))
+        with self.assertRaisesRegex(ValueError, "unknown scope guard"):
+            scope_guard_in_text("ScopeGuard[NotAGuard]: ...")
+
     def test_gmsh_build_census_contract_negatives(self):
         from mesh_stage_contract import validate_gmsh_build_census
         with tempfile.TemporaryDirectory() as temporary:
@@ -2808,6 +2870,44 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             rejected(lambda c: c["CornerGrading"].__setitem__("CornerSize", .002),
                      "corner grading differs from the build command")
             rejected(lambda c: c["PrismTubes"]["SizeLaws"].pop("BandRule"), "size laws are not recorded")
+            # Decision 48: the recipe Scope record - the class lists of the contract, a
+            # statement per guard, the exhibited classes recomputed from the bound inputs
+            # (none guarded), the per-loop straight sides and TubeCount = 2 x their sum.
+            from mesh_stage_contract import (RECIPE_SCOPE_GUARDS, RECIPE_SCOPE_SUPPORTED_CLASSES,
+                                             scope_classes_of_build, unsupported_scope_classes)
+            scope = census["Scope"]
+            self.assertEqual(scope["Recipe"], "prism-tubes")
+            self.assertEqual(scope["SupportedClasses"], list(RECIPE_SCOPE_SUPPORTED_CLASSES))
+            self.assertEqual(scope["GuardedClasses"], list(RECIPE_SCOPE_GUARDS))
+            self.assertEqual(scope["ExhibitedClasses"], scope_classes_of_build(report))
+            self.assertIn("ExteriorLoops", scope["ExhibitedClasses"])
+            self.assertEqual(unsupported_scope_classes(scope["ExhibitedClasses"]), [])
+            self.assertEqual([loop["Sides"] for loop in scope["MetalLoops"]], [2])
+            self.assertEqual(census["PrismTubes"]["TubeCount"], 4)
+            rejected(lambda c: c.pop("Scope"), "lacks the recipe Scope record")
+            rejected(lambda c: c["Scope"].__setitem__("Recipe", "tetrahedral-edge-layer"), "names another recipe")
+            rejected(lambda c: c["Scope"]["SupportedClasses"].append("HoleLoops"), "classes differ from the recipe scope")
+            rejected(lambda c: c["Scope"]["GuardedClasses"].remove("TopRounding"), "classes differ from the recipe scope")
+            rejected(lambda c: c["Scope"]["Guards"][0].__setitem__("Statement", ""), "guards lack their id")
+            rejected(lambda c: c["Scope"]["Guards"][0].__setitem__("DetectedFrom", "build"), "guards lack their id")
+            rejected(lambda c: c["Scope"]["ExhibitedClasses"].append("TopRounding"), "exhibited classes differ")
+            rejected(lambda c: c["Scope"]["ExhibitedClasses"].remove("ExteriorLoops"), "exhibited classes differ")
+            rejected(lambda c: c["Scope"]["MetalLoops"][0].__setitem__("Sides", 3), "metal loops differ")
+            rejected(lambda c: c["Scope"]["MetalLoops"][0].__setitem__("Hole", True), "hole loops differ")
+            rejected(lambda c: c["PrismTubes"].__setitem__("TubeCount", 2) or c["PrismTubes"]["Tubes"].__delitem__(slice(2, 4)),
+                     "twice the straight sides")
+            # A guarded class in the bound inputs is rejected even when recorded consistently.
+            holed_report = copy.deepcopy(report)
+            holed_boundary = Path(temporary) / "holed-boundary.csv"
+            rows = Path(report["Inputs"]["source-boundary"]["Path"]).read_text().splitlines()
+            holed_boundary.write_text("\n".join(rows + [row.replace(",1,0,0,", ",1,0,1,").replace("1,", "2,", 1)
+                                                          for row in rows[1:]]) + "\n")
+            holed_report["Inputs"]["source-boundary"]["Path"] = str(holed_boundary)
+            holed = copy.deepcopy(census)
+            holed["Scope"]["ExhibitedClasses"] = scope_classes_of_build(holed_report)
+            self.assertIn("HoleLoops", holed["Scope"]["ExhibitedClasses"])
+            with self.assertRaisesRegex(ValueError, "exhibits a class the recipe guards"):
+                validate_gmsh_build_census(holed_report, holed, semantic)
             # The unbound-by-option tube parameters are bound to the option default or the
             # mesher constants: sector angle, pyramid height rule, band growth, protected distance.
             rejected(lambda c: c["PrismTubes"]["Section"].__setitem__("SectorDegrees", 45.0),

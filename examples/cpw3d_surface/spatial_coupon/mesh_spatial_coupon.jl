@@ -3629,6 +3629,122 @@ end
 # tube cap centre (the cap centre is a graded point of the corner law) and from
 # CornerSize at the corner, so the cap triangles meet cells of their own size.
 
+# Recipe scope (supervisor decision 48): every fail-closed guard of the prism-tube
+# recipe is a recorded statement. RECIPE_SCOPE_GUARDS lists the geometry classes
+# the recipe does not build, keyed by a stable id that the guard's error message
+# carries as "ScopeGuard[<id>]" (scope_error), so that the build drivers record an
+# unsupported class distinctly from any other failure; DetectedFrom says whether
+# the class is visible in the frozen inputs ("inputs") or only in a derived
+# quantity during the build ("build"). RECIPE_SCOPE_SUPPORTED_CLASSES are the
+# input classes the recipe builds; exhibited_scope_classes lists the classes an
+# input exhibits from the frozen inputs alone. The census Scope block records
+# them and mesh_stage_contract.py binds the same lists.
+const RECIPE_SCOPE_RECIPE = "prism-tubes"
+const RECIPE_SCOPE_SUPPORTED_CLASSES = [
+    "ContinuationVertices", "DeviceFootprint", "ExteriorLoops", "MultipleConductors",
+    "MultipleLayers", "MultipleSlots", "TraceBasis"]
+const RECIPE_SCOPE_GUARDS = [
+    ("HoleLoops", "inputs",
+     "interior conductor loops (holes in the metal): the tube outward normal is derived " *
+     "for exterior loops only"),
+    ("DownwardLayers", "inputs",
+     "process layers with Nz = -1 (flip-chip): the tube frame and the tube planes assume " *
+     "upward layers"),
+    ("TopRounding", "inputs",
+     "rounded metal top edges (TopRounding > 0): the tube rings surround a sharp edge"),
+    ("TrenchRounding", "inputs",
+     "rounded trench edges (TrenchRounding > 0): the bottom tube splits its substrate and " *
+     "vacuum sectors at a sharp trench wall"),
+    ("SlopedSidewalls", "inputs",
+     "sidewall angle below 90 degrees: the tube sections assume vertical metal faces"),
+    ("ThinMetal", "inputs",
+     "thin (non-fabricated) metal: no sidewall and no top / bottom edge pair to tube"),
+    ("NoTrench", "inputs",
+     "Overetch 0: the bottom tube needs an etched trench on its substrate side"),
+    ("ShallowTrench", "build",
+     "trench shallower than the tube radius plus the pyramid height: the pyramids would " *
+     "reach the trench floor"),
+    ("NarrowTransverseBound", "build",
+     "the tube inner size does not fit min(Overetch, MetalThickness / 2, " *
+     "CornerIsotropyRadius): no ring fits"),
+    ("FreeEdgeEnds", "build",
+     "a metal edge end that is neither a semantic corner nor on the outer box"),
+    ("ShortEdges", "build",
+     "a metal edge shorter than the corner clearances at its ends: no tube interval remains"),
+    ("FootprintWithoutEdge", "build",
+     "an explicit etch footprint with no side coincident with a metal edge")]
+const RECIPE_SCOPE_RULE =
+    "the prism-tube recipe builds every input whose classes are all in SupportedClasses; " *
+    "an input exhibiting a class in GuardedClasses fails closed at the guard whose " *
+    "error message carries ScopeGuard[<Id>] (Guards); ExhibitedClasses are the classes " *
+    "of this input among both lists, from the frozen inputs (loops, layers, process); " *
+    "MetalLoops counts per plan-view loop the straight sides not on the outer box, and " *
+    "TubeCount = 2 x their sum (a top and a bottom tube per side of every loop)"
+
+scope_guard_statement(id) = RECIPE_SCOPE_GUARDS[findfirst(guard -> guard[1] == id, RECIPE_SCOPE_GUARDS)][3]
+
+function scope_error(id, detail)
+    any(guard -> guard[1] == id, RECIPE_SCOPE_GUARDS) || error("Unknown scope guard $id")
+    error("ScopeGuard[$id]: $(scope_guard_statement(id)); $detail")
+end
+
+# The classes an input exhibits (sorted), from the plan-view loops, the signature
+# layers and the process options, before anything is built.
+function exhibited_scope_classes(edges, loops, layers, fabricated, sidewall_angle, top_rounding,
+                                 trench_rounding, overetch, device_footprint, trace_basis_bound)
+    classes = String[]
+    any(!loop.hole for loop in loops) && push!(classes, "ExteriorLoops")
+    any(loop.hole for loop in loops) && push!(classes, "HoleLoops")
+    any(class == "Continuation" for loop in loops for class in loop.classes) &&
+        push!(classes, "ContinuationVertices")
+    length(unique(edge.slot for edge in edges)) > 1 && push!(classes, "MultipleSlots")
+    length(unique(edge.conductor for edge in edges)) > 1 && push!(classes, "MultipleConductors")
+    length(layers) > 1 && push!(classes, "MultipleLayers")
+    any(layer.sign < 0 for layer in layers) && push!(classes, "DownwardLayers")
+    device_footprint && push!(classes, "DeviceFootprint")
+    trace_basis_bound && push!(classes, "TraceBasis")
+    top_rounding > 0.0 && push!(classes, "TopRounding")
+    trench_rounding > 0.0 && push!(classes, "TrenchRounding")
+    sidewall_angle != 90.0 && push!(classes, "SlopedSidewalls")
+    fabricated || push!(classes, "ThinMetal")
+    overetch == 0.0 && push!(classes, "NoTrench")
+    return sort!(classes)
+end
+
+# A plan-view side lies on the outer box when both ends are on the same box face.
+function side_on_box_face(p, q, lower, upper, tolerance)
+    return any((abs(p[d] - lower[d]) <= tolerance && abs(q[d] - lower[d]) <= tolerance) ||
+               (abs(p[d] - upper[d]) <= tolerance && abs(q[d] - upper[d]) <= tolerance)
+               for d in 1:2)
+end
+
+# Per plan-view loop: the straight sides not on the outer box (each carries a top
+# and a bottom tube).
+function metal_loop_records(loops, lower, upper, tolerance)
+    records = Dict{String, Any}[]
+    for (index, loop) in enumerate(loops)
+        n = length(loop.points)
+        sides = count(!side_on_box_face(loop.points[i], loop.points[i % n + 1], lower, upper,
+                                        tolerance) for i in 1:n)
+        push!(records, Dict{String, Any}(
+            "Loop" => index, "Conductor" => loop.conductor, "Plane" => loop.plane,
+            "Hole" => loop.hole, "Vertices" => n, "Sides" => sides))
+    end
+    return records
+end
+
+function recipe_scope_record(exhibited, loops, lower, upper, tolerance)
+    return Dict{String, Any}(
+        "Rule" => RECIPE_SCOPE_RULE, "Recipe" => RECIPE_SCOPE_RECIPE,
+        "SupportedClasses" => copy(RECIPE_SCOPE_SUPPORTED_CLASSES),
+        "GuardedClasses" => [guard[1] for guard in RECIPE_SCOPE_GUARDS],
+        "Guards" => [Dict{String, Any}("Id" => id, "DetectedFrom" => detected,
+                                       "Statement" => statement)
+                     for (id, detected, statement) in RECIPE_SCOPE_GUARDS],
+        "ExhibitedClasses" => copy(exhibited),
+        "MetalLoops" => metal_loop_records(loops, lower, upper, tolerance))
+end
+
 # Straight metal edges of the plan-view boundary loops: the Physical sides (the
 # sides not lying on the outer box), with the horizontal normal pointing away
 # from the metal and the tube interval shrunk by the corner clearance at semantic
@@ -3638,21 +3754,19 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
     segments = NamedTuple[]
     on_box(p) = any(abs(p[d] - lower[d]) <= tolerance || abs(p[d] - upper[d]) <= tolerance
                     for d in 1:2)
-    same_box_face(p, q) = any((abs(p[d] - lower[d]) <= tolerance && abs(q[d] - lower[d]) <= tolerance) ||
-                              (abs(p[d] - upper[d]) <= tolerance && abs(q[d] - upper[d]) <= tolerance)
-                              for d in 1:2)
     is_corner(p, plane) = any(norm(collect(corner) .- [p[1], p[2], plane]) <= tolerance
                               for corner in corners)
     # Every straight side first, so that the angle between the sides meeting at a
     # corner is known before the clearance is applied.
     sides = NamedTuple[]
     for loop in loops
-        loop.hole && error("Prism edge tubes support exterior conductor loops only")
+        loop.hole && scope_error("HoleLoops", "plan-view loop of conductor $(loop.conductor) " *
+                                              "on plane $(loop.plane) is a hole")
         n = length(loop.points)
         for i in 1:n
             p = loop.points[i]
             q = loop.points[i % n + 1]
-            same_box_face(p, q) && continue
+            side_on_box_face(p, q, lower, upper, tolerance) && continue
             direction = [q[1] - p[1], q[2] - p[2]]
             span = norm(direction)
             span > tolerance || error("Degenerate metal edge $p -> $q")
@@ -3668,7 +3782,7 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
                 error("Unable to orient the metal edge $p -> $q")
             for (point, other) in ((p, q), (q, p))
                 is_corner(point, loop.plane) || on_box(point) ||
-                    error("Metal edge end $point is neither a semantic corner nor on the box")
+                    scope_error("FreeEdgeEnds", "metal edge end $point of $p -> $q")
             end
             push!(sides, (start=[p[1], p[2]], stop=[q[1], q[2]], direction=direction,
                           normal=normal, span=span, plane=loop.plane, conductor=loop.conductor,
@@ -3696,7 +3810,10 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
         stop_angle = side.stop_corner ? corner_angle(side.stop, side.plane, -side.direction) : Float64(pi)
         s_start = side.start_corner ? clearance_of_angle(start_angle) : 0.0
         s_end = side.span - (side.stop_corner ? clearance_of_angle(stop_angle) : 0.0)
-        s_end > s_start || error("Metal edge $(side.start) -> $(side.stop) is too short for a tube")
+        s_end > s_start ||
+            scope_error("ShortEdges", "metal edge $(side.start) -> $(side.stop) of span " *
+                                      "$(side.span) against clearances $(s_start) and " *
+                                      "$(side.span - s_end)")
         push!(segments, (side..., s_start=s_start, s_end=s_end,
                          corner_angles=(start_angle, stop_angle)))
     end
@@ -3719,7 +3836,9 @@ function assert_etch_carries_edge(etch_loops, segment, tolerance)
             end
         end
     end
-    error("Etch footprint has no side coincident with the metal edge $(segment.start) -> $(segment.stop)")
+    scope_error("FootprintWithoutEdge",
+                "etch footprint has no side coincident with the metal edge $(segment.start) -> " *
+                "$(segment.stop)")
 end
 
 # Ring count of the tube: the largest K with r_K + h_K <= the smallest transverse
@@ -3736,7 +3855,8 @@ function tube_ring_count(edge_size, ratio, bound)
         radius + size <= bound || break
         rings = next
     end
-    rings >= 1 || error("The tube inner size $edge_size does not fit the transverse bound $bound")
+    rings >= 1 || scope_error("NarrowTransverseBound",
+                              "the tube inner size $edge_size does not fit the transverse bound $bound")
     return rings
 end
 
@@ -3749,7 +3869,7 @@ const TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING = 0.5
 function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, ratio,
                            sector_degrees, metal_thickness, overetch, corner_radius, lc_tangent,
                            lower, upper, tolerance)
-    overetch > 0.0 || error("Prism tubes require an etched trench (Overetch > 0)")
+    overetch > 0.0 || scope_error("NoTrench", "Overetch $overetch")
     sectors = round(Int, 270.0 / sector_degrees)
     abs(sectors * sector_degrees - 270.0) <= 1.0e-9 || error("Tube sector angle must divide 270 degrees")
     per_quadrant = round(Int, 90.0 / sector_degrees)
@@ -3769,14 +3889,16 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
     outer_ring = ring_sizes(top_section)[end]
     pyramid_height = TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING * outer_ring
     radius + pyramid_height < overetch ||
-        error("The tube pyramids would reach the trench floor")
+        scope_error("ShallowTrench", "tube radius $radius + pyramid height $pyramid_height " *
+                                     "against Overetch $overetch")
     clearance(angle) = (angle < pi - 1.0e-9 ? radius / tan(0.5 * angle) : 0.0) + outer_ring
     tools = Tuple{Int32, Int32}[]
     records = TubeRecord[]
     tubes = Tuple{EdgeTube, TubeSection}[]
     segments = NamedTuple[]
     for layer in layers
-        layer.sign > 0 || error("Prism tubes support upward process layers only")
+        layer.sign > 0 || scope_error("DownwardLayers", "process layer at z = $(layer.plane) has " *
+                                                        "Nz = $(layer.sign)")
         layer_loops = [loop for loop in loops if abs(loop.plane - layer.plane) <= tolerance]
         isempty(layer_loops) && error("Plan-view boundary is missing the tube layer $(layer.plane)")
         layer_segments = metal_edge_segments(layer_loops, corners, clearance, lower, upper, tolerance)
@@ -4500,8 +4622,10 @@ function generate_spatial_coupon(;
             error("Prism tubes require --far-growth > 0 (band grading around the tubes)")
         isfinite(tube_sector_degrees) && 0.0 < tube_sector_degrees <= 90.0 ||
             error("Tube sector angle must lie in (0, 90] degrees")
-        fabricated && sidewall_angle == 90.0 && top_rounding == 0.0 && trench_rounding == 0.0 ||
-            error("Prism tubes require sharp vertical fabricated geometry")
+        fabricated || scope_error("ThinMetal", "kind thin")
+        sidewall_angle == 90.0 || scope_error("SlopedSidewalls", "SidewallAngle $sidewall_angle")
+        top_rounding == 0.0 || scope_error("TopRounding", "TopRounding $top_rounding")
+        trench_rounding == 0.0 || scope_error("TrenchRounding", "TrenchRounding $trench_rounding")
         matching_trace === nothing && surface_constraints === nothing ||
             error("Prism tubes cannot be combined with matching-trace or surface constraints")
         mesh_order == 1 || error("Prism tubes require a linear mesh")
@@ -4540,6 +4664,10 @@ function generate_spatial_coupon(;
         isempty(etch_loops) && error("Empty explicit etch footprint")
     end
     pullback_trench = overetch > 0.0 ? overetch / tan(deg2rad(sidewall_angle)) : 0.0
+    scope_classes = exhibited_scope_classes(edges, boundary_loops, layers, fabricated,
+                                            sidewall_angle, top_rounding, trench_rounding,
+                                            overetch, etch_loops !== nothing,
+                                            trace_basis !== nothing)
 
     gmsh.initialize()
     gmsh.option.setNumber("General.Verbosity", 2)
@@ -5489,7 +5617,10 @@ function generate_spatial_coupon(;
         open(corner_census, "w") do stream
             write_json(stream, Dict{String, Any}(
                 "Version" => 1, "Frame" => "SourceLocal",
-                "Scope" => "Seed corner-ball census, longitudinal-face census and interface areas; reported, not a qualification gate",
+                "Purpose" => "Seed corner-ball census, longitudinal-face census and interface areas; reported, not a qualification gate",
+                "Scope" => prism_tubes ?
+                    recipe_scope_record(scope_classes, boundary_loops, lower, upper, tolerance) :
+                    nothing,
                 "SemanticContract" => semantic_contract,
                 "SemanticContractSHA256" => bytes2hex(sha256(read(semantic_contract))),
                 "RigidTransform" => vec(transform'),

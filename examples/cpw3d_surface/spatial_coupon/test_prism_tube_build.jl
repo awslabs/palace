@@ -246,6 +246,64 @@ end
     @test_throws ErrorException metal_edge_segments([hole], corners, clearance, lower, upper, 1.0e-9)
 end
 
+@testset "recipe scope: guard ids, exhibited classes, metal loop records (decision 48)" begin
+    guard_message(f) = try f(); "" catch e; e.msg end
+    points = [(10.0, 0.0), (2.0, 0.0), (0.0, -2.0), (0.0, 8.0), (-1.0, 8.0), (-1.0, -3.0),
+              (10.0, -3.0)]
+    loop = (conductor=1, plane=0.0, hole=false, points=points,
+            classes=fill("Physical", length(points)))
+    corners = [(2.0, 0.0, 0.0), (0.0, -2.0, 0.0), (-1.0, -3.0, 0.0)]
+    lower = [-1.0, -3.0]; upper = [10.0, 8.0]
+    clearance(angle) = 0.03 / tan(0.5 * angle) + 0.016
+    # Every guard id is unique, has a statement and a detection origin.
+    ids = [guard[1] for guard in RECIPE_SCOPE_GUARDS]
+    @test allunique(ids) && isempty(intersect(ids, RECIPE_SCOPE_SUPPORTED_CLASSES))
+    @test all(guard[2] in ("inputs", "build") && !isempty(guard[3]) for guard in RECIPE_SCOPE_GUARDS)
+    @test_throws ErrorException scope_error("NotAGuard", "")
+    # The guard messages carry ScopeGuard[<id>].
+    hole = (conductor=1, plane=0.0, hole=true, points=points, classes=loop.classes)
+    @test occursin("ScopeGuard[HoleLoops]",
+                   guard_message(() -> metal_edge_segments([hole], corners, clearance, lower, upper, 1.0e-9)))
+    @test occursin("ScopeGuard[FreeEdgeEnds]",
+                   guard_message(() -> metal_edge_segments([loop], corners[2:end], clearance, lower, upper, 1.0e-9)))
+    @test occursin("ScopeGuard[ShortEdges]",
+                   guard_message(() -> metal_edge_segments([loop], corners, angle -> 5.0, lower, upper, 1.0e-9)))
+    @test occursin("ScopeGuard[NarrowTransverseBound]", guard_message(() -> tube_ring_count(0.01, 2.0, 0.005)))
+    segment = (start=[2.0, 0.0], stop=[5.0, 0.0])
+    @test occursin("ScopeGuard[FootprintWithoutEdge]",
+                   guard_message(() -> assert_etch_carries_edge([loop], segment, 1.0e-9)))
+    # Exhibited classes from the frozen inputs: an upward exterior loop shows only
+    # supported classes; a hole, a downward layer, rounding, a sloped sidewall, thin
+    # metal and a missing trench show their guarded class.
+    edges = [(slot=0, conductor=1), (slot=0, conductor=1)]
+    layers = [(plane=0.0, sign=1)]
+    @test exhibited_scope_classes(edges, [loop], layers, true, 90.0, 0.0, 0.0, 0.03, false, false) ==
+          ["ExteriorLoops"]
+    continued = (loop..., classes=vcat("Continuation", fill("Physical", length(points) - 1)))
+    @test exhibited_scope_classes([(slot=0, conductor=1), (slot=1, conductor=2)], [continued],
+                                  [(plane=0.0, sign=1), (plane=0.6, sign=1)], true, 90.0, 0.0, 0.0,
+                                  0.03, true, true) ==
+          ["ContinuationVertices", "DeviceFootprint", "ExteriorLoops", "MultipleConductors",
+           "MultipleLayers", "MultipleSlots", "TraceBasis"]
+    @test exhibited_scope_classes(edges, [loop, hole], layers, true, 90.0, 0.0, 0.0, 0.03, false, false) ==
+          ["ExteriorLoops", "HoleLoops"]
+    @test exhibited_scope_classes(edges, [loop], [(plane=0.6, sign=-1)], true, 90.0, 0.0, 0.0, 0.03,
+                                  false, false) == ["DownwardLayers", "ExteriorLoops"]
+    @test exhibited_scope_classes(edges, [loop], layers, false, 80.0, 0.005, 0.001, 0.0, false, false) ==
+          ["ExteriorLoops", "NoTrench", "SlopedSidewalls", "ThinMetal", "TopRounding", "TrenchRounding"]
+    # The metal loop records count the sides not on the box: the L-shaped loop has
+    # three (its four other sides lie on the box faces).
+    records = metal_loop_records([loop, hole], lower, upper, 1.0e-9)
+    @test [record["Sides"] for record in records] == [3, 3]
+    @test [record["Hole"] for record in records] == [false, true]
+    @test records[1]["Vertices"] == 7 && records[1]["Conductor"] == 1 && records[1]["Plane"] == 0.0
+    scope = recipe_scope_record(["ExteriorLoops"], [loop], lower, upper, 1.0e-9)
+    @test scope["Recipe"] == "prism-tubes" && scope["GuardedClasses"] == ids
+    @test scope["SupportedClasses"] == RECIPE_SCOPE_SUPPORTED_CLASSES
+    @test [guard["Id"] for guard in scope["Guards"]] == ids
+    @test 2 * sum(record["Sides"] for record in scope["MetalLoops"]) == 6
+end
+
 @testset "tube and band volume size laws" begin
     @test segment_point_distance(0.5, 1.0, 0.0, (0.0, 0.0, 0.0, 1.0, 0.0, 0.0)) ≈ 1.0
     @test segment_point_distance(2.0, 0.0, 0.0, (0.0, 0.0, 0.0, 1.0, 0.0, 0.0)) ≈ 1.0

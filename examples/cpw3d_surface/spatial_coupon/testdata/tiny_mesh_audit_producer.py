@@ -19,8 +19,43 @@ import meshio
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from mesh_stage_contract import metal_loop_sides, read_csv_rows, scope_classes  # noqa: E402
+from mesh_stage_contract import RECIPE_SCOPE_GUARDS, RECIPE_SCOPE_RECIPE, RECIPE_SCOPE_SUPPORTED_CLASSES  # noqa: E402
 from mixed_mesh import volume_quality  # noqa: E402
 from trace_basis import NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE  # noqa: E402
+
+# The fixture coupon box of the census (CouponBox / trace basis box), per scale.
+FIXTURE_BOX = ((0.0, 0.0, -.001), (10.001, .001, .001))
+
+
+def fixture_box(scale):
+    return [c * scale for c in FIXTURE_BOX[0]], [c * scale for c in FIXTURE_BOX[1]]
+
+
+def recipe_scope(tubes, lower, upper):
+    """The production mesher's Scope census record (decision 48) for the fixture: the
+    classes exhibited by the fixture's bound signature / boundary / process values and
+    the per-loop straight sides not on the fixture box (two tubes each)."""
+    boundary = read_csv_rows(tubes["boundary"])
+    loops = {}
+    for row in boundary:
+        loops.setdefault(int(row["Loop"]), []).append(row)
+    sides = metal_loop_sides(boundary, lower, upper, 1e-7 * tubes["radius"])
+    return {"Rule": "fixture: recipe scope classes and per-loop straight sides",
+            "Recipe": RECIPE_SCOPE_RECIPE,
+            "SupportedClasses": list(RECIPE_SCOPE_SUPPORTED_CLASSES),
+            "GuardedClasses": list(RECIPE_SCOPE_GUARDS),
+            "Guards": [{"Id": guard, "DetectedFrom": origin, "Statement": f"fixture guard {guard}"}
+                       for guard, origin in RECIPE_SCOPE_GUARDS.items()],
+            "ExhibitedClasses": scope_classes(
+                read_csv_rows(tubes["signature"]), boundary, sidewall_angle=tubes["sidewall_angle"],
+                top_rounding=tubes["top_rounding"], trench_rounding=tubes["trench_rounding"],
+                overetch=tubes["overetch"], device_footprint=tubes["device_footprint"],
+                trace_basis=tubes["trace_basis"]),
+            "MetalLoops": [{"Loop": index, "Conductor": int(rows[0]["Conductor"]),
+                            "Plane": float(rows[0]["Plane"]), "Hole": bool(int(float(rows[0]["Hole"]))),
+                            "Vertices": len(rows), "Sides": count}
+                           for (index, rows), count in zip(sorted(loops.items()), sides)]}
 
 
 def tube_cells(scale, offset):
@@ -102,9 +137,10 @@ def corner_grading(corner_size, ratio, normal, radius):
             "ShellSizes": [corner_size * ratio**k for k in range(len(radii))] + [normal]}
 
 
-def prism_tube_record(mesh, tubes):
-    """The production seeder's PrismTubes census record for the fixture: one tube of
-    one layer, three rings, the per-type quality measured on the written mesh."""
+def prism_tube_record(mesh, tubes, tube_count):
+    """The production seeder's PrismTubes census record for the fixture: `tube_count`
+    tubes (a top and a bottom tube per straight loop side, decision 48) of one layer
+    each, three rings, the per-type quality measured on the written mesh."""
     quality = volume_quality(mesh)
     per_type = {name: {"Count": record["Samples"], "PositiveOrientation": record["PositiveOrientation"],
                        "NonpositiveCells": record["NonpositiveCells"],
@@ -114,20 +150,22 @@ def prism_tube_record(mesh, tubes):
     per_type["Total"] = quality["Samples"]
     inner, ratio = tubes["edge_size"], tubes["ratio"]
     rings = 3
+    tube_row = {"Spacing": tubes["lc_tangent"], "Layers": 1, "Length": tubes["lc_tangent"],
+                "Conductor": 1, "Plane": 0.0, "EndsOnBox": [False, False],
+                "LayerThickness": {"Minimum": tubes["lc_tangent"], "P50": tubes["lc_tangent"],
+                                   "Maximum": tubes["lc_tangent"],
+                                   "AtStart": tubes["lc_tangent"], "AtEnd": tubes["lc_tangent"],
+                                   "PrescribedAtStart": tubes["lc_tangent"],
+                                   "PrescribedAtEnd": tubes["lc_tangent"],
+                                   "AchievedOverPrescribed": {"Minimum": 1.0, "P50": 1.0,
+                                                              "Maximum": 1.0},
+                                   "MaximumNeighbourRatio": 1.0}}
     return {"Rule": "fixture", "InnerSize": inner, "GrowthRatio": ratio,
             "TangentialSize": tubes["lc_tangent"], "NormalSize": tubes["lc_fine"],
             "FarSize": tubes["lc_far"], "FarGrowth": tubes["far_growth"],
-            "Tubes": [{"Spacing": tubes["lc_tangent"], "Layers": 1, "Length": tubes["lc_tangent"],
-                       "Edge": "top", "Conductor": 1, "EndsOnBox": [False, False],
-                       "LayerThickness": {"Minimum": tubes["lc_tangent"], "P50": tubes["lc_tangent"],
-                                          "Maximum": tubes["lc_tangent"],
-                                          "AtStart": tubes["lc_tangent"], "AtEnd": tubes["lc_tangent"],
-                                          "PrescribedAtStart": tubes["lc_tangent"],
-                                          "PrescribedAtEnd": tubes["lc_tangent"],
-                                          "AchievedOverPrescribed": {"Minimum": 1.0, "P50": 1.0,
-                                                                     "Maximum": 1.0},
-                                          "MaximumNeighbourRatio": 1.0}}],
-            "TubeCount": 1, "TotalTubeLength": tubes["lc_tangent"], "Layers": 1,
+            "Tubes": [{**tube_row, "Edge": "top" if k % 2 == 0 else "bottom"} for k in range(tube_count)],
+            "TubeCount": tube_count, "TotalTubeLength": tube_count * tubes["lc_tangent"],
+            "Layers": tube_count,
             "SpacingMinimum": tubes["lc_tangent"], "SpacingMaximum": tubes["lc_tangent"],
             "LayerRule": "fixture layer rule", "TubeAxisSizeLaw": "fixture axis law",
             "LayerGrowthCap": ratio,
@@ -270,13 +308,16 @@ def corner_census(output, contract_path, radius, isotropic_size, etch_boundary=N
         # tangential spacing is min(--lc-tangent, FarSize); the fixture requests below it.
         requested = tubes["lc_tangent"]
         tubes["lc_tangent"] = min(requested, tubes["lc_far"])
-        tube_records = {"PrismTubes": prism_tube_record(mesh, tubes),
+        lower, upper = fixture_box(scale)
+        scope = recipe_scope(tubes, lower, upper)
+        tube_count = 2 * sum(loop["Sides"] for loop in scope["MetalLoops"])
+        tube_records = {"PrismTubes": prism_tube_record(mesh, tubes, tube_count),
+                        "Scope": scope,
                         "CornerGrading": corner_grading(tubes["corner_size"], tubes["ratio"],
                                                         isotropic_size, radius),
                         "EdgeLayer": None,
                         "CouponBox": {"Rule": "fixture: single-row extension; CAD subdivision chains judged on the union",
-                                      "Radius": radius, "Lower": [0.0, 0.0, -.001 * scale],
-                                      "Upper": [10.001 * scale, .001 * scale, .001 * scale],
+                                      "Radius": radius, "Lower": lower, "Upper": upper,
                                       "EdgeChains": [], "ChainedRows": 0, "ExtendedChains": 0},
                         "SizeBounds": {"Rule": "fixture: TangentialSize = min(--lc-tangent, FarSize)",
                                        "FarSize": tubes["lc_far"],
@@ -363,6 +404,11 @@ def main():
     parser.add_argument("--corner-size", type=float)
     parser.add_argument("--far-growth", type=float)
     parser.add_argument("--max-elements", type=int)
+    # Process values the production mesher classifies the input by (decision 48).
+    parser.add_argument("--sidewall-angle", type=float, default=80.0)
+    parser.add_argument("--top-radius", type=float, default=0.01)
+    parser.add_argument("--bottom-radius", type=float, default=0.01)
+    parser.add_argument("--overetch", type=float, default=0.05)
     args = parser.parse_args()
     tubes = None
     if args.prism_tubes == "true":
@@ -375,6 +421,10 @@ def main():
                          "--far-growth and --max-elements")
         tubes["radius"] = args.corner_isotropy_radius
         tubes["trace_basis"] = args.trace_basis_contract is not None
+        tubes.update({"signature": args.signature, "boundary": args.boundary,
+                      "sidewall_angle": args.sidewall_angle, "top_rounding": args.top_radius,
+                      "trench_rounding": args.bottom_radius, "overetch": args.overetch,
+                      "device_footprint": args.etch_boundary is not None})
     gates = (args.maximum_corner_aspect, args.minimum_scaled_jacobian,
              args.maximum_jacobian_condition, args.maximum_quality_displacement_over_normal)
     if any(value is not None for value in gates):

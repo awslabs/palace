@@ -928,6 +928,52 @@ one-edge-cad-subdivided, two-edge-transition, two-edge-multislot, six-edge-clust
 recipe's stated scope (hole loop, rounded edge, downward layer), a producer feature
 decision, not a repair.
 
+### Recipe scope as a recorded statement (supervisor decision 48, 2026-09-20)
+
+Every fail-closed guard of the prism-tube recipe is now a recorded, machine-readable
+statement, so that a library run distinguishes "unsupported class" from a bug:
+
+- **Classes.** `mesh_spatial_coupon.jl` `RECIPE_SCOPE_SUPPORTED_CLASSES` are the input
+  classes the recipe builds (`ContinuationVertices`, `DeviceFootprint`, `ExteriorLoops`,
+  `MultipleConductors`, `MultipleLayers`, `MultipleSlots`, `TraceBasis`);
+  `RECIPE_SCOPE_GUARDS` are the classes it fails closed on, each with a stable id, a
+  statement and its detection origin: visible in the frozen inputs (`HoleLoops`,
+  `DownwardLayers`, `TopRounding`, `TrenchRounding`, `SlopedSidewalls`, `ThinMetal`,
+  `NoTrench`) or only in a derived quantity during the build (`ShallowTrench` - the
+  pyramids would reach the trench floor; `NarrowTransverseBound` - no ring fits
+  min(Overetch, MetalThickness / 2, CornerIsotropyRadius); `FreeEdgeEnds` - an edge end
+  neither a semantic corner nor on the box; `ShortEdges` - no tube interval remains
+  after the corner clearances; `FootprintWithoutEdge` - an explicit footprint without
+  the metal edge). `mesh_stage_contract.py` spells the same two lists
+  (`RECIPE_SCOPE_SUPPORTED_CLASSES`, `RECIPE_SCOPE_GUARDS`).
+- **Guard messages.** A guard fails with `ScopeGuard[<id>]: <statement>; <detail>`
+  (`scope_error`), replacing the former prose messages ("Prism edge tubes support
+  exterior conductor loops only", "Prism tubes require sharp vertical fabricated
+  geometry", "upward process layers only", "The tube pyramids would reach the trench
+  floor", "neither a semantic corner nor on the box", ...).
+- **Census.** The build census records a `Scope` block: `Recipe`, `SupportedClasses`,
+  `GuardedClasses`, `Guards[]` (id, origin, statement), `ExhibitedClasses` (the classes
+  this input exhibits, from the loops, the signature layers and the process options)
+  and `MetalLoops[]` (per plan-view loop: conductor, plane, hole flag, vertices and the
+  straight sides not on the outer box). The former descriptive `Scope` string is now
+  `Purpose`. `validate_gmsh_build_census` -> `validate_recipe_scope` binds the block: the
+  lists equal the contract's, the exhibited classes equal the classification recomputed
+  from the bound signature / boundary inputs and the command's process options (none of
+  them guarded - a guarded class never reaches a census), the loop sides equal the
+  recount from the bound boundary against the census `CouponBox`, and
+  `PrismTubes.TubeCount = 2 x` the sides of all loops (negatives in
+  `test_general_mesh_manifest.py`; Julia `test_prism_tube_build.jl`).
+- **Drivers.** `run_gmsh_only_case.py` writes `build-summary.json` in the root with
+  `Status` `built` / `unsupported-class` / `failed`: a mesher stop whose log carries
+  `ScopeGuard[<id>]` is recorded with the id (`UNSUPPORTED_CLASS <id>` on stderr),
+  distinctly from any other failure. The manifest preflight (`run_general_mesh_suite.py
+  --preflight-only`) classifies every Gmsh-only case from its frozen inputs
+  (`Cases[].Scope.ExhibitedClasses / UnsupportedClasses`), records a case outside the
+  scope as `UnsupportedClass` with the error `unsupported class <id>` (summary
+  `UnsupportedClassCases`), and does not count it as a preflight failure of the matrix:
+  the case is never built or judged, so a full matrix run reports it as not passed with
+  its class, not as a bug.
+
 ### Synthetic matrix under the Gmsh-only recipe (decision 45(b), 2026-09-19)
 
 The 2026-09-17 record (below, under the retired recipe) found ten of the twelve
@@ -1827,7 +1873,9 @@ python3 run_general_mesh_suite.py \
 
 This now succeeds for all 15 source cases and verifies the four-/ten-edge row
 counts as four and ten. `--input CASE=DIRECTORY` cannot bypass a mismatched
-hash.
+hash. A case outside the recipe scope is recorded as `UnsupportedClass` (summary
+`UnsupportedClassCases`, decision 48) and excluded from the build, not counted as a
+preflight failure.
 
 ## Production evidence chain
 

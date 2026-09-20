@@ -20,7 +20,11 @@ has no default here - it is passed, at the manifest's value, exactly when the ca
 binds a trace basis) and run under run_bounded_mesher.py with the
 manifest's stage bounds (audits: --audit-memory-gib).
 Nothing here is an evidence tool: the evidence is the bounded stage reports, the
-audit records and the verification report written under --root.
+audit records and the verification report written under --root.  The run's outcome is
+recorded in --root/build-summary.json (Status built / unsupported-class / failed): a
+mesher stop at a recipe scope guard ("ScopeGuard[<id>]" in the gmsh-build log,
+supervisor decision 48) is recorded as an unsupported class with the guard id,
+distinctly from any other failure.
 
 usage: run_gmsh_only_case.py CASE_ID [--manifest PATH] [--root DIR] [--julia PATH]
        [--python PATH] [--stages-only] [--audits-only]
@@ -40,6 +44,8 @@ import tomllib
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from estimate_build_cost import gate as estimate_gate  # noqa: E402
+from mesh_stage_contract import scope_guard_in_text  # noqa: E402
+BUILD_SUMMARY = "build-summary.json"
 TRACE_BASIS = {"BasisContract": ("source-basis-contract", "--trace-basis-contract"),
                "TraceVertices": ("source-trace-vertices", "--trace-vertices"),
                "TraceTriangles": ("source-trace-triangles", "--trace-triangles"),
@@ -145,11 +151,29 @@ def main():
     S = {role: str(path) for role, path in paths.items()}
     variants = [variant["Id"] for variant in case["Variants"]]
 
+    def write_summary(status, *, stage=None, return_code=0, scope_guard=None, message=None):
+        """The machine-readable outcome of this run (decision 48): Status "built",
+        "unsupported-class" (the mesher stopped at a recipe scope guard; ScopeGuard is its
+        id) or "failed" (any other stage failure)."""
+        (root / BUILD_SUMMARY).write_text(json.dumps({
+            "Case": args.case_id, "Commit": commit, "Root": str(root), "Status": status,
+            "Stage": stage, "ReturnCode": return_code, "ScopeGuard": scope_guard,
+            "Message": message}, indent=2) + "\n")
+
     def launch(name, *command, memory_gib=memory, check=True):
         with open(root / f"{name}.launch.stdout", "w") as out, open(root / f"{name}.launch.stderr", "w") as err:
             result = subprocess.run([python, str(tools["run_bounded_mesher.py"]), "--seconds", seconds,
                                      "--memory-gib", memory_gib, *command], env=env, stdout=out, stderr=err)
         if check and result.returncode != 0:
+            log = root / f"{name}.log"
+            guard = scope_guard_in_text(log.read_text(errors="replace")) if log.is_file() else None
+            if guard is not None:
+                write_summary("unsupported-class", stage=name, return_code=result.returncode,
+                              scope_guard=guard, message=f"unsupported class {guard}")
+                raise SystemExit(f"UNSUPPORTED_CLASS {guard}: stage {name} stopped at the recipe scope "
+                                 f"guard ScopeGuard[{guard}]; see {log} and {root}/{BUILD_SUMMARY}")
+            write_summary("failed", stage=name, return_code=result.returncode,
+                          message=f"stage {name} failed rc={result.returncode}")
             raise SystemExit(f"stage {name} failed rc={result.returncode}; see {root}/{name}.launch.stderr")
         return result.returncode
 
@@ -162,6 +186,8 @@ def main():
             print(f"ESTIMATE {args.case_id}: {cost['EstimatedElements']:.0f} elements "
                   f"({cost['EstimateOverCap']:.3f} of the cap {cost['MaximumElements']})", flush=True)
             if not cost["Passed"]:
+                write_summary("failed", stage="headroom-gate", return_code=1,
+                              message=f"pre-build element estimate {cost['EstimatedElements']:.0f} exceeds the cap")
                 raise SystemExit(f"pre-build element estimate {cost['EstimatedElements']:.0f} exceeds the cap "
                                  f"{cost['MaximumElements']}: not building (see {root}/build-cost-estimate.json)")
         (root / ("CALIBRATION.txt" if "Calibration" in manifest else "PRODUCTION.txt")).write_text(
@@ -261,6 +287,7 @@ def main():
         (root / "stages.done").touch()
         print(f"STAGES_DONE {root}", flush=True)
     if args.stages_only:
+        write_summary("built", stage="stages-only")
         print(root); return
     (root / "audits").mkdir(exist_ok=True)
     stage_reports = [token for stage in CANONICAL_STAGES
@@ -290,6 +317,8 @@ def main():
                   python, str(tools["verify_canonical_case_entries.py"]), str(manifest_path), f"{root}/audits",
                   f"{root}/per-entry-verification.json", args.case_id, memory_gib=args.audit_memory_gib, check=False)
     print(f"verification rc={code}", flush=True)
+    write_summary("built" if code == 0 else "failed", stage="per-entry-verification", return_code=code,
+                  message=None if code == 0 else "per-entry verification failed")
     print(f"DONE {root}", flush=True)
 
 

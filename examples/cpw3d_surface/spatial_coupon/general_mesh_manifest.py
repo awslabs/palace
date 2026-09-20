@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import tomllib
 
 from audit_edge_metric_mesh import (ANISOTROPY_GATE_APPLIED, ANISOTROPY_GATE_NOT_APPLICABLE,
                                     BAND_GATE_CUTOFFS, LAYER_ADJACENT_BAND_RULE, analyze)
@@ -16,8 +17,8 @@ from mesh_array_io import read_mesh
 from canonical_mesh_build import same_canonical_build, validate_build_record
 from mesh_stage_contract import (GMSH_ONLY_PIPELINE, LEGACY_MMG_PIPELINE, PIPELINE_BUILD_STAGE,
                                  PLACEMENT_STAGE_ORDER, STAGE_TOOLS, TRACE_BASIS_RATIO_OPTION,
-                                 canonical_stage_order, pipeline_of, stage_order,
-                                 validate_stage_dag)
+                                 canonical_stage_order, pipeline_of, scope_classes_of_case_inputs,
+                                 stage_order, unsupported_scope_classes, validate_stage_dag)
 from mixed_mesh import simplicial_view
 from semantic_mesh_contract import (REQUIRED_ROLES, load_semantic_contract,
                                     validate_feature_topology)
@@ -172,6 +173,30 @@ def validate_production_recipe(manifest):
 
 
 BUILD_COST_ESTIMATE_KEY = "BuildCostEstimate"
+SCOPE_KEY = "Scope"
+UNSUPPORTED_CLASS_KEY = "UnsupportedClass"
+
+
+class UnsupportedClassError(ValueError):
+    """A case exhibits a class the Gmsh-only recipe guards (supervisor decision 48):
+    recorded as "unsupported class <id>" distinctly from any other preflight failure."""
+
+    def __init__(self, guard):
+        super().__init__(f"unsupported class {guard}")
+        self.guard = guard
+
+
+def preflight_recipe_scope(manifest, paths, case):
+    """The recipe scope classification of a Gmsh-only case from its frozen inputs
+    (signature, boundary, process, footprint declaration, trace basis): the exhibited
+    classes and the guarded ones among them; None for a legacy manifest."""
+    if manifest.get("Pipeline") != GMSH_ONLY_PIPELINE:
+        return None
+    process = tomllib.loads(paths["Process"].read_text())
+    classes = scope_classes_of_case_inputs(paths["Signature"], paths["Boundary"], process,
+                                          device_footprint="RetainedEtch" in paths,
+                                          trace_basis="BasisContract" in paths)
+    return {"ExhibitedClasses": classes, "UnsupportedClasses": unsupported_scope_classes(classes)}
 
 
 def validate_build_cost_estimate_model(recipe):
@@ -1245,6 +1270,11 @@ def run_manifest(args):
                            "DiscoveredEdgeCount": len(rows),
                            "DiscoveredSlots": sorted({int(row["Slot"]) for row in rows}),
                            "DiscoveredConductors": sorted({int(row["Conductor"]) for row in rows})})
+            scope = preflight_recipe_scope(manifest, paths, case)
+            if scope is not None:
+                record[SCOPE_KEY] = scope
+                if scope["UnsupportedClasses"]:
+                    raise UnsupportedClassError(scope["UnsupportedClasses"][0])
             cost = preflight_build_cost(manifest, manifest_path, case)
             if cost is not None:
                 record[BUILD_COST_ESTIMATE_KEY] = {
@@ -1256,13 +1286,21 @@ def run_manifest(args):
                                      f"MaximumElements {cost['MaximumElements']} (headroom gate, fail closed)")
             sources[case["Id"]] = (hashes, paths, contract)
             record["Passed"] = True
+        except UnsupportedClassError as error:
+            # An unsupported class is not a preflight failure of the matrix: the case is
+            # recorded as such and never built or judged (decision 48).
+            record["Error"] = str(error)
+            record[UNSUPPORTED_CLASS_KEY] = error.guard
         except (KeyError, OSError, TypeError, ValueError) as error:
             record["Error"] = str(error)
             preflight_ok = False
         records.append(record)
 
+    unsupported = {record["Id"]: record[UNSUPPORTED_CLASS_KEY] for record in records
+                   if UNSUPPORTED_CLASS_KEY in record}
     summary = {"Version": 2, "Scope": "Mesh-only geometry-independence gates",
                "Manifest": str(manifest_path), "PreflightPassed": preflight_ok,
+               "UnsupportedClassCases": unsupported,
                "Cases": records, "Passed": False}
     args.root.mkdir(parents=True, exist_ok=False)
     if not preflight_ok or args.preflight_only:
@@ -1276,6 +1314,8 @@ def run_manifest(args):
     canonical_reuse = {}
     for case, record in zip(manifest["Cases"], records):
         record["VariantResults"] = []
+        if UNSUPPORTED_CLASS_KEY in record:
+            continue
         hashes, _, contract = sources[case["Id"]]
         for variant in case["Variants"]:
             variant_id = variant["Id"]

@@ -3,10 +3,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Validation for reusable canonical-build and per-placement publication DAGs."""
+import csv
 import hashlib
 import json
 import math
 from pathlib import Path
+import re
 
 from edge_volume_metric import (COPLANAR_TOLERANCE, EDGE_LAYER_ORIENTATION_FLOOR,
                                 EDGE_LAYER_QUALITY_RULE)
@@ -1251,6 +1253,184 @@ GMSH_BUILD_GATE_OPTIONS = {"--maximum-corner-aspect": "MaximumCornerAspect",
 GMSH_BUILD_ELEMENT_CAP_OPTION = "--max-elements"
 GMSH_BUILD_VOLUME_TYPES = ("Tetrahedron", "Prism", "Pyramid")
 
+# Recipe scope (supervisor decision 48; mesh_spatial_coupon.jl RECIPE_SCOPE_*): the
+# input classes the prism-tube recipe builds, the guarded classes it fails closed on
+# (a guard's error message carries "ScopeGuard[<id>]"; DetectedFrom "inputs" when the
+# class is visible in the frozen inputs, "build" when only a derived quantity shows it)
+# and the classification of an input from its frozen inputs.  The census Scope block
+# records the same lists and is bound here; the build drivers record an unsupported
+# class distinctly from any other failure with these ids.
+RECIPE_SCOPE_RECIPE = "prism-tubes"
+RECIPE_SCOPE_SUPPORTED_CLASSES = ("ContinuationVertices", "DeviceFootprint", "ExteriorLoops",
+                                  "MultipleConductors", "MultipleLayers", "MultipleSlots",
+                                  "TraceBasis")
+RECIPE_SCOPE_GUARDS = {
+    "HoleLoops": "inputs", "DownwardLayers": "inputs", "TopRounding": "inputs",
+    "TrenchRounding": "inputs", "SlopedSidewalls": "inputs", "ThinMetal": "inputs",
+    "NoTrench": "inputs", "ShallowTrench": "build", "NarrowTransverseBound": "build",
+    "FreeEdgeEnds": "build", "ShortEdges": "build", "FootprintWithoutEdge": "build"}
+SCOPE_GUARD_PATTERN = re.compile(r"ScopeGuard\[([A-Za-z]+)\]")
+# Process options of the mesher command with the mesher's defaults (a command without
+# the option builds the default) that classify an input.
+SCOPE_PROCESS_OPTIONS = {"--sidewall-angle": 80.0, "--top-radius": 0.01, "--bottom-radius": 0.01,
+                         "--overetch": 0.05}
+
+
+def scope_guard_in_text(text):
+    """The ScopeGuard id a mesher log or message carries (the first one), or None; an
+    id outside RECIPE_SCOPE_GUARDS fails closed (the mesher and this contract must
+    spell one list)."""
+    match = SCOPE_GUARD_PATTERN.search(text)
+    if match is None:
+        return None
+    if match.group(1) not in RECIPE_SCOPE_GUARDS:
+        raise ValueError(f"unknown scope guard {match.group(1)}")
+    return match.group(1)
+
+
+def scope_classes(signature_rows, boundary_rows, *, fabricated=True, sidewall_angle=90.0,
+                  top_rounding=0.0, trench_rounding=0.0, overetch, device_footprint=False,
+                  trace_basis=False):
+    """The sorted classes an input exhibits (mesh_spatial_coupon.jl
+    exhibited_scope_classes): from the signature rows (Slot, Conductor, Pz, Nz), the
+    plan-view boundary rows (Hole, Class) and the process values."""
+    classes = []
+    holes = {int(row["Loop"]): int(float(row["Hole"])) for row in boundary_rows}
+    if any(hole == 0 for hole in holes.values()):
+        classes.append("ExteriorLoops")
+    if any(hole != 0 for hole in holes.values()):
+        classes.append("HoleLoops")
+    if any(row["Class"] == "Continuation" for row in boundary_rows):
+        classes.append("ContinuationVertices")
+    if len({int(row["Slot"]) for row in signature_rows}) > 1:
+        classes.append("MultipleSlots")
+    if len({int(row["Conductor"]) for row in signature_rows}) > 1:
+        classes.append("MultipleConductors")
+    layers = {(float(row["Pz"]), int(float(row.get("Nz", 1) or 1))) for row in signature_rows}
+    if len(layers) > 1:
+        classes.append("MultipleLayers")
+    if any(sign < 0 for _, sign in layers):
+        classes.append("DownwardLayers")
+    if device_footprint:
+        classes.append("DeviceFootprint")
+    if trace_basis:
+        classes.append("TraceBasis")
+    if top_rounding > 0.0:
+        classes.append("TopRounding")
+    if trench_rounding > 0.0:
+        classes.append("TrenchRounding")
+    if sidewall_angle != 90.0:
+        classes.append("SlopedSidewalls")
+    if not fabricated:
+        classes.append("ThinMetal")
+    if overetch == 0.0:
+        classes.append("NoTrench")
+    return sorted(classes)
+
+
+def unsupported_scope_classes(classes):
+    """The guarded classes among `classes`, in guard order."""
+    return [guard for guard in RECIPE_SCOPE_GUARDS if guard in classes]
+
+
+def read_csv_rows(path):
+    with Path(path).open(newline="") as stream:
+        return list(csv.DictReader(stream))
+
+
+def scope_classes_of_case_inputs(signature, boundary, process, *, device_footprint, trace_basis):
+    """The classes of a manifest case from its frozen inputs (signature, boundary,
+    process.toml values; production builds are fabricated)."""
+    return scope_classes(read_csv_rows(signature), read_csv_rows(boundary),
+                         sidewall_angle=float(process["SidewallAngle"]),
+                         top_rounding=float(process["TopRounding"]),
+                         trench_rounding=float(process["TrenchRounding"]),
+                         overetch=float(process["Overetch"]),
+                         device_footprint=device_footprint, trace_basis=trace_basis)
+
+
+def scope_classes_of_build(build_report):
+    """The classes of a gmsh-build stage's input from its bound inputs and command."""
+    command = build_report["Command"]
+    inputs = build_report["Inputs"]
+    process = {option: _option_or_default(command, option, default)
+               for option, default in SCOPE_PROCESS_OPTIONS.items()}
+    return scope_classes(read_csv_rows(inputs["source-signature"]["Path"]),
+                         read_csv_rows(inputs["source-boundary"]["Path"]),
+                         fabricated="thin" not in command,
+                         sidewall_angle=process["--sidewall-angle"],
+                         top_rounding=process["--top-radius"],
+                         trench_rounding=process["--bottom-radius"],
+                         overetch=process["--overetch"],
+                         device_footprint="source-retained-etch" in inputs,
+                         trace_basis=bound_trace_basis(build_report) is not None)
+
+
+def metal_loop_sides(boundary_rows, lower, upper, tolerance):
+    """Per plan-view loop (in Loop order) the straight sides not lying on an outer box
+    face (mesh_spatial_coupon.jl metal_loop_records); each carries two tubes."""
+    loops = {}
+    for row in boundary_rows:
+        loops.setdefault(int(row["Loop"]), []).append((int(row["Vertex"]), float(row["X"]), float(row["Y"])))
+    sides = []
+    for _, vertices in sorted(loops.items()):
+        points = [(x, y) for _, x, y in sorted(vertices)]
+        count = 0
+        for i, p in enumerate(points):
+            q = points[(i + 1) % len(points)]
+            on_face = any((abs(p[d] - lower[d]) <= tolerance and abs(q[d] - lower[d]) <= tolerance) or
+                          (abs(p[d] - upper[d]) <= tolerance and abs(q[d] - upper[d]) <= tolerance)
+                          for d in range(2))
+            count += not on_face
+        sides.append(count)
+    return sides
+
+
+def validate_recipe_scope(build_report, census):
+    """The census Scope block (decision 48) names the recipe, spells the supported and
+    guarded class lists of this contract with a statement per guard, exhibits exactly
+    the classes recomputed from the bound inputs and command (none of them guarded: a
+    guarded class never reaches the census), and counts per loop the sides not on the
+    census CouponBox so that TubeCount = 2 x their sum."""
+    scope = census.get("Scope")
+    if not isinstance(scope, dict) or not isinstance(scope.get("Rule"), str) or not scope["Rule"]:
+        raise ValueError("Build census lacks the recipe Scope record")
+    if scope.get("Recipe") != RECIPE_SCOPE_RECIPE:
+        raise ValueError("Build census Scope names another recipe")
+    if (scope.get("SupportedClasses") != list(RECIPE_SCOPE_SUPPORTED_CLASSES) or
+            scope.get("GuardedClasses") != list(RECIPE_SCOPE_GUARDS)):
+        raise ValueError("Build census Scope classes differ from the recipe scope of this contract")
+    guards = scope.get("Guards")
+    if (not isinstance(guards, list) or
+            [guard.get("Id") if isinstance(guard, dict) else None for guard in guards] != list(RECIPE_SCOPE_GUARDS) or
+            any(guard.get("DetectedFrom") != RECIPE_SCOPE_GUARDS[guard["Id"]] or
+                not isinstance(guard.get("Statement"), str) or not guard["Statement"] for guard in guards)):
+        raise ValueError("Build census Scope guards lack their id, detection origin or statement")
+    exhibited = scope.get("ExhibitedClasses")
+    if (not isinstance(exhibited, list) or exhibited != sorted(set(exhibited)) or
+            exhibited != scope_classes_of_build(build_report)):
+        raise ValueError("Build census Scope exhibited classes differ from the bound inputs")
+    if unsupported_scope_classes(exhibited):
+        raise ValueError("Build census exhibits a class the recipe guards")
+    loops = scope.get("MetalLoops")
+    box = census.get("CouponBox") if isinstance(census.get("CouponBox"), dict) else {}
+    radius = _census_number(box, "Radius", "Coupon box")
+    expected = metal_loop_sides(read_csv_rows(build_report["Inputs"]["source-boundary"]["Path"]),
+                                box.get("Lower"), box.get("Upper"), 1e-7 * radius)
+    if (not isinstance(loops, list) or len(loops) != len(expected) or
+            any(not isinstance(loop, dict) or not isinstance(loop.get("Hole"), bool) or
+                _count(loop.get("Sides"), "Metal loop sides") != sides or
+                _count(loop.get("Vertices"), "Metal loop vertices") < 3 or
+                _count(loop.get("Loop"), "Metal loop index") != index + 1
+                for index, (loop, sides) in enumerate(zip(loops, expected)))):
+        raise ValueError("Build census Scope metal loops differ from the bound plan-view boundary")
+    if ("HoleLoops" in exhibited) != any(loop["Hole"] for loop in loops):
+        raise ValueError("Build census Scope hole loops differ from the exhibited classes")
+    tubes = census.get("PrismTubes")
+    if not isinstance(tubes, dict) or tubes.get("TubeCount") != 2 * sum(expected) or sum(expected) <= 0:
+        raise ValueError("Prism tube count is not twice the straight sides of every loop")
+    return scope
+
 
 def _census_number(record, name, description):
     value = record.get(name) if isinstance(record, dict) else None
@@ -1390,6 +1570,7 @@ def validate_gmsh_build_census(build_report, census, semantic):
             raise ValueError(f"Prism tube record {name} differs from the build command {option}")
     validate_size_bounds(census, command)
     validate_coupon_box(census)
+    validate_recipe_scope(build_report, census)
     if tubes["TangentialSize"] != _census_number(census["SizeBounds"], "TangentialSize", "Size bounds"):
         raise ValueError("Prism tube record TangentialSize differs from the bound tangential size")
     if tubes["InnerSize"] != corner_size:
