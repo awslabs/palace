@@ -2005,6 +2005,81 @@ with more than one model, another topology than `SpatialEdgeCluster` (e.g. an Ar
 model) or edges without `InterfaceSlot` / `Conductor` is a contract error with that
 message, not a lookup failure.
 
+## Two commands (supervisor decision 48, 2026-09-20)
+
+The mesh path of the library is one command, `coupon_library.py build`; the physics
+path, `coupon-library qualify`, is the next step and is not implemented yet (its
+scope: the per-run physics scripts moved into the repository and parametrized by
+mesh SHA / remote root / sources / stage prefix, plan / estimate / submit under the
+40-job accounting, fetch / validate / hygiene, machine-readable class gates,
+`PendingQualification` without a reference, `library-qualification.json` and the
+process-library entries).
+
+```sh
+python3 coupon_library.py build \
+  --register <CASE_ID>=<SOURCE_DIR> --footprint producer-default \
+  --inventory-status RepositoryAssessmentFixture \
+  [--mesh-recipe examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json] \
+  [--case ID ...] [--jobs 2] [--root /tmp/coupon-library-build-<commit>-<ts>]
+```
+
+1. **Registration** (`register_case.py`, one call per `--register`): a source
+   directory (`mesh-signature.csv`, `plan-view-boundary.csv`, `plan-view-mask.csv`,
+   `process.toml`; optionally `process-library.json` with the trace basis
+   `basis-contract.json` / `trace-vertices.csv` / `trace-triangles.csv` - all four or
+   none -, `provenance.json`, `retained-etch.csv`; its own `mesh-recipe.json` or
+   `--mesh-recipe`) becomes a manifest case: SHA-256 of every source file, the recipe
+   scope classes of the inputs (a guarded class stops the registration as
+   `unsupported-class` with the guard id, no probe built), the two-pass contract
+   derivation orchestrated automatically (provisional contract -> stages-only probe
+   build of a staging copy under the production recipe, headroom gate included ->
+   `derive_semantic_contract.py --build-census`), the production `Variants` (identity
+   and rotate-z) / `TransformComparison` / `SignatureColumns` shared by every existing
+   case (fail closed when they differ), `InventoryStatus`, `Features` (default: the
+   exhibited scope classes), `FixtureVersion` and a `Provenance` statement (commit,
+   footprint declaration, probe root), then `refreeze_manifest_tools.py`. The etch
+   footprint is an explicit declaration - `--footprint bound` freezes the directory's
+   `retained-etch.csv`, `--footprint producer-default` requires its absence - and the
+   command fails closed without it. Idempotent by content: recorded source digests
+   equal to the directory's reuse the case (nothing written); any changed source
+   becomes the next `FixtureVersion` and the previous entry's changed bindings go to
+   `RetiredFixtures.Entries` (`Reason`, `Evidence`), never a silent edit. The outcome
+   is `WORK/register-case.json` (`Status` registered / reused / unsupported-class /
+   failed, `StoppedBy`, `Scope`, `SourceSHA256`, `ContractSHA256`, `ProbeRoot`).
+2. **Build** (`run_gmsh_only_matrix.py`): the selected cases (default: every case,
+   the registered ones included) run as a pool of `--jobs` drivers (default 2), each
+   the unchanged `run_gmsh_only_case.py` under the manifest bounds for every stage
+   (`--audit-memory-gib` = `Gates.MaximumRSSGiB`, so audits and verification share
+   the 1800 s / 8 GiB stage bounds): headroom gate -> canonical DAG -> rigid
+   placements -> audits -> `verify_canonical_case_entries.py`. A case fails closed on
+   its own and the others continue; the exit status is nonzero unless every case
+   passed.
+3. **Record** `ROOT/library-build.json`: per case `Scope` (exhibited / unsupported
+   classes), `Status` (built / unsupported-class / failed) and `StoppedBy` (the exact
+   `ScopeGuard` id, `HeadroomGate` MaximumElements, the stopped `Stage` with its
+   `StopReason`, or `Verification` with the failure list), `CanonicalBuildId`,
+   identity / rotate-z mesh SHA-256 and paths, elements by type, `H1` DOFs at
+   `--h1-order` (default 4), `Estimate` (estimated vs actual elements,
+   `EstimateOverActual`, `EstimateOverCap`), every bounded stage's wall seconds / peak
+   GiB / limits, the verification verdict and `HeadroomFlags` (any measure at or above
+   0.9 of its bound: elements or estimate vs the cap, a stage's seconds or peak RSS vs
+   its limit - the margin rule the throughput plan lacked); library totals: cases
+   attempted / built / passed / unsupported / failed, `FlaggedCases`, wall clock,
+   jobs, bounds, commit and manifest digest. Nothing in the record is measured by the
+   command itself: every number is read from the per-case root's stage reports,
+   census, estimate, audits and verification report.
+
+Nothing case-specific is hard-coded: the shared case fields, the recipe, the gates,
+the bounds and the scope vocabulary come from the manifest and the stage contract.
+Tests: `test_register_case.py` (a temporary copy of a repository source directory:
+hash reuse, changed-source versioning with the retired binding, footprint / recipe /
+inventory fail-closed, unsupported class from the inputs and from the probe),
+`test_run_gmsh_only_matrix.py` (the record schema, stop attribution and headroom
+flags from synthetic roots; with Julia, `coupon-library build` end to end: the
+smallest trace-basis gallery case registered as a temporary copy through the real
+probe - its derived contract equals the frozen one - and built next to
+`one-edge-straight` as a pool of two, root kept under `/tmp/coupon-library-e2e-*`).
+
 ## Preflight
 
 ```sh
