@@ -1,0 +1,46 @@
+{
+  "Version": 1,
+  "Copyright": "Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
+  "SPDX-License-Identifier": "Apache-2.0",
+  "Purpose": "Measured per-stage cost rates of the Palace response worker / reducer / ordinary local-edge stages on one r8g.48xlarge node (192 ranks, frozen b28 executable), from the four-edge-physics-11 V-a run (PBS 45145; results/main/cost-summary.json and status.json of coupon-accuracy-assessment-20260913/four-edge-physics-11). estimate_stages.py scales them to another hybrid prism-tube coupon mesh by the exact H1 DOF ratio (time per PCG iteration, reducer, memory) with 1x / 1.5x / 2x the measured mean PCG counts; the same method predicted the physics-11 V-a run from physics-09 GO within 2% (47 vs 48 min, 187 vs 187 GB) and the gallery-06b run from V-a.",
+  "MeasuredMesh": {
+    "Label": "four-edge V-a = decision-42 production root (80966c7d...; 1,683,863 tets + 172,107 prisms + 13,239 pyramids, 414,758 nodes)",
+    "SHA256": "80966c7db44dabc49ac7bb068bbaee0e0828e413b115cee8c066c886866b6108",
+    "EntityCounts": {
+      "Vertices": 414758,
+      "Edges": 2468137,
+      "TriangleFaces": 3647511,
+      "QuadFaces": 275077,
+      "Tetrahedra": 1683863,
+      "Prisms": 172107,
+      "Pyramids": 13239
+    }
+  },
+  "BlockSize": 6,
+  "PCGFactors": [1.0, 1.5, 2.0],
+  "PreflightAndMarginFactor": 1.35,
+  "PreflightSeconds": 300,
+  "NodeFitFraction": 0.75,
+  "PalaceGBPerGiB": 1.0737,
+  "Stages": {
+    "p3": {
+      "H1": 10548977, "Sources": 8, "SecondsPerPCGIteration": 0.28206, "MeanPCGIterations": 19.125, "MaxPCGIterations": 25,
+      "MeanPerSourceSeconds": 5.554, "WorkerNonSourceSeconds": 35.49, "ReducerPalaceSeconds": 37.93, "ReducerPairSeconds": 2.44,
+      "WorkerPalacePeakGB": 64.7, "ReducerPalacePeakGB": 59.9, "WorkerNodeUsedGiB": 101.1, "ReducerNodeUsedGiB": 102.5, "ArchiveGB": 0.66
+    },
+    "p4": {
+      "H1": 24827674, "Sources": 80, "SecondsPerPCGIteration": 0.78618, "MeanPCGIterations": 19.85, "MaxPCGIterations": 39,
+      "MeanPerSourceSeconds": 15.846, "WorkerNonSourceSeconds": 43.76, "ReducerPalaceSeconds": 512.49, "ReducerPairSeconds": 468.73,
+      "WorkerPalacePeakGB": 92.1, "ReducerPalacePeakGB": 108.0, "WorkerNodeUsedGiB": 125.36, "ReducerNodeUsedGiB": 153.67, "ArchiveGB": 15.0
+    },
+    "p5": {
+      "H1": 48286920, "Sources": 8, "SecondsPerPCGIteration": 2.95662, "MeanPCGIterations": 18.0, "MaxPCGIterations": 25,
+      "MeanPerSourceSeconds": 53.504, "WorkerNonSourceSeconds": 71.01, "ReducerPalaceSeconds": 94.56, "ReducerPairSeconds": 23.55,
+      "WorkerPalacePeakGB": 149.4, "ReducerPalacePeakGB": 178.5, "WorkerNodeUsedGiB": 183.0, "ReducerNodeUsedGiB": 223.0, "ArchiveGB": 2.9
+    }
+  },
+  "LocalEdge": {
+    "Order": 4, "H1": 24827674, "Sources": 8, "PalacePeakGB": 196.7, "NodeUsedGiB": 222.3,
+    "PalaceTotalSeconds": 325.8, "LinearSolveSeconds": 130.3, "NonSolveSeconds": 195.5
+  }
+}

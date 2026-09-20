@@ -3,11 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """coupon-library: the consolidated command line of the coupon mesh library
-(supervisor decision 48).
+(supervisor decision 48): `build` (the mesh path) and `qualify` (the physics path).
 
   coupon_library.py build [--register CASE_ID=SOURCE_DIR ... --footprint {bound,producer-default}
                            --inventory-status STATUS [--mesh-recipe PATH] [--provenance TEXT]]
                           [--case ID ...] [--jobs N] [--root DIR] [--output PATH] [--manifest PATH]
+  coupon_library.py qualify --build-record library-build.json --reference <campaign dir or none>
+                            --remote HOST:ROOT --orders p4 --controls p3,p5 --max-jobs N
+                            --frozen-binary-sha256 HEX [--case ID ...] [--root DIR] [--dry-run]
 
 `build` registers the given source directories as manifest cases (register_case.py:
 source SHA256s, the automated two-pass contract derivation, idempotent by content; the
@@ -18,8 +21,13 @@ run_gmsh_only_case.py DAG -> audits -> verify_canonical_case_entries.py, fail cl
 case) and writes library-build.json.  A registration that fails closed stops the build
 before any mesh is made (exit 1) and leaves its record under the case's work directory.
 
-The next step, `qualify` (physics against a reference, library-qualification.json), is
-not implemented here.
+`qualify` runs the physics of every passed coupon of a library-build.json against its
+graded_v2 reference (qualify/qualify_library.py: configs from the reference config on
+the hash-verified identity mesh, estimate gate, plan with pinned digests, submission
+under the user job cap, read-only monitoring, fetch / digest verification / matrix
+validation / recorded archive deletion, the frozen machine-readable class gates) and
+writes library-qualification.json, qualification-gates.json and process-library.json;
+--dry-run writes the plans / configs / estimates / gates without contacting anything.
 """
 import argparse
 from pathlib import Path
@@ -29,6 +37,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import register_case  # noqa: E402
 import run_gmsh_only_matrix  # noqa: E402
+sys.path.insert(0, str(HERE / "qualify"))
+import qualify_library  # noqa: E402
 
 
 def parse_registration(value):
@@ -56,12 +66,16 @@ def build_parser():
                                              "directories without their own mesh-recipe.json")
     build.add_argument("--provenance", help="text appended to the Provenance of every registered case")
     build.add_argument("--work", type=Path, help="parent of the registration work directories")
+    qualify = commands.add_parser("qualify", help="physics qualification of the built coupons against their references")
+    qualify_library.add_arguments(qualify)
     return parser
 
 
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "qualify":
+        return qualify_library.run_from_args(args)
     if args.command != "build":
         parser.error(f"unknown command {args.command}")
     if args.register and (args.footprint is None or args.inventory_status is None):

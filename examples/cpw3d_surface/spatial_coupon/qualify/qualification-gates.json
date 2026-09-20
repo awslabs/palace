@@ -1,0 +1,53 @@
+{
+  "Version": 1,
+  "Copyright": "Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
+  "SPDX-License-Identifier": "Apache-2.0",
+  "Purpose": "Machine-readable qualification gates of a coupon's response matrices against its graded_v2 reference (supervisor decision 48 and the 2026-09-20 gate confirmation): the class statements of the geometry-independence suite's physics table, evaluated on the free view. Changing a threshold means editing this frozen file; every qualification record carries its SHA-256.",
+  "FreeView": "every source of the reference that is not a contract ZeroTraceIndices knot (PEC-constrained library knots whose 3D coupon energies are nonzero) and whose reference and run diagonal domain energies are nonzero",
+  "RelativeOffset": "(run - reference) / |reference| of the per-source diagonal quantities: E = Q_ii (domain), p_X = Q_total_ii(X) / E_ii for the interfaces MA / MS / SA",
+  "ReferenceAnchor": "the reference's own Solver.Order (recorded per case as 'vs p<order> anchor'); the reference is a discretization anchor, not a converged limit",
+  "SourceClasses": "classify_sources.py geometric classes from the trace apexes and the plan-view boundary (never a hand list); the wide classes are the four listed below",
+  "WideClasses": [
+    "wide hats, bottom/top faces",
+    "box 3D corners (bottom/top faces)",
+    "wide hats, metal-top ring",
+    "wide hats, substrate/trench rings"
+  ],
+  "Gates": {
+    "E": {
+      "Statement": "every source of the wide classes within 1% of the reference domain energy",
+      "Classes": "WideClasses",
+      "MaximumAbsoluteRelativeOffset": 0.01,
+      "Report": "the all-free within-1% count and the worst free source"
+    },
+    "p_MA": {
+      "Statement": "free signed median within 1%, reference-p_MA-weighted mean within 1%, every strongest-reference-MA source within 2%, every free source within 5%",
+      "MaximumAbsoluteSignedMedian": 0.01,
+      "MaximumAbsoluteWeightedMean": 0.01,
+      "StrongestCount": 20,
+      "StrongestRule": "the 20 strongest reference-MA free sources, or every free source when fewer than 20",
+      "MaximumAbsoluteRelativeOffsetStrongest": 0.02,
+      "MaximumAbsoluteRelativeOffsetFree": 0.05
+    },
+    "p_MS": {
+      "Statement": "free |median| within 1%, every free source within 5%",
+      "MaximumAbsoluteSignedMedian": 0.01,
+      "MaximumAbsoluteRelativeOffsetFree": 0.05
+    },
+    "p_SA": {
+      "Statement": "at least 2/3 of the free sources within 2% and at least 90% within 5% (the EL4c level: 40 / 56 of 60)",
+      "MinimumFractionWithin2Percent": 0.6666666666666666,
+      "MinimumFractionWithin5Percent": 0.9
+    },
+    "PSequenceControls": {
+      "Statement": "for every control source the p-step d45 = (p_high - p_main) / |p_high| of the domain energy is within 1% and that of every participation p_MA / p_MS / p_SA within 5% (controls at the orders below and above the main order)",
+      "MaximumAbsoluteEnergyStep": 0.01,
+      "MaximumAbsoluteParticipationStep": 0.05
+    }
+  },
+  "Verdicts": {
+    "Passed": "every gate with a reference passed and every p-sequence control passed",
+    "Failed": "a gate or a p-sequence control failed on a complete run",
+    "PendingQualification": "no reference matrices for this coupon: only the p-sequence controls are evaluated; never Passed"
+  }
+}

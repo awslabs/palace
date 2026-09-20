@@ -1,0 +1,665 @@
+#!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""`coupon-library qualify`: physics qualification of the coupons of a library-build.json
+against their graded_v2 references (supervisor decision 48, second command).
+
+Per passed coupon of the build record:
+ 1. inputs: the reference campaign directory (--reference) is matched BY CONTENT (the
+    case's frozen basis-contract.json digest) to `inputs-<key>/` (the reference Palace
+    config - Order, Linear.Tol, materials, interfaces -, the trace files, the
+    ZeroTraceIndices) and `case-<key>-fabricated/reducer/` (the reference matrices, when
+    the reference completed); the identity mesh of the build record is hash-verified;
+ 2. sources: every PrescribedPotential source of the reference config; the control
+    sources by geometric class (locate_sources / classify_sources: one per class in
+    priority order, cycling) unless --control-source names them;
+ 3. configs: worker / reducer at every --orders order on all sources, at every
+    --controls order on the controls, the ordinary-path local-edge stage at the main
+    order on the controls (build_configs.py); the remote paths follow the layout
+    <remote root>/<run>/<case>/{mesh, inputs/traces, main/<prefix>-p<order>[-control]};
+ 4. estimate (estimate_stages.py, the cost model scaled by the exact H1 counts of the
+    build record's entity counts): fail closed when the coupon does not fit one job
+    within the walltime; plan.json with estimate-derived caps and pinned SHA-256 of the
+    mesh, every config and every trace; job.pbs from the cluster profile;
+ 5. --dry-run stops here (plans / configs / estimates / qualification-gates.json written,
+    nothing contacted); otherwise upload, submit under the user job cap (recorded),
+    monitor read-only, fetch (never the archives), hash-verify every result CSV against
+    the remote digests, validate every matrix (run_graded_library_case.validate_matrix:
+    complete, symmetric, nonnegative), then delete the remote archives (recorded);
+ 6. qualification: comparisons vs the reference and between the p levels, class
+    statistics, MA / MS / SA offsets, p-sequence controls, key sources, cost; the
+    frozen gate table (qualification-gates.json, digest recorded) -> Passed / Failed, or
+    PendingQualification when the reference has no matrices (never Passed).
+
+Records: ROOT/library-qualification.json (per coupon: verdict per gate and class
+offsets, PCG, node-h, x the reference cost; library totals: node-h, critical-path wall
+clock from first submission to last fetch, jobs vs the cap, coupons stopped and why),
+ROOT/qualification-gates.json (the table used), ROOT/process-library.json (the
+process-library entries: the case's model with the response matrices and the
+qualification bound; LibraryQualified only when Passed).
+"""
+import argparse
+import hashlib
+import json
+from pathlib import Path
+import shutil
+import sys
+import time
+
+HERE = Path(__file__).resolve().parent
+TOOLS = HERE.parent
+for path in (str(HERE), str(TOOLS)):
+    if path not in sys.path:
+        sys.path.insert(0, path)
+import build_configs  # noqa: E402
+import build_plan  # noqa: E402
+import classify_sources  # noqa: E402
+import compare_matrices  # noqa: E402
+import estimate_stages  # noqa: E402
+import gates as gate_evaluation  # noqa: E402
+import key_sources  # noqa: E402
+import locate_sources  # noqa: E402
+import ma_ms_offsets  # noqa: E402
+import p_sequence  # noqa: E402
+import reference_campaign  # noqa: E402
+import remote as remote_side  # noqa: E402
+import summarize_cost  # noqa: E402
+from run_graded_library_case import validate_matrix  # noqa: E402
+
+LIBRARY_QUALIFICATION_RECORD = "library-qualification.json"
+PROCESS_LIBRARY_RECORD = "process-library.json"
+GATES_COPY = "qualification-gates.json"
+QUALIFICATION_VERSION = 1
+DEFAULT_CONTROL_COUNT = 8
+DEFAULT_MONITOR_INTERVAL = 90
+DEFAULT_MONITOR_POLLS = 240
+STATUS_QUALIFIED, STATUS_PENDING, STATUS_FAILED, STATUS_PLANNED, STATUS_SKIPPED = (
+    "qualified", "pending-qualification", "failed", "planned", "skipped")
+
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for block in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def write_json(path, value):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, indent=2) + "\n")
+
+
+def parse_orders(text):
+    orders = []
+    for item in text.split(","):
+        item = item.strip().lower()
+        if not item:
+            continue
+        if not item.startswith("p") or not item[1:].isdigit():
+            raise argparse.ArgumentTypeError(f"orders are p<N>, not {item!r}")
+        orders.append(int(item[1:]))
+    if len(set(orders)) != len(orders):
+        raise argparse.ArgumentTypeError(f"repeated order in {text!r}")
+    return orders
+
+
+def parse_remote(text):
+    if text is None:
+        return None
+    if ":" not in text:
+        raise argparse.ArgumentTypeError("--remote expects HOST:ROOT")
+    host, root = text.split(":", 1)
+    if not host or not root.startswith("/"):
+        raise argparse.ArgumentTypeError("--remote expects HOST:/absolute/root")
+    return {"Host": host, "Root": root.rstrip("/")}
+
+
+class CaseStop(Exception):
+    """A per-coupon fail-closed stop (recorded as StoppedBy; the other coupons continue)."""
+
+    def __init__(self, kind, message, **fields):
+        super().__init__(message)
+        self.record = {"Kind": kind, "Message": message, **fields}
+
+
+def manifest_case(manifest, case_id):
+    case = next((item for item in manifest["Cases"] if item["Id"] == case_id), None)
+    if case is None:
+        raise CaseStop("Manifest", f"case {case_id} is not in the manifest {manifest.get('Path')}")
+    return case
+
+
+def source_directory(manifest_path, manifest, case):
+    directory = Path(case["Source"]["Directory"])
+    if directory.is_absolute():
+        return directory
+    return (Path(manifest_path).parent / manifest["RepositoryRoot"]).resolve() / directory
+
+
+def stage_layout(prefix, main_orders, control_orders, source_count, control_count):
+    """The run order: full stages at every main order, the control stages from the highest
+    order down (the step to the higher order is secured before the cheaper low control, as
+    the recorded campaigns did), the local-edge stage at the first main order."""
+    layout = []
+    control_orders = sorted(control_orders, reverse=True)
+    for order in main_orders:
+        layout.append({"Prefix": f"{prefix}-p{order}", "Kind": "response", "Order": order, "Sources": source_count,
+                       "EstimateKey": f"p{order}-{source_count}", "Role": "main"})
+    for order in control_orders:
+        layout.append({"Prefix": f"{prefix}-p{order}-control", "Kind": "response", "Order": order, "Sources": control_count,
+                       "EstimateKey": f"p{order}-control-{control_count}", "Role": "control"})
+    layout.append({"Prefix": f"{prefix}-p{main_orders[0]}-local-edge", "Kind": "local-edge", "Order": main_orders[0],
+                   "Sources": control_count, "EstimateKey": f"local-edge-p{main_orders[0]}-{control_count}", "Role": "local-edge"})
+    return layout
+
+
+def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, profile, cost_model, gates, gates_digest):
+    """Steps 1-4 of one coupon: the per-case record with the plan written locally."""
+    case_id = case_record["Case"]
+    case_root = root / case_id
+    case_root.mkdir(parents=True, exist_ok=True)
+    record = {"Case": case_id, "Status": None, "StoppedBy": None, "BuildStatus": case_record["Status"],
+              "BuildPassed": case_record["Passed"], "Mesh": None, "Reference": None, "Sources": None, "Controls": None,
+              "StagePrefix": None, "Stages": None, "Estimate": None, "Plan": None, "Configs": None,
+              "Root": str(case_root), "Remote": None}
+    if not case_record["Passed"]:
+        raise CaseStop("Build", f"the build record marks {case_id} {case_record['Status']} (Passed false): not qualified")
+    case = manifest_case(manifest, case_id)
+    files = case["Source"]["Files"]
+    if "BasisContract" not in files:
+        raise CaseStop("Manifest", f"{case_id} binds no trace basis (no basis-contract.json): no sources to qualify")
+    # 1. mesh (hash-verified now) and reference inputs (by content).
+    identity = case_record["Variants"].get("identity")
+    if not identity or not Path(identity["Path"]).is_file():
+        raise CaseStop("Mesh", f"the build record's identity mesh of {case_id} is missing ({identity})")
+    actual = sha256(identity["Path"])
+    if actual != identity["SHA256"]:
+        raise CaseStop("Mesh", f"identity mesh SHA256 {actual} differs from the build record {identity['SHA256']}")
+    try:
+        reference = reference_campaign.resolve(args.reference, files["BasisContract"]["SHA256"])
+    except reference_campaign.ReferenceError as error:
+        raise CaseStop("Reference", str(error))
+    if reference is None:
+        raise CaseStop("Reference", f"no reference campaign inputs bind the basis contract of {case_id} "
+                                    f"({files['BasisContract']['SHA256'][:12]}...) under {args.reference}: no Palace config "
+                                    f"and no traces to run")
+    record["Reference"] = reference
+    record["Mesh"] = {"Local": identity["Path"], "SHA256": identity["SHA256"], "Verified": True}
+    # 2. sources and controls.
+    reference_config = json.loads(Path(reference["Config"]).read_text())
+    sources = reference["Sources"]
+    indices = [source["Index"] for source in sources]
+    terminals = [source["Index"] for source in sources if source["Terminal"]]
+    zero_trace = reference["ZeroTraceIndices"]
+    trace_dir = Path(reference["Inputs"]) / reference_campaign.TRACES_DIRECTORY
+    comparison_dir = case_root / "comparison"
+    comparison_dir.mkdir(exist_ok=True)
+    if reference["PlanViewBoundary"] is None:
+        raise CaseStop("Reference", f"{reference['Inputs']} carries no plan-view-boundary.csv (needed for the source classes)")
+    rows, geometry = locate_sources.locate_directory(
+        trace_dir, reference["PlanViewBoundary"], comparison_dir / "source-locations.csv",
+        retained_etch=reference["RetainedEtch"], geometry_out=comparison_dir / "source-geometry.json")
+    locations = {row["index"]: {key: str(value) for key, value in row.items()} for row in rows}
+    classes = classify_sources.classify_all(locations, zero_trace, terminals)
+    free = [i for i in indices if i not in set(zero_trace) and i in locations]
+    if args.control_source:
+        controls = sorted(args.control_source)
+        unknown = [i for i in controls if i not in indices]
+        if unknown:
+            raise CaseStop("Controls", f"--control-source {unknown} are not reference sources of {case_id}")
+        control_rule = "explicit --control-source"
+    else:
+        controls = classify_sources.choose_controls(classes, args.control_count, free)
+        control_rule = f"{args.control_count} by class (classify_sources.choose_controls: one per class in priority order, cycling)"
+    record["Sources"] = {"Count": len(indices), "Indices": indices, "ZeroTrace": zero_trace, "Free": len(free),
+                         "Terminals": terminals, "Classes": {str(i): name for i, (name, _) in classes.items()},
+                         "Geometry": {key: geometry[key] for key in ("box", "z_levels", "per_z_level")}}
+    record["Controls"] = {"Indices": controls, "Rule": control_rule,
+                          "Classes": {str(i): classes[i][0] for i in controls if i in classes}}
+    # 3. stage layout, remote layout, configs.
+    prefix = args.stage_prefix or case_id
+    main_orders, control_orders = args.orders, args.controls
+    layout = stage_layout(prefix, main_orders, control_orders, len(indices), len(controls))
+    run_name = root.name
+    remote_root = remote["Root"] if remote else "<remote-root>"
+    remote_run = f"{remote_root}/{run_name}"
+    remote_case = f"{remote_run}/{case_id}"
+    remote_mesh = f"{remote_case}/mesh/identity-{identity['SHA256'][:12]}.msh"
+    remote_traces = f"{remote_case}/inputs/traces"
+    config_digests = {}
+    local_configs = {}
+    for item in layout:
+        subset = indices if item["Role"] == "main" else controls
+        directory = case_root / "main" / item["Prefix"]
+        if item["Kind"] == "response":
+            worker, reducer = build_configs.derive(reference_config, remote_mesh, f"{remote_case}/main/{item['Prefix']}",
+                                                   subset, remote_traces, order=item["Order"])
+            config_digests[item["Prefix"]] = build_configs.write_stage(directory, worker, reducer)
+        else:
+            config, _ = build_configs.derive(reference_config, remote_mesh, f"{remote_case}/main/{item['Prefix']}", subset,
+                                             remote_traces, order=item["Order"], save_local_edge_energy=True)
+            config_digests[item["Prefix"]] = build_configs.write_local_edge_stage(
+                directory, config, f"{remote_case}/main/{item['Prefix']}/output")
+        local_configs[item["Prefix"]] = str(directory)
+    record["StagePrefix"] = prefix
+    record["Stages"] = layout
+    record["Configs"] = {"Directories": local_configs, "SHA256": config_digests,
+                         "ReferenceConfig": reference["Config"], "ReferenceConfigSHA256": reference["ConfigSHA256"],
+                         "ReferenceConfigRole": reference["ConfigRole"], "ReferenceOrder": reference["ReferenceOrder"],
+                         "LinearTol": reference["LinearTol"]}
+    # 4. estimate (fail closed) and plan.
+    counts = (case_record.get("H1") or {}).get("EntityCounts")
+    counts_origin = "library-build.json H1.EntityCounts"
+    if counts is None:
+        counts = estimate_stages.entity_counts_of_mesh(identity["Path"])
+        counts_origin = "computed from the identity mesh (the build record carries no entity counts)"
+    stages = [(item["EstimateKey"], item["Order"], item["Sources"]) for item in layout if item["Kind"] == "response"]
+    local_edge = next((item for item in layout if item["Kind"] == "local-edge"), None)
+    try:
+        estimate = estimate_stages.estimate(counts, stages, model=cost_model, profile=profile,
+                                            local_edge=(local_edge["EstimateKey"], local_edge["Order"], local_edge["Sources"]))
+    except ValueError as error:
+        raise CaseStop("Estimate", str(error))
+    estimate["EntityCountsOrigin"] = counts_origin
+    write_json(case_root / "preflight" / "stage-estimate.json", estimate)
+    record["Estimate"] = {"Path": str(case_root / "preflight" / "stage-estimate.json"), "FitsOneJob": estimate["FitsOneJob"],
+                         "Decision": estimate["Decision"], "H1ByOrder": estimate["Mesh"]["H1ByOrder"],
+                         "JobSecondsEstimateByPCGFactor": estimate["JobSecondsEstimateByPCGFactor"],
+                         "JobSecondsEstimateWithPreflightAndMargin": estimate["JobSecondsEstimateWithPreflightAndMargin"],
+                         "MaxPalacePeakGBEstimate": estimate["MaxPalacePeakGBEstimate"],
+                         "P4CouponNodeHoursEstimate": None}
+    main_key = layout[0]["EstimateKey"]
+    record["Estimate"]["MainStageNodeHoursEstimate"] = {
+        factor: value["StageSecondsEstimate"] * profile["Nodes"] / 3600.0
+        for factor, value in estimate["Stages"][main_key]["ByPCGFactor"].items()}
+    del record["Estimate"]["P4CouponNodeHoursEstimate"]
+    if not estimate["FitsOneJob"]:
+        raise CaseStop("Estimate", estimate["Decision"], Estimate=record["Estimate"])
+    trace_pins = {f"{remote_traces}/{source['Name']}": source["SHA256"] for source in sources}
+    binary = f"{remote_root}/{profile['BinaryPattern'].format(sha256=args.frozen_binary_sha256)}"
+    mpiexec = f"{remote_root}/{profile['MPIExecWrapper']}"
+    purpose = (f"coupon-library qualify of {case_id} (identity mesh {identity['SHA256']}, {len(indices)} sources, "
+               f"{len(zero_trace)} contract zero-trace knots) against the graded_v2 reference inputs {reference['Key']} "
+               f"(reference Order {reference['ReferenceOrder']}, Linear.Tol {reference['LinearTol']}); stages "
+               f"{[item['Prefix'] for item in layout]}; controls {controls} ({control_rule}); {estimate['Decision']}")
+    plan = build_plan.build_plan(case_id=case_id, remote_case_root=remote_case,
+                                 mesh={"Remote": remote_mesh, "SHA256": identity["SHA256"], "Local": identity["Path"]},
+                                 stage_layout=layout, estimate=estimate, config_digests=config_digests, trace_pins=trace_pins,
+                                 profile=profile, binary=binary, binary_sha256=args.frozen_binary_sha256, mpiexec=mpiexec,
+                                 purpose=purpose, factors=[f"{factor:.1f}" for factor in cost_model["PCGFactors"]])
+    write_json(case_root / "main" / "plan.json", plan)
+    job_script = build_plan.render_job_script(profile=profile, remote_root=remote_root, remote_case_root=remote_case,
+                                              runner=f"{remote_run}/run_stages.py", job_name=f"{profile['JobNamePrefix']}-{case_id}"[:64],
+                                              walltime_seconds=profile["WalltimeSeconds"])
+    (case_root / "main" / "job.pbs").write_text(job_script)
+    record["Plan"] = {"Path": str(case_root / "main" / "plan.json"), "Pins": len(plan["PinnedSHA256"]),
+                      "StageNames": [stage["Name"] for stage in plan["Stages"]],
+                      "Caps": {stage["Name"]: [stage["CapSeconds"], stage["MinimumSeconds"]] for stage in plan["Stages"]},
+                      "JobScript": str(case_root / "main" / "job.pbs")}
+    record["Remote"] = {"Root": remote_root, "Run": remote_run, "Case": remote_case, "Mesh": remote_mesh,
+                        "Traces": remote_traces, "Binary": binary, "MPIExec": mpiexec}
+    record["Status"] = STATUS_PLANNED
+    return record, {"plan": plan, "sources": sources, "locations": locations, "classes": classes, "layout": layout,
+                    "reference": reference, "controls": controls, "zero_trace": zero_trace, "identity": identity}
+
+
+def upload_case(record, context, *, remote, profile):
+    """Mesh, traces (every DataFile) and the main/ directory to the remote case root."""
+    case_root = Path(record["Root"])
+    staging = case_root / "upload"
+    if staging.exists():
+        shutil.rmtree(staging)
+    (staging / "mesh").mkdir(parents=True)
+    (staging / "inputs" / "traces").mkdir(parents=True)
+    shutil.copyfile(context["identity"]["Path"], staging / "mesh" / Path(record["Remote"]["Mesh"]).name)
+    for source in context["sources"]:
+        shutil.copyfile(source["Path"], staging / "inputs" / "traces" / source["Name"])
+    shutil.copytree(case_root / "main", staging / "main")
+    commands = [remote_side.upload(remote["Host"], staging, record["Remote"]["Case"]),
+                remote_side.upload(remote["Host"], HERE / "run_stages.py", record["Remote"]["Run"] + "/run_stages.py")]
+    shutil.rmtree(staging)
+    return {"Commands": commands, "UTC": remote_side.utc()}
+
+
+def run_case(record, context, *, remote, profile, args, log):
+    """Steps 5: submit, monitor, fetch, verify, validate, delete archives.  Returns the
+    results directory (local) with status.json."""
+    case_root = Path(record["Root"])
+    remote_case = record["Remote"]["Case"]
+    record["Upload"] = upload_case(record, context, remote=remote, profile=profile)
+    submission = remote_side.submit(remote["Host"], profile["PBSBin"], f"{remote_case}/main/job.pbs", f"{remote_case}/main",
+                                    job_cap=profile["UserJobCap"])
+    record["Submission"] = submission
+    write_json(case_root / "submission.json", submission)
+    log(f"{record['Case']}: submitted {submission['Job']} ({submission['UserJobsBefore']} user jobs before, cap {profile['UserJobCap']})")
+    polls = remote_side.monitor(remote["Host"], profile["PBSBin"], submission["Job"], f"{remote_case}/main/status.json",
+                                interval_seconds=args.monitor_interval, max_polls=args.monitor_polls, sink=log)
+    record["Monitor"] = {"Polls": len(polls), "LastJobState": polls[-1]["JobState"] if polls else None}
+    if polls and polls[-1]["JobState"] in ("Q", "R", "E"):
+        raise CaseStop("Monitor", f"job {submission['Job']} still {polls[-1]['JobState']} after {len(polls)} polls: fetch later "
+                                  f"with the recorded job id", Submission=submission)
+    results = case_root / "results"
+    results.mkdir(exist_ok=True)
+    record["Fetch"] = {"Command": remote_side.fetch(remote["Host"], f"{remote_case}/main", results / "main"),
+                       "UTC": remote_side.utc(), "QStatHistory": remote_side.qstat_history(remote["Host"], profile["PBSBin"], submission["Job"])}
+    (results / "qstat-xf.txt").write_text(record["Fetch"]["QStatHistory"])
+    status_path = results / "main" / "status.json"
+    if not status_path.is_file():
+        raise CaseStop("Fetch", f"no status.json fetched from {remote_case}/main", Submission=submission)
+    status = json.loads(status_path.read_text())
+    incomplete = [stage["Name"] for stage in status["Stages"] if stage["State"] != "complete"]
+    nonconvergence = {stage["Name"]: stage.get("Parsed", {}).get("Nonconvergence") for stage in status["Stages"]
+                      if stage.get("Parsed", {}).get("Nonconvergence")}
+    if status["State"] != "complete" or incomplete or nonconvergence:
+        raise CaseStop("Stages", f"runner state {status['State']}: incomplete {incomplete}, PCG non-convergence {nonconvergence}",
+                       Submission=submission, StatusPath=str(status_path))
+    # Hash-verify every fetched CSV against the remote digests, validate every matrix.
+    csv_local = sorted(path for path in (results / "main").rglob("*.csv"))
+    remote_paths = [f"{remote_case}/main/{path.relative_to(results / 'main')}" for path in csv_local]
+    remote_digests = remote_side.remote_sha256(remote["Host"], remote_paths)
+    verification = {}
+    mismatches = []
+    for local, remote_path in zip(csv_local, remote_paths):
+        local_digest = sha256(local)
+        ok = remote_digests.get(remote_path) == local_digest
+        verification[str(local.relative_to(results))] = {"Local": local_digest, "Remote": remote_digests.get(remote_path), "OK": ok}
+        if not ok:
+            mismatches.append(str(local))
+    record["ResultDigests"] = verification
+    write_json(case_root / "result-csv-sha256.json", verification)
+    if mismatches:
+        raise CaseStop("Verification", f"fetched CSVs differ from the remote digests: {mismatches}")
+    matrices = {}
+    for item in context["layout"]:
+        if item["Kind"] != "response":
+            continue
+        reducer = results / "main" / item["Prefix"] / "reducer"
+        subset = [source["Index"] for source in context["sources"]] if item["Role"] == "main" else context["controls"]
+        try:
+            matrices[item["Prefix"]] = {"domain": validate_matrix(str(reducer / "domain-response-matrix.csv"), subset, "domain"),
+                                        "surface": validate_matrix(str(reducer / "surface-response-matrix.csv"), subset, "surface")}
+        except (ValueError, FileNotFoundError) as error:
+            raise CaseStop("MatrixValidation", f"{item['Prefix']}: {error}")
+    record["MatrixValidation"] = {prefix: {kind: {"Rows": value["Rows"], "BasisSize": value["BasisSize"]}
+                                           for kind, value in kinds.items()} for prefix, kinds in matrices.items()}
+    write_json(case_root / "matrix-validation.json", matrices)
+    archives = [f"{remote_case}/main/{item['Prefix']}/archive" for item in context["layout"] if item["Kind"] == "response"]
+    record["ArchiveDeletion"] = remote_side.delete_archives(remote["Host"], archives)
+    write_json(case_root / "remote-archive-deletion.json", record["ArchiveDeletion"])
+    return results
+
+
+def analyze_case(record, context, results, *, gates, gates_digest, profile):
+    """Step 6: comparisons, classes, offsets, p-sequence, key sources, cost, gates."""
+    case_root = Path(record["Root"])
+    comparison_dir = case_root / "comparison"
+    reference = context["reference"]
+    layout, controls, zero_trace = context["layout"], context["controls"], context["zero_trace"]
+    locations, classes = context["locations"], context["classes"]
+    main = next(item for item in layout if item["Role"] == "main")
+    main_dir = results / "main" / main["Prefix"] / "reducer"
+    control_dirs = {item["Order"]: results / "main" / item["Prefix"] / "reducer" for item in layout if item["Role"] == "control"}
+    reference_dir = Path(reference["Results"]) if reference["Results"] else None
+    comparisons = {}
+    labels = {}
+    if reference_dir is not None:
+        labels[f"{main['Prefix']}-vs-reference"] = (reference_dir, main_dir, f"reference p{reference['ReferenceOrder']}", f"{main['Prefix']} (all sources)")
+        for order, directory in control_dirs.items():
+            labels[f"{main['Prefix'].rsplit('-p', 1)[0]}-p{order}-control-vs-reference"] = (
+                reference_dir, directory, f"reference p{reference['ReferenceOrder']}", f"p{order} control ({len(controls)} sources)")
+    for order, directory in control_dirs.items():
+        if order > main["Order"]:
+            labels[f"{main['Prefix']}-vs-p{order}-control"] = (main_dir, directory, main["Prefix"], f"p{order} control")
+        else:
+            labels[f"p{order}-control-vs-{main['Prefix']}"] = (directory, main_dir, f"p{order} control", main["Prefix"])
+    for label, (ref, run, ref_label, run_label) in labels.items():
+        comparisons[label] = compare_matrices.write_comparison(ref, run, comparison_dir / label, zero_trace_indices=zero_trace,
+                                                                locations=locations, reference_label=ref_label, run_label=run_label,
+                                                                max_entry_rows=200)
+    class_stats = classify_sources.write_class_report(classes, locations, list(comparisons.items()),
+                                                      comparison_dir / "source-classes.csv", comparison_dir / "class-statistics.md")
+    main_label = f"{main['Prefix']}-vs-reference"
+    orders_of = {"main": main["Order"]}
+    runs = {"main": main_dir, "low": None, "high": None, "ref": reference_dir}
+    lower = [order for order in control_dirs if order < main["Order"]]
+    higher = [order for order in control_dirs if order > main["Order"]]
+    if lower:
+        orders_of["low"] = max(lower)
+        runs["low"] = control_dirs[max(lower)]
+    if higher:
+        orders_of["high"] = min(higher)
+        runs["high"] = control_dirs[min(higher)]
+    p_sequence_summary = p_sequence.write_p_sequence(runs, orders_of, controls, comparison_dir / "p-sequence-controls.md",
+                                                     comparison_dir / "p-sequence-controls.json",
+                                                     title=f"p-sequence controls of {record['Case']}")
+    offsets = None
+    keys = None
+    if reference_dir is not None:
+        per_source = {label: summary["PerSource"] for label, summary in comparisons.items()}
+        offsets = ma_ms_offsets.write_offsets(per_source, main_label, zero_trace, reference_dir,
+                                              comparison_dir / "ma-ms-offsets.md", comparison_dir / "ma-ms-offsets.json",
+                                              title=f"Offsets of {record['Case']} vs the reference",
+                                              strongest=gates["Gates"]["p_MA"]["StrongestCount"])
+        keys = key_sources.key_sources(per_source, zero_trace)
+        (comparison_dir / "key-sources.md").write_text(key_sources.markdown_report(keys))
+        write_json(comparison_dir / "key-sources.json", keys)
+    status = json.loads((results / "main" / "status.json").read_text())
+    cost = summarize_cost.summarize(status, full_sources=len(context["sources"]), nodes=profile["Nodes"])
+    write_json(results / "main" / "cost-summary.json", cost)
+    reference_cost = reference_node_hours(reference, profile)
+    main_cost = cost["Stages"].get(main["Prefix"], {})
+    gate_record = gate_evaluation.evaluate(
+        gates, comparison=comparisons.get(main_label), classes={i: name for i, (name, _) in classes.items()},
+        ref_pma=ma_ms_offsets.reference_p_ma(reference_dir) if reference_dir else None,
+        p_sequence_summary=p_sequence_summary, reference_order=reference["ReferenceOrder"], gates_sha256=gates_digest)
+    write_json(case_root / "qualification.json", gate_record)
+    record["Qualification"] = {"Verdict": gate_record["Verdict"], "Reason": gate_record["Reason"],
+                               "GatesPassed": gate_record["GatesPassed"], "ReferenceAnchor": gate_record["ReferenceAnchor"],
+                               "Path": str(case_root / "qualification.json"),
+                               "ClassStatistics": class_stats.get(main_label),
+                               "Offsets": (offsets["Distributions"].get(main_label) if offsets else None),
+                               "WeightedPMA": (offsets["Weighted"].get(main_label) if offsets else None)}
+    record["Cost"] = {"MainStage": {key: main_cost.get(key) for key in ("H1", "Order", "MeanPCGIterations", "MaxPCGIterations",
+                                                                        "SecondsPerPCGIteration", "WorkerWallSeconds",
+                                                                        "ReducerWallSeconds", "StageWallSeconds", "NodeHours")},
+                      "JobNodeHours": cost["JobNodeHours"], "JobTotalSeconds": cost["JobTotalSeconds"],
+                      "ReferenceNodeHours": reference_cost,
+                      "MainStageOverReference": (main_cost.get("NodeHours") / reference_cost
+                                                 if reference_cost and main_cost.get("NodeHours") else None),
+                      "Path": str(results / "main" / "cost-summary.json")}
+    record["Status"] = {gate_evaluation.VERDICT_PASSED: STATUS_QUALIFIED, gate_evaluation.VERDICT_PENDING: STATUS_PENDING,
+                        gate_evaluation.VERDICT_FAILED: STATUS_FAILED}[gate_record["Verdict"]]
+    return gate_record
+
+
+def reference_node_hours(reference, profile):
+    """Worker + reducer wall of the reference campaign case (its status.json) in node-hours."""
+    if not reference.get("Results"):
+        return None
+    status_path = Path(reference["Results"]).parent / "status.json"
+    if not status_path.is_file():
+        return None
+    status = json.loads(status_path.read_text())
+    seconds = 0.0
+    nodes = 1
+    for stage in status.get("Stages", []):
+        seconds += float(stage.get("WallSeconds") or 0.0)
+        command = stage.get("Command") or []
+        if "-n" in command:
+            ranks = int(command[command.index("-n") + 1])
+            nodes = max(nodes, -(-ranks // profile["Ranks"]))
+    return seconds * nodes / 3600.0 if seconds else None
+
+
+def process_library_entries(records, contexts, *, manifest_path, manifest, root):
+    """The process-library entries: every qualified / pending coupon's model (from the
+    case's own process-library.json) with the fetched response matrices and the
+    qualification bound; LibraryQualified only when Passed."""
+    models = []
+    for record in records:
+        context = contexts.get(record["Case"])
+        if context is None or record.get("Qualification") is None:
+            continue
+        case = manifest_case(manifest, record["Case"])
+        directory = source_directory(manifest_path, manifest, case)
+        library_path = directory / case["Source"]["Files"]["ProcessLibrary"]["Name"]
+        library = json.loads(library_path.read_text())
+        model = dict(library["Models"][0])
+        main = next(item for item in context["layout"] if item["Role"] == "main")
+        reducer = Path(record["Root"]) / "results" / "main" / main["Prefix"] / "reducer"
+        model["FabricatedMatrix"] = str(reducer.relative_to(root) / "domain-response-matrix.csv")
+        model["FabricatedSurfaceMatrix"] = str(reducer.relative_to(root) / "surface-response-matrix.csv")
+        model["CouponMesh"] = {"Path": record["Mesh"]["Local"], "SHA256": record["Mesh"]["SHA256"]}
+        model["Qualification"] = {"Verdict": record["Qualification"]["Verdict"], "Record": record["Qualification"]["Path"],
+                                  "ReferenceAnchor": record["Qualification"]["ReferenceAnchor"], "Order": main["Order"]}
+        model["LibraryQualified"] = record["Qualification"]["Verdict"] == gate_evaluation.VERDICT_PASSED
+        model["SourceProcessLibrary"] = {"Path": str(library_path), "SHA256": sha256(library_path)}
+        models.append(model)
+    return {"Version": 1, "Name": "coupon-library", "Command": "coupon-library qualify", "Root": str(root),
+            "Rule": "an entry is LibraryQualified only with the verdict Passed; PendingQualification entries carry their "
+                    "matrices and p-sequence controls but no accuracy statement",
+            "Models": models}
+
+
+def library_totals(records, *, args, remote, profile, wall_seconds, first_submission, last_fetch, jobs, cap):
+    node_hours = sum((record.get("Cost") or {}).get("JobNodeHours") or 0.0 for record in records)
+    return {"CouponsAttempted": len(records),
+            "CouponsQualified": sum(record["Status"] == STATUS_QUALIFIED for record in records),
+            "CouponsPending": sum(record["Status"] == STATUS_PENDING for record in records),
+            "CouponsFailed": sum(record["Status"] == STATUS_FAILED for record in records),
+            "CouponsPlanned": sum(record["Status"] == STATUS_PLANNED for record in records),
+            "CouponsSkipped": sum(record["Status"] == STATUS_SKIPPED for record in records),
+            "StoppedCoupons": {record["Case"]: record["StoppedBy"] for record in records if record["StoppedBy"]},
+            "NodeHours": node_hours,
+            "CriticalPathSeconds": ((last_fetch - first_submission) if first_submission and last_fetch else None),
+            "WallClockSeconds": wall_seconds, "JobsSubmitted": jobs, "UserJobCap": cap,
+            "MaxJobs": args.max_jobs, "DryRun": args.dry_run, "Remote": remote,
+            "Orders": [f"p{order}" for order in args.orders], "Controls": [f"p{order}" for order in args.controls],
+            "FrozenBinarySHA256": args.frozen_binary_sha256, "ClusterProfile": profile["Name"]}
+
+
+def run_qualify(args, *, log=print):
+    build_path = Path(args.build_record).resolve()
+    build = json.loads(build_path.read_text())
+    manifest_path = Path(build["Library"]["Manifest"]["Path"])
+    manifest = json.loads(manifest_path.read_text())
+    manifest["Path"] = str(manifest_path)
+    if sha256(manifest_path) != build["Library"]["Manifest"]["SHA256"]:
+        raise ValueError(f"the manifest {manifest_path} changed since the build record ({build['Library']['Manifest']['SHA256'][:12]}...)")
+    profile = json.loads(Path(args.cluster_profile).read_text())
+    cost_model = estimate_stages.load_cost_model(args.cost_model)
+    gates, gates_digest = gate_evaluation.load_gates(args.gates)
+    remote = parse_remote(args.remote)
+    if not args.dry_run and remote is None:
+        raise ValueError("--remote HOST:ROOT is required unless --dry-run")
+    if args.max_jobs > profile["UserJobCap"]:
+        raise ValueError(f"--max-jobs {args.max_jobs} exceeds the cluster profile's user job cap {profile['UserJobCap']}")
+    root = Path(args.root) if args.root else Path(
+        f"/tmp/coupon-library-qualify-{build['Library']['Commit']}-{time.strftime('%Y%m%d-%H%M%S')}")
+    root.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(args.gates, root / GATES_COPY)
+    selected = build["Cases"]
+    if args.case:
+        by_id = {case["Case"]: case for case in build["Cases"]}
+        unknown = [case_id for case_id in args.case if case_id not in by_id]
+        if unknown:
+            raise ValueError(f"cases {unknown} are not in the build record")
+        selected = [by_id[case_id] for case_id in args.case]
+    start = time.time()
+    records, contexts = [], {}
+    jobs = 0
+    first_submission = last_fetch = None
+    for case_record in selected:
+        record = None
+        try:
+            record, context = prepare_case(case_record, manifest_path=manifest_path, manifest=manifest, args=args, root=root,
+                                           remote=remote, profile=profile, cost_model=cost_model, gates=gates,
+                                           gates_digest=gates_digest)
+            contexts[record["Case"]] = context
+            log(f"{record['Case']}: planned {record['Plan']['StageNames']} ({record['Estimate']['Decision']})")
+            if args.dry_run:
+                record["Status"] = STATUS_PLANNED
+            else:
+                if jobs >= args.max_jobs:
+                    raise CaseStop("JobBudget", f"--max-jobs {args.max_jobs} reached before {record['Case']}: not submitted")
+                submitted_at = time.time()
+                results = run_case(record, context, remote=remote, profile=profile, args=args, log=log)
+                jobs += 1
+                first_submission = first_submission or submitted_at
+                last_fetch = time.time()
+                analyze_case(record, context, results, gates=gates, gates_digest=gates_digest, profile=profile)
+                log(f"{record['Case']}: {record['Qualification']['Verdict']} ({record['Qualification']['Reason']})")
+        except CaseStop as stop:
+            if record is None:
+                record = {"Case": case_record["Case"], "Root": str(root / case_record["Case"])}
+            record["Status"] = STATUS_SKIPPED if stop.record["Kind"] in ("Build", "Manifest", "Reference", "JobBudget") else STATUS_FAILED
+            record["StoppedBy"] = stop.record
+            log(f"{record['Case']}: {record['Status']} - {stop.record['Kind']}: {stop.record['Message']}")
+        records.append(record)
+        write_json(root / LIBRARY_QUALIFICATION_RECORD, {"Version": QUALIFICATION_VERSION, "Command": "coupon-library qualify",
+                                                          "Partial": True, "Cases": records})
+    record = {"Version": QUALIFICATION_VERSION, "Command": "coupon-library qualify", "Root": str(root),
+              "BuildRecord": {"Path": str(build_path), "SHA256": sha256(build_path), "Commit": build["Library"]["Commit"]},
+              "Gates": {"Path": str(root / GATES_COPY), "SHA256": gates_digest},
+              "CostModel": {"Path": str(args.cost_model), "SHA256": sha256(args.cost_model)},
+              "ClusterProfile": {"Path": str(args.cluster_profile), "SHA256": sha256(args.cluster_profile)},
+              "Cases": records,
+              "Library": library_totals(records, args=args, remote=remote, profile=profile, wall_seconds=time.time() - start,
+                                        first_submission=first_submission, last_fetch=last_fetch, jobs=jobs,
+                                        cap=profile["UserJobCap"])}
+    write_json(root / LIBRARY_QUALIFICATION_RECORD, record)
+    write_json(root / PROCESS_LIBRARY_RECORD, process_library_entries(records, contexts, manifest_path=manifest_path,
+                                                                         manifest=manifest, root=root))
+    return record
+
+
+def add_arguments(parser):
+    parser.add_argument("--build-record", type=Path, required=True, help="library-build.json of coupon-library build")
+    parser.add_argument("--reference", type=lambda text: None if text.lower() == "none" else Path(text), default=None,
+                        help="graded_v2 reference campaign directory (inputs-<key>/, case-<key>-fabricated/) or 'none'")
+    parser.add_argument("--remote", help="HOST:ROOT of the frozen executable and MPI wrapper (required unless --dry-run)")
+    parser.add_argument("--orders", type=parse_orders, default=[4], help="main orders, full stages (default p4)")
+    parser.add_argument("--controls", type=parse_orders, default=[3, 5], help="control orders (default p3,p5)")
+    parser.add_argument("--control-count", type=int, default=DEFAULT_CONTROL_COUNT, help="controls chosen by class (default 8)")
+    parser.add_argument("--control-source", type=int, action="append", help="explicit control source (repeatable; overrides the class choice)")
+    parser.add_argument("--max-jobs", type=int, default=40, help="jobs this run may submit (within the cluster profile's user cap)")
+    parser.add_argument("--frozen-binary-sha256", required=True, help="SHA-256 of the frozen Palace executable under ROOT")
+    parser.add_argument("--stage-prefix", help="stage name prefix (default: the case id)")
+    parser.add_argument("--case", action="append", default=None, help="case id (repeatable; default: every case of the build record)")
+    parser.add_argument("--root", type=Path, help="local run root (default /tmp/coupon-library-qualify-<commit>-<ts>)")
+    parser.add_argument("--dry-run", action="store_true", help="write plans / configs / estimates / gates; contact nothing")
+    parser.add_argument("--monitor-interval", type=int, default=DEFAULT_MONITOR_INTERVAL, help="seconds between read-only polls")
+    parser.add_argument("--monitor-polls", type=int, default=DEFAULT_MONITOR_POLLS)
+    parser.add_argument("--cluster-profile", type=Path, default=HERE / "cluster-profile.json")
+    parser.add_argument("--cost-model", type=Path, default=estimate_stages.COST_MODEL)
+    parser.add_argument("--gates", type=Path, default=gate_evaluation.GATES_FILE)
+
+
+def run_from_args(args):
+    record = run_qualify(args)
+    totals = record["Library"]
+    for case in record["Cases"]:
+        stopped = case.get("StoppedBy")
+        verdict = (case.get("Qualification") or {}).get("Verdict")
+        print(f"{case['Case']}: {case['Status']}" + (f" verdict {verdict}" if verdict else "")
+              + (f" stopped-by {stopped['Kind']}: {stopped['Message']}" if stopped else ""), flush=True)
+    print(f"LIBRARY attempted {totals['CouponsAttempted']} qualified {totals['CouponsQualified']} pending {totals['CouponsPending']} "
+          f"failed {totals['CouponsFailed']} planned {totals['CouponsPlanned']} skipped {totals['CouponsSkipped']} "
+          f"node-h {totals['NodeHours']:.3f} jobs {totals['JobsSubmitted']}/{totals['MaxJobs']} (cap {totals['UserJobCap']}); "
+          f"record {Path(record['Root']) / LIBRARY_QUALIFICATION_RECORD}")
+    if args.dry_run:
+        return 0 if totals["CouponsPlanned"] == totals["CouponsAttempted"] else 1
+    return 0 if totals["CouponsQualified"] == totals["CouponsAttempted"] else 1
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    add_arguments(parser)
+    return run_from_args(parser.parse_args(argv))
+
+
+if __name__ == "__main__":
+    sys.exit(main())
