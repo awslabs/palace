@@ -16,7 +16,8 @@ others continue; the exit status is nonzero unless every case passed.
 library-build.json records per case: the recipe scope classes of its inputs, the
 Status (built / unsupported-class / failed) and the exact guard / gate / stage that
 stopped it, CanonicalBuildId, the identity and rotate-z mesh SHA256 and paths, elements
-by type, H1 DOFs at --h1-order, the pre-build estimate against the actual count and the
+by type, H1 DOFs at --h1-order with the entity counts (vertices, edges, faces, cells by
+type: Palace's H1 closed form at any order), the pre-build estimate against the actual count and the
 cap (EstimateOverCap), wall seconds and peak GiB of every bounded stage, the
 verification verdict, and HeadroomFlags: any measure at or above HEADROOM_FRACTION of
 its bound (elements or estimate vs the cap, a stage's seconds or peak RSS vs its
@@ -125,10 +126,13 @@ def headroom_flags(elements, estimate, stages, gates):
     return flags
 
 
-def h1_dofs_of_mesh(mesh_path, order):
+def h1_record_of_mesh(mesh_path, order):
+    """H1 DOFs at `order` with the entity counts they are computed from (the qualify
+    step estimates the other orders from the same counts without re-reading the mesh)."""
     from mesh_array_io import read_mesh
-    from mixed_mesh import h1_dofs
-    return int(h1_dofs(read_mesh(mesh_path), order))
+    from mixed_mesh import h1_dofs_from_counts, h1_entity_counts
+    counts = h1_entity_counts(read_mesh(mesh_path))
+    return {"Order": order, "DOFs": h1_dofs_from_counts(counts, order), "EntityCounts": counts}
 
 
 def case_record(manifest, manifest_path, case, root, *, h1_order, driver_return_code, wall_seconds):
@@ -168,7 +172,7 @@ def case_record(manifest, manifest_path, case, root, *, h1_order, driver_return_
     h1 = None
     identity = root / "identity.msh"
     if built and identity.is_file():
-        h1 = {"Order": h1_order, "DOFs": h1_dofs_of_mesh(identity, h1_order)}
+        h1 = h1_record_of_mesh(identity, h1_order)
     status = summary["Status"] if summary is not None else STATUS_FAILED
     canonical = None
     if verification is not None:

@@ -3144,15 +3144,26 @@ class MixedMeshTest(unittest.TestCase):
         self.assertAlmostEqual(quality["MinimumScaledJacobian"], 6e-4 / math.sqrt(.5 + 3.6e-7), places=12)
         self.assertGreater(quality["MaximumJacobianCondition"], 1000.)
         # H1 counts: vertices at order 1; at order 2 one node per unique edge (tet 6 +
-        # prism 9 + pyramid 8 - 3 shared tet/prism - 4 shared prism/pyramid = 16) and
-        # per unique quadrangle face (3).
+        # prism 9 + pyramid 8 - 3 shared tet/prism - 4 shared prism/pyramid = 16), per
+        # unique quadrangle face (3) and (2 - 1)^3 = 1 inside the pyramid.
+        from mixed_mesh import h1_dofs_from_counts, h1_entity_counts
         mesh = self.mesh()
+        counts = h1_entity_counts(mesh)
+        self.assertEqual(counts, {"Vertices": 8, "Edges": 16, "TriangleFaces": 9, "QuadFaces": 3,
+                                  "Tetrahedra": 1, "Prisms": 1, "Pyramids": 1})
         self.assertEqual(h1_dofs(mesh, 1), 8)
-        self.assertEqual(h1_dofs(mesh, 2), 8 + 16 + 3)
+        self.assertEqual(h1_dofs(mesh, 2), 8 + 16 + 3 + 1)
         # Order 3: two nodes per edge, one per triangle face (tet 4 + prism 2 + pyramid 4
-        # - 1 shared = 9), four per quadrangle, two prism and one pyramid interior nodes
-        # (40 - 6 - 18 - 2 - 12 and 30 - 5 - 16 - 4 - 4).
-        self.assertEqual(h1_dofs(mesh, 3), 8 + 2 * 16 + 9 + 4 * 3 + 2 + 1)
+        # - 1 shared = 9), four per quadrangle, two prism interior nodes and (3 - 1)^3 = 8
+        # pyramid interior nodes (Palace's Fuentes H1 pyramid; the Bergot count would be 1).
+        self.assertEqual(h1_dofs(mesh, 3), 8 + 2 * 16 + 9 + 4 * 3 + 2 + 8)
+        self.assertEqual(h1_dofs_from_counts(counts, 3), h1_dofs(mesh, 3))
+        # The closed form reproduces the Palace-printed counts of the gallery-06b hybrid
+        # mesh (95837ed5...: 428,366 nodes, 1,659,373 tets, 172,692 prisms, 13,284 pyramids).
+        gallery = {"Vertices": 428366, "Edges": 2489399, "TriangleFaces": 3630370, "QuadFaces": 276012,
+                   "Tetrahedra": 1659373, "Prisms": 172692, "Pyramids": 13284}
+        self.assertEqual([h1_dofs_from_counts(gallery, p) for p in (3, 4, 5)],
+                         [10593238, 24844050, 48216650])
 
 
 class AchievedAnisotropyDesignGateTest(unittest.TestCase):

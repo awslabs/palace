@@ -443,7 +443,14 @@ seed optimization; hence the axis law excludes the cap centres as ball-law point
 
 H1 p1 is `Measurements.Complexity.H1DOFs` of the identity `mesh-complexity`
 record (= the node count); H1 p4 is `mixed_mesh.h1_dofs(mesh, 4)` on `identity.msh`
-(not a recorded field).
+(not a recorded field). The table below and the decision-44 evidence table were
+computed before `mixed_mesh.h1_dofs` adopted Palace's pyramid interior count
+(`(p - 1)^3`, the Fuentes H1 pyramid of Palace's MFEM build; the earlier Bergot count
+`(p - 1)(p - 2)(2p - 3)/6` undercounts by 22 x pyramids at p4): the Palace-printed H1
+of the three-edge root is 24,844,050 = 24,551,802 + 22 x 13,284, and
+`h1_dofs_from_counts` now reproduces the printed p3 / p4 / p5 counts exactly (test).
+The `coupon-library build` record stores the H1 entity counts so `qualify` estimates
+every order from them.
 
 Junction first layer (census `PrismTubes.Bands.JunctionFirstLayer`, prescribed
 NormalSize 25 nm; before = the 1a0289994 builds, whose junction curves sat on the

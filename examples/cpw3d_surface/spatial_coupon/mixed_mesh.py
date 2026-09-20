@@ -222,15 +222,13 @@ def volume_quality(mesh):
                      "condition judge every type, the scaled Jacobian judges the tetrahedra")}
 
 
-def h1_dofs(mesh, order):
-    """H1 (continuous Lagrange) degrees of freedom of order `order` on the native
-    cells: vertices, (order - 1) per edge, the interior nodes of every triangle,
-    quadrangle face and of every cell type."""
-    order = int(order)
-    if order < 1:
-        raise ValueError("H1 order must be positive")
-    edge_sets, face_sets = [], []
-    interior = 0
+H1_ENTITY_NAMES = ("Vertices", "Edges", "TriangleFaces", "QuadFaces", "Tetrahedra", "Prisms", "Pyramids")
+
+
+def h1_entity_counts(mesh):
+    """The mesh entities an H1 space is counted on: unique vertices, edges,
+    triangular and quadrangular faces of the volume cells and the cells by type."""
+    edge_sets = []
     vertices = set()
     face_edges = {"tetra": ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)),
                   "wedge": ((0, 1), (1, 2), (2, 0), (3, 4), (4, 5), (5, 3), (0, 3), (1, 4), (2, 5)),
@@ -238,13 +236,12 @@ def h1_dofs(mesh, order):
     faces = {"tetra": (((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)), ()),
              "wedge": (((0, 1, 2), (3, 4, 5)), ((0, 1, 4, 3), (1, 2, 5, 4), (2, 0, 3, 5))),
              "pyramid": (((0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4)), ((0, 1, 2, 3),))}
-    cell_interior = {"tetra": max((order - 1) * (order - 2) * (order - 3) // 6, 0),
-                     "wedge": max((order - 1) * (order - 1) * (order - 2) // 2, 0),
-                     "pyramid": max((order - 1) * (order - 2) * (2 * order - 3) // 6, 0)}
+    cells = {"tetra": 0, "wedge": 0, "pyramid": 0}
     triangle_faces, quad_faces = [], []
     for kind, connectivity, _ in cell_blocks(mesh, VOLUME_KINDS):
         if not len(connectivity):
             continue
+        cells[kind] += len(connectivity)
         vertices.update(np.unique(connectivity).tolist())
         edge_sets.append(np.sort(connectivity[:, face_edges[kind]].reshape(-1, 2), axis=1))
         tri, quad = faces[kind]
@@ -252,10 +249,34 @@ def h1_dofs(mesh, order):
             triangle_faces.append(np.sort(connectivity[:, tri].reshape(-1, 3), axis=1))
         if quad:
             quad_faces.append(np.sort(connectivity[:, quad].reshape(-1, 4), axis=1))
-        interior += cell_interior[kind] * len(connectivity)
-    edges = len(np.unique(np.concatenate(edge_sets), axis=0))
+    edges = len(np.unique(np.concatenate(edge_sets), axis=0)) if edge_sets else 0
     triangles = len(np.unique(np.concatenate(triangle_faces), axis=0)) if triangle_faces else 0
     quads = len(np.unique(np.concatenate(quad_faces), axis=0)) if quad_faces else 0
-    return int(len(vertices) + (order - 1) * edges +
-               max((order - 1) * (order - 2) // 2, 0) * triangles +
-               (order - 1) ** 2 * quads + interior)
+    return {"Vertices": len(vertices), "Edges": int(edges), "TriangleFaces": int(triangles),
+            "QuadFaces": int(quads), "Tetrahedra": cells["tetra"], "Prisms": cells["wedge"],
+            "Pyramids": cells["pyramid"]}
+
+
+def h1_dofs_from_counts(counts, order):
+    """Palace's H1 count on the entity counts: vertices, (p - 1) per edge, (p - 1)(p - 2)/2
+    per triangle, (p - 1)^2 per quadrangle, (p - 1)(p - 2)(p - 3)/6 per tetrahedron,
+    (p - 1)^2 (p - 2)/2 per prism and (p - 1)^3 per pyramid - the pyramid interior of
+    the Fuentes H1 pyramid Palace's MFEM build selects; this closed form reproduces the
+    Palace-printed H1 counts of the physics-09 / -11 / gallery-06b hybrid meshes at
+    p3 / p4 / p5 exactly (the Bergot count (p - 1)(p - 2)(2p - 3)/6 does not)."""
+    order = int(order)
+    if order < 1:
+        raise ValueError("H1 order must be positive")
+    p = order
+    return int(counts["Vertices"] + (p - 1) * counts["Edges"]
+               + max((p - 1) * (p - 2) // 2, 0) * counts["TriangleFaces"]
+               + (p - 1) ** 2 * counts["QuadFaces"]
+               + max((p - 1) * (p - 2) * (p - 3) // 6, 0) * counts["Tetrahedra"]
+               + max((p - 1) ** 2 * (p - 2) // 2, 0) * counts["Prisms"]
+               + (p - 1) ** 3 * counts["Pyramids"])
+
+
+def h1_dofs(mesh, order):
+    """H1 (continuous Lagrange) degrees of freedom of order `order` on the native
+    cells (h1_dofs_from_counts of h1_entity_counts)."""
+    return h1_dofs_from_counts(h1_entity_counts(mesh), order)

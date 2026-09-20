@@ -262,6 +262,11 @@ class LibraryBuildEndToEndTest(unittest.TestCase):
             self.assertEqual(case["Elements"]["Total"], sum(case["Elements"][k] for k in ("Tetrahedron", "Prism", "Pyramid")))
             self.assertEqual(case["H1"]["Order"], 4)
             self.assertGreater(case["H1"]["DOFs"], case["Elements"]["Total"])
+            counts = case["H1"]["EntityCounts"]
+            self.assertEqual((counts["Tetrahedra"], counts["Prisms"], counts["Pyramids"]),
+                             (case["Elements"]["Tetrahedron"], case["Elements"]["Prism"], case["Elements"]["Pyramid"]))
+            from mixed_mesh import h1_dofs_from_counts
+            self.assertEqual(h1_dofs_from_counts(counts, 4), case["H1"]["DOFs"])
             self.assertLess(case["Estimate"]["EstimateOverCap"], 1.0)
             self.assertGreater(case["Estimate"]["EstimateOverActual"], 0.0)
             self.assertTrue(case["Verification"]["Passed"])
