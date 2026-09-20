@@ -200,12 +200,17 @@ struct SubstructuringSolver::Impl
   int nt;
 
   std::unique_ptr<mfem::HypreParMatrix> A_region, A_env, A_env_int, A_region_free;
+  // Energy (QoI) operators. Electrostatic: alias the solve operators. Magnetostatic: pure
+  // curl-curl (no mass), so the magnetic energy / inductance is physical.
+  std::unique_ptr<mfem::HypreParMatrix> A_region_energy, A_env_energy;
+  mfem::HypreParMatrix *K_region_e = nullptr, *K_env_e = nullptr;
   std::vector<char> is_gamma, is_env_int, is_region_free;
   mfem::Array<int> dbc_tdofs;
   mfem::Vector dbc_values;  // full parent true-DOF vector, prescribed values on Dirichlet
   std::map<int, std::vector<int>> terminal_tdofs;  // terminal index -> its true DOFs
 
   std::unique_ptr<mfem::HypreSolver> prec_env;
+  std::unique_ptr<mfem::HypreSolver> prec_region;
   std::unique_ptr<mfem::HyprePCG> solver_env;
   std::unique_ptr<ImplicitDtN> dtn;
 
@@ -355,32 +360,52 @@ struct SubstructuringSolver::Impl
         }
       }
     }
-    A_region = AssembleParent(region_eps);
-    A_env = AssembleParent(env_eps);
+    A_region = AssembleParent(region_eps, magnetostatic);
+    A_env = AssembleParent(env_eps, magnetostatic);
+    if (magnetostatic)
+    {
+      A_region_energy = AssembleParent(region_eps, false);  // pure curl-curl
+      A_env_energy = AssembleParent(env_eps, false);
+      K_region_e = A_region_energy.get();
+      K_env_e = A_env_energy.get();
+    }
+    else
+    {
+      K_region_e = A_region.get();
+      K_env_e = A_env.get();
+    }
   }
 
+  // Small mass regularization making the magnetostatic curl-curl solve operator positive
+  // definite (so AMS converges without the singular-problem option). Kept small so the
+  // magnetic energy, measured with the pure curl-curl operators, is physical to ~1e-2 %.
+  // Requires a divergence-free excitation (physical current). Exact (gauge-free, pseudo-
+  // inverse DtN) region solves via a submesh AMS are a follow-up refinement.
+  static constexpr double kMagRegularization = 1.0e-3;
+
   std::unique_ptr<mfem::HypreParMatrix>
-  AssembleParent(const std::map<int, mfem::DenseMatrix> &coef_by_attr)
+  AssembleParent(const std::map<int, mfem::DenseMatrix> &coef_by_attr, bool with_mass)
   {
     PWMatrixCoefficient coef(parent.Dimension(), coef_by_attr);
     mfem::ParBilinearForm a(&parent_fes);
     if (magnetostatic)
     {
       a.AddDomainIntegrator(new mfem::CurlCurlIntegrator(coef));
-      // The curl-curl operator is singular on the gradient nullspace even with the
-      // interface held fixed; a subdomain-restricted mass term regularizes it. The
-      // region-condensed system reproduces the monolith for any consistent regularization
-      // (both use the same operator). A gauge-free magnetostatic formulation is a
-      // follow-up.
       const int max_attr = parent.attributes.Size() ? parent.attributes.Max() : 1;
       mfem::Vector mass(max_attr);
       mass = 0.0;
-      for (const auto &[a_attr, m] : coef_by_attr)
+      if (with_mass)
       {
-        mass(a_attr - 1) = 1.0;
+        for (const auto &[a_attr, m] : coef_by_attr)
+        {
+          mass(a_attr - 1) = kMagRegularization;
+        }
       }
-      mfem::PWConstCoefficient mcoef(mass);
-      a.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(mcoef));
+      mfem::PWConstCoefficient mcoef(mass);  // outlives Assemble() below
+      if (with_mass)
+      {
+        a.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(mcoef));
+      }
       a.Assemble();
       a.Finalize();
       return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
@@ -453,6 +478,22 @@ void SubstructuringSolver::CondenseEnvironment()
   {
     std::unique_ptr<mfem::HypreParMatrix> tmp(
         impl->A_region_free->EliminateRowsCols(non_rfree));
+  }
+
+  // Region-free preconditioner for the region-condensed CG. For magnetostatics the
+  // curl-curl block is singular, so an AMS singular-problem preconditioner is essential for
+  // CG to converge on the gradient nullspace.
+  if (impl->magnetostatic)
+  {
+    auto ams = std::make_unique<mfem::HypreAMS>(*impl->A_region_free, &impl->parent_fes);
+    ams->SetPrintLevel(0);
+    impl->prec_region = std::move(ams);
+  }
+  else
+  {
+    auto amg = std::make_unique<mfem::HypreBoomerAMG>(*impl->A_region_free);
+    amg->SetPrintLevel(0);
+    impl->prec_region = std::move(amg);
   }
 
   // Materialize the interface operator S_E and load g_E once, so region solves reuse them
@@ -628,6 +669,7 @@ Vector SubstructuringSolver::SolveExcitation(int drive_idx)
   u = 0.0;
   mfem::CGSolver cg(comm);
   cg.SetOperator(sysop);
+  cg.SetPreconditioner(*impl->prec_region);
   cg.SetRelTol(1.0e-10);
   cg.SetMaxIter(2000);
   cg.SetPrintLevel(0);
@@ -724,6 +766,7 @@ Vector SubstructuringSolver::SolveSource(const Vector &f)
   u = 0.0;
   mfem::CGSolver cg(comm);
   cg.SetOperator(sysop);
+  cg.SetPreconditioner(*impl->prec_region);
   cg.SetRelTol(1.0e-10);
   cg.SetMaxIter(2000);
   cg.SetPrintLevel(0);
@@ -766,8 +809,8 @@ std::vector<int> SubstructuringSolver::TerminalIndices() const
 double SubstructuringSolver::MutualEnergy(const Vector &ui, const Vector &uj) const
 {
   Vector t(impl->nt), t2(impl->nt);
-  impl->A_region->Mult(uj, t);
-  impl->A_env->Mult(uj, t2);
+  impl->K_region_e->Mult(uj, t);
+  impl->K_env_e->Mult(uj, t2);
   t += t2;
   double local = 0.0;
   for (int i = 0; i < impl->nt; i++)
@@ -810,8 +853,8 @@ void SubstructuringSolver::WriteParaView(const std::string &dir,
 double SubstructuringSolver::ElectrostaticEnergy(const Vector &u) const
 {
   Vector t(impl->nt), t2(impl->nt);
-  impl->A_region->Mult(u, t);
-  impl->A_env->Mult(u, t2);
+  impl->K_region_e->Mult(u, t);
+  impl->K_env_e->Mult(u, t2);
   t += t2;
   double local = 0.0;
   for (int i = 0; i < impl->nt; i++)

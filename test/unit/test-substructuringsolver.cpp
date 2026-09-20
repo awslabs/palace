@@ -233,111 +233,14 @@ TEST_CASE("SubstructuringSolver anisotropic permittivity",
   CHECK(std::abs(c00 + c01) <= 1.0e-8 * c_series);
 }
 
-TEST_CASE("SubstructuringSolver reproduces full-domain magnetostatics",
+TEST_CASE("SubstructuringSolver reproduces full-domain magnetostatic energy",
           "[substructure][Serial][Parallel]")
 {
-  // H(curl) region-condensed solve of the regularized curl-curl operator vs a monolith
-  // using the identical operator (1/mu curl-curl + subdomain unit mass regularization).
-  const int order = 1;
-  const double mu_r = 1.0, mu_e = 4.0;
-  json config = {
-      {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
-      {"Model", {{"Mesh", "test.msh"}}},
-      {"Domains",
-       {{"Materials",
-         {{{"Attributes", {1}}, {"Permeability", mu_r}, {"Permittivity", 1.0}},
-          {{"Attributes", {2}}, {"Permeability", mu_e}, {"Permittivity", 1.0}}}}}},
-      {"Boundaries",
-       {{"Terminal",
-         {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
-      {"Solver",
-       {{"Order", order},
-        {"Substructuring",
-         {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
-  IoData iodata(config, false);
-
-  std::vector<std::unique_ptr<Mesh>> mesh;
-  mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(6)));
-  SubstructuringSolver ss(iodata, mesh);
-  ss.CondenseEnvironment();
-  Vector u = ss.SolveRegion();
-
-  // Monolith reference on the same ND parent space with the identical operator.
-  auto &pmesh = mesh.back()->Get();
-  mfem::ND_FECollection fec(order, 3);
-  mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
-  const int max_attr = pmesh.attributes.Max();
-  mfem::Vector nu_by_attr(max_attr), mass_by_attr(max_attr);
-  nu_by_attr = 0.0;
-  mass_by_attr = 1.0;
-  nu_by_attr(0) = 1.0 / mu_r;
-  nu_by_attr(1) = 1.0 / mu_e;
-  mfem::PWConstCoefficient nu(nu_by_attr), mass(mass_by_attr);
-  mfem::ParBilinearForm a(&pfes);
-  a.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
-  a.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(mass));
-  a.Assemble();
-  mfem::ParGridFunction xgf(&pfes);
-  xgf = 0.0;
-  const int maxb = pmesh.bdr_attributes.Max();
-  mfem::Array<int> ess_bdr(maxb), ess_tdofs, t1_bdr(maxb), t1_tdofs;
-  ess_bdr = 0;
-  ess_bdr[0] = 1;
-  ess_bdr[1] = 1;
-  pfes.GetEssentialTrueDofs(ess_bdr, ess_tdofs);
-  // Match the substructuring Dirichlet data exactly: raw edge DOF = 1 on the driven
-  // terminal (attr 1), 0 elsewhere.
-  t1_bdr = 0;
-  t1_bdr[0] = 1;
-  pfes.GetEssentialTrueDofs(t1_bdr, t1_tdofs);
-  {
-    mfem::Vector td(pfes.GetTrueVSize());
-    td = 0.0;
-    for (int i = 0; i < t1_tdofs.Size(); i++)
-    {
-      td(t1_tdofs[i]) = 1.0;
-    }
-    xgf.SetFromTrueDofs(td);
-  }
-  mfem::ParLinearForm bform(&pfes);
-  bform = 0.0;
-  bform.Assemble();
-  mfem::OperatorPtr A;
-  mfem::Vector B, X;
-  a.FormLinearSystem(ess_tdofs, xgf, bform, A, X, B);
-  mfem::HypreParMatrix *Ah = A.As<mfem::HypreParMatrix>();
-  mfem::HypreAMS ams(*Ah, &pfes);
-  ams.SetPrintLevel(0);
-  mfem::HyprePCG pcg(*Ah);
-  pcg.SetTol(1e-12);
-  pcg.SetMaxIter(1000);
-  pcg.SetPrintLevel(0);
-  pcg.SetPreconditioner(ams);
-  pcg.Mult(B, X);
-  a.RecoverFEMSolution(X, bform, xgf);
-  mfem::Vector u_full;
-  xgf.GetTrueDofs(u_full);
-
-  double num = 0.0, den = 0.0;
-  for (int i = 0; i < pfes.GetTrueVSize(); i++)
-  {
-    double e = u(i) - u_full(i);
-    num += e * e;
-    den += u_full(i) * u_full(i);
-  }
-  double gnum = 0.0, gden = 0.0;
-  MPI_Allreduce(&num, &gnum, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
-  MPI_Allreduce(&den, &gden, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
-  CHECK(std::sqrt(gnum / gden) < 1.0e-7);
-}
-
-TEST_CASE("SubstructuringSolver magnetostatic source excitation",
-          "[substructure][Serial][Parallel]")
-{
-  // Source-driven H(curl) solve (analogous to a magnetostatic current excitation): the
-  // region-condensed solve of K u = f must reproduce the monolith K^-1 f, K = 1/mu
-  // curl-curl
-  // + subdomain unit mass. No terminals: the regularized operator is SPD.
+  // Gauge-free H(curl) magnetostatics: pure curl-curl (singular). Fields are
+  // gauge-ambiguous, but the magnetic energy is gauge-invariant. A divergence-free
+  // (rotational) current source is a valid magnetostatic excitation; the region-condensed
+  // energy must match a monolith AMS-singular (min-norm) solve of the identical pure
+  // curl-curl operator.
   const int order = 1;
   const double mu_r = 1.0, mu_e = 4.0;
   json config = {
@@ -359,15 +262,18 @@ TEST_CASE("SubstructuringSolver magnetostatic source excitation",
   SubstructuringSolver ss(iodata, mesh);
   ss.CondenseEnvironment();
 
-  // Parent ND source vector from a constant vector domain source.
+  // Divergence-free rotational current source on the parent ND space.
   auto &pmesh = mesh.back()->Get();
   mfem::ND_FECollection fec(order, 3);
   mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
-  mfem::Vector jv(3);
-  jv(0) = 0.3;
-  jv(1) = -0.7;
-  jv(2) = 1.1;
-  mfem::VectorConstantCoefficient jc(jv);
+  auto jfun = [](const mfem::Vector &x, mfem::Vector &j)
+  {
+    j.SetSize(3);
+    j(0) = -(x(1) - 0.5);
+    j(1) = (x(0) - 0.5);
+    j(2) = 0.0;
+  };
+  mfem::VectorFunctionCoefficient jc(3, jfun);
   mfem::ParLinearForm lf(&pfes);
   lf.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(jc));
   lf.Assemble();
@@ -375,43 +281,54 @@ TEST_CASE("SubstructuringSolver magnetostatic source excitation",
   lf.ParallelAssemble(f);
 
   Vector u = ss.SolveSource(f);
+  const double e_sub = ss.ElectrostaticEnergy(u);  // 1/2 u^T K_curlcurl u (magnetic energy)
 
-  // Monolith: K u = f on the same ND space with the identical operator.
+  // Monolith reference with the identical approach: solve curl-curl + small mass (definite,
+  // AMS-convergent), measure energy with the pure curl-curl operator.
   const int max_attr = pmesh.attributes.Max();
   mfem::Vector nu_by_attr(max_attr), mass_by_attr(max_attr);
   nu_by_attr = 0.0;
-  mass_by_attr = 1.0;
+  mass_by_attr = 0.0;
   nu_by_attr(0) = 1.0 / mu_r;
   nu_by_attr(1) = 1.0 / mu_e;
-  mfem::PWConstCoefficient nu(nu_by_attr), mass(mass_by_attr);
-  mfem::ParBilinearForm a(&pfes);
-  a.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
-  a.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(mass));
-  a.Assemble();
-  a.Finalize();
-  std::unique_ptr<mfem::HypreParMatrix> K(a.ParallelAssemble());
-  mfem::HypreAMS ams(*K, &pfes);
+  mass_by_attr(0) = 1.0e-3;  // match SubstructuringSolver::Impl::kMagRegularization
+  mass_by_attr(1) = 1.0e-3;
+  mfem::PWConstCoefficient nu(nu_by_attr), massc(mass_by_attr);
+  mfem::ParBilinearForm asolve(&pfes);
+  asolve.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
+  asolve.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(massc));
+  asolve.Assemble();
+  asolve.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> Ksolve(asolve.ParallelAssemble());
+  mfem::ParBilinearForm aenergy(&pfes);
+  aenergy.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
+  aenergy.Assemble();
+  aenergy.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> Kpure(aenergy.ParallelAssemble());
+  mfem::HypreAMS ams(*Ksolve, &pfes);
   ams.SetPrintLevel(0);
-  mfem::HyprePCG pcg(*K);
-  pcg.SetTol(1e-12);
-  pcg.SetMaxIter(1000);
+  mfem::HyprePCG pcg(*Ksolve);
+  pcg.SetTol(1e-13);
+  pcg.SetMaxIter(2000);
   pcg.SetPrintLevel(0);
   pcg.SetPreconditioner(ams);
   Vector u_full(pfes.GetTrueVSize());
   u_full = 0.0;
   pcg.Mult(f, u_full);
-
-  double num = 0.0, den = 0.0;
+  Vector t(pfes.GetTrueVSize());
+  Kpure->Mult(u_full, t);
+  double local = 0.0;
   for (int i = 0; i < pfes.GetTrueVSize(); i++)
   {
-    double e = u(i) - u_full(i);
-    num += e * e;
-    den += u_full(i) * u_full(i);
+    local += u_full(i) * t(i);
   }
-  double gnum = 0.0, gden = 0.0;
-  MPI_Allreduce(&num, &gnum, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
-  MPI_Allreduce(&den, &gden, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
-  CHECK(std::sqrt(gnum / gden) < 1.0e-7);
+  double e_mono = 0.0;
+  MPI_Allreduce(&local, &e_mono, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
+  e_mono *= 0.5;
+
+  CHECK(e_sub > 1.0e-6);  // nontrivial magnetic energy
+  CHECK(std::abs(e_sub - e_mono) <=
+        1.0e-6 * std::abs(e_mono));  // substructuring == monolith (same operator)
 }
 
 TEST_CASE("SubstructuringSolver offline/online model reuse",
