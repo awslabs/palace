@@ -883,7 +883,7 @@ behaviour on unchained rows; verified by rebuilding the two-edge 10 case under t
 mesher and comparing its `gmsh-build.msh` SHA with the decision-43 root (evidence
 below).
 
-### Evidence (decision 48: hole, opposed-layers and the concave-multislot relabel rebuild; commits 42f997c62 / 97ed84952 / bdfe87890, 2026-09-20)
+### Evidence (decisions 48 / 49: hole, opposed-layers and the concave-multislot relabel rebuild; commits 42f997c62 / 97ed84952 / bdfe87890, 2026-09-20)
 
 Built through `run_gmsh_only_case.py` under the unchanged production recipe (every
 option and gate at its production value; audits at 8 GiB), identity + rotate-z-0.63,
@@ -1071,7 +1071,10 @@ below" mirrors with b (`TubeFrameRule` in the census Section). Added:
 - Census tube rows carry `Layer` (Nz); `validate_tube_layers` binds every row to the
   signature's Nz on its plane and to `Origin[3] = Plane + Layer x --metal-thickness`
   (top) / `Plane` (bottom).
-- **Interface labeling by the surface's own layer (generic defect fixed).** The CAD
+- **Interface labeling by the surface's own layer (generic defect fixed; supervisor
+  decision 49, 2026-09-20: layer-band selection of the interface label + the box
+  tolerance, the mislabeling condition Radius < 1 um, concave-multislot FixtureVersion
+  2).** The CAD
   interface classification took the nearest signature edge over ALL layers to decide
   the un-etched plane (3000 + s) vs the etched trench (3100 + s) and the metal
   surface's slot, and compared the surface's z-range with that edge's plane at the
@@ -1084,7 +1087,20 @@ below" mirrors with b (`TubeFrameRule` in the census Section). Added:
   3000 / 3001 (1.68 um^2 each) and 3100 / 3101 (15.248 each) instead of 3100 / 3101
   (16.928 each) with an identical mesh; concave-multislot (Radius 0.5) gains 3000 /
   3001 (0.4533 / 0.1767 um^2) and is re-frozen as `FixtureVersion 2` with its version-1
-  contract retired; hole (fully etched) and every Radius-2 case are unchanged.
+  contract retired; hole (fully etched) is unchanged. Inertness on production: all five
+  gallery cases (four-edge 07, ten-edge 09, three-edge 06, two-edge 10, two-edge 05)
+  and the six Radius-2 fixtures bind Radius 2 um, where the source tolerance 2e-7
+  exceeds the 1e-7 CAD padding, so the old rule already labeled their planes correctly
+  by construction; the cheapest real case, two-edge 10 (`two-edge-8dd4bc70f183`), was
+  rebuilt under the fixed mesher (bdfe87890): `gmsh-build.msh` `10afee1f...` and
+  `identity.msh` `5d01204e...` byte-identical to the kept decision-43 root
+  (`/tmp/coupon-gmsh-only-two-edge-8dd4bc70f183-72185ce89-20260919-170018`; the
+  rebuild's binaries were deleted, its logs kept under
+  `/tmp/coupon-scope-20260920/two-edge-10-inertness`). Regression guard: the Julia
+  testset "un-etched plane of a Radius-0.5 coupon is labeled 3000" builds a
+  single-slot L-shaped Radius-0.5 coupon whose producer-default collar leaves the
+  0.63 um^2 notch un-etched and requires label 3000 with that area (and 3100 = 15.90);
+  under the old rule it fails (3000 absent, 3100 = 16.53 - verified on a patched copy).
 - Julia tests (`test_prism_tube_build.jl`): per-sign box padding; downward tube frames
   are the mirror of the upward ones (b, origin z, e; same intervals, sections and
   materials); the `NarrowLayerGap` guard at the threshold; mirror covariance of a

@@ -285,14 +285,15 @@ end
     @test segment_segment_distance_2d((0.0, 0.0), (1.0, 0.0), (2.0, 1.0), (3.0, 1.0)) ≈ sqrt(2.0)
 end
 
-# A rectangular strip coupon written as the frozen inputs (signature, boundary, mask,
-# semantic contract) of the production mesher, with the process normal `sign`.
-function write_strip_inputs(directory, sign; x=0.6, y=0.2, plane=0.0)
-    points = [(-x, -y), (x, -y), (x, y), (-x, y)]
+# A single-conductor, single-slot coupon whose counterclockwise plan-view loop is
+# `points`, written as the frozen inputs (signature, boundary, mask, semantic
+# contract) of the production mesher, with the process normal `sign`.
+function write_loop_inputs(directory, points, sign; plane=0.0)
+    n = length(points)
     open(joinpath(directory, "signature.csv"), "w") do io
         println(io, "Index,Slot,Conductor,Px,Py,Pz,Gx,Gy,Gz,Tx,Ty,Tz,Nz,S0,S1,VertexArm")
-        for i in 1:4
-            a = points[i]; b = points[i % 4 + 1]
+        for i in 1:n
+            a = points[i]; b = points[i % n + 1]
             span = hypot(b[1] - a[1], b[2] - a[2])
             t = ((b[1] - a[1]) / span, (b[2] - a[2]) / span)
             println(io, join([i, 0, 1, 0.5 * (a[1] + b[1]), 0.5 * (a[2] + b[2]), plane, t[2], -t[1], 0,
@@ -319,11 +320,16 @@ function write_strip_inputs(directory, sign; x=0.6, y=0.2, plane=0.0)
            joinpath(directory, "mask.csv"), joinpath(directory, "semantic.json")
 end
 
-# Build the strip coupon under coarse prism-tube options; returns the census.
-function build_strip_coupon(directory, sign)
-    signature, boundary, mask, semantic = write_strip_inputs(directory, sign)
-    mesh = joinpath(directory, "coupon-$(sign > 0 ? "up" : "down").msh")
-    census = joinpath(directory, "census-$(sign > 0 ? "up" : "down").json")
+write_strip_inputs(directory, sign; x=0.6, y=0.2, plane=0.0) =
+    write_loop_inputs(directory, [(-x, -y), (x, -y), (x, y), (-x, y)], sign; plane=plane)
+
+# Build the loop coupon under coarse prism-tube options at Radius 0.5; returns the
+# census and the mesh path.
+function build_strip_coupon(directory, sign; points=nothing, stem=sign > 0 ? "up" : "down")
+    signature, boundary, mask, semantic = points === nothing ?
+        write_strip_inputs(directory, sign) : write_loop_inputs(directory, points, sign)
+    mesh = joinpath(directory, "coupon-$stem.msh")
+    census = joinpath(directory, "census-$stem.json")
     generate_spatial_coupon(; signature=signature, mask=mask, boundary=boundary, fabricated=true,
                             filename=mesh, radius=0.5, metal_thickness=0.1, overetch=0.05,
                             sidewall_angle=90.0, top_rounding=0.0, trench_rounding=0.0,
@@ -476,6 +482,27 @@ end
             @test !isempty(up_ends) && length(up_ends) == length(down_ends)
             @test maximum(norm(a .- b) for (a, b) in zip(up_ends, down_ends)) <= 1.0e-9
         end
+    end
+end
+
+@testset "un-etched plane of a Radius-0.5 coupon is labeled 3000 (decisions 48 / 49)" begin
+    # The producer-default collar (3 x Radius) of an L-shaped conductor leaves the box
+    # corner opposite its notch un-etched: box [-1.5, 2.7] x [-1.5, 2.5] minus the
+    # mitered collar polygon = the notch [1.8, 2.7] x [1.8, 2.5] = 0.63 um^2 at the layer
+    # plane. Before decision 49 the mesher compared the surface's z-range with the plane
+    # at 1e-7 x Radius = 5e-8, below the 1e-7 padding of the OCC bounding box, so this
+    # plane was labeled 3100 (etched trench) for every coupon with Radius < 1 um.
+    l_shape = [(0.0, 0.0), (1.2, 0.0), (1.2, 0.3), (0.3, 0.3), (0.3, 1.0), (0.0, 1.0)]
+    mktempdir() do directory
+        census, _ = build_strip_coupon(directory, 1; points=l_shape, stem="l-shape")
+        areas = Dict(row["Attribute"] => row["Area"] for row in census["InterfaceAreas"])
+        @test haskey(areas, 3000) && haskey(areas, 3100)
+        @test isapprox(areas[3000], 0.63; atol=1.0e-9)
+        # The trench: the collar floor (16.17 minus the metal 0.57) plus the trench walls
+        # under the metal edges (perimeter 4.4) and along the notch (0.9 + 0.7; the other
+        # collar sides lie on the box), both x Overetch 0.05.
+        @test isapprox(areas[3100], 16.17 - 0.57 + (4.4 + 1.6) * 0.05; atol=1.0e-9)
+        @test census["CouponBox"]["Lower"][1:2] ≈ [-1.5, -1.5] && census["CouponBox"]["Upper"][1:2] ≈ [2.7, 2.5]
     end
 end
 
