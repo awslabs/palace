@@ -608,9 +608,6 @@ void SubstructuringSolver::CondenseEnvironment()
 Vector SubstructuringSolver::SolveExcitation(int drive_idx)
 {
   MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
-  const int nt = impl->nt;
-  MPI_Comm comm = impl->parent_fes.GetComm();
-
   // Prescribed terminal values for this excitation: driven terminal at 1 V, others
   // grounded.
   impl->dbc_values = 0.0;
@@ -622,6 +619,26 @@ Vector SubstructuringSolver::SolveExcitation(int drive_idx)
       impl->dbc_values(d) = value;
     }
   }
+  return SolveWithCurrentDbc();
+}
+
+Vector SubstructuringSolver::SolveDirichlet(const Vector &dbc_values)
+{
+  MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
+  // Prescribe an arbitrary boundary field on the Dirichlet DOF set (e.g. a flux-loop lift).
+  impl->dbc_values = 0.0;
+  for (int i = 0; i < impl->dbc_tdofs.Size(); i++)
+  {
+    const int d = impl->dbc_tdofs[i];
+    impl->dbc_values(d) = dbc_values(d);
+  }
+  return SolveWithCurrentDbc();
+}
+
+Vector SubstructuringSolver::SolveWithCurrentDbc()
+{
+  const int nt = impl->nt;
+  MPI_Comm comm = impl->parent_fes.GetComm();
 
   // g_E for this excitation: interface response to the (excitation-specific) Dirichlet
   // data, via one environment solve through the implicit DtN, gathered to the global

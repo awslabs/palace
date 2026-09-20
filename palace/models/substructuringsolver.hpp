@@ -41,6 +41,10 @@ public:
   // grounded. Reuses the materialized environment DtN. Returns the full parent field.
   Vector SolveExcitation(int drive_terminal_index);
 
+  // Solve a Dirichlet-lift excitation with an arbitrary prescribed boundary field on the
+  // Dirichlet DOF set (e.g. a magnetostatic flux-loop lift). Returns the full parent field.
+  Vector SolveDirichlet(const Vector &dbc_values);
+
   // Solve K u = f for a full parent-space source f (magnetostatic current excitation),
   // reusing the condensed environment. Returns the full parent field.
   Vector SolveSource(const Vector &f);
@@ -66,6 +70,9 @@ public:
                      const std::vector<Vector> &fields) const;
 
 private:
+  // Region-condensed Dirichlet-lift solve using the currently set impl->dbc_values.
+  Vector SolveWithCurrentDbc();
+
   // Hides the heavy internals (LaplaceOperator on each submesh, Substructure,
   // DtNBoundaryOperator, KspSolver) so the header stays decoupled from the plumbing.
   struct Impl;
