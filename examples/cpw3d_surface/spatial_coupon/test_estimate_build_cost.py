@@ -48,6 +48,21 @@ class EstimateBuildCostTest(unittest.TestCase):
         self.assertEqual(result["Corners"], 4)
         self.assertEqual(result["Sizes"]["TangentialSize"], 0.05)
 
+    def test_box_pads_each_layer_by_its_process_normal(self):
+        # Decision 48: Overetch on the substrate side (-Nz), MetalThickness on the metal
+        # side (+Nz); the opposed-layers fixture (upward at 0, downward at 0.6) is padded
+        # by the trench above its downward layer, the hole fixture (upward only) as before.
+        paths = case_paths(self.manifest, MANIFEST, self.case("opposed-layers"))
+        lower, upper = coupon_box(read_edges(paths["Signature"]), 0.5, 0.06, 0.02)
+        self.assertAlmostEqual(lower[2], -0.52)
+        self.assertAlmostEqual(upper[2], 0.6 + 0.5 + 0.02)
+        paths = case_paths(self.manifest, MANIFEST, self.case("hole"))
+        lower, upper = coupon_box(read_edges(paths["Signature"]), 0.5, 0.08, 0.03)
+        self.assertAlmostEqual(lower[2], -0.53)
+        self.assertAlmostEqual(upper[2], 0.58)
+        result = estimate(paths, self.options, self.model["TetrahedraPerCubicSize"])
+        self.assertEqual(result["Tubes"]["Sides"], 8)      # the hole's four sides carry tubes too
+
     def test_cad_subdivided_edge_keeps_the_unsubdivided_box(self):
         # Decision 47: the two collinear half rows of one-edge-cad-subdivided chain into
         # the straight edge's union, so both fixtures share the box and the estimate.

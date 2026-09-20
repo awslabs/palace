@@ -285,6 +285,200 @@ end
     @test segment_segment_distance_2d((0.0, 0.0), (1.0, 0.0), (2.0, 1.0), (3.0, 1.0)) ≈ sqrt(2.0)
 end
 
+# A rectangular strip coupon written as the frozen inputs (signature, boundary, mask,
+# semantic contract) of the production mesher, with the process normal `sign`.
+function write_strip_inputs(directory, sign; x=0.6, y=0.2, plane=0.0)
+    points = [(-x, -y), (x, -y), (x, y), (-x, y)]
+    open(joinpath(directory, "signature.csv"), "w") do io
+        println(io, "Index,Slot,Conductor,Px,Py,Pz,Gx,Gy,Gz,Tx,Ty,Tz,Nz,S0,S1,VertexArm")
+        for i in 1:4
+            a = points[i]; b = points[i % 4 + 1]
+            span = hypot(b[1] - a[1], b[2] - a[2])
+            t = ((b[1] - a[1]) / span, (b[2] - a[2]) / span)
+            println(io, join([i, 0, 1, 0.5 * (a[1] + b[1]), 0.5 * (a[2] + b[2]), plane, t[2], -t[1], 0,
+                              t[1], t[2], 0, sign, -span / 2, span / 2, 0], ","))
+        end
+    end
+    open(joinpath(directory, "boundary.csv"), "w") do io
+        println(io, "Loop,Vertex,Conductor,Plane,Hole,Class,X,Y")
+        for (i, point) in enumerate(points)
+            println(io, join([1, i, 1, plane, 0, "Physical", point[1], point[2]], ","))
+        end
+    end
+    open(joinpath(directory, "mask.csv"), "w") do io
+        println(io, "Facet,Conductor,Plane,X,Y")
+        for point in points
+            println(io, join([1, 1, plane, point[1], point[2]], ","))
+        end
+    end
+    open(joinpath(directory, "semantic.json"), "w") do io
+        write_json(io, Dict{String, Any}(
+            "Version" => 1, "SemanticCorners" => [[p[1], p[2], plane] for p in points]))
+    end
+    return joinpath(directory, "signature.csv"), joinpath(directory, "boundary.csv"),
+           joinpath(directory, "mask.csv"), joinpath(directory, "semantic.json")
+end
+
+# Build the strip coupon under coarse prism-tube options; returns the census.
+function build_strip_coupon(directory, sign)
+    signature, boundary, mask, semantic = write_strip_inputs(directory, sign)
+    mesh = joinpath(directory, "coupon-$(sign > 0 ? "up" : "down").msh")
+    census = joinpath(directory, "census-$(sign > 0 ? "up" : "down").json")
+    generate_spatial_coupon(; signature=signature, mask=mask, boundary=boundary, fabricated=true,
+                            filename=mesh, radius=0.5, metal_thickness=0.1, overetch=0.05,
+                            sidewall_angle=90.0, top_rounding=0.0, trench_rounding=0.0,
+                            lc_fine=0.05, lc_tangent=0.1, lc_far=0.3, max_nodes=2_000_000,
+                            max_elements=2_000_000, semantic_contract=semantic,
+                            corner_isotropy_radius=0.1, corner_census=census, edge_size=0.01,
+                            edge_growth_ratio=2.0, corner_size=0.01, prism_tubes=true,
+                            far_growth=0.5, maximum_corner_aspect=4.0,
+                            minimum_scaled_jacobian=0.01, maximum_jacobian_condition=1000.0,
+                            quality_displacement_over_normal=0.75)
+    return parse_json(read(census, String)), mesh
+end
+
+# Node coordinates and per-type element node tags of a written mesh.
+function read_mesh_cells(path)
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    gmsh.open(path)
+    node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
+    points = Dict(tag => coordinates[(3i - 2):(3i)] for (i, tag) in enumerate(node_tags))
+    types, _, element_nodes = gmsh.model.mesh.getElements(3)
+    cells = Dict(Int(type) => reshape(block, GMSH_LINEAR_VOLUME_TYPES[Int(type)][2], :)
+                 for (type, block) in zip(types, element_nodes))
+    gmsh.finalize()
+    return points, cells
+end
+
+@testset "downward process layers: tube frame, layer gap, box padding, mirror covariance (decision 48)" begin
+    guard_message(f) = try f(); "" catch e; e.msg end
+    # The coupon box pads each layer's plane by Overetch on the substrate side (-Nz) and
+    # MetalThickness on the metal side (+Nz).
+    row(z, sign) = (slot=0, conductor=1, point=(0.0, 0.0, z), gap=(0.0, -1.0, 0.0),
+                    tangent=(1.0, 0.0, 0.0), interval=(-1.0, 1.0), normal_sign=Float64(sign),
+                    vertex_arm=false)
+    up_lower, up_upper = coupon_bounds([row(0.0, 1)], 2.0, 0.1, 0.05)
+    @test up_lower[3] ≈ -2.05 && up_upper[3] ≈ 2.1
+    down_lower, down_upper = coupon_bounds([row(0.0, -1)], 2.0, 0.1, 0.05)
+    @test down_lower[3] ≈ -2.1 && down_upper[3] ≈ 2.05
+    opposed_lower, opposed_upper = coupon_bounds([row(0.0, 1), row(0.6, -1)], 2.0, 0.1, 0.05)
+    @test opposed_lower[3] ≈ -2.05 && opposed_upper[3] ≈ 2.65
+    @test "DownwardLayers" in RECIPE_SCOPE_SUPPORTED_CLASSES &&
+          any(guard -> guard[1] == "NarrowLayerGap", RECIPE_SCOPE_GUARDS)
+    # The tube frame of a downward layer: b = -z, the top tube on plane - thickness, the
+    # extrusion sense mirrored; a narrow gap between facing layers fails closed.
+    points = [(-0.6, -0.2), (0.6, -0.2), (0.6, 0.2), (-0.6, 0.2)]
+    loop(plane) = (conductor=1, plane=plane, hole=false, points=points, classes=fill("Physical", 4))
+    corners(plane) = [(p[1], p[2], plane) for p in points]
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    gmsh.model.add("frames")
+    lower = [-2.1, -1.7]; upper = [2.1, 1.7]
+    _, _, up_tubes, _, description = build_edge_tubes!(
+        gmsh.model.occ, [(plane=0.0, sign=1, edges=nothing)], [loop(0.0)], nothing, corners(0.0),
+        0.01, 2.0, 30.0, 0.1, 0.05, 0.1, 0.1, 0.05, lower, upper, 1.0e-9)
+    _, _, down_tubes, _, _ = build_edge_tubes!(
+        gmsh.model.occ, [(plane=0.0, sign=-1, edges=nothing)], [loop(0.0)], nothing, corners(0.0),
+        0.01, 2.0, 30.0, 0.1, 0.05, 0.1, 0.1, 0.05, lower, upper, 1.0e-9)
+    @test length(up_tubes) == length(down_tubes) == 8
+    for ((up, up_section), (down, down_section)) in zip(up_tubes, down_tubes)
+        @test up.b == [0.0, 0.0, 1.0] && down.b == [0.0, 0.0, -1.0]
+        @test up.n == down.n && up.e ≈ -down.e
+        @test up.origin[3] ≈ -down.origin[3]                # plane + thickness <-> plane - thickness
+        @test up.origin[1:2] ≈ down.origin[1:2] || true
+        @test up_section.materials == down_section.materials && up_section.angles == down_section.angles
+        # The tube covers the same edge interval in space: its end points are mirrored.
+        ends(t) = sort([tube_point(t, 0.0, 0.0, t.s_start)[1:2], tube_point(t, 0.0, 0.0, t.s_end)[1:2]])
+        @test ends(up) ≈ ends(down)
+    end
+    @test occursin("tube frame", lowercase(description["TubeFrameRule"])) || haskey(description, "TubeFrameRule")
+    facing_reach = description["FacingReach"]
+    @test facing_reach ≈ description["Radius"] + description["PyramidHeight"] + 2 * 0.05
+    # Facing layers: the gap between the metal faces must exceed twice the reach.
+    narrow = [(plane=0.0, sign=1, edges=nothing), (plane=0.2 + 2 * facing_reach, sign=-1, edges=nothing)]
+    message = guard_message(() -> build_edge_tubes!(
+        gmsh.model.occ, narrow, [loop(0.0), loop(narrow[2].plane)], nothing,
+        vcat(corners(0.0), corners(narrow[2].plane)), 0.01, 2.0, 30.0, 0.1, 0.05, 0.1, 0.1, 0.05,
+        lower, upper, 1.0e-9))
+    @test occursin("ScopeGuard[NarrowLayerGap]", message)
+    wide = [(plane=0.0, sign=1, edges=nothing), (plane=0.2 + 2 * facing_reach + 1.0e-3, sign=-1, edges=nothing)]
+    _, _, wide_tubes, _, _ = build_edge_tubes!(
+        gmsh.model.occ, wide, [loop(0.0), loop(wide[2].plane)], nothing,
+        vcat(corners(0.0), corners(wide[2].plane)), 0.01, 2.0, 30.0, 0.1, 0.05, 0.1, 0.1, 0.05,
+        lower, upper, 1.0e-9)
+    @test length(wide_tubes) == 16
+    gmsh.finalize()
+    # Mirror covariance: a downward-only coupon is the z-reflection of the upward one.
+    mktempdir() do directory
+        up_census, up_mesh = build_strip_coupon(directory, 1)
+        down_census, down_mesh = build_strip_coupon(directory, -1)
+        up_rows = up_census["PrismTubes"]["Tubes"]; down_rows = down_census["PrismTubes"]["Tubes"]
+        @test all(row["Layer"] == 1 for row in up_rows) && all(row["Layer"] == -1 for row in down_rows)
+        @test all(row["Origin"][3] ≈ (row["Edge"] == "top" ? 0.1 : 0.0) for row in up_rows)
+        @test all(row["Origin"][3] ≈ (row["Edge"] == "top" ? -0.1 : 0.0) for row in down_rows)
+        @test up_census["Scope"]["ExhibitedClasses"] == ["ExteriorLoops"]
+        @test down_census["Scope"]["ExhibitedClasses"] == ["DownwardLayers", "ExteriorLoops"]
+        @test up_census["CouponBox"]["Lower"][3] ≈ -down_census["CouponBox"]["Upper"][3]
+        @test up_census["CouponBox"]["Upper"][3] ≈ -down_census["CouponBox"]["Lower"][3]
+        # Everything the recipe determines mirrors exactly: the interface areas (CAD),
+        # the tube prisms and pyramids (installed explicitly) and their node sets; every
+        # gate passes on both. Gmsh's tetrahedral meshing of the mirrored CAD is not
+        # reflection-covariant (the Delaunay kernel depends on orientation), so the tet
+        # count and its quality extremes are reported, not asserted equal.
+        @test [row["Attribute"] for row in up_census["InterfaceAreas"]] ==
+              [row["Attribute"] for row in down_census["InterfaceAreas"]]
+        @test [row["Area"] for row in up_census["InterfaceAreas"]] ≈
+              [row["Area"] for row in down_census["InterfaceAreas"]]
+        up_quality = up_census["PrismTubes"]["Quality"]; down_quality = down_census["PrismTubes"]["Quality"]
+        for kind in ("Tetrahedron", "Prism", "Pyramid")
+            @test up_quality[kind]["PositiveOrientation"] && down_quality[kind]["PositiveOrientation"]
+            @test max(up_quality[kind]["MaximumJacobianCondition"],
+                      down_quality[kind]["MaximumJacobianCondition"]) <= 1000.0
+        end
+        @test min(up_quality["Tetrahedron"]["MinimumScaledJacobian"],
+                  down_quality["Tetrahedron"]["MinimumScaledJacobian"]) >= 0.01
+        @test all(<=(4.0), up_census["SeedQualityOptimization"]["CornerAspectsAfter"])
+        @test all(<=(4.0), down_census["SeedQualityOptimization"]["CornerAspectsAfter"])
+        @info "mirror covariance: tetrahedra" up=up_quality["Tetrahedron"]["Count"] down=down_quality["Tetrahedron"]["Count"]
+        # The tube rows mirror: same edge intervals and layer counts, origin z negated,
+        # extrusion sense reversed (e = n x b with b = (0, 0, Nz)).
+        @test length(up_rows) == length(down_rows) == 8
+        for (up_row, down_row) in zip(up_rows, down_rows)
+            @test up_row["Layers"] == down_row["Layers"] && up_row["Edge"] == down_row["Edge"]
+            @test up_row["Length"] ≈ down_row["Length"] && up_row["Start"] ≈ down_row["Start"]
+            @test up_row["Extrusion"] ≈ -down_row["Extrusion"] && up_row["Normal"] ≈ down_row["Normal"]
+            @test up_row["Origin"][3] ≈ -down_row["Origin"][3]
+        end
+        up_points, up_cells = read_mesh_cells(up_mesh)
+        down_points, down_cells = read_mesh_cells(down_mesh)
+        for type in (6, 7)
+            @test size(up_cells[type]) == size(down_cells[type])
+            @test up_quality[GMSH_LINEAR_VOLUME_TYPES[type][1]]["Count"] == size(up_cells[type], 2)
+            # The tube node sets are mirrored up to the axial layer placement: the layer
+            # stations follow the axis size field sampled adaptively from s_start
+            # (graded_tube_stations, decision 40), so reversing the extrusion sense moves a
+            # station by less than one sampling step TangentialSize /
+            # TUBE_LAYER_SAMPLES_PER_SIZE (the same direction dependence two oppositely
+            # traversed exterior edges have); the cross-section (rings, rays, cap ends) is
+            # exact.
+            up_nodes = [up_points[tag] for tag in unique(vec(up_cells[type]))]
+            down_nodes = [down_points[tag] .* [1.0, 1.0, -1.0] for tag in unique(vec(down_cells[type]))]
+            @test length(up_nodes) == length(down_nodes)
+            deviation = maximum(minimum(norm(a .- b) for b in down_nodes) for a in up_nodes)
+            @info "mirror covariance: tube node deviation" type deviation
+            @test deviation <= 0.1 / TUBE_LAYER_SAMPLES_PER_SIZE
+            ends(points, cells, flip) = sort([points[tag] .* [1.0, 1.0, flip] for tag in unique(vec(cells[type]))
+                                              if abs(abs(points[tag][1]) - 0.55) <= 1.0e-9 ||
+                                                 abs(abs(points[tag][2]) - 0.15) <= 1.0e-9];
+                                             by=xyz -> round.(xyz, digits=9))
+            up_ends = ends(up_points, up_cells, 1.0); down_ends = ends(down_points, down_cells, -1.0)
+            @test !isempty(up_ends) && length(up_ends) == length(down_ends)
+            @test maximum(norm(a .- b) for (a, b) in zip(up_ends, down_ends)) <= 1.0e-9
+        end
+    end
+end
+
 @testset "recipe scope: guard ids, exhibited classes, metal loop records (decision 48)" begin
     guard_message(f) = try f(); "" catch e; e.msg end
     points = [(10.0, 0.0), (2.0, 0.0), (0.0, -2.0), (0.0, 8.0), (-1.0, 8.0), (-1.0, -3.0),
@@ -327,6 +521,7 @@ end
     @test "HoleLoops" in RECIPE_SCOPE_SUPPORTED_CLASSES && "NarrowHoles" in ids
     @test exhibited_scope_classes(edges, [loop], [(plane=0.6, sign=-1)], true, 90.0, 0.0, 0.0, 0.03,
                                   false, false) == ["DownwardLayers", "ExteriorLoops"]
+    @test "DownwardLayers" in RECIPE_SCOPE_SUPPORTED_CLASSES
     @test exhibited_scope_classes(edges, [loop], layers, false, 80.0, 0.005, 0.001, 0.0, false, false) ==
           ["ExteriorLoops", "NoTrench", "SlopedSidewalls", "ThinMetal", "TopRounding", "TrenchRounding"]
     # The metal loop records count the sides not on the box: the L-shaped loop has

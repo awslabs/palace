@@ -1005,6 +1005,57 @@ band curves from the fragmented CAD, ownership by conductor and z-band). Added:
   the Radius-0.5 coupon is fully etched under the producer-default collars, no 3000
   plane). The production build's `gmsh-build.msh` equals the probe's byte for byte.
 
+#### Downward process layers (Nz = -1, flip-chip) in scope (decision 48, extension 2)
+
+`DownwardLayers` moved from the guarded to the supported classes. In
+`build_edge_tubes!` the tube frame follows the layer: `b = (0, 0, Nz)`, `e = n x b`
+(the extrusion sense mirrors; both `along` senses were already handled), the top tube
+lies on the metal top face at `plane + Nz x MetalThickness`, the bottom tube on the
+plane; the sections are defined in the (n, b) frame, so "vacuum above / substrate
+below" mirrors with b (`TubeFrameRule` in the census Section). Added:
+
+- `NarrowLayerGap` guard (build-detected): the vacuum gap between the metal top faces
+  of an upward layer and the downward layer above it (`layer_groups` admits no other
+  two-layer configuration) must exceed twice the tube reach `Radius + PyramidHeight +
+  ProtectedDistance`, the same rule as `NarrowHoles` (opposed-layers fixture: gap
+  0.48 um against 2 x 0.03975).
+- Per-layer-sign vertical box padding in `coupon_bounds` and
+  `estimate_build_cost.coupon_box`: Overetch on the substrate side (-Nz),
+  MetalThickness on the metal side (+Nz) of every row's plane (`COUPON_BOX_RULE`);
+  identity for upward-only coupons, opposed-layers box z in [-0.52, 1.12].
+- Census tube rows carry `Layer` (Nz); `validate_tube_layers` binds every row to the
+  signature's Nz on its plane and to `Origin[3] = Plane + Layer x --metal-thickness`
+  (top) / `Plane` (bottom).
+- **Interface labeling by the surface's own layer (generic defect fixed).** The CAD
+  interface classification took the nearest signature edge over ALL layers to decide
+  the un-etched plane (3000 + s) vs the etched trench (3100 + s) and the metal
+  surface's slot, and compared the surface's z-range with that edge's plane at the
+  source tolerance 1e-7 x Radius - below the 1e-7 padding of the OCC bounding box, so
+  for Radius < 1 um every un-etched plane was labeled 3100 + s (Radius-2 cases: 2e-7 >
+  1e-7, unaffected). Now `surface_process_layer` selects the layer whose band
+  `[plane - Nz x Overetch, plane + Nz x MetalThickness]` contains the surface (fail
+  closed otherwise), its edges own the surface, and the flat-plane test uses the box
+  tolerance like every other bounding-box comparison. Effect: opposed-layers records
+  3000 / 3001 (1.68 um^2 each) and 3100 / 3101 (15.248 each) instead of 3100 / 3101
+  (16.928 each) with an identical mesh; concave-multislot (Radius 0.5) gains 3000 /
+  3001 (0.4533 / 0.1767 um^2) and is re-frozen as `FixtureVersion 2` with its version-1
+  contract retired; hole (fully etched) and every Radius-2 case are unchanged.
+- Julia tests (`test_prism_tube_build.jl`): per-sign box padding; downward tube frames
+  are the mirror of the upward ones (b, origin z, e; same intervals, sections and
+  materials); the `NarrowLayerGap` guard at the threshold; mirror covariance of a
+  downward-only strip coupon against the upward one through the full mesher: the
+  interface areas, tube rows, prism / pyramid counts and the tube end cross-sections
+  mirror to roundoff, every gate passes on both, the tube node sets mirror within one
+  axial sampling step (`TangentialSize / TUBE_LAYER_SAMPLES_PER_SIZE`: the layer
+  stations follow the axis field sampled from `s_start`, so reversing the extrusion
+  sense moves a station by < 1.5e-3 um here - the direction dependence two oppositely
+  traversed exterior edges already have) and the tetrahedra are reported, not asserted
+  equal (Gmsh's Delaunay kernel is not reflection-covariant: 27,699 vs 27,732 tets on
+  the probe).
+- Fixture `opposed-layers` re-frozen as `FixtureVersion 2` (contract re-derived: 8
+  corners, 9 labels); the multi-slot ownership postprocessor runs on two facing
+  layers (first production case with two slots on different planes).
+
 ### Synthetic matrix under the Gmsh-only recipe (decision 45(b), 2026-09-19)
 
 The 2026-09-17 record (below, under the retired recipe) found ten of the twelve

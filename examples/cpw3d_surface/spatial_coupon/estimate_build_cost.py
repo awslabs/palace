@@ -70,6 +70,7 @@ def read_edges(signature):
                       "gap": np.array([float(row[k]) for k in ("Gx", "Gy", "Gz")]),
                       "tangent": np.array([float(row[k]) for k in ("Tx", "Ty", "Tz")]),
                       "interval": (float(row["S0"]), float(row["S1"])),
+                      "normal_sign": int(float(row["Nz"])),
                       "vertex_arm": bool(int(float(row.get("VertexArm", 0) or 0)))})
     return edges
 
@@ -117,7 +118,8 @@ def edge_chains(edges):
 
 def coupon_box(edges, radius, metal_thickness, overetch):
     """The mesher's coupon box (mesh_spatial_coupon.jl coupon_bounds / extended_interval,
-    with the decision-47 chain rule for CAD-subdivided edges)."""
+    with the decision-47 chain rule for CAD-subdivided edges and the per-layer-sign
+    vertical padding of decision 48)."""
     points = []
     unions = edge_chains(edges)
     for index, edge in enumerate(edges):
@@ -148,9 +150,12 @@ def coupon_box(edges, radius, metal_thickness, overetch):
     points = np.asarray(points)
     lower = points.min(axis=0) - radius
     upper = points.max(axis=0) + radius
-    z = np.array([edge["point"][2] for edge in edges])
-    lower[2] = min(lower[2], z.min() - radius - overetch)
-    upper[2] = max(upper[2], z.max() + radius + metal_thickness)
+    # Vertical padding per process layer sign (decision 48): Overetch on the substrate
+    # side (-Nz), MetalThickness on the metal side (+Nz) of every row's plane.
+    lower[2] = min(lower[2], min(edge["point"][2] - radius - (overetch if edge["normal_sign"] > 0 else metal_thickness)
+                                 for edge in edges))
+    upper[2] = max(upper[2], max(edge["point"][2] + radius + (metal_thickness if edge["normal_sign"] > 0 else overetch)
+                                 for edge in edges))
     return lower, upper
 
 

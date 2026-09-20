@@ -1261,15 +1261,17 @@ GMSH_BUILD_VOLUME_TYPES = ("Tetrahedron", "Prism", "Pyramid")
 # records the same lists and is bound here; the build drivers record an unsupported
 # class distinctly from any other failure with these ids.
 RECIPE_SCOPE_RECIPE = "prism-tubes"
-RECIPE_SCOPE_SUPPORTED_CLASSES = ("ContinuationVertices", "DeviceFootprint", "ExteriorLoops",
-                                  "HoleLoops", "MultipleConductors", "MultipleLayers",
-                                  "MultipleSlots", "TraceBasis")
+RECIPE_SCOPE_SUPPORTED_CLASSES = ("ContinuationVertices", "DeviceFootprint", "DownwardLayers",
+                                  "ExteriorLoops", "HoleLoops", "MultipleConductors",
+                                  "MultipleLayers", "MultipleSlots", "TraceBasis")
 RECIPE_SCOPE_GUARDS = {
-    "DownwardLayers": "inputs", "TopRounding": "inputs",
-    "TrenchRounding": "inputs", "SlopedSidewalls": "inputs", "ThinMetal": "inputs",
-    "NoTrench": "inputs", "ShallowTrench": "build", "NarrowTransverseBound": "build",
-    "NarrowHoles": "build", "FreeEdgeEnds": "build", "ShortEdges": "build",
-    "FootprintWithoutEdge": "build"}
+    "TopRounding": "inputs", "TrenchRounding": "inputs", "SlopedSidewalls": "inputs",
+    "ThinMetal": "inputs", "NoTrench": "inputs", "ShallowTrench": "build",
+    "NarrowTransverseBound": "build", "NarrowHoles": "build", "NarrowLayerGap": "build",
+    "FreeEdgeEnds": "build", "ShortEdges": "build", "FootprintWithoutEdge": "build"}
+# Metal thickness option of the mesher command with its default; the top tube of a
+# process layer with normal Nz lies at plane + Nz x MetalThickness (decision 48).
+GMSH_BUILD_THICKNESS_OPTION = ("--metal-thickness", 0.1)
 SCOPE_GUARD_PATTERN = re.compile(r"ScopeGuard\[([A-Za-z]+)\]")
 # Process options of the mesher command with the mesher's defaults (a command without
 # the option builds the default) that classify an input.
@@ -1430,7 +1432,40 @@ def validate_recipe_scope(build_report, census):
     tubes = census.get("PrismTubes")
     if not isinstance(tubes, dict) or tubes.get("TubeCount") != 2 * sum(expected) or sum(expected) <= 0:
         raise ValueError("Prism tube count is not twice the straight sides of every loop")
+    validate_tube_layers(build_report, tubes)
     return scope
+
+
+def validate_tube_layers(build_report, tubes):
+    """Every census tube row names its process layer sign (Tubes[].Layer = the signature
+    Nz of the rows on its Plane) and lies on that layer's edge: the top tube at
+    Plane + Layer x MetalThickness (the command's --metal-thickness), the bottom tube on
+    the Plane (decision 48: b = (0, 0, Nz) is the tube frame)."""
+    command = build_report["Command"]
+    thickness = _option_or_default(command, *GMSH_BUILD_THICKNESS_OPTION)
+    signs = {}
+    for row in read_csv_rows(build_report["Inputs"]["source-signature"]["Path"]):
+        signs.setdefault(float(row["Pz"]), set()).add(int(float(row.get("Nz", 1) or 1)))
+    if any(len(values) != 1 for values in signs.values()):
+        raise ValueError("Signature rows on one plane carry both process normals")
+    rows = tubes.get("Tubes")
+    if not isinstance(rows, list):
+        raise ValueError("Prism tube record lacks its rows")
+    for row in rows:
+        plane = _census_number(row, "Plane", "Tube row")
+        origin = row.get("Origin")
+        layer = row.get("Layer")
+        matching = [sign for z, values in signs.items() if abs(z - plane) <= 1e-9 * max(1.0, abs(plane))
+                    for sign in values]
+        if (isinstance(layer, bool) or layer not in (-1, 1) or matching != [layer] or
+                not isinstance(origin, list) or len(origin) != 3 or
+                any(isinstance(x, bool) or not isinstance(x, (int, float)) for x in origin) or
+                row.get("Edge") not in ("top", "bottom")):
+            raise ValueError("Prism tube row lacks its process layer sign or lies on another layer")
+        expected = plane + layer * thickness if row["Edge"] == "top" else plane
+        if abs(origin[2] - expected) > 1e-9 * max(1.0, abs(expected)):
+            raise ValueError("Prism tube row does not lie on its layer's metal edge (plane + Nz x thickness / plane)")
+    return rows
 
 
 def _census_number(record, name, description):

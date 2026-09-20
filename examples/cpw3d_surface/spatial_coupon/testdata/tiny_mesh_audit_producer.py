@@ -151,7 +151,7 @@ def prism_tube_record(mesh, tubes, tube_count):
     inner, ratio = tubes["edge_size"], tubes["ratio"]
     rings = 3
     tube_row = {"Spacing": tubes["lc_tangent"], "Layers": 1, "Length": tubes["lc_tangent"],
-                "Conductor": 1, "Plane": 0.0, "EndsOnBox": [False, False],
+                "Conductor": 1, "Plane": 0.0, "Layer": 1, "EndsOnBox": [False, False],
                 "LayerThickness": {"Minimum": tubes["lc_tangent"], "P50": tubes["lc_tangent"],
                                    "Maximum": tubes["lc_tangent"],
                                    "AtStart": tubes["lc_tangent"], "AtEnd": tubes["lc_tangent"],
@@ -163,7 +163,11 @@ def prism_tube_record(mesh, tubes, tube_count):
     return {"Rule": "fixture", "InnerSize": inner, "GrowthRatio": ratio,
             "TangentialSize": tubes["lc_tangent"], "NormalSize": tubes["lc_fine"],
             "FarSize": tubes["lc_far"], "FarGrowth": tubes["far_growth"],
-            "Tubes": [{**tube_row, "Edge": "top" if k % 2 == 0 else "bottom"} for k in range(tube_count)],
+            # Row k: the top tube on the metal top face (plane + Nz x thickness), then the
+            # bottom tube on the plane, of one straight loop side each (decision 48).
+            "Tubes": [{**tube_row, "Edge": "top" if k % 2 == 0 else "bottom",
+                       "Origin": [0.0, 0.0, tubes["metal_thickness"] if k % 2 == 0 else 0.0]}
+                      for k in range(tube_count)],
             "TubeCount": tube_count, "TotalTubeLength": tube_count * tubes["lc_tangent"],
             "Layers": tube_count,
             "SpacingMinimum": tubes["lc_tangent"], "SpacingMaximum": tubes["lc_tangent"],
@@ -409,6 +413,7 @@ def main():
     parser.add_argument("--top-radius", type=float, default=0.01)
     parser.add_argument("--bottom-radius", type=float, default=0.01)
     parser.add_argument("--overetch", type=float, default=0.05)
+    parser.add_argument("--metal-thickness", type=float, default=0.1)
     args = parser.parse_args()
     tubes = None
     if args.prism_tubes == "true":
@@ -424,6 +429,7 @@ def main():
         tubes.update({"signature": args.signature, "boundary": args.boundary,
                       "sidewall_angle": args.sidewall_angle, "top_rounding": args.top_radius,
                       "trench_rounding": args.bottom_radius, "overetch": args.overetch,
+                      "metal_thickness": args.metal_thickness,
                       "device_footprint": args.etch_boundary is not None})
     gates = (args.maximum_corner_aspect, args.minimum_scaled_jacobian,
              args.maximum_jacobian_condition, args.maximum_quality_displacement_over_normal)

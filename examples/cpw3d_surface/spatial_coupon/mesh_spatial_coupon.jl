@@ -107,7 +107,10 @@ const COUPON_BOX_RULE =
     "(vertex arms at their far end); collinear touching rows of one metal edge (same slot, " *
     "conductor, plane, tangent, gap; no vertex arm) form a chain judged on the union interval " *
     "about its midpoint, so the source CAD's subdivision of a straight edge never changes the " *
-    "coupon box (decision 47; EdgeChains lists every chain with its union length and rows)"
+    "coupon box (decision 47; EdgeChains lists every chain with its union length and rows); " *
+    "the box is padded by Radius around the extended rows and, per process layer sign Nz, " *
+    "by Overetch on the substrate side (-Nz) and MetalThickness on the metal side (+Nz) of " *
+    "every row's plane (decision 48)"
 
 edge_chain_key(edge) = (edge.slot, edge.conductor, edge.point, edge.tangent, edge.gap, edge.interval)
 
@@ -2889,15 +2892,21 @@ function coupon_bounds(edges, radius, metal_thickness, overetch)
     end
     lower = ntuple(index -> minimum(point[index] for point in points) - radius, 3)
     upper = ntuple(index -> maximum(point[index] for point in points) + radius, 3)
+    # Vertical padding per process layer sign: the trench (Overetch) lies on the
+    # substrate side of the plane, -Nz, and the metal (MetalThickness) on +Nz.
     lower = (
         lower[1],
         lower[2],
-        min(lower[3], minimum(edge.point[3] for edge in edges) - radius - overetch)
+        min(lower[3], minimum(edge.point[3] - radius -
+                              (edge.normal_sign > 0 ? overetch : metal_thickness)
+                              for edge in edges))
     )
     upper = (
         upper[1],
         upper[2],
-        max(upper[3], maximum(edge.point[3] for edge in edges) + radius + metal_thickness)
+        max(upper[3], maximum(edge.point[3] + radius +
+                              (edge.normal_sign > 0 ? metal_thickness : overetch)
+                              for edge in edges))
     )
     return lower, upper
 end
@@ -2928,6 +2937,22 @@ function layer_groups(edges, tolerance)
         overlap && error("Spatial coupon substrate half-spaces overlap")
     end
     return layers
+end
+
+# The process layer whose band [plane - Nz x Overetch, plane + Nz x MetalThickness]
+# contains the z-range [zmin, zmax] of a fabricated surface (OCC bounding boxes carry
+# their own tolerance: the box tolerance is used); fail closed when none or several do
+# (layer_groups rejects overlapping half-spaces, so bands are disjoint).
+function surface_process_layer(layers, zmin, zmax, metal_thickness, overetch, tolerance)
+    matches = [layer for layer in layers
+               if min(layer.plane - layer.sign * overetch, layer.plane + layer.sign * metal_thickness) -
+                  tolerance <= zmin &&
+                  zmax <= max(layer.plane - layer.sign * overetch,
+                              layer.plane + layer.sign * metal_thickness) + tolerance]
+    length(matches) == 1 ||
+        error("Fabricated surface spanning z in [$zmin, $zmax] lies in $(length(matches)) process " *
+              "layer bands")
+    return only(matches)
 end
 
 function on_outer_box(bounds, lower, upper, tolerance)
@@ -3641,12 +3666,9 @@ end
 # them and mesh_stage_contract.py binds the same lists.
 const RECIPE_SCOPE_RECIPE = "prism-tubes"
 const RECIPE_SCOPE_SUPPORTED_CLASSES = [
-    "ContinuationVertices", "DeviceFootprint", "ExteriorLoops", "HoleLoops",
+    "ContinuationVertices", "DeviceFootprint", "DownwardLayers", "ExteriorLoops", "HoleLoops",
     "MultipleConductors", "MultipleLayers", "MultipleSlots", "TraceBasis"]
 const RECIPE_SCOPE_GUARDS = [
-    ("DownwardLayers", "inputs",
-     "process layers with Nz = -1 (flip-chip): the tube frame and the tube planes assume " *
-     "upward layers"),
     ("TopRounding", "inputs",
      "rounded metal top edges (TopRounding > 0): the tube rings surround a sharp edge"),
     ("TrenchRounding", "inputs",
@@ -3667,6 +3689,9 @@ const RECIPE_SCOPE_GUARDS = [
     ("NarrowHoles", "build",
      "a hole narrower than twice the tube reach (Radius + PyramidHeight + the band's " *
      "ProtectedDistance): the tubes facing each other across it would overlap"),
+    ("NarrowLayerGap", "build",
+     "a vacuum gap between the metal faces of an upward and a downward process layer " *
+     "narrower than twice the tube reach: the tubes facing each other across it would overlap"),
     ("FreeEdgeEnds", "build",
      "a metal edge end that is neither a semantic corner nor on the outer box"),
     ("ShortEdges", "build",
@@ -3936,24 +3961,39 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
     records = TubeRecord[]
     tubes = Tuple{EdgeTube, TubeSection}[]
     segments = NamedTuple[]
+    # Facing process layers (an upward layer below a downward one, the only pair
+    # layer_groups admits): the vacuum gap between their metal top faces must exceed
+    # two tube reaches, like the width of a hole.
+    for lower_layer in layers, upper_layer in layers
+        lower_layer.sign > 0 && upper_layer.sign < 0 || continue
+        gap = (upper_layer.plane - metal_thickness) - (lower_layer.plane + metal_thickness)
+        gap > 2.0 * facing_reach ||
+            scope_error("NarrowLayerGap", "vacuum gap $gap between the metal faces of the layers " *
+                                          "at z = $(lower_layer.plane) (Nz = 1) and z = " *
+                                          "$(upper_layer.plane) (Nz = -1) against twice the tube " *
+                                          "reach $facing_reach")
+    end
     for layer in layers
-        layer.sign > 0 || scope_error("DownwardLayers", "process layer at z = $(layer.plane) has " *
-                                                        "Nz = $(layer.sign)")
         layer_loops = [loop for loop in loops if abs(loop.plane - layer.plane) <= tolerance]
         isempty(layer_loops) && error("Plan-view boundary is missing the tube layer $(layer.plane)")
-        layer_segments = metal_edge_segments(layer_loops, corners, clearance, lower, upper, tolerance)
+        layer_segments = [(segment..., layer_sign=layer.sign) for segment in
+                          metal_edge_segments(layer_loops, corners, clearance, lower, upper, tolerance)]
         if etch_loops !== nothing
             for segment in layer_segments
                 assert_etch_carries_edge(etch_loops, segment, tolerance)
             end
         end
         for segment in layer_segments
+            # The tube frame follows the layer: b is the process normal (Nz), so the
+            # sections' "up" (towards the metal top face) and the extrusion sense
+            # e = n x b mirror for a downward layer; the top tube sits on the metal top
+            # face at plane + Nz x thickness, the bottom tube on the plane.
             n = [segment.normal[1], segment.normal[2], 0.0]
-            b = [0.0, 0.0, 1.0]
+            b = [0.0, 0.0, Float64(layer.sign)]
             e = cross(n, b)
             along = dot(e[1:2], segment.direction)
             abs(abs(along) - 1.0) <= 1.0e-12 || error("Tube frame is not aligned with the edge")
-            for (z, section) in ((layer.plane + metal_thickness, top_section),
+            for (z, section) in ((layer.plane + layer.sign * metal_thickness, top_section),
                                  (layer.plane, bottom_section))
                 tube = if along > 0.0
                     EdgeTube([segment.start[1], segment.start[2], z], n, b, segment.s_start,
@@ -3985,8 +4025,14 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                                  "(h_K alone for a single tube edge); 0 at box continuation vertices",
         "FacingReach" => facing_reach,
         "FacingRule" => "every hole is wider than 2 x (Radius + PyramidHeight + " *
-                        "ProtectedDistance) between any two of its non-adjacent sides, so the " *
-                        "tubes facing each other across it keep disjoint bands",
+                        "ProtectedDistance) between any two of its non-adjacent sides, and the " *
+                        "vacuum gap between the metal top faces of an upward and a downward " *
+                        "process layer exceeds the same 2 x reach, so the tubes facing each " *
+                        "other across a hole or a layer gap keep disjoint bands",
+        "TubeFrameRule" => "b = (0, 0, Nz) of the tube's process layer, n the horizontal " *
+                           "normal away from the metal, e = n x b; the top tube lies on the " *
+                           "metal top face at plane + Nz x MetalThickness, the bottom tube on " *
+                           "the plane (Tubes[].Layer records Nz)",
         "Top" => Dict("Angles" => top_section.angles, "Materials" => top_section.materials),
         "Bottom" => Dict("Angles" => bottom_section.angles, "Materials" => bottom_section.materials))
     return tools, records, tubes, segments, description
@@ -4331,7 +4377,7 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
             "Layers" => tube.layers, "Spacing" => tube_spacing(tube),
             "LayerThickness" => layer_records[k],
             "Materials" => section.materials, "Conductor" => segment.conductor,
-            "Plane" => segment.plane, "Hole" => segment.hole,
+            "Plane" => segment.plane, "Hole" => segment.hole, "Layer" => segment.layer_sign,
             "CornerAngles" => collect(segment.corner_angles),
             "Edge" => isodd(k) ? "top" : "bottom"))
     end
@@ -5016,24 +5062,36 @@ function generate_spatial_coupon(;
         prism_tubes && length(up) == 2 && (isempty(adjacent_substrate) || isempty(adjacent_vacuum)) &&
             continue
         point = point_on_surface(tag)
-        edge = nearest_edge(edges, point, radius)
         attribute = 0
         if fabricated
+            # A fabricated surface belongs to the process layer whose band
+            # [plane - Nz x Overetch, plane + Nz x MetalThickness] contains it, and is
+            # owned by that layer's edges: with two layers (decision 48) the nearest edge
+            # of another layer must not decide the un-etched / etched plane or the slot.
+            _, _, zmin, _, _, zmax = bounds
+            layer = surface_process_layer(layers, zmin, zmax, metal_thickness, overetch,
+                                          outer_tolerance)
+            layer_edges = layer.edges
             if !isempty(adjacent_substrate) && !isempty(adjacent_vacuum)
-                _, _, zmin, _, _, zmax = bounds
+                edge = nearest_edge(layer_edges, point, radius)
+                # The un-etched plane is the interface lying in the layer plane; the
+                # OCC bounding box carries the CAD's absolute tolerance (1e-7), so it is
+                # compared with the box tolerance like every other bounding box here
+                # (the source tolerance 1e-7 x Radius is below it for Radius < 1 um).
                 attribute =
-                    abs(zmin - edge.point[3]) < tolerance &&
-                    abs(zmax - edge.point[3]) < tolerance ? 3000 + edge.slot :
+                    abs(zmin - layer.plane) < outer_tolerance &&
+                    abs(zmax - layer.plane) < outer_tolerance ? 3000 + edge.slot :
                     3100 + edge.slot
                 push!(interface_surfaces, tag)
             elseif !isempty(adjacent_substrate)
-                owner = nearest_metal_edge(edges, facets, point, radius, tolerance)
+                owner = nearest_metal_edge(layer_edges, facets, point, radius, tolerance)
                 attribute = metal_surface_attribute(5000, owner.slot, owner.conductor)
             elseif !isempty(adjacent_vacuum)
-                owner = nearest_metal_edge(edges, facets, point, radius, tolerance)
+                owner = nearest_metal_edge(layer_edges, facets, point, radius, tolerance)
                 attribute = metal_surface_attribute(6000, owner.slot, owner.conductor)
             end
         else
+            edge = nearest_edge(edges, point, radius)
             metal_edges = [
                 candidate for candidate in edges if
                 point_in_metal(candidate, point, radius, tolerance, facets)

@@ -323,7 +323,8 @@ class FixtureMatrixMixin:
                      "--corner-isotropy-radius", str(CORNER_ISOTROPY_RADIUS),
                      "--lc-fine", str(NORMAL_SIZE), "--corner-census", str(census),
                      *(["--etch-boundary", str(etch)] if etch is not None else []),
-                     *basis_options, *SEED_QUALITY_GATE_OPTIONS, *GMSH_BUILD_OPTIONS])
+                     *basis_options, *SEED_QUALITY_GATE_OPTIONS, *GMSH_BUILD_OPTIONS,
+                     "--metal-thickness", str(0.004 * case["TestScale"])])
                 launch(canonical_stem, canonical_reports, "canonical-gmsh-publication",
                     {"gmsh-mesh": seed, "source-process": directory / "process.toml",
                      "source-signature": directory / "signature.csv",
@@ -2586,7 +2587,7 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
             # Decision 48: a case outside the recipe scope is recorded as an unsupported
             # class (not a preflight failure of the matrix), distinctly from any other error.
             self.assertEqual(summary["UnsupportedClassCases"],
-                             {"rounded-strip": "TopRounding", "opposed-layers": "DownwardLayers"})
+                             {"rounded-strip": "TopRounding"})
             self.assertTrue(summary["PreflightPassed"])
             self.assertEqual({case["Id"] for case in summary["Cases"] if not case["Passed"]},
                              set(summary["UnsupportedClassCases"]))
@@ -2749,15 +2750,17 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
         opposed = signature + [{"Slot": "1", "Conductor": "1", "Pz": "0.6", "Nz": "-1"}]
         self.assertEqual(scope_classes(opposed, boundary, overetch=.03),
                          ["DownwardLayers", "ExteriorLoops", "MultipleLayers", "MultipleSlots"])
+        self.assertEqual(unsupported_scope_classes(scope_classes(opposed, boundary, overetch=.03)), [])
         self.assertEqual(scope_classes(signature, boundary, fabricated=False, sidewall_angle=80.0,
                                        top_rounding=.005, trench_rounding=.001, overetch=0.0,
                                        device_footprint=True, trace_basis=True),
                          ["DeviceFootprint", "ExteriorLoops", "NoTrench", "SlopedSidewalls", "ThinMetal",
                           "TopRounding", "TraceBasis", "TrenchRounding"])
-        self.assertEqual(unsupported_scope_classes(["ExteriorLoops", "TopRounding", "DownwardLayers"]),
-                         ["DownwardLayers", "TopRounding"])
+        self.assertEqual(unsupported_scope_classes(["ExteriorLoops", "TopRounding", "DownwardLayers",
+                                                    "NarrowLayerGap"]),
+                         ["TopRounding", "NarrowLayerGap"])
         testdata = HERE / "testdata"
-        for case, expected in (("hole", []), ("opposed-layers", ["DownwardLayers"]),
+        for case, expected in (("hole", []), ("opposed-layers", []),
                                ("rounded-strip", ["TopRounding"]), ("concave-multislot", [])):
             process = tomllib.loads((testdata / case / "process.toml").read_text())
             classes = scope_classes_of_case_inputs(testdata / case / "mesh-signature.csv",
@@ -2919,6 +2922,8 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             holed["PrismTubes"]["Tubes"] = 2 * holed["PrismTubes"]["Tubes"]
             holed["PrismTubes"]["TubeCount"] = 8
             self.assertIs(validate_gmsh_build_census(holed_report, holed, semantic), holed)
+            # A downward layer (Nz = -1) is a supported class: the census tube rows must name
+            # the layer sign and lie on plane + Nz x thickness (top) / the plane (bottom).
             downward_report = copy.deepcopy(report)
             downward_signature = Path(temporary) / "downward-signature.csv"
             rows = Path(report["Inputs"]["source-signature"]["Path"]).read_text().splitlines()
@@ -2930,8 +2935,27 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             downward = copy.deepcopy(census)
             downward["Scope"]["ExhibitedClasses"] = scope_classes_of_build(downward_report)
             self.assertIn("DownwardLayers", downward["Scope"]["ExhibitedClasses"])
-            with self.assertRaisesRegex(ValueError, "exhibits a class the recipe guards"):
+            with self.assertRaisesRegex(ValueError, "lies on another layer"):
                 validate_gmsh_build_census(downward_report, downward, semantic)
+            thickness = float(report["Command"][report["Command"].index("--metal-thickness") + 1])
+            for row in downward["PrismTubes"]["Tubes"]:
+                row["Layer"] = -1
+                row["Origin"][2] = -thickness if row["Edge"] == "top" else 0.0
+            self.assertIs(validate_gmsh_build_census(downward_report, downward, semantic), downward)
+            downward["PrismTubes"]["Tubes"][0]["Origin"][2] = thickness
+            with self.assertRaisesRegex(ValueError, "does not lie on its layer's metal edge"):
+                validate_gmsh_build_census(downward_report, downward, semantic)
+            rejected(lambda c: c["PrismTubes"]["Tubes"][0].__setitem__("Layer", -1), "lies on another layer")
+            rejected(lambda c: c["PrismTubes"]["Tubes"][1].__setitem__("Origin", [0.0, 0.0, 0.5]),
+                     "does not lie on its layer's metal edge")
+            # A guarded class (rounding) in the bound command is rejected even when recorded.
+            rounded_report = copy.deepcopy(report)
+            rounded_report["Command"][rounded_report["Command"].index("--top-radius") + 1] = "0.001"
+            rounded = copy.deepcopy(census)
+            rounded["Scope"]["ExhibitedClasses"] = scope_classes_of_build(rounded_report)
+            self.assertIn("TopRounding", rounded["Scope"]["ExhibitedClasses"])
+            with self.assertRaisesRegex(ValueError, "exhibits a class the recipe guards"):
+                validate_gmsh_build_census(rounded_report, rounded, semantic)
             # The unbound-by-option tube parameters are bound to the option default or the
             # mesher constants: sector angle, pyramid height rule, band growth, protected distance.
             rejected(lambda c: c["PrismTubes"]["Section"].__setitem__("SectorDegrees", 45.0),

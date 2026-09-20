@@ -6,9 +6,11 @@
     "PlanViewBoundarySHA256": "a78480087ba79a6a1d85e7fd981db11eef8389024d9d2d1620ffdd5d49dfe0ac",
     "SignatureSHA256": "c85f1e81f28f782cd6cbd637c0ad43e294b05e79c359376b8fff23b1a04d346c",
     "Rules": "materials and physical label families follow the frozen fabricated spatial-coupon producer (substrate 1 / vacuum 2; matching surface 1; substrate-vacuum interface 3000 + slot in the metal plane (un-etched) and 3100 + slot recessed; MS 5000 + 100 slot + conductor; MA 6000 + 100 slot + conductor); slots/conductors come from Models[0].Edges and agree with the signature (from the signature alone when no process library is bound); semantic corners are plan-view vertices classified Physical; the un-etched plane labels present are those of the recorded gmsh-build census of the same inputs (a producer outcome of the etch footprint and the coupon box), every census label belonging to a derived family",
-    "BuildCensusSHA256": "3b7b931d8406c3e9cd392b971fcef6b872ef37cf11eac94c5ee97e339fa96f13",
+    "BuildCensusSHA256": "cad495759b235390ce9fd54b414acc19b4d0015e77c658df6d13fe03af0785dc",
     "BuildCensusInterfaceLabels": [
       1,
+      3000,
+      3001,
       3100,
       3101,
       5001,
@@ -44,6 +46,24 @@
           2
         ]
       ]
+    },
+    {
+      "Attribute": 3000,
+      "Role": "un-etched-substrate-vacuum-slot-0",
+      "AdjacentMaterials": [
+        1,
+        2
+      ],
+      "Protected": true
+    },
+    {
+      "Attribute": 3001,
+      "Role": "un-etched-substrate-vacuum-slot-1",
+      "AdjacentMaterials": [
+        1,
+        2
+      ],
+      "Protected": true
     },
     {
       "Attribute": 3100,
@@ -130,6 +150,8 @@
   ],
   "ProtectedSupports": [
     "matching-surface",
+    "un-etched-substrate-vacuum-slot-0",
+    "un-etched-substrate-vacuum-slot-1",
     "etched-substrate-vacuum-slot-0",
     "etched-substrate-vacuum-slot-1",
     "conductor-1-slot-0-ms",
