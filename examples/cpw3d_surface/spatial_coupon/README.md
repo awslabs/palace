@@ -3,6 +3,14 @@
 
 # Spatial coupon meshers
 
+## Two commands
+
+The Gmsh-only coupon mesh library is driven by `coupon_library.py build` (register a
+source directory as a manifest case with an explicit footprint declaration, build the
+selected cases as a job pool through the production DAG, audits and verification, and
+write `library-build.json`); `coupon-library qualify` (physics against a reference) is
+the next step. See "Two commands" in `geometry-independence-suite.md`.
+
 ## Exact blockwise response matrices
 
 Large high-order coupons can exceed node memory because the ordinary response-matrix
