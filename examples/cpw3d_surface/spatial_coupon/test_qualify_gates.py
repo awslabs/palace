@@ -23,6 +23,7 @@ import locate_sources  # noqa: E402
 import ma_ms_offsets  # noqa: E402
 import p_sequence  # noqa: E402
 import reference_campaign  # noqa: E402
+import remote  # noqa: E402
 import summarize_cost  # noqa: E402
 
 ASSESSMENT = Path(os.environ.get("COUPON_ASSESSMENT_ROOT", HERE.parents[3] / "coupon-accuracy-assessment-20260913"))
@@ -324,6 +325,17 @@ class GateRuleTest(unittest.TestCase):
         self.assertEqual(table["Gates"]["PSequenceControls"]["MaximumAbsoluteEnergyStep"], 0.01)
         self.assertEqual(table["WideClasses"], list(classify_sources.WIDE_CLASSES))
         self.assertEqual(digest, reference_campaign.sha256(gates.GATES_FILE))
+
+
+class RemoteCommandTest(unittest.TestCase):
+    def test_upload_commands_are_portable_rsync(self):
+        """The macOS openrsync client has no --mkpath: directories are created by ssh, the
+        rsync commands carry only -a; a single file (the runner) is copied as a file."""
+        self.assertEqual(remote.upload_command("h", "/l/case", "/r/run/case"), ["rsync", "-a", "/l/case/", "h:/r/run/case/"])
+        self.assertEqual(remote.upload_file_command("h", "/l/run_stages.py", "/r/run/run_stages.py"),
+                         ["rsync", "-a", "/l/run_stages.py", "h:/r/run/run_stages.py"])
+        self.assertEqual(remote.fetch_command("h", "/r/run/case/main", "/l/results/main"),
+                         ["rsync", "-a", "--exclude", "archive/", "--exclude", "tmp/", "h:/r/run/case/main/", "/l/results/main/"])
 
 
 class ControlsPlanAndEstimateRuleTest(unittest.TestCase):

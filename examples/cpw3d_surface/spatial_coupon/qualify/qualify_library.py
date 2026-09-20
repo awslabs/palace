@@ -346,7 +346,7 @@ def upload_case(record, context, *, remote, profile):
         shutil.copyfile(source["Path"], staging / "inputs" / "traces" / source["Name"])
     shutil.copytree(case_root / "main", staging / "main")
     commands = [remote_side.upload(remote["Host"], staging, record["Remote"]["Case"]),
-                remote_side.upload(remote["Host"], HERE / "run_stages.py", record["Remote"]["Run"] + "/run_stages.py")]
+                remote_side.upload_file(remote["Host"], HERE / "run_stages.py", record["Remote"]["Run"] + "/run_stages.py")]
     shutil.rmtree(staging)
     return {"Commands": commands, "UTC": remote_side.utc()}
 

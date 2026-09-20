@@ -29,12 +29,25 @@ def ssh(host, command, *, check=True):
 
 
 def upload_command(host, local_directory, remote_directory):
-    """rsync of a local directory tree into the remote directory (created)."""
-    return ["rsync", "-a", "--mkpath", f"{local_directory}/", f"{host}:{remote_directory}/"]
+    """rsync of a local directory tree into the remote directory (which must exist: the
+    macOS openrsync client has no --mkpath, so the directory is created by ssh first)."""
+    return ["rsync", "-a", f"{local_directory}/", f"{host}:{remote_directory}/"]
+
+
+def upload_file_command(host, local_file, remote_file):
+    return ["rsync", "-a", str(local_file), f"{host}:{remote_file}"]
 
 
 def upload(host, local_directory, remote_directory):
+    ssh(host, f"mkdir -p '{remote_directory}'")
     command = upload_command(host, local_directory, remote_directory)
+    subprocess.run(command, check=True)
+    return command
+
+
+def upload_file(host, local_file, remote_file):
+    ssh(host, f"mkdir -p '{str(remote_file).rsplit('/', 1)[0]}'")
+    command = upload_file_command(host, local_file, remote_file)
     subprocess.run(command, check=True)
     return command
 
