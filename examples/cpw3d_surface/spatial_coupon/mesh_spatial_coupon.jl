@@ -3641,12 +3641,9 @@ end
 # them and mesh_stage_contract.py binds the same lists.
 const RECIPE_SCOPE_RECIPE = "prism-tubes"
 const RECIPE_SCOPE_SUPPORTED_CLASSES = [
-    "ContinuationVertices", "DeviceFootprint", "ExteriorLoops", "MultipleConductors",
-    "MultipleLayers", "MultipleSlots", "TraceBasis"]
+    "ContinuationVertices", "DeviceFootprint", "ExteriorLoops", "HoleLoops",
+    "MultipleConductors", "MultipleLayers", "MultipleSlots", "TraceBasis"]
 const RECIPE_SCOPE_GUARDS = [
-    ("HoleLoops", "inputs",
-     "interior conductor loops (holes in the metal): the tube outward normal is derived " *
-     "for exterior loops only"),
     ("DownwardLayers", "inputs",
      "process layers with Nz = -1 (flip-chip): the tube frame and the tube planes assume " *
      "upward layers"),
@@ -3667,6 +3664,9 @@ const RECIPE_SCOPE_GUARDS = [
     ("NarrowTransverseBound", "build",
      "the tube inner size does not fit min(Overetch, MetalThickness / 2, " *
      "CornerIsotropyRadius): no ring fits"),
+    ("NarrowHoles", "build",
+     "a hole narrower than twice the tube reach (Radius + PyramidHeight + the band's " *
+     "ProtectedDistance): the tubes facing each other across it would overlap"),
     ("FreeEdgeEnds", "build",
      "a metal edge end that is neither a semantic corner nor on the outer box"),
     ("ShortEdges", "build",
@@ -3760,8 +3760,10 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
     # corner is known before the clearance is applied.
     sides = NamedTuple[]
     for loop in loops
-        loop.hole && scope_error("HoleLoops", "plan-view loop of conductor $(loop.conductor) " *
-                                              "on plane $(loop.plane) is a hole")
+        # The metal lies inside an exterior loop and outside a hole (loop.hole: the
+        # polygon interior is dielectric), so the tube normal, which points away from
+        # the metal, points out of an exterior loop and into a hole.
+        metal_inside = !loop.hole
         n = length(loop.points)
         for i in 1:n
             p = loop.points[i]
@@ -3774,11 +3776,11 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
             normal = [direction[2], -direction[1]]
             midpoint = [0.5 * (p[1] + q[1]), 0.5 * (p[2] + q[2])]
             probe = midpoint .+ 1.0e-3 .* normal
-            if point_in_polygon((probe[1], probe[2]), loop.points, tolerance)
+            if point_in_polygon((probe[1], probe[2]), loop.points, tolerance) == metal_inside
                 normal .*= -1.0
             end
             probe = midpoint .- 1.0e-3 .* normal
-            point_in_polygon((probe[1], probe[2]), loop.points, tolerance) ||
+            point_in_polygon((probe[1], probe[2]), loop.points, tolerance) == metal_inside ||
                 error("Unable to orient the metal edge $p -> $q")
             for (point, other) in ((p, q), (q, p))
                 is_corner(point, loop.plane) || on_box(point) ||
@@ -3786,6 +3788,7 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
             end
             push!(sides, (start=[p[1], p[2]], stop=[q[1], q[2]], direction=direction,
                           normal=normal, span=span, plane=loop.plane, conductor=loop.conductor,
+                          hole=loop.hole,
                           start_corner=is_corner(p, loop.plane), stop_corner=is_corner(q, loop.plane)))
         end
     end
@@ -3818,6 +3821,31 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
                          corner_angles=(start_angle, stop_angle)))
     end
     return segments
+end
+
+# Distance between two plan-view segments (0 when they intersect).
+function segment_segment_distance_2d(a, b, c, d)
+    orientation(p, q, r) = sign(cross2d((q[1] - p[1], q[2] - p[2]), (r[1] - p[1], r[2] - p[2])))
+    if orientation(a, b, c) * orientation(a, b, d) < 0 && orientation(c, d, a) * orientation(c, d, b) < 0
+        return 0.0
+    end
+    return min(point_segment_distance_2d(a, c, d), point_segment_distance_2d(b, c, d),
+               point_segment_distance_2d(c, a, b), point_segment_distance_2d(d, a, b))
+end
+
+# Width of a hole for its facing tubes: the smallest distance between two
+# non-adjacent sides of the loop (adjacent sides meet at a corner, where the corner
+# clearance rule applies).
+function hole_facing_width(points, tolerance)
+    n = length(points)
+    n >= 4 || return Inf
+    width = Inf
+    for i in 1:n, j in (i + 2):n
+        (i == 1 && j == n) && continue
+        width = min(width, segment_segment_distance_2d(points[i], points[i % n + 1],
+                                                       points[j], points[j % n + 1]))
+    end
+    return width
 end
 
 # The etch footprint must carry the metal edge (trench wall under the sidewall) so
@@ -3868,7 +3896,7 @@ const TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING = 0.5
 # pairs, the edge segments and the section description for the census.
 function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, ratio,
                            sector_degrees, metal_thickness, overetch, corner_radius, lc_tangent,
-                           lower, upper, tolerance)
+                           lc_fine, lower, upper, tolerance)
     overetch > 0.0 || scope_error("NoTrench", "Overetch $overetch")
     sectors = round(Int, 270.0 / sector_degrees)
     abs(sectors * sector_degrees - 270.0) <= 1.0e-9 || error("Tube sector angle must divide 270 degrees")
@@ -3892,6 +3920,18 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
         scope_error("ShallowTrench", "tube radius $radius + pyramid height $pyramid_height " *
                                      "against Overetch $overetch")
     clearance(angle) = (angle < pi - 1.0e-9 ? radius / tan(0.5 * angle) : 0.0) + outer_ring
+    # Facing tubes (the sides of a hole carry tubes pointing into it): the hole must be
+    # wider than two tube reaches, a reach being the tube radius, the pyramid height and
+    # the band's protected distance, so that no two tube bands overlap across it.
+    facing_reach = radius + pyramid_height + BAND_PROTECTED_DISTANCE_OVER_NORMAL * lc_fine
+    for loop in loops
+        loop.hole || continue
+        width = hole_facing_width(loop.points, tolerance)
+        width > 2.0 * facing_reach ||
+            scope_error("NarrowHoles", "hole of conductor $(loop.conductor) on plane " *
+                                       "$(loop.plane) is $width wide against twice the tube " *
+                                       "reach $facing_reach")
+    end
     tools = Tuple{Int32, Int32}[]
     records = TubeRecord[]
     tubes = Tuple{EdgeTube, TubeSection}[]
@@ -3943,6 +3983,10 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
         "CornerClearanceRule" => "R / tan(phi / 2) + h_K before a semantic corner, phi the " *
                                  "smallest in-plane angle between the tube edges meeting there " *
                                  "(h_K alone for a single tube edge); 0 at box continuation vertices",
+        "FacingReach" => facing_reach,
+        "FacingRule" => "every hole is wider than 2 x (Radius + PyramidHeight + " *
+                        "ProtectedDistance) between any two of its non-adjacent sides, so the " *
+                        "tubes facing each other across it keep disjoint bands",
         "Top" => Dict("Angles" => top_section.angles, "Materials" => top_section.materials),
         "Bottom" => Dict("Angles" => bottom_section.angles, "Materials" => bottom_section.materials))
     return tools, records, tubes, segments, description
@@ -4287,7 +4331,8 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
             "Layers" => tube.layers, "Spacing" => tube_spacing(tube),
             "LayerThickness" => layer_records[k],
             "Materials" => section.materials, "Conductor" => segment.conductor,
-            "Plane" => segment.plane, "CornerAngles" => collect(segment.corner_angles),
+            "Plane" => segment.plane, "Hole" => segment.hole,
+            "CornerAngles" => collect(segment.corner_angles),
             "Edge" => isodd(k) ? "top" : "bottom"))
     end
     thicknesses = reduce(vcat, tube_layer_thicknesses(tube) for (tube, _) in tubes)
@@ -4870,7 +4915,7 @@ function generate_spatial_coupon(;
                 build_edge_tubes!(occ, layers, boundary_loops, etch_loops, semantic_corners,
                                   edge_size, edge_growth_ratio, tube_sector_degrees,
                                   metal_thickness, overetch, corner_isotropy_radius,
-                                  lc_tangent, lower, upper, tolerance)
+                                  lc_tangent, lc_fine, lower, upper, tolerance)
         end
         domains, domain_map = occ.fragment(objects, tube_tools)
         substrate_seed = domain_map[1:length(substrates)] |> Iterators.flatten |> collect

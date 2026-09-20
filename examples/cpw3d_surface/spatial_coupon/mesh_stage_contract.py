@@ -1262,13 +1262,14 @@ GMSH_BUILD_VOLUME_TYPES = ("Tetrahedron", "Prism", "Pyramid")
 # class distinctly from any other failure with these ids.
 RECIPE_SCOPE_RECIPE = "prism-tubes"
 RECIPE_SCOPE_SUPPORTED_CLASSES = ("ContinuationVertices", "DeviceFootprint", "ExteriorLoops",
-                                  "MultipleConductors", "MultipleLayers", "MultipleSlots",
-                                  "TraceBasis")
+                                  "HoleLoops", "MultipleConductors", "MultipleLayers",
+                                  "MultipleSlots", "TraceBasis")
 RECIPE_SCOPE_GUARDS = {
-    "HoleLoops": "inputs", "DownwardLayers": "inputs", "TopRounding": "inputs",
+    "DownwardLayers": "inputs", "TopRounding": "inputs",
     "TrenchRounding": "inputs", "SlopedSidewalls": "inputs", "ThinMetal": "inputs",
     "NoTrench": "inputs", "ShallowTrench": "build", "NarrowTransverseBound": "build",
-    "FreeEdgeEnds": "build", "ShortEdges": "build", "FootprintWithoutEdge": "build"}
+    "NarrowHoles": "build", "FreeEdgeEnds": "build", "ShortEdges": "build",
+    "FootprintWithoutEdge": "build"}
 SCOPE_GUARD_PATTERN = re.compile(r"ScopeGuard\[([A-Za-z]+)\]")
 # Process options of the mesher command with the mesher's defaults (a command without
 # the option builds the default) that classify an input.

@@ -2586,8 +2586,7 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
             # Decision 48: a case outside the recipe scope is recorded as an unsupported
             # class (not a preflight failure of the matrix), distinctly from any other error.
             self.assertEqual(summary["UnsupportedClassCases"],
-                             {"hole": "HoleLoops", "rounded-strip": "TopRounding",
-                              "opposed-layers": "DownwardLayers"})
+                             {"rounded-strip": "TopRounding", "opposed-layers": "DownwardLayers"})
             self.assertTrue(summary["PreflightPassed"])
             self.assertEqual({case["Id"] for case in summary["Cases"] if not case["Passed"]},
                              set(summary["UnsupportedClassCases"]))
@@ -2746,6 +2745,7 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
         self.assertEqual(scope_classes(signature, boundary, overetch=.03), ["ExteriorLoops"])
         holed = boundary + [{"Loop": "2", "Hole": "1", "Class": "Physical"}]
         self.assertEqual(scope_classes(signature, holed, overetch=.03), ["ExteriorLoops", "HoleLoops"])
+        self.assertEqual(unsupported_scope_classes(["ExteriorLoops", "HoleLoops"]), [])
         opposed = signature + [{"Slot": "1", "Conductor": "1", "Pz": "0.6", "Nz": "-1"}]
         self.assertEqual(scope_classes(opposed, boundary, overetch=.03),
                          ["DownwardLayers", "ExteriorLoops", "MultipleLayers", "MultipleSlots"])
@@ -2754,18 +2754,18 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
                                        device_footprint=True, trace_basis=True),
                          ["DeviceFootprint", "ExteriorLoops", "NoTrench", "SlopedSidewalls", "ThinMetal",
                           "TopRounding", "TraceBasis", "TrenchRounding"])
-        self.assertEqual(unsupported_scope_classes(["ExteriorLoops", "TopRounding", "HoleLoops"]),
-                         ["HoleLoops", "TopRounding"])
+        self.assertEqual(unsupported_scope_classes(["ExteriorLoops", "TopRounding", "DownwardLayers"]),
+                         ["DownwardLayers", "TopRounding"])
         testdata = HERE / "testdata"
-        for case, expected in (("hole", ["HoleLoops"]), ("opposed-layers", ["DownwardLayers"]),
+        for case, expected in (("hole", []), ("opposed-layers", ["DownwardLayers"]),
                                ("rounded-strip", ["TopRounding"]), ("concave-multislot", [])):
             process = tomllib.loads((testdata / case / "process.toml").read_text())
             classes = scope_classes_of_case_inputs(testdata / case / "mesh-signature.csv",
                                                   testdata / case / "plan-view-boundary.csv", process,
                                                   device_footprint=False, trace_basis=False)
             self.assertEqual(unsupported_scope_classes(classes), expected, case)
-        self.assertEqual(scope_guard_in_text("ERROR: ScopeGuard[HoleLoops]: interior conductor loops ..."),
-                         "HoleLoops")
+        self.assertEqual(scope_guard_in_text("ERROR: ScopeGuard[NarrowHoles]: a hole narrower than ..."),
+                         "NarrowHoles")
         self.assertIsNone(scope_guard_in_text("ERROR: Semantic corner is absent from the seed CAD"))
         with self.assertRaisesRegex(ValueError, "unknown scope guard"):
             scope_guard_in_text("ScopeGuard[NotAGuard]: ...")
@@ -2896,7 +2896,10 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             rejected(lambda c: c["Scope"]["MetalLoops"][0].__setitem__("Hole", True), "hole loops differ")
             rejected(lambda c: c["PrismTubes"].__setitem__("TubeCount", 2) or c["PrismTubes"]["Tubes"].__delitem__(slice(2, 4)),
                      "twice the straight sides")
-            # A guarded class in the bound inputs is rejected even when recorded consistently.
+            # A hole loop in the bound inputs is a supported class: its sides count tubes
+            # like the exterior loop's (TubeCount = 2 x the sides of ALL loops) and the
+            # census must exhibit it; a guarded class (a downward layer) is rejected even
+            # when recorded consistently.
             holed_report = copy.deepcopy(report)
             holed_boundary = Path(temporary) / "holed-boundary.csv"
             rows = Path(report["Inputs"]["source-boundary"]["Path"]).read_text().splitlines()
@@ -2904,10 +2907,31 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
                                                           for row in rows[1:]]) + "\n")
             holed_report["Inputs"]["source-boundary"]["Path"] = str(holed_boundary)
             holed = copy.deepcopy(census)
+            with self.assertRaisesRegex(ValueError, "exhibited classes differ"):
+                validate_gmsh_build_census(holed_report, holed, semantic)
             holed["Scope"]["ExhibitedClasses"] = scope_classes_of_build(holed_report)
             self.assertIn("HoleLoops", holed["Scope"]["ExhibitedClasses"])
-            with self.assertRaisesRegex(ValueError, "exhibits a class the recipe guards"):
+            with self.assertRaisesRegex(ValueError, "metal loops differ"):
                 validate_gmsh_build_census(holed_report, holed, semantic)
+            holed["Scope"]["MetalLoops"].append(dict(holed["Scope"]["MetalLoops"][0], Loop=2, Hole=True))
+            with self.assertRaisesRegex(ValueError, "twice the straight sides"):
+                validate_gmsh_build_census(holed_report, holed, semantic)
+            holed["PrismTubes"]["Tubes"] = 2 * holed["PrismTubes"]["Tubes"]
+            holed["PrismTubes"]["TubeCount"] = 8
+            self.assertIs(validate_gmsh_build_census(holed_report, holed, semantic), holed)
+            downward_report = copy.deepcopy(report)
+            downward_signature = Path(temporary) / "downward-signature.csv"
+            rows = Path(report["Inputs"]["source-signature"]["Path"]).read_text().splitlines()
+            nz = rows[0].split(",").index("Nz")
+            downward_signature.write_text("\n".join([rows[0]] + [
+                ",".join(value if i != nz else "-1" for i, value in enumerate(row.split(",")))
+                for row in rows[1:]]) + "\n")
+            downward_report["Inputs"]["source-signature"]["Path"] = str(downward_signature)
+            downward = copy.deepcopy(census)
+            downward["Scope"]["ExhibitedClasses"] = scope_classes_of_build(downward_report)
+            self.assertIn("DownwardLayers", downward["Scope"]["ExhibitedClasses"])
+            with self.assertRaisesRegex(ValueError, "exhibits a class the recipe guards"):
+                validate_gmsh_build_census(downward_report, downward, semantic)
             # The unbound-by-option tube parameters are bound to the option default or the
             # mesher constants: sector angle, pyramid height rule, band growth, protected distance.
             rejected(lambda c: c["PrismTubes"]["Section"].__setitem__("SectorDegrees", 45.0),

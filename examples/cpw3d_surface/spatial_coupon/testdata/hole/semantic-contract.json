@@ -1,5 +1,19 @@
 {
   "Version": 1,
+  "Derivation": {
+    "ProcessLibrarySHA256": null,
+    "SlotConductorSource": "mesh signature Slot / Conductor pairs (no process library is bound)",
+    "PlanViewBoundarySHA256": "116343c6be9868175b09fed262a1db7bc117512bdf2f4a1170497ac6670cc131",
+    "SignatureSHA256": "33037bd7ef8d7ed1684384f81a69819111f57877d23a8522f6487ed4ae40492d",
+    "Rules": "materials and physical label families follow the frozen fabricated spatial-coupon producer (substrate 1 / vacuum 2; matching surface 1; substrate-vacuum interface 3000 + slot in the metal plane (un-etched) and 3100 + slot recessed; MS 5000 + 100 slot + conductor; MA 6000 + 100 slot + conductor); slots/conductors come from Models[0].Edges and agree with the signature (from the signature alone when no process library is bound); semantic corners are plan-view vertices classified Physical; the un-etched plane labels present are those of the recorded gmsh-build census of the same inputs (a producer outcome of the etch footprint and the coupon box), every census label belonging to a derived family",
+    "BuildCensusSHA256": "e7b587ca950c4188979c56cab7bd694a151c0a253392b91c331aae2778bd68ab",
+    "BuildCensusInterfaceLabels": [
+      1,
+      3100,
+      5001,
+      6001
+    ]
+  },
   "VolumeMaterials": [
     {
       "Attribute": 1,
@@ -29,17 +43,8 @@
       ]
     },
     {
-      "Attribute": 3000,
-      "Role": "substrate-vacuum-slot-0",
-      "AdjacentMaterials": [
-        1,
-        2
-      ],
-      "Protected": true
-    },
-    {
       "Attribute": 3100,
-      "Role": "matching-slot-0",
+      "Role": "etched-substrate-vacuum-slot-0",
       "AdjacentMaterials": [
         1,
         2
@@ -65,20 +70,49 @@
   ],
   "SemanticCorners": [
     [
+      -0.8,
+      -0.8,
+      0.0
+    ],
+    [
+      0.8,
+      -0.8,
+      0.0
+    ],
+    [
+      0.8,
+      0.8,
+      0.0
+    ],
+    [
+      -0.8,
+      0.8,
+      0.0
+    ],
+    [
       -0.3,
       -0.3,
-      0
+      0.0
+    ],
+    [
+      0.3,
+      -0.3,
+      0.0
     ],
     [
       0.3,
       0.3,
-      0
+      0.0
+    ],
+    [
+      -0.3,
+      0.3,
+      0.0
     ]
   ],
   "ProtectedSupports": [
     "matching-surface",
-    "substrate-vacuum-slot-0",
-    "matching-slot-0",
+    "etched-substrate-vacuum-slot-0",
     "conductor-1-slot-0-ms",
     "conductor-1-slot-0-ma"
   ],
@@ -96,37 +130,6 @@
     "BoundaryPhysicalVertexCount": 8,
     "BoundaryContinuationVertexCount": 0,
     "CADSubdivisionEndpoints": [],
-    "CutEndpoints": [
-      [
-        -0.8,
-        -0.8,
-        0.0
-      ],
-      [
-        -0.8,
-        0.8,
-        0.0
-      ],
-      [
-        -0.3,
-        0.3,
-        0.0
-      ],
-      [
-        0.3,
-        -0.3,
-        0.0
-      ],
-      [
-        0.8,
-        -0.8,
-        0.0
-      ],
-      [
-        0.8,
-        0.8,
-        0.0
-      ]
-    ]
+    "CutEndpoints": []
   }
 }

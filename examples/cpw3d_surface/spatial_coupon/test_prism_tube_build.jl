@@ -242,8 +242,47 @@ end
     # A loop vertex that is neither a corner nor on the box is rejected.
     @test_throws ErrorException metal_edge_segments([loop], corners[2:end], clearance, lower,
                                                     upper, 1.0e-9)
-    hole = (conductor=1, plane=0.0, hole=true, points=points, classes=loop.classes)
-    @test_throws ErrorException metal_edge_segments([hole], corners, clearance, lower, upper, 1.0e-9)
+end
+
+@testset "interior conductor loops (holes): inward tube normals, tube counts, facing width (decision 48)" begin
+    # An outer square conductor with a square hole; every vertex is a semantic corner.
+    outer = [(-0.8, -0.8), (0.8, -0.8), (0.8, 0.8), (-0.8, 0.8)]
+    inner = [(-0.3, -0.3), (0.3, -0.3), (0.3, 0.3), (-0.3, 0.3)]
+    loops = [(conductor=1, plane=0.0, hole=false, points=outer, classes=fill("Physical", 4)),
+             (conductor=1, plane=0.0, hole=true, points=inner, classes=fill("Physical", 4))]
+    corners = [(p[1], p[2], 0.0) for p in vcat(outer, inner)]
+    lower = [-2.3, -2.3]; upper = [2.3, 2.3]
+    clearance(angle) = 0.03 / tan(0.5 * angle) + 0.016
+    segments = metal_edge_segments(loops, corners, clearance, lower, upper, 1.0e-9)
+    # Two tubes per straight side of every loop: 8 sides -> 16 tubes, the same count
+    # rule as an exterior loop (metal_loop_records agrees).
+    @test length(segments) == 8
+    @test 2 * length(segments) ==
+          2 * sum(record["Sides"] for record in metal_loop_records(loops, lower, upper, 1.0e-9))
+    for segment in segments
+        midpoint = 0.5 .* (segment.start .+ segment.stop)
+        # The normal points away from the metal: outward for the exterior loop, into the
+        # hole (towards its centre) for the hole loop.
+        towards_centre = dot(segment.normal, -midpoint) > 0.0
+        @test segment.hole == towards_centre
+        @test abs(norm(segment.normal) - 1.0) <= 1.0e-12
+        # Every hole corner is a right angle between two tube edges: the same clearance
+        # as an exterior right-angle corner.
+        @test all(angle -> isapprox(angle, pi / 2), segment.corner_angles)
+        @test segment.s_start == clearance(pi / 2) && segment.s_end == segment.span - clearance(pi / 2)
+    end
+    # A hole side missing from a device etch footprint fails closed.
+    footprint = [(conductor=1, plane=0.0, hole=true, points=[(-0.3, -0.3), (0.3, -0.3), (0.3, 0.2), (-0.3, 0.2)],
+                  classes=fill("Physical", 4))]
+    hole_sides = [segment for segment in segments if segment.hole]
+    @test assert_etch_carries_edge(footprint, hole_sides[1], 1.0e-9)
+    message = try assert_etch_carries_edge(footprint, hole_sides[3], 1.0e-9); "" catch e; e.msg end
+    @test occursin("ScopeGuard[FootprintWithoutEdge]", message)
+    # The facing width of a hole is the distance between its non-adjacent sides.
+    @test hole_facing_width(inner, 1.0e-9) ≈ 0.6
+    @test hole_facing_width([(0.0, 0.0), (1.0, 0.0), (1.0, 0.05), (0.0, 0.05)], 1.0e-9) ≈ 0.05
+    @test segment_segment_distance_2d((0.0, 0.0), (1.0, 0.0), (0.5, -1.0), (0.5, 1.0)) == 0.0
+    @test segment_segment_distance_2d((0.0, 0.0), (1.0, 0.0), (2.0, 1.0), (3.0, 1.0)) ≈ sqrt(2.0)
 end
 
 @testset "recipe scope: guard ids, exhibited classes, metal loop records (decision 48)" begin
@@ -262,8 +301,6 @@ end
     @test_throws ErrorException scope_error("NotAGuard", "")
     # The guard messages carry ScopeGuard[<id>].
     hole = (conductor=1, plane=0.0, hole=true, points=points, classes=loop.classes)
-    @test occursin("ScopeGuard[HoleLoops]",
-                   guard_message(() -> metal_edge_segments([hole], corners, clearance, lower, upper, 1.0e-9)))
     @test occursin("ScopeGuard[FreeEdgeEnds]",
                    guard_message(() -> metal_edge_segments([loop], corners[2:end], clearance, lower, upper, 1.0e-9)))
     @test occursin("ScopeGuard[ShortEdges]",
@@ -287,6 +324,7 @@ end
            "MultipleLayers", "MultipleSlots", "TraceBasis"]
     @test exhibited_scope_classes(edges, [loop, hole], layers, true, 90.0, 0.0, 0.0, 0.03, false, false) ==
           ["ExteriorLoops", "HoleLoops"]
+    @test "HoleLoops" in RECIPE_SCOPE_SUPPORTED_CLASSES && "NarrowHoles" in ids
     @test exhibited_scope_classes(edges, [loop], [(plane=0.6, sign=-1)], true, 90.0, 0.0, 0.0, 0.03,
                                   false, false) == ["DownwardLayers", "ExteriorLoops"]
     @test exhibited_scope_classes(edges, [loop], layers, false, 80.0, 0.005, 0.001, 0.0, false, false) ==

@@ -974,6 +974,37 @@ statement, so that a library run distinguishes "unsupported class" from a bug:
   the case is never built or judged, so a full matrix run reports it as not passed with
   its class, not as a bug.
 
+#### Interior conductor loops (holes) in scope (decision 48, extension 1)
+
+`HoleLoops` moved from the guarded to the supported classes. In
+`metal_edge_segments` the tube normal points away from the metal: out of an exterior
+loop and into a hole (the polygon interior of a hole is dielectric: the same
+`loop.hole` inversion the tetrahedral path applies in `offset_loop_points`); every
+other component was loop-agnostic by inspection (corner clearance from the in-plane
+angle between the two tube edges, hole corners = contract corners from the boundary's
+`Physical` vertices, producer-default collars via `offset_hole_points`, junction and
+band curves from the fragmented CAD, ownership by conductor and z-band). Added:
+
+- `NarrowHoles` guard (build-detected): a hole must be wider than twice the tube reach
+  `Radius + PyramidHeight + ProtectedDistance` (2 x NormalSize, the band law's protected
+  distance) between any two of its non-adjacent sides (`hole_facing_width`), so the
+  tubes facing each other across it keep disjoint bands; recorded as
+  `PrismTubes.Section.FacingReach / FacingRule` (hole fixture: 0.6 um against 2 x 0.05975).
+- The etch-footprint check `assert_etch_carries_edge` now runs over the hole sides too
+  (a device footprint must carry them; negative in `test_prism_tube_build.jl`).
+- Census tube rows carry `Hole`; `validate_recipe_scope` requires `TubeCount = 2 x` the
+  straight sides of ALL loops and the hole flags of `MetalLoops` to agree with the
+  exhibited `HoleLoops` class.
+- Julia tests: hole tube normals point towards the hole centre, a hole coupon has 2 x
+  sides of all loops tubes (16 for the square-with-square-hole), right-angle hole
+  corners take the exterior right-angle clearance, facing width / segment distance.
+- Fixture `hole` re-frozen as `FixtureVersion 2`: the version-1 contract listed 2 of the
+  8 `Physical` vertices as corners (retired in `RetiredFixtures` with the
+  `ScopeGuard[FreeEdgeEnds]` evidence); the contract is re-derived by
+  `derive_semantic_contract.py` with the probe census (labels 1 / 3100 / 5001 / 6001:
+  the Radius-0.5 coupon is fully etched under the producer-default collars, no 3000
+  plane). The production build's `gmsh-build.msh` equals the probe's byte for byte.
+
 ### Synthetic matrix under the Gmsh-only recipe (decision 45(b), 2026-09-19)
 
 The 2026-09-17 record (below, under the retired recipe) found ten of the twelve

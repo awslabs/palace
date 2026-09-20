@@ -179,7 +179,7 @@
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "10873539c182e7daad32fbf46702b386b55521e0c055783101d66d2e1cdc4bc6"
+      "SHA256": "d6f91c5dbddccacd37e3a0f49b7ea14285b5fefae9ad771caec0561876e04e00"
     },
     {
       "Name": "canonical_mesh_build.py",
@@ -1803,7 +1803,7 @@
           },
           "SemanticContract": {
             "Name": "semantic-contract.json",
-            "SHA256": "1bf357ce9f4884d769dd0325ce7da0837037a43a7fcdf59a2d0676a6d0f1fc10"
+            "SHA256": "747ab6ae7fdc86b38d22bd258634ee518df7e5728d5fe0be4d0d9e5c5a435e97"
           },
           "MeshRecipe": {
             "Name": "mesh-recipe.json",
@@ -1812,7 +1812,8 @@
         },
         "EtchFootprint": "producer-default"
       },
-      "Provenance": "Generated only from run_general_mesh_suite.py fixture source under the repository Apache-2.0 license; no field archive"
+      "Provenance": "Fixture version 2 (supervisor decision 48, 2026-09-20): interior conductor loops entered the prism-tube recipe scope (tube normals point into the hole; facing-tube width check); the contract is re-derived by derive_semantic_contract.py from the fixture inputs and the gmsh-build census of a production-option probe build (8 semantic corners = the Physical vertices of both loops; no un-etched 3000 plane under the producer-default footprint); version 1 retired in RetiredFixtures. Fixture source: run_general_mesh_suite.py under the repository Apache-2.0 license; no field archive",
+      "FixtureVersion": 2
     },
     {
       "Id": "rounded-strip",
@@ -2046,7 +2047,7 @@
     },
     "gmsh-build": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "6c42513dd900676783cf12c544169ecb58ef63f3e54cbff92485c653464e0744"
+      "mesher": "27f540d2ebb8db4b5b653e710804203476e2eb4b41d9e6a8633cb5dd8646ac0b"
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
@@ -2152,6 +2153,20 @@
         },
         "Contradiction": "shares one-edge-straight's boundary loop (authored on the Radius-2 box [-4, 4] x [-8, 8]) while binding generality-sharp-process.toml (Radius 12.5: box [-25, 25] x [-14.5, 14.5]); and, at Radius 2, its two collinear half rows (P = (0, -1) / (0, 1), S in [-1, 1]) never reached Radius from their own reference points, so the pre-decision-47 mesher shrank the box to [-4, 4] x [-4, 4] and the shared loop lay outside it: the coupon box depended on the source CAD's subdivision of a straight edge (the defect the cad-subdivision-sensitivity comparison exists to catch; fixed by decision 47's union rule)",
         "Evidence": "/tmp/coupon-matrix-case05-20260919/probe-root-one-edge-cad-subdivided/gmsh-build.log (Radius 12.5, 2026-09-19); decision47-box-probe.txt; geometry-independence-suite.md decisions 46 / 47"
+      },
+      {
+        "Id": "hole",
+        "RetiredVersion": 1,
+        "Retired": "2026-09-20 (supervisor decision 48)",
+        "RetiredBinding": {
+          "SemanticContract": {
+            "Name": "semantic-contract.json",
+            "SHA256": "1bf357ce9f4884d769dd0325ce7da0837037a43a7fcdf59a2d0676a6d0f1fc10",
+            "ProvisionalDerivedSHA256Prefix": "28d45bcad1f3"
+          }
+        },
+        "Contradiction": "the version-1 contract listed 2 SemanticCorners ((-0.3, -0.3, 0) and (0.3, 0.3, 0)) while the plan-view boundary classifies all 8 vertices of the outer loop and the hole loop Physical; under the recipe the outer loop's first side then fails closed at gmsh-build (ScopeGuard[FreeEdgeEnds]: metal edge end (-0.8, -0.8) is neither a semantic corner nor on the box) before the former hole guard; the case was also outside the recipe scope until decision 48 (HoleLoops)",
+        "Evidence": "/tmp/coupon-scope-20260920/hole-guard-probe/gmsh-build.log (2026-09-20, commit 42f997c62); geometry-independence-suite.md decision 48"
       }
     ]
   }
