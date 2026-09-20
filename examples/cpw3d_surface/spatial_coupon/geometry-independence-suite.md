@@ -883,6 +883,51 @@ behaviour on unchained rows; verified by rebuilding the two-edge 10 case under t
 mesher and comparing its `gmsh-build.msh` SHA with the decision-43 root (evidence
 below).
 
+### Evidence (decision 48: hole, opposed-layers and the concave-multislot relabel rebuild; commits 42f997c62 / 97ed84952 / bdfe87890, 2026-09-20)
+
+Built through `run_gmsh_only_case.py` under the unchanged production recipe (every
+option and gate at its production value; audits at 8 GiB), identity + rotate-z-0.63,
+verified `Passed true` with empty `Failures` / `TransformComparisonFailures`; every
+root passed the headroom gate first and its `build-summary.json` records
+`Status built`. Roots `/tmp/coupon-gmsh-only-<case>-<commit>-*`:
+
+| case | elements = tets + prisms + pyramids | H1 DOFs | estimate (ratio) | tets SJ / cond | prisms / pyramids cond | corners (n) | protected err / vertex | closure (points) | diag | interface areas (um^2) | build s / GiB | verification s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| hole (v2; bdfe87890, identity `6ab22454...`, CanonicalBuildId `a16919cb...`) | **1,852,882** = 1,795,858 + 52,272 + 4,752 | 345,684 | 1,854,486 (1.001) | 0.0245 / 45.9 | 465.2 / 13.7 | 3.42 - 3.76 (8) | 0 / 0 | 1.6e-13 (364,020) | 0 | 1: 62.744, 3100: 19.224, 5001: 2.200, 6001: 2.904 | 114 / 4.00 | 600 |
+| opposed-layers (v2; 97ed84952, identity `cc6e04f7...`, CanonicalBuildId `cc4e4c44...`) | **2,289,512** = 2,240,552 + 44,064 + 4,896 | 414,330 | 2,252,546 (0.984) | 0.0130 / 142.2 | 464.4 / 27.4 | 2.77 - 3.70 (8) | 0 / 2.2e-16 | 1.8e-13 (551,952) | 0 | 1: 62.832, 3000 / 3001: 1.680 / 1.680, 3100 / 3101: 15.248 / 15.248, 5001 / 5101: 0.961 / 0.959, 6001 / 6101: 1.202 / 1.198 | 185 / 4.33 | 871 |
+| concave-multislot (v2; 97ed84952, identity `3c86b72a...`, CanonicalBuildId `d255af28...`) | **1,454,056** = 1,423,816 + 27,720 + 2,520 | 265,608 | 1,448,136 (0.996) | 0.0207 / 139.4 | 469.7 / 13.9 | 3.23 - 3.73 (6) | 0 / 2.2e-16 | 2.6e-13 (252,990) | 0 | 1: 51.804, 3000 / 3001: 0.4533 / 0.1767, 3100 / 3101: 8.950 / 6.830, 5001 / 5101: 0.325 / 0.245, 6001 / 6101: 0.517 / 0.405 | 113 / 3.47 | - |
+
+- hole: the hole's four sides carry tubes pointing into it (16 tubes = 2 x 8 sides of
+  both loops); the metal areas are exact (5001 = 1.6^2 - 0.6^2 = 2.2; 6001 = 2.2 +
+  8.8 x 0.08 = 2.904; 3100 = trench floor 18.96 + walls 8.8 x 0.03 = 19.224); the
+  producer-default collars etch the whole Radius-0.5 coupon (no 3000 plane). The
+  first hole root (42f997c62 + the extension-1 mesher) and the rebuild under the final
+  mesher of bdfe87890 give byte-identical `gmsh-build.msh` (`49258267...`) and
+  `identity.msh` (`6ab22454...`): the extension-2 labeling change is inert on it. The
+  earlier root's binaries were deleted (evidence kept).
+- opposed-layers: upward layer at z = 0 and downward layer at z = 0.6, two slots on
+  both; box z in [-0.52, 1.12] (per-sign padding); vacuum gap 0.48 um against the
+  facing reach 2 x 0.03975; the un-etched strips of both planes (3000 / 3001 = 2 x 4.2
+  x 0.2 = 1.68 each) and the trenches (floor 15.0 + walls 0.08 + collar walls 0.168 =
+  15.248 each) are exact; the multi-slot ownership postprocessor certified both facing
+  layers (closure 1.8e-13 over 551,952 points). The tetrahedral minimum scaled
+  Jacobian 0.0130 is the smallest margin of the matrix over the 0.01 gate.
+- concave-multislot: element count identical to the decision-45(b) build (1,454,056;
+  the mesh differs only by the un-etched labels 3000 / 3001 = 0.4533 / 0.1767 um^2 the
+  fixed labeling restores); the superseded 869465f32 root's binaries were deleted.
+- Probe roots (`/tmp/coupon-scope-20260920/probe-root-*`, the mirror-covariance strips
+  and the mislabeled opposed-layers probe) keep their censuses / logs; their meshes are
+  listed in `/tmp/coupon-scope-20260920/deleted-binaries.txt`.
+
+**Matrix status after decision 48 (15 cases): built and verified 14** (the twelve of
+decisions 46 / 47 with concave-multislot rebuilt at version 2, plus hole and
+opposed-layers); **unsupported class 1**: rounded-strip (`TopRounding`, recorded by the
+preflight as `UnsupportedClass`, not a failure; the rounded-edge extension stays out of
+scope per decision 48(3): a process-model / reference decision first). Validation sweep
+at bdfe87890: `unittest discover` **263 OK (skipped=33)**; preflights production 15
+cases / 14 passed / 1 unsupported (`rounded-strip: TopRounding`; max estimate 0.89 of
+the cap), calibration-ma 6 / 6, calibration-sizing 2 / 2.
+
 ### Evidence (decisions 46 / 47: the five regenerated fixtures and the two-edge 10 inertness rebuild; commit 8b0057dbd, 2026-09-19)
 
 All six built through `run_gmsh_only_case.py` under the production recipe (options and
@@ -920,7 +965,7 @@ decision-46 attempts of one-edge-straight and two-edge-transition (roots
 decision-47 mesher edit landed during their audits (tool digest changed); their and
 the probe meshes are listed in `deleted-binaries.txt`.
 
-**Matrix status after decisions 46 / 47 (15 cases): built and verified 12**
+**Matrix status after decisions 46 / 47 (15 cases; superseded by decision 48 above: 14 built / 1 unsupported class): built and verified 12**
 (four-edge, ten-edge, three-edge 06, two-edge 10, two-edge 05,
 three-edge-current-calibration, concave-multislot, one-edge-straight,
 one-edge-cad-subdivided, two-edge-transition, two-edge-multislot, six-edge-cluster);
