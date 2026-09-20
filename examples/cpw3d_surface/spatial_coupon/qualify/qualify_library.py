@@ -183,8 +183,9 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
     except reference_campaign.ReferenceError as error:
         raise CaseStop("Reference", str(error))
     if reference is None:
+        where = f"under {args.reference}" if args.reference is not None else "(--reference none)"
         raise CaseStop("Reference", f"no reference campaign inputs bind the basis contract of {case_id} "
-                                    f"({files['BasisContract']['SHA256'][:12]}...) under {args.reference}: no Palace config "
+                                    f"({files['BasisContract']['SHA256'][:12]}...) {where}: no Palace config "
                                     f"and no traces to run")
     record["Reference"] = reference
     record["Mesh"] = {"Local": identity["Path"], "SHA256": identity["SHA256"], "Verified": True}
@@ -270,12 +271,9 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                          "JobSecondsEstimateByPCGFactor": estimate["JobSecondsEstimateByPCGFactor"],
                          "JobSecondsEstimateWithPreflightAndMargin": estimate["JobSecondsEstimateWithPreflightAndMargin"],
                          "MaxPalacePeakGBEstimate": estimate["MaxPalacePeakGBEstimate"],
-                         "P4CouponNodeHoursEstimate": None}
-    main_key = layout[0]["EstimateKey"]
-    record["Estimate"]["MainStageNodeHoursEstimate"] = {
-        factor: value["StageSecondsEstimate"] * profile["Nodes"] / 3600.0
-        for factor, value in estimate["Stages"][main_key]["ByPCGFactor"].items()}
-    del record["Estimate"]["P4CouponNodeHoursEstimate"]
+                         "MainStageNodeHoursEstimate": {
+                             factor: value["StageSecondsEstimate"] * profile["Nodes"] / 3600.0
+                             for factor, value in estimate["Stages"][layout[0]["EstimateKey"]]["ByPCGFactor"].items()}}
     if not estimate["FitsOneJob"]:
         raise CaseStop("Estimate", estimate["Decision"], Estimate=record["Estimate"])
     trace_pins = {f"{remote_traces}/{source['Name']}": source["SHA256"] for source in sources}
