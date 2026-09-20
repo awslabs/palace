@@ -116,7 +116,7 @@
     {
       "Name": "mixed_mesh.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mixed_mesh.py",
-      "SHA256": "f2111135b62d4163a94b7414562eaef3c395c2b8b4ed1bd0d95ce4b4c9788379"
+      "SHA256": "3ce0f30b227ea5160f7574472a3c140e3d1e1a830b37ef1f471c246d7fa8e4cd"
     },
     {
       "Name": "run_bounded_mesher.py",
