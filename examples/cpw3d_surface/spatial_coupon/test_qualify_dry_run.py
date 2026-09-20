@@ -316,7 +316,8 @@ class QualifyDryRunTest(unittest.TestCase):
         def fake_submit(host, pbs_bin, script, cwd, *, job_cap, user=None):
             case = Path(cwd).parts[-2]
             events.append(("submit", case))
-            return {"Job": f"{len(events)}.fake", "UTC": "fake", "UserJobsBefore": 0, "JobCap": job_cap, "Command": "qsub"}
+            return {"Job": f"{len(events)}.fake", "UTC": qualify_library.remote_side.utc(), "UserJobsBefore": 0, "JobCap": job_cap,
+                    "Command": "qsub"}
 
         def fake_poll(host, pbs_bin, job_id, status_path):
             case = Path(status_path).parts[-3]
@@ -366,7 +367,7 @@ class QualifyDryRunTest(unittest.TestCase):
             qualify_library.prepare_case = prepare_with_recorded_controls
             args = argparse.Namespace(build_record=self.build_record, reference=None, remote="h:/r", orders=[4], controls=[3, 5],
                                       control_count=8, control_source=None, max_jobs=2, frozen_binary_sha256=BINARY_SHA256,
-                                      stage_prefix=None, case=None, root=self.tmp / "concurrent", dry_run=False,
+                                      stage_prefix=None, case=None, root=self.tmp / "concurrent", dry_run=False, resume=False,
                                       monitor_interval=0, monitor_polls=10, cluster_profile=HERE / "qualify" / "cluster-profile.json",
                                       cost_model=estimate_stages.COST_MODEL, gates=gates.GATES_FILE)
             # Each coupon binds its own reference campaign: a directory holding both inputs trees.
@@ -379,12 +380,20 @@ class QualifyDryRunTest(unittest.TestCase):
                             os.symlink(entry, reference / entry.name)
             args.reference = reference
             record = qualify_library.run_qualify(args, log=lambda message: None)
+            # --resume on the same root adopts the recorded job ids: no upload, no qsub, the
+            # plans are re-derived byte-identical, both coupons are polled / fetched / analyzed again.
+            first_events = list(events)
+            events.clear()
+            polls.clear()
+            args.resume = True
+            resumed = qualify_library.run_qualify(args, log=lambda message: None)
         finally:
             for name, fake in saved.items():
                 setattr(qualify_library.remote_side, name, fake)
             qualify_library.upload_case = saved_upload
             qualify_library.prepare_case = saved_prepare
         del controls
+        events, resumed_events = first_events, events
         kinds = [kind for kind, _ in events]
         self.assertEqual(kinds[:4], ["upload", "submit", "upload", "submit"], events)
         first_fetch = kinds.index("fetch")
@@ -410,6 +419,17 @@ class QualifyDryRunTest(unittest.TestCase):
             self.assertTrue(all(entry["OK"] for entry in case["ResultDigests"].values()))
             self.assertIn("ArchiveDeletion", case)
         self.assertTrue((self.tmp / "concurrent" / "process-library.json").is_file())
+        resumed_kinds = [kind for kind, _ in resumed_events]
+        self.assertNotIn("upload", resumed_kinds)
+        self.assertNotIn("submit", resumed_kinds)
+        self.assertEqual(resumed_kinds.count("fetch"), 2)
+        self.assertEqual(resumed["Library"]["JobsSubmitted"], 2)
+        self.assertEqual(resumed["Library"]["CouponsQualified"], 2)
+        for case in resumed["Cases"]:
+            self.assertTrue(case["Monitor"]["Resumed"])
+            self.assertTrue(case["Upload"]["Resumed"])
+            self.assertEqual(case["Submission"], json.loads((self.tmp / "concurrent" / case["Case"] / "submission.json").read_text()))
+        self.assertIsNotNone(resumed["Library"]["CriticalPathSeconds"])
 
     def test_without_reference_matrices_the_verdict_is_pending(self):
         case_id = "four-edge-9d2cb9bbb3fe"

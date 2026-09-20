@@ -46,6 +46,7 @@ process-library entries: the case's model with the response matrices and the
 qualification bound; LibraryQualified only when Passed).
 """
 import argparse
+import calendar
 import hashlib
 import json
 from pathlib import Path
@@ -351,6 +352,38 @@ def upload_case(record, context, *, remote, profile):
     return {"Commands": commands, "UTC": remote_side.utc()}
 
 
+def wait(seconds, slice_seconds=10):
+    """Sleep in short slices against the wall clock (one long sleep of an idle driver was
+    observed not to return on macOS; the slices keep the driver's timers short)."""
+    end = time.time() + seconds
+    while True:
+        remaining = end - time.time()
+        if remaining <= 0:
+            return
+        time.sleep(min(slice_seconds, remaining))
+
+
+def resume_submission(record, plan_before):
+    """Under --resume: adopt the submission a previous driver recorded for this coupon
+    (<case>/submission.json) when its plan is byte-identical to the one just derived;
+    returns the submission time (epoch) or None when nothing was submitted."""
+    case_root = Path(record["Root"])
+    submission_path = case_root / "submission.json"
+    if not submission_path.is_file():
+        return None
+    plan_now = (case_root / "main" / "plan.json").read_text()
+    if plan_before != plan_now:
+        raise CaseStop("Resume", f"the plan derived now differs from the plan the recorded submission {submission_path} ran: "
+                                 f"not resumable (inputs or tooling changed)")
+    submission = json.loads(submission_path.read_text())
+    record["Submission"] = submission
+    record["Upload"] = {"Resumed": True, "SubmissionRecord": str(submission_path)}
+    record["Monitor"] = {"Polls": 0, "LastJobState": None, "LastStages": None, "Resumed": True}
+    submitted = calendar.timegm(time.strptime(submission["UTC"], "%Y-%m-%dT%H:%M:%SZ"))
+    record["SubmittedAt"] = submitted
+    return submitted
+
+
 def submit_case(record, context, *, remote, profile, log):
     """Step 5a: upload and submit one coupon's job under the user job cap (recorded)."""
     case_root = Path(record["Root"])
@@ -616,7 +649,11 @@ def tool_commit():
         return None
 
 
-def run_qualify(args, *, log=print):
+def log_line(message):
+    print(message, flush=True)
+
+
+def run_qualify(args, *, log=log_line):
     build_path = Path(args.build_record).resolve()
     build = json.loads(build_path.read_text())
     manifest_path = Path(build["Library"]["Manifest"]["Path"])
@@ -659,6 +696,8 @@ def run_qualify(args, *, log=print):
         write_json(partial, {"Version": QUALIFICATION_VERSION, "Command": "coupon-library qualify", "Partial": True, "Cases": records})
 
     # Steps 1-4 for every coupon (a stop records the coupon; the others continue).
+    plans_before = {case["Case"]: (root / case["Case"] / "main" / "plan.json").read_text()
+                    for case in selected if (root / case["Case"] / "main" / "plan.json").is_file()} if args.resume else {}
     pending = []
     for case_record in selected:
         record = None
@@ -677,9 +716,27 @@ def run_qualify(args, *, log=print):
     # Step 5: up to --max-jobs of this run's jobs in the queue at once (one per coupon), a
     # read-only poll of every active job per interval, fetch / verify / analyze each coupon
     # as its job leaves the queue, the next pending coupon submitted into the freed slot.
+    # --resume adopts the submissions a previous driver of this root recorded (the job ids
+    # in <case>/submission.json) instead of uploading and submitting again.
     jobs = 0
     first_submission = last_fetch = None
     active = []
+    if args.resume:
+        for record, context in list(pending):
+            try:
+                resumed = resume_submission(record, plans_before.get(record["Case"]))
+            except CaseStop as exception:
+                stop(record, None, exception)
+                pending.remove((record, context))
+                checkpoint()
+                continue
+            if resumed:
+                pending.remove((record, context))
+                active.append((record, context))
+                jobs += 1
+                first_submission = min(first_submission or resumed, resumed)
+                log(f"{record['Case']}: resumed job {record['Submission']['Job']} submitted {record['Submission']['UTC']}")
+        checkpoint()
     while pending or active:
         while pending and len(active) < args.max_jobs:
             record, context = pending.pop(0)
@@ -696,7 +753,7 @@ def run_qualify(args, *, log=print):
             checkpoint()
         if not active:
             break
-        time.sleep(args.monitor_interval)
+        wait(args.monitor_interval)
         still_active = []
         for record, context in active:
             try:
@@ -750,6 +807,9 @@ def add_arguments(parser):
     parser.add_argument("--case", action="append", default=None, help="case id (repeatable; default: every case of the build record)")
     parser.add_argument("--root", type=Path, help="local run root (default /tmp/coupon-library-qualify-<commit>-<ts>)")
     parser.add_argument("--dry-run", action="store_true", help="write plans / configs / estimates / gates; contact nothing")
+    parser.add_argument("--resume", action="store_true", help="adopt the job ids a previous driver of this --root recorded "
+                                                               "(<case>/submission.json, plan byte-identical) instead of "
+                                                               "submitting again; monitor / fetch / analyze from there")
     parser.add_argument("--monitor-interval", type=int, default=DEFAULT_MONITOR_INTERVAL, help="seconds between read-only polls")
     parser.add_argument("--monitor-polls", type=int, default=DEFAULT_MONITOR_POLLS)
     parser.add_argument("--cluster-profile", type=Path, default=HERE / "cluster-profile.json")
