@@ -8,8 +8,13 @@
 The Gmsh-only coupon mesh library is driven by `coupon_library.py build` (register a
 source directory as a manifest case with an explicit footprint declaration, build the
 selected cases as a job pool through the production DAG, audits and verification, and
-write `library-build.json`); `coupon-library qualify` (physics against a reference) is
-the next step. See "Two commands" in `geometry-independence-suite.md`.
+write `library-build.json`) and `coupon_library.py qualify` (the physics of every built
+coupon against its graded_v2 reference: configs / estimate / plan from the build record
+and the reference campaign, submission under the 40-job cap, fetch / verification /
+archive hygiene, the frozen class gates of `qualify/qualification-gates.json`,
+`library-qualification.json` and the process-library entries; `--dry-run` writes the
+plans without contacting the cluster). See "Two commands" in
+`geometry-independence-suite.md`.
 
 ## Exact blockwise response matrices
 

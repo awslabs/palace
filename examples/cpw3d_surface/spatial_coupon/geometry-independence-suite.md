@@ -2014,11 +2014,11 @@ message, not a lookup failure.
 
 ## Two commands (supervisor decision 48, 2026-09-20)
 
-The mesh path of the library is one command, `coupon_library.py build`; the physics
-path, `coupon-library qualify`, is the next step and is not implemented yet (its
-scope: the per-run physics scripts moved into the repository and parametrized by
-mesh SHA / remote root / sources / stage prefix, plan / estimate / submit under the
-40-job accounting, fetch / validate / hygiene, machine-readable class gates,
+The library is two commands of `coupon_library.py`: `build` (the mesh path:
+registration, job-pool build, `library-build.json`) and `qualify` (the physics path:
+the per-run physics scripts of `coupon-accuracy-assessment-20260913` moved into
+`qualify/` as parametrized modules, plan / estimate / submit under the 40-job
+accounting, fetch / validate / hygiene, machine-readable class gates,
 `PendingQualification` without a reference, `library-qualification.json` and the
 process-library entries).
 
@@ -2086,6 +2086,134 @@ flags from synthetic roots; with Julia, `coupon-library build` end to end: the
 smallest trace-basis gallery case registered as a temporary copy through the real
 probe - its derived contract equals the frozen one - and built next to
 `one-edge-straight` as a pool of two, root kept under `/tmp/coupon-library-e2e-*`).
+
+### `coupon-library qualify`
+
+```sh
+python3 coupon_library.py qualify \
+  --build-record /tmp/coupon-library-build-<commit>-<ts>/library-build.json \
+  --reference <graded_v2 campaign dir or none> \
+  --remote soca-green-job:/data/home/simlap/coupon_accuracy_assessment_20260913 \
+  --orders p4 --controls p3,p5 --max-jobs 40 \
+  --frozen-binary-sha256 b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27 \
+  [--case ID ...] [--stage-prefix NAME] [--control-source I ...] [--root DIR] [--dry-run]
+```
+
+Every constant the physics runs edited per copy is an argument or a record field:
+the mesh path and SHA-256 (the build record's identity variant, re-hashed before
+anything is written), the source count and the trace files (every
+`PrescribedPotential` entry of the reference config, digests pinned), the
+ZeroTrace set (the basis contract's `ZeroTraceIndices`), the control sources (by
+geometric class, or `--control-source`), the remote host / root (`--remote`), the
+stage prefix (`--stage-prefix`, default the case id), the orders, `Solver.Order` /
+`Linear.Tol` / materials / interfaces (byte-for-byte the reference config), the
+frozen executable hash (`--frozen-binary-sha256`; the executable is
+`<root>/palace-archive-estimate-<sha>.bin`), the cluster facts
+(`qualify/cluster-profile.json`: queue, project, instance, 192 ranks, 6 h walltime,
+20,700 s runner deadline, modules, `mpiexec_bound.sh`, the 40-job user cap) and the
+measured cost rates (`qualify/cost-model.json`: the physics-11 V-a worker / reducer /
+local-edge rates with the V-a entity counts, whose closed-form H1 must reproduce the
+measured counts on load).
+
+1. **Reference by content.** `--reference DIR` has the layout of the physics runs'
+   `reference/` trees: `inputs-<key>/` (the producer's `spatial_fabricated.json`,
+   `traces/basis-NNNN.csv` and any other DataFile, `basis-contract.json`,
+   `plan-view-boundary.csv`, optionally `retained-etch.csv`) and
+   `case-<key>-fabricated/` (`worker.json` = the config the reference ran, preferred
+   over the producer's; `reducer/{domain,surface}-response-matrix.csv`). A coupon is
+   bound to `inputs-<key>` whose `basis-contract.json` digest equals the manifest's
+   `BasisContract` digest (`qualify/reference_campaign.py`); no match = no config and
+   no traces, recorded `StoppedBy Reference` (skipped); inputs without reducer
+   matrices = the coupon runs and is `PendingQualification`. `--reference none` skips
+   every coupon with that reason.
+2. **Sources and controls.** `locate_sources.py` (box from the trace vertices, z levels
+   from the apex heights, metal loops and junctions from the plan-view boundary, the
+   3000 / 3100 adjacency from a bound `retained-etch.csv`) and `classify_sources.py`
+   (ZeroTrace; junction rings; junction columns; narrow hats next to a junction;
+   near-junction hats; isolated narrow hats; box 3D corners; wide hats bottom / top,
+   metal-top ring, substrate / trench rings; conductor terminals = `TerminalAttributes`
+   sources). The 8 controls (`--control-count`) are one source per class in that
+   priority order, cycling, lowest index first (`choose_controls`), unless
+   `--control-source` names them (the recorded campaigns' supervisor-specified sets).
+3. **Configs and plan.** `build_configs.py` derives worker / reducer at every `--orders`
+   order on all sources, at every `--controls` order (highest first) on the controls,
+   and the ordinary-path local-edge `config.json` at the main order on the controls
+   (`SaveLocalEdgeEnergy` true); only `Model.Mesh`, `Problem.Output`, the trace
+   directory, the source subset and `Solver.Order` differ from the reference config.
+   `estimate_stages.py` scales the cost model by the exact H1 ratio
+   (`mixed_mesh.h1_dofs_from_counts` on the build record's `H1.EntityCounts`) at 1 /
+   1.5 / 2x the measured PCG counts; a coupon whose 2x total with the 35% + 300 s
+   preflight margin exceeds the walltime, or whose Palace peak exceeds 0.75 of the
+   node, is `StoppedBy Estimate` before any plan. `build_plan.py`: pinned SHA-256 of
+   the mesh, every config and every trace; `CapSeconds` = 2 x the stage's 2x-PCG
+   estimate rounded up to 300 s and bounded by the deadline, `MinimumSeconds` = the
+   1x estimate rounded up; `job.pbs` from the cluster profile; `run_stages.py` (the
+   unchanged bounded runner, executable / hash / MPI wrapper read from the plan).
+4. **Submission and results** (`qualify/remote.py`; not under `--dry-run`): rsync of
+   mesh / traces / `main/` to `<root>/<run>/<case>/`, `qsub` after a read-only `qstat`
+   count of the user's jobs against the cap (`submission.json`), read-only polls of
+   the job state and the runner's `status.json`, rsync of `main/` without the archives,
+   `sha256sum` of every fetched CSV against the remote (`result-csv-sha256.json`),
+   `run_graded_library_case.validate_matrix` on every reducer matrix (complete,
+   symmetric, nonnegative), then `du` + `rm -rf` of the response archives
+   (`remote-archive-deletion.json`). Any stage not `complete`, a PCG non-convergence,
+   a digest mismatch or an invalid matrix is a recorded stop.
+5. **Qualification.** `compare_matrices.py` (main vs reference, controls vs reference,
+   main vs the higher control, the lower control vs main), `classify_sources.py`
+   class statistics, `ma_ms_offsets.py` (distributions, reference-p_MA-weighted view,
+   strongest-20), `p_sequence.py` (d_low / d_high / r / Aitken limit at the controls),
+   `key_sources.py`, `summarize_cost.py` (per-source PCG and seconds, node-h = wall x
+   nodes, the full-coupon extrapolation) and `gates.py` on the frozen
+   `qualify/qualification-gates.json` (its SHA-256 in every record; free view = the
+   reference's sources minus the ZeroTrace knots and zero-energy sources; anchor
+   "vs p<reference order>"):
+
+   | gate | statement |
+   |---|---|
+   | E | every source of the four wide classes within 1% (the all-free count and the worst source reported) |
+   | p_MA | free signed median within 1%; reference-p_MA-weighted mean within 1%; every one of the 20 strongest reference-MA sources (all free sources when fewer) within 2%; every free source within 5% |
+   | p_MS | free |median| within 1%; every free source within 5% |
+   | p_SA | >= 2/3 of the free sources within 2% and >= 90% within 5% (the EL4c level 40 / 56 of 60) |
+   | p-sequence controls | every control's step to the higher order d_high = (p_high - p_main)/|p_high| within 1% for E and 5% for p_MA / p_MS / p_SA |
+
+   Verdict `Passed` only when every gate passes; `Failed` otherwise;
+   `PendingQualification` when the reference has no matrices (the p-sequence controls
+   alone are evaluated; never `Passed`). On the stored CSVs: physics-11 passes with
+   E 60 / 60, p_SA 35 / 44 / 58, p_MS 51 / 60 / 60, p_MA 32 / 55 / 60 (strongest-20 15
+   / 20 within 1%, 20 / 20 within 2%), 0.508 node-h (0.14x the reference's 3.64);
+   gallery-06b passes with E 93 / 95 (both misses in the narrow class), p_SA 47 / 69 /
+   95, p_MS 77 / 94 / 95, p_MA 68 / 91 / 95 (19 / 20, 20 / 20), 0.974 node-h;
+   gallery-06 (before decision 44) fails p_MA (25 / 133 beyond 5%) - the table
+   reproduces the RESULTS.md class counts (tests).
+6. **Records.** `ROOT/library-qualification.json`: per coupon `Status` (qualified /
+   pending-qualification / failed / planned / skipped) and `StoppedBy` (Build, Manifest,
+   Reference, Mesh, Estimate, JobBudget, Monitor, Fetch, Stages, Verification,
+   MatrixValidation), the reference binding, sources / classes / controls, stage layout,
+   estimate (H1 by order, job seconds by PCG factor, peak GB, node-h of the main stage),
+   plan (pins, caps), remote layout, submission / monitor / fetch / digest / matrix /
+   deletion records, `Qualification` (verdict, gates passed, anchor, class statistics,
+   offsets, weighted p_MA), `Cost` (main-stage H1 / PCG / seconds / node-h, job node-h,
+   the reference's node-h from its `status.json`, the ratio); library totals: coupons by
+   status, stopped coupons with the reason, node-h, critical-path seconds from the first
+   submission to the last fetch, jobs submitted vs `--max-jobs` and the cap, orders,
+   binary hash, profile. `ROOT/qualification-gates.json` (the table used),
+   `ROOT/process-library.json` (each coupon's model from its own `process-library.json`
+   with the fetched matrices, `CouponMesh`, `Qualification` and `LibraryQualified` only
+   when Passed).
+
+`--dry-run` writes steps 1-3 and the gate table without contacting anything; the
+recorded campaigns are its fixtures: on the four-edge case with `--stage-prefix va`
+and the physics-11 controls, every generated `worker.json` / `reducer.json` /
+`config.json` equals `four-edge-physics-11/main/*/` apart from paths and the plan
+equals its `plan.json` in stages (names, config files, environment, dependencies,
+order) and pins (the 80 trace digests; the mesh pin is the build record's); the same
+on the gallery-06 case against `gallery-physics-06b` (135 traces). Tests:
+`test_qualify_gates.py` (the gate evaluation, the recorded class table and locations,
+the estimator against the recorded 06b `stage-estimate.json`, node-h, the cap rule,
+the control choice), `test_qualify_dry_run.py` (the dry runs above, the analysis of
+the recorded results through the same records, PendingQualification, the fail-closed
+stops). Nothing four-edge-specific remains hard-coded: no source count, control
+index, remote path or mesh digest is in the code.
 
 ## Preflight
 
