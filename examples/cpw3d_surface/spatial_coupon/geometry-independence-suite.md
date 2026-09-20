@@ -883,6 +883,51 @@ behaviour on unchained rows; verified by rebuilding the two-edge 10 case under t
 mesher and comparing its `gmsh-build.msh` SHA with the decision-43 root (evidence
 below).
 
+### Evidence (decisions 46 / 47: the five regenerated fixtures and the two-edge 10 inertness rebuild; commit 8b0057dbd, 2026-09-19)
+
+All six built through `run_gmsh_only_case.py` under the production recipe (options and
+gates unchanged; audits at 8 GiB), identity + rotate-z-0.63, verified `Passed true`
+with empty failure lists; the verification reports bind the manifest SHA-256
+`7120d18c...` (commit 8b0057dbd). Every root passed the headroom gate first
+(`build-cost-estimate.json`).
+
+| case (fixture v2) | elements (tets + prisms + pyramids) | nodes | estimate (ratio) | tets min SJ / max cond | prisms / pyramids max cond | tubes / layers | corners | protected | closure (points; owners) | interface areas um^2 | box; chains | build s / GiB | verification s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| one-edge-straight | **796,062** = 714,666 + 75,582 + 5,814 | 176,133 | 794,118 (0.998) | 0.0396 / 23.8 | 589.5 / 8.74 | 2 / 646 | 3.67 | 0 / 3.5e-18 | 3.1e-13 (287,781; 3100 / 5001 / 6001) | 1: 452.8, 3100: 64.8, 5001: 64.0, 6001: 65.6 | [-4, 4] x [-8, 8]; 0 | 44.4 / 2.5 | 331 |
+| one-edge-cad-subdivided | **796,062** (identical) | 176,133 | 794,118 (0.998) | 0.0396 / 23.8 | 589.5 / 8.74 | 2 / 646 | 3.67 | 0 / 3.5e-18 | 3.1e-13 (287,781) | identical | [-4, 4] x [-8, 8]; **1 chain (rows 1-2, union 4.0, extended)** | 44.5 / 2.5 | 333 |
+| two-edge-transition | **1,496,338** = 1,310,866 + 172,224 + 13,248 | 339,728 | 1,496,561 (1.000) | 0.0257 / 63.1 | 589.5 / 8.74 | 10 / 1,472 | 3.05 - 3.50 (5) | 0 / 3.5e-18 | 5.9e-13 (593,391) | 1: 694.6, 3100: 125.8, 5001: 100.0, 6001: 103.6 | [-8, 6] x [-8, 8]; 0 | 76.8 / 3.9 | 675 |
+| two-edge-multislot | **1,117,402** = 1,029,328 + 81,783 + 6,291 | 236,752 | 1,136,205 (1.017) | 0.0351 / 100.8 | 589.5 / 8.74 | 6 / 699 | 3.30 / 3.52 / 3.20 | 0 / 3.5e-18 | 3.3e-13 (377,358; 3100 / 3101 / 5001 / 5101 / 6001 / 6101) | 1: 613.6, 3100: 29.53, 3101: 57.32, 5001: 31.84, 5101: 74.16, 6001: 32.62, 6101: 75.08 | [-8, 8] x [-4, 8]; 0 | 60.9 / 3.3 | 457 |
+| six-edge-cluster | **1,329,382** = 1,119,970 + 194,454 + 14,958 | 318,937 | 1,371,715 (1.032) | 0.0201 / 126.4 | 589.5 / 8.74 | 20 / 1,662 | 3.23 - 3.79 (10) | 0 / 1.4e-17 | 5.2e-13 (626,208; 10 owners) | 1: 566.85, 3100: 8.97, 3101: 90.03, 5001 / 5002: 0.254 / 0.255, 5101 / 5102: 36.00 / 36.00, 6001 / 6002: 0.351 / 0.356, 6101 / 6102: 37.90 / 37.89 | [-9.917, 8.917] x [-4.5, 4.5]; 0 | 82.7 / 3.7 | 548 |
+| two-edge-8dd4bc70f183 (10, inertness rebuild) | **521,676** = 425,916 + 88,920 + 6,840 | 134,927 | 560,105 (1.074) | 0.0202 / 99.3 | 586.3 / 8.69 | 12 / 760 | 3.25 - 3.74 (6) | 0 / 0 | 1.2e-13 (279,090) | 1: 206.0, 3100: 37.9, 5001 / 5002: 4.0, 6001 / 6002: 4.9 | [-5, 4] x [-2, 3]; 0 | 43.9 / 2.4 | 238 |
+
+The decision-47 rule is inert on the real cases as the probe predicted: the two-edge
+10 rebuild under the new mesher gives `gmsh-build.msh` `10afee1f...` and identity.msh
+`5d01204e3396744cdbcf6f53fd1ff85d9f8c218eec1f0b9e11fc6a58aa469b04`, byte-identical to
+the decision-43 root (`...-72185ce89-20260919-170018`), whose binaries are kept while
+the rebuild's were deleted (its census / reports are the evidence). The
+`cad-subdivision-sensitivity` comparison is live again and trivially satisfied: the
+subdivided and the straight fixture produce byte-identical identity meshes
+(`ff9898a5e001f64e96f6226e25828d67455aeee69bbc6c8249e58500bf5be00f`; normalized DOF
+ratio 1.0 against the 1.25 bound), the only difference being the census `CouponBox`
+chain record. Roots: `/tmp/coupon-gmsh-only-<case>-8b0057dbd-2026091[6-9]-*` (identity
+SHA-256s: one-edge-straight / -cad-subdivided `ff9898a5...`; two-edge-transition
+`455f0dc754e27cfd7b75f91b5887c3751630dc53c6583dd04aa6d4349006d7a1`; two-edge-multislot
+`45ded77f1dea16af56740d34bf88e2d80d1422bc004df798bdd9ea04c06c9eb6`; six-edge-cluster
+`5f749dbaab96cc9d0af0e22337cf9ad89385af040eb1fcc24660dd65f013d40c`; CanonicalBuildIds
+1fd47f70... / 722caab8... / e3f5fda2... / 7e91cc6f... / f38a201c...). The first
+decision-46 attempts of one-edge-straight and two-edge-transition (roots
+`...-7abfd08ff-20260919-155819-superseded-mesher-edit`) were superseded when the
+decision-47 mesher edit landed during their audits (tool digest changed); their and
+the probe meshes are listed in `deleted-binaries.txt`.
+
+**Matrix status after decisions 46 / 47 (15 cases): built and verified 12**
+(four-edge, ten-edge, three-edge 06, two-edge 10, two-edge 05,
+three-edge-current-calibration, concave-multislot, one-edge-straight,
+one-edge-cad-subdivided, two-edge-transition, two-edge-multislot, six-edge-cluster);
+**unbuildable 3**: hole, rounded-strip, opposed-layers - outside the prism-tube
+recipe's stated scope (hole loop, rounded edge, downward layer), a producer feature
+decision, not a repair.
+
 ### Synthetic matrix under the Gmsh-only recipe (decision 45(b), 2026-09-19)
 
 The 2026-09-17 record (below, under the retired recipe) found ten of the twelve
@@ -988,7 +1033,7 @@ binaries (1.24 GB: the case-05 build launched before the size-bound commit, whos
 rotate-z audit failed on the changed mesher digest, and the probe meshes) are listed
 in `deleted-binaries.txt` there.
 
-**Matrix status under the Gmsh-only recipe (15 cases): built and verified 7**
+**Matrix status under the Gmsh-only recipe before decisions 46 / 47 (15 cases): built and verified 7**
 (four-edge, ten-edge, three-edge 06, two-edge 10, two-edge 05,
 three-edge-current-calibration, concave-multislot); **unbuildable 8**: five
 Radius-12.5 fixtures whose frozen boundary loops were authored on the Radius-2 box
@@ -1009,6 +1054,9 @@ same sweep ran 260 tests, OK (33 skipped); preflights 15 (every case with its
 `BuildCostEstimate`, maximum 0.89 of the cap on ten-edge) / 6 / 2 pass;
 `refreeze_manifest_tools.py --check` current. The 869465f32 roots stay bound to their
 commit's manifest (`cef6ba51...`); nothing was rebuilt.
+After decisions 46 / 47 (8b0057dbd) the sweep ran 261 tests, OK (33 skipped);
+preflights 15 / 6 / 2 pass (maximum estimate 0.89 of the cap); `refreeze_manifest_tools.py
+--check` current; the Julia `test_edge_chains.jl` testsets pass (17 assertions).
 
 ## Retired production recipe (supervisor decision 34B, 2026-09-17; legacy MMG pipeline)
 
