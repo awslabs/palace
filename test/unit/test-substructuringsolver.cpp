@@ -331,6 +331,115 @@ TEST_CASE("SubstructuringSolver reproduces full-domain magnetostatic energy",
         1.0e-6 * std::abs(e_mono));  // substructuring == monolith (same operator)
 }
 
+TEST_CASE("SubstructuringSolver magnetostatic Dirichlet (flux-loop-type) excitation",
+          "[substructure][Serial][Parallel]")
+{
+  // Flux-loop excitations in Palace are Dirichlet-lift (prescribe tangential A on the flux
+  // boundary, RHS = -K*lift). The Dirichlet lift is orthogonal to interior gradients, so
+  // the DtN condensation is consistent. Validate that a magnetostatic Dirichlet excitation
+  // gives the same gauge-invariant energy region-condensed vs monolith (identical solve
+  // approach).
+  const int order = 1;
+  const double mu_r = 1.0, mu_e = 4.0;
+  json config = {
+      {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+      {"Model", {{"Mesh", "test.msh"}}},
+      {"Domains",
+       {{"Materials",
+         {{{"Attributes", {1}}, {"Permeability", mu_r}, {"Permittivity", 1.0}},
+          {{"Attributes", {2}}, {"Permeability", mu_e}, {"Permittivity", 1.0}}}}}},
+      {"Boundaries",
+       {{"Terminal",
+         {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+      {"Solver",
+       {{"Order", order},
+        {"Substructuring",
+         {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+  IoData iodata(config, false);
+
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(6)));
+  SubstructuringSolver ss(iodata, mesh);
+  ss.CondenseEnvironment();
+  Vector u = ss.SolveExcitation(1);  // tangential A = 1 on attr-1 boundary, 0 on attr-2
+  const double e_sub = ss.ElectrostaticEnergy(u);
+
+  // Monolith: same Dirichlet data, curl-curl + small mass (definite), pure-curl-curl
+  // energy.
+  auto &pmesh = mesh.back()->Get();
+  mfem::ND_FECollection fec(order, 3);
+  mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
+  const int max_attr = pmesh.attributes.Max();
+  mfem::Vector nu_by_attr(max_attr), mass_by_attr(max_attr);
+  nu_by_attr = 0.0;
+  mass_by_attr = 0.0;
+  nu_by_attr(0) = 1.0 / mu_r;
+  nu_by_attr(1) = 1.0 / mu_e;
+  mass_by_attr(0) = 1.0e-3;  // match kMagRegularization
+  mass_by_attr(1) = 1.0e-3;
+  mfem::PWConstCoefficient nu(nu_by_attr), massc(mass_by_attr);
+  mfem::ParBilinearForm asolve(&pfes);
+  asolve.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
+  asolve.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(massc));
+  asolve.Assemble();
+  mfem::ParBilinearForm aenergy(&pfes);
+  aenergy.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
+  aenergy.Assemble();
+  aenergy.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> Kpure(aenergy.ParallelAssemble());
+
+  const int maxb = pmesh.bdr_attributes.Max();
+  mfem::Array<int> ess_bdr(maxb), ess_tdofs, t1_bdr(maxb), t1_tdofs;
+  ess_bdr = 0;
+  ess_bdr[0] = 1;
+  ess_bdr[1] = 1;
+  pfes.GetEssentialTrueDofs(ess_bdr, ess_tdofs);
+  t1_bdr = 0;
+  t1_bdr[0] = 1;
+  pfes.GetEssentialTrueDofs(t1_bdr, t1_tdofs);
+  mfem::ParGridFunction xgf(&pfes);
+  {
+    mfem::Vector td(pfes.GetTrueVSize());
+    td = 0.0;
+    for (int i = 0; i < t1_tdofs.Size(); i++)
+    {
+      td(t1_tdofs[i]) = 1.0;
+    }
+    xgf.SetFromTrueDofs(td);
+  }
+  mfem::ParLinearForm bform(&pfes);
+  bform = 0.0;
+  bform.Assemble();
+  mfem::OperatorPtr A;
+  mfem::Vector B, X;
+  asolve.FormLinearSystem(ess_tdofs, xgf, bform, A, X, B);
+  mfem::HypreParMatrix *Ah = A.As<mfem::HypreParMatrix>();
+  mfem::HypreAMS ams(*Ah, &pfes);
+  ams.SetPrintLevel(0);
+  mfem::HyprePCG pcg(*Ah);
+  pcg.SetTol(1e-13);
+  pcg.SetMaxIter(2000);
+  pcg.SetPrintLevel(0);
+  pcg.SetPreconditioner(ams);
+  pcg.Mult(B, X);
+  asolve.RecoverFEMSolution(X, bform, xgf);
+  mfem::Vector u_full;
+  xgf.GetTrueDofs(u_full);
+  mfem::Vector t(pfes.GetTrueVSize());
+  Kpure->Mult(u_full, t);
+  double local = 0.0;
+  for (int i = 0; i < pfes.GetTrueVSize(); i++)
+  {
+    local += u_full(i) * t(i);
+  }
+  double e_mono = 0.0;
+  MPI_Allreduce(&local, &e_mono, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
+  e_mono *= 0.5;
+
+  CHECK(e_sub > 1.0e-8);
+  CHECK(std::abs(e_sub - e_mono) <= 1.0e-6 * std::abs(e_mono));
+}
+
 TEST_CASE("SubstructuringSolver offline/online model reuse",
           "[substructure][Serial][Parallel]")
 {
