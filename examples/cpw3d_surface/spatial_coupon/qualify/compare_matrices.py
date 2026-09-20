@@ -8,12 +8,14 @@
 Common (basis_i, basis_j) pairs only.  Emits a long CSV of every compared entry, a
 Markdown summary (diagonal / participation / off-diagonal views) and a JSON summary
 with the per-source relative offsets the class statistics and gates are evaluated
-on.  Zero-trace sources (diagonal domain energy of exactly 0 in either input, plus the
+on.  The surface matrix's interface indices are labeled by the run config's
+Postprocessing.Dielectric map (never assumed; a participation p_X sums every interface
+of type X).  Zero-trace sources (diagonal domain energy of exactly 0 in either input, plus the
 contract's ZeroTraceIndices: basis knots PEC-constrained in the library whose 3D
 coupon energies are nonetheless nonzero) are reported in the raw view and excluded
 from the free view.
 
-usage: compare_matrices.py --reference DIR --run DIR --out-prefix PATH [--zero-trace I ...]
+usage: compare_matrices.py --reference DIR --run DIR --out-prefix PATH --config RUN_CONFIG [--zero-trace I ...]
        [--contract basis-contract.json] [--locations source-locations.csv]
        [--reference-label TEXT] [--run-label TEXT] [--max-entry-rows N]
 """
@@ -26,8 +28,28 @@ import statistics
 
 SURFACE_QUANTITIES = ["Q_ij (J)", "Q_ij normal (J)", "Q_ij tangential (J)", "Q_total_ij (J)",
                       "Q_total_ij normal (J)", "Q_total_ij tangential (J)"]
-INTERFACE_NAMES = {1: "MA", 2: "MS", 3: "SA"}
+INTERFACE_TYPES = ("MA", "MS", "SA")
 OFFSET_KEYS = ("E_rel", "p_MA_rel", "p_MS_rel", "p_SA_rel")
+
+
+def interface_names_of(interface_types):
+    """Interface index -> type from a config's map ({index: type}, case_inputs.interface_types);
+    None (unknown) fails closed: the labels of the surface matrix rows are never assumed."""
+    if interface_types is None:
+        raise ValueError("the interface index -> type map of the run config is required (never assumed)")
+    names = {int(index): str(name) for index, name in interface_types.items()}
+    unknown = sorted(set(names.values()) - set(INTERFACE_TYPES))
+    if unknown:
+        raise ValueError(f"interface types {unknown} outside {INTERFACE_TYPES}")
+    return names
+
+
+def type_energy(surface, diagonal_keys, names, interface_type, i, quantity="Q_total_ij (J)"):
+    """The whole-interface diagonal energy of source i summed over every interface of
+    the type (None when the type has no interface entry for i)."""
+    values = [surface[diagonal_keys[(interface, i)]][quantity] for interface, name in names.items()
+              if name == interface_type and (interface, i) in diagonal_keys]
+    return sum(values) if values else None
 
 
 def rows(path):
@@ -83,10 +105,16 @@ def fmt(x):
     return "n/a" if x is None or (isinstance(x, float) and not math.isfinite(x)) else f"{x:.3e}"
 
 
-def compare(reference_dir, run_dir, *, zero_trace_indices=(), locations=None):
-    """Every compared entry (out_rows), the per-source offsets and the source lists."""
+def compare(reference_dir, run_dir, *, zero_trace_indices=(), locations=None, interface_types=None):
+    """Every compared entry (out_rows), the per-source offsets and the source lists;
+    `interface_types` = the run config's interface index -> type map (the reference is
+    checked to label the same indices with the same types by the caller)."""
+    names = interface_names_of(interface_types)
     ref_domain, ref_surface = load(reference_dir)
     run_domain, run_surface = load(run_dir)
+    unlabeled = sorted(({key[0] for key in ref_surface} | {key[0] for key in run_surface}) - set(names))
+    if unlabeled:
+        raise ValueError(f"surface matrix interfaces {unlabeled} are not in the config's interface map {names}")
     common = sorted(set(ref_domain) & set(run_domain))
     sources = sorted({i for i, _ in common} | {j for _, j in common})
     contract_zero = {int(i) for i in zero_trace_indices}
@@ -95,6 +123,7 @@ def compare(reference_dir, run_dir, *, zero_trace_indices=(), locations=None):
     free = [i for i in sources if i not in zero_trace]
     locations = locations or {}
     diagonal_keys = diagonal_surface_keys(ref_surface)
+    run_diagonal_keys = diagonal_surface_keys(run_surface)
     out_rows = []
 
     def add(kind, interface, quantity, i, j, r, v):
@@ -108,7 +137,7 @@ def compare(reference_dir, run_dir, *, zero_trace_indices=(), locations=None):
             if key_i is not None and key_j is not None:
                 qi, qj = ref_surface[key_i][quantity], ref_surface[key_j][quantity]
                 scale = math.sqrt(abs(qi * qj)) if qi and qj else None
-        out_rows.append({"kind": kind, "interface": interface or "", "name": INTERFACE_NAMES.get(interface, "domain"),
+        out_rows.append({"kind": kind, "interface": interface or "", "name": names.get(interface, "domain"),
                          "quantity": quantity, "basis_i": i, "basis_j": j, "diagonal": int(i == j),
                          "zero_trace": int(i in zero_trace or j in zero_trace), "reference": r, "run": v,
                          "rel_diff": rel(r, v), "scaled_diff": (v - r) / scale if scale else math.nan})
@@ -123,17 +152,18 @@ def compare(reference_dir, run_dir, *, zero_trace_indices=(), locations=None):
     for i in sources:
         er, ev = ref_domain[(i, i)], run_domain[(i, i)]
         per_source[i] = {"E_rel": rel(er, ev), "E_ref": er, "E_run": ev}
-        for interface, name in INTERFACE_NAMES.items():
-            key = diagonal_keys.get((interface, i))
-            if key is not None and key in run_surface and er and ev:
-                pr = ref_surface[key]["Q_total_ij (J)"] / er
-                pv = run_surface[key]["Q_total_ij (J)"] / ev
+        for name in INTERFACE_TYPES:
+            qr = type_energy(ref_surface, diagonal_keys, names, name, i)
+            qv = type_energy(run_surface, run_diagonal_keys, names, name, i)
+            if qr is not None and qv is not None and er and ev:
+                pr = qr / er
+                pv = qv / ev
                 per_source[i][f"p_{name}_rel"] = rel(pr, pv)
                 per_source[i][f"p_{name}_ref"] = pr
                 per_source[i][f"p_{name}_run"] = pv
     return {"Rows": out_rows, "PerSource": per_source, "Sources": sources, "ZeroTrace": zero_trace, "Free": free,
             "ContractZeroTrace": sorted(i for i in contract_zero if i in sources), "Locations": locations,
-            "ReferenceSurface": ref_surface, "RunSurface": run_surface}
+            "ReferenceSurface": ref_surface, "RunSurface": run_surface, "InterfaceNames": names}
 
 
 def summary_record(comparison):
@@ -155,6 +185,7 @@ def markdown_report(comparison, *, reference_label, run_label, max_entry_rows=0)
     sources, zero_trace, free, locations = (comparison["Sources"], comparison["ZeroTrace"], comparison["Free"],
                                             comparison["Locations"])
     contract_zero = comparison["ContractZeroTrace"]
+    names = comparison["InterfaceNames"]
     common_pairs = sum(1 for r in out_rows if r["kind"] == "domain")
     lines = [f"# Response-matrix comparison: {run_label} vs {reference_label}", "",
              f"Common sources: {len(sources)} ({sources[0]}..{sources[-1]}; {common_pairs} common domain pairs). "
@@ -164,14 +195,14 @@ def markdown_report(comparison, *, reference_label, run_label, max_entry_rows=0)
              "Relative difference = (run - reference)/|reference|; scaled difference = (run - reference)/sqrt(|Q_ii Q_jj|) of the reference.", ""]
     lines += ["## Per-source (diagonal) domain energy and participations (raw view: all common sources; ZT = contract zero-trace knot)", "",
               "| source | ZT | location | E_ref (J) | E_run (J) | rel diff | "
-              + " | ".join(f"p_{n} ref | p_{n} run | rel diff" for n in INTERFACE_NAMES.values()) + " |",
+              + " | ".join(f"p_{n} ref | p_{n} run | rel diff" for n in INTERFACE_TYPES) + " |",
               "|---:|---|---|---:|---:|---:|" + "---:|" * 9]
     for i in sources:
         record = per_source[i]
         loc = locations.get(i)
         loc_text = f"({loc['x']}, {loc['y']}, {loc['z']}) {loc['lateral']}; {loc['adjacent_surface_at_z0']}" if loc else ""
         cells = [str(i), "ZT" if i in zero_trace else "", loc_text, fmt(record["E_ref"]), fmt(record["E_run"]), fmt(record["E_rel"])]
-        for name in INTERFACE_NAMES.values():
+        for name in INTERFACE_TYPES:
             if f"p_{name}_rel" in record:
                 cells += [fmt(record[f"p_{name}_ref"]), fmt(record[f"p_{name}_run"]), fmt(record[f"p_{name}_rel"])]
             else:
@@ -201,7 +232,7 @@ def markdown_report(comparison, *, reference_label, run_label, max_entry_rows=0)
         lines += [f"## Diagonal (per-source) surface energies, all surface quantities ({view} view)", "",
                   "| interface | quantity | n | median rel diff | p90 | p99 | max rel diff | source at max | ref magnitude range |",
                   "|---|---|---:|---:|---:|---:|---:|---:|---|"]
-        for interface in INTERFACE_NAMES:
+        for interface in names:
             for q in SURFACE_QUANTITIES:
                 selection = [r for r in out_rows if r["kind"] == "surface" and r["interface"] == interface and r["quantity"] == q
                              and r["diagonal"] and (view == "raw" or not r["zero_trace"])]
@@ -209,7 +240,7 @@ def markdown_report(comparison, *, reference_label, run_label, max_entry_rows=0)
                 finite = [r for r in selection if math.isfinite(r["rel_diff"])]
                 worst = max(finite, key=lambda r: abs(r["rel_diff"]))["basis_i"] if finite else ""
                 magnitudes = [abs(r["reference"]) for r in selection]
-                lines.append(f"| {INTERFACE_NAMES[interface]} ({interface}) | {q} | {stats['n']} | {fmt(stats.get('median'))} | "
+                lines.append(f"| {names[interface]} ({interface}) | {q} | {stats['n']} | {fmt(stats.get('median'))} | "
                              f"{fmt(stats.get('p90'))} | {fmt(stats.get('p99'))} | {fmt(stats.get('max'))} | {worst} | "
                              f"{fmt(min(magnitudes)) if magnitudes else 'n/a'} .. {fmt(max(magnitudes)) if magnitudes else 'n/a'} |")
         lines.append("")
@@ -217,7 +248,7 @@ def markdown_report(comparison, *, reference_label, run_label, max_entry_rows=0)
         lines += [f"## Off-diagonal (cross) terms ({view} view)", "",
                   "| kind | quantity | n | median rel diff | p90 rel | max rel diff | median scaled diff | p90 scaled | p99 scaled | max scaled diff | pair at max scaled |",
                   "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|"]
-        for kind, interface in [("domain", None)] + [("surface", k) for k in INTERFACE_NAMES]:
+        for kind, interface in [("domain", None)] + [("surface", k) for k in names]:
             for q in (["Q_ij (J)"] if kind == "domain" else SURFACE_QUANTITIES):
                 selection = [r for r in out_rows if r["kind"] == kind and (r["interface"] or None) == interface and r["quantity"] == q
                              and not r["diagonal"] and (view == "raw" or not r["zero_trace"])]
@@ -225,7 +256,7 @@ def markdown_report(comparison, *, reference_label, run_label, max_entry_rows=0)
                 scaled = summarize([r["scaled_diff"] for r in selection])
                 finite = [r for r in selection if math.isfinite(r["scaled_diff"])]
                 worst = max(finite, key=lambda r: abs(r["scaled_diff"])) if finite else None
-                label = "domain" if kind == "domain" else f"{INTERFACE_NAMES[interface]} ({interface})"
+                label = "domain" if kind == "domain" else f"{names[interface]} ({interface})"
                 lines.append(f"| {label} | {q} | {stats['n']} | {fmt(stats.get('median'))} | {fmt(stats.get('p90'))} | {fmt(stats.get('max'))} | "
                              f"{fmt(scaled.get('median'))} | {fmt(scaled.get('p90'))} | {fmt(scaled.get('p99'))} | {fmt(scaled.get('max'))} | "
                              f"{(worst['basis_i'], worst['basis_j']) if worst else ''} |")
@@ -245,9 +276,10 @@ def read_locations(path):
 
 
 def write_comparison(reference_dir, run_dir, out_prefix, *, zero_trace_indices=(), locations=None,
-                     reference_label="reference", run_label="run", max_entry_rows=0):
+                     reference_label="reference", run_label="run", max_entry_rows=0, interface_types=None):
     """CSV + Markdown + JSON at out_prefix; returns the JSON summary."""
-    comparison = compare(reference_dir, run_dir, zero_trace_indices=zero_trace_indices, locations=locations)
+    comparison = compare(reference_dir, run_dir, zero_trace_indices=zero_trace_indices, locations=locations,
+                         interface_types=interface_types)
     out_prefix = Path(out_prefix)
     out_prefix.parent.mkdir(parents=True, exist_ok=True)
     with open(f"{out_prefix}.csv", "w", newline="") as stream:
@@ -272,13 +304,17 @@ def main(argv=None):
     parser.add_argument("--zero-trace", type=int, action="append", default=[], help="zero-trace source index (repeatable)")
     parser.add_argument("--locations", help="source-locations.csv from locate_sources.py")
     parser.add_argument("--max-entry-rows", type=int, default=0, help="cap the per-entry Markdown table (0 = all rows)")
+    parser.add_argument("--config", required=True, help="the run's Palace config: its Postprocessing.Dielectric entries "
+                                                        "label the surface matrix interfaces (index -> type)")
     args = parser.parse_args(argv)
+    interface_types = {int(entry["Index"]): entry["Type"]
+                       for entry in json.loads(Path(args.config).read_text())["Boundaries"]["Postprocessing"]["Dielectric"]}
     zero = list(args.zero_trace)
     if args.contract:
         zero += [int(i) for i in json.loads(Path(args.contract).read_text()).get("ZeroTraceIndices", [])]
     summary = write_comparison(args.reference, args.run, args.out_prefix, zero_trace_indices=zero,
                                locations=read_locations(args.locations), reference_label=args.reference_label,
-                               run_label=args.run_label, max_entry_rows=args.max_entry_rows)
+                               run_label=args.run_label, max_entry_rows=args.max_entry_rows, interface_types=interface_types)
     print(json.dumps({key: value for key, value in summary.items() if key != "PerSource"}, indent=2))
     return 0
 

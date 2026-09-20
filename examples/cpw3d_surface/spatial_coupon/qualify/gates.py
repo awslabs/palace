@@ -6,7 +6,8 @@
 compare_matrices summary, the classify_sources classes, the reference p_MA and the
 p-sequence controls.  Every statement records its measured numbers next to the
 threshold; the verdict is Passed / Failed / PendingQualification (no reference:
-only the p-sequence controls are evaluated, never Passed).
+only the p-sequence controls are evaluated - PendingQualification when they pass,
+never Passed; Failed when one fails).
 
 Applicability: a participation p_X whose interface X the reference config does not
 postprocess (no Postprocessing.Dielectric entry of that Type; gallery case 10 declares
@@ -156,7 +157,8 @@ def applicable_observables(interfaces):
 def evaluate(gates, *, comparison=None, classes=None, ref_pma=None, p_sequence_summary=None, reference_order=None,
              free=None, gates_sha256=None, interfaces=None, gated_order=None):
     """The gate record.  Without `comparison` (no reference matrices) only the p-sequence
-    controls are evaluated and the verdict is PendingQualification.  `interfaces` = the
+    controls are evaluated and the verdict is PendingQualification when they pass, Failed
+    otherwise.  `interfaces` = the
     reference's postprocessed interface types (reference_campaign.interfaces); a
     participation gate of an undeclared interface is NotApplicable.  `gated_order` = the
     order of the gated main stage (recorded next to the anchor)."""
@@ -190,10 +192,15 @@ def evaluate(gates, *, comparison=None, classes=None, ref_pma=None, p_sequence_s
     passed = {name: gate["Passed"] for name, gate in record["Gates"].items()}
     record["GatesPassed"] = passed
     suffix = f" ({', '.join(record['NotApplicable'])} not applicable)" if record["NotApplicable"] else ""
-    if comparison is None:
+    if comparison is None and passed and all(passed.values()):
         record["Verdict"] = VERDICT_PENDING
-        record["Reason"] = ("no reference matrices: only the p-sequence controls were evaluated"
-                            + ("" if all(passed.values()) else f"; failing {[k for k, v in passed.items() if not v]}"))
+        record["Reason"] = "no reference matrices: only the p-sequence controls were evaluated (passed); never Passed"
+    elif comparison is None:
+        # No reference never masks a failed convergence control (decision 50: PendingQualification
+        # is never Passed; Failed is Failed).
+        record["Verdict"] = VERDICT_FAILED
+        record["Reason"] = (f"no reference matrices and failing {[k for k, v in passed.items() if not v]}"
+                            if passed else "no reference matrices and no p-sequence controls evaluated")
     elif all(passed.values()) and passed:
         record["Verdict"] = VERDICT_PASSED
         record["Reason"] = "every gate passed" + suffix
@@ -213,6 +220,7 @@ def main(argv=None):
     parser.add_argument("--comparison", help="compare_matrices JSON of the main run vs the reference (omit when no reference)")
     parser.add_argument("--classes", help="source-classes.csv of classify_sources.py")
     parser.add_argument("--reference-dir", help="reducer directory of the reference matrices")
+    parser.add_argument("--reference-config", help="the reference's Palace config (interface index -> type map; with --reference-dir)")
     parser.add_argument("--p-sequence", help="p_sequence.py JSON")
     parser.add_argument("--reference-order", type=int)
     parser.add_argument("--interface", action="append", help="interface type the reference postprocesses (MA / MS / SA; "
@@ -227,8 +235,14 @@ def main(argv=None):
     if args.p_sequence:
         loaded = json.loads(Path(args.p_sequence).read_text())
         p_sequence_summary = {int(k): v for k, v in loaded["Sources"].items()}
+    reference_types = None
+    if args.reference_dir:
+        if not args.reference_config:
+            parser.error("--reference-dir needs --reference-config (the interface index -> type map)")
+        reference_types = {int(entry["Index"]): entry["Type"] for entry in
+                           json.loads(Path(args.reference_config).read_text())["Boundaries"]["Postprocessing"]["Dielectric"]}
     record = evaluate(gates, comparison=comparison, classes=read_classes(args.classes) if args.classes else None,
-                      ref_pma=reference_p_ma(args.reference_dir) if args.reference_dir else None,
+                      ref_pma=reference_p_ma(args.reference_dir, reference_types) if args.reference_dir else None,
                       p_sequence_summary=p_sequence_summary, reference_order=args.reference_order, gates_sha256=digest,
                       interfaces=args.interface, gated_order=args.gated_order)
     args.out.write_text(json.dumps(record, indent=2) + "\n")

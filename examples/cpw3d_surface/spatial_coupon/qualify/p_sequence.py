@@ -13,8 +13,8 @@ r = d_high / d_low and, where 0 < r < 1, the Aitken limit p_inf = high + (high -
 r / (1 - r) (geometric continuation; optimistic for edge-singular functionals), next to
 the reference value and the signed distances (value - ref) / |ref|.
 
-usage: p_sequence.py --main DIR --main-order P [--low DIR --low-order P] [--high DIR --high-order P]
-       [--reference DIR] --control I ... --out-md PATH --out-json PATH
+usage: p_sequence.py --main DIR --main-order P --config RUN_CONFIG [--low DIR --low-order P]
+       [--high DIR --high-order P] [--reference DIR] --control I ... --out-md PATH --out-json PATH
 """
 import argparse
 import csv
@@ -22,7 +22,7 @@ import json
 import math
 from pathlib import Path
 
-INTERFACES = {1: "MA", 2: "MS", 3: "SA"}
+INTERFACE_TYPES = ("MA", "MS", "SA")
 OBSERVABLES = ["E", "Q_MA", "Q_MS", "Q_SA", "Q_SA_normal", "Q_SA_tangential", "p_MA", "p_MS", "p_SA"]
 GATED_OBSERVABLES = ("E", "p_MA", "p_MS", "p_SA")
 
@@ -32,24 +32,42 @@ def rows(path):
         return [{key.strip(): value.strip() for key, value in row.items()} for row in csv.DictReader(stream)]
 
 
-def observables(directory):
+def observables(directory, interface_types):
+    """Source -> observables of a reducer directory; `interface_types` = the run
+    config's interface index -> type map (a participation of a type sums every
+    interface of that type)."""
+    if interface_types is None:
+        raise ValueError("the interface index -> type map of the run config is required (never assumed)")
+    names = {int(index): str(name) for index, name in interface_types.items()}
     directory = Path(directory)
     out = {}
     for row in rows(directory / "domain-response-matrix.csv"):
         i, j = int(float(row["basis_i"])), int(float(row["basis_j"]))
         if i == j:
             out.setdefault(i, {})["E"] = float(row["Q_ij (J)"])
+    # The whole-interface diagonal row per (interface, source): the smallest edge /
+    # largest radius group (compare_matrices.diagonal_surface_keys), then summed per type.
+    diagonal = {}
     for row in rows(directory / "surface-response-matrix.csv"):
         i, j = int(float(row["basis_i"])), int(float(row["basis_j"]))
         if i != j:
             continue
-        name = INTERFACES[int(float(row["interface"]))]
-        out.setdefault(i, {})[f"Q_{name}"] = float(row["Q_total_ij (J)"])
+        interface = int(float(row["interface"]))
+        if interface not in names:
+            raise ValueError(f"surface matrix interface {interface} is not in the config's interface map {names}")
+        group = (int(float(row["edge"])), -float(row["R (m)"]))
+        current = diagonal.get((interface, i))
+        if current is None or group < current[0]:
+            diagonal[(interface, i)] = (group, row)
+    for (interface, i), (_, row) in sorted(diagonal.items()):
+        name = names[interface]
+        record = out.setdefault(i, {})
+        record[f"Q_{name}"] = record.get(f"Q_{name}", 0.0) + float(row["Q_total_ij (J)"])
         if name == "SA":
-            out[i]["Q_SA_normal"] = float(row["Q_total_ij normal (J)"])
-            out[i]["Q_SA_tangential"] = float(row["Q_total_ij tangential (J)"])
+            record["Q_SA_normal"] = record.get("Q_SA_normal", 0.0) + float(row["Q_total_ij normal (J)"])
+            record["Q_SA_tangential"] = record.get("Q_SA_tangential", 0.0) + float(row["Q_total_ij tangential (J)"])
     for record in out.values():
-        for name in INTERFACES.values():
+        for name in INTERFACE_TYPES:
             if f"Q_{name}" in record and record.get("E"):
                 record[f"p_{name}"] = record[f"Q_{name}"] / record["E"]
     return out
@@ -82,10 +100,10 @@ def sequence(low, main, high):
     return {"d_low": d_low, "d_high": d_high, "r": r, "p_inf": p_inf}
 
 
-def p_sequence(runs, controls):
+def p_sequence(runs, controls, interface_types):
     """`runs` = {"low": dir or None, "main": dir, "high": dir or None, "ref": dir or None};
     returns {control: {observable: {values, seq, vs_ref}}}."""
-    data = {key: observables(path) for key, path in runs.items() if path is not None}
+    data = {key: observables(path, interface_types) for key, path in runs.items() if path is not None}
     summary = {}
     for i in controls:
         summary[i] = {}
@@ -130,8 +148,8 @@ def markdown_report(summary, orders, title):
     return "\n".join(lines) + "\n"
 
 
-def write_p_sequence(runs, orders, controls, out_md, out_json, *, title):
-    summary = p_sequence(runs, controls)
+def write_p_sequence(runs, orders, controls, out_md, out_json, *, title, interface_types):
+    summary = p_sequence(runs, controls, interface_types)
     Path(out_md).write_text(markdown_report(summary, orders, title))
     Path(out_json).write_text(json.dumps({"Orders": orders, "Controls": list(controls),
                                           "Sources": {str(i): record for i, record in summary.items()}}, indent=2) + "\n")
@@ -151,11 +169,14 @@ def main(argv=None):
     parser.add_argument("--out-md", required=True)
     parser.add_argument("--out-json", required=True)
     parser.add_argument("--title", default="p-sequence controls")
+    parser.add_argument("--config", required=True, help="the run's Palace config (interface index -> type map)")
     args = parser.parse_args(argv)
+    interface_types = {int(entry["Index"]): entry["Type"]
+                       for entry in json.loads(Path(args.config).read_text())["Boundaries"]["Postprocessing"]["Dielectric"]}
     runs = {"low": args.low, "main": args.main, "high": args.high, "ref": args.reference}
     orders = {key: order for key, order in (("low", args.low_order), ("main", args.main_order), ("high", args.high_order))
               if order is not None}
-    write_p_sequence(runs, orders, args.control, args.out_md, args.out_json, title=args.title)
+    write_p_sequence(runs, orders, args.control, args.out_md, args.out_json, title=args.title, interface_types=interface_types)
     print(Path(args.out_md).read_text().splitlines()[-40:])
     return 0
 

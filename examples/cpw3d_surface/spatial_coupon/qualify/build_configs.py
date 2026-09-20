@@ -2,15 +2,16 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Derive the worker / reducer / local-edge Palace configs of a coupon from its
-reference config (four-edge-physics-11 / gallery-physics-06b build_configs.py,
-parametrized).
+"""Derive the worker / reducer / local-edge Palace configs of a coupon from its run
+config (case_inputs.derive: the case's own sources at the recipe Order / Tol; equal to
+the reference config apart from paths and Order / Tol - four-edge-physics-11 /
+gallery-physics-06b build_configs.py, parametrized).
 
 Only Model.Mesh, Problem.Output, the PrescribedPotential DataFile directory, the
 source subset (controls) and Solver.Order (control orders) change; the local-edge
 stage additionally sets SaveLocalEdgeEnergy true on every Dielectric interface
 entry.  Every other entry - materials, interfaces, Linear.Tol, MaxIts, the
-electrostatic response-matrix options - is byte-for-byte the reference value.
+electrostatic response-matrix options - is byte-for-byte the run config's value.
 
 usage: build_configs.py REFERENCE_CONFIG --mesh REMOTE_MESH --traces REMOTE_TRACES_DIR
        --output-root REMOTE_STAGE_DIR --out DIR [--source I ...] [--order P]

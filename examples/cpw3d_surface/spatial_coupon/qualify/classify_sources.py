@@ -11,16 +11,18 @@ Classes, in priority order:
   ZeroTrace (apex on the metal cross-section at the cut; contract ZeroTraceIndices) -> raw view only
   junction rings (apex where a metal edge meets the cut, not on the bottom / top face)
   junction columns on the bottom / top faces
-  narrow hats w < NARROW_WIDTH next to a junction (junction closer than JUNCTION_REACH)
-  near-junction hats (w >= NARROW_WIDTH, junction closer than JUNCTION_REACH)
-  narrow hats w < NARROW_WIDTH away from every junction (isolated slivers)
+  narrow hats w < NarrowHatWidth next to a junction (junction closer than JunctionReach)
+  near-junction hats (w >= NarrowHatWidth, junction closer than JunctionReach)
+  narrow hats w < NarrowHatWidth away from every junction (isolated slivers)
   box 3D corners (bottom / top face corners)
   wide hats, bottom / top faces
   wide hats, metal-top ring
   wide hats, substrate / trench rings
   conductor terminal (a TerminalAttributes source: no trace apex)
-Hat width w = distance from the apex to the nearest apex on the same z level.  The
-control sources of a qualification are chosen by class (`choose_controls`): a
+Hat width w = distance from the apex to the nearest apex on the same z level.  The two
+thresholds (NarrowHatWidthMicrons, JunctionReachMicrons) are the frozen gate table's
+SourceClasses block (qualification-gates.json; `thresholds_of_gates`): they decide the E
+gate's scope and are covered by the gates digest.  The control sources of a qualification are chosen by class (`choose_controls`): a
 deterministic geometric choice - one source per class in the priority order above,
 cycling until the requested count, the lowest index of each class first.
 
@@ -34,8 +36,17 @@ import math
 from pathlib import Path
 import statistics
 
-NARROW_WIDTH = 0.1
-JUNCTION_REACH = 0.6
+HERE = Path(__file__).resolve().parent
+GATES_FILE = HERE / "qualification-gates.json"
+
+
+def thresholds_of_gates(gates):
+    """(narrow hat width, junction reach) in um from a gate table's SourceClasses block."""
+    block = gates["SourceClasses"]
+    return float(block["NarrowHatWidthMicrons"]), float(block["JunctionReachMicrons"])
+
+
+NARROW_WIDTH, JUNCTION_REACH = thresholds_of_gates(json.loads(GATES_FILE.read_text()))
 CLASS_ZERO_TRACE = "ZeroTrace (apex on PEC at the cut)"
 CLASS_JUNCTION_RINGS = "junction rings (metal edge meets cut)"
 CLASS_JUNCTION_COLUMNS = "junction columns on the bottom/top faces"
@@ -70,8 +81,14 @@ def hat_width(locations, i):
     return best
 
 
-def classify_all(locations, zero_trace, terminals=()):
-    """Index -> (class, hat width) for every located source and every terminal."""
+def classify_all(locations, zero_trace, terminals=(), *, thresholds=(NARROW_WIDTH, JUNCTION_REACH)):
+    """Index -> (class, hat width) for every located source and every terminal;
+    `thresholds` = (narrow hat width, junction reach) of the gate table in use (the class
+    names spell the frozen file's values: a table with other values fails closed)."""
+    narrow_width, junction_reach = (float(value) for value in thresholds)
+    if (narrow_width, junction_reach) != (NARROW_WIDTH, JUNCTION_REACH):
+        raise ValueError(f"the gate table's SourceClasses thresholds {thresholds} differ from the frozen "
+                         f"{GATES_FILE} ({NARROW_WIDTH}, {JUNCTION_REACH}) the class names spell")
     zero_trace = set(zero_trace)
     classes = {}
     for i in sorted(set(locations) | set(terminals)):
@@ -88,11 +105,11 @@ def classify_all(locations, zero_trace, terminals=()):
             name = CLASS_JUNCTION_RINGS
         elif row["metal_edge_junction_here"] == "1":
             name = CLASS_JUNCTION_COLUMNS
-        elif distance < JUNCTION_REACH and width < NARROW_WIDTH:
+        elif distance < junction_reach and width < narrow_width:
             name = CLASS_NARROW_JUNCTION
-        elif distance < JUNCTION_REACH:
+        elif distance < junction_reach:
             name = CLASS_NEAR_JUNCTION
-        elif width < NARROW_WIDTH:
+        elif width < narrow_width:
             name = CLASS_NARROW_ISOLATED
         elif row["box_corner_3d"] == "1":
             name = CLASS_BOX_CORNERS

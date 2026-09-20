@@ -28,6 +28,13 @@
       "--far-growth": 0.5,
       "--trace-basis-size-ratio": 0.5
     },
+    "PhysicsRun": {
+      "Order": 4,
+      "LinearTol": 1e-10,
+      "Rule": "the Palace electrostatic run of every coupon of this library solves at Solver.Order = Order with Solver.Linear.Tol = LinearTol (BoomerAMG-preconditioned CG, MaxIts 1000, the producer's other solver options); coupon-library qualify derives the run config from the case's own sources (qualify/case_inputs.py) and binds these two values into it - a run at another order is a p-sequence control, never the library stage",
+      "Provenance": "calibrated by the four-edge reference campaigns: graded_v2 input 07 (worker.json Order 4, Linear.Tol 1e-10, PBS 45175 physics-13 anchor) and every recorded four-edge / gallery-05 / gallery-06 qualification (physics-11 PASS, gallery-05 / -06b PASS at p4, Tol 1e-10; decisions 42, 49, 50); the producer's default Tol 1e-8 (generate_spatial_response.make_config: sub-4e-4% worst-energy change vs 1e-10 at ~25% lower solve time) is NOT the library value - the gallery-10 / ten-edge references ran the producer default at Order 5 and are compared at their own order (the reference order is added as a main stage) with this Tol, recorded as the reference-derived config's only Solver difference (decision 52, 2026-09-20)",
+      "Binding": "qualify_library.prepare_case: the derived config's Solver.Order at the main stage and Solver.Linear.Tol equal these values; with a reference campaign the derived config must equal the reference's own config apart from Model.Mesh, Problem.Output, the DataFile directory, Solver.Order and Solver.Linear.Tol (fail closed otherwise); general_mesh_manifest.validate_physics_run binds the types and ranges"
+    },
     "Binding": "verify_canonical_case_entries.py and run_general_mesh_suite.py (general_mesh_manifest.validate_production_recipe_commands) require the recorded gmsh-build command of every production case to execute each option exactly once at its value - --trace-basis-size-ratio exactly once at 0.5 when the case binds a trace basis and never otherwise (run_gmsh_only_case.py takes the ratio from these options alone, no default) - and mesh_stage_contract.validate_gmsh_build_census requires --prism-tubes true; the tube record (InnerSize = --edge-size = CornerSize, GrowthRatio, TangentialSize = min(--lc-tangent, FarSize) with the census SizeBounds record, NormalSize = --lc-fine, FarSize = --lc-far, FarGrowth, rings, spacing, SectorDegrees = --tube-sector-degrees or its default 30, PyramidHeight = 0.5 x the outermost ring, prisms, pyramids, the decision-40 layer records within GrowthRatio with the decision-41 surface layer at every tube end on the box, size laws with RadialGrowth 1 and ProtectedDistance 2 x NormalSize, the decision-39 volume laws growing with FarGrowth with their achieved shell statistics, band curves at NormalSize spacing with the recorded junction first-layer sizes, the decision-43 CurveSpacing rows of every explicitly 1D-meshed curve within their spacing and the growth cap), the corner grading, the etch footprint, the junction segments, the trace basis sizing (with its minimum-altitude measure, MinimumBasisAltitude and needle counts recomputed from the recorded triangles), the coupon box rule record (CouponBox: radius, bounds, every CAD-subdivision chain with its union length and the recomputed chained-row / extended-chain counts - decision 47) and the per-type quality gates are bound by mesh_stage_contract.validate_gmsh_build_census; the canonical cache key (CanonicalBuildId) does not encode recipe options",
     "Parameters": {
       "EdgeSize": "0.25 nm: the tube's innermost ring size and the corner ball's CornerSize (one graded law)",
@@ -119,7 +126,7 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "4aecd1d249f037fc0a0354c463eef35a37851c451b8794f59f0be296c71ef4ce"
+      "SHA256": "56715197f25636bab17eef64b2809b6cce1713ae2a091c61e0dc8f4f1885a613"
     },
     {
       "Name": "verify_canonical_case_entries.py",

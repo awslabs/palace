@@ -3,11 +3,14 @@
 """coupon-library qualify --dry-run end to end on the four-edge case with the recorded
 physics-11 configuration (controls, stage prefix) and on the gallery-06 case: the
 generated configs equal the recorded worker / reducer / local-edge configs apart from
-paths, the plan equals the recorded plan in stages and pins; the analysis of the
-recorded results through the same records gives the recorded verdicts (gallery-10: the
-reference order p5 added as a main stage and gated, p_SA not applicable); the concurrent
-job scheduler against a fake remote replaying the recorded trees; the per-coupon
-fail-closed stops.  Needs a local identity mesh of each case and the assessment tree."""
+paths, the plan equals the recorded plan in stages and pins; the run config of every
+gallery case derived from the case's own sources equals the reference's config apart
+from Mesh / Output / DataFile directory (and the recipe-bound Order / Tol); the analysis
+of the recorded results through the same records gives the recorded verdicts
+(gallery-10: the reference order p5 added as a main stage and gated, p_SA not
+applicable); --reference none plans the coupon on its own inputs; the concurrent job
+scheduler against a fake remote replaying the recorded trees; the per-coupon fail-closed
+stops.  Needs a local identity mesh of each case and the assessment tree."""
 import argparse
 import glob
 import json
@@ -22,6 +25,7 @@ import unittest
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE / "qualify"))
+import case_inputs  # noqa: E402
 import estimate_stages  # noqa: E402
 import gates  # noqa: E402
 import qualify_library  # noqa: E402
@@ -29,7 +33,18 @@ from mixed_mesh import h1_dofs_from_counts  # noqa: E402
 from run_gmsh_only_matrix import sha256  # noqa: E402
 
 ASSESSMENT = Path(os.environ.get("COUPON_ASSESSMENT_ROOT", HERE.parents[3] / "coupon-accuracy-assessment-20260913"))
+# A read-only mirror of graded_v2 inputs the assessment tree does not hold (the ten-edge input 09).
+REFERENCE_MIRROR = Path(os.environ.get("COUPON_REFERENCE_MIRROR", "/tmp/library-device-path-reference"))
 MANIFEST = HERE / "geometry-independence-suite.json"
+# The five gallery cases and the config their graded_v2 reference ran (worker.json of the
+# recorded campaign, or the producer's spatial_fabricated.json of the mirrored inputs).
+GALLERY_REFERENCE_CONFIGS = {
+    "four-edge-9d2cb9bbb3fe": ASSESSMENT / "four-edge-physics-13" / "reference" / "case-07-fabricated" / "worker.json",
+    "three-edge-419576fdab24": ASSESSMENT / "gallery-physics-06b" / "reference" / "case-06-fabricated" / "worker.json",
+    "two-edge-8dd4bc70f183": ASSESSMENT / "gallery-physics-10" / "reference" / "case-10-fabricated" / "worker.json",
+    "two-edge-3f8992613e95": ASSESSMENT / "gallery-physics-05" / "reference" / "case-05-fabricated" / "worker.json",
+    "ten-edge-6791f1c84123": REFERENCE_MIRROR / "inputs-09" / "spatial_fabricated.json",
+}
 BINARY_SHA256 = "b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27"
 CASES = {
     "four-edge-9d2cb9bbb3fe": {"Campaign": "four-edge-physics-11", "Prefix": "va", "Controls": [1, 7, 23, 26, 34, 35, 48, 80],
@@ -124,8 +139,9 @@ class QualifyDryRunTest(unittest.TestCase):
                 generated = strip_paths(json.loads((root / case_id / "main" / stage / name).read_text()))
                 self.assertEqual(generated, recorded, f"{stage}/{name}")
         # The plan equals the recorded one in stages (names, config file, environment,
-        # dependencies, order) and pins (the same files; every trace digest equal; the mesh pin
-        # is the build record's).
+        # dependencies, order) and pins the same files: every trace name of the recorded plan
+        # (the traces are regenerated from the case's basis - their digests are the run's
+        # own, recorded under Inputs.Sources); the mesh pin is the build record's.
         recorded_plan = json.loads((campaign / "main" / "plan.json").read_text())
         plan = json.loads((root / case_id / "main" / "plan.json").read_text())
 
@@ -139,7 +155,8 @@ class QualifyDryRunTest(unittest.TestCase):
         self.assertEqual(len(pins), len(recorded_pins))
         traces = {name: digest for name, digest in recorded_pins.items() if name.startswith("basis-")}
         self.assertEqual(len(traces), spec["Sources"])
-        self.assertEqual({name: pins[name] for name in traces}, traces)
+        regenerated = {source["Name"]: source["SHA256"] for source in case["Inputs"]["Sources"]}
+        self.assertEqual({name: pins[name] for name in traces}, {name: regenerated[name] for name in traces})
         self.assertEqual(set(pins) - set(recorded_pins), {Path(plan["MeshRemote"]).name})
         self.assertEqual(plan["MeshSHA256"], sha256(local_identity_mesh(case_id)))
         self.assertEqual(plan["Ranks"], recorded_plan["Ranks"])
@@ -185,11 +202,11 @@ class QualifyDryRunTest(unittest.TestCase):
         manifest = json.loads(MANIFEST.read_text())
         manifest["Path"] = str(MANIFEST)
         args = argparse.Namespace(reference=reference, control_source=controls or spec["Controls"], control_count=8,
-                                  stage_prefix=spec["Prefix"], orders=[4], controls=[3, 5], frozen_binary_sha256=BINARY_SHA256)
+                                  stage_prefix=spec["Prefix"], orders=[], controls=[3, 5], frozen_binary_sha256=BINARY_SHA256)
         profile = json.loads((HERE / "qualify" / "cluster-profile.json").read_text())
         model = estimate_stages.load_cost_model()
         table, digest = gates.load_gates()
-        root = self.tmp / f"analysis-{spec['Prefix']}-{Path(str(reference)).name}"
+        root = self.tmp / f"analysis-{spec['Prefix']}-{Path(str(reference)).name if reference is not None else 'none'}"
         root.mkdir(exist_ok=True)
         case = next(item for item in build["Cases"] if item["Case"] == case_id)
         record, context = qualify_library.prepare_case(case, manifest_path=MANIFEST, manifest=manifest, args=args, root=root,
@@ -197,14 +214,18 @@ class QualifyDryRunTest(unittest.TestCase):
                                                        gates=table, gates_digest=digest)
         return record, context, root, table, digest, profile, manifest
 
+    @staticmethod
+    def snapshot(campaign):
+        """mtime of every file of the recorded campaign (results, reference, main, ...)."""
+        return {path: path.stat().st_mtime_ns for path in Path(campaign).rglob("*") if path.is_file()}
+
     def assert_campaign_untouched(self, campaign, before):
-        after = {path: path.stat().st_mtime_ns for path in (campaign / "results").rglob("*") if path.is_file()}
-        self.assertEqual(after, before, "the recorded campaign's results tree must stay read only")
+        self.assertEqual(self.snapshot(campaign), before, "the recorded campaign directory must stay read only")
 
     def test_analysis_of_the_recorded_results_reproduces_the_verdicts(self):
         for case_id, spec in CASES.items():
             campaign = ASSESSMENT / spec["Campaign"]
-            before = {path: path.stat().st_mtime_ns for path in (campaign / "results").rglob("*") if path.is_file()}
+            before = self.snapshot(campaign)
             record, context, root, table, digest, profile, manifest = self.analysis_context(case_id, campaign / "reference")
             gate_record = qualify_library.analyze_case(record, context, campaign / "results", gates=table, gates_digest=digest,
                                                        profile=profile)
@@ -252,7 +273,7 @@ class QualifyDryRunTest(unittest.TestCase):
                            "StoppedBy": None, "HeadroomFlags": [], "Root": str(mesh.parent)}]
         campaign = ASSESSMENT / spec["Campaign"]
         args = argparse.Namespace(reference=campaign / "reference", control_source=spec["Controls"], control_count=8,
-                                  stage_prefix=spec["Prefix"], orders=[4], controls=[3, 5], frozen_binary_sha256=BINARY_SHA256)
+                                  stage_prefix=spec["Prefix"], orders=[], controls=[3, 5], frozen_binary_sha256=BINARY_SHA256)
         profile = json.loads((HERE / "qualify" / "cluster-profile.json").read_text())
         model = estimate_stages.load_cost_model()
         table, digest = gates.load_gates()
@@ -260,7 +281,7 @@ class QualifyDryRunTest(unittest.TestCase):
         manifest["Path"] = str(MANIFEST)
         root = self.tmp / "analysis-g10"
         root.mkdir(exist_ok=True)
-        before = {path: path.stat().st_mtime_ns for path in (campaign / "results").rglob("*") if path.is_file()}
+        before = self.snapshot(campaign)
         record, context = qualify_library.prepare_case(build["Cases"][0], manifest_path=MANIFEST, manifest=manifest, args=args,
                                                        root=root, remote={"Host": "h", "Root": "/r"}, profile=profile,
                                                        cost_model=model, gates=table, gates_digest=digest)
@@ -365,7 +386,7 @@ class QualifyDryRunTest(unittest.TestCase):
                 setattr(qualify_library.remote_side, name, fake)
             qualify_library.upload_case = fake_upload
             qualify_library.prepare_case = prepare_with_recorded_controls
-            args = argparse.Namespace(build_record=self.build_record, reference=None, remote="h:/r", orders=[4], controls=[3, 5],
+            args = argparse.Namespace(build_record=self.build_record, reference=None, remote="h:/r", orders=[], controls=[3, 5],
                                       control_count=8, control_source=None, max_jobs=2, frozen_binary_sha256=BINARY_SHA256,
                                       stage_prefix=None, case=None, root=self.tmp / "concurrent", dry_run=False, resume=False,
                                       monitor_interval=0, monitor_polls=10, cluster_profile=HERE / "qualify" / "cluster-profile.json",
@@ -440,7 +461,7 @@ class QualifyDryRunTest(unittest.TestCase):
             os.symlink(campaign / "reference" / "inputs-07", inputs_only / "inputs-07")
         record, context, root, table, digest, profile, manifest = self.analysis_context(case_id, inputs_only)
         self.assertIsNone(record["Reference"]["Results"])
-        before = {path: path.stat().st_mtime_ns for path in (campaign / "results").rglob("*") if path.is_file()}
+        before = self.snapshot(campaign)
         gate_record = qualify_library.analyze_case(record, context, campaign / "results", gates=table, gates_digest=digest,
                                                    profile=profile)
         self.assert_campaign_untouched(campaign, before)
@@ -500,12 +521,114 @@ class QualifyDryRunTest(unittest.TestCase):
         self.assertEqual(case["StoppedBy"]["Kind"], "Estimate")
         self.assertIn("does NOT fit", case["StoppedBy"]["Message"])
         self.assertFalse((root / case_id / "main" / "plan.json").exists())
-        # Without --dry-run the remote is mandatory.
+        # Without --dry-run the remote is mandatory; --reference must be spelled ('none' included).
         result = subprocess.run([sys.executable, str(HERE / "coupon_library.py"), "qualify", "--build-record", str(self.build_record),
-                                 "--frozen-binary-sha256", BINARY_SHA256, "--root", str(self.tmp / "no-remote")],
+                                 "--reference", "none", "--frozen-binary-sha256", BINARY_SHA256, "--root", str(self.tmp / "no-remote")],
                                 text=True, capture_output=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--remote", result.stderr)
+        result = subprocess.run([sys.executable, str(HERE / "coupon_library.py"), "qualify", "--build-record", str(self.build_record),
+                                 "--frozen-binary-sha256", BINARY_SHA256, "--root", str(self.tmp / "no-reference"), "--dry-run"],
+                                text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--reference", result.stderr)
+        # A reference whose config differs from the case's own sources fails closed.
+        altered = self.tmp / "altered-reference"
+        if not altered.exists():
+            altered.mkdir()
+            shutil.copytree(campaign / "reference" / "inputs-07", altered / "inputs-07")
+            producer = json.loads((altered / "inputs-07" / "spatial_fabricated.json").read_text())
+            producer["Domains"]["Materials"][0]["Permittivity"] = 9.0
+            (altered / "inputs-07" / "spatial_fabricated.json").write_text(json.dumps(producer, indent=2))
+        root = self.tmp / "dry-altered"
+        command = [sys.executable, str(HERE / "coupon_library.py"), "qualify", "--build-record", str(self.build_record),
+                   "--reference", str(altered), "--frozen-binary-sha256", BINARY_SHA256, "--case", case_id, "--root", str(root), "--dry-run"]
+        result = subprocess.run(command, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        case = json.loads((root / "library-qualification.json").read_text())["Cases"][0]
+        self.assertEqual(case["StoppedBy"]["Kind"], "Reference")
+        self.assertIn("Permittivity", str(case["StoppedBy"]["Differences"]))
+
+    def test_run_config_derived_from_the_case_equals_every_gallery_reference(self):
+        """Decision 52: for all five gallery cases the config derived from the case's own
+        sources (process library, trace basis, mesh $PhysicalNames, recipe PhysicsRun)
+        equals the config the graded_v2 reference ran apart from Model.Mesh, Problem.Output
+        and the DataFile directory; Solver.Order / Linear.Tol are the recipe's (the
+        references at p5 / Tol 1e-8 - gallery 10 and the ten-edge - differ there only)."""
+        manifest = json.loads(MANIFEST.read_text())
+        manifest["Path"] = str(MANIFEST)
+        physics_run = case_inputs.physics_run_parameters(manifest)
+        self.assertEqual((physics_run["Order"], physics_run["LinearTol"]), (4, 1e-10))
+        checked = []
+        for case_id, reference_path in GALLERY_REFERENCE_CONFIGS.items():
+            mesh = local_identity_mesh(case_id)
+            if mesh is None or not reference_path.is_file():
+                continue
+            case = next(item for item in manifest["Cases"] if item["Id"] == case_id)
+            directory = qualify_library.source_directory(MANIFEST, manifest, case)
+            out = self.tmp / "derived" / case_id
+            config, record = case_inputs.derive(case, directory, mesh_path=mesh, physics_run=physics_run, out_dir=out)
+            reference = json.loads(reference_path.read_text())
+            self.assertEqual(case_inputs.config_differences(config, reference, ignore_solver=("Order", "Linear.Tol")), [], case_id)
+            self.assertEqual(config["Solver"]["Order"], 4)
+            self.assertEqual(config["Solver"]["Linear"]["Tol"], 1e-10)
+            self.assertEqual(len(config["Boundaries"]["PrescribedPotential"]), len(reference["Boundaries"]["PrescribedPotential"]))
+            self.assertEqual(record["Interfaces"], case_inputs.interface_types(reference))
+            self.assertTrue(record["AttributeCheck"]["Passed"])
+            # Every regenerated trace has the reference trace's name; the digests differ from the
+            # producer's files by the canonical-frame round trip only (FrameFitResidual, recorded).
+            self.assertEqual([source["Name"] for source in record["Sources"]],
+                             [Path(entry["DataFile"]).name for entry in reference["Boundaries"]["PrescribedPotential"]])
+            self.assertIsNotNone(record["Traces"]["FrameFitResidual"])
+            reference_traces = reference_path.parent / "traces" if (reference_path.parent / "traces").is_dir() else \
+                reference_path.parents[1] / f"inputs-{reference_path.parent.name.split('-')[1]}" / "traces"
+            if reference_traces.is_dir():
+                for source in record["Sources"][:3] + record["Sources"][-1:]:
+                    candidate = reference_traces / source["Name"]
+                    if not candidate.is_file():
+                        candidate = reference_traces.parent / source["Name"]
+                    ours = [line.split(",") for line in Path(source["Path"]).read_text().splitlines()[1:]]
+                    theirs = [line.split(",") for line in candidate.read_text().splitlines()[1:]]
+                    self.assertEqual(len(ours), len(theirs))
+                    for a, b in zip(ours, theirs):
+                        self.assertEqual((a[3], a[4]), (b[3], b[4]))     # V and triangle columns identical
+                        self.assertTrue(all(abs(float(x) - float(y)) <= 1e-13 for x, y in zip(a[:3], b[:3])), (source["Name"], a, b))
+            checked.append(case_id)
+        self.assertGreaterEqual(len(checked), 4, checked)
+        if len(checked) < 5:
+            self.skipTest(f"derived-config equality proven for {checked}; the others lack a local mesh or reference config")
+
+    def test_reference_none_plans_the_coupon_on_its_own_inputs(self):
+        case_id = "four-edge-9d2cb9bbb3fe"
+        root = self.tmp / "dry-none"
+        command = [sys.executable, str(HERE / "coupon_library.py"), "qualify", "--build-record", str(self.build_record),
+                   "--reference", "none", "--frozen-binary-sha256", BINARY_SHA256, "--case", case_id, "--root", str(root), "--dry-run"]
+        result = subprocess.run(command, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        record = json.loads((root / "library-qualification.json").read_text())
+        case = record["Cases"][0]
+        self.assertEqual(case["Status"], "planned", case.get("StoppedBy"))
+        self.assertIn("--reference none", case["Reference"]["Rule"])
+        self.assertEqual(case["Orders"], {**case["Orders"], "Main": ["p4"], "Gated": "p4", "ReferenceOrder": None, "RecipeOrder": "p4"})
+        self.assertEqual(case["Sources"]["Count"], 80)
+        self.assertEqual(case["Inputs"]["Origin"], "case")
+        self.assertEqual(case["Configs"]["ReferenceConfig"], None)
+        self.assertEqual(len(case["Inputs"]["Sources"]), 80)
+        self.assertTrue((root / case_id / "inputs" / "traces" / "basis-0080.csv").is_file())
+        worker = json.loads((root / case_id / "main" / f"{case_id}-p4" / "worker.json").read_text())
+        self.assertEqual(worker["Solver"]["Linear"]["Tol"], 1e-10)
+        self.assertEqual(worker["Solver"]["Order"], 4)
+        self.assertEqual(worker["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeFrameNormal"], [0.0, 0.0, 1.0])
+        # The analysis without a reference: the recorded results give PendingQualification.
+        campaign = ASSESSMENT / CASES[case_id]["Campaign"]
+        record_, context, root_, table, digest, profile, manifest = self.analysis_context(case_id, None)
+        before = self.snapshot(campaign)
+        gate_record = qualify_library.analyze_case(record_, context, campaign / "results", gates=table, gates_digest=digest,
+                                                   profile=profile)
+        self.assert_campaign_untouched(campaign, before)
+        self.assertEqual(gate_record["Verdict"], gates.VERDICT_PENDING)
+        self.assertEqual(record_["Status"], "pending-qualification")
+        self.assertIsNone(record_["Cost"]["ReferenceNodeHours"])
 
 
 if __name__ == "__main__":

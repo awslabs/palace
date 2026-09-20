@@ -20,6 +20,7 @@ usage: estimate_stages.py --entity-counts JSON --stage ORDER:SOURCES ... [--loca
        [--cost-model PATH] [--cluster-profile PATH] [--out PATH]
 """
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -43,6 +44,8 @@ def load_cost_model(path=COST_MODEL):
             raise ValueError(f"cost model {path}: closed-form H1 {closed} at {name} differs from the measured "
                              f"{stage['H1']} - the model file is inconsistent")
     model["ClosedFormCheck"] = check
+    model["Path"] = str(Path(path).resolve())
+    model["SHA256"] = hashlib.sha256(Path(path).read_bytes()).hexdigest()
     return model
 
 
@@ -120,7 +123,7 @@ def estimate(counts, stages, *, local_edge=None, model=None, profile=None):
     peak_gb = 0.0
     out = {"Mesh": {"EntityCounts": counts, "VolumeElements": counts["Tetrahedra"] + counts["Prisms"] + counts["Pyramids"],
                     "H1ByOrder": {f"p{p}": h1_dofs_from_counts(counts, p) for p in (1, 2, 3, 4, 5)}},
-           "CostModel": {"Path": str(COST_MODEL), "MeasuredMesh": model["MeasuredMesh"]["SHA256"],
+           "CostModel": {"Path": model["Path"], "SHA256": model["SHA256"], "MeasuredMesh": model["MeasuredMesh"]["SHA256"],
                          "ClosedFormCheck": model.get("ClosedFormCheck")},
            "Stages": {}}
     for name, order, sources in stages:

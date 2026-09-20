@@ -15,6 +15,7 @@ import unittest
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / "qualify"))
 import build_plan  # noqa: E402
+import case_inputs  # noqa: E402
 import classify_sources  # noqa: E402
 import compare_matrices  # noqa: E402
 import estimate_stages  # noqa: E402
@@ -27,6 +28,8 @@ import remote  # noqa: E402
 import summarize_cost  # noqa: E402
 
 ASSESSMENT = Path(os.environ.get("COUPON_ASSESSMENT_ROOT", HERE.parents[3] / "coupon-accuracy-assessment-20260913"))
+# The recorded references postprocess MA / MS / SA at the indices 1 / 2 / 3 (read from their configs).
+THREE_INTERFACES = {1: "MA", 2: "MS", 3: "SA"}
 # The two recorded campaigns: (directory, graded_v2 input key, stage prefix, controls, RESULTS.md counts).
 CAMPAIGNS = {
     "four-edge-physics-11": {"Key": "07", "Prefix": "va", "Controls": [1, 7, 23, 26, 34, 35, 48, 80], "Free": 60,
@@ -53,6 +56,7 @@ class StoredCampaign:
         self.reference = self.root / "reference" / f"case-{self.spec['Key']}-fabricated" / "reducer"
         self.zero_trace = json.loads((self.inputs / "basis-contract.json").read_text())["ZeroTraceIndices"]
         self.results = self.root / "results" / "main"
+        self.interface_types = case_inputs.interface_types(json.loads((self.inputs / "spatial_fabricated.json").read_text()))
 
     def stage(self, suffix):
         return self.results / f"{self.spec['Prefix']}-{suffix}" / "reducer"
@@ -61,6 +65,7 @@ class StoredCampaign:
         etch = self.inputs / "retained-etch.csv"
         rows, _ = locate_sources.locate_directory(self.inputs / "traces", self.inputs / "plan-view-boundary.csv",
                                                   Path(out_dir) / "source-locations.csv",
+                                                  signature_path=self.inputs / "mesh-signature.csv",
                                                   retained_etch=str(etch) if etch.is_file() else None)
         locations = {row["index"]: {key: str(value) for key, value in row.items()} for row in rows}
         return locations, classify_sources.classify_all(locations, self.zero_trace)
@@ -74,16 +79,18 @@ class StoredCampaignGateTest(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(lambda: __import__("shutil").rmtree(tmp, True))
         locations, classes = campaign.locations_and_classes(tmp)
+        self.assertEqual(campaign.interface_types, THREE_INTERFACES)
         comparison = compare_matrices.compare(campaign.reference, campaign.stage("p4"),
-                                              zero_trace_indices=campaign.zero_trace, locations=locations)
+                                              zero_trace_indices=campaign.zero_trace, locations=locations,
+                                              interface_types=campaign.interface_types)
         summary = compare_matrices.summary_record(comparison)
         sequence = p_sequence.p_sequence({"low": campaign.stage("p3-control"), "main": campaign.stage("p4"),
                                           "high": campaign.stage("p5-control"), "ref": campaign.reference},
-                                         campaign.spec["Controls"])
+                                         campaign.spec["Controls"], campaign.interface_types)
         table, digest = gates.load_gates()
         record = gates.evaluate(table, comparison=summary, classes={i: name for i, (name, _) in classes.items()},
-                                ref_pma=ma_ms_offsets.reference_p_ma(campaign.reference), p_sequence_summary=sequence,
-                                reference_order=4, gates_sha256=digest)
+                                ref_pma=ma_ms_offsets.reference_p_ma(campaign.reference, campaign.interface_types),
+                                p_sequence_summary=sequence, reference_order=4, gates_sha256=digest)
         return record, summary, classes
 
     def check_counts(self, name):
@@ -153,10 +160,12 @@ class StoredCampaignGateTest(unittest.TestCase):
         self.addCleanup(lambda: __import__("shutil").rmtree(tmp, True))
         locations, classes = campaign.locations_and_classes(tmp)
         summary = compare_matrices.summary_record(compare_matrices.compare(
-            campaign.reference, run, zero_trace_indices=campaign.zero_trace, locations=locations))
+            campaign.reference, run, zero_trace_indices=campaign.zero_trace, locations=locations,
+            interface_types=campaign.interface_types))
         table, digest = gates.load_gates()
         record = gates.evaluate(table, comparison=summary, classes={i: name for i, (name, _) in classes.items()},
-                                ref_pma=ma_ms_offsets.reference_p_ma(campaign.reference), reference_order=4, gates_sha256=digest)
+                                ref_pma=ma_ms_offsets.reference_p_ma(campaign.reference, campaign.interface_types),
+                                reference_order=4, gates_sha256=digest)
         self.assertEqual(record["Verdict"], gates.VERDICT_FAILED)
         self.assertFalse(record["GatesPassed"]["p_MA"])
         self.assertTrue(record["GatesPassed"]["E"])   # the failing E sources are the narrow class
@@ -416,16 +425,92 @@ class ControlsPlanAndEstimateRuleTest(unittest.TestCase):
                 for i, j, q in ((1, 1, 0.2), (1, 2, 0.05), (2, 2, 0.4 * scale), (3, 3, 0.0), (1, 3, 0.0), (2, 3, 0.0)):
                     rows.append(f"{interface},1,2e-06,{i},{j},{q},{q},{q},{q},{q},{q}")
             (tmp / name / "surface-response-matrix.csv").write_text("\n".join(rows) + "\n")
-        comparison = compare_matrices.compare(tmp / "ref", tmp / "run", zero_trace_indices=[])
+        comparison = compare_matrices.compare(tmp / "ref", tmp / "run", zero_trace_indices=[], interface_types=THREE_INTERFACES)
         self.assertEqual(comparison["ZeroTrace"], [3])     # zero diagonal energy
         self.assertEqual(comparison["Free"], [1, 2])
         self.assertAlmostEqual(comparison["PerSource"][2]["E_rel"], 0.01)
         self.assertAlmostEqual(comparison["PerSource"][2]["p_MA_rel"], 0.0)   # both scale: participation unchanged
         self.assertAlmostEqual(comparison["PerSource"][1]["E_rel"], 0.0)
-        summary = compare_matrices.write_comparison(tmp / "ref", tmp / "run", tmp / "out", zero_trace_indices=[1])
+        summary = compare_matrices.write_comparison(tmp / "ref", tmp / "run", tmp / "out", zero_trace_indices=[1],
+                                                    interface_types=THREE_INTERFACES)
         self.assertEqual(summary["ZeroTrace"], [1, 3])
         self.assertTrue((tmp / "out.md").is_file() and (tmp / "out.csv").is_file())
         self.assertTrue(math.isfinite(summary["PerSource"]["2"]["E_rel"]))
+        # The interface index -> type map comes from the config, never from the indices: with
+        # the reference's indices labeled MS / MA / SA (index 1 = MS) the participations follow
+        # the labels; two interfaces of one type sum; an unlabeled index fails closed.
+        relabeled = compare_matrices.compare(tmp / "ref", tmp / "run", zero_trace_indices=[],
+                                             interface_types={1: "MS", 2: "MA", 3: "SA"})
+        self.assertAlmostEqual(relabeled["PerSource"][1]["p_MS_ref"], comparison["PerSource"][1]["p_MA_ref"])
+        two_ma = compare_matrices.compare(tmp / "ref", tmp / "run", zero_trace_indices=[],
+                                          interface_types={1: "MA", 2: "MA", 3: "SA"})
+        self.assertAlmostEqual(two_ma["PerSource"][1]["p_MA_ref"], 2 * comparison["PerSource"][1]["p_MA_ref"])
+        self.assertNotIn("p_MS_ref", two_ma["PerSource"][1])
+        with self.assertRaises(ValueError):
+            compare_matrices.compare(tmp / "ref", tmp / "run", zero_trace_indices=[], interface_types={1: "MA", 2: "MS"})
+        with self.assertRaises(ValueError):
+            compare_matrices.compare(tmp / "ref", tmp / "run", zero_trace_indices=[])
+        self.assertAlmostEqual(ma_ms_offsets.reference_p_ma(tmp / "ref", {1: "MA", 2: "MA", 3: "SA"})[1], 2 * 0.2 / 2.0)
+        sequence = p_sequence.observables(tmp / "ref", {1: "MS", 2: "MA", 3: "SA"})
+        self.assertAlmostEqual(sequence[1]["p_MS"], 0.2 / 2.0)
+        self.assertAlmostEqual(p_sequence.observables(tmp / "ref", {1: "MA", 2: "MA", 3: "SA"})[1]["Q_MA"], 0.4)
+
+    def test_downward_and_multiple_layers_stop_the_source_location(self):
+        """A synthetic downward trace set (Nz = -1: the metal below the plane) and a two-layer
+        signature are refused with a recorded ScopeGuard reason before any role is assigned;
+        the same traces with an upward single-layer signature locate."""
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, True))
+        traces = tmp / "traces"
+        traces.mkdir()
+        # Apexes on the x = -1 side of a box [-1, 1]^2 x [-2.05, 2.1]: levels bottom, trench
+        # (metal below the plane), plane, metal-top (-0.1), top.
+        levels = [-2.05, -0.1, 0.0, 0.05, 2.1]
+        apexes = [(-1.0, 0.0, z) for z in levels] + [(1.0, 0.0, -2.05), (1.0, 0.0, 2.1)]
+        for index, (x, y, z) in enumerate(apexes, start=1):
+            lines = ["x,y,z,V,triangle"]
+            for k, (px, py, pz) in enumerate(apexes):
+                lines.append(f"{px},{py},{pz},{1.0 if k == index - 1 else 0.0},{k // 3 + 1}")
+            (traces / f"basis-{index:04d}.csv").write_text("\n".join(lines) + "\n")
+        (tmp / "plan-view-boundary.csv").write_text("Loop,Vertex,Conductor,Plane,Hole,Class,X,Y\n"
+                                                    "1,1,1,0.0,0,Continuation,-1.0,-1.0\n1,2,1,0.0,0,Physical,-1.0,0.5\n"
+                                                    "1,3,1,0.0,0,Physical,-0.5,0.5\n1,4,1,0.0,0,Continuation,-0.5,-1.0\n")
+        header = "Index,Slot,Conductor,Px,Py,Pz,Gx,Gy,Gz,Tx,Ty,Tz,Nz,S0,S1,VertexArm\n"
+        (tmp / "downward.csv").write_text(header + "1,0,1,-0.5,0,0,1,0,0,0,1,0,-1,-1,1,0\n")
+        (tmp / "two-layers.csv").write_text(header + "1,0,1,-0.5,0,0,1,0,0,0,1,0,1,-1,1,0\n2,1,2,-0.5,0,0.6,1,0,0,0,1,0,-1,-1,1,0\n")
+        (tmp / "upward.csv").write_text(header + "1,0,1,-0.5,0,0,1,0,0,0,1,0,1,-1,1,0\n")
+        for name, guard in (("downward.csv", "DownwardLayers"), ("two-layers.csv", "MultipleLayers")):
+            with self.assertRaises(locate_sources.UnsupportedSourceGeometry) as stop:
+                locate_sources.locate_directory(traces, tmp / "plan-view-boundary.csv", tmp / f"{name}.locations.csv",
+                                                signature_path=tmp / name)
+            self.assertEqual(stop.exception.guard, guard)
+            self.assertIn(f"ScopeGuard[{guard}]", str(stop.exception))
+            self.assertFalse((tmp / f"{name}.locations.csv").exists())
+        rows, geometry = locate_sources.locate_directory(traces, tmp / "plan-view-boundary.csv", tmp / "up.csv",
+                                                         signature_path=tmp / "upward.csv")
+        self.assertEqual(len(rows), 7)
+        self.assertEqual(geometry["layers"], [(0.0, 1)])
+        self.assertEqual(locate_sources.signature_layers([{"Pz": "0", "Nz": ""}]), [(0.0, 1)])
+
+    def test_pending_qualification_never_masks_a_failed_p_sequence(self):
+        table, digest = gates.load_gates()
+        passing = {"1": {name: {"seq": {"d_high": 0.001, "d_low": 0.002, "r": 0.5}} for name in p_sequence.GATED_OBSERVABLES}}
+        record = gates.evaluate(table, comparison=None, p_sequence_summary=passing, gates_sha256=digest)
+        self.assertEqual(record["Verdict"], gates.VERDICT_PENDING)
+        failing = json.loads(json.dumps(passing))
+        failing["1"]["E"]["seq"]["d_high"] = 0.02
+        record = gates.evaluate(table, comparison=None, p_sequence_summary=failing, gates_sha256=digest)
+        self.assertEqual(record["Verdict"], gates.VERDICT_FAILED)
+        self.assertIn("PSequenceControls", record["Reason"])
+        self.assertEqual(gates.evaluate(table, comparison=None, p_sequence_summary={}, gates_sha256=digest)["Verdict"],
+                         gates.VERDICT_FAILED)
+
+    def test_source_class_thresholds_are_the_frozen_tables(self):
+        table, _ = gates.load_gates()
+        self.assertEqual(classify_sources.thresholds_of_gates(table), (classify_sources.NARROW_WIDTH, classify_sources.JUNCTION_REACH))
+        self.assertEqual(classify_sources.thresholds_of_gates(table), (0.1, 0.6))
+        with self.assertRaises(ValueError):
+            classify_sources.classify_all({}, [], thresholds=(0.2, 0.6))
 
 
 if __name__ == "__main__":

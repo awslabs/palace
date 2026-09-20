@@ -6,12 +6,20 @@
 against their graded_v2 references (supervisor decision 48, second command).
 
 Per passed coupon of the build record:
- 1. inputs: the reference campaign directory (--reference) is matched BY CONTENT (the
-    case's frozen basis-contract.json digest) to `inputs-<key>/` (the reference Palace
-    config - Order, Linear.Tol, materials, interfaces -, the trace files, the
-    ZeroTraceIndices) and `case-<key>-fabricated/reducer/` (the reference matrices, when
-    the reference completed); the identity mesh of the build record is hash-verified;
- 2. sources: every PrescribedPotential source of the reference config; the control
+ 1. inputs: the run config, the source traces and the zero-trace knots are derived from
+    the CASE ITSELF (case_inputs.py: process-library.json materials / interface layers /
+    interface index -> type map, the bound trace basis regenerated in the mesh frame,
+    the identity mesh's $PhysicalNames, the manifest recipe's PhysicsRun Order and
+    Linear.Tol); the identity mesh of the build record is hash-verified; the case's
+    signature layers must be one upward layer (locate_sources.check_layers: a
+    DownwardLayers / MultipleLayers case stops with a recorded ScopeGuard).  A reference
+    campaign directory (--reference) is matched BY CONTENT (the frozen basis-contract.json
+    digest) to `inputs-<key>/` and `case-<key>-fabricated/reducer/` (the reference
+    matrices, when the reference completed); the reference's own config must equal the
+    derived one apart from Model.Mesh, Problem.Output, the DataFile directory,
+    Solver.Order and Solver.Linear.Tol (fail closed otherwise); `--reference none` runs
+    the coupon on its own inputs (verdict PendingQualification or Failed, never Passed);
+ 2. sources: every PrescribedPotential source of the derived config; the control
     sources by geometric class (locate_sources / classify_sources: one per class in
     priority order, cycling) unless --control-source names them;
  3. configs: worker / reducer at every --orders order on all sources, at every
@@ -24,7 +32,8 @@ Per passed coupon of the build record:
     mesh, every config and every trace; job.pbs from the cluster profile;
  5. --dry-run stops here (plans / configs / estimates / qualification-gates.json written,
     nothing contacted); otherwise every planned coupon is one job: up to --max-jobs of
-    them are queued / running at once (each qsub under the user job cap, recorded), every
+    them are queued / running at once (each qsub under the user job cap, recorded and
+    counted at submission), every
     active job is polled read-only once per interval, and a coupon whose job left the
     queue is fetched (never the archives), hash-verified CSV by CSV against the remote
     digests, matrix-validated (run_graded_library_case.validate_matrix: complete,
@@ -33,10 +42,12 @@ Per passed coupon of the build record:
  6. qualification: comparisons vs the reference and between the p levels, class
     statistics, MA / MS / SA offsets, p-sequence controls, key sources, cost; the
     frozen gate table (qualification-gates.json, digest recorded) -> Passed / Failed, or
-    PendingQualification when the reference has no matrices (never Passed).  The main
-    orders are --orders plus the reference's own order when it differs; the same-order
-    comparison is gated (the others are informational); a participation of an interface
-    the reference does not postprocess is NotApplicable (gates.py).
+    PendingQualification when there are no reference matrices and every p-sequence
+    control passed (never Passed; a failed control is Failed).  The main orders are the
+    recipe's PhysicsRun order, then --orders, then the reference's own order when it
+    differs; the same-order comparison is gated (the others are informational); a
+    participation of an interface the coupon does not postprocess is NotApplicable
+    (gates.py).
 
 Records: ROOT/library-qualification.json (per coupon: verdict per gate and class
 offsets, PCG, node-h, x the reference cost; library totals: node-h, critical-path wall
@@ -62,6 +73,7 @@ for path in (str(HERE), str(TOOLS)):
         sys.path.insert(0, path)
 import build_configs  # noqa: E402
 import build_plan  # noqa: E402
+import case_inputs  # noqa: E402
 import classify_sources  # noqa: E402
 import compare_matrices  # noqa: E402
 import estimate_stages  # noqa: E402
@@ -82,8 +94,8 @@ QUALIFICATION_VERSION = 1
 DEFAULT_CONTROL_COUNT = 8
 DEFAULT_MONITOR_INTERVAL = 90
 DEFAULT_MONITOR_POLLS = 240
-STATUS_QUALIFIED, STATUS_PENDING, STATUS_FAILED, STATUS_PLANNED, STATUS_SKIPPED = (
-    "qualified", "pending-qualification", "failed", "planned", "skipped")
+STATUS_QUALIFIED, STATUS_PENDING, STATUS_FAILED, STATUS_PLANNED, STATUS_SKIPPED, STATUS_UNSUPPORTED = (
+    "qualified", "pending-qualification", "failed", "planned", "skipped", "unsupported-class")
 
 
 def sha256(path):
@@ -147,16 +159,17 @@ def source_directory(manifest_path, manifest, case):
     return (Path(manifest_path).parent / manifest["RepositoryRoot"]).resolve() / directory
 
 
-ORDERS_RULE = ("main stages at every --orders order plus the reference's own order when it differs (the same-order "
-               "comparison is the gated one; the first --orders order stays the library order: cost coupon, "
-               "local-edge stage, p-sequence main)")
+ORDERS_RULE = ("main stages at the recipe's PhysicsRun order (the library order: cost coupon, local-edge stage, "
+               "p-sequence main), then every --orders order, then the reference's own order when it differs (the "
+               "same-order comparison is the gated one)")
 
 
-def main_orders_of(orders, reference_order):
-    """The main orders of a coupon: --orders, then the reference order when absent."""
-    main_orders = list(orders)
-    if reference_order is not None and reference_order not in main_orders:
-        main_orders.append(reference_order)
+def main_orders_of(recipe_order, orders, reference_order):
+    """The main orders of a coupon: the recipe order, --orders, the reference order."""
+    main_orders = [recipe_order]
+    for order in list(orders or []) + ([reference_order] if reference_order is not None else []):
+        if order not in main_orders:
+            main_orders.append(order)
     return main_orders
 
 
@@ -197,90 +210,130 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
     files = case["Source"]["Files"]
     if "BasisContract" not in files:
         raise CaseStop("Manifest", f"{case_id} binds no trace basis (no basis-contract.json): no sources to qualify")
-    # 1. mesh (hash-verified now) and reference inputs (by content).
+    # 1. mesh (hash-verified now), the case's own run inputs, the reference (by content).
     identity = case_record["Variants"].get("identity")
     if not identity or not Path(identity["Path"]).is_file():
         raise CaseStop("Mesh", f"the build record's identity mesh of {case_id} is missing ({identity})")
     actual = sha256(identity["Path"])
     if actual != identity["SHA256"]:
         raise CaseStop("Mesh", f"identity mesh SHA256 {actual} differs from the build record {identity['SHA256']}")
-    try:
-        reference = reference_campaign.resolve(args.reference, files["BasisContract"]["SHA256"])
-    except reference_campaign.ReferenceError as error:
-        raise CaseStop("Reference", str(error))
-    if reference is None:
-        where = f"under {args.reference}" if args.reference is not None else "(--reference none)"
-        raise CaseStop("Reference", f"no reference campaign inputs bind the basis contract of {case_id} "
-                                    f"({files['BasisContract']['SHA256'][:12]}...) {where}: no Palace config "
-                                    f"and no traces to run")
-    record["Reference"] = reference
     record["Mesh"] = {"Local": identity["Path"], "SHA256": identity["SHA256"], "Verified": True}
-    # 2. sources and controls.
-    reference_config = json.loads(Path(reference["Config"]).read_text())
-    sources = reference["Sources"]
-    indices = [source["Index"] for source in sources]
-    terminals = [source["Index"] for source in sources if source["Terminal"]]
-    zero_trace = reference["ZeroTraceIndices"]
-    trace_dir = Path(reference["Inputs"]) / reference_campaign.TRACES_DIRECTORY
-    comparison_dir = case_root / "comparison"
-    comparison_dir.mkdir(exist_ok=True)
-    if reference["PlanViewBoundary"] is None:
-        raise CaseStop("Reference", f"{reference['Inputs']} carries no plan-view-boundary.csv (needed for the source classes)")
-    rows, geometry = locate_sources.locate_directory(
-        trace_dir, reference["PlanViewBoundary"], comparison_dir / "source-locations.csv",
-        retained_etch=reference["RetainedEtch"], geometry_out=comparison_dir / "source-geometry.json")
-    locations = {row["index"]: {key: str(value) for key, value in row.items()} for row in rows}
-    classes = classify_sources.classify_all(locations, zero_trace, terminals)
-    free = [i for i in indices if i not in set(zero_trace) and i in locations]
-    if args.control_source:
-        controls = sorted(args.control_source)
-        unknown = [i for i in controls if i not in indices]
-        if unknown:
-            raise CaseStop("Controls", f"--control-source {unknown} are not reference sources of {case_id}")
-        control_rule = "explicit --control-source"
-    else:
-        controls = classify_sources.choose_controls(classes, args.control_count, free)
-        control_rule = f"{args.control_count} by class (classify_sources.choose_controls: one per class in priority order, cycling)"
-    record["Sources"] = {"Count": len(indices), "Indices": indices, "ZeroTrace": zero_trace, "Free": len(free),
-                         "Terminals": terminals, "Classes": {str(i): name for i, (name, _) in classes.items()},
-                         "Geometry": {key: geometry[key] for key in ("box", "z_levels", "per_z_level")}}
-    record["Controls"] = {"Indices": controls, "Rule": control_rule,
-                          "Classes": {str(i): classes[i][0] for i in controls if i in classes}}
-    # 3. stage layout, remote layout, configs.
+    directory = source_directory(manifest_path, manifest, case)
+    try:
+        physics_run = case_inputs.physics_run_parameters(manifest)
+        signature_layers = locate_sources.signature_layers(
+            locate_sources.read_signature_rows(directory / files["Signature"]["Name"]))
+        locate_sources.check_layers(signature_layers)
+    except locate_sources.UnsupportedSourceGeometry as guard:
+        raise CaseStop("ScopeGuard", str(guard), Guard=guard.guard, Layers=[list(layer) for layer in guard.layers],
+                       Rule="locate_sources assigns the z-level roles of the sources for one upward process layer; "
+                            "a DownwardLayers / MultipleLayers case is refused until the roles are assigned per layer band")
+    except case_inputs.CaseInputError as error:
+        raise CaseStop("Manifest", str(error))
     prefix = args.stage_prefix or case_id
-    main_orders = main_orders_of(args.orders, reference["ReferenceOrder"])
-    control_orders = list(args.controls)
-    record["Orders"] = {"Main": [f"p{order}" for order in main_orders], "Controls": [f"p{order}" for order in control_orders],
-                        "ReferenceOrder": f"p{reference['ReferenceOrder']}", "Gated": f"p{gated_order(main_orders, reference['ReferenceOrder'])}",
-                        "Rule": ORDERS_RULE}
-    layout = stage_layout(prefix, main_orders, control_orders, len(indices), len(controls))
     run_name = root.name
     remote_root = remote["Root"] if remote else "<remote-root>"
     remote_run = f"{remote_root}/{run_name}"
     remote_case = f"{remote_run}/{case_id}"
     remote_mesh = f"{remote_case}/mesh/identity-{identity['SHA256'][:12]}.msh"
     remote_traces = f"{remote_case}/inputs/traces"
+    try:
+        run_config, inputs = case_inputs.derive(case, directory, mesh_path=identity["Path"], physics_run=physics_run,
+                                                out_dir=case_root / "inputs", mesh=remote_mesh, output_root=f"{remote_case}/main",
+                                                traces_remote=remote_traces)
+    except (case_inputs.CaseInputError, ValueError) as error:
+        raise CaseStop("Inputs", f"the run inputs of {case_id} cannot be derived from its sources: {error}")
+    write_json(case_root / "inputs" / "run-config.json", run_config)
+    record["Inputs"] = {**inputs, "Config": str(case_root / "inputs" / "run-config.json"),
+                        "ConfigSHA256": sha256(case_root / "inputs" / "run-config.json")}
+    interface_types = {int(index): name for index, name in inputs["Interfaces"].items()}
+    interfaces = inputs["InterfaceTypes"]
+    reference = None
+    if args.reference is not None:
+        try:
+            reference = reference_campaign.resolve(args.reference, files["BasisContract"]["SHA256"])
+        except reference_campaign.ReferenceError as error:
+            raise CaseStop("Reference", str(error))
+        if reference is None:
+            raise CaseStop("Reference", f"no reference campaign inputs bind the basis contract of {case_id} "
+                                        f"({files['BasisContract']['SHA256'][:12]}...) under {args.reference}: pass "
+                                        f"--reference none to run the coupon on its own inputs")
+        reference_config = json.loads(Path(reference["Config"]).read_text())
+        differences = case_inputs.config_differences(run_config, reference_config, ignore_solver=("Order", "Linear.Tol"))
+        if differences:
+            raise CaseStop("Reference", f"the reference config {reference['Config']} differs from the config derived from "
+                                        f"the case's own sources outside Mesh / Output / DataFile / Order / Tol: {differences[:12]}",
+                           Differences=differences)
+        reference["ConfigEqualsDerived"] = {"ApartFrom": list(case_inputs.PATH_FIELDS) + ["Solver.Order", "Solver.Linear.Tol"],
+                                            "ReferenceOrder": reference["ReferenceOrder"], "ReferenceLinearTol": reference["LinearTol"],
+                                            "RunOrder": physics_run["Order"], "RunLinearTol": physics_run["LinearTol"]}
+    record["Reference"] = reference if reference is not None else {
+        "Rule": "--reference none: the coupon runs on its own inputs; without reference matrices the verdict is "
+                "PendingQualification (every p-sequence control passed) or Failed, never Passed"}
+    reference_order = reference["ReferenceOrder"] if reference else None
+    # 2. sources and controls.
+    sources = inputs["Sources"]
+    indices = [source["Index"] for source in sources]
+    terminals = [source["Index"] for source in sources if source["Terminal"]]
+    zero_trace = inputs["ZeroTraceIndices"]
+    trace_dir = Path(inputs["Traces"]["Directory"])
+    comparison_dir = case_root / "comparison"
+    comparison_dir.mkdir(exist_ok=True)
+    try:
+        rows, geometry = locate_sources.locate_directory(
+            trace_dir, inputs["PlanViewBoundary"], comparison_dir / "source-locations.csv", signature_path=inputs["Signature"],
+            retained_etch=inputs["RetainedEtch"], geometry_out=comparison_dir / "source-geometry.json")
+    except locate_sources.UnsupportedSourceGeometry as guard:
+        raise CaseStop("ScopeGuard", str(guard), Guard=guard.guard)
+    locations = {row["index"]: {key: str(value) for key, value in row.items()} for row in rows}
+    classes = classify_sources.classify_all(locations, zero_trace, terminals, thresholds=classify_sources.thresholds_of_gates(gates))
+    free = [i for i in indices if i not in set(zero_trace) and i in locations]
+    if args.control_source:
+        controls = sorted(args.control_source)
+        unknown = [i for i in controls if i not in indices]
+        if unknown:
+            raise CaseStop("Controls", f"--control-source {unknown} are not sources of {case_id}")
+        control_rule = "explicit --control-source"
+    else:
+        controls = classify_sources.choose_controls(classes, args.control_count, free)
+        control_rule = f"{args.control_count} by class (classify_sources.choose_controls: one per class in priority order, cycling)"
+    record["Sources"] = {"Count": len(indices), "Indices": indices, "ZeroTrace": zero_trace, "Free": len(free),
+                         "Terminals": terminals, "Classes": {str(i): name for i, (name, _) in classes.items()},
+                         "Geometry": {key: geometry[key] for key in ("box", "z_levels", "per_z_level", "layers")}}
+    record["Controls"] = {"Indices": controls, "Rule": control_rule,
+                          "Classes": {str(i): classes[i][0] for i in controls if i in classes}}
+    # 3. stage layout, remote layout, configs.
+    main_orders = main_orders_of(physics_run["Order"], args.orders, reference_order)
+    control_orders = list(args.controls)
+    record["Orders"] = {"Main": [f"p{order}" for order in main_orders], "Controls": [f"p{order}" for order in control_orders],
+                        "RecipeOrder": f"p{physics_run['Order']}", "RecipeLinearTol": physics_run["LinearTol"],
+                        "ReferenceOrder": f"p{reference_order}" if reference_order is not None else None,
+                        "Gated": f"p{gated_order(main_orders, reference_order)}", "Rule": ORDERS_RULE}
+    layout = stage_layout(prefix, main_orders, control_orders, len(indices), len(controls))
     config_digests = {}
     local_configs = {}
     for item in layout:
         subset = indices if item["Role"] == "main" else controls
-        directory = case_root / "main" / item["Prefix"]
+        directory_ = case_root / "main" / item["Prefix"]
         if item["Kind"] == "response":
-            worker, reducer = build_configs.derive(reference_config, remote_mesh, f"{remote_case}/main/{item['Prefix']}",
+            worker, reducer = build_configs.derive(run_config, remote_mesh, f"{remote_case}/main/{item['Prefix']}",
                                                    subset, remote_traces, order=item["Order"])
-            config_digests[item["Prefix"]] = build_configs.write_stage(directory, worker, reducer)
+            config_digests[item["Prefix"]] = build_configs.write_stage(directory_, worker, reducer)
         else:
-            config, _ = build_configs.derive(reference_config, remote_mesh, f"{remote_case}/main/{item['Prefix']}", subset,
+            config, _ = build_configs.derive(run_config, remote_mesh, f"{remote_case}/main/{item['Prefix']}", subset,
                                              remote_traces, order=item["Order"], save_local_edge_energy=True)
             config_digests[item["Prefix"]] = build_configs.write_local_edge_stage(
-                directory, config, f"{remote_case}/main/{item['Prefix']}/output")
-        local_configs[item["Prefix"]] = str(directory)
+                directory_, config, f"{remote_case}/main/{item['Prefix']}/output")
+        local_configs[item["Prefix"]] = str(directory_)
     record["StagePrefix"] = prefix
     record["Stages"] = layout
     record["Configs"] = {"Directories": local_configs, "SHA256": config_digests,
-                         "ReferenceConfig": reference["Config"], "ReferenceConfigSHA256": reference["ConfigSHA256"],
-                         "ReferenceConfigRole": reference["ConfigRole"], "ReferenceOrder": reference["ReferenceOrder"],
-                         "LinearTol": reference["LinearTol"]}
+                         "DerivedFrom": "the case's own sources (case_inputs.derive) and the recipe PhysicsRun",
+                         "RunConfig": record["Inputs"]["Config"], "RunConfigSHA256": record["Inputs"]["ConfigSHA256"],
+                         "ReferenceConfig": reference["Config"] if reference else None,
+                         "ReferenceConfigSHA256": reference["ConfigSHA256"] if reference else None,
+                         "ReferenceConfigRole": reference["ConfigRole"] if reference else None,
+                         "ReferenceOrder": reference_order, "LinearTol": physics_run["LinearTol"], "Order": physics_run["Order"]}
     # 4. estimate (fail closed) and plan.
     counts = (case_record.get("H1") or {}).get("EntityCounts")
     counts_origin = "library-build.json H1.EntityCounts"
@@ -310,9 +363,11 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
     binary = f"{remote_root}/{profile['BinaryPattern'].format(sha256=args.frozen_binary_sha256)}"
     mpiexec = f"{remote_root}/{profile['MPIExecWrapper']}"
     purpose = (f"coupon-library qualify of {case_id} (identity mesh {identity['SHA256']}, {len(indices)} sources, "
-               f"{len(zero_trace)} contract zero-trace knots) against the graded_v2 reference inputs {reference['Key']} "
-               f"(reference Order {reference['ReferenceOrder']}, Linear.Tol {reference['LinearTol']}); stages "
-               f"{[item['Prefix'] for item in layout]}; controls {controls} ({control_rule}); {estimate['Decision']}")
+               f"{len(zero_trace)} contract zero-trace knots; config derived from the case's sources at the recipe Order "
+               f"{physics_run['Order']}, Linear.Tol {physics_run['LinearTol']}) "
+               + (f"against the graded_v2 reference inputs {reference['Key']} (reference Order {reference['ReferenceOrder']}, "
+                  f"Linear.Tol {reference['LinearTol']})" if reference else "without a reference (--reference none)")
+               + f"; stages {[item['Prefix'] for item in layout]}; controls {controls} ({control_rule}); {estimate['Decision']}")
     plan = build_plan.build_plan(case_id=case_id, remote_case_root=remote_case,
                                  mesh={"Remote": remote_mesh, "SHA256": identity["SHA256"], "Local": identity["Path"]},
                                  stage_layout=layout, estimate=estimate, config_digests=config_digests, trace_pins=trace_pins,
@@ -331,7 +386,8 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                         "Traces": remote_traces, "Binary": binary, "MPIExec": mpiexec}
     record["Status"] = STATUS_PLANNED
     return record, {"plan": plan, "sources": sources, "locations": locations, "classes": classes, "layout": layout,
-                    "reference": reference, "controls": controls, "zero_trace": zero_trace, "identity": identity}
+                    "reference": reference, "reference_order": reference_order, "interfaces": interfaces,
+                    "interface_types": interface_types, "controls": controls, "zero_trace": zero_trace, "identity": identity}
 
 
 def upload_case(record, context, *, remote, profile):
@@ -477,23 +533,24 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
     case_root = Path(record["Root"])
     comparison_dir = case_root / "comparison"
     reference = context["reference"]
+    reference_order, interface_types = context["reference_order"], context["interface_types"]
     layout, controls, zero_trace = context["layout"], context["controls"], context["zero_trace"]
     locations, classes = context["locations"], context["classes"]
     mains = [item for item in layout if item["Role"] == "main"]
     main = mains[0]
-    gated = next(item for item in mains if item["Order"] == gated_order([item["Order"] for item in mains], reference["ReferenceOrder"]))
+    gated = next(item for item in mains if item["Order"] == gated_order([item["Order"] for item in mains], reference_order))
     main_dir = results / "main" / main["Prefix"] / "reducer"
     control_dirs = {item["Order"]: results / "main" / item["Prefix"] / "reducer" for item in layout if item["Role"] == "control"}
-    reference_dir = Path(reference["Results"]) if reference["Results"] else None
+    reference_dir = Path(reference["Results"]) if reference and reference.get("Results") else None
     comparisons = {}
     labels = {}
     if reference_dir is not None:
         for item in mains:
             labels[f"{item['Prefix']}-vs-reference"] = (reference_dir, results / "main" / item["Prefix"] / "reducer",
-                                                       f"reference p{reference['ReferenceOrder']}", f"{item['Prefix']} (all sources)")
+                                                       f"reference p{reference_order}", f"{item['Prefix']} (all sources)")
         for order, directory in control_dirs.items():
             labels[f"{main['Prefix'].rsplit('-p', 1)[0]}-p{order}-control-vs-reference"] = (
-                reference_dir, directory, f"reference p{reference['ReferenceOrder']}", f"p{order} control ({len(controls)} sources)")
+                reference_dir, directory, f"reference p{reference_order}", f"p{order} control ({len(controls)} sources)")
     for order, directory in control_dirs.items():
         if order > main["Order"]:
             labels[f"{main['Prefix']}-vs-p{order}-control"] = (main_dir, directory, main["Prefix"], f"p{order} control")
@@ -502,7 +559,7 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
     for label, (ref, run, ref_label, run_label) in labels.items():
         comparisons[label] = compare_matrices.write_comparison(ref, run, comparison_dir / label, zero_trace_indices=zero_trace,
                                                                 locations=locations, reference_label=ref_label, run_label=run_label,
-                                                                max_entry_rows=200)
+                                                                max_entry_rows=200, interface_types=interface_types)
     class_stats = classify_sources.write_class_report(classes, locations, list(comparisons.items()),
                                                       comparison_dir / "source-classes.csv", comparison_dir / "class-statistics.md")
     main_label = f"{gated['Prefix']}-vs-reference"
@@ -519,7 +576,7 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
         runs["high"] = control_dirs[min(higher)]
     p_sequence_summary = p_sequence.write_p_sequence(runs, orders_of, controls, comparison_dir / "p-sequence-controls.md",
                                                      comparison_dir / "p-sequence-controls.json",
-                                                     title=f"p-sequence controls of {record['Case']}")
+                                                     title=f"p-sequence controls of {record['Case']}", interface_types=interface_types)
     offsets = None
     keys = None
     if reference_dir is not None:
@@ -527,7 +584,7 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
         offsets = ma_ms_offsets.write_offsets(per_source, main_label, zero_trace, reference_dir,
                                               comparison_dir / "ma-ms-offsets.md", comparison_dir / "ma-ms-offsets.json",
                                               title=f"Offsets of {record['Case']} vs the reference",
-                                              strongest=gates["Gates"]["p_MA"]["StrongestCount"])
+                                              strongest=gates["Gates"]["p_MA"]["StrongestCount"], interface_types=interface_types)
         keys = key_sources.key_sources(per_source, zero_trace)
         (comparison_dir / "key-sources.md").write_text(key_sources.markdown_report(keys))
         write_json(comparison_dir / "key-sources.json", keys)
@@ -540,9 +597,9 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
     main_cost = cost["Stages"].get(main["Prefix"], {})
     gate_record = gate_evaluation.evaluate(
         gates, comparison=comparisons.get(main_label), classes={i: name for i, (name, _) in classes.items()},
-        ref_pma=ma_ms_offsets.reference_p_ma(reference_dir) if reference_dir else None,
-        p_sequence_summary=p_sequence_summary, reference_order=reference["ReferenceOrder"], gates_sha256=gates_digest,
-        interfaces=reference.get("Interfaces"), gated_order=gated["Order"])
+        ref_pma=ma_ms_offsets.reference_p_ma(reference_dir, interface_types) if reference_dir else None,
+        p_sequence_summary=p_sequence_summary, reference_order=reference_order, gates_sha256=gates_digest,
+        interfaces=context["interfaces"], gated_order=gated["Order"])
     write_json(case_root / "qualification.json", gate_record)
     record["Qualification"] = {"Verdict": gate_record["Verdict"], "Reason": gate_record["Reason"],
                                "GatesPassed": gate_record["GatesPassed"], "NotApplicable": gate_record["NotApplicable"],
@@ -573,7 +630,7 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
 
 def reference_node_hours(reference, profile):
     """Worker + reducer wall of the reference campaign case (its status.json) in node-hours."""
-    if not reference.get("Results"):
+    if not reference or not reference.get("Results"):
         return None
     status_path = Path(reference["Results"]).parent / "status.json"
     if not status_path.is_file():
@@ -628,6 +685,7 @@ def library_totals(records, *, args, remote, profile, wall_seconds, first_submis
             "CouponsFailed": sum(record["Status"] == STATUS_FAILED for record in records),
             "CouponsPlanned": sum(record["Status"] == STATUS_PLANNED for record in records),
             "CouponsSkipped": sum(record["Status"] == STATUS_SKIPPED for record in records),
+            "CouponsUnsupported": sum(record["Status"] == STATUS_UNSUPPORTED for record in records),
             "StoppedCoupons": {record["Case"]: record["StoppedBy"] for record in records if record["StoppedBy"]},
             "NodeHours": node_hours,
             "CriticalPathSeconds": ((last_fetch - first_submission) if first_submission and last_fetch else None),
@@ -635,8 +693,11 @@ def library_totals(records, *, args, remote, profile, wall_seconds, first_submis
             "JobWallSeconds": {record["Case"]: (record.get("Cost") or {}).get("JobTotalSeconds") for record in records
                                if record.get("Cost")},
             "WallClockSeconds": wall_seconds, "JobsSubmitted": jobs, "UserJobCap": cap,
-            "MaxJobs": args.max_jobs, "DryRun": args.dry_run, "Remote": remote,
-            "Orders": [f"p{order}" for order in args.orders], "Controls": [f"p{order}" for order in args.controls],
+            "MaxJobs": args.max_jobs, "JobsRule": "every qsub of this run is counted at submission (a stop after the "
+                                                   "submission keeps its job counted)",
+            "DryRun": args.dry_run, "Remote": remote,
+            "Orders": [f"p{order}" for order in (args.orders or [])], "OrdersRule": ORDERS_RULE,
+            "Controls": [f"p{order}" for order in args.controls],
             "FrozenBinarySHA256": args.frozen_binary_sha256, "ClusterProfile": profile["Name"]}
 
 
@@ -687,7 +748,8 @@ def run_qualify(args, *, log=log_line):
     def stop(record, case_record, exception):
         if record is None:
             record = {"Case": case_record["Case"], "Root": str(root / case_record["Case"])}
-        record["Status"] = STATUS_SKIPPED if exception.record["Kind"] in ("Build", "Manifest", "Reference") else STATUS_FAILED
+        record["Status"] = (STATUS_UNSUPPORTED if exception.record["Kind"] == "ScopeGuard" else
+                            STATUS_SKIPPED if exception.record["Kind"] in ("Build", "Manifest", "Reference") else STATUS_FAILED)
         record["StoppedBy"] = exception.record
         log(f"{record['Case']}: {record['Status']} - {exception.record['Kind']}: {exception.record['Message']}")
         return record
@@ -744,6 +806,9 @@ def run_qualify(args, *, log=log_line):
                 submit_case(record, context, remote=remote, profile=profile, log=log)
             except CaseStop as exception:
                 stop(record, None, exception)
+                # A qsub that went through before the stop is a job of this run (counted).
+                if record.get("Submission"):
+                    jobs += 1
                 checkpoint()
                 continue
             jobs += 1
@@ -792,10 +857,12 @@ def run_qualify(args, *, log=log_line):
 
 def add_arguments(parser):
     parser.add_argument("--build-record", type=Path, required=True, help="library-build.json of coupon-library build")
-    parser.add_argument("--reference", type=lambda text: None if text.lower() == "none" else Path(text), default=None,
-                        help="graded_v2 reference campaign directory (inputs-<key>/, case-<key>-fabricated/) or 'none'")
+    parser.add_argument("--reference", type=lambda text: None if text.lower() == "none" else Path(text), required=True,
+                        help="graded_v2 reference campaign directory (inputs-<key>/, case-<key>-fabricated/) or 'none' "
+                             "(the coupon runs on its own inputs; verdict PendingQualification / Failed)")
     parser.add_argument("--remote", help="HOST:ROOT of the frozen executable and MPI wrapper (required unless --dry-run)")
-    parser.add_argument("--orders", type=parse_orders, default=[4], help="main orders, full stages (default p4)")
+    parser.add_argument("--orders", type=parse_orders, default=[], help="additional main orders, full stages (the recipe's "
+                                                                       "PhysicsRun order is always the first main order)")
     parser.add_argument("--controls", type=parse_orders, default=[3, 5], help="control orders (default p3,p5)")
     parser.add_argument("--control-count", type=int, default=DEFAULT_CONTROL_COUNT, help="controls chosen by class (default 8)")
     parser.add_argument("--control-source", type=int, action="append", help="explicit control source (repeatable; overrides the class choice)")
@@ -827,6 +894,7 @@ def run_from_args(args):
               + (f" stopped-by {stopped['Kind']}: {stopped['Message']}" if stopped else ""), flush=True)
     print(f"LIBRARY attempted {totals['CouponsAttempted']} qualified {totals['CouponsQualified']} pending {totals['CouponsPending']} "
           f"failed {totals['CouponsFailed']} planned {totals['CouponsPlanned']} skipped {totals['CouponsSkipped']} "
+          f"unsupported {totals['CouponsUnsupported']} "
           f"node-h {totals['NodeHours']:.3f} jobs {totals['JobsSubmitted']}/{totals['MaxJobs']} (cap {totals['UserJobCap']}); "
           f"record {Path(record['Root']) / LIBRARY_QUALIFICATION_RECORD}")
     if args.dry_run:

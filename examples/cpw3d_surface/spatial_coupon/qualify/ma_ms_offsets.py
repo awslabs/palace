@@ -9,7 +9,7 @@ same on the strongest-reference-MA sources) and the within-1/2/5/10% counts
 (gallery-physics-06b ma_ms_offsets.py, the pairings and the reference directory as
 arguments).
 
-usage: ma_ms_offsets.py --reference-dir DIR --out-md PATH --out-json PATH [--zero-trace I ...]
+usage: ma_ms_offsets.py --reference-dir DIR --config REFERENCE_CONFIG --out-md PATH --out-json PATH [--zero-trace I ...]
        [--strongest N] label=comparison.json [label=comparison.json ...]
 """
 import argparse
@@ -62,8 +62,13 @@ def weighted(offsets, weights):
     return {"n": len(pairs), "weighted_mean": mean, "weighted_median": median, "weight_total": total}
 
 
-def reference_p_ma(reference_dir):
-    """Source -> reference p_MA = Q_total_ii(MA) / E_ii."""
+def reference_p_ma(reference_dir, interface_types):
+    """Source -> reference p_MA = Q_total_ii(MA) / E_ii; `interface_types` = the
+    interface index -> type map of the config the matrices were produced with (every
+    interface of type MA is summed)."""
+    if interface_types is None:
+        raise ValueError("the interface index -> type map of the reference config is required (never assumed)")
+    ma_interfaces = {int(index) for index, name in interface_types.items() if str(name) == "MA"}
     reference_dir = Path(reference_dir)
     energies, ma = {}, {}
     with (reference_dir / "domain-response-matrix.csv").open(newline="") as stream:
@@ -74,8 +79,9 @@ def reference_p_ma(reference_dir):
     with (reference_dir / "surface-response-matrix.csv").open(newline="") as stream:
         for row in csv.DictReader(stream):
             row = {k.strip(): v.strip() for k, v in row.items()}
-            if int(float(row["interface"])) == 1 and int(float(row["basis_i"])) == int(float(row["basis_j"])):
-                ma[int(float(row["basis_i"]))] = float(row["Q_total_ij (J)"])
+            if int(float(row["interface"])) in ma_interfaces and int(float(row["basis_i"])) == int(float(row["basis_j"])):
+                i = int(float(row["basis_i"]))
+                ma[i] = ma.get(i, 0.0) + float(row["Q_total_ij (J)"])
     return {i: ma[i] / energies[i] for i in ma if energies.get(i)}
 
 
@@ -155,8 +161,8 @@ def markdown_report(record, comparisons, title):
 
 
 def write_offsets(comparisons, main_pairing, zero_trace, reference_dir, out_md, out_json, *, title,
-                  strongest=DEFAULT_STRONGEST):
-    ref_pma = reference_p_ma(reference_dir)
+                  strongest=DEFAULT_STRONGEST, interface_types):
+    ref_pma = reference_p_ma(reference_dir, interface_types)
     record = offsets(comparisons, main_pairing, zero_trace, ref_pma, strongest=strongest)
     Path(out_md).write_text(markdown_report(record, comparisons, title))
     Path(out_json).write_text(json.dumps(record, indent=2) + "\n")
@@ -173,11 +179,14 @@ def main(argv=None):
     parser.add_argument("--title", default="Offsets vs the reference")
     parser.add_argument("comparisons", nargs="+", metavar="label=comparison.json",
                         help="the first pairing is the main one (run vs reference)")
+    parser.add_argument("--config", required=True, help="the reference's Palace config (interface index -> type map)")
     args = parser.parse_args(argv)
+    interface_types = {int(entry["Index"]): entry["Type"]
+                       for entry in json.loads(Path(args.config).read_text())["Boundaries"]["Postprocessing"]["Dielectric"]}
     comparisons = {item.split("=", 1)[0]: json.loads(Path(item.split("=", 1)[1]).read_text())["PerSource"]
                    for item in args.comparisons}
     record = write_offsets(comparisons, next(iter(comparisons)), args.zero_trace, args.reference_dir, args.out_md,
-                           args.out_json, title=args.title, strongest=args.strongest)
+                           args.out_json, title=args.title, strongest=args.strongest, interface_types=interface_types)
     print(json.dumps(record["Weighted"], indent=1))
     return 0
 

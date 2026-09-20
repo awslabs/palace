@@ -169,10 +169,26 @@ def validate_production_recipe(manifest):
                          "recipe stages: " + ", ".join(keys))
     if manifest_pipeline(manifest) == GMSH_ONLY_PIPELINE:
         validate_build_cost_estimate_model(recipe)
+        validate_physics_run(recipe)
     return recipe
 
 
 BUILD_COST_ESTIMATE_KEY = "BuildCostEstimate"
+PHYSICS_RUN_KEY = "PhysicsRun"
+
+
+def validate_physics_run(recipe):
+    """The Gmsh-only production recipe binds the Palace run parameters of every coupon
+    (supervisor decision 52): PhysicsRun.Order (integer >= 1), PhysicsRun.LinearTol (0 <
+    float < 1) with a Provenance and a Binding text; qualify derives every run config
+    from the case's sources and these values (qualify/case_inputs.py)."""
+    block = recipe.get(PHYSICS_RUN_KEY)
+    if (not isinstance(block, dict) or not isinstance(block.get("Order"), int) or isinstance(block.get("Order"), bool) or
+            block["Order"] < 1 or not isinstance(block.get("LinearTol"), float) or not 0.0 < block["LinearTol"] < 1.0 or
+            any(not isinstance(block.get(key), str) or not block[key] for key in ("Rule", "Provenance", "Binding"))):
+        raise ValueError("Gmsh-only production recipe must carry the PhysicsRun block "
+                         "(Order int >= 1, LinearTol in (0, 1), Rule, Provenance, Binding)")
+    return block
 SCOPE_KEY = "Scope"
 UNSUPPORTED_CLASS_KEY = "UnsupportedClass"
 

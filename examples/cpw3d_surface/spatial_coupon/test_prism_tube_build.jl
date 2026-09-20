@@ -392,7 +392,6 @@ end
         @test up.b == [0.0, 0.0, 1.0] && down.b == [0.0, 0.0, -1.0]
         @test up.n == down.n && up.e ≈ -down.e
         @test up.origin[3] ≈ -down.origin[3]                # plane + thickness <-> plane - thickness
-        @test up.origin[1:2] ≈ down.origin[1:2] || true
         @test up_section.materials == down_section.materials && up_section.angles == down_section.angles
         # The tube covers the same edge interval in space: its end points are mirrored.
         ends(t) = sort([tube_point(t, 0.0, 0.0, t.s_start)[1:2], tube_point(t, 0.0, 0.0, t.s_end)[1:2]])

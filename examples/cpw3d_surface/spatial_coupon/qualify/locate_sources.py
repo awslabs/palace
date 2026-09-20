@@ -8,7 +8,12 @@ surface) of a coupon, from its trace files and plan-view boundary alone
 
 * box = bounding box of the trace vertices; the z levels are the distinct apex
   heights (bottom face = the lowest, top face = the highest, metal-top level = the
-  highest intermediate level, the others substrate / trench levels);
+  highest intermediate level, the others substrate / trench levels) - a role
+  assignment that holds for ONE process layer with its metal ABOVE the plane (Nz = +1):
+  the case's bound signature layers (Pz, Nz) are checked first and a downward layer or
+  a second layer stops the location with a recorded scope guard
+  (UnsupportedSourceGeometry: DownwardLayers / MultipleLayers) until the roles are
+  assigned per layer band;
 * metal loops from plan-view-boundary.csv (vertices in loop order): an edge whose two
   endpoints lie on the same box side is a box-boundary (continuation) edge, every
   other edge is a physical metal edge; the metal cross-section meets the cut along
@@ -17,8 +22,8 @@ surface) of a coupon, from its trace files and plan-view boundary alone
 * the adjacent substrate surface at the cut is the trench (3100+s) unless a bound
   retained-etch.csv says the point is outside every etched loop (un-etched 3000+s).
 
-usage: locate_sources.py --traces DIR --boundary plan-view-boundary.csv --out source-locations.csv
-       [--retained-etch retained-etch.csv] [--geometry-out source-geometry.json]
+usage: locate_sources.py --traces DIR --boundary plan-view-boundary.csv --signature mesh-signature.csv
+       --out source-locations.csv [--retained-etch retained-etch.csv] [--geometry-out source-geometry.json]
 """
 import argparse
 import csv
@@ -29,6 +34,44 @@ from pathlib import Path
 
 TOL = 1e-6
 NUDGE = 1e-3
+# The layer classes the z-level role assignment below does not cover (the ids are the
+# recipe scope classes of mesh_stage_contract.RECIPE_SCOPE_SUPPORTED_CLASSES).
+SOURCE_GEOMETRY_GUARDS = {
+    "DownwardLayers": "a process layer with Nz = -1 puts the metal below its plane: the highest intermediate apex "
+                      "level is not the metal top",
+    "MultipleLayers": "two or more process layers stack their metal-top / trench levels: the two highest intermediate "
+                      "apex levels are not one layer's cross-section"}
+
+
+class UnsupportedSourceGeometry(ValueError):
+    """The source geometry of a case outside the single upward layer the role assignment
+    covers (recorded as a ScopeGuard stop, never a silent misclassification)."""
+
+    def __init__(self, guard, layers):
+        self.guard = guard
+        self.layers = layers
+        super().__init__(f"ScopeGuard[{guard}]: {SOURCE_GEOMETRY_GUARDS[guard]} (signature layers (Pz, Nz) {layers}); "
+                         f"locate_sources assigns z-level roles for one upward layer only")
+
+
+def signature_layers(rows):
+    """The distinct (Pz, Nz) layers of mesh-signature rows (Nz defaults to +1)."""
+    return sorted({(float(row["Pz"]), int(float(row.get("Nz", 1) or 1))) for row in rows})
+
+
+def check_layers(layers):
+    """Fail closed on the layer classes the role assignment does not cover."""
+    layers = [(float(plane), int(sign)) for plane, sign in layers]
+    if len(layers) > 1:
+        raise UnsupportedSourceGeometry("MultipleLayers", layers)
+    if any(sign < 0 for _, sign in layers):
+        raise UnsupportedSourceGeometry("DownwardLayers", layers)
+    return layers
+
+
+def read_signature_rows(path):
+    with open(path, newline="") as stream:
+        return list(csv.DictReader(stream))
 
 
 def read_loops(boundary_path):
@@ -91,8 +134,10 @@ def inside(polygon, x, y):
     return crossing
 
 
-def locate(trace_paths, loops, *, etch_loops=None):
-    """Rows (one per source) and the geometry summary."""
+def locate(trace_paths, loops, *, etch_loops=None, layers):
+    """Rows (one per source) and the geometry summary; `layers` = the case's signature
+    layers [(Pz, Nz)] (check_layers: one upward layer, else UnsupportedSourceGeometry)."""
+    layers = check_layers(layers)
     box = trace_extent(trace_paths)
 
     def on_side(x, y):
@@ -192,7 +237,8 @@ def locate(trace_paths, loops, *, etch_loops=None):
                 "box_corner_3d_sources": [r["index"] for r in rows if r["box_corner_3d"]],
                 "face_interior_sources": [r["index"] for r in rows if r["lateral"] == "face interior"],
                 "per_z_level": {z_level[level]: sum(1 for r in rows if r["z_level"] == z_level[level]) for level in levels},
-                "retained_etch_bound": etch_loops is not None}
+                "retained_etch_bound": etch_loops is not None, "layers": layers,
+                "layer_rule": "one upward layer (Nz = +1): metal-top = the highest intermediate apex level"}
     return rows, geometry
 
 
@@ -205,12 +251,13 @@ def write_locations(rows, path):
         writer.writerows(rows)
 
 
-def locate_directory(traces_dir, boundary_path, out_path, *, retained_etch=None, geometry_out=None):
+def locate_directory(traces_dir, boundary_path, out_path, *, signature_path, retained_etch=None, geometry_out=None):
     trace_paths = sorted(glob.glob(str(Path(traces_dir) / "basis-*.csv")))
     if not trace_paths:
         raise ValueError(f"no basis-*.csv trace under {traces_dir}")
     rows, geometry = locate(trace_paths, read_loops(boundary_path),
-                            etch_loops=read_etch_loops(retained_etch) if retained_etch else None)
+                            etch_loops=read_etch_loops(retained_etch) if retained_etch else None,
+                            layers=signature_layers(read_signature_rows(signature_path)))
     write_locations(rows, out_path)
     if geometry_out:
         Path(geometry_out).write_text(json.dumps(geometry, indent=1) + "\n")
@@ -221,12 +268,13 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--traces", required=True)
     parser.add_argument("--boundary", required=True)
+    parser.add_argument("--signature", required=True, help="the case's mesh-signature.csv (layer check: Pz, Nz)")
     parser.add_argument("--out", required=True)
     parser.add_argument("--retained-etch")
     parser.add_argument("--geometry-out")
     args = parser.parse_args(argv)
-    _, geometry = locate_directory(args.traces, args.boundary, args.out, retained_etch=args.retained_etch,
-                                   geometry_out=args.geometry_out)
+    _, geometry = locate_directory(args.traces, args.boundary, args.out, signature_path=args.signature,
+                                   retained_etch=args.retained_etch, geometry_out=args.geometry_out)
     print(json.dumps({key: value for key, value in geometry.items()
                       if key not in ("physical_metal_edges", "continuation_edges")}, indent=1))
     return 0

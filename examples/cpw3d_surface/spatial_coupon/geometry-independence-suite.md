@@ -2094,7 +2094,7 @@ python3 coupon_library.py qualify \
   --build-record /tmp/coupon-library-build-<commit>-<ts>/library-build.json \
   --reference <graded_v2 campaign dir or none> \
   --remote soca-green-job:/data/home/simlap/coupon_accuracy_assessment_20260913 \
-  --orders p4 --controls p3,p5 --max-jobs 40 \
+  [--orders p5] --controls p3,p5 --max-jobs 40 \
   --frozen-binary-sha256 b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27 \
   [--case ID ...] [--stage-prefix NAME] [--control-source I ...] [--root DIR] [--dry-run] [--resume]
 ```
@@ -2115,17 +2115,46 @@ measured cost rates (`qualify/cost-model.json`: the physics-11 V-a worker / redu
 local-edge rates with the V-a entity counts, whose closed-form H1 must reproduce the
 measured counts on load).
 
-1. **Reference by content.** `--reference DIR` has the layout of the physics runs'
-   `reference/` trees: `inputs-<key>/` (the producer's `spatial_fabricated.json`,
-   `traces/basis-NNNN.csv` and any other DataFile, `basis-contract.json`,
-   `plan-view-boundary.csv`, optionally `retained-etch.csv`) and
-   `case-<key>-fabricated/` (`worker.json` = the config the reference ran, preferred
-   over the producer's; `reducer/{domain,surface}-response-matrix.csv`). A coupon is
-   bound to `inputs-<key>` whose `basis-contract.json` digest equals the manifest's
-   `BasisContract` digest (`qualify/reference_campaign.py`); no match = no config and
-   no traces, recorded `StoppedBy Reference` (skipped); inputs without reducer
-   matrices = the coupon runs and is `PendingQualification`. `--reference none` skips
-   every coupon with that reason.
+1. **Run inputs from the case itself (supervisor decision 52).** The Palace config, the
+   source traces and the zero-trace set are derived from the manifest case's own frozen
+   sources by `qualify/case_inputs.py`: `process-library.json` (substrate permittivity,
+   interface layer thickness / permittivity, matching radius, the model's edges - slot,
+   conductor, process normal placed in the mesh frame by the bound process frame - and
+   its `Interfaces[].Coupon` index -> type map), the trace basis (`basis-contract.json`,
+   `trace-vertices.csv`, `trace-triangles.csv`) regenerated as the producer wrote it
+   (`generate_spatial_response.write_surface_trace`: `basis-NNNN.csv` = the hat of basis
+   vertex NNNN, `conductor-N.csv` = the lift of every conductor but the first,
+   `zero-trace.csv`; the coordinates are within the contract's `FrameFitResidual` of the
+   producer's files - the canonical-frame round trip -, V and triangle columns
+   identical, digests recorded under `Inputs.Sources`), the identity mesh's
+   `$PhysicalNames` (the attribute candidates are filtered by them exactly as the
+   producer's `make_config` did on the reference mesh; every attribute the config names
+   must exist - `AttributeCheck`, before any submission) and the recipe's
+   `ProductionRecipe.PhysicsRun` (`Order` 4, `LinearTol` 1e-10 with their calibration
+   provenance: the four-edge reference and every recorded qualification ran them; bound
+   by `general_mesh_manifest.validate_physics_run`, used by every case). The five
+   gallery cases' derived configs equal the configs their graded_v2 references ran apart
+   from `Model.Mesh`, `Problem.Output`, the DataFile directory and - for the p5 / Tol 1e-8
+   references (gallery 10, ten-edge) - `Solver.Order` / `Linear.Tol` only
+   (`test_qualify_dry_run.test_run_config_derived_from_the_case_equals_every_gallery_reference`).
+   A case whose signature has a downward layer (`Nz = -1`) or more than one layer stops
+   with `StoppedBy ScopeGuard` (`DownwardLayers` / `MultipleLayers`,
+   `locate_sources.check_layers`: the z-level role assignment covers one upward layer)
+   until the roles are assigned per layer band.
+   **Reference by content.** `--reference DIR` has the layout of the physics runs'
+   `reference/` trees: `inputs-<key>/` (`basis-contract.json`, the producer's
+   `spatial_fabricated.json`) and `case-<key>-fabricated/` (`worker.json` = the config
+   the reference ran, preferred over the producer's;
+   `reducer/{domain,surface}-response-matrix.csv`). A coupon is bound to `inputs-<key>`
+   whose `basis-contract.json` digest equals the manifest's `BasisContract` digest
+   (`qualify/reference_campaign.py`); the reference's config must equal the derived one
+   apart from the path fields and Order / Tol (`StoppedBy Reference` with the
+   differences otherwise); no match = `StoppedBy Reference` (skipped: pass
+   `--reference none` to run on the case's own inputs); inputs without reducer matrices
+   = the coupon runs and is `PendingQualification`. `--reference none` (mandatory
+   spelling: `--reference` is required) runs every coupon on its own inputs: the
+   p-sequence controls alone are evaluated - `PendingQualification` when they pass,
+   `Failed` when one fails, never `Passed`.
 2. **Sources and controls.** `locate_sources.py` (box from the trace vertices, z levels
    from the apex heights, metal loops and junctions from the plan-view boundary, the
    3000 / 3100 adjacency from a bound `retained-etch.csv`) and `classify_sources.py`
@@ -2135,9 +2164,10 @@ measured counts on load).
    sources). The 8 controls (`--control-count`) are one source per class in that
    priority order, cycling, lowest index first (`choose_controls`), unless
    `--control-source` names them (the recorded campaigns' supervisor-specified sets).
-3. **Configs and plan.** The main orders of a coupon are `--orders` plus the
-   reference's own `Solver.Order` when it differs (gallery case 10: reference p5 ->
-   main stages p4 and p5, the recorded gallery-10 layout; the first `--orders` order
+3. **Configs and plan.** The main orders of a coupon are the recipe's `PhysicsRun`
+   order, then `--orders`, then the reference's own `Solver.Order` when it differs
+   (gallery case 10: reference p5 -> main stages p4 and p5, the recorded gallery-10
+   layout; the recipe order
    stays the library order: cost coupon, local-edge stage, p-sequence main; recorded
    per coupon as `Orders`). `build_configs.py` derives worker / reducer at every main
    order on all sources, at every `--controls` order (highest first) on the controls,
@@ -2199,9 +2229,14 @@ measured counts on load).
    config does not postprocess (no `Postprocessing.Dielectric` entry of that type;
    case 10 declares MA and MS only) is `NotApplicable` for its gate and its p-sequence
    observable - recorded with the declared interfaces, never a failure.
-   Verdict `Passed` only when every gate passes; `Failed` otherwise;
-   `PendingQualification` when the reference has no matrices (the p-sequence controls
-   alone are evaluated; never `Passed`). On the stored CSVs: physics-11 passes with
+   The interface index -> type map of the response matrices is read from the run
+   config's `Postprocessing.Dielectric` entries (never `{1 MA, 2 MS, 3 SA}`); a
+   participation p_X sums every postprocessed interface of type X (the ten-edge
+   postprocesses MA / MS per slot). The class thresholds (narrow hat width 0.1 um,
+   junction reach 0.6 um) are the frozen gate table's `SourceClasses` block, covered by
+   its digest. Verdict `Passed` only when every gate passes; `Failed` otherwise, a
+   failed p-sequence control included; `PendingQualification` only when there are no
+   reference matrices AND every p-sequence control passed (never `Passed`). On the stored CSVs: physics-11 passes with
    E 60 / 60, p_SA 35 / 44 / 58, p_MS 51 / 60 / 60, p_MA 32 / 55 / 60 (strongest-20 15
    / 20 within 1%, 20 / 20 within 2%), 0.508 node-h (0.14x the reference's 3.64);
    gallery-06b passes with E 93 / 95 (both misses in the narrow class), p_SA 47 / 69 /
@@ -2225,7 +2260,8 @@ measured counts on load).
    its `status.json`, the ratio); library totals: coupons by status, stopped coupons with
    the reason, node-h, critical-path seconds from the first submission to the last fetch
    (jobs overlap up to `--max-jobs`), per-job wall seconds, jobs submitted vs `--max-jobs`
-   and the cap, orders, binary hash, profile. `ROOT/qualification-gates.json` (the table used),
+   and the cap (every qsub counted at submission, a stop after it included), orders,
+   binary hash, profile. `ROOT/qualification-gates.json` (the table used),
    `ROOT/process-library.json` (each coupon's model from its own `process-library.json`
    with the fetched matrices, `CouponMesh`, `Qualification` and `LibraryQualified` only
    when Passed).
@@ -2235,16 +2271,31 @@ recorded campaigns are its fixtures: on the four-edge case with `--stage-prefix 
 and the physics-11 controls, every generated `worker.json` / `reducer.json` /
 `config.json` equals `four-edge-physics-11/main/*/` apart from paths and the plan
 equals its `plan.json` in stages (names, config files, environment, dependencies,
-order) and pins (the 80 trace digests; the mesh pin is the build record's); the same
-on the gallery-06 case against `gallery-physics-06b` (135 traces). Tests:
+order) and pins the same 80 trace files (their digests are the regenerated traces',
+recorded; the mesh pin is the build record's); the same on the gallery-06 case against
+`gallery-physics-06b` (135 traces). Tests:
 `test_qualify_gates.py` (the gate evaluation, the recorded class table and locations,
 the estimator against the recorded 06b `stage-estimate.json`, node-h, the cap rule,
 the control choice), `test_qualify_dry_run.py` (the dry runs above, the analysis of
 the recorded results through the same records - physics-11 / 06b Passed, gallery-10
 gated at its p5 main stage with p_SA not applicable -, the concurrent scheduler against
 a fake remote replaying the recorded trees, PendingQualification, the fail-closed
-stops). Nothing four-edge-specific remains hard-coded: no source count, control
-index, remote path or mesh digest is in the code.
+stops, `--reference none`, the derived-config equality on the five gallery cases, the
+altered-reference stop). Nothing four-edge-specific remains hard-coded: no source
+count, control index, remote path, interface index map or mesh digest is in the code.
+
+**Still manual between a device layout and a qualified library.** (1) The remote
+prerequisites: the frozen executable `palace-archive-estimate-<sha>.bin` and
+`mpiexec_bound.sh` must pre-exist under `--remote ROOT`, and another cluster means
+editing `qualify/cluster-profile.json`. (2) The etch footprint declaration of a
+registered case (`--footprint bound` with a `retained-etch.csv`, or `producer-default`)
+is a deliberate per-case statement (decision 16), never inferred. (3) A device whose
+discovery yields corner or straight-edge requirements gets those families from their
+own builders (`corner_coupon/`, `cpw2d/`): `build --device` registers the
+SpatialEdgeCluster coupons and records the others as out of this library's scope. (4)
+A qualification without a reference is `PendingQualification` at best: an accuracy
+statement needs a graded_v2 reference (or the decision-53 calibration path) and is not
+produced by the command alone.
 
 ### Live acceptance of the two commands (supervisor decision 51, 2026-09-20)
 
