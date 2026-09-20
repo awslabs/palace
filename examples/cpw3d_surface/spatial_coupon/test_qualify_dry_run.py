@@ -190,12 +190,20 @@ class QualifyDryRunTest(unittest.TestCase):
                                                        gates=table, gates_digest=digest)
         return record, context, root, table, digest, profile, manifest
 
+    def assert_campaign_untouched(self, campaign, before):
+        after = {path: path.stat().st_mtime_ns for path in (campaign / "results").rglob("*") if path.is_file()}
+        self.assertEqual(after, before, "the recorded campaign's results tree must stay read only")
+
     def test_analysis_of_the_recorded_results_reproduces_the_verdicts(self):
         for case_id, spec in CASES.items():
             campaign = ASSESSMENT / spec["Campaign"]
+            before = {path: path.stat().st_mtime_ns for path in (campaign / "results").rglob("*") if path.is_file()}
             record, context, root, table, digest, profile, manifest = self.analysis_context(case_id, campaign / "reference")
             gate_record = qualify_library.analyze_case(record, context, campaign / "results", gates=table, gates_digest=digest,
                                                        profile=profile)
+            self.assert_campaign_untouched(campaign, before)
+            self.assertEqual(Path(record["Cost"]["Path"]), root / case_id / "cost-summary.json")
+            self.assertTrue((root / case_id / "cost-summary.json").is_file())
             self.assertEqual(gate_record["Verdict"], gates.VERDICT_PASSED, gate_record["Reason"])
             self.assertEqual(record["Status"], "qualified")
             self.assertEqual(record["Qualification"]["ReferenceAnchor"], "vs p4 anchor")
@@ -226,8 +234,10 @@ class QualifyDryRunTest(unittest.TestCase):
             os.symlink(campaign / "reference" / "inputs-07", inputs_only / "inputs-07")
         record, context, root, table, digest, profile, manifest = self.analysis_context(case_id, inputs_only)
         self.assertIsNone(record["Reference"]["Results"])
+        before = {path: path.stat().st_mtime_ns for path in (campaign / "results").rglob("*") if path.is_file()}
         gate_record = qualify_library.analyze_case(record, context, campaign / "results", gates=table, gates_digest=digest,
                                                    profile=profile)
+        self.assert_campaign_untouched(campaign, before)
         self.assertEqual(gate_record["Verdict"], gates.VERDICT_PENDING)
         self.assertEqual(set(gate_record["Gates"]), {"PSequenceControls"})
         self.assertEqual(record["Status"], "pending-qualification")

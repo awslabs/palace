@@ -446,7 +446,9 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
         write_json(comparison_dir / "key-sources.json", keys)
     status = json.loads((results / "main" / "status.json").read_text())
     cost = summarize_cost.summarize(status, full_sources=len(context["sources"]), nodes=profile["Nodes"])
-    write_json(results / "main" / "cost-summary.json", cost)
+    # Every analysis output goes under the case root; the results directory is read only
+    # (it may be a recorded campaign's tree).
+    write_json(case_root / "cost-summary.json", cost)
     reference_cost = reference_node_hours(reference, profile)
     main_cost = cost["Stages"].get(main["Prefix"], {})
     gate_record = gate_evaluation.evaluate(
@@ -467,7 +469,7 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
                       "ReferenceNodeHours": reference_cost,
                       "MainStageOverReference": (main_cost.get("NodeHours") / reference_cost
                                                  if reference_cost and main_cost.get("NodeHours") else None),
-                      "Path": str(results / "main" / "cost-summary.json")}
+                      "Path": str(case_root / "cost-summary.json")}
     record["Status"] = {gate_evaluation.VERDICT_PASSED: STATUS_QUALIFIED, gate_evaluation.VERDICT_PENDING: STATUS_PENDING,
                         gate_evaluation.VERDICT_FAILED: STATUS_FAILED}[gate_record["Verdict"]]
     return gate_record
