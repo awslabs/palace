@@ -1,0 +1,24 @@
+== two-edge-8dd4bc70f183: status planned orders ['p4', 'p5'] gated p5 controls [1, 2, 3, 5, 6, 20, 25, 49] (8 by class (classify...)
+  plan stages (names/config/env/requires, prefix aside) equal: True | recorded caps [('p4-worker', 10800), ('p4-reducer', 5400), ('p5-worker', 7200), ('p5-reducer', 5400), ('p5-control-worker', 3600), ('p5-control-reducer', 1800), ('p3-control-worker', 1800), ('p3-control-reducer', 1800), ('p4-local-edge', 1800)] | live caps [('p4-worker', 1800, 600), ('p4-reducer', 600, 300), ('p5-worker', 5400, 1500), ('p5-reducer', 1500, 900), ('p5-control-worker', 600, 300), ('p5-control-reducer', 300, 300), ('p3-control-worker', 300, 300), ('p3-control-reducer', 300, 300), ('p4-local-edge', 300, 300)]
+  DIFF BinarySHA256 None b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27
+  pins recorded 82 live 82; trace pins 78 equal: True; recorded mesh pin 15e938658915 live 5d01204e3396 same: False
+  two-edge-8dd4bc70f183-p4/worker.json: EQUAL apart from paths
+  two-edge-8dd4bc70f183-p4/reducer.json: EQUAL apart from paths
+  two-edge-8dd4bc70f183-p5/worker.json: EQUAL apart from paths
+  two-edge-8dd4bc70f183-p5/reducer.json: EQUAL apart from paths
+  two-edge-8dd4bc70f183-p5-control/worker.json: DIFF non-source keys []; sources recorded [1, 7, 21, 25, 26, 35, 43, 78] live [1, 2, 3, 5, 6, 20, 25, 49]
+  two-edge-8dd4bc70f183-p5-control/reducer.json: DIFF non-source keys []; sources recorded [1, 7, 21, 25, 26, 35, 43, 78] live [1, 2, 3, 5, 6, 20, 25, 49]
+  two-edge-8dd4bc70f183-p3-control/worker.json: DIFF non-source keys []; sources recorded [1, 7, 21, 25, 26, 35, 43, 78] live [1, 2, 3, 5, 6, 20, 25, 49]
+  two-edge-8dd4bc70f183-p3-control/reducer.json: DIFF non-source keys []; sources recorded [1, 7, 21, 25, 26, 35, 43, 78] live [1, 2, 3, 5, 6, 20, 25, 49]
+  two-edge-8dd4bc70f183-p4-local-edge/config.json: DIFF non-source keys []; sources recorded [1, 7, 21, 25, 26, 35, 43, 78] live [1, 2, 3, 5, 6, 20, 25, 49]
+== four-edge-9d2cb9bbb3fe: status planned orders ['p4'] gated p4 controls [1, 2, 4, 5, 10, 17, 20, 49] (8 by class (classify...)
+  plan stages (names/config/env/requires, prefix aside) equal: True | recorded caps [('p4-worker', 9000), ('p4-reducer', 3600), ('p5-control-worker', 3600), ('p5-control-reducer', 1800), ('p3-control-worker', 1800), ('p3-control-reducer', 1800), ('p4-local-edge', 1800)] | live caps [('p4-worker', 5400, 1500), ('p4-reducer', 1200, 600), ('p5-control-worker', 2100, 600), ('p5-control-reducer', 300, 300), ('p3-control-worker', 300, 300), ('p3-control-reducer', 300, 300), ('p4-local-edge', 1200, 600)]
+  DIFF BinarySHA256 None b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27
+  pins recorded 84 live 84; trace pins 80 equal: True; recorded mesh pin 1d536c448885 live 1d536c448885 same: True
+  four-edge-9d2cb9bbb3fe-p4/worker.json: EQUAL apart from paths
+  four-edge-9d2cb9bbb3fe-p4/reducer.json: EQUAL apart from paths
+  four-edge-9d2cb9bbb3fe-p5-control/worker.json: DIFF non-source keys []; sources recorded [1, 7, 23, 26, 31, 34, 35, 47, 48, 80] live [1, 2, 4, 5, 10, 17, 20, 49]
+  four-edge-9d2cb9bbb3fe-p5-control/reducer.json: DIFF non-source keys []; sources recorded [1, 7, 23, 26, 31, 34, 35, 47, 48, 80] live [1, 2, 4, 5, 10, 17, 20, 49]
+  four-edge-9d2cb9bbb3fe-p3-control/worker.json: DIFF non-source keys []; sources recorded [1, 7, 23, 26, 31, 34, 35, 47, 48, 80] live [1, 2, 4, 5, 10, 17, 20, 49]
+  four-edge-9d2cb9bbb3fe-p3-control/reducer.json: DIFF non-source keys []; sources recorded [1, 7, 23, 26, 31, 34, 35, 47, 48, 80] live [1, 2, 4, 5, 10, 17, 20, 49]
+  four-edge-9d2cb9bbb3fe-p4-local-edge/config.json: DIFF non-source keys []; sources recorded [1, 7, 23, 26, 31, 34, 35, 47, 48, 80] live [1, 2, 4, 5, 10, 17, 20, 49]

@@ -1,0 +1,10 @@
+== live four-edge-9d2cb9bbb3fe-p4 vs recorded pr-p4: sources live 80 recorded 80 common 80
+   E     max |rel diff| 0.000e+00 at source None; signed median +0.000e+00; n 80
+   Q_MA  max |rel diff| 0.000e+00 at source None; signed median +0.000e+00; n 80
+   Q_MS  max |rel diff| 0.000e+00 at source None; signed median +0.000e+00; n 80
+   Q_SA  max |rel diff| 0.000e+00 at source None; signed median +0.000e+00; n 80
+   p_MA  max |rel diff| 0.000e+00 at source None; signed median +0.000e+00; n 80
+   p_MS  max |rel diff| 0.000e+00 at source None; signed median +0.000e+00; n 80
+   p_SA  max |rel diff| 0.000e+00 at source None; signed median +0.000e+00; n 80
+   domain matrix (all 3240 common entries) max |rel diff| 0.000e+00 at None
+   surface matrix (all 58320 common entries) max |rel diff| 0.000e+00 at None

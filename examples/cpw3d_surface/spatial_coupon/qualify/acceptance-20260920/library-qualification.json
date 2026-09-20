@@ -1,0 +1,4379 @@
+{
+  "Version": 1,
+  "Command": "coupon-library qualify",
+  "Root": "/tmp/library-acceptance-01",
+  "ToolCommit": "526c282da",
+  "BuildRecord": {
+    "Path": "/private/tmp/coupon-library-build-96ec539c4-20260920-125056/library-build.json",
+    "SHA256": "d0b8ec11c038bc472b7e150777c261b4b0a21b5a2713b33a0d6c70e4844475c9",
+    "Commit": "96ec539c4"
+  },
+  "Gates": {
+    "Path": "/tmp/library-acceptance-01/qualification-gates.json",
+    "SHA256": "4246f22f816e53cda0e73dcc82db7b87d92bda1528cc77cb56033a4410ee5914"
+  },
+  "CostModel": {
+    "Path": "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/qualify/cost-model.json",
+    "SHA256": "931a56f97555a85644d17faaef328e8e60be3bb908ee521f893c3aafca64efd8"
+  },
+  "ClusterProfile": {
+    "Path": "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/qualify/cluster-profile.json",
+    "SHA256": "451966ed3529cbc90b1776dbb6a2c9019a5cde9ffe389a73d2d6b6efb6694f0a"
+  },
+  "Cases": [
+    {
+      "Case": "two-edge-8dd4bc70f183",
+      "Status": "failed",
+      "StoppedBy": null,
+      "BuildStatus": "built",
+      "BuildPassed": true,
+      "Mesh": {
+        "Local": "/private/tmp/coupon-library-build-96ec539c4-20260920-125056/two-edge-8dd4bc70f183/identity.msh",
+        "SHA256": "5d01204e3396744cdbcf6f53fd1ff85d9f8c218eec1f0b9e11fc6a58aa469b04",
+        "Verified": true
+      },
+      "Reference": {
+        "Key": "10",
+        "Inputs": "/tmp/library-acceptance-01-reference/inputs-10",
+        "Config": "/tmp/library-acceptance-01-reference/case-10-fabricated/worker.json",
+        "ConfigRole": "the config the reference ran (case worker.json)",
+        "ConfigSHA256": "bf301f623963166186f59e8cdfc0c4e359b9da5fab1d9fa3bd154d44f331aa38",
+        "ReferenceOrder": 5,
+        "LinearTol": 1e-08,
+        "Interfaces": [
+          "MA",
+          "MS"
+        ],
+        "ZeroTraceIndices": [],
+        "Sources": [
+          {
+            "Index": 1,
+            "Name": "basis-0001.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0001.csv",
+            "SHA256": "2427c88eb3326ad9ec781c9cdad72bde2f52771866c2e779dcf5f169d8610dc3",
+            "Terminal": false
+          },
+          {
+            "Index": 2,
+            "Name": "basis-0002.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0002.csv",
+            "SHA256": "495e734c320d6aa8e918cf1ffb5f7bdcb3122c8e2b6350adcab5b36b1b3be724",
+            "Terminal": false
+          },
+          {
+            "Index": 3,
+            "Name": "basis-0003.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0003.csv",
+            "SHA256": "0e0f63dcc78fd61ae81d2f321f3ec97bd5d9f169b2730323d933babe9689c728",
+            "Terminal": false
+          },
+          {
+            "Index": 4,
+            "Name": "basis-0004.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0004.csv",
+            "SHA256": "eaedb28c68500f72eceb3ef0ffcfa94051b2ca55c6d54bddf09a9cd93858e28f",
+            "Terminal": false
+          },
+          {
+            "Index": 5,
+            "Name": "basis-0005.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0005.csv",
+            "SHA256": "e4030d65c54d76fc59a0cc1aeb53daea8b56d752813f5af087a1c1094fc79855",
+            "Terminal": false
+          },
+          {
+            "Index": 6,
+            "Name": "basis-0006.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0006.csv",
+            "SHA256": "baba2b85dc70af6c1e182a95316a462c92f7855fc432112afaa9e1c9ed556a33",
+            "Terminal": false
+          },
+          {
+            "Index": 7,
+            "Name": "basis-0007.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0007.csv",
+            "SHA256": "d56314e4359e4e55c21bc0f6ca94504e2d79458980a134e2cf1c176c8a35c4be",
+            "Terminal": false
+          },
+          {
+            "Index": 8,
+            "Name": "basis-0008.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0008.csv",
+            "SHA256": "f5dd0dae645036686c9c3504cc3163aba8669834433ab2d5c41cb7a9f7ef10e8",
+            "Terminal": false
+          },
+          {
+            "Index": 9,
+            "Name": "basis-0009.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0009.csv",
+            "SHA256": "ffa80b7f0f8ca6691e153a84d8c5460a4e3c079340d6b9cb881c3abc2a8f3eb8",
+            "Terminal": false
+          },
+          {
+            "Index": 10,
+            "Name": "basis-0010.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0010.csv",
+            "SHA256": "1f81aaac287ff6278ed9bfd7649e67718a88317b9533dfe4b8c713ab43e29f9e",
+            "Terminal": false
+          },
+          {
+            "Index": 11,
+            "Name": "basis-0011.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0011.csv",
+            "SHA256": "bbb0c4f876443751f290975c09cc89c835e4fcbad99d8e17a909854db84b48f8",
+            "Terminal": false
+          },
+          {
+            "Index": 12,
+            "Name": "basis-0012.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0012.csv",
+            "SHA256": "f8c2a16c038a61b3ce907043c3d16709ff4cbbc712bcf06960dc6eed5390efa4",
+            "Terminal": false
+          },
+          {
+            "Index": 13,
+            "Name": "basis-0013.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0013.csv",
+            "SHA256": "3dcea1f4f1cfb13011267b3a1c0fc7c2a65ec0b059c1c69f578cc85cbfa73c30",
+            "Terminal": false
+          },
+          {
+            "Index": 14,
+            "Name": "basis-0014.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0014.csv",
+            "SHA256": "1205a45ffaa49afe86312a51d77eb54ce794255ea72eea780f5015317faa7d8d",
+            "Terminal": false
+          },
+          {
+            "Index": 15,
+            "Name": "basis-0015.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0015.csv",
+            "SHA256": "fe1d0ca1627f879d2a5b79779864434d4eb086fe88a3026c95d553f255fe4c07",
+            "Terminal": false
+          },
+          {
+            "Index": 16,
+            "Name": "basis-0016.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0016.csv",
+            "SHA256": "c5c4e3f3c5dc57b458f92a96ad70c404014622630788fb6a4009c48ea1cdb8a1",
+            "Terminal": false
+          },
+          {
+            "Index": 17,
+            "Name": "basis-0017.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0017.csv",
+            "SHA256": "d68d9f6a982bc1e8cf6765750a05d0bd855f90cb95b767db2d0456c785fd97c4",
+            "Terminal": false
+          },
+          {
+            "Index": 18,
+            "Name": "basis-0018.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0018.csv",
+            "SHA256": "f7c77935d5bd4a5db998c6ac887beffb6cd56e3eb6dbbe9334935e4bad5f6d6d",
+            "Terminal": false
+          },
+          {
+            "Index": 19,
+            "Name": "basis-0019.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0019.csv",
+            "SHA256": "f2766a9ce5db6f915176760cb3869f1618083e43d666dad9faded15e8cd3841d",
+            "Terminal": false
+          },
+          {
+            "Index": 20,
+            "Name": "basis-0020.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0020.csv",
+            "SHA256": "0ac572fd1297137a3f742e499cb7c41147105ab15fcfb0c21650762a33e24b77",
+            "Terminal": false
+          },
+          {
+            "Index": 21,
+            "Name": "basis-0021.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0021.csv",
+            "SHA256": "8f29f861f66b768c9ceec006079574d8da83ab09f9a7049ac9c9df16e7c559e9",
+            "Terminal": false
+          },
+          {
+            "Index": 22,
+            "Name": "basis-0022.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0022.csv",
+            "SHA256": "621711a1bee2da1b092594d8487621e3f48d85ae82430f365eb8cd578ba3c707",
+            "Terminal": false
+          },
+          {
+            "Index": 23,
+            "Name": "basis-0023.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0023.csv",
+            "SHA256": "9b1ca8eddd6a331b2e33278167b935d8512059ad4cb0892e6460cf7e6a16d6d4",
+            "Terminal": false
+          },
+          {
+            "Index": 24,
+            "Name": "basis-0024.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0024.csv",
+            "SHA256": "29b5fbff8cfac20b52f2a80a31260049d20b2b94f04068da512f91238df6382f",
+            "Terminal": false
+          },
+          {
+            "Index": 25,
+            "Name": "basis-0025.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0025.csv",
+            "SHA256": "a1a116351cb09ad93f5addae65f83c2b2c4f131d97596b1be48ae0b09773b08d",
+            "Terminal": false
+          },
+          {
+            "Index": 26,
+            "Name": "basis-0026.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0026.csv",
+            "SHA256": "e894ddaef6ca7b2cec23ed8c1bc71ab9ae43e85898f67142f110e4baf8449bd1",
+            "Terminal": false
+          },
+          {
+            "Index": 27,
+            "Name": "basis-0027.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0027.csv",
+            "SHA256": "06a15171e453184f2a37df593dd0700fc8d6850490f0578b0578305be80e8863",
+            "Terminal": false
+          },
+          {
+            "Index": 28,
+            "Name": "basis-0028.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0028.csv",
+            "SHA256": "aa925354738abf012013c43975aadbabfec6288a937906359062b725695ded89",
+            "Terminal": false
+          },
+          {
+            "Index": 29,
+            "Name": "basis-0029.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0029.csv",
+            "SHA256": "1edc75ed7e95d2a67a65db7c0361e3fe94e3956c50c1db2668a4d5d304d45e44",
+            "Terminal": false
+          },
+          {
+            "Index": 30,
+            "Name": "basis-0030.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0030.csv",
+            "SHA256": "c54f4720d9f24384bae197eb820531db7bea5afa3d301c12294a8d6e0e61d042",
+            "Terminal": false
+          },
+          {
+            "Index": 31,
+            "Name": "basis-0031.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0031.csv",
+            "SHA256": "97b009e3131bf48cc2644144d12f9667d8bd2888548b1a1cbc2ff22f14e97f28",
+            "Terminal": false
+          },
+          {
+            "Index": 32,
+            "Name": "basis-0032.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0032.csv",
+            "SHA256": "9451492fc62f947b09d349398418ea68af028a5cba29fd02cd6f0f405191a8fe",
+            "Terminal": false
+          },
+          {
+            "Index": 33,
+            "Name": "basis-0033.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0033.csv",
+            "SHA256": "d2d6ce712f1a7d40b43fb25636f7ed43b151f1cc3014383e2d1e4724dfb8a594",
+            "Terminal": false
+          },
+          {
+            "Index": 34,
+            "Name": "basis-0034.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0034.csv",
+            "SHA256": "588e0292f7d3ffc08f9b7d8de39c9a15a7c2c832369cf7ada9dccecfc0f29b5a",
+            "Terminal": false
+          },
+          {
+            "Index": 35,
+            "Name": "basis-0035.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0035.csv",
+            "SHA256": "0039cd014ffc4c00f703518fce76a2f52b147fc8543e5ea8c29b37ae619c967e",
+            "Terminal": false
+          },
+          {
+            "Index": 36,
+            "Name": "basis-0036.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0036.csv",
+            "SHA256": "93f1312a16a0a409a464bb92d1806d0b5f40abdc0fb310927e7e400d4c96d827",
+            "Terminal": false
+          },
+          {
+            "Index": 37,
+            "Name": "basis-0037.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0037.csv",
+            "SHA256": "b27a3303363a9b7a46be6c0f43f4424b6774e2813cd84724640cfc0885207977",
+            "Terminal": false
+          },
+          {
+            "Index": 38,
+            "Name": "basis-0038.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0038.csv",
+            "SHA256": "da252b4b07856c210e5e468b2b4eebbc6ed9e3cb1c79da2b08240914d1092d71",
+            "Terminal": false
+          },
+          {
+            "Index": 39,
+            "Name": "basis-0039.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0039.csv",
+            "SHA256": "d89dcad77b7472ed8747e5a920349797372d43e3056ef4face0dd17f41df4433",
+            "Terminal": false
+          },
+          {
+            "Index": 40,
+            "Name": "basis-0040.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0040.csv",
+            "SHA256": "0272f4a6b8fc0be33df75f19f51831d169a5f28b9b35b0f8b3f212fdd956e265",
+            "Terminal": false
+          },
+          {
+            "Index": 41,
+            "Name": "basis-0041.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0041.csv",
+            "SHA256": "d21690d371fdb422e389fe7a9f1c54274a383b7eca459129242d4a54e00b93ed",
+            "Terminal": false
+          },
+          {
+            "Index": 42,
+            "Name": "basis-0042.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0042.csv",
+            "SHA256": "45ab456f9017d070629f38fac97597a7acbcc01c2cb299dcfbcaea08170b4f4e",
+            "Terminal": false
+          },
+          {
+            "Index": 43,
+            "Name": "basis-0043.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0043.csv",
+            "SHA256": "a5b0106679b00c9610de928221dc0cc400239cd7ab754100796203ee077cfc69",
+            "Terminal": false
+          },
+          {
+            "Index": 44,
+            "Name": "basis-0044.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0044.csv",
+            "SHA256": "a60e46540a9df190682abc920b564c81b125488799eb06c8f4f8668aa00e3b0d",
+            "Terminal": false
+          },
+          {
+            "Index": 45,
+            "Name": "basis-0045.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0045.csv",
+            "SHA256": "7f6361bf399c0cd5f5abbc4595380eba81ef671640a2b35c17dc6f59b0ca1bc7",
+            "Terminal": false
+          },
+          {
+            "Index": 46,
+            "Name": "basis-0046.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0046.csv",
+            "SHA256": "9301041b2156f113c19f9ba9f888e61376848c91a4a80a44e002321ec7ab03d8",
+            "Terminal": false
+          },
+          {
+            "Index": 47,
+            "Name": "basis-0047.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0047.csv",
+            "SHA256": "b70b3d31ec417d926821cb4239193a26b99f94add2ee5d69b869c8eb72286506",
+            "Terminal": false
+          },
+          {
+            "Index": 48,
+            "Name": "basis-0048.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0048.csv",
+            "SHA256": "ddc929fadf604fbbc4b8920776bc55c868be62ef3e1414018d588aac54c78958",
+            "Terminal": false
+          },
+          {
+            "Index": 49,
+            "Name": "basis-0049.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0049.csv",
+            "SHA256": "b6dad0b64316c3207737d199af1b8e27c9cadfc1c8820c2f983e7a5ae65c6eaa",
+            "Terminal": false
+          },
+          {
+            "Index": 50,
+            "Name": "basis-0050.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0050.csv",
+            "SHA256": "709c645d53929acb97b45abfc6fb2ee91b44da6b1d979a05ad12666f858afb42",
+            "Terminal": false
+          },
+          {
+            "Index": 51,
+            "Name": "basis-0051.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0051.csv",
+            "SHA256": "95e8a4a9202dadba45714184fb7cfabc66a33e78d219a22ca341ff9fc9df1402",
+            "Terminal": false
+          },
+          {
+            "Index": 52,
+            "Name": "basis-0052.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0052.csv",
+            "SHA256": "40eeec9316f6d2a50debbf1fc0e8da7df9606d247d71896b7db2cc6ec0cbe964",
+            "Terminal": false
+          },
+          {
+            "Index": 53,
+            "Name": "basis-0053.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0053.csv",
+            "SHA256": "41065e4099d3cfb4894ee2ef1cf97f337b18155d0dd4cfb5ad360f9c938eab41",
+            "Terminal": false
+          },
+          {
+            "Index": 54,
+            "Name": "basis-0054.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0054.csv",
+            "SHA256": "cda05a97ecbb4588c670c6ab85f5c05901f1271fe3dd369c4f42dc8b8c07280a",
+            "Terminal": false
+          },
+          {
+            "Index": 55,
+            "Name": "basis-0055.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0055.csv",
+            "SHA256": "b47a611b50c97de851e110bc8e28b88f31f724f0e912fbc3a0350823b42f1843",
+            "Terminal": false
+          },
+          {
+            "Index": 56,
+            "Name": "basis-0056.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0056.csv",
+            "SHA256": "7d418175a7aed0eb3de22bcc918c747b5b51570a4d4fb99a4412ca47ca6770ed",
+            "Terminal": false
+          },
+          {
+            "Index": 57,
+            "Name": "basis-0057.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0057.csv",
+            "SHA256": "1afde1e1e0f741c3ef5a7175787a9e0bff4c058c277ac7f950e7c5c75bf5a4c0",
+            "Terminal": false
+          },
+          {
+            "Index": 58,
+            "Name": "basis-0058.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0058.csv",
+            "SHA256": "d066f82743fa18881f6b28d2a264a0eba6381e7929051d84c38050c3b2b0e348",
+            "Terminal": false
+          },
+          {
+            "Index": 59,
+            "Name": "basis-0059.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0059.csv",
+            "SHA256": "df948c3158e0839aa688c8addf64e5e3968eaf57717047c816dfdde6f6ed9695",
+            "Terminal": false
+          },
+          {
+            "Index": 60,
+            "Name": "basis-0060.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0060.csv",
+            "SHA256": "7bc28257121200741680f2ed3c58cab678e83c360151c594ee182a7d085e320f",
+            "Terminal": false
+          },
+          {
+            "Index": 61,
+            "Name": "basis-0061.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0061.csv",
+            "SHA256": "1b7f69cb219c97eb318ad794b2417bab8488b2fda2f0455bb8f0901b45ccde0b",
+            "Terminal": false
+          },
+          {
+            "Index": 62,
+            "Name": "basis-0062.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0062.csv",
+            "SHA256": "8622673cd1c30ca4275021a12b450812bb281cf80e64f295a626c9ddbfd7dc53",
+            "Terminal": false
+          },
+          {
+            "Index": 63,
+            "Name": "basis-0063.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0063.csv",
+            "SHA256": "d604fadaef80ebdfb390dbb5adfb3cd2ebd65e79f8917bff90e9392b438ab9b8",
+            "Terminal": false
+          },
+          {
+            "Index": 64,
+            "Name": "basis-0064.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0064.csv",
+            "SHA256": "923ab3a4c4a2a1c94642ab82b68ef2f7a8599b3b302f29e57e267d34f77c8b70",
+            "Terminal": false
+          },
+          {
+            "Index": 65,
+            "Name": "basis-0065.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0065.csv",
+            "SHA256": "a39a221c26dd1b3759277af492e94653bcdd8969333ce3b37e12fb2add34956c",
+            "Terminal": false
+          },
+          {
+            "Index": 66,
+            "Name": "basis-0066.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0066.csv",
+            "SHA256": "d710e8814a2e67d72e4065c34f7f5e27a8e0e6d003b91b0f36a3dffa37930f6b",
+            "Terminal": false
+          },
+          {
+            "Index": 67,
+            "Name": "basis-0067.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0067.csv",
+            "SHA256": "15ce876907229863377555cc1f9d7c4c51b659f051ab6bb2ae36abadcbd11d8c",
+            "Terminal": false
+          },
+          {
+            "Index": 68,
+            "Name": "basis-0068.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0068.csv",
+            "SHA256": "4fd947150806690180120928d4f9d406ddcc2d7f7d8a0bc58fa991adbf81c28f",
+            "Terminal": false
+          },
+          {
+            "Index": 69,
+            "Name": "basis-0069.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0069.csv",
+            "SHA256": "5ea489f5038b053bffa9a5b4b245a0c10cc48ffc662ebb59438fedba3ff5cee3",
+            "Terminal": false
+          },
+          {
+            "Index": 70,
+            "Name": "basis-0070.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0070.csv",
+            "SHA256": "00bb9eeed4e3ede68111fe2040290fdb0593dbcf829d2a05fdf7e4df661d5554",
+            "Terminal": false
+          },
+          {
+            "Index": 71,
+            "Name": "basis-0071.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0071.csv",
+            "SHA256": "6808ed0c3fd0a725ce4ffb959d84acafc32d175ba6dae4fbe3fee978b6a8f3a1",
+            "Terminal": false
+          },
+          {
+            "Index": 72,
+            "Name": "basis-0072.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0072.csv",
+            "SHA256": "fce14edc726b3ff628d07a4b177eed8f4c51af85758747c2cdf542e9368eb926",
+            "Terminal": false
+          },
+          {
+            "Index": 73,
+            "Name": "basis-0073.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0073.csv",
+            "SHA256": "324d4fe214e9decbd0a1d83395beae073c6b6d7b9a11f4bf2d5a92c842617413",
+            "Terminal": false
+          },
+          {
+            "Index": 74,
+            "Name": "basis-0074.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0074.csv",
+            "SHA256": "5e690fa3e5285eb24302c5c7409f3e9f3e06efcccb835afb9102be452bc684b5",
+            "Terminal": false
+          },
+          {
+            "Index": 75,
+            "Name": "basis-0075.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0075.csv",
+            "SHA256": "02495699bc6bf3b0891b60d5b641029004aa9a7e65cf93c2eea71d072eaf5846",
+            "Terminal": false
+          },
+          {
+            "Index": 76,
+            "Name": "basis-0076.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0076.csv",
+            "SHA256": "6200b4f7fa1ceb997800842d1d678c72af6c93089697216c8a5a171af3720739",
+            "Terminal": false
+          },
+          {
+            "Index": 77,
+            "Name": "basis-0077.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/traces/basis-0077.csv",
+            "SHA256": "4a1a321f9f1abb6a86f783c322be0cd7f006cdefd15e32f3e2f750c5dd5f6d06",
+            "Terminal": false
+          },
+          {
+            "Index": 78,
+            "Name": "conductor-2.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-10/conductor-2.csv",
+            "SHA256": "8b8ff6ece476cc15e4307d3c4ee488030a876970e51cc6b0f3638647073f67b2",
+            "Terminal": true
+          }
+        ],
+        "Results": "/tmp/library-acceptance-01-reference/case-10-fabricated/reducer",
+        "ResultsSHA256": {
+          "domain-response-matrix.csv": "e886602df5d7c7e624f40e8059e5589cab0cf713e40dc832776038428fd49157",
+          "surface-response-matrix.csv": "d8dc3af20b74c9ca39fda04b5197c9de5ec38f36ee0df083585902691fcc80e9"
+        },
+        "PlanViewBoundary": "/tmp/library-acceptance-01-reference/inputs-10/plan-view-boundary.csv",
+        "RetainedEtch": null
+      },
+      "Sources": {
+        "Count": 78,
+        "Indices": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62,
+          63,
+          64,
+          65,
+          66,
+          67,
+          68,
+          69,
+          70,
+          71,
+          72,
+          73,
+          74,
+          75,
+          76,
+          77,
+          78
+        ],
+        "ZeroTrace": [],
+        "Free": 77,
+        "Terminals": [
+          78
+        ],
+        "Classes": {
+          "1": "box 3D corners (bottom/top faces)",
+          "2": "wide hats, bottom/top faces",
+          "3": "wide hats, bottom/top faces",
+          "4": "box 3D corners (bottom/top faces)",
+          "5": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "6": "junction columns on the bottom/top faces",
+          "7": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "8": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "9": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "10": "junction columns on the bottom/top faces",
+          "11": "box 3D corners (bottom/top faces)",
+          "12": "wide hats, bottom/top faces",
+          "13": "wide hats, bottom/top faces",
+          "14": "box 3D corners (bottom/top faces)",
+          "15": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "16": "junction columns on the bottom/top faces",
+          "17": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "18": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "19": "junction columns on the bottom/top faces",
+          "20": "wide hats, substrate/trench rings",
+          "21": "wide hats, substrate/trench rings",
+          "22": "wide hats, substrate/trench rings",
+          "23": "wide hats, substrate/trench rings",
+          "24": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "25": "junction rings (metal edge meets cut)",
+          "26": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "27": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "28": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "29": "junction rings (metal edge meets cut)",
+          "30": "wide hats, substrate/trench rings",
+          "31": "wide hats, substrate/trench rings",
+          "32": "wide hats, substrate/trench rings",
+          "33": "wide hats, substrate/trench rings",
+          "34": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "35": "junction rings (metal edge meets cut)",
+          "36": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "37": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "38": "junction rings (metal edge meets cut)",
+          "39": "wide hats, substrate/trench rings",
+          "40": "wide hats, substrate/trench rings",
+          "41": "wide hats, substrate/trench rings",
+          "42": "wide hats, substrate/trench rings",
+          "43": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "44": "wide hats, substrate/trench rings",
+          "45": "wide hats, substrate/trench rings",
+          "46": "wide hats, substrate/trench rings",
+          "47": "wide hats, substrate/trench rings",
+          "48": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "49": "wide hats, metal-top ring",
+          "50": "wide hats, metal-top ring",
+          "51": "wide hats, metal-top ring",
+          "52": "wide hats, metal-top ring",
+          "53": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "54": "wide hats, metal-top ring",
+          "55": "wide hats, metal-top ring",
+          "56": "wide hats, metal-top ring",
+          "57": "wide hats, metal-top ring",
+          "58": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "59": "box 3D corners (bottom/top faces)",
+          "60": "wide hats, bottom/top faces",
+          "61": "wide hats, bottom/top faces",
+          "62": "box 3D corners (bottom/top faces)",
+          "63": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "64": "junction columns on the bottom/top faces",
+          "65": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "66": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "67": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "68": "junction columns on the bottom/top faces",
+          "69": "box 3D corners (bottom/top faces)",
+          "70": "wide hats, bottom/top faces",
+          "71": "wide hats, bottom/top faces",
+          "72": "box 3D corners (bottom/top faces)",
+          "73": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "74": "junction columns on the bottom/top faces",
+          "75": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "76": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "77": "junction columns on the bottom/top faces",
+          "78": "conductor terminal (TerminalAttributes source)"
+        },
+        "Geometry": {
+          "box": [
+            -5.0,
+            4.0,
+            -2.0,
+            3.0
+          ],
+          "z_levels": [
+            "bottom face z=-2.05",
+            "substrate/trench level z=-0.05",
+            "substrate/trench level z=0",
+            "metal-top level z=0.1",
+            "top face z=2.1"
+          ],
+          "per_z_level": {
+            "bottom face z=-2.05": 19,
+            "substrate/trench level z=-0.05": 19,
+            "substrate/trench level z=0": 10,
+            "metal-top level z=0.1": 10,
+            "top face z=2.1": 19
+          }
+        }
+      },
+      "Controls": {
+        "Indices": [
+          1,
+          2,
+          3,
+          5,
+          6,
+          20,
+          25,
+          49
+        ],
+        "Rule": "8 by class (classify_sources.choose_controls: one per class in priority order, cycling)",
+        "Classes": {
+          "1": "box 3D corners (bottom/top faces)",
+          "2": "wide hats, bottom/top faces",
+          "3": "wide hats, bottom/top faces",
+          "5": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "6": "junction columns on the bottom/top faces",
+          "20": "wide hats, substrate/trench rings",
+          "25": "junction rings (metal edge meets cut)",
+          "49": "wide hats, metal-top ring"
+        }
+      },
+      "StagePrefix": "two-edge-8dd4bc70f183",
+      "Stages": [
+        {
+          "Prefix": "two-edge-8dd4bc70f183-p4",
+          "Kind": "response",
+          "Order": 4,
+          "Sources": 78,
+          "EstimateKey": "p4-78",
+          "Role": "main"
+        },
+        {
+          "Prefix": "two-edge-8dd4bc70f183-p5",
+          "Kind": "response",
+          "Order": 5,
+          "Sources": 78,
+          "EstimateKey": "p5-78",
+          "Role": "main"
+        },
+        {
+          "Prefix": "two-edge-8dd4bc70f183-p5-control",
+          "Kind": "response",
+          "Order": 5,
+          "Sources": 8,
+          "EstimateKey": "p5-control-8",
+          "Role": "control"
+        },
+        {
+          "Prefix": "two-edge-8dd4bc70f183-p3-control",
+          "Kind": "response",
+          "Order": 3,
+          "Sources": 8,
+          "EstimateKey": "p3-control-8",
+          "Role": "control"
+        },
+        {
+          "Prefix": "two-edge-8dd4bc70f183-p4-local-edge",
+          "Kind": "local-edge",
+          "Order": 4,
+          "Sources": 8,
+          "EstimateKey": "local-edge-p4-8",
+          "Role": "local-edge"
+        }
+      ],
+      "Estimate": {
+        "Path": "/tmp/library-acceptance-01/two-edge-8dd4bc70f183/preflight/stage-estimate.json",
+        "FitsOneJob": true,
+        "Decision": "every stage fits ONE job of 6 h: runner total 49 min at the measured PCG counts, 81 min at 2.0x (+35% and preflight: 114 min); largest Palace peak 63 GB of 1485 GiB",
+        "H1ByOrder": {
+          "p1": 134926,
+          "p2": 1019728,
+          "p3": 3388123,
+          "p4": 7973827,
+          "p5": 15510556
+        },
+        "JobSecondsEstimateByPCGFactor": {
+          "1.0": 2934.9463054292005,
+          "1.5": 3893.3491571022946,
+          "2.0": 4851.752008775388
+        },
+        "JobSecondsEstimateWithPreflightAndMargin": {
+          "1.0": 4262.177512329421,
+          "1.5": 5556.021362088098,
+          "2.0": 6849.865211846774
+        },
+        "MaxPalacePeakGBEstimate": 63.173528494856185,
+        "MainStageNodeHoursEstimate": {
+          "1.0": 0.1578388547962227,
+          "1.5": 0.21213579837913152,
+          "2.0": 0.26643274196204036
+        }
+      },
+      "Plan": {
+        "Path": "/tmp/library-acceptance-01/two-edge-8dd4bc70f183/main/plan.json",
+        "Pins": 88,
+        "StageNames": [
+          "two-edge-8dd4bc70f183-p4-worker",
+          "two-edge-8dd4bc70f183-p4-reducer",
+          "two-edge-8dd4bc70f183-p5-worker",
+          "two-edge-8dd4bc70f183-p5-reducer",
+          "two-edge-8dd4bc70f183-p5-control-worker",
+          "two-edge-8dd4bc70f183-p5-control-reducer",
+          "two-edge-8dd4bc70f183-p3-control-worker",
+          "two-edge-8dd4bc70f183-p3-control-reducer",
+          "two-edge-8dd4bc70f183-p4-local-edge"
+        ],
+        "Caps": {
+          "two-edge-8dd4bc70f183-p4-worker": [
+            1800,
+            600
+          ],
+          "two-edge-8dd4bc70f183-p4-reducer": [
+            600,
+            300
+          ],
+          "two-edge-8dd4bc70f183-p5-worker": [
+            5400,
+            1500
+          ],
+          "two-edge-8dd4bc70f183-p5-reducer": [
+            1500,
+            900
+          ],
+          "two-edge-8dd4bc70f183-p5-control-worker": [
+            600,
+            300
+          ],
+          "two-edge-8dd4bc70f183-p5-control-reducer": [
+            300,
+            300
+          ],
+          "two-edge-8dd4bc70f183-p3-control-worker": [
+            300,
+            300
+          ],
+          "two-edge-8dd4bc70f183-p3-control-reducer": [
+            300,
+            300
+          ],
+          "two-edge-8dd4bc70f183-p4-local-edge": [
+            300,
+            300
+          ]
+        },
+        "JobScript": "/tmp/library-acceptance-01/two-edge-8dd4bc70f183/main/job.pbs"
+      },
+      "Configs": {
+        "Directories": {
+          "two-edge-8dd4bc70f183-p4": "/tmp/library-acceptance-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p4",
+          "two-edge-8dd4bc70f183-p5": "/tmp/library-acceptance-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p5",
+          "two-edge-8dd4bc70f183-p5-control": "/tmp/library-acceptance-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p5-control",
+          "two-edge-8dd4bc70f183-p3-control": "/tmp/library-acceptance-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p3-control",
+          "two-edge-8dd4bc70f183-p4-local-edge": "/tmp/library-acceptance-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p4-local-edge"
+        },
+        "SHA256": {
+          "two-edge-8dd4bc70f183-p4": {
+            "worker.json": "c9ceb0f84a411f68b93099cc2ba6149fe0de09d87172d03ec8a7e0a30c690247",
+            "reducer.json": "6e909ebc9bbab55f4f16f2221a5d353c8201562919f6a5b905fd3bf4bdd94d7d"
+          },
+          "two-edge-8dd4bc70f183-p5": {
+            "worker.json": "bfad2c817b6a4eeaa58d85a551bb03d81006d7e2f86ddc4e3048bbda332bfbeb",
+            "reducer.json": "2affdee08277ffcc8ef2b74043bb7c20c7c798e94e537b7f7f5aaaf9e644f46f"
+          },
+          "two-edge-8dd4bc70f183-p5-control": {
+            "worker.json": "7c6ecdcf3e0e9862ffab9f0d4ba744cde580f91df0f052a1bcfcb9fe573f8b3a",
+            "reducer.json": "374b8ca5d68772907afa57c56c088498bd37705bd0f7baefeedf0a3977ea0679"
+          },
+          "two-edge-8dd4bc70f183-p3-control": {
+            "worker.json": "a79eb3a02a3408330527fd271055b56d8f58d3894ba48e44ae52b74424a23aac",
+            "reducer.json": "eca8cbfe6598fb840cf4da5880eab064c6e415ca9243c32710cc1c2599e247a9"
+          },
+          "two-edge-8dd4bc70f183-p4-local-edge": {
+            "config.json": "e5ce63a5c7917dc56c2b9e58c42ca9cba433e8d977668ce6130491a206730103"
+          }
+        },
+        "ReferenceConfig": "/tmp/library-acceptance-01-reference/case-10-fabricated/worker.json",
+        "ReferenceConfigSHA256": "bf301f623963166186f59e8cdfc0c4e359b9da5fab1d9fa3bd154d44f331aa38",
+        "ReferenceConfigRole": "the config the reference ran (case worker.json)",
+        "ReferenceOrder": 5,
+        "LinearTol": 1e-08
+      },
+      "Root": "/tmp/library-acceptance-01/two-edge-8dd4bc70f183",
+      "Remote": {
+        "Root": "/data/home/simlap/coupon_accuracy_assessment_20260913",
+        "Run": "/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01",
+        "Case": "/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/two-edge-8dd4bc70f183",
+        "Mesh": "/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/two-edge-8dd4bc70f183/mesh/identity-5d01204e3396.msh",
+        "Traces": "/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/two-edge-8dd4bc70f183/inputs/traces",
+        "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27.bin",
+        "MPIExec": "/data/home/simlap/coupon_accuracy_assessment_20260913/mpiexec_bound.sh"
+      },
+      "Orders": {
+        "Main": [
+          "p4",
+          "p5"
+        ],
+        "Controls": [
+          "p3",
+          "p5"
+        ],
+        "ReferenceOrder": "p5",
+        "Gated": "p5",
+        "Rule": "main stages at every --orders order plus the reference's own order when it differs (the same-order comparison is the gated one; the first --orders order stays the library order: cost coupon, local-edge stage, p-sequence main)"
+      },
+      "Submission": {
+        "Job": "46023.ip-192-168-54-24.us-west-2.compute.internal",
+        "UTC": "2026-09-20T20:35:31Z",
+        "UserJobsBefore": 1,
+        "JobCap": 40,
+        "Command": "cd /data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/two-edge-8dd4bc70f183/main && /opt/soca/soca-green1/schedulers/default/pbs/bin/qsub /data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/two-edge-8dd4bc70f183/main/job.pbs"
+      },
+      "Upload": {
+        "Resumed": true,
+        "SubmissionRecord": "/tmp/library-acceptance-01/two-edge-8dd4bc70f183/submission.json"
+      },
+      "Monitor": {
+        "Polls": 4,
+        "LastJobState": null,
+        "LastStages": [
+          [
+            "two-edge-8dd4bc70f183-p4-worker",
+            "complete",
+            325
+          ],
+          [
+            "two-edge-8dd4bc70f183-p4-reducer",
+            "complete",
+            99
+          ],
+          [
+            "two-edge-8dd4bc70f183-p5-worker",
+            "complete",
+            1095
+          ],
+          [
+            "two-edge-8dd4bc70f183-p5-reducer",
+            "complete",
+            280
+          ],
+          [
+            "two-edge-8dd4bc70f183-p5-control-worker",
+            "complete",
+            137
+          ],
+          [
+            "two-edge-8dd4bc70f183-p5-control-reducer",
+            "complete",
+            23
+          ],
+          [
+            "two-edge-8dd4bc70f183-p3-control-worker",
+            "complete",
+            25
+          ],
+          [
+            "two-edge-8dd4bc70f183-p3-control-reducer",
+            "complete",
+            12
+          ],
+          [
+            "two-edge-8dd4bc70f183-p4-local-edge",
+            "complete",
+            75
+          ]
+        ],
+        "Resumed": true,
+        "LastPollUTC": "2026-09-20T21:13:21Z"
+      },
+      "SubmittedAt": 1789936531,
+      "Fetch": {
+        "Command": [
+          "rsync",
+          "-a",
+          "--exclude",
+          "archive/",
+          "--exclude",
+          "tmp/",
+          "soca-green-job:/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/two-edge-8dd4bc70f183/main/",
+          "/tmp/library-acceptance-01/two-edge-8dd4bc70f183/results/main/"
+        ],
+        "UTC": "2026-09-20T21:13:23Z",
+        "QStatHistory": "Job Id: 46023.ip-192-168-54-24.us-west-2.compute.internal\n    Job_Name = coupon-qualify-two-edge-8dd4bc70f183\n    Job_Owner = simlap@ip-192-168-148-82.us-west-2.compute.internal\n    resources_used.cpupercent = 66468\n    resources_used.cput = 107:54:05\n    resources_used.mem = 17020kb\n    resources_used.ncpus = 192\n    resources_used.vmem = 113168kb\n    resources_used.walltime = 00:34:32\n    job_state = F\n    queue = normal-g\n    server = ip-192-168-54-24.us-west-2.compute.internal\n    Checkpoint = u\n    ctime = Sun Sep 20 20:35:31 2026\n    Error_Path = ip-192-168-148-82.us-west-2.compute.internal:/data/home/simlap\n\t/coupon_accuracy_assessment_20260913/library-acceptance-01/two-edge-8dd\n\t4bc70f183/main/coupon-qualify-two-edge-8dd4bc70f183.e46023\n    exec_host = 192.168.53.106/0*192\n    exec_vnode = (192.168.53.106:ncpus=192)\n    Hold_Types = n\n    Join_Path = oe\n    Keep_Files = n\n    Mail_Points = a\n    mtime = Sun Sep 20 21:13:00 2026\n    Output_Path = ip-192-168-148-82:/data/home/simlap/coupon_accuracy_assessmen\n\tt_20260913/library-acceptance-01/two-edge-8dd4bc70f183/main/pbs.log\n    Priority = 0\n    qtime = Sun Sep 20 20:35:31 2026\n    Rerunable = False\n    Resource_List.efa_support = True\n    Resource_List.instance_type = r8g.48xlarge\n    Resource_List.mpiprocs = 192\n    Resource_List.ncpus = 192\n    Resource_List.nodect = 1\n    Resource_List.place = scatter:excl\n    Resource_List.select = 1:ncpus=192:mpiprocs=192:compute_node=job46023\n    Resource_List.stack_id = soca-green1-job-46023\n    Resource_List.subnet_id = subnet-0c98d793bbcebb39a\n    Resource_List.walltime = 06:00:00\n    stime = Sun Sep 20 20:38:26 2026\n    obittime = Sun Sep 20 21:13:00 2026\n    session_id = 5077\n    jobdir = /data/home/simlap\n    substate = 92\n    Variable_List = PBS_O_HOME=/data/home/simlap,PBS_O_LANG=C.UTF-8,\n\tPBS_O_LOGNAME=simlap,\n\tPBS_O_PATH=/apps/comsol/comsol61/multiphysics/bin:/usr/local/sbin:/usr\n\t/local/bin:/sbin:/bin:/usr/sbin:/usr/bin:/opt/pbs/bin:/opt/pbs/sbin:/op\n\tt/pbs/bin:/opt/soca/soca-green1,PBS_O_SHELL=/bin/bash,\n\tPBS_O_WORKDIR=/data/home/simlap/coupon_accuracy_assessment_20260913/li\n\tbrary-acceptance-01/two-edge-8dd4bc70f183/main,PBS_O_SYSTEM=Linux,\n\tPBS_O_QUEUE=normal-g,\n\tPBS_O_HOST=ip-192-168-148-82.us-west-2.compute.internal\n    comment = Job run at Sun Sep 20 at 20:38 on (192.168.53.106:ncpus=192) and \n\tfinished\n    etime = Sun Sep 20 20:35:31 2026\n    run_count = 1\n    Stageout_status = 1\n    Exit_status = 0\n    Submit_arguments = /data/home/simlap/coupon_accuracy_assessment_20260913/li\n\tbrary-acceptance-01/two-edge-8dd4bc70f183/main/job.pbs\n    history_timestamp = 1789938780\n    project = DS-EM-FEM\n    Submit_Host = ip-192-168-148-82.us-west-2.compute.internal\n\n"
+      },
+      "ResultDigests": {
+        "main/memory-samples.csv": {
+          "Local": "4e019238a82e98f95a0bf19054309355f38893fdc27a76e79a4e23c8c0af1e68",
+          "Remote": "4e019238a82e98f95a0bf19054309355f38893fdc27a76e79a4e23c8c0af1e68",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p3-control/reducer/domain-response-matrix.csv": {
+          "Local": "14e4b9660b010bb6ae0cbe9b6c955480b054434492eb0b7e3863bcab855e4f7f",
+          "Remote": "14e4b9660b010bb6ae0cbe9b6c955480b054434492eb0b7e3863bcab855e4f7f",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p3-control/reducer/surface-response-matrix.csv": {
+          "Local": "5ef52972d9092b4298c6c8b0aa134b4f6292ce9da32f00da04c6f728d816ac7d",
+          "Remote": "5ef52972d9092b4298c6c8b0aa134b4f6292ce9da32f00da04c6f728d816ac7d",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p4/reducer/domain-response-matrix.csv": {
+          "Local": "755a684c6ce8b9b94b46e16762cbec41b4f4c1daa103691d651af9acaec814fb",
+          "Remote": "755a684c6ce8b9b94b46e16762cbec41b4f4c1daa103691d651af9acaec814fb",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p4/reducer/surface-response-matrix.csv": {
+          "Local": "ed17b455560bdf275342e9b84a90cb9447db25152ed26f553580db1835da91d9",
+          "Remote": "ed17b455560bdf275342e9b84a90cb9447db25152ed26f553580db1835da91d9",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p4-local-edge/output/domain-E.csv": {
+          "Local": "534e5dfa7c4dc6a54ff4199cb0d304e2d9acc41f3bde52cf6ba74374d47eed08",
+          "Remote": "534e5dfa7c4dc6a54ff4199cb0d304e2d9acc41f3bde52cf6ba74374d47eed08",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p4-local-edge/output/domain-response-matrix.csv": {
+          "Local": "d265dce52fad84d672810e4b1ec5a374f647eaf8544018089557c00c87539e72",
+          "Remote": "d265dce52fad84d672810e4b1ec5a374f647eaf8544018089557c00c87539e72",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p4-local-edge/output/error-indicators.csv": {
+          "Local": "a51136575d0e8384052273e0739ff76fd2ba356ef8404c2856f72de7c3c5bc5a",
+          "Remote": "a51136575d0e8384052273e0739ff76fd2ba356ef8404c2856f72de7c3c5bc5a",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p4-local-edge/output/surface-Q-edge-local.csv": {
+          "Local": "705ebba9a767ed1bce6f6d1ed728d24535c7da6e72acb6b6f79d8e77ab034db6",
+          "Remote": "705ebba9a767ed1bce6f6d1ed728d24535c7da6e72acb6b6f79d8e77ab034db6",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p4-local-edge/output/surface-Q-edge.csv": {
+          "Local": "66f52fc52c41c9db2ff9dd01c6f7f14676fc3cf723ef088ff99af1a33f57b15b",
+          "Remote": "66f52fc52c41c9db2ff9dd01c6f7f14676fc3cf723ef088ff99af1a33f57b15b",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p4-local-edge/output/surface-Q.csv": {
+          "Local": "3f8cb1e9c173d15160697d49a2b09524d4bc8a32015900d04a845a718f230f85",
+          "Remote": "3f8cb1e9c173d15160697d49a2b09524d4bc8a32015900d04a845a718f230f85",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p4-local-edge/output/surface-response-matrix.csv": {
+          "Local": "c58d5ba78c45401d980c6f0fe7ccf78c619b54c5acd0e68d42eda766f1b4d3b1",
+          "Remote": "c58d5ba78c45401d980c6f0fe7ccf78c619b54c5acd0e68d42eda766f1b4d3b1",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p5/reducer/domain-response-matrix.csv": {
+          "Local": "17a44a7b476506ffc15c24ea3f4655b5efed466179565c2fbc1790f6b60d960a",
+          "Remote": "17a44a7b476506ffc15c24ea3f4655b5efed466179565c2fbc1790f6b60d960a",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p5/reducer/surface-response-matrix.csv": {
+          "Local": "db70e1f00d892c275b52e5cb6b8e378b5a7d9d4aea1f9bb971b9fca1bfc6a9f3",
+          "Remote": "db70e1f00d892c275b52e5cb6b8e378b5a7d9d4aea1f9bb971b9fca1bfc6a9f3",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p5-control/reducer/domain-response-matrix.csv": {
+          "Local": "f11c31fe6329e512e67da7b5f096081c397734f6266fddd40accc0279904d918",
+          "Remote": "f11c31fe6329e512e67da7b5f096081c397734f6266fddd40accc0279904d918",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p5-control/reducer/surface-response-matrix.csv": {
+          "Local": "7416d3bad8b88faf72321a9b187768c181d98cde86c479130e72f9b7b4e55237",
+          "Remote": "7416d3bad8b88faf72321a9b187768c181d98cde86c479130e72f9b7b4e55237",
+          "OK": true
+        }
+      },
+      "MatrixValidation": {
+        "two-edge-8dd4bc70f183-p4": {
+          "domain": {
+            "Rows": 3081,
+            "BasisSize": 78
+          },
+          "surface": {
+            "Rows": 6162,
+            "BasisSize": 78
+          }
+        },
+        "two-edge-8dd4bc70f183-p5": {
+          "domain": {
+            "Rows": 3081,
+            "BasisSize": 78
+          },
+          "surface": {
+            "Rows": 6162,
+            "BasisSize": 78
+          }
+        },
+        "two-edge-8dd4bc70f183-p5-control": {
+          "domain": {
+            "Rows": 36,
+            "BasisSize": 8
+          },
+          "surface": {
+            "Rows": 72,
+            "BasisSize": 8
+          }
+        },
+        "two-edge-8dd4bc70f183-p3-control": {
+          "domain": {
+            "Rows": 36,
+            "BasisSize": 8
+          },
+          "surface": {
+            "Rows": 72,
+            "BasisSize": 8
+          }
+        }
+      },
+      "ArchiveDeletion": {
+        "Archives": [
+          "/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p4/archive",
+          "/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p5/archive",
+          "/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p5-control/archive",
+          "/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p3-control/archive"
+        ],
+        "SizesBeforeDeletion": "4.8G\t/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p4/archive\n9.2G\t/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p5/archive\n961M\t/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p5-control/archive\n214M\t/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p3-control/archive",
+        "DeletedUTC": "2026-09-20T21:13:55Z",
+        "Remaining": ""
+      },
+      "FetchedAt": 1789938835.599332,
+      "Qualification": {
+        "Verdict": "Failed",
+        "Reason": "failing gates ['p_MA'] (p_SA not applicable)",
+        "GatesPassed": {
+          "E": true,
+          "p_MA": false,
+          "p_MS": true,
+          "p_SA": true,
+          "PSequenceControls": true
+        },
+        "NotApplicable": [
+          "p_SA"
+        ],
+        "ReferenceAnchor": "vs p5 anchor",
+        "GatedStage": "two-edge-8dd4bc70f183-p5",
+        "GatedOrder": "p5",
+        "GatedComparison": "two-edge-8dd4bc70f183-p5-vs-reference",
+        "Path": "/tmp/library-acceptance-01/two-edge-8dd4bc70f183/qualification.json",
+        "ClassStatistics": {
+          "wide hats, bottom/top faces": {
+            "n": 8,
+            "members": [
+              2,
+              3,
+              12,
+              13,
+              60,
+              61,
+              70,
+              71
+            ],
+            "E_rel": {
+              "n": 8,
+              "abs_median": 0.00017040327413235567,
+              "abs_max": 0.0008038287536288228,
+              "signed_median": 0.00017040327413235567,
+              "worst_source": 3,
+              "worst_offset": 0.0008038287536288228,
+              "within_1pct": 8,
+              "within_2pct": 8,
+              "within_5pct": 8
+            },
+            "p_MA_rel": {
+              "n": 8,
+              "abs_median": 0.012509916476300903,
+              "abs_max": 0.020838460245030055,
+              "signed_median": 0.012509916476300903,
+              "worst_source": 13,
+              "worst_offset": 0.020838460245030055,
+              "within_1pct": 2,
+              "within_2pct": 7,
+              "within_5pct": 8
+            },
+            "p_MS_rel": {
+              "n": 8,
+              "abs_median": 0.000891272086308389,
+              "abs_max": 0.0020836909382389397,
+              "signed_median": 0.000891272086308389,
+              "worst_source": 70,
+              "worst_offset": 0.0020836909382389397,
+              "within_1pct": 8,
+              "within_2pct": 8,
+              "within_5pct": 8
+            }
+          },
+          "box 3D corners (bottom/top faces)": {
+            "n": 8,
+            "members": [
+              1,
+              4,
+              11,
+              14,
+              59,
+              62,
+              69,
+              72
+            ],
+            "E_rel": {
+              "n": 8,
+              "abs_median": 0.0001772585264672401,
+              "abs_max": 0.0007933682258633692,
+              "signed_median": 0.0001772585264672401,
+              "worst_source": 4,
+              "worst_offset": 0.0007933682258633692,
+              "within_1pct": 8,
+              "within_2pct": 8,
+              "within_5pct": 8
+            },
+            "p_MA_rel": {
+              "n": 8,
+              "abs_median": 0.015990865091591668,
+              "abs_max": 0.026332653453269066,
+              "signed_median": 0.015990865091591668,
+              "worst_source": 59,
+              "worst_offset": 0.026332653453269066,
+              "within_1pct": 1,
+              "within_2pct": 6,
+              "within_5pct": 8
+            },
+            "p_MS_rel": {
+              "n": 8,
+              "abs_median": 0.0010388339624129753,
+              "abs_max": 0.0026816656608476684,
+              "signed_median": 0.0010388339624129753,
+              "worst_source": 69,
+              "worst_offset": 0.0026816656608476684,
+              "within_1pct": 8,
+              "within_2pct": 8,
+              "within_5pct": 8
+            }
+          },
+          "wide hats, metal-top ring": {
+            "n": 8,
+            "members": [
+              49,
+              50,
+              51,
+              52,
+              54,
+              55,
+              56,
+              57
+            ],
+            "E_rel": {
+              "n": 8,
+              "abs_median": 0.0008490524369711949,
+              "abs_max": 0.0011797347645273325,
+              "signed_median": 0.0008490524369711949,
+              "worst_source": 52,
+              "worst_offset": 0.0011797347645273325,
+              "within_1pct": 8,
+              "within_2pct": 8,
+              "within_5pct": 8
+            },
+            "p_MA_rel": {
+              "n": 8,
+              "abs_median": 0.022835385722602956,
+              "abs_max": 0.024228642407285367,
+              "signed_median": 0.022835385722602956,
+              "worst_source": 57,
+              "worst_offset": 0.024228642407285367,
+              "within_1pct": 2,
+              "within_2pct": 2,
+              "within_5pct": 8
+            },
+            "p_MS_rel": {
+              "n": 8,
+              "abs_median": 0.000573074208894946,
+              "abs_max": 0.0022402548139929582,
+              "signed_median": 0.000573074208894946,
+              "worst_source": 54,
+              "worst_offset": 0.0022402548139929582,
+              "within_1pct": 8,
+              "within_2pct": 8,
+              "within_5pct": 8
+            }
+          },
+          "wide hats, substrate/trench rings": {
+            "n": 16,
+            "members": [
+              20,
+              21,
+              22,
+              23,
+              30,
+              31,
+              32,
+              33,
+              39,
+              40,
+              41,
+              42,
+              44,
+              45,
+              46,
+              47
+            ],
+            "E_rel": {
+              "n": 16,
+              "abs_median": 0.0007228395278323097,
+              "abs_max": 0.002207159026868735,
+              "signed_median": 0.0007228395278323097,
+              "worst_source": 39,
+              "worst_offset": 0.002207159026868735,
+              "within_1pct": 16,
+              "within_2pct": 16,
+              "within_5pct": 16
+            },
+            "p_MA_rel": {
+              "n": 16,
+              "abs_median": 0.01727565830471737,
+              "abs_max": 0.023880807167712563,
+              "signed_median": 0.01727565830471737,
+              "worst_source": 47,
+              "worst_offset": 0.023880807167712563,
+              "within_1pct": 4,
+              "within_2pct": 11,
+              "within_5pct": 16
+            },
+            "p_MS_rel": {
+              "n": 16,
+              "abs_median": 0.001240465453110661,
+              "abs_max": 0.003044921591304157,
+              "signed_median": 0.0010484624491846576,
+              "worst_source": 30,
+              "worst_offset": 0.003044921591304157,
+              "within_1pct": 16,
+              "within_2pct": 16,
+              "within_5pct": 16
+            }
+          },
+          "near-junction hats (0.1 <= w, junction < 0.6 um)": {
+            "n": 25,
+            "members": [
+              5,
+              7,
+              8,
+              9,
+              15,
+              17,
+              18,
+              24,
+              26,
+              27,
+              28,
+              34,
+              36,
+              37,
+              43,
+              48,
+              53,
+              58,
+              63,
+              65,
+              66,
+              67,
+              73,
+              75,
+              76
+            ],
+            "E_rel": {
+              "n": 25,
+              "abs_median": 0.001556494917800578,
+              "abs_max": 0.006778069147503466,
+              "signed_median": 0.001556494917800578,
+              "worst_source": 7,
+              "worst_offset": 0.006778069147503466,
+              "within_1pct": 25,
+              "within_2pct": 25,
+              "within_5pct": 25
+            },
+            "p_MA_rel": {
+              "n": 25,
+              "abs_median": 0.00597953748005279,
+              "abs_max": 0.035046946939987215,
+              "signed_median": 0.00597953748005279,
+              "worst_source": 53,
+              "worst_offset": 0.035046946939987215,
+              "within_1pct": 15,
+              "within_2pct": 22,
+              "within_5pct": 25
+            },
+            "p_MS_rel": {
+              "n": 25,
+              "abs_median": 0.002055996040990693,
+              "abs_max": 0.01382780119039044,
+              "signed_median": 0.00022207530576714608,
+              "worst_source": 27,
+              "worst_offset": 0.01382780119039044,
+              "within_1pct": 24,
+              "within_2pct": 25,
+              "within_5pct": 25
+            }
+          },
+          "junction columns on the bottom/top faces": {
+            "n": 8,
+            "members": [
+              6,
+              10,
+              16,
+              19,
+              64,
+              68,
+              74,
+              77
+            ],
+            "E_rel": {
+              "n": 8,
+              "abs_median": 0.003449193078384822,
+              "abs_max": 0.005443178035996037,
+              "signed_median": 0.003449193078384822,
+              "worst_source": 16,
+              "worst_offset": 0.005443178035996037,
+              "within_1pct": 8,
+              "within_2pct": 8,
+              "within_5pct": 8
+            },
+            "p_MA_rel": {
+              "n": 8,
+              "abs_median": 0.008024465338962236,
+              "abs_max": 0.02441961979830264,
+              "signed_median": 0.008024465338962236,
+              "worst_source": 74,
+              "worst_offset": 0.02441961979830264,
+              "within_1pct": 5,
+              "within_2pct": 7,
+              "within_5pct": 8
+            },
+            "p_MS_rel": {
+              "n": 8,
+              "abs_median": 0.0016203131131720776,
+              "abs_max": 0.004555233136118853,
+              "signed_median": -0.0014582337615129445,
+              "worst_source": 16,
+              "worst_offset": -0.004555233136118853,
+              "within_1pct": 8,
+              "within_2pct": 8,
+              "within_5pct": 8
+            }
+          },
+          "junction rings (metal edge meets cut)": {
+            "n": 4,
+            "members": [
+              25,
+              29,
+              35,
+              38
+            ],
+            "E_rel": {
+              "n": 4,
+              "abs_median": 0.0015834165049732401,
+              "abs_max": 0.001835002989508975,
+              "signed_median": 0.0015834165049732401,
+              "worst_source": 29,
+              "worst_offset": 0.001835002989508975,
+              "within_1pct": 4,
+              "within_2pct": 4,
+              "within_5pct": 4
+            },
+            "p_MA_rel": {
+              "n": 4,
+              "abs_median": 0.003503879495636057,
+              "abs_max": 0.007803532835142805,
+              "signed_median": 0.003503879495636057,
+              "worst_source": 38,
+              "worst_offset": 0.007803532835142805,
+              "within_1pct": 4,
+              "within_2pct": 4,
+              "within_5pct": 4
+            },
+            "p_MS_rel": {
+              "n": 4,
+              "abs_median": 0.0027223194065969254,
+              "abs_max": 0.009909665627003267,
+              "signed_median": 0.0009891516498646675,
+              "worst_source": 35,
+              "worst_offset": -0.009909665627003267,
+              "within_1pct": 4,
+              "within_2pct": 4,
+              "within_5pct": 4
+            }
+          },
+          "conductor terminal (TerminalAttributes source)": {
+            "n": 1,
+            "members": [
+              78
+            ],
+            "E_rel": {
+              "n": 1,
+              "abs_median": 4.473024581526678e-05,
+              "abs_max": 4.473024581526678e-05,
+              "signed_median": 4.473024581526678e-05,
+              "worst_source": 78,
+              "worst_offset": 4.473024581526678e-05,
+              "within_1pct": 1,
+              "within_2pct": 1,
+              "within_5pct": 1
+            },
+            "p_MA_rel": {
+              "n": 1,
+              "abs_median": 0.0076751580053412835,
+              "abs_max": 0.0076751580053412835,
+              "signed_median": 0.0076751580053412835,
+              "worst_source": 78,
+              "worst_offset": 0.0076751580053412835,
+              "within_1pct": 1,
+              "within_2pct": 1,
+              "within_5pct": 1
+            },
+            "p_MS_rel": {
+              "n": 1,
+              "abs_median": 0.001075940806084482,
+              "abs_max": 0.001075940806084482,
+              "signed_median": 0.001075940806084482,
+              "worst_source": 78,
+              "worst_offset": 0.001075940806084482,
+              "within_1pct": 1,
+              "within_2pct": 1,
+              "within_5pct": 1
+            }
+          }
+        },
+        "Offsets": {
+          "p_MA_rel:free": {
+            "n": 78,
+            "signed_median": 0.012485375650538526,
+            "p10": 0.0024138979252317427,
+            "p90": 0.023396934077715207,
+            "min": -0.0005975530376796964,
+            "max": 0.035046946939987215,
+            "abs_median": 0.012485375650538526,
+            "abs_max": 0.035046946939987215,
+            "worst_source": 53,
+            "negative": 2,
+            "within_1pct": 34,
+            "within_2pct": 60,
+            "within_5pct": 78,
+            "within_10pct": 78
+          },
+          "p_MA_rel:raw": {
+            "n": 78,
+            "signed_median": 0.012485375650538526,
+            "p10": 0.0024138979252317427,
+            "p90": 0.023396934077715207,
+            "min": -0.0005975530376796964,
+            "max": 0.035046946939987215,
+            "abs_median": 0.012485375650538526,
+            "abs_max": 0.035046946939987215,
+            "worst_source": 53,
+            "negative": 2,
+            "within_1pct": 34,
+            "within_2pct": 60,
+            "within_5pct": 78,
+            "within_10pct": 78
+          },
+          "p_MA_rel:strongest20": {
+            "n": 20,
+            "signed_median": 0.009785227304212324,
+            "p10": 0.002111154499918874,
+            "p90": 0.020203025170149946,
+            "min": -0.0005975530376796964,
+            "max": 0.035046946939987215,
+            "abs_median": 0.009785227304212324,
+            "abs_max": 0.035046946939987215,
+            "worst_source": 53,
+            "negative": 1,
+            "within_1pct": 10,
+            "within_2pct": 18,
+            "within_5pct": 20,
+            "within_10pct": 20
+          },
+          "p_MS_rel:free": {
+            "n": 78,
+            "signed_median": 0.0006661865681051089,
+            "p10": -0.003075679968772122,
+            "p90": 0.0022078088328375094,
+            "min": -0.009909665627003267,
+            "max": 0.01382780119039044,
+            "abs_median": 0.0011541956419743467,
+            "abs_max": 0.01382780119039044,
+            "worst_source": 27,
+            "negative": 23,
+            "within_1pct": 77,
+            "within_2pct": 78,
+            "within_5pct": 78,
+            "within_10pct": 78
+          },
+          "p_MS_rel:raw": {
+            "n": 78,
+            "signed_median": 0.0006661865681051089,
+            "p10": -0.003075679968772122,
+            "p90": 0.0022078088328375094,
+            "min": -0.009909665627003267,
+            "max": 0.01382780119039044,
+            "abs_median": 0.0011541956419743467,
+            "abs_max": 0.01382780119039044,
+            "worst_source": 27,
+            "negative": 23,
+            "within_1pct": 77,
+            "within_2pct": 78,
+            "within_5pct": 78,
+            "within_10pct": 78
+          },
+          "p_MS_rel:strongest20": {
+            "n": 20,
+            "signed_median": 0.0008655833853295342,
+            "p10": -0.00023868163404266811,
+            "p90": 0.002613957304635625,
+            "min": -0.009909665627003267,
+            "max": 0.0034432928490415017,
+            "abs_median": 0.00126344310272171,
+            "abs_max": 0.009909665627003267,
+            "worst_source": 35,
+            "negative": 3,
+            "within_1pct": 20,
+            "within_2pct": 20,
+            "within_5pct": 20,
+            "within_10pct": 20
+          },
+          "p_SA_rel:free": {
+            "n": 0
+          },
+          "p_SA_rel:raw": {
+            "n": 0
+          },
+          "p_SA_rel:strongest20": {
+            "n": 0
+          },
+          "E_rel:free": {
+            "n": 78,
+            "signed_median": 0.000927723714235584,
+            "p10": 0.00011378248353264032,
+            "p90": 0.004534445134724847,
+            "min": -2.0838949529070293e-05,
+            "max": 0.006778069147503466,
+            "abs_median": 0.000927723714235584,
+            "abs_max": 0.006778069147503466,
+            "worst_source": 7,
+            "negative": 1,
+            "within_1pct": 78,
+            "within_2pct": 78,
+            "within_5pct": 78,
+            "within_10pct": 78
+          },
+          "E_rel:raw": {
+            "n": 78,
+            "signed_median": 0.000927723714235584,
+            "p10": 0.00011378248353264032,
+            "p90": 0.004534445134724847,
+            "min": -2.0838949529070293e-05,
+            "max": 0.006778069147503466,
+            "abs_median": 0.000927723714235584,
+            "abs_max": 0.006778069147503466,
+            "worst_source": 7,
+            "negative": 1,
+            "within_1pct": 78,
+            "within_2pct": 78,
+            "within_5pct": 78,
+            "within_10pct": 78
+          },
+          "E_rel:strongest20": {
+            "n": 20,
+            "signed_median": 0.0009172857454885781,
+            "p10": 7.82887116169058e-05,
+            "p90": 0.0018960409307033916,
+            "min": 4.473024581526678e-05,
+            "max": 0.004043375759886915,
+            "abs_median": 0.0009172857454885781,
+            "abs_max": 0.004043375759886915,
+            "worst_source": 76,
+            "negative": 0,
+            "within_1pct": 20,
+            "within_2pct": 20,
+            "within_5pct": 20,
+            "within_10pct": 20
+          }
+        },
+        "WeightedPMA": {
+          "free": {
+            "n": 78,
+            "weighted_mean": 0.011164130767670402,
+            "weighted_median": 0.0076751580053412835,
+            "weight_total": 0.00018045487147044524,
+            "unweighted_median": 0.012485375650538526,
+            "p10": 0.0024138979252317427,
+            "p90": 0.023396934077715207,
+            "within_1pct": 34,
+            "within_2pct": 60
+          },
+          "strongest20": {
+            "n": 20,
+            "weighted_mean": 0.010867294076969264,
+            "weighted_median": 0.0076751580053412835,
+            "weight_total": 0.00015364281022444367,
+            "unweighted_median": 0.009785227304212324,
+            "p10": 0.002111154499918874,
+            "p90": 0.020203025170149946,
+            "within_1pct": 10,
+            "within_2pct": 18
+          }
+        },
+        "Informational": {
+          "two-edge-8dd4bc70f183-p4-vs-reference": {
+            "ClassStatistics": {
+              "wide hats, bottom/top faces": {
+                "n": 8,
+                "members": [
+                  2,
+                  3,
+                  12,
+                  13,
+                  60,
+                  61,
+                  70,
+                  71
+                ],
+                "E_rel": {
+                  "n": 8,
+                  "abs_median": 0.00021667946321780456,
+                  "abs_max": 0.0013434310007411797,
+                  "signed_median": 0.00021667946321780456,
+                  "worst_source": 3,
+                  "worst_offset": 0.0013434310007411797,
+                  "within_1pct": 8,
+                  "within_2pct": 8,
+                  "within_5pct": 8
+                },
+                "p_MA_rel": {
+                  "n": 8,
+                  "abs_median": 0.007615841501034787,
+                  "abs_max": 0.010912213823630362,
+                  "signed_median": -0.00029657848647146536,
+                  "worst_source": 12,
+                  "worst_offset": -0.010912213823630362,
+                  "within_1pct": 6,
+                  "within_2pct": 8,
+                  "within_5pct": 8
+                },
+                "p_MS_rel": {
+                  "n": 8,
+                  "abs_median": 0.0013571027300172062,
+                  "abs_max": 0.0026809011503507994,
+                  "signed_median": -0.0013571027300172062,
+                  "worst_source": 61,
+                  "worst_offset": -0.0026809011503507994,
+                  "within_1pct": 8,
+                  "within_2pct": 8,
+                  "within_5pct": 8
+                }
+              },
+              "box 3D corners (bottom/top faces)": {
+                "n": 8,
+                "members": [
+                  1,
+                  4,
+                  11,
+                  14,
+                  59,
+                  62,
+                  69,
+                  72
+                ],
+                "E_rel": {
+                  "n": 8,
+                  "abs_median": 0.00022822271623758122,
+                  "abs_max": 0.001147707244988986,
+                  "signed_median": 0.00022822271623758122,
+                  "worst_source": 4,
+                  "worst_offset": 0.001147707244988986,
+                  "within_1pct": 8,
+                  "within_2pct": 8,
+                  "within_5pct": 8
+                },
+                "p_MA_rel": {
+                  "n": 8,
+                  "abs_median": 0.008256399510053148,
+                  "abs_max": 0.017740228878726443,
+                  "signed_median": 0.008256399510053148,
+                  "worst_source": 59,
+                  "worst_offset": 0.017740228878726443,
+                  "within_1pct": 5,
+                  "within_2pct": 8,
+                  "within_5pct": 8
+                },
+                "p_MS_rel": {
+                  "n": 8,
+                  "abs_median": 0.001430181994021322,
+                  "abs_max": 0.002414771991304722,
+                  "signed_median": -0.001430181994021322,
+                  "worst_source": 62,
+                  "worst_offset": -0.002414771991304722,
+                  "within_1pct": 8,
+                  "within_2pct": 8,
+                  "within_5pct": 8
+                }
+              },
+              "wide hats, metal-top ring": {
+                "n": 8,
+                "members": [
+                  49,
+                  50,
+                  51,
+                  52,
+                  54,
+                  55,
+                  56,
+                  57
+                ],
+                "E_rel": {
+                  "n": 8,
+                  "abs_median": 0.0013045928791722305,
+                  "abs_max": 0.001953210097409349,
+                  "signed_median": 0.0013045928791722305,
+                  "worst_source": 49,
+                  "worst_offset": 0.001953210097409349,
+                  "within_1pct": 8,
+                  "within_2pct": 8,
+                  "within_5pct": 8
+                },
+                "p_MA_rel": {
+                  "n": 8,
+                  "abs_median": 0.011311523745116129,
+                  "abs_max": 0.015198923925817804,
+                  "signed_median": 0.011311523745116129,
+                  "worst_source": 57,
+                  "worst_offset": 0.015198923925817804,
+                  "within_1pct": 4,
+                  "within_2pct": 8,
+                  "within_5pct": 8
+                },
+                "p_MS_rel": {
+                  "n": 8,
+                  "abs_median": 0.0025868667006559865,
+                  "abs_max": 0.004219024411645849,
+                  "signed_median": -0.0025868667006559865,
+                  "worst_source": 54,
+                  "worst_offset": -0.004219024411645849,
+                  "within_1pct": 8,
+                  "within_2pct": 8,
+                  "within_5pct": 8
+                }
+              },
+              "wide hats, substrate/trench rings": {
+                "n": 16,
+                "members": [
+                  20,
+                  21,
+                  22,
+                  23,
+                  30,
+                  31,
+                  32,
+                  33,
+                  39,
+                  40,
+                  41,
+                  42,
+                  44,
+                  45,
+                  46,
+                  47
+                ],
+                "E_rel": {
+                  "n": 16,
+                  "abs_median": 0.0014878636273897043,
+                  "abs_max": 0.004110830137041525,
+                  "signed_median": 0.0014878636273897043,
+                  "worst_source": 39,
+                  "worst_offset": 0.004110830137041525,
+                  "within_1pct": 16,
+                  "within_2pct": 16,
+                  "within_5pct": 16
+                },
+                "p_MA_rel": {
+                  "n": 16,
+                  "abs_median": 0.006749190769206865,
+                  "abs_max": 0.013731211491709364,
+                  "signed_median": 0.0006046965872606351,
+                  "worst_source": 42,
+                  "worst_offset": 0.013731211491709364,
+                  "within_1pct": 12,
+                  "within_2pct": 16,
+                  "within_5pct": 16
+                },
+                "p_MS_rel": {
+                  "n": 16,
+                  "abs_median": 0.0035687841793139528,
+                  "abs_max": 0.007702315238625202,
+                  "signed_median": -0.0035687841793139528,
+                  "worst_source": 44,
+                  "worst_offset": -0.007702315238625202,
+                  "within_1pct": 16,
+                  "within_2pct": 16,
+                  "within_5pct": 16
+                }
+              },
+              "near-junction hats (0.1 <= w, junction < 0.6 um)": {
+                "n": 25,
+                "members": [
+                  5,
+                  7,
+                  8,
+                  9,
+                  15,
+                  17,
+                  18,
+                  24,
+                  26,
+                  27,
+                  28,
+                  34,
+                  36,
+                  37,
+                  43,
+                  48,
+                  53,
+                  58,
+                  63,
+                  65,
+                  66,
+                  67,
+                  73,
+                  75,
+                  76
+                ],
+                "E_rel": {
+                  "n": 25,
+                  "abs_median": 0.0036188992284163866,
+                  "abs_max": 0.01055792962496276,
+                  "signed_median": 0.0036188992284163866,
+                  "worst_source": 67,
+                  "worst_offset": 0.01055792962496276,
+                  "within_1pct": 23,
+                  "within_2pct": 25,
+                  "within_5pct": 25
+                },
+                "p_MA_rel": {
+                  "n": 25,
+                  "abs_median": 0.005926607409579987,
+                  "abs_max": 0.026685424212301988,
+                  "signed_median": 0.0007089218352109922,
+                  "worst_source": 53,
+                  "worst_offset": 0.026685424212301988,
+                  "within_1pct": 17,
+                  "within_2pct": 23,
+                  "within_5pct": 25
+                },
+                "p_MS_rel": {
+                  "n": 25,
+                  "abs_median": 0.00400618428156557,
+                  "abs_max": 0.012554031537576163,
+                  "signed_median": -0.0031965542165523116,
+                  "worst_source": 7,
+                  "worst_offset": -0.012554031537576163,
+                  "within_1pct": 21,
+                  "within_2pct": 25,
+                  "within_5pct": 25
+                }
+              },
+              "junction columns on the bottom/top faces": {
+                "n": 8,
+                "members": [
+                  6,
+                  10,
+                  16,
+                  19,
+                  64,
+                  68,
+                  74,
+                  77
+                ],
+                "E_rel": {
+                  "n": 8,
+                  "abs_median": 0.005383921686087566,
+                  "abs_max": 0.007765205723770357,
+                  "signed_median": 0.005383921686087566,
+                  "worst_source": 6,
+                  "worst_offset": 0.007765205723770357,
+                  "within_1pct": 8,
+                  "within_2pct": 8,
+                  "within_5pct": 8
+                },
+                "p_MA_rel": {
+                  "n": 8,
+                  "abs_median": 0.005108192459778085,
+                  "abs_max": 0.010983859663394905,
+                  "signed_median": 0.0006059828561132451,
+                  "worst_source": 6,
+                  "worst_offset": -0.010983859663394905,
+                  "within_1pct": 7,
+                  "within_2pct": 8,
+                  "within_5pct": 8
+                },
+                "p_MS_rel": {
+                  "n": 8,
+                  "abs_median": 0.006673043187700475,
+                  "abs_max": 0.008847827667984202,
+                  "signed_median": -0.006673043187700475,
+                  "worst_source": 74,
+                  "worst_offset": -0.008847827667984202,
+                  "within_1pct": 8,
+                  "within_2pct": 8,
+                  "within_5pct": 8
+                }
+              },
+              "junction rings (metal edge meets cut)": {
+                "n": 4,
+                "members": [
+                  25,
+                  29,
+                  35,
+                  38
+                ],
+                "E_rel": {
+                  "n": 4,
+                  "abs_median": 0.0034655598941357004,
+                  "abs_max": 0.004032452855658479,
+                  "signed_median": 0.0034655598941357004,
+                  "worst_source": 25,
+                  "worst_offset": 0.004032452855658479,
+                  "within_1pct": 4,
+                  "within_2pct": 4,
+                  "within_5pct": 4
+                },
+                "p_MA_rel": {
+                  "n": 4,
+                  "abs_median": 0.001474547984126587,
+                  "abs_max": 0.0020948042325054116,
+                  "signed_median": -0.0005552507869890458,
+                  "worst_source": 38,
+                  "worst_offset": 0.0020948042325054116,
+                  "within_1pct": 4,
+                  "within_2pct": 4,
+                  "within_5pct": 4
+                },
+                "p_MS_rel": {
+                  "n": 4,
+                  "abs_median": 0.005325952427736838,
+                  "abs_max": 0.02613312610290459,
+                  "signed_median": -0.0018588042464940304,
+                  "worst_source": 35,
+                  "worst_offset": 0.02613312610290459,
+                  "within_1pct": 3,
+                  "within_2pct": 3,
+                  "within_5pct": 4
+                }
+              },
+              "conductor terminal (TerminalAttributes source)": {
+                "n": 1,
+                "members": [
+                  78
+                ],
+                "E_rel": {
+                  "n": 1,
+                  "abs_median": 0.00013524608281571422,
+                  "abs_max": 0.00013524608281571422,
+                  "signed_median": 0.00013524608281571422,
+                  "worst_source": 78,
+                  "worst_offset": 0.00013524608281571422,
+                  "within_1pct": 1,
+                  "within_2pct": 1,
+                  "within_5pct": 1
+                },
+                "p_MA_rel": {
+                  "n": 1,
+                  "abs_median": 0.0017630149421980746,
+                  "abs_max": 0.0017630149421980746,
+                  "signed_median": -0.0017630149421980746,
+                  "worst_source": 78,
+                  "worst_offset": -0.0017630149421980746,
+                  "within_1pct": 1,
+                  "within_2pct": 1,
+                  "within_5pct": 1
+                },
+                "p_MS_rel": {
+                  "n": 1,
+                  "abs_median": 0.0009674902975870119,
+                  "abs_max": 0.0009674902975870119,
+                  "signed_median": -0.0009674902975870119,
+                  "worst_source": 78,
+                  "worst_offset": -0.0009674902975870119,
+                  "within_1pct": 1,
+                  "within_2pct": 1,
+                  "within_5pct": 1
+                }
+              }
+            },
+            "Offsets": {
+              "p_MA_rel:free": {
+                "n": 78,
+                "signed_median": 0.001004123808640943,
+                "p10": -0.007468300515102479,
+                "p90": 0.013801752652124856,
+                "min": -0.013239021100403639,
+                "max": 0.026685424212301988,
+                "abs_median": 0.0066424738772755745,
+                "abs_max": 0.026685424212301988,
+                "worst_source": 53,
+                "negative": 34,
+                "within_1pct": 56,
+                "within_2pct": 76,
+                "within_5pct": 78,
+                "within_10pct": 78
+              },
+              "p_MA_rel:raw": {
+                "n": 78,
+                "signed_median": 0.001004123808640943,
+                "p10": -0.007468300515102479,
+                "p90": 0.013801752652124856,
+                "min": -0.013239021100403639,
+                "max": 0.026685424212301988,
+                "abs_median": 0.0066424738772755745,
+                "abs_max": 0.026685424212301988,
+                "worst_source": 53,
+                "negative": 34,
+                "within_1pct": 56,
+                "within_2pct": 76,
+                "within_5pct": 78,
+                "within_10pct": 78
+              },
+              "p_MA_rel:strongest20": {
+                "n": 20,
+                "signed_median": 0.0014847034786178643,
+                "p10": -0.002856482009961481,
+                "p90": 0.012015628137397486,
+                "min": -0.0077471194663506745,
+                "max": 0.026685424212301988,
+                "abs_median": 0.0029813219154321935,
+                "abs_max": 0.026685424212301988,
+                "worst_source": 53,
+                "negative": 9,
+                "within_1pct": 16,
+                "within_2pct": 18,
+                "within_5pct": 20,
+                "within_10pct": 20
+              },
+              "p_MS_rel:free": {
+                "n": 78,
+                "signed_median": -0.002550769727552968,
+                "p10": -0.007904063680948604,
+                "p90": -0.0008720278468790494,
+                "min": -0.012554031537576163,
+                "max": 0.02613312610290459,
+                "abs_median": 0.002632159446606595,
+                "abs_max": 0.02613312610290459,
+                "worst_source": 35,
+                "negative": 73,
+                "within_1pct": 73,
+                "within_2pct": 77,
+                "within_5pct": 78,
+                "within_10pct": 78
+              },
+              "p_MS_rel:raw": {
+                "n": 78,
+                "signed_median": -0.002550769727552968,
+                "p10": -0.007904063680948604,
+                "p90": -0.0008720278468790494,
+                "min": -0.012554031537576163,
+                "max": 0.02613312610290459,
+                "abs_median": 0.002632159446606595,
+                "abs_max": 0.02613312610290459,
+                "worst_source": 35,
+                "negative": 73,
+                "within_1pct": 73,
+                "within_2pct": 77,
+                "within_5pct": 78,
+                "within_10pct": 78
+              },
+              "p_MS_rel:strongest20": {
+                "n": 20,
+                "signed_median": -0.0023322097725536383,
+                "p10": -0.006664389318511417,
+                "p90": -0.0005339825757404161,
+                "min": -0.007646223470137229,
+                "max": 0.02613312610290459,
+                "abs_median": 0.0025508484057184346,
+                "abs_max": 0.02613312610290459,
+                "worst_source": 35,
+                "negative": 19,
+                "within_1pct": 19,
+                "within_2pct": 19,
+                "within_5pct": 20,
+                "within_10pct": 20
+              },
+              "p_SA_rel:free": {
+                "n": 0
+              },
+              "p_SA_rel:raw": {
+                "n": 0
+              },
+              "p_SA_rel:strongest20": {
+                "n": 0
+              },
+              "E_rel:free": {
+                "n": 78,
+                "signed_median": 0.0015403574378639044,
+                "p10": 0.0002057486749031234,
+                "p90": 0.0070704290871654125,
+                "min": 8.953104582001906e-05,
+                "max": 0.01055792962496276,
+                "abs_median": 0.0015403574378639044,
+                "abs_max": 0.01055792962496276,
+                "worst_source": 67,
+                "negative": 0,
+                "within_1pct": 76,
+                "within_2pct": 78,
+                "within_5pct": 78,
+                "within_10pct": 78
+              },
+              "E_rel:raw": {
+                "n": 78,
+                "signed_median": 0.0015403574378639044,
+                "p10": 0.0002057486749031234,
+                "p90": 0.0070704290871654125,
+                "min": 8.953104582001906e-05,
+                "max": 0.01055792962496276,
+                "abs_median": 0.0015403574378639044,
+                "abs_max": 0.01055792962496276,
+                "worst_source": 67,
+                "negative": 0,
+                "within_1pct": 76,
+                "within_2pct": 78,
+                "within_5pct": 78,
+                "within_10pct": 78
+              },
+              "E_rel:strongest20": {
+                "n": 20,
+                "signed_median": 0.0015403574378639044,
+                "p10": 0.0001988332296167587,
+                "p90": 0.004180168939509569,
+                "min": 8.953104582001906e-05,
+                "max": 0.008156401770595413,
+                "abs_median": 0.0015403574378639044,
+                "abs_max": 0.008156401770595413,
+                "worst_source": 76,
+                "negative": 0,
+                "within_1pct": 20,
+                "within_2pct": 20,
+                "within_5pct": 20,
+                "within_10pct": 20
+              }
+            },
+            "WeightedPMA": {
+              "free": {
+                "n": 78,
+                "weighted_mean": 0.0028670783957111187,
+                "weighted_median": -0.0017630149421980746,
+                "weight_total": 0.00018045487147044524,
+                "unweighted_median": 0.001004123808640943,
+                "p10": -0.007468300515102479,
+                "p90": 0.013801752652124856,
+                "within_1pct": 56,
+                "within_2pct": 76
+              },
+              "strongest20": {
+                "n": 20,
+                "weighted_mean": 0.002770329205405644,
+                "weighted_median": -0.0017630149421980746,
+                "weight_total": 0.00015364281022444367,
+                "unweighted_median": 0.0014847034786178643,
+                "p10": -0.002856482009961481,
+                "p90": 0.012015628137397486,
+                "within_1pct": 16,
+                "within_2pct": 18
+              }
+            }
+          }
+        }
+      },
+      "Cost": {
+        "MainStage": {
+          "H1": 7973827,
+          "Order": 4,
+          "MeanPCGIterations": 11.897435897435898,
+          "MaxPCGIterations": 29,
+          "SecondsPerPCGIteration": 0.3179210798599138,
+          "WorkerWallSeconds": 324.606986554,
+          "ReducerWallSeconds": 99.37740495199995,
+          "StageWallSeconds": 423.98439150599995,
+          "NodeHours": 0.11777344208499999
+        },
+        "MainStages": {
+          "two-edge-8dd4bc70f183-p4": {
+            "H1": 7973827,
+            "Order": 4,
+            "MeanPCGIterations": 11.897435897435898,
+            "MaxPCGIterations": 29,
+            "SecondsPerPCGIteration": 0.3179210798599138,
+            "WorkerWallSeconds": 324.606986554,
+            "ReducerWallSeconds": 99.37740495199995,
+            "StageWallSeconds": 423.98439150599995,
+            "NodeHours": 0.11777344208499999
+          },
+          "two-edge-8dd4bc70f183-p5": {
+            "H1": 15510556,
+            "Order": 5,
+            "MeanPCGIterations": 10.820512820512821,
+            "MaxPCGIterations": 33,
+            "SecondsPerPCGIteration": 1.260136688913507,
+            "WorkerWallSeconds": 1094.516711201,
+            "ReducerWallSeconds": 279.885864543,
+            "StageWallSeconds": 1374.402575744,
+            "NodeHours": 0.3817784932622222
+          }
+        },
+        "JobNodeHours": 0.5753277913216667,
+        "JobTotalSeconds": 2071.180048758,
+        "ReferenceNodeHours": 3.6802267974363883,
+        "MainStageOverReference": 0.03200168048530049,
+        "Path": "/tmp/library-acceptance-01/two-edge-8dd4bc70f183/cost-summary.json"
+      }
+    },
+    {
+      "Case": "four-edge-9d2cb9bbb3fe",
+      "Status": "qualified",
+      "StoppedBy": null,
+      "BuildStatus": "built",
+      "BuildPassed": true,
+      "Mesh": {
+        "Local": "/private/tmp/coupon-library-build-96ec539c4-20260920-125056/four-edge-9d2cb9bbb3fe/identity.msh",
+        "SHA256": "1d536c448885cda2d8af7441c63a9b7b591c18b0b127366c1958ba65030a9ba5",
+        "Verified": true
+      },
+      "Reference": {
+        "Key": "07",
+        "Inputs": "/tmp/library-acceptance-01-reference/inputs-07",
+        "Config": "/tmp/library-acceptance-01-reference/case-07-fabricated/worker.json",
+        "ConfigRole": "the config the reference ran (case worker.json)",
+        "ConfigSHA256": "b758b017c0e4d577be1b4a4d626a7a47c107d326b3daa5494d80919cf88fae70",
+        "ReferenceOrder": 4,
+        "LinearTol": 1e-10,
+        "Interfaces": [
+          "MA",
+          "MS",
+          "SA"
+        ],
+        "ZeroTraceIndices": [
+          36,
+          37,
+          38,
+          39,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          52,
+          53,
+          54,
+          55,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62
+        ],
+        "Sources": [
+          {
+            "Index": 1,
+            "Name": "basis-0001.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0001.csv",
+            "SHA256": "f39d066f578040d0da9807567238421320f780b112428628d17804d2e231c3ab",
+            "Terminal": false
+          },
+          {
+            "Index": 2,
+            "Name": "basis-0002.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0002.csv",
+            "SHA256": "48cbca7ffe4b13754f586453f59de079f24c2dd3b33599cd8c7a7e6a231fb6a7",
+            "Terminal": false
+          },
+          {
+            "Index": 3,
+            "Name": "basis-0003.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0003.csv",
+            "SHA256": "536200131a1f5be6755ffc1c07b0cf5419c6b3c957718fdfc9b508fcc205d7ec",
+            "Terminal": false
+          },
+          {
+            "Index": 4,
+            "Name": "basis-0004.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0004.csv",
+            "SHA256": "1d837b23c7ff4d653f05f11840a1d580a8f21394dd5c55b08f9124e7cad43c44",
+            "Terminal": false
+          },
+          {
+            "Index": 5,
+            "Name": "basis-0005.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0005.csv",
+            "SHA256": "fdd4540fb1ebfecebd1c36757ef392e670c71a9b6c5e3b0f5d4387442ddaad68",
+            "Terminal": false
+          },
+          {
+            "Index": 6,
+            "Name": "basis-0006.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0006.csv",
+            "SHA256": "dbe9d6b9c0ea2070e9e608bf800d278bea3367f588d9c3d92c66274aa5cf2ab1",
+            "Terminal": false
+          },
+          {
+            "Index": 7,
+            "Name": "basis-0007.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0007.csv",
+            "SHA256": "e7bbc8a3c05d5b63725f9e94b6dc0cee1022adca5baced1c884acf965813062e",
+            "Terminal": false
+          },
+          {
+            "Index": 8,
+            "Name": "basis-0008.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0008.csv",
+            "SHA256": "4621fd3c79cd7f63c07bdee101034570dbfe2f54ef063c5f7f244fb31d459b8b",
+            "Terminal": false
+          },
+          {
+            "Index": 9,
+            "Name": "basis-0009.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0009.csv",
+            "SHA256": "190e87bf0ee181788328a74d8ce278bd285b365b2fc954b8d865815521b688f7",
+            "Terminal": false
+          },
+          {
+            "Index": 10,
+            "Name": "basis-0010.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0010.csv",
+            "SHA256": "4bceda58677ac036c8304bd9baf86902d33fa3b948bbf367fadd5fd1a6e6eb3b",
+            "Terminal": false
+          },
+          {
+            "Index": 11,
+            "Name": "basis-0011.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0011.csv",
+            "SHA256": "515206460730cf58fa0df1dccad76e24cdf73b9ac47e05dad4eefc97ea9dde70",
+            "Terminal": false
+          },
+          {
+            "Index": 12,
+            "Name": "basis-0012.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0012.csv",
+            "SHA256": "c85c247f75b9ac9d75bf6523572b669a3f96b1b4930ee2b8194e35d450b9c2a6",
+            "Terminal": false
+          },
+          {
+            "Index": 13,
+            "Name": "basis-0013.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0013.csv",
+            "SHA256": "2b870bf226d2eb29db58844cada360340f7da9af83c44853d5ef1cfc30bd0372",
+            "Terminal": false
+          },
+          {
+            "Index": 14,
+            "Name": "basis-0014.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0014.csv",
+            "SHA256": "89d7fc8862a25fc0140e01052a06d2eb65a997c52d47eed54cfe0125f4ce816d",
+            "Terminal": false
+          },
+          {
+            "Index": 15,
+            "Name": "basis-0015.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0015.csv",
+            "SHA256": "6d0ca88993e701be5ce9c47befd0575a55c91186ccc6c2f9a9ce2e5814b6349a",
+            "Terminal": false
+          },
+          {
+            "Index": 16,
+            "Name": "basis-0016.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0016.csv",
+            "SHA256": "417c405620013c68f2597cd0e4f95a0b6e9a2e7473aba96430ce7a09af6d8adb",
+            "Terminal": false
+          },
+          {
+            "Index": 17,
+            "Name": "basis-0017.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0017.csv",
+            "SHA256": "504cd7e2d87fbe8321c695b2bbc86b30cc981c0692d1d8b7614b26268ecce865",
+            "Terminal": false
+          },
+          {
+            "Index": 18,
+            "Name": "basis-0018.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0018.csv",
+            "SHA256": "300e54b72c5ed2894e4c85afac05d6f5ef1add597ed24cd8d2bc7967aa5d9ac7",
+            "Terminal": false
+          },
+          {
+            "Index": 19,
+            "Name": "basis-0019.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0019.csv",
+            "SHA256": "ed4e7657823cd128b43623de34419bfbeb1173326810d27132ecb25b81e49012",
+            "Terminal": false
+          },
+          {
+            "Index": 20,
+            "Name": "basis-0020.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0020.csv",
+            "SHA256": "319bd2d7b2c2373a92ca05c2776fbdf7656352b4f2408f92cbdfd1ce900623aa",
+            "Terminal": false
+          },
+          {
+            "Index": 21,
+            "Name": "basis-0021.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0021.csv",
+            "SHA256": "6bac9f770b4d1f8658016908a5e164fc5d012d64a23b8122e715dc77a25ffa46",
+            "Terminal": false
+          },
+          {
+            "Index": 22,
+            "Name": "basis-0022.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0022.csv",
+            "SHA256": "59ec06fe5bf327ae28abc0eb9cfe5aea3e08f460fc79e180e4582464f4db5659",
+            "Terminal": false
+          },
+          {
+            "Index": 23,
+            "Name": "basis-0023.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0023.csv",
+            "SHA256": "5837611c5410fa04d6ec5bc6f148283f010f54d7494bc9686fb031dab9efe4ce",
+            "Terminal": false
+          },
+          {
+            "Index": 24,
+            "Name": "basis-0024.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0024.csv",
+            "SHA256": "402eb2665ca78de26a73ee446d94be12823bb4cb0bda91d507a07f6ba057b7b7",
+            "Terminal": false
+          },
+          {
+            "Index": 25,
+            "Name": "basis-0025.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0025.csv",
+            "SHA256": "4e1f0937b30223ee9b2c39c10a6178fdbdf683119fc07b1cbc12a1c004712879",
+            "Terminal": false
+          },
+          {
+            "Index": 26,
+            "Name": "basis-0026.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0026.csv",
+            "SHA256": "6a7305fdf1ffce427e4a33b4ba5f81798659eae688d48ee78c0cfd70f080c47a",
+            "Terminal": false
+          },
+          {
+            "Index": 27,
+            "Name": "basis-0027.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0027.csv",
+            "SHA256": "7d8b7ac2daddbee4d375fb4b9818f2ab4fdfa29dc4d79a536ee0ca9a8d3328de",
+            "Terminal": false
+          },
+          {
+            "Index": 28,
+            "Name": "basis-0028.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0028.csv",
+            "SHA256": "21aa1867df8e3bee0801d54f0f3aa75cbf05479d0d0a814a2124de69723ade21",
+            "Terminal": false
+          },
+          {
+            "Index": 29,
+            "Name": "basis-0029.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0029.csv",
+            "SHA256": "4ab6c7627dc1e717d34a0e94826803e4cb695ebf97c383a47c007605be6e2b33",
+            "Terminal": false
+          },
+          {
+            "Index": 30,
+            "Name": "basis-0030.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0030.csv",
+            "SHA256": "9bf4245f911bf55f223f38788329bd32dbd4dc8847a0b1891d394f2634b00605",
+            "Terminal": false
+          },
+          {
+            "Index": 31,
+            "Name": "basis-0031.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0031.csv",
+            "SHA256": "4bc279b2e9dd0a8ac72ec62181aebfeecc5bdd10ab8e3a82952c8e157bf1c528",
+            "Terminal": false
+          },
+          {
+            "Index": 32,
+            "Name": "basis-0032.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0032.csv",
+            "SHA256": "881901960e3c5d8c736751a50b0218c71056e409b795c1116e3981d8f38a6f73",
+            "Terminal": false
+          },
+          {
+            "Index": 33,
+            "Name": "basis-0033.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0033.csv",
+            "SHA256": "eaf2990302af5f8a8d74e7c1e9289fe38caefa727c69c9bc75427ea7885a2009",
+            "Terminal": false
+          },
+          {
+            "Index": 34,
+            "Name": "basis-0034.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0034.csv",
+            "SHA256": "1e6940824ed46775731ec165bfa666ff1534e7f9e316b62049a323d729278239",
+            "Terminal": false
+          },
+          {
+            "Index": 35,
+            "Name": "basis-0035.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0035.csv",
+            "SHA256": "cb8c8cf9f2d4ca1e5f131124029a98d0fecb1b33ba8895d650b24e9b21d21588",
+            "Terminal": false
+          },
+          {
+            "Index": 36,
+            "Name": "basis-0036.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0036.csv",
+            "SHA256": "ff99f040aa95a3bd2144aa2b409b537580a6b66e2b06e2c0c8d10992b46fc6fc",
+            "Terminal": false
+          },
+          {
+            "Index": 37,
+            "Name": "basis-0037.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0037.csv",
+            "SHA256": "34e9c667f78559af545a7685371cb5eb309e64385b54d14813dd53e59bf71114",
+            "Terminal": false
+          },
+          {
+            "Index": 38,
+            "Name": "basis-0038.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0038.csv",
+            "SHA256": "cb58acfb38c614f7a219e05da86794e5a222455cda5e475c232e3b65e2e88bee",
+            "Terminal": false
+          },
+          {
+            "Index": 39,
+            "Name": "basis-0039.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0039.csv",
+            "SHA256": "46053ea3924218f7746d896066b88c9e5de25e12e2b9633564fc1809d5ef94a8",
+            "Terminal": false
+          },
+          {
+            "Index": 40,
+            "Name": "basis-0040.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0040.csv",
+            "SHA256": "f718af4630ad97af76e39f6c551cfc10b56b9dbf8c043970f57af67bdbc88f3f",
+            "Terminal": false
+          },
+          {
+            "Index": 41,
+            "Name": "basis-0041.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0041.csv",
+            "SHA256": "e5dea9e51607cf1fafdaaea0834594d56f295b4ee09676b05acdd58fc261059f",
+            "Terminal": false
+          },
+          {
+            "Index": 42,
+            "Name": "basis-0042.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0042.csv",
+            "SHA256": "e1be4744662d1f19d1d1eeb3dc88613a47af1e4012b0fac3baa0ce1e166829e3",
+            "Terminal": false
+          },
+          {
+            "Index": 43,
+            "Name": "basis-0043.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0043.csv",
+            "SHA256": "e2dff7e2925c5df9e3d406aa998296a0734aa70038d4e54eb4e600766e25c64e",
+            "Terminal": false
+          },
+          {
+            "Index": 44,
+            "Name": "basis-0044.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0044.csv",
+            "SHA256": "30ee929dda916128d74ac4740a20ec8845a59d53d7b5a5f447ea4c5dbb184c02",
+            "Terminal": false
+          },
+          {
+            "Index": 45,
+            "Name": "basis-0045.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0045.csv",
+            "SHA256": "5a60c4f41a4e95e29caa3cc31b6b2ec375a2ecce02b9388fa6a62f035ef35d96",
+            "Terminal": false
+          },
+          {
+            "Index": 46,
+            "Name": "basis-0046.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0046.csv",
+            "SHA256": "a5f2267a39545475803a6d52e4a8ba3cd2181f0c6a8be561aa9949c961ba40c9",
+            "Terminal": false
+          },
+          {
+            "Index": 47,
+            "Name": "basis-0047.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0047.csv",
+            "SHA256": "072c3ea52e4797639ac65c05b0e5102000d732d06ed6f517716e43c06cf81f12",
+            "Terminal": false
+          },
+          {
+            "Index": 48,
+            "Name": "basis-0048.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0048.csv",
+            "SHA256": "10af9e7a258f38c05e3fdba445ac94df52853d0514b9ce577a50f3e1a55e9209",
+            "Terminal": false
+          },
+          {
+            "Index": 49,
+            "Name": "basis-0049.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0049.csv",
+            "SHA256": "bfb5e43479b17d52a08b36726b633827e259bc3259cfb29957e184a4b41b37dd",
+            "Terminal": false
+          },
+          {
+            "Index": 50,
+            "Name": "basis-0050.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0050.csv",
+            "SHA256": "e2b79b303cfe502ccd01e85d621e8897b41ffc11f045b22163cdf5fbbb0bfdb4",
+            "Terminal": false
+          },
+          {
+            "Index": 51,
+            "Name": "basis-0051.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0051.csv",
+            "SHA256": "ab8b854a7ccdfaeefc06e889d6b6f7d0f44295a7f2a44531cd31e27ce0e1cfad",
+            "Terminal": false
+          },
+          {
+            "Index": 52,
+            "Name": "basis-0052.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0052.csv",
+            "SHA256": "8740de85dcc4201d2a37dcdc32061c351937bcc96f6e91f047e981ea177cbd09",
+            "Terminal": false
+          },
+          {
+            "Index": 53,
+            "Name": "basis-0053.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0053.csv",
+            "SHA256": "84f6abd02ba90e51c9375eddce7cd6eea5eb76be46467e619111cfb8d900ea04",
+            "Terminal": false
+          },
+          {
+            "Index": 54,
+            "Name": "basis-0054.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0054.csv",
+            "SHA256": "8061b798fb08bfebd288e38a5084b11eee8a3e7788124f03c5734e9e1e745403",
+            "Terminal": false
+          },
+          {
+            "Index": 55,
+            "Name": "basis-0055.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0055.csv",
+            "SHA256": "93362e0f7ef045b082b4323d4da6b3fa31a97f7b0796e759f82244806a0c2464",
+            "Terminal": false
+          },
+          {
+            "Index": 56,
+            "Name": "basis-0056.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0056.csv",
+            "SHA256": "95abf1417fe4b28a20bf3177714f58e45c51e9c43fb60da8f0a7100824b738b3",
+            "Terminal": false
+          },
+          {
+            "Index": 57,
+            "Name": "basis-0057.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0057.csv",
+            "SHA256": "6dc42b6263cdcb804c04715a0a61fa2ad2e08a6fe5319d5f044ae47b62b55c76",
+            "Terminal": false
+          },
+          {
+            "Index": 58,
+            "Name": "basis-0058.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0058.csv",
+            "SHA256": "0bb22232e240bdd1b9711f0a8e74efc82cb6cc5cb8eaa912c26fa97acda5c018",
+            "Terminal": false
+          },
+          {
+            "Index": 59,
+            "Name": "basis-0059.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0059.csv",
+            "SHA256": "bcda43180d84bb079cf805f5e90f5c5cd2efa23b4c435c54fb887366cfe373c8",
+            "Terminal": false
+          },
+          {
+            "Index": 60,
+            "Name": "basis-0060.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0060.csv",
+            "SHA256": "93ae0f514b3e295c4c8be2c455acfde5849a7de1cd9c3f5cd6b3795943572436",
+            "Terminal": false
+          },
+          {
+            "Index": 61,
+            "Name": "basis-0061.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0061.csv",
+            "SHA256": "e75b3f93291b29586a0224185ee6e5d1ae677d2b3af7dc0d6f2932662e283f02",
+            "Terminal": false
+          },
+          {
+            "Index": 62,
+            "Name": "basis-0062.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0062.csv",
+            "SHA256": "a1945e63865fe811b721decb17f365e9a62d6ee4b1c1606be9d39b9606b4a00d",
+            "Terminal": false
+          },
+          {
+            "Index": 63,
+            "Name": "basis-0063.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0063.csv",
+            "SHA256": "79393520a7d080d45d9f0d10f5424492262a97069e13b7dec54c62862e133b1f",
+            "Terminal": false
+          },
+          {
+            "Index": 64,
+            "Name": "basis-0064.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0064.csv",
+            "SHA256": "b40c45d58cf7256b4fcd60f9e808ad6d04d29f524c3a68e7b8fd13a93d64dd1a",
+            "Terminal": false
+          },
+          {
+            "Index": 65,
+            "Name": "basis-0065.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0065.csv",
+            "SHA256": "4c168776752427e9f41b9bed051043db6555421832760187b041dcc032cae15f",
+            "Terminal": false
+          },
+          {
+            "Index": 66,
+            "Name": "basis-0066.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0066.csv",
+            "SHA256": "b8c223dbcc57ec19450c1d45977531bee957c815461c4551be0416da4c3b95ec",
+            "Terminal": false
+          },
+          {
+            "Index": 67,
+            "Name": "basis-0067.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0067.csv",
+            "SHA256": "6a4f1c9321014f72b8e0c9aeb8275af189327b607f66d1151889f0320ebaf600",
+            "Terminal": false
+          },
+          {
+            "Index": 68,
+            "Name": "basis-0068.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0068.csv",
+            "SHA256": "d8a1df503ad0411662eba94a66820285d73fb10119a51f94bb310ea971bafb4b",
+            "Terminal": false
+          },
+          {
+            "Index": 69,
+            "Name": "basis-0069.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0069.csv",
+            "SHA256": "87a18a21bca15ae84e69704ba591246c24aa9e7c1fe9e2e13364f7fb2a4a705b",
+            "Terminal": false
+          },
+          {
+            "Index": 70,
+            "Name": "basis-0070.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0070.csv",
+            "SHA256": "3b044ffbe3ca4559df865540488c4688699cef55a92c356216fb50ab122cbf3d",
+            "Terminal": false
+          },
+          {
+            "Index": 71,
+            "Name": "basis-0071.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0071.csv",
+            "SHA256": "e56e9beee2c303d8d17d0f7c8b75d4db18db505f06db2500da469c6ad86bcf97",
+            "Terminal": false
+          },
+          {
+            "Index": 72,
+            "Name": "basis-0072.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0072.csv",
+            "SHA256": "d42bfa83a85419a6764b5dfeb86f9700daa2a0478c8761d856d4dfa2a867b272",
+            "Terminal": false
+          },
+          {
+            "Index": 73,
+            "Name": "basis-0073.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0073.csv",
+            "SHA256": "057d3f4f38abfab2c56a7ce7396a5c1359bbc7e6ae648729a2676304ec99f2a7",
+            "Terminal": false
+          },
+          {
+            "Index": 74,
+            "Name": "basis-0074.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0074.csv",
+            "SHA256": "b326af8cb6bdf0e8aae5e4cc4edba38813d554027da3daff16403475a999010d",
+            "Terminal": false
+          },
+          {
+            "Index": 75,
+            "Name": "basis-0075.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0075.csv",
+            "SHA256": "338c2380434d592ea3a72cf5f194b47da9af02ee7f285182823e2aa28a0d7157",
+            "Terminal": false
+          },
+          {
+            "Index": 76,
+            "Name": "basis-0076.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0076.csv",
+            "SHA256": "7e8e47f6bd374c00fa4f0c64df925ed0eb79f74de681070041aae90eb707b3df",
+            "Terminal": false
+          },
+          {
+            "Index": 77,
+            "Name": "basis-0077.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0077.csv",
+            "SHA256": "0fa9768d69c7dc64eca7f99f4afb06ba75ec4038892419379484407becd54bae",
+            "Terminal": false
+          },
+          {
+            "Index": 78,
+            "Name": "basis-0078.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0078.csv",
+            "SHA256": "b60386b41a6f37066ca35d08be0f4a939852b5e79782140cbc69c2b97327be1e",
+            "Terminal": false
+          },
+          {
+            "Index": 79,
+            "Name": "basis-0079.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0079.csv",
+            "SHA256": "697c7e70e7a07968f357c4f377ffdf7effca3b41fccb88deeed0c73056b8194c",
+            "Terminal": false
+          },
+          {
+            "Index": 80,
+            "Name": "basis-0080.csv",
+            "Path": "/tmp/library-acceptance-01-reference/inputs-07/traces/basis-0080.csv",
+            "SHA256": "1a1932127bb4ae7f38c85e6b1f44c83b162866ae5c1a296d46b7ad245106de4a",
+            "Terminal": false
+          }
+        ],
+        "Results": "/tmp/library-acceptance-01-reference/case-07-fabricated/reducer",
+        "ResultsSHA256": {
+          "domain-response-matrix.csv": "76abf31c24e5bbc6395f06369ca314ee46c3fca7d8def05582a9d5af49fed19a",
+          "surface-response-matrix.csv": "b23921bba560d0584233f000253b60303856ee0e0b5625f08443cf209401c284"
+        },
+        "PlanViewBoundary": "/tmp/library-acceptance-01-reference/inputs-07/plan-view-boundary.csv",
+        "RetainedEtch": "/tmp/library-acceptance-01-reference/inputs-07/retained-etch.csv"
+      },
+      "Sources": {
+        "Count": 80,
+        "Indices": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62,
+          63,
+          64,
+          65,
+          66,
+          67,
+          68,
+          69,
+          70,
+          71,
+          72,
+          73,
+          74,
+          75,
+          76,
+          77,
+          78,
+          79,
+          80
+        ],
+        "ZeroTrace": [
+          36,
+          37,
+          38,
+          39,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          52,
+          53,
+          54,
+          55,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62
+        ],
+        "Free": 60,
+        "Terminals": [],
+        "Classes": {
+          "1": "box 3D corners (bottom/top faces)",
+          "2": "wide hats, bottom/top faces",
+          "3": "box 3D corners (bottom/top faces)",
+          "4": "junction columns on the bottom/top faces",
+          "5": "wide hats, bottom/top faces",
+          "6": "wide hats, bottom/top faces",
+          "7": "junction columns on the bottom/top faces",
+          "8": "box 3D corners (bottom/top faces)",
+          "9": "junction columns on the bottom/top faces",
+          "10": "narrow hats w < 0.1 um next to a junction",
+          "11": "narrow hats w < 0.1 um next to a junction",
+          "12": "wide hats, bottom/top faces",
+          "13": "wide hats, bottom/top faces",
+          "14": "junction columns on the bottom/top faces",
+          "15": "box 3D corners (bottom/top faces)",
+          "16": "wide hats, bottom/top faces",
+          "17": "wide hats, substrate/trench rings",
+          "18": "wide hats, substrate/trench rings",
+          "19": "wide hats, substrate/trench rings",
+          "20": "junction rings (metal edge meets cut)",
+          "21": "wide hats, substrate/trench rings",
+          "22": "wide hats, substrate/trench rings",
+          "23": "junction rings (metal edge meets cut)",
+          "24": "wide hats, substrate/trench rings",
+          "25": "junction rings (metal edge meets cut)",
+          "26": "narrow hats w < 0.1 um next to a junction",
+          "27": "narrow hats w < 0.1 um next to a junction",
+          "28": "wide hats, substrate/trench rings",
+          "29": "wide hats, substrate/trench rings",
+          "30": "junction rings (metal edge meets cut)",
+          "31": "wide hats, substrate/trench rings",
+          "32": "wide hats, substrate/trench rings",
+          "33": "wide hats, substrate/trench rings",
+          "34": "wide hats, substrate/trench rings",
+          "35": "wide hats, substrate/trench rings",
+          "36": "ZeroTrace (apex on PEC at the cut)",
+          "37": "ZeroTrace (apex on PEC at the cut)",
+          "38": "ZeroTrace (apex on PEC at the cut)",
+          "39": "ZeroTrace (apex on PEC at the cut)",
+          "40": "wide hats, substrate/trench rings",
+          "41": "ZeroTrace (apex on PEC at the cut)",
+          "42": "ZeroTrace (apex on PEC at the cut)",
+          "43": "ZeroTrace (apex on PEC at the cut)",
+          "44": "ZeroTrace (apex on PEC at the cut)",
+          "45": "ZeroTrace (apex on PEC at the cut)",
+          "46": "ZeroTrace (apex on PEC at the cut)",
+          "47": "wide hats, substrate/trench rings",
+          "48": "wide hats, substrate/trench rings",
+          "49": "wide hats, metal-top ring",
+          "50": "wide hats, metal-top ring",
+          "51": "wide hats, metal-top ring",
+          "52": "ZeroTrace (apex on PEC at the cut)",
+          "53": "ZeroTrace (apex on PEC at the cut)",
+          "54": "ZeroTrace (apex on PEC at the cut)",
+          "55": "ZeroTrace (apex on PEC at the cut)",
+          "56": "wide hats, metal-top ring",
+          "57": "ZeroTrace (apex on PEC at the cut)",
+          "58": "ZeroTrace (apex on PEC at the cut)",
+          "59": "ZeroTrace (apex on PEC at the cut)",
+          "60": "ZeroTrace (apex on PEC at the cut)",
+          "61": "ZeroTrace (apex on PEC at the cut)",
+          "62": "ZeroTrace (apex on PEC at the cut)",
+          "63": "wide hats, metal-top ring",
+          "64": "wide hats, metal-top ring",
+          "65": "box 3D corners (bottom/top faces)",
+          "66": "wide hats, bottom/top faces",
+          "67": "box 3D corners (bottom/top faces)",
+          "68": "junction columns on the bottom/top faces",
+          "69": "wide hats, bottom/top faces",
+          "70": "wide hats, bottom/top faces",
+          "71": "junction columns on the bottom/top faces",
+          "72": "box 3D corners (bottom/top faces)",
+          "73": "junction columns on the bottom/top faces",
+          "74": "narrow hats w < 0.1 um next to a junction",
+          "75": "narrow hats w < 0.1 um next to a junction",
+          "76": "wide hats, bottom/top faces",
+          "77": "wide hats, bottom/top faces",
+          "78": "junction columns on the bottom/top faces",
+          "79": "box 3D corners (bottom/top faces)",
+          "80": "wide hats, bottom/top faces"
+        },
+        "Geometry": {
+          "box": [
+            -6.0,
+            10.0,
+            -8.0,
+            8.0
+          ],
+          "z_levels": [
+            "bottom face z=-2.05",
+            "substrate/trench level z=-0.05",
+            "substrate/trench level z=0",
+            "metal-top level z=0.1",
+            "top face z=2.1"
+          ],
+          "per_z_level": {
+            "bottom face z=-2.05": 16,
+            "substrate/trench level z=-0.05": 16,
+            "substrate/trench level z=0": 16,
+            "metal-top level z=0.1": 16,
+            "top face z=2.1": 16
+          }
+        }
+      },
+      "Controls": {
+        "Indices": [
+          1,
+          2,
+          4,
+          5,
+          10,
+          17,
+          20,
+          49
+        ],
+        "Rule": "8 by class (classify_sources.choose_controls: one per class in priority order, cycling)",
+        "Classes": {
+          "1": "box 3D corners (bottom/top faces)",
+          "2": "wide hats, bottom/top faces",
+          "4": "junction columns on the bottom/top faces",
+          "5": "wide hats, bottom/top faces",
+          "10": "narrow hats w < 0.1 um next to a junction",
+          "17": "wide hats, substrate/trench rings",
+          "20": "junction rings (metal edge meets cut)",
+          "49": "wide hats, metal-top ring"
+        }
+      },
+      "StagePrefix": "four-edge-9d2cb9bbb3fe",
+      "Stages": [
+        {
+          "Prefix": "four-edge-9d2cb9bbb3fe-p4",
+          "Kind": "response",
+          "Order": 4,
+          "Sources": 80,
+          "EstimateKey": "p4-80",
+          "Role": "main"
+        },
+        {
+          "Prefix": "four-edge-9d2cb9bbb3fe-p5-control",
+          "Kind": "response",
+          "Order": 5,
+          "Sources": 8,
+          "EstimateKey": "p5-control-8",
+          "Role": "control"
+        },
+        {
+          "Prefix": "four-edge-9d2cb9bbb3fe-p3-control",
+          "Kind": "response",
+          "Order": 3,
+          "Sources": 8,
+          "EstimateKey": "p3-control-8",
+          "Role": "control"
+        },
+        {
+          "Prefix": "four-edge-9d2cb9bbb3fe-p4-local-edge",
+          "Kind": "local-edge",
+          "Order": 4,
+          "Sources": 8,
+          "EstimateKey": "local-edge-p4-8",
+          "Role": "local-edge"
+        }
+      ],
+      "Estimate": {
+        "Path": "/tmp/library-acceptance-01/four-edge-9d2cb9bbb3fe/preflight/stage-estimate.json",
+        "FitsOneJob": true,
+        "Decision": "every stage fits ONE job of 6 h: runner total 49 min at the measured PCG counts, 80 min at 2.0x (+35% and preflight: 113 min); largest Palace peak 201 GB of 1485 GiB",
+        "H1ByOrder": {
+          "p1": 426520,
+          "p2": 3249455,
+          "p3": 10795700,
+          "p4": 25392150,
+          "p5": 49365700
+        },
+        "JobSecondsEstimateByPCGFactor": {
+          "1.0": 2926.077789960223,
+          "1.5": 3870.842996490825,
+          "2.0": 4815.6082030214275
+        },
+        "JobSecondsEstimateWithPreflightAndMargin": {
+          "1.0": 4250.205016446302,
+          "1.5": 5525.6380452626145,
+          "2.0": 6801.071074078927
+        },
+        "MaxPalacePeakGBEstimate": 201.17212369551814,
+        "MainStageNodeHoursEstimate": {
+          "1.0": 0.5181662311076743,
+          "1.5": 0.6955048956903896,
+          "2.0": 0.8728435602731047
+        }
+      },
+      "Plan": {
+        "Path": "/tmp/library-acceptance-01/four-edge-9d2cb9bbb3fe/main/plan.json",
+        "Pins": 88,
+        "StageNames": [
+          "four-edge-9d2cb9bbb3fe-p4-worker",
+          "four-edge-9d2cb9bbb3fe-p4-reducer",
+          "four-edge-9d2cb9bbb3fe-p5-control-worker",
+          "four-edge-9d2cb9bbb3fe-p5-control-reducer",
+          "four-edge-9d2cb9bbb3fe-p3-control-worker",
+          "four-edge-9d2cb9bbb3fe-p3-control-reducer",
+          "four-edge-9d2cb9bbb3fe-p4-local-edge"
+        ],
+        "Caps": {
+          "four-edge-9d2cb9bbb3fe-p4-worker": [
+            5400,
+            1500
+          ],
+          "four-edge-9d2cb9bbb3fe-p4-reducer": [
+            1200,
+            600
+          ],
+          "four-edge-9d2cb9bbb3fe-p5-control-worker": [
+            2100,
+            600
+          ],
+          "four-edge-9d2cb9bbb3fe-p5-control-reducer": [
+            300,
+            300
+          ],
+          "four-edge-9d2cb9bbb3fe-p3-control-worker": [
+            300,
+            300
+          ],
+          "four-edge-9d2cb9bbb3fe-p3-control-reducer": [
+            300,
+            300
+          ],
+          "four-edge-9d2cb9bbb3fe-p4-local-edge": [
+            1200,
+            600
+          ]
+        },
+        "JobScript": "/tmp/library-acceptance-01/four-edge-9d2cb9bbb3fe/main/job.pbs"
+      },
+      "Configs": {
+        "Directories": {
+          "four-edge-9d2cb9bbb3fe-p4": "/tmp/library-acceptance-01/four-edge-9d2cb9bbb3fe/main/four-edge-9d2cb9bbb3fe-p4",
+          "four-edge-9d2cb9bbb3fe-p5-control": "/tmp/library-acceptance-01/four-edge-9d2cb9bbb3fe/main/four-edge-9d2cb9bbb3fe-p5-control",
+          "four-edge-9d2cb9bbb3fe-p3-control": "/tmp/library-acceptance-01/four-edge-9d2cb9bbb3fe/main/four-edge-9d2cb9bbb3fe-p3-control",
+          "four-edge-9d2cb9bbb3fe-p4-local-edge": "/tmp/library-acceptance-01/four-edge-9d2cb9bbb3fe/main/four-edge-9d2cb9bbb3fe-p4-local-edge"
+        },
+        "SHA256": {
+          "four-edge-9d2cb9bbb3fe-p4": {
+            "worker.json": "23fc352718bfb56022e037aa37d67483186661d8fbc643b154aed04ccf40e249",
+            "reducer.json": "f9105f472cbffad513b523909a9e56934e87540ec1b6bdc478026c60e0ab4e8f"
+          },
+          "four-edge-9d2cb9bbb3fe-p5-control": {
+            "worker.json": "d9792349491bd94efc93b005013ac62f75be7102e1997cc58f30a760bdd70d5a",
+            "reducer.json": "6bb5dbaeb7e4adfb8a8a6bd2c306067bba577d25fa9ac467eae4f67cbe1f2efb"
+          },
+          "four-edge-9d2cb9bbb3fe-p3-control": {
+            "worker.json": "e2121417715660259fb860189d06ce1dd7c30ad2570104956074f7305a70440a",
+            "reducer.json": "9999a2726e0f4326caff6708f3fb7e487705d75623c9e5e1721e3998ff83c1fe"
+          },
+          "four-edge-9d2cb9bbb3fe-p4-local-edge": {
+            "config.json": "05cd7e59d1b69af4b41900b7bf47a7cc18ddb75f54310b2785c01f9b3cf5f6c3"
+          }
+        },
+        "ReferenceConfig": "/tmp/library-acceptance-01-reference/case-07-fabricated/worker.json",
+        "ReferenceConfigSHA256": "b758b017c0e4d577be1b4a4d626a7a47c107d326b3daa5494d80919cf88fae70",
+        "ReferenceConfigRole": "the config the reference ran (case worker.json)",
+        "ReferenceOrder": 4,
+        "LinearTol": 1e-10
+      },
+      "Root": "/tmp/library-acceptance-01/four-edge-9d2cb9bbb3fe",
+      "Remote": {
+        "Root": "/data/home/simlap/coupon_accuracy_assessment_20260913",
+        "Run": "/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01",
+        "Case": "/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/four-edge-9d2cb9bbb3fe",
+        "Mesh": "/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/four-edge-9d2cb9bbb3fe/mesh/identity-1d536c448885.msh",
+        "Traces": "/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/four-edge-9d2cb9bbb3fe/inputs/traces",
+        "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27.bin",
+        "MPIExec": "/data/home/simlap/coupon_accuracy_assessment_20260913/mpiexec_bound.sh"
+      },
+      "Orders": {
+        "Main": [
+          "p4"
+        ],
+        "Controls": [
+          "p3",
+          "p5"
+        ],
+        "ReferenceOrder": "p4",
+        "Gated": "p4",
+        "Rule": "main stages at every --orders order plus the reference's own order when it differs (the same-order comparison is the gated one; the first --orders order stays the library order: cost coupon, local-edge stage, p-sequence main)"
+      },
+      "Submission": {
+        "Job": "46024.ip-192-168-54-24.us-west-2.compute.internal",
+        "UTC": "2026-09-20T20:35:41Z",
+        "UserJobsBefore": 2,
+        "JobCap": 40,
+        "Command": "cd /data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/four-edge-9d2cb9bbb3fe/main && /opt/soca/soca-green1/schedulers/default/pbs/bin/qsub /data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/four-edge-9d2cb9bbb3fe/main/job.pbs"
+      },
+      "Upload": {
+        "Resumed": true,
+        "SubmissionRecord": "/tmp/library-acceptance-01/four-edge-9d2cb9bbb3fe/submission.json"
+      },
+      "Monitor": {
+        "Polls": 13,
+        "LastJobState": null,
+        "LastStages": [
+          [
+            "four-edge-9d2cb9bbb3fe-p4-worker",
+            "complete",
+            1380
+          ],
+          [
+            "four-edge-9d2cb9bbb3fe-p4-reducer",
+            "complete",
+            535
+          ],
+          [
+            "four-edge-9d2cb9bbb3fe-p5-control-worker",
+            "complete",
+            531
+          ],
+          [
+            "four-edge-9d2cb9bbb3fe-p5-control-reducer",
+            "complete",
+            84
+          ],
+          [
+            "four-edge-9d2cb9bbb3fe-p3-control-worker",
+            "complete",
+            87
+          ],
+          [
+            "four-edge-9d2cb9bbb3fe-p3-control-reducer",
+            "complete",
+            42
+          ],
+          [
+            "four-edge-9d2cb9bbb3fe-p4-local-edge",
+            "complete",
+            269
+          ]
+        ],
+        "Resumed": true,
+        "LastPollUTC": "2026-09-20T21:27:28Z"
+      },
+      "SubmittedAt": 1789936541,
+      "Fetch": {
+        "Command": [
+          "rsync",
+          "-a",
+          "--exclude",
+          "archive/",
+          "--exclude",
+          "tmp/",
+          "soca-green-job:/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/four-edge-9d2cb9bbb3fe/main/",
+          "/tmp/library-acceptance-01/four-edge-9d2cb9bbb3fe/results/main/"
+        ],
+        "UTC": "2026-09-20T21:27:32Z",
+        "QStatHistory": "Job Id: 46024.ip-192-168-54-24.us-west-2.compute.internal\n    Job_Name = coupon-qualify-four-edge-9d2cb9bbb3fe\n    Job_Owner = simlap@ip-192-168-148-82.us-west-2.compute.internal\n    resources_used.cpupercent = 70976\n    resources_used.cput = 154:23:17\n    resources_used.mem = 18984kb\n    resources_used.ncpus = 192\n    resources_used.vmem = 112144kb\n    resources_used.walltime = 00:48:50\n    job_state = F\n    queue = normal-g\n    server = ip-192-168-54-24.us-west-2.compute.internal\n    Checkpoint = u\n    ctime = Sun Sep 20 20:35:41 2026\n    Error_Path = ip-192-168-148-82.us-west-2.compute.internal:/data/home/simlap\n\t/coupon_accuracy_assessment_20260913/library-acceptance-01/four-edge-9d\n\t2cb9bbb3fe/main/coupon-qualify-four-edge-9d2cb9bbb3fe.e46024\n    exec_host = 192.168.45.4/0*192\n    exec_vnode = (192.168.45.4:ncpus=192)\n    Hold_Types = n\n    Join_Path = oe\n    Keep_Files = n\n    Mail_Points = a\n    mtime = Sun Sep 20 21:27:19 2026\n    Output_Path = ip-192-168-148-82:/data/home/simlap/coupon_accuracy_assessmen\n\tt_20260913/library-acceptance-01/four-edge-9d2cb9bbb3fe/main/pbs.log\n    Priority = 0\n    qtime = Sun Sep 20 20:35:41 2026\n    Rerunable = False\n    Resource_List.efa_support = True\n    Resource_List.instance_type = r8g.48xlarge\n    Resource_List.mpiprocs = 192\n    Resource_List.ncpus = 192\n    Resource_List.nodect = 1\n    Resource_List.place = scatter:excl\n    Resource_List.select = 1:ncpus=192:mpiprocs=192:compute_node=job46024\n    Resource_List.stack_id = soca-green1-job-46024\n    Resource_List.subnet_id = subnet-0c98d793bbcebb39a\n    Resource_List.walltime = 06:00:00\n    stime = Sun Sep 20 20:38:26 2026\n    obittime = Sun Sep 20 21:27:19 2026\n    session_id = 5088\n    jobdir = /data/home/simlap\n    substate = 92\n    Variable_List = PBS_O_HOME=/data/home/simlap,PBS_O_LANG=C.UTF-8,\n\tPBS_O_LOGNAME=simlap,\n\tPBS_O_PATH=/apps/comsol/comsol61/multiphysics/bin:/usr/local/sbin:/usr\n\t/local/bin:/sbin:/bin:/usr/sbin:/usr/bin:/opt/pbs/bin:/opt/pbs/sbin:/op\n\tt/pbs/bin:/opt/soca/soca-green1,PBS_O_SHELL=/bin/bash,\n\tPBS_O_WORKDIR=/data/home/simlap/coupon_accuracy_assessment_20260913/li\n\tbrary-acceptance-01/four-edge-9d2cb9bbb3fe/main,PBS_O_SYSTEM=Linux,\n\tPBS_O_QUEUE=normal-g,\n\tPBS_O_HOST=ip-192-168-148-82.us-west-2.compute.internal\n    comment = Job run at Sun Sep 20 at 20:38 on (192.168.45.4:ncpus=192) and fi\n\tnished\n    etime = Sun Sep 20 20:35:41 2026\n    run_count = 1\n    Stageout_status = 1\n    Exit_status = 0\n    Submit_arguments = /data/home/simlap/coupon_accuracy_assessment_20260913/li\n\tbrary-acceptance-01/four-edge-9d2cb9bbb3fe/main/job.pbs\n    history_timestamp = 1789939639\n    project = DS-EM-FEM\n    Submit_Host = ip-192-168-148-82.us-west-2.compute.internal\n\n"
+      },
+      "ResultDigests": {
+        "main/four-edge-9d2cb9bbb3fe-p3-control/reducer/domain-response-matrix.csv": {
+          "Local": "e807c91d26518ebb3cd780ba144f7e2ebae4bb8d5f593dcba23183e7ad717e44",
+          "Remote": "e807c91d26518ebb3cd780ba144f7e2ebae4bb8d5f593dcba23183e7ad717e44",
+          "OK": true
+        },
+        "main/four-edge-9d2cb9bbb3fe-p3-control/reducer/surface-response-matrix.csv": {
+          "Local": "d6b38333dbf91636b23fcfd569ddd60b11167fbba209fe0d6204fe8c3d12a363",
+          "Remote": "d6b38333dbf91636b23fcfd569ddd60b11167fbba209fe0d6204fe8c3d12a363",
+          "OK": true
+        },
+        "main/four-edge-9d2cb9bbb3fe-p4/reducer/domain-response-matrix.csv": {
+          "Local": "468304d3f6851a067f3246b8e224cbbca6637efd3038d2e8acee8b6f69c46be7",
+          "Remote": "468304d3f6851a067f3246b8e224cbbca6637efd3038d2e8acee8b6f69c46be7",
+          "OK": true
+        },
+        "main/four-edge-9d2cb9bbb3fe-p4/reducer/surface-response-matrix.csv": {
+          "Local": "2426ec167d7927a7e0884f6d2872b80214e3abc1c954d94fe1d6e265aed7a7c9",
+          "Remote": "2426ec167d7927a7e0884f6d2872b80214e3abc1c954d94fe1d6e265aed7a7c9",
+          "OK": true
+        },
+        "main/four-edge-9d2cb9bbb3fe-p4-local-edge/output/domain-E.csv": {
+          "Local": "eb9fc591303067e47e301231223fb2edb13ca016783d4f99c5d1b10f07015e54",
+          "Remote": "eb9fc591303067e47e301231223fb2edb13ca016783d4f99c5d1b10f07015e54",
+          "OK": true
+        },
+        "main/four-edge-9d2cb9bbb3fe-p4-local-edge/output/domain-response-matrix.csv": {
+          "Local": "2ea90a152a9b127f9e9031a224d2475bef6615112a3d4616eceeea8005ee9b34",
+          "Remote": "2ea90a152a9b127f9e9031a224d2475bef6615112a3d4616eceeea8005ee9b34",
+          "OK": true
+        },
+        "main/four-edge-9d2cb9bbb3fe-p4-local-edge/output/error-indicators.csv": {
+          "Local": "89567f975ff2e21bdada8b8afbb3e652ec1276956c480ab51d42a6d27621d96c",
+          "Remote": "89567f975ff2e21bdada8b8afbb3e652ec1276956c480ab51d42a6d27621d96c",
+          "OK": true
+        },
+        "main/four-edge-9d2cb9bbb3fe-p4-local-edge/output/surface-Q-edge-local.csv": {
+          "Local": "debaad7f28fa577ed91fba18afcb59068aacc87eb000a543d761056aee7f9557",
+          "Remote": "debaad7f28fa577ed91fba18afcb59068aacc87eb000a543d761056aee7f9557",
+          "OK": true
+        },
+        "main/four-edge-9d2cb9bbb3fe-p4-local-edge/output/surface-Q-edge.csv": {
+          "Local": "e7fd5b15f69150dbdfdb329fab474ff07c6664bd042bc31cef8273c2a7df1da2",
+          "Remote": "e7fd5b15f69150dbdfdb329fab474ff07c6664bd042bc31cef8273c2a7df1da2",
+          "OK": true
+        },
+        "main/four-edge-9d2cb9bbb3fe-p4-local-edge/output/surface-Q.csv": {
+          "Local": "7065a2be2cef6768979aa9147b2df2df65989692f23aa8da04dbd8f9b4712611",
+          "Remote": "7065a2be2cef6768979aa9147b2df2df65989692f23aa8da04dbd8f9b4712611",
+          "OK": true
+        },
+        "main/four-edge-9d2cb9bbb3fe-p4-local-edge/output/surface-response-matrix.csv": {
+          "Local": "b8287e67b256070ba0c1bad0a23025cd883a77e996f3bff90292612215d27828",
+          "Remote": "b8287e67b256070ba0c1bad0a23025cd883a77e996f3bff90292612215d27828",
+          "OK": true
+        },
+        "main/four-edge-9d2cb9bbb3fe-p5-control/reducer/domain-response-matrix.csv": {
+          "Local": "f5c90aea8162e53f8707b5f8de2084fa0da4ffe34c0f3d8334f7f1d6d5b8ba64",
+          "Remote": "f5c90aea8162e53f8707b5f8de2084fa0da4ffe34c0f3d8334f7f1d6d5b8ba64",
+          "OK": true
+        },
+        "main/four-edge-9d2cb9bbb3fe-p5-control/reducer/surface-response-matrix.csv": {
+          "Local": "819f193cc67a54f101f0db637caa81445f591484d158bc390dcc72f57c312922",
+          "Remote": "819f193cc67a54f101f0db637caa81445f591484d158bc390dcc72f57c312922",
+          "OK": true
+        },
+        "main/memory-samples.csv": {
+          "Local": "8d0873b378b909c838b79421da43532bb7cd63209fbdb9159cf89f71d91da231",
+          "Remote": "8d0873b378b909c838b79421da43532bb7cd63209fbdb9159cf89f71d91da231",
+          "OK": true
+        }
+      },
+      "MatrixValidation": {
+        "four-edge-9d2cb9bbb3fe-p4": {
+          "domain": {
+            "Rows": 3240,
+            "BasisSize": 80
+          },
+          "surface": {
+            "Rows": 9720,
+            "BasisSize": 80
+          }
+        },
+        "four-edge-9d2cb9bbb3fe-p5-control": {
+          "domain": {
+            "Rows": 36,
+            "BasisSize": 8
+          },
+          "surface": {
+            "Rows": 108,
+            "BasisSize": 8
+          }
+        },
+        "four-edge-9d2cb9bbb3fe-p3-control": {
+          "domain": {
+            "Rows": 36,
+            "BasisSize": 8
+          },
+          "surface": {
+            "Rows": 108,
+            "BasisSize": 8
+          }
+        }
+      },
+      "ArchiveDeletion": {
+        "Archives": [
+          "/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/four-edge-9d2cb9bbb3fe/main/four-edge-9d2cb9bbb3fe-p4/archive",
+          "/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/four-edge-9d2cb9bbb3fe/main/four-edge-9d2cb9bbb3fe-p5-control/archive",
+          "/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/four-edge-9d2cb9bbb3fe/main/four-edge-9d2cb9bbb3fe-p3-control/archive"
+        ],
+        "SizesBeforeDeletion": "16G\t/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/four-edge-9d2cb9bbb3fe/main/four-edge-9d2cb9bbb3fe-p4/archive\n3.0G\t/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/four-edge-9d2cb9bbb3fe/main/four-edge-9d2cb9bbb3fe-p5-control/archive\n665M\t/data/home/simlap/coupon_accuracy_assessment_20260913/library-acceptance-01/four-edge-9d2cb9bbb3fe/main/four-edge-9d2cb9bbb3fe-p3-control/archive",
+        "DeletedUTC": "2026-09-20T21:27:52Z",
+        "Remaining": ""
+      },
+      "FetchedAt": 1789939672.1967518,
+      "Qualification": {
+        "Verdict": "Passed",
+        "Reason": "every gate passed",
+        "GatesPassed": {
+          "E": true,
+          "p_MA": true,
+          "p_MS": true,
+          "p_SA": true,
+          "PSequenceControls": true
+        },
+        "NotApplicable": [],
+        "ReferenceAnchor": "vs p4 anchor",
+        "GatedStage": "four-edge-9d2cb9bbb3fe-p4",
+        "GatedOrder": "p4",
+        "GatedComparison": "four-edge-9d2cb9bbb3fe-p4-vs-reference",
+        "Path": "/tmp/library-acceptance-01/four-edge-9d2cb9bbb3fe/qualification.json",
+        "ClassStatistics": {
+          "wide hats, bottom/top faces": {
+            "n": 12,
+            "members": [
+              2,
+              5,
+              6,
+              12,
+              13,
+              16,
+              66,
+              69,
+              70,
+              76,
+              77,
+              80
+            ],
+            "E_rel": {
+              "n": 12,
+              "abs_median": 0.003335773112382574,
+              "abs_max": 0.006074519486862464,
+              "signed_median": 0.003335773112382574,
+              "worst_source": 13,
+              "worst_offset": 0.006074519486862464,
+              "within_1pct": 12,
+              "within_2pct": 12,
+              "within_5pct": 12
+            },
+            "p_MA_rel": {
+              "n": 12,
+              "abs_median": 0.006525869127644005,
+              "abs_max": 0.011578527206910952,
+              "signed_median": 0.0013625083504599615,
+              "worst_source": 2,
+              "worst_offset": -0.011578527206910952,
+              "within_1pct": 11,
+              "within_2pct": 12,
+              "within_5pct": 12
+            },
+            "p_MS_rel": {
+              "n": 12,
+              "abs_median": 0.00664244482642416,
+              "abs_max": 0.00992443724273745,
+              "signed_median": -0.00664244482642416,
+              "worst_source": 69,
+              "worst_offset": -0.00992443724273745,
+              "within_1pct": 12,
+              "within_2pct": 12,
+              "within_5pct": 12
+            },
+            "p_SA_rel": {
+              "n": 12,
+              "abs_median": 0.004253635103210159,
+              "abs_max": 0.03754251869066455,
+              "signed_median": -0.004253635103210159,
+              "worst_source": 5,
+              "worst_offset": -0.03754251869066455,
+              "within_1pct": 7,
+              "within_2pct": 8,
+              "within_5pct": 12
+            }
+          },
+          "box 3D corners (bottom/top faces)": {
+            "n": 8,
+            "members": [
+              1,
+              3,
+              8,
+              15,
+              65,
+              67,
+              72,
+              79
+            ],
+            "E_rel": {
+              "n": 8,
+              "abs_median": 4.2880751970576115e-05,
+              "abs_max": 6.603713478554784e-05,
+              "signed_median": 4.2880751970576115e-05,
+              "worst_source": 1,
+              "worst_offset": 6.603713478554784e-05,
+              "within_1pct": 8,
+              "within_2pct": 8,
+              "within_5pct": 8
+            },
+            "p_MA_rel": {
+              "n": 8,
+              "abs_median": 0.015786661319859174,
+              "abs_max": 0.028507505071816437,
+              "signed_median": 0.007720121515893691,
+              "worst_source": 79,
+              "worst_offset": 0.028507505071816437,
+              "within_1pct": 3,
+              "within_2pct": 6,
+              "within_5pct": 8
+            },
+            "p_MS_rel": {
+              "n": 8,
+              "abs_median": 0.006372947322417995,
+              "abs_max": 0.009247302845360315,
+              "signed_median": -0.006372947322417995,
+              "worst_source": 67,
+              "worst_offset": -0.009247302845360315,
+              "within_1pct": 8,
+              "within_2pct": 8,
+              "within_5pct": 8
+            },
+            "p_SA_rel": {
+              "n": 8,
+              "abs_median": 0.0029415480239352683,
+              "abs_max": 0.008631924569253147,
+              "signed_median": -0.0029415480239352683,
+              "worst_source": 8,
+              "worst_offset": -0.008631924569253147,
+              "within_1pct": 8,
+              "within_2pct": 8,
+              "within_5pct": 8
+            }
+          },
+          "wide hats, metal-top ring": {
+            "n": 6,
+            "members": [
+              49,
+              50,
+              51,
+              56,
+              63,
+              64
+            ],
+            "E_rel": {
+              "n": 6,
+              "abs_median": 0.001109562776181642,
+              "abs_max": 0.001380723776915301,
+              "signed_median": 0.001109562776181642,
+              "worst_source": 64,
+              "worst_offset": 0.001380723776915301,
+              "within_1pct": 6,
+              "within_2pct": 6,
+              "within_5pct": 6
+            },
+            "p_MA_rel": {
+              "n": 6,
+              "abs_median": 0.0148513890351358,
+              "abs_max": 0.02608420253893387,
+              "signed_median": 0.009234401033684015,
+              "worst_source": 51,
+              "worst_offset": 0.02608420253893387,
+              "within_1pct": 2,
+              "within_2pct": 4,
+              "within_5pct": 6
+            },
+            "p_MS_rel": {
+              "n": 6,
+              "abs_median": 0.007670855929719193,
+              "abs_max": 0.010719656413789452,
+              "signed_median": -0.007670855929719193,
+              "worst_source": 51,
+              "worst_offset": -0.010719656413789452,
+              "within_1pct": 4,
+              "within_2pct": 6,
+              "within_5pct": 6
+            },
+            "p_SA_rel": {
+              "n": 6,
+              "abs_median": 0.0013005418300075207,
+              "abs_max": 0.005302193665995619,
+              "signed_median": -0.0010215696864350867,
+              "worst_source": 64,
+              "worst_offset": -0.005302193665995619,
+              "within_1pct": 6,
+              "within_2pct": 6,
+              "within_5pct": 6
+            }
+          },
+          "wide hats, substrate/trench rings": {
+            "n": 16,
+            "members": [
+              17,
+              18,
+              19,
+              21,
+              22,
+              24,
+              28,
+              29,
+              31,
+              32,
+              33,
+              34,
+              35,
+              40,
+              47,
+              48
+            ],
+            "E_rel": {
+              "n": 16,
+              "abs_median": 0.0015288684198144146,
+              "abs_max": 0.004644639016035947,
+              "signed_median": 0.0015288684198144146,
+              "worst_source": 48,
+              "worst_offset": 0.004644639016035947,
+              "within_1pct": 16,
+              "within_2pct": 16,
+              "within_5pct": 16
+            },
+            "p_MA_rel": {
+              "n": 16,
+              "abs_median": 0.011228880253020625,
+              "abs_max": 0.02176399005284683,
+              "signed_median": 0.006551429633233446,
+              "worst_source": 33,
+              "worst_offset": -0.02176399005284683,
+              "within_1pct": 7,
+              "within_2pct": 15,
+              "within_5pct": 16
+            },
+            "p_MS_rel": {
+              "n": 16,
+              "abs_median": 0.007878446723726246,
+              "abs_max": 0.015537895333828114,
+              "signed_median": -0.007092956451090853,
+              "worst_source": 29,
+              "worst_offset": -0.015537895333828114,
+              "within_1pct": 10,
+              "within_2pct": 16,
+              "within_5pct": 16
+            },
+            "p_SA_rel": {
+              "n": 16,
+              "abs_median": 0.01800847661609886,
+              "abs_max": 0.051609826784112425,
+              "signed_median": -0.016352283013827434,
+              "worst_source": 48,
+              "worst_offset": -0.051609826784112425,
+              "within_1pct": 4,
+              "within_2pct": 9,
+              "within_5pct": 15
+            }
+          },
+          "narrow hats w < 0.1 um next to a junction": {
+            "n": 6,
+            "members": [
+              10,
+              11,
+              26,
+              27,
+              74,
+              75
+            ],
+            "E_rel": {
+              "n": 6,
+              "abs_median": 0.0008210348866511027,
+              "abs_max": 0.009882818004055717,
+              "signed_median": -0.000718901489551627,
+              "worst_source": 10,
+              "worst_offset": -0.009882818004055717,
+              "within_1pct": 6,
+              "within_2pct": 6,
+              "within_5pct": 6
+            },
+            "p_MA_rel": {
+              "n": 6,
+              "abs_median": 0.01622877673282536,
+              "abs_max": 0.0392040055665749,
+              "signed_median": 0.01622877673282536,
+              "worst_source": 74,
+              "worst_offset": 0.0392040055665749,
+              "within_1pct": 2,
+              "within_2pct": 4,
+              "within_5pct": 6
+            },
+            "p_MS_rel": {
+              "n": 6,
+              "abs_median": 0.008256457072589457,
+              "abs_max": 0.0299037363670786,
+              "signed_median": 0.008256457072589457,
+              "worst_source": 26,
+              "worst_offset": 0.0299037363670786,
+              "within_1pct": 4,
+              "within_2pct": 5,
+              "within_5pct": 6
+            },
+            "p_SA_rel": {
+              "n": 6,
+              "abs_median": 0.015156951773019773,
+              "abs_max": 0.02903364769754371,
+              "signed_median": -0.015156951773019773,
+              "worst_source": 11,
+              "worst_offset": -0.02903364769754371,
+              "within_1pct": 1,
+              "within_2pct": 5,
+              "within_5pct": 6
+            }
+          },
+          "junction columns on the bottom/top faces": {
+            "n": 8,
+            "members": [
+              4,
+              7,
+              9,
+              14,
+              68,
+              71,
+              73,
+              78
+            ],
+            "E_rel": {
+              "n": 8,
+              "abs_median": 0.0006315979695935914,
+              "abs_max": 0.0027383920510184925,
+              "signed_median": 0.0003087319983839548,
+              "worst_source": 9,
+              "worst_offset": -0.0027383920510184925,
+              "within_1pct": 8,
+              "within_2pct": 8,
+              "within_5pct": 8
+            },
+            "p_MA_rel": {
+              "n": 8,
+              "abs_median": 0.011711488844944946,
+              "abs_max": 0.01593389072623327,
+              "signed_median": 0.011711488844944946,
+              "worst_source": 14,
+              "worst_offset": 0.01593389072623327,
+              "within_1pct": 3,
+              "within_2pct": 8,
+              "within_5pct": 8
+            },
+            "p_MS_rel": {
+              "n": 8,
+              "abs_median": 0.004552142568851159,
+              "abs_max": 0.010097914139161739,
+              "signed_median": -0.004552142568851159,
+              "worst_source": 68,
+              "worst_offset": -0.010097914139161739,
+              "within_1pct": 7,
+              "within_2pct": 8,
+              "within_5pct": 8
+            },
+            "p_SA_rel": {
+              "n": 8,
+              "abs_median": 0.004275421456969386,
+              "abs_max": 0.024101315569398766,
+              "signed_median": -0.004275421456969386,
+              "worst_source": 4,
+              "worst_offset": -0.024101315569398766,
+              "within_1pct": 5,
+              "within_2pct": 7,
+              "within_5pct": 8
+            }
+          },
+          "junction rings (metal edge meets cut)": {
+            "n": 4,
+            "members": [
+              20,
+              23,
+              25,
+              30
+            ],
+            "E_rel": {
+              "n": 4,
+              "abs_median": 0.0004538768340034016,
+              "abs_max": 0.0008395283616271096,
+              "signed_median": 0.0004538768340034016,
+              "worst_source": 23,
+              "worst_offset": 0.0008395283616271096,
+              "within_1pct": 4,
+              "within_2pct": 4,
+              "within_5pct": 4
+            },
+            "p_MA_rel": {
+              "n": 4,
+              "abs_median": 0.009445859131914737,
+              "abs_max": 0.011947559643061113,
+              "signed_median": 0.009445859131914737,
+              "worst_source": 25,
+              "worst_offset": 0.011947559643061113,
+              "within_1pct": 2,
+              "within_2pct": 4,
+              "within_5pct": 4
+            },
+            "p_MS_rel": {
+              "n": 4,
+              "abs_median": 0.00781915590117015,
+              "abs_max": 0.017562385629748864,
+              "signed_median": 0.00781915590117015,
+              "worst_source": 30,
+              "worst_offset": 0.017562385629748864,
+              "within_1pct": 2,
+              "within_2pct": 4,
+              "within_5pct": 4
+            },
+            "p_SA_rel": {
+              "n": 4,
+              "abs_median": 0.005664205605766305,
+              "abs_max": 0.057208618292189005,
+              "signed_median": -0.005664205605766305,
+              "worst_source": 23,
+              "worst_offset": -0.057208618292189005,
+              "within_1pct": 3,
+              "within_2pct": 3,
+              "within_5pct": 3
+            }
+          },
+          "ZeroTrace (apex on PEC at the cut)": {
+            "n": 20,
+            "members": [
+              36,
+              37,
+              38,
+              39,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              52,
+              53,
+              54,
+              55,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62
+            ],
+            "E_rel": {
+              "n": 20,
+              "abs_median": 0.12493316885553404,
+              "abs_max": 0.23160440363598958,
+              "signed_median": -0.12493316885553404,
+              "worst_source": 38,
+              "worst_offset": -0.23160440363598958,
+              "within_1pct": 2,
+              "within_2pct": 3,
+              "within_5pct": 6
+            },
+            "p_MA_rel": {
+              "n": 20,
+              "abs_median": 0.6941470682926076,
+              "abs_max": 38.630465054206425,
+              "signed_median": 0.22556094083519024,
+              "worst_source": 36,
+              "worst_offset": 38.630465054206425,
+              "within_1pct": 0,
+              "within_2pct": 0,
+              "within_5pct": 0
+            },
+            "p_MS_rel": {
+              "n": 20,
+              "abs_median": 0.2074481730293523,
+              "abs_max": 8.607170941458847,
+              "signed_median": 0.005438474911633576,
+              "worst_source": 41,
+              "worst_offset": 8.607170941458847,
+              "within_1pct": 1,
+              "within_2pct": 2,
+              "within_5pct": 5
+            },
+            "p_SA_rel": {
+              "n": 20,
+              "abs_median": 0.1713062923524287,
+              "abs_max": 4.811041831036578,
+              "signed_median": 0.1713062923524287,
+              "worst_source": 36,
+              "worst_offset": 4.811041831036578,
+              "within_1pct": 2,
+              "within_2pct": 3,
+              "within_5pct": 5
+            }
+          }
+        },
+        "Offsets": {
+          "p_MA_rel:free": {
+            "n": 60,
+            "signed_median": 0.007914919180516783,
+            "p10": -0.011826973560868093,
+            "p90": 0.019389659306246497,
+            "min": -0.02176399005284683,
+            "max": 0.0392040055665749,
+            "abs_median": 0.010064705045067596,
+            "abs_max": 0.0392040055665749,
+            "worst_source": 74,
+            "negative": 13,
+            "within_1pct": 30,
+            "within_2pct": 53,
+            "within_5pct": 60,
+            "within_10pct": 60
+          },
+          "p_MA_rel:raw": {
+            "n": 80,
+            "signed_median": 0.008220045522190411,
+            "p10": -0.049105419226109726,
+            "p90": 0.28842257545058886,
+            "min": -0.7576915476706509,
+            "max": 38.630465054206425,
+            "abs_median": 0.012934847077613172,
+            "abs_max": 38.630465054206425,
+            "worst_source": 36,
+            "negative": 21,
+            "within_1pct": 30,
+            "within_2pct": 53,
+            "within_5pct": 60,
+            "within_10pct": 61
+          },
+          "p_MA_rel:strongest20": {
+            "n": 20,
+            "signed_median": 0.007898081176501658,
+            "p10": -0.0004973659183504904,
+            "p90": 0.01326160483376175,
+            "min": -0.002578368788825374,
+            "max": 0.0153832132054361,
+            "abs_median": 0.007898081176501658,
+            "abs_max": 0.0153832132054361,
+            "worst_source": 7,
+            "negative": 3,
+            "within_1pct": 14,
+            "within_2pct": 20,
+            "within_5pct": 20,
+            "within_10pct": 20
+          },
+          "p_MS_rel:free": {
+            "n": 60,
+            "signed_median": -0.006274547732156277,
+            "p10": -0.010139967218541752,
+            "p90": 0.00827179586817325,
+            "min": -0.015537895333828114,
+            "max": 0.0299037363670786,
+            "abs_median": 0.0070991462506271585,
+            "abs_max": 0.0299037363670786,
+            "worst_source": 26,
+            "negative": 49,
+            "within_1pct": 47,
+            "within_2pct": 59,
+            "within_5pct": 60,
+            "within_10pct": 60
+          },
+          "p_MS_rel:raw": {
+            "n": 80,
+            "signed_median": -0.006096462913482948,
+            "p10": -0.029926816808128295,
+            "p90": 0.0306459708438663,
+            "min": -0.5200089866238448,
+            "max": 8.607170941458847,
+            "abs_median": 0.007965675646603977,
+            "abs_max": 8.607170941458847,
+            "worst_source": 41,
+            "negative": 59,
+            "within_1pct": 48,
+            "within_2pct": 61,
+            "within_5pct": 65,
+            "within_10pct": 65
+          },
+          "p_MS_rel:strongest20": {
+            "n": 20,
+            "signed_median": -0.006038911362025867,
+            "p10": -0.00931501628509803,
+            "p90": 0.004601656828076087,
+            "min": -0.010097914139161739,
+            "max": 0.017562385629748864,
+            "abs_median": 0.0066422666995875,
+            "abs_max": 0.017562385629748864,
+            "worst_source": 30,
+            "negative": 16,
+            "within_1pct": 17,
+            "within_2pct": 20,
+            "within_5pct": 20,
+            "within_10pct": 20
+          },
+          "p_SA_rel:free": {
+            "n": 60,
+            "signed_median": -0.004253635103210159,
+            "p10": -0.03209210171377659,
+            "p90": 0.0012229979929761453,
+            "min": -0.057208618292189005,
+            "max": 0.01691388419248272,
+            "abs_median": 0.007535566097222136,
+            "abs_max": 0.057208618292189005,
+            "worst_source": 23,
+            "negative": 51,
+            "within_1pct": 34,
+            "within_2pct": 46,
+            "within_5pct": 58,
+            "within_10pct": 60
+          },
+          "p_SA_rel:raw": {
+            "n": 80,
+            "signed_median": -0.001415464525711898,
+            "p10": -0.02915249874716513,
+            "p90": 0.2006158612537226,
+            "min": -0.057208618292189005,
+            "max": 4.811041831036578,
+            "abs_median": 0.014274762602634867,
+            "abs_max": 4.811041831036578,
+            "worst_source": 36,
+            "negative": 53,
+            "within_1pct": 36,
+            "within_2pct": 49,
+            "within_5pct": 63,
+            "within_10pct": 65
+          },
+          "p_SA_rel:strongest20": {
+            "n": 20,
+            "signed_median": -0.0029479517135092264,
+            "p10": -0.019010679070915228,
+            "p90": -0.0007553479805204366,
+            "min": -0.057208618292189005,
+            "max": 0.001142497240385435,
+            "abs_median": 0.0029479517135092264,
+            "abs_max": 0.057208618292189005,
+            "worst_source": 23,
+            "negative": 19,
+            "within_1pct": 16,
+            "within_2pct": 18,
+            "within_5pct": 19,
+            "within_10pct": 20
+          },
+          "E_rel:free": {
+            "n": 60,
+            "signed_median": 0.000659836205092798,
+            "p10": -0.00017592283726162447,
+            "p90": 0.003478598376974108,
+            "min": -0.009882818004055717,
+            "max": 0.006074519486862464,
+            "abs_median": 0.0008242400482548651,
+            "abs_max": 0.009882818004055717,
+            "worst_source": 10,
+            "negative": 8,
+            "within_1pct": 60,
+            "within_2pct": 60,
+            "within_5pct": 60,
+            "within_10pct": 60
+          },
+          "E_rel:raw": {
+            "n": 80,
+            "signed_median": 0.0002026735013658856,
+            "p10": -0.1555573183094563,
+            "p90": 0.00371295775164147,
+            "min": -0.23160440363598958,
+            "max": 0.02897886922100197,
+            "abs_median": 0.0016074648984436045,
+            "abs_max": 0.23160440363598958,
+            "worst_source": 38,
+            "negative": 25,
+            "within_1pct": 62,
+            "within_2pct": 63,
+            "within_5pct": 66,
+            "within_10pct": 68
+          },
+          "E_rel:strongest20": {
+            "n": 20,
+            "signed_median": 0.0002078555372381243,
+            "p10": -1.400428434506656e-07,
+            "p90": 0.003478598376974108,
+            "min": -0.0024711826581073027,
+            "max": 0.005101310909585424,
+            "abs_median": 0.0003087319983839548,
+            "abs_max": 0.005101310909585424,
+            "worst_source": 77,
+            "negative": 2,
+            "within_1pct": 20,
+            "within_2pct": 20,
+            "within_5pct": 20,
+            "within_10pct": 20
+          }
+        },
+        "WeightedPMA": {
+          "free": {
+            "n": 60,
+            "weighted_mean": 0.007674781022141203,
+            "weighted_median": 0.007932817060144927,
+            "weight_total": 0.00011890506279167238,
+            "unweighted_median": 0.007914919180516783,
+            "p10": -0.011826973560868093,
+            "p90": 0.019389659306246497,
+            "within_1pct": 30,
+            "within_2pct": 53
+          },
+          "strongest20": {
+            "n": 20,
+            "weighted_mean": 0.0075649236327057934,
+            "weighted_median": 0.007932817060144927,
+            "weight_total": 0.00011574261530829623,
+            "unweighted_median": 0.007898081176501658,
+            "p10": -0.0004973659183504904,
+            "p90": 0.01326160483376175,
+            "within_1pct": 14,
+            "within_2pct": 20
+          }
+        },
+        "Informational": {}
+      },
+      "Cost": {
+        "MainStage": {
+          "H1": 25392150,
+          "Order": 4,
+          "MeanPCGIterations": 20.05,
+          "MaxPCGIterations": 40,
+          "SecondsPerPCGIteration": 0.8224516693254365,
+          "WorkerWallSeconds": 1379.894511129,
+          "ReducerWallSeconds": 534.6985512020001,
+          "StageWallSeconds": 1914.593062331,
+          "NodeHours": 0.5318314062030556
+        },
+        "MainStages": {
+          "four-edge-9d2cb9bbb3fe-p4": {
+            "H1": 25392150,
+            "Order": 4,
+            "MeanPCGIterations": 20.05,
+            "MaxPCGIterations": 40,
+            "SecondsPerPCGIteration": 0.8224516693254365,
+            "WorkerWallSeconds": 1379.894511129,
+            "ReducerWallSeconds": 534.6985512020001,
+            "StageWallSeconds": 1914.593062331,
+            "NodeHours": 0.5318314062030556
+          }
+        },
+        "JobNodeHours": 0.8136277782744444,
+        "JobTotalSeconds": 2929.060001788,
+        "ReferenceNodeHours": 3.638508297623056,
+        "MainStageOverReference": 0.14616742980921257,
+        "Path": "/tmp/library-acceptance-01/four-edge-9d2cb9bbb3fe/cost-summary.json"
+      }
+    }
+  ],
+  "Library": {
+    "CouponsAttempted": 2,
+    "CouponsQualified": 1,
+    "CouponsPending": 0,
+    "CouponsFailed": 1,
+    "CouponsPlanned": 0,
+    "CouponsSkipped": 0,
+    "StoppedCoupons": {},
+    "NodeHours": 1.388955569596111,
+    "CriticalPathSeconds": 3141.196751832962,
+    "CriticalPathRule": "first submission to the last fetch of this run (the jobs of different coupons overlap up to MaxJobs)",
+    "JobWallSeconds": {
+      "two-edge-8dd4bc70f183": 2071.180048758,
+      "four-edge-9d2cb9bbb3fe": 2929.060001788
+    },
+    "WallClockSeconds": 1234.0699129104614,
+    "JobsSubmitted": 2,
+    "UserJobCap": 40,
+    "MaxJobs": 2,
+    "DryRun": false,
+    "Remote": {
+      "Host": "soca-green-job",
+      "Root": "/data/home/simlap/coupon_accuracy_assessment_20260913"
+    },
+    "Orders": [
+      "p4"
+    ],
+    "Controls": [
+      "p3",
+      "p5"
+    ],
+    "FrozenBinarySHA256": "b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27",
+    "ClusterProfile": "soca-green normal-g r8g.48xlarge"
+  }
+}

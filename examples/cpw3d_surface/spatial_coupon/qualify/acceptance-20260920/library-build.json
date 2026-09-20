@@ -1,0 +1,337 @@
+{
+  "Version": 1,
+  "Command": "coupon-library build",
+  "Root": "/tmp/coupon-library-build-96ec539c4-20260920-125056",
+  "Cases": [
+    {
+      "Case": "two-edge-8dd4bc70f183",
+      "InventoryStatus": "RemoteVerified",
+      "FixtureVersion": null,
+      "Scope": {
+        "ExhibitedClasses": [
+          "ContinuationVertices",
+          "ExteriorLoops",
+          "MultipleConductors",
+          "TraceBasis"
+        ],
+        "UnsupportedClasses": []
+      },
+      "Status": "built",
+      "Passed": true,
+      "StoppedBy": null,
+      "CanonicalBuildId": "a9499778ea4e8f39889f139a451eb01c8175a295f0e64d40e100274243b8b3f1",
+      "Variants": {
+        "identity": {
+          "Path": "/private/tmp/coupon-library-build-96ec539c4-20260920-125056/two-edge-8dd4bc70f183/identity.msh",
+          "SHA256": "5d01204e3396744cdbcf6f53fd1ff85d9f8c218eec1f0b9e11fc6a58aa469b04"
+        },
+        "rotate-z-0.63": {
+          "Path": "/private/tmp/coupon-library-build-96ec539c4-20260920-125056/two-edge-8dd4bc70f183/rotate-z-0.63.msh",
+          "SHA256": "ebb790ad1b89a2b264780fc8f9d8e450bb47071fe9f6f89b797b1647c504139a"
+        }
+      },
+      "Elements": {
+        "Tetrahedron": 425916,
+        "Prism": 88920,
+        "Pyramid": 6840,
+        "Total": 521676
+      },
+      "H1": {
+        "Order": 4,
+        "DOFs": 7973827,
+        "EntityCounts": {
+          "Vertices": 134926,
+          "Edges": 735842,
+          "TriangleFaces": 980473,
+          "QuadFaces": 142120,
+          "Tetrahedra": 425916,
+          "Prisms": 88920,
+          "Pyramids": 6840
+        }
+      },
+      "Estimate": {
+        "EstimatedElements": 560104.9559104523,
+        "EstimateOverCap": 0.14002623897761307,
+        "MaximumElements": 4000000,
+        "Passed": true,
+        "ActualElements": 521676,
+        "EstimateOverActual": 1.0736644122222458
+      },
+      "Stages": {
+        "canonical-publish": {
+          "Seconds": 14.291168584022671,
+          "PeakGiB": 1.475677490234375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-library-build-96ec539c4-20260920-125056/two-edge-8dd4bc70f183/canonical-publish.log.json"
+        },
+        "canonical-source": {
+          "Seconds": 0.10970470798201859,
+          "PeakGiB": 3.0517578125e-05,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-library-build-96ec539c4-20260920-125056/two-edge-8dd4bc70f183/canonical-source.log.json"
+        },
+        "gmsh-build": {
+          "Seconds": 44.78403916710522,
+          "PeakGiB": 2.3279571533203125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-library-build-96ec539c4-20260920-125056/two-edge-8dd4bc70f183/gmsh-build.log.json"
+        },
+        "identity-publication": {
+          "Seconds": 34.98693708400242,
+          "PeakGiB": 1.6392974853515625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-library-build-96ec539c4-20260920-125056/two-edge-8dd4bc70f183/identity-publication.log.json"
+        },
+        "identity-variant-audits": {
+          "Seconds": 64.95758037501946,
+          "PeakGiB": 1.0109100341796875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-library-build-96ec539c4-20260920-125056/two-edge-8dd4bc70f183/identity-variant-audits.audit.log.json"
+        },
+        "per-entry-verification": {
+          "Seconds": 233.9933215000201,
+          "PeakGiB": 0.946746826171875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-library-build-96ec539c4-20260920-125056/two-edge-8dd4bc70f183/per-entry-verification.audit.log.json"
+        },
+        "rotate-z-0.63-publication": {
+          "Seconds": 34.38451258302666,
+          "PeakGiB": 1.643646240234375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-library-build-96ec539c4-20260920-125056/two-edge-8dd4bc70f183/rotate-z-0.63-publication.log.json"
+        },
+        "rotate-z-0.63-variant-audits": {
+          "Seconds": 78.96123579191044,
+          "PeakGiB": 0.921661376953125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-library-build-96ec539c4-20260920-125056/two-edge-8dd4bc70f183/rotate-z-0.63-variant-audits.audit.log.json"
+        }
+      },
+      "Verification": {
+        "Passed": true,
+        "Failures": [],
+        "Path": "/tmp/coupon-library-build-96ec539c4-20260920-125056/two-edge-8dd4bc70f183/per-entry-verification.json"
+      },
+      "HeadroomFlags": [],
+      "Root": "/tmp/coupon-library-build-96ec539c4-20260920-125056/two-edge-8dd4bc70f183",
+      "DriverReturnCode": 0,
+      "WallSeconds": 510.18333315849304
+    },
+    {
+      "Case": "four-edge-9d2cb9bbb3fe",
+      "InventoryStatus": "RemoteVerified",
+      "FixtureVersion": null,
+      "Scope": {
+        "ExhibitedClasses": [
+          "ContinuationVertices",
+          "DeviceFootprint",
+          "ExteriorLoops",
+          "TraceBasis"
+        ],
+        "UnsupportedClasses": []
+      },
+      "Status": "built",
+      "Passed": true,
+      "StoppedBy": null,
+      "CanonicalBuildId": "54e800bcef037bb0607a1dc3b4b5067706b142f5924c4b6e284724238dae8a68",
+      "Variants": {
+        "identity": {
+          "Path": "/private/tmp/coupon-library-build-96ec539c4-20260920-125056/four-edge-9d2cb9bbb3fe/identity.msh",
+          "SHA256": "1d536c448885cda2d8af7441c63a9b7b591c18b0b127366c1958ba65030a9ba5"
+        },
+        "rotate-z-0.63": {
+          "Path": "/private/tmp/coupon-library-build-96ec539c4-20260920-125056/four-edge-9d2cb9bbb3fe/rotate-z-0.63.msh",
+          "SHA256": "5443f2d8357159abda8d6425814598f859966ada2f66947317bb2b6360c4d72e"
+        }
+      },
+      "Elements": {
+        "Tetrahedron": 1731140,
+        "Prism": 172107,
+        "Pyramid": 13239,
+        "Total": 1916486
+      },
+      "H1": {
+        "Order": 4,
+        "DOFs": 25392150,
+        "EntityCounts": {
+          "Vertices": 426520,
+          "Edges": 2534619,
+          "TriangleFaces": 3749508,
+          "QuadFaces": 275077,
+          "Tetrahedra": 1731140,
+          "Prisms": 172107,
+          "Pyramids": 13239
+        }
+      },
+      "Estimate": {
+        "EstimatedElements": 1966878.512576444,
+        "EstimateOverCap": 0.491719628144111,
+        "MaximumElements": 4000000,
+        "Passed": true,
+        "ActualElements": 1916486,
+        "EstimateOverActual": 1.0262942242084963
+      },
+      "Stages": {
+        "canonical-publish": {
+          "Seconds": 28.98178520903457,
+          "PeakGiB": 3.3348846435546875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-library-build-96ec539c4-20260920-125056/four-edge-9d2cb9bbb3fe/canonical-publish.log.json"
+        },
+        "canonical-source": {
+          "Seconds": 0.09865912492386997,
+          "PeakGiB": 3.0517578125e-05,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-library-build-96ec539c4-20260920-125056/four-edge-9d2cb9bbb3fe/canonical-source.log.json"
+        },
+        "gmsh-build": {
+          "Seconds": 121.07900791603606,
+          "PeakGiB": 4.60028076171875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-library-build-96ec539c4-20260920-125056/four-edge-9d2cb9bbb3fe/gmsh-build.log.json"
+        },
+        "identity-publication": {
+          "Seconds": 108.02834104106296,
+          "PeakGiB": 3.9703216552734375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-library-build-96ec539c4-20260920-125056/four-edge-9d2cb9bbb3fe/identity-publication.log.json"
+        },
+        "identity-variant-audits": {
+          "Seconds": 263.12800891697407,
+          "PeakGiB": 2.69964599609375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-library-build-96ec539c4-20260920-125056/four-edge-9d2cb9bbb3fe/identity-variant-audits.audit.log.json"
+        },
+        "per-entry-verification": {
+          "Seconds": 916.4411482909927,
+          "PeakGiB": 2.98614501953125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-library-build-96ec539c4-20260920-125056/four-edge-9d2cb9bbb3fe/per-entry-verification.audit.log.json"
+        },
+        "rotate-z-0.63-publication": {
+          "Seconds": 105.98973604093771,
+          "PeakGiB": 3.9617767333984375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-library-build-96ec539c4-20260920-125056/four-edge-9d2cb9bbb3fe/rotate-z-0.63-publication.log.json"
+        },
+        "rotate-z-0.63-variant-audits": {
+          "Seconds": 309.03371820796747,
+          "PeakGiB": 2.7007904052734375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-library-build-96ec539c4-20260920-125056/four-edge-9d2cb9bbb3fe/rotate-z-0.63-variant-audits.audit.log.json"
+        }
+      },
+      "Verification": {
+        "Passed": true,
+        "Failures": [],
+        "Path": "/tmp/coupon-library-build-96ec539c4-20260920-125056/four-edge-9d2cb9bbb3fe/per-entry-verification.json"
+      },
+      "HeadroomFlags": [],
+      "Root": "/tmp/coupon-library-build-96ec539c4-20260920-125056/four-edge-9d2cb9bbb3fe",
+      "DriverReturnCode": 0,
+      "WallSeconds": 1857.1399359703064
+    }
+  ],
+  "Library": {
+    "CasesAttempted": 2,
+    "CasesBuilt": 2,
+    "CasesPassed": 2,
+    "CasesUnsupported": 0,
+    "CasesFailed": 0,
+    "FlaggedCases": [],
+    "WallClockSeconds": 1912.6236469745636,
+    "Jobs": 2,
+    "Commit": "96ec539c4",
+    "Bounds": {
+      "MaximumElements": 4000000,
+      "MaximumSeconds": 1800,
+      "MaximumRSSGiB": 8.0
+    },
+    "HeadroomFraction": 0.9,
+    "HeadroomRule": "a case is flagged when its element count or pre-build estimate reaches 0.9 x MaximumElements, or any bounded stage's wall seconds or peak process-tree RSS reaches 0.9 x its limit (the ten-edge production root sits at 0.87 of the cap and 0.96 of the memory bound: the margin rule the throughput plan lacked)",
+    "Manifest": {
+      "Path": "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/geometry-independence-suite.json",
+      "SHA256": "169b420c0854adf28c74a04354425ecee22dca9f143ae895a8ecf1fb605fc7af"
+    }
+  }
+}

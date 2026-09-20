@@ -2096,7 +2096,7 @@ python3 coupon_library.py qualify \
   --remote soca-green-job:/data/home/simlap/coupon_accuracy_assessment_20260913 \
   --orders p4 --controls p3,p5 --max-jobs 40 \
   --frozen-binary-sha256 b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27 \
-  [--case ID ...] [--stage-prefix NAME] [--control-source I ...] [--root DIR] [--dry-run]
+  [--case ID ...] [--stage-prefix NAME] [--control-source I ...] [--root DIR] [--dry-run] [--resume]
 ```
 
 Every constant the physics runs edited per copy is an argument or a record field:
@@ -2167,7 +2167,13 @@ measured counts on load).
    (`remote-archive-deletion.json`) - and analyzed, and the next pending coupon takes
    the freed slot. Any stage not `complete`, a PCG non-convergence, a digest mismatch
    or an invalid matrix is a recorded stop. The library's `CriticalPathSeconds` is
-   measured from the first submission to the last fetch.
+   measured from the first submission to the last fetch. `--resume` on the same
+   `--root` adopts the job ids a previous driver recorded (`<case>/submission.json`;
+   the re-derived plan must be byte-identical, else a recorded `Resume` stop) and
+   monitors / fetches / analyzes from there, so a lost driver (VPN drop, a stalled
+   process) never causes a second submission; the monitor wait is sliced against
+   the wall clock (a single 90 s sleep of the idle driver was observed not to return
+   on macOS during the acceptance run).
 5. **Qualification.** `compare_matrices.py` (main vs reference, controls vs reference,
    main vs the higher control, the lower control vs main), `classify_sources.py`
    class statistics, `ma_ms_offsets.py` (distributions, reference-p_MA-weighted view,
@@ -2239,6 +2245,26 @@ gated at its p5 main stage with p_SA not applicable -, the concurrent scheduler 
 a fake remote replaying the recorded trees, PendingQualification, the fail-closed
 stops). Nothing four-edge-specific remains hard-coded: no source count, control
 index, remote path or mesh digest is in the code.
+
+### Live acceptance of the two commands (supervisor decision 51, 2026-09-20)
+
+`qualify/acceptance-20260920/` holds the records of the live run that qualifies the two
+commands (`ACCEPTANCE.md`, `library-build.json`, `library-qualification.json`,
+`process-library.json`, per-coupon `qualification.json` / `cost-summary.json` / submission,
+digest, matrix-validation and archive-deletion records; no CSV, mesh or log). `build`
+rebuilt four-edge (identity byte-identical to the physics-13 mesh `1d536c44…`) and two-edge
+(the decision-44 production mesh `5d01204e…`, not gallery-10's pre-decision-43/44 mesh) in
+1913 s; `qualify` ran both coupons concurrently (PBS 46023 / 46024, 34:32 and 48:50,
+critical path 3141 s, 1.389 node-h, archives deleted after the digest check). Four-edge:
+Passed, CSVs bit-identical to physics-13 (E 60 / 60, p_MA 30 / 53 / 60 with 20 / 20 strongest,
+p_MS 47 / 59 / 60, p_SA 34 / 46 / 58, 0.532 node-h). Two-edge, gated at its p5 main stage
+against the p5 reference with p_SA not applicable: Failed on the p_MA strongest-20 at 53 / 58
+exactly as the recorded gallery-10 CSVs do through the same gates (E 78 / 78, p_MA
+34 / 60 / 78 vs 33 / 59 / 78 recorded, p_MS 77 / 78 / 78 vs 75 / 78 / 78; per-source
+differences ≤ 2.1% = the recipe step 43 / 44 on the two-edge mesh; 0.118 / 0.382 node-h at
+p4 / p5). Defects fixed forward during the run: not-applicable interfaces, sequential
+submission, global `--orders`, `rsync --mkpath`, the runner uploaded as a tree, a lost driver
+without `--resume`.
 
 ## Preflight
 

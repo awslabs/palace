@@ -1,0 +1,16 @@
+== live two-edge-8dd4bc70f183-p4 vs recorded g10-p4: sources live 78 recorded 78 common 78
+   E     max |rel diff| 9.094e-03 at source 18; signed median -5.567e-05; n 78
+   Q_MA  max |rel diff| 1.031e-02 at source 65; signed median +9.791e-05; n 78
+   Q_MS  max |rel diff| 1.696e-02 at source 35; signed median -3.121e-04; n 78
+   p_MA  max |rel diff| 1.242e-02 at source 17; signed median +2.461e-04; n 78
+   p_MS  max |rel diff| 1.737e-02 at source 35; signed median +6.647e-05; n 78
+   domain matrix (all 3081 common entries) max |rel diff| 2.371e-01 at (9, 29)
+   surface matrix (all 36972 common entries) max |rel diff| 7.559e-02 at ((2, 1, 2e-06, 47, 78), 'Q_ij normal (J)')
+== live two-edge-8dd4bc70f183-p5 vs recorded g10-p5: sources live 78 recorded 78 common 78
+   E     max |rel diff| 5.123e-03 at source 18; signed median -6.331e-05; n 78
+   Q_MA  max |rel diff| 1.922e-02 at source 66; signed median -4.643e-04; n 78
+   Q_MS  max |rel diff| 2.075e-02 at source 35; signed median +1.533e-04; n 78
+   p_MA  max |rel diff| 1.824e-02 at source 66; signed median -3.921e-04; n 78
+   p_MS  max |rel diff| 2.051e-02 at source 35; signed median +1.757e-04; n 78
+   domain matrix (all 3081 common entries) max |rel diff| 9.874e-02 at (9, 29)
+   surface matrix (all 36972 common entries) max |rel diff| 4.570e-02 at ((1, 1, 2e-06, 38, 78), 'Q_total_ij (J)')
