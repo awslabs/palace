@@ -50,6 +50,7 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import time
 
@@ -606,6 +607,15 @@ def library_totals(records, *, args, remote, profile, wall_seconds, first_submis
             "FrozenBinarySHA256": args.frozen_binary_sha256, "ClusterProfile": profile["Name"]}
 
 
+def tool_commit():
+    """The repository commit of the qualify tooling (None outside a git checkout)."""
+    try:
+        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=HERE, text=True,
+                                       stderr=subprocess.DEVNULL).strip()
+    except (subprocess.CalledProcessError, OSError):
+        return None
+
+
 def run_qualify(args, *, log=print):
     build_path = Path(args.build_record).resolve()
     build = json.loads(build_path.read_text())
@@ -708,6 +718,7 @@ def run_qualify(args, *, log=print):
             checkpoint()
         active = still_active
     record = {"Version": QUALIFICATION_VERSION, "Command": "coupon-library qualify", "Root": str(root),
+              "ToolCommit": tool_commit(),
               "BuildRecord": {"Path": str(build_path), "SHA256": sha256(build_path), "Commit": build["Library"]["Commit"]},
               "Gates": {"Path": str(root / GATES_COPY), "SHA256": gates_digest},
               "CostModel": {"Path": str(args.cost_model), "SHA256": sha256(args.cost_model)},
