@@ -79,12 +79,20 @@ def resolve(campaign, basis_contract_sha256):
     sources = source_files(config, inputs)
     return {"Key": key, "Inputs": str(inputs), "Config": str(config_path), "ConfigRole": config_role,
             "ConfigSHA256": sha256(config_path), "ReferenceOrder": int(config["Solver"]["Order"]),
-            "LinearTol": config["Solver"]["Linear"]["Tol"],
+            "LinearTol": config["Solver"]["Linear"]["Tol"], "Interfaces": interfaces(config),
             "ZeroTraceIndices": [int(i) for i in contract.get("ZeroTraceIndices", [])],
             "Sources": sources, "Results": str(results) if results else None,
             "ResultsSHA256": ({name: sha256(results / name) for name in MATRICES} if results else None),
             "PlanViewBoundary": str(inputs / "plan-view-boundary.csv") if (inputs / "plan-view-boundary.csv").is_file() else None,
             "RetainedEtch": str(inputs / "retained-etch.csv") if (inputs / "retained-etch.csv").is_file() else None}
+
+
+def interfaces(config):
+    """The dielectric interface types the reference config postprocesses (MA / MS / SA);
+    a participation of an interface the reference does not declare cannot be compared and
+    its gates are not applicable (gallery case 10 declares MA and MS only)."""
+    entries = config.get("Boundaries", {}).get("Postprocessing", {}).get("Dielectric", [])
+    return sorted({str(entry["Type"]) for entry in entries if "Type" in entry})
 
 
 def source_files(config, inputs):

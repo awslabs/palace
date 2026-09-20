@@ -23,14 +23,20 @@ Per passed coupon of the build record:
     within the walltime; plan.json with estimate-derived caps and pinned SHA-256 of the
     mesh, every config and every trace; job.pbs from the cluster profile;
  5. --dry-run stops here (plans / configs / estimates / qualification-gates.json written,
-    nothing contacted); otherwise upload, submit under the user job cap (recorded),
-    monitor read-only, fetch (never the archives), hash-verify every result CSV against
-    the remote digests, validate every matrix (run_graded_library_case.validate_matrix:
-    complete, symmetric, nonnegative), then delete the remote archives (recorded);
+    nothing contacted); otherwise every planned coupon is one job: up to --max-jobs of
+    them are queued / running at once (each qsub under the user job cap, recorded), every
+    active job is polled read-only once per interval, and a coupon whose job left the
+    queue is fetched (never the archives), hash-verified CSV by CSV against the remote
+    digests, matrix-validated (run_graded_library_case.validate_matrix: complete,
+    symmetric, nonnegative), its remote archives deleted (recorded) and analyzed while
+    the other jobs run; the next pending coupon takes the freed slot;
  6. qualification: comparisons vs the reference and between the p levels, class
     statistics, MA / MS / SA offsets, p-sequence controls, key sources, cost; the
     frozen gate table (qualification-gates.json, digest recorded) -> Passed / Failed, or
-    PendingQualification when the reference has no matrices (never Passed).
+    PendingQualification when the reference has no matrices (never Passed).  The main
+    orders are --orders plus the reference's own order when it differs; the same-order
+    comparison is gated (the others are informational); a participation of an interface
+    the reference does not postprocess is NotApplicable (gates.py).
 
 Records: ROOT/library-qualification.json (per coupon: verdict per gate and class
 offsets, PCG, node-h, x the reference cost; library totals: node-h, critical-path wall
@@ -139,6 +145,24 @@ def source_directory(manifest_path, manifest, case):
     return (Path(manifest_path).parent / manifest["RepositoryRoot"]).resolve() / directory
 
 
+ORDERS_RULE = ("main stages at every --orders order plus the reference's own order when it differs (the same-order "
+               "comparison is the gated one; the first --orders order stays the library order: cost coupon, "
+               "local-edge stage, p-sequence main)")
+
+
+def main_orders_of(orders, reference_order):
+    """The main orders of a coupon: --orders, then the reference order when absent."""
+    main_orders = list(orders)
+    if reference_order is not None and reference_order not in main_orders:
+        main_orders.append(reference_order)
+    return main_orders
+
+
+def gated_order(main_orders, reference_order):
+    """The gated main order: the reference order when the run solves it, else the first."""
+    return reference_order if reference_order in main_orders else main_orders[0]
+
+
 def stage_layout(prefix, main_orders, control_orders, source_count, control_count):
     """The run order: full stages at every main order, the control stages from the highest
     order down (the step to the higher order is secured before the cheaper low control, as
@@ -222,7 +246,11 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                           "Classes": {str(i): classes[i][0] for i in controls if i in classes}}
     # 3. stage layout, remote layout, configs.
     prefix = args.stage_prefix or case_id
-    main_orders, control_orders = args.orders, args.controls
+    main_orders = main_orders_of(args.orders, reference["ReferenceOrder"])
+    control_orders = list(args.controls)
+    record["Orders"] = {"Main": [f"p{order}" for order in main_orders], "Controls": [f"p{order}" for order in control_orders],
+                        "ReferenceOrder": f"p{reference['ReferenceOrder']}", "Gated": f"p{gated_order(main_orders, reference['ReferenceOrder'])}",
+                        "Rule": ORDERS_RULE}
     layout = stage_layout(prefix, main_orders, control_orders, len(indices), len(controls))
     run_name = root.name
     remote_root = remote["Root"] if remote else "<remote-root>"
@@ -322,23 +350,43 @@ def upload_case(record, context, *, remote, profile):
     return {"Commands": commands, "UTC": remote_side.utc()}
 
 
-def run_case(record, context, *, remote, profile, args, log):
-    """Steps 5: submit, monitor, fetch, verify, validate, delete archives.  Returns the
-    results directory (local) with status.json."""
+def submit_case(record, context, *, remote, profile, log):
+    """Step 5a: upload and submit one coupon's job under the user job cap (recorded)."""
     case_root = Path(record["Root"])
     remote_case = record["Remote"]["Case"]
     record["Upload"] = upload_case(record, context, remote=remote, profile=profile)
-    submission = remote_side.submit(remote["Host"], profile["PBSBin"], f"{remote_case}/main/job.pbs", f"{remote_case}/main",
-                                    job_cap=profile["UserJobCap"])
+    try:
+        submission = remote_side.submit(remote["Host"], profile["PBSBin"], f"{remote_case}/main/job.pbs", f"{remote_case}/main",
+                                        job_cap=profile["UserJobCap"])
+    except RuntimeError as error:
+        raise CaseStop("JobBudget", str(error))
     record["Submission"] = submission
+    record["Monitor"] = {"Polls": 0, "LastJobState": None, "LastStages": None}
     write_json(case_root / "submission.json", submission)
     log(f"{record['Case']}: submitted {submission['Job']} ({submission['UserJobsBefore']} user jobs before, cap {profile['UserJobCap']})")
-    polls = remote_side.monitor(remote["Host"], profile["PBSBin"], submission["Job"], f"{remote_case}/main/status.json",
-                                interval_seconds=args.monitor_interval, max_polls=args.monitor_polls, sink=log)
-    record["Monitor"] = {"Polls": len(polls), "LastJobState": polls[-1]["JobState"] if polls else None}
-    if polls and polls[-1]["JobState"] in ("Q", "R", "E"):
-        raise CaseStop("Monitor", f"job {submission['Job']} still {polls[-1]['JobState']} after {len(polls)} polls: fetch later "
-                                  f"with the recorded job id", Submission=submission)
+    return submission
+
+
+def poll_case(record, *, remote, profile, log):
+    """One read-only poll of a submitted coupon; True when the job has left Q / R / E."""
+    submission = record["Submission"]
+    poll = remote_side.poll(remote["Host"], profile["PBSBin"], submission["Job"], f"{record['Remote']['Case']}/main/status.json")
+    stages = ([(s["Name"], s["State"], round(s.get("WallSeconds", 0))) for s in poll["Status"]["Stages"]] if poll["Status"] else None)
+    record["Monitor"]["Polls"] += 1
+    record["Monitor"]["LastJobState"] = poll["JobState"]
+    record["Monitor"]["LastStages"] = stages
+    record["Monitor"]["LastPollUTC"] = poll["UTC"]
+    log(f"== {poll['UTC']} {record['Case']} job {submission['Job']} state {poll['JobState']} stages {stages}")
+    return poll["JobState"] not in ("Q", "R", "E")
+
+
+def finish_case(record, context, *, remote, profile):
+    """Step 5b after the job left the queue: fetch (never the archives), hash-verify every
+    CSV against the remote, validate every matrix, delete the remote archives (recorded).
+    Returns the local results directory with status.json."""
+    case_root = Path(record["Root"])
+    remote_case = record["Remote"]["Case"]
+    submission = record["Submission"]
     results = case_root / "results"
     results.mkdir(exist_ok=True)
     record["Fetch"] = {"Command": remote_side.fetch(remote["Host"], f"{remote_case}/main", results / "main"),
@@ -397,14 +445,18 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
     reference = context["reference"]
     layout, controls, zero_trace = context["layout"], context["controls"], context["zero_trace"]
     locations, classes = context["locations"], context["classes"]
-    main = next(item for item in layout if item["Role"] == "main")
+    mains = [item for item in layout if item["Role"] == "main"]
+    main = mains[0]
+    gated = next(item for item in mains if item["Order"] == gated_order([item["Order"] for item in mains], reference["ReferenceOrder"]))
     main_dir = results / "main" / main["Prefix"] / "reducer"
     control_dirs = {item["Order"]: results / "main" / item["Prefix"] / "reducer" for item in layout if item["Role"] == "control"}
     reference_dir = Path(reference["Results"]) if reference["Results"] else None
     comparisons = {}
     labels = {}
     if reference_dir is not None:
-        labels[f"{main['Prefix']}-vs-reference"] = (reference_dir, main_dir, f"reference p{reference['ReferenceOrder']}", f"{main['Prefix']} (all sources)")
+        for item in mains:
+            labels[f"{item['Prefix']}-vs-reference"] = (reference_dir, results / "main" / item["Prefix"] / "reducer",
+                                                       f"reference p{reference['ReferenceOrder']}", f"{item['Prefix']} (all sources)")
         for order, directory in control_dirs.items():
             labels[f"{main['Prefix'].rsplit('-p', 1)[0]}-p{order}-control-vs-reference"] = (
                 reference_dir, directory, f"reference p{reference['ReferenceOrder']}", f"p{order} control ({len(controls)} sources)")
@@ -419,7 +471,8 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
                                                                 max_entry_rows=200)
     class_stats = classify_sources.write_class_report(classes, locations, list(comparisons.items()),
                                                       comparison_dir / "source-classes.csv", comparison_dir / "class-statistics.md")
-    main_label = f"{main['Prefix']}-vs-reference"
+    main_label = f"{gated['Prefix']}-vs-reference"
+    informational = [f"{item['Prefix']}-vs-reference" for item in mains if item is not gated and reference_dir is not None]
     orders_of = {"main": main["Order"]}
     runs = {"main": main_dir, "low": None, "high": None, "ref": reference_dir}
     lower = [order for order in control_dirs if order < main["Order"]]
@@ -454,17 +507,26 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
     gate_record = gate_evaluation.evaluate(
         gates, comparison=comparisons.get(main_label), classes={i: name for i, (name, _) in classes.items()},
         ref_pma=ma_ms_offsets.reference_p_ma(reference_dir) if reference_dir else None,
-        p_sequence_summary=p_sequence_summary, reference_order=reference["ReferenceOrder"], gates_sha256=gates_digest)
+        p_sequence_summary=p_sequence_summary, reference_order=reference["ReferenceOrder"], gates_sha256=gates_digest,
+        interfaces=reference.get("Interfaces"), gated_order=gated["Order"])
     write_json(case_root / "qualification.json", gate_record)
     record["Qualification"] = {"Verdict": gate_record["Verdict"], "Reason": gate_record["Reason"],
-                               "GatesPassed": gate_record["GatesPassed"], "ReferenceAnchor": gate_record["ReferenceAnchor"],
+                               "GatesPassed": gate_record["GatesPassed"], "NotApplicable": gate_record["NotApplicable"],
+                               "ReferenceAnchor": gate_record["ReferenceAnchor"],
+                               "GatedStage": gated["Prefix"], "GatedOrder": f"p{gated['Order']}", "GatedComparison": main_label,
                                "Path": str(case_root / "qualification.json"),
                                "ClassStatistics": class_stats.get(main_label),
                                "Offsets": (offsets["Distributions"].get(main_label) if offsets else None),
-                               "WeightedPMA": (offsets["Weighted"].get(main_label) if offsets else None)}
-    record["Cost"] = {"MainStage": {key: main_cost.get(key) for key in ("H1", "Order", "MeanPCGIterations", "MaxPCGIterations",
-                                                                        "SecondsPerPCGIteration", "WorkerWallSeconds",
-                                                                        "ReducerWallSeconds", "StageWallSeconds", "NodeHours")},
+                               "WeightedPMA": (offsets["Weighted"].get(main_label) if offsets else None),
+                               "Informational": {label: {"ClassStatistics": class_stats.get(label),
+                                                         "Offsets": (offsets["Distributions"].get(label) if offsets else None),
+                                                         "WeightedPMA": (offsets["Weighted"].get(label) if offsets else None)}
+                                                 for label in informational}}
+    stage_keys = ("H1", "Order", "MeanPCGIterations", "MaxPCGIterations", "SecondsPerPCGIteration", "WorkerWallSeconds",
+                  "ReducerWallSeconds", "StageWallSeconds", "NodeHours")
+    record["Cost"] = {"MainStage": {key: main_cost.get(key) for key in stage_keys},
+                      "MainStages": {item["Prefix"]: {key: cost["Stages"].get(item["Prefix"], {}).get(key) for key in stage_keys}
+                                     for item in mains},
                       "JobNodeHours": cost["JobNodeHours"], "JobTotalSeconds": cost["JobTotalSeconds"],
                       "ReferenceNodeHours": reference_cost,
                       "MainStageOverReference": (main_cost.get("NodeHours") / reference_cost
@@ -535,6 +597,9 @@ def library_totals(records, *, args, remote, profile, wall_seconds, first_submis
             "StoppedCoupons": {record["Case"]: record["StoppedBy"] for record in records if record["StoppedBy"]},
             "NodeHours": node_hours,
             "CriticalPathSeconds": ((last_fetch - first_submission) if first_submission and last_fetch else None),
+            "CriticalPathRule": "first submission to the last fetch of this run (the jobs of different coupons overlap up to MaxJobs)",
+            "JobWallSeconds": {record["Case"]: (record.get("Cost") or {}).get("JobTotalSeconds") for record in records
+                               if record.get("Cost")},
             "WallClockSeconds": wall_seconds, "JobsSubmitted": jobs, "UserJobCap": cap,
             "MaxJobs": args.max_jobs, "DryRun": args.dry_run, "Remote": remote,
             "Orders": [f"p{order}" for order in args.orders], "Controls": [f"p{order}" for order in args.controls],
@@ -570,8 +635,21 @@ def run_qualify(args, *, log=print):
         selected = [by_id[case_id] for case_id in args.case]
     start = time.time()
     records, contexts = [], {}
-    jobs = 0
-    first_submission = last_fetch = None
+    partial = root / LIBRARY_QUALIFICATION_RECORD
+
+    def stop(record, case_record, exception):
+        if record is None:
+            record = {"Case": case_record["Case"], "Root": str(root / case_record["Case"])}
+        record["Status"] = STATUS_SKIPPED if exception.record["Kind"] in ("Build", "Manifest", "Reference") else STATUS_FAILED
+        record["StoppedBy"] = exception.record
+        log(f"{record['Case']}: {record['Status']} - {exception.record['Kind']}: {exception.record['Message']}")
+        return record
+
+    def checkpoint():
+        write_json(partial, {"Version": QUALIFICATION_VERSION, "Command": "coupon-library qualify", "Partial": True, "Cases": records})
+
+    # Steps 1-4 for every coupon (a stop records the coupon; the others continue).
+    pending = []
     for case_record in selected:
         record = None
         try:
@@ -580,27 +658,55 @@ def run_qualify(args, *, log=print):
                                            gates_digest=gates_digest)
             contexts[record["Case"]] = context
             log(f"{record['Case']}: planned {record['Plan']['StageNames']} ({record['Estimate']['Decision']})")
-            if args.dry_run:
-                record["Status"] = STATUS_PLANNED
-            else:
-                if jobs >= args.max_jobs:
-                    raise CaseStop("JobBudget", f"--max-jobs {args.max_jobs} reached before {record['Case']}: not submitted")
-                submitted_at = time.time()
-                results = run_case(record, context, remote=remote, profile=profile, args=args, log=log)
-                jobs += 1
-                first_submission = first_submission or submitted_at
-                last_fetch = time.time()
+            if not args.dry_run:
+                pending.append((record, context))
+        except CaseStop as exception:
+            record = stop(record, case_record, exception)
+        records.append(record)
+        checkpoint()
+    # Step 5: up to --max-jobs of this run's jobs in the queue at once (one per coupon), a
+    # read-only poll of every active job per interval, fetch / verify / analyze each coupon
+    # as its job leaves the queue, the next pending coupon submitted into the freed slot.
+    jobs = 0
+    first_submission = last_fetch = None
+    active = []
+    while pending or active:
+        while pending and len(active) < args.max_jobs:
+            record, context = pending.pop(0)
+            try:
+                submit_case(record, context, remote=remote, profile=profile, log=log)
+            except CaseStop as exception:
+                stop(record, None, exception)
+                checkpoint()
+                continue
+            jobs += 1
+            record["SubmittedAt"] = time.time()
+            first_submission = first_submission or record["SubmittedAt"]
+            active.append((record, context))
+            checkpoint()
+        if not active:
+            break
+        time.sleep(args.monitor_interval)
+        still_active = []
+        for record, context in active:
+            try:
+                done = poll_case(record, remote=remote, profile=profile, log=log)
+                if not done and record["Monitor"]["Polls"] >= args.monitor_polls:
+                    raise CaseStop("Monitor", f"job {record['Submission']['Job']} still {record['Monitor']['LastJobState']} after "
+                                              f"{record['Monitor']['Polls']} polls: fetch later with the recorded job id",
+                                   Submission=record["Submission"])
+                if not done:
+                    still_active.append((record, context))
+                    continue
+                results = finish_case(record, context, remote=remote, profile=profile)
+                record["FetchedAt"] = time.time()
+                last_fetch = record["FetchedAt"]
                 analyze_case(record, context, results, gates=gates, gates_digest=gates_digest, profile=profile)
                 log(f"{record['Case']}: {record['Qualification']['Verdict']} ({record['Qualification']['Reason']})")
-        except CaseStop as stop:
-            if record is None:
-                record = {"Case": case_record["Case"], "Root": str(root / case_record["Case"])}
-            record["Status"] = STATUS_SKIPPED if stop.record["Kind"] in ("Build", "Manifest", "Reference", "JobBudget") else STATUS_FAILED
-            record["StoppedBy"] = stop.record
-            log(f"{record['Case']}: {record['Status']} - {stop.record['Kind']}: {stop.record['Message']}")
-        records.append(record)
-        write_json(root / LIBRARY_QUALIFICATION_RECORD, {"Version": QUALIFICATION_VERSION, "Command": "coupon-library qualify",
-                                                          "Partial": True, "Cases": records})
+            except CaseStop as exception:
+                stop(record, None, exception)
+            checkpoint()
+        active = still_active
     record = {"Version": QUALIFICATION_VERSION, "Command": "coupon-library qualify", "Root": str(root),
               "BuildRecord": {"Path": str(build_path), "SHA256": sha256(build_path), "Commit": build["Library"]["Commit"]},
               "Gates": {"Path": str(root / GATES_COPY), "SHA256": gates_digest},
@@ -625,7 +731,9 @@ def add_arguments(parser):
     parser.add_argument("--controls", type=parse_orders, default=[3, 5], help="control orders (default p3,p5)")
     parser.add_argument("--control-count", type=int, default=DEFAULT_CONTROL_COUNT, help="controls chosen by class (default 8)")
     parser.add_argument("--control-source", type=int, action="append", help="explicit control source (repeatable; overrides the class choice)")
-    parser.add_argument("--max-jobs", type=int, default=40, help="jobs this run may submit (within the cluster profile's user cap)")
+    parser.add_argument("--max-jobs", type=int, default=40, help="at most this many of the run's jobs queued / running at once "
+                                                                  "(one job per coupon; every qsub is counted against the cluster "
+                                                                  "profile's user cap)")
     parser.add_argument("--frozen-binary-sha256", required=True, help="SHA-256 of the frozen Palace executable under ROOT")
     parser.add_argument("--stage-prefix", help="stage name prefix (default: the case id)")
     parser.add_argument("--case", action="append", default=None, help="case id (repeatable; default: every case of the build record)")

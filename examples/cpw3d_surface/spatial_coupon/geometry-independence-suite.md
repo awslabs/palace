@@ -2135,7 +2135,11 @@ measured counts on load).
    sources). The 8 controls (`--control-count`) are one source per class in that
    priority order, cycling, lowest index first (`choose_controls`), unless
    `--control-source` names them (the recorded campaigns' supervisor-specified sets).
-3. **Configs and plan.** `build_configs.py` derives worker / reducer at every `--orders`
+3. **Configs and plan.** The main orders of a coupon are `--orders` plus the
+   reference's own `Solver.Order` when it differs (gallery case 10: reference p5 ->
+   main stages p4 and p5, the recorded gallery-10 layout; the first `--orders` order
+   stays the library order: cost coupon, local-edge stage, p-sequence main; recorded
+   per coupon as `Orders`). `build_configs.py` derives worker / reducer at every main
    order on all sources, at every `--controls` order (highest first) on the controls,
    and the ordinary-path local-edge `config.json` at the main order on the controls
    (`SaveLocalEdgeEnergy` true); only `Model.Mesh`, `Problem.Output`, the trace
@@ -2149,15 +2153,21 @@ measured counts on load).
    estimate rounded up to 300 s and bounded by the deadline, `MinimumSeconds` = the
    1x estimate rounded up; `job.pbs` from the cluster profile; `run_stages.py` (the
    unchanged bounded runner, executable / hash / MPI wrapper read from the plan).
-4. **Submission and results** (`qualify/remote.py`; not under `--dry-run`): rsync of
-   mesh / traces / `main/` to `<root>/<run>/<case>/`, `qsub` after a read-only `qstat`
-   count of the user's jobs against the cap (`submission.json`), read-only polls of
-   the job state and the runner's `status.json`, rsync of `main/` without the archives,
-   `sha256sum` of every fetched CSV against the remote (`result-csv-sha256.json`),
+4. **Submission and results** (`qualify/remote.py`; not under `--dry-run`): every
+   planned coupon is one job and up to `--max-jobs` of them are queued / running at
+   once (the library run's concurrency; the 40-job user cap is checked at every
+   `qsub`). Per coupon: rsync of mesh / traces / `main/` to `<root>/<run>/<case>/`,
+   `qsub` after a read-only `qstat` count of the user's jobs against the cap
+   (`submission.json`); every active job is polled read-only once per interval (job
+   state and the runner's `status.json`); a coupon whose job left the queue is
+   fetched while the others run - rsync of `main/` without the archives, `sha256sum`
+   of every fetched CSV against the remote (`result-csv-sha256.json`),
    `run_graded_library_case.validate_matrix` on every reducer matrix (complete,
    symmetric, nonnegative), then `du` + `rm -rf` of the response archives
-   (`remote-archive-deletion.json`). Any stage not `complete`, a PCG non-convergence,
-   a digest mismatch or an invalid matrix is a recorded stop.
+   (`remote-archive-deletion.json`) - and analyzed, and the next pending coupon takes
+   the freed slot. Any stage not `complete`, a PCG non-convergence, a digest mismatch
+   or an invalid matrix is a recorded stop. The library's `CriticalPathSeconds` is
+   measured from the first submission to the last fetch.
 5. **Qualification.** `compare_matrices.py` (main vs reference, controls vs reference,
    main vs the higher control, the lower control vs main), `classify_sources.py`
    class statistics, `ma_ms_offsets.py` (distributions, reference-p_MA-weighted view,
@@ -2176,6 +2186,13 @@ measured counts on load).
    | p_SA | >= 2/3 of the free sources within 2% and >= 90% within 5% (the EL4c level 40 / 56 of 60) |
    | p-sequence controls | every control's step to the higher order d_high = (p_high - p_main)/|p_high| within 1% for E and 5% for p_MA / p_MS / p_SA |
 
+   Anchor rule: when a main stage was solved at the reference order, the gates
+   evaluate that same-order comparison and the other main orders are recorded as
+   `Informational`; otherwise the first main order is gated against the named anchor
+   (`GatedOrder`, `GatedComparison`). A participation whose interface the reference
+   config does not postprocess (no `Postprocessing.Dielectric` entry of that type;
+   case 10 declares MA and MS only) is `NotApplicable` for its gate and its p-sequence
+   observable - recorded with the declared interfaces, never a failure.
    Verdict `Passed` only when every gate passes; `Failed` otherwise;
    `PendingQualification` when the reference has no matrices (the p-sequence controls
    alone are evaluated; never `Passed`). On the stored CSVs: physics-11 passes with
@@ -2184,19 +2201,25 @@ measured counts on load).
    gallery-06b passes with E 93 / 95 (both misses in the narrow class), p_SA 47 / 69 /
    95, p_MS 77 / 94 / 95, p_MA 68 / 91 / 95 (19 / 20, 20 / 20), 0.974 node-h;
    gallery-06 (before decision 44) fails p_MA (25 / 133 beyond 5%) - the table
-   reproduces the RESULTS.md class counts (tests).
+   reproduces the RESULTS.md class counts (tests); gallery-10 (reference p5, gated at
+   its p5 main stage, p_SA not applicable) reproduces its RESULTS.md p5 row - E 78 / 78,
+   p_MA 33 / 59 / 78 (median +1.28%), p_MS 75 / 78 / 78 - and FAILS the p_MA
+   strongest-20 statement at the two z = 0.1 near-junction hats 53 / 58 (+2.8 / +3.5%),
+   the finding RESULTS.md reports as the systematic far-surface MA offset at equal p.
 6. **Records.** `ROOT/library-qualification.json`: per coupon `Status` (qualified /
    pending-qualification / failed / planned / skipped) and `StoppedBy` (Build, Manifest,
    Reference, Mesh, Estimate, JobBudget, Monitor, Fetch, Stages, Verification,
    MatrixValidation), the reference binding, sources / classes / controls, stage layout,
    estimate (H1 by order, job seconds by PCG factor, peak GB, node-h of the main stage),
    plan (pins, caps), remote layout, submission / monitor / fetch / digest / matrix /
-   deletion records, `Qualification` (verdict, gates passed, anchor, class statistics,
-   offsets, weighted p_MA), `Cost` (main-stage H1 / PCG / seconds / node-h, job node-h,
-   the reference's node-h from its `status.json`, the ratio); library totals: coupons by
-   status, stopped coupons with the reason, node-h, critical-path seconds from the first
-   submission to the last fetch, jobs submitted vs `--max-jobs` and the cap, orders,
-   binary hash, profile. `ROOT/qualification-gates.json` (the table used),
+   deletion records, `Qualification` (verdict, gates passed, not-applicable gates, anchor,
+   gated stage / order / comparison, class statistics, offsets, weighted p_MA, the other
+   main orders as `Informational`), `Cost` (library-order main-stage H1 / PCG / seconds /
+   node-h, every main stage under `MainStages`, job node-h, the reference's node-h from
+   its `status.json`, the ratio); library totals: coupons by status, stopped coupons with
+   the reason, node-h, critical-path seconds from the first submission to the last fetch
+   (jobs overlap up to `--max-jobs`), per-job wall seconds, jobs submitted vs `--max-jobs`
+   and the cap, orders, binary hash, profile. `ROOT/qualification-gates.json` (the table used),
    `ROOT/process-library.json` (each coupon's model from its own `process-library.json`
    with the fetched matrices, `CouponMesh`, `Qualification` and `LibraryQualified` only
    when Passed).
@@ -2211,7 +2234,9 @@ on the gallery-06 case against `gallery-physics-06b` (135 traces). Tests:
 `test_qualify_gates.py` (the gate evaluation, the recorded class table and locations,
 the estimator against the recorded 06b `stage-estimate.json`, node-h, the cap rule,
 the control choice), `test_qualify_dry_run.py` (the dry runs above, the analysis of
-the recorded results through the same records, PendingQualification, the fail-closed
+the recorded results through the same records - physics-11 / 06b Passed, gallery-10
+gated at its p5 main stage with p_SA not applicable -, the concurrent scheduler against
+a fake remote replaying the recorded trees, PendingQualification, the fail-closed
 stops). Nothing four-edge-specific remains hard-coded: no source count, control
 index, remote path or mesh digest is in the code.
 

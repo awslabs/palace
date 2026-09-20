@@ -275,6 +275,43 @@ class GateRuleTest(unittest.TestCase):
         self.assertEqual(len(record["Gates"]["p_MA"]["StrongestSources"]), 12)
         self.assertEqual(record["ReferenceAnchor"], "vs p5 anchor")
 
+    def test_undeclared_interface_is_not_applicable(self):
+        """A reference that postprocesses MA and MS only (gallery case 10): the p_SA gate and the
+        p_SA p-sequence observable are NotApplicable, recorded, never a failure; the declared
+        interfaces are still gated; without the interface list everything is gated."""
+        table, digest = gates.load_gates()
+        comparison, classes, ref_pma = self.synthetic()
+        for record in comparison["PerSource"].values():
+            del record["p_SA_rel"]
+        sequence = self.sequence()
+        sequence[1]["p_SA"]["seq"] = {"d_low": None, "d_high": None, "r": None, "p_inf": None}
+        gated = gates.evaluate(table, comparison=comparison, classes=classes, ref_pma=ref_pma, p_sequence_summary=sequence,
+                               reference_order=5, gates_sha256=digest)
+        self.assertEqual(gated["Verdict"], gates.VERDICT_FAILED)
+        self.assertFalse(gated["GatesPassed"]["p_SA"])
+        self.assertFalse(gated["GatesPassed"]["PSequenceControls"])
+        record = gates.evaluate(table, comparison=comparison, classes=classes, ref_pma=ref_pma, p_sequence_summary=sequence,
+                                reference_order=5, gates_sha256=digest, interfaces=["MA", "MS"], gated_order=5)
+        self.assertEqual(record["Verdict"], gates.VERDICT_PASSED)
+        self.assertEqual(record["Reason"], "every gate passed (p_SA not applicable)")
+        self.assertEqual(record["NotApplicable"], ["p_SA"])
+        self.assertTrue(record["Gates"]["p_SA"]["NotApplicable"])
+        self.assertIn("no SA interface", record["Gates"]["p_SA"]["Reason"])
+        self.assertNotIn("NotApplicable", record["Gates"]["p_MA"])
+        self.assertEqual(record["Gates"]["PSequenceControls"]["NotApplicableObservables"], ["p_SA"])
+        self.assertEqual(set(record["Gates"]["PSequenceControls"]["Controls"]["1"]), {"E", "p_MA", "p_MS"})
+        self.assertEqual(record["GatedOrder"], 5)
+        self.assertEqual(record["ReferenceAnchor"], "vs p5 anchor")
+        # A declared interface that fails still fails.
+        comparison["PerSource"]["1"]["p_MA_rel"] = 0.021
+        record = gates.evaluate(table, comparison=comparison, classes=classes, ref_pma=ref_pma, p_sequence_summary=sequence,
+                                reference_order=5, gates_sha256=digest, interfaces=["MA", "MS"])
+        self.assertEqual(record["Reason"], "failing gates ['p_MA'] (p_SA not applicable)")
+        self.assertEqual(reference_campaign.interfaces(
+            {"Boundaries": {"Postprocessing": {"Dielectric": [{"Type": "MS"}, {"Type": "MA"}]}}}), ["MA", "MS"])
+        self.assertEqual(reference_campaign.interfaces({"Boundaries": {}}), [])
+        self.assertEqual(gates.applicable_observables(None), list(p_sequence.GATED_OBSERVABLES))
+
     def test_frozen_gate_table_is_the_confirmed_one(self):
         table, digest = gates.load_gates()
         self.assertEqual(table["Gates"]["E"]["MaximumAbsoluteRelativeOffset"], 0.01)
