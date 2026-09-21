@@ -110,3 +110,10 @@ value); reading the p-sequence verdicts: PendingQualification is not qualified -
 needs a reference (`--reference` on a gallery-anchored case; there is none for these device geometries),
 so registering these five entries as LibraryQualified is a user decision the tool refuses to take; the
 corner (30 occurrences) and isolated-edge (3,082) requirements outside the spatial-coupon scope.
+
+## Validation of the recording commit
+
+At `c1de40a4b` (this record): full `python3 -m unittest discover -s . -p "test_*.py"` 321 OK (skipped 33) in
+2,210 s (`/tmp/library-device-transmon-01/sweep-final-2/full-unittest.log`); preflight suite 15 cases
+PreflightPassed (rounded-strip UnsupportedClass TopRounding, as recorded), calibration-sizing 4 / 4,
+calibration-ma 6 / 6 (`preflight-final/`); `refreeze_manifest_tools.py --check`: frozen hashes current.
