@@ -16,6 +16,14 @@ namespace palace
 namespace ceed
 {
 
+// The element lists which may be used to assemble a libCEED sub-operator.
+enum class CeedElementSubset
+{
+  Full,
+  Active,
+  Complement
+};
+
 //
 // Data structure for geometry information stored at quadrature points.
 //
@@ -25,15 +33,36 @@ struct CeedGeomFactorData
   int dim, space_dim;
 
   // Domain or boundary indices from the mesh used to construct Ceed objects with these
-  // geometry factors.
-  std::vector<int> indices;
+  // geometry factors, in the original mesh order. active_indices contains positions in
+  // indices for the shared lossy-domain or active-boundary subset, in the same order (empty
+  // when no subset is configured, full-sized when every element is active), and
+  // complement_indices the remaining positions (empty unless the subset is a nonempty
+  // strict subset of the full element list).
+  std::vector<int> indices, active_indices, complement_indices;
 
   // Mesh geometry factor data: {attr, w * |J|, adj(J)^T / |J|}. Jacobian matrix is
-  // space_dim x dim, stored column-major by component.
+  // space_dim x dim, stored column-major by component. The vector uses the libCEED
+  // backend's strided layout (CEED_STRIDES_BACKEND) and is only accessed through the
+  // restrictions below.
   CeedVector geom_data;
 
-  // Element restriction for the geometry factor quadrature data.
+  // Element restrictions for all geometry factors and the shared subset. Both address the
+  // same geom_data vector. active_geom_data_restr is null when the subset is empty or
+  // contains every element, in which case the full strided restriction is used.
   CeedElemRestriction geom_data_restr;
+  CeedElemRestriction active_geom_data_restr = nullptr;
+
+  CeedElemRestriction GetGeomDataRestriction(CeedElementSubset subset) const
+  {
+    MFEM_ASSERT(subset != CeedElementSubset::Complement,
+                "No geometry factor restriction over the complement element subset!");
+    if (subset == CeedElementSubset::Active && active_indices.size() < indices.size())
+    {
+      MFEM_ASSERT(active_geom_data_restr, "Empty active subset for geometry factor data!");
+      return active_geom_data_restr;
+    }
+    return geom_data_restr;
+  }
 };
 
 }  // namespace ceed
@@ -58,6 +87,10 @@ private:
   std::unordered_map<int, int> loc_attr;
   std::unordered_map<int, std::unordered_map<int, int>> loc_bdr_attr;
   bool ceed_from_self = false;  // True after RebuildCeedAttributes()
+
+  // Process-local libCEED attributes in the two shared element sets: lossy domain elements
+  // and active boundary elements.
+  std::vector<int> lossy_attr, active_bdr_attr;
 
   // Mesh data structures for assembling libCEED operators on a (mixed) mesh:
   //   - Mesh element indices for threads and element geometry types.
@@ -160,6 +193,18 @@ public:
 
   const ceed::GeometryObjectMap<ceed::CeedGeomFactorData> &
   GetCeedGeomFactorData(Ceed ceed) const;
+
+  // Configure the process-local libCEED attributes in the shared lossy-domain and
+  // active-boundary element sets. The sets must be configured before geometry data is
+  // requested; reconfiguring with the same sets afterwards is a no-op (mesh levels retained
+  // across adaptive refinement iterations are reconfigured by every new SpaceOperator).
+  void SetCeedActiveAttributes(std::vector<int> lossy_attr_,
+                               std::vector<int> active_bdr_attr_);
+
+  const std::vector<int> &GetCeedActiveAttributes(bool use_bdr) const
+  {
+    return use_bdr ? active_bdr_attr : lossy_attr;
+  }
 
   void ResetCeedObjects();
 

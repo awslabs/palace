@@ -196,6 +196,12 @@ public:
   // compare exactly equal to zero. This deliberately has no tolerance.
   bool IsExactlyZero() const;
 
+  // Append the (libCEED, 1-based) attributes whose material property tensor has at least
+  // one entry which is not exactly zero. Attributes with no assigned material, or an
+  // exactly zero tensor, contribute exactly zero and are not appended. The output is not
+  // sorted or made unique by this call.
+  void AddNonzeroAttributes(std::vector<int> &attr_list) const;
+
   const auto &GetAttributeToMaterial() const { return attr_mat; }
   const auto &GetMaterialProperties() const { return mat_coeff; }
 
