@@ -12,6 +12,8 @@ from pathlib import Path
 
 import numpy as np
 
+from trace_basis import NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE
+
 
 INTERFACE_DEFAULTS = {
     "SA": (0.002, 4.0),
@@ -567,6 +569,71 @@ def cap_ring(triangles, points, offset, size, reverse):
             )
 
 
+CAP_TRIANGULATIONS = ("ear-clipping", "delaunay")
+
+
+def delaunay_flip_cap(triangles, points, start):
+    """Lawson edge flips of the cap triangles[start:] (one planar cap of the matching box,
+    projected on the plan view) to the Delaunay (max-min-angle) triangulation of the
+    same vertices, keeping their orientation; returns the flip count.  Ear clipping of a
+    ring with clustered vertices leaves needle ears (a short boundary edge joined to a
+    vertex far along the boundary line: a 56 nm edge, a 19 um long side and a 5 nm
+    altitude on the ten-edge box) whose hats the coupon mesh must resolve at
+    TraceBasisSizeRatio x that altitude over their whole length; the Delaunay
+    triangulation joins the short edge across the face instead, so every altitude is a
+    local ring spacing (supervisor decision 54b; the sources are unchanged)."""
+    xy = points[:, :2]
+
+    def orient(a, b, c):
+        return (xy[b, 0] - xy[a, 0]) * (xy[c, 1] - xy[a, 1]) - (xy[b, 1] - xy[a, 1]) * (xy[c, 0] - xy[a, 0])
+
+    def in_circle(a, b, c, d):
+        rows = [[xy[v, 0] - xy[d, 0], xy[v, 1] - xy[d, 1],
+                 (xy[v, 0] - xy[d, 0]) ** 2 + (xy[v, 1] - xy[d, 1]) ** 2] for v in (a, b, c)]
+        area = orient(a, b, c)
+        return np.linalg.det(np.array(rows)) * np.sign(area) > 1.0e-12 * area * area
+
+    flips = 0
+    while True:
+        edges = {}
+        for index in range(start, len(triangles)):
+            t = triangles[index]
+            for k in range(3):
+                edges.setdefault(frozenset((t[k], t[(k + 1) % 3])), []).append(index)
+        for edge, owners in edges.items():
+            if len(owners) != 2:
+                continue
+            i, j = owners
+            u, v = tuple(edge)
+            p = next(x for x in triangles[i] if x not in edge)
+            q = next(x for x in triangles[j] if x not in edge)
+            # Flip a convex quad whose opposite vertex lies inside the circumcircle.
+            if orient(p, q, u) * orient(p, q, v) >= 0.0 or not in_circle(u, v, p, q):
+                continue
+            sign = np.sign(orient(*triangles[i]))
+            first = (p, q, u) if np.sign(orient(p, q, u)) == sign else (q, p, u)
+            second = (q, p, v) if np.sign(orient(q, p, v)) == sign else (p, q, v)
+            triangles[i], triangles[j] = first, second
+            flips += 1
+            break
+        else:
+            return flips
+
+
+def cap_triangulation_report(points, triangles):
+    """Minimum altitude and needle count (altitude < NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE x
+    shortest edge) of the box triangulation, for the basis contract."""
+    minimum, needles = math.inf, 0
+    for triangle in triangles:
+        a, b, c = (points[v] for v in triangle)
+        lengths = (np.linalg.norm(b - a), np.linalg.norm(c - b), np.linalg.norm(a - c))
+        altitude = np.linalg.norm(np.cross(b - a, c - a)) / max(lengths)
+        minimum = min(minimum, altitude)
+        needles += altitude < NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE * min(lengths)
+    return {"MinimumAltitude": float(minimum), "NeedleTriangles": int(needles),
+            "NeedleRule": f"minimum altitude < {NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE} x shortest edge"}
+
+
 def build_matching_surface(
     bounds,
     levels,
@@ -576,7 +643,10 @@ def build_matching_surface(
     metal_thickness,
     sidewall_angle,
     facets,
+    cap_triangulation="ear-clipping",
 ):
+    if cap_triangulation not in CAP_TRIANGULATIONS:
+        raise ValueError(f"cap triangulation must be one of {CAP_TRIANGULATIONS}")
     levels = sorted(set(float(value) for value in levels))
     coordinates = matching_perimeter_coordinates(
         bounds,
@@ -596,14 +666,11 @@ def build_matching_surface(
         connect_rings(
             triangles, ring * ring_size, (ring + 1) * ring_size, ring_size
         )
-    cap_ring(triangles, points, 0, ring_size, True)
-    cap_ring(
-        triangles,
-        points,
-        (len(rings) - 1) * ring_size,
-        ring_size,
-        False,
-    )
+    for offset, reverse in ((0, True), ((len(rings) - 1) * ring_size, False)):
+        start = len(triangles)
+        cap_ring(triangles, points, offset, ring_size, reverse)
+        if cap_triangulation == "delaunay":
+            delaunay_flip_cap(triangles, points, start)
     return points, np.asarray(triangles, dtype=int), [ring_size] * len(rings)
 
 
@@ -1696,6 +1763,7 @@ def write_basis_contract(
     traces,
     conductor_lift_paths,
     zero_indices,
+    cap_triangulation="ear-clipping",
 ):
     """basis-contract.json of a freshly built trace basis (the layout of
     rebuild_box_coupon_inputs: Version 1, the model, the source counts, the box-trace
@@ -1743,6 +1811,15 @@ def write_basis_contract(
             for path in sources
         },
         "ZeroTraceIndices": [int(i) for i in zero_indices],
+        "CapTriangulation": {
+            "Method": cap_triangulation,
+            "Rule": (
+                "ear-clipping: cap_ring (the frozen producer's caps); delaunay: cap_ring "
+                "followed by Lawson flips to the Delaunay triangulation of the same cap "
+                "vertices (delaunay_flip_cap), sources unchanged"
+            ),
+            **cap_triangulation_report(points, triangles),
+        },
         "LibraryQualified": False,
     }
     (output / "basis-contract.json").write_text(json.dumps(report, indent=2) + "\n")
@@ -1763,6 +1840,17 @@ def main():
     parser.add_argument("--trench-rounding", type=float, required=True)
     parser.add_argument("--substrate-permittivity", type=float, default=11.47)
     parser.add_argument("--ring-size", type=int, default=32)
+    parser.add_argument(
+        "--cap-triangulation",
+        choices=CAP_TRIANGULATIONS,
+        default="ear-clipping",
+        help=(
+            "Triangulation of the two matching-box caps: ear-clipping (the frozen "
+            "producer's, every gallery reference) or delaunay (Lawson flips of the "
+            "clipped caps to the max-min-angle triangulation of the same vertices, "
+            "no needle ears; device coupons only, supervisor decision 54b)"
+        ),
+    )
     parser.add_argument("--order", type=int, default=2)
     parser.add_argument("--model-name", required=True)
     parser.add_argument(
@@ -1873,6 +1961,7 @@ def main():
         args.metal_thickness,
         args.sidewall_angle,
         facets,
+        cap_triangulation=args.cap_triangulation,
     )
     labels = conductor_at_points(
         points,
@@ -1964,6 +2053,7 @@ def main():
             traces,
             conductor_lift_paths,
             zero_indices,
+            cap_triangulation=args.cap_triangulation,
         )
         print(output / "mesh-signature.csv")
         print(output / "basis-contract.json")

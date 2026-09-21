@@ -31,7 +31,7 @@ source-directory adapter).
    recipe every trace-basis case of the manifest binds, or --mesh-recipe).
 
 usage: device_coupons.py DEVICE_CONFIG --palace PATH --output DIR [--manifest PATH]
-       [--mesh-recipe REPOSITORY_PATH] [--ring-size N] [--register]
+       [--mesh-recipe REPOSITORY_PATH] [--ring-size N] [--cap-triangulation METHOD] [--register]
 """
 import argparse
 import copy
@@ -56,6 +56,7 @@ DISCOVERY = CPW2D / "discover_surface_response_requirements.py"
 GENERATOR = HERE / "generate_spatial_response.py"
 SPATIAL_METHOD = "SpatialCoupon"
 DEFAULT_RING_SIZE = 16   # prepare_surface_response_coupons --spatial-ring-size default
+DEFAULT_CAP_TRIANGULATION = "ear-clipping"   # generate_spatial_response --cap-triangulation (decision 54b)
 INVENTORY_STATUS = "DeviceDerived"
 # The bound source roles whose digests name a device coupon's directory (the manifest's
 # content identity of a case: register_case.source_digests without the derived contract).
@@ -122,7 +123,8 @@ def coupon_geometry(coupon, radius):
             "BoundaryCondition": coupon["BoundaryCondition"]}
 
 
-def generate_sources(coupon, work, *, radius, parameters, ring_size, python=sys.executable):
+def generate_sources(coupon, work, *, radius, parameters, ring_size, cap_triangulation=DEFAULT_CAP_TRIANGULATION,
+                     python=sys.executable):
     """generate_spatial_response.py --basis-only into `work`; returns the generator command."""
     work = Path(work)
     work.mkdir(parents=True, exist_ok=True)
@@ -131,8 +133,8 @@ def generate_sources(coupon, work, *, radius, parameters, ring_size, python=sys.
     command = [python, str(GENERATOR), str(coupon_path), "--output", str(work), "--radius", str(radius),
                "--metal-thickness", str(parameters["metal_thickness"]), "--overetch-depth", str(parameters["overetch"]),
                "--sidewall-angle", str(parameters["sidewall_angle"]), "--top-rounding", str(parameters["top_radius"]),
-               "--trench-rounding", str(parameters["bottom_radius"]), "--ring-size", str(ring_size), "--order", "1",
-               "--model-name", coupon["Id"], "--basis-only"]
+               "--trench-rounding", str(parameters["bottom_radius"]), "--ring-size", str(ring_size),
+               "--cap-triangulation", cap_triangulation, "--order", "1", "--model-name", coupon["Id"], "--basis-only"]
     command += [str(item) for item in planner.material_options(parameters)]
     with open(work / "generate.log", "w") as log:
         result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT)
@@ -160,7 +162,7 @@ def content_hash(directory):
 
 
 def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODUCTION_MANIFEST, ring_size=DEFAULT_RING_SIZE,
-                           python=sys.executable, log=print):
+                           cap_triangulation=DEFAULT_CAP_TRIANGULATION, python=sys.executable, log=print):
     """Steps 1-3: the source directories of every spatial coupon of the device under
     output/sources/<case id>; returns the device record (written to output/device-coupons.json)."""
     device_config = Path(device_config).resolve()
@@ -189,9 +191,12 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
               "Discovery": {"Manifest": str(closure), "SHA256": sha256(closure), "Summary": closure_manifest["Summary"],
                             "Complete": closure_manifest.get("Complete")},
               "Plan": {"Path": str(output / "coupon-plan.json"), "Summary": plan["Summary"]},
-              "TraceBasis": {"RingSize": ring_size, "Rule": "generate_spatial_response.build_matching_surface with the "
-                             "planner's default ring size (prepare_surface_response_coupons --spatial-ring-size); "
-                             "the basis every gallery case was produced with"},
+              "TraceBasis": {"RingSize": ring_size, "CapTriangulation": cap_triangulation,
+                             "Rule": "generate_spatial_response.build_matching_surface with the planner's default ring "
+                                     "size (prepare_surface_response_coupons --spatial-ring-size), the basis every "
+                                     "gallery case was produced with; CapTriangulation ear-clipping is the gallery "
+                                     "producer's, delaunay re-triangulates the two box caps without needle ears "
+                                     "(decision 54b; device coupons only)"},
               "Coupons": [], "OutOfScope": []}
     for coupon in plan["Coupons"]:
         method = coupon["Preparation"]["Method"]
@@ -206,7 +211,8 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
         work = output / "work" / coupon["Id"]
         if work.exists():
             shutil.rmtree(work)
-        command = generate_sources(coupon, work, radius=radius, parameters=parameters, ring_size=ring_size, python=python)
+        command = generate_sources(coupon, work, radius=radius, parameters=parameters, ring_size=ring_size,
+                                   cap_triangulation=cap_triangulation, python=python)
         write_process_toml(work / "process.toml", parameters, radius)
         digest, digests = content_hash(work)
         edge_count = int(coupon["Geometry"].get("EdgeCount", len(coupon["Geometry"].get("Edges", []))))
@@ -221,7 +227,7 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
             "Requirement": {"Id": coupon["Id"], "Topology": coupon["Topology"], "EdgeCount": edge_count,
                             "Interfaces": coupon["Interfaces"], "BoundaryCondition": coupon["BoundaryCondition"],
                             "DeviceOccurrences": coupon["DeviceOccurrences"], "DeviceEdgeLength": coupon["DeviceEdgeLength"]},
-            "Generator": {"Command": command, "RingSize": ring_size,
+            "Generator": {"Command": command, "RingSize": ring_size, "CapTriangulation": cap_triangulation,
                           "PlanViewBoundary": "prepare_surface_response_coupons.canonical_plan_view_boundary of the "
                                               "requirement's PlanViewFacets (process axis 1), MaskRegularization "
                                               "TaperAndRound / Vertical (the planner's execute rule)"},
@@ -301,6 +307,8 @@ def main(argv=None):
     parser.add_argument("--mesh-recipe", help="repository path of the frozen mesh recipe (default: the one every "
                                               "trace-basis case of the manifest binds)")
     parser.add_argument("--ring-size", type=int, default=DEFAULT_RING_SIZE)
+    parser.add_argument("--cap-triangulation", choices=("ear-clipping", "delaunay"), default=DEFAULT_CAP_TRIANGULATION,
+                        help="matching-box cap triangulation of the device basis (generate_spatial_response.py)")
     parser.add_argument("--register", action="store_true", help="register the produced directories into --manifest")
     parser.add_argument("--work", type=Path, help="parent of the registration work directories")
     parser.add_argument("--julia", default=shutil.which("julia"))
@@ -308,7 +316,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         record = prepare_device_sources(args.device_config, palace=args.palace, output=args.output, manifest_path=args.manifest,
-                                        ring_size=args.ring_size, python=args.python)
+                                        ring_size=args.ring_size, cap_triangulation=args.cap_triangulation, python=args.python)
         if args.register:
             register_device_sources(record, manifest_path=args.manifest, mesh_recipe=args.mesh_recipe, work=args.work,
                                     python=args.python, julia=args.julia)

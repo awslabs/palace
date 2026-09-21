@@ -2444,7 +2444,7 @@ p4 / p5). Defects fixed forward during the run: not-applicable interfaces, seque
 submission, global `--orders`, `rsync --mkpath`, the runner uploaded as a tree, a lost driver
 without `--resume`.
 
-### Device-library blockers (supervisor decision 54, 2026-09-21): the 5-edge collar-union footprint (54a)
+### Device-library blockers (supervisor decision 54, 2026-09-21): the 5-edge collar-union footprint (54a) and the needle cost of the device basis (54b)
 
 **54a - the 5-edge mesher defect.** The transmon 5-edge coupon (`spatial-5-edge-ea1fbd054c1e`,
 7 physical sides: two 6 um wide notches x in (-6, 0) and (10, 16) below y = 2.5 flanking a
@@ -2530,7 +2530,113 @@ opposite corner (altitudes 11.8 / 19.1 / 38.3 nm over 26 / 24 / 21 um long sides
 / 26 = 0.0059 rad), so the trace rule requests 6 nm along the whole edge - the needle cost
 of 54b, here failing a production gate rather than the cap. Recorded fail-closed
 (`build-summary.json`, `per-entry-verification.json`); the root's mesh binaries were deleted
-after hashing (`deleted-mesh-sha256.txt`).
+after hashing (`deleted-mesh-sha256.txt`). The same coupon with the Delaunay device basis
+(54b below) is `spatial-5-edge-9bfa8265e2e7` (same sources, `trace-triangles.csv` and
+`basis-contract.json` the only differing files; 8 needles, 2 below FarSize, min altitude
+46.8 nm): estimate 2,905,085 (0.726 of the cap; est / actual 1.077), **BUILT AND VERIFIED** -
+2,696,939 elements = 2,424,275 tets + 253,188 prisms + 19,476 pyramids (0.88 x the
+ear-clipped build), gmsh-build 190 s / 5.55 GiB, verification 1,335 s, min SJ 0.0229, tet
+condition 100.6, prism 589.1, corner aspects <= 3.66, 0 global diagonal bands (12 / 12 / 4
+aligned with signature / footprint / junction), interfaces 1 1174.4 / 3100 117.861 / 3101
+65.789 / 5001 199.56 / 5101 35.44 / 6001 203.179 / 6101 37.121 um^2, identity `identity.msh`
+`ddf1081b694fba74f604e79442e5dc82ce52b1821b05273ca8b24e2281452895` (gmsh-build `db66deed...`,
+rotate-z `d209228f...`), CanonicalBuildId `c136a66e...`, both variants Passed, transform
+comparison Passed.
+
+**54b - needle cost (`analyze_basis_needles.py`, analysis; record
+`/tmp/coupon-five-edge-54a-20260921/needle/*.json`).** The tool decomposes
+`estimate_build_cost.estimate` into its components and splits the trace-basis law by basis
+triangle class - needle: minimum altitude < 0.6 x shortest edge (trace_basis.py); right
+sliver: any other triangle with requested size 0.5 x altitude < FarSize; wide: the rest - and,
+given a built root, attributes every tetrahedron to the size law governing at its centroid
+(tube band, corner / cap ball, junction band, trace-basis per class, FarSize; ties at FarSize
+to the far field). Where the needles come from: the producer's `cap_ring` ear-clips the two
+box caps; a ring with clustered vertices (the ten-edge: three vertices 56 nm apart on the
+-y side) leaves ears that join the short edge to a vertex far along the same side (19.4 um
+away at 5.6 deg: altitude 56 nm x sin 5.6 deg = 5.5 nm), and the trace rule then requests
+2.7 nm over a 39 um perimeter. The side strips (56 nm x 2 um) are right slivers (altitude =
+the ring spacing), the class TraceBasisSizeRatio 0.5 was calibrated on.
+
+| case | sources | estimate (cap 4M) | needles / right slivers / wide | min altitude needle / sliver | needle tets (share) | right-sliver tets | far / tube band / prisms+pyramids / balls / junction |
+|---|---|---|---|---|---|---|---|
+| three-edge 7f03 (`spatial-3-edge-d96d52b95001`) | 225 | 5,025,593 (1.256) | 38 / 224 / 184 | 1.0 nm / 15.1 nm | 1,977,952 (**39.4%**) | 310,611 (6.2%) | 1,814,861 / 409,725 / 397,908 / 36,732 / 77,804 |
+| ten-edge gallery (`ten-edge-6791f1c84123`) | 260 | 3,561,695 (0.890) | 34 / 268 / 214 | 5.5 nm / 35.1 nm | 744,253 (**20.9%**) | 330,017 (9.3%) | 1,721,083 / 290,773 / 282,744 / 118,673 / 74,151 |
+| ten-edge production root `8a871f22...` (actual, by governing law) | 260 | 3,498,453 built | - | - | 921,337 (**26.3%**) | 225,603 (6.4%) | far 1,620,702 / tube band 363,132 / prisms+pyramids 290,304 / balls 77,317 / junction 58 |
+| device ten-edge (`spatial-10-edge-1ce0c327a734`, 8.03 GiB probe) | 300 | 3,625,496 (0.906) | 40 / 304 / 252 | 5.5 nm / - | 794,975 (21.9%) | 343,097 | - |
+| device 5-edge | 185 | 3,452,743 (0.863) | 14 / 182 / 170 | 11.8 nm / - | 538,214 (15.6%) | 255,192 | 1,951,317 / 275,196 / 267,120 / 87,592 / 78,113 |
+| four-edge gallery | 80 | 1,966,879 | 0 / 78 / 78 | - / 15.3 nm | 0 | - | - |
+
+The needle share of the estimate is 39.4% on 7f03 and 20.9% on the ten-edge (26.3% of the
+built ten-edge by governing law; the estimator charges the needles' Steiner shells at
+their perimeter and under-attributes them relative to the built mesh, whose trace-law tets
+also include the shell overlap with the far field).
+
+Basis constructions for DEVICE coupons (the library's own basis; never the gallery
+references):
+
+(a) **Delaunay caps** (`generate_spatial_response.py --cap-triangulation delaunay`;
+`delaunay_flip_cap`, Lawson edge flips of the ear-clipped caps to the max-min-angle
+triangulation of the SAME vertices; ~40 lines; default `ear-clipping` = the frozen
+producer, so every gallery and every existing device directory is unchanged; plumbed
+through `device_coupons.py` / `coupon-library build --device --cap-triangulation`,
+recorded in `basis-contract.json` `CapTriangulation` {Method, MinimumAltitude,
+NeedleTriangles}, the device record and the provenance; the content hash names a new
+case). The short cluster edges are joined across the face, so every narrow altitude is a
+ring spacing times the sine of the join angle: 7f03 min altitude 1.0 -> 12.8 nm, needles
+38 -> 2 (two 0.18 um corner triangles), estimate 5,025,593 -> **3,135,224** (0.624 x; 0.784
+of the cap); ten-edge 5.5 -> 32.0 nm, 34 -> 8 (0.107 um cluster edges joined at 35 deg,
+altitude 62 nm), 3,561,695 -> 2,795,156 (0.785 x); device ten-edge 3,625,496 -> 2,837,463
+(0.783 x); device 5-edge 3,452,743 -> 2,905,085 (0.841 x). Sources unchanged, so the
+physics cost index (sources x elements) falls by the same factor. `analyze_basis_needles.py`
+reproduces the producer's result exactly: the estimate of the directory generated with
+`--cap-triangulation delaunay` equals the tool's re-triangulated estimate (3,135,224).
+Tests: `test_box_trace.py` (the gallery ten-edge testdata basis: 34 -> <= 8 needles below
+0.32 um, min altitude 5.5 -> > 30 nm, sides untouched, closed oriented surface, fixed point
+of the flips; `build_matching_surface` with either method: same vertices and closure, an
+unknown method fails closed).
+
+(b) **Graded refinement** (modelled, not built): a basis whose local edge on every face is
+the ring spacing graded at slope BasisGrowth (h = min_i spacing_i + BasisGrowth x |x - v_i|),
+interior sources 2 / (sqrt 3 h^2) per area, trace cost the volume-law shell with s = 0.5 x
+(sqrt 3 / 2) h. The refinement cannot raise an altitude above the ring spacing (the hats
+of clustered ring vertices vary over that spacing whatever the interior), it only shortens
+the narrow hats' supports, and every added vertex is a Palace solve:
+
+| case | BasisGrowth | sources | estimate | elements x | sources x | physics cost (sources x elements) |
+|---|---|---|---|---|---|---|
+| 7f03 | 0.5 / 1.0 / 2.0 | 3,092 / 1,308 / 625 | 2,763,814 / 2,745,369 / 2,739,686 | 0.550 / 0.546 / 0.545 | 13.7 / 5.8 / 2.8 | **7.6 / 3.2 / 1.5 x** |
+| ten-edge | 0.5 / 1.0 / 2.0 | 3,281 / 1,444 / 711 | 2,515,615 / 2,496,585 / 2,490,453 | 0.706 / 0.701 / 0.699 | 12.6 / 5.6 / 2.7 | **8.9 / 3.9 / 1.9 x** |
+
+Against Delaunay caps (0.624 / 0.785 x at 1.0 x sources) the refinement buys a further
+0.08-0.09 x of elements for 2.7-14 x the sources: the trade is lost at every slope.
+**Proposal:** adopt (a) for device coupons - `--cap-triangulation delaunay` as the device
+basis rule (a `build --device` option today, default unchanged; making it the device
+default is a basis-contract decision for the supervisor since it changes every device case
+id and its hats, never a gallery reference) - and do not pursue (b). The remaining
+right-sliver cost (6-9% of the estimate) is the ring spacing itself (16-56 nm clusters
+inherited from the device mesh) and would need ring coarsening, a source-resolution
+decision, not a triangulation one. Note the ten-edge's 8.03 GiB probe is a memory-bound
+question the Delaunay basis addresses only through the element count (0.785 x).
+
+Build of 7f03 with the Delaunay basis (`spatial-3-edge-5d3b5e644745`: the recorded
+`coupon.json` of the 2026-09-20 device run regenerated with `--cap-triangulation delaunay`;
+every bound file byte-identical to `spatial-3-edge-d96d52b95001` apart from
+`trace-triangles.csv` and `basis-contract.json`; registered into the same manifest copy):
+estimate gate 3,135,224 (0.784 of the cap) PASSED where the ear-clipped basis failed closed
+at 1.256; probe 3,037,912 elements in 194 s / 6.35 GiB (est / actual 1.032). **BUILT AND
+VERIFIED** (`spatial-3-edge-5d3b5e644745-attempt2`): 3,037,912 elements = 2,635,846 tets +
+373,347 prisms + 28,719 pyramids, gmsh-build 193 s / 6.51 GiB, min SJ 0.0244, tet condition
+108.6, prism 589.4, corner aspects <= 3.79, 0 global diagonal bands, interfaces 1 1115.836 /
+3100 268.309 / 5001 122.545 / 6001 130.436 um^2, identity `identity.msh`
+`e038c5efbb50145aacc18f768317344f03b8af1a47e0482a0296d9ab1ffe62fc` (gmsh-build `25fe87f3...`,
+rotate-z `ed1ea942...`), CanonicalBuildId `a9a0eaf4...`, both variants Passed; verification
+1,561 s of the 1,800 s bound. A first attempt of the same case produced byte-identical
+meshes and stopped at the verification TIME bound (1,800 s, `StopReason timeout`) while the
+full unit-test sweep and a second verification ran concurrently
+(`spatial-3-edge-5d3b5e644745/build-summary.first-attempt-timeout.json`, meshes deleted after
+hashing): the bound is a machine resource guard (decision 54c) and a 3M-element coupon's
+verification sits within 15% of it - the ten-edge's 1,607 s again.
+
 
 ## Preflight
 
