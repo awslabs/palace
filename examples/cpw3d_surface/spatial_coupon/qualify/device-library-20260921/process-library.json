@@ -1,0 +1,2449 @@
+{
+  "Version": 1,
+  "Name": "coupon-library",
+  "Command": "coupon-library qualify",
+  "Root": "/tmp/library-device-transmon-01",
+  "Rule": "an entry is LibraryQualified only with the verdict Passed; PendingQualification entries carry their matrices and p-sequence controls but no accuracy statement",
+  "Models": [
+    {
+      "Name": "spatialedgecluster_edgecount-10_6791f1c84123",
+      "Topology": "SpatialEdgeCluster",
+      "FabricatedMatrix": "spatial-10-edge-65450ff47b9b/results/main/spatial-10-edge-65450ff47b9b-p4/reducer/domain-response-matrix.csv",
+      "ThinMatrix": "postpro/spatial_thin/domain-response-matrix.csv",
+      "FabricatedSurfaceMatrix": "spatial-10-edge-65450ff47b9b/results/main/spatial-10-edge-65450ff47b9b-p4/reducer/surface-response-matrix.csv",
+      "ThinSurfaceMatrix": "postpro/spatial_thin/surface-response-matrix.csv",
+      "BasisPoints": "basis-points.csv",
+      "TraceMesh": {
+        "Vertices": "trace-vertices.csv",
+        "Triangles": "trace-triangles.csv"
+      },
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Type": "MA",
+          "Coupon": 1
+        },
+        {
+          "Slot": 0,
+          "Type": "MS",
+          "Coupon": 2
+        },
+        {
+          "Slot": 1,
+          "Type": "MA",
+          "Coupon": 3
+        },
+        {
+          "Slot": 1,
+          "Type": "MS",
+          "Coupon": 4
+        },
+        {
+          "Slot": 1,
+          "Type": "SA",
+          "Coupon": 5
+        }
+      ],
+      "SupportPoints": [
+        [
+          11.75,
+          -2.05,
+          -8.6
+        ],
+        [
+          11.75,
+          2.1,
+          -8.6
+        ],
+        [
+          11.75,
+          -2.05,
+          8.4
+        ],
+        [
+          11.75,
+          2.1,
+          8.4
+        ],
+        [
+          -9.8333333333,
+          -2.05,
+          -8.6
+        ],
+        [
+          -9.8333333333,
+          2.1,
+          -8.6
+        ],
+        [
+          -9.8333333333,
+          -2.05,
+          8.4
+        ],
+        [
+          -9.8333333333,
+          2.1,
+          8.4
+        ]
+      ],
+      "Edges": [
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 1,
+          "GapDirection": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "InterfaceSlot": 0,
+          "Interval": [
+            -0.4,
+            0.6
+          ],
+          "Point": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 1,
+          "GapDirection": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "InterfaceSlot": 1,
+          "Interval": [
+            0.0,
+            2.0
+          ],
+          "Point": [
+            6.5,
+            0.0,
+            -0.6
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 1,
+          "GapDirection": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "InterfaceSlot": 1,
+          "Interval": [
+            -2.0,
+            0.0
+          ],
+          "Point": [
+            6.5,
+            0.0,
+            0.4
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 2,
+          "GapDirection": [
+            0.0,
+            0.0,
+            -1.0
+          ],
+          "InterfaceSlot": 1,
+          "Interval": [
+            -2.0,
+            1.8333333333000001
+          ],
+          "Point": [
+            -1.8333333333000001,
+            0.0,
+            -0.6
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 1,
+          "GapDirection": [
+            0.0,
+            0.0,
+            -1.0
+          ],
+          "InterfaceSlot": 1,
+          "Interval": [
+            -2.0,
+            2.3928571429
+          ],
+          "Point": [
+            3.3571428571,
+            0.0,
+            -0.6
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 2,
+          "GapDirection": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "InterfaceSlot": 1,
+          "Interval": [
+            -1.8333333333000001,
+            2.0
+          ],
+          "Point": [
+            -1.8333333333000001,
+            0.0,
+            0.4
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 1,
+          "GapDirection": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "InterfaceSlot": 1,
+          "Interval": [
+            -2.3928571429,
+            2.0
+          ],
+          "Point": [
+            3.3571428571,
+            0.0,
+            0.4
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 2,
+          "GapDirection": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "InterfaceSlot": 1,
+          "Interval": [
+            -2.0,
+            0.0
+          ],
+          "Point": [
+            -5.5,
+            0.0,
+            -0.6
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 2,
+          "GapDirection": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "InterfaceSlot": 1,
+          "Interval": [
+            0.0,
+            2.0
+          ],
+          "Point": [
+            -5.5,
+            0.0,
+            0.4
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 2,
+          "GapDirection": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "InterfaceSlot": 0,
+          "Interval": [
+            -0.6,
+            0.4
+          ],
+          "Point": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        }
+      ],
+      "EdgePositionTolerance": 2e-06,
+      "EdgeAngleTolerance": 1e-06,
+      "ConductorReferences": [
+        [
+          6.7,
+          0.0,
+          -0.6
+        ],
+        [
+          -0.2,
+          0.0,
+          0.0
+        ]
+      ],
+      "PlanViewBoundary": [
+        {
+          "Conductor": 1,
+          "ContinuationSegments": [
+            [
+              [
+                3250000000,
+                0,
+                -4300000000
+              ],
+              [
+                5875000000,
+                0,
+                -4300000000
+              ]
+            ],
+            [
+              [
+                3250000000,
+                0,
+                4200000000
+              ],
+              [
+                5875000000,
+                0,
+                4200000000
+              ]
+            ],
+            [
+              [
+                5875000000,
+                0,
+                -4300000000
+              ],
+              [
+                5875000000,
+                0,
+                4200000000
+              ]
+            ]
+          ],
+          "Segments": [
+            [
+              [
+                500000000,
+                0,
+                -300000000
+              ],
+              [
+                500000000,
+                0,
+                200000000
+              ]
+            ],
+            [
+              [
+                500000000,
+                0,
+                -300000000
+              ],
+              [
+                3250000000,
+                0,
+                -300000000
+              ]
+            ],
+            [
+              [
+                500000000,
+                0,
+                200000000
+              ],
+              [
+                3250000000,
+                0,
+                200000000
+              ]
+            ],
+            [
+              [
+                3250000000,
+                0,
+                -4300000000
+              ],
+              [
+                3250000000,
+                0,
+                -300000000
+              ]
+            ],
+            [
+              [
+                3250000000,
+                0,
+                -4300000000
+              ],
+              [
+                5875000000,
+                0,
+                -4300000000
+              ]
+            ],
+            [
+              [
+                3250000000,
+                0,
+                200000000
+              ],
+              [
+                3250000000,
+                0,
+                4200000000
+              ]
+            ],
+            [
+              [
+                3250000000,
+                0,
+                4200000000
+              ],
+              [
+                5875000000,
+                0,
+                4200000000
+              ]
+            ],
+            [
+              [
+                5875000000,
+                0,
+                -4300000000
+              ],
+              [
+                5875000000,
+                0,
+                4200000000
+              ]
+            ]
+          ]
+        },
+        {
+          "Conductor": 2,
+          "ContinuationSegments": [
+            [
+              [
+                -4916666667,
+                0,
+                -4300000000
+              ],
+              [
+                -4916666667,
+                0,
+                4200000000
+              ]
+            ],
+            [
+              [
+                -4916666667,
+                0,
+                -4300000000
+              ],
+              [
+                -2750000000,
+                0,
+                -4300000000
+              ]
+            ],
+            [
+              [
+                -4916666667,
+                0,
+                4200000000
+              ],
+              [
+                -2750000000,
+                0,
+                4200000000
+              ]
+            ]
+          ],
+          "Segments": [
+            [
+              [
+                -4916666667,
+                0,
+                -4300000000
+              ],
+              [
+                -4916666667,
+                0,
+                4200000000
+              ]
+            ],
+            [
+              [
+                -4916666667,
+                0,
+                -4300000000
+              ],
+              [
+                -2750000000,
+                0,
+                -4300000000
+              ]
+            ],
+            [
+              [
+                -4916666667,
+                0,
+                4200000000
+              ],
+              [
+                -2750000000,
+                0,
+                4200000000
+              ]
+            ],
+            [
+              [
+                -2750000000,
+                0,
+                -4300000000
+              ],
+              [
+                -2750000000,
+                0,
+                -300000000
+              ]
+            ],
+            [
+              [
+                -2750000000,
+                0,
+                -300000000
+              ],
+              [
+                0,
+                0,
+                -300000000
+              ]
+            ],
+            [
+              [
+                -2750000000,
+                0,
+                200000000
+              ],
+              [
+                -2750000000,
+                0,
+                4200000000
+              ]
+            ],
+            [
+              [
+                -2750000000,
+                0,
+                200000000
+              ],
+              [
+                0,
+                0,
+                200000000
+              ]
+            ],
+            [
+              [
+                0,
+                0,
+                -300000000
+              ],
+              [
+                0,
+                0,
+                200000000
+              ]
+            ]
+          ]
+        }
+      ],
+      "MaskRegularization": {
+        "Version": 1,
+        "PhysicalBoundary": "TaperAndRound",
+        "ContinuationBoundary": "Vertical"
+      },
+      "OpenContourPaths": [
+        {
+          "Indices": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            59,
+            60
+          ],
+          "StartConductor": 1,
+          "EndConductor": 2
+        },
+        {
+          "Indices": [
+            61,
+            62,
+            63,
+            64,
+            65,
+            66,
+            67,
+            68,
+            69,
+            70,
+            71,
+            72,
+            73,
+            74,
+            75,
+            76,
+            77,
+            78,
+            79,
+            80,
+            81,
+            82,
+            83,
+            84,
+            85,
+            86,
+            87,
+            88,
+            89,
+            90,
+            91,
+            92,
+            93,
+            94,
+            95,
+            96,
+            97,
+            98,
+            99,
+            100,
+            101,
+            102,
+            103,
+            104,
+            105,
+            106,
+            107,
+            108,
+            109,
+            110,
+            111,
+            112,
+            113,
+            114,
+            115,
+            116,
+            117,
+            118,
+            119,
+            120
+          ],
+          "StartConductor": 1,
+          "EndConductor": 2
+        },
+        {
+          "Indices": [
+            121,
+            122
+          ],
+          "StartConductor": 1,
+          "EndConductor": 2
+        },
+        {
+          "Indices": [
+            123,
+            124,
+            125
+          ],
+          "StartConductor": 1,
+          "EndConductor": 2
+        },
+        {
+          "Indices": [
+            126,
+            127
+          ],
+          "StartConductor": 1,
+          "EndConductor": 2
+        },
+        {
+          "Indices": [
+            128,
+            129,
+            130
+          ],
+          "StartConductor": 1,
+          "EndConductor": 2
+        },
+        {
+          "Indices": [
+            131,
+            132,
+            133,
+            134,
+            135,
+            136,
+            137,
+            138,
+            139,
+            140,
+            141,
+            142,
+            143,
+            144,
+            145,
+            146,
+            147,
+            148,
+            149,
+            150,
+            151,
+            152,
+            153,
+            154,
+            155,
+            156,
+            157,
+            158,
+            159,
+            160,
+            161,
+            162,
+            163,
+            164,
+            165,
+            166,
+            167,
+            168,
+            169,
+            170,
+            171,
+            172,
+            173,
+            174,
+            175,
+            176,
+            177,
+            178,
+            179,
+            180,
+            181,
+            182,
+            183,
+            184,
+            185,
+            186,
+            187,
+            188,
+            189,
+            190
+          ],
+          "StartConductor": 1,
+          "EndConductor": 2
+        }
+      ],
+      "CouponMesh": {
+        "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/spatial-10-edge-65450ff47b9b/identity.msh",
+        "SHA256": "316d7a1898c2f3f76ecf491d0c7bfe7109af32fb5dfd94d5e9cea2f57958e5da"
+      },
+      "Qualification": {
+        "Verdict": "PendingQualification",
+        "Record": "/tmp/library-device-transmon-01/spatial-10-edge-65450ff47b9b/qualification.json",
+        "ReferenceAnchor": null,
+        "Order": 4
+      },
+      "LibraryQualified": false,
+      "SourceProcessLibrary": {
+        "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/device/sources/spatial-10-edge-65450ff47b9b/process-library.json",
+        "SHA256": "e52032c451ffab2760d4013c0c08e43a2a69567fcf0f9f38ed21ee2a5ed92d79"
+      }
+    },
+    {
+      "Name": "spatialedgecluster_edgecount-5_938a30f63a3d",
+      "Topology": "SpatialEdgeCluster",
+      "FabricatedMatrix": "spatial-5-edge-9bfa8265e2e7/results/main/spatial-5-edge-9bfa8265e2e7-p4/reducer/domain-response-matrix.csv",
+      "ThinMatrix": "postpro/spatial_thin/domain-response-matrix.csv",
+      "FabricatedSurfaceMatrix": "spatial-5-edge-9bfa8265e2e7/results/main/spatial-5-edge-9bfa8265e2e7-p4/reducer/surface-response-matrix.csv",
+      "ThinSurfaceMatrix": "postpro/spatial_thin/surface-response-matrix.csv",
+      "BasisPoints": "basis-points.csv",
+      "TraceMesh": {
+        "Vertices": "trace-vertices.csv",
+        "Triangles": "trace-triangles.csv"
+      },
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Type": "MA",
+          "Coupon": 1
+        },
+        {
+          "Slot": 0,
+          "Type": "MS",
+          "Coupon": 2
+        },
+        {
+          "Slot": 0,
+          "Type": "SA",
+          "Coupon": 3
+        },
+        {
+          "Slot": 1,
+          "Type": "MA",
+          "Coupon": 4
+        },
+        {
+          "Slot": 1,
+          "Type": "MS",
+          "Coupon": 5
+        }
+      ],
+      "SupportPoints": [
+        [
+          8.0,
+          -2.05,
+          -8.0
+        ],
+        [
+          8.0,
+          2.1,
+          -8.0
+        ],
+        [
+          8.0,
+          -2.05,
+          8.0
+        ],
+        [
+          8.0,
+          2.1,
+          8.0
+        ],
+        [
+          -18.0,
+          -2.05,
+          -8.0
+        ],
+        [
+          -18.0,
+          2.1,
+          -8.0
+        ],
+        [
+          -18.0,
+          -2.05,
+          8.0
+        ],
+        [
+          -18.0,
+          2.1,
+          8.0
+        ]
+      ],
+      "Edges": [
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 1,
+          "GapDirection": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "InterfaceSlot": 0,
+          "Interval": [
+            -2.0,
+            2.0
+          ],
+          "Point": [
+            -10.0,
+            0.0,
+            0.0
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 1,
+          "GapDirection": [
+            0.0,
+            0.0,
+            -1.0
+          ],
+          "InterfaceSlot": 0,
+          "Interval": [
+            -2.0,
+            0.0
+          ],
+          "Point": [
+            -10.0,
+            0.0,
+            2.5
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 1,
+          "GapDirection": [
+            0.0,
+            0.0,
+            -1.0
+          ],
+          "InterfaceSlot": 1,
+          "Interval": [
+            -2.0,
+            2.0
+          ],
+          "Point": [
+            -5.0,
+            0.0,
+            -2.5
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 1,
+          "GapDirection": [
+            0.0,
+            0.0,
+            -1.0
+          ],
+          "InterfaceSlot": 0,
+          "Interval": [
+            0.0,
+            2.0
+          ],
+          "Point": [
+            0.0,
+            0.0,
+            2.5
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 1,
+          "GapDirection": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "InterfaceSlot": 0,
+          "Interval": [
+            -2.0,
+            2.0
+          ],
+          "Point": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        }
+      ],
+      "EdgePositionTolerance": 2e-06,
+      "EdgeAngleTolerance": 1e-06,
+      "Reference": [
+        -0.2,
+        0.0,
+        0.0
+      ],
+      "PlanViewBoundary": [
+        {
+          "Conductor": 1,
+          "ContinuationSegments": [
+            [
+              [
+                -9000000000,
+                0,
+                -4000000000
+              ],
+              [
+                -9000000000,
+                0,
+                4000000000
+              ]
+            ],
+            [
+              [
+                -9000000000,
+                0,
+                -4000000000
+              ],
+              [
+                -8000000000,
+                0,
+                -4000000000
+              ]
+            ],
+            [
+              [
+                -9000000000,
+                0,
+                4000000000
+              ],
+              [
+                4000000000,
+                0,
+                4000000000
+              ]
+            ],
+            [
+              [
+                3000000000,
+                0,
+                -4000000000
+              ],
+              [
+                4000000000,
+                0,
+                -4000000000
+              ]
+            ],
+            [
+              [
+                4000000000,
+                0,
+                -4000000000
+              ],
+              [
+                4000000000,
+                0,
+                4000000000
+              ]
+            ]
+          ],
+          "Segments": [
+            [
+              [
+                -9000000000,
+                0,
+                -4000000000
+              ],
+              [
+                -9000000000,
+                0,
+                4000000000
+              ]
+            ],
+            [
+              [
+                -9000000000,
+                0,
+                -4000000000
+              ],
+              [
+                -8000000000,
+                0,
+                -4000000000
+              ]
+            ],
+            [
+              [
+                -9000000000,
+                0,
+                4000000000
+              ],
+              [
+                4000000000,
+                0,
+                4000000000
+              ]
+            ],
+            [
+              [
+                -8000000000,
+                0,
+                -4000000000
+              ],
+              [
+                -8000000000,
+                0,
+                1250000000
+              ]
+            ],
+            [
+              [
+                -8000000000,
+                0,
+                1250000000
+              ],
+              [
+                -5000000000,
+                0,
+                1250000000
+              ]
+            ],
+            [
+              [
+                -5000000000,
+                0,
+                -1250000000
+              ],
+              [
+                -5000000000,
+                0,
+                1250000000
+              ]
+            ],
+            [
+              [
+                -5000000000,
+                0,
+                -1250000000
+              ],
+              [
+                0,
+                0,
+                -1250000000
+              ]
+            ],
+            [
+              [
+                0,
+                0,
+                -1250000000
+              ],
+              [
+                0,
+                0,
+                1250000000
+              ]
+            ],
+            [
+              [
+                0,
+                0,
+                1250000000
+              ],
+              [
+                3000000000,
+                0,
+                1250000000
+              ]
+            ],
+            [
+              [
+                3000000000,
+                0,
+                -4000000000
+              ],
+              [
+                3000000000,
+                0,
+                1250000000
+              ]
+            ],
+            [
+              [
+                3000000000,
+                0,
+                -4000000000
+              ],
+              [
+                4000000000,
+                0,
+                -4000000000
+              ]
+            ],
+            [
+              [
+                4000000000,
+                0,
+                -4000000000
+              ],
+              [
+                4000000000,
+                0,
+                4000000000
+              ]
+            ]
+          ]
+        }
+      ],
+      "MaskRegularization": {
+        "Version": 1,
+        "PhysicalBoundary": "TaperAndRound",
+        "ContinuationBoundary": "Vertical"
+      },
+      "ContourGroups": [
+        37,
+        37,
+        37,
+        37,
+        37
+      ],
+      "ZeroTraceIndices": [
+        75,
+        76,
+        77,
+        82,
+        83,
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+        109,
+        110,
+        111,
+        112,
+        113,
+        114,
+        119,
+        120,
+        121,
+        122,
+        123,
+        124,
+        125,
+        126,
+        127,
+        128,
+        129,
+        130,
+        131,
+        132,
+        133,
+        134,
+        135,
+        136,
+        137,
+        138,
+        139,
+        140,
+        141,
+        142,
+        143,
+        144,
+        145,
+        146,
+        147,
+        148
+      ],
+      "CouponMesh": {
+        "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/spatial-5-edge-9bfa8265e2e7/identity.msh",
+        "SHA256": "ddf1081b694fba74f604e79442e5dc82ce52b1821b05273ca8b24e2281452895"
+      },
+      "Qualification": {
+        "Verdict": "PendingQualification",
+        "Record": "/tmp/library-device-transmon-01/spatial-5-edge-9bfa8265e2e7/qualification.json",
+        "ReferenceAnchor": null,
+        "Order": 4
+      },
+      "LibraryQualified": false,
+      "SourceProcessLibrary": {
+        "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/device/sources/spatial-5-edge-9bfa8265e2e7/process-library.json",
+        "SHA256": "76a0e6e72e24d580a36fc516429d3ad3c38f9d2696bc30eeb484a7425ea5dd16"
+      }
+    },
+    {
+      "Name": "spatialedgecluster_edgecount-3_419576fdab24",
+      "Topology": "SpatialEdgeCluster",
+      "FabricatedMatrix": "spatial-3-edge-9cd906b81cbe/results/main/spatial-3-edge-9cd906b81cbe-p4/reducer/domain-response-matrix.csv",
+      "ThinMatrix": "postpro/spatial_thin/domain-response-matrix.csv",
+      "FabricatedSurfaceMatrix": "spatial-3-edge-9cd906b81cbe/results/main/spatial-3-edge-9cd906b81cbe-p4/reducer/surface-response-matrix.csv",
+      "ThinSurfaceMatrix": "postpro/spatial_thin/surface-response-matrix.csv",
+      "BasisPoints": "basis-points.csv",
+      "TraceMesh": {
+        "Vertices": "trace-vertices.csv",
+        "Triangles": "trace-triangles.csv"
+      },
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Type": "MA",
+          "Coupon": 1
+        },
+        {
+          "Slot": 0,
+          "Type": "MS",
+          "Coupon": 2
+        },
+        {
+          "Slot": 0,
+          "Type": "SA",
+          "Coupon": 3
+        }
+      ],
+      "SupportPoints": [
+        [
+          8.0,
+          -2.05,
+          -8.0
+        ],
+        [
+          8.0,
+          2.1,
+          -8.0
+        ],
+        [
+          8.0,
+          -2.05,
+          8.0
+        ],
+        [
+          8.0,
+          2.1,
+          8.0
+        ],
+        [
+          -6.0,
+          -2.05,
+          -8.0
+        ],
+        [
+          -6.0,
+          2.1,
+          -8.0
+        ],
+        [
+          -6.0,
+          -2.05,
+          8.0
+        ],
+        [
+          -6.0,
+          2.1,
+          8.0
+        ]
+      ],
+      "Edges": [
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 1,
+          "GapDirection": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "InterfaceSlot": 0,
+          "Interval": [
+            -2.0,
+            2.0
+          ],
+          "Point": [
+            -2.0,
+            0.0,
+            0.0
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 1,
+          "GapDirection": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "InterfaceSlot": 0,
+          "Interval": [
+            -2.0,
+            0.0
+          ],
+          "Point": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 1,
+          "GapDirection": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "InterfaceSlot": 0,
+          "Interval": [
+            0.0,
+            2.0
+          ],
+          "Point": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        }
+      ],
+      "EdgePositionTolerance": 2e-06,
+      "EdgeAngleTolerance": 1e-06,
+      "Reference": [
+        -0.2,
+        0.0,
+        0.0
+      ],
+      "PlanViewBoundary": [
+        {
+          "Conductor": 1,
+          "ContinuationSegments": [
+            [
+              [
+                -1000000000,
+                0,
+                -4000000000
+              ],
+              [
+                4000000000,
+                0,
+                -4000000000
+              ]
+            ],
+            [
+              [
+                -1000000000,
+                0,
+                4000000000
+              ],
+              [
+                0,
+                0,
+                4000000000
+              ]
+            ],
+            [
+              [
+                3000000000,
+                0,
+                4000000000
+              ],
+              [
+                4000000000,
+                0,
+                4000000000
+              ]
+            ],
+            [
+              [
+                4000000000,
+                0,
+                -4000000000
+              ],
+              [
+                4000000000,
+                0,
+                0
+              ]
+            ],
+            [
+              [
+                4000000000,
+                0,
+                3000000000
+              ],
+              [
+                4000000000,
+                0,
+                4000000000
+              ]
+            ]
+          ],
+          "Segments": [
+            [
+              [
+                -1000000000,
+                0,
+                -4000000000
+              ],
+              [
+                -1000000000,
+                0,
+                4000000000
+              ]
+            ],
+            [
+              [
+                -1000000000,
+                0,
+                -4000000000
+              ],
+              [
+                4000000000,
+                0,
+                -4000000000
+              ]
+            ],
+            [
+              [
+                -1000000000,
+                0,
+                4000000000
+              ],
+              [
+                0,
+                0,
+                4000000000
+              ]
+            ],
+            [
+              [
+                0,
+                0,
+                0
+              ],
+              [
+                0,
+                0,
+                4000000000
+              ]
+            ],
+            [
+              [
+                0,
+                0,
+                0
+              ],
+              [
+                4000000000,
+                0,
+                0
+              ]
+            ],
+            [
+              [
+                3000000000,
+                0,
+                3000000000
+              ],
+              [
+                3000000000,
+                0,
+                4000000000
+              ]
+            ],
+            [
+              [
+                3000000000,
+                0,
+                3000000000
+              ],
+              [
+                4000000000,
+                0,
+                3000000000
+              ]
+            ],
+            [
+              [
+                3000000000,
+                0,
+                4000000000
+              ],
+              [
+                4000000000,
+                0,
+                4000000000
+              ]
+            ],
+            [
+              [
+                4000000000,
+                0,
+                -4000000000
+              ],
+              [
+                4000000000,
+                0,
+                0
+              ]
+            ],
+            [
+              [
+                4000000000,
+                0,
+                3000000000
+              ],
+              [
+                4000000000,
+                0,
+                4000000000
+              ]
+            ]
+          ]
+        }
+      ],
+      "MaskRegularization": {
+        "Version": 1,
+        "PhysicalBoundary": "TaperAndRound",
+        "ContinuationBoundary": "Vertical"
+      },
+      "ContourGroups": [
+        35,
+        35,
+        35,
+        35,
+        35
+      ],
+      "ZeroTraceIndices": [
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        88,
+        89,
+        90,
+        91,
+        92,
+        95,
+        96,
+        97,
+        98,
+        99,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+        109,
+        110,
+        111,
+        112,
+        123,
+        124,
+        125,
+        126,
+        127,
+        130,
+        131,
+        132,
+        133,
+        134,
+        136,
+        137,
+        138,
+        139,
+        140
+      ],
+      "CouponMesh": {
+        "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-9cd906b81cbe/identity.msh",
+        "SHA256": "9b2bd97cbe74ed06b40d995ba4a72ce504cc013a637c8e7e404680aedd882a93"
+      },
+      "Qualification": {
+        "Verdict": "PendingQualification",
+        "Record": "/tmp/library-device-transmon-01/spatial-3-edge-9cd906b81cbe/qualification.json",
+        "ReferenceAnchor": null,
+        "Order": 4
+      },
+      "LibraryQualified": false,
+      "SourceProcessLibrary": {
+        "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/device/sources/spatial-3-edge-9cd906b81cbe/process-library.json",
+        "SHA256": "cb4f605c29332d2a62b4fb652103558e9e6105603f1a27758d7cb626f7e0647b"
+      }
+    },
+    {
+      "Name": "spatialedgecluster_edgecount-4_9d2cb9bbb3fe",
+      "Topology": "SpatialEdgeCluster",
+      "FabricatedMatrix": "spatial-4-edge-e51d7380245e/results/main/spatial-4-edge-e51d7380245e-p4/reducer/domain-response-matrix.csv",
+      "ThinMatrix": "postpro/spatial_thin/domain-response-matrix.csv",
+      "FabricatedSurfaceMatrix": "spatial-4-edge-e51d7380245e/results/main/spatial-4-edge-e51d7380245e-p4/reducer/surface-response-matrix.csv",
+      "ThinSurfaceMatrix": "postpro/spatial_thin/surface-response-matrix.csv",
+      "BasisPoints": "basis-points.csv",
+      "TraceMesh": {
+        "Vertices": "trace-vertices.csv",
+        "Triangles": "trace-triangles.csv"
+      },
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Type": "MA",
+          "Coupon": 1
+        },
+        {
+          "Slot": 0,
+          "Type": "MS",
+          "Coupon": 2
+        },
+        {
+          "Slot": 0,
+          "Type": "SA",
+          "Coupon": 3
+        }
+      ],
+      "SupportPoints": [
+        [
+          6.0,
+          -2.05,
+          -8.0
+        ],
+        [
+          6.0,
+          2.1,
+          -8.0
+        ],
+        [
+          6.0,
+          -2.05,
+          8.0
+        ],
+        [
+          6.0,
+          2.1,
+          8.0
+        ],
+        [
+          -10.0,
+          -2.05,
+          -8.0
+        ],
+        [
+          -10.0,
+          2.1,
+          -8.0
+        ],
+        [
+          -10.0,
+          -2.05,
+          8.0
+        ],
+        [
+          -10.0,
+          2.1,
+          8.0
+        ]
+      ],
+      "Edges": [
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 1,
+          "GapDirection": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "InterfaceSlot": 0,
+          "Interval": [
+            -2.0,
+            0.0
+          ],
+          "Point": [
+            -2.0,
+            0.0,
+            0.0
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 1,
+          "GapDirection": [
+            0.0,
+            0.0,
+            -1.0
+          ],
+          "InterfaceSlot": 0,
+          "Interval": [
+            -2.0,
+            2.0
+          ],
+          "Point": [
+            -2.0,
+            0.0,
+            -2.0
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 1,
+          "GapDirection": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "InterfaceSlot": 0,
+          "Interval": [
+            0.0,
+            2.0
+          ],
+          "Point": [
+            -2.0,
+            0.0,
+            0.0
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 1,
+          "GapDirection": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "InterfaceSlot": 0,
+          "Interval": [
+            -2.0,
+            2.0
+          ],
+          "Point": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        }
+      ],
+      "EdgePositionTolerance": 2e-06,
+      "EdgeAngleTolerance": 1e-06,
+      "Reference": [
+        -0.2,
+        0.0,
+        0.0
+      ],
+      "PlanViewBoundary": [
+        {
+          "Conductor": 1,
+          "ContinuationSegments": [
+            [
+              [
+                -5000000000,
+                0,
+                -1000000000
+              ],
+              [
+                -5000000000,
+                0,
+                0
+              ]
+            ],
+            [
+              [
+                -1000000000,
+                0,
+                4000000000
+              ],
+              [
+                0,
+                0,
+                4000000000
+              ]
+            ]
+          ],
+          "Segments": [
+            [
+              [
+                -5000000000,
+                0,
+                -1000000000
+              ],
+              [
+                -5000000000,
+                0,
+                0
+              ]
+            ],
+            [
+              [
+                -5000000000,
+                0,
+                -1000000000
+              ],
+              [
+                0,
+                0,
+                -1000000000
+              ]
+            ],
+            [
+              [
+                -5000000000,
+                0,
+                0
+              ],
+              [
+                -1000000000,
+                0,
+                0
+              ]
+            ],
+            [
+              [
+                -1000000000,
+                0,
+                0
+              ],
+              [
+                -1000000000,
+                0,
+                4000000000
+              ]
+            ],
+            [
+              [
+                -1000000000,
+                0,
+                4000000000
+              ],
+              [
+                0,
+                0,
+                4000000000
+              ]
+            ],
+            [
+              [
+                0,
+                0,
+                -1000000000
+              ],
+              [
+                0,
+                0,
+                4000000000
+              ]
+            ]
+          ]
+        }
+      ],
+      "MaskRegularization": {
+        "Version": 1,
+        "PhysicalBoundary": "TaperAndRound",
+        "ContinuationBoundary": "Vertical"
+      },
+      "ContourGroups": [
+        24,
+        24,
+        24,
+        24,
+        24
+      ],
+      "ZeroTraceIndices": [
+        55,
+        56,
+        57,
+        58,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        79,
+        80,
+        81,
+        82,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91
+      ],
+      "CouponMesh": {
+        "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/spatial-4-edge-e51d7380245e/identity.msh",
+        "SHA256": "957e3129b4950053536745b2c9a5e4552ac4bacc3cc05ff684c2ca9b0fb3dbce"
+      },
+      "Qualification": {
+        "Verdict": "PendingQualification",
+        "Record": "/tmp/library-device-transmon-01/spatial-4-edge-e51d7380245e/qualification.json",
+        "ReferenceAnchor": null,
+        "Order": 4
+      },
+      "LibraryQualified": false,
+      "SourceProcessLibrary": {
+        "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/device/sources/spatial-4-edge-e51d7380245e/process-library.json",
+        "SHA256": "4f7ace69dea0e1342806468b685787529eaf26ffe29065059d723c8e2674f1dc"
+      }
+    },
+    {
+      "Name": "spatialedgecluster_edgecount-2_3f8992613e95",
+      "Topology": "SpatialEdgeCluster",
+      "FabricatedMatrix": "spatial-2-edge-8ce3fb213a2d/results/main/spatial-2-edge-8ce3fb213a2d-p4/reducer/domain-response-matrix.csv",
+      "ThinMatrix": "postpro/spatial_thin/domain-response-matrix.csv",
+      "FabricatedSurfaceMatrix": "spatial-2-edge-8ce3fb213a2d/results/main/spatial-2-edge-8ce3fb213a2d-p4/reducer/surface-response-matrix.csv",
+      "ThinSurfaceMatrix": "postpro/spatial_thin/surface-response-matrix.csv",
+      "BasisPoints": "basis-points.csv",
+      "TraceMesh": {
+        "Vertices": "trace-vertices.csv",
+        "Triangles": "trace-triangles.csv"
+      },
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Type": "MA",
+          "Coupon": 1
+        },
+        {
+          "Slot": 0,
+          "Type": "MS",
+          "Coupon": 2
+        },
+        {
+          "Slot": 0,
+          "Type": "SA",
+          "Coupon": 3
+        }
+      ],
+      "SupportPoints": [
+        [
+          4.0,
+          -2.05,
+          -8.0
+        ],
+        [
+          4.0,
+          2.1,
+          -8.0
+        ],
+        [
+          4.0,
+          -2.05,
+          8.0
+        ],
+        [
+          4.0,
+          2.1,
+          8.0
+        ],
+        [
+          -6.0,
+          -2.05,
+          -8.0
+        ],
+        [
+          -6.0,
+          2.1,
+          -8.0
+        ],
+        [
+          -6.0,
+          -2.05,
+          8.0
+        ],
+        [
+          -6.0,
+          2.1,
+          8.0
+        ]
+      ],
+      "Edges": [
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 1,
+          "GapDirection": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "InterfaceSlot": 0,
+          "Interval": [
+            -2.0,
+            2.0
+          ],
+          "Point": [
+            -2.0,
+            0.0,
+            0.0
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "BoundaryCondition": {
+            "Type": "PEC"
+          },
+          "Conductor": 1,
+          "GapDirection": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "InterfaceSlot": 0,
+          "Interval": [
+            -2.0,
+            2.0
+          ],
+          "Point": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "ProcessNormal": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        }
+      ],
+      "EdgePositionTolerance": 2e-06,
+      "EdgeAngleTolerance": 1e-06,
+      "Reference": [
+        -0.2,
+        0.0,
+        0.0
+      ],
+      "PlanViewBoundary": [
+        {
+          "Conductor": 1,
+          "ContinuationSegments": [
+            [
+              [
+                -1000000000,
+                0,
+                -4000000000
+              ],
+              [
+                0,
+                0,
+                -4000000000
+              ]
+            ],
+            [
+              [
+                -1000000000,
+                0,
+                4000000000
+              ],
+              [
+                0,
+                0,
+                4000000000
+              ]
+            ]
+          ],
+          "Segments": [
+            [
+              [
+                -1000000000,
+                0,
+                -4000000000
+              ],
+              [
+                -1000000000,
+                0,
+                4000000000
+              ]
+            ],
+            [
+              [
+                -1000000000,
+                0,
+                -4000000000
+              ],
+              [
+                0,
+                0,
+                -4000000000
+              ]
+            ],
+            [
+              [
+                -1000000000,
+                0,
+                4000000000
+              ],
+              [
+                0,
+                0,
+                4000000000
+              ]
+            ],
+            [
+              [
+                0,
+                0,
+                -4000000000
+              ],
+              [
+                0,
+                0,
+                4000000000
+              ]
+            ]
+          ]
+        }
+      ],
+      "MaskRegularization": {
+        "Version": 1,
+        "PhysicalBoundary": "TaperAndRound",
+        "ContinuationBoundary": "Vertical"
+      },
+      "ContourGroups": [
+        30,
+        30,
+        30,
+        30,
+        30
+      ],
+      "ZeroTraceIndices": [
+        63,
+        64,
+        65,
+        66,
+        78,
+        79,
+        80,
+        81,
+        93,
+        94,
+        95,
+        96,
+        108,
+        109,
+        110,
+        111
+      ],
+      "CouponMesh": {
+        "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/spatial-2-edge-8ce3fb213a2d/identity.msh",
+        "SHA256": "7839a4f6341ab5681e2aa18b240946dbeff8097869190bb7ffaf6989a98a8e16"
+      },
+      "Qualification": {
+        "Verdict": "PendingQualification",
+        "Record": "/tmp/library-device-transmon-01/spatial-2-edge-8ce3fb213a2d/qualification.json",
+        "ReferenceAnchor": null,
+        "Order": 4
+      },
+      "LibraryQualified": false,
+      "SourceProcessLibrary": {
+        "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/device/sources/spatial-2-edge-8ce3fb213a2d/process-library.json",
+        "SHA256": "f44b03fc1985958dd1e6f5dff9c5d57e9c3d13f3e83416c6002566de7c823dbd"
+      }
+    }
+  ]
+}

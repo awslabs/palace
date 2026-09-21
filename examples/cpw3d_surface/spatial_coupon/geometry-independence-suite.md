@@ -2760,6 +2760,61 @@ hashing): the bound is a machine resource guard (decision 54c) and a 3M-element 
 verification sits within 15% of it - the ten-edge's 1,607 s again.
 
 
+### First complete device library run (supervisor decision 58, 2026-09-21)
+
+`qualify/device-library-20260921/` (`DEVICE-LIBRARY.md`, `library-build.json`,
+`device-coupons.json`, the dry-run `library-qualification.dry-run.json`, the live
+`library-qualification.json` / `process-library.json` / `qualification-gates.json`, per coupon
+`submission.json` / `stage-estimate.json` / `qualification.json` / `cost-summary.json` /
+`matrix-validation.json` / `remote-archive-deletion.json` / `result-csv-sha256.json` /
+`qstat-xf.txt` / `comparison/p-sequence-controls.{json,md}` / `comparison/class-statistics.json`;
+no CSV, mesh or log) records the transmon layout run
+through both commands with the decision-57 Delaunay device basis. **Build** (`build --device`,
+fresh production-manifest copy, no `--build-limit`, pool of 2, one workstation): discovery +
+basis generation + registration of all SIX spatial coupons in 990 s (every census-only probe
+under the bounds; the ten-edge probe 177 s / 5.94 GiB where the ear-clipped basis hit 8.03 GiB),
+build pool 7,338 s, end to end 8,493 s; **6 / 6 built and verified** (identity + rotate-z
+Passed, every gate at its production value): 2-edge 1,215,960 (H1 p4 17.1M), 3-edge `9cd9`
+1,680,987 (22.9M), 4-edge 1,895,487 (25.2M), ten-edge 2,643,905 (35.9M; 0.709 of the cap,
+gmsh 5.92 GiB), 5-edge 2,696,939 (35.9M), 7f03 3,037,912 (42.7M; 0.784 of the cap; the one
+headroom flag: verification 1,692 s = 0.94 of the 1,800 s bound under the concurrent 5-edge
+build, decision 54c); estimate / actual 1.03-1.08 everywhere. Nothing fails closed in the build
+any more: the three 2026-09-20 stops (7f03 1.256 x cap, ten-edge memory, 5-edge tube tool) are
+removed by 54a / 54b. `build` does not reuse roots by content: the 5-edge and 7f03 were rebuilt
+and came out BYTE-IDENTICAL to the decision-54 identities `ddf1081b…` / `e038c5ef…`.
+**Qualify** (`--reference none --orders p4 --controls p3,p5 --max-jobs 2`): the dry run plans
+five coupons in one 6 h job each (runner minutes at the measured PCG counts / at 2.0x with
+preflight and margin: 2-edge 59 / 130, 4-edge 69 / 154, 3-edge 94 / 201, 5-edge 158 / 332,
+ten-edge 164 / 342; main-stage node-h 0.79 / 0.86 / 1.30 / 2.21 / 2.31 = 7.47 at 1.0x; Palace
+peaks 135-285 GB of 1,485) and fails 7f03 closed at the estimate: 225 sources x 42.7M H1 (p4) /
+83.1M (p5) = 21,460 s at 2.0x PCG, 29,272 s with preflight and margin > the 21,600 s walltime -
+a job-size limit of the one-job-per-coupon plan (the mesh is built and verified), resolvable
+only by a two-job split of the source set (unsupported) or a longer walltime (user decision).
+The live run (the five, largest first) submitted PBS 46219 (ten-edge) and 46220 (5-edge) at
+11:28Z; from 11:38Z the cluster login host was unreachable for more than two hours (the two jobs
+kept running), the driver read the empty poll as "left the queue", its fetch failed and it
+crashed - fixed forward (transport-failure polls and fetch stops above, commit `5a25d034e`) and
+the run resumed with `--resume` on the same root at 15:48Z: both submissions adopted
+(`Monitor.Resumed`, no second qsub), fetched at 15:52 / 15:55Z; 46221 (3-edge) and 46222 (4-edge)
+submitted into the freed slots, a second login-host outage 16:21-16:40Z recorded as 8
+`Monitor.TransportFailures` on each (ssh rc 255, jobs kept active, 50 / 38 of 240 polls spent),
+both fetched; 46255 (2-edge) last, fetched 18:11:38Z. **Outcome: 5 / 5 PendingQualification, 0
+Failed, 0 Passed** - every p-sequence gate passed at the gated order p4 (8 control sources per
+coupon; max |d45| of E 0.09-0.49% against 1%, of the participations 1.21-2.68% against 5%: ten-edge
+p_MA 1.22%, 5-edge p_MS 1.69%, 3-edge p_MA 2.68%, 4-edge p_SA 1.21%, 2-edge p_MS 1.63%; every
+stage complete, every matrix validated, 14 digests per coupon, all response archives deleted on
+the cluster); `process-library.json` carries the five models with `LibraryQualified false` - the
+rule "never Passed without a reference" holds, so nothing is qualified until a reference exists.
+Cost: PBS job wall 8,618 / 8,501 / 5,241 / 3,984 / 3,380 s (ten-edge, 5-edge, 3-edge, 4-edge,
+2-edge; PCG mean 14-18, max 39-40), **8.257 node-h** (main stages 6.82; the 1.0x-PCG estimate
+4-14% above the job, the 2.0x-with-margin gate value 2.3-2.4x); `CriticalPathSeconds` 24,313
+(11:26:25Z first submission -> 18:11:38Z last fetch), of which 7,158 s is the first outage's dead
+time (46219 / 46220 ended 13:53 / 13:51Z), 17,155 s of job + queue chain; 5 jobs submitted, 2
+concurrent, user cap 40. Every MA value of this run is the sharp-edge value at the recipe's 0.25
+nm cutoff (decisions 55 / 56). Manual after the run: the 7f03 job split or walltime, the MA
+definition, the reference for the device geometries (the accuracy statement), the corner and
+isolated-edge requirements outside the spatial scope.
+
 ## Preflight
 
 ```sh

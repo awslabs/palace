@@ -1,0 +1,10 @@
+{
+  "Archives": [
+    "/data/home/simlap/coupon_accuracy_assessment_20260913/library-device-transmon-01/spatial-5-edge-9bfa8265e2e7/main/spatial-5-edge-9bfa8265e2e7-p4/archive",
+    "/data/home/simlap/coupon_accuracy_assessment_20260913/library-device-transmon-01/spatial-5-edge-9bfa8265e2e7/main/spatial-5-edge-9bfa8265e2e7-p5-control/archive",
+    "/data/home/simlap/coupon_accuracy_assessment_20260913/library-device-transmon-01/spatial-5-edge-9bfa8265e2e7/main/spatial-5-edge-9bfa8265e2e7-p3-control/archive"
+  ],
+  "SizesBeforeDeletion": "50G\t/data/home/simlap/coupon_accuracy_assessment_20260913/library-device-transmon-01/spatial-5-edge-9bfa8265e2e7/main/spatial-5-edge-9bfa8265e2e7-p4/archive\n4.2G\t/data/home/simlap/coupon_accuracy_assessment_20260913/library-device-transmon-01/spatial-5-edge-9bfa8265e2e7/main/spatial-5-edge-9bfa8265e2e7-p5-control/archive\n946M\t/data/home/simlap/coupon_accuracy_assessment_20260913/library-device-transmon-01/spatial-5-edge-9bfa8265e2e7/main/spatial-5-edge-9bfa8265e2e7-p3-control/archive",
+  "DeletedUTC": "2026-09-21T15:55:14Z",
+  "Remaining": ""
+}

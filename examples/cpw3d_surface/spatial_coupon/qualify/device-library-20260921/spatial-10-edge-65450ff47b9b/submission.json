@@ -1,0 +1,7 @@
+{
+  "Job": "46219.ip-192-168-54-24.us-west-2.compute.internal",
+  "UTC": "2026-09-21T11:26:25Z",
+  "UserJobsBefore": 1,
+  "JobCap": 40,
+  "Command": "cd /data/home/simlap/coupon_accuracy_assessment_20260913/library-device-transmon-01/spatial-10-edge-65450ff47b9b/main && /opt/soca/soca-green1/schedulers/default/pbs/bin/qsub /data/home/simlap/coupon_accuracy_assessment_20260913/library-device-transmon-01/spatial-10-edge-65450ff47b9b/main/job.pbs"
+}

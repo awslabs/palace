@@ -1,0 +1,1348 @@
+{
+  "Version": 1,
+  "Command": "coupon-library build",
+  "Root": "/tmp/coupon-device-transmon-delaunay-20260921",
+  "Cases": [
+    {
+      "Case": "spatial-10-edge-65450ff47b9b",
+      "InventoryStatus": "DeviceDerived",
+      "FixtureVersion": 1,
+      "Calibration": null,
+      "Scope": {
+        "ExhibitedClasses": [
+          "ContinuationVertices",
+          "ExteriorLoops",
+          "MultipleConductors",
+          "MultipleSlots",
+          "TraceBasis"
+        ],
+        "UnsupportedClasses": []
+      },
+      "Status": "built",
+      "Passed": true,
+      "StoppedBy": null,
+      "CanonicalBuildId": "164c219ea32935925c0f0e52ba5ede6b2f5e3c1a5d7c1406a016ab50c9c3567d",
+      "Variants": {
+        "identity": {
+          "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/spatial-10-edge-65450ff47b9b/identity.msh",
+          "SHA256": "316d7a1898c2f3f76ecf491d0c7bfe7109af32fb5dfd94d5e9cea2f57958e5da"
+        },
+        "rotate-z-0.63": {
+          "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/spatial-10-edge-65450ff47b9b/rotate-z-0.63.msh",
+          "SHA256": "b0d7f21cf7a341f6d0f575bc8214a05c93404f9157b0493c5962b63f43348e95"
+        }
+      },
+      "Elements": {
+        "Tetrahedron": 2353601,
+        "Prism": 269568,
+        "Pyramid": 20736,
+        "Total": 2643905
+      },
+      "H1": {
+        "Order": 4,
+        "DOFs": 35861283,
+        "EntityCounts": {
+          "Vertices": 603397,
+          "Edges": 3535281,
+          "TriangleFaces": 5144942,
+          "QuadFaces": 430848,
+          "Tetrahedra": 2353601,
+          "Prisms": 269568,
+          "Pyramids": 20736
+        }
+      },
+      "Estimate": {
+        "EstimatedElements": 2837463.1401317683,
+        "EstimateOverCap": 0.7093657850329421,
+        "MaximumElements": 4000000,
+        "Passed": true,
+        "ActualElements": 2643905,
+        "EstimateOverActual": 1.073209188730975
+      },
+      "Stages": {
+        "canonical-publish": {
+          "Seconds": 36.843128959066235,
+          "PeakGiB": 4.19342041015625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-10-edge-65450ff47b9b/canonical-publish.log.json"
+        },
+        "canonical-source": {
+          "Seconds": 0.10305599996354431,
+          "PeakGiB": 3.0517578125e-05,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-10-edge-65450ff47b9b/canonical-source.log.json"
+        },
+        "gmsh-build": {
+          "Seconds": 195.34874641592614,
+          "PeakGiB": 5.9166412353515625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-10-edge-65450ff47b9b/gmsh-build.log.json"
+        },
+        "identity-publication": {
+          "Seconds": 145.86874445795547,
+          "PeakGiB": 5.1776123046875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-10-edge-65450ff47b9b/identity-publication.log.json"
+        },
+        "identity-variant-audits": {
+          "Seconds": 322.63847583404277,
+          "PeakGiB": 3.7955474853515625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-10-edge-65450ff47b9b/identity-variant-audits.audit.log.json"
+        },
+        "per-entry-verification": {
+          "Seconds": 1329.7855201660423,
+          "PeakGiB": 4.0505828857421875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-10-edge-65450ff47b9b/per-entry-verification.audit.log.json"
+        },
+        "rotate-z-0.63-publication": {
+          "Seconds": 139.31144058296923,
+          "PeakGiB": 5.2102813720703125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-10-edge-65450ff47b9b/rotate-z-0.63-publication.log.json"
+        },
+        "rotate-z-0.63-variant-audits": {
+          "Seconds": 483.7344616249902,
+          "PeakGiB": 3.9052886962890625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-10-edge-65450ff47b9b/rotate-z-0.63-variant-audits.audit.log.json"
+        }
+      },
+      "Verification": {
+        "Passed": true,
+        "Failures": [],
+        "Path": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-10-edge-65450ff47b9b/per-entry-verification.json"
+      },
+      "HeadroomFlags": [],
+      "Root": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-10-edge-65450ff47b9b",
+      "DriverReturnCode": 0,
+      "WallSeconds": 2658.8247911930084
+    },
+    {
+      "Case": "spatial-2-edge-8ce3fb213a2d",
+      "InventoryStatus": "DeviceDerived",
+      "FixtureVersion": 1,
+      "Calibration": null,
+      "Scope": {
+        "ExhibitedClasses": [
+          "ContinuationVertices",
+          "ExteriorLoops",
+          "TraceBasis"
+        ],
+        "UnsupportedClasses": []
+      },
+      "Status": "built",
+      "Passed": true,
+      "StoppedBy": null,
+      "CanonicalBuildId": "560a2ff55a663c6fb01302326dd40e6749728e81f132eeab8951b36aa1519c54",
+      "Variants": {
+        "identity": {
+          "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/spatial-2-edge-8ce3fb213a2d/identity.msh",
+          "SHA256": "7839a4f6341ab5681e2aa18b240946dbeff8097869190bb7ffaf6989a98a8e16"
+        },
+        "rotate-z-0.63": {
+          "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/spatial-2-edge-8ce3fb213a2d/rotate-z-0.63.msh",
+          "SHA256": "407b6ecc20950c82e56922a718fc450a23403ec227c2caa9b924f84d17cff4c7"
+        }
+      },
+      "Elements": {
+        "Tetrahedron": 1052916,
+        "Prism": 151398,
+        "Pyramid": 11646,
+        "Total": 1215960
+      },
+      "H1": {
+        "Order": 4,
+        "DOFs": 17099910,
+        "EntityCounts": {
+          "Vertices": 284010,
+          "Edges": 1639707,
+          "TriangleFaces": 2329679,
+          "QuadFaces": 241978,
+          "Tetrahedra": 1052916,
+          "Prisms": 151398,
+          "Pyramids": 11646
+        }
+      },
+      "Estimate": {
+        "EstimatedElements": 1254183.433717683,
+        "EstimateOverCap": 0.31354585842942073,
+        "MaximumElements": 4000000,
+        "Passed": true,
+        "ActualElements": 1215960,
+        "EstimateOverActual": 1.0314347788723996
+      },
+      "Stages": {
+        "canonical-publish": {
+          "Seconds": 21.03963779192418,
+          "PeakGiB": 2.4051361083984375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-2-edge-8ce3fb213a2d/canonical-publish.log.json"
+        },
+        "canonical-source": {
+          "Seconds": 0.09934862493537366,
+          "PeakGiB": 3.0517578125e-05,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-2-edge-8ce3fb213a2d/canonical-source.log.json"
+        },
+        "gmsh-build": {
+          "Seconds": 71.47426824993454,
+          "PeakGiB": 3.553314208984375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-2-edge-8ce3fb213a2d/gmsh-build.log.json"
+        },
+        "identity-publication": {
+          "Seconds": 67.40889037493616,
+          "PeakGiB": 2.9404296875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-2-edge-8ce3fb213a2d/identity-publication.log.json"
+        },
+        "identity-variant-audits": {
+          "Seconds": 143.6808944590157,
+          "PeakGiB": 2.0904541015625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-2-edge-8ce3fb213a2d/identity-variant-audits.audit.log.json"
+        },
+        "per-entry-verification": {
+          "Seconds": 547.2023967920104,
+          "PeakGiB": 2.049346923828125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-2-edge-8ce3fb213a2d/per-entry-verification.audit.log.json"
+        },
+        "rotate-z-0.63-publication": {
+          "Seconds": 67.08555279194843,
+          "PeakGiB": 2.94549560546875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-2-edge-8ce3fb213a2d/rotate-z-0.63-publication.log.json"
+        },
+        "rotate-z-0.63-variant-audits": {
+          "Seconds": 195.80768841598183,
+          "PeakGiB": 1.9908905029296875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-2-edge-8ce3fb213a2d/rotate-z-0.63-variant-audits.audit.log.json"
+        }
+      },
+      "Verification": {
+        "Passed": true,
+        "Failures": [],
+        "Path": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-2-edge-8ce3fb213a2d/per-entry-verification.json"
+      },
+      "HeadroomFlags": [],
+      "Root": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-2-edge-8ce3fb213a2d",
+      "DriverReturnCode": 0,
+      "WallSeconds": 1117.9723811149597
+    },
+    {
+      "Case": "spatial-3-edge-9cd906b81cbe",
+      "InventoryStatus": "DeviceDerived",
+      "FixtureVersion": 1,
+      "Calibration": null,
+      "Scope": {
+        "ExhibitedClasses": [
+          "ContinuationVertices",
+          "ExteriorLoops",
+          "TraceBasis"
+        ],
+        "UnsupportedClasses": []
+      },
+      "Status": "built",
+      "Passed": true,
+      "StoppedBy": null,
+      "CanonicalBuildId": "69b4dbed1ec890f6b6ec9cb8a48fc1f73389dfa56d49f4b13a3e3ca6fdc2025c",
+      "Variants": {
+        "identity": {
+          "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-9cd906b81cbe/identity.msh",
+          "SHA256": "9b2bd97cbe74ed06b40d995ba4a72ce504cc013a637c8e7e404680aedd882a93"
+        },
+        "rotate-z-0.63": {
+          "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-9cd906b81cbe/rotate-z-0.63.msh",
+          "SHA256": "6d82dc5defcd6c4dfb16d017cad4087dea359f94ba2050ea9c081745d08d618d"
+        }
+      },
+      "Elements": {
+        "Tetrahedron": 1495011,
+        "Prism": 172692,
+        "Pyramid": 13284,
+        "Total": 1680987
+      },
+      "H1": {
+        "Order": 4,
+        "DOFs": 22886084,
+        "EntityCounts": {
+          "Vertices": 387911,
+          "Edges": 2259161,
+          "TriangleFaces": 3276225,
+          "QuadFaces": 276012,
+          "Tetrahedra": 1495011,
+          "Prisms": 172692,
+          "Pyramids": 13284
+        }
+      },
+      "Estimate": {
+        "EstimatedElements": 1763366.0466352294,
+        "EstimateOverCap": 0.44084151165880736,
+        "MaximumElements": 4000000,
+        "Passed": true,
+        "ActualElements": 1680987,
+        "EstimateOverActual": 1.049006355572785
+      },
+      "Stages": {
+        "canonical-publish": {
+          "Seconds": 26.479229249991477,
+          "PeakGiB": 3.0541229248046875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-9cd906b81cbe/canonical-publish.log.json"
+        },
+        "canonical-source": {
+          "Seconds": 0.10633541701827198,
+          "PeakGiB": 3.0517578125e-05,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-9cd906b81cbe/canonical-source.log.json"
+        },
+        "gmsh-build": {
+          "Seconds": 104.71650687500369,
+          "PeakGiB": 4.243499755859375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-9cd906b81cbe/gmsh-build.log.json"
+        },
+        "identity-publication": {
+          "Seconds": 92.54807495803107,
+          "PeakGiB": 3.6145782470703125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-9cd906b81cbe/identity-publication.log.json"
+        },
+        "identity-variant-audits": {
+          "Seconds": 204.83424270804971,
+          "PeakGiB": 2.809478759765625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-9cd906b81cbe/identity-variant-audits.audit.log.json"
+        },
+        "per-entry-verification": {
+          "Seconds": 825.8676165420329,
+          "PeakGiB": 2.8110809326171875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-9cd906b81cbe/per-entry-verification.audit.log.json"
+        },
+        "rotate-z-0.63-publication": {
+          "Seconds": 100.39180383295752,
+          "PeakGiB": 3.642059326171875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-9cd906b81cbe/rotate-z-0.63-publication.log.json"
+        },
+        "rotate-z-0.63-variant-audits": {
+          "Seconds": 305.6751914160559,
+          "PeakGiB": 2.687713623046875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-9cd906b81cbe/rotate-z-0.63-variant-audits.audit.log.json"
+        }
+      },
+      "Verification": {
+        "Passed": true,
+        "Failures": [],
+        "Path": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-9cd906b81cbe/per-entry-verification.json"
+      },
+      "HeadroomFlags": [],
+      "Root": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-9cd906b81cbe",
+      "DriverReturnCode": 0,
+      "WallSeconds": 1665.2476239204407
+    },
+    {
+      "Case": "spatial-3-edge-5d3b5e644745",
+      "InventoryStatus": "DeviceDerived",
+      "FixtureVersion": 1,
+      "Calibration": null,
+      "Scope": {
+        "ExhibitedClasses": [
+          "ContinuationVertices",
+          "ExteriorLoops",
+          "TraceBasis"
+        ],
+        "UnsupportedClasses": []
+      },
+      "Status": "built",
+      "Passed": true,
+      "StoppedBy": null,
+      "CanonicalBuildId": "cfbe4d61b4e101145ecc5282ace33de08691ccdb57c91c1954e06d0a524fd6f9",
+      "Variants": {
+        "identity": {
+          "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-5d3b5e644745/identity.msh",
+          "SHA256": "e038c5efbb50145aacc18f768317344f03b8af1a47e0482a0296d9ab1ffe62fc"
+        },
+        "rotate-z-0.63": {
+          "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-5d3b5e644745/rotate-z-0.63.msh",
+          "SHA256": "ed1ea9422d41e97c43f054299a87ae546bc5536b0cf1e0f9d901d0161d5baacd"
+        }
+      },
+      "Elements": {
+        "Tetrahedron": 2635846,
+        "Prism": 373347,
+        "Pyramid": 28719,
+        "Total": 3037912
+      },
+      "H1": {
+        "Order": 4,
+        "DOFs": 42696378,
+        "EntityCounts": {
+          "Vertices": 714404,
+          "Edges": 4109961,
+          "TriangleFaces": 5836752,
+          "QuadFaces": 596717,
+          "Tetrahedra": 2635846,
+          "Prisms": 373347,
+          "Pyramids": 28719
+        }
+      },
+      "Estimate": {
+        "EstimatedElements": 3135223.9752248586,
+        "EstimateOverCap": 0.7838059938062146,
+        "MaximumElements": 4000000,
+        "Passed": true,
+        "ActualElements": 3037912,
+        "EstimateOverActual": 1.0320325194491673
+      },
+      "Stages": {
+        "canonical-publish": {
+          "Seconds": 42.54918999993242,
+          "PeakGiB": 4.9941253662109375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-5d3b5e644745/canonical-publish.log.json"
+        },
+        "canonical-source": {
+          "Seconds": 0.19271720794495195,
+          "PeakGiB": 3.0517578125e-05,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-5d3b5e644745/canonical-source.log.json"
+        },
+        "gmsh-build": {
+          "Seconds": 182.24964470800478,
+          "PeakGiB": 6.6266021728515625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-5d3b5e644745/gmsh-build.log.json"
+        },
+        "identity-publication": {
+          "Seconds": 170.32935933291446,
+          "PeakGiB": 6.31805419921875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-5d3b5e644745/identity-publication.log.json"
+        },
+        "identity-variant-audits": {
+          "Seconds": 366.7503951659892,
+          "PeakGiB": 4.503662109375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-5d3b5e644745/identity-variant-audits.audit.log.json"
+        },
+        "per-entry-verification": {
+          "Seconds": 1692.171858791029,
+          "PeakGiB": 4.9280548095703125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-5d3b5e644745/per-entry-verification.audit.log.json"
+        },
+        "rotate-z-0.63-publication": {
+          "Seconds": 175.40105020802002,
+          "PeakGiB": 6.32354736328125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-5d3b5e644745/rotate-z-0.63-publication.log.json"
+        },
+        "rotate-z-0.63-variant-audits": {
+          "Seconds": 747.5957140829414,
+          "PeakGiB": 4.8618927001953125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-5d3b5e644745/rotate-z-0.63-variant-audits.audit.log.json"
+        }
+      },
+      "Verification": {
+        "Passed": true,
+        "Failures": [],
+        "Path": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-5d3b5e644745/per-entry-verification.json"
+      },
+      "HeadroomFlags": [
+        "stage per-entry-verification 1692 s >= 0.9 x 1800.0 s"
+      ],
+      "Root": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-5d3b5e644745",
+      "DriverReturnCode": 0,
+      "WallSeconds": 3382.9404299259186
+    },
+    {
+      "Case": "spatial-4-edge-e51d7380245e",
+      "InventoryStatus": "DeviceDerived",
+      "FixtureVersion": 1,
+      "Calibration": null,
+      "Scope": {
+        "ExhibitedClasses": [
+          "ContinuationVertices",
+          "ExteriorLoops",
+          "TraceBasis"
+        ],
+        "UnsupportedClasses": []
+      },
+      "Status": "built",
+      "Passed": true,
+      "StoppedBy": null,
+      "CanonicalBuildId": "7f57a8ce9cfa7aba5a63b1611be99da8d03f89abda6809fef4c9e4a537fe0af6",
+      "Variants": {
+        "identity": {
+          "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/spatial-4-edge-e51d7380245e/identity.msh",
+          "SHA256": "957e3129b4950053536745b2c9a5e4552ac4bacc3cc05ff684c2ca9b0fb3dbce"
+        },
+        "rotate-z-0.63": {
+          "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/spatial-4-edge-e51d7380245e/rotate-z-0.63.msh",
+          "SHA256": "a6bc76a80eb5e56d60d175f93ff1e6fe2ecbf7f99af1eedb3b6d9d69f4efb927"
+        }
+      },
+      "Elements": {
+        "Tetrahedron": 1710141,
+        "Prism": 172107,
+        "Pyramid": 13239,
+        "Total": 1895487
+      },
+      "H1": {
+        "Order": 4,
+        "DOFs": 25167936,
+        "EntityCounts": {
+          "Vertices": 422877,
+          "Edges": 2510035,
+          "TriangleFaces": 3707568,
+          "QuadFaces": 275077,
+          "Tetrahedra": 1710141,
+          "Prisms": 172107,
+          "Pyramids": 13239
+        }
+      },
+      "Estimate": {
+        "EstimatedElements": 1968009.5178464693,
+        "EstimateOverCap": 0.49200237946161735,
+        "MaximumElements": 4000000,
+        "Passed": true,
+        "ActualElements": 1895487,
+        "EstimateOverActual": 1.03826062528863
+      },
+      "Stages": {
+        "canonical-publish": {
+          "Seconds": 28.160346958087757,
+          "PeakGiB": 3.3199005126953125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-4-edge-e51d7380245e/canonical-publish.log.json"
+        },
+        "canonical-source": {
+          "Seconds": 0.09811029094271362,
+          "PeakGiB": 3.0517578125e-05,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-4-edge-e51d7380245e/canonical-source.log.json"
+        },
+        "gmsh-build": {
+          "Seconds": 114.55088562495075,
+          "PeakGiB": 4.1512603759765625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-4-edge-e51d7380245e/gmsh-build.log.json"
+        },
+        "identity-publication": {
+          "Seconds": 113.75019916601013,
+          "PeakGiB": 3.8531341552734375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-4-edge-e51d7380245e/identity-publication.log.json"
+        },
+        "identity-variant-audits": {
+          "Seconds": 227.08204795909114,
+          "PeakGiB": 2.7786102294921875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-4-edge-e51d7380245e/identity-variant-audits.audit.log.json"
+        },
+        "per-entry-verification": {
+          "Seconds": 877.457554792054,
+          "PeakGiB": 2.967010498046875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-4-edge-e51d7380245e/per-entry-verification.audit.log.json"
+        },
+        "rotate-z-0.63-publication": {
+          "Seconds": 111.34269404190127,
+          "PeakGiB": 3.931640625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-4-edge-e51d7380245e/rotate-z-0.63-publication.log.json"
+        },
+        "rotate-z-0.63-variant-audits": {
+          "Seconds": 307.1247715000063,
+          "PeakGiB": 2.4641571044921875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-4-edge-e51d7380245e/rotate-z-0.63-variant-audits.audit.log.json"
+        }
+      },
+      "Verification": {
+        "Passed": true,
+        "Failures": [],
+        "Path": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-4-edge-e51d7380245e/per-entry-verification.json"
+      },
+      "HeadroomFlags": [],
+      "Root": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-4-edge-e51d7380245e",
+      "DriverReturnCode": 0,
+      "WallSeconds": 1784.3848569393158
+    },
+    {
+      "Case": "spatial-5-edge-9bfa8265e2e7",
+      "InventoryStatus": "DeviceDerived",
+      "FixtureVersion": 1,
+      "Calibration": null,
+      "Scope": {
+        "ExhibitedClasses": [
+          "ContinuationVertices",
+          "ExteriorLoops",
+          "MultipleSlots",
+          "TraceBasis"
+        ],
+        "UnsupportedClasses": []
+      },
+      "Status": "built",
+      "Passed": true,
+      "StoppedBy": null,
+      "CanonicalBuildId": "1f1139b0922f2f2965c358658cab4cf60eeab9ee93aac1c9ccfea1fbdace68f5",
+      "Variants": {
+        "identity": {
+          "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/spatial-5-edge-9bfa8265e2e7/identity.msh",
+          "SHA256": "ddf1081b694fba74f604e79442e5dc82ce52b1821b05273ca8b24e2281452895"
+        },
+        "rotate-z-0.63": {
+          "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/spatial-5-edge-9bfa8265e2e7/rotate-z-0.63.msh",
+          "SHA256": "d209228f6b705b6ff4d1690b30bd9c72cb6876ba2cdc20a1a631877af077a5d4"
+        }
+      },
+      "Elements": {
+        "Tetrahedron": 2424275,
+        "Prism": 253188,
+        "Pyramid": 19476,
+        "Total": 2696939
+      },
+      "H1": {
+        "Order": 4,
+        "DOFs": 35941049,
+        "EntityCounts": {
+          "Vertices": 599304,
+          "Edges": 3565335,
+          "TriangleFaces": 5258303,
+          "QuadFaces": 404668,
+          "Tetrahedra": 2424275,
+          "Prisms": 253188,
+          "Pyramids": 19476
+        }
+      },
+      "Estimate": {
+        "EstimatedElements": 2905084.558384487,
+        "EstimateOverCap": 0.7262711395961218,
+        "MaximumElements": 4000000,
+        "Passed": true,
+        "ActualElements": 2696939,
+        "EstimateOverActual": 1.0771784450387965
+      },
+      "Stages": {
+        "canonical-publish": {
+          "Seconds": 38.29681412491482,
+          "PeakGiB": 4.551971435546875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-5-edge-9bfa8265e2e7/canonical-publish.log.json"
+        },
+        "canonical-source": {
+          "Seconds": 0.09708716697059572,
+          "PeakGiB": 3.0517578125e-05,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-5-edge-9bfa8265e2e7/canonical-source.log.json"
+        },
+        "gmsh-build": {
+          "Seconds": 163.37634066597093,
+          "PeakGiB": 5.5863800048828125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-5-edge-9bfa8265e2e7/gmsh-build.log.json"
+        },
+        "identity-publication": {
+          "Seconds": 149.72633295797277,
+          "PeakGiB": 4.870269775390625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-5-edge-9bfa8265e2e7/identity-publication.log.json"
+        },
+        "identity-variant-audits": {
+          "Seconds": 327.9279379158979,
+          "PeakGiB": 4.02392578125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-5-edge-9bfa8265e2e7/identity-variant-audits.audit.log.json"
+        },
+        "per-entry-verification": {
+          "Seconds": 1227.955290416954,
+          "PeakGiB": 3.84466552734375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-5-edge-9bfa8265e2e7/per-entry-verification.audit.log.json"
+        },
+        "rotate-z-0.63-publication": {
+          "Seconds": 149.11576312500983,
+          "PeakGiB": 5.06024169921875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-5-edge-9bfa8265e2e7/rotate-z-0.63-publication.log.json"
+        },
+        "rotate-z-0.63-variant-audits": {
+          "Seconds": 503.759989125072,
+          "PeakGiB": 3.7907257080078125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 1800.0,
+            "MemoryGiB": 8.0
+          },
+          "Report": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-5-edge-9bfa8265e2e7/rotate-z-0.63-variant-audits.audit.log.json"
+        }
+      },
+      "Verification": {
+        "Passed": true,
+        "Failures": [],
+        "Path": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-5-edge-9bfa8265e2e7/per-entry-verification.json"
+      },
+      "HeadroomFlags": [],
+      "Root": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-5-edge-9bfa8265e2e7",
+      "DriverReturnCode": 0,
+      "WallSeconds": 2565.5074310302734
+    }
+  ],
+  "Library": {
+    "CasesAttempted": 6,
+    "CasesBuilt": 6,
+    "CasesPassed": 6,
+    "CasesUnsupported": 0,
+    "CasesFailed": 0,
+    "CasesUnbuilt": 0,
+    "FlaggedCases": [
+      "spatial-3-edge-5d3b5e644745"
+    ],
+    "WallClockSeconds": 7338.244870901108,
+    "Jobs": 2,
+    "Commit": "4538c7fc7",
+    "Bounds": {
+      "MaximumElements": 4000000,
+      "MaximumSeconds": 1800,
+      "MaximumRSSGiB": 8.0
+    },
+    "HeadroomFraction": 0.9,
+    "HeadroomRule": "a case is flagged when its element count or pre-build estimate reaches 0.9 x MaximumElements, or any bounded stage's wall seconds or peak process-tree RSS reaches 0.9 x its limit (the ten-edge production root sits at 0.87 of the cap and 0.96 of the memory bound: the margin rule the throughput plan lacked)",
+    "Manifest": {
+      "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/manifest.json",
+      "SHA256": "4caf40dd5cd4994fde7d1a1b5914515261b646d23b817d600c9403da52e02bd0",
+      "Kind": "production",
+      "ProductionManifest": null
+    }
+  },
+  "Device": {
+    "Device": {
+      "Config": "/private/tmp/coupon-device-transmon-delaunay-20260921/device.json",
+      "SHA256": "442b687626368e53786e37d14200b9f9c364687632d401dafabd4da70cf8b899"
+    },
+    "ProcessLibrary": {
+      "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/process-seed.json",
+      "SHA256": "98bd6e43684e36bc5099d7a4fc437ba3d5ab62a56eb70483e3a968b80889dbab",
+      "MatchingRadius": 2.0,
+      "Fabrication": {
+        "LengthUnit": "um",
+        "MetalThickness": 0.1,
+        "OveretchDepth": 0.05,
+        "SidewallAngleDegrees": 90.0,
+        "TopRoundingRadius": 0.0,
+        "BottomRoundingRadius": 0.0,
+        "SubstratePermittivity": 11.45,
+        "InterfaceLayers": {
+          "SA": {
+            "Thickness": 0.002,
+            "Permittivity": 4.0
+          },
+          "MS": {
+            "Thickness": 0.002,
+            "Permittivity": 11.47
+          },
+          "MA": {
+            "Thickness": 0.002,
+            "Permittivity": 10.0
+          }
+        }
+      }
+    },
+    "Discovery": {
+      "Manifest": "/private/tmp/coupon-device-transmon-delaunay-20260921/device/discovery/surface-response-requirements.json",
+      "SHA256": "a0517f889a6742c065d7a7132d9bdb40c8f661ed6b45a1d1bcfecd6aa645ca85",
+      "Summary": {
+        "Counts": {
+          "Exact": 0,
+          "Interpolated": 0,
+          "Missing": 3120
+        },
+        "TotalEdgeLengths": {
+          "Exact": 0.0,
+          "Interpolated": 0.0,
+          "Missing": 35296.80977799022
+        }
+      },
+      "Complete": false
+    },
+    "Plan": {
+      "Path": "/private/tmp/coupon-device-transmon-delaunay-20260921/device/coupon-plan.json",
+      "Summary": {
+        "CouponCount": 9,
+        "AutomaticallyPreparatable": 9,
+        "Unsupported": 0
+      }
+    },
+    "TraceBasis": {
+      "RingSize": 16,
+      "CapTriangulation": "delaunay",
+      "DefaultCapTriangulation": "delaunay",
+      "Rule": "generate_spatial_response.build_matching_surface with the planner's default ring size (prepare_surface_response_coupons --spatial-ring-size), the basis every gallery case was produced with; CapTriangulation delaunay (the device default, decision 57) re-triangulates the two box caps without needle ears, ear-clipping is the gallery producer's (an explicit option; device coupons only, never a gallery reference)"
+    },
+    "OutOfScope": [
+      {
+        "Id": "concavecorner_angledegrees-90_cornerradius-0_977cefce7c4a",
+        "Topology": "ConcaveCorner",
+        "Method": "CornerCoupon",
+        "Reason": null,
+        "DeviceOccurrences": 18,
+        "DeviceEdgeLength": 72.0,
+        "Rule": "not a coupon of the Gmsh-only spatial library: built by its own family (CornerCoupon)"
+      },
+      {
+        "Id": "convexcorner_angledegrees-90_cornerradius-0_90951f493ec3",
+        "Topology": "ConvexCorner",
+        "Method": "CornerCoupon",
+        "Reason": null,
+        "DeviceOccurrences": 12,
+        "DeviceEdgeLength": 48.0,
+        "Rule": "not a coupon of the Gmsh-only spatial library: built by its own family (CornerCoupon)"
+      },
+      {
+        "Id": "isolatededge_edgecount-1_c16a871d29dd",
+        "Topology": "IsolatedEdge",
+        "Method": "StraightEdgeBuilder",
+        "Reason": null,
+        "DeviceOccurrences": 3082,
+        "DeviceEdgeLength": 35068.35739703781,
+        "Rule": "not a coupon of the Gmsh-only spatial library: built by its own family (StraightEdgeBuilder)"
+      }
+    ],
+    "MeshRecipe": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
+    "Output": "/private/tmp/coupon-device-transmon-delaunay-20260921/device"
+  },
+  "DeviceCoupons": [
+    {
+      "Case": "spatial-10-edge-65450ff47b9b",
+      "Requirement": "spatialedgecluster_edgecount-10_6791f1c84123",
+      "EdgeCount": 10,
+      "Directory": "/private/tmp/coupon-device-transmon-delaunay-20260921/device/sources/spatial-10-edge-65450ff47b9b",
+      "ContentHash": "65450ff47b9b31bccaf3790cff9fc9f347d8208677ccfb1ceafbfc22b46acfec",
+      "Status": "written",
+      "Sources": 191,
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 0,
+          "Target": 2,
+          "Type": "MS"
+        },
+        {
+          "Slot": 1,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 1,
+          "Target": 2,
+          "Type": "MS"
+        },
+        {
+          "Slot": 1,
+          "Target": 1,
+          "Type": "SA"
+        }
+      ],
+      "DeviceOccurrences": 1,
+      "DeviceEdgeLength": 26.452380952400002,
+      "Registration": {
+        "Status": "registered",
+        "Message": "registered spatial-10-edge-65450ff47b9b as FixtureVersion 1",
+        "FixtureVersion": 1,
+        "ContractSHA256": "cbbd6e29f992ba43168cbdba9e749f597ca269c09b67960d21e06da0b03cc6b2",
+        "Scope": {
+          "ExhibitedClasses": [
+            "ContinuationVertices",
+            "ExteriorLoops",
+            "MultipleConductors",
+            "MultipleSlots",
+            "TraceBasis"
+          ],
+          "UnsupportedClasses": []
+        },
+        "StoppedBy": null,
+        "Work": "/tmp/coupon-device-transmon-delaunay-20260921/device/register/spatial-10-edge-65450ff47b9b"
+      }
+    },
+    {
+      "Case": "spatial-2-edge-8ce3fb213a2d",
+      "Requirement": "spatialedgecluster_edgecount-2_3f8992613e95",
+      "EdgeCount": 2,
+      "Directory": "/private/tmp/coupon-device-transmon-delaunay-20260921/device/sources/spatial-2-edge-8ce3fb213a2d",
+      "ContentHash": "8ce3fb213a2d77ee68b45ebcfe2f844e65eadea24fe558f3444948bcbefbf7c9",
+      "Status": "written",
+      "Sources": 150,
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 0,
+          "Target": 2,
+          "Type": "MS"
+        },
+        {
+          "Slot": 0,
+          "Target": 1,
+          "Type": "SA"
+        }
+      ],
+      "DeviceOccurrences": 1,
+      "DeviceEdgeLength": 8.0,
+      "Registration": {
+        "Status": "registered",
+        "Message": "registered spatial-2-edge-8ce3fb213a2d as FixtureVersion 1",
+        "FixtureVersion": 1,
+        "ContractSHA256": "132ac8eaa8d0b378004db39f791c520bf2590c128d35482be0525d410fda7f65",
+        "Scope": {
+          "ExhibitedClasses": [
+            "ContinuationVertices",
+            "ExteriorLoops",
+            "TraceBasis"
+          ],
+          "UnsupportedClasses": []
+        },
+        "StoppedBy": null,
+        "Work": "/tmp/coupon-device-transmon-delaunay-20260921/device/register/spatial-2-edge-8ce3fb213a2d"
+      }
+    },
+    {
+      "Case": "spatial-3-edge-9cd906b81cbe",
+      "Requirement": "spatialedgecluster_edgecount-3_419576fdab24",
+      "EdgeCount": 3,
+      "Directory": "/private/tmp/coupon-device-transmon-delaunay-20260921/device/sources/spatial-3-edge-9cd906b81cbe",
+      "ContentHash": "9cd906b81cbef7300f8cb65998c374a3c3c26467de8e3b0f409442ba1467b1bc",
+      "Status": "written",
+      "Sources": 175,
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 0,
+          "Target": 2,
+          "Type": "MS"
+        },
+        {
+          "Slot": 0,
+          "Target": 1,
+          "Type": "SA"
+        }
+      ],
+      "DeviceOccurrences": 1,
+      "DeviceEdgeLength": 8.0,
+      "Registration": {
+        "Status": "registered",
+        "Message": "registered spatial-3-edge-9cd906b81cbe as FixtureVersion 1",
+        "FixtureVersion": 1,
+        "ContractSHA256": "72b97bb590e05f229248856f69b267412da16fbd1613df5a06708ea91ed8c6e3",
+        "Scope": {
+          "ExhibitedClasses": [
+            "ContinuationVertices",
+            "ExteriorLoops",
+            "TraceBasis"
+          ],
+          "UnsupportedClasses": []
+        },
+        "StoppedBy": null,
+        "Work": "/tmp/coupon-device-transmon-delaunay-20260921/device/register/spatial-3-edge-9cd906b81cbe"
+      }
+    },
+    {
+      "Case": "spatial-3-edge-5d3b5e644745",
+      "Requirement": "spatialedgecluster_edgecount-3_7f03270dca8e",
+      "EdgeCount": 3,
+      "Directory": "/private/tmp/coupon-device-transmon-delaunay-20260921/device/sources/spatial-3-edge-5d3b5e644745",
+      "ContentHash": "5d3b5e644745d7c95638fc3a2e7a9c3529e4c5312fad536449129b78d93870c5",
+      "Status": "written",
+      "Sources": 225,
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 0,
+          "Target": 2,
+          "Type": "MS"
+        },
+        {
+          "Slot": 0,
+          "Target": 1,
+          "Type": "SA"
+        }
+      ],
+      "DeviceOccurrences": 1,
+      "DeviceEdgeLength": 10.0,
+      "Registration": {
+        "Status": "registered",
+        "Message": "registered spatial-3-edge-5d3b5e644745 as FixtureVersion 1",
+        "FixtureVersion": 1,
+        "ContractSHA256": "65d4a1ddf6ce9b1f0b201cfe466b845e8f0ba9d7e1908a8d32e6b12ecd0bd4c4",
+        "Scope": {
+          "ExhibitedClasses": [
+            "ContinuationVertices",
+            "ExteriorLoops",
+            "TraceBasis"
+          ],
+          "UnsupportedClasses": []
+        },
+        "StoppedBy": null,
+        "Work": "/tmp/coupon-device-transmon-delaunay-20260921/device/register/spatial-3-edge-5d3b5e644745"
+      }
+    },
+    {
+      "Case": "spatial-4-edge-e51d7380245e",
+      "Requirement": "spatialedgecluster_edgecount-4_9d2cb9bbb3fe",
+      "EdgeCount": 4,
+      "Directory": "/private/tmp/coupon-device-transmon-delaunay-20260921/device/sources/spatial-4-edge-e51d7380245e",
+      "ContentHash": "e51d7380245e07cdab162c71f84ffb289e1ec9b3e6903603d6e89f033aa8c67f",
+      "Status": "written",
+      "Sources": 120,
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 0,
+          "Target": 2,
+          "Type": "MS"
+        },
+        {
+          "Slot": 0,
+          "Target": 1,
+          "Type": "SA"
+        }
+      ],
+      "DeviceOccurrences": 2,
+      "DeviceEdgeLength": 24.0,
+      "Registration": {
+        "Status": "registered",
+        "Message": "registered spatial-4-edge-e51d7380245e as FixtureVersion 1",
+        "FixtureVersion": 1,
+        "ContractSHA256": "002c9c53466bae5488003fe7caecf5d0f5d3218b427e6dc282809c31fea30ed4",
+        "Scope": {
+          "ExhibitedClasses": [
+            "ContinuationVertices",
+            "ExteriorLoops",
+            "TraceBasis"
+          ],
+          "UnsupportedClasses": []
+        },
+        "StoppedBy": null,
+        "Work": "/tmp/coupon-device-transmon-delaunay-20260921/device/register/spatial-4-edge-e51d7380245e"
+      }
+    },
+    {
+      "Case": "spatial-5-edge-9bfa8265e2e7",
+      "Requirement": "spatialedgecluster_edgecount-5_938a30f63a3d",
+      "EdgeCount": 5,
+      "Directory": "/private/tmp/coupon-device-transmon-delaunay-20260921/device/sources/spatial-5-edge-9bfa8265e2e7",
+      "ContentHash": "9bfa8265e2e739f4e0e8b6f9b73308de36feea9bf7111a0dc740dc0db130b5df",
+      "Status": "written",
+      "Sources": 185,
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 0,
+          "Target": 2,
+          "Type": "MS"
+        },
+        {
+          "Slot": 0,
+          "Target": 1,
+          "Type": "SA"
+        },
+        {
+          "Slot": 1,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 1,
+          "Target": 2,
+          "Type": "MS"
+        }
+      ],
+      "DeviceOccurrences": 2,
+      "DeviceEdgeLength": 32.0,
+      "Registration": {
+        "Status": "registered",
+        "Message": "registered spatial-5-edge-9bfa8265e2e7 as FixtureVersion 1",
+        "FixtureVersion": 1,
+        "ContractSHA256": "3168045237a95e0223ae6dcadaa1a5a4caea834b46169d09ef408facea8de15d",
+        "Scope": {
+          "ExhibitedClasses": [
+            "ContinuationVertices",
+            "ExteriorLoops",
+            "MultipleSlots",
+            "TraceBasis"
+          ],
+          "UnsupportedClasses": []
+        },
+        "StoppedBy": null,
+        "Work": "/tmp/coupon-device-transmon-delaunay-20260921/device/register/spatial-5-edge-9bfa8265e2e7"
+      }
+    }
+  ]
+}

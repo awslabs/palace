@@ -1,0 +1,174 @@
+{
+  "Mesh": {
+    "EntityCounts": {
+      "Vertices": 422877,
+      "Edges": 2510035,
+      "TriangleFaces": 3707568,
+      "QuadFaces": 275077,
+      "Tetrahedra": 1710141,
+      "Prisms": 172107,
+      "Pyramids": 13239
+    },
+    "VolumeElements": 1895487,
+    "H1ByOrder": {
+      "p1": 422877,
+      "p2": 3221228,
+      "p3": 10700949,
+      "p4": 25167936,
+      "p5": 48928085
+    }
+  },
+  "CostModel": {
+    "Path": "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/qualify/cost-model.json",
+    "SHA256": "931a56f97555a85644d17faaef328e8e60be3bb908ee521f893c3aafca64efd8",
+    "MeasuredMesh": "80966c7db44dabc49ac7bb068bbaee0e0828e413b115cee8c066c886866b6108",
+    "ClosedFormCheck": {
+      "p3": {
+        "ClosedForm": 10548977,
+        "Measured": 10548977
+      },
+      "p4": {
+        "ClosedForm": 24827674,
+        "Measured": 24827674
+      },
+      "p5": {
+        "ClosedForm": 48286920,
+        "Measured": 48286920
+      }
+    }
+  },
+  "Stages": {
+    "p4-120": {
+      "Order": 4,
+      "Sources": 120,
+      "H1Estimate": 25167936,
+      "DOFRatioVsMeasured": 1.0137049487600007,
+      "ReducerPairs": 7260,
+      "ReducerBlockPairs": 210,
+      "ReducerSecondsEstimate": 1109.056476641169,
+      "WorkerPalacePeakGBEstimate": 93.36222578079607,
+      "ReducerPalacePeakGBEstimate": 109.48013446608007,
+      "ArchiveGBEstimate": 22.808361347100014,
+      "ByPCGFactor": {
+        "1.0": {
+          "MeanPCGIterations": 19.85,
+          "WorkerSecondsEstimate": 1971.9399627238543,
+          "StageSecondsEstimate": 3080.9964393650234
+        },
+        "1.5": {
+          "MeanPCGIterations": 29.775000000000002,
+          "WorkerSecondsEstimate": 2921.1128396536737,
+          "StageSecondsEstimate": 4030.1693162948427
+        },
+        "2.0": {
+          "MeanPCGIterations": 39.7,
+          "WorkerSecondsEstimate": 3870.2857165834935,
+          "StageSecondsEstimate": 4979.342193224662
+        }
+      },
+      "NodeUsedGiBEstimateWorker": 126.53558515488132,
+      "NodeUsedGiBEstimateReducer": 155.04853633797154,
+      "FitsNode": true
+    },
+    "p5-control-8": {
+      "Order": 5,
+      "Sources": 8,
+      "H1Estimate": 48928085,
+      "DOFRatioVsMeasured": 1.0132782335257664,
+      "ReducerPairs": 36,
+      "ReducerBlockPairs": 3,
+      "ReducerSecondsEstimate": 95.81558976219648,
+      "WorkerPalacePeakGBEstimate": 151.38376808874952,
+      "ReducerPalacePeakGBEstimate": 180.8701646843493,
+      "ArchiveGBEstimate": 2.9385068772247225,
+      "ByPCGFactor": {
+        "1.0": {
+          "MeanPCGIterations": 18.0,
+          "WorkerSecondsEstimate": 505.66839621516556,
+          "StageSecondsEstimate": 601.4839859773621
+        },
+        "1.5": {
+          "MeanPCGIterations": 27.0,
+          "WorkerSecondsEstimate": 721.3716619532661,
+          "StageSecondsEstimate": 817.1872517154626
+        },
+        "2.0": {
+          "MeanPCGIterations": 36.0,
+          "WorkerSecondsEstimate": 937.0749276913666,
+          "StageSecondsEstimate": 1032.890517453563
+        }
+      },
+      "NodeUsedGiBEstimateWorker": 184.84759997089458,
+      "NodeUsedGiBEstimateReducer": 225.20747386080777,
+      "FitsNode": true
+    },
+    "p3-control-8": {
+      "Order": 3,
+      "Sources": 8,
+      "H1Estimate": 10700949,
+      "DOFRatioVsMeasured": 1.0144063258456246,
+      "ReducerPairs": 36,
+      "ReducerBlockPairs": 3,
+      "ReducerSecondsEstimate": 38.47643193932454,
+      "WorkerPalacePeakGBEstimate": 65.63208928221192,
+      "ReducerPalacePeakGBEstimate": 60.76293891815291,
+      "ArchiveGBEstimate": 0.6695081750581123,
+      "ByPCGFactor": {
+        "1.0": {
+          "MeanPCGIterations": 19.125,
+          "WorkerSecondsEstimate": 81.07338237423401,
+          "StageSecondsEstimate": 119.54981431355856
+        },
+        "1.5": {
+          "MeanPCGIterations": 28.6875,
+          "WorkerSecondsEstimate": 102.9618261667373,
+          "StageSecondsEstimate": 141.43825810606182
+        },
+        "2.0": {
+          "MeanPCGIterations": 38.25,
+          "WorkerSecondsEstimate": 124.85026995924059,
+          "StageSecondsEstimate": 163.32670189856515
+        }
+      },
+      "NodeUsedGiBEstimateWorker": 101.96810960436986,
+      "NodeUsedGiBEstimateReducer": 103.30370580064536,
+      "FitsNode": true
+    },
+    "local-edge-p4-8": {
+      "Order": 4,
+      "Sources": 8,
+      "H1Estimate": 25167936,
+      "DOFRatioVsMeasured": 1.0137049487600007,
+      "PalacePeakGBEstimate": 199.39576342109214,
+      "NodeUsedGiBEstimate": 224.8107231266575,
+      "ByPCGFactor": {
+        "1.0": {
+          "StageSecondsEstimate": 330.2650723060082
+        },
+        "1.5": {
+          "StageSecondsEstimate": 396.30794971772235
+        },
+        "2.0": {
+          "StageSecondsEstimate": 462.35082712943637
+        }
+      },
+      "FitsNode": true
+    }
+  },
+  "JobSecondsEstimateByPCGFactor": {
+    "1.0": 4132.295311961952,
+    "1.5": 5385.10277583409,
+    "2.0": 6637.910239706227
+  },
+  "JobSecondsEstimateWithPreflightAndMargin": {
+    "1.0": 5878.598671148636,
+    "1.5": 7569.8887473760215,
+    "2.0": 9261.178823603406
+  },
+  "MaxPalacePeakGBEstimate": 199.39576342109214,
+  "NodeGiB": 1485.13,
+  "WalltimeSeconds": 21600,
+  "FitsOneJob": true,
+  "Decision": "every stage fits ONE job of 6 h: runner total 69 min at the measured PCG counts, 111 min at 2.0x (+35% and preflight: 154 min); largest Palace peak 199 GB of 1485 GiB",
+  "EntityCountsOrigin": "library-build.json H1.EntityCounts"
+}
