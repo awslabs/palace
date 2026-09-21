@@ -86,6 +86,28 @@ TEST_CASE("BuildParSumOperator", "[rap][Serial][Parallel]")
     double constexpr tol = 1e-12;
     CHECK(x1.Max() < tol);
     CHECK(x1.Max() < tol);
+
+    // Exercise BaseSumOperator's unit-weight first-term initialization path directly.
+    SumOperator direct_sum(DA->Height());
+    direct_sum.AddOperator(*DA);
+    direct_sum.AddOperator(*A, c2);
+    x1 = 100.0;  // The first term must fully overwrite the output.
+    direct_sum.Mult(v0, x1);
+    DA->Mult(v0, x2);
+    A->AddMult(v0, x2, c2);
+    x1 -= x2;
+    CHECK(x1.Normlinf() < tol);
+    x1 = 100.0;
+    direct_sum.MultTranspose(v0, x1);
+    DA->MultTranspose(v0, x2);
+    A->AddMultTranspose(v0, x2, c2);
+    x1 -= x2;
+    CHECK(x1.Normlinf() < tol);
+
+    // An empty sum zeroes its output.
+    SumOperator empty_sum(DA->Height());
+    empty_sum.Mult(v0, x1);
+    CHECK(x1.Normlinf() == 0.0);
   }
 
   SECTION("ComplexParOperator")
@@ -130,6 +152,29 @@ TEST_CASE("BuildParSumOperator", "[rap][Serial][Parallel]")
     double constexpr tol = 1e-12;
     CHECK(x1.Real().Max() < tol);
     CHECK(x1.Imag().Max() < tol);
+
+    SumComplexOperator direct_sum(DA->Height());
+    direct_sum.AddOperator(*DA);
+    direct_sum.AddOperator(*A, c2);
+    x1.Real() = 100.0;  // The first term must fully overwrite the output.
+    x1.Imag() = 100.0;
+    direct_sum.Mult(v0, x1);
+    DA->Mult(v0, x2);
+    A->AddMult(v0, x2, c2);
+    x1 -= x2;
+    CHECK(std::max(x1.Real().Normlinf(), x1.Imag().Normlinf()) < tol);
+    x1.Real() = 100.0;
+    x1.Imag() = 100.0;
+    direct_sum.MultTranspose(v0, x1);
+    DA->MultTranspose(v0, x2);
+    A->AddMultTranspose(v0, x2, c2);
+    x1 -= x2;
+    CHECK(std::max(x1.Real().Normlinf(), x1.Imag().Normlinf()) < tol);
+
+    // An empty sum zeroes its output.
+    SumComplexOperator empty_sum(DA->Height());
+    empty_sum.Mult(v0, x1);
+    CHECK(std::max(x1.Real().Normlinf(), x1.Imag().Normlinf()) == 0.0);
   }
 }
 

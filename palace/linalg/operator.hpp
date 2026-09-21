@@ -5,6 +5,7 @@
 #define PALACE_LINALG_OPERATOR_HPP
 
 #include <complex>
+#include <iterator>
 #include <memory>
 #include <type_traits>
 #include <utility>
@@ -207,6 +208,11 @@ public:
 
   void Mult(const VecType &x, VecType &y) const override
   {
+    if (ops.empty())
+    {
+      y = 0.0;
+      return;
+    }
     if (ops.size() == 1)
     {
       ops.front().first->Mult(x, y);
@@ -216,12 +222,31 @@ public:
       }
       return;
     }
-    y = 0.0;
-    AddMult(x, y);
+    if (ops.front().second != ScalarType{1.0})
+    {
+      y = 0.0;
+      AddMult(x, y);
+      return;
+    }
+
+    // The first unit-weight operator can initialize y directly. Computing it into z and
+    // adding z to an explicitly zeroed y only adds two full-vector memory passes.
+    ops.front().first->Mult(x, y);
+    z.SetSize(y.Size());
+    for (auto it = std::next(ops.begin()); it != ops.end(); ++it)
+    {
+      it->first->Mult(x, z);
+      y.Add(it->second, z);
+    }
   }
 
   void MultTranspose(const VecType &x, VecType &y) const override
   {
+    if (ops.empty())
+    {
+      y = 0.0;
+      return;
+    }
     if (ops.size() == 1)
     {
       ops.front().first->MultTranspose(x, y);
@@ -231,8 +256,20 @@ public:
       }
       return;
     }
-    y = 0.0;
-    AddMultTranspose(x, y);
+    if (ops.front().second != ScalarType{1.0})
+    {
+      y = 0.0;
+      AddMultTranspose(x, y);
+      return;
+    }
+
+    ops.front().first->MultTranspose(x, y);
+    z.SetSize(y.Size());
+    for (auto it = std::next(ops.begin()); it != ops.end(); ++it)
+    {
+      it->first->MultTranspose(x, z);
+      y.Add(it->second, z);
+    }
   }
 
   void AddMult(const VecType &x, VecType &y,
