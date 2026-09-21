@@ -3,7 +3,10 @@
 
 #include "integrator.hpp"
 
+#include <algorithm>
+#include <initializer_list>
 #include "fem/libceed/integrator.hpp"
+#include "models/materialoperator.hpp"
 
 namespace palace
 {
@@ -49,6 +52,55 @@ int DefaultIntegrationOrder::Get(const mfem::Mesh &mesh, mfem::Geometry::Type ge
 }
 
 }  // namespace fem
+
+namespace
+{
+
+// Union of the (libCEED, 1-based) attributes on which the given coefficients are not
+// identically zero. A null coefficient is the identity on every attribute, in which case
+// there is no restricted attribute set.
+std::optional<std::vector<int>>
+NonzeroCoefficientAttributes(std::initializer_list<const MaterialPropertyCoefficient *> Q)
+{
+  std::vector<int> attr_list;
+  for (const auto *Q_i : Q)
+  {
+    if (!Q_i)
+    {
+      return std::nullopt;
+    }
+    Q_i->AddNonzeroAttributes(attr_list);
+  }
+  std::sort(attr_list.begin(), attr_list.end());
+  attr_list.erase(std::unique(attr_list.begin(), attr_list.end()), attr_list.end());
+  return attr_list;
+}
+
+}  // namespace
+
+std::optional<std::vector<int>>
+BilinearFormIntegrator::GetNonzeroCoefficientAttributes() const
+{
+  return NonzeroCoefficientAttributes({Q});
+}
+
+std::optional<std::vector<int>>
+DiffusionMassIntegrator::GetNonzeroCoefficientAttributes() const
+{
+  return NonzeroCoefficientAttributes({Q, Q_mass});
+}
+
+std::optional<std::vector<int>>
+CurlCurlMassIntegrator::GetNonzeroCoefficientAttributes() const
+{
+  return NonzeroCoefficientAttributes({Q, Q_mass});
+}
+
+std::optional<std::vector<int>>
+DivDivMassIntegrator::GetNonzeroCoefficientAttributes() const
+{
+  return NonzeroCoefficientAttributes({Q, Q_mass});
+}
 
 void DiscreteInterpolator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
                                     CeedElemRestriction test_restr, CeedBasis interp_basis,

@@ -77,6 +77,10 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                                mat_op.GetPermittivityReal());
       epsilon_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
       BilinearForm m(nd_fespace);
+      // The coefficient is exactly zero outside of the postprocessing domain and the
+      // operator is only ever applied, never assembled as a matrix, so a postprocessing
+      // domain inside the shared lossy-domain set is assembled over that subset only.
+      m.SkipZeroCoefficientElements();
       m.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
       M_elec_i = m.PartialAssemble();
     }
@@ -87,6 +91,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                                mat_op.GetCurlCurlInvPermeability());
         muinv_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
         BilinearForm m(rt_fespace);
+        m.SkipZeroCoefficientElements();
         m.AddDomainIntegrator<MassIntegrator>(muinv_func);
         M_mag_i = m.PartialAssemble();
       }
@@ -96,6 +101,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                                mat_op.GetInvPermeability());
         muinv_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
         BilinearForm m(rt_fespace);
+        m.SkipZeroCoefficientElements();
         m.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
         M_mag_i = m.PartialAssemble();
       }
@@ -137,6 +143,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                                  mat_op.GetPermittivityReal());
         epsilon_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
         BilinearForm m(fespace);
+        m.SkipZeroCoefficientElements();
         m.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
         M_elec_i = m.PartialAssemble();
       }
@@ -165,6 +172,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                                mat_op.GetCurlCurlInvPermeability());
         muinv_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
         BilinearForm m(fespace);
+        m.SkipZeroCoefficientElements();
         m.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
         M_mag_i = m.PartialAssemble();
       }
@@ -209,6 +217,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
                                                mat_op.GetPermittivityReal());
       epsilon_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
       BilinearForm m(nd_fespace);
+      m.SkipZeroCoefficientElements();
       m.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
       M_elec_i = m.PartialAssemble();
     }

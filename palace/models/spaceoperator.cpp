@@ -3,6 +3,7 @@
 
 #include "spaceoperator.hpp"
 
+#include <algorithm>
 #include <limits>
 #include <set>
 #include <type_traits>
@@ -68,6 +69,9 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
     port_excitation_helper(lumped_port_op, wave_port_op, floquet_port_op, surf_j_op,
                            current_dipole_op)
 {
+  // Configure the two shared libCEED element sets before any geometry data is built.
+  SetUpCeedElementSets(mesh);
+
   // In 2D, curl maps H(curl) → L2 (scalar), so we need an L2 FE space for B = curl E.
   // Must use INTEGRAL map type so the discrete interpolator recognizes this as the curl
   // target space.
@@ -100,6 +104,91 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
 {
   // Validate excitations after wave port setup is complete.
   CheckExcitations(iodata.problem.type);
+}
+
+void SpaceOperator::SetUpCeedElementSets(const std::vector<std::unique_ptr<Mesh>> &mesh)
+{
+  // The lossy volume set is the union of the exact nonzero supports of the loss-type
+  // MaterialOperator coefficients, each extracted on its own (summing the tensors first
+  // could cancel entries of opposite sign and drop an attribute). This MaterialOperator has
+  // no imaginary permeability property; add it here if one is introduced.
+  MaterialPropertyCoefficient loss_epsilon(mat_op.GetAttributeToMaterial(),
+                                           mat_op.GetPermittivityImag());
+  MaterialPropertyCoefficient loss_conductivity(mat_op.GetAttributeToMaterial(),
+                                                mat_op.GetConductivity());
+  std::vector<int> lossy_attr;
+  loss_epsilon.AddNonzeroAttributes(lossy_attr);
+  loss_conductivity.AddNonzeroAttributes(lossy_attr);
+  std::sort(lossy_attr.begin(), lossy_attr.end());
+  lossy_attr.erase(std::unique(lossy_attr.begin(), lossy_attr.end()), lossy_attr.end());
+
+  // All boundary bilinear-form coefficients are supported on this union. Construct a
+  // coefficient so the active set uses the same exact support extraction as integrators.
+  std::vector<int> active_bdr_global;
+  auto AddAttributes = [&active_bdr_global](const mfem::Array<int> &attr)
+  { active_bdr_global.insert(active_bdr_global.end(), attr.begin(), attr.end()); };
+  AddAttributes(farfield_op.GetAttrList());
+  AddAttributes(surf_sigma_op.GetAttrList());
+  AddAttributes(surf_z_op.GetAttrList());
+  AddAttributes(surf_rz_op.GetAttrList());
+  AddAttributes(lumped_port_op.GetAttrList());
+  AddAttributes(wave_port_op.GetAttrList());
+  AddAttributes(floquet_port_op.GetAttrList());
+  std::sort(active_bdr_global.begin(), active_bdr_global.end());
+  active_bdr_global.erase(std::unique(active_bdr_global.begin(), active_bdr_global.end()),
+                          active_bdr_global.end());
+  MaterialPropertyCoefficient active_bdr(mat_op.MaxCeedBdrAttribute());
+  active_bdr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(active_bdr_global), 1.0);
+  std::vector<int> active_bdr_attr;
+  active_bdr.AddNonzeroAttributes(active_bdr_attr);
+
+  // Convert the fine-mesh process-local sets back to global attributes, then into the local
+  // numbering of every h-level mesh. The p-levels share the finest mesh and ordering.
+  std::vector<int> lossy_global;
+  for (const auto &[attr, local_attr] : mat_op.GetMesh().GetCeedAttributes())
+  {
+    if (std::binary_search(lossy_attr.begin(), lossy_attr.end(), local_attr))
+    {
+      lossy_global.push_back(attr);
+    }
+  }
+  active_bdr_global.clear();
+  for (const auto &[attr, local_attr_map] : mat_op.GetMesh().GetCeedBdrAttributes())
+  {
+    for (const auto &[nbr_attr, local_attr] : local_attr_map)
+    {
+      if (std::binary_search(active_bdr_attr.begin(), active_bdr_attr.end(), local_attr))
+      {
+        active_bdr_global.push_back(attr);
+        break;
+      }
+    }
+  }
+  for (const auto &mesh_l : mesh)
+  {
+    std::vector<int> lossy_attr_l;
+    for (auto attr : lossy_global)
+    {
+      const auto it = mesh_l->GetCeedAttributes().find(attr);
+      if (it != mesh_l->GetCeedAttributes().end())
+      {
+        lossy_attr_l.push_back(it->second);
+      }
+    }
+    std::vector<int> active_bdr_attr_l;
+    for (auto attr : active_bdr_global)
+    {
+      const auto it = mesh_l->GetCeedBdrAttributes().find(attr);
+      if (it != mesh_l->GetCeedBdrAttributes().end())
+      {
+        for (const auto &[nbr_attr, local_attr] : it->second)
+        {
+          active_bdr_attr_l.push_back(local_attr);
+        }
+      }
+    }
+    mesh_l->SetCeedActiveAttributes(std::move(lossy_attr_l), std::move(active_bdr_attr_l));
+  }
 }
 
 void SpaceOperator::CheckExcitations(ProblemType problem_type) const
@@ -266,12 +355,6 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
   print_hdr = false;
 }
 
-const MaterialPropertyCoefficient *
-ActiveCoefficient(const MaterialPropertyCoefficient *coeff)
-{
-  return (coeff && !coeff->IsExactlyZero()) ? coeff : nullptr;
-}
-
 template <typename... CoeffType>
 bool AreExactlyZero(const CoeffType &...coeff)
 {
@@ -279,8 +362,9 @@ bool AreExactlyZero(const CoeffType &...coeff)
 }
 
 // Add every configured (non-empty) term, including terms whose current value is exactly
-// zero. This storage-based selection is used only for coarse preconditioner assembly below;
-// normal operator assembly uses AddIntegrators and filters exact zeros.
+// zero. This storage-based selection is used only for coarse preconditioner assembly, which
+// retains the configured sparse structure for symbolic reuse; normal operator assembly uses
+// AddIntegrators, which drops exactly-zero coefficients first.
 void AddConfiguredIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *df,
                               const MaterialPropertyCoefficient *f,
                               const MaterialPropertyCoefficient *dfb,
@@ -334,6 +418,16 @@ void AddConfiguredIntegrators(BilinearForm &a, const MaterialPropertyCoefficient
   }
 }
 
+// Coefficients which are exactly zero on every attribute are dropped before the integrator
+// type is chosen, so that a combined integrator degrades to its nonzero block (a mass
+// integrator instead of a curl-curl + mass integrator with a zero curl-curl coefficient).
+// Element subsets then handle coefficients which vanish on only part of the mesh.
+const MaterialPropertyCoefficient *
+ActiveCoefficient(const MaterialPropertyCoefficient *coeff)
+{
+  return (coeff && !coeff->IsExactlyZero()) ? coeff : nullptr;
+}
+
 void AddIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *df,
                     const MaterialPropertyCoefficient *f,
                     const MaterialPropertyCoefficient *dfb,
@@ -379,6 +473,10 @@ auto AssembleOperator(const FiniteElementSpace &fespace,
                       bool assemble_q_data = false)
 {
   BilinearForm a(fespace);
+  // System matrices are only ever applied matrix-free (their sums are assembled into
+  // SumOperator, which has no sparse representation), so elements where a coefficient is
+  // exactly zero can be left out of the partially assembled operator.
+  a.SkipZeroCoefficientElements();
   AddIntegrators(a, df, f, dfb, fb, fp, assemble_q_data);
   return a.Assemble(skip_zeros);
 }
@@ -406,6 +504,10 @@ auto AssembleOperators(const FiniteElementSpaceHierarchy &fespaces,
   if (fespaces.GetNumLevels() > 1)
   {
     BilinearForm fine(fespaces.GetFinestFESpace());
+    // Levels above the coarsest are only applied matrix-free (their smoothers use the
+    // operator action and its diagonal), so elements where a coefficient is exactly zero
+    // can be left out.
+    fine.SkipZeroCoefficientElements();
     AddIntegrators(fine, df, f, dfb, fb, fp, assemble_q_data);
     auto fine_ops = fine.Assemble(fespaces, skip_zeros, 1);
     for (auto &op : fine_ops)
@@ -430,6 +532,7 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
   if (fespaces.GetNumLevels() > 1)
   {
     BilinearForm fine(fespaces.GetFinestFESpace());
+    fine.SkipZeroCoefficientElements();
     AddAuxIntegrators(fine, f, fb, assemble_q_data);
     auto fine_ops = fine.Assemble(fespaces, skip_zeros, 1);
     for (auto &op : fine_ops)

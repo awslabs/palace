@@ -4,6 +4,8 @@
 #ifndef PALACE_FEM_INTEGRATOR_HPP
 #define PALACE_FEM_INTEGRATOR_HPP
 
+#include <optional>
+#include <vector>
 #include <mfem.hpp>
 #include "fem/libceed/ceed.hpp"
 
@@ -61,6 +63,12 @@ public:
                         CeedElemRestriction geom_data_restr, CeedOperator *op) const = 0;
 
   virtual void SetMapTypes(int trial_type, int test_type) {}
+
+  // Sorted list of the (libCEED, 1-based) attributes on which the integrator's coefficients
+  // are not identically zero, or no value if the integrator may contribute on every
+  // attribute. Element contributions from the other attributes are exactly zero, so
+  // assembly can skip those elements.
+  virtual std::optional<std::vector<int>> GetNonzeroCoefficientAttributes() const;
 
   void AssembleQuadratureData() { assemble_q_data = true; }
 };
@@ -134,8 +142,8 @@ public:
 class DiffusionMassIntegrator : public BilinearFormIntegrator
 {
 protected:
-  const MaterialPropertyCoefficient *Q_mass;
-  bool transpose_mass;
+  const MaterialPropertyCoefficient *Q_mass = nullptr;
+  bool transpose_mass = false;
 
 public:
   using BilinearFormIntegrator::BilinearFormIntegrator;
@@ -149,14 +157,16 @@ public:
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+
+  std::optional<std::vector<int>> GetNonzeroCoefficientAttributes() const override;
 };
 
 // Integrator for a(u, v) = (Qc curl u, curl v) + (Qm u, v) for Nedelec elements.
 class CurlCurlMassIntegrator : public BilinearFormIntegrator
 {
 protected:
-  const MaterialPropertyCoefficient *Q_mass;
-  bool transpose_mass;
+  const MaterialPropertyCoefficient *Q_mass = nullptr;
+  bool transpose_mass = false;
 
 public:
   using BilinearFormIntegrator::BilinearFormIntegrator;
@@ -170,14 +180,16 @@ public:
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+
+  std::optional<std::vector<int>> GetNonzeroCoefficientAttributes() const override;
 };
 
 // Integrator for a(u, v) = (Qd div u, div v) + (Qm u, v) for Raviart-Thomas elements.
 class DivDivMassIntegrator : public BilinearFormIntegrator
 {
 protected:
-  const MaterialPropertyCoefficient *Q_mass;
-  bool transpose_mass;
+  const MaterialPropertyCoefficient *Q_mass = nullptr;
+  bool transpose_mass = false;
 
 public:
   using BilinearFormIntegrator::BilinearFormIntegrator;
@@ -191,6 +203,8 @@ public:
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+
+  std::optional<std::vector<int>> GetNonzeroCoefficientAttributes() const override;
 };
 
 // Integrator for a(u, v) = (Q grad u, v) for u in H1 and v in H(curl) or H(div).

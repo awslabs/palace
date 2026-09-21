@@ -320,10 +320,8 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
                                data.indices.data(), &mesh_elem_restr));
 
       // Element restriction and basis objects for inputs.
-      CeedElemRestriction nd_restr =
-          nd_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
-      CeedElemRestriction rt_restr =
-          rt_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
+      CeedElemRestriction nd_restr = nd_fespace.GetCeedElemRestriction(ceed, geom, data);
+      CeedElemRestriction rt_restr = rt_fespace.GetCeedElemRestriction(ceed, geom, data);
       CeedBasis nd_basis = nd_fespace.GetCeedBasis(ceed, geom);
       CeedBasis rt_basis = rt_fespace.GetCeedBasis(ceed, geom);
 
@@ -438,10 +436,8 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
                                data.indices.data(), &mesh_elem_restr));
 
       // Element restriction and basis objects for inputs.
-      CeedElemRestriction rt_restr =
-          rt_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
-      CeedElemRestriction nd_restr =
-          nd_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
+      CeedElemRestriction rt_restr = rt_fespace.GetCeedElemRestriction(ceed, geom, data);
+      CeedElemRestriction nd_restr = nd_fespace.GetCeedElemRestriction(ceed, geom, data);
       CeedBasis rt_basis = rt_fespace.GetCeedBasis(ceed, geom);
       CeedBasis nd_basis = nd_fespace.GetCeedBasis(ceed, geom);
 
