@@ -105,16 +105,25 @@ def fmt(x):
     return "n/a" if x is None or (isinstance(x, float) and not math.isfinite(x)) else f"{x:.3e}"
 
 
-def compare(reference_dir, run_dir, *, zero_trace_indices=(), locations=None, interface_types=None):
+def compare(reference_dir, run_dir, *, zero_trace_indices=(), locations=None, interface_types=None,
+            reference_interface_types=None):
     """Every compared entry (out_rows), the per-source offsets and the source lists;
-    `interface_types` = the run config's interface index -> type map (the reference is
-    checked to label the same indices with the same types by the caller)."""
+    `interface_types` = the run config's interface index -> type map,
+    `reference_interface_types` the reference config's (default: the run's; a radial-
+    shell run labels many MA interfaces the reference labels as one - the per-type sums
+    compare, the per-entry rows cover the common indices only)."""
     names = interface_names_of(interface_types)
+    reference_names = interface_names_of(reference_interface_types) if reference_interface_types is not None else names
     ref_domain, ref_surface = load(reference_dir)
     run_domain, run_surface = load(run_dir)
-    unlabeled = sorted(({key[0] for key in ref_surface} | {key[0] for key in run_surface}) - set(names))
+    unlabeled = sorted({key[0] for key in run_surface} - set(names))
     if unlabeled:
         raise ValueError(f"surface matrix interfaces {unlabeled} are not in the config's interface map {names}")
+    unlabeled = sorted({key[0] for key in ref_surface} - set(reference_names))
+    if unlabeled:
+        raise ValueError(f"reference surface matrix interfaces {unlabeled} are not in the reference config's interface map "
+                         f"{reference_names}")
+    common_names = {index: name for index, name in names.items() if reference_names.get(index) == name}
     common = sorted(set(ref_domain) & set(run_domain))
     sources = sorted({i for i, _ in common} | {j for _, j in common})
     contract_zero = {int(i) for i in zero_trace_indices}
@@ -146,6 +155,8 @@ def compare(reference_dir, run_dir, *, zero_trace_indices=(), locations=None, in
         add("domain", None, "Q_ij (J)", i, j, ref_domain[(i, j)], run_domain[(i, j)])
     for key in sorted(set(ref_surface) & set(run_surface)):
         interface, edge, radius, i, j = key
+        if interface not in common_names:
+            continue
         for quantity in SURFACE_QUANTITIES:
             add("surface", interface, quantity, i, j, ref_surface[key][quantity], run_surface[key][quantity])
     per_source = {}
@@ -153,7 +164,7 @@ def compare(reference_dir, run_dir, *, zero_trace_indices=(), locations=None, in
         er, ev = ref_domain[(i, i)], run_domain[(i, i)]
         per_source[i] = {"E_rel": rel(er, ev), "E_ref": er, "E_run": ev}
         for name in INTERFACE_TYPES:
-            qr = type_energy(ref_surface, diagonal_keys, names, name, i)
+            qr = type_energy(ref_surface, diagonal_keys, reference_names, name, i)
             qv = type_energy(run_surface, run_diagonal_keys, names, name, i)
             if qr is not None and qv is not None and er and ev:
                 pr = qr / er
@@ -163,7 +174,8 @@ def compare(reference_dir, run_dir, *, zero_trace_indices=(), locations=None, in
                 per_source[i][f"p_{name}_run"] = pv
     return {"Rows": out_rows, "PerSource": per_source, "Sources": sources, "ZeroTrace": zero_trace, "Free": free,
             "ContractZeroTrace": sorted(i for i in contract_zero if i in sources), "Locations": locations,
-            "ReferenceSurface": ref_surface, "RunSurface": run_surface, "InterfaceNames": names}
+            "ReferenceSurface": ref_surface, "RunSurface": run_surface, "InterfaceNames": common_names,
+            "RunInterfaceNames": names, "ReferenceInterfaceNames": reference_names}
 
 
 def summary_record(comparison):
@@ -276,10 +288,11 @@ def read_locations(path):
 
 
 def write_comparison(reference_dir, run_dir, out_prefix, *, zero_trace_indices=(), locations=None,
-                     reference_label="reference", run_label="run", max_entry_rows=0, interface_types=None):
+                     reference_label="reference", run_label="run", max_entry_rows=0, interface_types=None,
+                     reference_interface_types=None):
     """CSV + Markdown + JSON at out_prefix; returns the JSON summary."""
     comparison = compare(reference_dir, run_dir, zero_trace_indices=zero_trace_indices, locations=locations,
-                         interface_types=interface_types)
+                         interface_types=interface_types, reference_interface_types=reference_interface_types)
     out_prefix = Path(out_prefix)
     out_prefix.parent.mkdir(parents=True, exist_ok=True)
     with open(f"{out_prefix}.csv", "w", newline="") as stream:

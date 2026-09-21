@@ -100,10 +100,13 @@ def sequence(low, main, high):
     return {"d_low": d_low, "d_high": d_high, "r": r, "p_inf": p_inf}
 
 
-def p_sequence(runs, controls, interface_types):
+def p_sequence(runs, controls, interface_types, reference_interface_types=None):
     """`runs` = {"low": dir or None, "main": dir, "high": dir or None, "ref": dir or None};
-    returns {control: {observable: {values, seq, vs_ref}}}."""
-    data = {key: observables(path, interface_types) for key, path in runs.items() if path is not None}
+    returns {control: {observable: {values, seq, vs_ref}}}.  The reference matrices are
+    labeled by `reference_interface_types` (default: the run's map)."""
+    data = {key: observables(path, reference_interface_types if key == "ref" and reference_interface_types is not None
+                             else interface_types)
+            for key, path in runs.items() if path is not None}
     summary = {}
     for i in controls:
         summary[i] = {}
@@ -148,8 +151,8 @@ def markdown_report(summary, orders, title):
     return "\n".join(lines) + "\n"
 
 
-def write_p_sequence(runs, orders, controls, out_md, out_json, *, title, interface_types):
-    summary = p_sequence(runs, controls, interface_types)
+def write_p_sequence(runs, orders, controls, out_md, out_json, *, title, interface_types, reference_interface_types=None):
+    summary = p_sequence(runs, controls, interface_types, reference_interface_types)
     Path(out_md).write_text(markdown_report(summary, orders, title))
     Path(out_json).write_text(json.dumps({"Orders": orders, "Controls": list(controls),
                                           "Sources": {str(i): record for i, record in summary.items()}}, indent=2) + "\n")

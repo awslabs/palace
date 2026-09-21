@@ -65,9 +65,12 @@ class CaseInputError(ValueError):
     """A fail-closed derivation (recorded per case, never a crash of the run)."""
 
 
-def physics_run_parameters(manifest):
+def physics_run_parameters(manifest, case=None):
     """The recipe's Order and Linear.Tol (ProductionRecipe.PhysicsRun); a labeled
-    calibration manifest takes them from its Calibration.ProductionManifest."""
+    calibration manifest takes them from its Calibration.ProductionManifest.  A
+    calibration case declaring Calibration.PhysicsRun.LinearTol runs at that tolerance
+    when the manifest's Calibration.GateDeviations.LinearTol labels it (Production equal
+    to the recipe value, the case named, ProductionUse FORBIDDEN; fail closed otherwise)."""
     recipe = manifest.get("ProductionRecipe")
     if recipe is None and "Calibration" in manifest:
         production = Path(manifest["Path"]).parent / manifest["Calibration"]["ProductionManifest"]
@@ -78,7 +81,21 @@ def physics_run_parameters(manifest):
             not isinstance(block.get("Provenance"), str) or not block["Provenance"]):
         raise CaseInputError("the production recipe must bind PhysicsRun {Order (int >= 1), LinearTol (0 < float < 1), "
                              "Provenance}: no run parameters for the coupon")
-    return {"Order": int(block["Order"]), "LinearTol": float(block["LinearTol"]), "Provenance": block["Provenance"]}
+    parameters = {"Order": int(block["Order"]), "LinearTol": float(block["LinearTol"]), "Provenance": block["Provenance"]}
+    deviation_block = ((case or {}).get("Calibration") or {}).get(PHYSICS_RUN_KEY)
+    if deviation_block is not None:
+        deviation = ((manifest.get("Calibration") or {}).get("GateDeviations") or {}).get("LinearTol")
+        tolerance = deviation_block.get("LinearTol") if isinstance(deviation_block, dict) else None
+        if (not isinstance(deviation_block, dict) or set(deviation_block) != {"LinearTol"} or not isinstance(tolerance, float) or
+                not 0.0 < tolerance < 1.0 or not isinstance(deviation, dict) or deviation.get("Production") != parameters["LinearTol"] or
+                deviation.get("Calibration") != tolerance or case.get("Id") not in (deviation.get("Cases") or []) or
+                "FORBIDDEN" not in str(deviation.get("ProductionUse", ""))):
+            raise CaseInputError(f"{case.get('Id')} declares Calibration.PhysicsRun.LinearTol without a labeled calibration-only "
+                                 f"deviation of the recipe value {parameters['LinearTol']} (Calibration.GateDeviations.LinearTol)")
+        parameters["LinearTol"] = tolerance
+        parameters["Deviation"] = {"LinearTol": {"Production": deviation["Production"], "Calibration": tolerance,
+                                                 "Reason": deviation.get("Reason"), "ProductionUse": deviation["ProductionUse"]}}
+    return parameters
 
 
 def interface_types(config):
@@ -161,11 +178,16 @@ def local_edges(model, frame):
     return edges
 
 
-def derive(case, directory, *, mesh_path, physics_run, out_dir, mesh=None, output_root="<output>", traces_remote=None):
+def derive(case, directory, *, mesh_path, physics_run, out_dir, mesh=None, output_root="<output>", traces_remote=None,
+           radial_shells=None):
     """The run inputs of a case: (config, record).  `mesh` is the value written into
     Model.Mesh (default: the local mesh path), `traces_remote` the directory written
     into every DataFile (default: the local trace directory); Problem.Output is
-    `output_root`.  The traces are regenerated under out_dir/traces."""
+    `output_root`.  The traces are regenerated under out_dir/traces.  `radial_shells`
+    (the census of a radial-shell relabel) derives the base config against the parent
+    MA labels and expands it (expand_radial_shells); the record then carries the base
+    config under BaseConfig (the reference comparison view) and the shell map under
+    RadialShells."""
     files = case["Source"]["Files"]
     paths = load_case_sources(directory, files)
     process = tomllib.loads(paths["Process"].read_text())
@@ -208,15 +230,28 @@ def derive(case, directory, *, mesh_path, physics_run, out_dir, mesh=None, outpu
     layers = {name: (float(layer["Thickness"]), float(layer["Permittivity"]))
               for name, layer in fabrication["InterfaceLayers"].items()}
     available = producer.mesh_boundary_attributes(Path(mesh_path))
+    shell_parents = set(shell_labels_by_parent(radial_shells)) if radial_shells is not None else set()
+    config_available = available
+    if shell_parents:
+        shell_labels = {int(shell["Label"]) for shell in radial_shells["Shells"]}
+        if shell_parents & available or not shell_labels <= available:
+            raise CaseInputError(f"the mesh's boundary attributes do not match the radial-shell census (parents "
+                                 f"{sorted(shell_parents)} must be absent, shell labels present)")
+        # The base config sees the parent labels the producer knows; the expansion maps them.
+        config_available = (available - shell_labels) | shell_parents
     traces_remote = traces_remote or str(trace_dir)
     config = producer.make_config(
         Path(output_root), "run", mesh if mesh is not None else str(mesh_path),
         [f"{traces_remote}/{path.name}" for path in traces], f"{traces_remote}/{zero_trace.name}",
         terminal_conductors, True, physics_run["Order"], radius, float(fabrication["SubstratePermittivity"]),
-        layers, interfaces, edges, available_attributes=available,
+        layers, interfaces, edges, available_attributes=config_available,
         terminal_traces={conductor: f"{traces_remote}/{path.name}" for conductor, path in conductor_traces.items()})
     config["Problem"]["Output"] = output_root
     config["Solver"]["Linear"]["Tol"] = physics_run["LinearTol"]
+    base_config, shell_map = None, None
+    if shell_parents:
+        base_config = config
+        config, shell_map = expand_radial_shells(base_config, radial_shells)
     attribute_check = check_attributes(config, available)
     sources = []
     local_paths = {path.name: path for path in list(traces) + list(conductor_traces.values())}
@@ -240,6 +275,14 @@ def derive(case, directory, *, mesh_path, physics_run, out_dir, mesh=None, outpu
               "PlanViewBoundary": str(paths["Boundary"]),
               "RetainedEtch": str(paths["RetainedEtch"]) if "RetainedEtch" in paths else None,
               "Signature": str(paths["Signature"]), "MeshAttributes": sorted(available), "AttributeCheck": attribute_check}
+    if base_config is not None:
+        record["BaseConfig"] = base_config
+        record["BaseInterfaces"] = interface_types(base_config)
+        record["RadialShells"] = {"Rule": "the base config (derived against the parent MA labels; the reference comparison "
+                                          "view) expanded by expand_radial_shells: one MA Dielectric entry per shell ordinal, "
+                                          "the parent labels replaced by the shell labels in every attribute list",
+                                  "Census": radial_shells.get("Mesh"), "RingRadii": radial_shells.get("RingRadii"),
+                                  "Interfaces": {str(index): value for index, value in sorted(shell_map.items())}}
     return config, record
 
 
@@ -254,6 +297,72 @@ def contract_digests_identical(contract, sources):
     if not compared:
         return None
     return all(by_name[source["Name"]] == source["SHA256"] for source in compared)
+
+
+def shell_labels_by_parent(shells):
+    """Parent MA attribute -> [(ordinal, label)] of a radial-shell census
+    (relabel_radial_ma_shells.py identity.msh.radial-shells.json), ordinals ascending."""
+    by_parent = {}
+    for shell in shells["Shells"]:
+        by_parent.setdefault(int(shell["Parent"]), []).append((int(shell["Ordinal"]), int(shell["Label"])))
+    return {parent: sorted(items) for parent, items in by_parent.items()}
+
+
+def expand_radial_shells(config, shells):
+    """The config of a radial-shell relabel (supervisor decision 56) from the base
+    config derived against the parent labels: every attribute list naming a parent MA
+    label names its shell labels instead (Ground, TerminalAttributes, edge lists), and
+    every Dielectric entry naming parent labels becomes one entry per shell ordinal -
+    Attributes = the shell labels of that ordinal over the entry's parents, the same
+    Type / layer / edge settings, fresh indices after the base entries' maximum - so a
+    participation of the type sums the shells and the per-shell matrices are recorded.
+    Returns (config, {index: shell record}) with the base entry the shells replace."""
+    by_parent = shell_labels_by_parent(shells)
+    by_label = {int(shell["Label"]): shell for shell in shells["Shells"]}
+    parents = set(by_parent)
+
+    def expand(attributes):
+        out = []
+        for attribute in attributes:
+            out.extend([label for _, label in by_parent[int(attribute)]] if int(attribute) in parents else [attribute])
+        return out
+
+    expanded = json.loads(json.dumps(config))
+    boundaries = expanded["Boundaries"]
+    if "Ground" in boundaries:
+        boundaries["Ground"]["Attributes"] = expand(boundaries["Ground"]["Attributes"])
+    for entry in boundaries["PrescribedPotential"]:
+        if "TerminalAttributes" in entry:
+            entry["TerminalAttributes"] = expand(entry["TerminalAttributes"])
+    dielectric = boundaries.get("Postprocessing", {}).get("Dielectric", [])
+    next_index = max(int(entry["Index"]) for entry in dielectric) + 1 if dielectric else 1
+    entries, shell_map = [], {}
+    for entry in dielectric:
+        entry["EdgeAttributes"] = expand(entry.get("EdgeAttributes", []))
+        if "EdgeExcludeAttributes" in entry:
+            entry["EdgeExcludeAttributes"] = expand(entry["EdgeExcludeAttributes"])
+        own = [int(a) for a in entry["Attributes"] if int(a) in parents]
+        if not own:
+            entries.append(entry)
+            continue
+        if len(own) != len(entry["Attributes"]):
+            raise CaseInputError(f"dielectric interface {entry['Index']} mixes relabeled parents {own} with other attributes "
+                                 f"{entry['Attributes']}: the shell expansion needs a pure MA entry")
+        ordinals = sorted({ordinal for parent in own for ordinal, _ in by_parent[parent]})
+        for ordinal in ordinals:
+            labels = [label for parent in own for o, label in by_parent[parent] if o == ordinal]
+            shell_entry = dict(entry, Index=next_index, Attributes=labels)
+            entries.append(shell_entry)
+            records = [by_label[label] for label in labels]
+            shell_map[next_index] = {"BaseIndex": int(entry["Index"]), "Type": entry["Type"], "Ordinal": ordinal,
+                                     "Kind": records[0]["Kind"], "Ring": records[0]["Ring"],
+                                     "InnerRadius": records[0]["InnerRadius"], "OuterRadius": records[0]["OuterRadius"],
+                                     "Labels": labels, "Parents": [int(r["Parent"]) for r in records],
+                                     "Area": sum(float(r["Area"]) for r in records)}
+            next_index += 1
+    # The base order is kept (the shells take the place of the entry they replace).
+    boundaries["Postprocessing"]["Dielectric"] = entries
+    return expanded, shell_map
 
 
 def config_attributes(config):

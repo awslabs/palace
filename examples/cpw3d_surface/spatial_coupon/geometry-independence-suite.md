@@ -284,6 +284,96 @@ resolutions (analytic shell extrapolation of the edge remainder from per-ring MA
 rounded-edge process model with its own references) are physics / definition decisions for the
 supervisor / user, not mesh levers (`qualify/he-check-20260921/HE-CHECK.md`).
 
+### Radial MA shells: measuring the edge tail directly (supervisor decision 56, 2026-09-21)
+
+Before the MA-definition decision, the tail is measured rather than modelled: the
+PRODUCTION two-edge identity mesh (SHA256 `5d01204e...`, the acceptance-run mesh of PBS 46023)
+is relabeled, label-only, into per-tube-ring radial shells of its MA surfaces and run through
+`qualify`, so the MA of every source is recorded per ring. Tool `relabel_radial_ma_shells.py`
+(byte-level on the MSH 2.2 binary; nothing is built): a surface element of an MA label
+(6000 + 100 slot + conductor: metal top face and sidewalls) goes to shell k when the distance
+of its centroid to the nearest metal edge line - the Physical plan-view boundary segments at
+the metal top level (plane + Nz MetalThickness, the sharp 90-degree "top" edges) and at the
+plane (the metal / trench "bottom" edges) - lies in [r_(k-1), r_k) of the production ring set
+(7 rings: 0.25, 0.75, 1.75, 3.75, 7.75, 15.75, 31.75 nm), the far shell beyond the tube radius;
+label = 10000 x ordinal + parent (ordinal 1 far, 1 + k top ring k, 1 + K + k bottom ring k),
+each (shell, conductor) its own boundary label of the same interface type MA. Assertions:
+the $Nodes block byte-identical and every element identical in type / nodes / tag count with
+only the (physical, elementary) pair of the 14,575 MA elements changed (29,150 integers;
+the parent names leave $PhysicalNames, the 30 shell names enter); the shells sum to the
+parent areas (4.9 um^2 each, 1.9e-14 relative vs the parent's ownership partition record);
+every relabeled element's parent equals the parent ownership certificate's attribute; the
+radial partition audited point-wise (degree-4 positive rules; closure 0; straddling measure
+0.11% of the MA, in the graded corner-ball / cap triangles - tube quadrangles are
+ring-aligned). The parent's mixed-element, protected-surface and ownership-quadrature
+audits hold by identity (geometry, connectivity, element order and every other label
+unchanged; Gmsh reopens the file with 34 surface groups and the parent's min SICN). Census
+`identity.msh.radial-shells.json` (ring radii, edge lines, per-shell label / parent / kind /
+ring / radii / element counts / area / straddling), build record `library-build.json`
+(`Status relabeled`, the parent's entity counts, the `Relabel` binding) under
+`/tmp/coupon-calibration-radial-ma-20260921`.
+
+Manifest: case `two-edge-calib-radial-ma-shells` of the sizing calibration manifest
+(`Calibration.Relabel` - Kind, Tool, BaseCase, ParentMeshSHA256, RingRadii - instead of
+`BuildCommandOptions`; `general_mesh_manifest.validate_calibration_relabel`;
+`run_gmsh_only_case.case_build_options` refuses to build it) with the labeled physics-run
+deviation `Calibration.PhysicsRun {LinearTol 1e-8}` (`GateDeviations.LinearTol`, Production
+1e-10, ProductionUse FORBIDDEN, `validate_case_linear_tol`;
+`qualify/case_inputs.physics_run_parameters(manifest, case)` applies it only when labeled):
+the acceptance run PBS 46023 ran the producer default 1e-8, and the label-only proof at the
+physics level is the summed shells reproducing that run at the deterministic-solve level,
+which the recipe's 1e-10 would mask by the recorded sub-4e-4% Tol effect (immaterial for
+the per-shell profile). `qualify` on a relabeled case: the base config is derived against
+the parent labels (it equals the acceptance p5 worker config apart from paths / Order) and
+compared with the reference; `case_inputs.expand_radial_shells` then replaces the parent
+labels by the shell labels in every attribute list (Ground, TerminalAttributes, edge lists)
+and the one MA Dielectric entry by one entry per shell ordinal (indices after the base
+entries' maximum: 15 MA entries 3-17 next to MS 2), so a participation of the type sums the
+shells (`compare_matrices`, `p_sequence`, `ma_ms_offsets` label the reference matrices by the
+reference's own interface map, the run's by the shell map; per-entry rows cover the common
+indices) and the per-shell matrices are recorded in the fetched `surface-response-matrix.csv`.
+Analysis `qualify/radial_ma_profile.py`: per source / order / edge kind the ring energies
+Q_k, the power-law fit Q_k = c L (r_k^(1+alpha) - r_(k-1)^(1+alpha)) / (1 + alpha) over rings
+2-7 (the innermost ring holds the singularity a polynomial element cannot represent; alpha
+with its standard error), the remainder inside ring 1 = model ring-1 energy - resolved
+ring-1 energy (fitted alpha and the theoretical -2/3), the extrapolated sharp-edge MA and the
+deficit, and a clean-power-law flag (log residual RMS < 0.05, local slopes within 0.25 of
+alpha). Tests: `test_relabel_radial_ma_shells.py` (synthetic strip relabel, the two-edge edge
+lines, the shell expansion, the Tol deviation, the two-map comparison, the fit),
+`test_general_mesh_manifest.py` (the case and both deviations). Evidence:
+`qualify/radial-ma-20260921/RADIAL-MA.md`.
+
+**Outcome of decision 56 (2026-09-21, PBS 46164, 0.657 node-h, root `/tmp/library-radial-ma-01`).**
+Label-only proof: the shells summed per source reproduce the production acceptance run PBS
+46023 at max |rel| 4.4e-13 (Q_MA), 1.1e-13 (E), 2.8e-13 (Q_MS) at p4 and p5 - the workers are
+the acceptance's to the second and PCG count (322 / 1092 s, 11.90 / 10.82 iterations), the
+reducers +50 / +163 s for 16 vs 2 surface integrals - and the gated p5 verdict is the
+acceptance's to the digit (Failed on p_MA, 53 +3.50%). Profile (78 free sources): the sharp
+90-degree top edge follows r^(-2/3) in every source's inner rings - median local slopes -0.68 /
+-0.64 / -0.67 between rings 2-3 / 3-4 / 4-5, fitted alpha over rings 2-4 -0.648 (quartiles
+-0.657 / -0.613, se 0.006), 53 / 58 -0.672 +/- 0.011; the outer rings (4-32 nm) bend as the
+finite geometry takes over (flatter at the cut-face hats, steeper at 53 / 58), which is why a
+fit over rings 2-7 (-0.62 median, -0.70 at 53 / 58) is a mixture and 22 / 78 top profiles are not
+"clean" there (13 near-junction hats, 4 junction rings, 4 cut-face wide hats, 1 junction
+column; their inner slopes are still -0.68 / -0.64 ... -0.51). The innermost ring (0-0.25 nm,
+5.7% of the MA at the median source, 10.9% at 53 / 58) holds 0.706 (p5; range 0.687-0.710 over
+all sources) / 0.665 (p4) of the energy the -2/3 law anchored on ring 2 predicts - a
+discretization property, not a source property; the p4 -> p5 MA step (+0.79% median) is +6.2%
+in top ring 1, <= 0.13% in rings 2-7 (p-converged), +0.9% in the far shell (84% ring 1 / 20% far
+at 53 / 58). The bottom (metal / trench) edge is not a -2/3 edge: alpha -0.33, ring-1 p-step
++1.4%, remainder 0.1% of the MA. Implied deficit of the production value below its sharp-edge
+limit (top edge -2/3 anchored on ring 2 + bottom edge at its own law, p5): median +2.68%
+(quartiles +2.22 / +3.21%), strongest-20 +2.65%, 53 / 58 +4.44% (p4: +3.07% / +5.11%) - the
+HE-CHECK model's 2.7% / 4.7% confirmed by measurement, and the model's ring-halving
+prediction 0.206 x deficit = 0.50% / 0.91% matches the ring-refined run's +0.54% / +0.96%.
+Evidence for the options (no decision): (i) analytic extrapolation is computable per source
+from the run's own per-ring labels with a source-independent ring-1 factor, but it removes the
+ring-1 deficit only (the far shell keeps 20-46% of the p-step), rests on the -2/3 assumption
+inside 0.25 nm (the fitted -0.648 vs -2/3 moves the deficit by ~0.5 points) and must be applied
+to the 0.5 nm-anchored reference too (~5.6% at 53 / 58 under the same law); (ii) a rounding
+radius of nm order acts on 5.7 / 10.9% (inside 0.25 nm) to 9.3 / 17.6% (inside 0.75 nm) of the MA
+at the median / 53 - a process quantity of several percent (`qualify/radial-ma-20260921/RADIAL-MA.md`).
+
 ## Gmsh-only production pipeline (supervisor decision 38, 2026-09-18)
 
 The coupon mesh is generated by Gmsh alone. Decision 37's prism-tube spike showed

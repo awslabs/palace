@@ -18,6 +18,15 @@
         ],
         "Reason": "supervisor decision 53 (2026-09-20): halving the innermost tube ring to 0.125 nm at the production tube layer spacing (50 nm) doubles the innermost prisms' Jacobian condition by construction (the ring / layer aspect): the production two-edge mesh's worst prism is 586.30, the refined ring set's 1172.6 = 2 x 586.30 exactly, above the production bound 1000 - a labeling of the anisotropy the refinement implies, not a quality loss elsewhere (tetrahedra, pyramids and cap regions keep the production bounds); the smallest round value admitting the refined ring; the physics run of this case reports PCG iteration counts and kappa next to the production two-edge run so any conditioning effect of these prisms is visible (if PCG degrades materially, the ring lever is bounded by conditioning - itself a finding)",
         "ProductionUse": "FORBIDDEN: production cases and the production manifest keep MaximumJacobianCondition 1000; this bound judges the named calibration case alone (general_mesh_manifest.case_gates)"
+      },
+      "LinearTol": {
+        "Production": 1e-10,
+        "Calibration": 1e-08,
+        "Cases": [
+          "two-edge-calib-radial-ma-shells"
+        ],
+        "Reason": "supervisor decision 56 (2026-09-21): the radial MA shell relabel of the production two-edge mesh must reproduce the production acceptance run PBS 46023 (Solver.Linear.Tol 1e-8, the producer default the acceptance ran before the decision-52 binding) when its shells are summed - the label-only proof at the physics level at the deterministic-solve level (1e-10 per source); at the recipe's 1e-10 the CG stopping point differs and the energies move by the recorded sub-4e-4% Tol effect, which would mask the proof; the Tol effect is immaterial for the per-shell r^alpha fit and the equal-p comparison with the ring run",
+        "ProductionUse": "FORBIDDEN: production cases and the production recipe keep PhysicsRun.LinearTol 1e-10; this tolerance runs the named calibration case alone (qualify/case_inputs.physics_run_parameters)"
       }
     },
     "Outcome": "physics-11 (PBS 45145, V-a mesh 80966c7d..., 0.508 node-h) reaches EL4c level or better on every class while MA stays converged: E 60/60 within 1% (worst +0.43%; 74/10/26 +0.03/+0.15/-0.10%), p_SA within 1/2/5% 35/44/58 (EL4c 35/40/56), p_MS median -0.60% worst -1.70%, p_MA +0.76/+0.76/+0.76% with 55/60 within 2%; physics-12 (PBS 45146, V-b mesh 7db360be..., 0.593 node-h) moves E/SA/MS by <= 0.53 points at 1.14x cost: REJECTED, TangentialSize stays 50 nm. Decision 42: TraceBasisSizeRatio 0.5 is the production recipe; the production four-edge root rebuilt under geometry-independence-suite.json reproduced the V-a identity mesh SHA256 80966c7db44dabc49ac7bb068bbaee0e0828e413b115cee8c066c886866b6108 under commits 21cf534ff..138618e57 (pre-decision-44 shortest-edge trace measure); since b6378f173 (decision 44: minimum-altitude measure and composed curve spacing) the production four-edge root is 1d536c448885cda2d8af7441c63a9b7b591c18b0b127366c1958ba65030a9ba5 (1,916,486 elements) and the physics-11 evidence stays bound to 80966c7d..."
@@ -44,7 +53,7 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "c0adee1b2de126f41b343a102c4e9a5c9ba2518d41aa9bab016835524c2a1bb6"
+      "SHA256": "f903554a1908f17f7704feea16b33073177f9e6092ed8dd34b5ac2c8d60beeaa"
     },
     {
       "Name": "verify_canonical_case_entries.py",
@@ -645,6 +654,175 @@
         },
         "ProductionValuesRule": "the production BuildCommandOptions at the time of this declaration (decision 42 recipe: --trace-basis-size-ratio 0.5): the two declared options differ from them, every undeclared option executes at its production value",
         "MaximumJacobianCondition": 1200.0
+      }
+    },
+    {
+      "Id": "two-edge-calib-radial-ma-shells",
+      "InventoryStatus": "Calibration",
+      "Frozen": true,
+      "Features": [
+        "2-edge",
+        "single-slot",
+        "multiple-conductors",
+        "finite-strips",
+        "calibration-sizing",
+        "calibration-radial-ma-shells",
+        "label-only-relabel"
+      ],
+      "Variants": [
+        {
+          "Id": "identity",
+          "Transform": [
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        },
+        {
+          "Id": "rotate-z-0.63",
+          "Transform": [
+            0.8080275083121519,
+            -0.5891447579422695,
+            0,
+            0,
+            0.5891447579422695,
+            0.8080275083121519,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        }
+      ],
+      "TransformComparison": {
+        "Reference": "identity",
+        "Transformed": "rotate-z-0.63",
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
+      },
+      "Source": {
+        "Directory": "examples/cpw3d_surface/spatial_coupon/testdata/two-edge-8dd4bc70f183",
+        "SignatureRole": "Signature",
+        "SignatureColumns": [
+          "Index",
+          "Slot",
+          "Conductor",
+          "Px",
+          "Py",
+          "Pz",
+          "Gx",
+          "Gy",
+          "Gz",
+          "Tx",
+          "Ty",
+          "Tz",
+          "S0",
+          "S1"
+        ],
+        "Files": {
+          "Signature": {
+            "Name": "mesh-signature.csv",
+            "SHA256": "389982d17eb28513b9900ee8ae8be37f7583ebac09a3493b033c5cd4697f8d20"
+          },
+          "Boundary": {
+            "Name": "plan-view-boundary.csv",
+            "SHA256": "0a926635709754e14771c12323548a3ca97688650dcec621bd23139e074db98d"
+          },
+          "Mask": {
+            "Name": "plan-view-mask.csv",
+            "SHA256": "2070d684e43e29d816273666afe65104f41d70c9ed49eb2094e85346243f09bc"
+          },
+          "Process": {
+            "Name": "process.toml",
+            "SHA256": "883b8b345d4943faaf498fdaaea14a54a9be3e7dbf520210b4fcd475ac5bc569"
+          },
+          "ProcessLibrary": {
+            "Name": "process-library.json",
+            "SHA256": "7d9052ca0df35a9edd464b2d06a4b1c84af93e205ac3b3b5c5de7bde2df74b8f"
+          },
+          "BasisContract": {
+            "Name": "basis-contract.json",
+            "SHA256": "9bcbd95c82c0ebc2f5aa58692028814ebebf334fd0ec6d631729375509dc4691"
+          },
+          "TraceVertices": {
+            "Name": "trace-vertices.csv",
+            "SHA256": "bd698b85dd3ed1b41165a8f839a6b13919ddca3d88fc4d8952424058fa30b765"
+          },
+          "TraceTriangles": {
+            "Name": "trace-triangles.csv",
+            "SHA256": "6a19c6d838b2288896dc63cd21ec884ab39b3c0eb88488bc6a5d0297b6528441"
+          },
+          "Provenance": {
+            "Name": "provenance.json",
+            "SHA256": "ad0e49052dbf174c0372e3f9cd20d9d8363312ec990de6062cc72c19b97be19c"
+          },
+          "SemanticContract": {
+            "Name": "semantic-contract.json",
+            "SHA256": "f2f5fbe5ff36d414ff5d9231835aed43191e8a4ffb00e4afd4ffe6d00449b336"
+          },
+          "MeshRecipe": {
+            "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
+            "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
+          }
+        },
+        "EtchFootprint": "producer-default"
+      },
+      "Provenance": "CALIBRATION label-only relabel of the PRODUCTION two-edge-8dd4bc70f183 identity mesh (SHA256 5d01204e3396744cdbcf6f53fd1ff85d9f8c218eec1f0b9e11fc6a58aa469b04, the acceptance-run mesh of PBS 46023; same immutable inputs, hashes and semantic contract as the production case, FixtureVersion None; Gmsh-only pipeline; supervisor decision 56, 2026-09-21): nothing is built - relabel_radial_ma_shells.py splits the MA surfaces 6001 / 6002 (metal top face and sidewalls) into radial shells following the production tube ring set (7 rings, 0.25 nm inner ring, growth 2, tube radius 31.75 nm; shell k = elements whose centroid distance to the nearest metal edge line - top edges at z = 0.1, bottom edges at z = 0 - lies in [r_(k-1), r_k); one far shell beyond the tube radius), each (shell, conductor) a distinct boundary label of the same interface type MA (label = 10000 x ordinal + parent); nodes, connectivity, element order and every other label byte-identical to the parent (asserted), shell areas summing to the parent areas (asserted), the parent ownership certificate reproduced element by element (asserted). Purpose: measure the sharp-edge MA tail directly - MA per radial shell per source through qualify (p4 + p5), the r^alpha fit and the eps^(1/3) remainder per source (decisions 55 / 56); never a production change",
+      "Calibration": {
+        "Label": "RADIAL MA SHELLS (supervisor decision 56, 2026-09-21): the production two-edge identity mesh with its MA surfaces relabeled into per-tube-ring radial shells (top-edge rings 1-7, bottom-edge rings 1-7, far), every shell an MA interface of its own in the run config so qualify sums the type (the production MA) and records the per-shell matrices; the physics runs at Solver.Linear.Tol 1e-8 (labeled PhysicsRun deviation: the value the production acceptance run PBS 46023 ran, so the summed MA reproduces it at the deterministic-solve level); a label-only measurement of the edge tail, never a production change",
+        "BaseCase": "two-edge-8dd4bc70f183",
+        "Relabel": {
+          "Kind": "radial-ma-shells",
+          "Tool": "relabel_radial_ma_shells.py",
+          "BaseCase": "two-edge-8dd4bc70f183",
+          "ParentMeshSHA256": "5d01204e3396744cdbcf6f53fd1ff85d9f8c218eec1f0b9e11fc6a58aa469b04",
+          "RingRadii": [
+            0.00025,
+            0.00075,
+            0.00175,
+            0.00375,
+            0.00775,
+            0.01575,
+            0.03175
+          ],
+          "Rule": "shell = tube ring interval of the centroid distance to the nearest metal edge line (Physical plan-view boundary segments at the metal top level plane + Nz x MetalThickness and at the plane), far = beyond the tube radius; label = 10000 x ordinal + parent MA attribute, ordinal 1 far, 1 + k top ring k, 1 + K + k bottom ring k; the RingRadii must equal the parent build census PrismTubes.Section.RingRadii (fail closed)"
+        },
+        "ProductionValues": {
+          "--lc-tangent": 0.05,
+          "--edge-size": 0.00025,
+          "--edge-growth-ratio": 2.0,
+          "--corner-size": 0.00025,
+          "--far-growth": 0.5,
+          "--trace-basis-size-ratio": 0.5
+        },
+        "ProductionValuesRule": "the production BuildCommandOptions the relabeled parent identity mesh was built at (decision 42 recipe); no option differs - the case builds nothing",
+        "PhysicsRun": {
+          "LinearTol": 1e-08
+        }
       }
     }
   ],

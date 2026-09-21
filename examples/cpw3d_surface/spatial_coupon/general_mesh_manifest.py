@@ -286,6 +286,33 @@ CALIBRATION_BUILD_OPTIONS_KEY = "BuildCommandOptions"
 # AdoptedAsProductionRecipe.
 PIPELINE_CALIBRATION_PRODUCTION_VALUES_KEY = {LEGACY_MMG_PIPELINE: "ProductionValuesBefore34B",
                                               GMSH_ONLY_PIPELINE: "ProductionValues"}
+# A label-only calibration case (supervisor decision 56): its mesh is a relabel of a
+# built base case's identity mesh (relabel_radial_ma_shells.py), declared under
+# Calibration.Relabel instead of BuildCommandOptions; the mesher never builds it.
+RELABEL_KEY = "Relabel"
+RELABEL_KINDS = ("radial-ma-shells",)
+
+
+def validate_calibration_relabel(case, calibration):
+    """Calibration.Relabel (if present) binds Kind (RELABEL_KINDS), BaseCase equal to
+    Calibration.BaseCase, the ParentMeshSHA256 of the relabeled identity mesh, the tube
+    RingRadii (strictly increasing positive) and the Tool name; a relabel case declares
+    no BuildCommandOptions.  Returns the block or None."""
+    relabel = calibration.get(RELABEL_KEY)
+    if relabel is None:
+        return None
+    radii = relabel.get("RingRadii") if isinstance(relabel, dict) else None
+    digest = relabel.get("ParentMeshSHA256") if isinstance(relabel, dict) else None
+    if (not isinstance(relabel, dict) or relabel.get("Kind") not in RELABEL_KINDS or
+            relabel.get("BaseCase") != calibration.get("BaseCase") or not isinstance(relabel.get("BaseCase"), str) or
+            not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest) or
+            not isinstance(radii, list) or not radii or any(not _finite_number(r, positive=True) for r in radii) or
+            any(b <= a for a, b in zip(radii, radii[1:])) or
+            not isinstance(relabel.get("Tool"), str) or not relabel["Tool"] or
+            CALIBRATION_BUILD_OPTIONS_KEY in calibration):
+        raise ValueError(f"{case.get('Id')} declares a Relabel block that is not a labeled label-only relabel of its "
+                         f"base case (Kind, BaseCase, ParentMeshSHA256, increasing RingRadii, Tool; no BuildCommandOptions)")
+    return relabel
 
 
 def validate_calibration_case_options(manifest, case):
@@ -297,6 +324,14 @@ def validate_calibration_case_options(manifest, case):
     if "Calibration" not in manifest or manifest_pipeline(manifest) != GMSH_ONLY_PIPELINE:
         return
     calibration = case.get("Calibration")
+    if isinstance(calibration, dict) and validate_calibration_relabel(case, calibration) is not None:
+        production = calibration.get(PIPELINE_CALIBRATION_PRODUCTION_VALUES_KEY[GMSH_ONLY_PIPELINE])
+        if (not isinstance(calibration.get("Label"), str) or not calibration["Label"] or not isinstance(production, dict) or
+                not production or any(not isinstance(option, str) or not option.startswith("--") or not _finite_number(value)
+                                      for option, value in production.items())):
+            raise ValueError(f"{case.get('Id')} must declare its Gmsh-only calibration label and the production values "
+                             f"its relabeled base mesh was built at")
+        return
     options = calibration.get(CALIBRATION_BUILD_OPTIONS_KEY) if isinstance(calibration, dict) else None
     production = (calibration.get(PIPELINE_CALIBRATION_PRODUCTION_VALUES_KEY[GMSH_ONLY_PIPELINE])
                   if isinstance(calibration, dict) else None)
@@ -413,6 +448,38 @@ def validate_case_jacobian_condition(manifest, case):
 ELEMENT_CAP_GATE = "MaximumElements"
 
 
+# A calibration case may run its physics at its own linear tolerance
+# (Calibration.PhysicsRun.LinearTol, supervisor decision 56: 1e-8 for the radial MA
+# shell relabel of the two-edge production mesh, so its summed MA reproduces the
+# production acceptance run PBS 46023 - which ran the producer default 1e-8 - at the
+# deterministic-solve level), labeled in the manifest's Calibration.GateDeviations.
+# LinearTol naming the case; every other case runs at the recipe's PhysicsRun value.
+LINEAR_TOL_GATE = "LinearTol"
+
+
+def validate_case_linear_tol(manifest, case):
+    """Calibration.PhysicsRun.LinearTol of a case (if present) is a labeled calibration-only
+    deviation: a float in (0, 1) equal to the deviation's Calibration value, the case
+    named in the deviation's Cases, a Production value in (0, 1) differing from it (bound
+    to the recipe by qualify/case_inputs.physics_run_parameters) and ProductionUse
+    FORBIDDEN.  Returns the tolerance or None."""
+    calibration = case.get("Calibration")
+    physics = calibration.get("PhysicsRun") if isinstance(calibration, dict) else None
+    if physics is None:
+        return None
+    tolerance = physics.get(LINEAR_TOL_GATE) if isinstance(physics, dict) else None
+    deviation = manifest.get("Calibration", {}).get("GateDeviations", {}).get(LINEAR_TOL_GATE)
+    if (not isinstance(physics, dict) or set(physics) != {LINEAR_TOL_GATE} or not isinstance(tolerance, float) or
+            not 0.0 < tolerance < 1.0 or not isinstance(deviation, dict) or
+            not isinstance(deviation.get("Production"), float) or not 0.0 < deviation["Production"] < 1.0 or
+            deviation["Production"] == tolerance or deviation.get("Calibration") != tolerance or
+            not isinstance(deviation.get("Cases"), list) or case.get("Id") not in deviation["Cases"] or
+            "FORBIDDEN" not in str(deviation.get("ProductionUse", ""))):
+        raise ValueError(f"{case.get('Id')} declares a physics-run linear tolerance that is not labeled as a "
+                         f"calibration-only deviation")
+    return tolerance
+
+
 def validate_case_element_cap(manifest, case):
     """Calibration.MaximumElements of a case (if present) is a labeled calibration-only
     deviation: an integer above the manifest gate, equal to the deviation's
@@ -488,6 +555,7 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
             raise ValueError(f"{case['Id']} must declare its edge layer under Calibration")
         validate_case_element_cap(manifest, case)
         validate_case_jacobian_condition(manifest, case)
+        validate_case_linear_tol(manifest, case)
         validate_calibration_case_options(manifest, case)
         source = case.get("Source", {})
         files = source.get("Files")
@@ -567,6 +635,14 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
                            case["Calibration"].get(JACOBIAN_CONDITION_GATE) is not None)
         if not isinstance(condition_deviation, dict) or sorted(condition_deviation.get("Cases") or []) != declaring:
             raise ValueError("Jacobian condition deviation must name exactly the cases declaring the bound")
+    tolerance_deviation = manifest.get("Calibration", {}).get("GateDeviations", {}).get(LINEAR_TOL_GATE)
+    if tolerance_deviation is not None:
+        declaring = sorted(case["Id"] for case in manifest["Cases"]
+                           if isinstance(case.get("Calibration"), dict) and
+                           isinstance(case["Calibration"].get("PhysicsRun"), dict) and
+                           case["Calibration"]["PhysicsRun"].get(LINEAR_TOL_GATE) is not None)
+        if not isinstance(tolerance_deviation, dict) or sorted(tolerance_deviation.get("Cases") or []) != declaring:
+            raise ValueError("Linear tolerance deviation must name exactly the cases declaring the tolerance")
     if comparison_kinds != {"feature-scaling", "cad-subdivision-sensitivity"}:
         raise ValueError("Both feature and CAD-subdivision scaling controls are required")
     return repository, tool_hashes, matrix

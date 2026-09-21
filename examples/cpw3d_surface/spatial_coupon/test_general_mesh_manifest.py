@@ -2306,7 +2306,8 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
         # Decision 53: the one gate deviation is the per-case Jacobian condition bound of
         # the 0.125 nm tube-ring case (labeled, production value recorded, FORBIDDEN in
         # production); the manifest Gates themselves stay the production gates.
-        self.assertEqual(set(sizing["Calibration"]["GateDeviations"]), {"MaximumJacobianCondition"})
+        # Decision 56: the radial MA shell relabel adds the labeled physics-run tolerance deviation.
+        self.assertEqual(set(sizing["Calibration"]["GateDeviations"]), {"MaximumJacobianCondition", "LinearTol"})
         self.assertEqual(sizing["Gates"], production["Gates"])
         self.assertEqual(sizing["Tools"], production["Tools"])
         self.assertEqual(sizing["StageToolSHA256"], production["StageToolSHA256"])
@@ -2318,6 +2319,24 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
         levers = {}
         for case in sizing["Cases"]:
             self.assertEqual(case["InventoryStatus"], "Calibration")
+            if case["Id"] == "two-edge-calib-radial-ma-shells":
+                # Decision 56: a label-only relabel of the production two-edge identity mesh -
+                # the mesher never builds it, no BuildCommandOptions, the parent's production
+                # values recorded, the labeled Tol 1e-8 physics-run deviation (PBS 46023's value).
+                self.assertEqual(case["Calibration"]["BaseCase"], two_edge["Id"])
+                self.assertEqual(case["Source"], two_edge["Source"])
+                self.assertNotIn("BuildCommandOptions", case["Calibration"])
+                self.assertEqual(case["Calibration"]["ProductionValues"], production_options)
+                relabel = case["Calibration"]["Relabel"]
+                self.assertEqual((relabel["Kind"], relabel["Tool"], relabel["BaseCase"]),
+                                 ("radial-ma-shells", "relabel_radial_ma_shells.py", two_edge["Id"]))
+                self.assertEqual(relabel["ParentMeshSHA256"], "5d01204e3396744cdbcf6f53fd1ff85d9f8c218eec1f0b9e11fc6a58aa469b04")
+                self.assertEqual(relabel["RingRadii"], [0.00025 * (2 ** k - 1) for k in range(1, 8)])
+                self.assertEqual(case["Calibration"]["PhysicsRun"], {"LinearTol": 1e-8})
+                self.assertEqual(case_gates(sizing, case)["MaximumJacobianCondition"], 1000.0)
+                with self.assertRaisesRegex(ValueError, "label-only relabel"):
+                    case_build_options(sizing, case)
+                continue
             options, ratio, label = case_build_options(sizing, case)
             self.assertIn("CALIBRATION", label)
             declared = case["Calibration"]["BuildCommandOptions"]
@@ -2371,6 +2390,27 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
         rejected_bound(lambda m: m["Cases"][0]["Calibration"].__setitem__("MaximumJacobianCondition", 1200.0))
         rejected_bound(lambda m: ring_case(m)["Calibration"].pop("MaximumJacobianCondition"),
                        "name exactly the cases declaring the bound")
+
+        def shell_case(m):
+            return next(case for case in m["Cases"] if case["Id"] == "two-edge-calib-radial-ma-shells")
+        tolerance = sizing["Calibration"]["GateDeviations"]["LinearTol"]
+        self.assertEqual((tolerance["Production"], tolerance["Calibration"], tolerance["Cases"]),
+                         (1e-10, 1e-8, ["two-edge-calib-radial-ma-shells"]))
+        self.assertIn("FORBIDDEN", tolerance["ProductionUse"])
+        rejected_bound(lambda m: m["Calibration"]["GateDeviations"].pop("LinearTol"))
+        rejected_bound(lambda m: shell_case(m)["Calibration"]["PhysicsRun"].__setitem__("LinearTol", 1e-9))
+        rejected_bound(lambda m: shell_case(m)["Calibration"]["PhysicsRun"].__setitem__("Order", 5))
+        rejected_bound(lambda m: m["Calibration"]["GateDeviations"]["LinearTol"].__setitem__("Cases", []))
+        rejected_bound(lambda m: ring_case(m)["Calibration"].__setitem__("PhysicsRun", {"LinearTol": 1e-8}))
+        rejected_bound(lambda m: shell_case(m)["Calibration"].pop("PhysicsRun"), "name exactly the cases declaring the tolerance")
+        rejected_relabel = "not a labeled label-only relabel"
+        rejected_bound(lambda m: shell_case(m)["Calibration"].__setitem__("BuildCommandOptions", {"--edge-size": 0.0001}), rejected_relabel)
+        rejected_bound(lambda m: shell_case(m)["Calibration"]["Relabel"].__setitem__("Kind", "other"), rejected_relabel)
+        rejected_bound(lambda m: shell_case(m)["Calibration"]["Relabel"].__setitem__("BaseCase", base["Id"]), rejected_relabel)
+        rejected_bound(lambda m: shell_case(m)["Calibration"]["Relabel"].__setitem__("RingRadii", [0.00025, 0.00025]), rejected_relabel)
+        rejected_bound(lambda m: shell_case(m)["Calibration"]["Relabel"].__setitem__("ParentMeshSHA256", "abc"), rejected_relabel)
+        rejected_bound(lambda m: shell_case(m)["Calibration"].pop("Relabel"),
+                       "calibration label and build options against differing production values")
         with self.assertRaisesRegex(ValueError, "calibration or edge-layer block in a production manifest"):
             broken = copy.deepcopy(production)
             broken["Cases"][0]["Calibration"] = {"MaximumJacobianCondition": 1200.0}

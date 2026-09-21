@@ -82,6 +82,9 @@ def case_build_options(manifest, case):
     declares no ratio fails closed."""
     calibration = case.get("Calibration") if "Calibration" in manifest else None
     if calibration is not None:
+        if calibration.get("Relabel") is not None:
+            raise ValueError(f"{case['Id']} is a label-only relabel of {calibration['Relabel'].get('BaseCase')} "
+                             f"({calibration['Relabel'].get('Tool')}): the mesher never builds it")
         options = dict(calibration["ProductionValues"], **calibration["BuildCommandOptions"])
         label = (f"CALIBRATION build {case['Id']} ({calibration['Label']}): options "
                  f"{calibration['BuildCommandOptions']} against production {calibration['ProductionValues']}")

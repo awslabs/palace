@@ -18,7 +18,12 @@ Per passed coupon of the build record:
     matrices, when the reference completed); the reference's own config must equal the
     derived one apart from Model.Mesh, Problem.Output, the DataFile directory,
     Solver.Order and Solver.Linear.Tol (fail closed otherwise); `--reference none` runs
-    the coupon on its own inputs (verdict PendingQualification or Failed, never Passed);
+    the coupon on its own inputs (verdict PendingQualification or Failed, never Passed).
+    A radial-shell relabel case (build record `Relabel`, relabel_radial_ma_shells.py) derives
+    its base config against the parent MA labels - the reference comparison view - and
+    runs the shell-expanded config (case_inputs.expand_radial_shells: one MA interface per
+    shell), the reference matrices labeled by the reference's own interface map; a
+    labeled Calibration.PhysicsRun.LinearTol deviation replaces the recipe tolerance;
  2. sources: every PrescribedPotential source of the derived config; the control
     sources by geometric class (locate_sources / classify_sources: one per class in
     priority order, cycling) unless --control-source names them;
@@ -219,8 +224,20 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
         raise CaseStop("Mesh", f"identity mesh SHA256 {actual} differs from the build record {identity['SHA256']}")
     record["Mesh"] = {"Local": identity["Path"], "SHA256": identity["SHA256"], "Verified": True}
     directory = source_directory(manifest_path, manifest, case)
+    radial_shells = None
+    if case_record.get("Relabel"):
+        shells = case_record["Relabel"].get("Shells") or {}
+        if not shells.get("Path") or not Path(shells["Path"]).is_file() or sha256(shells["Path"]) != shells.get("SHA256"):
+            raise CaseStop("Mesh", f"the build record's radial-shell census of {case_id} is missing or its SHA256 differs ({shells})")
+        radial_shells = json.loads(Path(shells["Path"]).read_text())
+        if radial_shells.get("Mesh", {}).get("SHA256") != identity["SHA256"]:
+            raise CaseStop("Mesh", f"the radial-shell census binds mesh {radial_shells.get('Mesh', {}).get('SHA256')}, the build "
+                                   f"record {identity['SHA256']}")
+        record["Mesh"]["Relabel"] = {"Kind": case_record["Relabel"].get("Kind"), "Parent": case_record["Relabel"].get("Parent"),
+                                     "ParentMesh": case_record["Relabel"].get("ParentMesh"), "Shells": shells,
+                                     "ShellCount": len(radial_shells["Shells"])}
     try:
-        physics_run = case_inputs.physics_run_parameters(manifest)
+        physics_run = case_inputs.physics_run_parameters(manifest, case)
         signature_layers = locate_sources.signature_layers(
             locate_sources.read_signature_rows(directory / files["Signature"]["Name"]))
         locate_sources.check_layers(signature_layers)
@@ -240,15 +257,25 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
     try:
         run_config, inputs = case_inputs.derive(case, directory, mesh_path=identity["Path"], physics_run=physics_run,
                                                 out_dir=case_root / "inputs", mesh=remote_mesh, output_root=f"{remote_case}/main",
-                                                traces_remote=remote_traces)
+                                                traces_remote=remote_traces, radial_shells=radial_shells)
     except (case_inputs.CaseInputError, ValueError) as error:
         raise CaseStop("Inputs", f"the run inputs of {case_id} cannot be derived from its sources: {error}")
     write_json(case_root / "inputs" / "run-config.json", run_config)
+    # A radial-shell relabel compares its BASE config (parent labels, one MA entry) with
+    # the reference; the run config carries the shell entries (case_inputs.expand_radial_shells).
+    comparison_config = inputs.pop("BaseConfig", None)
+    if comparison_config is not None:
+        write_json(case_root / "inputs" / "base-run-config.json", comparison_config)
+        inputs["BaseConfigPath"] = str(case_root / "inputs" / "base-run-config.json")
+        inputs["BaseConfigSHA256"] = sha256(case_root / "inputs" / "base-run-config.json")
+    else:
+        comparison_config = run_config
     record["Inputs"] = {**inputs, "Config": str(case_root / "inputs" / "run-config.json"),
                         "ConfigSHA256": sha256(case_root / "inputs" / "run-config.json")}
     interface_types = {int(index): name for index, name in inputs["Interfaces"].items()}
     interfaces = inputs["InterfaceTypes"]
     reference = None
+    reference_interface_types = None
     if args.reference is not None:
         try:
             reference = reference_campaign.resolve(args.reference, files["BasisContract"]["SHA256"])
@@ -259,12 +286,15 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                                         f"({files['BasisContract']['SHA256'][:12]}...) under {args.reference}: pass "
                                         f"--reference none to run the coupon on its own inputs")
         reference_config = json.loads(Path(reference["Config"]).read_text())
-        differences = case_inputs.config_differences(run_config, reference_config, ignore_solver=("Order", "Linear.Tol"))
+        reference_interface_types = case_inputs.interface_types(reference_config)
+        differences = case_inputs.config_differences(comparison_config, reference_config, ignore_solver=("Order", "Linear.Tol"))
         if differences:
             raise CaseStop("Reference", f"the reference config {reference['Config']} differs from the config derived from "
                                         f"the case's own sources outside Mesh / Output / DataFile / Order / Tol: {differences[:12]}",
                            Differences=differences)
         reference["ConfigEqualsDerived"] = {"ApartFrom": list(case_inputs.PATH_FIELDS) + ["Solver.Order", "Solver.Linear.Tol"],
+                                            "ComparedConfig": ("the base config (parent labels) of the radial-shell relabel"
+                                                               if comparison_config is not run_config else "the run config"),
                                             "ReferenceOrder": reference["ReferenceOrder"], "ReferenceLinearTol": reference["LinearTol"],
                                             "RunOrder": physics_run["Order"], "RunLinearTol": physics_run["LinearTol"]}
     record["Reference"] = reference if reference is not None else {
@@ -387,7 +417,8 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
     record["Status"] = STATUS_PLANNED
     return record, {"plan": plan, "sources": sources, "locations": locations, "classes": classes, "layout": layout,
                     "reference": reference, "reference_order": reference_order, "interfaces": interfaces,
-                    "interface_types": interface_types, "controls": controls, "zero_trace": zero_trace, "identity": identity}
+                    "interface_types": interface_types, "reference_interface_types": reference_interface_types,
+                    "controls": controls, "zero_trace": zero_trace, "identity": identity}
 
 
 def upload_case(record, context, *, remote, profile):
@@ -534,6 +565,9 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
     comparison_dir = case_root / "comparison"
     reference = context["reference"]
     reference_order, interface_types = context["reference_order"], context["interface_types"]
+    # The reference labels its surface matrix by its own config (one MA entry); a radial-
+    # shell run labels its own by the shell entries - both sum per type.
+    reference_interface_types = context.get("reference_interface_types") or interface_types
     layout, controls, zero_trace = context["layout"], context["controls"], context["zero_trace"]
     locations, classes = context["locations"], context["classes"]
     mains = [item for item in layout if item["Role"] == "main"]
@@ -557,9 +591,10 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
         else:
             labels[f"p{order}-control-vs-{main['Prefix']}"] = (directory, main_dir, f"p{order} control", main["Prefix"])
     for label, (ref, run, ref_label, run_label) in labels.items():
-        comparisons[label] = compare_matrices.write_comparison(ref, run, comparison_dir / label, zero_trace_indices=zero_trace,
-                                                                locations=locations, reference_label=ref_label, run_label=run_label,
-                                                                max_entry_rows=200, interface_types=interface_types)
+        comparisons[label] = compare_matrices.write_comparison(
+            ref, run, comparison_dir / label, zero_trace_indices=zero_trace, locations=locations, reference_label=ref_label,
+            run_label=run_label, max_entry_rows=200, interface_types=interface_types,
+            reference_interface_types=(reference_interface_types if ref == reference_dir else interface_types))
     class_stats = classify_sources.write_class_report(classes, locations, list(comparisons.items()),
                                                       comparison_dir / "source-classes.csv", comparison_dir / "class-statistics.md")
     main_label = f"{gated['Prefix']}-vs-reference"
@@ -576,7 +611,8 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
         runs["high"] = control_dirs[min(higher)]
     p_sequence_summary = p_sequence.write_p_sequence(runs, orders_of, controls, comparison_dir / "p-sequence-controls.md",
                                                      comparison_dir / "p-sequence-controls.json",
-                                                     title=f"p-sequence controls of {record['Case']}", interface_types=interface_types)
+                                                     title=f"p-sequence controls of {record['Case']}", interface_types=interface_types,
+                                                     reference_interface_types=reference_interface_types)
     offsets = None
     keys = None
     if reference_dir is not None:
@@ -584,7 +620,8 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
         offsets = ma_ms_offsets.write_offsets(per_source, main_label, zero_trace, reference_dir,
                                               comparison_dir / "ma-ms-offsets.md", comparison_dir / "ma-ms-offsets.json",
                                               title=f"Offsets of {record['Case']} vs the reference",
-                                              strongest=gates["Gates"]["p_MA"]["StrongestCount"], interface_types=interface_types)
+                                              strongest=gates["Gates"]["p_MA"]["StrongestCount"],
+                                              interface_types=reference_interface_types)
         keys = key_sources.key_sources(per_source, zero_trace)
         (comparison_dir / "key-sources.md").write_text(key_sources.markdown_report(keys))
         write_json(comparison_dir / "key-sources.json", keys)
@@ -597,7 +634,7 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
     main_cost = cost["Stages"].get(main["Prefix"], {})
     gate_record = gate_evaluation.evaluate(
         gates, comparison=comparisons.get(main_label), classes={i: name for i, (name, _) in classes.items()},
-        ref_pma=ma_ms_offsets.reference_p_ma(reference_dir, interface_types) if reference_dir else None,
+        ref_pma=ma_ms_offsets.reference_p_ma(reference_dir, reference_interface_types) if reference_dir else None,
         p_sequence_summary=p_sequence_summary, reference_order=reference_order, gates_sha256=gates_digest,
         interfaces=context["interfaces"], gated_order=gated["Order"])
     write_json(case_root / "qualification.json", gate_record)

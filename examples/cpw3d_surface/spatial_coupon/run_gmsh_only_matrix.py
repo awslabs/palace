@@ -184,7 +184,7 @@ def case_record(manifest, manifest_path, case, root, *, h1_order, driver_return_
     calibration = case.get("Calibration") if "Calibration" in manifest else None
     return {"Case": case_id, "InventoryStatus": case["InventoryStatus"], "FixtureVersion": case.get("FixtureVersion"),
             "Calibration": ({"Label": calibration["Label"], "BaseCase": calibration.get("BaseCase"),
-                             "BuildCommandOptions": calibration["BuildCommandOptions"],
+                             "BuildCommandOptions": calibration.get("BuildCommandOptions"),
                              "ProductionValues": calibration["ProductionValues"]} if calibration else None),
             "Scope": scope, "Status": status, "Passed": passed,
             "StoppedBy": stopped_by(summary, stages, verification) if not passed else None,

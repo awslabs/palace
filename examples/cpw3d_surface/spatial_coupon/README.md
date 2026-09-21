@@ -109,7 +109,14 @@ ownership, retains the frozen input unchanged, and verifies in-memory IDs plus
 serialized geometry/connectivity, quality, grouped physical-family areas,
 expected attributes, and SHA-bound partition certificates. MSH 2.2 is
 intentional: it is the format consumed by the Palace/MFEM reader used by these
-campaigns.
+campaigns. `relabel_radial_ma_shells.py` is the calibration-only, label-only
+counterpart on a built identity mesh (supervisor decision 56): it splits the MA
+surfaces into per-tube-ring radial shells at the byte level of the MSH 2.2 file
+(nodes and every other element byte identical, shell areas summing to the parent
+areas, the parent ownership certificate reproduced), writes the shell census and a
+build record `coupon_library.py qualify` consumes (one MA interface per shell, summed
+per type; `qualify/radial_ma_profile.py` fits the edge power law and the remainder
+inside the innermost ring from the per-shell matrices).
 
 The [graded-library campaign notes](graded-library-campaign-20260910.md) record
 full-scale source-contract checks and remaining qualification gates. Retained
