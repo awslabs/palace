@@ -18,6 +18,37 @@ verifiable, and the labeled calibration manifest
 `geometry-independence-calibration-sizing.json` (supervisor decision 41) freezes the
 Gmsh-only pipeline for the sizing calibration of the four-edge case (below).
 
+### Resource bounds are guidelines (supervisor decision 61c / user decision 60(3), 2026-09-21)
+
+The three build-machine bounds of the manifests' `Gates` are guidelines for the 36 GiB
+workstation (at most two concurrent builds), not restrictions on the physics:
+`MaximumElements` 4,000,000 -> **6,000,000**, `MaximumSeconds` 1800 -> **3600** per
+bounded stage, `MaximumRSSGiB` 8 -> **12** (two 12 GiB builds and the operating system
+fit 36 GiB). The production manifest carries the new values, mirrored into both
+calibration manifests; every manifest records the previous values, the decision and
+the reason under `Gates.PreviousValues` (the `Gates` block is the canonical build cache
+key, so a root built under the previous bounds carries its own recorded `Gates`).
+Reason: the transmon device library (decision 58) built its largest coupon,
+`spatial-3-edge-5d3b5e644745`, at 3,037,912 elements with a verification stage at
+1692 s (0.94 of the 1800 s bound, the run's one headroom flag) - the device coupons
+approach bounds calibrated on the gallery cases. Nothing else moves: every physical
+gate (positive orientation, SJ 0.01, condition 1000, corner aspect 4.0, protected
+1e-8, closure 1e-12) is unchanged; the estimate gate
+(`estimate_build_cost.preflight_build_cost` against `Gates.MaximumElements`), the
+mesher's `--max-elements` / `--max-nodes` budget (a fail-closed gate on the generated
+mesh: `FarFieldBudgetPolicy` Pressure 1, the size field never depends on the cap), the
+bounded-stage limits (`run_bounded_mesher.py` at `Gates.MaximumSeconds` /
+`Gates.MaximumRSSGiB`, audits included) and the 0.9 headroom flags
+(`run_gmsh_only_matrix.HEADROOM_FRACTION`) keep failing closed at the NEW values
+(`test_general_mesh_manifest.test_resource_bounds_are_guidelines_raised_by_decision_61c`).
+The decision-33 calibration-only element cap (`Calibration.MaximumElements` 5,000,000
+of `four-edge-calib-ma-el1c`, recorded build 4,483,816 tets) is retired
+(`Calibration.RetiredGateDeviations.MaximumElements` of the MA calibration manifest;
+the case is judged by the 6,000,000 gate like every other case; the per-case
+`UnchangedProductionParameters.seed["--max-elements"] 4000000` texts of the
+calibration cases record what those builds executed and are unchanged). Evidence
+recorded before 2026-09-21 quotes the bounds of its time (4M / 1800 s / 8 GiB).
+
 ### Production recipe (supervisor decision 42, 2026-09-19): Gmsh-only, TraceBasisSizeRatio 0.5
 
 The production recipe is the Gmsh-only build of decisions 38-42
@@ -40,7 +71,8 @@ the option fails closed), and `mesh_stage_contract.validate_trace_basis_sizing`
 binds the census `TraceBasisSizing.Ratio` to the executed value. Every physical
 gate is unchanged (positive orientation and Jacobian condition <= 1000 for every
 element type, tetrahedra SJ >= 0.01, corner aspect 4.0, protected 1e-8, closure
-1e-12, 4M elements, 1800 s / 8 GiB). **The MMG path (metric preparation, native
+1e-12; the resource guidelines 4M elements, 1800 s / 8 GiB of the time - 6M / 3600 s /
+12 GiB since decision 61c). **The MMG path (metric preparation, native
 MMG adaptation, label restoration, required-region optimizer, tetrahedral edge
 layer) is legacy calibration only**: it survives under the labeled
 `geometry-independence-calibration-ma.json` (`Pipeline: legacy-mmg`) so its study
@@ -579,8 +611,9 @@ edge segment (the four-edge narrow-hat bands on the top/bottom cut faces: 11.4 u
 on the basis edges (2,8)-(-6,0), RMS width 33 nm, tilt ~3 mrad). Physical gates
 unchanged: positive orientation and Jacobian condition <= 1000 for every element
 type, scaled Jacobian >= 0.01 for tetrahedra, MaximumCornerAspect 4.0,
-protected-surface tolerance 1e-8, ownership closure 1e-12, MaximumElements
-4,000,000, 1800 s / 8 GiB per stage (audits 16 GiB), trace-diagonal 0.
+protected-surface tolerance 1e-8, ownership closure 1e-12, trace-diagonal 0; the
+resource guidelines were MaximumElements 4,000,000, 1800 s / 8 GiB per stage (audits
+16 GiB) at the time (6,000,000 / 3600 s / 12 GiB since decision 61c).
 
 `run_gmsh_only_case.py CASE` drives a production case through the DAG, the rigid
 placements, the consolidated audits, normalization and per-entry verification from
@@ -2049,6 +2082,9 @@ exactly the declaring cases with the production value 4,000,000, and
 `case_gates` judges only those cases by the cap; `Gates.MaximumElements` stays
 4,000,000 in both manifests (the build cache key, and the gate of every other
 case), no production case may declare a cap, and the stage bounds are unchanged.
+(Decision 61c, 2026-09-21: the cap deviation is RETIRED - `Gates.MaximumElements` is
+6,000,000 in every manifest and the EL1c case declares no cap; the record is kept under
+`Calibration.RetiredGateDeviations.MaximumElements`.)
 Measured outcomes of decision 33 (roots
 `/tmp/coupon-calibration-ma-el4c-4f9946870-20260917-155730` and
 `/tmp/coupon-calibration-ma-el1c-cb3f64d81-20260917-160517`, adapter 72f741e3...,
@@ -2249,7 +2285,8 @@ python3 coupon_library.py build \
    the registered ones included) run as a pool of `--jobs` drivers (default 2), each
    the unchanged `run_gmsh_only_case.py` under the manifest bounds for every stage
    (`--audit-memory-gib` = `Gates.MaximumRSSGiB`, so audits and verification share
-   the 1800 s / 8 GiB stage bounds): headroom gate -> canonical DAG -> rigid
+   the stage bounds - 3600 s / 12 GiB since decision 61c, 1800 s / 8 GiB before):
+   headroom gate -> canonical DAG -> rigid
    placements -> audits -> `verify_canonical_case_entries.py`. A case fails closed on
    its own and the others continue; the exit status is nonzero unless every case
    passed.

@@ -20,9 +20,13 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 PRODUCTION_MANIFEST = HERE / "geometry-independence-suite.json"
 GIB = 2**30
+# The manifest's bounded-stage limits (decision 61c: 3600 s / 12 GiB; the synthetic stage
+# reports below carry them as run_bounded_mesher.py records them).
+PRODUCTION_GATES = json.loads(PRODUCTION_MANIFEST.read_text())["Gates"]
+STAGE_LIMITS = (float(PRODUCTION_GATES["MaximumSeconds"]), float(PRODUCTION_GATES["MaximumRSSGiB"]))
 
 
-def stage_report(root, name, seconds, peak_gib, *, code=0, reason=None, limits=(1800.0, 8.0), audit=False):
+def stage_report(root, name, seconds, peak_gib, *, code=0, reason=None, limits=STAGE_LIMITS, audit=False):
     suffix = ".audit.log.json" if audit else ".log.json"
     (root / f"{name}{suffix}").write_text(json.dumps({
         "Version": 3, "Command": ["x"], "Seconds": seconds, "PeakProcessTreeRSSBytes": int(peak_gib * GIB),
@@ -96,7 +100,7 @@ class LibraryBuildRecordTest(unittest.TestCase):
                                                  "identity-publication", "identity-variant-audits",
                                                  "per-entry-verification"})
         self.assertEqual(record["Stages"]["gmsh-build"]["PeakGiB"], 2.0)
-        self.assertEqual(record["Stages"]["gmsh-build"]["Limits"], {"Seconds": 1800.0, "MemoryGiB": 8.0})
+        self.assertEqual(record["Stages"]["gmsh-build"]["Limits"], {"Seconds": 3600.0, "MemoryGiB": 12.0})
         self.assertTrue(record["Verification"]["Passed"])
         self.assertEqual(record["HeadroomFlags"], [])
         self.assertIsNone(record["H1"])   # no identity mesh in the synthetic root
@@ -135,7 +139,7 @@ class LibraryBuildRecordTest(unittest.TestCase):
         (timeout / "build-summary.json").write_text(json.dumps(
             {"Status": STATUS_FAILED, "Stage": "gmsh-build", "ReturnCode": 124, "ScopeGuard": None,
              "Message": "stage gmsh-build failed rc=124"}))
-        stage_report(timeout, "gmsh-build", 1800.2, 3.0, code=-15, reason="timeout")
+        stage_report(timeout, "gmsh-build", STAGE_LIMITS[0] + 0.2, 3.0, code=-15, reason="timeout")
         record = self.record(timeout, driver_return_code=1)
         self.assertEqual((record["StoppedBy"]["Kind"], record["StoppedBy"]["Id"], record["StoppedBy"]["StopReason"]),
                          ("Stage", "gmsh-build", "timeout"))

@@ -52,8 +52,9 @@ HEADROOM_FRACTION = 0.9
 HEADROOM_RULE = (f"a case is flagged when its element count or pre-build estimate reaches "
                  f"{HEADROOM_FRACTION} x MaximumElements, or any bounded stage's wall seconds or peak "
                  f"process-tree RSS reaches {HEADROOM_FRACTION} x its limit (the ten-edge production root "
-                 f"sits at 0.87 of the cap and 0.96 of the memory bound: the margin rule the throughput "
-                 f"plan lacked)")
+                 f"sat at 0.87 of the 4M cap and 0.96 of the 8 GiB bound of decision 42: the margin rule the "
+                 f"throughput plan lacked; the bounds are the manifest's Gates - guidelines since decision 61c, "
+                 f"6M / 3600 s / 12 GiB, recorded under Gates.PreviousValues with their history)")
 STATUS_BUILT, STATUS_UNSUPPORTED, STATUS_FAILED, STATUS_UNBUILT = "built", "unsupported-class", "failed", "registered-unbuilt"
 HEADROOM_GATE_STAGE = "headroom-gate"
 VERIFICATION_STAGE = "per-entry-verification"

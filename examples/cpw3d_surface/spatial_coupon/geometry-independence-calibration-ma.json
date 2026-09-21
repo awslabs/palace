@@ -24,7 +24,15 @@
         "Derivation": "MaximumEdgeAspect = 2 x lc_tangent / EdgeSize = 2 x 0.05 / 0.001 = 100: the longest layer edge is the ridge-grid diagonal sqrt(2) x lc_tangent = 70.7 nm and the shortest height is the first slab EdgeSize = 1 nm (the row zigzag moves nodes outward), so the design aspect is sqrt(2) x 50 = 70.7 and the factor 2 leaves 1.41 for the zigzag (1.05) and the Delaunay split of the slabs; the roundoff floor 1e-12 on the scaled Jacobian marks a cell flat to double precision (the design minimum is 4e-4)",
         "Applies": "only a case of this manifest declaring Calibration.EdgeLayerQualityRule (general_mesh_manifest.case_gates: the verifier and the suite runner drop the rule from the gates judging every other case, which is judged by MinimumScaledJacobian on its whole mesh as before); the seed (--edge-layer-maximum-aspect on mesh_spatial_coupon.jl) and the label restorer (same option) of a declaring case gate the layer with the same bound (verify_canonical_case_entries.validate_edge_layer_quality_rule_binding); the audit producer reports MeshQuality.EdgeLayer / MeshQuality.OutsideEdgeLayer and general_mesh_manifest.audit_manifest_evidence judges them (edge-layer-quality, mesh-quality-jacobian outside); four-edge-calib-ma-edge-layer-4nm declares no rule and stays under its scaled-Jacobian-gated record (physical gates pass under the SJ gate; not re-verified under the rule)",
         "ProductionUse": "FORBIDDEN: a production manifest (no Calibration block) cannot carry Gates.EdgeLayerQualityRule and none of its cases may declare a Calibration or EdgeLayer block (general_mesh_manifest.validate_manifest fails preflight closed); test_general_mesh_manifest asserts it"
-      },
+      }
+    },
+    "VariantParameters": "the calibration recipe parameters live in the recorded stage commands (as in production) and are listed per case under Calibration; each case declares its options against ProductionValuesBefore34B, the production values at the time of the study (decision 34B adopted the EL4c options as the production recipe; this manifest never carries a ProductionRecipe block)",
+    "Verification": "per case only (verify_canonical_case_entries.py); the ScalingComparisons below are schema placeholders required by validate_manifest and are never evaluated as a matrix",
+    "EdgeLayerVariant": {
+      "Purpose": "decision 27 (user directive): O(1 nm) transverse resolution at the metal edges is required for the edge-singular MA participation; the seed carries a geometric transverse layer (EdgeSize, GrowthRatio) on every metal-edge face with nested tangential refinement (EdgeLayerAspect), the metric prescribes the same law and the layer surface is frozen; EdgeSize is the recorded h-parameter of the MA edge study (25 -> 4 -> 2 -> 1 nm)",
+      "CommandBinding": "verify_canonical_case_entries.py binds the declared seed/metric/adaptation options; mesh_stage_contract.validate_edge_layer binds EdgeSize/GrowthRatio/Aspect across the seed command, the metric command, the seed census, the recipe and the adapter hmin"
+    },
+    "RetiredGateDeviations": {
       "MaximumElements": {
         "Production": 4000000,
         "Calibration": 5000000,
@@ -34,14 +42,9 @@
         "Kind": "element-count RESOURCE cap (per case, calibration only)",
         "Reason": "supervisor decision 33: the 1 nm x aspect-4 edge layer is surface-driven (the first 1 nm aspect-4 probe adapted to 4,703,260 tets, layer ~1.3M) and cannot fit the 4,000,000 production cap at the required 3.125 nm tangential rows; the cap is raised for this one case so the un-confounded h_e point can be built; MaximumSeconds 1800 / MaximumRSSGiB 8 and every other gate keep their production values (a stage exceeding them stops the campaign)",
         "Applies": "only the cases named in Cases, each declaring Calibration.MaximumElements equal to Calibration (general_mesh_manifest.case_gates / validate_case_element_cap; the manifest Gates.MaximumElements 4,000,000 stays the build cache key and judges every other case)",
-        "ProductionUse": "FORBIDDEN: the production manifest keeps Gates.MaximumElements 4,000,000 and no production case may declare a Calibration block; test_general_mesh_manifest asserts it"
+        "ProductionUse": "FORBIDDEN: the production manifest keeps Gates.MaximumElements 4,000,000 and no production case may declare a Calibration block; test_general_mesh_manifest asserts it",
+        "Retired": "decision 61c (2026-09-21): Gates.MaximumElements is 6,000,000 in every manifest (Gates.PreviousValues); the recorded EL1c build (4,483,816 tets) is under the current gate, so the case declares no cap and is judged by the manifest gate like every other case"
       }
-    },
-    "VariantParameters": "the calibration recipe parameters live in the recorded stage commands (as in production) and are listed per case under Calibration; each case declares its options against ProductionValuesBefore34B, the production values at the time of the study (decision 34B adopted the EL4c options as the production recipe; this manifest never carries a ProductionRecipe block)",
-    "Verification": "per case only (verify_canonical_case_entries.py); the ScalingComparisons below are schema placeholders required by validate_manifest and are never evaluated as a matrix",
-    "EdgeLayerVariant": {
-      "Purpose": "decision 27 (user directive): O(1 nm) transverse resolution at the metal edges is required for the edge-singular MA participation; the seed carries a geometric transverse layer (EdgeSize, GrowthRatio) on every metal-edge face with nested tangential refinement (EdgeLayerAspect), the metric prescribes the same law and the layer surface is frozen; EdgeSize is the recorded h-parameter of the MA edge study (25 -> 4 -> 2 -> 1 nm)",
-      "CommandBinding": "verify_canonical_case_entries.py binds the declared seed/metric/adaptation options; mesh_stage_contract.validate_edge_layer binds EdgeSize/GrowthRatio/Aspect across the seed command, the metric command, the seed census, the recipe and the adapter hmin"
     }
   },
   "Gates": {
@@ -50,9 +53,9 @@
     "MinimumAchievedAspect": 0.9,
     "MinimumScaledJacobian": 0.01,
     "MaximumJacobianCondition": 1000.0,
-    "MaximumSeconds": 1800,
-    "MaximumRSSGiB": 8.0,
-    "MaximumElements": 4000000,
+    "MaximumSeconds": 3600,
+    "MaximumRSSGiB": 12.0,
+    "MaximumElements": 6000000,
     "MaximumCornerAspect": 4.0,
     "MinimumNoncornerAspect": 1.5,
     "MaximumProtectedMeasureError": 1e-08,
@@ -60,6 +63,22 @@
       "MaximumEdgeAspect": 100.0,
       "ScaledJacobianRoundoffFloor": 1e-12,
       "Rule": "calibration only (decision 32): cells inside the recorded edge layer pass on positive orientation (scaled Jacobian > ScaledJacobianRoundoffFloor) and longest edge / shortest height <= MaximumEdgeAspect; all other gates apply outside the layer; see Calibration.GateDeviations.EdgeLayerQualityRule"
+    },
+    "PreviousValues": {
+      "Decision": "61c (user decision 60(3), 2026-09-21): the build-machine resource bounds are GUIDELINES for the 36 GiB workstation with at most 2 concurrent builds, not hard restrictions",
+      "ChangedOn": "2026-09-21",
+      "Previous": {
+        "MaximumElements": 4000000,
+        "MaximumSeconds": 1800,
+        "MaximumRSSGiB": 8.0
+      },
+      "Current": {
+        "MaximumElements": 6000000,
+        "MaximumSeconds": 3600,
+        "MaximumRSSGiB": 12.0
+      },
+      "Reason": "the transmon device library (decision 58) built its largest coupon, spatial-3-edge-5d3b5e644745, at 3,037,912 elements with one verification stage at 1692 s (0.94 of the 1800 s bound; headroom flag) - the device coupons approach the 4M / 1800 s / 8 GiB bounds calibrated on the gallery cases; two concurrent 12 GiB builds fit the 36 GiB workstation with the operating system's headroom",
+      "Rule": "the estimate gate (estimate_build_cost.preflight_build_cost against Gates.MaximumElements), the mesher's --max-elements / --max-nodes budget, the bounded-stage limits (Gates.MaximumSeconds / Gates.MaximumRSSGiB through run_bounded_mesher.py) and the 0.9 headroom flags (run_gmsh_only_matrix.HEADROOM_FRACTION) all keep failing closed at the CURRENT values; every physical gate (orientation, MinimumScaledJacobian 0.01, MaximumJacobianCondition 1000, MaximumCornerAspect 4.0, MaximumProtectedMeasureError 1e-8, the 1e-12 ownership closure) is unchanged; the manifests' Gates are the canonical build cache key, so roots built under the previous bounds carry their own recorded Gates; the calibration-only decision-33 element-cap deviation (Calibration.MaximumElements 5,000,000 for four-edge-calib-ma-el1c, recorded build 4,483,816 tets) is retired: the case is judged by the current gate"
     }
   },
   "Tools": [
@@ -1539,7 +1558,7 @@
           }
         }
       },
-      "Provenance": "CALIBRATION variant of four-edge-9d2cb9bbb3fe (same immutable inputs, hashes and semantic contract as the production case; EDGE LAYER 1 nm x ASPECT 4 + CORNER GRADING (EL1c, supervisor decision 33, user directive): the EL4c recipe with EdgeSize 0.001 (rows 1/3/7/15/31 nm, sizes 1/2/4/8/16 nm; EdgeLayerAspect 4 nested tangential rows 3.125/6.25/12.5/25/50 nm on the 50 nm ridge grid, no taper: the rows start at the corner ball boundary) and EL4c's corner shells unchanged, CornerSize 0.004 (shells 4/8/16 nm at 4/12/28 nm, NormalSize from the reach 0.021 to the radius 0.1; supervisor amendment of 2026-09-17: CornerSize = EdgeSize 0.001 failed the seed's production gates - corner (2,0,0) aspect 4.81 > 4 from a 0.41 nm Gmsh surface edge next to the 1 nm shell node and one layer/ball-junction cell at scaled Jacobian 0.0073 - so EL4c -> EL1c changes exactly the edge layer at fixed corners), adapter hmin 0.001, corner balls and layer as MMG required tetrahedra, seed-side gates (MinimumScaledJacobian 0.01 on the whole mesh: aspect 4 keeps the layer under the SJ gate, no Calibration.EdgeLayerQualityRule); the un-confounded h_e step 4 -> 1 nm at fixed aspect 4 against EL4c; under the labeled calibration-only element cap Calibration.MaximumElements 5,000,000 (Calibration.GateDeviations.MaximumElements; the first 1 nm aspect-4 probe measured 4,703,260 adapted tets without corner grading); stage bounds 1800 s / 8 GiB and every other gate at the production value - supervisor decision 33 (corner grading then the clean 1 nm point, 2026-09-17, user directive). RemoteVerified: bounded read-only copy from soca-green /data/home/simlap/transmon_library_graded_v2_20260911/inputs/07; campaign.json maps input 07 to spatialedgecluster_edgecount-4_9d2cb9bbb3fe; 4 signature rows, model/process semantics, all copied hashes, and local copies verified; no jobs, meshes, fields, solutions, response matrices, or source banks copied",
+      "Provenance": "CALIBRATION variant of four-edge-9d2cb9bbb3fe (same immutable inputs, hashes and semantic contract as the production case; EDGE LAYER 1 nm x ASPECT 4 + CORNER GRADING (EL1c, supervisor decision 33, user directive): the EL4c recipe with EdgeSize 0.001 (rows 1/3/7/15/31 nm, sizes 1/2/4/8/16 nm; EdgeLayerAspect 4 nested tangential rows 3.125/6.25/12.5/25/50 nm on the 50 nm ridge grid, no taper: the rows start at the corner ball boundary) and EL4c's corner shells unchanged, CornerSize 0.004 (shells 4/8/16 nm at 4/12/28 nm, NormalSize from the reach 0.021 to the radius 0.1; supervisor amendment of 2026-09-17: CornerSize = EdgeSize 0.001 failed the seed's production gates - corner (2,0,0) aspect 4.81 > 4 from a 0.41 nm Gmsh surface edge next to the 1 nm shell node and one layer/ball-junction cell at scaled Jacobian 0.0073 - so EL4c -> EL1c changes exactly the edge layer at fixed corners), adapter hmin 0.001, corner balls and layer as MMG required tetrahedra, seed-side gates (MinimumScaledJacobian 0.01 on the whole mesh: aspect 4 keeps the layer under the SJ gate, no Calibration.EdgeLayerQualityRule); the un-confounded h_e step 4 -> 1 nm at fixed aspect 4 against EL4c; under the labeled calibration-only element cap Calibration.MaximumElements 5,000,000 (Calibration.GateDeviations.MaximumElements; the first 1 nm aspect-4 probe measured 4,703,260 adapted tets without corner grading); stage bounds 1800 s / 8 GiB and every other gate at the production value - supervisor decision 33 (corner grading then the clean 1 nm point, 2026-09-17, user directive). RemoteVerified: bounded read-only copy from soca-green /data/home/simlap/transmon_library_graded_v2_20260911/inputs/07; campaign.json maps input 07 to spatialedgecluster_edgecount-4_9d2cb9bbb3fe; 4 signature rows, model/process semantics, all copied hashes, and local copies verified; no jobs, meshes, fields, solutions, response matrices, or source banks copied; DECISION 61c (2026-09-21): the calibration-only element cap Calibration.MaximumElements 5,000,000 is RETIRED (Calibration.RetiredGateDeviations.MaximumElements) - the manifest Gates.MaximumElements is now 6,000,000 (Gates.PreviousValues) and the recorded 4,483,816-tet build is judged by it",
       "Calibration": {
         "Label": "EDGE LAYER 1 nm x ASPECT 4 + CORNER GRADING (EL1c, supervisor decision 33, user directive): the EL4c recipe with EdgeSize 0.001 (rows 1/3/7/15/31 nm, sizes 1/2/4/8/16 nm; EdgeLayerAspect 4 nested tangential rows 3.125/6.25/12.5/25/50 nm on the 50 nm ridge grid, no taper: the rows start at the corner ball boundary) and EL4c's corner shells unchanged, CornerSize 0.004 (shells 4/8/16 nm at 4/12/28 nm, NormalSize from the reach 0.021 to the radius 0.1; supervisor amendment of 2026-09-17: CornerSize = EdgeSize 0.001 failed the seed's production gates - corner (2,0,0) aspect 4.81 > 4 from a 0.41 nm Gmsh surface edge next to the 1 nm shell node and one layer/ball-junction cell at scaled Jacobian 0.0073 - so EL4c -> EL1c changes exactly the edge layer at fixed corners), adapter hmin 0.001, corner balls and layer as MMG required tetrahedra, seed-side gates (MinimumScaledJacobian 0.01 on the whole mesh: aspect 4 keeps the layer under the SJ gate, no Calibration.EdgeLayerQualityRule); the un-confounded h_e step 4 -> 1 nm at fixed aspect 4 against EL4c; under the labeled calibration-only element cap Calibration.MaximumElements 5,000,000 (Calibration.GateDeviations.MaximumElements; the first 1 nm aspect-4 probe measured 4,703,260 adapted tets without corner grading); stage bounds 1800 s / 8 GiB and every other gate at the production value; MEASURED at cb3f64d81 (root coupon-calibration-ma-el1c-cb3f64d81-20260917-160517, identity SHA256 9e9e1567...): 4,479,207 tets, physical gate mesh-quality-jacobian FAILED (MaximumJacobianCondition 5115.5 > 1000 on 56 layer cells with 0.02-0.24 nm edges made by the seed's own bounded descent next to 1 nm row nodes; min scaled Jacobian 0.01696 passes), identity-only audits (the rotate-z-0.63 audit exceeded the 1800 s audit bound), not run in physics; REBUILT under decision 34 (seed sub-size collapse on surface vertices, descent condition/edge guards, seed-side --maximum-jacobian-condition 1000 gate; root coupon-calibration-ma-el1c-cb3f64d81-20260917-205035, identity SHA256 2a3de0d9...): 4,483,816 tets, every physical gate passes on identity (min scaled Jacobian 0.01630, max Jacobian condition 924.2, corners 3.55/3.24/3.42/3.41), design gate achieved-anisotropy fails on the layer-adjacent band (decision 31), rotate-z-0.63 audit exceeded the 1800 s audit bound (identity verified only)",
         "BaseCase": "four-edge-9d2cb9bbb3fe",
@@ -1687,8 +1706,7 @@
           "MetricLaw": "min(NormalSize, CornerSize + (GrowthRatio - 1) x distance to the corner) inside CornerIsotropyRadius (edge_volume_metric.corner_ball_size; the shells never exceed it); the corner-ball cells are MMG required tetrahedra so the adapted corner cells are the seed's",
           "Binding": "seed --corner-size == metric --corner-size == census CornerGrading.CornerSize == recipe CornerGrading.CornerSize; GrowthRatio = the edge-layer growth ratio; Reach <= CornerIsotropyRadius; shells recomputed (mesh_stage_contract.validate_corner_grading); with the layer the census records LayerReachesCornerBall, no taper and UnlayeredEdgeLengthPerCorner",
           "Default": "--corner-size 0 (absent) is the production ball: uniform NormalSize; the EL4 and EL1 records keep it"
-        },
-        "MaximumElements": 5000000
+        }
       }
     }
   ],

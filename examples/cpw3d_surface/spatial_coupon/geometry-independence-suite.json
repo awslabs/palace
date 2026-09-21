@@ -9,12 +9,28 @@
     "MinimumAchievedAspect": 1.5,
     "MinimumScaledJacobian": 0.01,
     "MaximumJacobianCondition": 1000.0,
-    "MaximumSeconds": 1800,
-    "MaximumRSSGiB": 8.0,
-    "MaximumElements": 4000000,
+    "MaximumSeconds": 3600,
+    "MaximumRSSGiB": 12.0,
+    "MaximumElements": 6000000,
     "MaximumCornerAspect": 4.0,
     "MinimumNoncornerAspect": 1.5,
-    "MaximumProtectedMeasureError": 1e-08
+    "MaximumProtectedMeasureError": 1e-08,
+    "PreviousValues": {
+      "Decision": "61c (user decision 60(3), 2026-09-21): the build-machine resource bounds are GUIDELINES for the 36 GiB workstation with at most 2 concurrent builds, not hard restrictions",
+      "ChangedOn": "2026-09-21",
+      "Previous": {
+        "MaximumElements": 4000000,
+        "MaximumSeconds": 1800,
+        "MaximumRSSGiB": 8.0
+      },
+      "Current": {
+        "MaximumElements": 6000000,
+        "MaximumSeconds": 3600,
+        "MaximumRSSGiB": 12.0
+      },
+      "Reason": "the transmon device library (decision 58) built its largest coupon, spatial-3-edge-5d3b5e644745, at 3,037,912 elements with one verification stage at 1692 s (0.94 of the 1800 s bound; headroom flag) - the device coupons approach the 4M / 1800 s / 8 GiB bounds calibrated on the gallery cases; two concurrent 12 GiB builds fit the 36 GiB workstation with the operating system's headroom",
+      "Rule": "the estimate gate (estimate_build_cost.preflight_build_cost against Gates.MaximumElements), the mesher's --max-elements / --max-nodes budget, the bounded-stage limits (Gates.MaximumSeconds / Gates.MaximumRSSGiB through run_bounded_mesher.py) and the 0.9 headroom flags (run_gmsh_only_matrix.HEADROOM_FRACTION) all keep failing closed at the CURRENT values; every physical gate (orientation, MinimumScaledJacobian 0.01, MaximumJacobianCondition 1000, MaximumCornerAspect 4.0, MaximumProtectedMeasureError 1e-8, the 1e-12 ownership closure) is unchanged; the manifests' Gates are the canonical build cache key, so roots built under the previous bounds carry their own recorded Gates; the calibration-only decision-33 element-cap deviation (Calibration.MaximumElements 5,000,000 for four-edge-calib-ma-el1c, recorded build 4,483,816 tets) is retired: the case is judged by the current gate"
+    }
   },
   "ProductionRecipe": {
     "Label": "Gmsh-only production recipe (supervisor decisions 38-42, 2026-09-18/19): the coupon mesh is the Gmsh build alone - prism edge tubes on every straight metal edge (inner ring EdgeSize 0.25 nm, ring ratio 2 up to the transverse bound, extruded in layers following the size field on the axis within the tangential spacing, explicit pyramids), isotropic corner balls graded to the tube inner size (CornerSize = EdgeSize), trace-basis cut-surface / volume sizing at TraceBasisSizeRatio 0.5 x the minimum altitude of the basis triangle (decision 42, calibrated by physics-11; the altitude measure and the composed spacing of every explicitly 1D-meshed curve since decision 43), junction-line / footprint band and tube-band volume size laws with FarGrowth 0.5 to FarSize; no MMG, no tetrahedral edge layer, no metric / adaptation / restoration stages; every physical gate (Gates) unchanged and re-expressed per element type",
@@ -69,7 +85,8 @@
         "--minimum-scaled-jacobian": 0.01,
         "--maximum-jacobian-condition": 1000.0,
         "--maximum-quality-displacement-over-normal": 0.75,
-        "--max-elements": 4000000
+        "--max-elements": 6000000,
+        "--max-elements-history": "4000000 until decision 61c (2026-09-21; Gates.PreviousValues): the option is Gates.MaximumElements, a fail-closed budget on the generated mesh (FarFieldBudgetPolicy Pressure 1 - the size field never changes with the cap)"
       }
     },
     "RetiredLegacyRecipe": {

@@ -2162,8 +2162,7 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
             self.assertNotIn("calib-ma", case["Id"])
             self.assertNotEqual(case["InventoryStatus"], "Calibration")
         deviations = calibration["Calibration"]["GateDeviations"]
-        self.assertEqual(set(deviations), {"MinimumAchievedAspect", "EdgeLayerQualityRule",
-                                           "MaximumElements"})
+        self.assertEqual(set(deviations), {"MinimumAchievedAspect", "EdgeLayerQualityRule"})
         self.assertEqual(deviations["MinimumAchievedAspect"]["Production"], 1.5)
         self.assertEqual(deviations["MinimumAchievedAspect"]["Calibration"], 0.9)
         self.assertIn("FORBIDDEN", deviations["MinimumAchievedAspect"]["ProductionUse"])
@@ -2182,39 +2181,39 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
                           if key not in deviating},
                          {key: value for key, value in production["Gates"].items()
                           if key not in deviating})
-        # Decision 33: the element cap 5,000,000 is a per-case calibration deviation
-        # of the 1 nm aspect-4 case only; both manifests' Gates keep 4,000,000 (the
-        # production value and the build cache key) and production cases never
-        # carry a cap.
-        self.assertEqual(production["Gates"]["MaximumElements"], 4000000)
-        self.assertEqual(calibration["Gates"]["MaximumElements"], 4000000)
-        cap = deviations["MaximumElements"]
-        self.assertEqual((cap["Production"], cap["Calibration"]), (4000000, 5000000))
-        self.assertEqual(cap["Cases"], ["four-edge-calib-ma-el1c"])
-        self.assertIn("FORBIDDEN", cap["ProductionUse"])
+        # Decision 33's per-case element cap 5,000,000 (the 1 nm aspect-4 case) is RETIRED
+        # by decision 61c: both manifests' Gates carry 6,000,000 (the build cache key), no
+        # case declares a cap, the retired deviation is recorded and the EL1c build
+        # (4,483,816 tets) is judged by the manifest gate like every other case.
+        self.assertEqual(production["Gates"]["MaximumElements"], 6000000)
+        self.assertEqual(calibration["Gates"]["MaximumElements"], 6000000)
+        retired = calibration["Calibration"]["RetiredGateDeviations"]["MaximumElements"]
+        self.assertEqual((retired["Production"], retired["Calibration"]), (4000000, 5000000))
+        self.assertEqual(retired["Cases"], ["four-edge-calib-ma-el1c"])
+        self.assertIn("61c", retired["Retired"])
         for case in production["Cases"]:
-            self.assertEqual(case_gates(production, case)["MaximumElements"], 4000000)
+            self.assertEqual(case_gates(production, case)["MaximumElements"], 6000000)
         for case in calibration["Cases"]:
-            expected = 5000000 if case["Id"] in cap["Cases"] else 4000000
-            self.assertEqual(case_gates(calibration, case)["MaximumElements"], expected)
-            self.assertEqual(case["Calibration"].get("MaximumElements"),
-                             5000000 if case["Id"] in cap["Cases"] else None)
-        capped = next(case for case in calibration["Cases"] if case["Id"] == cap["Cases"][0])
+            self.assertEqual(case_gates(calibration, case)["MaximumElements"], 6000000)
+            self.assertIsNone(case["Calibration"].get("MaximumElements"))
+        el1c = next(case for case in calibration["Cases"] if case["Id"] == retired["Cases"][0])
+        self.assertIn("DECISION 61c", el1c["Provenance"])
         over = {"Resources": {"ExitCode": 0, "Seconds": 1., "PeakRSSGiB": 1., "Elements": 4500000,
                               "CanonicalBuild": {"Seconds": 1., "PeakRSSGiB": 1.},
                               "PlacementPublication": {"Seconds": 1., "PeakRSSGiB": 1.}}}
         contract = load_semantic_contract(
-            HERE / capped["Source"]["Directory"].split("spatial_coupon/", 1)[1] / "semantic-contract.json")
-        binding = {"CaseId": capped["Id"], "Variant": "identity",
-                   "Transform": capped["Variants"][0]["Transform"], "TransformSHA256": "x",
+            HERE / el1c["Source"]["Directory"].split("spatial_coupon/", 1)[1] / "semantic-contract.json")
+        binding = {"CaseId": el1c["Id"], "Variant": "identity",
+                   "Transform": el1c["Variants"][0]["Transform"], "TransformSHA256": "x",
                    "InputSHA256": {"Process": "p", "SemanticContract": "s", "MeshRecipe": "r"},
                    "ToolSHA256": {}, "StageToolSHA256": {}}
-        self.assertNotIn("bounded-resources", audit_manifest_evidence(
-            over, case_gates(calibration, capped), contract, binding))
-        self.assertIn("bounded-resources", audit_manifest_evidence(
-            over, case_gates(calibration, calibration["Cases"][0]), contract, binding))
-        self.assertIn("bounded-resources", audit_manifest_evidence(
-            over, production["Gates"], contract, binding))
+        # 4.5M elements pass every case under the current gate; 6,000,001 fail every case.
+        for judged in (case_gates(calibration, el1c), case_gates(calibration, calibration["Cases"][0]),
+                       production["Gates"]):
+            self.assertNotIn("bounded-resources", audit_manifest_evidence(over, judged, contract, binding))
+            beyond = copy.deepcopy(over)
+            beyond["Resources"]["Elements"] = 6000001
+            self.assertIn("bounded-resources", audit_manifest_evidence(beyond, judged, contract, binding))
         with tempfile.TemporaryDirectory() as temporary:
             forged = Path(temporary) / "geometry-independence-suite.json"
             def rejected(mutate, message):
@@ -2245,25 +2244,30 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
                 "ScaledJacobianRoundoffFloor", .01), "not labeled")
             rejected_calibration(lambda m: m["Cases"][-1].__setitem__("EdgeLayer", {}),
                                  "must declare its edge layer under Calibration")
-            # The element cap must be labeled: deviation present, values equal, case
-            # named, above the manifest gate; the label names exactly the declaring cases.
+            # A per-case element cap (validate_case_element_cap, kept for a future labeled
+            # deviation) must still be labeled: deviation present, values equal, case named,
+            # above the manifest gate; the label names exactly the declaring cases.
             def capped_case(m):
-                return next(case for case in m["Cases"] if case["Id"] == cap["Cases"][0])
-            rejected_calibration(lambda m: m["Calibration"]["GateDeviations"].pop("MaximumElements"),
+                return next(case for case in m["Cases"] if case["Id"] == retired["Cases"][0])
+            def relabeled(m, cap=7000000, production_value=6000000, cases=None):
+                capped_case(m)["Calibration"]["MaximumElements"] = cap
+                m["Calibration"]["GateDeviations"]["MaximumElements"] = {
+                    "Production": production_value, "Calibration": cap,
+                    "Cases": [retired["Cases"][0]] if cases is None else cases, "ProductionUse": "FORBIDDEN"}
+            relabeled_manifest = copy.deepcopy(calibration); relabeled(relabeled_manifest)
+            validate_manifest(relabeled_manifest, forged, check_available_files=False)
+            self.assertEqual(case_gates(relabeled_manifest, capped_case(relabeled_manifest))["MaximumElements"], 7000000)
+            rejected_calibration(lambda m: capped_case(m)["Calibration"].__setitem__("MaximumElements", 7000000),
                                  "not labeled as a calibration-only deviation")
-            rejected_calibration(lambda m: capped_case(m)["Calibration"].__setitem__("MaximumElements", 6000000),
+            rejected_calibration(lambda m: relabeled(m, cap=5000000),
                                  "not labeled as a calibration-only deviation")
-            rejected_calibration(lambda m: capped_case(m)["Calibration"].__setitem__("MaximumElements", 3000000),
+            rejected_calibration(lambda m: relabeled(m, production_value=4000000),
                                  "not labeled as a calibration-only deviation")
-            rejected_calibration(lambda m: m["Calibration"]["GateDeviations"]["MaximumElements"].__setitem__(
-                "Production", 5000000), "not labeled as a calibration-only deviation")
-            rejected_calibration(lambda m: m["Calibration"]["GateDeviations"]["MaximumElements"].__setitem__(
-                "Cases", []), "not labeled as a calibration-only deviation")
-            rejected_calibration(lambda m: m["Cases"][0]["Calibration"].__setitem__("MaximumElements", 5000000),
+            rejected_calibration(lambda m: relabeled(m, cases=[]),
                                  "not labeled as a calibration-only deviation")
-            rejected_calibration(lambda m: capped_case(m)["Calibration"].pop("MaximumElements"),
+            rejected_calibration(lambda m: (relabeled(m), capped_case(m)["Calibration"].pop("MaximumElements")),
                                  "name exactly the cases declaring the cap")
-            rejected(lambda m: m["Cases"][0].__setitem__("Calibration", {"MaximumElements": 5000000}),
+            rejected(lambda m: m["Cases"][0].__setitem__("Calibration", {"MaximumElements": 7000000}),
                      "calibration or edge-layer block in a production manifest")
         self.assertEqual(calibration["Tools"], production["Tools"])
         # The calibration manifest keeps the legacy MMG stages (labeled); the shared
@@ -2282,6 +2286,75 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
             self.assertEqual(case["Variants"], base["Variants"])
             self.assertEqual(case["TransformComparison"], base["TransformComparison"])
         validate_manifest(calibration, calibration_path)
+
+    def test_resource_bounds_are_guidelines_raised_by_decision_61c(self):
+        """Decision 61c (user decision 60(3)): the build-machine bounds are guidelines -
+        MaximumElements 4M -> 6M, MaximumSeconds 1800 -> 3600, MaximumRSSGiB 8 -> 12 in the
+        production manifest, mirrored into both calibration manifests with the previous
+        values and the reason recorded under Gates.PreviousValues; every physical gate is
+        unchanged; the estimate gate, the headroom flags and the bounded-resources audit
+        still fail closed at the NEW values."""
+        from general_mesh_manifest import preflight_build_cost
+        from run_gmsh_only_matrix import HEADROOM_FRACTION, headroom_flags
+        paths = {name: HERE / f"geometry-independence-{name}.json"
+                 for name in ("suite", "calibration-sizing", "calibration-ma")}
+        manifests = {name: json.loads(path.read_text()) for name, path in paths.items()}
+        current = {"MaximumElements": 6000000, "MaximumSeconds": 3600, "MaximumRSSGiB": 12.0}
+        previous = {"MaximumElements": 4000000, "MaximumSeconds": 1800, "MaximumRSSGiB": 8.0}
+        physical = {"CornerTolerance": 1e-08, "MaximumNormalFactor": 2.0, "MinimumScaledJacobian": 0.01,
+                    "MaximumJacobianCondition": 1000.0, "MaximumCornerAspect": 4.0, "MinimumNoncornerAspect": 1.5,
+                    "MaximumProtectedMeasureError": 1e-08}
+        for name, manifest in manifests.items():
+            gates = manifest["Gates"]
+            self.assertEqual({key: gates[key] for key in current}, current, name)
+            self.assertEqual({key: gates[key] for key in physical}, physical, name)
+            history = gates["PreviousValues"]
+            self.assertEqual(history["Previous"], previous, name)
+            self.assertEqual(history["Current"], current, name)
+            self.assertIn("61c", history["Decision"])
+            self.assertIn("36 GiB", history["Decision"])
+            self.assertEqual(history, manifests["suite"]["Gates"]["PreviousValues"], name)
+            validate_manifest(manifest, paths[name], check_available_files=False)
+        recipe = manifests["suite"]["ProductionRecipe"]["UnchangedParameters"]["build"]
+        self.assertEqual(recipe["--max-elements"], 6000000)
+        self.assertIn("4000000", recipe["--max-elements-history"])
+        # The estimate gate fails closed at the new cap: an estimate of 6,000,001 fails,
+        # 5,999,999 passes (estimate_build_cost.gate against Gates.MaximumElements).
+        production = manifests["suite"]
+        ten_edge = next(case for case in production["Cases"] if case["Id"] == "ten-edge-6791f1c84123")
+        result = preflight_build_cost(production, paths["suite"], ten_edge)
+        self.assertTrue(result["Passed"])
+        self.assertEqual(result["MaximumElements"], 6000000)
+        tight = copy.deepcopy(production)
+        tight["Gates"]["MaximumElements"] = int(result["EstimatedElements"]) - 1
+        self.assertFalse(preflight_build_cost(tight, paths["suite"], ten_edge)["Passed"])
+        # The headroom flags fire at 0.9 x the new values and the bounded stages are judged
+        # by the new limits.
+        gates = production["Gates"]
+        stages = {"gmsh-build": {"Seconds": 0.9 * 3600, "PeakGiB": 1.0, "Limits": {"Seconds": 3600.0, "MemoryGiB": 12.0}},
+                  "canonical-publish": {"Seconds": 1.0, "PeakGiB": 0.9 * 12.0, "Limits": {"Seconds": 3600.0, "MemoryGiB": 12.0}}}
+        flags = headroom_flags(int(0.9 * 6000000), None, stages, gates)
+        self.assertEqual(len(flags), 3, flags)
+        self.assertIn(f"elements 5400000 >= {HEADROOM_FRACTION} x MaximumElements 6000000", flags)
+        self.assertEqual(headroom_flags(5399999, None, {"gmsh-build": {"Seconds": 3239.0, "PeakGiB": 10.79,
+                                                                        "Limits": {"Seconds": 3600.0, "MemoryGiB": 12.0}}},
+                                        gates), [])
+        contract = load_semantic_contract(
+            HERE / ten_edge["Source"]["Directory"].split("spatial_coupon/", 1)[1] / "semantic-contract.json")
+        binding = {"CaseId": ten_edge["Id"], "Variant": "identity", "Transform": ten_edge["Variants"][0]["Transform"],
+                   "TransformSHA256": "x", "InputSHA256": {"Process": "p", "SemanticContract": "s", "MeshRecipe": "r"},
+                   "ToolSHA256": {}, "StageToolSHA256": {}}
+        within = {"Resources": {"ExitCode": 0, "Seconds": 3600., "PeakRSSGiB": 12., "Elements": 6000000,
+                                "CanonicalBuild": {"Seconds": 3600., "PeakRSSGiB": 12.},
+                                "PlacementPublication": {"Seconds": 3600., "PeakRSSGiB": 12.}}}
+        self.assertNotIn("bounded-resources", audit_manifest_evidence(within, gates, contract, binding))
+        for key, value in (("Seconds", 3600.5), ("PeakRSSGiB", 12.01)):
+            beyond = copy.deepcopy(within)
+            beyond["Resources"]["CanonicalBuild"][key] = value
+            self.assertIn("bounded-resources", audit_manifest_evidence(beyond, gates, contract, binding))
+        beyond = copy.deepcopy(within)
+        beyond["Resources"]["Elements"] = 6000001
+        self.assertIn("bounded-resources", audit_manifest_evidence(beyond, gates, contract, binding))
 
     def test_sizing_calibration_manifest_is_a_labeled_gmsh_only_calibration(self):
         # Decision 41: the sizing calibration manifest freezes the Gmsh-only pipeline,
@@ -3318,8 +3391,11 @@ class AchievedAnisotropyDesignGateTest(unittest.TestCase):
         self.assertEqual(self.gates["MaximumJacobianCondition"], 1000.)
         self.assertEqual(self.gates["MaximumCornerAspect"], 4.)
         self.assertEqual(self.gates["MaximumProtectedMeasureError"], 1e-8)
-        self.assertEqual(self.gates["MaximumElements"], 4000000)
-        self.assertEqual((self.gates["MaximumSeconds"], self.gates["MaximumRSSGiB"]), (1800, 8.))
+        # The resource guidelines (decision 61c) with their previous values recorded.
+        self.assertEqual(self.gates["MaximumElements"], 6000000)
+        self.assertEqual((self.gates["MaximumSeconds"], self.gates["MaximumRSSGiB"]), (3600, 12.))
+        self.assertEqual(self.gates["PreviousValues"]["Previous"],
+                         {"MaximumElements": 4000000, "MaximumSeconds": 1800, "MaximumRSSGiB": 8.0})
         # The production stage set is the Gmsh-only DAG: no metric, MMG or restoration stage.
         self.assertEqual(set(self.production["StageToolSHA256"]),
                          {"canonical-source-validation", "gmsh-build", "canonical-gmsh-publication",
