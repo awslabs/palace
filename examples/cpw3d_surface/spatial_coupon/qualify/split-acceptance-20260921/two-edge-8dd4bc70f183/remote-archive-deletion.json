@@ -1,0 +1,10 @@
+{
+  "Archives": [
+    "/data/home/simlap/coupon_accuracy_assessment_20260913/library-split-acceptance-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p4/archive",
+    "/data/home/simlap/coupon_accuracy_assessment_20260913/library-split-acceptance-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p5-control/archive",
+    "/data/home/simlap/coupon_accuracy_assessment_20260913/library-split-acceptance-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p3-control/archive"
+  ],
+  "SizesBeforeDeletion": "4.8G\t/data/home/simlap/coupon_accuracy_assessment_20260913/library-split-acceptance-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p4/archive\n961M\t/data/home/simlap/coupon_accuracy_assessment_20260913/library-split-acceptance-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p5-control/archive\n214M\t/data/home/simlap/coupon_accuracy_assessment_20260913/library-split-acceptance-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p3-control/archive",
+  "DeletedUTC": "2026-09-21T21:43:30Z",
+  "Remaining": ""
+}

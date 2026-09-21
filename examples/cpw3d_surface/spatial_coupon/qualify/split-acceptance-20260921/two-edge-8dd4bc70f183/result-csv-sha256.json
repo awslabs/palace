@@ -1,0 +1,82 @@
+{
+  "main/jobs/reducer/memory-samples.csv": {
+    "Local": "4e5abdbb7d2bdf6a06a43ebad55897234264c7b8f53bba5f711410363bc0f972",
+    "Remote": "4e5abdbb7d2bdf6a06a43ebad55897234264c7b8f53bba5f711410363bc0f972",
+    "OK": true
+  },
+  "main/jobs/worker-1/memory-samples.csv": {
+    "Local": "664205f9e9433b01db1fc1d809f3aba428655d4e994b886889f3b9b20430fdac",
+    "Remote": "664205f9e9433b01db1fc1d809f3aba428655d4e994b886889f3b9b20430fdac",
+    "OK": true
+  },
+  "main/jobs/worker-2/memory-samples.csv": {
+    "Local": "b754e311b1d30c97caaab16b547eced1a51fdfa8945674244185f57af422ca24",
+    "Remote": "b754e311b1d30c97caaab16b547eced1a51fdfa8945674244185f57af422ca24",
+    "OK": true
+  },
+  "main/two-edge-8dd4bc70f183-p3-control/reducer/domain-response-matrix.csv": {
+    "Local": "14e4b9660b010bb6ae0cbe9b6c955480b054434492eb0b7e3863bcab855e4f7f",
+    "Remote": "14e4b9660b010bb6ae0cbe9b6c955480b054434492eb0b7e3863bcab855e4f7f",
+    "OK": true
+  },
+  "main/two-edge-8dd4bc70f183-p3-control/reducer/surface-response-matrix.csv": {
+    "Local": "5d4b7f3cd706d76ae489f1f4c7b46bd3c15812c2e359fb50f7c5c2d3d8673182",
+    "Remote": "5d4b7f3cd706d76ae489f1f4c7b46bd3c15812c2e359fb50f7c5c2d3d8673182",
+    "OK": true
+  },
+  "main/two-edge-8dd4bc70f183-p4/reducer/domain-response-matrix.csv": {
+    "Local": "2cb432ee04ae70637b1a90eb320ec676a841d80390a9c54e29b44ac8484ac262",
+    "Remote": "2cb432ee04ae70637b1a90eb320ec676a841d80390a9c54e29b44ac8484ac262",
+    "OK": true
+  },
+  "main/two-edge-8dd4bc70f183-p4/reducer/surface-response-matrix.csv": {
+    "Local": "d4e2aa53d614753db345f197f98abbb39de0f92a4090d4060833f0bac362c35e",
+    "Remote": "d4e2aa53d614753db345f197f98abbb39de0f92a4090d4060833f0bac362c35e",
+    "OK": true
+  },
+  "main/two-edge-8dd4bc70f183-p4-local-edge/output/domain-E.csv": {
+    "Local": "534e5dfa7c4dc6a54ff4199cb0d304e2d9acc41f3bde52cf6ba74374d47eed08",
+    "Remote": "534e5dfa7c4dc6a54ff4199cb0d304e2d9acc41f3bde52cf6ba74374d47eed08",
+    "OK": true
+  },
+  "main/two-edge-8dd4bc70f183-p4-local-edge/output/domain-response-matrix.csv": {
+    "Local": "b228d62a8b2797506dda8a1d012d4c72d262cb16ca19d8b0659799e25136a7b7",
+    "Remote": "b228d62a8b2797506dda8a1d012d4c72d262cb16ca19d8b0659799e25136a7b7",
+    "OK": true
+  },
+  "main/two-edge-8dd4bc70f183-p4-local-edge/output/error-indicators.csv": {
+    "Local": "a51136575d0e8384052273e0739ff76fd2ba356ef8404c2856f72de7c3c5bc5a",
+    "Remote": "a51136575d0e8384052273e0739ff76fd2ba356ef8404c2856f72de7c3c5bc5a",
+    "OK": true
+  },
+  "main/two-edge-8dd4bc70f183-p4-local-edge/output/surface-Q-edge-local.csv": {
+    "Local": "fbdfa042c13e7cae1843b72c89f326babb2f886432053d504932e51282a429e8",
+    "Remote": "fbdfa042c13e7cae1843b72c89f326babb2f886432053d504932e51282a429e8",
+    "OK": true
+  },
+  "main/two-edge-8dd4bc70f183-p4-local-edge/output/surface-Q-edge.csv": {
+    "Local": "66f52fc52c41c9db2ff9dd01c6f7f14676fc3cf723ef088ff99af1a33f57b15b",
+    "Remote": "66f52fc52c41c9db2ff9dd01c6f7f14676fc3cf723ef088ff99af1a33f57b15b",
+    "OK": true
+  },
+  "main/two-edge-8dd4bc70f183-p4-local-edge/output/surface-Q.csv": {
+    "Local": "3f8cb1e9c173d15160697d49a2b09524d4bc8a32015900d04a845a718f230f85",
+    "Remote": "3f8cb1e9c173d15160697d49a2b09524d4bc8a32015900d04a845a718f230f85",
+    "OK": true
+  },
+  "main/two-edge-8dd4bc70f183-p4-local-edge/output/surface-response-matrix.csv": {
+    "Local": "c58d5ba78c45401d980c6f0fe7ccf78c619b54c5acd0e68d42eda766f1b4d3b1",
+    "Remote": "c58d5ba78c45401d980c6f0fe7ccf78c619b54c5acd0e68d42eda766f1b4d3b1",
+    "OK": true
+  },
+  "main/two-edge-8dd4bc70f183-p5-control/reducer/domain-response-matrix.csv": {
+    "Local": "c10294ee15a3586c7204d291ec62da76807a11f7e879f4b8d8799663b174ef33",
+    "Remote": "c10294ee15a3586c7204d291ec62da76807a11f7e879f4b8d8799663b174ef33",
+    "OK": true
+  },
+  "main/two-edge-8dd4bc70f183-p5-control/reducer/surface-response-matrix.csv": {
+    "Local": "7416d3bad8b88faf72321a9b187768c181d98cde86c479130e72f9b7b4e55237",
+    "Remote": "7416d3bad8b88faf72321a9b187768c181d98cde86c479130e72f9b7b4e55237",
+    "OK": true
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "UTC": "2026-09-21T21:13:28Z",
+  "Stages": {
+    "two-edge-8dd4bc70f183-p4": {
+      "Directory": "/data/home/simlap/coupon_accuracy_assessment_20260913/library-split-acceptance-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p4/archive",
+      "Expected": 14976,
+      "Found": 14976,
+      "OK": true,
+      "Rule": "sources x ranks files source-*-rank-*-V.bin (one potential per source and rank)"
+    }
+  }
+}
