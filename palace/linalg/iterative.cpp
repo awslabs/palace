@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <limits>
 #include <string>
+#include <vector>
 #include "linalg/orthog.hpp"
 #include "utils/communication.hpp"
 #include "utils/timer.hpp"
@@ -304,6 +305,23 @@ inline void ApplyBA(PreconditionerSide side, const OperType *A, const Solver<Ope
   }
 }
 
+// Free the memory owned by a solver work vector. The device use flag is preserved, and the
+// vector is resized as needed at the start of the next solve.
+template <typename VecType>
+inline void DestroyWorkVector(VecType &x)
+{
+  x.Destroy();
+}
+
+// Free the memory owned by a solver work array (std::vector::clear() alone keeps the
+// capacity allocated).
+template <typename T>
+inline void DestroyWorkArray(std::vector<T> &x)
+{
+  x.clear();
+  x.shrink_to_fit();
+}
+
 }  // namespace
 
 template <typename OperType>
@@ -466,6 +484,14 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
 }
 
 template <typename OperType>
+void CgSolver<OperType>::ReleaseWorkspace() const
+{
+  DestroyWorkVector(r);
+  DestroyWorkVector(z);
+  DestroyWorkVector(p);
+}
+
+template <typename OperType>
 void GmresSolver<OperType>::Initialize() const
 {
   if (!V.empty())
@@ -518,6 +544,21 @@ void GmresSolver<OperType>::Update(int j) const
     cs.resize(needed_size);
     sn.resize(needed_size);
   }
+}
+
+template <typename OperType>
+void GmresSolver<OperType>::ReleaseWorkspace() const
+{
+  // The Krylov basis and Hessenberg data carry no state between solves, so they are freed
+  // here and reallocated on the next Mult (r in Mult itself, the rest by Initialize() and
+  // Update()). The restart dimension max_dim is preserved so that the reallocation
+  // reproduces the same configuration.
+  DestroyWorkArray(V);
+  DestroyWorkVector(r);
+  DestroyWorkArray(H);
+  DestroyWorkArray(s);
+  DestroyWorkArray(cs);
+  DestroyWorkArray(sn);
 }
 
 template <typename OperType>
@@ -708,6 +749,13 @@ void FgmresSolver<OperType>::Update(int j) const
     Z[k].SetSize(A->Height());
     Z[k].UseDevice(true);
   }
+}
+
+template <typename OperType>
+void FgmresSolver<OperType>::ReleaseWorkspace() const
+{
+  GmresSolver<OperType>::ReleaseWorkspace();
+  DestroyWorkArray(Z);
 }
 
 template <typename OperType>

@@ -113,7 +113,11 @@ void ElectrostaticSolver::PostprocessTerminals(
   {
     // Diagonal: Cᵢᵢ = 2 Uₑ(Vᵢ) / Vᵢ² = (Vᵢᵀ K Vᵢ) / Vᵢ² (with ∀i, Vᵢ = 1)
     auto &V_gf = post_op.GetVGridFunction().Real();
+    // The domain postprocessor sizes its work vectors lazily during measurements; this
+    // applies its operator directly, so size the output here.
     auto &D_gf = post_op.GetDomainPostOp().D;
+    D_gf.SetSize(post_op.GetDomainPostOp().M_elec->Height());
+    D_gf.UseDevice(true);
     V_gf.SetFromTrueDofs(V[i]);
     post_op.GetDomainPostOp().M_elec->Mult(V_gf, D_gf);
     C(i, i) = Cm(i, i) = linalg::Dot<Vector>(post_op.GetComm(), V_gf, D_gf);

@@ -2464,6 +2464,20 @@ void PostOperator<solver_t>::MeasureFinalize(const ErrorIndicator &indicator)
 }
 
 template <ProblemType solver_t>
+void PostOperator<solver_t>::ReleaseFields()
+{
+  if constexpr (HasEGridFunction<solver_t>())
+  {
+    E->Destroy();
+  }
+  if constexpr (HasBGridFunction<solver_t>())
+  {
+    B->Destroy();
+  }
+  dom_post_op.ReleaseWorkspace();
+}
+
+template <ProblemType solver_t>
 template <ProblemType U>
 auto PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(const ComplexVector &e,
                                                           const ComplexVector &b)

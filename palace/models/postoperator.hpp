@@ -369,6 +369,7 @@ protected:
   auto SetEGridFunction(const ComplexVector &e, bool exchange_face_nbr_data = true)
       -> std::enable_if_t<HasEGridFunction<U>() && HasComplexGridFunction<U>(), void>
   {
+    E->EnsureAllocated();                 // Reallocate after a ReleaseFields
     E->Real().SetFromTrueDofs(e.Real());  // Parallel distribute
     E->Imag().SetFromTrueDofs(e.Imag());
     if (exchange_face_nbr_data)
@@ -382,6 +383,7 @@ protected:
   auto SetEGridFunction(const Vector &e, bool exchange_face_nbr_data = true)
       -> std::enable_if_t<HasEGridFunction<U>() && !HasComplexGridFunction<U>(), void>
   {
+    E->EnsureAllocated();
     E->Real().SetFromTrueDofs(e);
     if (exchange_face_nbr_data)
     {
@@ -393,6 +395,7 @@ protected:
   auto SetBGridFunction(const ComplexVector &b, bool exchange_face_nbr_data = true)
       -> std::enable_if_t<HasBGridFunction<U>() && HasComplexGridFunction<U>(), void>
   {
+    B->EnsureAllocated();
     B->Real().SetFromTrueDofs(b.Real());  // Parallel distribute
     B->Imag().SetFromTrueDofs(b.Imag());
     if (exchange_face_nbr_data)
@@ -406,6 +409,7 @@ protected:
   auto SetBGridFunction(const Vector &b, bool exchange_face_nbr_data = true)
       -> std::enable_if_t<HasBGridFunction<U>() && !HasComplexGridFunction<U>(), void>
   {
+    B->EnsureAllocated();
     B->Real().SetFromTrueDofs(b);
     if (exchange_face_nbr_data)
     {
@@ -511,6 +515,14 @@ public:
   // Write error indicator into ParaView file and print summary statistics to csv. Should be
   // called once at the end of the solver loop.
   void MeasureFinalize(const ErrorIndicator &indicator);
+
+  // Free the storage of the E- and B-field grid functions and of the domain energy work
+  // vectors, which is reallocated by the next measurement. The driven sweeps call this
+  // after each measured step, where the fields are idle until the next solution while the
+  // memory peak occurs inside the next solve's coarse-grid factorization. The registered
+  // ParaView fields, coefficients and evaluators reference the grid function objects, which
+  // stay alive, and field output happens before the release, within the measurement.
+  void ReleaseFields();
 
   // Measurement of the domain energy without printing. This is needed during the driven
   // simulation with PROM. There samples are taken and we need the total domain energy for

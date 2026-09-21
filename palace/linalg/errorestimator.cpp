@@ -103,6 +103,18 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
   return std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc));
 }
 
+// Size a work vector on first use and after a workspace release (see ReleaseWorkspace). The
+// values are completely overwritten before they are read.
+template <typename VecType>
+void EnsureWorkVector(VecType &x, int size)
+{
+  if (x.Size() != size)
+  {
+    x.SetSize(size);
+    x.UseDevice(true);
+  }
+}
+
 }  // namespace
 
 template <typename VecType>
@@ -162,19 +174,25 @@ FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
   }
   ksp = ConfigureLinearSolver<OperType>(smooth_fespaces, tol, max_it, print, use_mg);
   ksp->SetOperators(*M, *M);
-  rhs.SetSize(smooth_fespace.GetTrueVSize());
-  rhs.UseDevice(true);
 }
 
 template <typename VecType>
 void FluxProjector<VecType>::Mult(const VecType &x, VecType &y) const
 {
   BlockTimer bt(Timer::SOLVE_ESTIMATOR);
-  MFEM_ASSERT(x.Size() == Flux->Width() && y.Size() == rhs.Size(),
+  MFEM_ASSERT(x.Size() == Flux->Width() && y.Size() == Flux->Height(),
               "Invalid vector dimensions for FluxProjector::Mult!");
+  EnsureWorkVector(rhs, Flux->Height());
   // Mpi::Print(" Computing smooth flux recovery (projection) for error estimation\n");
   Flux->Mult(x, rhs);
   ksp->Mult(rhs, y);
+}
+
+template <typename VecType>
+void FluxProjector<VecType>::ReleaseWorkspace() const
+{
+  ksp->ReleaseWorkspace();
+  rhs.Destroy();
 }
 
 namespace
@@ -190,6 +208,9 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
   // Compute the projection of the discontinuous flux onto the smooth finite element space
   // (recovery) and populate the corresponding grid functions.
   BlockTimer bt(Timer::ESTIMATION);
+  EnsureWorkVector(F_gf, fespace.GetVSize());
+  EnsureWorkVector(G, smooth_fespace.GetTrueVSize());
+  EnsureWorkVector(G_gf, smooth_fespace.GetVSize());
   projector.Mult(F, G);
   if constexpr (std::is_same<VecType, ComplexVector>::value)
   {
@@ -213,11 +234,10 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
 
-    // We need to update the state of the underlying libCEED vectors to indicate that the
-    // data has changed. Each thread has its own pair of vectors, referencing the same
-    // underlying data, and every sub-operator of the thread's composite (one per element
-    // geometry type) shares that pair, so re-pointing the vectors of the first sub-operator
-    // updates all of them.
+    // We need to update the state of the underlying libCEED vectors and point them at the
+    // reallocated grid function storage. Each thread has its own pair, and every
+    // sub-operator of the thread's composite shares that pair, so re-pointing the vectors
+    // of the first sub-operator updates all element geometry types.
     CeedVector F_gf_vec, G_gf_vec;
     {
       CeedInt nsub_ops;
@@ -398,6 +418,15 @@ void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, double
 }
 
 template <typename VecType>
+void GradFluxErrorEstimator<VecType>::ReleaseWorkspace() const
+{
+  projector.ReleaseWorkspace();
+  E_gf.Destroy();
+  D.Destroy();
+  D_gf.Destroy();
+}
+
+template <typename VecType>
 CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpace &rt_fespace,
     FiniteElementSpaceHierarchy &nd_fespaces, double tol, int max_it, int print,
@@ -525,6 +554,15 @@ void CurlFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &B, double
 }
 
 template <typename VecType>
+void CurlFluxErrorEstimator<VecType>::ReleaseWorkspace() const
+{
+  projector.ReleaseWorkspace();
+  B_gf.Destroy();
+  H.Destroy();
+  H_gf.Destroy();
+}
+
+template <typename VecType>
 TimeDependentFluxErrorEstimator<VecType>::TimeDependentFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
     FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it, int print,
@@ -555,6 +593,13 @@ void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
 }
 
 template <typename VecType>
+void TimeDependentFluxErrorEstimator<VecType>::ReleaseWorkspace() const
+{
+  grad_estimator.ReleaseWorkspace();
+  curl_estimator.ReleaseWorkspace();
+}
+
+template <typename VecType>
 BoundaryModeFluxErrorEstimator<VecType>::BoundaryModeFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
     FiniteElementSpaceHierarchy &rt_fespaces, FiniteElementSpace &curl_fespace,
@@ -581,6 +626,13 @@ void BoundaryModeFluxErrorEstimator<VecType>::AddErrorIndicator(
   grad_estimates += curl_estimates;
   linalg::Sqrt(grad_estimates, (Et > 0.0) ? 0.5 / Et : 1.0);
   indicator.AddIndicator(grad_estimates);
+}
+
+template <typename VecType>
+void BoundaryModeFluxErrorEstimator<VecType>::ReleaseWorkspace() const
+{
+  grad_estimator.ReleaseWorkspace();
+  curl_estimator.ReleaseWorkspace();
 }
 
 template class FluxProjector<Vector>;

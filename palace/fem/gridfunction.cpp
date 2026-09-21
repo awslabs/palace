@@ -57,4 +57,35 @@ void GridFunction::Update()
   }
 }
 
+void GridFunction::Destroy()
+{
+  // mfem::GridFunction::Destroy is not accessible and would also drop the space; only the
+  // data arrays of the underlying vectors are freed here (the device use flags are
+  // preserved). The MPI send buffer of the face-neighbor exchange has no accessor and is
+  // kept.
+  auto DestroyPart = [](mfem::ParGridFunction &gf)
+  {
+    static_cast<mfem::Vector &>(gf).Destroy();
+    gf.FaceNbrData().Destroy();
+  };
+  DestroyPart(gfr);
+  if (HasImag())
+  {
+    DestroyPart(gfi);
+  }
+}
+
+void GridFunction::EnsureAllocated()
+{
+  const int vsize = ParFESpace()->GetVSize();
+  if (gfr.Size() != vsize)
+  {
+    gfr.SetSize(vsize);
+  }
+  if (HasImag() && gfi.Size() != vsize)
+  {
+    gfi.SetSize(vsize);
+  }
+}
+
 }  // namespace palace
