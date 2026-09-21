@@ -207,6 +207,39 @@ TEST_CASE("SurfaceImpedanceOperator", "[surfaceimpedanceoperator][Serial][Parall
     }
     require_global_coverage(v1.has_value(), v2.has_value());
   }
+
+  SECTION("Combined terms are added once per attribute")
+  {
+    // Both attributes get the same stiffness term first, so they share one entry of the
+    // coefficient; the per-attribute mass term must then be added once to each of them
+    // (regression: it was added once per attribute to the shared entry). Values of similar
+    // magnitude so that the sum is resolved.
+    const double Ls_c = 0.5, Cs_c = 0.25;
+    config::ImpedanceData imp;
+    imp.Rs = Rs;
+    imp.Ls = Ls_c;
+    imp.Cs = Cs_c;
+    imp.attributes = {1, 2};
+    std::unordered_set<int> cracked = {};
+
+    SurfaceImpedanceOperator op({imp}, cracked, units, mat_op, palace_mesh);
+
+    MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
+    op.AddStiffnessBdrCoefficients(coeff, fb);
+    op.AddMassBdrCoefficients(coeff, fb);
+
+    auto v1 = GetBdrCoeffValue(fb, palace_mesh, 1);
+    auto v2 = GetBdrCoeffValue(fb, palace_mesh, 2);
+    if (v1)
+    {
+      CHECK_THAT(*v1, WithinRel(coeff / Ls_c + coeff * Cs_c, 1e-12));
+    }
+    if (v2)
+    {
+      CHECK_THAT(*v2, WithinRel(coeff / Ls_c + coeff * Cs_c, 1e-12));
+    }
+    require_global_coverage(v1.has_value(), v2.has_value());
+  }
 }
 
 }  // namespace palace
