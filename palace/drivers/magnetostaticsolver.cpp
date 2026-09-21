@@ -18,10 +18,12 @@
 #include "linalg/operator.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/postoperator.hpp"
+#include "models/substructuringsolver.hpp"
 #include "models/surfacecurlsolver.hpp"
 #include "models/surfacecurrentoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -104,6 +106,76 @@ void ComputeMinvAndMm(const mfem::DenseMatrix &M, mfem::DenseMatrix &Minv,
 std::pair<ErrorIndicator, long long int>
 MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
+  // Substructuring (region-condensed) path for flux-loop excitations. Flux loops are
+  // Dirichlet-lifts (prescribed tangential A on the flux boundary), which are consistent
+  // for the DtN condensation. Condense the environment once, solve each flux loop against
+  // it, and form the inductance matrix from the reluctance R(i,j) = A_i^T K A_j / (Phi_i
+  // Phi_j), M = R^-1 (K = pure 1/mu curl-curl).
+  if (iodata.solver.substructuring)
+  {
+    BlockTimer bt(Timer::CONSTRUCT);
+    CurlCurlOperator curlcurl_op(iodata, mesh);
+    PostOperator<ProblemType::MAGNETOSTATIC> post_op(iodata, curlcurl_op);
+    SubstructuringSolver sub(iodata, mesh);
+    sub.CondenseEnvironment();
+    const int n = static_cast<int>(curlcurl_op.GetSurfaceFluxOp().Size());
+    MFEM_VERIFY(n > 0, "Magnetostatic substructuring requires flux-loop excitations!");
+
+    std::vector<Vector> A(n);
+    std::vector<double> Phi(n);
+    std::vector<int> idxs;
+    Vector RHS, boundary_values;
+    int j = 0;
+    for (const auto &[idx, data] : curlcurl_op.GetSurfaceFluxOp())
+    {
+      Mpi::Print("\nSubstructuring flux-loop excitation {:d}/{:d}: index {:d}\n", j + 1, n,
+                 idx);
+      curlcurl_op.GetFluxExcitationVector(idx, RHS, post_op, &boundary_values);
+      A[j] = sub.SolveDirichlet(boundary_values);
+      Phi[j] = data.GetExcitationFlux();
+      idxs.push_back(idx);
+      j++;
+    }
+    mfem::DenseMatrix Minv(n);
+    for (int i = 0; i < n; i++)
+    {
+      for (int k = 0; k < n; k++)
+      {
+        Minv(i, k) = sub.MutualEnergy(A[i], A[k]) / (Phi[i] * Phi[k]);
+      }
+    }
+    mfem::DenseMatrix M(Minv);
+    M.Invert();  // inductance = reluctance^-1
+    if (root)
+    {
+      const double H = iodata.units.Dimensionalize<Units::ValueType::INDUCTANCE>(1.0);
+      TableWithCSVFile output(post_dir / "terminal-M.csv");
+      output.table.insert(Column("i", "i", 0, 0, 2, ""));
+      for (int k = 0; k < n; k++)
+      {
+        output.table.insert(fmt::format("M{}", idxs[k]),
+                            fmt::format("M[i][{}] (H)", idxs[k]));
+      }
+      for (int i = 0; i < n; i++)
+      {
+        output.table["i"] << static_cast<double>(idxs[i]);
+      }
+      for (int k = 0; k < n; k++)
+      {
+        auto &col = output.table[fmt::format("M{}", idxs[k])];
+        for (int i = 0; i < n; i++)
+        {
+          col << M(i, k) * H;
+        }
+      }
+      output.WriteFullTableTrunc();
+    }
+    sub.WriteParaView(post_dir.string(), idxs, A);
+    Mpi::Print("\nSubstructuring inductance sweep complete ({:d} flux loop{})\n", n,
+               (n > 1) ? "s" : "");
+    return {ErrorIndicator(), sub.RegionGlobalTrueVSize()};
+  }
+
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding
   // dofs.
