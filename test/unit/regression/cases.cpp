@@ -843,6 +843,18 @@ TEST_CASE("circular_hole_flux_loop", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("circular_hole", "circular_hole.json", "", opts);
 }
 
+// Region-condensed (substructuring) electrostatic solve: the environment (attr 2) is
+// condensed to a Dirichlet-to-Neumann operator and the region (attr 1) is solved against it,
+// producing the terminal capacitance matrix. Exercises the SubstructuringSolver driver path.
+TEST_CASE("substructuring_electrostatic", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  palace::test::RunRegressionCase("substructuring_electrostatic", "electrostatic.json", "",
+                                  opts);
+}
+
 // Mixed current-flux excitation. The aperture integral recovering M[1][2] is
 // reduced over surfaces the partitioner may split, so this case catches a
 // double-counted contribution.
