@@ -8,7 +8,8 @@ split (decision 61b) - the matrices of a coupon reduced from the union of N work
 jobs' archives must equal a single job's to roundoff.  Rows are matched by their key
 columns (basis_i, basis_j; interface, edge, basis_i, basis_j), every numeric column is
 compared, and the record carries the number of entries, the exact matches, the largest
-absolute and relative differences per column and the verdict against --tolerance: the
+absolute and relative differences per column (and per source = basis_i) and the verdict
+against --tolerance: the
 largest absolute difference of a column relative to the column's largest entry (default
 1e-9, roundoff of a 12-significant-digit print; the per-entry relative differences are
 reported - a near-zero cross term may differ by more at the same absolute roundoff).
@@ -71,9 +72,17 @@ def compare_matrix(path_a, path_b, keys, tolerance):
             if relative > max_rel:
                 max_rel = relative
                 worst = {"Key": key_of(header_a, row, keys), "A": a, "B": b}
+        per_source = {}
+        for row in rows_a:
+            other = by_key_b[key_of(header_a, row, keys)]
+            a, b = float(row[index]), float(other[index])
+            relative = abs(a - b) / max(abs(a), abs(b)) if max(abs(a), abs(b)) > 0.0 else 0.0
+            source = key_of(header_a, row, keys)[keys.index("basis_i")]
+            per_source[source] = max(per_source.get(source, 0.0), relative)
         columns[name] = {"Entries": len(rows_a), "ExactText": exact, "MaxAbsoluteDifference": max_abs,
                          "MaxRelativeDifference": max_rel, "MaxRelativeToLargestEntry": (max_abs / scale if scale > 0.0 else 0.0),
                          "LargestEntry": scale, "Worst": worst,
+                         "PerSourceMaxRelativeDifference": {str(source): per_source[source] for source in sorted(per_source)},
                          "WithinTolerance": bool((max_abs / scale if scale > 0.0 else 0.0) <= tolerance or not math.isfinite(tolerance))}
     return {"A": str(path_a), "B": str(path_b), "Rows": len(rows_a), "Columns": columns,
             "WithinTolerance": all(column["WithinTolerance"] for column in columns.values())}

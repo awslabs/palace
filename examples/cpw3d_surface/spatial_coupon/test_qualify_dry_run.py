@@ -387,6 +387,10 @@ class JobSplitTest(unittest.TestCase):
             self.assertFalse(different["Equal"])
             self.assertAlmostEqual(different["MaxRelativeDifference"], 0.3e-17 / 3.3e-17, places=6)   # |a - b| / max(|a|, |b|)
             self.assertEqual(different["Matrices"]["surface"]["Columns"]["Q_ij (J)"]["Worst"]["Key"], (1, 1, 2, 2))
+            per_source = different["Matrices"]["domain"]["Columns"]["Q_ij (J)"]["PerSourceMaxRelativeDifference"]
+            self.assertEqual(list(per_source), ["1", "2"])
+            self.assertEqual(per_source["1"], 0.0)
+            self.assertAlmostEqual(per_source["2"], 0.3e-17 / 3.3e-17, places=6)
             with self.assertRaisesRegex(ValueError, "different row keys"):
                 (tmp / "d").mkdir()
                 for name in ("domain-response-matrix.csv", "surface-response-matrix.csv"):
