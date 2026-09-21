@@ -23,7 +23,11 @@ source-directory adapter).
    trace-triangles.csv, basis-points.csv, zero-trace.csv, conductor-N.csv) and the
    process-library.json of the model; process.toml from the fabrication; a
    provenance.json naming the device config, the discovery closure, the requirement
-   and every tool.  The directory is named by the content hash of its bound source
+   and every tool.  The device basis triangulates the matching-box caps with Delaunay
+   flips by default (--cap-triangulation delaunay, supervisor decision 57: the
+   ear-clipped caps produced the needle triangles that drove 20-40% of the mesh cost;
+   ear-clipping, the gallery producer's, stays an explicit option and the gallery
+   references keep it).  The directory is named by the content hash of its bound source
    files (`spatial-<edge count>-edge-<hash12>`): the same device geometry always maps
    to the same case, and register_case.py reuses a case whose digests it already holds.
 4. Registration through register_case.register (footprint declared producer-default:
@@ -56,7 +60,8 @@ DISCOVERY = CPW2D / "discover_surface_response_requirements.py"
 GENERATOR = HERE / "generate_spatial_response.py"
 SPATIAL_METHOD = "SpatialCoupon"
 DEFAULT_RING_SIZE = 16   # prepare_surface_response_coupons --spatial-ring-size default
-DEFAULT_CAP_TRIANGULATION = "ear-clipping"   # generate_spatial_response --cap-triangulation (decision 54b)
+DEFAULT_CAP_TRIANGULATION = "delaunay"   # generate_spatial_response --cap-triangulation (decisions 54b / 57)
+CAP_TRIANGULATIONS = ("ear-clipping", "delaunay")
 INVENTORY_STATUS = "DeviceDerived"
 # The bound source roles whose digests name a device coupon's directory (the manifest's
 # content identity of a case: register_case.source_digests without the derived contract).
@@ -192,11 +197,13 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                             "Complete": closure_manifest.get("Complete")},
               "Plan": {"Path": str(output / "coupon-plan.json"), "Summary": plan["Summary"]},
               "TraceBasis": {"RingSize": ring_size, "CapTriangulation": cap_triangulation,
+                             "DefaultCapTriangulation": DEFAULT_CAP_TRIANGULATION,
                              "Rule": "generate_spatial_response.build_matching_surface with the planner's default ring "
                                      "size (prepare_surface_response_coupons --spatial-ring-size), the basis every "
-                                     "gallery case was produced with; CapTriangulation ear-clipping is the gallery "
-                                     "producer's, delaunay re-triangulates the two box caps without needle ears "
-                                     "(decision 54b; device coupons only)"},
+                                     "gallery case was produced with; CapTriangulation delaunay (the device default, "
+                                     "decision 57) re-triangulates the two box caps without needle ears, ear-clipping "
+                                     "is the gallery producer's (an explicit option; device coupons only, never a "
+                                     "gallery reference)"},
               "Coupons": [], "OutOfScope": []}
     for coupon in plan["Coupons"]:
         method = coupon["Preparation"]["Method"]
@@ -307,8 +314,9 @@ def main(argv=None):
     parser.add_argument("--mesh-recipe", help="repository path of the frozen mesh recipe (default: the one every "
                                               "trace-basis case of the manifest binds)")
     parser.add_argument("--ring-size", type=int, default=DEFAULT_RING_SIZE)
-    parser.add_argument("--cap-triangulation", choices=("ear-clipping", "delaunay"), default=DEFAULT_CAP_TRIANGULATION,
-                        help="matching-box cap triangulation of the device basis (generate_spatial_response.py)")
+    parser.add_argument("--cap-triangulation", choices=CAP_TRIANGULATIONS, default=DEFAULT_CAP_TRIANGULATION,
+                        help="matching-box cap triangulation of the device basis (generate_spatial_response.py): "
+                             "delaunay (default, decision 57) or ear-clipping (the gallery producer's)")
     parser.add_argument("--register", action="store_true", help="register the produced directories into --manifest")
     parser.add_argument("--work", type=Path, help="parent of the registration work directories")
     parser.add_argument("--julia", default=shutil.which("julia"))

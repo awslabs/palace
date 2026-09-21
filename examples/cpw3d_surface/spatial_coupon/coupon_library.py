@@ -19,7 +19,9 @@
 spatial coupons -> generate_spatial_response.py --basis-only -> content-hashed source
 directories with provenance; the other families are recorded out of scope) and
 registers every one of them (footprint producer-default, InventoryStatus DeviceDerived,
-the manifest's shared mesh recipe); `--build-limit N` builds the N smallest by the
+the manifest's shared mesh recipe; the device basis's box caps are Delaunay-triangulated
+by default - decision 57 -, `--cap-triangulation ear-clipping` selects the gallery
+producer's caps); `--build-limit N` builds the N smallest by the
 pre-build estimate and records the rest registered-unbuilt with their estimates.
 `build --register` registers the given source directories as manifest cases (register_case.py:
 source SHA256s, the automated two-pass contract derivation, idempotent by content; the
@@ -83,10 +85,10 @@ def build_parser():
     build.add_argument("--device-output", type=Path, help="output of the device adapter (default ROOT/device)")
     build.add_argument("--ring-size", type=int, default=device_coupons.DEFAULT_RING_SIZE,
                        help="trace-basis ring size of the device coupons (the planner's default)")
-    build.add_argument("--cap-triangulation", choices=("ear-clipping", "delaunay"),
+    build.add_argument("--cap-triangulation", choices=device_coupons.CAP_TRIANGULATIONS,
                        default=device_coupons.DEFAULT_CAP_TRIANGULATION,
-                       help="matching-box cap triangulation of the device basis: ear-clipping (the gallery producer's) "
-                            "or delaunay (no needle ears; decision 54b)")
+                       help="matching-box cap triangulation of the device basis: delaunay (default; no needle ears, "
+                            "decisions 54b / 57) or ear-clipping (the gallery producer's)")
     qualify = commands.add_parser("qualify", help="physics qualification of the built coupons against their references")
     qualify_library.add_arguments(qualify)
     return parser

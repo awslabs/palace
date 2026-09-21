@@ -2267,8 +2267,17 @@ python3 coupon_library.py build \
    `trace-triangles.csv`, `basis-points.csv`, `zero-trace.csv`, `conductor-N.csv`) and
    the model's `process-library.json`; `process.toml` from the fabrication; a
    `provenance.json` naming the device config, the seed, the closure manifest, the
-   requirement, the generator command and the ring size (the planner's default 16 - the
-   basis every gallery case was produced with). The directory is named by the content
+   requirement, the generator command, the ring size (the planner's default 16 - the
+   basis every gallery case was produced with) and the cap triangulation. **The device
+   basis triangulates the two matching-box caps with Delaunay flips by default**
+   (`--cap-triangulation delaunay`, supervisor decision 57: the ear-clipped caps
+   produced the needle triangles that drove 20-40% of the mesh cost and the only
+   remaining device fail-closed cases, decision 54b below; recorded in
+   `basis-contract.json` `CapTriangulation`, the device record's `TraceBasis` and the
+   provenance, so every device case id / hat set changed with the default - they are
+   new cases; `--cap-triangulation ear-clipping` selects the gallery producer's caps
+   explicitly and the gallery reference cases keep their producer's basis for
+   comparability). The directory is named by the content
    hash of its bound source files (`spatial-<edges>-edge-<hash12>`), so the same device
    geometry maps to the same case and `register_case.py` reuses it by content; every
    directory is registered (footprint `producer-default` - the device path binds no
@@ -2700,9 +2709,12 @@ the narrow hats' supports, and every added vertex is a Palace solve:
 Against Delaunay caps (0.624 / 0.785 x at 1.0 x sources) the refinement buys a further
 0.08-0.09 x of elements for 2.7-14 x the sources: the trade is lost at every slope.
 **Proposal:** adopt (a) for device coupons - `--cap-triangulation delaunay` as the device
-basis rule (a `build --device` option today, default unchanged; making it the device
-default is a basis-contract decision for the supervisor since it changes every device case
-id and its hats, never a gallery reference) - and do not pursue (b). The remaining
+basis rule - and do not pursue (b). **Adopted (supervisor decision 57, 2026-09-21):**
+`delaunay` is the `build --device` default (`device_coupons.DEFAULT_CAP_TRIANGULATION`;
+`generate_spatial_response.py` itself keeps `ear-clipping` as its default because it is
+the gallery producer); every device case id and hat set changed with it (new cases);
+`--cap-triangulation ear-clipping` remains an explicit option; no gallery reference
+case is touched (`test_device_coupons.py`). The remaining
 right-sliver cost (6-9% of the estimate) is the ring spacing itself (16-56 nm clusters
 inherited from the device mesh) and would need ring coarsening, a source-resolution
 decision, not a triangulation one. Note the ten-edge's 8.03 GiB probe is a memory-bound

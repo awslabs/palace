@@ -20,6 +20,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE / "qualify"))
 import case_inputs  # noqa: E402
+import coupon_library  # noqa: E402
 import device_coupons  # noqa: E402
 import register_case  # noqa: E402
 import trace_basis  # noqa: E402
@@ -91,6 +92,20 @@ def census_probe(labels):
     return probe
 
 
+class DeviceBasisDefaultTest(unittest.TestCase):
+    def test_delaunay_caps_are_the_device_default_and_ear_clipping_an_explicit_option(self):
+        """Decision 57: `build --device` triangulates the device basis's box caps with Delaunay
+        flips unless `--cap-triangulation ear-clipping` (the gallery producer's) is given."""
+        self.assertEqual(device_coupons.DEFAULT_CAP_TRIANGULATION, "delaunay")
+        parser = coupon_library.build_parser()
+        common = ["build", "--device", "device.json", "--palace", "palace", "--root", "root"]
+        self.assertEqual(parser.parse_args(common).cap_triangulation, "delaunay")
+        self.assertEqual(parser.parse_args(common + ["--cap-triangulation", "ear-clipping"]).cap_triangulation,
+                         "ear-clipping")
+        with self.assertRaises(SystemExit):
+            parser.parse_args(common + ["--cap-triangulation", "fan"])
+
+
 @unittest.skipUnless(available(), "the Palace executable and the transmon fixture are needed")
 class DeviceCouponsTest(unittest.TestCase):
     @classmethod
@@ -118,13 +133,20 @@ class DeviceCouponsTest(unittest.TestCase):
         self.assertGreaterEqual(len(record["Coupons"]), 4)
         self.assertTrue(record["OutOfScope"])
         self.assertEqual({item["Method"] for item in record["OutOfScope"]}, {"CornerCoupon", "StraightEdgeBuilder"})
+        # The device basis default is the Delaunay cap triangulation (decision 57), recorded in
+        # the device record, every basis contract and every provenance.
+        self.assertEqual(record["TraceBasis"]["CapTriangulation"], "delaunay")
         for coupon in record["Coupons"]:
             directory = Path(coupon["Directory"])
             self.assertEqual(directory.name, coupon["Case"])
+            contract = json.loads((directory / "basis-contract.json").read_text())
+            self.assertEqual(contract["CapTriangulation"]["Method"], "delaunay", coupon["Case"])
+            provenance = json.loads((directory / "provenance.json").read_text())
+            self.assertEqual(provenance["Generator"]["CapTriangulation"], "delaunay")
+            self.assertIn("delaunay", provenance["Generator"]["Command"])
             digest, digests = device_coupons.content_hash(directory)
             self.assertEqual(coupon["Case"], f"spatial-{coupon['EdgeCount']}-edge-{digest[:12]}")
             self.assertEqual(set(digests), set(device_coupons.CONTENT_ROLES))
-            provenance = json.loads((directory / "provenance.json").read_text())
             self.assertEqual(provenance["ContentHash"]["SHA256"], digest)
             self.assertEqual(provenance["EtchFootprint"]["Declared"], "producer-default")
             self.assertFalse((directory / "retained-etch.csv").exists())
