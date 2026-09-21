@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 #include "fem/libceed/ceed.hpp"
+#include "fem/mesh.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 
@@ -37,6 +38,11 @@ protected:
   Vector dof_multiplicity;
   mutable Vector temp;
 
+  // Element subset used to assemble each sub-operator, in the order the sub-operators were
+  // added for each thread. This lets p-coarsening recreate the matching finite element
+  // restriction while reusing the fine operator's quadrature data.
+  std::vector<std::vector<CeedElementSubset>> sub_op_subsets;
+
 public:
   Operator(int h, int w);
   ~Operator() override;
@@ -45,7 +51,11 @@ public:
 
   auto Size() const { return op.size(); }
 
-  void AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t = nullptr);
+  void AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t = nullptr,
+                      CeedElementSubset subset = CeedElementSubset::Full);
+
+  // Element subsets used to assemble the sub-operators of the given thread.
+  const auto &SubOperatorSubsets(std::size_t i) const { return sub_op_subsets[i]; }
 
   void Finalize();
 
@@ -82,12 +92,16 @@ public:
 
 // Wrap finalized, owned real/imaginary operators, packing compatible QData-assembled
 // volume terms on CPU. Other terms and unsupported operators keep their original action.
-// The inputs must remain structurally unchanged and unrescaled after ownership transfer,
-// including through retained aliases or raw CEED handles. Passive QData values remain
-// shared and may be updated. Borrowed operators should use ComplexWrapperOperator.
+// Compatible leaves assembled over an element subset of the given finite element space (the
+// one both operators were assembled from) are packed over that subset, with the elements
+// they leave out applied separately. The inputs must remain structurally unchanged and
+// unrescaled after ownership transfer, including through retained aliases or raw CEED
+// handles. Passive QData values remain shared and may be updated. Borrowed operators should
+// use ComplexWrapperOperator.
 std::unique_ptr<ComplexWrapperOperator>
 CreateComplexOperator(std::unique_ptr<palace::Operator> &&Ar,
-                      std::unique_ptr<palace::Operator> &&Ai);
+                      std::unique_ptr<palace::Operator> &&Ai,
+                      const FiniteElementSpace &fespace);
 
 // Assemble a ceed::Operator as a CSR matrix.
 std::unique_ptr<hypre::HypreCSRMatrix> CeedOperatorFullAssemble(const Operator &op,

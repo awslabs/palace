@@ -27,9 +27,12 @@ private:
   // Reference to the underlying mesh object (not owned).
   Mesh &mesh;
 
-  // Members for constructing libCEED operators.
+  // Members for constructing libCEED operators. active_restr caches the single shared
+  // lossy-domain or active-boundary subset for each geometry type, and complement_restr the
+  // elements that subset leaves out.
   mutable ceed::CeedObjectMap<CeedBasis> basis;
-  mutable ceed::CeedObjectMap<CeedElemRestriction> restr, interp_restr, interp_range_restr;
+  mutable ceed::CeedObjectMap<CeedElemRestriction> restr, active_restr, complement_restr,
+      interp_restr, interp_range_restr;
 
   // Temporary storage for operator applications.
   mutable ComplexVector tx, lx, ly;
@@ -117,22 +120,25 @@ public:
   // Return the basis object for elements of the given element geometry type.
   CeedBasis GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const;
 
-  // Return the element restriction object for the given element set (all with the same
-  // geometry type).
-  CeedElemRestriction GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
-                                             const std::vector<int> &indices) const;
+  // Return the element restriction object for the full element index list, the shared
+  // active subset of the given geometry factor data, or the elements that subset leaves
+  // out.
+  CeedElemRestriction GetCeedElemRestriction(
+      Ceed ceed, mfem::Geometry::Type geom, const ceed::CeedGeomFactorData &data,
+      ceed::CeedElementSubset subset = ceed::CeedElementSubset::Full) const;
 
   // If the space has a special element restriction for discrete interpolators, return that.
   // Otherwise return the same restriction as given by GetCeedElemRestriction.
-  CeedElemRestriction GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
-                                                   const std::vector<int> &indices) const;
+  CeedElemRestriction
+  GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                               const ceed::CeedGeomFactorData &data) const;
 
   // If the space has a special element restriction for the range space of discrete
   // interpolators, return that. Otherwise return the same restriction as given by
   // GetCeedElemRestriction.
   CeedElemRestriction
   GetInterpRangeCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
-                                    const std::vector<int> &indices) const;
+                                    const ceed::CeedGeomFactorData &data) const;
 
   // Clear the cached basis and element restriction objects owned by the finite element
   // space.

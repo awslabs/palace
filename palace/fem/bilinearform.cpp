@@ -3,6 +3,7 @@
 
 #include "bilinearform.hpp"
 
+#include <algorithm>
 #include "fem/fespace.hpp"
 #include "fem/libceed/basis.hpp"
 #include "fem/libceed/ceed.hpp"
@@ -26,7 +27,8 @@ void BilinearForm::AssembleQuadratureData()
 
 std::unique_ptr<ceed::Operator>
 BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
-                              const FiniteElementSpace &test_fespace) const
+                              const FiniteElementSpace &test_fespace,
+                              bool skip_zero_coeff_elems) const
 {
   MFEM_VERIFY(&trial_fespace.GetMesh() == &test_fespace.GetMesh(),
               "Trial and test finite element spaces must correspond to the same mesh!");
@@ -51,50 +53,68 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
   PalacePragmaOmp(parallel if (ceed::internal::NumCeeds() > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
+
+    // Select either the full element list or the single shared lossy-domain/active-boundary
+    // subset. An integrator outside that shared set remains unrestricted; this is important
+    // for user-selected postprocessing domains. An empty support creates no sub-operator.
+    auto GetIntegratorSubset = [&](const BilinearFormIntegrator &integ,
+                                   bool use_bdr) -> std::optional<ceed::CeedElementSubset>
+    {
+      if (!skip_zero_coeff_elems)
+      {
+        return ceed::CeedElementSubset::Full;
+      }
+      const auto attr_list = integ.GetNonzeroCoefficientAttributes();
+      if (!attr_list)
+      {
+        return ceed::CeedElementSubset::Full;
+      }
+      if (attr_list->empty())
+      {
+        return std::nullopt;
+      }
+      const auto &active_attr = mesh.GetCeedActiveAttributes(use_bdr);
+      return std::includes(active_attr.begin(), active_attr.end(), attr_list->begin(),
+                           attr_list->end())
+                 ? ceed::CeedElementSubset::Active
+                 : ceed::CeedElementSubset::Full;
+    };
+
     for (const auto &[geom, data] : mesh.GetCeedGeomFactorData(ceed))
     {
       const auto trial_map_type =
           trial_fespace.GetFEColl().GetMapType(mfem::Geometry::Dimension[geom]);
       const auto test_map_type =
           test_fespace.GetFEColl().GetMapType(mfem::Geometry::Dimension[geom]);
+      const bool use_bdr = (mfem::Geometry::Dimension[geom] != mesh.Dimension());
+      const auto &integs = use_bdr ? boundary_integs : domain_integs;
 
-      if (mfem::Geometry::Dimension[geom] == mesh.Dimension() && !domain_integs.empty())
+      if (mfem::Geometry::Dimension[geom] >= mesh.Dimension() - 1 && !integs.empty())
       {
-        // Assemble domain integrators on this element geometry type.
-        CeedElemRestriction trial_restr =
-            trial_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
-        CeedElemRestriction test_restr =
-            test_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
+        // Assemble domain or boundary integrators on this element geometry type.
         CeedBasis trial_basis = trial_fespace.GetCeedBasis(ceed, geom);
         CeedBasis test_basis = test_fespace.GetCeedBasis(ceed, geom);
 
-        for (const auto &integ : domain_integs)
+        for (const auto &integ : integs)
         {
-          CeedOperator sub_op;
-          integ->SetMapTypes(trial_map_type, test_map_type);
-          integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
-                          data.geom_data, data.geom_data_restr, &sub_op);
-          op->AddSubOperator(sub_op);  // Sub-operator owned by ceed::Operator
-        }
-      }
-      else if (mfem::Geometry::Dimension[geom] == mesh.Dimension() - 1 &&
-               !boundary_integs.empty())
-      {
-        // Assemble boundary integrators on this element geometry type.
-        CeedElemRestriction trial_restr =
-            trial_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
-        CeedElemRestriction test_restr =
-            test_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
-        CeedBasis trial_basis = trial_fespace.GetCeedBasis(ceed, geom);
-        CeedBasis test_basis = test_fespace.GetCeedBasis(ceed, geom);
+          const auto subset = GetIntegratorSubset(*integ, use_bdr);
+          if (!subset ||
+              (*subset == ceed::CeedElementSubset::Active && data.active_indices.empty()))
+          {
+            continue;
+          }
+          CeedElemRestriction trial_restr =
+              trial_fespace.GetCeedElemRestriction(ceed, geom, data, *subset);
+          CeedElemRestriction test_restr =
+              test_fespace.GetCeedElemRestriction(ceed, geom, data, *subset);
 
-        for (const auto &integ : boundary_integs)
-        {
           CeedOperator sub_op;
           integ->SetMapTypes(trial_map_type, test_map_type);
           integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
-                          data.geom_data, data.geom_data_restr, &sub_op);
-          op->AddSubOperator(sub_op);  // Sub-operator owned by ceed::Operator
+                          data.geom_data, data.GetGeomDataRestriction(*subset), &sub_op);
+          // Sub-operator owned by ceed::Operator. Record the subset so p-coarsening uses
+          // the same mesh-ordered element list with the cached quadrature data.
+          op->AddSubOperator(sub_op, nullptr, *subset);
         }
       }
     }
@@ -160,9 +180,18 @@ BilinearForm::Assemble(const FiniteElementSpaceHierarchy &fespaces, bool skip_ze
               "Assembly on a FiniteElementSpaceHierarchy should have the same BilinearForm "
               "spaces and fine space of the hierarchy!");
 
-  // First partially assemble all of the operators.
+  // First partially assemble all of the operators. Any level which is fully assembled below
+  // needs the contributions of the zero-coefficient elements for its sparsity pattern, and
+  // the operators of the other levels are built from the same sub-operators, so element
+  // skipping is disabled for all levels in that case.
   MFEM_VERIFY(l0 < fespaces.GetNumLevels(),
               "No levels available for operator coarsening (l0 = " << l0 << ")!");
+  bool skip_zero_coeff_elems = this->skip_zero_coeff_elems;
+  for (std::size_t l = l0; skip_zero_coeff_elems && l < fespaces.GetNumLevels(); l++)
+  {
+    skip_zero_coeff_elems =
+        !UseFullAssembly(fespaces.GetFESpaceAtLevel(l), pa_order_threshold);
+  }
   std::vector<std::unique_ptr<ceed::Operator>> pa_ops;
   pa_ops.reserve(fespaces.GetNumLevels() - l0);
   for (std::size_t l = l0; l < fespaces.GetNumLevels(); l++)
@@ -175,8 +204,9 @@ BilinearForm::Assemble(const FiniteElementSpaceHierarchy &fespaces, bool skip_ze
     }
     else
     {
-      pa_ops.push_back(
-          PartialAssemble(fespaces.GetFESpaceAtLevel(l), fespaces.GetFESpaceAtLevel(l)));
+      pa_ops.push_back(PartialAssemble(fespaces.GetFESpaceAtLevel(l),
+                                       fespaces.GetFESpaceAtLevel(l),
+                                       skip_zero_coeff_elems));
     }
   }
 
@@ -222,9 +252,9 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
       {
         // Assemble domain interpolators on this element geometry type.
         CeedElemRestriction trial_restr =
-            trial_fespace.GetInterpCeedElemRestriction(ceed, geom, data.indices);
+            trial_fespace.GetInterpCeedElemRestriction(ceed, geom, data);
         CeedElemRestriction test_restr =
-            test_fespace.GetInterpRangeCeedElemRestriction(ceed, geom, data.indices);
+            test_fespace.GetInterpRangeCeedElemRestriction(ceed, geom, data);
 
         // Construct the interpolator basis.
         CeedBasis interp_basis;
