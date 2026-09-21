@@ -855,6 +855,21 @@ TEST_CASE("substructuring_electrostatic", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
+// Region-condensed (substructuring) magnetostatic solve on the mirror-split double-circular-
+// hole slab: the environment (right hole, attr 2) is condensed to a DtN operator and the
+// region (left hole, attr 1) is solved against it for each flux-loop excitation, giving the
+// 2x2 mutual-inductance matrix. Flux loops are Dirichlet-lifts (divergence-free compatible),
+// so the region-condensed inductance matches the monolithic solve.
+TEST_CASE("substructuring_magnetostatic", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("substructuring_magnetostatic", "magnetostatic.json", "",
+                                  opts);
+}
+
 // Mixed current-flux excitation. The aperture integral recovering M[1][2] is
 // reduced over surfaces the partitioner may split, so this case catches a
 // double-counted contribution.
