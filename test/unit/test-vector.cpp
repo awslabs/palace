@@ -109,6 +109,53 @@ TEST_CASE("Vector Sum - Complex", "[vector][Serial][Parallel][GPU]")
   CHECK_THAT(sum.imag(), WithinRel(expected_imag));
 }
 
+TEST_CASE("Vector Dot - Complex", "[vector][Serial][Parallel][GPU]")
+{
+  // Check the complex inner product yᴴ x (and the norm for x == y) against a
+  // component-wise reference accumulated in std::complex arithmetic.
+  int rank = Mpi::Rank(Mpi::World());
+  int size = Mpi::Size(Mpi::World());
+  constexpr int n = 7;
+
+  ComplexVector x(n), y(n);
+  x.UseDevice(true);
+  y.UseDevice(true);
+  auto d_xr = x.Real().Write();
+  auto d_xi = x.Imag().Write();
+  auto d_yr = y.Real().Write();
+  auto d_yi = y.Imag().Write();
+  mfem::forall(n,
+               [=] MFEM_HOST_DEVICE(int i)
+               {
+                 d_xr[i] = 0.5 * rank + 0.25 * i;
+                 d_xi[i] = 1.0 - 0.125 * i;
+                 d_yr[i] = 2.0 - 0.5 * i + rank;
+                 d_yi[i] = -0.75 * rank + 0.1 * i;
+               });
+
+  std::complex<double> expected = 0.0, expected_norm2 = 0.0;
+  for (int r = 0; r < size; r++)
+  {
+    for (int i = 0; i < n; i++)
+    {
+      std::complex<double> xv(0.5 * r + 0.25 * i, 1.0 - 0.125 * i);
+      std::complex<double> yv(2.0 - 0.5 * i + r, -0.75 * r + 0.1 * i);
+      expected += std::conj(yv) * xv;
+      expected_norm2 += std::conj(xv) * xv;
+    }
+  }
+
+  auto dot = linalg::Dot(Mpi::World(), x, y);
+  CHECK_THAT(dot.real(), WithinRel(expected.real(), 1.0e-14));
+  CHECK_THAT(dot.imag(), WithinRel(expected.imag(), 1.0e-14));
+
+  auto norm2 = linalg::Dot(Mpi::World(), x, x);
+  CHECK_THAT(norm2.real(), WithinRel(expected_norm2.real(), 1.0e-14));
+  CHECK(norm2.imag() == 0.0);
+  CHECK_THAT(linalg::Norml2(Mpi::World(), x),
+             WithinRel(std::sqrt(expected_norm2.real()), 1.0e-14));
+}
+
 TEST_CASE("ComplexVector Set", "[vector][Serial][Parallel][GPU]")
 {
   ComplexVector cv(2);

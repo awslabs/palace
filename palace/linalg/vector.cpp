@@ -673,6 +673,28 @@ double LocalDot(const Vector &x, const Vector &y)
 
 std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y)
 {
+  MFEM_ASSERT(x.Size() == y.Size(), "Size mismatch for vector inner product!");
+  if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
+  {
+    // On host, accumulate the four component products in a single pass over the data
+    // instead of one hypre inner product per pair (same partial sums as below, so the
+    // result agrees to rounding; for x == y the imaginary accumulators cancel exactly).
+    const int N = x.Size();
+    const auto *XR = x.Real().HostRead();
+    const auto *XI = x.Imag().HostRead();
+    const auto *YR = y.Real().HostRead();
+    const auto *YI = y.Imag().HostRead();
+    double rr = 0.0, ii = 0.0, ir = 0.0, ri = 0.0;
+    PalacePragmaOmp(parallel for reduction(+ : rr, ii, ir, ri) schedule(static))
+    for (int i = 0; i < N; i++)
+    {
+      rr += XR[i] * YR[i];
+      ii += XI[i] * YI[i];
+      ir += XI[i] * YR[i];
+      ri += XR[i] * YI[i];
+    }
+    return {rr + ii, ir - ri};
+  }
   if (&x == &y)
   {
     return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()), 0.0};
