@@ -216,7 +216,8 @@ struct SubstructuringSolver::Impl
   mfem::Vector dbc_values;  // full parent true-DOF vector, prescribed values on Dirichlet
   std::map<int, std::vector<int>> terminal_tdofs;  // terminal index -> its true DOFs
 
-  std::unique_ptr<mfem::HypreSolver> prec_region;
+  std::unique_ptr<RegionCondensedOperator> region_op;
+  std::unique_ptr<KspSolver> region_ksp;  // Palace CG + wrapped AMG/AMS on the region block
   std::unique_ptr<KspSolver> solver_env;  // Palace CG + wrapped AMG/AMS (config-consistent)
   std::unique_ptr<ImplicitDtN> dtn;
 
@@ -502,22 +503,6 @@ void SubstructuringSolver::CondenseEnvironment()
         impl->A_region_free->EliminateRowsCols(non_rfree));
   }
 
-  // Region-free preconditioner for the region-condensed CG. For magnetostatics the
-  // curl-curl block is singular, so an AMS singular-problem preconditioner is essential for
-  // CG to converge on the gradient nullspace.
-  if (impl->magnetostatic)
-  {
-    auto ams = std::make_unique<mfem::HypreAMS>(*impl->A_region_free, &impl->parent_fes);
-    ams->SetPrintLevel(0);
-    impl->prec_region = std::move(ams);
-  }
-  else
-  {
-    auto amg = std::make_unique<mfem::HypreBoomerAMG>(*impl->A_region_free);
-    amg->SetPrintLevel(0);
-    impl->prec_region = std::move(amg);
-  }
-
   // Materialize the interface operator S_E and load g_E once, so region solves reuse them
   // without any environment solves. Global interface enumeration via MPI_Exscan.
   MPI_Comm comm = impl->parent_fes.GetComm();
@@ -625,6 +610,38 @@ void SubstructuringSolver::CondenseEnvironment()
   // g_E is excitation-dependent; it is computed per excitation in the region solve.
   impl->mat_dtn = std::make_unique<MaterializedDtN>(impl->S_dense, impl->gamma_global,
                                                     impl->nG_global, comm);
+
+  // Region-condensed solver: Palace CG preconditioned by a wrapped AMS (H(curl)) or
+  // BoomerAMG (H1) on the region-free block. Built once and reused across excitations (the
+  // condensed interface operator S_E is fixed). The region operator carries the same mass
+  // regularization as the environment, so it is definite and AMS is used without the
+  // singular-problem option.
+  {
+    std::unique_ptr<Solver<Operator>> pc;
+    if (impl->magnetostatic)
+    {
+      auto ams = std::make_unique<mfem::HypreAMS>(&impl->parent_fes);
+      ams->SetPrintLevel(0);
+      pc = std::make_unique<MfemWrapperSolver<Operator>>(
+          std::move(ams), /*save_assembled=*/true, /*complex_matrix=*/false,
+          /*drop_small_entries=*/false);
+    }
+    else
+    {
+      pc = std::make_unique<MfemWrapperSolver<Operator>>(
+          std::make_unique<BoomerAmgSolver>(1, 1, true, 0), /*save_assembled=*/true,
+          /*complex_matrix=*/false, /*drop_small_entries=*/false);
+    }
+    auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
+    pcg->SetInitialGuess(false);
+    pcg->SetRelTol(1.0e-10);
+    pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
+    pcg->SetMaxIter(2000);
+    impl->region_op = std::make_unique<RegionCondensedOperator>(
+        *impl->A_region_free, *impl->mat_dtn, impl->is_region_free);
+    impl->region_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
+    impl->region_ksp->SetOperators(*impl->region_op, *impl->A_region_free);
+  }
 }
 
 Vector SubstructuringSolver::SolveExcitation(int drive_idx)
@@ -703,17 +720,9 @@ Vector SubstructuringSolver::SolveWithCurrentDbc()
   }
 
   // Region-condensed solve using the materialized S_E (no environment solves in the loop).
-  RegionCondensedOperator sysop(*impl->A_region_free, *impl->mat_dtn, impl->is_region_free);
   Vector u(nt);
   u = 0.0;
-  mfem::CGSolver cg(comm);
-  cg.SetOperator(sysop);
-  cg.SetPreconditioner(*impl->prec_region);
-  cg.SetRelTol(1.0e-10);
-  cg.SetMaxIter(2000);
-  cg.SetPrintLevel(0);
-  cg.Mult(b, u);
-  MFEM_VERIFY(cg.GetConverged(), "Region-condensed CG solve did not converge!");
+  impl->region_ksp->Mult(b, u);
   for (int i = 0; i < impl->dbc_tdofs.Size(); i++)
   {
     u(impl->dbc_tdofs[i]) = impl->dbc_values(impl->dbc_tdofs[i]);
@@ -800,17 +809,9 @@ Vector SubstructuringSolver::SolveSource(const Vector &f)
     }
   }
 
-  RegionCondensedOperator sysop(*impl->A_region_free, *impl->mat_dtn, impl->is_region_free);
   Vector u(nt);
   u = 0.0;
-  mfem::CGSolver cg(comm);
-  cg.SetOperator(sysop);
-  cg.SetPreconditioner(*impl->prec_region);
-  cg.SetRelTol(1.0e-10);
-  cg.SetMaxIter(2000);
-  cg.SetPrintLevel(0);
-  cg.Mult(b, u);
-  MFEM_VERIFY(cg.GetConverged(), "Region-condensed CG solve did not converge!");
+  impl->region_ksp->Mult(b, u);
 
   // Recover environment interior: u_E = A_EE^-1 (f_E - (A_env u)|_E).
   Vector Au(nt), rhs(nt), uE(nt);
