@@ -33,6 +33,17 @@ ParOperator::ParOperator(const Operator &A, const FiniteElementSpace &trial_fesp
 {
 }
 
+ParOperator::ParOperator(std::unique_ptr<mfem::HypreParMatrix> &&hA,
+                         const FiniteElementSpace &fespace)
+  : Operator(fespace.GetTrueVSize(), fespace.GetTrueVSize()), data_A(nullptr), A(nullptr),
+    trial_fespace(fespace), test_fespace(fespace), use_R(false),
+    diag_policy(DiagonalPolicy::DIAG_ONE), RAP(std::move(hA))
+{
+  MFEM_VERIFY(RAP, "Cannot construct ParOperator from an empty parallel matrix!");
+  MFEM_VERIFY(RAP->Height() == height && RAP->Width() == width,
+              "Dimension mismatch for the assembled parallel matrix of a ParOperator!");
+}
+
 void ParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
                                        DiagonalPolicy policy)
 {
@@ -44,6 +55,12 @@ void ParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
   tdof_list.Read();
   dbc_tdof_list.MakeRef(tdof_list);
   diag_policy = policy;
+  if (IsParallelAssembled())
+  {
+    // There is no assembly of our own to eliminate the constraints of, so eliminate them
+    // from the given matrix here (see ParallelAssemble).
+    RAP->EliminateBC(dbc_tdof_list, diag_policy);
+  }
 }
 
 Operator::DiagonalPolicy ParOperator::GetDiagonalPolicy() const
@@ -55,7 +72,6 @@ Operator::DiagonalPolicy ParOperator::GetDiagonalPolicy() const
 
 void ParOperator::EliminateRHS(const Vector &x, Vector &b) const
 {
-  MFEM_VERIFY(A, "No local matrix available for ParOperator::EliminateRHS!");
   auto &lx = trial_fespace.GetLVector<Vector>();
   auto &ly = GetTestLVector();
   {
@@ -66,7 +82,7 @@ void ParOperator::EliminateRHS(const Vector &x, Vector &b) const
   }
 
   // Apply the unconstrained operator.
-  A->Mult(lx, ly);
+  LocalOperator().Mult(lx, ly);
 
   auto &ty = test_fespace.GetTVector<Vector>();
   RestrictionMatrixMult(ly, ty);
@@ -87,6 +103,8 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
   {
     return *RAP;
   }
+  MFEM_VERIFY(A, "A ParOperator constructed from an assembled parallel matrix cannot be "
+                 "assembled again once that matrix has been taken!");
 
   // Build the square or rectangular assembled HypreParMatrix.
   const auto *sA = dynamic_cast<const hypre::HypreCSRMatrix *>(A);
@@ -165,7 +183,7 @@ void ParOperator::AssembleDiagonal(Vector &diag) const
   MFEM_VERIFY(&trial_fespace == &test_fespace,
               "Diagonal assembly is only available for square ParOperator!");
   auto &lx = trial_fespace.GetLVector<Vector>();
-  A->AssembleDiagonal(lx);
+  LocalOperator().AssembleDiagonal(lx);
 
   // Parallel assemble and eliminate essential true dofs.
   const Operator *P = test_fespace.GetProlongationMatrix();
@@ -217,7 +235,7 @@ void ParOperator::Mult(const Vector &x, Vector &y) const
   }
 
   // Apply the operator on the L-vector.
-  A->Mult(lx, ly);
+  LocalOperator().Mult(lx, ly);
 
   RestrictionMatrixMult(ly, y);
   if (dbc_tdof_list.Size())
@@ -258,7 +276,7 @@ void ParOperator::MultTranspose(const Vector &x, Vector &y) const
   }
 
   // Apply the operator on the L-vector.
-  A->MultTranspose(ly, lx);
+  LocalOperator().MultTranspose(ly, lx);
 
   trial_fespace.GetProlongationMatrix()->MultTranspose(lx, y);
   if (dbc_tdof_list.Size())
@@ -299,7 +317,7 @@ void ParOperator::AddMult(const Vector &x, Vector &y, const double a) const
   }
 
   // Apply the operator on the L-vector.
-  A->Mult(lx, ly);
+  LocalOperator().Mult(lx, ly);
 
   auto &ty = test_fespace.GetTVector<Vector>();
   RestrictionMatrixMult(ly, ty);
@@ -342,7 +360,7 @@ void ParOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) c
   }
 
   // Apply the operator on the L-vector.
-  A->MultTranspose(ly, lx);
+  LocalOperator().MultTranspose(ly, lx);
 
   auto &tx = trial_fespace.GetTVector<Vector>();
   trial_fespace.GetProlongationMatrix()->MultTranspose(lx, tx);
@@ -432,6 +450,20 @@ ComplexParOperator::ComplexParOperator(const Operator *Ar, const Operator *Ai,
 {
 }
 
+ComplexParOperator::ComplexParOperator(std::unique_ptr<mfem::HypreParMatrix> &&Ar,
+                                       std::unique_ptr<mfem::HypreParMatrix> &&Ai,
+                                       const FiniteElementSpace &fespace)
+  : ComplexOperator(fespace.GetTrueVSize(), fespace.GetTrueVSize()), data_A(nullptr),
+    A(nullptr), trial_fespace(fespace), test_fespace(fespace), use_R(false),
+    diag_policy(Operator::DiagonalPolicy::DIAG_ONE),
+    RAPr(Ar ? std::make_unique<ParOperator>(std::move(Ar), fespace) : nullptr),
+    RAPi(Ai ? std::make_unique<ParOperator>(std::move(Ai), fespace) : nullptr)
+{
+  MFEM_VERIFY(RAPr || RAPi,
+              "Cannot construct ComplexParOperator from empty parallel matrices!");
+  assembled_A = std::make_unique<ComplexWrapperOperator>(RAPr.get(), RAPi.get());
+}
+
 void ComplexParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
                                               Operator::DiagonalPolicy policy)
 {
@@ -447,6 +479,11 @@ void ComplexParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
   tdof_list.Read();
   dbc_tdof_list.MakeRef(tdof_list);
   diag_policy = policy;
+  // A stored diagonal carries the eliminated values of the previous constraints, so it no
+  // longer applies (see SetAssembledDiagonal).
+  diag_assembled.Real().Destroy();
+  diag_assembled.Imag().Destroy();
+  has_diag_assembled = false;
   if (RAPr)
   {
     RAPr->SetEssentialTrueDofs(tdof_list, policy);
@@ -464,7 +501,46 @@ Operator::DiagonalPolicy ComplexParOperator::GetDiagonalPolicy() const
   return diag_policy;
 }
 
+void ComplexParOperator::EliminateEssentialDiagonal(ComplexVector &diag) const
+{
+  if (dbc_tdof_list.Size())
+  {
+    if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
+    {
+      linalg::SetSubVector(diag.Real(), dbc_tdof_list, 1.0);
+    }
+    else if (diag_policy == Operator::DiagonalPolicy::DIAG_ZERO)
+    {
+      linalg::SetSubVector(diag.Real(), dbc_tdof_list, 0.0);
+    }
+    linalg::SetSubVector(diag.Imag(), dbc_tdof_list, 0.0);
+  }
+}
+
 void ComplexParOperator::AssembleDiagonal(ComplexVector &diag) const
+{
+  if (has_diag_assembled)
+  {
+    MFEM_VERIFY(diag.Size() == diag_assembled.Size(),
+                "Invalid size for the stored diagonal of a ComplexParOperator!");
+    diag.UseDevice(true);
+    diag = diag_assembled;
+    return;
+  }
+  AssembleDiagonalFromOperator(diag);
+}
+
+void ComplexParOperator::SetAssembledDiagonal(ComplexVector &&diag)
+{
+  MFEM_VERIFY(diag.Size() == height,
+              "Invalid size for the stored diagonal of a ComplexParOperator!");
+  diag_assembled = std::move(diag);
+  diag_assembled.UseDevice(true);
+  has_diag_assembled = true;
+  EliminateEssentialDiagonal(diag_assembled);
+}
+
+void ComplexParOperator::AssembleDiagonalFromOperator(ComplexVector &diag) const
 {
   diag.UseDevice(true);
   diag = 0.0;
@@ -482,6 +558,13 @@ void ComplexParOperator::Mult(const ComplexVector &x, ComplexVector &y) const
 {
   MFEM_ASSERT(x.Size() == width && y.Size() == height,
               "Incompatible dimensions for ComplexParOperator::Mult!");
+  if (assembled_A)
+  {
+    // The two parts are assembled parallel matrices on the true dofs, with the essential
+    // dofs already eliminated: there is no local operator to apply P and Pᵀ around.
+    assembled_A->Mult(x, y);
+    return;
+  }
 
   auto &lx = trial_fespace.GetLVector<ComplexVector>();
   auto &ly = GetTestLVector();
@@ -520,6 +603,11 @@ void ComplexParOperator::MultTranspose(const ComplexVector &x, ComplexVector &y)
 {
   MFEM_ASSERT(x.Size() == height && y.Size() == width,
               "Incompatible dimensions for ComplexParOperator::MultTranspose!");
+  if (assembled_A)
+  {
+    assembled_A->MultTranspose(x, y);
+    return;
+  }
 
   auto &lx = trial_fespace.GetLVector<ComplexVector>();
   auto &ly = GetTestLVector();
@@ -558,6 +646,11 @@ void ComplexParOperator::MultHermitianTranspose(const ComplexVector &x,
 {
   MFEM_ASSERT(x.Size() == height && y.Size() == width,
               "Incompatible dimensions for ComplexParOperator::MultHermitianTranspose!");
+  if (assembled_A)
+  {
+    assembled_A->MultHermitianTranspose(x, y);
+    return;
+  }
 
   auto &lx = trial_fespace.GetLVector<ComplexVector>();
   auto &ly = GetTestLVector();
@@ -596,6 +689,11 @@ void ComplexParOperator::AddMult(const ComplexVector &x, ComplexVector &y,
 {
   MFEM_ASSERT(x.Size() == width && y.Size() == height,
               "Incompatible dimensions for ComplexParOperator::AddMult!");
+  if (assembled_A)
+  {
+    assembled_A->AddMult(x, y, a);
+    return;
+  }
 
   auto &lx = trial_fespace.GetLVector<ComplexVector>();
   auto &ly = GetTestLVector();
@@ -637,6 +735,11 @@ void ComplexParOperator::AddMultTranspose(const ComplexVector &x, ComplexVector 
 {
   MFEM_ASSERT(x.Size() == height && y.Size() == width,
               "Incompatible dimensions for ComplexParOperator::AddMultTranspose!");
+  if (assembled_A)
+  {
+    assembled_A->AddMultTranspose(x, y, a);
+    return;
+  }
 
   auto &lx = trial_fespace.GetLVector<ComplexVector>();
   auto &ly = GetTestLVector();
@@ -677,6 +780,11 @@ void ComplexParOperator::AddMultHermitianTranspose(const ComplexVector &x, Compl
 {
   MFEM_ASSERT(x.Size() == height && y.Size() == width,
               "Incompatible dimensions for ComplexParOperator::AddMultHermitianTranspose!");
+  if (assembled_A)
+  {
+    assembled_A->AddMultHermitianTranspose(x, y, a);
+    return;
+  }
 
   auto &lx = trial_fespace.GetLVector<ComplexVector>();
   auto &ly = GetTestLVector();

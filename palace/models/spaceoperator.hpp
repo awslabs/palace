@@ -132,7 +132,11 @@ private:
                               std::vector<std::unique_ptr<Operator>> &br_vec,
                               std::vector<std::unique_ptr<Operator>> &br_aux_vec,
                               std::vector<std::unique_ptr<Operator>> &bi_vec,
-                              std::vector<std::unique_ptr<Operator>> &bi_aux_vec);
+                              std::vector<std::unique_ptr<Operator>> &bi_aux_vec,
+                              std::vector<ComplexVector> &diag_vec,
+                              std::vector<ComplexVector> &diag_aux_vec,
+                              std::unique_ptr<mfem::HypreParMatrix> &coarse_r,
+                              std::unique_ptr<mfem::HypreParMatrix> &coarse_i);
   template <typename A3Type>
   void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
                               std::complex<double> a2, A3Type a3,
@@ -141,6 +145,79 @@ private:
   void AssemblePreconditioner(double a0, double a1, double a2, double a3,
                               std::vector<std::unique_ptr<Operator>> &br_vec,
                               std::vector<std::unique_ptr<Operator>> &br_aux_vec);
+
+  // The scalings of the four frequency-independent terms which the complex preconditioner
+  // matrix is a linear combination of, for one part (real or imaginary) of it.
+  struct PreconditionerTermScalars
+  {
+    double stiffness, damping, real_mass, imag_mass;
+  };
+  struct PreconditionerScalars
+  {
+    PreconditionerTermScalars real, imag;
+  };
+
+  // The scalings of the terms for both parts, read by the material property coefficient
+  // construction of AssemblePreconditioner and by the linear combinations of the cached
+  // term diagonals and matrices (CombinePreconditionerTermDiagonals,
+  // CombinePreconditionerTermMatrices), so that they cannot drift apart.
+  PreconditionerScalars GetPreconditionerScalars(std::complex<double> a0,
+                                                 std::complex<double> a1,
+                                                 std::complex<double> a2) const;
+
+  // Diagonals of the four frequency-independent terms of the complex preconditioner matrix
+  // (each with a unit coefficient, including its boundary counterpart), on each level of a
+  // hierarchy and its true dofs. The diagonal is linear in the coefficients, so the
+  // diagonal at any frequency is the same linear combination of these as the coefficients
+  // themselves (see GetPreconditionerScalars). Level 0 is a fully assembled sparse matrix
+  // with a cheap diagonal and is left empty, as is a term whose coefficient is exactly zero
+  // everywhere.
+  struct PreconditionerTermDiagonals
+  {
+    std::vector<Vector> stiffness, damping, real_mass, imag_mass;
+  };
+  PreconditionerTermDiagonals pc_term_diag, pc_term_diag_aux;
+
+  // The same four terms of the coarsest level of the ND hierarchy, as parallel sparse
+  // matrices without essential true dof elimination: that level is a sparse matrix which is
+  // likewise linear in the term scalings, so it is combined from these instead of being
+  // assembled and RAP'd at every frequency. A term whose coefficient is exactly zero
+  // everywhere is left empty. The auxiliary H1 hierarchy keeps its per-frequency assembly:
+  // its coarsest level is only ever used by the auxiliary space smoothers above it.
+  struct PreconditionerTermMatrices
+  {
+    std::unique_ptr<mfem::HypreParMatrix> stiffness, damping, real_mass, imag_mass;
+  };
+  PreconditionerTermMatrices pc_term_coarse;
+
+  bool pc_terms_built = false;
+
+  // Assemble and cache the term diagonals and the coarsest level term matrices, once for
+  // the lifetime of this object.
+  void BuildPreconditionerTerms();
+
+  // True if the complex preconditioner matrix is the linear combination of the cached terms
+  // at every frequency: the Floquet periodic and the frequency-dependent boundary terms
+  // (A2) are excluded, as their coefficients are not the frequency-independent terms scaled
+  // by GetPreconditionerScalars. A single-level hierarchy is excluded as well: its only
+  // level is the coarsest one, which is a sparse matrix with a cheap diagonal and no
+  // smoother above it.
+  bool CanCombinePreconditionerTerms() const;
+
+  // The diagonal of each level above the coarsest, before essential true dof elimination,
+  // as the linear combination of the cached term diagonals with the given scalings. Level 0
+  // is left empty.
+  void CombinePreconditionerTermDiagonals(const PreconditionerScalars &s,
+                                          std::vector<ComplexVector> &diag_vec,
+                                          std::vector<ComplexVector> &diag_aux_vec) const;
+
+  // The two parts of the coarsest level matrix, before essential true dof elimination, as
+  // the linear combination of the cached term matrices with the given scalings. Both are
+  // empty if no term has a coefficient.
+  void
+  CombinePreconditionerTermMatrices(const PreconditionerScalars &s,
+                                    std::unique_ptr<mfem::HypreParMatrix> &coarse_r,
+                                    std::unique_ptr<mfem::HypreParMatrix> &coarse_i) const;
 
 public:
   SpaceOperator(const config::SolverData &solver, const config::DomainData &domains,
@@ -188,6 +265,15 @@ public:
   // frequency-dependent terms exist, returns nullptr.
   std::unique_ptr<ComplexOperator>
   GetExtraSystemOperator(double omega, Operator::DiagonalPolicy diag_policy);
+
+  // True if any boundary condition contributing to the frequency-dependent operator
+  // A2(ω) + F(ω) of GetExtraSystemOperator is configured: a second-order farfield ABC,
+  // surface conductivity, rational surface impedance, a numeric wave port, or a Floquet
+  // port (see AddExtraSystemBdrCoefficients). If false, GetExtraSystemOperator returns null
+  // at every frequency. Only configuration counts are inspected, so the result is the same
+  // on every rank, and conservative (true for a configured term whose coefficient happens
+  // to vanish).
+  bool HasFrequencyDependentBoundaryTerms() const;
 
   // Complex-ω overload for the eigenmode nonlinear solve: the sparse local wave-port mass
   // i·k_n(ω)·M evaluated at the complex ω plus the matrix-free modal correction W frozen at
