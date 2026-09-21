@@ -347,14 +347,23 @@ def build_options_and_model(manifest, manifest_path, case):
     manifest's ProductionRecipe; a case of a labeled calibration manifest its
     Calibration.ProductionValues overridden by its Calibration.BuildCommandOptions
     (run_gmsh_only_case.case_build_options) with the model of the production manifest
-    the calibration manifest names (Calibration.ProductionManifest)."""
+    the calibration manifest names (Calibration.ProductionManifest); a label-only
+    Relabel case its ProductionValues alone (the parent mesh's options)."""
     if "Calibration" in manifest:
         calibration = case["Calibration"]
-        options = dict(calibration["ProductionValues"], **calibration["BuildCommandOptions"])
         production = Path(manifest_path).parent / manifest["Calibration"]["ProductionManifest"]
         recipe = json.loads(production.read_text())["ProductionRecipe"]
-        origin = {"Options": "Calibration.ProductionValues overridden by Calibration.BuildCommandOptions",
-                  "Model": str(production)}
+        if calibration.get("Relabel") is not None:
+            # A label-only relabel case (decision 56) builds nothing: its mesh is the base
+            # case's identity mesh built at Calibration.ProductionValues, so its estimate is
+            # the parent's (no BuildCommandOptions to apply).
+            options = dict(calibration["ProductionValues"])
+            origin = {"Options": "Calibration.ProductionValues (a label-only Relabel case: the parent mesh's production "
+                                 "options, no BuildCommandOptions)", "Model": str(production)}
+        else:
+            options = dict(calibration["ProductionValues"], **calibration["BuildCommandOptions"])
+            origin = {"Options": "Calibration.ProductionValues overridden by Calibration.BuildCommandOptions",
+                      "Model": str(production)}
     else:
         recipe = manifest["ProductionRecipe"]
         options = dict(recipe["BuildCommandOptions"])

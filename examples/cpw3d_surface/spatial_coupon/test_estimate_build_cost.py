@@ -115,6 +115,20 @@ class EstimateBuildCostTest(unittest.TestCase):
         self.assertFalse(preflight_build_cost(tight, MANIFEST, self.case("ten-edge-6791f1c84123"))["Passed"])
         self.assertIsNone(preflight_build_cost({"Gates": tight["Gates"]}, MANIFEST, self.case("ten-edge-6791f1c84123")))
 
+    def test_relabel_calibration_case_is_estimated_at_its_parent_options(self):
+        """A label-only Relabel case (decision 56) declares no BuildCommandOptions: its
+        preflight estimate is the parent mesh's (ProductionValues alone), under the cap."""
+        sizing_path = HERE / "geometry-independence-calibration-sizing.json"
+        sizing = json.loads(sizing_path.read_text())
+        relabel = next(case for case in sizing["Cases"] if case["Calibration"].get("Relabel") is not None)
+        self.assertNotIn("BuildCommandOptions", relabel["Calibration"])
+        result = preflight_build_cost(sizing, sizing_path, relabel)
+        self.assertTrue(result["Passed"])
+        self.assertEqual(result["Options"], relabel["Calibration"]["ProductionValues"])
+        self.assertIn("Relabel", result["Origin"]["Options"])
+        parent = gate(self.manifest, MANIFEST, self.case(relabel["Calibration"]["BaseCase"]))
+        self.assertEqual(result["EstimatedElements"], parent["EstimatedElements"])
+
     def test_manifest_requires_the_model(self):
         validate_manifest(self.manifest, MANIFEST)
         broken = copy.deepcopy(self.manifest)
