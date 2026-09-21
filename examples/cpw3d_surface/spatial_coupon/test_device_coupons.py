@@ -86,7 +86,7 @@ def census_probe(labels):
         Path(log).write_text("stub probe\n")
         (root / "build-census.json").write_text(json.dumps(
             {"InterfaceAreas": [{"Attribute": label, "Area": 1.0} for label in labels]}))
-        return {"Case": case_id, "Commit": "stub", "Root": str(root), "Status": "built", "Stage": "stages-only",
+        return {"Case": case_id, "Commit": "stub", "Root": str(root), "Status": "built", "Stage": "census-only",
                 "ReturnCode": 0, "ScopeGuard": None, "Message": None}
     return probe
 

@@ -2037,9 +2037,13 @@ substrate-vacuum role strings (`test_derive_semantic_contract.py`). The `06` /
 `10` probes recorded labels 1 / 3100 / 5001 / 6001 and 1 / 3100 / 5001 / 5002 /
 6001 / 6002: no un-etched plane under the producer-default footprint. The workflow is
 two-pass by design: (1) derive without a census (PROVISIONAL: the required label set
-only), (2) a stages-only probe build of the same inputs under the production options
-with that provisional contract, then derive again with `--build-census
-PROBE/build-census.json`. The probe census is not validated by the stage contract
+only), (2) a census-only probe build of the same inputs under the production options
+with that provisional contract (`run_gmsh_only_case.py --census-only`: headroom gate,
+source validation, gmsh-build with its census, canonical publication - not the
+placements: their ownership check judges the mesh against the contract and the
+provisional one lacks exactly the un-etched plane labels the census confirms, as the
+device four-edge coupon under the producer-default footprint showed), then derive
+again with `--build-census PROBE/build-census.json`. The probe census is not validated by the stage contract
 (only its `InterfaceAreas` labels are read, and only labels inside the derived
 families are accepted); the production build that follows binds the final contract
 and validates its own census, and since the contract enters the build through its
@@ -2075,7 +2079,7 @@ python3 coupon_library.py build \
    `--mesh-recipe`) becomes a manifest case: SHA-256 of every source file, the recipe
    scope classes of the inputs (a guarded class stops the registration as
    `unsupported-class` with the guard id, no probe built), the two-pass contract
-   derivation orchestrated automatically (provisional contract -> stages-only probe
+   derivation orchestrated automatically (provisional contract -> census-only probe
    build of a staging copy under the production recipe, headroom gate included ->
    `derive_semantic_contract.py --build-census`), the production `Variants` (identity
    and rotate-z) / `TransformComparison` / `SignatureColumns` shared by every existing

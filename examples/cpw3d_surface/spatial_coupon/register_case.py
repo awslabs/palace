@@ -21,10 +21,12 @@ Registration:
    (mesh_stage_contract.scope_classes_of_case_inputs) - a class the recipe guards
    stops the registration as "unsupported-class" with the guard id, no probe built;
 2. the two-pass contract derivation of derive_semantic_contract.py, orchestrated:
-   a PROVISIONAL contract from the inputs, a stages-only probe build of a staging copy
-   (run_gmsh_only_case.py under the production recipe; its headroom gate applies and a
-   mesher ScopeGuard stop is recorded as unsupported-class), then the final contract
-   from the probe's gmsh-build census (--build-census), written to
+   a PROVISIONAL contract from the inputs, a census-only probe build of a staging copy
+   (run_gmsh_only_case.py --census-only under the production recipe: headroom gate,
+   source validation, gmsh-build with its census, canonical publication - not the
+   placements, which the provisional contract cannot judge when the footprint leaves
+   an un-etched plane; a mesher ScopeGuard stop is recorded as unsupported-class), then
+   the final contract from the probe's gmsh-build census (--build-census), written to
    SOURCE_DIR/semantic-contract.json;
 3. the manifest case: the source file digests, the production Variants (identity and
    rotate-z) / TransformComparison / SignatureColumns shared by every existing case
@@ -201,9 +203,9 @@ def case_directory(case, repository):
 
 
 def run_probe_build(python, julia, manifest_path, case_id, root, log):
-    """The stages-only probe build of the staging case; returns its build summary."""
+    """The census-only probe build of the staging case; returns its build summary."""
     command = [python, str(HERE / "run_gmsh_only_case.py"), case_id, "--manifest", str(manifest_path),
-               "--root", str(root), "--stages-only"]
+               "--root", str(root), "--census-only"]
     if julia is not None:
         command += ["--julia", str(julia)]
     with open(log, "w") as stream:
@@ -216,7 +218,7 @@ def run_probe_build(python, julia, manifest_path, case_id, root, log):
 
 
 def derive_two_pass(manifest, repository, case, paths, recipe_path, work, probe):
-    """Provisional contract -> stages-only probe build of a staging copy -> final
+    """Provisional contract -> census-only probe build of a staging copy -> final
     contract from the probe census.  Returns (contract, probe root, probe summary);
     raises RegistrationError with the probe summary attached when the probe stopped."""
     staging = work / "probe-source"
@@ -362,7 +364,7 @@ def register(case_id, directory, *, footprint, inventory_status, manifest_path, 
         f"Registered by register_case.py at {commit} ({time.strftime('%Y-%m-%d')}), fixture version {version}: "
         f"source directory {case['Source']['Directory']}, etch footprint {footprint}, recipe scope classes "
         f"{scope['ExhibitedClasses']}; the contract is derived by derive_semantic_contract.py from the inputs "
-        f"and the gmsh-build census of a stages-only production-option probe build ({probe_root}, commit "
+        f"and the gmsh-build census of a census-only production-option probe build ({probe_root}, commit "
         f"{summary.get('Commit')})"
         + (f"; {provenance}" if provenance else "")
         + (f"; version {version - 1} retired in RetiredFixtures" if existing is not None else ""))

@@ -110,6 +110,10 @@ def main():
                         help="Julia project (relative to the repository root)")
     parser.add_argument("--audit-memory-gib", default="16")
     parser.add_argument("--stages-only", action="store_true")
+    parser.add_argument("--census-only", action="store_true",
+                        help="stop after the canonical stages (headroom gate, source validation, gmsh-build with its "
+                             "census, canonical publication and build record): the registration probe, whose "
+                             "provisional contract cannot judge the placements yet")
     parser.add_argument("--audits-only", action="store_true")
     args = parser.parse_args()
     manifest_path = args.manifest.resolve()
@@ -274,6 +278,10 @@ def main():
                         *[token for stage in CANONICAL_STAGES
                           for token in ("--stage-report", f"{stage}={root}/{STAGE_STEMS[stage]}.log.json")]],
                        cwd=HERE, check=True, env=env)
+        if args.census_only:
+            write_summary("built", stage="census-only")
+            print(f"CENSUS_DONE {root}", flush=True)
+            print(root); return
         for variant in variants:
             transform = f"{root}/{variant}-transform.json"; output = f"{root}/{variant}.msh"
             ownership = f"{output}.interface-partition.csv"

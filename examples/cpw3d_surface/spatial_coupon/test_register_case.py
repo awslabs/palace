@@ -20,7 +20,7 @@ SOURCE_FIXTURE = HERE / "testdata" / "two-edge-8dd4bc70f183"
 
 
 def census_probe(labels, summary_status="built", guard=None):
-    """A probe standing in for the stages-only build: writes the census labels the
+    """A probe standing in for the census-only build: writes the census labels the
     real build would record (from the frozen contract) and the build summary."""
     def probe(probe_manifest, case_id, root, log):
         root.mkdir(parents=True)
@@ -29,7 +29,7 @@ def census_probe(labels, summary_status="built", guard=None):
             {"InterfaceAreas": [{"Attribute": label, "Area": 1.0} for label in labels]}))
         probe.manifests.append(json.loads(Path(probe_manifest).read_text()))
         return {"Case": case_id, "Commit": "stub", "Root": str(root), "Status": summary_status,
-                "Stage": "gmsh-build" if guard else "stages-only", "ReturnCode": 0 if guard is None else 1,
+                "Stage": "gmsh-build" if guard else "census-only", "ReturnCode": 0 if guard is None else 1,
                 "ScopeGuard": guard, "Message": None if guard is None else f"unsupported class {guard}"}
     probe.manifests = []
     return probe
