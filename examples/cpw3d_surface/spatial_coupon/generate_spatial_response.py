@@ -1684,6 +1684,71 @@ def write_plan_view_boundary(path, loops):
     path.write_text("\n".join(lines) + "\n")
 
 
+def write_basis_contract(
+    output,
+    model_name,
+    points,
+    triangles,
+    active,
+    labels,
+    frame,
+    conductor_count,
+    traces,
+    conductor_lift_paths,
+    zero_indices,
+):
+    """basis-contract.json of a freshly built trace basis (the layout of
+    rebuild_box_coupon_inputs: Version 1, the model, the source counts, the box-trace
+    geometry report, the zero-trace knots and the digests of every source trace).  The
+    frame fit residual is the canonical -> mesh-frame round trip of the vertices written
+    to trace-vertices.csv (the frame is the bound process frame)."""
+    import hashlib
+    from box_trace import validate_box_trace
+
+    active = np.asarray(active, dtype=int)
+    canonical = canonical_points(points, frame)
+    residual = float(np.max(np.abs(canonical @ frame.T - points)))
+    geometry = validate_box_trace(points, triangles)
+    geometry.update(
+        {
+            "OriginalVertices": len(points),
+            "AddedVertices": 0,
+            "MaximumRetainedNodeDisplacement": 0.0,
+            "RetainedVertexMap": list(range(len(points))),
+        }
+    )
+    sources = [str(path) for path in traces] + [
+        str(conductor_lift_paths[conductor])
+        for conductor in range(2, conductor_count + 1)
+    ]
+    report = {
+        "Version": 1,
+        "Model": model_name,
+        "SourceDefinitionChanged": False,
+        "AllRetainedDegreesOfFreedomPreserved": True,
+        "OriginalSources": len(sources),
+        "Sources": len(sources),
+        "OriginalContourDOFs": int(len(active)),
+        "ContourDOFs": int(len(active)),
+        "ConductorStates": conductor_count - 1,
+        "OldToNewSourceIndices": {str(i): i for i in range(1, len(sources) + 1)},
+        "FrameFitResidual": residual,
+        "Geometry": geometry,
+        "Origin": (
+            "generate_spatial_response.py --basis-only: the trace basis built by "
+            "build_matching_surface from the coupon geometry (no retained campaign sources)"
+        ),
+        "OutputSourceSHA256": {
+            Path(path).name: hashlib.sha256(Path(path).read_bytes()).hexdigest()
+            for path in sources
+        },
+        "ZeroTraceIndices": [int(i) for i in zero_indices],
+        "LibraryQualified": False,
+    }
+    (output / "basis-contract.json").write_text(json.dumps(report, indent=2) + "\n")
+    return report
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("coupon", type=Path)
@@ -1704,6 +1769,16 @@ def main():
         "--signature-only",
         action="store_true",
         help="Validate the coupon and write only mesh-signature.csv",
+    )
+    parser.add_argument(
+        "--basis-only",
+        action="store_true",
+        help=(
+            "Write the signature files, the trace basis (traces/, zero-trace.csv, "
+            "conductor-N.csv, basis-points.csv, trace-vertices.csv, trace-triangles.csv, "
+            "basis-contract.json) and process-library.json without a mesh or a config: "
+            "the source directory of a coupon-library case"
+        ),
     )
     for interface, (thickness, permittivity) in INTERFACE_DEFAULTS.items():
         parser.add_argument(
@@ -1774,7 +1849,7 @@ def main():
     if args.signature_only:
         print(output / "mesh-signature.csv")
         return
-    if args.thin_mesh is None or args.fabricated_mesh is None:
+    if not args.basis_only and (args.thin_mesh is None or args.fabricated_mesh is None):
         parser.error("--thin-mesh and --fabricated-mesh are required")
 
     bounds = np.vstack((lower, upper))
@@ -1832,6 +1907,67 @@ def main():
         fmt="%.16e",
     )
     write_trace_mesh(output, points, triangles, active.tolist(), labels, frame)
+    interface_layers = {
+        interface: (
+            getattr(args, f"{interface.lower()}_thickness"),
+            getattr(args, f"{interface.lower()}_permittivity"),
+        )
+        for interface in INTERFACE_DEFAULTS
+    }
+    fabrication = {
+        "LengthUnit": "um",
+        "MetalThickness": args.metal_thickness,
+        "OveretchDepth": args.overetch_depth,
+        "SidewallAngleDegrees": args.sidewall_angle,
+        "TopRoundingRadius": args.top_rounding,
+        "BottomRoundingRadius": args.trench_rounding,
+        "SubstratePermittivity": args.substrate_permittivity,
+        "InterfaceLayers": {
+            interface: {
+                "Thickness": values[0],
+                "Permittivity": values[1],
+            }
+            for interface, values in interface_layers.items()
+        },
+    }
+    if args.basis_only:
+        conductor_lift_paths = {}
+        for conductor, values in conductor_trace_lifts(
+            points, labels, conductor_count
+        ).items():
+            path = output / f"conductor-{conductor}.csv"
+            write_surface_trace(path, points, triangles, values)
+            conductor_lift_paths[conductor] = path
+        write_library(
+            output,
+            coupon,
+            args.radius,
+            basis_path,
+            support_points,
+            contour_groups,
+            zero_indices,
+            paths,
+            reference_points(coupon, edges, facets, frame, args.radius),
+            interfaces,
+            fabrication,
+            args.model_name,
+        )
+        write_basis_contract(
+            output,
+            args.model_name,
+            points,
+            triangles,
+            active,
+            labels,
+            frame,
+            conductor_count,
+            traces,
+            conductor_lift_paths,
+            zero_indices,
+        )
+        print(output / "mesh-signature.csv")
+        print(output / "basis-contract.json")
+        return
 
     scale = np.maximum(upper - lower, np.finfo(float).tiny)
     normalized = (points - 0.5 * (lower + upper)) / scale
@@ -1904,13 +2040,6 @@ def main():
         json.dumps({"Version": 1, "Probes": probe_metadata}, indent=2) + "\n"
     )
 
-    interface_layers = {
-        interface: (
-            getattr(args, f"{interface.lower()}_thickness"),
-            getattr(args, f"{interface.lower()}_permittivity"),
-        )
-        for interface in INTERFACE_DEFAULTS
-    }
     terminal_conductors = list(range(2, conductor_count + 1))
     meshes = {
         "thin": args.thin_mesh.expanduser().resolve(),
@@ -2003,22 +2132,6 @@ def main():
             json.dumps(probe, indent=2) + "\n"
         )
 
-    fabrication = {
-        "LengthUnit": "um",
-        "MetalThickness": args.metal_thickness,
-        "OveretchDepth": args.overetch_depth,
-        "SidewallAngleDegrees": args.sidewall_angle,
-        "TopRoundingRadius": args.top_rounding,
-        "BottomRoundingRadius": args.trench_rounding,
-        "SubstratePermittivity": args.substrate_permittivity,
-        "InterfaceLayers": {
-            interface: {
-                "Thickness": values[0],
-                "Permittivity": values[1],
-            }
-            for interface, values in interface_layers.items()
-        },
-    }
     library = write_library(
         output,
         coupon,

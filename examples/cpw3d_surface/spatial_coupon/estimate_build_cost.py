@@ -342,13 +342,35 @@ def case_paths(manifest, manifest_path, case):
             for role, entry in case["Source"]["Files"].items()}
 
 
+def build_options_and_model(manifest, manifest_path, case):
+    """The build options a case executes and the estimate model: a production case its
+    manifest's ProductionRecipe; a case of a labeled calibration manifest its
+    Calibration.ProductionValues overridden by its Calibration.BuildCommandOptions
+    (run_gmsh_only_case.case_build_options) with the model of the production manifest
+    the calibration manifest names (Calibration.ProductionManifest)."""
+    if "Calibration" in manifest:
+        calibration = case["Calibration"]
+        options = dict(calibration["ProductionValues"], **calibration["BuildCommandOptions"])
+        production = Path(manifest_path).parent / manifest["Calibration"]["ProductionManifest"]
+        recipe = json.loads(production.read_text())["ProductionRecipe"]
+        origin = {"Options": "Calibration.ProductionValues overridden by Calibration.BuildCommandOptions",
+                  "Model": str(production)}
+    else:
+        recipe = manifest["ProductionRecipe"]
+        options = dict(recipe["BuildCommandOptions"])
+        origin = {"Options": "ProductionRecipe.BuildCommandOptions", "Model": str(manifest_path)}
+    return options, recipe["BuildCostEstimate"], origin
+
+
 def gate(manifest, manifest_path, case):
     """The estimate of a manifest case against the manifest's element cap; a case whose
-    estimate exceeds the cap is reported Passed false (the caller fails closed)."""
-    recipe = manifest["ProductionRecipe"]
-    options = dict(recipe["BuildCommandOptions"])
-    model = recipe["BuildCostEstimate"]
+    estimate exceeds the cap is reported Passed false (the caller fails closed).  A
+    calibration case is estimated with its own build options (labeled deviations
+    included) and the production manifest's model."""
+    options, model, origin = build_options_and_model(manifest, manifest_path, case)
     result = estimate(case_paths(manifest, manifest_path, case), options, model["TetrahedraPerCubicSize"])
+    result["Options"] = options
+    result["Origin"] = origin
     cap = manifest["Gates"]["MaximumElements"]
     result.update({"MaximumElements": cap, "EstimateOverCap": result["EstimatedElements"] / cap,
                    "Passed": result["EstimatedElements"] <= cap})

@@ -169,7 +169,8 @@ The production roots are rebuilt below.
 
 `geometry-independence-calibration-sizing.json` is a CALIBRATION-ONLY manifest of
 the Gmsh-only pipeline: it carries a `Calibration` block (no `ProductionRecipe`),
-`GateDeviations` `{}` - every gate at its production value -, and `Tools` /
+`GateDeviations` naming the one labeled per-case deviation (decision 53 below; every
+other gate at its production value), and `Tools` /
 `StageToolSHA256` mirrored from production by `refreeze_manifest_tools.py`
 (`CALIBRATION_MANIFESTS`; `--check` reports a stale mirror of either calibration
 manifest). Its cases clone the production four-edge case (same immutable inputs,
@@ -201,6 +202,42 @@ builds a calibration case from `ProductionValues` overridden by `BuildCommandOpt
 the options alone and passed with the bound trace basis; a production case executes
 the production recipe's 0.5) and writes `CALIBRATION.txt` instead of
 `PRODUCTION.txt` in the root.
+
+**Decision 53 (2026-09-20): `two-edge-calib-tube-rings-0.125nm`.** The third case of
+the sizing manifest clones the production two-edge-8dd4bc70f183 case and declares
+`--edge-size 0.000125` / `--corner-size 0.000125` against the CURRENT production values
+(decision 42, `--trace-basis-size-ratio 0.5`; `ProductionValuesRule`): the innermost
+tube ring halved at the unchanged growth 2, so the ring rule yields one more ring (8
+rings to 31.875 nm; production 7 to 31.75 nm) and the corner balls grade from the same
+size - the h-refinement lever for the two-edge p_MA strongest-20 excess at 53 / 58.
+Halving the inner ring at the production tube layer spacing doubles the innermost
+prisms' Jacobian condition by construction (ring / layer aspect): the production
+two-edge worst prism is 586.30, the refined ring set's 1172.6 = 2 x 586.30, above the
+production bound 1000, so the case declares `Calibration.MaximumJacobianCondition 1200`
+labeled under `Calibration.GateDeviations.MaximumJacobianCondition` exactly on the
+decision-33 element-cap precedent (`Production` 1000 recorded, `Cases` naming it,
+`ProductionUse FORBIDDEN`; `general_mesh_manifest.validate_case_jacobian_condition`,
+applied by `case_gates` in the mesher command of `run_gmsh_only_case.py` - the manifest
+`Gates` stay the canonical cache key, the judged gates are written to `case-gates.json`
+- and in the verification). The pre-build estimate gate now judges calibration cases
+too (`estimate_build_cost.build_options_and_model`: the case's own labeled options with
+the production manifest's model), and `run_gmsh_only_matrix.py` accepts a labeled
+Gmsh-only calibration manifest (records `Calibration` per case and
+`Library.Manifest.Kind calibration`). Build (2026-09-20): estimate 574,787 (0.144 of
+the cap; production two-edge 560,105), actual 537,069 elements (427,629 tets + 102,600
+prisms + 6,840 pyramids; production 521,676 = 425,916 + 88,920 + 6,840: +15,393 = +2.95%,
+the prisms +15.4% = the eighth ring), H1 p4 8,445,107 (production 7,973,827, +5.9%), 760
+tube layers on 35.17 um of tube (unchanged), spacing 15.8-49.7 nm (unchanged), maximum
+prism edge aspect 759.7 (production 379.9), prism Jacobian condition max 1172.56 (11,772
+cells above 1000, 0 nonpositive, min scaled Jacobian 0.0305), tetrahedra max condition
+124.4 / min scaled Jacobian 0.0200, pyramids 8.69 / 0.292, cap regions 124.4 / 0.0200 -
+every gate but the labeled prism bound at its production value; gmsh-build 41 s /
+2.45 GiB; identity + rotate-z verified (Passed). The record for `qualify` is the
+calibration root's `library-build.json` (`Library.Manifest.Kind calibration`;
+`qualify` reads the run parameters from `Calibration.ProductionManifest`); the physics
+run of this case must report PCG iteration counts and kappa next to the production
+two-edge run (supervisor: a material PCG degradation bounds the ring lever by
+conditioning - itself a finding).
 
 ## Gmsh-only production pipeline (supervisor decision 38, 2026-09-18)
 
@@ -2075,6 +2112,46 @@ python3 coupon_library.py build \
    jobs, bounds, commit and manifest digest. Nothing in the record is measured by the
    command itself: every number is read from the per-case root's stage reports,
    census, estimate, audits and verification report.
+
+4. **`build --device` (supervisor decision 52; `device_coupons.py`).** A device layout
+   is the only input: `--device <Palace config> --palace <executable>` runs the
+   discovery closure (`examples/cpw2d/discover_surface_response_requirements.py`:
+   geometry preflights against the config's process seed - the version-3 `Fabrication`
+   metadata of `Solver.*ResponseCorrection.Library` -, never a mesh or a solve), routes
+   every requirement with the planner (`prepare_surface_response_coupons.plan_from_manifest`)
+   and turns every `SpatialCoupon` requirement into a source directory:
+   `generate_spatial_response.py --basis-only` with the planner's canonical plan-view
+   boundary / mask regularization and the seed's fabrication writes the signature
+   files, the trace basis (`basis-contract.json` with the geometry report,
+   `FrameFitResidual` and the digests of every source trace, `trace-vertices.csv`,
+   `trace-triangles.csv`, `basis-points.csv`, `zero-trace.csv`, `conductor-N.csv`) and
+   the model's `process-library.json`; `process.toml` from the fabrication; a
+   `provenance.json` naming the device config, the seed, the closure manifest, the
+   requirement, the generator command and the ring size (the planner's default 16 - the
+   basis every gallery case was produced with). The directory is named by the content
+   hash of its bound source files (`spatial-<edges>-edge-<hash12>`), so the same device
+   geometry maps to the same case and `register_case.py` reuses it by content; every
+   directory is registered (footprint `producer-default` - the device path binds no
+   `retained-etch.csv` -, `InventoryStatus DeviceDerived`, the mesh recipe every
+   trace-basis case of the manifest binds or `--mesh-recipe`). Corner and straight-edge
+   requirements are recorded `OutOfScope` with their builder (their own families), never
+   dropped. `--build-limit N` builds the N smallest registered cases by the pre-build
+   estimate and records the others `registered-unbuilt` with their estimates
+   (`Library.BuildLimit.Ranked`). On the transmon example (`examples/transmon/
+   transmon_surface_coarse.json` with the benchmark process seed) the closure yields six
+   spatial coupons - the four-edge `9d2cb9bbb3fe`, three-edge `419576fdab24`, two-edge
+   `3f8992613e95` and ten-edge `6791f1c84123` gallery models among them, whose
+   `mesh-signature.csv` / `plan-view-boundary.csv` / `process.toml` the device path
+   reproduces BYTE FOR BYTE from the device config (the `plan-view-mask.csv` facet
+   tessellation follows the device mesh: byte-identical for the four-edge and
+   three-edge, the same footprint area per conductor to 1e-14 for the two-edge and
+   ten-edge) - plus three out-of-scope families (`test_device_coupons.py`; the checked-in seed's MS
+   permittivity 11.45 differs from the config's 11.47 and Palace refuses the mismatch,
+   so the test binds the config's interface layers into a copy of the seed). The device
+   trace basis is the producer's own (`build_matching_surface`: 120 vertices on the
+   four-edge box against the gallery's 80 retained ones), so device coupons are new
+   cases with their own sources, not the gallery references' basis (decision 44's open
+   design item stands).
 
 Nothing case-specific is hard-coded: the shared case fields, the recipe, the gates,
 the bounds and the scope vocabulary come from the manifest and the stage contract.

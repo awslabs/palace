@@ -44,6 +44,7 @@ import tomllib
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from estimate_build_cost import gate as estimate_gate  # noqa: E402
+from general_mesh_manifest import case_gates  # noqa: E402
 from mesh_stage_contract import scope_guard_in_text  # noqa: E402
 BUILD_SUMMARY = "build-summary.json"
 TRACE_BASIS = {"BasisContract": ("source-basis-contract", "--trace-basis-contract"),
@@ -119,7 +120,11 @@ def main():
     os.chdir(repository)
     case = next(item for item in manifest["Cases"] if item["Id"] == args.case_id)
     recipe, trace_basis_ratio, label = case_build_options(manifest, case)
+    # The manifest Gates are the canonical cache key (gates.json); the mesher's quality
+    # bounds are the gates that judge THIS case - a labeled calibration-only per-case
+    # deviation (element cap, Jacobian condition bound) applies to that case alone.
     gates = manifest["Gates"]
+    judged = case_gates(manifest, case)
     commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
     root = args.root or Path(f"/tmp/coupon-gmsh-only-{args.case_id}-{commit}-{time.strftime('%Y%m%d-%H%M%S')}")
     root.mkdir(parents=True, exist_ok=args.audits_only)
@@ -178,18 +183,18 @@ def main():
         return result.returncode
 
     if not args.audits_only:
-        # Headroom gate (fail closed before any build): the pre-build element estimate of a
-        # production case against the unchanged MaximumElements; recorded in the root.
-        if "Calibration" not in manifest:
-            cost = estimate_gate(manifest, manifest_path, case)
-            (root / "build-cost-estimate.json").write_text(json.dumps(cost, indent=2) + "\n")
-            print(f"ESTIMATE {args.case_id}: {cost['EstimatedElements']:.0f} elements "
-                  f"({cost['EstimateOverCap']:.3f} of the cap {cost['MaximumElements']})", flush=True)
-            if not cost["Passed"]:
-                write_summary("failed", stage="headroom-gate", return_code=1,
-                              message=f"pre-build element estimate {cost['EstimatedElements']:.0f} exceeds the cap")
-                raise SystemExit(f"pre-build element estimate {cost['EstimatedElements']:.0f} exceeds the cap "
-                                 f"{cost['MaximumElements']}: not building (see {root}/build-cost-estimate.json)")
+        # Headroom gate (fail closed before any build): the pre-build element estimate of the
+        # case - a calibration case with its own labeled options and the production model -
+        # against the unchanged MaximumElements; recorded in the root.
+        cost = estimate_gate(manifest, manifest_path, case)
+        (root / "build-cost-estimate.json").write_text(json.dumps(cost, indent=2) + "\n")
+        print(f"ESTIMATE {args.case_id}: {cost['EstimatedElements']:.0f} elements "
+              f"({cost['EstimateOverCap']:.3f} of the cap {cost['MaximumElements']})", flush=True)
+        if not cost["Passed"]:
+            write_summary("failed", stage="headroom-gate", return_code=1,
+                          message=f"pre-build element estimate {cost['EstimatedElements']:.0f} exceeds the cap")
+            raise SystemExit(f"pre-build element estimate {cost['EstimatedElements']:.0f} exceeds the cap "
+                             f"{cost['MaximumElements']}: not building (see {root}/build-cost-estimate.json)")
         (root / ("CALIBRATION.txt" if "Calibration" in manifest else "PRODUCTION.txt")).write_text(
             f"{label} at {commit} (decision 38): build options {recipe}, {TRACE_BASIS_RATIO_OPTION} "
             f"{trace_basis_ratio if trace_basis_ratio is not None else 'not passed (no trace basis)'}; "
@@ -198,6 +203,12 @@ def main():
         (root / "canonical-transform.json").write_text("[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]\n")
         (root / "input-hashes.json").write_text(json.dumps({k: v["SHA256"] for k, v in source["Files"].items()}, indent=2))
         (root / "gates.json").write_text(json.dumps(gates, indent=2))
+        if judged != gates:
+            (root / "case-gates.json").write_text(json.dumps(
+                {"Rule": "the gates that judge this case (general_mesh_manifest.case_gates: the manifest Gates with the "
+                         "case's labeled calibration-only deviations); gates.json stays the canonical cache key",
+                 "Gates": judged, "Deviations": {key: value for key, value in judged.items() if gates.get(key) != value}},
+                indent=2) + "\n")
         (root / "canonical-tool-hashes.json").write_text(json.dumps(
             {f"{stage}/{role}": digest for stage in CANONICAL_STAGES
              for role, digest in manifest["StageToolSHA256"][stage].items()}, indent=2))
@@ -240,13 +251,13 @@ def main():
                "--overetch", number(process["Overetch"]), "--sidewall-angle", number(process["SidewallAngle"]),
                "--top-radius", number(process["TopRounding"]), "--bottom-radius", number(process["TrenchRounding"]),
                "--lc-fine", number(normal), "--lc-far", number(far), "--mesh-order", str(mesh_recipe["GeometryOrder"]),
-               "--max-nodes", str(int(gates["MaximumElements"])), "--max-elements", str(int(gates["MaximumElements"])),
+               "--max-nodes", str(int(judged["MaximumElements"])), "--max-elements", str(int(judged["MaximumElements"])),
                "--semantic-contract", f"{root}/canonical-semantic.json", "--corner-isotropy-radius", number(tangent),
                "--corner-census", f"{root}/build-census.json", *ownership_report, *etch_options, *basis_options,
                "--prism-tubes", "true", *recipe_options,
-               "--maximum-corner-aspect", number(gates["MaximumCornerAspect"]),
-               "--minimum-scaled-jacobian", number(gates["MinimumScaledJacobian"]),
-               "--maximum-jacobian-condition", number(gates["MaximumJacobianCondition"]),
+               "--maximum-corner-aspect", number(judged["MaximumCornerAspect"]),
+               "--minimum-scaled-jacobian", number(judged["MinimumScaledJacobian"]),
+               "--maximum-jacobian-condition", number(judged["MaximumJacobianCondition"]),
                "--maximum-quality-displacement-over-normal", "0.75")
         launch("canonical-publish", "--log", f"{root}/canonical-publish.log", "--stage", "canonical-gmsh-publication",
                "--input", f"gmsh-mesh={root}/gmsh-build.msh", "--input", f"source-process={S['Process']}",

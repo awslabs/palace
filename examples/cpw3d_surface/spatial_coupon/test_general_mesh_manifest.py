@@ -2303,32 +2303,78 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
         validate_manifest(sizing, sizing_path)
         self.assertEqual(sizing["Pipeline"], "gmsh-only")
         self.assertNotIn("ProductionRecipe", sizing)
-        self.assertEqual(sizing["Calibration"]["GateDeviations"], {})
+        # Decision 53: the one gate deviation is the per-case Jacobian condition bound of
+        # the 0.125 nm tube-ring case (labeled, production value recorded, FORBIDDEN in
+        # production); the manifest Gates themselves stay the production gates.
+        self.assertEqual(set(sizing["Calibration"]["GateDeviations"]), {"MaximumJacobianCondition"})
         self.assertEqual(sizing["Gates"], production["Gates"])
         self.assertEqual(sizing["Tools"], production["Tools"])
         self.assertEqual(sizing["StageToolSHA256"], production["StageToolSHA256"])
         base = next(item for item in production["Cases"] if item["Id"] == "four-edge-9d2cb9bbb3fe")
+        two_edge = next(item for item in production["Cases"] if item["Id"] == "two-edge-8dd4bc70f183")
         production_options = production["ProductionRecipe"]["BuildCommandOptions"]
         self.assertEqual(production_options["--trace-basis-size-ratio"], 0.5)
         production_values = {**production_options, "--trace-basis-size-ratio": 1.0}
         levers = {}
         for case in sizing["Cases"]:
-            self.assertIn("calib-sizing", case["Id"])
             self.assertEqual(case["InventoryStatus"], "Calibration")
+            options, ratio, label = case_build_options(sizing, case)
+            self.assertIn("CALIBRATION", label)
+            declared = case["Calibration"]["BuildCommandOptions"]
+            if case["Id"] == "two-edge-calib-tube-rings-0.125nm":
+                # Decision 53: the two-edge base, the current production values as the baseline,
+                # the ring set refined (inner ring and corner size 0.125 nm), the per-case bound.
+                self.assertEqual(case["Calibration"]["BaseCase"], two_edge["Id"])
+                self.assertEqual(case["Source"], two_edge["Source"])
+                self.assertEqual(case["Calibration"]["ProductionValues"], production_options)
+                self.assertEqual(declared, {"--edge-size": 0.000125, "--corner-size": 0.000125})
+                self.assertEqual(case["Calibration"]["MaximumJacobianCondition"], 1200.0)
+                self.assertEqual(case_gates(sizing, case)["MaximumJacobianCondition"], 1200.0)
+                expected = {**production_options, **declared}
+                self.assertEqual(ratio, expected.pop("--trace-basis-size-ratio"))
+                self.assertEqual(options, expected)
+                continue
+            self.assertIn("calib-sizing", case["Id"])
             self.assertEqual(case["Calibration"]["BaseCase"], base["Id"])
             self.assertEqual(case["Source"], base["Source"])
             self.assertEqual(case["Variants"], base["Variants"])
             self.assertEqual(case["TransformComparison"], base["TransformComparison"])
             self.assertEqual(case["Calibration"]["ProductionValues"], production_values)
-            declared = case["Calibration"]["BuildCommandOptions"]
             self.assertEqual(len(declared), 1)
             levers.update(declared)
-            options, ratio, label = case_build_options(sizing, case)
-            self.assertIn("CALIBRATION", label)
+            self.assertNotIn("MaximumJacobianCondition", case["Calibration"])
+            self.assertEqual(case_gates(sizing, case)["MaximumJacobianCondition"], 1000.0)
             expected = {**production_values, **declared}
             self.assertEqual(ratio, expected.pop("--trace-basis-size-ratio"))
             self.assertEqual(options, expected)
         self.assertEqual(levers, {"--trace-basis-size-ratio": 0.5, "--lc-tangent": 0.025})
+        deviation = sizing["Calibration"]["GateDeviations"]["MaximumJacobianCondition"]
+        self.assertEqual((deviation["Production"], deviation["Calibration"]), (1000.0, 1200.0))
+        self.assertEqual(deviation["Cases"], ["two-edge-calib-tube-rings-0.125nm"])
+        self.assertIn("FORBIDDEN", deviation["ProductionUse"])
+        for case in production["Cases"]:
+            self.assertEqual(case_gates(production, case)["MaximumJacobianCondition"], 1000.0)
+
+        def rejected_bound(mutate, message="not labeled as a calibration-only deviation"):
+            broken = copy.deepcopy(sizing)
+            mutate(broken)
+            with self.assertRaisesRegex(ValueError, message):
+                validate_manifest(broken, sizing_path, check_available_files=False)
+
+        def ring_case(m):
+            return next(case for case in m["Cases"] if case["Id"] == "two-edge-calib-tube-rings-0.125nm")
+        rejected_bound(lambda m: m["Calibration"]["GateDeviations"].pop("MaximumJacobianCondition"))
+        rejected_bound(lambda m: ring_case(m)["Calibration"].__setitem__("MaximumJacobianCondition", 1500.0))
+        rejected_bound(lambda m: ring_case(m)["Calibration"].__setitem__("MaximumJacobianCondition", 900.0))
+        rejected_bound(lambda m: m["Calibration"]["GateDeviations"]["MaximumJacobianCondition"].__setitem__("Production", 1200.0))
+        rejected_bound(lambda m: m["Calibration"]["GateDeviations"]["MaximumJacobianCondition"].__setitem__("Cases", []))
+        rejected_bound(lambda m: m["Cases"][0]["Calibration"].__setitem__("MaximumJacobianCondition", 1200.0))
+        rejected_bound(lambda m: ring_case(m)["Calibration"].pop("MaximumJacobianCondition"),
+                       "name exactly the cases declaring the bound")
+        with self.assertRaisesRegex(ValueError, "calibration or edge-layer block in a production manifest"):
+            broken = copy.deepcopy(production)
+            broken["Cases"][0]["Calibration"] = {"MaximumJacobianCondition": 1200.0}
+            validate_manifest(broken, production_path, check_available_files=False)
         adopted = next(case for case in sizing["Cases"] if case["Id"] == "four-edge-calib-sizing-tbr-0.5")
         self.assertIn("AdoptedAsProductionRecipe", adopted["Calibration"])
         self.assertIn("80966c7db44dabc49ac7bb068bbaee0e0828e413b115cee8c066c886866b6108",

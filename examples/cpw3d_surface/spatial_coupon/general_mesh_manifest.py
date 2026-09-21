@@ -230,10 +230,14 @@ def validate_build_cost_estimate_model(recipe):
 
 
 def preflight_build_cost(manifest, manifest_path, case):
-    """The pre-build element estimate of a production case against MaximumElements
-    (fail closed), or None for a manifest without the model (calibration manifests)."""
+    """The pre-build element estimate of a case against MaximumElements (fail closed): a
+    production case with its recipe's options and model; a case of a labeled Gmsh-only
+    calibration manifest with its own options and the production manifest's model
+    (estimate_build_cost.build_options_and_model); None for a legacy manifest."""
+    if manifest.get("Pipeline") != GMSH_ONLY_PIPELINE:
+        return None
     recipe = manifest.get(PRODUCTION_RECIPE_KEY)
-    if recipe is None or BUILD_COST_ESTIMATE_KEY not in recipe:
+    if "Calibration" not in manifest and (recipe is None or BUILD_COST_ESTIMATE_KEY not in recipe):
         return None
     from estimate_build_cost import gate as estimate_gate
     return estimate_gate(manifest, manifest_path, case)
@@ -367,7 +371,39 @@ def case_gates(manifest, case):
         del gates[EDGE_LAYER_QUALITY_RULE_GATE]
     if calibration.get(ELEMENT_CAP_GATE) is not None:
         gates[ELEMENT_CAP_GATE] = validate_case_element_cap(manifest, case)
+    if calibration.get(JACOBIAN_CONDITION_GATE) is not None:
+        gates[JACOBIAN_CONDITION_GATE] = validate_case_jacobian_condition(manifest, case)
     return gates
+
+
+# A calibration case may carry its own Jacobian condition bound
+# (Calibration.MaximumJacobianCondition, supervisor decision 53: 1200 for the 0.125 nm
+# tube ring set, whose innermost prisms have twice the production ring / layer aspect -
+# 2 x 586.30 = 1172.6 by construction, not a quality loss), labeled in the manifest's
+# Calibration.GateDeviations.MaximumJacobianCondition naming the case; every other case
+# and every production case keeps the manifest gate.
+JACOBIAN_CONDITION_GATE = "MaximumJacobianCondition"
+
+
+def validate_case_jacobian_condition(manifest, case):
+    """Calibration.MaximumJacobianCondition of a case (if present) is a labeled
+    calibration-only deviation: a finite number above the manifest gate, equal to the
+    deviation's Calibration value, the case named in the deviation's Cases, Production
+    equal to the manifest gate and ProductionUse FORBIDDEN.  Returns the bound or None."""
+    calibration = case.get("Calibration")
+    bound = calibration.get(JACOBIAN_CONDITION_GATE) if isinstance(calibration, dict) else None
+    if bound is None:
+        return None
+    manifest_bound = manifest.get("Gates", {}).get(JACOBIAN_CONDITION_GATE)
+    deviation = manifest.get("Calibration", {}).get("GateDeviations", {}).get(JACOBIAN_CONDITION_GATE)
+    if (not _finite_number(bound, positive=True) or not _finite_number(manifest_bound, positive=True) or
+            bound <= manifest_bound or not isinstance(deviation, dict) or
+            deviation.get("Production") != manifest_bound or deviation.get("Calibration") != bound or
+            not isinstance(deviation.get("Cases"), list) or case.get("Id") not in deviation["Cases"] or
+            "FORBIDDEN" not in str(deviation.get("ProductionUse", ""))):
+        raise ValueError(f"{case.get('Id')} declares a Jacobian condition bound that is not labeled as a "
+                         f"calibration-only deviation")
+    return float(bound)
 
 
 # A calibration case may carry its own element cap (Calibration.MaximumElements,
@@ -451,6 +487,7 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
         if EDGE_LAYER_CASE_KEY in case:
             raise ValueError(f"{case['Id']} must declare its edge layer under Calibration")
         validate_case_element_cap(manifest, case)
+        validate_case_jacobian_condition(manifest, case)
         validate_calibration_case_options(manifest, case)
         source = case.get("Source", {})
         files = source.get("Files")
@@ -523,6 +560,13 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
                            case["Calibration"].get(ELEMENT_CAP_GATE) is not None)
         if not isinstance(cap_deviation, dict) or sorted(cap_deviation.get("Cases") or []) != declaring:
             raise ValueError("Element cap deviation must name exactly the cases declaring the cap")
+    condition_deviation = manifest.get("Calibration", {}).get("GateDeviations", {}).get(JACOBIAN_CONDITION_GATE)
+    if condition_deviation is not None:
+        declaring = sorted(case["Id"] for case in manifest["Cases"]
+                           if isinstance(case.get("Calibration"), dict) and
+                           case["Calibration"].get(JACOBIAN_CONDITION_GATE) is not None)
+        if not isinstance(condition_deviation, dict) or sorted(condition_deviation.get("Cases") or []) != declaring:
+            raise ValueError("Jacobian condition deviation must name exactly the cases declaring the bound")
     if comparison_kinds != {"feature-scaling", "cad-subdivision-sensitivity"}:
         raise ValueError("Both feature and CAD-subdivision scaling controls are required")
     return repository, tool_hashes, matrix

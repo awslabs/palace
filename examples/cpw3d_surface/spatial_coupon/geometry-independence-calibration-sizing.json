@@ -9,7 +9,17 @@
     "Decision": "SUPERVISOR-DECISIONS.md items 38 (Gmsh-only pipeline, 2026-09-18), 39 (volume size laws), 40 (tube layers follow the size field) and 41 (two-variant sizing calibration, 2026-09-19) and 42 (TraceBasisSizeRatio 0.5 adopted into production, 2026-09-19)",
     "ProductionManifest": "geometry-independence-suite.json",
     "Binding": "each case declares Calibration.BuildCommandOptions (the options that differ from production, any subset) against Calibration.ProductionValues (the production BuildCommandOptions at the time of the decision-41 study, before decision 42: --trace-basis-size-ratio 1.0; a historical baseline, never updated after an adoption - the EL4c precedent of the legacy manifest); general_mesh_manifest.validate_calibration_case_options requires the label and differing finite values, and verify_canonical_case_entries.validate_calibration_commands requires the recorded gmsh-build command to execute every declared option exactly once at its value, never at its production value, and every undeclared production option only at its production value (the canonical cache key does not encode recipe options, so the recorded command is the binding of the label to the build); run_gmsh_only_case.py builds a case from ProductionValues overridden by BuildCommandOptions",
-    "GateDeviations": {},
+    "GateDeviations": {
+      "MaximumJacobianCondition": {
+        "Production": 1000.0,
+        "Calibration": 1200.0,
+        "Cases": [
+          "two-edge-calib-tube-rings-0.125nm"
+        ],
+        "Reason": "supervisor decision 53 (2026-09-20): halving the innermost tube ring to 0.125 nm at the production tube layer spacing (50 nm) doubles the innermost prisms' Jacobian condition by construction (the ring / layer aspect): the production two-edge mesh's worst prism is 586.30, the refined ring set's 1172.6 = 2 x 586.30 exactly, above the production bound 1000 - a labeling of the anisotropy the refinement implies, not a quality loss elsewhere (tetrahedra, pyramids and cap regions keep the production bounds); the smallest round value admitting the refined ring; the physics run of this case reports PCG iteration counts and kappa next to the production two-edge run so any conditioning effect of these prisms is visible (if PCG degrades materially, the ring lever is bounded by conditioning - itself a finding)",
+        "ProductionUse": "FORBIDDEN: production cases and the production manifest keep MaximumJacobianCondition 1000; this bound judges the named calibration case alone (general_mesh_manifest.case_gates)"
+      }
+    },
     "Outcome": "physics-11 (PBS 45145, V-a mesh 80966c7d..., 0.508 node-h) reaches EL4c level or better on every class while MA stays converged: E 60/60 within 1% (worst +0.43%; 74/10/26 +0.03/+0.15/-0.10%), p_SA within 1/2/5% 35/44/58 (EL4c 35/40/56), p_MS median -0.60% worst -1.70%, p_MA +0.76/+0.76/+0.76% with 55/60 within 2%; physics-12 (PBS 45146, V-b mesh 7db360be..., 0.593 node-h) moves E/SA/MS by <= 0.53 points at 1.14x cost: REJECTED, TangentialSize stays 50 nm. Decision 42: TraceBasisSizeRatio 0.5 is the production recipe; the production four-edge root rebuilt under geometry-independence-suite.json reproduced the V-a identity mesh SHA256 80966c7db44dabc49ac7bb068bbaee0e0828e413b115cee8c066c886866b6108 under commits 21cf534ff..138618e57 (pre-decision-44 shortest-edge trace measure); since b6378f173 (decision 44: minimum-altitude measure and composed curve spacing) the production four-edge root is 1d536c448885cda2d8af7441c63a9b7b591c18b0b127366c1958ba65030a9ba5 (1,916,486 elements) and the physics-11 evidence stays bound to 80966c7d..."
   },
   "Gates": {
@@ -34,7 +44,7 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "56715197f25636bab17eef64b2809b6cce1713ae2a091c61e0dc8f4f1885a613"
+      "SHA256": "c0adee1b2de126f41b343a102c4e9a5c9ba2518d41aa9bab016835524c2a1bb6"
     },
     {
       "Name": "verify_canonical_case_entries.py",
@@ -59,7 +69,7 @@
     {
       "Name": "estimate_build_cost.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/estimate_build_cost.py",
-      "SHA256": "ea87e731927dd7bdc4bb59597b0c8327c14a3896edf5ff665548864b80270597"
+      "SHA256": "6da1c6aee8d999481e70afb87535d3d63f2a36b62c3f5ff89ded5ca62bc09b69"
     },
     {
       "Name": "audit_edge_metric_mesh.py",
@@ -481,6 +491,160 @@
           "--far-growth": 0.5,
           "--trace-basis-size-ratio": 1.0
         }
+      }
+    },
+    {
+      "Id": "two-edge-calib-tube-rings-0.125nm",
+      "InventoryStatus": "Calibration",
+      "Frozen": true,
+      "Features": [
+        "2-edge",
+        "single-slot",
+        "multiple-conductors",
+        "finite-strips",
+        "calibration-sizing",
+        "calibration-tube-rings"
+      ],
+      "Variants": [
+        {
+          "Id": "identity",
+          "Transform": [
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        },
+        {
+          "Id": "rotate-z-0.63",
+          "Transform": [
+            0.8080275083121519,
+            -0.5891447579422695,
+            0,
+            0,
+            0.5891447579422695,
+            0.8080275083121519,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        }
+      ],
+      "TransformComparison": {
+        "Reference": "identity",
+        "Transformed": "rotate-z-0.63",
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
+      },
+      "Source": {
+        "Directory": "examples/cpw3d_surface/spatial_coupon/testdata/two-edge-8dd4bc70f183",
+        "SignatureRole": "Signature",
+        "SignatureColumns": [
+          "Index",
+          "Slot",
+          "Conductor",
+          "Px",
+          "Py",
+          "Pz",
+          "Gx",
+          "Gy",
+          "Gz",
+          "Tx",
+          "Ty",
+          "Tz",
+          "S0",
+          "S1"
+        ],
+        "Files": {
+          "Signature": {
+            "Name": "mesh-signature.csv",
+            "SHA256": "389982d17eb28513b9900ee8ae8be37f7583ebac09a3493b033c5cd4697f8d20"
+          },
+          "Boundary": {
+            "Name": "plan-view-boundary.csv",
+            "SHA256": "0a926635709754e14771c12323548a3ca97688650dcec621bd23139e074db98d"
+          },
+          "Mask": {
+            "Name": "plan-view-mask.csv",
+            "SHA256": "2070d684e43e29d816273666afe65104f41d70c9ed49eb2094e85346243f09bc"
+          },
+          "Process": {
+            "Name": "process.toml",
+            "SHA256": "883b8b345d4943faaf498fdaaea14a54a9be3e7dbf520210b4fcd475ac5bc569"
+          },
+          "ProcessLibrary": {
+            "Name": "process-library.json",
+            "SHA256": "7d9052ca0df35a9edd464b2d06a4b1c84af93e205ac3b3b5c5de7bde2df74b8f"
+          },
+          "BasisContract": {
+            "Name": "basis-contract.json",
+            "SHA256": "9bcbd95c82c0ebc2f5aa58692028814ebebf334fd0ec6d631729375509dc4691"
+          },
+          "TraceVertices": {
+            "Name": "trace-vertices.csv",
+            "SHA256": "bd698b85dd3ed1b41165a8f839a6b13919ddca3d88fc4d8952424058fa30b765"
+          },
+          "TraceTriangles": {
+            "Name": "trace-triangles.csv",
+            "SHA256": "6a19c6d838b2288896dc63cd21ec884ab39b3c0eb88488bc6a5d0297b6528441"
+          },
+          "Provenance": {
+            "Name": "provenance.json",
+            "SHA256": "ad0e49052dbf174c0372e3f9cd20d9d8363312ec990de6062cc72c19b97be19c"
+          },
+          "SemanticContract": {
+            "Name": "semantic-contract.json",
+            "SHA256": "f2f5fbe5ff36d414ff5d9231835aed43191e8a4ffb00e4afd4ffe6d00449b336"
+          },
+          "MeshRecipe": {
+            "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
+            "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
+          }
+        },
+        "EtchFootprint": "producer-default"
+      },
+      "Provenance": "CALIBRATION variant of two-edge-8dd4bc70f183 (same immutable inputs, hashes and semantic contract as the production case, FixtureVersion None; Gmsh-only pipeline; supervisor decision 53, 2026-09-20): the tube ring set refined - inner ring 0.125 nm (--edge-size 0.000125, half the production 0.25 nm) at the unchanged growth 2, so the ring rule (largest K with r_K + h_K <= min(Overetch, MetalThickness / 2, CornerIsotropyRadius)) yields one more ring (8 rings, radius 31.875 nm; production 7 rings, 31.75 nm), the corner balls graded to it (--corner-size 0.000125 = EdgeSize, the recipe's one graded law); every other build option and every gate at its production value. Purpose: adjudicate the gallery-10 / live two-edge p_MA strongest-20 excess at 53 / 58 (+2.8 / +3.5% vs the p5 reference) under h (ring) refinement through qualify (p4 + p5): stable -> reference-limited annotation rule; moving -> our error",
+      "Calibration": {
+        "Label": "TUBE RINGS 0.125 nm (supervisor decision 53, 2026-09-20): the Gmsh-only production recipe with the innermost tube ring and the corner size halved to 0.125 nm at the production growth ratio 2 - one more ring inside the unchanged transverse bound (8 rings to 31.875 nm) and the corner balls graded from the same size - every other option at its production value (TangentialSize 50 nm, FarGrowth 0.5, TraceBasisSizeRatio 0.5); a labeled h-refinement lever for the two-edge MA excess at 53 / 58, never a production change",
+        "BaseCase": "two-edge-8dd4bc70f183",
+        "BuildCommandOptions": {
+          "--edge-size": 0.000125,
+          "--corner-size": 0.000125
+        },
+        "ProductionValues": {
+          "--lc-tangent": 0.05,
+          "--edge-size": 0.00025,
+          "--edge-growth-ratio": 2.0,
+          "--corner-size": 0.00025,
+          "--far-growth": 0.5,
+          "--trace-basis-size-ratio": 0.5
+        },
+        "ProductionValuesRule": "the production BuildCommandOptions at the time of this declaration (decision 42 recipe: --trace-basis-size-ratio 0.5): the two declared options differ from them, every undeclared option executes at its production value",
+        "MaximumJacobianCondition": 1200.0
       }
     }
   ],

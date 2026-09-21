@@ -7,15 +7,23 @@
 
   coupon_library.py build [--register CASE_ID=SOURCE_DIR ... --footprint {bound,producer-default}
                            --inventory-status STATUS [--mesh-recipe PATH] [--provenance TEXT]]
-                          [--case ID ...] [--jobs N] [--root DIR] [--output PATH] [--manifest PATH]
+                          [--device PALACE_CONFIG --palace PATH [--device-output DIR] [--ring-size N]]
+                          [--case ID ...] [--jobs N] [--build-limit N] [--root DIR] [--output PATH] [--manifest PATH]
   coupon_library.py qualify --build-record library-build.json --reference <campaign dir or none>
                             --remote HOST:ROOT [--orders p5] --controls p3,p5 --max-jobs N
                             --frozen-binary-sha256 HEX [--case ID ...] [--root DIR] [--dry-run]
 
-`build` registers the given source directories as manifest cases (register_case.py:
+`build --device` maps a device layout to coupon source directories first
+(device_coupons.py: discovery closure by Palace geometry preflights -> the planner's
+spatial coupons -> generate_spatial_response.py --basis-only -> content-hashed source
+directories with provenance; the other families are recorded out of scope) and
+registers every one of them (footprint producer-default, InventoryStatus DeviceDerived,
+the manifest's shared mesh recipe); `--build-limit N` builds the N smallest by the
+pre-build estimate and records the rest registered-unbuilt with their estimates.
+`build --register` registers the given source directories as manifest cases (register_case.py:
 source SHA256s, the automated two-pass contract derivation, idempotent by content; the
 footprint declaration is mandatory and applies to every directory registered by the
-call), then builds the selected cases (default: every case of the manifest, the newly
+call).  Both then build the selected cases (default: every case of the manifest, the newly
 registered ones included) as a job pool (run_gmsh_only_matrix.py: headroom gate ->
 run_gmsh_only_case.py DAG -> audits -> verify_canonical_case_entries.py, fail closed per
 case) and writes library-build.json.  A registration that fails closed stops the build
@@ -36,6 +44,7 @@ import sys
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import device_coupons  # noqa: E402
 import register_case  # noqa: E402
 import run_gmsh_only_matrix  # noqa: E402
 sys.path.insert(0, str(HERE / "qualify"))
@@ -67,6 +76,12 @@ def build_parser():
                                              "directories without their own mesh-recipe.json")
     build.add_argument("--provenance", help="text appended to the Provenance of every registered case")
     build.add_argument("--work", type=Path, help="parent of the registration work directories")
+    build.add_argument("--device", type=Path, help="a device's Palace config (its ResponseCorrection Library is the "
+                                                  "process seed): discovery -> source directories -> registration")
+    build.add_argument("--palace", type=Path, help="Palace executable for the discovery preflights (with --device)")
+    build.add_argument("--device-output", type=Path, help="output of the device adapter (default ROOT/device)")
+    build.add_argument("--ring-size", type=int, default=device_coupons.DEFAULT_RING_SIZE,
+                       help="trace-basis ring size of the device coupons (the planner's default)")
     qualify = commands.add_parser("qualify", help="physics qualification of the built coupons against their references")
     qualify_library.add_arguments(qualify)
     return parser
@@ -82,7 +97,33 @@ def main(argv=None):
     if args.register and (args.footprint is None or args.inventory_status is None):
         parser.error("--register requires --footprint and --inventory-status (fail closed without a footprint "
                      "declaration)")
+    if args.device is not None and args.palace is None:
+        parser.error("--device requires --palace (the discovery preflights)")
     registered = []
+    extra = None
+    if args.device is not None:
+        if args.root is None:
+            parser.error("--device requires --root (the device adapter writes under ROOT/device)")
+        device_output = args.device_output or (args.root / "device")
+        try:
+            device_record = device_coupons.prepare_device_sources(
+                args.device, palace=args.palace, output=device_output, manifest_path=args.manifest, ring_size=args.ring_size,
+                python=args.python)
+            device_coupons.register_device_sources(device_record, manifest_path=args.manifest, mesh_recipe=args.mesh_recipe,
+                                                   work=(args.work or device_output / "register"), python=args.python,
+                                                   julia=args.julia)
+        except device_coupons.DeviceAdapterError as error:
+            print(f"DEVICE_ADAPTER_FAILED: {error}", file=sys.stderr)
+            return 1
+        for coupon in device_record["Coupons"]:
+            status = (coupon["Registration"] or {}).get("Status")
+            if status in (register_case.STATUS_REGISTERED, register_case.STATUS_REUSED):
+                registered.append(coupon["Case"])
+        extra = {"Device": {key: device_record[key] for key in ("Device", "ProcessLibrary", "Discovery", "Plan", "TraceBasis",
+                                                                "OutOfScope", "MeshRecipe", "Output")},
+                 "DeviceCoupons": device_record["Coupons"]}
+        if args.case is None:
+            args.case = []
     for case_id, directory in args.register:
         try:
             record = register_case.register(
@@ -96,7 +137,10 @@ def main(argv=None):
         registered.append(case_id)
     if args.case is not None:
         args.case = list(dict.fromkeys(args.case + registered))
-    return run_gmsh_only_matrix.run_build(args)
+    if args.device is not None and not args.case:
+        print("DEVICE_ADAPTER_FAILED: no device coupon registered", file=sys.stderr)
+        return 1
+    return run_gmsh_only_matrix.run_build(args, extra=extra)
 
 
 if __name__ == "__main__":

@@ -74,9 +74,11 @@ MESH_RECIPE_FILE = "mesh-recipe.json"
 FOOTPRINT_BOUND = "bound"
 FOOTPRINT_DECLARATIONS = (FOOTPRINT_BOUND, PRODUCER_DEFAULT_ETCH_FOOTPRINT)
 # The production manifest's inventory vocabulary; "Calibration" belongs to the labeled
-# calibration manifests only and is never registered here.
+# calibration manifests only and is never registered here.  "DeviceDerived" is a case
+# whose sources the device adapter (device_coupons.py) produced from a device's
+# discovery closure (decision 52).
 INVENTORY_STATUSES = ("RepositoryFixture", "RepositoryAssessmentFixture", "RemoteVerified",
-                      "LocalImmutableCalibration")
+                      "LocalImmutableCalibration", "DeviceDerived")
 # Case fields every production case shares (the production placement variants, the
 # physical covariance comparison, the signature preflight columns).
 SHARED_CASE_FIELDS = ("Variants", "TransformComparison")

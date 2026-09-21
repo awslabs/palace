@@ -78,7 +78,7 @@ class LibraryBuildRecordTest(unittest.TestCase):
         root = self.tmp / "built"
         self.write_built_root(root)
         record = self.record(root)
-        self.assertEqual(set(record), {"Case", "InventoryStatus", "FixtureVersion", "Scope", "Status", "Passed",
+        self.assertEqual(set(record), {"Case", "InventoryStatus", "FixtureVersion", "Calibration", "Scope", "Status", "Passed",
                                        "StoppedBy", "CanonicalBuildId", "Variants", "Elements", "H1", "Estimate",
                                        "Stages", "Verification", "HeadroomFlags", "Root", "DriverReturnCode",
                                        "WallSeconds"})
@@ -175,13 +175,17 @@ class LibraryBuildRecordTest(unittest.TestCase):
         self.assertEqual((totals["Jobs"], totals["WallClockSeconds"], totals["Commit"]), (2, 99.0, "abc"))
         self.assertEqual(totals["Manifest"]["Path"], str(self.manifest_path))
 
-    def test_matrix_rejects_unknown_cases_and_calibration_manifests(self):
+    def test_matrix_rejects_unknown_cases_legacy_manifests_and_bad_limits(self):
         with self.assertRaises(ValueError):
             run_matrix(self.manifest_path, ["no-such-case"], root=self.tmp / "root")
+        # A labeled Gmsh-only calibration manifest is accepted (decision 53 builds a labeled
+        # ring-set variant through the matrix); the legacy-pipeline calibration manifest is not.
         with self.assertRaises(ValueError):
-            run_matrix(HERE / "geometry-independence-calibration-sizing.json", root=self.tmp / "root")
+            run_matrix(HERE / "geometry-independence-calibration-ma.json", root=self.tmp / "root")
         with self.assertRaises(ValueError):
             run_matrix(self.manifest_path, [self.case["Id"]], root=self.tmp / "root", jobs=0)
+        with self.assertRaises(ValueError):
+            run_matrix(self.manifest_path, [self.case["Id"]], root=self.tmp / "root", build_limit=-1)
 
 
 class LibraryBuildEndToEndTest(unittest.TestCase):
