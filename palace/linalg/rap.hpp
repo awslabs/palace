@@ -47,6 +47,10 @@ private:
   void RestrictionMatrixMultTranspose(const Vector &ty, Vector &ly) const;
   Vector &GetTestLVector() const;
 
+  // True if the operator was constructed from an already assembled parallel matrix, and so
+  // has no local operator behind it.
+  bool IsParallelAssembled() const { return !A; }
+
   ParOperator(std::unique_ptr<Operator> &&dA, const Operator *pA,
               const FiniteElementSpace &trial_fespace,
               const FiniteElementSpace &test_fespace, bool test_restrict);
@@ -68,8 +72,22 @@ public:
   {
   }
 
+  // Construct the parallel operator from an already assembled parallel matrix, for a matrix
+  // which is available more cheaply than it can be assembled here, e.g. as a scaled sum of
+  // frequency-independent term matrices. There is no local operator: the operator is
+  // applied and returned by ParallelAssemble as the given matrix, and the essential true
+  // dof elimination is applied to it directly (see SetEssentialTrueDofs). Nothing is left
+  // of the operator once the matrix has been taken (StealParallelAssemble).
+  ParOperator(std::unique_ptr<mfem::HypreParMatrix> &&hA,
+              const FiniteElementSpace &fespace);
+
   // Get access to the underlying local (L-vector) operator.
-  const Operator &LocalOperator() const { return *A; }
+  const Operator &LocalOperator() const
+  {
+    MFEM_VERIFY(A, "A ParOperator constructed from an assembled parallel matrix has no "
+                   "local operator!");
+    return *A;
+  }
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return trial_fespace.GetComm(); }
@@ -138,13 +156,30 @@ private:
   // Diagonal policy for constrained true dofs.
   Operator::DiagonalPolicy diag_policy = Operator::DiagonalPolicy::DIAG_ZERO;
 
+  // A precomputed diagonal returned by AssembleDiagonal instead of assembling one from the
+  // local operator, empty unless one has been stored (see SetAssembledDiagonal). The flag,
+  // not the vector size, decides: a rank with no true dofs stores an empty vector and must
+  // still take the same (non-collective) path as every other rank.
+  ComplexVector diag_assembled;
+  bool has_diag_assembled = false;
+
   // Real and imaginary parts of the operator as non-owning ParOperator objects.
   std::unique_ptr<ParOperator> RAPr, RAPi;
+
+  // The two parts as a single complex operator on the true dofs, applying the assembled
+  // parallel matrices of RAPr and RAPi (non-owning). Set only for an operator constructed
+  // from already assembled parallel matrices, which has no local operator to apply P and Pᵀ
+  // around.
+  std::unique_ptr<ComplexWrapperOperator> assembled_A;
 
   // Helper methods for operator application.
   void RestrictionMatrixMult(const ComplexVector &ly, ComplexVector &ty) const;
   void RestrictionMatrixMultTranspose(const ComplexVector &ty, ComplexVector &ly) const;
   ComplexVector &GetTestLVector() const;
+
+  // Apply the essential true dof elimination of the assembled diagonal: the real part takes
+  // the value of the diagonal policy and the imaginary part is always zero.
+  void EliminateEssentialDiagonal(ComplexVector &diag) const;
 
   ComplexParOperator(std::unique_ptr<Operator> &&dAr, std::unique_ptr<Operator> &&dAi,
                      const Operator *pAr, const Operator *pAi,
@@ -175,11 +210,29 @@ public:
   {
   }
 
+  // Construct the complex-valued parallel operator from the already assembled parallel
+  // matrices of its two parts (see the corresponding ParOperator constructor), either of
+  // which may be empty. The parts are wrapped as ParOperator, so that a solver which
+  // assembles them (MfemWrapperSolver) is unchanged, and the essential true dof elimination
+  // is applied to the matrices directly.
+  ComplexParOperator(std::unique_ptr<mfem::HypreParMatrix> &&Ar,
+                     std::unique_ptr<mfem::HypreParMatrix> &&Ai,
+                     const FiniteElementSpace &fespace);
+
+  // True if the operator was constructed from the already assembled parallel matrices of
+  // its two parts, and so has no local operator (LocalOperator).
+  bool IsParallelAssembled() const { return assembled_A != nullptr; }
+
   const Operator *Real() const override { return RAPr.get(); }
   const Operator *Imag() const override { return RAPi.get(); }
 
   // Get access to the underlying local (L-vector) operator.
-  const ComplexOperator &LocalOperator() const { return *A; }
+  const ComplexOperator &LocalOperator() const
+  {
+    MFEM_VERIFY(A, "A ComplexParOperator constructed from assembled parallel matrices has "
+                   "no local operator!");
+    return *A;
+  }
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return trial_fespace.GetComm(); }
@@ -206,6 +259,22 @@ public:
   Operator::DiagonalPolicy GetDiagonalPolicy() const;
 
   void AssembleDiagonal(ComplexVector &diag) const override;
+
+  // Assemble the diagonal from the local operator, ignoring any diagonal stored by
+  // SetAssembledDiagonal. This is what AssembleDiagonal does when none is stored.
+  void AssembleDiagonalFromOperator(ComplexVector &diag) const;
+
+  // Store a precomputed diagonal of this operator, which AssembleDiagonal returns instead
+  // of assembling one from the local operator. Used where the diagonal is known more
+  // cheaply than libCEED can assemble it, e.g. as a linear combination of the diagonals of
+  // frequency-independent operators. The essential true dof elimination is applied here, so
+  // the essential dofs must already be set (SetEssentialTrueDofs) and the stored vector is
+  // the diagonal before elimination.
+  void SetAssembledDiagonal(ComplexVector &&diag);
+
+  // True if a precomputed diagonal is stored, and so AssembleDiagonal does not assemble
+  // one. Rank-uniform whenever SetAssembledDiagonal is.
+  bool HasAssembledDiagonal() const { return has_diag_assembled; }
 
   void Mult(const ComplexVector &x, ComplexVector &y) const override;
 

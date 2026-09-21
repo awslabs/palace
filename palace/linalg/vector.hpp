@@ -32,6 +32,11 @@ public:
   // Copy constructor.
   ComplexVector(const ComplexVector &y);
 
+  // Move constructor and assignment, stealing the data of both parts. They are declared
+  // because the user-declared copy constructor suppresses the implicit ones.
+  ComplexVector(ComplexVector &&y) = default;
+  ComplexVector &operator=(ComplexVector &&y) = default;
+
   // Copy constructor from separately provided real and imaginary parts.
   ComplexVector(const Vector &yr, const Vector &yi);
 
