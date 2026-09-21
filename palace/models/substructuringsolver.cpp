@@ -4,12 +4,18 @@
 #include "substructuringsolver.hpp"
 
 #include <fstream>
+#include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/mesh.hpp"
 #include "fem/substructure.hpp"
+#include "linalg/amg.hpp"
+#include "linalg/iterative.hpp"
+#include "linalg/ksp.hpp"
+#include "linalg/solver.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
@@ -57,11 +63,12 @@ public:
 class ImplicitDtN : public mfem::Operator
 {
 public:
-  ImplicitDtN(mfem::HypreParMatrix &A_env, mfem::Solver &Aee_inv,
+  using ApplyFn = std::function<void(const mfem::Vector &, mfem::Vector &)>;
+  ImplicitDtN(mfem::HypreParMatrix &A_env, ApplyFn Aee_inv,
               const std::vector<char> &is_gamma, const std::vector<char> &is_env_int)
-    : mfem::Operator(A_env.Height()), A_env(A_env), Aee_inv(Aee_inv), is_gamma(is_gamma),
-      is_env_int(is_env_int), t(A_env.Height()), rhs(A_env.Height()), ye(A_env.Height()),
-      t2(A_env.Height())
+    : mfem::Operator(A_env.Height()), A_env(A_env), Aee_inv(std::move(Aee_inv)),
+      is_gamma(is_gamma), is_env_int(is_env_int), t(A_env.Height()), rhs(A_env.Height()),
+      ye(A_env.Height()), t2(A_env.Height())
   {
   }
 
@@ -77,7 +84,7 @@ public:
       }
     }
     ye = 0.0;
-    Aee_inv.Mult(rhs, ye);
+    Aee_inv(rhs, ye);
     for (int i = 0; i < height; i++)
     {
       if (!is_env_int[i])
@@ -98,7 +105,7 @@ public:
 
 private:
   mfem::HypreParMatrix &A_env;
-  mfem::Solver &Aee_inv;
+  ApplyFn Aee_inv;
   const std::vector<char> &is_gamma, &is_env_int;
   mutable mfem::Vector t, rhs, ye, t2;
 };
@@ -209,9 +216,8 @@ struct SubstructuringSolver::Impl
   mfem::Vector dbc_values;  // full parent true-DOF vector, prescribed values on Dirichlet
   std::map<int, std::vector<int>> terminal_tdofs;  // terminal index -> its true DOFs
 
-  std::unique_ptr<mfem::HypreSolver> prec_env;
   std::unique_ptr<mfem::HypreSolver> prec_region;
-  std::unique_ptr<mfem::HyprePCG> solver_env;
+  std::unique_ptr<KspSolver> solver_env;  // Palace CG + wrapped AMG/AMS (config-consistent)
   std::unique_ptr<ImplicitDtN> dtn;
 
   // Materialized (reusable) interface operator: replicated dense S_E + load g_E over a
@@ -445,25 +451,41 @@ void SubstructuringSolver::CondenseEnvironment()
   {
     std::unique_ptr<mfem::HypreParMatrix> tmp(impl->A_env_int->EliminateRowsCols(non_int));
   }
-  if (impl->magnetostatic)
+  // Environment interior solver: Palace's configurable Krylov (CG) preconditioned by a
+  // wrapped hypre BoomerAMG (H1) or AMS (H(curl)). This routes the dominant offline cost
+  // (|Gamma| environment back-solves) through Palace's solver stack -- consistent, config-
+  // driven, complex-ready, and upgradeable to geometric multigrid. The tolerance is kept
+  // tight since it sets the accuracy of the condensed DtN operator.
   {
-    auto ams = std::make_unique<mfem::HypreAMS>(*impl->A_env_int, &impl->parent_fes);
-    ams->SetPrintLevel(0);
-    impl->prec_env = std::move(ams);
+    MPI_Comm comm = impl->parent_fes.GetComm();
+    std::unique_ptr<Solver<Operator>> pc;
+    if (impl->magnetostatic)
+    {
+      auto ams = std::make_unique<mfem::HypreAMS>(&impl->parent_fes);
+      ams->SetPrintLevel(0);
+      pc = std::make_unique<MfemWrapperSolver<Operator>>(
+          std::move(ams), /*save_assembled=*/true, /*complex_matrix=*/false,
+          /*drop_small_entries=*/false);
+    }
+    else
+    {
+      auto amg = std::make_unique<MfemWrapperSolver<Operator>>(
+          std::make_unique<BoomerAmgSolver>(1, 1, true, 0), /*save_assembled=*/true,
+          /*complex_matrix=*/false, /*drop_small_entries=*/false);
+      pc = std::move(amg);
+    }
+    auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
+    pcg->SetInitialGuess(false);
+    pcg->SetRelTol(1.0e-12);
+    pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
+    pcg->SetMaxIter(1000);
+    impl->solver_env = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
+    impl->solver_env->SetOperators(*impl->A_env_int, *impl->A_env_int);
   }
-  else
-  {
-    auto amg = std::make_unique<mfem::HypreBoomerAMG>(*impl->A_env_int);
-    amg->SetPrintLevel(0);
-    impl->prec_env = std::move(amg);
-  }
-  impl->solver_env = std::make_unique<mfem::HyprePCG>(*impl->A_env_int);
-  impl->solver_env->SetTol(1.0e-13);
-  impl->solver_env->SetMaxIter(1000);
-  impl->solver_env->SetPrintLevel(0);
-  impl->solver_env->SetPreconditioner(*impl->prec_env);
-  impl->dtn = std::make_unique<ImplicitDtN>(*impl->A_env, *impl->solver_env, impl->is_gamma,
-                                            impl->is_env_int);
+  KspSolver *se = impl->solver_env.get();
+  impl->dtn = std::make_unique<ImplicitDtN>(
+      *impl->A_env, [se](const mfem::Vector &x, mfem::Vector &y) { se->Mult(x, y); },
+      impl->is_gamma, impl->is_env_int);
 
   // A_region restricted to region-free true DOFs (non-region-free pinned to identity).
   impl->A_region_free = std::make_unique<mfem::HypreParMatrix>(*impl->A_region);
