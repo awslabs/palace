@@ -1011,18 +1011,20 @@ void WavePortData::Initialize(double omega)
     BdrSubmeshHVectorCoefficient<ValueType::IMAG, false> port_nxH0i_scalar(
         *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0.real(),
         omega0);
-    mfem::LinearForm sr_scalar(&port_nd_fespace->Get()), si_scalar(&port_nd_fespace->Get());
-    sr_scalar.AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0r_scalar));
-    si_scalar.AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0i_scalar));
-    for (auto *lf : {&sr_scalar, &si_scalar})
+    port_sr_scalar = std::make_unique<mfem::LinearForm>(&port_nd_fespace->Get());
+    port_si_scalar = std::make_unique<mfem::LinearForm>(&port_nd_fespace->Get());
+    port_sr_scalar->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0r_scalar));
+    port_si_scalar->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0i_scalar));
+    for (auto *lf : {port_sr_scalar.get(), port_si_scalar.get()})
     {
       lf->UseFastAssembly(false);
       lf->UseDevice(false);
       lf->Assemble();
       lf->UseDevice(true);
     }
-    modal_reaction_scalar = {sr_scalar * port_E0t->Real() - si_scalar * port_E0t->Imag(),
-                             sr_scalar * port_E0t->Imag() + si_scalar * port_E0t->Real()};
+    modal_reaction_scalar = {
+        (*port_sr_scalar) * port_E0t->Real() - (*port_si_scalar) * port_E0t->Imag(),
+        (*port_sr_scalar) * port_E0t->Imag() + (*port_si_scalar) * port_E0t->Real()};
     Mpi::GlobalSum(1, &modal_reaction_scalar, port_nd_fespace->GetComm());
   }
 }
@@ -1367,6 +1369,37 @@ std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) co
   }
   Mpi::GlobalSum(1, &dot, nd_fespace.GetComm());
   return dot;
+}
+
+void WavePortData::RestrictToPort(const mfem::ParGridFunction &E,
+                                  mfem::Vector &e_port) const
+{
+  port_nd_transfer->Transfer(E, port_E->Real());
+  e_port.SetSize(port_E->Real().Size());
+  e_port.UseDevice(false);
+  const auto *src = port_E->Real().HostRead();
+  auto *dst = e_port.HostWrite();
+  std::copy(src, src + e_port.Size(), dst);
+}
+
+WavePortData::ModePairing WavePortData::LocalModePairing(const mfem::Vector &e_port) const
+{
+  MFEM_VERIFY(port_sr && port_si && port_sr_scalar && port_si_scalar,
+              "Wave port mode pairing requires an initialized port mode!");
+  MFEM_ASSERT(e_port.Size() == port_sr->Size(),
+              "Invalid size for port-restricted field in wave port mode pairing!");
+  const auto *e = e_port.HostRead();
+  auto dot = [&](const mfem::LinearForm &s)
+  {
+    const auto *sd = s.HostRead();
+    double d = 0.0;
+    for (int i = 0; i < e_port.Size(); i++)
+    {
+      d += sd[i] * e[i];
+    }
+    return d;
+  };
+  return {{dot(*port_sr), dot(*port_si)}, {dot(*port_sr_scalar), dot(*port_si_scalar)}};
 }
 
 std::complex<double> WavePortData::GetSParameter(GridFunction &E) const

@@ -145,6 +145,7 @@ private:
   // postprocessing.
   std::unique_ptr<GridFunction> port_E0t, port_E0n, port_S0t, port_E;
   std::unique_ptr<mfem::LinearForm> port_sr, port_si;
+  std::unique_ptr<mfem::LinearForm> port_sr_scalar, port_si_scalar;
 
   // libCEED surface functional for port power computation, replacing per-call boundary
   // LinearForm assembly in the legacy path when supported.
@@ -197,6 +198,24 @@ public:
   const auto &GetAttrMarker() const { return attr_marker; }
 
   void Initialize(double omega);
+
+  // Restrict a real-valued field on the parent ND space (given as a grid function on the
+  // local dofs) to the port submesh dofs. The result is stored on the host.
+  void RestrictToPort(const mfem::ParGridFunction &E, mfem::Vector &e_port) const;
+
+  // Unconjugated pairings sᵀe = ∫_Γ (n×H_mode)·e of the current normalized modal n×H (the
+  // full n×H including ∇ₜEₙ, and the scalar-admittance n×H without it) with a real field
+  // restricted to the port by RestrictToPort. Only the local contribution of this process
+  // is returned (no communication), so a sum over the mesh communicator is required. With
+  // e the restriction of a parent-space field E, this equals the pairing of E with the
+  // parent-space assembled mode vectors of AssembleNxHVector (same integrals and
+  // quadrature), so the PROM can project the modal shape vectors and excitation without
+  // any per-frequency assembly on the parent mesh.
+  struct ModePairing
+  {
+    std::complex<double> full, scalar;
+  };
+  ModePairing LocalModePairing(const mfem::Vector &e_port) const;
 
   // Tighten the cross-section EVP tolerances for wave-port circuit synthesis, so kₙ(ω) and
   // M(ω) are not sampled below the port-mode accuracy floor (which would make the synthesis

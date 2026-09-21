@@ -72,6 +72,13 @@ public:
   auto &GetKr() const { return Kr; }
   auto &GetCr() const { return Cr; }
   auto &GetMr() const { return Mr; }
+  bool WavePortPairingChecked() const { return wp_pairing_checked; }
+  bool WavePortPairingOk() const { return wp_pairing_ok; }
+  void UseAssembledWavePortPath(bool assembled)
+  {
+    wp_pairing_ok = !assembled;
+    Ar_omega = std::numeric_limits<double>::quiet_NaN();
+  }
 };
 
 auto LoadScaleParMesh2(IoData &iodata, MPI_Comm world_comm)
@@ -1124,6 +1131,117 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 // Excited ports must always be included in synthesis. The configuration parser
 // rejects a port carrying both "Excitation" > 0 and "IncludeInSynthesis": false because
 // the excitation vector is unconditionally added to the basis.
+// The PROM evaluates the wave-port modal correction and excitation from pairings of the
+// basis restricted to the port submesh with the port-space mode forms, instead of
+// assembling and projecting HDM-size mode vectors at every frequency. SolvePROM verifies
+// the two paths agree once (and once more with the final basis at the start of the online
+// sweep) and otherwise falls back to the assembled path: require that the check ran and
+// passed, and that the reduced excitation matches the assembled one.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator port-space wave port pairing matches assembled projection",
+                 "[romoperator][Serial][Parallel][GPU]")
+{
+  MPI_Comm comm = Mpi::World();
+  const auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+
+  // 3 cm x 2 cm x 1 cm box: attribute 14 is a 1 cm x 1 cm face, used as a wave port with
+  // PEC on every other face (TE10 above cutoff over the 20-30 GHz band).
+  json pec_attributes = json::array();
+  for (int attr = 1; attr <= 22; attr++)
+  {
+    if (attr != 14)
+    {
+      pec_attributes.push_back(attr);
+    }
+  }
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"L0", 1.0e-2},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+  setup_json["Boundaries"] = {
+      {"PEC", {{"Attributes", pec_attributes}}},
+      {"WavePort", json::array({json::object({{"Index", 1},
+                                              {"Attributes", json::array({14})},
+                                              {"Mode", 1},
+                                              {"Offset", 0.0},
+                                              {"Excitation", uint(1)}})})}};
+  setup_json["Solver"] = {
+      {"Order", 2UL},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"AdaptiveTol", 1.0e-3}, {"MinFreq", 20.0}, {"MaxFreq", 30.0}, {"FreqStep", 10.0}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}}};
+
+  IoData iodata(setup_json, false);
+  auto mesh = LoadScaleParMesh2(iodata, comm);
+  SpaceOperator space_op(iodata, mesh);
+  RomOperatorTest rom_op(iodata, space_op, 4);
+
+  REQUIRE(iodata.solver.driven.sample_f.size() == 2);
+  const double omega_front = iodata.solver.driven.sample_f.front();
+  const double omega_back = iodata.solver.driven.sample_f.back();
+  ComplexVector sample(space_op.GetNDSpace().GetTrueVSize());
+  sample.UseDevice(true);
+  for (int seed : {42, 44})
+  {
+    linalg::SetRandom(comm, sample.Real(), seed);
+    linalg::SetRandom(comm, sample.Imag(), seed + 1);
+    linalg::SetSubVector(sample.Real(), space_op.GetNDDbcTDofLists().back(), 0.0);
+    linalg::SetSubVector(sample.Imag(), space_op.GetNDDbcTDofLists().back(), 0.0);
+    rom_op.UpdatePROM(sample, fmt::format("pairing_sample_{:d}", seed));
+  }
+  const auto n = rom_op.GetReducedDimension();
+  REQUIRE(n > 0);
+
+  auto solve = [&](double omega)
+  {
+    ComplexVector u(space_op.GetNDSpace().GetTrueVSize());
+    u.UseDevice(true);
+    rom_op.SolvePROM(1, omega, u);
+    return u;
+  };
+  auto check_close = [&](const ComplexVector &u, const ComplexVector &u_ref)
+  {
+    ComplexVector diff(u);
+    diff.Add(std::complex<double>(-1.0, 0.0), u_ref);
+    const double norm_ref = linalg::Norml2(comm, u_ref);
+    const double norm_diff = linalg::Norml2(comm, diff);
+    CAPTURE(norm_ref, norm_diff);
+    REQUIRE(norm_ref > 0.0);
+    CHECK(norm_diff <= 1.0e-8 * norm_ref);
+  };
+
+  // Port-space pairing path (self-checked against the assembled vectors on first use, and
+  // again with the final basis after PrepareOnlineExcitations), then the same PROM solution
+  // from the assembled mode vectors at the same frequency (the port mode is cached at that
+  // frequency, so the comparison is not affected by the sign ambiguity of a re-solved
+  // eigenvector).
+  const ComplexVector u_front = solve(omega_front);
+  REQUIRE(rom_op.WavePortPairingChecked());
+  REQUIRE(rom_op.WavePortPairingOk());
+  rom_op.UseAssembledWavePortPath(true);
+  check_close(solve(omega_front), u_front);
+
+  rom_op.UseAssembledWavePortPath(false);
+  rom_op.PrepareOnlineExcitations();
+  REQUIRE_FALSE(rom_op.WavePortPairingChecked());
+  const ComplexVector u_back = solve(omega_back);
+  REQUIRE(rom_op.WavePortPairingChecked());
+  REQUIRE(rom_op.WavePortPairingOk());
+  rom_op.UseAssembledWavePortPath(true);
+  check_close(solve(omega_back), u_back);
+}
+
 TEST_CASE("RomOperator-Synthesis-ExcludedExcitedRejected", "[romoperator][Serial]")
 {
   json setup_json;
