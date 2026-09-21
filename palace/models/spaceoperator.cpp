@@ -1430,7 +1430,7 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, Vector &RHS)
   RHS.SetSize(GetNDSpace().GetTrueVSize());
   RHS.UseDevice(true);
   RHS = 0.0;
-  bool nnz = AddExcitationVector1Internal(excitation_idx, RHS);
+  bool nnz = AddExcitationVector1Internal(excitation_idx, RHS, /*time_harmonic*/ false);
   linalg::SetSubVector(RHS, nd_dbc_tdof_lists.back(), 0.0);
   return nnz;
 }
@@ -1442,7 +1442,8 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, double omega,
   RHS.SetSize(GetNDSpace().GetTrueVSize());
   RHS.UseDevice(true);
   RHS = 0.0;
-  bool nnz1 = AddExcitationVector1Internal(excitation_idx, RHS.Real());
+  bool nnz1 =
+      AddExcitationVector1Internal(excitation_idx, RHS.Real(), /*time_harmonic*/ true);
   RHS *= 1i * omega;
   bool nnz2 = AddExcitationVector2Internal(excitation_idx, omega, RHS);
   linalg::SetSubVector(RHS, nd_dbc_tdof_lists.back(), 0.0);
@@ -1547,7 +1548,8 @@ bool SpaceOperator::GetExcitationVector1(int excitation_idx, ComplexVector &RHS1
   RHS1.SetSize(GetNDSpace().GetTrueVSize());
   RHS1.UseDevice(true);
   RHS1 = 0.0;
-  bool nnz1 = AddExcitationVector1Internal(excitation_idx, RHS1.Real());
+  bool nnz1 =
+      AddExcitationVector1Internal(excitation_idx, RHS1.Real(), /*time_harmonic*/ true);
   linalg::SetSubVector(RHS1.Real(), nd_dbc_tdof_lists.back(), 0.0);
   return nnz1;
 }
@@ -1563,7 +1565,8 @@ bool SpaceOperator::GetExcitationVector2(int excitation_idx, double omega,
   return nnz2;
 }
 
-bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS1)
+bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS1,
+                                                 bool time_harmonic)
 {
   // Assemble the time domain excitation -g'(t) J or frequency domain excitation -iω J.
   // The g'(t) or iω factors are not accounted for here, they are accounted for in the time
@@ -1573,7 +1576,7 @@ bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS
 
   // Boundary sources
   SumVectorCoefficient fb(GetMesh().SpaceDimension());
-  lumped_port_op.AddExcitationBdrCoefficients(excitation_idx, fb);
+  lumped_port_op.AddExcitationBdrCoefficients(excitation_idx, fb, time_harmonic);
   surf_j_op.AddExcitationBdrCoefficients(fb);  // No excitation_idx — currently in all
 
   // Domain sources (current dipoles) - use integrator-based approach

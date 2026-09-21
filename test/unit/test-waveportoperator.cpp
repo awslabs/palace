@@ -15,6 +15,7 @@
 #include "models/spaceoperator.hpp"
 #include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -248,7 +249,10 @@ TEST_CASE("WavePortOperator-ModalCorrectionMatchedMode",
     break;
   }
 
-  // (i·k_n·M + W)·e should equal −iω·s_full = RHS₂/2 for the excited port.
+  // (i·k_n·M + W)·e should equal −iω·s_full for the excited port. The excitation vector
+  // RHS₂ = −2iω·√2·s_full is that of the incident wave, which is √2 times the unit-overlap
+  // mode so that it carries unit time-averaged power (see
+  // WavePortOperator::AddExcitationBdrCoefficients).
   ComplexVector We(n), rhs(n), expected(n), diff(n);
   We.UseDevice(true);
   rhs.UseDevice(true);
@@ -261,7 +265,8 @@ TEST_CASE("WavePortOperator-ModalCorrectionMatchedMode",
   bool nnz = space_op.GetExcitationVector2(exc_idx, omega, rhs);
   REQUIRE(nnz);
   expected = 0.0;
-  linalg::AXPY(std::complex<double>(0.5, 0.0), rhs, expected);
+  linalg::AXPY(std::complex<double>(0.5 / electromagnetics::UnitPowerAmplitude(true), 0.0),
+               rhs, expected);
 
   diff = We;
   linalg::AXPY(std::complex<double>(-1.0, 0.0), expected, diff);

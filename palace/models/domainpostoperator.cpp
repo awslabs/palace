@@ -10,6 +10,7 @@
 #include "fem/integrator.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
@@ -216,19 +217,27 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
   }
 }
 
+double DomainPostOperator::GetFieldEnergy(const Operator &M, const GridFunction &u,
+                                          Vector &Mu)
+{
+  // Instantaneous energy 1/2 uᵀ M u for a real field, or time-averaged energy
+  // 1/4 (u_rᵀ M u_r + u_iᵀ M u_i) for a complex peak phasor.
+  M.Mult(u.Real(), Mu);
+  double dot = linalg::LocalDot(u.Real(), Mu);
+  if (u.HasImag())
+  {
+    M.Mult(u.Imag(), Mu);
+    dot += linalg::LocalDot(u.Imag(), Mu);
+  }
+  Mpi::GlobalSum(1, &dot, u.GetComm());
+  return 0.5 * electromagnetics::TimeAverageWeight(u.HasImag()) * dot;
+}
+
 double DomainPostOperator::GetElectricFieldEnergy(const GridFunction &E) const
 {
   if (M_elec)
   {
-    M_elec->Mult(E.Real(), D);
-    double dot = linalg::LocalDot(E.Real(), D);
-    if (E.HasImag())
-    {
-      M_elec->Mult(E.Imag(), D);
-      dot += linalg::LocalDot(E.Imag(), D);
-    }
-    Mpi::GlobalSum(1, &dot, E.GetComm());
-    return 0.5 * dot;
+    return GetFieldEnergy(*M_elec, E, D);
   }
   MFEM_ABORT(
       "Domain postprocessing is not configured for electric field energy calculation!");
@@ -239,15 +248,7 @@ double DomainPostOperator::GetMagneticFieldEnergy(const GridFunction &B) const
 {
   if (M_mag)
   {
-    M_mag->Mult(B.Real(), H);
-    double dot = linalg::LocalDot(B.Real(), H);
-    if (B.HasImag())
-    {
-      M_mag->Mult(B.Imag(), H);
-      dot += linalg::LocalDot(B.Imag(), H);
-    }
-    Mpi::GlobalSum(1, &dot, B.GetComm());
-    return 0.5 * dot;
+    return GetFieldEnergy(*M_mag, B, H);
   }
   return 0.0;
 }
@@ -263,15 +264,7 @@ double DomainPostOperator::GetDomainElectricFieldEnergy(int idx,
   {
     return 0.0;
   }
-  it->second.first->Mult(E.Real(), D);
-  double dot = linalg::LocalDot(E.Real(), D);
-  if (E.HasImag())
-  {
-    it->second.first->Mult(E.Imag(), D);
-    dot += linalg::LocalDot(E.Imag(), D);
-  }
-  Mpi::GlobalSum(1, &dot, E.GetComm());
-  return 0.5 * dot;
+  return GetFieldEnergy(*it->second.first, E, D);
 }
 
 double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx,
@@ -285,15 +278,7 @@ double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx,
   {
     return 0.0;
   }
-  it->second.second->Mult(B.Real(), H);
-  double dot = linalg::LocalDot(B.Real(), H);
-  if (B.HasImag())
-  {
-    it->second.second->Mult(B.Imag(), H);
-    dot += linalg::LocalDot(B.Imag(), H);
-  }
-  Mpi::GlobalSum(1, &dot, B.GetComm());
-  return 0.5 * dot;
+  return GetFieldEnergy(*it->second.second, B, H);
 }
 
 }  // namespace palace

@@ -29,7 +29,10 @@ class Mesh;
 // one route application binds both physical phases, stores phase-resolved linear slices,
 // and stores the combined quadratic slices. The packed result is keyed by source-vector
 // identity and the explicit save generation. Direct VTU output can expose non-owning
-// slice views while PointFieldEvaluator retains Copy() for non-bundle callers.
+// slice views while PointFieldEvaluator retains Copy() for non-bundle callers. The
+// quadratic (energy density, Poynting) slices are scaled by the owner-supplied
+// quadratic_weight (the time-average weight for complex peak phasors) in addition to the
+// unit scalings, while the linear surface charge/current slices carry only the latter.
 class BoundaryDerivedFieldBundle
 {
 public:
@@ -51,7 +54,8 @@ public:
                              std::shared_ptr<const FaceSamplingPlan> sampling_plan,
                              std::shared_ptr<BoundaryPhysicalTraceCache> trace_cache,
                              const GridFunction &E, const GridFunction &B,
-                             double electric_scaling, double magnetic_scaling);
+                             double electric_scaling, double magnetic_scaling,
+                             double quadratic_weight = 1.0);
   ~BoundaryDerivedFieldBundle();
 
   BoundaryDerivedFieldBundle(const BoundaryDerivedFieldBundle &) = delete;

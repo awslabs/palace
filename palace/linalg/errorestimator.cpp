@@ -17,6 +17,7 @@
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/diagnostic.hpp"
 #include "utils/omp.hpp"
 #include "utils/timer.hpp"
@@ -267,6 +268,19 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
   return estimates;
 }
 
+// Normalization of the squared element error estimates by the total field energy Et, so the
+// indicators are relative to the energy norm of the fields, ||e_K|| / ||F||. Et is the
+// physical stored energy of the solution: 1/2 ||F||² for a real-valued field and the time
+// average 1/4 ||F||² for a complex peak phasor (see electromagnetics::TimeAverageWeight),
+// so the matching factor keeps the same relative indicator for both.
+template <typename VecType>
+double ErrorEstimateNormalization(double Et)
+{
+  constexpr double weight = 0.5 * electromagnetics::TimeAverageWeight(
+                                      std::is_same<VecType, ComplexVector>::value);
+  return (Et > 0.0) ? weight / Et : 1.0;
+}
+
 }  // namespace
 
 template <typename VecType>
@@ -383,7 +397,7 @@ void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, double
 {
   auto estimates =
       ComputeErrorEstimates(E, E_gf, D, D_gf, nd_fespace, rt_fespace, projector, integ_op);
-  linalg::Sqrt(estimates, (Et > 0.0) ? 0.5 / Et : 1.0);  // Correct factor of 1/2 in energy
+  linalg::Sqrt(estimates, ErrorEstimateNormalization<VecType>(Et));
   indicator.AddIndicator(estimates);
 }
 
@@ -505,7 +519,7 @@ void CurlFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &B, double
 {
   auto estimates =
       ComputeErrorEstimates(B, B_gf, H, H_gf, rt_fespace, nd_fespace, projector, integ_op);
-  linalg::Sqrt(estimates, (Et > 0.0) ? 0.5 / Et : 1.0);  // Correct factor of 1/2 in energy
+  linalg::Sqrt(estimates, ErrorEstimateNormalization<VecType>(Et));
   indicator.AddIndicator(estimates);
 }
 
@@ -534,8 +548,7 @@ void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
                             curl_estimator.rt_fespace, curl_estimator.nd_fespace,
                             curl_estimator.projector, curl_estimator.integ_op);
   grad_estimates += curl_estimates;
-  linalg::Sqrt(grad_estimates,
-               (Et > 0.0) ? 0.5 / Et : 1.0);  // Correct factor of 1/2 in energy
+  linalg::Sqrt(grad_estimates, ErrorEstimateNormalization<VecType>(Et));
   indicator.AddIndicator(grad_estimates);
 }
 
@@ -564,7 +577,7 @@ void BoundaryModeFluxErrorEstimator<VecType>::AddErrorIndicator(
                             curl_estimator.rt_fespace, curl_estimator.nd_fespace,
                             curl_estimator.projector, curl_estimator.integ_op);
   grad_estimates += curl_estimates;
-  linalg::Sqrt(grad_estimates, (Et > 0.0) ? 0.5 / Et : 1.0);
+  linalg::Sqrt(grad_estimates, ErrorEstimateNormalization<VecType>(Et));
   indicator.AddIndicator(grad_estimates);
 }
 

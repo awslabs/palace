@@ -1045,10 +1045,10 @@ TEST_CASE("dielectric_grating_uniform", "[Serial][Parallel][GPU][Regression]")
                                   "uniform", opts);
 }
 
-// Mixed Floquet + lumped/wave port S-parameter tests: validate the sqrt(2) power
-// normalization bridge for cross-type observations. Use custom checks to verify power
-// balance (sum |S|^2 = 1 for the lossless structure). Floquet NaN and negligible
-// entries handled as in dielectric_grating.
+// Mixed Floquet + lumped/wave port S-parameter tests: all port families share the unit
+// time-averaged incident power normalization, so cross-type S needs no bridge factor. Use
+// custom checks to verify power balance (sum |S|^2 = 1 for the lossless structure). Floquet
+// NaN and negligible entries handled as in dielectric_grating.
 TEST_CASE("floquet_lumped", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
