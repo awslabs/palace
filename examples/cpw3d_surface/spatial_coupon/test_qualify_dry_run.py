@@ -27,6 +27,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE / "qualify"))
 import build_plan  # noqa: E402
 import case_inputs  # noqa: E402
+import compare_split_matrices  # noqa: E402
 import estimate_stages  # noqa: E402
 import gates  # noqa: E402
 import job_split  # noqa: E402
@@ -125,6 +126,43 @@ class MonitorTransportFailureTest(unittest.TestCase):
         self.assertIn("unreachable", logged[0])
         self.assertTrue(done_finished)
         self.assertEqual(record["Monitor"]["Polls"], 2)
+
+    def test_held_job_is_still_in_the_queue(self):
+        """PBS H (the SOCA dispatcher's capacity retry: 'Job held by root', error_message
+        CF:ROLLBACK_COMPLETE:retry=1, released at retry_eligible_after) is not "left the queue"
+        (the 2026-09-21 split acceptance: the reducer job 46339 was held 4 min after its
+        submission and the driver stopped the coupon with 'no status.json fetched')."""
+        remote_side = qualify_library.remote_side
+        self.assertEqual([remote_side.in_queue(state) for state in ("Q", "R", "E", "H", "W", "T", "S", "B", "F", "X", None)],
+                         [True] * 8 + [False] * 3)
+        held = {"UTC": "u", "JobState": "H", "Reachable": True, "SSHReturnCode": 0, "Status": None,
+                "QStat": "job_state = H\nHold_Types = u\ncomment = Job held by root on Mon Sep 21 21:17:12 2026\n"
+                         "Resource_List.error_message = CF:ROLLBACK_COMPLETE:retry=1"}
+        record = {"Case": "c", "Submission": {"Job": "1.h"}, "Remote": {"Case": "/r/case"},
+                  "Monitor": {"Polls": 0, "LastJobState": "Q", "LastStages": None}}
+        logged = []
+        saved_poll = remote_side.poll
+        try:
+            remote_side.poll = lambda *args: dict(held)
+            done = qualify_library.poll_case(record, remote={"Host": "h"}, profile={"PBSBin": "/pbs"}, log=logged.append)
+        finally:
+            remote_side.poll = saved_poll
+        self.assertFalse(done)
+        self.assertEqual(record["Monitor"]["LastJobState"], "H")
+        self.assertIn("held, still queued", logged[0])
+        self.assertIn("Job held by root", logged[0])
+        commands = []
+        saved_ssh = remote_side.ssh
+        try:
+            remote_side.ssh = lambda host, command, check=True: (commands.append(command) or subprocess.CompletedProcess(
+                ["ssh"], 0, stdout="job_state = H\nHold_Types = u\ncomment = Job held by root\nResource_List.error_message = CF:ROLLBACK_COMPLETE:retry=1\n"
+                                   "---STATUS---\n\n" + remote_side.POLL_MARKER + "\n", stderr=""))
+            polled = remote_side.poll("h", "/pbs", "1.h", "/r/case/main/status.json")
+        finally:
+            remote_side.ssh = saved_ssh
+        self.assertIn("Hold_Types|error_message", commands[0])          # the poll's qstat grep carries the hold and its reason
+        self.assertEqual(polled["JobState"], "H")
+        self.assertIn("CF:ROLLBACK_COMPLETE", polled["QStat"])
 
     def test_fetch_transport_failure_is_a_recorded_stop(self):
         remote_side = qualify_library.remote_side
@@ -329,6 +367,34 @@ class JobSplitTest(unittest.TestCase):
         self.assertEqual((policy["Mode"], policy["Origin"]), ("frugal", "built-in default frugal"))
         with self.assertRaises(qualify_library.CaseStop):
             qualify_library.job_policy_of(argparse.Namespace(job_policy="fixed", fixed_jobs=None, max_jobs=2), physics_run, self.profile)
+
+    def test_compare_split_matrices_reports_roundoff_and_differences(self):
+        tmp = Path(tempfile.mkdtemp(prefix="split-compare-"))
+        try:
+            for name, rows in (("a", [("1", "1", "+1.000000000000e-17"), ("1", "2", "+2.000000000000e-18"), ("2", "2", "+3.000000000000e-17")]),
+                               ("b", [("1", "2", "+2.000000000000e-18"), ("2", "2", "+3.000000000001e-17"), ("1", "1", "+1.000000000000e-17")]),
+                               ("c", [("1", "1", "+1.000000000000e-17"), ("1", "2", "+2.000000000000e-18"), ("2", "2", "+3.300000000000e-17")])):
+                (tmp / name).mkdir()
+                (tmp / name / "domain-response-matrix.csv").write_text(
+                    "  basis_i,  basis_j,                   Q_ij (J)\n" + "".join(f" {i}.00e+00, {j}.00e+00, {q}\n" for i, j, q in rows))
+                (tmp / name / "surface-response-matrix.csv").write_text(
+                    "interface, edge, R (m), basis_i, basis_j, Q_ij (J)\n" + "".join(f" 1.00e+00, 1.00e+00, +2.0e-06, {i}.00e+00, {j}.00e+00, {q}\n" for i, j, q in rows))
+            same = compare_split_matrices.compare(tmp / "a", tmp / "b")
+            self.assertTrue(same["Equal"])
+            self.assertAlmostEqual(same["MaxRelativeToLargestEntry"], 1e-12 / 3, delta=1e-14)   # roundoff in the last digit, row order free
+            self.assertEqual(same["Matrices"]["domain"]["Columns"]["Q_ij (J)"]["ExactText"], 2)
+            different = compare_split_matrices.compare(tmp / "a", tmp / "c")
+            self.assertFalse(different["Equal"])
+            self.assertAlmostEqual(different["MaxRelativeDifference"], 0.3e-17 / 3.3e-17, places=6)   # |a - b| / max(|a|, |b|)
+            self.assertEqual(different["Matrices"]["surface"]["Columns"]["Q_ij (J)"]["Worst"]["Key"], (1, 1, 2, 2))
+            with self.assertRaisesRegex(ValueError, "different row keys"):
+                (tmp / "d").mkdir()
+                for name in ("domain-response-matrix.csv", "surface-response-matrix.csv"):
+                    text = (tmp / "a" / name).read_text().splitlines()
+                    (tmp / "d" / name).write_text("\n".join(text[:-1]) + "\n")
+                compare_split_matrices.compare(tmp / "a", tmp / "d")
+        finally:
+            shutil.rmtree(tmp, True)
 
     def test_merged_split_statuses_read_as_one_stage(self):
         def timing(indices):
@@ -687,7 +753,8 @@ class QualifyDryRunTest(unittest.TestCase):
                                       control_count=8, control_source=None, max_jobs=2, frozen_binary_sha256=BINARY_SHA256,
                                       stage_prefix=None, case=None, root=self.tmp / "concurrent", dry_run=False, resume=False,
                                       monitor_interval=0, monitor_polls=10, cluster_profile=HERE / "qualify" / "cluster-profile.json",
-                                      cost_model=estimate_stages.COST_MODEL, gates=gates.GATES_FILE, job_policy=None, fixed_jobs=None)
+                                      cost_model=estimate_stages.COST_MODEL, gates=gates.GATES_FILE, job_policy=None, fixed_jobs=None,
+                                      merge_into=None)
             # Each coupon binds its own reference campaign: a directory holding both inputs trees.
             reference = self.tmp / "both-references"
             if not reference.exists():
@@ -843,12 +910,20 @@ class QualifyDryRunTest(unittest.TestCase):
                 setattr(qualify_library.remote_side, name, fake)
             qualify_library.upload_case = fake_upload
             qualify_library.prepare_case = prepare_with_recorded_controls
+            manifest = json.loads(MANIFEST.read_text())
+            case_library = qualify_library.source_directory(MANIFEST, manifest, qualify_library.manifest_case(manifest, case_id)) \
+                / qualify_library.manifest_case(manifest, case_id)["Source"]["Files"]["ProcessLibrary"]["Name"]
+            model_name = json.loads(case_library.read_text())["Models"][0]["Name"]
+            previous_library = self.tmp / "previous-process-library.json"
+            previous_library.write_text(json.dumps({"Version": 1, "Root": "/tmp/previous", "Models": [
+                {"Name": "other-coupon", "LibraryQualified": False},
+                {"Name": model_name, "LibraryQualified": False, "Stale": True}]}))
             args = argparse.Namespace(build_record=self.build_record, reference=ASSESSMENT / spec["Campaign"] / "reference", remote="h:/r",
                                       orders=[], controls=[3, 5], control_count=8, control_source=None, max_jobs=2,
                                       frozen_binary_sha256=BINARY_SHA256, stage_prefix=None, case=[case_id], root=self.tmp / "split",
                                       dry_run=False, resume=False, monitor_interval=0, monitor_polls=10,
                                       cluster_profile=HERE / "qualify" / "cluster-profile.json", cost_model=estimate_stages.COST_MODEL,
-                                      gates=gates.GATES_FILE, job_policy="fixed", fixed_jobs=2)
+                                      gates=gates.GATES_FILE, job_policy="fixed", fixed_jobs=2, merge_into=previous_library)
             record = qualify_library.run_qualify(args, log=lambda message: None)
         finally:
             for name, fake in saved.items():
@@ -908,6 +983,14 @@ class QualifyDryRunTest(unittest.TestCase):
         self.assertEqual(totals["Splits"][case_id]["N"], 2)
         self.assertEqual(totals["JobPolicy"]["Mode"], "fixed")
         self.assertAlmostEqual(totals["NodeHours"], cost["JobNodeHours"])
+        # --merge-into: the previous library's other model kept first, the same Name replaced by this run's, provenance recorded.
+        merged = json.loads((self.tmp / "split" / "process-library.json").read_text())
+        self.assertEqual([model["Name"] for model in merged["Models"]], ["other-coupon", model_name])
+        self.assertNotIn("Stale", merged["Models"][1])
+        self.assertEqual(merged["Models"][1]["CouponMesh"]["SHA256"], case["Mesh"]["SHA256"])
+        self.assertEqual((merged["MergedFrom"]["Kept"], merged["MergedFrom"]["Replaced"]), (["other-coupon"], [model_name]))
+        self.assertEqual(merged["MergedFrom"]["SHA256"], sha256(previous_library))
+        self.assertIn("Stale", json.loads(previous_library.read_text())["Models"][1])   # the previous file is not modified
 
     def test_without_reference_matrices_the_verdict_is_pending(self):
         case_id = "four-edge-9d2cb9bbb3fe"

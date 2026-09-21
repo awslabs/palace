@@ -75,6 +75,7 @@ import argparse
 import calendar
 import hashlib
 import json
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -596,7 +597,8 @@ def submit_job(record, context, job, *, remote, profile, log):
 
 
 def poll_job(record, job, *, remote, profile, log):
-    """One read-only poll of a submitted job; True when it has left Q / R / E."""
+    """One read-only poll of a submitted job; True when it has left the queue (a held job -
+    PBS H, the SOCA capacity retry - is still in the queue: remote.IN_QUEUE_STATES)."""
     submission = job["Submission"]
     poll = remote_side.poll(remote["Host"], profile["PBSBin"], submission["Job"], f"{job['RemoteDirectory']}/status.json")
     job["Monitor"]["Polls"] += 1
@@ -611,8 +613,10 @@ def poll_job(record, job, *, remote, profile, log):
     stages = ([(s["Name"], s["State"], round(s.get("WallSeconds", 0))) for s in poll["Status"]["Stages"]] if poll["Status"] else None)
     job["Monitor"]["LastJobState"] = poll["JobState"]
     job["Monitor"]["LastStages"] = stages
-    log(f"== {poll['UTC']} {record['Case']} {job['Name']} job {submission['Job']} state {poll['JobState']} stages {stages}")
-    return poll["JobState"] not in ("Q", "R", "E")
+    held = re.search(r"(comment = .*|error_message = .*)", poll["QStat"]) if poll["JobState"] == "H" else None
+    log(f"== {poll['UTC']} {record['Case']} {job['Name']} job {submission['Job']} state {poll['JobState']} stages {stages}"
+        + (f" (held, still queued: {held.group(1).strip()})" if held else ""))
+    return not remote_side.in_queue(poll["JobState"])
 
 
 def poll_case(record, *, remote, profile, log):
@@ -890,10 +894,13 @@ def reference_node_hours(reference, profile):
     return seconds * nodes / 3600.0 if seconds else None
 
 
-def process_library_entries(records, contexts, *, manifest_path, manifest, root):
+def process_library_entries(records, contexts, *, manifest_path, manifest, root, merge_into=None):
     """The process-library entries: every qualified / pending coupon's model (from the
     case's own process-library.json) with the fetched response matrices and the
-    qualification bound; LibraryQualified only when Passed."""
+    qualification bound; LibraryQualified only when Passed.  `merge_into` = a previous
+    qualify run's process-library.json (read only): its models this run did not qualify
+    are kept ahead of this run's, a model of the same Name is replaced, and MergedFrom
+    records the file, its digest and the names kept / replaced."""
     models = []
     for record in records:
         context = contexts.get(record["Case"])
@@ -914,10 +921,21 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root)
         model["LibraryQualified"] = record["Qualification"]["Verdict"] == gate_evaluation.VERDICT_PASSED
         model["SourceProcessLibrary"] = {"Path": str(library_path), "SHA256": sha256(library_path)}
         models.append(model)
+    merged = None
+    if merge_into is not None:
+        previous = json.loads(Path(merge_into).read_text())
+        names = {model["Name"] for model in models}
+        kept = [model for model in previous["Models"] if model["Name"] not in names]
+        merged = {"Path": str(merge_into), "SHA256": sha256(Path(merge_into)), "Root": previous.get("Root"),
+                  "Kept": [model["Name"] for model in kept],
+                  "Replaced": [model["Name"] for model in previous["Models"] if model["Name"] in names],
+                  "Rule": "models of the previous library this run did not qualify are kept ahead of this run's; a model "
+                          "of the same Name is replaced by this run's; the previous file is not modified"}
+        models = kept + models
     return {"Version": 1, "Name": "coupon-library", "Command": "coupon-library qualify", "Root": str(root),
             "Rule": "an entry is LibraryQualified only with the verdict Passed; PendingQualification entries carry their "
                     "matrices and p-sequence controls but no accuracy statement",
-            "Models": models}
+            "MergedFrom": merged, "Models": models}
 
 
 def library_totals(records, *, args, remote, profile, wall_seconds, first_submission, last_fetch, jobs, cap):
@@ -1153,7 +1171,8 @@ def run_qualify(args, *, log=log_line):
                                         cap=profile["UserJobCap"])}
     write_json(root / LIBRARY_QUALIFICATION_RECORD, record)
     write_json(root / PROCESS_LIBRARY_RECORD, process_library_entries(records, contexts, manifest_path=manifest_path,
-                                                                         manifest=manifest, root=root))
+                                                                         manifest=manifest, root=root,
+                                                                         merge_into=args.merge_into))
     return record
 
 
@@ -1180,6 +1199,9 @@ def add_arguments(parser):
     parser.add_argument("--stage-prefix", help="stage name prefix (default: the case id)")
     parser.add_argument("--case", action="append", default=None, help="case id (repeatable; default: every case of the build record)")
     parser.add_argument("--root", type=Path, help="local run root (default /tmp/coupon-library-qualify-<commit>-<ts>)")
+    parser.add_argument("--merge-into", type=Path, default=None,
+                        help="a previous qualify run's process-library.json (read only): ROOT/process-library.json holds "
+                             "its models this run did not qualify plus this run's (the same Name replaced), MergedFrom recorded")
     parser.add_argument("--dry-run", action="store_true", help="write plans / configs / estimates / gates; contact nothing")
     parser.add_argument("--resume", action="store_true", help="adopt the job ids a previous driver of this --root recorded "
                                                                "(<case>/submission.json, plan byte-identical) instead of "

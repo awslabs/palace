@@ -78,11 +78,22 @@ def submit(host, pbs_bin, remote_job_script, remote_working_directory, *, job_ca
 POLL_MARKER = "---POLL-OK---"
 
 
+# PBS job states of a job still in the queue: queued, running, exiting, held, waiting,
+# transiting, suspended, array begun.  H is not "left the queue": the SOCA dispatcher holds a
+# job whose compute-node stack failed (Resource_List.error_message CF:ROLLBACK_COMPLETE:retry=N)
+# and releases it itself at retry_eligible_after (the 2026-09-21 split acceptance reducer job).
+IN_QUEUE_STATES = ("Q", "R", "E", "H", "W", "T", "S", "B")
+
+
+def in_queue(job_state):
+    return job_state in IN_QUEUE_STATES
+
+
 def poll(host, pbs_bin, job_id, remote_status_path):
     """One read-only poll: qstat state fields and the runner's status.json (if written).
     `Reachable` is False when the ssh round trip itself failed (no POLL_MARKER came back):
     a lost connection says nothing about the job and must not be read as "left the queue"."""
-    command = (f"{pbs_bin}/qstat -f {job_id} 2>/dev/null | grep -E 'job_state|resources_used.walltime|resources_used.mem|exec_host|comment' "
+    command = (f"{pbs_bin}/qstat -f {job_id} 2>/dev/null | grep -E 'job_state|resources_used.walltime|resources_used.mem|exec_host|comment|Hold_Types|error_message' "
                f"| tr -s ' '; echo ---STATUS---; cat {remote_status_path} 2>/dev/null; echo; echo {POLL_MARKER}")
     result = ssh(host, command, check=False)
     reachable = POLL_MARKER in result.stdout
@@ -100,7 +111,7 @@ def poll(host, pbs_bin, job_id, remote_status_path):
 
 
 def monitor(host, pbs_bin, job_id, remote_status_path, *, interval_seconds, max_polls, sink=print):
-    """Poll until the job leaves Q / R / E or the poll budget is spent; returns the polls."""
+    """Poll until the job leaves the queue (IN_QUEUE_STATES) or the poll budget is spent; returns the polls."""
     polls = []
     for _ in range(max_polls):
         record = poll(host, pbs_bin, job_id, remote_status_path)
@@ -109,7 +120,7 @@ def monitor(host, pbs_bin, job_id, remote_status_path, *, interval_seconds, max_
                   if record["Status"] else None)
         sink(f"== {record['UTC']} job {job_id} state {record['JobState']} stages {stages}"
              + ("" if record["Reachable"] else f" (unreachable: ssh rc {record['SSHReturnCode']})"))
-        if record["Reachable"] and record["JobState"] not in ("Q", "R", "E"):
+        if record["Reachable"] and not in_queue(record["JobState"]):
             break
         time.sleep(interval_seconds)
     return polls
