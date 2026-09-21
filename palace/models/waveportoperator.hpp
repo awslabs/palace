@@ -92,8 +92,10 @@ private:
   std::unique_ptr<GridFunction> port_Et_omega, port_En_omega;
   std::complex<double> kn_recompute = 0.0, omega_recompute = 0.0;
 
-  // List of all boundary attributes making up this port boundary.
-  mfem::Array<int> attr_list;
+  // List of all boundary attributes making up this port boundary, and the corresponding
+  // marker array on the parent mesh boundary attributes (used to restrict linear form
+  // assembly of port mode vectors to the port boundary elements only).
+  mfem::Array<int> attr_list, attr_marker;
 
   // SubMesh data structures to define finite element spaces and grid functions on the
   // SubMesh corresponding to this port boundary.
@@ -192,6 +194,7 @@ public:
   [[nodiscard]] bool HasVoltageCoords() const { return has_voltage_coords; }
 
   const auto &GetAttrList() const { return attr_list; }
+  const auto &GetAttrMarker() const { return attr_marker; }
 
   void Initialize(double omega);
 
@@ -410,6 +413,11 @@ public:
   // excited port boundaries.
   void AddExcitationBdrCoefficients(int excitation_idx, double omega,
                                     SumVectorCoefficient &fbr, SumVectorCoefficient &fbi);
+
+  // Marker array over the parent mesh boundary attributes for all wave ports excited by
+  // the given excitation index (empty if none), to restrict the right-hand side boundary
+  // assembly to the excited port boundary elements.
+  mfem::Array<int> GetExcitationBdrMarker(int excitation_idx) const;
 
   // A single rank-1 term g·s·sᵀ of the modal correction W = Σ_k g_k s_k s_kᵀ. Exposed so
   // the PROM / adaptive sweep can build the Galerkin projection Wᵣ = Σ_k g_k
