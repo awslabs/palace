@@ -1,0 +1,82 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Dev container cleanup workflow.
+#
+# `Publish Containers` writes a moving `dev-<slug>` channel for a branch, on
+# `workflow_dispatch` or from a `push-containers`-labeled PR. This workflow
+# removes what is no longer needed (e.g., merged branches).
+
+name: Cleanup Containers
+
+on:
+  delete:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 4 * * *'  # Daily at 04:17 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Print the plan without deleting anything'
+        type: boolean
+        default: true
+
+permissions: {}
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    # A half-finished sweep is harmless: deletes are idempotent and the next run
+    # resumes. Overlapping sweeps would race on the same batch-delete-image
+    # calls, so serialize instead. NOT cancel-in-progress — cancelling mid-loop
+    # gains nothing over letting the run finish, and the queued run supersedes it.
+    concurrency:
+      group: cleanup-containers
+      cancel-in-progress: false
+    timeout-minutes: 20
+    # Same environment as `Publish Containers`, restricted to `main` in repo
+    # settings. Reusing it means the OIDC subject already matches the role's
+    # trust policy, so no new role and no new environment are needed.
+    environment: palace-container-publish
+    permissions:
+      id-token: write     # mint the OIDC JWT for AWS
+      contents: read      # list branches via gh
+      pull-requests: read # read each branch's latest PR state via gh
+    env:
+      AWS_REGION: us-west-2
+      ECR_REPOSITORY: palace
+      S3_CONTAINERS_BUCKET: palace-ci-containers
+      S3_SCHEMAS_BUCKET: palace-ci-schemas
+      GH_TOKEN: ${{ github.token }}
+      OWNER_REPO: ${{ github.repository }}
+    steps:
+      # Check out the trusted cleanup code. No `ref:` is set, so the default
+      # branch applies — we must never check out a PR's ref here, or
+      # PR-controlled code would run holding a delete-capable role.
+      - name: Check out trusted cleanup code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ secrets.PALACE_CONTAINER_PUBLISH_ROLE_ARN }}
+          aws-region: us-west-2
+
+      # cleanup.py samples the live branch set before AND after listing ECR/S3
+      # and protects the union, so a channel published while the sweep runs is
+      # never deleted. It prints the full plan on every run, deleting or not.
+      #
+      # `dry_run` only exists for workflow_dispatch; for the other three triggers
+      # inputs.dry_run is empty, which is falsey, so they sweep for real.
+      - name: Sweep orphaned dev containers
+        shell: bash
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "${DRY_RUN:-false}" = "true" ]; then
+            python3 .github/publish_containers/cleanup.py --dry-run
+          else
+            python3 .github/publish_containers/cleanup.py
+          fi
