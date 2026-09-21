@@ -2499,7 +2499,11 @@ measured counts on load).
    `main/` to `<root>/<run>/<case>/`, `qsub` after a read-only `qstat` count of the
    user's jobs against the cap (`submission.json`, `submission-<job>.json`); every
    active job is polled read-only once per interval (job state and the runner's
-   `status.json`); a worker job that left the queue incomplete stops the coupon (its
+   `status.json`; a job is in the queue while `qstat` reports Q / R / E / H / W / T / S / B -
+   `remote.IN_QUEUE_STATES` -, a held job (H: the SOCA dispatcher holds a job whose
+   compute-node stack failed, `error_message CF:ROLLBACK_COMPLETE:retry=N`, and releases
+   it itself at `retry_eligible_after`) stays active with its reason logged); a worker
+   job that left the queue incomplete stops the coupon (its
    other jobs finish on their own, never qdel'd, recorded `JobsLeftRunning`); a coupon
    whose last job left the queue is
    fetched while the others run - rsync of `main/` without the archives, `sha256sum`
@@ -2517,7 +2521,8 @@ measured counts on load).
    the library totals keep their meaning (node-h summed over every job, jobs counted at
    every `qsub`, `Splits` per coupon). `--resume` on the same
    `--root` adopts the job ids a previous driver recorded (`<case>/submission*.json`;
-   the re-derived plans must be byte-identical, else a recorded `Resume` stop) and
+   the re-derived plans must be byte-identical - both sides read in path order -, else a
+   recorded `Resume` stop) and
    monitors / fetches / analyzes from there, so a lost driver (VPN drop, a stalled
    process) never causes a second submission; the monitor wait is sliced against
    the wall clock (a single 90 s sleep of the idle driver was observed not to return
@@ -2587,7 +2592,10 @@ measured counts on load).
    binary hash, profile. `ROOT/qualification-gates.json` (the table used),
    `ROOT/process-library.json` (each coupon's model from its own `process-library.json`
    with the fetched matrices, `CouponMesh`, `Qualification` and `LibraryQualified` only
-   when Passed).
+   when Passed; `--merge-into PATH` = a previous run's `process-library.json`, read only:
+   its models this run did not qualify are kept ahead of this run's, a model of the same
+   `Name` is replaced, `MergedFrom {Path, SHA256, Root, Kept, Replaced}` recorded - a
+   coupon qualified later joins its device library without re-running the others).
 
 `--dry-run` writes steps 1-3 and the gate table without contacting anything; the
 recorded campaigns are its fixtures: on the four-edge case with `--stage-prefix va`
@@ -2619,6 +2627,45 @@ SpatialEdgeCluster coupons and records the others as out of this library's scope
 A qualification without a reference is `PendingQualification` at best: an accuracy
 statement needs a graded_v2 reference (or the decision-53 calibration path) and is not
 produced by the command alone.
+
+### Acceptance of the source split (supervisor decision 61b / 61d, 2026-09-21)
+
+Two live runs, records under `qualify/split-acceptance-20260921/` and
+`qualify/device-library-20260921/spatial-3-edge-5d3b5e644745/` (7f03).
+
+**1. Split correctness - the two-edge 10 under `--job-policy fixed --fixed-jobs 2`** (78 sources,
+mesh `5d01204e…`, `--reference none --controls p3,p5`; PBS 46337 worker-1 = block 1 sources 1-13 with
+the p3 / p5 controls and the local-edge stage, 46338 worker-2 = block 2 sources 14-78, 46339 the
+reducer on the union of 14,976 = 78 x 192 potentials). `qualify/compare_split_matrices.py` against the
+single job 46023 of the 2026-09-20 acceptance (same mesh and p4 configs): domain Q_ij 3,081 entries,
+3,042 bit-for-bit, largest per-entry relative difference 8.65e-13 (source 13) = 2.3e-14 of the largest
+entry; surface Q_ij / normal / total 6,162 entries, 6,111 bit-for-bit, 8.47e-13 (source 53) = 3.4e-14
+of the largest entry; R and the tangential columns exact - every difference one unit in the 12th printed
+digit (the union's file order changes the summation order of the linear reduction, nothing else):
+**equal to roundoff**. Cost: 339 + 272 + 102 = 713 s = 0.198 node-h over three jobs against the single
+job's 696 s for the same p4 stages (+2.4 %, three job start-ups); compute path 441 s (worker-1 then the
+reducer) against 696 s; measured `CriticalPathSeconds` 2,346 because the reducer job was held three
+times by the SOCA dispatcher for r8g.48xlarge capacity (1,689 s of queue). The acceptance surfaced two
+driver defects, fixed forward: a held job (PBS H) was read as "left the queue" and stopped the coupon
+(`remote.IN_QUEUE_STATES`, commit 9cf2b837f), and `--resume` of a split coupon compared byte-identical
+plans in two orders (commit 415ed0428); the third driver resumed and finished the run.
+
+**2. 7f03 under `--job-policy speed --max-jobs 4` (decision 61d) - RUNNING at the time of this
+commit.** `spatial-3-edge-5d3b5e644745` (225 sources, 3.04M elements, the coupon that did not fit
+one 6 h job in the decision-58 run), `--reference none --orders p4 --controls p3,p5 --merge-into
+/tmp/library-device-transmon-01/process-library.json`, root `/tmp/library-device-transmon-02`. Dry
+run (identical to the recorded one): N = 4 of 4, blocks [17, 70, 69, 69], controls + local-edge in
+worker-1, per-job 2x-PCG estimates 91 / 92 / 91 / 91 min and the reducer 149 min (the longest job),
+critical path 241 min, node time 8.55 h (N = 1 does not fit at 29,272 s; N = 2 fits at 10,551 s
+longest / 19,492 s path; N = 3 8,941 / 16,133 s). Live: PBS 46341-46344 submitted 21:47Z, all
+running 21:53Z without a capacity hold; worker-1 2,026 s (block 1 500 s, p5 controls 786 + 117 s,
+p3 controls 135 + 61 s, local-edge), worker-2 1,777 s, worker-3 1,598 s, worker-4 1,589 s (every
+worker 2.3-3.4x under its 2x estimate); archive union 43,200 = 225 x 192 potentials; reducer job
+46350 submitted 22:27Z and running since 22:28Z. The driver is detached (`nohup`, log
+`/tmp/library-device-transmon-02/qualify.log`) and will fetch, verify the digests, delete the
+archives, evaluate the p-sequence gates and write `process-library.json` merged with the five
+decision-58 models; its outcome, cost (jobs, node-h, critical path) and records are the next
+worker's evidence commit (resume with the same command plus `--resume` if the driver is lost).
 
 ### Live acceptance of the two commands (supervisor decision 51, 2026-09-20)
 
