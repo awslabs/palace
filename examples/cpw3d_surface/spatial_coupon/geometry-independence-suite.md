@@ -1078,7 +1078,8 @@ statement, so that a library run distinguishes "unsupported class" from a bug:
   min(Overetch, MetalThickness / 2, CornerIsotropyRadius); `FreeEdgeEnds` - an edge end
   neither a semantic corner nor on the box; `ShortEdges` - no tube interval remains
   after the corner clearances; `FootprintWithoutEdge` - an explicit footprint without
-  the metal edge). `mesh_stage_contract.py` spells the same two lists
+  the metal edge; `FootprintTopology` - a producer-default collar whose region is not one
+  simple polygon, decision 54a below). `mesh_stage_contract.py` spells the same two lists
   (`RECIPE_SCOPE_SUPPORTED_CLASSES`, `RECIPE_SCOPE_GUARDS`).
 - **Guard messages.** A guard fails with `ScopeGuard[<id>]: <statement>; <detail>`
   (`scope_error`), replacing the former prose messages ("Prism edge tubes support
@@ -2442,6 +2443,94 @@ differences ≤ 2.1% = the recipe step 43 / 44 on the two-edge mesh; 0.118 / 0.3
 p4 / p5). Defects fixed forward during the run: not-applicable interfaces, sequential
 submission, global `--orders`, `rsync --mkpath`, the runner uploaded as a tree, a lost driver
 without `--resume`.
+
+### Device-library blockers (supervisor decision 54, 2026-09-21): the 5-edge collar-union footprint (54a)
+
+**54a - the 5-edge mesher defect.** The transmon 5-edge coupon (`spatial-5-edge-ea1fbd054c1e`,
+7 physical sides: two 6 um wide notches x in (-6, 0) and (10, 16) below y = 2.5 flanking a
+10 um tooth) stopped its registration probe at `tube tool (3, 10) has 3 volume
+descendants` (prism_edge_tubes.jl `tube_volume_after_fragment`). Reproduced on the source
+directory (17 s, geometry only) and localized: tool (3, 10) is the bottom tube's vacuum
+sectors of the side (-6, 2.5) -> (-6, -8) (the left notch wall, y from 2.452 to -7.984).
+The cause is not a tube interaction but the producer-default etch footprint:
+`boundary_strips` offsets the metal loop by the collar width 3R = 6 um with
+`offset_loop_points`, a miter offset that shifts every Physical side by 6 um and joins
+consecutive shifted lines. Two Physical sides facing each other across a dielectric gap
+narrower than twice the collar fold the miter polygon back through the gap: here the left
+notch wall x = -6 offsets to x = 0 and the notch's other wall x = 0 offsets to x = -6, so
+the polygon runs (0, -8) -> (0, -3.5) -> (-6, -3.5) -> (-6, -8.5) -> (16, -8.5) -> ...: its
+side (-6, -3.5) -> (-6, -8.5) lies ON the metal wall x = -6, the axis of that wall's tubes,
+and it crosses the box side y = -8 (self-intersections at (-6, -8) and (10, -8); the OCC
+warnings `BOPAlgo_AlertAcquiredSelfIntersection` / `FaceBuilderUnusedEdges`). The face OCC
+builds from the self-intersecting wire acquires arbitrary seams, and the fragment splits the
+tube volume along them. A survey of every plan-view loop of the manifest (five gallery cases,
+the calibration input, the six Radius-2 fixtures, the four Radius-0.5 assessment fixtures
+and the six device coupons) finds exactly one self-intersecting collar polygon: the 5-edge's
+(`/tmp/coupon-five-edge-54a-20260921/survey`).
+
+Fix (`mesh_spatial_coupon.jl`, generic): `collar_loop_points` builds the loft polygon of an
+exterior loop: the miter polygon while it is simple (`polygon_is_simple`: no side shorter
+than the tolerance or folding back onto its predecessor, no two non-adjacent sides within
+the tolerance; construction `MiterOffset`), otherwise the outer boundary of the union of
+`collar_pieces` - the loop, one rectangle per Physical side and one miter kite per convex
+metal corner (the miter point of `offset_loop_points`; a right-angle box junction gives a
+degenerate kite), every piece clipped to the coupon box by Sutherland-Hodgman
+(`clip_polygon_to_box`) - traced by `polygon_union_boundary` (every piece edge split where
+another meets it, a sub-segment kept when exactly one of its sides is inside some piece,
+chained with the union on the left from the lexicographically smallest vertex;
+construction `CollarUnion`). The two constructions describe the same region wherever the
+miter polygon is simple, so the union form is entered only where the old one was invalid.
+Fail-closed: a union boundary that is not one simple loop (an un-etched island inside a gap
+narrower than twice the collar - a keyhole - or a pinch point) stops at the new recorded
+scope guard `FootprintTopology` (`RECIPE_SCOPE_GUARDS`, `mesh_stage_contract.py`); an
+inward (positive) self-intersecting offset has no union form and errors. Census: every
+`FootprintPolygons[]` record carries `Construction` (`MiterOffset` / `CollarUnion` /
+`HoleOffset` / `EdgeStrip`), `FootprintSimplification` the `ConstructionRule` and
+`CollarUnionPolygons`. On the 5-edge the union is the whole box: every point of both
+notches is within 6 um of a wall and every other exposed point within 6 um of the tooth or
+the legs, so the footprint polygon is the box, the trench covers the whole exposed plane
+(no 3000 label; 3100 117.8 + 3101 65.8 um^2), and every tube tool has one descendant.
+
+Byte-identity of the verified roots (the union path is never entered): two-edge 10
+(`two-edge-8dd4bc70f183`) and four-edge rebuilt under the fixed mesher with
+`run_gmsh_only_case.py --stages-only` (`/tmp/coupon-five-edge-54a-20260921/`, binaries
+deleted after hashing, `deleted-mesh-sha256.txt`): `gmsh-build.msh` `10afee1f...` (two-edge:
+the recorded gmsh-build of the production identity `5d01204e...`) and `96645749...`
+(four-edge: the recorded gmsh-build of the physics-13 / acceptance identity `1d536c44...`),
+both BYTE-IDENTICAL; census `FootprintPolygons` all `MiterOffset`, `CollarUnionPolygons 0`.
+Every other case has a simple miter polygon (survey above) and takes the unchanged path.
+Regression tests (`test_prism_tube_build.jl`, testset "producer-default collar of facing
+sides closer than twice the collar"): a 2D notch 8 um wide under a 6 um collar (miter
+polygon self-intersecting, union = the half-plane y >= -6 of the box; pieces counted and
+inside the box; the 16 um notch keeps `MiterOffset` with the identical polygon; zero offset
+is the loop; inward self-intersection and a missing box fail closed; a keyhole stops at
+`ScopeGuard[FootprintTopology]`), and a Radius-0.5 coupon build whose notch is exactly one
+collar (1.5 um) wide - the device failure mode: verified to stop with `tube tool (3, 5) has
+2 volume descendants` under the old construction on a scratch copy - now builds with
+`CollarUnion`, the box as footprint, 16 tubes / 21 matched tube volumes, no 3000 plane.
+
+Device 5-edge under the production recipe (`/tmp/coupon-five-edge-54a-20260921/device`, a
+fresh copy of the production manifest; `register_case.py` census-only probe, then
+`run_gmsh_only_case.py`): estimate 3,452,743 (0.863 of the cap; est / actual 1.126); built
+**3,066,661** elements = 2,793,997 tets + 253,188 prisms + 19,476 pyramids, gmsh-build 195 s
+/ 6.54 GiB (the probe 177 s / 7.09 GiB - the 8 GiB bound is close), 14 tubes / 21 tube
+volumes, min SJ 0.0319, tet condition 126.5, prism condition 589.1, corner aspects <= 3.72,
+interfaces 1 1174.4 / 3100 117.805 / 3101 65.845 / 5001 199.555 / 5101 35.445 / 6001 203.174
+/ 6101 37.126 um^2, basis 28 needles (14 below FarSize, min altitude 11.8 nm) - the ear-
+clipped device basis; identity `identity.msh` `6b94299e...` (gmsh-build `3220b214...`,
+rotate-z `0663a207...`; every mesh gate passed; CanonicalBuildId `53dc9f55...`). The case
+then FAILED CLOSED at per-entry verification (1,601 s of the 1,800 s bound): both
+variants `gate failure: trace-diagonal-overrefinement` - two global short-edge bands of
+27,613 / 27,647 vertices along the box edge y = -8 on the matching-surface bottom and top
+faces (z = -2.05 / 2.1), spanning the 26 um box, RMS width 24 nm, tilted 0.0057 rad from
+the edge against the band's own resolvability 0.0009 rad, aligned with no feature within
+that resolvability. They are the needle bands of the ear-clipped device basis: its cap fan
+joins the y = -8 ring vertices (2-5 um apart) to an apex 0.153 um off the line at the
+opposite corner (altitudes 11.8 / 19.1 / 38.3 nm over 26 / 24 / 21 um long sides; tilt 0.153
+/ 26 = 0.0059 rad), so the trace rule requests 6 nm along the whole edge - the needle cost
+of 54b, here failing a production gate rather than the cap. Recorded fail-closed
+(`build-summary.json`, `per-entry-verification.json`); the root's mesh binaries were deleted
+after hashing (`deleted-mesh-sha256.txt`).
 
 ## Preflight
 

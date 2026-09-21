@@ -1268,7 +1268,8 @@ RECIPE_SCOPE_GUARDS = {
     "TopRounding": "inputs", "TrenchRounding": "inputs", "SlopedSidewalls": "inputs",
     "ThinMetal": "inputs", "NoTrench": "inputs", "ShallowTrench": "build",
     "NarrowTransverseBound": "build", "NarrowHoles": "build", "NarrowLayerGap": "build",
-    "FreeEdgeEnds": "build", "ShortEdges": "build", "FootprintWithoutEdge": "build"}
+    "FreeEdgeEnds": "build", "ShortEdges": "build", "FootprintWithoutEdge": "build",
+    "FootprintTopology": "build"}
 # Metal thickness option of the mesher command with its default; the top tube of a
 # process layer with normal Nz lies at plane + Nz x MetalThickness (decision 48).
 GMSH_BUILD_THICKNESS_OPTION = ("--metal-thickness", 0.1)

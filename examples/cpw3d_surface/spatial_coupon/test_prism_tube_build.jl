@@ -502,6 +502,86 @@ end
         # collar sides lie on the box), both x Overetch 0.05.
         @test isapprox(areas[3100], 16.17 - 0.57 + (4.4 + 1.6) * 0.05; atol=1.0e-9)
         @test census["CouponBox"]["Lower"][1:2] ≈ [-1.5, -1.5] && census["CouponBox"]["Upper"][1:2] ≈ [2.7, 2.5]
+        @test all(polygon["Construction"] == "MiterOffset" for polygon in census["FootprintPolygons"])
+        @test census["FootprintSimplification"]["CollarUnionPolygons"] == 0
+    end
+end
+
+@testset "producer-default collar of facing sides closer than twice the collar: union footprint (decision 54a)" begin
+    guard_message(f) = try f(); "" catch e; e.msg end
+    tolerance = 1.0e-9
+    # A metal band y in [0, 10] with a notch x in (-4, 4), y in (0, 6) open to the gap
+    # below; box [-10, 10]^2. Under the 6 um collar the two notch walls face each other
+    # across 8 < 12 um, so the miter polygon folds back through the notch (the wall at
+    # x = -4 offsets to x = 2, the wall at x = 4 to x = -2) and self-intersects.
+    notched(width) = [(-10.0, 0.0), (-width / 2, 0.0), (-width / 2, 6.0), (width / 2, 6.0),
+                      (width / 2, 0.0), (10.0, 0.0), (10.0, 10.0), (-10.0, 10.0)]
+    classes = vcat(fill("Physical", 5), fill("Continuation", 3))
+    loop(width) = (conductor=1, plane=0.0, hole=false, points=notched(width), classes=classes)
+    box = ([-10.0, -10.0], [10.0, 10.0])
+    narrow = offset_loop_points(loop(8.0), -6.0, tolerance)
+    @test polygon_is_simple(notched(8.0), tolerance) && !polygon_is_simple(narrow, tolerance)
+    @test !polygon_is_simple([(0.0, 0.0), (1.0, 0.0), (1.0, 0.0), (0.0, 1.0)], tolerance)   # zero side
+    @test !polygon_is_simple([(0.0, 0.0), (2.0, 0.0), (1.0, 0.0), (1.0, 1.0)], tolerance)   # fold-back
+    points, construction = collar_loop_points(loop(8.0), -6.0, box, tolerance)
+    @test construction == "CollarUnion"
+    # The union of the loop, the side rectangles and the convex-corner kites clipped to
+    # the box is the half-plane y >= -6 of the box: the notch is etched throughout.
+    simplified, _ = simplify_footprint_polygon(points, FOOTPRINT_COLLINEAR_TOLERANCE)
+    @test simplified == [(-10.0, -6.0), (10.0, -6.0), (10.0, 10.0), (-10.0, 10.0)]
+    @test polygon_area2(points) > 0.0
+    # A notch wider than twice the collar keeps the miter polygon (the same region).
+    wide, wide_construction = collar_loop_points(loop(16.0), -6.0, box, tolerance)
+    @test wide_construction == "MiterOffset" && wide == offset_loop_points(loop(16.0), -6.0, tolerance)
+    @test polygon_is_simple(wide, tolerance)
+    # Zero offset is the loop itself; an inward (positive) self-intersecting offset has
+    # no union form; the union needs the box.
+    @test collar_loop_points(loop(8.0), 0.0, nothing, tolerance) == (notched(8.0), "MiterOffset")
+    @test occursin("Inward offset", guard_message(() -> collar_loop_points(
+        (conductor=1, plane=0.0, hole=false, points=notched(8.0), classes=fill("Physical", 8)),
+        3.0, box, tolerance)))
+    @test occursin("coupon box", guard_message(() -> collar_loop_points(loop(8.0), -6.0, nothing, tolerance)))
+    # The pieces are counterclockwise convex polygons inside the box: the loop, five side
+    # rectangles (the three box sides are Continuation) and the two convex notch-opening
+    # kites (the box junctions and the loop's convex box corners give degenerate kites).
+    pieces = collar_pieces(loop(8.0), -6.0, narrow, box..., tolerance)
+    @test length(pieces) == 1 + 5 + 2
+    @test all(polygon_area2(piece) > 0.0 for piece in pieces)
+    @test all(-10.0 - tolerance <= p[d] <= 10.0 + tolerance for piece in pieces for p in piece for d in 1:2)
+    @test [(-4.0, 0.0), (-4.0, -6.0), (2.0, -6.0), (2.0, 0.0)] in pieces
+    # A keyhole (entry 8 wide, chamber 32 wide and 14 tall under a 6 um collar) leaves an
+    # un-etched island inside the chamber: the collar region is not one polygon.
+    keyhole = [(-20.0, 0.0), (-4.0, 0.0), (-4.0, 4.0), (-16.0, 4.0), (-16.0, 18.0), (16.0, 18.0),
+               (16.0, 4.0), (4.0, 4.0), (4.0, 0.0), (20.0, 0.0), (20.0, 20.0), (-20.0, 20.0)]
+    island = (conductor=1, plane=0.0, hole=false, points=keyhole,
+              classes=vcat(fill("Physical", 10), fill("Continuation", 2)))
+    message = guard_message(() -> collar_loop_points(island, -6.0, ([-20.0, -10.0], [20.0, 20.0]), tolerance))
+    @test occursin("ScopeGuard[FootprintTopology]", message) && occursin("island", message)
+    @test any(guard -> guard[1] == "FootprintTopology" && guard[2] == "build", RECIPE_SCOPE_GUARDS)
+    # The failure mode of the device 5-edge coupon ("tube tool ... has 3 volume
+    # descendants") on a Radius-0.5 coupon: a notch exactly as wide as the 1.5 um collar,
+    # so the miter side of each notch wall lands on the facing wall, the axis of that
+    # wall's tubes, and the OCC face built from the self-intersecting polygon split the
+    # bottom tube's vacuum sectors. With the union footprint every tube is matched, the
+    # collar covers the whole box (every un-notched side is within 1.5 um of the box) and
+    # the census records the construction.
+    notch = [(-2.0, -0.2), (2.0, -0.2), (2.0, 0.8), (0.75, 0.8), (0.75, 0.0), (-0.75, 0.0),
+             (-0.75, 0.8), (-2.0, 0.8)]
+    mktempdir() do directory
+        census, _ = build_strip_coupon(directory, 1; points=notch, stem="notch")
+        polygons = census["FootprintPolygons"]
+        @test length(polygons) == 1 && polygons[1]["Construction"] == "CollarUnion"
+        @test census["FootprintSimplification"]["CollarUnionPolygons"] == 1
+        lower = census["CouponBox"]["Lower"]; upper = census["CouponBox"]["Upper"]
+        @test Set(Tuple.(polygons[1]["Points"])) ==
+              Set([(lower[1], lower[2]), (upper[1], lower[2]), (upper[1], upper[2]), (lower[1], upper[2])])
+        # 8 sides x (top tube + bottom substrate + bottom vacuum sectors) = 24 tube volumes,
+        # every one a single fragment descendant.
+        @test length(census["PrismTubes"]["Tubes"]) == 16
+        @test length(census["PrismTubes"]["Volumes"]) == 24
+        areas = Dict(row["Attribute"] => row["Area"] for row in census["InterfaceAreas"])
+        @test !haskey(areas, 3000)
+        @test census["PrismTubes"]["Quality"]["Tetrahedron"]["MinimumScaledJacobian"] >= 0.01
     end
 end
 

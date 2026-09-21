@@ -2427,6 +2427,244 @@ function offset_loop_points(loop, distance, tolerance)
     return points
 end
 
+# A closed plan-view polygon is simple when no side is degenerate (shorter than
+# `tolerance`, or folding straight back onto its predecessor) and no two
+# non-adjacent sides come within `tolerance` of each other.
+function polygon_is_simple(points, tolerance)
+    n = length(points)
+    n >= 3 || return false
+    side(i) = (points[mod1(i, n)], points[mod1(i + 1, n)])
+    for i in 1:n
+        a, b = side(i)
+        u = (b[1] - a[1], b[2] - a[2])
+        hypot(u...) > tolerance || return false
+        c, d = side(i + 1)
+        v = (d[1] - c[1], d[2] - c[2])
+        u[1] * v[1] + u[2] * v[2] < 0.0 && abs(cross2d(u, v)) <= tolerance * hypot(u...) &&
+            return false
+    end
+    for i in 1:n, j in (i + 2):n
+        (i == 1 && j == n) && continue
+        segment_segment_distance_2d(side(i)..., side(j)...) <= tolerance && return false
+    end
+    return true
+end
+
+# Consecutive duplicate vertices (within `tolerance`) removed, the closing
+# duplicate included.
+function dedupe_polygon_points(points, tolerance)
+    result = NTuple{2, Float64}[]
+    for point in points
+        (isempty(result) || hypot(point[1] - result[end][1], point[2] - result[end][2]) > tolerance) &&
+            push!(result, (Float64(point[1]), Float64(point[2])))
+    end
+    while length(result) > 1 &&
+          hypot(result[1][1] - result[end][1], result[1][2] - result[end][2]) <= tolerance
+        pop!(result)
+    end
+    return result
+end
+
+# Sutherland-Hodgman clip of a polygon to the plan-view rectangle of the coupon box
+# (vertices on a box side within `tolerance` are kept; cut vertices lie exactly on
+# the side). Returns the deduplicated result, possibly empty.
+function clip_polygon_to_box(points, lower, upper, tolerance)
+    result = collect(points)
+    for (axis, bound, sign) in ((1, lower[1], 1.0), (1, upper[1], -1.0),
+                                (2, lower[2], 1.0), (2, upper[2], -1.0))
+        inside(p) = sign * (p[axis] - bound) >= -tolerance
+        output = NTuple{2, Float64}[]
+        m = length(result)
+        for k in 1:m
+            p = result[k]
+            q = result[mod1(k + 1, m)]
+            inside(p) && push!(output, (Float64(p[1]), Float64(p[2])))
+            if inside(p) != inside(q)
+                t = (bound - p[axis]) / (q[axis] - p[axis])
+                push!(output, axis == 1 ? (bound, p[2] + t * (q[2] - p[2])) :
+                                          (p[1] + t * (q[1] - p[1]), bound))
+            end
+        end
+        result = output
+    end
+    return dedupe_polygon_points(result, tolerance)
+end
+
+polygon_area2(points) = sum(cross2d(points[i], points[mod1(i + 1, length(points))])
+                            for i in eachindex(points); init=0.0)
+
+# The convex pieces whose union is the etch collar of an exterior loop under the
+# miter rule of offset_loop_points (`distance` < 0: away from the metal): the loop
+# itself, one rectangle per shifted (Physical) side and, at every convex metal
+# corner, the kite between the two rectangle ends and the miter point (`miter`
+# is the miter polygon; a right-angle box junction gives a degenerate kite). Every
+# piece is clipped to the coupon box: the region outside the box is never lofted.
+function collar_pieces(loop, distance, miter, lower, upper, tolerance)
+    points = loop.points
+    n = length(points)
+    metal_side = loop_orientation(points) * (loop.hole ? -1.0 : 1.0)
+    directions = Vector{NTuple{2, Float64}}(undef, n)
+    shifts = Vector{NTuple{2, Float64}}(undef, n)
+    for i in 1:n
+        a = points[i]
+        b = points[mod1(i + 1, n)]
+        direction = (b[1] - a[1], b[2] - a[2])
+        segment_length = hypot(direction...)
+        shift = loop.classes[i] == "Physical" ? distance : 0.0
+        directions[i] = direction
+        shifts[i] = (-metal_side * direction[2] / segment_length * shift,
+                     metal_side * direction[1] / segment_length * shift)
+    end
+    pieces = [[(Float64(p[1]), Float64(p[2])) for p in points]]
+    for i in 1:n
+        hypot(shifts[i]...) > tolerance || continue
+        a = points[i]
+        b = points[mod1(i + 1, n)]
+        push!(pieces, [(a[1], a[2]), (b[1], b[2]), (b[1] + shifts[i][1], b[2] + shifts[i][2]),
+                       (a[1] + shifts[i][1], a[2] + shifts[i][2])])
+    end
+    for i in 1:n
+        h = mod1(i - 1, n)
+        metal_side * cross2d(directions[h], directions[i]) >
+        tolerance * hypot(directions[h]...) * hypot(directions[i]...) || continue
+        p = points[i]
+        push!(pieces, [(p[1], p[2]), (p[1] + shifts[h][1], p[2] + shifts[h][2]),
+                       (miter[i][1], miter[i][2]), (p[1] + shifts[i][1], p[2] + shifts[i][2])])
+    end
+    clipped = Vector{NTuple{2, Float64}}[]
+    for piece in pieces
+        piece = clip_polygon_to_box(dedupe_polygon_points(piece, tolerance), lower, upper, tolerance)
+        length(piece) >= 3 && abs(polygon_area2(piece)) > tolerance^2 || continue
+        push!(clipped, polygon_area2(piece) > 0.0 ? piece : reverse(piece))
+    end
+    return clipped
+end
+
+# Outer boundary of the union of simple polygons: every piece edge is split where
+# any other piece edge meets it (crossings, touching ends and collinear overlaps),
+# a sub-segment is on the union boundary when exactly one of its two sides is
+# inside some piece (probed a quarter of the shortest sub-segment away), and the
+# boundary sub-segments are chained with the union on their left, starting at the
+# lexicographically smallest vertex. Fails closed (ScopeGuard FootprintTopology)
+# when the boundary is not one simple loop: a vertex with two outgoing boundary
+# sub-segments (the region touches itself) or sub-segments left over (holes).
+function polygon_union_boundary(pieces, tolerance)
+    edges = Tuple{NTuple{2, Float64}, NTuple{2, Float64}}[]
+    for piece in pieces, k in eachindex(piece)
+        push!(edges, (piece[k], piece[mod1(k + 1, length(piece))]))
+    end
+    subsegments = Tuple{NTuple{2, Float64}, NTuple{2, Float64}}[]
+    for (index, (a, b)) in enumerate(edges)
+        u = (b[1] - a[1], b[2] - a[2])
+        len = hypot(u...)
+        parameters = [0.0, 1.0]
+        for (other, (c, d)) in enumerate(edges)
+            other == index && continue
+            v = (d[1] - c[1], d[2] - c[2])
+            w = (c[1] - a[1], c[2] - a[2])
+            denominator = cross2d(u, v)
+            if abs(denominator) <= tolerance * len * hypot(v...)
+                abs(cross2d(u, w)) <= tolerance * len || continue
+                for point in (c, d)
+                    t = ((point[1] - a[1]) * u[1] + (point[2] - a[2]) * u[2]) / len^2
+                    -tolerance / len < t < 1.0 + tolerance / len &&
+                        push!(parameters, clamp(t, 0.0, 1.0))
+                end
+            else
+                t = cross2d(w, v) / denominator
+                s = cross2d(w, u) / denominator
+                -tolerance / len <= t <= 1.0 + tolerance / len &&
+                    -tolerance / hypot(v...) <= s <= 1.0 + tolerance / hypot(v...) &&
+                    push!(parameters, clamp(t, 0.0, 1.0))
+            end
+        end
+        sort!(parameters)
+        merged = [parameters[1]]
+        for t in parameters
+            t - merged[end] > tolerance / len && push!(merged, t)
+        end
+        merged[end] < 1.0 && (merged[end] = 1.0)
+        at(t) = (a[1] + t * u[1], a[2] + t * u[2])
+        for k in 1:(length(merged) - 1)
+            push!(subsegments, (at(merged[k]), at(merged[k + 1])))
+        end
+    end
+    probe = 0.25 * minimum(hypot(b[1] - a[1], b[2] - a[2]) for (a, b) in subsegments)
+    inside_union(p) = any(point_in_polygon(p, piece, 1.0e-3 * probe) for piece in pieces)
+    boundary = Tuple{NTuple{2, Float64}, NTuple{2, Float64}}[]
+    for (a, b) in subsegments
+        u = (b[1] - a[1], b[2] - a[2])
+        len = hypot(u...)
+        normal = (-u[2] / len, u[1] / len)
+        mid = (0.5 * (a[1] + b[1]), 0.5 * (a[2] + b[2]))
+        left = inside_union((mid[1] + probe * normal[1], mid[2] + probe * normal[2]))
+        right = inside_union((mid[1] - probe * normal[1], mid[2] - probe * normal[2]))
+        left == right && continue
+        segment = left ? (a, b) : (b, a)
+        same(p, q) = hypot(p[1] - q[1], p[2] - q[2]) <= tolerance
+        any(same(s[1], segment[1]) && same(s[2], segment[2]) for s in boundary) && continue
+        any(same(s[1], segment[2]) && same(s[2], segment[1]) for s in boundary) &&
+            error("Collar union boundary sub-segment $segment has the union on both sides")
+        push!(boundary, segment)
+    end
+    vertices = NTuple{2, Float64}[]
+    function vertex_index(p)
+        i = findfirst(v -> hypot(v[1] - p[1], v[2] - p[2]) <= tolerance, vertices)
+        i === nothing || return i
+        push!(vertices, p)
+        return length(vertices)
+    end
+    starts = [vertex_index(a) for (a, _) in boundary]
+    stops = [vertex_index(b) for (_, b) in boundary]
+    outgoing = [findall(==(v), starts) for v in eachindex(vertices)]
+    incoming = [findall(==(v), stops) for v in eachindex(vertices)]
+    for v in eachindex(vertices)
+        length(outgoing[v]) == 1 && length(incoming[v]) == 1 ||
+            scope_error("FootprintTopology",
+                        "the collar region touches itself at $(vertices[v]) " *
+                        "($(length(outgoing[v])) outgoing / $(length(incoming[v])) incoming " *
+                        "boundary sub-segments)")
+    end
+    start = argmin(vertices)
+    loop = [start]
+    used = falses(length(boundary))
+    current = start
+    while true
+        k = outgoing[current][1]
+        used[k] = true
+        current = stops[k]
+        current == start && break
+        push!(loop, current)
+    end
+    all(used) || scope_error("FootprintTopology",
+                             "the collar region encloses $(count(!, used)) boundary sub-segments " *
+                             "of an un-etched island inside a dielectric gap")
+    return [vertices[i] for i in loop]
+end
+
+# The plan-view polygon of an exterior loop offset by `distance` for a loft: the
+# miter polygon of offset_loop_points while it is simple (construction
+# "MiterOffset"). When two Physical sides face each other across a dielectric gap
+# narrower than twice the offset (the device 5-edge coupon: 6 um notches against
+# the 6 um producer-default collar), the miter polygon folds back through the gap
+# and self-intersects; the OCC face built from it acquires arbitrary seams that
+# split the tube volumes of the facing edges ("tube tool ... has 3 volume
+# descendants"). The collar region is then assembled as the union of
+# collar_pieces clipped to the coupon box `box` = (lower, upper) and its outer
+# boundary is traced (construction "CollarUnion"); the two constructions describe
+# the same region wherever the miter polygon is simple. Inward offsets
+# (`distance` > 0, sloped-sidewall pullbacks) have no union form and fail closed.
+function collar_loop_points(loop, distance, box, tolerance)
+    miter = offset_loop_points(loop, distance, tolerance)
+    polygon_is_simple(miter, tolerance) && return miter, "MiterOffset"
+    distance < 0.0 ||
+        error("Inward offset $distance of the plan-view loop of conductor $(loop.conductor) " *
+              "on plane $(loop.plane) self-intersects")
+    box === nothing && error("The collar union of a self-intersecting offset needs the coupon box")
+    pieces = collar_pieces(loop, distance, miter, box[1], box[2], tolerance)
+    return polygon_union_boundary(pieces, tolerance), "CollarUnion"
+end
+
 # Two consecutive etch-footprint edges are one edge when every vertex between
 # their outer endpoints lies within this fraction of the merged edge's length from
 # the merged edge. It is the same dimensionless roundoff-scale bound as
@@ -2515,22 +2753,28 @@ function simplify_footprint_polygon(points, tolerance)
     return simplified, record
 end
 
-function footprint_record(conductor, plane, hole, points, record)
+# `construction` names how the polygon was built before simplification:
+# "MiterOffset" / "CollarUnion" (collar_loop_points), "HoleOffset"
+# (offset_hole_points) or "EdgeStrip" (loft_strip).
+function footprint_record(conductor, plane, hole, points, record, construction)
     return Dict{String, Any}(
         "Conductor" => conductor, "Plane" => plane, "Hole" => hole,
-        "Points" => [collect(point) for point in points], "Simplification" => record)
+        "Points" => [collect(point) for point in points], "Simplification" => record,
+        "Construction" => construction)
 end
 
 # Simplify the bottom and top polygons of a footprint loft; when `footprint` is a
 # vector, the loft must be prismatic (one polygon) and the polygon is recorded.
-function simplified_loft_polygons(bottom_points, top_points, footprint, conductor, plane, hole)
+function simplified_loft_polygons(bottom_points, top_points, footprint, conductor, plane, hole,
+                                  construction)
     bottom_points, bottom_record =
         simplify_footprint_polygon(bottom_points, FOOTPRINT_COLLINEAR_TOLERANCE)
     top_points, _ = simplify_footprint_polygon(top_points, FOOTPRINT_COLLINEAR_TOLERANCE)
     if footprint !== nothing
         bottom_points == top_points ||
             error("Footprint recording requires a prismatic (vertical-wall) loft")
-        push!(footprint, footprint_record(conductor, plane, hole, bottom_points, bottom_record))
+        push!(footprint, footprint_record(conductor, plane, hole, bottom_points, bottom_record,
+                                          construction))
     end
     return bottom_points, top_points
 end
@@ -2591,9 +2835,11 @@ function offset_hole_points(loop,distance,tolerance)
 end
 
 # `simplify` merges collinear polygon edges (etch footprints: one CAD face per
-# genuine facet); `footprint` additionally records every simplified polygon.
+# genuine facet); `footprint` additionally records every simplified polygon; `box`
+# = (lower, upper) is the coupon box the collar union of a self-intersecting
+# exterior offset is clipped to (collar_loop_points).
 function loft_mask_offsets(occ, loops, z0, z1, bottom_offset, top_offset, tolerance;
-                           simplify=false, footprint=nothing)
+                           simplify=false, footprint=nothing, box=nothing)
     footprint === nothing || simplify || error("Footprint recording requires simplification")
     outers = [loop for loop in loops if !loop.hole]
     holes = [loop for loop in loops if loop.hole]
@@ -2601,11 +2847,16 @@ function loft_mask_offsets(occ, loops, z0, z1, bottom_offset, top_offset, tolera
     result = Tuple{Int32, Int32}[]
     hole_owners=zeros(Int,length(holes))
     for outer in outers
-        bottom_points = offset_loop_points(outer, bottom_offset, tolerance)
-        top_points = offset_loop_points(outer, top_offset, tolerance)
+        bottom_points, bottom_construction =
+            collar_loop_points(outer, bottom_offset, box, tolerance)
+        top_points, top_construction = collar_loop_points(outer, top_offset, box, tolerance)
         if simplify
+            bottom_construction == top_construction ||
+                error("Footprint loft mixes the $bottom_construction and $top_construction " *
+                      "constructions")
             bottom_points, top_points = simplified_loft_polygons(
-                bottom_points, top_points, footprint, outer.conductor, z0, false)
+                bottom_points, top_points, footprint, outer.conductor, z0, false,
+                bottom_construction)
         end
         volume = loft_polygon(occ, bottom_points, top_points, z0, z1)
         cutters = Tuple{Int32, Int32}[]
@@ -2620,7 +2871,7 @@ function loft_mask_offsets(occ, loops, z0, z1, bottom_offset, top_offset, tolera
                 error("Fabrication hole collapses across loft height; unsupported topology change")
             if simplify
                 bottom_hole, top_hole = simplified_loft_polygons(
-                    bottom_hole, top_hole, footprint, hole.conductor, z0, true)
+                    bottom_hole, top_hole, footprint, hole.conductor, z0, true, "HoleOffset")
             end
             append!(
                 cutters,
@@ -2644,7 +2895,8 @@ end
 
 # The expanded collar polygons are the producer-default etch footprint: they are
 # simplified and recorded like a device footprint. The retained metal mask is not.
-function boundary_strips(occ, loops, radius, z0, z1, pullback, tolerance; footprint=nothing)
+function boundary_strips(occ, loops, radius, z0, z1, pullback, tolerance; footprint=nothing,
+                         box=nothing)
     expanded_volumes = Tuple{Int32, Int32}[]
     retained_volumes = Tuple{Int32, Int32}[]
     width = 3radius
@@ -2652,7 +2904,7 @@ function boundary_strips(occ, loops, radius, z0, z1, pullback, tolerance; footpr
         conductor_loops = [loop for loop in loops if loop.conductor == conductor]
         append!(expanded_volumes,
                 loft_mask_offsets(occ, conductor_loops, z0, z1, -width, -width, tolerance;
-                                  simplify=true, footprint=footprint))
+                                  simplify=true, footprint=footprint, box=box))
         append!(retained_volumes,
                 loft_mask_offsets(occ, conductor_loops, z0, z1, 0.0, -pullback, tolerance))
     end
@@ -2673,7 +2925,7 @@ function loft_strip(occ, edge, radius, side, z0, z1, pullback; footprint=nothing
     bottom_points, top_points = simplified_loft_polygons(
         collect(strip_points(edge, radius, side)),
         collect(strip_points(edge, radius, side, pullback)), footprint, edge.conductor, z0,
-        false)
+        false, "EdgeStrip")
     bottom = polygon_wire(occ, bottom_points, z0)
     top = polygon_wire(occ, top_points, z1)
     entities = occ.addThruSections([bottom, top], -1, true, false, -1, "C0")
@@ -3697,7 +3949,11 @@ const RECIPE_SCOPE_GUARDS = [
     ("ShortEdges", "build",
      "a metal edge shorter than the corner clearances at its ends: no tube interval remains"),
     ("FootprintWithoutEdge", "build",
-     "an explicit etch footprint with no side coincident with a metal edge")]
+     "an explicit etch footprint with no side coincident with a metal edge"),
+    ("FootprintTopology", "build",
+     "a producer-default etch collar whose region is not one simple polygon (Physical sides " *
+     "facing each other across a dielectric gap narrower than twice the collar enclose an " *
+     "un-etched island, or the region touches itself): the collar loft takes one simple polygon")]
 const RECIPE_SCOPE_RULE =
     "the prism-tube recipe builds every input whose classes are all in SupportedClasses; " *
     "an input exhibiting a class in GuardedClasses fails closed at the guard whose " *
@@ -4849,7 +5105,8 @@ function generate_spatial_coupon(;
                     layer.plane - layer.sign * overetch,
                     pullback_trench,
                     tolerance;
-                    footprint=footprint_polygons
+                    footprint=footprint_polygons,
+                    box=(lower, upper)
                 )
             end
             trench = if isempty(boundary_loops)
@@ -5807,7 +6064,17 @@ function generate_spatial_coupon(;
                                                  for polygon in footprint_polygons]),
                     "MaximumRelativeDeviation" => maximum(
                         Float64[polygon["Simplification"]["MaximumRelativeDeviation"]
-                                for polygon in footprint_polygons]; init=0.0)),
+                                for polygon in footprint_polygons]; init=0.0),
+                    "ConstructionRule" => "an exterior loop's collar polygon is the miter " *
+                                          "offset of its Physical sides (MiterOffset) while " *
+                                          "that polygon is simple; a self-intersecting miter " *
+                                          "polygon (facing sides closer than twice the collar) " *
+                                          "is replaced by the outer boundary of the union of " *
+                                          "the loop, the per-side collar rectangles and the " *
+                                          "convex-corner miter kites, clipped to the coupon " *
+                                          "box (CollarUnion)",
+                    "CollarUnionPolygons" => count(polygon["Construction"] == "CollarUnion"
+                                                   for polygon in footprint_polygons)),
                 "FootprintPolygons" => footprint_polygons,
                 "PrismTubes" => tube_record,
                 "EdgeLayer" => prism_tubes ? nothing : Dict{String, Any}(
