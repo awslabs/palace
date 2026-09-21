@@ -348,31 +348,46 @@ Label-only proof: the shells summed per source reproduce the production acceptan
 46023 at max |rel| 4.4e-13 (Q_MA), 1.1e-13 (E), 2.8e-13 (Q_MS) at p4 and p5 - the workers are
 the acceptance's to the second and PCG count (322 / 1092 s, 11.90 / 10.82 iterations), the
 reducers +50 / +163 s for 16 vs 2 surface integrals - and the gated p5 verdict is the
-acceptance's to the digit (Failed on p_MA, 53 +3.50%). Profile (78 free sources): the sharp
-90-degree top edge follows r^(-2/3) in every source's inner rings - median local slopes -0.68 /
--0.64 / -0.67 between rings 2-3 / 3-4 / 4-5, fitted alpha over rings 2-4 -0.648 (quartiles
--0.657 / -0.613, se 0.006), 53 / 58 -0.672 +/- 0.011; the outer rings (4-32 nm) bend as the
-finite geometry takes over (flatter at the cut-face hats, steeper at 53 / 58), which is why a
-fit over rings 2-7 (-0.62 median, -0.70 at 53 / 58) is a mixture and 22 / 78 top profiles are not
-"clean" there (13 near-junction hats, 4 junction rings, 4 cut-face wide hats, 1 junction
-column; their inner slopes are still -0.68 / -0.64 ... -0.51). The innermost ring (0-0.25 nm,
-5.7% of the MA at the median source, 10.9% at 53 / 58) holds 0.706 (p5; range 0.687-0.710 over
-all sources) / 0.665 (p4) of the energy the -2/3 law anchored on ring 2 predicts - a
-discretization property, not a source property; the p4 -> p5 MA step (+0.79% median) is +6.2%
-in top ring 1, <= 0.13% in rings 2-7 (p-converged), +0.9% in the far shell (84% ring 1 / 20% far
-at 53 / 58). The bottom (metal / trench) edge is not a -2/3 edge: alpha -0.33, ring-1 p-step
-+1.4%, remainder 0.1% of the MA. Implied deficit of the production value below its sharp-edge
-limit (top edge -2/3 anchored on ring 2 + bottom edge at its own law, p5): median +2.68%
-(quartiles +2.22 / +3.21%), strongest-20 +2.65%, 53 / 58 +4.44% (p4: +3.07% / +5.11%) - the
-HE-CHECK model's 2.7% / 4.7% confirmed by measurement, and the model's ring-halving
-prediction 0.206 x deficit = 0.50% / 0.91% matches the ring-refined run's +0.54% / +0.96%.
-Evidence for the options (no decision): (i) analytic extrapolation is computable per source
-from the run's own per-ring labels with a source-independent ring-1 factor, but it removes the
-ring-1 deficit only (the far shell keeps 20-46% of the p-step), rests on the -2/3 assumption
-inside 0.25 nm (the fitted -0.648 vs -2/3 moves the deficit by ~0.5 points) and must be applied
-to the 0.5 nm-anchored reference too (~5.6% at 53 / 58 under the same law); (ii) a rounding
-radius of nm order acts on 5.7 / 10.9% (inside 0.25 nm) to 9.3 / 17.6% (inside 0.75 nm) of the MA
-at the median / 53 - a process quantity of several percent (`qualify/radial-ma-20260921/RADIAL-MA.md`).
+acceptance's to the digit (Failed on p_MA, 53 +3.50%). Profile (78 free sources; every number
+from `qualify/radial_ma_profile.py`, `qualify/radial-ma-20260921/radial-ma-profile.md`): the sharp
+90-degree top edge follows a r^(-2/3) tail in its inner rings - the ring 2-3 slope (0.25-1.75 nm)
+is within 0.05 of -2/3 at every source, the 3-4 slope (1.75-3.75 nm) within 0.10 at 56 / 78 (49 /
+78 within 0.05 on both); median local slopes -0.68 / -0.64 / -0.67 between rings 2-3 / 3-4 / 4-5,
+fitted alpha over rings 2-4 -0.648 (quartiles -0.657 / -0.613, se 0.006), 53 / 58 -0.672 +/- 0.011;
+the outer rings (4-32 nm) bend as the finite geometry takes over (flatter at the cut-face hats,
+steeper at 53 / 58), which is why a fit over rings 2-7 (-0.62 median, -0.70 at 53 / 58) is a mixture
+and 22 / 78 top profiles are not "clean" there (13 near-junction hats, 4 junction rings, 4
+cut-face wide hats, 1 junction column; their inner slopes are still -0.68 / -0.64 ... -0.51). The
+innermost ring (0-0.25 nm, 5.7% of the MA at the median source, 10.9% at 53 / 58) holds 0.706
+(p5; range 0.687-0.710 over all sources) / 0.665 (p4) of the energy the -2/3 law anchored on
+ring 2 predicts - a discretization property, not a source property; the p4 -> p5 MA step (+0.79%
+median) is +6.2% in top ring 1, <= 0.13% in rings 2-7 (p-converged), +0.9% in the far shell (84%
+ring 1 / 20% far at 53 / 58). The bottom (metal / trench) edge is not a -2/3 edge: alpha -0.33
+(Fit2-4 over the 45 sources whose bottom rings carry > 20% of the MA), ring-1 p-step +1.4%,
+remainder 0.1% of the MA. Implied deficit of the production value below its sharp-edge limit
+(p5): 1.9-2.7% at the median source and 4.4-4.8% at 53 / 58 across the tool's estimators; the
+named `Consistent` estimator (top edge -2/3 anchored on ring 2 + bottom edge at its own fitted
+law) gives +2.68% (quartiles +2.22 / +3.21%), strongest-20 +2.65%, 53 / 58 +4.44% (p4: +3.07% /
++5.11%), Fit2-4 +1.89% / +4.75%. `Consistent` is preferred because 0.206 x its deficit
+reproduces the ring-refined run's ring-halving step (0.50% / 0.91% vs +0.54% / +0.96%; Fit2-4
+0.39%) - one check, not two: the HE-CHECK model's 2.7% / 4.7% were derived from that same step,
+so its "confirmation" IS the ring-halving match. Evidence for the options (no decision): (i)
+analytic extrapolation is computable per source from the run's own per-ring labels with a
+source-independent ring-1 factor, but it removes the ring-1 deficit only (the far shell keeps
+20-46% of the p-step), rests on the -2/3 assumption inside 0.25 nm (estimator spread 0.8 points
+at the median: the exponent -0.648 vs -2/3 and the amplitude anchor) and must be applied to the
+0.5 nm-anchored reference too (~5.6% at 53 / 58 under the same law); (ii) a rounding radius of
+nm order acts on 5.7 / 10.9% (inside 0.25 nm) to 9.3 / 17.6% (inside 0.75 nm) of the MA at the
+median / 53 - a process quantity of several percent (`qualify/radial-ma-20260921/RADIAL-MA.md`).
+Review follow-up (decision 58 notes, same day): the headline estimator is the tool's
+`Consistent` (COMBINED_ESTIMATORS; `HeadlineEstimator` in the JSON) and the bottom-share
+floor a recorded rule (`BottomShareFloor` 0.20); `relabel_radial_ma_shells.closure_check`
+closes the quadrature weights against the elements' cross-product areas (`element_area`;
+1.1e-15 on the production mesh) instead of the same sum on both sides; `analyze()` /
+`markdown()` guard every None fit and are tested on a synthetic shell run
+(`test_relabel_radial_ma_shells.py`); `analyze_basis_needles.delaunay_faces` flips every
+all-boundary box face where the producer flips the two caps only - identical on the
+three-level boxes of every coupon, recorded as a difference for two-level boxes.
 
 ## Gmsh-only production pipeline (supervisor decision 38, 2026-09-18)
 

@@ -24,7 +24,8 @@ areas sum to the parent MA area to roundoff (asserted against the parent's own
 ownership partition record), the parent ownership is reproduced element by element
 from the parent's partition certificate (asserted), and the radial partition is audited
 point-wise (degree-4 positive rules: the straddling measure of elements whose quadrature
-points fall in another shell is recorded per shell, the closure asserted at 1e-12).
+points fall in another shell is recorded per shell; the rules' weights are closed against
+the elements' cross-product areas at 1e-12 - an independent area, not the same sum).
 
 Outputs under ROOT/<case>/: identity.msh, identity.msh.radial-shells.json (the census the
 qualify command consumes: label -> parent / kind / ring / radii / area) and ROOT/
@@ -215,6 +216,16 @@ def ordinal_description(ordinal, radii):
     return kind, k, (0.0 if k == 1 else radii[k - 2]), radii[k - 1]
 
 
+def element_area(element_type, corners):
+    """The area of a linear triangle (half the cross product) or quadrangle (the two
+    triangles of its diagonal 0-2), independent of the quadrature rule."""
+    corners = np.asarray(corners)
+    area = 0.5 * np.linalg.norm(np.cross(corners[1] - corners[0], corners[2] - corners[0]))
+    if element_type == 3:
+        area += 0.5 * np.linalg.norm(np.cross(corners[2] - corners[0], corners[3] - corners[0]))
+    return float(area)
+
+
 def quadrature_points(element_type, corners):
     """(points, measures) of a positive degree-4 rule on a linear triangle / quadrangle."""
     corners = np.asarray(corners)
@@ -268,7 +279,7 @@ def relabel(data, *, lines, radii):
                          if shell_ordinal(d, k, radii) != group[0])
         shell["Elements"] += 1
         shell["Triangles" if element_type == 2 else "Quadrangles"] += 1
-        shell["Area"].append(float(measures.sum()))
+        shell["Area"].append(element_area(element_type, corners[position]))
         shell["QuadratureMeasure"].append(float(measures.sum()))
         shell["StraddlingMeasure"].append(straddling)
         shell["CentroidDistanceMinimum"] = min(shell["CentroidDistanceMinimum"], float(distances[position]))
@@ -364,6 +375,8 @@ def certificate_parents(data, mesh, relabeled, certificate_path):
 
 
 def closure_check(shells, tolerance=1e-12):
+    """The quadrature measure of every shell (the positive rule's weights) against the
+    shells' areas from the independent cross-product formula (element_area)."""
     whole = math.fsum(shell["Area"] for shell in shells.values())
     owned = math.fsum(shell["QuadratureMeasure"] for shell in shells.values())
     closure = abs(owned - whole) / whole

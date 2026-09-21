@@ -138,7 +138,16 @@ class RadialShellRelabelTest(unittest.TestCase):
         # (0.4 x 1 / 2) + the two corner triangles (1e-4 x 1e-4 / 2, 5e-4 x 4e-4 / 2).
         self.assertAlmostEqual(total, 3 * RADII[-1] + 0.2 + 0.5e-8 + 1e-7, places=14)
         closure = relabel.closure_check(shells)
-        self.assertEqual(closure["RelativeClosure"], 0.0)
+        self.assertLess(closure["RelativeClosure"], 1e-12)
+        self.assertAlmostEqual(closure["OwnedMeasure"], closure["WholeMeasure"], places=14)
+        # The closure is independent of the census: the quadrature weights are closed against
+        # the cross-product areas (element_area), so a rule that lost weight fails it.
+        self.assertAlmostEqual(relabel.element_area(2, [(0, 0, 0), (1, 0, 0), (0, 2, 0)]), 1.0, places=15)
+        self.assertAlmostEqual(relabel.element_area(3, [(0, 0, 0), (2, 0, 0), (2, 1, 0), (0, 1, 0)]), 2.0, places=15)
+        lossy = copy.deepcopy(shells)
+        lossy[(1 + rings + 1, 6001)]["QuadratureMeasure"] *= 0.5
+        with self.assertRaisesRegex(relabel.RelabelError, "does not close"):
+            relabel.closure_check(lossy)
 
     def test_metal_edge_lines_of_the_two_edge_case(self):
         boundary = relabel.read_csv_rows(TESTDATA / "plan-view-boundary.csv")
@@ -284,6 +293,119 @@ class RadialShellRelabelTest(unittest.TestCase):
         slopes = radial_ma_profile.local_slopes([shells[k] for k in range(1, 8)])
         self.assertTrue(all(abs(s + 0.4) < 0.02 for s in slopes[1:]))
         self.assertLess(slopes[0], -0.5)
+
+    def test_radial_profile_analyze_and_markdown(self):
+        """analyze() on a synthetic shell run (one main order, 15 MA shell interfaces next to
+        MS 2, a reference with one MA interface): the Consistent estimator sums the top edge's
+        Theory@2 remainder and the bottom edge's Fit2-4 remainder; a source whose bottom rings
+        carry no energy (no bottom fit) and a second order are handled (None guards) and
+        markdown() renders both."""
+        header = ["interface", "edge", "R (m)", "basis_i", "basis_j", "Q_ij (J)", "Q_ij normal (J)", "Q_ij tangential (J)",
+                  "Q_total_ij (J)", "Q_total_ij normal (J)", "Q_total_ij tangential (J)"]
+        bounds = [0.0] + RADII
+        rings = len(RADII)
+        top = {k: 3.0 * radial_ma_profile.ring_energy_factor(-2.0 / 3.0, bounds[k - 1], bounds[k]) for k in range(1, rings + 1)}
+        top[1] *= 0.7  # the innermost ring resolves 0.7 of the -2/3 law
+        bottom = {k: 5.0 * radial_ma_profile.ring_energy_factor(-0.4, bounds[k - 1], bounds[k]) for k in range(1, rings + 1)}
+        bottom[1] *= 0.9
+        far = 0.05
+        shells = {"3": {"Kind": "far", "Ring": 0, "InnerRadius": RADII[-1], "OuterRadius": None}}
+        for k in range(1, rings + 1):
+            shells[str(3 + k)] = {"Kind": "top", "Ring": k, "InnerRadius": bounds[k - 1], "OuterRadius": bounds[k]}
+            shells[str(3 + rings + k)] = {"Kind": "bottom", "Ring": k, "InnerRadius": bounds[k - 1], "OuterRadius": bounds[k]}
+        interfaces = {"2": "MS", **{index: "MA" for index in shells}}
+        # Source 1: both edges; source 2: no bottom energy (no bottom fit); source 3: zero trace.
+        energies = {1: 10.0, 2: 20.0, 3: 5.0}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            reference = root / "reference"
+            reference.mkdir()
+            (root / "reference-config.json").write_text(json.dumps(
+                {"Boundaries": {"Postprocessing": {"Dielectric": [{"Index": 1, "Type": "MA"}, {"Index": 2, "Type": "MS"}]}}}))
+            for order, scale in (("p4", 1.0), ("p5", 1.01)):
+                reducer = root / "case" / "results" / "main" / f"syn-{order}" / "reducer"
+                reducer.mkdir(parents=True)
+                with (reducer / "domain-response-matrix.csv").open("w", newline="") as stream:
+                    writer = csv.writer(stream)
+                    writer.writerow(["basis_i", "basis_j", "Q_ij (J)"])
+                    for i, e in energies.items():
+                        writer.writerow([i, i, e])
+                with (reducer / "surface-response-matrix.csv").open("w", newline="") as stream:
+                    writer = csv.writer(stream)
+                    writer.writerow(header)
+                    for i in energies:
+                        for index, shell in shells.items():
+                            if shell["Kind"] == "far":
+                                value = far
+                            elif shell["Kind"] == "top":
+                                value = top[shell["Ring"]] * (scale if shell["Ring"] == 1 else 1.0)
+                            else:
+                                value = 0.0 if i == 2 else bottom[shell["Ring"]]
+                            writer.writerow([int(index), 1, 2e-6, i, i] + [value] * 6)
+                        writer.writerow([2, 1, 2e-6, i, i] + [0.3] * 6)
+            for name in ("domain-response-matrix.csv", "surface-response-matrix.csv"):
+                (reference / name).write_text((root / "case" / "results" / "main" / "syn-p4" / "reducer" / name).read_text()
+                                              .replace("\n3,1,2e-06", "\n1,1,2e-06"))
+            record = {"Cases": [{"Case": "syn", "Root": str(root / "case"),
+                                 "Inputs": {"RadialShells": {"Interfaces": shells}, "Interfaces": interfaces},
+                                 "Sources": {"ZeroTrace": [3]},
+                                 "Stages": [{"Role": "main", "Prefix": "syn-p4", "Order": 4}, {"Role": "main", "Prefix": "syn-p5", "Order": 5},
+                                            {"Role": "control", "Prefix": "syn-p3-control", "Order": 3}],
+                                 "Reference": {"Results": str(reference), "Config": str(root / "reference-config.json")}}]}
+            (root / "library-qualification.json").write_text(json.dumps(record))
+            out = radial_ma_profile.analyze(root / "library-qualification.json", "syn", strongest=1)
+            self.assertEqual(out["HeadlineEstimator"], "Consistent")
+            self.assertEqual(out["CombinedEstimators"]["Consistent"], {"top": "Theory@2", "bottom": "Fit2-4"})
+            p4 = out["Orders"]["p4"]
+            self.assertEqual(p4["Sources"], [1, 2])
+            self.assertEqual(p4["Strongest"], [1])
+            one = p4["PerSource"]["1"]
+            q_ma = sum(top.values()) + sum(bottom.values()) + far
+            self.assertAlmostEqual(one["Q_MA"], q_ma, places=12)
+            top_theory = one["Kinds"]["top"]["Estimates"]["Theory@2"]["Remainder"]
+            bottom_fit = one["Kinds"]["bottom"]["Estimates"]["Fit2-4"]["Remainder"]
+            self.assertAlmostEqual(top_theory / (top[1] / 0.7), 0.3, places=6)
+            self.assertAlmostEqual(bottom_fit / (bottom[1] / 0.9), 0.1, places=3)
+            self.assertAlmostEqual(one["Remainder"]["Consistent"], top_theory + bottom_fit, places=15)
+            self.assertAlmostEqual(one["Deficit"]["Consistent"], (top_theory + bottom_fit) / q_ma, places=15)
+            self.assertAlmostEqual(one["DeficitTop"]["Consistent"], top_theory / q_ma, places=15)
+            # Theory@2 on both edges overstates the bottom remainder against the Consistent estimator.
+            self.assertGreater(one["Deficit"]["Theory@2"], one["Deficit"]["Consistent"])
+            self.assertLess(one["Deficit"]["Fit2-4"], one["Deficit"]["Consistent"])
+            # Source 2 has no bottom energy: no bottom fit, the Consistent remainder is the top part only.
+            two = p4["PerSource"]["2"]
+            self.assertIsNone(two["Kinds"]["bottom"]["Estimates"]["Fit2-4"])
+            self.assertAlmostEqual(two["Remainder"]["Consistent"], two["Kinds"]["top"]["Estimates"]["Theory@2"]["Remainder"], places=15)
+            summary = p4["Summary"]
+            self.assertEqual(summary["Alpha"]["bottom:Fit2-4"]["Fitted"], 1)
+            self.assertAlmostEqual(summary["Alpha"]["bottom:Fit2-4"]["Median"], -0.4, places=3)
+            above = summary["Alpha"]["bottom:Fit2-4"]["ShareAboveFloor"]
+            self.assertEqual((above["Floor"], above["Sources"]), (radial_ma_profile.BOTTOM_SHARE_FLOOR, 1))
+            self.assertNotIn("ShareAboveFloor", summary["Alpha"]["bottom:Theory@2"])
+            self.assertAlmostEqual(summary["Deficit"]["Consistent"]["StrongestMedian"], one["Deficit"]["Consistent"], places=15)
+            self.assertTrue(all(v is not None for v in summary["LocalSlopeMedians"]["bottom"]))
+            self.assertTrue(all(v is None for v in p4["PerSource"]["2"]["Kinds"]["bottom"]["LocalSlopes"]))
+            self.assertEqual(summary["Deficit"]["Consistent"]["At"], {})
+            # The p-step: ring 1 of the top edge moved by the scale, the other rings did not.
+            step = out["PStep"]["MedianRelativeStep"]
+            self.assertEqual(out["PStep"]["Orders"], ["p4", "p5"])
+            self.assertAlmostEqual(step["top"][0], 0.01, places=12)
+            self.assertAlmostEqual(step["top"][1], 0.0, places=12)
+            self.assertEqual(step["bottom"][0], 0.0)
+            self.assertAlmostEqual(step["Ring1ShareOfStep"]["top"], 1.0, places=12)
+            text = radial_ma_profile.markdown(out, detail=[1, 2, 9])
+            self.assertIn("| **Consistent** (top Theory@2 + bottom Fit2-4) |", text)
+            self.assertIn("bottom-edge alpha Fit2-4 over the 1 sources with bottom share > 20%", text)
+            self.assertIn("## p5: 2 free sources", text)
+            self.assertIn("## p-step p4 -> p5", text)
+            self.assertIn("| 2 |", text)
+            self.assertNotIn("\n| 9 |", text)
+            # A bottom-less source set (every bottom fit None) still summarizes and renders.
+            for order in ("p4", "p5"):
+                out["Orders"][order]["PerSource"].pop("1")
+                out["Orders"][order]["Sources"] = [2]
+                out["Orders"][order]["Strongest"] = [2]
+            self.assertIn("n/a", radial_ma_profile.markdown(out, detail=[2]))
 
 
 if __name__ == "__main__":

@@ -28,7 +28,12 @@ library's own, generate_spatial_response --basis-only), never the gallery refere
     triangulation of the same vertices (generate_spatial_response.delaunay_flip_cap, the
     producer's --cap-triangulation delaunay) - the sources are unchanged, the needles
     become right slivers whose altitude is the local ring spacing, and the estimate is
-    recomputed exactly under the unchanged recipe;
+    recomputed exactly under the unchanged recipe.  Face selection differs from the
+    producer's: the producer flips the two caps only, this tool flips every box face
+    whose vertices all lie on the face boundary - identical for the three-level boxes
+    of every device and gallery coupon (the side faces carry mid-level vertices), not
+    for a two-level box whose side faces would be flipped here and not by the producer
+    (the recorded exact agreement, 7f03 3,135,224, is a three-level box);
 (b) GRADED REFINEMENT (modelled, not constructed): a basis whose local edge h(x) on
     every face is the ring spacing graded away from the ring vertices at slope
     BasisGrowth (h = min_i spacing_i + BasisGrowth x |x - v_i|, capped at the face
@@ -162,7 +167,9 @@ def face_of(triangle, vertices, faces):
 
 def delaunay_faces(vertices, triangles):
     """Re-triangulate the faces whose vertices all lie on the face boundary; returns the
-    new triangle list and the list of re-triangulated face indices."""
+    new triangle list and the list of re-triangulated face indices.  The producer flips
+    the two caps only: on a three-level box the selections coincide (the side faces have
+    mid-level vertices), on a two-level box this tool would also flip the side faces."""
     faces, lower, upper = box_faces(vertices)
     grouped = {}
     for triangle in triangles:

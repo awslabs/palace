@@ -27,9 +27,15 @@ c L r_1^(1+alpha) / (1 + alpha) - Q_1 (the model's ring-1 energy minus the resol
 for each fit, and for the theoretical alpha = -2/3 anchored on ring 2 alone (c from Q_2:
 the most local extrapolation, Q_1 model = Q_2 r_1^(1/3) / (r_2^(1/3) - r_1^(1/3))) and
 fitted over rings 2..K.  The extrapolated sharp-edge MA is Q_MA + remainder(top) +
-remainder(bottom); the deficit is the remainder over Q_MA.  A profile is a clean power law
-when the log residual RMS of the rings-2..K fit is below 0.05 and every local slope
-between neighbouring fitted rings lies within 0.25 of alpha.
+remainder(bottom); the deficit is the remainder over Q_MA.  The per-ring estimators apply
+one rule to both edge kinds; the combined estimator `Consistent` (COMBINED_ESTIMATORS)
+takes the top edge's Theory@2 remainder (the sharp 90-degree edge, whose inner rings
+follow -2/3) and the bottom edge's Fit2-4 remainder (the metal / trench edge at its own
+fitted law, alpha ~ -0.33: -2/3 would overstate it) - the headline deficit.  The bottom
+edge's alpha statistic is also reported over the sources whose bottom rings carry more
+than BOTTOM_SHARE_FLOOR of the MA (the low-share sources have no bottom power law).  A
+profile is a clean power law when the log residual RMS of the rings-2..K fit is below
+0.05 and every local slope between neighbouring fitted rings lies within 0.25 of alpha.
 
 usage: radial_ma_profile.py --record library-qualification.json --case CASE_ID [--production DIR --production-prefix P]
        --out-json PATH --out-md PATH [--strongest N] [--detail I ...]
@@ -57,7 +63,31 @@ KINDS = ("top", "bottom")
 # Estimator name -> (first ring, last ring or None = K, fixed alpha or None = free).
 ESTIMATORS = {"Fit2-K": (2, None, None), "Fit2-4": (2, 4, None),
               "Theory@2": (2, 2, THEORETICAL_ALPHA), "Theory2-K": (2, None, THEORETICAL_ALPHA)}
+# Combined estimator name -> {edge kind: per-ring estimator whose remainder it takes}.
+COMBINED_ESTIMATORS = {"Consistent": {"top": "Theory@2", "bottom": "Fit2-4"}}
+HEADLINE_ESTIMATOR = "Consistent"
 PRIMARY_FIT = "Fit2-K"
+BOTTOM_SHARE_FLOOR = 0.20
+
+
+def remainder_names():
+    """Every estimator a total remainder / deficit is reported for."""
+    return list(ESTIMATORS) + list(COMBINED_ESTIMATORS)
+
+
+def kind_estimator(name, kind):
+    """The per-ring estimator whose remainder `name` takes for `kind`."""
+    return COMBINED_ESTIMATORS[name][kind] if name in COMBINED_ESTIMATORS else name
+
+
+def median_or_none(values):
+    values = [v for v in values if v is not None]
+    return statistics.median(values) if values else None
+
+
+def quartiles_or_none(values):
+    values = [v for v in values if v is not None]
+    return [float(np.percentile(values, q)) for q in (25, 75)] if values else None
 
 
 def rows(path):
@@ -194,7 +224,9 @@ def analyze(record_path, case_id, *, production=None, production_prefix=None, st
     reference_types = {int(e["Index"]): e["Type"] for e in reference_config["Boundaries"]["Postprocessing"]["Dielectric"]}
     ref_pma = ma_ms_offsets.reference_p_ma(reference_dir, reference_types)
     out = {"Case": case_id, "Record": str(record_path), "TheoreticalAlpha": THEORETICAL_ALPHA,
-           "Estimators": {name: list(value) for name, value in ESTIMATORS.items()}, "PrimaryFit": PRIMARY_FIT,
+           "Estimators": {name: list(value) for name, value in ESTIMATORS.items()},
+           "CombinedEstimators": {name: dict(value) for name, value in COMBINED_ESTIMATORS.items()},
+           "HeadlineEstimator": HEADLINE_ESTIMATOR, "PrimaryFit": PRIMARY_FIT, "BottomShareFloor": BOTTOM_SHARE_FLOOR,
            "CleanRule": {"ResidualRMS": CLEAN_RESIDUAL_RMS, "LocalSlopeTolerance": CLEAN_LOCAL_SLOPE_TOLERANCE},
            "Shells": {str(k): v for k, v in shell_map.items()}, "Orders": {}, "Reproduction": None}
     ring_shells = {kind: sorted((index, value) for index, value in shell_map.items() if value["Kind"] == kind)
@@ -212,8 +244,8 @@ def analyze(record_path, case_id, *, production=None, production_prefix=None, st
             total = sum(diagonal[index][i] for index in ma_interfaces)
             entry = {"E": energies[i], "Q_MA": total, "p_MA": total / energies[i], "Far": sum(diagonal[index][i] for index in far),
                      "Kinds": {}}
-            remainders = {name: 0.0 for name in ESTIMATORS}
-            top_remainders = {name: 0.0 for name in ESTIMATORS}
+            remainders = {name: 0.0 for name in remainder_names()}
+            top_remainders = {name: 0.0 for name in remainder_names()}
             for kind in KINDS:
                 by_ring = {value["Ring"]: (value["InnerRadius"], value["OuterRadius"], diagonal[index][i])
                            for index, value in ring_shells[kind]}
@@ -221,10 +253,11 @@ def analyze(record_path, case_id, *, production=None, production_prefix=None, st
                 profile["Share"] = sum(s[2] for s in by_ring.values()) / total if total else None
                 entry["Kinds"][kind] = profile
                 for name in remainders:
-                    if profile["Estimates"].get(name):
-                        remainders[name] += profile["Estimates"][name]["Remainder"]
+                    estimate = profile["Estimates"].get(kind_estimator(name, kind))
+                    if estimate:
+                        remainders[name] += estimate["Remainder"]
                         if kind == "top":
-                            top_remainders[name] += profile["Estimates"][name]["Remainder"]
+                            top_remainders[name] += estimate["Remainder"]
             entry["Remainder"] = remainders
             entry["ExtrapolatedQ_MA"] = {name: total + value for name, value in remainders.items()}
             entry["Deficit"] = {name: value / total for name, value in remainders.items()}
@@ -236,30 +269,44 @@ def analyze(record_path, case_id, *, production=None, production_prefix=None, st
             estimate = per_source[str(i)]["Kinds"][kind]["Estimates"].get(name)
             return estimate["Alpha"] if estimate else None
 
+        def alpha_se_of(i, kind, name):
+            estimate = per_source[str(i)]["Kinds"][kind]["Estimates"].get(name)
+            return (estimate["AlphaSE"] or 0.0) if estimate else None
+
         strong = [i for i in strongest_sources]
         summary = {"Alpha": {}, "Deficit": {}, "DeficitTop": {}, "CleanPowerLaw": {}}
         for name in ESTIMATORS:
             for kind in KINDS:
-                values = [alpha_of(i, kind, name) for i in sources if alpha_of(i, kind, name) is not None]
+                values = [alpha_of(i, kind, name) for i in sources]
                 summary["Alpha"][f"{kind}:{name}"] = {
-                    "Median": statistics.median(values), "Quartiles": [float(np.percentile(values, q)) for q in (25, 75)],
-                    "StrongestMedian": statistics.median([alpha_of(i, kind, name) for i in strong if alpha_of(i, kind, name) is not None]),
-                    "SEMedian": statistics.median([per_source[str(i)]["Kinds"][kind]["Estimates"][name]["AlphaSE"] or 0.0 for i in sources])}
+                    "Median": median_or_none(values), "Quartiles": quartiles_or_none(values),
+                    "Fitted": sum(v is not None for v in values),
+                    "StrongestMedian": median_or_none([alpha_of(i, kind, name) for i in strong]),
+                    "SEMedian": median_or_none([alpha_se_of(i, kind, name) for i in sources])}
+                if kind == "bottom" and ESTIMATORS[name][2] is None:
+                    # The bottom edge's fitted law is read where the bottom rings carry the MA.
+                    carrying = [i for i in sources if (per_source[str(i)]["Kinds"][kind]["Share"] or 0.0) > BOTTOM_SHARE_FLOOR]
+                    summary["Alpha"][f"{kind}:{name}"]["ShareAboveFloor"] = {
+                        "Floor": BOTTOM_SHARE_FLOOR, "Sources": len(carrying),
+                        "Median": median_or_none([alpha_of(i, kind, name) for i in carrying]),
+                        "Quartiles": quartiles_or_none([alpha_of(i, kind, name) for i in carrying]),
+                        "SEMedian": median_or_none([alpha_se_of(i, kind, name) for i in carrying])}
+        for name in remainder_names():
             for key in ("Deficit", "DeficitTop"):
                 values = [per_source[str(i)][key][name] for i in sources]
-                summary[key][name] = {"Median": statistics.median(values),
-                                      "Quartiles": [float(np.percentile(values, q)) for q in (25, 75)],
-                                      "StrongestMedian": statistics.median([per_source[str(i)][key][name] for i in strong]),
+                summary[key][name] = {"Median": median_or_none(values), "Quartiles": quartiles_or_none(values),
+                                      "StrongestMedian": median_or_none([per_source[str(i)][key][name] for i in strong]),
                                       "At": {str(i): per_source[str(i)][key][name] for i in (53, 58) if str(i) in per_source}}
         summary["CleanPowerLaw"] = {kind: sum(per_source[str(i)]["Kinds"][kind]["CleanPowerLaw"] for i in sources) for kind in KINDS}
-        summary["TopShareMedian"] = statistics.median(per_source[str(i)]["Kinds"]["top"]["Share"] for i in sources)
-        summary["BottomShareMedian"] = statistics.median(per_source[str(i)]["Kinds"]["bottom"]["Share"] for i in sources)
-        summary["FarShareMedian"] = statistics.median(per_source[str(i)]["Far"] / per_source[str(i)]["Q_MA"] for i in sources)
-        summary["Ring1ShareMedian"] = {kind: statistics.median(per_source[str(i)]["Kinds"][kind]["Q"][0] / per_source[str(i)]["Q_MA"]
-                                                               for i in sources) for kind in KINDS}
-        summary["LocalSlopeMedians"] = {kind: [statistics.median(per_source[str(i)]["Kinds"][kind]["LocalSlopes"][k] for i in sources)
-                                               for k in range(len(per_source[str(sources[0])]["Kinds"][kind]["LocalSlopes"]))]
-                                        for kind in KINDS}
+        summary["TopShareMedian"] = median_or_none(per_source[str(i)]["Kinds"]["top"]["Share"] for i in sources)
+        summary["BottomShareMedian"] = median_or_none(per_source[str(i)]["Kinds"]["bottom"]["Share"] for i in sources)
+        summary["FarShareMedian"] = median_or_none(per_source[str(i)]["Far"] / per_source[str(i)]["Q_MA"] for i in sources
+                                                   if per_source[str(i)]["Q_MA"])
+        summary["Ring1ShareMedian"] = {kind: median_or_none(per_source[str(i)]["Kinds"][kind]["Q"][0] / per_source[str(i)]["Q_MA"]
+                                                             for i in sources if per_source[str(i)]["Q_MA"]) for kind in KINDS}
+        slope_count = {kind: (len(per_source[str(sources[0])]["Kinds"][kind]["LocalSlopes"]) if sources else 0) for kind in KINDS}
+        summary["LocalSlopeMedians"] = {kind: [median_or_none(per_source[str(i)]["Kinds"][kind]["LocalSlopes"][k] for i in sources)
+                                               for k in range(slope_count[kind])] for kind in KINDS}
         out["Orders"][f"p{item['Order']}"] = {"Prefix": item["Prefix"], "Sources": sources, "Strongest": strongest_sources,
                                              "PerSource": per_source, "Summary": summary}
     out["PStep"] = p_step(out)
@@ -276,12 +323,18 @@ def p_step(out):
         return None
     low, high = out["Orders"][orders[0]], out["Orders"][orders[-1]]
     sources = [str(i) for i in low["Sources"] if str(i) in high["PerSource"]]
-    steps = {kind: [statistics.median(high["PerSource"][i]["Kinds"][kind]["Q"][k] / low["PerSource"][i]["Kinds"][kind]["Q"][k] - 1.0
-                                      for i in sources)
+    if not sources:
+        return None
+
+    def relative(numerator, denominator):
+        return numerator / denominator - 1.0 if denominator else None
+
+    steps = {kind: [median_or_none(relative(high["PerSource"][i]["Kinds"][kind]["Q"][k], low["PerSource"][i]["Kinds"][kind]["Q"][k])
+                                   for i in sources)
                     for k in range(len(low["PerSource"][sources[0]]["Kinds"][kind]["Q"]))] for kind in KINDS}
-    steps["far"] = statistics.median(high["PerSource"][i]["Far"] / low["PerSource"][i]["Far"] - 1.0 for i in sources)
-    steps["Q_MA"] = statistics.median(high["PerSource"][i]["Q_MA"] / low["PerSource"][i]["Q_MA"] - 1.0 for i in sources)
-    steps["Ring1ShareOfStep"] = {kind: statistics.median(
+    steps["far"] = median_or_none(relative(high["PerSource"][i]["Far"], low["PerSource"][i]["Far"]) for i in sources)
+    steps["Q_MA"] = median_or_none(relative(high["PerSource"][i]["Q_MA"], low["PerSource"][i]["Q_MA"]) for i in sources)
+    steps["Ring1ShareOfStep"] = {kind: median_or_none(
         (high["PerSource"][i]["Kinds"][kind]["Q"][0] - low["PerSource"][i]["Kinds"][kind]["Q"][0]) /
         (high["PerSource"][i]["Q_MA"] - low["PerSource"][i]["Q_MA"]) for i in sources
         if high["PerSource"][i]["Q_MA"] != low["PerSource"][i]["Q_MA"]) for kind in KINDS}
@@ -329,18 +382,31 @@ def pc(x, digits=2):
     return "n/a" if x is None or not math.isfinite(x) else f"{100 * x:+.{digits}f}%"
 
 
+def fx(x, digits=3, sign=True):
+    """A signed (or unsigned) fixed-point number, n/a for None."""
+    if x is None or not math.isfinite(x):
+        return "n/a"
+    return f"{x:+.{digits}f}" if sign else f"{x:.{digits}f}"
+
+
+def quartile_text(quartiles, formatter=fx):
+    return "n/a" if quartiles is None else f"{formatter(quartiles[0])} / {formatter(quartiles[1])}"
+
+
 def markdown(out, *, detail):
     lines = [f"# Radial MA profile of {out['Case']}", ""]
+    combined = out.get("CombinedEstimators", {})
+    headline = out.get("HeadlineEstimator")
     for order, block in out["Orders"].items():
         summary = block["Summary"]
         n = len(block["Sources"])
         lines += [f"## {order}: {n} free sources (strongest-{len(block['Strongest'])} by reference p_MA)",
-                  f"MA shares (median): top-edge rings {100 * summary['TopShareMedian']:.1f}%, bottom-edge rings "
-                  f"{100 * summary['BottomShareMedian']:.1f}%, far {100 * summary['FarShareMedian']:.1f}%; ring 1 (0-0.25 nm) top "
-                  f"{100 * summary['Ring1ShareMedian']['top']:.1f}%, bottom {100 * summary['Ring1ShareMedian']['bottom']:.1f}%",
+                  f"MA shares (median): top-edge rings {pc(summary['TopShareMedian'], 1)[1:]}, bottom-edge rings "
+                  f"{pc(summary['BottomShareMedian'], 1)[1:]}, far {pc(summary['FarShareMedian'], 1)[1:]}; ring 1 (0-0.25 nm) top "
+                  f"{pc(summary['Ring1ShareMedian']['top'], 1)[1:]}, bottom {pc(summary['Ring1ShareMedian']['bottom'], 1)[1:]}",
                   "local slopes (median over sources), rings 1-2 .. 6-7: top " +
-                  ", ".join(f"{v:+.2f}" for v in summary["LocalSlopeMedians"]["top"]) + "; bottom " +
-                  ", ".join(f"{v:+.2f}" for v in summary["LocalSlopeMedians"]["bottom"]), "",
+                  ", ".join(fx(v, 2) for v in summary["LocalSlopeMedians"]["top"]) + "; bottom " +
+                  ", ".join(fx(v, 2) for v in summary["LocalSlopeMedians"]["bottom"]), "",
                   "| estimator | alpha top median (quartiles) | se | strongest | alpha bottom | deficit median (quartiles) | strongest | 53 | 58 | top-edge part |",
                   "|---|---|---:|---:|---:|---|---:|---:|---:|---:|"]
         for name in out["Estimators"]:
@@ -348,12 +414,26 @@ def markdown(out, *, detail):
             b = summary["Alpha"][f"bottom:{name}"]
             d = summary["Deficit"][name]
             t = summary["DeficitTop"][name]
-            lines.append(f"| {name} | {a['Median']:+.3f} ({a['Quartiles'][0]:+.3f} / {a['Quartiles'][1]:+.3f}) | {a['SEMedian']:.3f} | "
-                         f"{a['StrongestMedian']:+.3f} | {b['Median']:+.3f} | {pc(d['Median'])} ({pc(d['Quartiles'][0])} / {pc(d['Quartiles'][1])}) | "
+            lines.append(f"| {name} | {fx(a['Median'])} ({quartile_text(a['Quartiles'])}) | {fx(a['SEMedian'], 3, False)} | "
+                         f"{fx(a['StrongestMedian'])} | {fx(b['Median'])} | {pc(d['Median'])} ({quartile_text(d['Quartiles'], pc)}) | "
                          f"{pc(d['StrongestMedian'])} | {pc(d['At'].get('53'))} | {pc(d['At'].get('58'))} | {pc(t['Median'])} |")
+        for name, kinds in combined.items():
+            d = summary["Deficit"][name]
+            t = summary["DeficitTop"][name]
+            label = f"**{name}**" if name == headline else name
+            lines.append(f"| {label} (top {kinds['top']} + bottom {kinds['bottom']}) | top: {kinds['top']} | | | bottom: {kinds['bottom']} | "
+                         f"**{pc(d['Median'])}** ({quartile_text(d['Quartiles'], pc)}) | {pc(d['StrongestMedian'])} | "
+                         f"{pc(d['At'].get('53'))} | {pc(d['At'].get('58'))} | {pc(t['Median'])} |")
+        for name in out["Estimators"]:
+            above = summary["Alpha"][f"bottom:{name}"].get("ShareAboveFloor")
+            if above and above["Sources"]:
+                lines.append(f"bottom-edge alpha {name} over the {above['Sources']} sources with bottom share > "
+                             f"{100 * above['Floor']:.0f}%: {fx(above['Median'])} ({quartile_text(above['Quartiles'])}), se "
+                             f"{fx(above['SEMedian'], 3, False)}")
         lines += [f"clean power law (Fit2-K residual RMS < {out['CleanRule']['ResidualRMS']}, local slopes within "
                   f"{out['CleanRule']['LocalSlopeTolerance']}): top {summary['CleanPowerLaw']['top']}/{n}, bottom {summary['CleanPowerLaw']['bottom']}/{n}", "",
-                  "| source | p_MA | top / bottom / far share | top Q_k / Q_MA, rings 1..7 | slopes 2-3, 3-4, 4-5 | alpha Fit2-K (se) | alpha Fit2-4 | clean | deficit Fit2-K / Fit2-4 / Theory@2 | ring1 resolved / Theory@2 model |",
+                  "| source | p_MA | top / bottom / far share | top Q_k / Q_MA, rings 1..7 | slopes 2-3, 3-4, 4-5 | alpha Fit2-K (se) | alpha Fit2-4 | clean | deficit Fit2-K / Fit2-4 / Theory@2"
+                  + "".join(f" / {name}" for name in combined) + " | ring1 resolved / Theory@2 model |",
                   "|---:|---:|---|---|---|---|---:|---|---|---:|"]
         for i in detail:
             entry = block["PerSource"].get(str(i))
@@ -361,12 +441,16 @@ def markdown(out, *, detail):
                 continue
             top, bottom = entry["Kinds"]["top"], entry["Kinds"]["bottom"]
             e = top["Estimates"]
-            lines.append(f"| {i}{'*' if entry['Strongest'] else ''} | {entry['p_MA']:.3e} | {100 * top['Share']:.0f} / {100 * bottom['Share']:.0f} / "
-                         f"{100 * entry['Far'] / entry['Q_MA']:.0f}% | " + " ".join(f"{q / entry['Q_MA']:.3f}" for q in top["Q"]) + " | "
-                         + " ".join(f"{v:+.2f}" for v in top["LocalSlopes"][1:4]) + f" | {e['Fit2-K']['Alpha']:+.3f} ({e['Fit2-K']['AlphaSE'] or 0:.3f}) | "
-                         f"{e['Fit2-4']['Alpha']:+.3f} | {'yes' if top['CleanPowerLaw'] else 'no'} | "
-                         f"{pc(entry['Deficit']['Fit2-K'])} / {pc(entry['Deficit']['Fit2-4'])} / {pc(entry['Deficit']['Theory@2'])} | "
-                         f"{e['Theory@2']['Ring1ResolvedOverModel']:.3f} |")
+            fit_k, fit_4, theory = e.get("Fit2-K"), e.get("Fit2-4"), e.get("Theory@2")
+            q_ma = entry["Q_MA"]
+            lines.append(f"| {i}{'*' if entry['Strongest'] else ''} | {entry['p_MA']:.3e} | {pc(top['Share'], 0)[1:]} / {pc(bottom['Share'], 0)[1:]} / "
+                         f"{pc(entry['Far'] / q_ma if q_ma else None, 0)[1:]} | " + " ".join(fx(q / q_ma if q_ma else None, 3, False) for q in top["Q"]) + " | "
+                         + " ".join(fx(v, 2) for v in top["LocalSlopes"][1:4])
+                         + f" | {fx(fit_k['Alpha'] if fit_k else None)} ({fx((fit_k or {}).get('AlphaSE') or 0.0, 3, False)}) | "
+                         f"{fx(fit_4['Alpha'] if fit_4 else None)} | {'yes' if top['CleanPowerLaw'] else 'no'} | "
+                         f"{pc(entry['Deficit']['Fit2-K'])} / {pc(entry['Deficit']['Fit2-4'])} / {pc(entry['Deficit']['Theory@2'])}"
+                         + "".join(f" / {pc(entry['Deficit'][name])}" for name in combined) + " | "
+                         f"{fx(theory['Ring1ResolvedOverModel'] if theory else None, 3, False)} |")
         lines.append("")
     if out.get("PStep"):
         step = out["PStep"]["MedianRelativeStep"]
