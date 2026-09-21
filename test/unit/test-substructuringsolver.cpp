@@ -487,4 +487,147 @@ TEST_CASE("SubstructuringSolver offline/online model reuse",
   CHECK(d.Norml2() <= 1.0e-12 * (u_off.Norml2() + 1.0e-30));
 }
 
+TEST_CASE("SubstructuringSolver magnetostatic inductance matrix",
+          "[substructure][Serial][Parallel]")
+{
+  // Validate the 2x2 inductance-matrix path used by the magnetostatic flux-loop driver:
+  // two Dirichlet excitations, reluctance R(i,j) = A_i^T K A_j / (Phi_i Phi_j), M = R^-1
+  // (pure curl-curl energy). The region-condensed matrix must match a monolith computing
+  // the same quantities, and be symmetric.
+  const int order = 1;
+  const double mu_r = 1.0, mu_e = 4.0;
+  json config = {
+      {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+      {"Model", {{"Mesh", "test.msh"}}},
+      {"Domains",
+       {{"Materials",
+         {{{"Attributes", {1}}, {"Permeability", mu_r}, {"Permittivity", 1.0}},
+          {{"Attributes", {2}}, {"Permeability", mu_e}, {"Permittivity", 1.0}}}}}},
+      {"Boundaries",
+       {{"Terminal",
+         {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+      {"Solver",
+       {{"Order", order},
+        {"Substructuring",
+         {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+  IoData iodata(config, false);
+
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(6)));
+  SubstructuringSolver ss(iodata, mesh);
+  ss.CondenseEnvironment();
+  std::vector<Vector> As = {ss.SolveExcitation(1), ss.SolveExcitation(2)};
+  auto invert2 = [](mfem::DenseMatrix &R)
+  {
+    mfem::DenseMatrix M(R);
+    M.Invert();
+    return M;
+  };
+  mfem::DenseMatrix R_sub(2);
+  for (int i = 0; i < 2; i++)
+  {
+    for (int j = 0; j < 2; j++)
+    {
+      R_sub(i, j) = ss.MutualEnergy(As[i], As[j]);  // Phi = 1
+    }
+  }
+  mfem::DenseMatrix M_sub = invert2(R_sub);
+  // Symmetric up to iterative-solver residual (cross-energies are analytically symmetric).
+  CHECK(std::abs(M_sub(0, 1) - M_sub(1, 0)) <= 1.0e-6 * std::abs(M_sub(0, 0)));
+
+  // Monolith: same two Dirichlet excitations, curl-curl + small mass, pure-curl-curl
+  // cross-energies, then reluctance inversion.
+  auto &pmesh = mesh.back()->Get();
+  mfem::ND_FECollection fec(order, 3);
+  mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
+  const int max_attr = pmesh.attributes.Max();
+  mfem::Vector nu_by_attr(max_attr), mass_by_attr(max_attr);
+  nu_by_attr = 0.0;
+  mass_by_attr = 0.0;
+  nu_by_attr(0) = 1.0 / mu_r;
+  nu_by_attr(1) = 1.0 / mu_e;
+  mass_by_attr(0) = 1.0e-3;
+  mass_by_attr(1) = 1.0e-3;
+  mfem::PWConstCoefficient nu(nu_by_attr), massc(mass_by_attr);
+  mfem::ParBilinearForm asolve(&pfes);
+  asolve.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
+  asolve.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(massc));
+  asolve.Assemble();
+  mfem::ParBilinearForm aenergy(&pfes);
+  aenergy.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
+  aenergy.Assemble();
+  aenergy.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> Kpure(aenergy.ParallelAssemble());
+  const int maxb = pmesh.bdr_attributes.Max();
+  mfem::Array<int> ess_bdr(maxb), ess_tdofs;
+  ess_bdr = 0;
+  ess_bdr[0] = 1;
+  ess_bdr[1] = 1;
+  pfes.GetEssentialTrueDofs(ess_bdr, ess_tdofs);
+  auto solve_dir = [&](int drive_attr)
+  {
+    mfem::Array<int> d_bdr(maxb), d_tdofs;
+    d_bdr = 0;
+    d_bdr[drive_attr - 1] = 1;
+    pfes.GetEssentialTrueDofs(d_bdr, d_tdofs);
+    mfem::ParGridFunction xgf(&pfes);
+    mfem::Vector td(pfes.GetTrueVSize());
+    td = 0.0;
+    for (int i = 0; i < d_tdofs.Size(); i++)
+    {
+      td(d_tdofs[i]) = 1.0;
+    }
+    xgf.SetFromTrueDofs(td);
+    mfem::ParLinearForm bform(&pfes);
+    bform = 0.0;
+    bform.Assemble();
+    mfem::OperatorPtr A;
+    mfem::Vector B, X;
+    asolve.FormLinearSystem(ess_tdofs, xgf, bform, A, X, B);
+    mfem::HypreParMatrix *Ah = A.As<mfem::HypreParMatrix>();
+    mfem::HypreAMS amsp(*Ah, &pfes);
+    amsp.SetPrintLevel(0);
+    mfem::HyprePCG pcg(*Ah);
+    pcg.SetTol(1e-13);
+    pcg.SetMaxIter(2000);
+    pcg.SetPrintLevel(0);
+    pcg.SetPreconditioner(amsp);
+    pcg.Mult(B, X);
+    asolve.RecoverFEMSolution(X, bform, xgf);
+    mfem::Vector uu;
+    xgf.GetTrueDofs(uu);
+    return uu;
+  };
+  std::vector<mfem::Vector> Am = {solve_dir(1), solve_dir(2)};
+  auto cross = [&](const mfem::Vector &a, const mfem::Vector &b)
+  {
+    mfem::Vector t(pfes.GetTrueVSize());
+    Kpure->Mult(b, t);
+    double loc = 0.0;
+    for (int i = 0; i < pfes.GetTrueVSize(); i++)
+    {
+      loc += a(i) * t(i);
+    }
+    double g = 0.0;
+    MPI_Allreduce(&loc, &g, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
+    return g;
+  };
+  mfem::DenseMatrix R_mono(2);
+  for (int i = 0; i < 2; i++)
+  {
+    for (int j = 0; j < 2; j++)
+    {
+      R_mono(i, j) = cross(Am[i], Am[j]);
+    }
+  }
+  mfem::DenseMatrix M_mono = invert2(R_mono);
+  for (int i = 0; i < 2; i++)
+  {
+    for (int j = 0; j < 2; j++)
+    {
+      CHECK(std::abs(M_sub(i, j) - M_mono(i, j)) <= 1.0e-6 * std::abs(M_mono(0, 0)));
+    }
+  }
+}
+
 }  // namespace palace
