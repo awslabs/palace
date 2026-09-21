@@ -536,9 +536,14 @@ def wait(seconds, slice_seconds=10):
         time.sleep(min(slice_seconds, remaining))
 
 
+def plans_text(paths):
+    """The plans of a coupon's jobs concatenated in path order (the --resume identity check
+    reads the recorded plans by glob and the derived ones from the job records: one order)."""
+    return "\n".join(path.read_text() for path in sorted(paths, key=str))
+
+
 def job_plans_text(record):
-    """The plans of every job of a coupon, concatenated (the --resume identity check)."""
-    return "\n".join(Path(job["Plan"]).read_text() for job in record["Jobs"])
+    return plans_text(Path(job["Plan"]) for job in record["Jobs"])
 
 
 def resume_submissions(record, context, plans_before):
@@ -1029,8 +1034,8 @@ def run_qualify(args, *, log=log_line):
     # Steps 1-4 for every coupon (a stop records the coupon; the others continue).
     def recorded_plans(case_id):
         case_root = root / case_id
-        plans = sorted(list(case_root.glob("main/plan.json")) + list(case_root.glob("main/jobs/*/plan.json")))
-        return "\n".join(path.read_text() for path in plans) if plans else None
+        plans = list(case_root.glob("main/plan.json")) + list(case_root.glob("main/jobs/*/plan.json"))
+        return plans_text(plans) if plans else None
     plans_before = {case["Case"]: recorded_plans(case["Case"]) for case in selected} if args.resume else {}
     pending = []
     for case_record in selected:

@@ -991,6 +991,29 @@ class QualifyDryRunTest(unittest.TestCase):
         self.assertEqual((merged["MergedFrom"]["Kept"], merged["MergedFrom"]["Replaced"]), (["other-coupon"], [model_name]))
         self.assertEqual(merged["MergedFrom"]["SHA256"], sha256(previous_library))
         self.assertIn("Stale", json.loads(previous_library.read_text())["Models"][1])   # the previous file is not modified
+        # --resume of the split coupon: the three recorded submissions are adopted (the plans
+        # are byte-identical; the identity check reads both sides in one order - the 2026-09-21
+        # split acceptance resume stopped with 'plans differ' on identical plans: glob order
+        # reducer / worker-1 / worker-2 against job order worker-1 / worker-2 / reducer).
+        try:
+            for name, fake in fakes.items():
+                setattr(qualify_library.remote_side, name, fake)
+            qualify_library.upload_case = fake_upload
+            qualify_library.prepare_case = prepare_with_recorded_controls
+            args.resume = True
+            del events[:]
+            resumed = qualify_library.run_qualify(args, log=lambda message: None)
+        finally:
+            for name, fake in saved.items():
+                setattr(qualify_library.remote_side, name, fake)
+            qualify_library.upload_case = saved_upload
+            qualify_library.prepare_case = saved_prepare
+        resumed_case = resumed["Cases"][0]
+        self.assertIsNone(resumed_case.get("StoppedBy"), resumed_case.get("StoppedBy"))
+        self.assertEqual(resumed_case["Status"], "qualified")
+        self.assertEqual([kind for kind, _ in events if kind in ("upload", "submit")], [])
+        self.assertEqual([job["Monitor"]["Resumed"] for job in resumed_case["Jobs"]], [True, True, True])
+        self.assertEqual([job["Submission"]["Job"] for job in resumed_case["Jobs"]], ["worker-1.fake", "worker-2.fake", "reducer.fake"])
 
     def test_without_reference_matrices_the_verdict_is_pending(self):
         case_id = "four-edge-9d2cb9bbb3fe"
