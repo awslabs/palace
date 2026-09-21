@@ -80,6 +80,70 @@ def strip_paths(value):
     return value
 
 
+class MonitorTransportFailureTest(unittest.TestCase):
+    """A lost ssh connection during monitoring is a transport failure, not "the job left the
+    queue" (the 2026-09-21 device run: a poll that returned nothing was read as done, the
+    fetch's rsync failed and the driver crashed with the second job still running)."""
+
+    def test_unreachable_poll_keeps_the_job_active(self):
+        remote_side = qualify_library.remote_side
+        saved = remote_side.ssh
+        try:
+            remote_side.ssh = lambda host, command, check=True: subprocess.CompletedProcess(["ssh"], 255, stdout="", stderr="timed out")
+            unreachable = remote_side.poll("h", "/pbs", "1.h", "/r/case/main/status.json")
+            remote_side.ssh = lambda host, command, check=True: subprocess.CompletedProcess(
+                ["ssh"], 1, stdout="---STATUS---\n\n" + remote_side.POLL_MARKER + "\n", stderr="")
+            finished = remote_side.poll("h", "/pbs", "1.h", "/r/case/main/status.json")
+            remote_side.ssh = lambda host, command, check=True: subprocess.CompletedProcess(
+                ["ssh"], 0, stdout="job_state = R\n---STATUS---\n{\"State\": \"running\", \"Stages\": []}\n" + remote_side.POLL_MARKER + "\n", stderr="")
+            running = remote_side.poll("h", "/pbs", "1.h", "/r/case/main/status.json")
+        finally:
+            remote_side.ssh = saved
+        self.assertFalse(unreachable["Reachable"])
+        self.assertEqual((unreachable["JobState"], unreachable["SSHReturnCode"]), (None, 255))
+        self.assertTrue(finished["Reachable"])
+        self.assertIsNone(finished["JobState"])          # reachable and not in the queue: done
+        self.assertEqual((running["Reachable"], running["JobState"], running["Status"]["State"]), (True, "R", "running"))
+        record = {"Case": "c", "Submission": {"Job": "1.h"}, "Remote": {"Case": "/r/case"},
+                  "Monitor": {"Polls": 0, "LastJobState": "R", "LastStages": None}}
+        logged = []
+        saved_poll = remote_side.poll
+        try:
+            remote_side.poll = lambda *args: dict(unreachable)
+            done_unreachable = qualify_library.poll_case(record, remote={"Host": "h"}, profile={"PBSBin": "/pbs"}, log=logged.append)
+            state_after_unreachable = record["Monitor"]["LastJobState"]
+            remote_side.poll = lambda *args: dict(finished)
+            done_finished = qualify_library.poll_case(record, remote={"Host": "h"}, profile={"PBSBin": "/pbs"}, log=logged.append)
+        finally:
+            remote_side.poll = saved_poll
+        self.assertFalse(done_unreachable)
+        self.assertEqual(record["Monitor"]["TransportFailures"], 1)
+        self.assertEqual(state_after_unreachable, "R")     # the unreachable poll changes no job state
+        self.assertIn("unreachable", logged[0])
+        self.assertTrue(done_finished)
+        self.assertEqual(record["Monitor"]["Polls"], 2)
+
+    def test_fetch_transport_failure_is_a_recorded_stop(self):
+        remote_side = qualify_library.remote_side
+        saved = remote_side.fetch
+
+        def failing_fetch(host, remote_directory, local_directory):
+            raise subprocess.CalledProcessError(255, ["rsync", remote_directory, str(local_directory)])
+        tmp = Path(tempfile.mkdtemp(prefix="qualify-fetch-stop-"))
+        record = {"Case": "c", "Root": str(tmp), "Remote": {"Case": "/r/case"}, "Submission": {"Job": "1.h"}}
+        try:
+            remote_side.fetch = failing_fetch
+            with self.assertRaises(qualify_library.CaseStop) as stop:
+                qualify_library.finish_case(record, None, remote={"Host": "h"}, profile={"PBSBin": "/pbs"})
+        finally:
+            remote_side.fetch = saved
+            shutil.rmtree(tmp, True)
+        self.assertEqual(stop.exception.record["Kind"], "Fetch")
+        self.assertIn("--resume", stop.exception.record["Message"])
+        self.assertEqual(stop.exception.record["Command"][0], "rsync")
+        self.assertNotIn("Fetch", record)
+
+
 @unittest.skipUnless(available(), "local identity meshes and the assessment campaigns are needed")
 class QualifyDryRunTest(unittest.TestCase):
     @classmethod

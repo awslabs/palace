@@ -2429,7 +2429,12 @@ measured counts on load).
    monitors / fetches / analyzes from there, so a lost driver (VPN drop, a stalled
    process) never causes a second submission; the monitor wait is sliced against
    the wall clock (a single 90 s sleep of the idle driver was observed not to return
-   on macOS during the acceptance run).
+   on macOS during the acceptance run). A poll whose ssh round trip fails (no
+   `POLL_MARKER` back: login host unreachable, banner timeout) is a recorded
+   `Monitor.TransportFailures` count that keeps the job active and spends one poll of
+   the budget - never "the job left the queue" -, and a fetch whose rsync fails is a
+   recorded `Fetch` stop (`--resume` fetches later), not a crash of the driver (the
+   2026-09-21 device run lost its login host for 30+ min with two jobs running).
 5. **Qualification.** `compare_matrices.py` (main vs reference, controls vs reference,
    main vs the higher control, the lower control vs main), `classify_sources.py`
    class statistics, `ma_ms_offsets.py` (distributions, reference-p_MA-weighted view,

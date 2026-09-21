@@ -492,11 +492,18 @@ def poll_case(record, *, remote, profile, log):
     """One read-only poll of a submitted coupon; True when the job has left Q / R / E."""
     submission = record["Submission"]
     poll = remote_side.poll(remote["Host"], profile["PBSBin"], submission["Job"], f"{record['Remote']['Case']}/main/status.json")
-    stages = ([(s["Name"], s["State"], round(s.get("WallSeconds", 0))) for s in poll["Status"]["Stages"]] if poll["Status"] else None)
     record["Monitor"]["Polls"] += 1
+    record["Monitor"]["LastPollUTC"] = poll["UTC"]
+    if not poll.get("Reachable", True):
+        # A failed ssh round trip says nothing about the job: the poll counts against the
+        # budget, the job stays active and the failure is recorded (never "left the queue").
+        record["Monitor"]["TransportFailures"] = record["Monitor"].get("TransportFailures", 0) + 1
+        log(f"== {poll['UTC']} {record['Case']} job {submission['Job']} unreachable (ssh rc {poll['SSHReturnCode']}; "
+            f"transport failure {record['Monitor']['TransportFailures']}, job kept active)")
+        return False
+    stages = ([(s["Name"], s["State"], round(s.get("WallSeconds", 0))) for s in poll["Status"]["Stages"]] if poll["Status"] else None)
     record["Monitor"]["LastJobState"] = poll["JobState"]
     record["Monitor"]["LastStages"] = stages
-    record["Monitor"]["LastPollUTC"] = poll["UTC"]
     log(f"== {poll['UTC']} {record['Case']} job {submission['Job']} state {poll['JobState']} stages {stages}")
     return poll["JobState"] not in ("Q", "R", "E")
 
@@ -510,8 +517,14 @@ def finish_case(record, context, *, remote, profile):
     submission = record["Submission"]
     results = case_root / "results"
     results.mkdir(exist_ok=True)
-    record["Fetch"] = {"Command": remote_side.fetch(remote["Host"], f"{remote_case}/main", results / "main"),
-                       "UTC": remote_side.utc(), "QStatHistory": remote_side.qstat_history(remote["Host"], profile["PBSBin"], submission["Job"])}
+    try:
+        fetch_command = remote_side.fetch(remote["Host"], f"{remote_case}/main", results / "main")
+    except subprocess.CalledProcessError as error:
+        raise CaseStop("Fetch", f"rsync of {remote_case}/main returned {error.returncode} (transport failure; the job's "
+                                f"results stay on the remote: run again with --resume)", Submission=submission,
+                       Command=error.cmd)
+    record["Fetch"] = {"Command": fetch_command, "UTC": remote_side.utc(),
+                       "QStatHistory": remote_side.qstat_history(remote["Host"], profile["PBSBin"], submission["Job"])}
     (results / "qstat-xf.txt").write_text(record["Fetch"]["QStatHistory"])
     status_path = results / "main" / "status.json"
     if not status_path.is_file():

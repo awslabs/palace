@@ -75,12 +75,19 @@ def submit(host, pbs_bin, remote_job_script, remote_working_directory, *, job_ca
             "Command": f"cd {remote_working_directory} && {pbs_bin}/qsub {remote_job_script}"}
 
 
+POLL_MARKER = "---POLL-OK---"
+
+
 def poll(host, pbs_bin, job_id, remote_status_path):
-    """One read-only poll: qstat state fields and the runner's status.json (if written)."""
+    """One read-only poll: qstat state fields and the runner's status.json (if written).
+    `Reachable` is False when the ssh round trip itself failed (no POLL_MARKER came back):
+    a lost connection says nothing about the job and must not be read as "left the queue"."""
     command = (f"{pbs_bin}/qstat -f {job_id} 2>/dev/null | grep -E 'job_state|resources_used.walltime|resources_used.mem|exec_host|comment' "
-               f"| tr -s ' '; echo ---STATUS---; cat {remote_status_path} 2>/dev/null")
+               f"| tr -s ' '; echo ---STATUS---; cat {remote_status_path} 2>/dev/null; echo; echo {POLL_MARKER}")
     result = ssh(host, command, check=False)
-    qstat_text, _, status_text = result.stdout.partition("---STATUS---\n")
+    reachable = POLL_MARKER in result.stdout
+    output = result.stdout.replace(POLL_MARKER, "")
+    qstat_text, _, status_text = output.partition("---STATUS---\n")
     state = re.search(r"job_state = (\w)", qstat_text)
     status = None
     if status_text.strip():
@@ -89,7 +96,7 @@ def poll(host, pbs_bin, job_id, remote_status_path):
         except json.JSONDecodeError:
             status = None
     return {"UTC": utc(), "JobState": state.group(1) if state else None, "QStat": qstat_text.strip(),
-            "Status": status}
+            "Status": status, "Reachable": reachable, "SSHReturnCode": result.returncode}
 
 
 def monitor(host, pbs_bin, job_id, remote_status_path, *, interval_seconds, max_polls, sink=print):
@@ -100,8 +107,9 @@ def monitor(host, pbs_bin, job_id, remote_status_path, *, interval_seconds, max_
         polls.append(record)
         stages = ([(s["Name"], s["State"], round(s.get("WallSeconds", 0))) for s in record["Status"]["Stages"]]
                   if record["Status"] else None)
-        sink(f"== {record['UTC']} job {job_id} state {record['JobState']} stages {stages}")
-        if record["JobState"] not in ("Q", "R", "E"):
+        sink(f"== {record['UTC']} job {job_id} state {record['JobState']} stages {stages}"
+             + ("" if record["Reachable"] else f" (unreachable: ssh rc {record['SSHReturnCode']})"))
+        if record["Reachable"] and record["JobState"] not in ("Q", "R", "E"):
             break
         time.sleep(interval_seconds)
     return polls
