@@ -445,7 +445,11 @@ void MagnetostaticSolver::PostprocessTerminals(
   for (int i = 0; i < n; i++)
   {
     auto &A_gf = post_op.GetAGridFunction().Real();
+    // The domain postprocessor sizes its work vectors lazily during measurements; this
+    // applies its operator directly, so size the output here.
     auto &H_gf = post_op.GetDomainPostOp().H;
+    H_gf.SetSize(post_op.GetDomainPostOp().M_mag->Height());
+    H_gf.UseDevice(true);
     A_gf.SetFromTrueDofs(A[i]);
     post_op.GetDomainPostOp().M_mag->Mult(A_gf, H_gf);
     cross_energy(i, i) = linalg::Dot<Vector>(post_op.GetComm(), A_gf, H_gf);

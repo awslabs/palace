@@ -76,6 +76,10 @@ public:
   void SetOperators(const OperType &op, const OperType &pc_op);
 
   void Mult(const VecType &x, VecType &y) const;
+
+  // Free the iterative solver's internal work vectors/arrays; they are reallocated on the
+  // next Mult.
+  void ReleaseWorkspace() const { ksp->ReleaseWorkspace(); }
 };
 
 using KspSolver = BaseKspSolver<Operator>;

@@ -15,6 +15,22 @@
 namespace palace
 {
 
+namespace
+{
+
+// Size a temporary vector on first use and after a workspace release. It is completely
+// overwritten by the operator application which follows.
+void EnsureWorkVector(Vector &x, int size)
+{
+  if (x.Size() != size)
+  {
+    x.SetSize(size);
+    x.UseDevice(true);
+  }
+}
+
+}  // namespace
+
 DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                        const MaterialOperator &mat_op,
                                        const FiniteElementSpace &nd_fespace,
@@ -37,8 +53,6 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
     BilinearForm m(nd_fespace);
     m.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
     M_elec = m.PartialAssemble();
-    D.SetSize(M_elec->Height());
-    D.UseDevice(true);
   }
   {
     // Construct mass matrix for B-field to compute the magnetic field energy integral as:
@@ -63,8 +77,6 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
       m.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
       M_mag = m.PartialAssemble();
     }
-    H.SetSize(M_mag->Height());
-    H.UseDevice(true);
   }
 
   // Use the provided domain postprocessing indices for postprocessing the electric and
@@ -125,8 +137,6 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
       BilinearForm m(fespace);
       m.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
       M_elec = m.PartialAssemble();
-      D.SetSize(M_elec->Height());
-      D.UseDevice(true);
     }
 
     for (const auto &[idx, data] : postpro.energy)
@@ -153,8 +163,6 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
       BilinearForm m(fespace);
       m.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
       M_mag = m.PartialAssemble();
-      H.SetSize(M_mag->Height());
-      H.UseDevice(true);
     }
 
     for (const auto &[idx, data] : postpro.energy)
@@ -197,8 +205,6 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     BilinearForm m(nd_fespace);
     m.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
     M_elec = m.PartialAssemble();
-    D.SetSize(M_elec->Height());
-    D.UseDevice(true);
   }
 
   for (const auto &[idx, data] : iodata.domains.postpro.energy)
@@ -220,6 +226,7 @@ double DomainPostOperator::GetElectricFieldEnergy(const GridFunction &E) const
 {
   if (M_elec)
   {
+    EnsureWorkVector(D, M_elec->Height());
     M_elec->Mult(E.Real(), D);
     double dot = linalg::LocalDot(E.Real(), D);
     if (E.HasImag())
@@ -239,6 +246,7 @@ double DomainPostOperator::GetMagneticFieldEnergy(const GridFunction &B) const
 {
   if (M_mag)
   {
+    EnsureWorkVector(H, M_mag->Height());
     M_mag->Mult(B.Real(), H);
     double dot = linalg::LocalDot(B.Real(), H);
     if (B.HasImag())
@@ -263,6 +271,7 @@ double DomainPostOperator::GetDomainElectricFieldEnergy(int idx,
   {
     return 0.0;
   }
+  EnsureWorkVector(D, it->second.first->Height());
   it->second.first->Mult(E.Real(), D);
   double dot = linalg::LocalDot(E.Real(), D);
   if (E.HasImag())
@@ -285,6 +294,7 @@ double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx,
   {
     return 0.0;
   }
+  EnsureWorkVector(H, it->second.second->Height());
   it->second.second->Mult(B.Real(), H);
   double dot = linalg::LocalDot(B.Real(), H);
   if (B.HasImag())

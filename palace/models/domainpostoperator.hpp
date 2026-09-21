@@ -34,7 +34,8 @@ struct DomainPostData;
 class DomainPostOperator
 {
 public:
-  // Temporary vectors for inner product calculations.
+  // Temporary vectors for inner product calculations, sized on first use and after a
+  // workspace release.
   mutable Vector D, H;
 
   // Bilinear forms for computing field energy integrals over domains.
@@ -67,6 +68,14 @@ public:
   // domain.
   double GetDomainElectricFieldEnergy(int idx, const GridFunction &E) const;
   double GetDomainMagneticFieldEnergy(int idx, const GridFunction &B) const;
+
+  // Free the temporary vectors; they are reallocated by the next energy measurement, which
+  // overwrites them completely.
+  void ReleaseWorkspace() const
+  {
+    D.Destroy();
+    H.Destroy();
+  }
 };
 
 }  // namespace palace

@@ -51,6 +51,12 @@ void ComplexVector::SetSize(int size)
   xi.SetSize(size);
 }
 
+void ComplexVector::Destroy()
+{
+  xr.Destroy();
+  xi.Destroy();
+}
+
 void ComplexVector::MakeRef(Vector &y, int offset, int size)
 {
   MFEM_ASSERT(y.Size() >= offset + 2 * size,

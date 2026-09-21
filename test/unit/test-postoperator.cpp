@@ -40,6 +40,13 @@ public:
     MeasureLumpedPorts();
     return measurement_cache.lumped_port_vi.at(idx);
   }
+
+  const Measurement &GetMeasurementCacheForTest() const { return measurement_cache; }
+
+  // Storage of the objects freed by ReleaseFields.
+  int EGridFunctionSize() const { return E->Real().Size(); }
+  int BGridFunctionSize() const { return B->Real().Size(); }
+  int DomainWorkVectorSize() const { return dom_post_op.D.Size() + dom_post_op.H.Size(); }
 };
 
 // random integer between 0 and n as a double.
@@ -622,6 +629,72 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
     const auto S_legacy = port.GetSParameter(E_gf);
     CHECK_THAT(std::abs(vi.S - S_legacy),
                Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(S_legacy)));
+  }
+
+  SECTION("Driven field release")
+  {
+    // The driven sweeps release the measured fields and the domain energy work vectors
+    // after every step. The next measurement reallocates them and has to reproduce the
+    // previous one bit for bit, including the port measurements which read the fields on
+    // shared faces through the face-neighbor exchange data freed with the grid functions.
+    iodata.problem.type = ProblemType::DRIVEN;
+    iodata.solver.driven.save_indices = {0, 1};
+    iodata.solver.driven.sample_f = {1.0};
+    iodata.boundaries.lumpedport = boundary_port.lumpedport;
+    SpaceOperator space_op(iodata, mesh);
+    DrivenPostOperatorTest post_op(iodata, space_op);
+
+    // Nonzero fields, so that every measurement below is nontrivial.
+    const auto &Curl = space_op.GetCurlMatrix();
+    ComplexVector E(Curl.Width()), B(Curl.Height());
+    E.UseDevice(true);
+    B.UseDevice(true);
+    E.Real().Randomize(1 + Mpi::Rank(comm));
+    E.Imag().Randomize(101 + Mpi::Rank(comm));
+    Curl.Mult(E.Real(), B.Real());
+    Curl.Mult(E.Imag(), B.Imag());
+
+    post_op.InitializeParaviewDataCollection(1);
+    const double total_full = post_op.MeasureAndPrintAll(1, 0, E, B, 1.0);
+    const Measurement full = post_op.GetMeasurementCacheForTest();
+    REQUIRE(total_full > 0.0);
+    REQUIRE(post_op.EGridFunctionSize() > 0);
+    REQUIRE(post_op.BGridFunctionSize() > 0);
+    REQUIRE(post_op.DomainWorkVectorSize() > 0);
+
+    post_op.ReleaseFields();
+    CHECK(post_op.EGridFunctionSize() == 0);
+    CHECK(post_op.BGridFunctionSize() == 0);
+    CHECK(post_op.DomainWorkVectorSize() == 0);
+
+    const double total_released = post_op.MeasureAndPrintAll(1, 1, E, B, 1.0);
+    const Measurement &released = post_op.GetMeasurementCacheForTest();
+    CHECK(post_op.EGridFunctionSize() > 0);
+    CHECK(post_op.BGridFunctionSize() > 0);
+    CHECK(post_op.DomainWorkVectorSize() > 0);
+    CHECK(total_released == total_full);
+    CHECK(released.domain_E_field_energy_all == full.domain_E_field_energy_all);
+    CHECK(released.domain_H_field_energy_all == full.domain_H_field_energy_all);
+    REQUIRE(released.domain_E_field_energy_i.size() == full.domain_E_field_energy_i.size());
+    for (std::size_t i = 0; i < full.domain_E_field_energy_i.size(); i++)
+    {
+      CHECK(released.domain_E_field_energy_i[i].energy ==
+            full.domain_E_field_energy_i[i].energy);
+      CHECK(released.domain_H_field_energy_i[i].energy ==
+            full.domain_H_field_energy_i[i].energy);
+    }
+    REQUIRE(released.lumped_port_vi.size() == full.lumped_port_vi.size());
+    for (const auto &[idx, data] : full.lumped_port_vi)
+    {
+      CHECK(released.lumped_port_vi.at(idx).V == data.V);
+      CHECK(released.lumped_port_vi.at(idx).I == data.I);
+      CHECK(released.lumped_port_vi.at(idx).S == data.S);
+    }
+
+    // A second release without an intervening measurement is a no-op.
+    post_op.ReleaseFields();
+    post_op.ReleaseFields();
+    CHECK(post_op.MeasureAndPrintAll(1, 2, E, B, 1.0) == total_full);
   }
 
   SECTION("Eigenmode")

@@ -36,14 +36,15 @@ class FluxProjector
   using OperType = typename std::conditional<std::is_same<VecType, ComplexVector>::value,
                                              ComplexOperator, Operator>::type;
 
-private:
+protected:
   // Operator for the mass matrix inversion.
   std::unique_ptr<OperType> Flux, M;
 
   // Linear solver and preconditioner for the projected linear system.
   std::unique_ptr<BaseKspSolver<OperType>> ksp;
 
-  // Workspace object for solver application.
+  // Workspace object for solver application, sized on first use and after a workspace
+  // release.
   mutable VecType rhs;
 
 public:
@@ -53,6 +54,11 @@ public:
                 bool use_mg);
 
   void Mult(const VecType &x, VecType &y) const;
+
+  // Free the linear solver's work vectors and the projection right-hand side; they are
+  // reallocated by the next Mult. Nothing is carried between projections (the
+  // preconditioner's inverse diagonal is operator state, not workspace, and is kept).
+  void ReleaseWorkspace() const;
 };
 
 // Forward declarations for friend access.
@@ -67,7 +73,7 @@ class GradFluxErrorEstimator
   friend class TimeDependentFluxErrorEstimator<VecType>;
   friend class BoundaryModeFluxErrorEstimator<VecType>;
 
-private:
+protected:
   // Finite element spaces used to represent E and the recovered D.
   const FiniteElementSpace &nd_fespace, &rt_fespace;
 
@@ -77,7 +83,9 @@ private:
   // Operator which performs the integration of the flux error on each element.
   ceed::Operator integ_op;
 
-  // Temporary vectors for error estimation.
+  // Temporary vectors for error estimation, sized on first use and after a workspace
+  // release. The grid function vectors are the passive inputs of integ_op, whose first
+  // sub-operator is re-pointed at their data at every estimate.
   mutable VecType E_gf, D, D_gf;
 
 public:
@@ -89,6 +97,12 @@ public:
   // and fold into an existing indicator. The indicators are nondimensionalized using the
   // total field energy.
   void AddErrorIndicator(const VecType &E, double Et, ErrorIndicator &indicator) const;
+
+  // Free the temporary vectors and the flux projection workspace; they are reallocated by
+  // the next AddErrorIndicator, and nothing is carried between estimates. The grid function
+  // vectors are only freed if the error integration operator has a single sub-operator,
+  // whose passive inputs are the only ones re-pointed at each estimate.
+  void ReleaseWorkspace() const;
 };
 
 // Class used for computing curl flux error estimate, η_K = || μ⁻¹ Bₕ - H ||_K where H
@@ -100,7 +114,7 @@ class CurlFluxErrorEstimator
   friend class TimeDependentFluxErrorEstimator<VecType>;
   friend class BoundaryModeFluxErrorEstimator<VecType>;
 
-private:
+protected:
   // Finite element space used to represent B and the recovered H.
   const FiniteElementSpace &rt_fespace, &nd_fespace;
 
@@ -110,7 +124,9 @@ private:
   // Operator which performs the integration of the flux error on each element.
   ceed::Operator integ_op;
 
-  // Temporary vectors for error estimation.
+  // Temporary vectors for error estimation, sized on first use and after a workspace
+  // release. The grid function vectors are the passive inputs of integ_op, whose first
+  // sub-operator is re-pointed at their data at every estimate.
   mutable VecType B_gf, H, H_gf;
 
 public:
@@ -122,6 +138,12 @@ public:
   // dofs, and fold into an existing indicator. The indicators are nondimensionalized using
   // the total field energy.
   void AddErrorIndicator(const VecType &B, double Et, ErrorIndicator &indicator) const;
+
+  // Free the temporary vectors and the flux projection workspace; they are reallocated by
+  // the next AddErrorIndicator, and nothing is carried between estimates. The grid function
+  // vectors are only freed if the error integration operator has a single sub-operator,
+  // whose passive inputs are the only ones re-pointed at each estimate.
+  void ReleaseWorkspace() const;
 };
 
 // Class used for computing sum of the gradient flux and curl flux error estimates for 3D,
@@ -143,6 +165,10 @@ public:
 
   void AddErrorIndicator(const VecType &E, const VecType &B, double Et,
                          ErrorIndicator &indicator) const;
+
+  // Free the temporary vectors and the flux projection workspaces of both estimators; they
+  // are reallocated by the next AddErrorIndicator.
+  void ReleaseWorkspace() const;
 };
 
 // 2D boundary mode error estimator. Owns its own single-level FE spaces for flux
@@ -165,6 +191,10 @@ public:
 
   void AddErrorIndicator(const VecType &E, const VecType &B, double Et,
                          ErrorIndicator &indicator) const;
+
+  // Free the temporary vectors and the flux projection workspaces of both estimators; they
+  // are reallocated by the next AddErrorIndicator.
+  void ReleaseWorkspace() const;
 };
 
 }  // namespace palace

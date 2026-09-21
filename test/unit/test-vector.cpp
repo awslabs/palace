@@ -133,6 +133,31 @@ TEST_CASE("ComplexVector Set", "[vector][Serial][Parallel][GPU]")
   CHECK_THAT(cv.Imag()[1], WithinRel(20.0 * rank) || WithinAbs(0.0, 1e-14));
 }
 
+TEST_CASE("ComplexVector Destroy", "[vector][Serial][Parallel][GPU]")
+{
+  // Destroy frees both parts and keeps the device use flag, so that a later SetSize
+  // restores the original configuration (used to release idle work vectors).
+  const bool use_dev = mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
+  ComplexVector cv(4);
+  cv.UseDevice(use_dev);
+  cv = 1.0;
+
+  cv.Destroy();
+  CHECK(cv.Size() == 0);
+  CHECK(cv.Real().Size() == 0);
+  CHECK(cv.Imag().Size() == 0);
+  CHECK(cv.UseDevice() == use_dev);
+
+  cv.SetSize(4);
+  CHECK(cv.Size() == 4);
+  CHECK(cv.Real().Size() == 4);
+  CHECK(cv.Imag().Size() == 4);
+  CHECK(cv.UseDevice() == use_dev);
+  cv = 2.0;
+  CHECK_THAT(cv.Real()[3], WithinRel(2.0));
+  CHECK_THAT(cv.Imag()[3], WithinAbs(0.0, 0.0));
+}
+
 TEST_CASE("StaticVectorConstruction", "[Vector][Serial]")
 {
   StaticVector<3> vec;

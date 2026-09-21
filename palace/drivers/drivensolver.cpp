@@ -128,10 +128,19 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   auto AddEstimate =
       [&](const ComplexVector &E, const ComplexVector &B, double Et, ErrorIndicator &ind)
   {
+    // The estimator work vectors and the workspace of its flux projection solver are idle
+    // until the next frequency's estimate, while the memory peak occurs inside the next
+    // solve's coarse-grid factorization. They carry no state between estimates.
     if (is_2d)
+    {
       estimator_2d->AddErrorIndicator(E, B, Et, ind);
+      estimator_2d->ReleaseWorkspace();
+    }
     else
+    {
       estimator_3d->AddErrorIndicator(E, B, Et, ind);
+      estimator_3d->ReleaseWorkspace();
+    }
   };
   ErrorIndicator indicator;
 
@@ -195,6 +204,10 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       Mpi::Print("\n");
       ksp.Mult(RHS, E);
 
+      // Free the Krylov workspace: the basis vectors are idle between frequency solves,
+      // while the memory peak occurs inside the next solve's coarse-grid factorization.
+      ksp.ReleaseWorkspace();
+
       // Start Post-processing.
       BlockTimer bt0(Timer::POSTPRO);
       Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n",
@@ -202,6 +215,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
                  linalg::Norml2(space_op.GetComm(), RHS));
 
       // Compute B = -1/(iω) ∇ x E on the true dofs.
+      B.SetSize(Curl.Height());  // Reallocate after the previous frequency's release
       Curl.Mult(E.Real(), B.Real());
       Curl.Mult(E.Imag(), B.Imag());
       B *= -1.0 / (1i * omega);
@@ -222,9 +236,17 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       auto total_domain_energy =
           post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
 
+      // The measured fields are idle until the next frequency's measurement, which sets
+      // them again from the true dofs.
+      post_op.ReleaseFields();
+
       // Calculate and record the error indicators.
       Mpi::Print(" Updating solution error estimates\n");
       AddEstimate(E, B, total_domain_energy, indicator);
+
+      // B is only needed between the curl above and the estimate: its storage would
+      // otherwise sit under the next solve's coarse-grid factorization transient.
+      B.Destroy();
     }
 
     // Final postprocessing & printing.
@@ -284,10 +306,20 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   auto AddEstimate =
       [&](const ComplexVector &E, const ComplexVector &B, double Et, ErrorIndicator &ind)
   {
+    // The estimator work vectors and the workspace of its flux projection solver are idle
+    // until the next sample's estimate (and for the whole online phase after the last
+    // sample), while the memory peak occurs inside the next solve's coarse-grid
+    // factorization. They carry no state between estimates.
     if (is_2d)
+    {
       estimator_2d->AddErrorIndicator(E, B, Et, ind);
+      estimator_2d->ReleaseWorkspace();
+    }
     else
+    {
       estimator_3d->AddErrorIndicator(E, B, Et, ind);
+      estimator_3d->ReleaseWorkspace();
+    }
   };
   ErrorIndicator indicator;
 
@@ -342,6 +374,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for energy postprocessing and error estimation.
     BlockTimer bt0(Timer::POSTPRO);
+    B.SetSize(Curl.Height());  // Reallocate after the previous sample's release
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
@@ -356,7 +389,15 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     // Measure domain energies for the error indicator only. Don't exchange face_nbr_data,
     // unless printing paraview fields.
     auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(E, B);
+
+    // The measured fields are idle until the next sample's measurement, which sets them
+    // again from the true dofs.
+    post_op.ReleaseFields();
     AddEstimate(E, B, total_domain_energy, indicator);
+
+    // B is only needed between the curl above and the estimate: its storage would otherwise
+    // sit under the next solve's coarse-grid factorization transient.
+    B.Destroy();
   };
 
   // Loop excitations to add to PROM.
@@ -488,6 +529,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     Mpi::Print(" Sol. ||E|| = {:.6e}\n", linalg::Norml2(space_op.GetComm(), E));
 
     // Compute B = -1/(iω) ∇ x E on the true dofs.
+    B.SetSize(Curl.Height());  // Reallocate after the previous sample's release
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
@@ -499,6 +541,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
           E, B, space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
     }
     post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
+
+    // The measured fields and B are idle until the next sample, which sets them again from
+    // the reduced solution.
+    post_op.ReleaseFields();
+    B.Destroy();
   };
 
   if (!post_op.WillWriteFields())

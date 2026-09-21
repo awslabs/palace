@@ -54,6 +54,10 @@ public:
   // where the new size is less than or greater than Size() or Capacity().
   void SetSize(int size);
 
+  // Free the memory of both parts, leaving a vector of size zero. The device use flags are
+  // preserved, so a subsequent SetSize restores the original configuration.
+  void Destroy();
+
   // Set this vector to reference the memory of another vector, at the given base offset and
   // size.
   void MakeRef(Vector &y, int offset, int size);

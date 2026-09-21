@@ -67,6 +67,16 @@ public:
   // Transform for space update (for example on mesh change).
   void Update();
 
+  // Free the storage of both parts, including any face-neighbor exchange data. The finite
+  // element space and this object's identity are kept, so references registered elsewhere
+  // (ParaView fields, coefficients) stay valid; the storage is restored by
+  // EnsureAllocated.
+  void Destroy();
+
+  // Allocate the storage of both parts if it has been freed by Destroy. The entries are
+  // undefined: callers set them from a vector of true dofs.
+  void EnsureAllocated();
+
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return ParFESpace()->GetComm(); }
 };

@@ -944,6 +944,11 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
 
   // Solve the linear system.
   ksp->Mult(r, u);
+
+  // Free the Krylov workspace: the basis vectors are idle between HDM samples (and for the
+  // whole online phase after the last sample), while the memory peak occurs inside the next
+  // solve's coarse-grid factorization.
+  ksp->ReleaseWorkspace();
 }
 
 std::size_t RomOperator::NumSynthesisPortModes() const

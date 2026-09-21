@@ -112,6 +112,9 @@ public:
 
   // Activate preconditioner timing during solves.
   void EnableTimer() { use_timer = true; }
+
+  // Free the solver's internal work vectors/arrays; they are reallocated on the next Mult.
+  virtual void ReleaseWorkspace() const {}
 };
 
 // Preconditioned Conjugate Gradient (CG) method for SPD linear systems.
@@ -147,6 +150,8 @@ public:
   CgSolver(MPI_Comm comm, int print) : IterativeSolver<OperType>(comm, print) {}
 
   void Mult(const VecType &b, VecType &x) const override;
+
+  void ReleaseWorkspace() const override;
 };
 
 // Preconditioned Generalized Minimum Residual Method (GMRES) for general nonsymmetric
@@ -214,6 +219,8 @@ public:
   virtual void SetPreconditionerSide(PreconditionerSide side) { pc_side = side; }
 
   void Mult(const VecType &b, VecType &x) const override;
+
+  void ReleaseWorkspace() const override;
 };
 
 // Preconditioned Flexible Generalized Minimum Residual Method (FGMRES) for general
@@ -272,6 +279,8 @@ public:
   }
 
   void Mult(const VecType &b, VecType &x) const override;
+
+  void ReleaseWorkspace() const override;
 };
 
 }  // namespace palace
