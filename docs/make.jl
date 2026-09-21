@@ -58,6 +58,10 @@ include(joinpath(@__DIR__, "generate_config_docs.jl"))
 generate_all()
 @info "Configuration documentation generated from JSON schemas."
 
+# Generate the human-readable schema compatibility table from its JSON source.
+include(joinpath(@__DIR__, "generate_schema_compatibility.jl"))
+generate_schema_compatibility_table()
+
 git_ref = get_git_ref()
 @info "Building documentation with GitHub links pointing to: $git_ref"
 rewrite_github_links(joinpath(@__DIR__, "src"), git_ref)

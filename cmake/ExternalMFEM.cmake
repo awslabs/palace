@@ -128,6 +128,34 @@ if(PALACE_WITH_CUDA)
       "-DCUDSS_DIR=${CUDSS_DIR}"
     )
   endif()
+  if(PALACE_WITH_CUDSS)
+    # cuDSS loads its MPI calls from a small plugin that must be compiled against the same
+    # MPI as Palace. Build it from the source NVIDIA ships with cuDSS rather than using the
+    # bundled Open MPI binary.
+    set(PALACE_CUDSS_COMM_SRC "${CUDSS_DIR}/src/cudss_commlayer_openmpi.cu")
+    if(NOT EXISTS "${PALACE_CUDSS_COMM_SRC}")
+      message(FATAL_ERROR
+        "Could not find ${PALACE_CUDSS_COMM_SRC}. The cuDSS tarball archives include the "
+        "communication layer source under src/; the pip/conda wheels do not. Install the "
+        "archive and set CUDSS_DIR to it."
+      )
+    endif()
+    find_package(cudss CONFIG REQUIRED HINTS "${CUDSS_DIR}/lib/cmake/cudss")
+    add_library(cudss_commlayer_mpi SHARED "${PALACE_CUDSS_COMM_SRC}")
+    target_link_libraries(cudss_commlayer_mpi PRIVATE cudss CUDA::cudart MPI::MPI_CXX)
+    set_target_properties(cudss_commlayer_mpi PROPERTIES
+      CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
+      LIBRARY_OUTPUT_DIRECTORY "${CMAKE_INSTALL_PREFIX}/lib"
+      BUILD_WITH_INSTALL_RPATH ON
+      INSTALL_RPATH_USE_LINK_PATH ON
+    )
+    set(PALACE_CUDSS_COMM_LIB
+      "${CMAKE_INSTALL_PREFIX}/lib/${CMAKE_SHARED_LIBRARY_PREFIX}cudss_commlayer_mpi${CMAKE_SHARED_LIBRARY_SUFFIX}"
+    )
+    message(STATUS "Building cuDSS communication layer for the selected MPI: ${PALACE_CUDSS_COMM_LIB}")
+    list(APPEND MFEM_DEPENDENCIES cudss_commlayer_mpi)
+    list(APPEND MFEM_OPTIONS "-DMFEM_CUDSS_COMM_LIB=${PALACE_CUDSS_COMM_LIB}")
+  endif()
   palace_append_cuda_architectures(MFEM_OPTIONS)
 else()
   list(APPEND MFEM_OPTIONS
@@ -424,6 +452,21 @@ download_mfem_patch(
   mfem_pr5353.diff
   "https://raw.githubusercontent.com/awslabs/palace/b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/mfem_pr5353.diff"
   c35f584090f97c84c12fc80e6d5c068512911d192132e18f5aa4254f507c5e4f
+)
+# https://github.com/mfem/mfem/pull/5494
+# NCMesh partition fixes; not yet in MFEM 4.10. Applied directly from the
+# upstream PR range, which uses FlipIndexSign (present as of 4.10).
+download_mfem_patch(
+  mfem_pr5494.diff
+  "https://github.com/mfem/mfem/compare/10b0b596dbc26dca384b9f25f23026b1a6403592...399d72c2b7607e25d196dc19fd70b8840eaf1cc8.diff"
+  771d758ce461c7353d2b33ff6b5c9fd5404cae77a0340c1a67c3935ce606fd4c
+)
+# https://github.com/mfem/mfem/pull/5502
+# NCMesh: fix 8-bit reference-counter overflow at high-valence vertices.
+download_mfem_patch(
+  mfem_pr5502.diff
+  "https://github.com/mfem/mfem/commit/3091ba40b238c4008b67216314bb26da6738b833.diff"
+  52ccf3332f87aaf7ebc84674448226201c04343a3e298006bea5fd8be8e92533
 )
 
 include(ExternalProject)

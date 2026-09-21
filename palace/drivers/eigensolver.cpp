@@ -40,6 +40,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   SpaceOperator space_op(iodata, mesh);
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  const bool has_C = (C != nullptr);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
 
   // Check if there are nonlinear terms and, if so, setup interpolation operator.
@@ -47,6 +48,15 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     const std::complex<double> omega = lambda / std::complex<double>(0.0, 1.0);  // ω = λ/i
     return space_op.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO);
+  };
+  // As funcA2, plus the matrix-free wave-port modal correction W. Used by the SLP and
+  // Quasi-Newton solves (the polynomial seed keeps funcA2, since W cannot enter
+  // BuildParSumOperator).
+  auto funcA2_full =
+      [&space_op](std::complex<double> lambda) -> std::unique_ptr<ComplexOperator>
+  {
+    const std::complex<double> omega = lambda / std::complex<double>(0.0, 1.0);  // ω = λ/i
+    return space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
   };
   auto funcP = [&space_op](std::complex<double> a0, std::complex<double> a1,
                            std::complex<double> a2,
@@ -56,12 +66,46 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto A2 = funcA2(1i * target);
   bool has_A2 = (A2 != nullptr);
 
+  // Freeze the wave-port modal reference at the target so funcA2_full's complex-ω
+  // correction W can extrapolate k_n(ω) around it (used by both the SLP and Quasi-Newton
+  // solves).
+  if (space_op.GetWavePortOp().Size() > 0)
+  {
+    space_op.GetWavePortOp().InitializeModalReference(target);
+  }
+
   // Extend K, C, M operators with interpolated A2 operator.
   // K' = K + A2_0, C' = C + A2_1, M' = M + A2_2
   std::unique_ptr<ComplexOperator> Kp, Cp, Mp;
   std::unique_ptr<Interpolation> interp_op;
   std::unique_ptr<ComplexOperator> A2_0, A2_1, A2_2;
   NonlinearEigenSolver nonlinear_type = iodata.solver.eigenmode.nonlinear_type;
+  // SLP is only realized through SLEPc's NEP path. Resolve it against the selected backend
+  // here, before the HYBRID interpolation below: an ARPACK backend (or a build without
+  // SLEPc) has no SLP solver, and switching later would leave Kp/Cp/Mp unbuilt and crash.
+  bool slp_available = true;
+#if !defined(PALACE_WITH_SLEPC)
+  slp_available = false;
+#endif
+  if (iodata.solver.eigenmode.type == EigenSolverBackend::ARPACK)
+  {
+    slp_available = false;
+  }
+  if (nonlinear_type == NonlinearEigenSolver::SLP && !slp_available)
+  {
+    Mpi::Warning("SLP nonlinear eigensolver requires the SLEPc backend, using Hybrid!\n");
+    nonlinear_type = NonlinearEigenSolver::HYBRID;
+  }
+  if (nonlinear_type == NonlinearEigenSolver::SLP && !has_A2)
+  {
+    // The SLP nonlinear eigensolver requires a frequency-dependent term A2(λ) (wave ports
+    // or absorbing boundaries). Without one the NEP function/Jacobian shells dereference a
+    // null A2; fall back to the standard linear/quadratic eigensolver instead.
+    Mpi::Warning(
+        "SLP nonlinear eigensolver requires a nonlinear system term (wave ports or "
+        "absorbing boundaries), none found; using a linear eigensolver!\n");
+    nonlinear_type = NonlinearEigenSolver::HYBRID;
+  }
   if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
   {
     const double target_max = iodata.solver.eigenmode.target_upper;
@@ -127,8 +171,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Configure objects for postprocessing.
   PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
-  ComplexVector E(Curl.Width()), B(Curl.Height());
-  E.UseDevice(true);
+  ComplexVector B(Curl.Height());
   B.UseDevice(true);
 
   // Define and configure the eigensolver to solve the eigenvalue problem:
@@ -138,13 +181,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const EigenSolverBackend type = iodata.solver.eigenmode.type;
 #if !defined(PALACE_WITH_ARPACK) && !defined(PALACE_WITH_SLEPC)
 #error "Eigenmode solver requires building with ARPACK or SLEPc!"
-#endif
-#if !defined(PALACE_WITH_SLEPC)
-  if (nonlinear_type == NonlinearEigenSolver::SLP)
-  {
-    Mpi::Warning("SLP nonlinear eigensolver not available without SLEPc, using Hybrid!\n");
-  }
-  nonlinear_type = NonlinearEigenSolver::HYBRID;
 #endif
   if (type == EigenSolverBackend::ARPACK)
   {
@@ -209,8 +245,15 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                           : EigenvalueSolver::ScaleType::NONE;
   if (nonlinear_type == NonlinearEigenSolver::SLP)
   {
-    eigen->SetOperators(*K, *C, *M, EigenvalueSolver::ScaleType::NONE);
-    eigen->SetExtraSystemMatrix(funcA2);
+    if (C)
+    {
+      eigen->SetOperators(*K, *C, *M, EigenvalueSolver::ScaleType::NONE);
+    }
+    else
+    {
+      eigen->SetOperators(*K, *M, EigenvalueSolver::ScaleType::NONE);
+    }
+    eigen->SetExtraSystemMatrix(funcA2_full);
     eigen->SetPreconditionerUpdate(funcP);
   }
   else
@@ -348,8 +391,22 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The
   // preconditioner for complex linear systems is constructed from a real approximation
   // to the complex system matrix.
-  auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i,
-                                    K.get(), C.get(), M.get(), A2.get());
+  std::unique_ptr<ComplexOperator> A;
+  std::unique_ptr<ComplexOperator> A2_shift;
+  if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
+  {
+    // Invert the same W-aware polynomial used by the seed eigensolver.
+    A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i, Kp.get(),
+                                 Cp.get(), Mp.get());
+  }
+  else
+  {
+    // SLP applies the exact nonlinear operator at the target; linear problems have no A2.
+    A2_shift = (nonlinear_type == NonlinearEigenSolver::SLP) ? funcA2_full(1i * target)
+                                                             : std::move(A2);
+    A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i, K.get(),
+                                 C.get(), M.get(), A2_shift.get());
+  }
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
       1.0 + 0.0i, 1i * target, -target * target + 0.0i, target + 0.0i);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
@@ -418,7 +475,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       qn->SetOperators(*K, *M, EigenvalueSolver::ScaleType::NONE);
     }
-    qn->SetExtraSystemMatrix(funcA2);
+    qn->SetExtraSystemMatrix(funcA2_full);
     qn->SetPreconditionerUpdate(funcP);
     qn->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
     qn->SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag,
@@ -439,23 +496,73 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Calculate and record the error indicators, and postprocess the results.
   Mpi::Print("\nComputing solution error estimates and performing postprocessing\n");
+  const int num_requested = iodata.solver.eigenmode.n;
+  const int num_report = num_conv;
+  MFEM_VERIFY(num_report >= num_requested, "Eigenmode solve only found "
+                                               << num_report << " modes when "
+                                               << num_requested << " were requested!");
   if (!KM)
   {
-    // Normalize the finalized eigenvectors with respect to mass matrix (unit electric field
-    // energy) even if they are not computed to be orthogonal with respect to it.
+    // Normalize every converged eigenvector with respect to the mass matrix (unit electric
+    // field energy) even if they are not computed to be orthogonal with respect to it.
     KM = space_op.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());
     eigen->SetBMat(*KM);
-    eigen->RescaleEigenvectors(num_conv);
+    eigen->RescaleEigenvectors(num_report);
+  }
+  std::vector<std::complex<double>> eigenvalues(num_report);
+  std::vector<double> errors_bkwd(num_report), errors_abs(num_report);
+  const bool stage_eigenvectors = post_op.WillWriteFields();
+  // Field output can construct large libCEED visualization operators. Only in that case,
+  // stage the converged eigenvectors in host memory so the eigensolver and matrices can
+  // release their device allocations before postprocessing.
+  std::vector<std::vector<std::complex<double>>> eigenvectors;
+  if (stage_eigenvectors)
+  {
+    eigenvectors.assign(num_report, std::vector<std::complex<double>>(Curl.Width()));
+  }
+  ComplexVector E(Curl.Width());
+  E.UseDevice(true);
+  for (int i = 0; i < num_report; i++)
+  {
+    eigenvalues[i] = eigen->GetEigenvalue(i);
+    errors_bkwd[i] = eigen->GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
+    errors_abs[i] = eigen->GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
+    if (stage_eigenvectors)
+    {
+      eigen->GetEigenvector(i, E);
+      E.Get(eigenvectors[i].data(), E.Size(), false);
+    }
+  }
+
+  if (stage_eigenvectors)
+  {
+    eigen.reset();
+    KM.reset();
+    ksp.reset();
+    P.reset();
+    A.reset();
+    divfree.reset();
+    Kp.reset();
+    Cp.reset();
+    Mp.reset();
+    A2_0.reset();
+    A2_1.reset();
+    A2_2.reset();
+    A2.reset();
+    interp_op.reset();
+    K.reset();
+    C.reset();
+    M.reset();
   }
   Mpi::Print("\n");
 
-  for (int i = 0; i < num_conv; i++)
+  for (int i = 0; i < num_report; i++)
   {
     // Get the eigenvalue and relative error.
-    std::complex<double> omega = eigen->GetEigenvalue(i);
-    double error_bkwd = eigen->GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
-    double error_abs = eigen->GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
-    if (!C && !has_A2)
+    std::complex<double> omega = eigenvalues[i];
+    double error_bkwd = errors_bkwd[i];
+    double error_abs = errors_abs[i];
+    if (!has_C && !has_A2)
     {
       // Linear EVP has eigenvalue μ = -λ² = ω².
       omega = std::sqrt(omega);
@@ -468,8 +575,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
-    eigen->GetEigenvector(i, E);
-
+    if (stage_eigenvectors)
+    {
+      E.Set(eigenvectors[i].data(), E.Size(), false);
+    }
+    else
+    {
+      eigen->GetEigenvector(i, E);
+    }
     linalg::NormalizePhase(space_op.GetComm(), E);
 
     Curl.Mult(E.Real(), B.Real());
@@ -483,24 +596,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
 
     auto total_domain_energy =
-        post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_conv);
-
-    // Calculate and record the error indicators.
-    if (i < iodata.solver.eigenmode.n)
+        post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_report);
+    if (i < num_requested)
     {
       AddEstimate(E, B, total_domain_energy, indicator);
     }
-
-    // Final write: Different condition than end of loop (i = num_conv - 1).
-    if (i == iodata.solver.eigenmode.n - 1)
-    {
-      post_op.MeasureFinalize(indicator);
-    }
   }
-  MFEM_VERIFY(num_conv >= iodata.solver.eigenmode.n, "Eigenmode solve only found "
-                                                         << num_conv << " modes when "
-                                                         << iodata.solver.eigenmode.n
-                                                         << " were requested!");
+  post_op.MeasureFinalize(indicator);
   return {indicator, space_op.GlobalTrueVSize()};
 }
 

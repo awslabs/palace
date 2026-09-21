@@ -455,10 +455,16 @@ int QuasiNewtonSolver::Solve()
       eig = sigma;
       if (num_init_guess < 3)
       {
-        // Set purely random vector.
+        // Set purely random vector, zeroing the essential-BC true dofs. On a
+        // partitioned mesh GetEssentialTrueDofs() returns nullptr on ranks whose
+        // local partition owns no essential (Dirichlet/PEC) dofs, in which case
+        // there is nothing to zero on this rank.
         linalg::SetRandom(GetComm(), v);
-        linalg::SetSubVector(
-            v, *dynamic_cast<const ComplexParOperator *>(opK)->GetEssentialTrueDofs(), 0.0);
+        if (const auto *ess_tdof_list =
+                dynamic_cast<const ComplexParOperator *>(opK)->GetEssentialTrueDofs())
+        {
+          linalg::SetSubVector(v, *ess_tdof_list, 0.0);
+        }
       }
       else
       {
@@ -496,8 +502,7 @@ int QuasiNewtonSolver::Solve()
 
     // Set the linear solver operators.
     opA2 = (*funcA2)(eig);
-    opA = BuildParSumOperator({1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i},
-                              {opK, opC, opM, opA2.get()}, true);
+    opA = BuildOperatorWithA2({1.0 + 0.0i, eig, eig * eig}, {opK, opC, opM}, opA2.get());
     opP = (*funcP)(1.0 + 0.0i, eig, eig * eig,
                    eig / std::complex<double>(0.0, 1.0));  // ω = λ/i
     opInv->SetOperators(*opA, *opP);
@@ -556,8 +561,8 @@ int QuasiNewtonSolver::Solve()
                                  std::unique_ptr<ComplexOperator> &A2_out) -> double
     {
       A2_out = (*funcA2)(lam);
-      auto A = BuildParSumOperator({1.0 + 0.0i, lam, lam * lam, 1.0 + 0.0i},
-                                   {opK, opC, opM, A2_out.get()}, true);
+      auto A =
+          BuildOperatorWithA2({1.0 + 0.0i, lam, lam * lam}, {opK, opC, opM}, A2_out.get());
       A->Mult(vv, rr);
       if (k > 0)
       {
@@ -648,20 +653,22 @@ int QuasiNewtonSolver::Solve()
         break;
       }
 
-      // Compute w = J * v.
+      // Compute w = J * v. The A2 finite difference is a matrix-free sum (each A2 may
+      // itself be a matrix-free SumComplexOperator carrying the wave-port correction).
       auto opA2p = (*funcA2)(eig * (1.0 + delta));
       const std::complex<double> denom = delta * eig;
-      std::unique_ptr<ComplexOperator> opAJ =
-          BuildParSumOperator({1.0 / denom, -1.0 / denom}, {opA2p.get(), A2n.get()}, true);
-      auto opJ = BuildParSumOperator({0.0 + 0.0i, 1.0 + 0.0i, 2.0 * eig, 1.0 + 0.0i},
-                                     {opK, opC, opM, opAJ.get()}, true);
+      auto opAJ = std::make_unique<SumComplexOperator>(opA2p->Height(), opA2p->Width());
+      opAJ->AddOperator(*opA2p, 1.0 / denom);
+      opAJ->AddOperator(*A2n, -1.0 / denom);
+      auto opJ = BuildOperatorWithA2({0.0 + 0.0i, 1.0 + 0.0i, 2.0 * eig}, {opK, opC, opM},
+                                     opAJ.get());
       opJ->Mult(v, w);
       if (k > 0)  // Deflation
       {
         // w1 = T'(l) v1 + U'(l) v2 = T'(l) v1 + T'(l)XS v2 - T(l)XS^2 v2. Scoping T(l)
         // here lets the line search overwrite A2n freely; with no deflation we skip it.
-        auto A = BuildParSumOperator({1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i},
-                                     {opK, opC, opM, A2n.get()}, true);
+        auto A =
+            BuildOperatorWithA2({1.0 + 0.0i, eig, eig * eig}, {opK, opC, opM}, A2n.get());
         const Eigen::MatrixXcd S = eig * Eigen::MatrixXcd::Identity(k, k) - H;
         const Eigen::VectorXcd Sv2 = S.fullPivLu().solve(v2);
         const ComplexVector XSv2 = MatVecMult(X, Sv2);
@@ -726,9 +733,8 @@ int QuasiNewtonSolver::Solve()
       {
         eig_opInv = eig;
         opA2 = (*funcA2)(eig_opInv);
-        opA =
-            BuildParSumOperator({1.0 + 0.0i, eig_opInv, eig_opInv * eig_opInv, 1.0 + 0.0i},
-                                {opK, opC, opM, opA2.get()}, true);
+        opA = BuildOperatorWithA2({1.0 + 0.0i, eig_opInv, eig_opInv * eig_opInv},
+                                  {opK, opC, opM}, opA2.get());
         opP = (*funcP)(1.0 + 0.0i, eig_opInv, eig_opInv * eig_opInv,
                        eig_opInv / std::complex<double>(0.0, 1.0));
         opInv->SetOperators(*opA, *opP);

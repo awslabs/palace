@@ -552,6 +552,10 @@ WavePortData::WavePortData(const json &port)
                           index));
   ksp_max_its = port.value("MaxIts", ksp_max_its);
   ksp_tol = port.value("KSPTol", ksp_tol);
+  if (auto it = port.find("ComplexCoarseSolve"); it != port.end())
+  {
+    complex_coarse_solve = it->get<bool>();
+  }
   eig_tol = port.value("EigenTol", eig_tol);
   max_size = port.value("MaxSize", max_size);
   verbose = port.value("Verbose", verbose);
@@ -1337,6 +1341,7 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
   {
     max_size = DefaultEigenSubspaceSize(n);
   }
+  n_post = std::clamp(n_post, 0, n);
 
   target_upper = (target_upper < 0) ? 3 * target : target_upper;  // default = 3 * target
   MFEM_VERIFY(target_upper > target, "config[\"Eigenmode\"][\"TargetUpper\"] must be "

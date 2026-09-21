@@ -580,6 +580,23 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
     CHECK(boundary_data.current.at(3).inactive_port_mode.value() ==
           InactivePortMode::SHORT);
   }
+
+  SECTION("WavePort ComplexCoarseSolve is optional and parses per port")
+  {
+    json boundaries = {
+        {"WavePort",
+         {{{"Attributes", {4}}, {"Index", 1}},
+          {{"Attributes", {5}}, {"Index", 2}, {"ComplexCoarseSolve", true}},
+          {{"Attributes", {6}}, {"Index", 3}, {"ComplexCoarseSolve", false}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(!config::Validate(boundary_data).has_value());
+    // Unset when not specified so the global linear solver settings apply for that port.
+    CHECK(!boundary_data.waveport.at(1).complex_coarse_solve.has_value());
+    REQUIRE(boundary_data.waveport.at(2).complex_coarse_solve.has_value());
+    CHECK(boundary_data.waveport.at(2).complex_coarse_solve.value());
+    REQUIRE(boundary_data.waveport.at(3).complex_coarse_solve.has_value());
+    CHECK_FALSE(boundary_data.waveport.at(3).complex_coarse_solve.value());
+  }
 }
 
 TEST_CASE("Config Driven Solver", "[config][Serial]")
@@ -749,6 +766,13 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
         {"AdaptiveTol", 1e-3}};
     CHECK_THROWS(config::DrivenSolverData(invalid_save));
   }
+}
+
+TEST_CASE("Config Eigenmode saved modes", "[config][Serial]")
+{
+  CHECK(config::EigenSolverData(json{{"Target", 1.0}, {"N", 3}, {"Save", 2}}).n_post == 2);
+  CHECK(config::EigenSolverData(json{{"Target", 1.0}, {"N", 2}, {"Save", 3}}).n_post == 2);
+  CHECK(config::EigenSolverData(json{{"Target", 1.0}, {"N", 2}, {"Save", -1}}).n_post == 0);
 }
 
 TEST_CASE("Config Magnetostatic InactivePorts", "[config][Serial]")
@@ -1687,6 +1711,9 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(w2.active == w1.active);
     CHECK(w2.ksp_max_its == w1.ksp_max_its);
     CHECK(w2.ksp_tol == w1.ksp_tol);
+    // An omitted per-port ComplexCoarseSolve must stay omitted (see coverage gate below).
+    CHECK_FALSE(w2.complex_coarse_solve.has_value());
+    CHECK_FALSE(config["Boundaries"]["WavePort"][0].contains("ComplexCoarseSolve"));
     CHECK(w2.eig_tol == w1.eig_tol);
     CHECK(w2.max_size == w1.max_size);
     CHECK(w2.verbose == w1.verbose);
@@ -1697,10 +1724,13 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     // PolarityAttributes is an opt-in [high, low] terminal pair for fixing the mode
     // polarity; absence means the internal polarity convention is used. Both are
     // opt-in features with no meaningful default value to emit (mutually exclusive),
-    // so they are deliberately not concretized.
-    auto wp_gaps = SchemaCoverageGaps("/properties/Boundaries/properties/WavePort/items",
-                                      config["Boundaries"]["WavePort"][0],
-                                      /*skip=*/{"VoltagePath", "PolarityAttributes"});
+    // so they are deliberately not concretized. ComplexCoarseSolve is an opt-in per-port
+    // override: an explicit value also takes precedence over Solver.Linear.PCMatReal, so
+    // absence (inherit both global settings) has no equivalent explicit value to emit.
+    auto wp_gaps = SchemaCoverageGaps(
+        "/properties/Boundaries/properties/WavePort/items",
+        config["Boundaries"]["WavePort"][0],
+        /*skip=*/{"VoltagePath", "PolarityAttributes", "ComplexCoarseSolve"});
     INFO("Boundaries.WavePort[] missing keys: " << json(wp_gaps).dump());
     CHECK(wp_gaps.empty());
   }

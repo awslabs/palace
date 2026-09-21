@@ -37,6 +37,16 @@ CEED_QFUNCTION_HELPER void MatUnpack22(const CeedScalar *A, const CeedInt A_stri
   A_loc[3] = A[A_stride * 3];
 }
 
+// Map a scalar INTEGRAL finite-element value to physical space. Unlike scalar VALUE
+// elements, INTEGRAL elements transform by the inverse element-transformation weight.
+CEED_QFUNCTION_HELPER CeedScalar IntegralMap22(CeedInt i, CeedInt Q, const CeedScalar *J,
+                                               const CeedScalar *u)
+{
+  CeedScalar J_loc[4];
+  MatUnpack22(J + i, Q, J_loc);
+  return u[i] / fabs(DetJ22(J_loc));
+}
+
 CEED_QFUNCTION_HELPER void MultBx22(const CeedScalar B[4], const CeedScalar x[2],
                                     CeedScalar y[2])
 {

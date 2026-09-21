@@ -20,6 +20,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     maintainers("hughcars", "sbozzolo", "simlap")
 
     version("develop", branch="main")
+    version("0.18.0", tag="v0.18.0", commit="b92aef83ecfe6d360c4b3d83e2122986297f6778")
     version("0.17.0", tag="v0.17.0", commit="12d8069afb5aa9e169a17e303d735e120968e9f2")
     version("0.16.1", tag="v0.16.1", commit="c13e409f255392b9d78369c386276cf9343c2205")
     version("0.16.0", tag="v0.16.0", commit="869ee5ced4850384410a7aeebc7c25f4c01be161")
@@ -202,7 +203,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     with when("@0.16:"):
         # +lapack means: use external lapack
         depends_on(
-            "mfem+mpi+metis+lapack@4.9:",
+            "mfem+mpi+metis+lapack@4.10.0",
             patches=[
                 # https://github.com/mfem/mfem/pull/3847
                 patch(
@@ -210,23 +211,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                     "2d574015756711029556c14d096ca52c15d5b663..."
                     "50ead1a9a785e3273b2a72ff59ac8ed8a496b498.diff",
                     sha256="e9be1a0d4b2642ed1b72f31c36065cf0aacbe342b6594d5d943782c73a6177f4",
-                ),
-                # https://github.com/mfem/mfem/commit/e4a2b9568c40f20e24612066d155cc6a9973b247
-                patch(
-                    "https://github.com/mfem/mfem/commit/"
-                    "e4a2b9568c40f20e24612066d155cc6a9973b247.diff",
-                    sha256="6ced66f487780af66fb8184d329b9aad4b694e711b65830391e8c6d0c898713e",
-                    when="@4.9.0",
-                ),
-                # Curated snapshots retain only the parts of these PRs that
-                # apply cleanly to MFEM 4.9.
-                # https://github.com/mfem/mfem/pull/5246
-                patch(
-                    "https://raw.githubusercontent.com/awslabs/palace/"
-                    "b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/"
-                    "mfem_pr5246.diff",
-                    sha256="d5227c18768369b8fa3a20f4457dd378a360346850329ab1970d18ed5a73b0d6",
-                    when="@4.9.0",
                 ),
                 # https://github.com/mfem/mfem/pull/5353
                 # Remove once merged upstream and MFEM is bumped.
@@ -236,29 +220,26 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                     "mfem_pr5353.diff",
                     sha256="c35f584090f97c84c12fc80e6d5c068512911d192132e18f5aa4254f507c5e4f",
                 ),
-                # https://github.com/mfem/mfem/pull/4983
+                # https://github.com/mfem/mfem/pull/5494
+                # NCMesh partition fixes; not yet in MFEM 4.10. Applied directly
+                # from the upstream PR range, which uses FlipIndexSign (present
+                # as of 4.10). Remove once merged upstream and MFEM is bumped.
                 patch(
-                    "https://raw.githubusercontent.com/awslabs/palace/"
-                    "b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/"
-                    "mfem_pr4983.diff",
-                    sha256="530532da3ae8815d004bb6ce19f6f08a1248c3d585503551c90d0eeae7fb3f87",
-                    when="@:4.9",
+                    "https://github.com/mfem/mfem/compare/"
+                    "10b0b596dbc26dca384b9f25f23026b1a6403592..."
+                    "399d72c2b7607e25d196dc19fd70b8840eaf1cc8.diff",
+                    sha256="771d758ce461c7353d2b33ff6b5c9fd5404cae77a0340c1a67c3935ce606fd4c",
+                    when="@4.10.0",
                 ),
-                # https://github.com/mfem/mfem/pull/5124
+                # https://github.com/mfem/mfem/pull/5502
+                # NCMesh: fix 8-bit reference-counter overflow at high-valence
+                # vertices. Pulled directly from the PR head commit. Remove once
+                # merged upstream and MFEM is bumped.
                 patch(
-                    "https://raw.githubusercontent.com/awslabs/palace/"
-                    "b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/"
-                    "mfem_pr5124_cudss.diff",
-                    sha256="d0b5893ec7925cbc8a70cc5eba2abe037754b99b5bb366c4bae90f0583d22290",
-                    when="@4.9.0 +cudss",
-                ),
-                # https://github.com/mfem/mfem/pull/5415
-                # Pulled directly from the PR head commit. Remove once merged
-                # upstream and MFEM is bumped.
-                patch(
-                    "https://github.com/mfem/mfem/commit/9d1438d8a2502cc927c63e093cf8c855ff17918e.diff",
-                    sha256="482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f",
-                    when="@4.9.0",
+                    "https://github.com/mfem/mfem/commit/"
+                    "3091ba40b238c4008b67216314bb26da6738b833.diff",
+                    sha256="52ccf3332f87aaf7ebc84674448226201c04343a3e298006bea5fd8be8e92533",
+                    when="@4.10.0",
                 ),
             ],
         )
@@ -288,7 +269,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     with when("@0.18:"):
         depends_on("mfem+cudss", when="+cudss")
-        depends_on("cudss", when="+cudss")
+        depends_on("cudss+mpi", when="+cudss")
 
     with when("+libxsmm"):
         depends_on("libxsmm@2: blas=0")
@@ -299,7 +280,20 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("libxsmm+shared")
 
     with when("@0.14:"):
-        depends_on("libceed@0.13:")
+        # The builtin recipe has no libCEED release newer than 0.12.0, so an open range
+        # resolves to an unpinned develop. Pin per Palace release. The 0.14-0.17 pins match
+        # cmake/ExternalGitTags.cmake; 0.18 uses the libCEED main merge of the same change
+        # (the superbuild commit predates libCEED's libxsmm 2.0 requirement).
+        depends_on(
+            "libceed@develop commit=204f3be0a8a44f14c6b90cf1319bc5c5bd195020", when="@0.14"
+        )
+        depends_on(
+            "libceed@develop commit=95bd1e908b16e04a70015e3a9a7fddec5e9c3fc8",
+            when="@0.15:0.17",
+        )
+        depends_on(
+            "libceed@develop commit=d6367d2d6a0cca608a0b8e21d79b83c50a49a19a", when="@0.18:"
+        )
         depends_on("libceed+openmp", when="+openmp")
         depends_on("libceed~openmp", when="~openmp")
         depends_on("libceed+shared", when="+shared")

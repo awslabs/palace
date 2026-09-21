@@ -15,7 +15,7 @@ on:
 
 permissions:
   packages: write
-  contents: write
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -82,9 +82,6 @@ jobs:
     needs: filter
     if: needs.filter.outputs.test == 'true'
     runs-on: [self-hosted, x64]
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/palace-ci
@@ -122,9 +119,6 @@ jobs:
         github.event.pull_request.head.repo.full_name == github.repository
       )
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     concurrency:
       group: palace-develop-buildcache-index
       cancel-in-progress: false

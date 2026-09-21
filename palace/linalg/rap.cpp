@@ -398,7 +398,7 @@ ComplexParOperator::ComplexParOperator(std::unique_ptr<Operator> &&dAr,
                                        bool test_restrict)
   : ComplexOperator(test_fespace.GetTrueVSize(), trial_fespace.GetTrueVSize()),
     data_A((dAr != nullptr || dAi != nullptr)
-               ? std::make_unique<ComplexWrapperOperator>(std::move(dAr), std::move(dAi))
+               ? ceed::CreateComplexOperator(std::move(dAr), std::move(dAi))
                : std::make_unique<ComplexWrapperOperator>(pAr, pAi)),
     A(data_A.get()), trial_fespace(trial_fespace), test_fespace(test_fespace),
     use_R(test_restrict), diag_policy(Operator::DiagonalPolicy::DIAG_ONE),
@@ -926,6 +926,23 @@ BuildParSumOperator(const std::vector<std::complex<double>> &coeff,
   std::transform(ops.begin(), ops.end(), par_ops.begin(), [](const ComplexOperator *op)
                  { return dynamic_cast<const ComplexParOperator *>(op); });
   return BuildParSumOperator(coeff, par_ops, set_essential);
+}
+
+std::unique_ptr<ComplexOperator>
+BuildOperatorWithA2(const std::vector<std::complex<double>> &coeff,
+                    const std::vector<const ComplexOperator *> &ops,
+                    const ComplexOperator *A2)
+{
+  if (A2 && !dynamic_cast<const ComplexParOperator *>(A2))
+  {
+    auto sum = BuildParSumOperator(coeff, ops, true);
+    return std::make_unique<SumComplexOperator>(std::move(sum), *A2);
+  }
+  std::vector<std::complex<double>> c(coeff);
+  std::vector<const ComplexOperator *> o(ops);
+  c.emplace_back(1.0, 0.0);
+  o.push_back(A2);
+  return BuildParSumOperator(c, o, true);
 }
 
 // TODO: replace with std::to_array in c++20.
