@@ -264,6 +264,17 @@ protected:
   bool has_RHS1 = true;
   bool has_RHS2 = true;
 
+  // One-time self-check state for sharing the preconditioner as the HDM system operator (it
+  // applies its finest level, which is assembled with the system coefficients). The check
+  // runs on the first HDM solve at a frequency where the configuration conditions hold, and
+  // its result is used for the whole sweep. See
+  // SpaceOperator::PreconditionerMatchesDrivenSystemMatrix and ApplySameMatrix.
+  bool pc_as_system_checked = false;
+  bool pc_as_system = false;
+
+  // Level of printing.
+  int verbose = 0;
+
   // HDM linear system solver and preconditioner.
   std::unique_ptr<ComplexKspSolver> ksp;
 

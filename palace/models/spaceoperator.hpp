@@ -360,6 +360,76 @@ public:
   std::unique_ptr<OperType> GetPreconditionerMatrix(ScalarType a0, ScalarType a1,
                                                     ScalarType a2, A3Type a3);
 
+  // Necessary configuration conditions for the finest level of the complex preconditioner
+  // matrix assembled with the driven-problem coefficients,
+  // GetPreconditionerMatrix<ComplexOperator>(1, iω, -ω², ω), to be the system matrix
+  // A = K + iω C - ω² (Mr + i Mi) of GetSystemMatrix. When it is, a caller can pass the
+  // preconditioner to the Krylov solver as the system operator as well
+  // (BaseMultigridOperator::Mult applies its finest level), which replaces the sum of the
+  // fixed K, C and M applications by the one application of that level (one fused libCEED
+  // application where the backend packs its two parts). The
+  // preconditioner object remains the sole owner of the level and of the operators it packs
+  // (ceed::CreateComplexOperator takes ownership of the assembled leaves), and the Krylov
+  // solver holds only a non-owning pointer to it: the shared system role must therefore not
+  // outlive the preconditioner of the frequency it was built at. The two matrices are
+  // assembled from the same bilinear form, differing only in assembly order:
+  //   - AssemblePreconditioner scales the stiffness, damping and mass material
+  //     coefficients by GetPreconditionerScalars(a0, a1, a2) exactly as
+  //     BuildParSumOperator scales the separately assembled K, C and M: for a0 = 1,
+  //     a1 = iω and a2 = -ω² the real part is K - ω² Mr and the imaginary part is
+  //     ω C - ω² Mi, term by term (the boundary R/L/C, surface impedance, conductivity
+  //     and London terms enter both sides through the same AddStiffness/AddDamping/
+  //     AddRealMass/AddImagMass helpers, with or without their boundary counterparts).
+  //     Both sides omit the elements on which a coefficient is exactly zero
+  //     (BilinearForm::SkipZeroCoefficientElements), which does not change the matrix
+  //     even where the accumulated preconditioner coefficient covers more elements than
+  //     an individual term of the sum.
+  //   - The finest level uses the finest ND space, the same essential true dofs
+  //     (nd_dbc_tdof_lists.back()) and the DIAG_ONE policy, which is what
+  //     BuildParSumOperator derives for the sum as the maximum policy of its summands
+  //     (K is built with DIAG_ONE, C, M and A2 with DIAG_ZERO in the driven sweep).
+  // Only the finest level is concerned: the coarsest level is a sparse matrix for the
+  // coarse solver (combined from the cached frequency-independent term matrices where
+  // possible, see CombinePreconditionerTermMatrices) and the cached level diagonals of
+  // CombinePreconditionerTermDiagonals are returned by AssembleDiagonal, which a Krylov
+  // system apply never calls.
+  // The configurations where the preconditioner is intentionally a different matrix are
+  // excluded here: pc_mat_real (a real-valued approximation using |Mr + Mi|),
+  // pc_mat_shifted (the real mass coefficient becomes |Re(a2)|), and a Floquet wave vector
+  // (the periodic terms are stamped through separate branches on the two sides, and a
+  // Floquet port adds a low-rank DtN correction to the system matrix which the
+  // preconditioner lacks). A single-level hierarchy is also excluded: its only level is the
+  // fully assembled sparse matrix for the coarse solver, which keeps configured exact-zero
+  // terms and is not the matrix-free operator this reuse is meant to save.
+  // The frequency-dependent term A2(ω) is stamped as boundary coefficients here but added
+  // as a separate operator to the system matrix, so a caller must additionally check that
+  // GetExtraSystemOperator(ω) is null at the frequency in question (see
+  // HasFrequencyDependentBoundaryTerms for a frequency-independent sufficient condition).
+  // These conditions are necessary but NOT sufficient: AssemblePreconditioner accumulates
+  // all of the terms above into one material property coefficient per part, while K, C and
+  // M each get their own. MaterialPropertyCoefficient::AddMaterialProperty updates one
+  // coefficient entry per call, and lets attribute groups with equal values share an entry,
+  // so a term which is stamped once per boundary element or attribute (the R/L/C of a
+  // lumped port or a surface impedance boundary) is counted once per member of a shared
+  // entry: the preconditioner is then a slightly different matrix, which is harmless for
+  // preconditioning but not for a system operator. A caller must therefore verify the
+  // equality numerically with ApplySameMatrix before relying on it.
+  // Whether any boundary condition contributes a frequency-dependent boundary operator
+  // A2(ω) + F(ω) (GetExtraSystemOperator): a second-order farfield ABC, surface
+  // conductivity, rational surface impedance, a numeric wave port, or a Floquet port. Only
+  // configuration counts are inspected, so the result is the same on every rank.
+  bool HasFrequencyDependentBoundaryTerms() const;
+
+  bool PreconditionerMatchesDrivenSystemMatrix() const;
+
+  // True if the two operators apply the same matrix to a random complex vector on the
+  // finest space, to within `rel_tol` relative in the 2-norm. The norms are global, so the
+  // result is the same on every rank. Used to verify that a preconditioner which satisfies
+  // PreconditionerMatchesDrivenSystemMatrix really is the system matrix before it is shared
+  // as the Krylov system operator.
+  bool ApplySameMatrix(const ComplexOperator &A, const ComplexOperator &B,
+                       double rel_tol = 1.0e-11) const;
+
   // Construct and return the discrete curl or gradient matrices.
   const Operator &GetGradMatrix() const
   {

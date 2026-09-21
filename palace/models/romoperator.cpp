@@ -530,7 +530,8 @@ HybridBulkBoundaryOperator::HybridBulkBoundaryOperator(
 
 RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
                          std::size_t max_size_per_excitation)
-  : space_op(space_op), orthog_type(iodata.solver.driven.adaptive_solver_gs_orthog_type)
+  : space_op(space_op), verbose(iodata.problem.verbose),
+    orthog_type(iodata.solver.driven.adaptive_solver_gs_orthog_type)
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are
   // handled simply by setting diagonal entries of the system matrix for the corresponding
@@ -920,12 +921,45 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
   A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
   has_A2 = (A2 != nullptr);
   auto A2_full = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
-  auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
-                                    std::complex<double>(-omega * omega, 0.0), K.get(),
-                                    C.get(), M.get(), A2_full.get());
+  // The preconditioner's finest level is assembled with the system coefficients, so when it
+  // is the same matrix it is handed to the Krylov solver as the system operator too: one
+  // application of that level per iteration (one fused libCEED application where the
+  // backend packs its two parts) instead of the sum of the fixed K, C and M applications
+  // (which are kept here for the PROM projections). The configuration conditions are
+  // necessary but not sufficient, so the equality is verified numerically once, at the
+  // first frequency where they hold (see
+  // SpaceOperator::PreconditionerMatchesDrivenSystemMatrix and ApplySameMatrix).
+  const bool can_share_pc = !A2_full && space_op.PreconditionerMatchesDrivenSystemMatrix();
+  std::unique_ptr<ComplexOperator> A;
+  if (!can_share_pc || !pc_as_system)
+  {
+    A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
+                                 std::complex<double>(-omega * omega, 0.0), K.get(),
+                                 C.get(), M.get(), A2_full.get());
+  }
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
                                                              -omega * omega + 0.0i, omega);
-  ksp->SetOperators(*A, *P);
+  // The check must run at a nonzero frequency: every term a mis-assembly could
+  // over-count scales with omega (damping) or omega^2 (mass), so at omega = 0 the two
+  // applications agree exactly even for a mismatched configuration, and the gate would
+  // latch on vacuously. At omega = 0 the explicitly assembled A is used instead.
+  if (can_share_pc && !pc_as_system_checked && omega != 0.0)
+  {
+    pc_as_system_checked = true;
+    pc_as_system = space_op.ApplySameMatrix(*A, *P);
+    if (pc_as_system)
+    {
+      A.reset();
+    }
+    if (verbose > 1)
+    {
+      Mpi::Print(" Preconditioner {}shared as the HDM system operator\n",
+                 pc_as_system ? "" : "not ");
+    }
+  }
+  // Without A, the preconditioner applies its finest level, which is the same matrix. Both
+  // roles are non-owning views of P, which owns that level for the whole solve.
+  ksp->SetOperators(A ? *A : *P, *P);
 
   // The HDM excitation vector is computed as RHS = iω RHS1 + RHS2(ω).
   Mpi::Print("\n");

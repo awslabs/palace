@@ -1294,6 +1294,37 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
   return B;
 }
 
+bool SpaceOperator::HasFrequencyDependentBoundaryTerms() const
+{
+  return farfield_op.GetOrder() > 1 || surf_sigma_op.Size() > 0 ||
+         surf_rz_op.GetNumBoundaries() > 0 || wave_port_op.Size() > 0 ||
+         floquet_port_op.Size() > 0;
+}
+
+bool SpaceOperator::PreconditionerMatchesDrivenSystemMatrix() const
+{
+  return !pc_mat_real && !pc_mat_shifted && !mat_op.HasWaveVector() &&
+         GetNDSpaces().GetNumLevels() > 1;
+}
+
+bool SpaceOperator::ApplySameMatrix(const ComplexOperator &A, const ComplexOperator &B,
+                                    double rel_tol) const
+{
+  MFEM_VERIFY(A.Height() == B.Height() && A.Width() == B.Width(),
+              "Mismatched operator dimensions in SpaceOperator::ApplySameMatrix!");
+  ComplexVector x(A.Width()), Ax(A.Height()), Bx(B.Height());
+  x.UseDevice(true);
+  Ax.UseDevice(true);
+  Bx.UseDevice(true);
+  linalg::SetRandom(GetComm(), x);
+  A.Mult(x, Ax);
+  B.Mult(x, Bx);
+  Bx.AXPY(-1.0, Ax);
+  const double norm_diff = linalg::Norml2(GetComm(), Bx);
+  const double norm_ref = linalg::Norml2(GetComm(), Ax);
+  return norm_ref > 0.0 && norm_diff <= rel_tol * norm_ref;
+}
+
 void SpaceOperator::AddStiffnessCoefficients(double coeff, MaterialPropertyCoefficient &df,
                                              MaterialPropertyCoefficient &f)
 {

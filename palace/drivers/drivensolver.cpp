@@ -94,6 +94,25 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   const auto &Curl = space_op.GetCurlMatrix();
 
+  // The preconditioner's finest level is assembled with the system coefficients, so when it
+  // is the same matrix it can be handed to the Krylov solver as the system operator too:
+  // one application of that level per iteration (one fused libCEED application where the
+  // backend packs its two parts) instead of the sum of the fixed K, C and M applications.
+  // The configuration conditions are necessary but not sufficient
+  // (see SpaceOperator::PreconditionerMatchesDrivenSystemMatrix), so the equality is
+  // verified numerically once, at the first frequency, after which K, C and M are released
+  // for the rest of the sweep. Nothing in the sweep uses them otherwise, and nothing in the
+  // preconditioner references them: its levels are assembled from their own bilinear forms
+  // and own their quadrature data (the packed two-component application of a level shares
+  // only the quadrature data of the leaves it owns), while the geometry factors and element
+  // restrictions they read are cached on the mesh and the finite element spaces. One
+  // frequency is representative: any difference is a multiple of one of the terms of the
+  // same bilinear form, so it scales with that term's frequency-dependent coefficient and
+  // cannot vanish at a single ω > 0 alone.
+  bool verify_pc_as_system = space_op.PreconditionerMatchesDrivenSystemMatrix() &&
+                             !space_op.HasFrequencyDependentBoundaryTerms();
+  bool pc_as_system = false;
+
   // Set up the linear solver.
   // The operators are constructed for each frequency step and used to initialize the ksp.
   ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
@@ -172,11 +191,44 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       // Assemble frequency dependent matrices and initialize operators in linear
       // solver.
       auto A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
-      auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
-                                        K.get(), C.get(), M.get(), A2.get());
+      MFEM_VERIFY(!(verify_pc_as_system || pc_as_system) || !A2,
+                  "Unexpected frequency-dependent system operator for a configuration with "
+                  "no frequency-dependent boundary term!");
+      std::unique_ptr<ComplexOperator> A;
+      if (!pc_as_system)
+      {
+        A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, K.get(),
+                                     C.get(), M.get(), A2.get());
+      }
       auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
           1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
-      ksp.SetOperators(*A, *P);
+      // The check must run at a nonzero frequency: every term a mis-assembly could
+      // over-count scales with omega (damping) or omega^2 (mass), so at omega = 0 the two
+      // applications agree exactly even for a mismatched configuration, and the gate would
+      // latch on vacuously. At omega = 0 the explicitly assembled A is used instead.
+      if (verify_pc_as_system && omega != 0.0)
+      {
+        verify_pc_as_system = false;
+        pc_as_system = space_op.ApplySameMatrix(*A, *P);
+        if (pc_as_system)
+        {
+          // The preconditioner applies the system matrix itself: use it as the system
+          // operator and drop the operators of the K, C, M sum. A holds non-owning
+          // references to their local operators, so it goes first.
+          A.reset();
+          K.reset();
+          C.reset();
+          M.reset();
+        }
+        if (iodata.problem.verbose > 1)
+        {
+          Mpi::Print(" Preconditioner {}shared as the system operator\n",
+                     pc_as_system ? "" : "not ");
+        }
+      }
+      // Without A, the preconditioner applies its finest level, which is the same matrix.
+      // Both roles are non-owning views of P, which owns that level for the whole solve.
+      ksp.SetOperators(A ? *A : *P, *P);
 
       Mpi::Print(
           "\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s{})\n",
