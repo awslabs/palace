@@ -84,14 +84,26 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   // Initialize write directory with default path; will be changed for multi-excitations.
   PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
 
-  // Construct the system matrices defining the linear operator. PEC boundaries are handled
-  // simply by setting diagonal entries of the system matrix for the corresponding dofs.
-  // Because the Dirichlet BC is always homogeneous, no special elimination is required on
-  // the RHS. Assemble the linear system for the initial frequency (so we can call
-  // KspSolver::SetOperators). Compute everything at the first frequency step.
-  auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
-  auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  // The preconditioner's finest level is assembled with the system coefficients. When the
+  // frequency has no extra system operator, use that level as the system operator too: one
+  // fused application per iteration instead of the sum of the fixed K, C and M
+  // applications. Nothing else in the uniform sweep uses K, C or M, so assemble them lazily
+  // only if GetExtraSystemOperator returns a term which prevents the reuse.
+  const bool can_use_pc_as_system = space_op.CanUsePreconditionerAsSystemOperator();
+  std::unique_ptr<ComplexOperator> K, C, M;
+  bool fixed_system_operators_assembled = false;
+  auto AssembleFixedSystemOperators = [&]()
+  {
+    if (!fixed_system_operators_assembled)
+    {
+      // PEC boundaries are handled by setting the system-matrix diagonal. The Dirichlet
+      // condition is homogeneous, so no special RHS elimination is required.
+      K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+      C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+      M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+      fixed_system_operators_assembled = true;
+    }
+  };
   const auto &Curl = space_op.GetCurlMatrix();
 
   // Set up the linear solver.
@@ -172,11 +184,19 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       // Assemble frequency dependent matrices and initialize operators in linear
       // solver.
       auto A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
-      auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
-                                        K.get(), C.get(), M.get(), A2.get());
+      const bool pc_as_system = can_use_pc_as_system && !A2;
+      std::unique_ptr<ComplexOperator> A;
+      if (!pc_as_system)
+      {
+        AssembleFixedSystemOperators();
+        A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, K.get(),
+                                     C.get(), M.get(), A2.get());
+      }
       auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
           1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
-      ksp.SetOperators(*A, *P);
+      // When shared, both roles are non-owning views of P, which owns its finest level for
+      // the whole solve.
+      ksp.SetOperators(pc_as_system ? *P : *A, *P);
 
       Mpi::Print(
           "\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s{})\n",
