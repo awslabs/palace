@@ -25,10 +25,13 @@ import unittest
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE / "qualify"))
+import build_plan  # noqa: E402
 import case_inputs  # noqa: E402
 import estimate_stages  # noqa: E402
 import gates  # noqa: E402
+import job_split  # noqa: E402
 import qualify_library  # noqa: E402
+import summarize_cost  # noqa: E402
 from mixed_mesh import h1_dofs_from_counts  # noqa: E402
 from run_gmsh_only_matrix import sha256  # noqa: E402
 
@@ -131,10 +134,11 @@ class MonitorTransportFailureTest(unittest.TestCase):
             raise subprocess.CalledProcessError(255, ["rsync", remote_directory, str(local_directory)])
         tmp = Path(tempfile.mkdtemp(prefix="qualify-fetch-stop-"))
         record = {"Case": "c", "Root": str(tmp), "Remote": {"Case": "/r/case"}, "Submission": {"Job": "1.h"}}
+        context = {"jobs": [{"Name": "single", "Kind": "single", "RemoteDirectory": "/r/case/main", "Submission": {"Job": "1.h"}}]}
         try:
             remote_side.fetch = failing_fetch
             with self.assertRaises(qualify_library.CaseStop) as stop:
-                qualify_library.finish_case(record, None, remote={"Host": "h"}, profile={"PBSBin": "/pbs"})
+                qualify_library.finish_case(record, context, remote={"Host": "h"}, profile={"PBSBin": "/pbs"})
         finally:
             remote_side.fetch = saved
             shutil.rmtree(tmp, True)
@@ -142,6 +146,233 @@ class MonitorTransportFailureTest(unittest.TestCase):
         self.assertIn("--resume", stop.exception.record["Message"])
         self.assertEqual(stop.exception.record["Command"][0], "rsync")
         self.assertNotIn("Fetch", record)
+
+
+class JobSplitTest(unittest.TestCase):
+    """The per-coupon source split policy (decision 61b) on the recorded device coupon
+    spatial-3-edge-5d3b5e644745 (225 sources, H1 42.7M at p4: 29,272 s single-job estimate
+    against the 21,600 s walltime - the coupon the first device library run failed closed)."""
+
+    @classmethod
+    def setUpClass(cls):
+        build = json.loads((HERE / "qualify" / "device-library-20260921" / "library-build.json").read_text())
+        cls.counts = next(case for case in build["Cases"] if case["Case"] == "spatial-3-edge-5d3b5e644745")["H1"]["EntityCounts"]
+        cls.model = estimate_stages.load_cost_model()
+        cls.profile = json.loads((HERE / "qualify" / "cluster-profile.json").read_text())
+        cls.indices = list(range(1, 226))
+        cls.layout = qualify_library.stage_layout("c", [4], [3, 5], 225, 8)
+        stages = [(item["EstimateKey"], item["Order"], item["Sources"]) for item in cls.layout if item["Kind"] == "response"]
+        local = next(item for item in cls.layout if item["Kind"] == "local-edge")
+        cls.estimate = estimate_stages.estimate(cls.counts, stages, model=cls.model, profile=cls.profile,
+                                                local_edge=(local["EstimateKey"], local["Order"], local["Sources"]))
+
+    def split(self, mode, max_jobs, fixed=None):
+        policy = job_split.normalize_policy(mode, max_jobs=max_jobs, walltime_seconds=self.profile["WalltimeSeconds"],
+                                            fixed_jobs=fixed, user_job_cap=self.profile["UserJobCap"])
+        return job_split.plan_split(indices=self.indices, layout=self.layout, estimate=self.estimate, policy=policy,
+                                    model=self.model, profile=self.profile)
+
+    def test_single_job_estimate_is_the_recorded_fail_closed_one(self):
+        self.assertFalse(self.estimate["FitsOneJob"])
+        self.assertAlmostEqual(self.estimate["JobSecondsEstimateWithPreflightAndMargin"]["2.0"], 29271.5, delta=1.0)
+        single = self.split("fixed", 4, fixed=1)
+        self.assertFalse(single["Fits"])
+        self.assertIsNone(single["N"])
+        self.assertIn("even the maximal split N = 1", single["Decision"])
+        self.assertAlmostEqual(single["Candidates"][0]["LongestJobSeconds"],
+                               self.estimate["JobSecondsEstimateWithPreflightAndMargin"]["2.0"], places=6)
+
+    def test_frugal_is_the_fewest_jobs_that_fit(self):
+        record = self.split("frugal", 4)
+        self.assertEqual(record["N"], 2)
+        self.assertTrue(record["Fits"])
+        self.assertEqual(sum(len(block) for block in record["Blocks"]), 225)
+        self.assertEqual([index for block in record["Blocks"] for index in block], self.indices)   # contiguous, in order
+        self.assertLess(len(record["Blocks"][0]), len(record["Blocks"][1]))   # job 1 carries the controls + local-edge
+        self.assertEqual([job["Kind"] for job in record["Jobs"]], ["worker", "worker", "reducer"])
+        worst = record["WorstPCGFactor"]
+        for job in record["Jobs"]:
+            self.assertLess(job["SecondsEstimateWithPreflightAndMargin"][worst], self.profile["WalltimeSeconds"])
+        # Balanced: the two worker jobs end within one source's cost of each other.
+        per_source = self.estimate["Stages"]["p4-225"]["ByPCGFactor"][worst]["PerSourceSecondsEstimate"] * self.model["PreflightAndMarginFactor"]
+        w1, w2 = (job["SecondsEstimateWithPreflightAndMargin"][worst] for job in record["Jobs"][:2])
+        self.assertLess(abs(w1 - w2), per_source)
+        self.assertEqual(record["ControlsJob"], "worker-1")
+        self.assertEqual([item["N"] for item in record["Candidates"]], [1, 2, 3, 4])
+        self.assertEqual([item["Fits"] for item in record["Candidates"]], [False, True, True, True])
+
+    def test_speed_minimizes_the_estimated_critical_path_within_max_jobs(self):
+        record = self.split("speed", 4)
+        self.assertEqual(record["N"], 4)
+        self.assertEqual(record["Blocks"], [self.indices[:17], self.indices[17:87], self.indices[87:156], self.indices[156:]])
+        worst = record["WorstPCGFactor"]
+        paths = [item["CriticalPathSeconds"] for item in record["Candidates"]]
+        self.assertEqual(paths, sorted(paths, reverse=True))   # more jobs, shorter path (the reducer job is the floor)
+        self.assertEqual(record["CriticalPathEstimateSeconds"][worst], min(paths))
+        reducer = record["Jobs"][-1]
+        self.assertEqual(reducer["Kind"], "reducer")
+        self.assertEqual(reducer["Sources"], self.indices)
+        self.assertAlmostEqual(record["CriticalPathEstimateSeconds"][worst],
+                               max(job["SecondsEstimateWithPreflightAndMargin"][worst] for job in record["Jobs"][:-1])
+                               + reducer["SecondsEstimateWithPreflightAndMargin"][worst])
+        # Node time grows with N (one preflight and non-source setup per job): recorded per candidate.
+        nodes = [item["NodeSeconds"] for item in record["Candidates"]]
+        self.assertEqual(nodes, sorted(nodes))
+        # speed never uses more jobs than shorten the path: with a walltime the reducer job
+        # dominates, two candidates tie and the smaller N is chosen.
+        capped = self.split("speed", 2)
+        self.assertEqual(capped["N"], 2)
+
+    def test_fixed_and_the_fail_closed_bounds(self):
+        record = self.split("fixed", 4, fixed=3)
+        self.assertEqual((record["N"], len(record["Jobs"])), (3, 4))
+        with self.assertRaisesRegex(ValueError, "exceeds the largest split"):
+            self.split("fixed", 4, fixed=5)
+        with self.assertRaisesRegex(ValueError, "FixedJobs"):
+            job_split.normalize_policy("fixed", max_jobs=4, walltime_seconds=1.0)
+        with self.assertRaisesRegex(ValueError, "not one of"):
+            job_split.normalize_policy("fast", max_jobs=4, walltime_seconds=1.0)
+        # Even the maximal split does not fit a short walltime: fail closed with the reason.
+        policy = job_split.normalize_policy("speed", max_jobs=4, walltime_seconds=3600.0, user_job_cap=40)
+        short = job_split.plan_split(indices=self.indices, layout=self.layout, estimate=self.estimate, policy=policy,
+                                     model=self.model, profile=self.profile)
+        self.assertFalse(short["Fits"])
+        self.assertIn("even the maximal split N = 4", short["Decision"])
+        self.assertIn("fail closed", short["Decision"])
+
+    def test_controls_take_a_separate_first_job_when_they_leave_no_room(self):
+        # 8 sources split in 4: the controls + local-edge alone outweigh a 2-source block, so
+        # job 1 carries them alone and the blocks go to jobs 2..4 (recorded).
+        indices = list(range(1, 9))
+        layout = qualify_library.stage_layout("c", [4], [3, 5], 8, 8)
+        stages = [(item["EstimateKey"], item["Order"], item["Sources"]) for item in layout if item["Kind"] == "response"]
+        local = next(item for item in layout if item["Kind"] == "local-edge")
+        estimate = estimate_stages.estimate(self.counts, stages, model=self.model, profile=self.profile,
+                                            local_edge=(local["EstimateKey"], local["Order"], local["Sources"]))
+        policy = job_split.normalize_policy("fixed", max_jobs=4, walltime_seconds=self.profile["WalltimeSeconds"], fixed_jobs=4)
+        record = job_split.plan_split(indices=indices, layout=layout, estimate=estimate, policy=policy, model=self.model,
+                                      profile=self.profile)
+        self.assertEqual(record["ControlsJob"], "separate")
+        self.assertEqual(record["Blocks"][0], [])
+        self.assertEqual(sum(len(block) for block in record["Blocks"]), 8)
+        self.assertEqual([len(block) for block in record["Blocks"][1:]], [3, 3, 2])
+
+    def test_block_plan_pins_and_caps(self):
+        record = self.split("speed", 4)
+        digests = {"c-p4": {f"worker-block{k}.json": f"{k}" * 64 for k in range(1, 5)} | {"reducer.json": "r" * 64},
+                   "c-p5-control": {"worker.json": "a" * 64, "reducer.json": "b" * 64},
+                   "c-p3-control": {"worker.json": "c" * 64, "reducer.json": "d" * 64},
+                   "c-p4-local-edge": {"config.json": "e" * 64}}
+        traces = {f"/r/case/inputs/traces/basis-{i:04d}.csv": "t" * 64 for i in self.indices}
+        common = dict(case_id="c", remote_case_root="/r/case", mesh={"Remote": "/r/case/mesh/m.msh", "SHA256": "m" * 64, "Local": "/l/m.msh"},
+                      stage_layout=self.layout, estimate=self.estimate, config_digests=digests, trace_pins=traces,
+                      profile=self.profile, binary="/r/b.bin", binary_sha256="0" * 64, mpiexec="/r/mpiexec_bound.sh",
+                      purpose="test", factors=["1.0", "1.5", "2.0"])
+        plans = {job["Name"]: build_plan.build_job_plan(job_name=job["Name"], split_job=job, **common) for job in record["Jobs"]}
+        self.assertEqual(plans["worker-1"]["StageNames"], ["c-p4-worker-block1", "c-p5-control-worker", "c-p5-control-reducer",
+                                                           "c-p3-control-worker", "c-p3-control-reducer", "c-p4-local-edge"])
+        self.assertEqual(plans["worker-2"]["StageNames"], ["c-p4-worker-block2"])
+        self.assertEqual(plans["reducer"]["StageNames"], ["c-p4-reducer"])
+        self.assertEqual(plans["reducer"]["Stages"][0]["Requires"], [])
+        archive = "/r/case/main/c-p4/archive"
+        for name in ("worker-1", "worker-2", "worker-3", "worker-4"):
+            block = plans[name]["Stages"][0]
+            self.assertEqual(block["Environment"]["PALACE_RESPONSE_ARCHIVE_DIR"], archive)
+            self.assertEqual(block["Environment"]["PALACE_RESPONSE_ARCHIVE_ONLY"], "1")
+            self.assertEqual(block["Config"], f"/r/case/main/c-p4/worker-block{name[-1]}.json")
+            self.assertGreaterEqual(block["CapSeconds"], block["MinimumSeconds"])
+            self.assertEqual(len(plans[name]["PinnedSHA256"]), 1 + 225 + (6 if name == "worker-1" else 1))
+        self.assertEqual(plans["reducer"]["Stages"][0]["Environment"]["PALACE_RESPONSE_ARCHIVE_DIR"], archive)
+        self.assertEqual(len(plans["reducer"]["PinnedSHA256"]), 1 + 225 + 1)
+        # A block's cap follows its own source count: block 2 (70 sources) above block 1 (17).
+        self.assertGreater(plans["worker-2"]["Stages"][0]["CapSeconds"], plans["worker-1"]["Stages"][0]["CapSeconds"])
+        script = build_plan.render_job_script(profile=self.profile, remote_root="/r", remote_case_root="/r/case", runner="/r/run/run_stages.py",
+                                              job_name="j", walltime_seconds=21600, job_directory="/r/case/main/jobs/worker-2")
+        self.assertIn("D=/r/case/main/jobs/worker-2\n", script)
+        self.assertIn("#PBS -o /r/case/main/jobs/worker-2/pbs.log", script)
+        single = build_plan.render_job_script(profile=self.profile, remote_root="/r", remote_case_root="/r/case", runner="/r/run/run_stages.py",
+                                              job_name="j", walltime_seconds=21600)
+        self.assertIn("D=/r/case/main\n", single)
+
+    def test_manifest_job_policy_default_and_command_line_override(self):
+        """The production recipe records the default policy (frugal) under
+        PhysicsRun.JobPolicy; case_inputs and general_mesh_manifest validate it; the
+        command line overrides it and the origin is recorded."""
+        from general_mesh_manifest import validate_physics_run
+        manifest = json.loads(MANIFEST.read_text())
+        manifest["Path"] = str(MANIFEST)
+        physics_run = case_inputs.physics_run_parameters(manifest)
+        self.assertEqual(physics_run["JobPolicy"]["Mode"], "frugal")
+        self.assertIsNone(physics_run["JobPolicy"]["FixedJobs"])
+        self.assertIn("61b", physics_run["JobPolicy"]["Rule"])
+        validate_physics_run(manifest["ProductionRecipe"])
+        for broken in ({"Mode": "fast", "Rule": "x"}, {"Mode": "fixed", "Rule": "x"}, {"Mode": "frugal", "FixedJobs": 2, "Rule": "x"},
+                       {"Mode": "frugal"}, "frugal"):
+            recipe = json.loads(json.dumps(manifest["ProductionRecipe"]))
+            recipe["PhysicsRun"]["JobPolicy"] = broken
+            with self.assertRaisesRegex(ValueError, "JobPolicy"):
+                validate_physics_run(recipe)
+            with self.assertRaisesRegex(case_inputs.CaseInputError, "JobPolicy"):
+                case_inputs.physics_run_parameters({**manifest, "ProductionRecipe": recipe})
+        recipe = json.loads(json.dumps(manifest["ProductionRecipe"]))
+        recipe["PhysicsRun"]["JobPolicy"] = {"Mode": "fixed", "FixedJobs": 3, "Rule": "x"}
+        self.assertEqual(case_inputs.physics_run_parameters({**manifest, "ProductionRecipe": recipe})["JobPolicy"],
+                         {"Mode": "fixed", "FixedJobs": 3, "Rule": "x"})
+        args = argparse.Namespace(job_policy=None, fixed_jobs=None, max_jobs=4)
+        policy = qualify_library.job_policy_of(args, physics_run, self.profile)
+        self.assertEqual((policy["Mode"], policy["MaxJobs"], policy["WalltimeSeconds"], policy["UserJobCap"]),
+                         ("frugal", 4, self.profile["WalltimeSeconds"], self.profile["UserJobCap"]))
+        self.assertIn("manifest", policy["Origin"])
+        policy = qualify_library.job_policy_of(argparse.Namespace(job_policy="speed", fixed_jobs=None, max_jobs=4), physics_run, self.profile)
+        self.assertEqual((policy["Mode"], policy["Origin"]), ("speed", "--job-policy"))
+        policy = qualify_library.job_policy_of(argparse.Namespace(job_policy=None, fixed_jobs=None, max_jobs=2), {"Order": 4}, self.profile)
+        self.assertEqual((policy["Mode"], policy["Origin"]), ("frugal", "built-in default frugal"))
+        with self.assertRaises(qualify_library.CaseStop):
+            qualify_library.job_policy_of(argparse.Namespace(job_policy="fixed", fixed_jobs=None, max_jobs=2), physics_run, self.profile)
+
+    def test_merged_split_statuses_read_as_one_stage(self):
+        def timing(indices):
+            return [{"Index": i, "Iterations": 20, "SolveSeconds": 10.0, "TotalSeconds": 12.0} for i in indices]
+        statuses = {
+            "worker-1": {"PBSJobID": "1.h", "Host": "n1", "StartUTC": "2026-09-21T10:00:00Z", "EndUTC": "2026-09-21T10:30:00Z",
+                         "TotalSeconds": 1800.0, "State": "complete",
+                         "Stages": [{"Name": "c-p4-worker-block1", "State": "complete", "WallSeconds": 100.0, "NodePeakUsedBytesSampled": 5,
+                                     "MaxSingleProcessRSSBytes": 7,
+                                     "Parsed": {"Order": 4, "H1": 100, "SourceTiming": timing([1, 2]), "PCG": [20, 20], "Nonconvergence": [],
+                                                "PalaceTotalSeconds": 60.0, "PalacePeakMemory": {"Total": "10.0G"}}},
+                                    {"Name": "c-p3-control-worker", "State": "complete", "WallSeconds": 5.0,
+                                     "Parsed": {"SourceTiming": timing([1]), "PCG": [20], "Nonconvergence": [], "PalaceTotalSeconds": 4.0}},
+                                    {"Name": "c-p3-control-reducer", "State": "complete", "WallSeconds": 3.0,
+                                     "Parsed": {"SourceTiming": [], "PCG": [], "Nonconvergence": [], "PalaceTotalSeconds": 2.0}},
+                                    {"Name": "c-p4-local-edge", "State": "complete", "WallSeconds": 9.0, "Parsed": {"PCG": [1], "Nonconvergence": []}}]},
+            "worker-2": {"PBSJobID": "2.h", "Host": "n2", "StartUTC": "2026-09-21T10:00:00Z", "EndUTC": "2026-09-21T10:40:00Z",
+                         "TotalSeconds": 2400.0, "State": "complete",
+                         "Stages": [{"Name": "c-p4-worker-block2", "State": "complete", "WallSeconds": 200.0, "NodePeakUsedBytesSampled": 9,
+                                     "MaxSingleProcessRSSBytes": 3,
+                                     "Parsed": {"Order": 4, "H1": 100, "SourceTiming": timing([3, 4, 5]), "PCG": [20, 20, 20], "Nonconvergence": [],
+                                                "PalaceTotalSeconds": 96.0, "PalacePeakMemory": {"Total": "12.0G"}}}]},
+            "reducer": {"PBSJobID": "3.h", "Host": "n3", "StartUTC": "2026-09-21T11:00:00Z", "EndUTC": "2026-09-21T11:20:00Z",
+                        "TotalSeconds": 1200.0, "State": "complete",
+                        "Stages": [{"Name": "c-p4-reducer", "State": "complete", "WallSeconds": 500.0,
+                                    "Parsed": {"SourceTiming": [], "PCG": [], "Nonconvergence": [], "PalaceTotalSeconds": 450.0}}]}}
+        jobs = [{"Name": "worker-1", "Kind": "worker"}, {"Name": "worker-2", "Kind": "worker"}, {"Name": "reducer", "Kind": "reducer"}]
+        merged = summarize_cost.merge_split_statuses(statuses, jobs)
+        self.assertEqual(merged["TotalSeconds"], 5400.0)
+        self.assertEqual((merged["StartUTC"], merged["EndUTC"]), ("2026-09-21T10:00:00Z", "2026-09-21T11:20:00Z"))
+        names = [stage["Name"] for stage in merged["Stages"]]
+        self.assertEqual(sorted(names), sorted(["c-p4-worker", "c-p4-reducer", "c-p3-control-worker", "c-p3-control-reducer", "c-p4-local-edge"]))
+        worker = next(stage for stage in merged["Stages"] if stage["Name"] == "c-p4-worker")
+        self.assertEqual(worker["WallSeconds"], 300.0)
+        self.assertEqual([t["Index"] for t in worker["Parsed"]["SourceTiming"]], [1, 2, 3, 4, 5])
+        self.assertEqual(worker["Parsed"]["PalaceTotalSeconds"], 156.0)
+        self.assertEqual(worker["Parsed"]["PalacePeakMemory"]["Total"], "12.0G")
+        self.assertEqual((worker["NodePeakUsedBytesSampled"], worker["MaxSingleProcessRSSBytes"], worker["Blocks"]), (9, 7, 2))
+        summary = summarize_cost.summarize(merged, full_sources=5, nodes=1)
+        self.assertAlmostEqual(summary["JobNodeHours"], 1.5)
+        self.assertEqual(summary["Stages"]["c-p4"]["Sources"], [1, 2, 3, 4, 5])
+        self.assertEqual(summary["Stages"]["c-p4"]["StageWallSeconds"], 800.0)
+        self.assertAlmostEqual(summary["Stages"]["c-p4"]["WorkerNonSourceSeconds"], 156.0 - 60.0)
+        self.assertEqual({name: job["NodeHours"] for name, job in summary["Jobs"].items()}, {"worker-1": 0.5, "worker-2": 2400 / 3600, "reducer": 1200 / 3600})
 
 
 @unittest.skipUnless(available(), "local identity meshes and the assessment campaigns are needed")
@@ -266,7 +497,8 @@ class QualifyDryRunTest(unittest.TestCase):
         manifest = json.loads(MANIFEST.read_text())
         manifest["Path"] = str(MANIFEST)
         args = argparse.Namespace(reference=reference, control_source=controls or spec["Controls"], control_count=8,
-                                  stage_prefix=spec["Prefix"], orders=[], controls=[3, 5], frozen_binary_sha256=BINARY_SHA256)
+                                  stage_prefix=spec["Prefix"], orders=[], controls=[3, 5], frozen_binary_sha256=BINARY_SHA256,
+                                  max_jobs=2, job_policy=None, fixed_jobs=None)
         profile = json.loads((HERE / "qualify" / "cluster-profile.json").read_text())
         model = estimate_stages.load_cost_model()
         table, digest = gates.load_gates()
@@ -337,7 +569,8 @@ class QualifyDryRunTest(unittest.TestCase):
                            "StoppedBy": None, "HeadroomFlags": [], "Root": str(mesh.parent)}]
         campaign = ASSESSMENT / spec["Campaign"]
         args = argparse.Namespace(reference=campaign / "reference", control_source=spec["Controls"], control_count=8,
-                                  stage_prefix=spec["Prefix"], orders=[], controls=[3, 5], frozen_binary_sha256=BINARY_SHA256)
+                                  stage_prefix=spec["Prefix"], orders=[], controls=[3, 5], frozen_binary_sha256=BINARY_SHA256,
+                                  max_jobs=2, job_policy=None, fixed_jobs=None)
         profile = json.loads((HERE / "qualify" / "cluster-profile.json").read_text())
         model = estimate_stages.load_cost_model()
         table, digest = gates.load_gates()
@@ -454,7 +687,7 @@ class QualifyDryRunTest(unittest.TestCase):
                                       control_count=8, control_source=None, max_jobs=2, frozen_binary_sha256=BINARY_SHA256,
                                       stage_prefix=None, case=None, root=self.tmp / "concurrent", dry_run=False, resume=False,
                                       monitor_interval=0, monitor_polls=10, cluster_profile=HERE / "qualify" / "cluster-profile.json",
-                                      cost_model=estimate_stages.COST_MODEL, gates=gates.GATES_FILE)
+                                      cost_model=estimate_stages.COST_MODEL, gates=gates.GATES_FILE, job_policy=None, fixed_jobs=None)
             # Each coupon binds its own reference campaign: a directory holding both inputs trees.
             reference = self.tmp / "both-references"
             if not reference.exists():
@@ -503,6 +736,13 @@ class QualifyDryRunTest(unittest.TestCase):
             self.assertEqual(case["Monitor"]["LastJobState"], "F")
             self.assertTrue(all(entry["OK"] for entry in case["ResultDigests"].values()))
             self.assertIn("ArchiveDeletion", case)
+            # A coupon that fits one job is one job (N = 1, the recorded campaigns' layout).
+            self.assertEqual((case["Split"]["N"], case["JobPolicy"]["Mode"], case["Split"]["ControlsJob"]), (1, "frugal", "worker-1"))
+            self.assertEqual([job["Kind"] for job in case["Jobs"]], ["single"])
+            self.assertEqual(case["Cost"]["Split"]["N"], 1)
+            self.assertEqual(case["Cost"]["Jobs"]["single"]["ActualSeconds"], case["Cost"]["JobTotalSeconds"])
+            self.assertIsNotNone(case["Cost"]["CriticalPathSeconds"])
+        self.assertEqual({case: split["N"] for case, split in totals["Splits"].items()}, {case: 1 for case in CASES})
         self.assertTrue((self.tmp / "concurrent" / "process-library.json").is_file())
         resumed_kinds = [kind for kind, _ in resumed_events]
         self.assertNotIn("upload", resumed_kinds)
@@ -515,6 +755,159 @@ class QualifyDryRunTest(unittest.TestCase):
             self.assertTrue(case["Upload"]["Resumed"])
             self.assertEqual(case["Submission"], json.loads((self.tmp / "concurrent" / case["Case"] / "submission.json").read_text()))
         self.assertIsNotNone(resumed["Library"]["CriticalPathSeconds"])
+
+    def test_split_coupon_runs_worker_jobs_then_the_reducer_job(self):
+        """--job-policy fixed --fixed-jobs 2 on the four-edge coupon against a fake remote: both
+        worker jobs are submitted at once, each is completed from its own status.json when it
+        leaves the queue, the archive union is counted before the one reducer job is submitted,
+        the coupon is fetched / verified / analyzed after the reducer job, the merged cost reads
+        the split as one main stage (per-source timings in block order) and records every job."""
+        case_id = "four-edge-9d2cb9bbb3fe"
+        spec = CASES[case_id]
+        recorded = json.loads((ASSESSMENT / spec["Campaign"] / "results" / "main" / "status.json").read_text())
+        events = []
+        holder = {}
+
+        def job_status(name):
+            blocks = holder["context"]["split"]["Blocks"]
+            stages = {stage["Name"]: stage for stage in recorded["Stages"]}
+            worker = stages[f"{spec['Prefix']}-p4-worker"]
+
+            def block_stage(k):
+                block = set(blocks[k - 1])
+                timings = [t for t in worker["Parsed"]["SourceTiming"] if t["Index"] in block]
+                positions = [i for i, t in enumerate(worker["Parsed"]["SourceTiming"]) if t["Index"] in block]
+                parsed = dict(worker["Parsed"], SourceTiming=timings, PCG=[worker["Parsed"]["PCG"][i] for i in positions],
+                              PalaceTotalSeconds=worker["Parsed"]["PalaceTotalSeconds"] * len(block) / 80)
+                return dict(worker, Name=f"{spec['Prefix']}-p4-worker-block{k}", Parsed=parsed,
+                            WallSeconds=worker["WallSeconds"] * len(block) / 80)
+            if name == "worker-1":
+                selected = [block_stage(1)] + [stages[n] for n in stages if "control" in n or n.endswith("local-edge")]
+            elif name == "worker-2":
+                selected = [block_stage(2)]
+            else:
+                selected = [stages[f"{spec['Prefix']}-p4-reducer"]]
+            return dict(recorded, Stages=selected, PBSJobID=f"{name}.fake",
+                        TotalSeconds=sum(stage["WallSeconds"] for stage in selected) + 60.0)
+
+        def fake_upload(record, context, *, remote, profile):
+            events.append(("upload", record["Case"]))
+            return {"Commands": [], "UTC": "fake"}
+
+        def fake_submit(host, pbs_bin, script, cwd, *, job_cap, user=None):
+            events.append(("submit", Path(cwd).name))
+            return {"Job": f"{Path(cwd).name}.fake", "UTC": qualify_library.remote_side.utc(), "UserJobsBefore": 0, "JobCap": job_cap,
+                    "Command": "qsub"}
+
+        def fake_poll(host, pbs_bin, job_id, status_path):
+            events.append(("poll", Path(status_path).parts[-2]))
+            return {"UTC": "fake", "JobState": "F", "QStat": "", "Status": None, "Reachable": True}
+
+        def fake_read_json(host, path):
+            events.append(("status", Path(path).parts[-2]))
+            return job_status(Path(path).parts[-2])
+
+        def fake_count(host, directory):
+            events.append(("archive-count", Path(directory).parts[-2]))
+            return 80 * 192
+
+        def fake_fetch(host, remote_directory, local_directory):
+            events.append(("fetch", Path(remote_directory).parts[-2]))
+            shutil.copytree(ASSESSMENT / spec["Campaign"] / "results" / "main", local_directory, dirs_exist_ok=True)
+            for name in ("worker-1", "worker-2", "reducer"):
+                (Path(local_directory) / "jobs" / name).mkdir(parents=True, exist_ok=True)
+                (Path(local_directory) / "jobs" / name / "status.json").write_text(json.dumps(job_status(name)))
+            return ["rsync", "fake"]
+
+        def fake_remote_sha256(host, paths):
+            return {path: sha256(self.tmp / "split" / case_id / "results" / "main" / path.split("/main/", 1)[1]) for path in paths}
+
+        def fake_delete(host, archives):
+            events.append(("delete", tuple(Path(a).parts[-2] for a in archives)))
+            return {"Archives": list(archives), "SizesBeforeDeletion": "0", "DeletedUTC": "fake", "Remaining": ""}
+
+        fakes = {"submit": fake_submit, "poll": fake_poll, "fetch": fake_fetch, "remote_sha256": fake_remote_sha256,
+                 "delete_archives": fake_delete, "qstat_history": lambda host, pbs_bin, job: "job_state = F",
+                 "read_json": fake_read_json, "count_archive_potentials": fake_count}
+        saved = {name: getattr(qualify_library.remote_side, name) for name in fakes}
+        saved_upload, saved_prepare = qualify_library.upload_case, qualify_library.prepare_case
+
+        def prepare_with_recorded_controls(case_record, **kwargs):
+            kwargs["args"].control_source = spec["Controls"]
+            kwargs["args"].stage_prefix = spec["Prefix"]
+            record, context = saved_prepare(case_record, **kwargs)
+            holder["record"], holder["context"] = record, context
+            return record, context
+        try:
+            for name, fake in fakes.items():
+                setattr(qualify_library.remote_side, name, fake)
+            qualify_library.upload_case = fake_upload
+            qualify_library.prepare_case = prepare_with_recorded_controls
+            args = argparse.Namespace(build_record=self.build_record, reference=ASSESSMENT / spec["Campaign"] / "reference", remote="h:/r",
+                                      orders=[], controls=[3, 5], control_count=8, control_source=None, max_jobs=2,
+                                      frozen_binary_sha256=BINARY_SHA256, stage_prefix=None, case=[case_id], root=self.tmp / "split",
+                                      dry_run=False, resume=False, monitor_interval=0, monitor_polls=10,
+                                      cluster_profile=HERE / "qualify" / "cluster-profile.json", cost_model=estimate_stages.COST_MODEL,
+                                      gates=gates.GATES_FILE, job_policy="fixed", fixed_jobs=2)
+            record = qualify_library.run_qualify(args, log=lambda message: None)
+        finally:
+            for name, fake in saved.items():
+                setattr(qualify_library.remote_side, name, fake)
+            qualify_library.upload_case = saved_upload
+            qualify_library.prepare_case = saved_prepare
+        case = record["Cases"][0]
+        self.assertEqual(case["Status"], "qualified", case.get("StoppedBy"))
+        self.assertEqual((case["Split"]["N"], case["JobPolicy"]["Mode"], case["JobPolicy"]["FixedJobs"]), (2, "fixed", 2))
+        blocks = holder["context"]["split"]["Blocks"]
+        self.assertEqual(case["Split"]["Blocks"], [len(blocks[0]), len(blocks[1])])
+        self.assertEqual(blocks[0] + blocks[1], list(range(1, 81)))
+        kinds = [kind for kind, _ in events]
+        self.assertEqual(events[:3], [("upload", case_id), ("submit", "worker-1"), ("submit", "worker-2")])
+        self.assertLess(kinds.index("poll"), kinds.index("archive-count"))
+        self.assertEqual([name for kind, name in events if kind == "status"], ["worker-1", "worker-2"])
+        self.assertEqual(events.index(("archive-count", f"{spec['Prefix']}-p4")) + 1, events.index(("submit", "reducer")))
+        self.assertLess(events.index(("submit", "reducer")), events.index(("fetch", case_id)))
+        self.assertEqual([name for kind, name in events if kind == "submit"], ["worker-1", "worker-2", "reducer"])
+        self.assertEqual(kinds.count("fetch"), 1)
+        self.assertEqual(kinds.count("delete"), 1)
+        self.assertEqual(case["ArchiveUnion"]["Stages"][f"{spec['Prefix']}-p4"]["OK"], True)
+        self.assertEqual(case["ArchiveUnion"]["Stages"][f"{spec['Prefix']}-p4"]["Expected"], 80 * 192)
+        self.assertEqual([job["Name"] for job in case["Jobs"]], ["worker-1", "worker-2", "reducer"])
+        self.assertEqual(case["Jobs"][2]["Requires"], ["worker-1", "worker-2"])
+        for job in case["Jobs"]:
+            self.assertEqual(job["Submission"]["Job"], f"{job['Name']}.fake")
+            self.assertTrue(Path(job["SubmissionRecord"]).is_file())
+            self.assertEqual(job["Monitor"]["LastJobState"], "F")
+        self.assertEqual(case["Jobs"][0]["Status"]["State"], "complete")
+        self.assertEqual(case["Jobs"][0]["StageNames"][1:], [f"{spec['Prefix']}-p5-control-worker", f"{spec['Prefix']}-p5-control-reducer",
+                                                              f"{spec['Prefix']}-p3-control-worker", f"{spec['Prefix']}-p3-control-reducer",
+                                                              f"{spec['Prefix']}-p4-local-edge"])
+        # Verdict and gate values from the same reducer matrices as the single-job record.
+        self.assertEqual(case["Qualification"]["Verdict"], gates.VERDICT_PASSED)
+        cost = case["Cost"]
+        self.assertEqual(cost["Split"], {**cost["Split"], "N": 2, "Policy": "fixed", "ControlsJob": "worker-1"})
+        self.assertEqual(set(cost["Jobs"]), {"worker-1", "worker-2", "reducer"})
+        for name, job in cost["Jobs"].items():
+            self.assertAlmostEqual(job["ActualSeconds"], job_status(name)["TotalSeconds"])
+            self.assertGreater(job["EstimateSecondsWithPreflightAndMargin"], 0.0)
+            self.assertEqual(job["PBSJobID"], f"{name}.fake")
+        self.assertAlmostEqual(cost["JobTotalSeconds"], sum(job["ActualSeconds"] for job in cost["Jobs"].values()))
+        self.assertAlmostEqual(cost["JobNodeHours"], cost["JobTotalSeconds"] / 3600.0)
+        self.assertIsNotNone(cost["CriticalPathSeconds"])
+        summary = json.loads((self.tmp / "split" / case_id / "cost-summary.json").read_text())
+        main = summary["Stages"][f"{spec['Prefix']}-p4"]
+        self.assertEqual(main["Sources"], list(range(1, 81)))
+        self.assertEqual(len(main["PCGIterations"]), 80)
+        recorded_main = {stage["Name"]: stage for stage in recorded["Stages"]}
+        self.assertAlmostEqual(main["WorkerWallSeconds"], recorded_main[f"{spec['Prefix']}-p4-worker"]["WallSeconds"])
+        self.assertAlmostEqual(main["ReducerWallSeconds"], recorded_main[f"{spec['Prefix']}-p4-reducer"]["WallSeconds"])
+        self.assertTrue((self.tmp / "split" / case_id / "results" / "main" / "jobs" / "reducer" / "status.json").is_file())
+        self.assertTrue((self.tmp / "split" / case_id / "archive-union.json").is_file())
+        totals = record["Library"]
+        self.assertEqual(totals["JobsSubmitted"], 3)
+        self.assertEqual(totals["Splits"][case_id]["N"], 2)
+        self.assertEqual(totals["JobPolicy"]["Mode"], "fixed")
+        self.assertAlmostEqual(totals["NodeHours"], cost["JobNodeHours"])
 
     def test_without_reference_matrices_the_verdict_is_pending(self):
         case_id = "four-edge-9d2cb9bbb3fe"

@@ -96,8 +96,81 @@ def build_plan(*, case_id, remote_case_root, mesh, stage_layout, estimate, confi
                                 "FitsOneJob": estimate["FitsOneJob"], "Decision": estimate["Decision"]}}
 
 
-def render_job_script(*, profile, remote_root, remote_case_root, runner, job_name, walltime_seconds):
-    """The PBS job script of one coupon (one exclusive node; the runner reads the plan)."""
+def block_stage(remote_case_root, prefix, block, cap, minimum):
+    """The worker stage of source block `block` of a split main stage (decision 61b): its
+    own config and Problem.Output, the stage's ONE archive directory (the union)."""
+    environment = {"PALACE_RESPONSE_ARCHIVE_DIR": f"{remote_case_root}/main/{prefix}/archive"}
+    environment.update(WORKER_ENVIRONMENT)
+    return {"Name": f"{prefix}-worker-block{block}", "Config": f"{remote_case_root}/main/{prefix}/worker-block{block}.json",
+            "Environment": environment, "CapSeconds": cap, "MinimumSeconds": minimum, "Requires": []}
+
+
+def block_estimate(estimate_stage, block_size, factors):
+    """The estimate view of one source block of a main stage (stage_caps' shape)."""
+    return {"ByPCGFactor": {factor: {"WorkerSecondsEstimate": (estimate_stage["WorkerNonSourceSecondsEstimate"]
+                                                               + block_size * estimate_stage["ByPCGFactor"][factor]["PerSourceSecondsEstimate"])}
+                            for factor in factors},
+            "ReducerSecondsEstimate": estimate_stage["ReducerSecondsEstimate"]}
+
+
+def build_job_plan(*, case_id, job_name, remote_case_root, mesh, stage_layout, split_job, estimate, config_digests,
+                   trace_pins, profile, binary, binary_sha256, mpiexec, purpose, factors):
+    """The plan of one job of a split coupon (decision 61b).  `split_job` = a job record
+    of job_split.plan_split (Kind worker: the main-stage worker of its block - job 1 also
+    the control stages and the local-edge stage; Kind reducer: the main-stage reducers,
+    Requires empty - the driver submits it after every worker job completed and the
+    archive union is counted).  Pins: the mesh, the configs of the stages this job runs
+    and every trace (the reducer config names them all)."""
+    kind, block = split_job["Kind"], split_job["Block"]
+    stage_names = []
+    deadline = profile["DeadlineSeconds"] - profile["DeadlineMarginSeconds"]
+    stages = []
+    pinned = {mesh["Remote"]: mesh["SHA256"]}
+    for item in stage_layout:
+        est = estimate["Stages"][item["EstimateKey"]]
+        if item["Role"] == "main":
+            if kind == "worker" and split_job["Sources"]:
+                cap, minimum = stage_caps(block_estimate(est, len(split_job["Sources"]), factors), "worker", factors, deadline)
+                stages.append(block_stage(remote_case_root, item["Prefix"], block, cap, minimum))
+                pinned[f"{remote_case_root}/main/{item['Prefix']}/worker-block{block}.json"] = config_digests[item["Prefix"]][f"worker-block{block}.json"]
+            elif kind == "reducer":
+                cap, minimum = stage_caps(est, "reducer", factors, deadline)
+                reducer = stage(remote_case_root, item["Prefix"], "reducer", cap, minimum)
+                reducer["Requires"] = []
+                stages.append(reducer)
+                pinned[f"{remote_case_root}/main/{item['Prefix']}/reducer.json"] = config_digests[item["Prefix"]]["reducer.json"]
+        elif kind == "worker" and block == 1:
+            for name, digest in config_digests[item["Prefix"]].items():
+                pinned[f"{remote_case_root}/main/{item['Prefix']}/{name}"] = digest
+            if item["Kind"] == "response":
+                for stage_kind in ("worker", "reducer"):
+                    cap, minimum = stage_caps(est, stage_kind, factors, deadline)
+                    stages.append(stage(remote_case_root, item["Prefix"], stage_kind, cap, minimum))
+            else:
+                cap, minimum = stage_caps(est, "local-edge", factors, deadline)
+                stages.append(ordinary_stage(remote_case_root, item["Prefix"], cap, minimum))
+    pinned.update(trace_pins)
+    stage_names = [item["Name"] for item in stages]
+    return {"Version": PLAN_VERSION, "Case": case_id, "Job": job_name, "JobKind": kind, "Block": block,
+            "BlockSources": split_job["Sources"] if kind == "worker" else None, "Purpose": purpose,
+            "Ranks": profile["Ranks"], "DeadlineSeconds": profile["DeadlineSeconds"],
+            "DeadlineMarginSeconds": profile["DeadlineMarginSeconds"],
+            "MinimumMemAvailableBytes": profile["MinimumMemAvailableBytes"],
+            "Binary": binary, "BinarySHA256": binary_sha256, "MPIExec": mpiexec,
+            "PinnedSHA256": pinned, "Stages": stages, "StageNames": stage_names,
+            "MeshSHA256": mesh["SHA256"], "MeshRemote": mesh["Remote"], "MeshLocal": mesh["Local"],
+            "CapRule": (f"CapSeconds = {CAP_FACTOR:g} x the stage estimate at {max(factors, key=float)}x the measured PCG "
+                        f"counts rounded up to {CAP_ROUNDING_SECONDS} s and bounded by the deadline; MinimumSeconds = "
+                        f"the estimate at {min(factors, key=float)}x rounded up; a block worker is estimated at its "
+                        f"block's source count"),
+            "EstimateSummary": {"JobSecondsEstimateWithPreflightAndMargin": split_job["SecondsEstimateWithPreflightAndMargin"],
+                                "Fits": split_job["Fits"]}}
+
+
+def render_job_script(*, profile, remote_root, remote_case_root, runner, job_name, walltime_seconds, job_directory=None):
+    """The PBS job script of one coupon job (one exclusive node; the runner reads the plan
+    of `job_directory`, default <case>/main - the single job of a coupon)."""
+    job_directory = job_directory or f"{remote_case_root}/main"
     hours, rest = divmod(int(walltime_seconds), 3600)
     minutes, seconds = divmod(rest, 60)
     modules = " ".join(profile["Modules"])
@@ -114,7 +187,7 @@ def render_job_script(*, profile, remote_root, remote_case_root, runner, job_nam
              f"#PBS -l {profile['ExtraResources']}",
              f"#PBS -l walltime={hours:02d}:{minutes:02d}:{seconds:02d}",
              "#PBS -j oe",
-             f"#PBS -o {remote_case_root}/main/pbs.log",
+             f"#PBS -o {job_directory}/pbs.log",
              "set -euo pipefail",
              "unset PYTHONOPTIMIZE",
              "source /etc/profile.d/modules.sh",
@@ -123,7 +196,7 @@ def render_job_script(*, profile, remote_root, remote_case_root, runner, job_nam
              "VECLIB_MAXIMUM_THREADS=1 PYTHONDONTWRITEBYTECODE=1",
              'for name in ${!PALACE_RESPONSE_@}; do unset "$name"; done',
              f"R={remote_root}",
-             f"D={remote_case_root}/main",
+             f"D={job_directory}",
              "trap 'code=$?; printf \"{\\\"ExitCode\\\":%d,\\\"JobID\\\":\\\"%s\\\",\\\"UTC\\\":\\\"%s\\\"}\\n\" \"$code\" "
              "\"${PBS_JOBID:-}\" \"$(date -u +%FT%TZ)\" > \"$D/pbs-status.json\"' EXIT",
              'mkdir "$D/tmp"; export TMPDIR="$D/tmp"',

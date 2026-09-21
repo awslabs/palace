@@ -12,6 +12,7 @@
                           [--case ID ...] [--jobs N] [--build-limit N] [--root DIR] [--output PATH] [--manifest PATH]
   coupon_library.py qualify --build-record library-build.json --reference <campaign dir or none>
                             --remote HOST:ROOT [--orders p5] --controls p3,p5 --max-jobs N
+                            [--job-policy speed|frugal|fixed [--fixed-jobs N]]
                             --frozen-binary-sha256 HEX [--case ID ...] [--root DIR] [--dry-run]
 
 `build --device` maps a device layout to coupon source directories first
@@ -36,7 +37,9 @@ before any mesh is made (exit 1) and leaves its record under the case's work dir
 graded_v2 reference or on its own (--reference none) (qualify/qualify_library.py: the
 run config derived from the case's own sources at the recipe's PhysicsRun Order / Tol
 on the hash-verified identity mesh, estimate gate, plan with pinned digests, submission
-under the user job cap, read-only monitoring, fetch / digest verification / matrix
+under the user job cap - a coupon's main-order sources split into N worker jobs plus one
+reducer job on the archive union under the recorded job policy (speed / frugal / fixed;
+decision 61b) -, read-only monitoring, fetch / digest verification / matrix
 validation / recorded archive deletion, the frozen machine-readable class gates) and
 writes library-qualification.json, qualification-gates.json and process-library.json;
 --dry-run writes the plans / configs / estimates / gates without contacting anything.

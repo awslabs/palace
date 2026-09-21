@@ -70,11 +70,83 @@ def stage_cost(stages, prefix, *, full_sources, nodes, block_size=DEFAULT_BLOCK_
             f"FullCouponEstimate{full_sources}Sources": estimate}
 
 
+def merge_split_statuses(statuses, jobs):
+    """One coupon-level status from the per-job statuses of a split coupon (decision
+    61b): `statuses` = job name -> run_stages.py status, `jobs` = the coupon's job
+    records (Name, Kind, StageNames).  Every main stage's block workers
+    (<prefix>-worker-block<k>) merge into one <prefix>-worker record - wall seconds and
+    Palace totals summed (the node time actually spent), the per-source timings and PCG
+    counts concatenated in block order, peaks as the largest block's - so stage_cost
+    reads the split exactly as a single job's stage; the reducer and the first job's
+    control / local-edge stages are copied; TotalSeconds = the sum over the jobs (node
+    seconds), and Jobs carries every job's own total."""
+    merged = {"Version": 2, "Split": True, "Jobs": {}, "Stages": [], "PBSJobID": None, "Host": None,
+              "StartUTC": None, "EndUTC": None, "TotalSeconds": 0.0}
+    blocks = {}
+    for job in jobs:
+        status = statuses[job["Name"]]
+        merged["Jobs"][job["Name"]] = {"Kind": job["Kind"], "PBSJobID": status.get("PBSJobID"), "Host": status.get("Host"),
+                                       "StartUTC": status.get("StartUTC"), "EndUTC": status.get("EndUTC"),
+                                       "TotalSeconds": status.get("TotalSeconds"), "State": status.get("State")}
+        merged["TotalSeconds"] += status.get("TotalSeconds") or 0.0
+        merged["StartUTC"] = min(filter(None, (merged["StartUTC"], status.get("StartUTC"))), default=None)
+        merged["EndUTC"] = max(filter(None, (merged["EndUTC"], status.get("EndUTC"))), default=None)
+        for stage in status["Stages"]:
+            name = stage["Name"]
+            if "-worker-block" in name:
+                prefix, block = name.rsplit("-worker-block", 1)
+                blocks.setdefault(prefix, []).append((int(block), stage))
+            else:
+                merged["Stages"].append(stage)
+    for prefix, items in blocks.items():
+        items.sort(key=lambda pair: pair[0])
+        stages = [stage for _, stage in items]
+        parsed = {"SourceTiming": [], "PCG": [], "Iterations": [], "Nonconvergence": [], "PairsProgress": [], "BlockPairsProgress": []}
+        for stage in stages:
+            for key in parsed:
+                parsed[key].extend(stage["Parsed"].get(key) or [])
+        first = stages[0]["Parsed"]
+        for key in ("Order", "H1", "ND", "RT", "Elements"):
+            if key in first:
+                parsed[key] = first[key]
+        parsed["PalaceTotalSeconds"] = sum(stage["Parsed"].get("PalaceTotalSeconds") or 0.0 for stage in stages)
+        peaks = [stage["Parsed"].get("PalacePeakMemory") for stage in stages if stage["Parsed"].get("PalacePeakMemory")]
+        if peaks:
+            parsed["PalacePeakMemory"] = max(peaks, key=lambda peak: _memory_bytes(peak.get("Total")))
+        parsed["Blocks"] = [{"Block": block, "Name": stage["Name"], "WallSeconds": stage.get("WallSeconds"),
+                             "Sources": [t["Index"] for t in stage["Parsed"].get("SourceTiming") or []],
+                             "PalaceTotalSeconds": stage["Parsed"].get("PalaceTotalSeconds"),
+                             "PalacePeakTotal": (stage["Parsed"].get("PalacePeakMemory") or {}).get("Total")}
+                            for block, stage in items]
+        merged["Stages"].append({"Name": f"{prefix}-worker", "State": "complete" if all(s["State"] == "complete" for s in stages) else "incomplete",
+                                 "WallSeconds": sum(s.get("WallSeconds") or 0.0 for s in stages),
+                                 "NodePeakUsedBytesSampled": max((s.get("NodePeakUsedBytesSampled") or 0) for s in stages),
+                                 "MaxSingleProcessRSSBytes": max((s.get("MaxSingleProcessRSSBytes") or 0) for s in stages),
+                                 "Blocks": len(stages), "Parsed": parsed})
+    merged["State"] = "complete" if all(s["State"] == "complete" for s in merged["Stages"]) else "incomplete"
+    return merged
+
+
+def _memory_bytes(text):
+    """'123.4G' -> bytes (the Palace peak-memory report unit suffixes)."""
+    if not text:
+        return 0.0
+    units = {"K": 2**10, "M": 2**20, "G": 2**30, "T": 2**40}
+    text = str(text).strip()
+    if text[-1] in units:
+        return float(text[:-1]) * units[text[-1]]
+    return float(text)
+
+
 def summarize(status, *, full_sources, nodes, block_size=DEFAULT_BLOCK_SIZE):
     stages = {stage["Name"]: stage for stage in status["Stages"]}
     summary = {"PBSJobID": status.get("PBSJobID"), "Host": status.get("Host"), "StartUTC": status.get("StartUTC"),
                "EndUTC": status.get("EndUTC"), "JobTotalSeconds": status.get("TotalSeconds"), "Nodes": nodes,
                "JobNodeHours": (status.get("TotalSeconds") or 0.0) * nodes / 3600.0, "Stages": {}}
+    if status.get("Jobs"):
+        summary["Jobs"] = {name: {**job, "NodeHours": (job.get("TotalSeconds") or 0.0) * nodes / 3600.0}
+                           for name, job in status["Jobs"].items()}
+        summary["JobTotalSecondsRule"] = "the sum of the split jobs' runner totals (node seconds); per job under Jobs"
     for prefix in sorted({name[:-len("-worker")] for name in stages if name.endswith("-worker")}):
         if all(stages.get(f"{prefix}-{kind}", {}).get("State") == "complete" for kind in ("worker", "reducer")):
             summary["Stages"][prefix] = stage_cost(stages, prefix, full_sources=full_sources, nodes=nodes, block_size=block_size)

@@ -32,18 +32,26 @@ Per passed coupon of the build record:
     order on the controls (build_configs.py); the remote paths follow the layout
     <remote root>/<run>/<case>/{mesh, inputs/traces, main/<prefix>-p<order>[-control]};
  4. estimate (estimate_stages.py, the cost model scaled by the exact H1 counts of the
-    build record's entity counts): fail closed when the coupon does not fit one job
-    within the walltime; plan.json with estimate-derived caps and pinned SHA-256 of the
-    mesh, every config and every trace; job.pbs from the cluster profile;
+    build record's entity counts) and the JOB POLICY (job_split.py, decision 61b): the
+    main-order source set is split into N contiguous blocks run as N independent worker
+    jobs archiving into the stage's one archive directory, then one reducer job on the
+    union (N = 1: the single job of the recorded campaigns, byte-identical); the policy
+    {speed | frugal | fixed} from --job-policy / --fixed-jobs, else the manifest's
+    PhysicsRun.JobPolicy default, else frugal; fail closed only when even the maximal
+    split (<= --max-jobs, the user job cap, the source count) does not fit the walltime
+    or the Palace peak exceeds the node fraction; one plan.json per job with
+    estimate-derived caps and pinned SHA-256 of the mesh, its configs and every trace;
+    job.pbs from the cluster profile;
  5. --dry-run stops here (plans / configs / estimates / qualification-gates.json written,
-    nothing contacted); otherwise every planned coupon is one job: up to --max-jobs of
-    them are queued / running at once (each qsub under the user job cap, recorded and
-    counted at submission), every
-    active job is polled read-only once per interval, and a coupon whose job left the
-    queue is fetched (never the archives), hash-verified CSV by CSV against the remote
-    digests, matrix-validated (run_graded_library_case.validate_matrix: complete,
-    symmetric, nonnegative), its remote archives deleted (recorded) and analyzed while
-    the other jobs run; the next pending coupon takes the freed slot;
+    nothing contacted); otherwise up to --max-jobs of the run's jobs are queued / running
+    at once (each qsub under the user job cap, recorded and counted at submission): a
+    coupon's worker jobs, then - every worker status.json complete and the archive union
+    counted (sources x ranks potential files) - its reducer job; every active job is
+    polled read-only once per interval, and a coupon whose last job left the queue is
+    fetched (never the archives), hash-verified CSV by CSV against the remote digests,
+    matrix-validated (run_graded_library_case.validate_matrix: complete, symmetric,
+    nonnegative), its remote archives deleted (recorded) and analyzed while the other
+    jobs run; the next ready job takes the freed slot;
  6. qualification: comparisons vs the reference and between the p levels, class
     statistics, MA / MS / SA offsets, p-sequence controls, key sources, cost; the
     frozen gate table (qualification-gates.json, digest recorded) -> Passed / Failed, or
@@ -55,8 +63,10 @@ Per passed coupon of the build record:
     (gates.py).
 
 Records: ROOT/library-qualification.json (per coupon: verdict per gate and class
-offsets, PCG, node-h, x the reference cost; library totals: node-h, critical-path wall
-clock from first submission to last fetch, jobs vs the cap, coupons stopped and why),
+offsets, PCG, node-h, x the reference cost, the job policy and split - N, blocks, per-job
+estimate / actual / node-h, the coupon's critical path; library totals: node-h summed
+over every job, critical-path wall clock from first submission to last fetch, jobs vs
+the cap, splits, coupons stopped and why),
 ROOT/qualification-gates.json (the table used), ROOT/process-library.json (the
 process-library entries: the case's model with the response matrices and the
 qualification bound; LibraryQualified only when Passed).
@@ -83,6 +93,7 @@ import classify_sources  # noqa: E402
 import compare_matrices  # noqa: E402
 import estimate_stages  # noqa: E402
 import gates as gate_evaluation  # noqa: E402
+import job_split  # noqa: E402
 import key_sources  # noqa: E402
 import locate_sources  # noqa: E402
 import ma_ms_offsets  # noqa: E402
@@ -340,31 +351,10 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                         "ReferenceOrder": f"p{reference_order}" if reference_order is not None else None,
                         "Gated": f"p{gated_order(main_orders, reference_order)}", "Rule": ORDERS_RULE}
     layout = stage_layout(prefix, main_orders, control_orders, len(indices), len(controls))
-    config_digests = {}
-    local_configs = {}
-    for item in layout:
-        subset = indices if item["Role"] == "main" else controls
-        directory_ = case_root / "main" / item["Prefix"]
-        if item["Kind"] == "response":
-            worker, reducer = build_configs.derive(run_config, remote_mesh, f"{remote_case}/main/{item['Prefix']}",
-                                                   subset, remote_traces, order=item["Order"])
-            config_digests[item["Prefix"]] = build_configs.write_stage(directory_, worker, reducer)
-        else:
-            config, _ = build_configs.derive(run_config, remote_mesh, f"{remote_case}/main/{item['Prefix']}", subset,
-                                             remote_traces, order=item["Order"], save_local_edge_energy=True)
-            config_digests[item["Prefix"]] = build_configs.write_local_edge_stage(
-                directory_, config, f"{remote_case}/main/{item['Prefix']}/output")
-        local_configs[item["Prefix"]] = str(directory_)
     record["StagePrefix"] = prefix
     record["Stages"] = layout
-    record["Configs"] = {"Directories": local_configs, "SHA256": config_digests,
-                         "DerivedFrom": "the case's own sources (case_inputs.derive) and the recipe PhysicsRun",
-                         "RunConfig": record["Inputs"]["Config"], "RunConfigSHA256": record["Inputs"]["ConfigSHA256"],
-                         "ReferenceConfig": reference["Config"] if reference else None,
-                         "ReferenceConfigSHA256": reference["ConfigSHA256"] if reference else None,
-                         "ReferenceConfigRole": reference["ConfigRole"] if reference else None,
-                         "ReferenceOrder": reference_order, "LinearTol": physics_run["LinearTol"], "Order": physics_run["Order"]}
-    # 4. estimate (fail closed) and plan.
+    # 4. estimate (the single-job view, then the split under the job policy: fail closed
+    # only when even the maximal split does not fit - decision 61b).
     counts = (case_record.get("H1") or {}).get("EntityCounts")
     counts_origin = "library-build.json H1.EntityCounts"
     if counts is None:
@@ -378,7 +368,15 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
     except ValueError as error:
         raise CaseStop("Estimate", str(error))
     estimate["EntityCountsOrigin"] = counts_origin
+    policy = job_policy_of(args, physics_run, profile)
+    try:
+        split = job_split.plan_split(indices=indices, layout=layout, estimate=estimate, policy=policy, model=cost_model,
+                                     profile=profile)
+    except ValueError as error:
+        raise CaseStop("JobPolicy", str(error), Policy=policy)
+    estimate["Split"] = split
     write_json(case_root / "preflight" / "stage-estimate.json", estimate)
+    record["JobPolicy"] = policy
     record["Estimate"] = {"Path": str(case_root / "preflight" / "stage-estimate.json"), "FitsOneJob": estimate["FitsOneJob"],
                          "Decision": estimate["Decision"], "H1ByOrder": estimate["Mesh"]["H1ByOrder"],
                          "JobSecondsEstimateByPCGFactor": estimate["JobSecondsEstimateByPCGFactor"],
@@ -387,8 +385,42 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                          "MainStageNodeHoursEstimate": {
                              factor: value["StageSecondsEstimate"] * profile["Nodes"] / 3600.0
                              for factor, value in estimate["Stages"][layout[0]["EstimateKey"]]["ByPCGFactor"].items()}}
-    if not estimate["FitsOneJob"]:
+    record["Split"] = {key: split[key] for key in ("N", "Fits", "Decision", "ControlsJob", "LargestSplit", "Candidates",
+                                                    "CriticalPathEstimateSeconds", "NodeSecondsEstimate", "WorstPCGFactor")}
+    record["Split"]["Blocks"] = [len(block) for block in split["Blocks"]] if split["Blocks"] else None
+    record["Split"]["Rule"] = job_split.SPLIT_RULE
+    fits_memory = estimate["MaxPalacePeakGBEstimate"] / cost_model["PalaceGBPerGiB"] + 60 < cost_model["NodeFitFraction"] * profile["NodeGiB"]
+    if not fits_memory:
         raise CaseStop("Estimate", estimate["Decision"], Estimate=record["Estimate"])
+    if not split["Fits"]:
+        raise CaseStop("Estimate", split["Decision"], Estimate=record["Estimate"], Split=record["Split"])
+    # 3. configs (the split's blocks at every main order) and one plan / job script per job.
+    config_digests = {}
+    local_configs = {}
+    for item in layout:
+        directory_ = case_root / "main" / item["Prefix"]
+        if item["Role"] == "main" and split["N"] > 1:
+            config_digests[item["Prefix"]] = build_configs.write_split_stage(
+                directory_, run_config, remote_mesh, f"{remote_case}/main/{item['Prefix']}", split["Blocks"], remote_traces,
+                order=item["Order"])
+        elif item["Kind"] == "response":
+            subset = indices if item["Role"] == "main" else controls
+            worker, reducer = build_configs.derive(run_config, remote_mesh, f"{remote_case}/main/{item['Prefix']}",
+                                                   subset, remote_traces, order=item["Order"])
+            config_digests[item["Prefix"]] = build_configs.write_stage(directory_, worker, reducer)
+        else:
+            config, _ = build_configs.derive(run_config, remote_mesh, f"{remote_case}/main/{item['Prefix']}", controls,
+                                             remote_traces, order=item["Order"], save_local_edge_energy=True)
+            config_digests[item["Prefix"]] = build_configs.write_local_edge_stage(
+                directory_, config, f"{remote_case}/main/{item['Prefix']}/output")
+        local_configs[item["Prefix"]] = str(directory_)
+    record["Configs"] = {"Directories": local_configs, "SHA256": config_digests,
+                         "DerivedFrom": "the case's own sources (case_inputs.derive) and the recipe PhysicsRun",
+                         "RunConfig": record["Inputs"]["Config"], "RunConfigSHA256": record["Inputs"]["ConfigSHA256"],
+                         "ReferenceConfig": reference["Config"] if reference else None,
+                         "ReferenceConfigSHA256": reference["ConfigSHA256"] if reference else None,
+                         "ReferenceConfigRole": reference["ConfigRole"] if reference else None,
+                         "ReferenceOrder": reference_order, "LinearTol": physics_run["LinearTol"], "Order": physics_run["Order"]}
     trace_pins = {f"{remote_traces}/{source['Name']}": source["SHA256"] for source in sources}
     binary = f"{remote_root}/{profile['BinaryPattern'].format(sha256=args.frozen_binary_sha256)}"
     mpiexec = f"{remote_root}/{profile['MPIExecWrapper']}"
@@ -398,27 +430,80 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                + (f"against the graded_v2 reference inputs {reference['Key']} (reference Order {reference['ReferenceOrder']}, "
                   f"Linear.Tol {reference['LinearTol']})" if reference else "without a reference (--reference none)")
                + f"; stages {[item['Prefix'] for item in layout]}; controls {controls} ({control_rule}); {estimate['Decision']}")
-    plan = build_plan.build_plan(case_id=case_id, remote_case_root=remote_case,
-                                 mesh={"Remote": remote_mesh, "SHA256": identity["SHA256"], "Local": identity["Path"]},
-                                 stage_layout=layout, estimate=estimate, config_digests=config_digests, trace_pins=trace_pins,
-                                 profile=profile, binary=binary, binary_sha256=args.frozen_binary_sha256, mpiexec=mpiexec,
-                                 purpose=purpose, factors=[f"{factor:.1f}" for factor in cost_model["PCGFactors"]])
-    write_json(case_root / "main" / "plan.json", plan)
-    job_script = build_plan.render_job_script(profile=profile, remote_root=remote_root, remote_case_root=remote_case,
-                                              runner=f"{remote_run}/run_stages.py", job_name=f"{profile['JobNamePrefix']}-{case_id}"[:64],
-                                              walltime_seconds=profile["WalltimeSeconds"])
-    (case_root / "main" / "job.pbs").write_text(job_script)
-    record["Plan"] = {"Path": str(case_root / "main" / "plan.json"), "Pins": len(plan["PinnedSHA256"]),
-                      "StageNames": [stage["Name"] for stage in plan["Stages"]],
-                      "Caps": {stage["Name"]: [stage["CapSeconds"], stage["MinimumSeconds"]] for stage in plan["Stages"]},
-                      "JobScript": str(case_root / "main" / "job.pbs")}
+    factors = [f"{factor:.1f}" for factor in cost_model["PCGFactors"]]
+    jobs = []
+    if split["N"] == 1:
+        plan = build_plan.build_plan(case_id=case_id, remote_case_root=remote_case,
+                                     mesh={"Remote": remote_mesh, "SHA256": identity["SHA256"], "Local": identity["Path"]},
+                                     stage_layout=layout, estimate=estimate, config_digests=config_digests, trace_pins=trace_pins,
+                                     profile=profile, binary=binary, binary_sha256=args.frozen_binary_sha256, mpiexec=mpiexec,
+                                     purpose=purpose, factors=factors)
+        write_json(case_root / "main" / "plan.json", plan)
+        job_script = build_plan.render_job_script(profile=profile, remote_root=remote_root, remote_case_root=remote_case,
+                                                  runner=f"{remote_run}/run_stages.py",
+                                                  job_name=f"{profile['JobNamePrefix']}-{case_id}"[:64],
+                                                  walltime_seconds=profile["WalltimeSeconds"])
+        (case_root / "main" / "job.pbs").write_text(job_script)
+        jobs.append({"Name": "single", "Kind": "single", "Block": 1, "Sources": indices, "Requires": [],
+                     "Directory": str(case_root / "main"), "RemoteDirectory": f"{remote_case}/main",
+                     "SubmissionRecord": str(case_root / "submission.json"), "StageNames": [stage["Name"] for stage in plan["Stages"]],
+                     "Estimate": split["Jobs"][0]["SecondsEstimateWithPreflightAndMargin"], "Plan": str(case_root / "main" / "plan.json")})
+    else:
+        for split_job in split["Jobs"]:
+            name = split_job["Name"]
+            directory_ = case_root / "main" / "jobs" / name
+            remote_directory = f"{remote_case}/main/jobs/{name}"
+            plan = build_plan.build_job_plan(case_id=case_id, job_name=name, remote_case_root=remote_case,
+                                             mesh={"Remote": remote_mesh, "SHA256": identity["SHA256"], "Local": identity["Path"]},
+                                             stage_layout=layout, split_job=split_job, estimate=estimate, config_digests=config_digests,
+                                             trace_pins=trace_pins, profile=profile, binary=binary,
+                                             binary_sha256=args.frozen_binary_sha256, mpiexec=mpiexec,
+                                             purpose=f"{purpose}; job {name} of the split {split['Decision']}", factors=factors)
+            write_json(directory_ / "plan.json", plan)
+            job_script = build_plan.render_job_script(profile=profile, remote_root=remote_root, remote_case_root=remote_case,
+                                                      runner=f"{remote_run}/run_stages.py",
+                                                      job_name=f"{profile['JobNamePrefix']}-{case_id}-{name}"[:64],
+                                                      walltime_seconds=profile["WalltimeSeconds"], job_directory=remote_directory)
+            (directory_ / "job.pbs").write_text(job_script)
+            jobs.append({"Name": name, "Kind": split_job["Kind"], "Block": split_job["Block"], "Sources": split_job["Sources"],
+                         "Requires": ([job["Name"] for job in split["Jobs"] if job["Kind"] == "worker"]
+                                      if split_job["Kind"] == "reducer" else []),
+                         "Directory": str(directory_), "RemoteDirectory": remote_directory,
+                         "SubmissionRecord": str(case_root / f"submission-{name}.json"), "StageNames": plan["StageNames"],
+                         "Estimate": split_job["SecondsEstimateWithPreflightAndMargin"], "Plan": str(directory_ / "plan.json")})
+    record["Plan"] = {"Path": jobs[0]["Plan"] if split["N"] == 1 else str(case_root / "main" / "jobs"),
+                      "Pins": len(plan["PinnedSHA256"]),
+                      "StageNames": [name for job in jobs for name in job["StageNames"]],
+                      "Caps": {stage["Name"]: [stage["CapSeconds"], stage["MinimumSeconds"]]
+                               for job in jobs for stage in json.loads(Path(job["Plan"]).read_text())["Stages"]},
+                      "JobScript": str(case_root / "main" / "job.pbs") if split["N"] == 1 else None}
+    # The job records are live: submission, monitor, status and times are written into
+    # them as the run proceeds (every checkpoint carries them).
+    record["Jobs"] = jobs
     record["Remote"] = {"Root": remote_root, "Run": remote_run, "Case": remote_case, "Mesh": remote_mesh,
                         "Traces": remote_traces, "Binary": binary, "MPIExec": mpiexec}
     record["Status"] = STATUS_PLANNED
-    return record, {"plan": plan, "sources": sources, "locations": locations, "classes": classes, "layout": layout,
-                    "reference": reference, "reference_order": reference_order, "interfaces": interfaces,
+    return record, {"jobs": jobs, "split": split, "sources": sources, "locations": locations, "classes": classes,
+                    "layout": layout, "reference": reference, "reference_order": reference_order, "interfaces": interfaces,
                     "interface_types": interface_types, "reference_interface_types": reference_interface_types,
                     "controls": controls, "zero_trace": zero_trace, "identity": identity}
+
+
+def job_policy_of(args, physics_run, profile):
+    """The coupon's job policy: --job-policy (and --fixed-jobs), else the manifest's
+    PhysicsRun.JobPolicy default, else frugal; MaxJobs = --max-jobs, the walltime and
+    the user job cap from the cluster profile."""
+    manifest_default = physics_run.get("JobPolicy") or {}
+    mode = args.job_policy or manifest_default.get("Mode") or job_split.DEFAULT_MODE
+    fixed = args.fixed_jobs if args.fixed_jobs is not None else manifest_default.get("FixedJobs")
+    origin = ("--job-policy" if args.job_policy else
+              "manifest ProductionRecipe.PhysicsRun.JobPolicy" if manifest_default.get("Mode") else
+              f"built-in default {job_split.DEFAULT_MODE}")
+    try:
+        return job_split.normalize_policy(mode, max_jobs=args.max_jobs, walltime_seconds=profile["WalltimeSeconds"],
+                                          fixed_jobs=fixed, user_job_cap=profile["UserJobCap"], origin=origin)
+    except ValueError as error:
+        raise CaseStop("JobPolicy", str(error))
 
 
 def upload_case(record, context, *, remote, profile):
@@ -450,92 +535,172 @@ def wait(seconds, slice_seconds=10):
         time.sleep(min(slice_seconds, remaining))
 
 
-def resume_submission(record, plan_before):
-    """Under --resume: adopt the submission a previous driver recorded for this coupon
-    (<case>/submission.json) when its plan is byte-identical to the one just derived;
-    returns the submission time (epoch) or None when nothing was submitted."""
-    case_root = Path(record["Root"])
-    submission_path = case_root / "submission.json"
-    if not submission_path.is_file():
-        return None
-    plan_now = (case_root / "main" / "plan.json").read_text()
-    if plan_before != plan_now:
-        raise CaseStop("Resume", f"the plan derived now differs from the plan the recorded submission {submission_path} ran: "
-                                 f"not resumable (inputs or tooling changed)")
-    submission = json.loads(submission_path.read_text())
-    record["Submission"] = submission
-    record["Upload"] = {"Resumed": True, "SubmissionRecord": str(submission_path)}
-    record["Monitor"] = {"Polls": 0, "LastJobState": None, "LastStages": None, "Resumed": True}
-    submitted = calendar.timegm(time.strptime(submission["UTC"], "%Y-%m-%dT%H:%M:%SZ"))
-    record["SubmittedAt"] = submitted
-    return submitted
+def job_plans_text(record):
+    """The plans of every job of a coupon, concatenated (the --resume identity check)."""
+    return "\n".join(Path(job["Plan"]).read_text() for job in record["Jobs"])
 
 
-def submit_case(record, context, *, remote, profile, log):
-    """Step 5a: upload and submit one coupon's job under the user job cap (recorded)."""
+def resume_submissions(record, context, plans_before):
+    """Under --resume: adopt the submissions a previous driver recorded for this coupon's
+    jobs (<case>/submission.json or <case>/submission-<job>.json) when the plans are
+    byte-identical to the ones just derived; returns the adopted jobs (their Submission
+    set) - the jobs without a record stay pending."""
     case_root = Path(record["Root"])
+    if plans_before is None:
+        return []
+    if plans_before != job_plans_text(record):
+        raise CaseStop("Resume", f"the plans derived now differ from the plans the recorded submissions under {case_root} "
+                                 f"ran: not resumable (inputs or tooling changed)")
+    adopted = []
+    for job in context["jobs"]:
+        submission_path = Path(job["SubmissionRecord"])
+        if not submission_path.is_file():
+            continue
+        submission = json.loads(submission_path.read_text())
+        job["Submission"] = submission
+        job["Monitor"] = {"Polls": 0, "LastJobState": None, "LastStages": None, "Resumed": True}
+        job["SubmittedAt"] = calendar.timegm(time.strptime(submission["UTC"], "%Y-%m-%dT%H:%M:%SZ"))
+        job["Upload"] = {"Resumed": True, "SubmissionRecord": str(submission_path)}
+        if job["Kind"] == "single":
+            record["Submission"] = submission
+            record["Monitor"] = job["Monitor"]
+            record["SubmittedAt"] = job["SubmittedAt"]
+        adopted.append(job)
+    if adopted:
+        record["Upload"] = {"Resumed": True, "SubmissionRecords": [job["SubmissionRecord"] for job in adopted]}
+        record.setdefault("Monitor", {"Polls": 0, "LastJobState": None, "LastStages": None, "Resumed": True})
+    return adopted
+
+
+def submit_job(record, context, job, *, remote, profile, log):
+    """Step 5a: upload the coupon (once, before its first job) and qsub one job under the
+    user job cap (recorded per job)."""
     remote_case = record["Remote"]["Case"]
-    record["Upload"] = upload_case(record, context, remote=remote, profile=profile)
+    if not record.get("Upload"):
+        record["Upload"] = upload_case(record, context, remote=remote, profile=profile)
     try:
-        submission = remote_side.submit(remote["Host"], profile["PBSBin"], f"{remote_case}/main/job.pbs", f"{remote_case}/main",
-                                        job_cap=profile["UserJobCap"])
+        submission = remote_side.submit(remote["Host"], profile["PBSBin"], f"{job['RemoteDirectory']}/job.pbs",
+                                        job["RemoteDirectory"], job_cap=profile["UserJobCap"])
     except RuntimeError as error:
-        raise CaseStop("JobBudget", str(error))
-    record["Submission"] = submission
-    record["Monitor"] = {"Polls": 0, "LastJobState": None, "LastStages": None}
-    write_json(case_root / "submission.json", submission)
-    log(f"{record['Case']}: submitted {submission['Job']} ({submission['UserJobsBefore']} user jobs before, cap {profile['UserJobCap']})")
+        raise CaseStop("JobBudget", str(error), Job=job["Name"])
+    job["Submission"] = submission
+    job["Monitor"] = {"Polls": 0, "LastJobState": None, "LastStages": None}
+    job["SubmittedAt"] = time.time()
+    write_json(job["SubmissionRecord"], submission)
+    if job["Kind"] == "single":
+        record["Submission"] = submission
+        record["Monitor"] = job["Monitor"]
+    log(f"{record['Case']}: submitted {job['Name']} {submission['Job']} ({submission['UserJobsBefore']} user jobs before, "
+        f"cap {profile['UserJobCap']}; {remote_case})")
     return submission
 
 
-def poll_case(record, *, remote, profile, log):
-    """One read-only poll of a submitted coupon; True when the job has left Q / R / E."""
-    submission = record["Submission"]
-    poll = remote_side.poll(remote["Host"], profile["PBSBin"], submission["Job"], f"{record['Remote']['Case']}/main/status.json")
-    record["Monitor"]["Polls"] += 1
-    record["Monitor"]["LastPollUTC"] = poll["UTC"]
+def poll_job(record, job, *, remote, profile, log):
+    """One read-only poll of a submitted job; True when it has left Q / R / E."""
+    submission = job["Submission"]
+    poll = remote_side.poll(remote["Host"], profile["PBSBin"], submission["Job"], f"{job['RemoteDirectory']}/status.json")
+    job["Monitor"]["Polls"] += 1
+    job["Monitor"]["LastPollUTC"] = poll["UTC"]
     if not poll.get("Reachable", True):
         # A failed ssh round trip says nothing about the job: the poll counts against the
         # budget, the job stays active and the failure is recorded (never "left the queue").
-        record["Monitor"]["TransportFailures"] = record["Monitor"].get("TransportFailures", 0) + 1
-        log(f"== {poll['UTC']} {record['Case']} job {submission['Job']} unreachable (ssh rc {poll['SSHReturnCode']}; "
-            f"transport failure {record['Monitor']['TransportFailures']}, job kept active)")
+        job["Monitor"]["TransportFailures"] = job["Monitor"].get("TransportFailures", 0) + 1
+        log(f"== {poll['UTC']} {record['Case']} {job['Name']} job {submission['Job']} unreachable (ssh rc {poll['SSHReturnCode']}; "
+            f"transport failure {job['Monitor']['TransportFailures']}, job kept active)")
         return False
     stages = ([(s["Name"], s["State"], round(s.get("WallSeconds", 0))) for s in poll["Status"]["Stages"]] if poll["Status"] else None)
-    record["Monitor"]["LastJobState"] = poll["JobState"]
-    record["Monitor"]["LastStages"] = stages
-    log(f"== {poll['UTC']} {record['Case']} job {submission['Job']} state {poll['JobState']} stages {stages}")
+    job["Monitor"]["LastJobState"] = poll["JobState"]
+    job["Monitor"]["LastStages"] = stages
+    log(f"== {poll['UTC']} {record['Case']} {job['Name']} job {submission['Job']} state {poll['JobState']} stages {stages}")
     return poll["JobState"] not in ("Q", "R", "E")
 
 
+def poll_case(record, *, remote, profile, log):
+    """The single-job poll of a coupon (the recorded campaigns' driver interface)."""
+    job = {"Name": "single", "Submission": record["Submission"], "Monitor": record["Monitor"],
+           "RemoteDirectory": f"{record['Remote']['Case']}/main"}
+    return poll_job(record, job, remote=remote, profile=profile, log=log)
+
+
+def status_failures(status):
+    """The incomplete stages and PCG non-convergences of a runner status (empty = complete)."""
+    incomplete = [stage["Name"] for stage in status["Stages"] if stage["State"] != "complete"]
+    nonconvergence = {stage["Name"]: stage.get("Parsed", {}).get("Nonconvergence") for stage in status["Stages"]
+                      if stage.get("Parsed", {}).get("Nonconvergence")}
+    return incomplete, nonconvergence
+
+
+def complete_worker_job(record, context, job, *, remote, profile):
+    """A worker job of a split coupon left the queue: its status.json (read now, read-only)
+    must be complete - every stage complete, no PCG non-convergence - else the coupon
+    stops (fail closed; the coupon's other jobs are left to finish on their own and are
+    recorded)."""
+    status = remote_side.read_json(remote["Host"], f"{job['RemoteDirectory']}/status.json")
+    job["FinishedAt"] = time.time()
+    if status is None:
+        raise CaseStop("Stages", f"{job['Name']} job {job['Submission']['Job']} left the queue without a status.json "
+                                 f"({job['RemoteDirectory']})", Job=job["Name"], Submission=job["Submission"])
+    incomplete, nonconvergence = status_failures(status)
+    job["Status"] = {"State": status["State"], "TotalSeconds": status.get("TotalSeconds"), "Host": status.get("Host"),
+                     "Stages": {stage["Name"]: (stage["State"], stage.get("WallSeconds")) for stage in status["Stages"]}}
+    if status["State"] != "complete" or incomplete or nonconvergence:
+        raise CaseStop("Stages", f"{job['Name']} job {job['Submission']['Job']}: runner state {status['State']}: incomplete "
+                                 f"{incomplete}, PCG non-convergence {nonconvergence}", Job=job["Name"], Submission=job["Submission"])
+
+
+def verify_archive_union(record, context, *, remote, profile):
+    """Every worker job completed: the archive directory of every main stage holds one
+    potential file per (source, rank) - the union the reducer job reduces (recorded)."""
+    union = {}
+    expected = len(context["sources"]) * profile["Ranks"]
+    for item in context["layout"]:
+        if item["Role"] != "main":
+            continue
+        directory = f"{record['Remote']['Case']}/main/{item['Prefix']}/archive"
+        found = remote_side.count_archive_potentials(remote["Host"], directory)
+        union[item["Prefix"]] = {"Directory": directory, "Expected": expected, "Found": found, "OK": found == expected,
+                                 "Rule": "sources x ranks files source-*-rank-*-V.bin (one potential per source and rank)"}
+    record["ArchiveUnion"] = {"UTC": remote_side.utc(), "Stages": union}
+    write_json(Path(record["Root"]) / "archive-union.json", record["ArchiveUnion"])
+    short = {prefix: (value["Found"], value["Expected"]) for prefix, value in union.items() if not value["OK"]}
+    if short:
+        raise CaseStop("ArchiveUnion", f"the archive union is incomplete (found, expected): {short}", ArchiveUnion=union)
+
+
 def finish_case(record, context, *, remote, profile):
-    """Step 5b after the job left the queue: fetch (never the archives), hash-verify every
-    CSV against the remote, validate every matrix, delete the remote archives (recorded).
-    Returns the local results directory with status.json."""
+    """Step 5b after the coupon's last job left the queue: fetch (never the archives),
+    hash-verify every CSV against the remote, validate every matrix, delete the remote
+    archives (recorded).  Returns the local results directory (results/main)."""
     case_root = Path(record["Root"])
     remote_case = record["Remote"]["Case"]
-    submission = record["Submission"]
+    jobs = context["jobs"]
     results = case_root / "results"
     results.mkdir(exist_ok=True)
     try:
         fetch_command = remote_side.fetch(remote["Host"], f"{remote_case}/main", results / "main")
     except subprocess.CalledProcessError as error:
         raise CaseStop("Fetch", f"rsync of {remote_case}/main returned {error.returncode} (transport failure; the job's "
-                                f"results stay on the remote: run again with --resume)", Submission=submission,
-                       Command=error.cmd)
+                                f"results stay on the remote: run again with --resume)",
+                       Submission=[job.get("Submission") for job in jobs], Command=error.cmd)
     record["Fetch"] = {"Command": fetch_command, "UTC": remote_side.utc(),
-                       "QStatHistory": remote_side.qstat_history(remote["Host"], profile["PBSBin"], submission["Job"])}
-    (results / "qstat-xf.txt").write_text(record["Fetch"]["QStatHistory"])
-    status_path = results / "main" / "status.json"
-    if not status_path.is_file():
-        raise CaseStop("Fetch", f"no status.json fetched from {remote_case}/main", Submission=submission)
-    status = json.loads(status_path.read_text())
-    incomplete = [stage["Name"] for stage in status["Stages"] if stage["State"] != "complete"]
-    nonconvergence = {stage["Name"]: stage.get("Parsed", {}).get("Nonconvergence") for stage in status["Stages"]
-                      if stage.get("Parsed", {}).get("Nonconvergence")}
-    if status["State"] != "complete" or incomplete or nonconvergence:
-        raise CaseStop("Stages", f"runner state {status['State']}: incomplete {incomplete}, PCG non-convergence {nonconvergence}",
-                       Submission=submission, StatusPath=str(status_path))
+                       "QStatHistory": {job["Name"]: remote_side.qstat_history(remote["Host"], profile["PBSBin"], job["Submission"]["Job"])
+                                        for job in jobs}}
+    for job in jobs:
+        suffix = "" if job["Kind"] == "single" else f"-{job['Name']}"
+        (results / f"qstat-xf{suffix}.txt").write_text(record["Fetch"]["QStatHistory"][job["Name"]])
+    if len(jobs) == 1:
+        record["Fetch"]["QStatHistory"] = record["Fetch"]["QStatHistory"]["single"]
+    statuses = {}
+    for job in jobs:
+        status_path = results / "main" / Path(job["RemoteDirectory"]).relative_to(f"{remote_case}/main") / "status.json"
+        if not status_path.is_file():
+            raise CaseStop("Fetch", f"no status.json fetched for {job['Name']} ({status_path})", Submission=job.get("Submission"))
+        status = json.loads(status_path.read_text())
+        incomplete, nonconvergence = status_failures(status)
+        if status["State"] != "complete" or incomplete or nonconvergence:
+            raise CaseStop("Stages", f"{job['Name']}: runner state {status['State']}: incomplete {incomplete}, PCG non-convergence "
+                                     f"{nonconvergence}", Submission=job.get("Submission"), StatusPath=str(status_path))
+        statuses[job["Name"]] = status
     # Hash-verify every fetched CSV against the remote digests, validate every matrix.
     csv_local = sorted(path for path in (results / "main").rglob("*.csv"))
     remote_paths = [f"{remote_case}/main/{path.relative_to(results / 'main')}" for path in csv_local]
@@ -569,6 +734,7 @@ def finish_case(record, context, *, remote, profile):
     archives = [f"{remote_case}/main/{item['Prefix']}/archive" for item in context["layout"] if item["Kind"] == "response"]
     record["ArchiveDeletion"] = remote_side.delete_archives(remote["Host"], archives)
     write_json(case_root / "remote-archive-deletion.json", record["ArchiveDeletion"])
+    context["statuses"] = statuses
     return results
 
 
@@ -638,8 +804,33 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
         keys = key_sources.key_sources(per_source, zero_trace)
         (comparison_dir / "key-sources.md").write_text(key_sources.markdown_report(keys))
         write_json(comparison_dir / "key-sources.json", keys)
-    status = json.loads((results / "main" / "status.json").read_text())
+    jobs = context["jobs"]
+    statuses = context.get("statuses") or {
+        job["Name"]: json.loads((results / "main" / Path(job["RemoteDirectory"]).relative_to(record["Remote"]["Case"] + "/main")
+                                 / "status.json").read_text()) for job in jobs}
+    status = statuses["single"] if len(jobs) == 1 and jobs[0]["Kind"] == "single" else summarize_cost.merge_split_statuses(statuses, jobs)
     cost = summarize_cost.summarize(status, full_sources=len(context["sources"]), nodes=profile["Nodes"])
+    worst = record["Split"]["WorstPCGFactor"]
+    cost["Jobs"] = {job["Name"]: {"Kind": job["Kind"], "Block": job["Block"], "SourceCount": len(job["Sources"]),
+                                  "PBSJobID": (job.get("Submission") or {}).get("Job"),
+                                  "SubmittedUTC": (job.get("Submission") or {}).get("UTC"),
+                                  "EstimateSecondsWithPreflightAndMargin": job["Estimate"][worst],
+                                  "ActualSeconds": statuses[job["Name"]].get("TotalSeconds"),
+                                  "ActualOverEstimate": ((statuses[job["Name"]].get("TotalSeconds") or 0.0) / job["Estimate"][worst]
+                                                         if job["Estimate"][worst] else None),
+                                  "NodeHours": (statuses[job["Name"]].get("TotalSeconds") or 0.0) * profile["Nodes"] / 3600.0,
+                                  "StartUTC": statuses[job["Name"]].get("StartUTC"), "EndUTC": statuses[job["Name"]].get("EndUTC"),
+                                  "Host": statuses[job["Name"]].get("Host")}
+                    for job in jobs}
+    submitted = [job["SubmittedAt"] for job in jobs if job.get("SubmittedAt")]
+    cost["CriticalPathSeconds"] = (record["FetchedAt"] - min(submitted)) if submitted and record.get("FetchedAt") else None
+    cost["CriticalPathRule"] = ("first submission of the coupon's jobs to its fetch (a split coupon: the worker jobs in "
+                                "parallel, then the reducer job's queue wait and run)")
+    cost["Split"] = {"N": record["Split"]["N"], "Blocks": record["Split"]["Blocks"], "ControlsJob": record["Split"]["ControlsJob"],
+                     "Policy": record["JobPolicy"]["Mode"],
+                     "CriticalPathEstimateSeconds": record["Split"]["CriticalPathEstimateSeconds"][worst],
+                     "NodeSecondsEstimate": record["Split"]["NodeSecondsEstimate"][worst]}
+
     # Every analysis output goes under the case root; the results directory is read only
     # (it may be a recorded campaign's tree).
     write_json(case_root / "cost-summary.json", cost)
@@ -669,6 +860,8 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
                       "MainStages": {item["Prefix"]: {key: cost["Stages"].get(item["Prefix"], {}).get(key) for key in stage_keys}
                                      for item in mains},
                       "JobNodeHours": cost["JobNodeHours"], "JobTotalSeconds": cost["JobTotalSeconds"],
+                      "Jobs": cost["Jobs"], "Split": cost["Split"], "CriticalPathSeconds": cost["CriticalPathSeconds"],
+                      "CriticalPathRule": cost["CriticalPathRule"],
                       "ReferenceNodeHours": reference_cost,
                       "MainStageOverReference": (main_cost.get("NodeHours") / reference_cost
                                                  if reference_cost and main_cost.get("NodeHours") else None),
@@ -744,7 +937,15 @@ def library_totals(records, *, args, remote, profile, wall_seconds, first_submis
                                if record.get("Cost")},
             "WallClockSeconds": wall_seconds, "JobsSubmitted": jobs, "UserJobCap": cap,
             "MaxJobs": args.max_jobs, "JobsRule": "every qsub of this run is counted at submission (a stop after the "
-                                                   "submission keeps its job counted)",
+                                                   "submission keeps its job counted); a split coupon counts N worker jobs "
+                                                   "and its reducer job",
+            "JobPolicy": {"Mode": args.job_policy or "manifest default or frugal", "FixedJobs": args.fixed_jobs,
+                          "MaxJobs": args.max_jobs, "Rule": job_split.SPLIT_RULE},
+            "Splits": {record["Case"]: {"N": record["Split"]["N"], "Blocks": record["Split"]["Blocks"],
+                                        "Policy": record["JobPolicy"]["Mode"],
+                                        "CriticalPathSeconds": (record.get("Cost") or {}).get("CriticalPathSeconds"),
+                                        "NodeHours": (record.get("Cost") or {}).get("JobNodeHours")}
+                       for record in records if record.get("Split")},
             "DryRun": args.dry_run, "Remote": remote,
             "Orders": [f"p{order}" for order in (args.orders or [])], "OrdersRule": ORDERS_RULE,
             "Controls": [f"p{order}" for order in args.controls],
@@ -808,8 +1009,11 @@ def run_qualify(args, *, log=log_line):
         write_json(partial, {"Version": QUALIFICATION_VERSION, "Command": "coupon-library qualify", "Partial": True, "Cases": records})
 
     # Steps 1-4 for every coupon (a stop records the coupon; the others continue).
-    plans_before = {case["Case"]: (root / case["Case"] / "main" / "plan.json").read_text()
-                    for case in selected if (root / case["Case"] / "main" / "plan.json").is_file()} if args.resume else {}
+    def recorded_plans(case_id):
+        case_root = root / case_id
+        plans = sorted(list(case_root.glob("main/plan.json")) + list(case_root.glob("main/jobs/*/plan.json")))
+        return "\n".join(path.read_text() for path in plans) if plans else None
+    plans_before = {case["Case"]: recorded_plans(case["Case"]) for case in selected} if args.resume else {}
     pending = []
     for case_record in selected:
         record = None
@@ -818,67 +1022,114 @@ def run_qualify(args, *, log=log_line):
                                            remote=remote, profile=profile, cost_model=cost_model, gates=gates,
                                            gates_digest=gates_digest)
             contexts[record["Case"]] = context
-            log(f"{record['Case']}: planned {record['Plan']['StageNames']} ({record['Estimate']['Decision']})")
+            log(f"{record['Case']}: planned {record['Plan']['StageNames']} ({record['Split']['Decision']})")
             if not args.dry_run:
                 pending.append((record, context))
         except CaseStop as exception:
             record = stop(record, case_record, exception)
         records.append(record)
         checkpoint()
-    # Step 5: up to --max-jobs of this run's jobs in the queue at once (one per coupon), a
-    # read-only poll of every active job per interval, fetch / verify / analyze each coupon
-    # as its job leaves the queue, the next pending coupon submitted into the freed slot.
-    # --resume adopts the submissions a previous driver of this root recorded (the job ids
-    # in <case>/submission.json) instead of uploading and submitting again.
+    # Step 5: up to --max-jobs of this run's jobs in the queue at once (a coupon's worker
+    # jobs, then its reducer job once every worker completed and the archive union is
+    # counted; a single-job coupon is one job), a read-only poll of every active job per
+    # interval, fetch / verify / analyze each coupon as its last job leaves the queue, the
+    # next ready job submitted into the freed slot.  --resume adopts the submissions a
+    # previous driver of this root recorded (<case>/submission*.json) instead of
+    # uploading and submitting again.
     jobs = 0
     first_submission = last_fetch = None
-    active = []
-    if args.resume:
-        for record, context in list(pending):
+    active = []      # (record, context, job) submitted and in the queue
+    waiting = []     # (record, context, job) not yet submitted
+
+    def drop_coupon(record, context, stopped_job=None):
+        """A coupon stopped: its unsubmitted jobs are dropped; its other submitted jobs
+        are left to finish on their own (the driver never qdels) and recorded."""
+        nonlocal waiting
+        waiting = [item for item in waiting if item[0] is not record]
+        left = [(job["Name"], job["Submission"]["Job"]) for job in context["jobs"]
+                if job is not stopped_job and job.get("Submission") and job.get("FinishedAt") is None]
+        if left and record.get("StoppedBy") is not None:
+            record["StoppedBy"]["JobsLeftRunning"] = left
+            record["StoppedBy"]["JobsLeftRunningRule"] = ("the coupon's other jobs finish on their own (the driver never qdels); "
+                                                          "their archives stay under the remote case until deleted by hand")
+
+    for record, context in pending:
+        adopted = []
+        if args.resume:
             try:
-                resumed = resume_submission(record, plans_before.get(record["Case"]))
+                adopted = resume_submissions(record, context, plans_before.get(record["Case"]))
             except CaseStop as exception:
                 stop(record, None, exception)
-                pending.remove((record, context))
                 checkpoint()
                 continue
-            if resumed:
-                pending.remove((record, context))
-                active.append((record, context))
+        for job in context["jobs"]:
+            if job in adopted:
+                active.append((record, context, job))
                 jobs += 1
-                first_submission = min(first_submission or resumed, resumed)
-                log(f"{record['Case']}: resumed job {record['Submission']['Job']} submitted {record['Submission']['UTC']}")
-        checkpoint()
-    while pending or active:
-        while pending and len(active) < args.max_jobs:
-            record, context = pending.pop(0)
+                first_submission = min(first_submission or job["SubmittedAt"], job["SubmittedAt"])
+                log(f"{record['Case']}: resumed {job['Name']} job {job['Submission']['Job']} submitted {job['Submission']['UTC']}")
+            else:
+                waiting.append((record, context, job))
+    checkpoint()
+
+    def ready(record, context, job):
+        done = {j["Name"] for j in context["jobs"] if j.get("Status", {}).get("State") == "complete"}
+        return all(name in done for name in job["Requires"])
+
+    while waiting or active:
+        for item in [item for item in waiting if ready(*item) and len(active) < args.max_jobs]:
+            if len(active) >= args.max_jobs:
+                break
+            record, context, job = item
+            waiting.remove(item)
             try:
-                submit_case(record, context, remote=remote, profile=profile, log=log)
+                if job["Kind"] == "reducer" and record.get("ArchiveUnion") is None:
+                    verify_archive_union(record, context, remote=remote, profile=profile)
+                    log(f"{record['Case']}: archive union complete "
+                        f"{[(k, v['Found']) for k, v in record['ArchiveUnion']['Stages'].items()]}")
+                submit_job(record, context, job, remote=remote, profile=profile, log=log)
             except CaseStop as exception:
                 stop(record, None, exception)
                 # A qsub that went through before the stop is a job of this run (counted).
-                if record.get("Submission"):
+                if job.get("Submission"):
                     jobs += 1
+                drop_coupon(record, context, job)
                 checkpoint()
                 continue
             jobs += 1
-            record["SubmittedAt"] = time.time()
-            first_submission = first_submission or record["SubmittedAt"]
-            active.append((record, context))
+            first_submission = first_submission or job["SubmittedAt"]
+            if job["Kind"] == "single":
+                record["SubmittedAt"] = job["SubmittedAt"]
+            active.append((record, context, job))
             checkpoint()
         if not active:
+            if waiting:
+                # Nothing active and nothing ready: the waiting jobs' requirements can never
+                # complete (their coupons stopped) - drop them.
+                for record, context, job in list(waiting):
+                    if record.get("StoppedBy") is None:
+                        stop(record, None, CaseStop("Scheduler", f"{job['Name']} waits on {job['Requires']} that never completed"))
+                    drop_coupon(record, context)
+                checkpoint()
             break
         wait(args.monitor_interval)
         still_active = []
-        for record, context in active:
+        for record, context, job in active:
+            if record.get("StoppedBy") is not None:
+                continue
             try:
-                done = poll_case(record, remote=remote, profile=profile, log=log)
-                if not done and record["Monitor"]["Polls"] >= args.monitor_polls:
-                    raise CaseStop("Monitor", f"job {record['Submission']['Job']} still {record['Monitor']['LastJobState']} after "
-                                              f"{record['Monitor']['Polls']} polls: fetch later with the recorded job id",
-                                   Submission=record["Submission"])
+                done = poll_job(record, job, remote=remote, profile=profile, log=log)
+                if not done and job["Monitor"]["Polls"] >= args.monitor_polls:
+                    raise CaseStop("Monitor", f"{job['Name']} job {job['Submission']['Job']} still {job['Monitor']['LastJobState']} after "
+                                              f"{job['Monitor']['Polls']} polls: fetch later with the recorded job id",
+                                   Submission=job["Submission"])
                 if not done:
-                    still_active.append((record, context))
+                    still_active.append((record, context, job))
+                    continue
+                job["FinishedAt"] = time.time()
+                if job["Kind"] == "worker":
+                    complete_worker_job(record, context, job, remote=remote, profile=profile)
+                    log(f"{record['Case']}: {job['Name']} complete ({job['Status']['TotalSeconds']:.0f} s)")
                     continue
                 results = finish_case(record, context, remote=remote, profile=profile)
                 record["FetchedAt"] = time.time()
@@ -887,8 +1138,9 @@ def run_qualify(args, *, log=log_line):
                 log(f"{record['Case']}: {record['Qualification']['Verdict']} ({record['Qualification']['Reason']})")
             except CaseStop as exception:
                 stop(record, None, exception)
+                drop_coupon(record, context, job)
             checkpoint()
-        active = still_active
+        active = [item for item in still_active if item[0].get("StoppedBy") is None]
     record = {"Version": QUALIFICATION_VERSION, "Command": "coupon-library qualify", "Root": str(root),
               "ToolCommit": tool_commit(),
               "BuildRecord": {"Path": str(build_path), "SHA256": sha256(build_path), "Commit": build["Library"]["Commit"]},
@@ -917,8 +1169,13 @@ def add_arguments(parser):
     parser.add_argument("--control-count", type=int, default=DEFAULT_CONTROL_COUNT, help="controls chosen by class (default 8)")
     parser.add_argument("--control-source", type=int, action="append", help="explicit control source (repeatable; overrides the class choice)")
     parser.add_argument("--max-jobs", type=int, default=40, help="at most this many of the run's jobs queued / running at once "
-                                                                  "(one job per coupon; every qsub is counted against the cluster "
-                                                                  "profile's user cap)")
+                                                                  "(a coupon's split is bounded by it too; every qsub is counted "
+                                                                  "against the cluster profile's user cap)")
+    parser.add_argument("--job-policy", choices=job_split.MODES, default=None,
+                        help="per-coupon source split policy (decision 61b): speed = the N <= --max-jobs minimizing the "
+                             "estimated critical path, frugal = the fewest jobs that fit the walltime, fixed = --fixed-jobs; "
+                             "default: the manifest's ProductionRecipe.PhysicsRun.JobPolicy, else frugal")
+    parser.add_argument("--fixed-jobs", type=int, default=None, help="N of --job-policy fixed")
     parser.add_argument("--frozen-binary-sha256", required=True, help="SHA-256 of the frozen Palace executable under ROOT")
     parser.add_argument("--stage-prefix", help="stage name prefix (default: the case id)")
     parser.add_argument("--case", action="append", default=None, help="case id (repeatable; default: every case of the build record)")

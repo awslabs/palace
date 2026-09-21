@@ -71,6 +71,30 @@ def write_stage(directory, worker, reducer):
             "reducer.json": write_json(Path(directory) / "reducer.json", reducer)}
 
 
+def block_worker_name(block):
+    """worker-block<k>.json: the worker config of source block k of a split stage."""
+    return f"worker-block{block}.json"
+
+
+def write_split_stage(directory, reference, mesh, output_root, blocks, traces_directory, *, order=None):
+    """A split main stage (decision 61b): one worker config per non-empty source block
+    (`blocks` = [[index, ...], ...] in job order, Problem.Output ROOT/worker-block<k>) and
+    the reducer config on every source (ROOT/reducer, as in the single-job stage); every
+    block archives into the same ROOT/archive (the plan's environment).  Returns the
+    digests by file name."""
+    digests = {}
+    all_sources = [index for block in blocks for index in block]
+    _, reducer = derive(reference, mesh, output_root, all_sources, traces_directory, order=order)
+    for k, block in enumerate(blocks, start=1):
+        if not block:
+            continue
+        worker, _ = derive(reference, mesh, output_root, block, traces_directory, order=order)
+        worker["Problem"]["Output"] = f"{output_root}/worker-block{k}"
+        digests[block_worker_name(k)] = write_json(Path(directory) / block_worker_name(k), worker)
+    digests["reducer.json"] = write_json(Path(directory) / "reducer.json", reducer)
+    return digests
+
+
 def write_local_edge_stage(directory, config, output):
     """The ordinary-path config.json (its own output directory, no worker / reducer)."""
     config = copy.deepcopy(config)

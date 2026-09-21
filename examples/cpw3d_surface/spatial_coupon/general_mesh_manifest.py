@@ -177,6 +177,10 @@ BUILD_COST_ESTIMATE_KEY = "BuildCostEstimate"
 PHYSICS_RUN_KEY = "PhysicsRun"
 
 
+JOB_POLICY_KEY = "JobPolicy"
+JOB_POLICY_MODES = ("speed", "frugal", "fixed")
+
+
 def validate_physics_run(recipe):
     """The Gmsh-only production recipe binds the Palace run parameters of every coupon
     (supervisor decision 52): PhysicsRun.Order (integer >= 1), PhysicsRun.LinearTol (0 <
@@ -188,6 +192,17 @@ def validate_physics_run(recipe):
             any(not isinstance(block.get(key), str) or not block[key] for key in ("Rule", "Provenance", "Binding"))):
         raise ValueError("Gmsh-only production recipe must carry the PhysicsRun block "
                          "(Order int >= 1, LinearTol in (0, 1), Rule, Provenance, Binding)")
+    policy = block.get(JOB_POLICY_KEY)
+    if policy is not None:
+        # The recorded default of qualify's per-coupon source split (decision 61b): Mode
+        # speed / frugal / fixed, FixedJobs (int >= 1) exactly for fixed, a Rule text.
+        mode = policy.get("Mode") if isinstance(policy, dict) else None
+        fixed = policy.get("FixedJobs") if isinstance(policy, dict) else None
+        if (mode not in JOB_POLICY_MODES or
+                (mode == "fixed") != (isinstance(fixed, int) and not isinstance(fixed, bool) and fixed >= 1) or
+                not isinstance(policy.get("Rule"), str) or not policy["Rule"]):
+            raise ValueError("PhysicsRun.JobPolicy must carry Mode speed | frugal | fixed, FixedJobs (int >= 1) "
+                             "exactly for fixed, and a Rule")
     return block
 SCOPE_KEY = "Scope"
 UNSUPPORTED_CLASS_KEY = "UnsupportedClass"

@@ -138,6 +138,25 @@ def remote_sha256(host, remote_paths):
     return digests
 
 
+def read_json(host, remote_path):
+    """The parsed content of a remote JSON file (None when absent or unparsable)."""
+    result = ssh(host, f"cat '{remote_path}' 2>/dev/null", check=False)
+    if not result.stdout.strip():
+        return None
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+
+
+def count_archive_potentials(host, archive_directory):
+    """The number of archived potential files (source-*-rank-*-V.bin) in a response
+    archive directory: the reducer's union check of a split coupon (decision 61b)."""
+    result = ssh(host, f"ls '{archive_directory}' 2>/dev/null | grep -c -- '-V.bin$' || true", check=False)
+    text = result.stdout.strip().splitlines()
+    return int(text[-1]) if text and text[-1].isdigit() else 0
+
+
 def qstat_history(host, pbs_bin, job_id):
     result = ssh(host, f"{pbs_bin}/qstat -xf {job_id}", check=False)
     return result.stdout

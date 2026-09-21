@@ -2372,7 +2372,7 @@ python3 coupon_library.py qualify \
   --build-record /tmp/coupon-library-build-<commit>-<ts>/library-build.json \
   --reference <graded_v2 campaign dir or none> \
   --remote soca-green-job:/data/home/simlap/coupon_accuracy_assessment_20260913 \
-  [--orders p5] --controls p3,p5 --max-jobs 40 \
+  [--orders p5] --controls p3,p5 --max-jobs 40 [--job-policy speed|frugal|fixed [--fixed-jobs N]] \
   --frozen-binary-sha256 b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27 \
   [--case ID ...] [--stage-prefix NAME] [--control-source I ...] [--root DIR] [--dry-run] [--resume]
 ```
@@ -2455,19 +2455,53 @@ measured counts on load).
    `estimate_stages.py` scales the cost model by the exact H1 ratio
    (`mixed_mesh.h1_dofs_from_counts` on the build record's `H1.EntityCounts`) at 1 /
    1.5 / 2x the measured PCG counts; a coupon whose 2x total with the 35% + 300 s
-   preflight margin exceeds the walltime, or whose Palace peak exceeds 0.75 of the
-   node, is `StoppedBy Estimate` before any plan. `build_plan.py`: pinned SHA-256 of
+   preflight margin exceeds the walltime is not one job; whose Palace peak exceeds
+   0.75 of the node is `StoppedBy Estimate` before any plan. **Job policy - the
+   per-coupon source split (supervisor decision 61b, user decision 60(2)):**
+   `qualify/job_split.py` partitions the coupon's main-order source set into N
+   contiguous blocks run as N independent worker jobs (the same mesh and configs apart
+   from the `PrescribedPotential` subset, `worker-block<k>.json` per block with its own
+   `Problem.Output`), every block archiving into the stage's ONE archive directory
+   (Palace archives one file per source, rank and field - `source-NNNNNN-rank-NNNNNN-
+   {V,D}.bin`, header-checked -, so the union of the N archives is that directory), and
+   the main-order reducer runs once, in its own job, on the union after every worker
+   job completed (the reduction is linear in the archive union: the matrices equal a
+   single job's to roundoff - acceptance below). The p3 / p5 controls and the
+   local-edge stage stay in the first worker job (`ControlsJob worker-1`), whose block
+   is shortened by their estimated share so every worker job ends together; when they
+   leave no room for a block the first job carries them alone (`separate`, recorded).
+   Policy `{Mode: speed | frugal | fixed, MaxJobs, WalltimeSeconds, FixedJobs}`, every
+   job estimated from the cost model at 2x the measured PCG counts with the 35% +
+   300 s preflight margin: `frugal` = the smallest N whose every job fits the
+   walltime; `speed` = the N minimizing the estimated critical path (the longest
+   worker job, then the reducer job), the smallest such N on a tie; `fixed` = N given.
+   N <= `--max-jobs` (the run's concurrency), the user job cap and the source count; a
+   coupon fails closed only when even the maximal split does not fit (`StoppedBy
+   Estimate` with the candidates table). N = 1 is the single job of the recorded
+   campaigns, byte-identical (`main/plan.json`, `job.pbs`); a split coupon has
+   `main/jobs/<worker-k | reducer>/{plan.json, job.pbs}` (the runner's status and logs
+   per job directory). `--job-policy` / `--fixed-jobs` select it; the manifest's
+   `ProductionRecipe.PhysicsRun.JobPolicy` is the recorded default (`frugal` until the
+   user chooses speed vs frugality); the policy used, the candidates (N, longest job,
+   critical path, node seconds), the blocks and per-job estimates are recorded per
+   coupon (`JobPolicy`, `Split`, `Jobs`). `build_plan.py`: pinned SHA-256 of
    the mesh, every config and every trace; `CapSeconds` = 2 x the stage's 2x-PCG
    estimate rounded up to 300 s and bounded by the deadline, `MinimumSeconds` = the
-   1x estimate rounded up; `job.pbs` from the cluster profile; `run_stages.py` (the
-   unchanged bounded runner, executable / hash / MPI wrapper read from the plan).
-4. **Submission and results** (`qualify/remote.py`; not under `--dry-run`): every
-   planned coupon is one job and up to `--max-jobs` of them are queued / running at
-   once (the library run's concurrency; the 40-job user cap is checked at every
-   `qsub`). Per coupon: rsync of mesh / traces / `main/` to `<root>/<run>/<case>/`,
-   `qsub` after a read-only `qstat` count of the user's jobs against the cap
-   (`submission.json`); every active job is polled read-only once per interval (job
-   state and the runner's `status.json`); a coupon whose job left the queue is
+   1x estimate rounded up (a block worker at its block's source count); `job.pbs` from
+   the cluster profile; `run_stages.py` (the unchanged bounded runner, executable /
+   hash / MPI wrapper read from the plan).
+4. **Submission and results** (`qualify/remote.py`; not under `--dry-run`): up to
+   `--max-jobs` of the run's jobs are queued / running at once (the library run's
+   concurrency; the 40-job user cap is checked at every `qsub`): a coupon's worker
+   jobs, then - once every worker job's `status.json` is complete and the archive
+   union holds sources x ranks potential files (`archive-union.json`, fail closed) -
+   its reducer job; a single-job coupon is one job. Per coupon: rsync of mesh / traces /
+   `main/` to `<root>/<run>/<case>/`, `qsub` after a read-only `qstat` count of the
+   user's jobs against the cap (`submission.json`, `submission-<job>.json`); every
+   active job is polled read-only once per interval (job state and the runner's
+   `status.json`); a worker job that left the queue incomplete stops the coupon (its
+   other jobs finish on their own, never qdel'd, recorded `JobsLeftRunning`); a coupon
+   whose last job left the queue is
    fetched while the others run - rsync of `main/` without the archives, `sha256sum`
    of every fetched CSV against the remote (`result-csv-sha256.json`),
    `run_graded_library_case.validate_matrix` on every reducer matrix (complete,
@@ -2475,9 +2509,15 @@ measured counts on load).
    (`remote-archive-deletion.json`) - and analyzed, and the next pending coupon takes
    the freed slot. Any stage not `complete`, a PCG non-convergence, a digest mismatch
    or an invalid matrix is a recorded stop. The library's `CriticalPathSeconds` is
-   measured from the first submission to the last fetch. `--resume` on the same
-   `--root` adopts the job ids a previous driver recorded (`<case>/submission.json`;
-   the re-derived plan must be byte-identical, else a recorded `Resume` stop) and
+   measured from the first submission to the last fetch; a coupon's own
+   `Cost.CriticalPathSeconds` from its first submission to its fetch (the reducer
+   job's queue wait included), its `Cost.Jobs` every job's estimate, actual seconds and
+   node-h, its `Cost.JobNodeHours` the sum over its jobs (the merged main stage reads
+   the blocks' per-source timings in block order: `summarize_cost.merge_split_statuses`);
+   the library totals keep their meaning (node-h summed over every job, jobs counted at
+   every `qsub`, `Splits` per coupon). `--resume` on the same
+   `--root` adopts the job ids a previous driver recorded (`<case>/submission*.json`;
+   the re-derived plans must be byte-identical, else a recorded `Resume` stop) and
    monitors / fetches / analyzes from there, so a lost driver (VPN drop, a stalled
    process) never causes a second submission; the monitor wait is sliced against
    the wall clock (a single 90 s sleep of the idle driver was observed not to return

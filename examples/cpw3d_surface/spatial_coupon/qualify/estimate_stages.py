@@ -76,6 +76,7 @@ def estimate_stage(model, order, sources, counts):
              "DOFRatioVsMeasured": ratio, "ReducerPairs": pairs,
              "ReducerBlockPairs": block_pairs(sources, model["BlockSize"]),
              "ReducerSecondsEstimate": reducer,
+             "WorkerNonSourceSecondsEstimate": measured["WorkerNonSourceSeconds"] * ratio,
              "WorkerPalacePeakGBEstimate": measured["WorkerPalacePeakGB"] * ratio,
              "ReducerPalacePeakGBEstimate": measured["ReducerPalacePeakGB"] * ratio,
              "ArchiveGBEstimate": measured["ArchiveGB"] * ratio * sources / measured["Sources"],
@@ -87,6 +88,7 @@ def estimate_stage(model, order, sources, counts):
     for factor in model["PCGFactors"]:
         worker = measured["WorkerNonSourceSeconds"] * ratio + sources * (other + solve * factor)
         stage["ByPCGFactor"][f"{factor:.1f}"] = {"MeanPCGIterations": measured["MeanPCGIterations"] * factor,
+                                                 "PerSourceSecondsEstimate": other + solve * factor,
                                                  "WorkerSecondsEstimate": worker,
                                                  "StageSecondsEstimate": worker + reducer}
     return stage

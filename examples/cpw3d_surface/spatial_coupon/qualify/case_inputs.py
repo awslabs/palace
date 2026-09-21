@@ -47,6 +47,8 @@ import generate_spatial_response as producer  # noqa: E402
 import trace_basis  # noqa: E402
 
 PHYSICS_RUN_KEY = "PhysicsRun"
+JOB_POLICY_KEY = "JobPolicy"
+JOB_POLICY_MODES = ("speed", "frugal", "fixed")
 TRACES_DIRECTORY = "traces"
 ZERO_TRACE_FILE = "zero-trace.csv"
 # Paths a derived config carries that differ from a reference config by construction.
@@ -82,6 +84,17 @@ def physics_run_parameters(manifest, case=None):
         raise CaseInputError("the production recipe must bind PhysicsRun {Order (int >= 1), LinearTol (0 < float < 1), "
                              "Provenance}: no run parameters for the coupon")
     parameters = {"Order": int(block["Order"]), "LinearTol": float(block["LinearTol"]), "Provenance": block["Provenance"]}
+    job_policy = block.get(JOB_POLICY_KEY)
+    if job_policy is not None:
+        # The manifest-recorded default of the per-coupon source split (decision 61b);
+        # the command line (--job-policy / --fixed-jobs) overrides it.
+        mode = job_policy.get("Mode") if isinstance(job_policy, dict) else None
+        fixed = job_policy.get("FixedJobs") if isinstance(job_policy, dict) else None
+        if (mode not in JOB_POLICY_MODES or (mode == "fixed") != (isinstance(fixed, int) and not isinstance(fixed, bool) and fixed >= 1)
+                or not isinstance(job_policy.get("Rule"), str) or not job_policy["Rule"]):
+            raise CaseInputError(f"PhysicsRun.JobPolicy must be {{Mode in {JOB_POLICY_MODES}, FixedJobs (int >= 1, fixed only), "
+                                 f"Rule}}, not {job_policy!r}")
+        parameters["JobPolicy"] = {"Mode": mode, "FixedJobs": fixed if mode == "fixed" else None, "Rule": job_policy["Rule"]}
     deviation_block = ((case or {}).get("Calibration") or {}).get(PHYSICS_RUN_KEY)
     if deviation_block is not None:
         deviation = ((manifest.get("Calibration") or {}).get("GateDeviations") or {}).get("LinearTol")
