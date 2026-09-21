@@ -1,9 +1,12 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <fstream>
 #include <iterator>
+#include <sstream>
 #include <scn/scan.h>
 #include <catch2/catch_test_macros.hpp>
+#include "fixtures.hpp"
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/tablecsv.hpp"
@@ -294,4 +297,248 @@ TEST_CASE("TableCSV_LoadFromFile", "[tablecsv][Serial]")
     CHECK(table_w.table[0].data == std::vector<double>{2, 8, 14, 20, 26, 32});
     CHECK(table_w.table[1].data == std::vector<double>{1, 1, 1, 1, 1, 1});
   }
+}
+
+namespace
+{
+
+std::string ReadFileToString(const fs::path &path)
+{
+  std::ifstream f(path, std::ios_base::in);
+  std::stringstream ss;
+  ss << f.rdbuf();
+  return ss.str();
+}
+
+void WriteFileFromString(const fs::path &path, const std::string &content)
+{
+  std::ofstream f(path, std::ios_base::out | std::ios_base::trunc);
+  f << content;
+}
+
+}  // namespace
+
+// The incremental write must be byte-identical to a whole-file write of the same table,
+// and a reload after every step must round-trip the data, since a restart reads the file
+// back at every measurement.
+TEST_CASE_METHOD(palace::test::PerRankTempDir, "TableCSV_IncrementalMatchesFullWrite",
+                 "[tablecsv][Serial]")
+{
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+  const auto incremental_path = temp_dir / "incremental.csv";
+  const auto full_path = temp_dir / "full.csv";
+
+  TableWithCSVFile out(incremental_path);
+  out.table.col_options.float_precision = 9;
+  out.table.insert("idx", "f (GHz)", -1);
+  out.table.insert("v_1", "V1 (V)", 0);
+
+  for (int i = 0; i < 5; i++)
+  {
+    out.table["idx"] << 0.25 * i;
+    out.table["v_1"] << 2.0 * i;
+    out.WriteTableIncremental();
+
+    TableWithCSVFile reloaded(incremental_path, true);
+    REQUIRE(reloaded.table.n_cols() == out.table.n_cols());
+    REQUIRE(reloaded.table.n_rows() == out.table.n_rows());
+    for (std::size_t j = 0; j < out.table.n_cols(); j++)
+    {
+      CHECK(reloaded.table[j].data == out.table[j].data);
+    }
+  }
+
+  TableWithCSVFile full(full_path);
+  full.table = out.table;
+  full.WriteFullTableTrunc();
+  CHECK(ReadFileToString(incremental_path) == ReadFileToString(full_path));
+  CHECK(ReadFileToString(incremental_path) == out.table.format_table());
+}
+
+// Rows already on disk are never re-rendered, so the bytes written grow with the step count
+// instead of its square. The corrupted byte below survives only if the writer appends.
+TEST_CASE_METHOD(palace::test::PerRankTempDir,
+                 "TableCSV_IncrementalDoesNotRewriteRowsOnDisk", "[tablecsv][Serial]")
+{
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+  const auto path = temp_dir / "append.csv";
+
+  TableWithCSVFile out(path);
+  out.table.col_options.float_precision = 9;
+  out.table.insert("idx", "f (GHz)", -1);
+  out.table.insert("v_1", "V1 (V)", 0);
+  for (int i = 0; i < 3; i++)
+  {
+    out.table["idx"] << 0.25 * i;
+    out.table["v_1"] << 2.0 * i;
+  }
+  out.WriteTableIncremental();
+
+  // Corrupt the first byte of the first data row in place, same length.
+  auto content = ReadFileToString(path);
+  const auto header = out.table.format_header();
+  REQUIRE(content.size() > header.size());
+  content[header.size()] = '#';
+  WriteFileFromString(path, content);
+
+  for (int i = 3; i < 5; i++)
+  {
+    out.table["idx"] << 0.25 * i;
+    out.table["v_1"] << 2.0 * i;
+  }
+  out.WriteTableIncremental();
+
+  CHECK(ReadFileToString(path) ==
+        content + out.table.format_row(3) + out.table.format_row(4));
+}
+
+// A multi-excitation sweep fills the table one column group per pass, so rows are
+// partially filled mid-sweep. The file must carry that fill state (NULLs included), and
+// once a later pass completes the rows, the whole-file fallback must revise them.
+TEST_CASE_METHOD(palace::test::PerRankTempDir, "TableCSV_MultiExcitationFillStateRoundTrip",
+                 "[tablecsv][Serial]")
+{
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+  const auto path = temp_dir / "sweep.csv";
+
+  TableWithCSVFile out(path);
+  Table &table = out.table;
+  table.col_options.float_precision = 9;
+  table.insert("idx", "f (GHz)", -1);
+  table.insert("a_1", "A1 (J)", 0);
+  table.insert("c_2", "C2 (J)", 1);
+  constexpr std::size_t n_rows = 3;
+
+  // First excitation pass fills the index and group 0 columns; group 1 stays empty.
+  for (std::size_t i = 0; i < n_rows; i++)
+  {
+    table["idx"] << 0.25 * i;
+    table["a_1"] << 1.0 * i;
+  }
+  out.WriteTableIncremental();
+
+  {
+    TableWithCSVFile reloaded(path, true);
+    REQUIRE(reloaded.table.n_rows() == n_rows);
+    CHECK(reloaded.table[0].data == table[0].data);
+    CHECK(reloaded.table[1].data == table[1].data);
+    CHECK(reloaded.table[2].data.empty());
+  }
+
+  // Second excitation pass fills the group 1 columns. The earlier rows were partially
+  // filled, so only a whole-file write can now put real values in their group 1 cells.
+  for (std::size_t i = 0; i < n_rows; i++)
+  {
+    table["c_2"] << 2.0 * i;
+  }
+  out.WriteTableIncremental();
+
+  {
+    TableWithCSVFile reloaded(path, true);
+    REQUIRE(reloaded.table.n_rows() == n_rows);
+    CHECK(reloaded.table[2].data == table[2].data);
+  }
+  CHECK(ReadFileToString(path) == table.format_table());
+}
+
+// A new run at the same path must never append to the previous run's rows.
+TEST_CASE_METHOD(palace::test::PerRankTempDir, "TableCSV_NewRunOverwritesPreviousRunOutput",
+                 "[tablecsv][Serial]")
+{
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+  const auto path = temp_dir / "previous.csv";
+
+  TableWithCSVFile run_a(path);
+  run_a.table.col_options.float_precision = 9;
+  run_a.table.insert("idx", "f (GHz)", -1);
+  run_a.table.insert("v_1", "V1 (V)", 0);
+  for (int i = 0; i < 3; i++)
+  {
+    run_a.table["idx"] << 0.25 * i;
+    run_a.table["v_1"] << 2.0 * i;
+  }
+  run_a.WriteTableIncremental();
+  REQUIRE(fs::exists(path));
+
+  TableWithCSVFile run_b(path);
+  run_b.table.col_options.float_precision = 9;
+  run_b.table.insert("idx", "f (GHz)", -1);
+  run_b.table.insert("v_1", "V1 (V)", 0);
+  for (int i = 0; i < 2; i++)
+  {
+    run_b.table["idx"] << 0.5 * i;
+    run_b.table["v_1"] << 3.0 * i;
+  }
+  run_b.WriteTableIncremental();
+
+  CHECK(ReadFileToString(path) == run_b.table.format_table());
+}
+
+// If the file disappears under a running table (deleted externally, or a symlink swap),
+// the next write must rebuild it from memory instead of appending into the void.
+TEST_CASE_METHOD(palace::test::PerRankTempDir, "TableCSV_WriteRecoversWhenFileVanishes",
+                 "[tablecsv][Serial]")
+{
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+  const auto path = temp_dir / "vanishes.csv";
+
+  TableWithCSVFile out(path);
+  out.table.col_options.float_precision = 9;
+  out.table.insert("idx", "f (GHz)", -1);
+  out.table.insert("v_1", "V1 (V)", 0);
+  for (int i = 0; i < 2; i++)
+  {
+    out.table["idx"] << 0.25 * i;
+    out.table["v_1"] << 2.0 * i;
+  }
+  out.WriteTableIncremental();
+
+  fs::remove(path);
+  for (int i = 2; i < 4; i++)
+  {
+    out.table["idx"] << 0.25 * i;
+    out.table["v_1"] << 2.0 * i;
+  }
+  out.WriteTableIncremental();
+
+  CHECK(ReadFileToString(path) == out.table.format_table());
+}
+
+// A table with columns but no rows still writes the header, matching a whole-file write,
+// and later rows land in the file as usual.
+TEST_CASE_METHOD(palace::test::PerRankTempDir, "TableCSV_EmptyTableWritesHeaderOnly",
+                 "[tablecsv][Serial]")
+{
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+  const auto path = temp_dir / "empty.csv";
+
+  TableWithCSVFile out(path);
+  out.table.col_options.float_precision = 9;
+  out.table.insert("idx", "f (GHz)", -1);
+  out.table.insert("v_1", "V1 (V)", 0);
+  out.WriteTableIncremental();
+  CHECK(ReadFileToString(path) == out.table.format_header());
+
+  out.table["idx"] << 0.25;
+  out.table["v_1"] << 2.0;
+  out.WriteTableIncremental();
+  CHECK(ReadFileToString(path) == out.table.format_table());
 }
