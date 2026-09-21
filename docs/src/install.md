@@ -196,7 +196,9 @@ Additional build options are (with default values in brackets):
   - `PALACE_WITH_MUMPS [OFF]` :  Build with MUMPS sparse direct solver
   - `PALACE_WITH_CUDSS [OFF]` :  Build with NVIDIA cuDSS sparse direct solver (requires
     `PALACE_WITH_CUDA=ON`; the cuDSS installation directory can be specified with
-    `CUDSS_DIR`)
+    `CUDSS_DIR`, which must point at a cuDSS archive installation rather than a pip/conda
+    wheel: the MPI communication layer is built from the source it ships against the
+    selected MPI)
   - `PALACE_WITH_SLEPC [ON]` :  Build with SLEPc eigenvalue solver
   - `PALACE_WITH_ARPACK [OFF]` :  Build with ARPACK eigenvalue solver
   - `PALACE_WITH_LIBXSMM [ON]` :  Build with LIBXSMM backend for libCEED
