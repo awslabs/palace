@@ -759,35 +759,58 @@ template <typename T>
 void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array<int> &attr_list,
                                                       const T &coeff, double a)
 {
-  // Preprocess the attribute list. If any of the given attributes already have material
-  // properties assigned, then they all need to point to the same material and it is
-  // updated in place. Otherwise a new material is added for these attributes.
+  // Preprocess the attribute list. If the given attributes already have material properties
+  // assigned, then they all need to point to the same material, which is updated (after
+  // being split off if other attributes share it). Otherwise a new material is added for
+  // these attributes.
   if (attr_list.Size() == 0)
   {
     // No attributes, nothing to add.
     return;
   }
 
-  int mat_idx = -1;
   for (auto attr : attr_list)
   {
-    MFEM_VERIFY(attr <= attr_mat.Size(),
+    MFEM_VERIFY(attr >= 1 && attr <= attr_mat.Size(),
                 "Out of bounds access for attribute "
                     << attr << " in MaterialPropertyCoefficient::AddMaterialProperty!");
-    if (mat_idx < 0)
-    {
-      mat_idx = attr_mat[attr - 1];
-    }
-    else
-    {
-      MFEM_VERIFY(mat_idx == attr_mat[attr - 1],
-                  "All attributes for MaterialPropertyCoefficient::AddMaterialProperty "
-                  "must correspond to the same "
-                  "existing material if it exists!");
-    }
+  }
+  int mat_idx = attr_mat[attr_list[0] - 1];
+  for (auto attr : attr_list)
+  {
+    MFEM_VERIFY(mat_idx == attr_mat[attr - 1],
+                "All attributes for MaterialPropertyCoefficient::AddMaterialProperty "
+                "must correspond to the same existing material, or all to none!");
   }
 
-  if (mat_idx < 0)
+  if (mat_idx >= 0)
+  {
+    // The material may be shared with attributes outside of the list (equal properties
+    // share an entry). Updating it in place would add the term to those attributes too, so
+    // give the listed attributes their own copy first.
+    bool shared = false;
+    for (int i = 0; i < attr_mat.Size() && !shared; i++)
+    {
+      shared = (attr_mat[i] == mat_idx && attr_list.Find(i + 1) < 0);
+    }
+    if (shared)
+    {
+      const mfem::DenseTensor mat_coeff_backup(mat_coeff);
+      mat_coeff.SetSize(mat_coeff_backup.SizeI(), mat_coeff_backup.SizeJ(),
+                        mat_coeff_backup.SizeK() + 1);
+      for (int k = 0; k < mat_coeff_backup.SizeK(); k++)
+      {
+        mat_coeff(k).Set(1.0, mat_coeff_backup(k));
+      }
+      mat_coeff(mat_coeff.SizeK() - 1).Set(1.0, mat_coeff_backup(mat_idx));
+      mat_idx = mat_coeff.SizeK() - 1;
+      for (auto attr : attr_list)
+      {
+        attr_mat[attr - 1] = mat_idx;
+      }
+    }
+  }
+  else
   {
     // Check if we can reuse an existing material.
     for (int k = 0; k < mat_coeff.SizeK(); k++)
