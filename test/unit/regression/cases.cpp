@@ -1029,7 +1029,6 @@ TEST_CASE("cylinder_driven_wave_tm_cutoff", "[Serial][Parallel][GPU][Regression]
 // 3.1-3.6 GHz, exercising the wave-port modal correction W on the reduced operator.
 // TestWavePortLossless asserts Sum_i |S_i1|^2 = 1 (reference-free); partition-dependent
 // error-indicators.csv / domain-E.csv are kept for the file-set check but not diffed.
-// Omits [GPU] like cpw_wave_adaptive (awslabs/palace#375).
 TEST_CASE("cylinder_driven_wave_tm_adaptive", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -1286,8 +1285,9 @@ TEST_CASE("cpw_wave_uniform", "[Serial][Parallel][GPU][Regression]")
 
 // Adaptive frequency sweeps primarily run as structural smoke tests because the greedy
 // sample sequence can vary. The wave-port case additionally applies a targeted complex
-// S-parameter comparison over every output frequency.
-TEST_CASE("cpw_lumped_adaptive", "[Serial][Parallel][Regression]")
+// S-parameter comparison over every output frequency. Both run on GPU now that the online
+// phase reuses reduced wave-port modes and operators (awslabs/palace#375).
+TEST_CASE("cpw_lumped_adaptive", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = std::numeric_limits<double>::infinity();
@@ -1296,8 +1296,7 @@ TEST_CASE("cpw_lumped_adaptive", "[Serial][Parallel][Regression]")
                                   opts);
 }
 
-// cpw_wave_adaptive omits [GPU] (awslabs/palace#375).
-TEST_CASE("cpw_wave_adaptive", "[Serial][Parallel][Regression]")
+TEST_CASE("cpw_wave_adaptive", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   // Keep non-port outputs as structural smoke checks because their adaptive interpolation
