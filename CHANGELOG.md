@@ -29,8 +29,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Restricted the assembly of wave-port mode vectors (excitation and modal correction) to
     the port boundary elements instead of looping over all boundary elements of the mesh,
     and assemble the per-frequency wave-port mode forms (S-parameter projection and modal
-    reactions) in a single sweep over the port elements. Together these dominated the
-    online phase of adaptive wave-port sweeps on GPU.
+    reactions) in a single sweep over the port elements.
     [PR 909](https://github.com/awslabs/palace/pull/909).
 
 #### Build system
