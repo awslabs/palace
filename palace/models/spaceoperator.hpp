@@ -360,6 +360,22 @@ public:
   std::unique_ptr<OperType> GetPreconditionerMatrix(ScalarType a0, ScalarType a1,
                                                     ScalarType a2, A3Type a3);
 
+  // Whether the finest level of GetPreconditionerMatrix<ComplexOperator>(1, iω, -ω², ω)
+  // is the system matrix K + iω C - ω² (Mr + i Mi). Both are assembled from the same
+  // material and boundary coefficients with the same essential-dof policy. Real and shifted
+  // preconditioners intentionally change the matrix. Floquet-wave-vector assembly is
+  // outside this equivalence contract, as is a single-level hierarchy: its only
+  // preconditioner level is the fully assembled coarse matrix, which must not replace the
+  // matrix-free system operator. A caller must separately check for any operator returned
+  // by GetExtraSystemOperator at the current frequency.
+  //
+  // When true and no extra operator is present, the preconditioner may also be passed to
+  // the Krylov solver as its system operator. BaseMultigridOperator::Mult applies the
+  // finest level, replacing the three fixed-operator applications by one (fused where
+  // supported). The preconditioner remains the sole owner; both Krylov roles are non-owning
+  // references and must not outlive it.
+  bool CanUsePreconditionerAsSystemOperator() const;
+
   // Construct and return the discrete curl or gradient matrices.
   const Operator &GetGradMatrix() const
   {

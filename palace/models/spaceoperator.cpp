@@ -1294,6 +1294,12 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
   return B;
 }
 
+bool SpaceOperator::CanUsePreconditionerAsSystemOperator() const
+{
+  return !pc_mat_real && !pc_mat_shifted && !mat_op.HasWaveVector() &&
+         GetNDSpaces().GetNumLevels() > 1;
+}
+
 void SpaceOperator::AddStiffnessCoefficients(double coeff, MaterialPropertyCoefficient &df,
                                              MaterialPropertyCoefficient &f)
 {

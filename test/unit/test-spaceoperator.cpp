@@ -236,4 +236,184 @@ TEST_CASE("CPU preconditioner quadrature data preserves the multigrid operators"
   }
 }
 
+// The driven sweep passes the preconditioner to the Krylov solver as the system operator
+// when its finest level applies exactly A = K + iω C - ω² (Mr + i Mi) (see
+// SpaceOperator::CanUsePreconditionerAsSystemOperator and DrivenSolver::SweepUniform).
+TEST_CASE("Driven preconditioner finest level is the system matrix",
+          "[spaceoperator][Serial][Parallel]")
+{
+  using namespace std::complex_literals;
+
+  const auto comm = Mpi::World();
+  auto serial_mesh = mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::TETRAHEDRON);
+  // A material loss tangent and an electrical conductivity cannot be combined on the same
+  // attribute, so split the domain: the first material gives the mass term an imaginary
+  // part, the second gives a damping term, and both are needed for every part of A to be
+  // nonzero.
+  for (int i = 0; i < serial_mesh.GetNE(); i++)
+  {
+    serial_mesh.SetAttribute(i, 1 + (i % 2));
+  }
+  serial_mesh.SetAttributes();
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh));
+
+  IntegrationSettingsGuard settings_guard;
+  config::SolverData solver;
+  solver.order = 2;
+  solver.pa_order_threshold = 2;
+  solver.linear.mg_max_levels = 2;
+  solver.linear.mg_coarsening = MultigridCoarsening::LINEAR;
+  solver.linear.pc_mat_real = false;
+  solver.linear.pc_mat_shifted = 0;
+  BilinearForm::pa_order_threshold = solver.pa_order_threshold;
+  fem::DefaultIntegrationOrder::p_trial = solver.order;
+  fem::DefaultIntegrationOrder::q_order_jac = solver.q_order_jac;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = solver.q_order_extra;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = solver.q_order_extra;
+
+  config::MaterialData lossy;
+  lossy.attributes = {1};
+  lossy.mu_r.s = {1.0, 2.0, 3.0};
+  lossy.epsilon_r.s = {2.0, 4.0, 5.0};
+  lossy.tandelta.s = {0.1, 0.1, 0.1};
+  config::MaterialData conductive;
+  conductive.attributes = {2};
+  conductive.epsilon_r.s = {3.0, 3.0, 3.0};
+  conductive.sigma.s = {0.5, 0.5, 0.5};
+  config::DomainData domains;
+  domains.attributes = {1, 2};
+  domains.materials = {lossy, conductive};
+
+  // Essential dofs, so the diagonal policies of the two operators are exercised, and a
+  // surface impedance boundary contributing to the boundary stiffness, damping and mass.
+  config::ImpedanceData impedance;
+  impedance.Rs = 2.0;
+  impedance.Ls = 0.5;
+  impedance.Cs = 0.25;
+  impedance.attributes = {4};
+  config::BoundaryData boundaries;
+  boundaries.pec.attributes = {1, 2, 3};
+  boundaries.impedance = {impedance};
+  Units units(1.0, 1.0);
+
+  double omega = 2.0;
+  // Assemble the system matrix from the fixed K, C and M and the preconditioner with the
+  // same driven coefficients, and return the relative difference of their application to a
+  // random complex vector. The Krylov solver applies the preconditioner through the
+  // multigrid wrapper, which forwards to its finest level.
+  auto ApplyDifference = [&](SpaceOperator &space_op)
+  {
+    auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+    auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    REQUIRE(K);
+    REQUIRE(C);
+    REQUIRE(M);
+    auto A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+    CHECK(!A2);
+    auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
+                                      K.get(), C.get(), M.get(), A2.get());
+    auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
+        1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
+    const auto *mg = dynamic_cast<const ComplexMultigridOperator *>(P.get());
+    REQUIRE(mg);
+    REQUIRE(mg->GetNumLevels() == 2);
+    REQUIRE(&mg->GetFinestOperator() == &mg->GetOperatorAtLevel(1));
+
+    ComplexVector x(A->Width()), expected(A->Height()), result(A->Height());
+    x.UseDevice(true);
+    expected.UseDevice(true);
+    result.UseDevice(true);
+    double max_rel_diff = 0.0;
+    for (int seed : {42, 314159})
+    {
+      x.Real().Randomize(seed + Mpi::Rank(comm));
+      x.Imag().Randomize(seed + 1 + Mpi::Rank(comm));
+      A->Mult(x, expected);
+      P->Mult(x, result);
+      CHECK(linalg::Norml2(comm, expected) > 0.0);
+      result.AXPY(-1.0, expected);
+      max_rel_diff = std::max(max_rel_diff, linalg::Norml2(comm, result) /
+                                                linalg::Norml2(comm, expected));
+    }
+    return max_rel_diff;
+  };
+
+  SECTION("Preconditioner is the system matrix")
+  {
+    SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
+    REQUIRE(space_op.CanUsePreconditionerAsSystemOperator());
+    CHECK_THAT(ApplyDifference(space_op), Catch::Matchers::WithinAbs(0.0, 1.0e-13));
+  }
+
+  SECTION("Multiple attributes in one impedance boundary group")
+  {
+    // Repeated terms on one boundary group must update only the listed attributes even when
+    // equal material properties initially share coefficient storage. This is the case that
+    // makes the configuration predicate a sufficient condition rather than a heuristic.
+    auto multi_attr_boundaries = boundaries;
+    multi_attr_boundaries.impedance.front().attributes = {4, 5, 6};
+    SpaceOperator space_op(solver, domains, multi_attr_boundaries, ProblemType::DRIVEN,
+                           units, mesh);
+    REQUIRE(space_op.CanUsePreconditionerAsSystemOperator());
+    CHECK_THAT(ApplyDifference(space_op), Catch::Matchers::WithinAbs(0.0, 1.0e-13));
+  }
+
+  SECTION("Shifted preconditioner is a different matrix")
+  {
+    auto shifted_solver = solver;
+    shifted_solver.linear.pc_mat_shifted = 1;
+    SpaceOperator space_op(shifted_solver, domains, boundaries, ProblemType::DRIVEN, units,
+                           mesh);
+    CHECK(!space_op.CanUsePreconditionerAsSystemOperator());
+    CHECK(ApplyDifference(space_op) > 1.0e-6);
+  }
+
+  SECTION("Real-valued preconditioner")
+  {
+    auto real_solver = solver;
+    real_solver.linear.pc_mat_real = true;
+    SpaceOperator space_op(real_solver, domains, boundaries, ProblemType::DRIVEN, units,
+                           mesh);
+    CHECK(!space_op.CanUsePreconditionerAsSystemOperator());
+  }
+
+  SECTION("Single multigrid level")
+  {
+    // Its only preconditioner level is the assembled coarse operator; keep the system
+    // application matrix-free.
+    auto single_solver = solver;
+    single_solver.linear.mg_max_levels = 1;
+    SpaceOperator space_op(single_solver, domains, boundaries, ProblemType::DRIVEN, units,
+                           mesh);
+    REQUIRE(space_op.GetNDSpaces().GetNumLevels() == 1);
+    CHECK(!space_op.CanUsePreconditionerAsSystemOperator());
+  }
+
+  SECTION("Floquet wave vector")
+  {
+    // Periodic wave-vector terms use a separate assembly path which is outside the reuse
+    // contract.
+    auto floquet_boundaries = boundaries;
+    floquet_boundaries.periodic.wave_vector = {0.1, 0.0, 0.0};
+    SpaceOperator space_op(solver, domains, floquet_boundaries, ProblemType::DRIVEN, units,
+                           mesh);
+    REQUIRE(space_op.GetMaterialOp().HasWaveVector());
+    CHECK(!space_op.CanUsePreconditionerAsSystemOperator());
+  }
+
+  SECTION("Second-order farfield boundary is frequency dependent")
+  {
+    auto farfield_boundaries = boundaries;
+    farfield_boundaries.impedance = {};
+    farfield_boundaries.farfield.order = 2;
+    farfield_boundaries.farfield.attributes = {4, 5, 6};
+    SpaceOperator space_op(solver, domains, farfield_boundaries, ProblemType::DRIVEN, units,
+                           mesh);
+    CHECK(space_op.CanUsePreconditionerAsSystemOperator());
+    CHECK(space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO));
+  }
+}
+
 }  // namespace palace
