@@ -21,9 +21,11 @@ class Units;
 //
 // A class handling thin-film superconductor sheet boundaries. Each sheet contributes a
 // tangential surface term (1/L_ksq) A_t · v_t to the curl-curl operator, where the kinetic
-// sheet inductance is L_ksq = mu0 * lambda^2 / d (nondimensionally lambda^2 / d). This is
-// the London kinetic-inductance contribution for a superconducting film modeled as a 2D
-// sheet.
+// sheet inductance is the finite-thickness London value L_ksq = mu0 * lambda *
+// coth(d/lambda) (nondimensionally lambda * coth(d/lambda)). This is the London
+// kinetic-inductance contribution for a superconducting film modeled as a 2D sheet; it
+// reduces to the thin-film Pearl limit lambda^2/d for d << lambda and saturates at lambda
+// for d >> lambda.
 //
 class SuperconductorSheetOperator
 {
@@ -54,6 +56,12 @@ public:
                               const mfem::ParMesh &mesh);
   SuperconductorSheetOperator(const IoData &iodata, const MaterialOperator &mat_op,
                               const mfem::ParMesh &mesh);
+
+  // Finite-thickness London kinetic sheet inductance L_ksq = lambda * coth(d/lambda) from
+  // the penetration depth and film thickness (in consistent units; mu0 absorbed in the
+  // nondimensional convention). Reduces to lambda^2/d for d << lambda, saturates at lambda
+  // for d >> lambda.
+  static double KineticSheetInductance(double lambda_L, double thickness);
 
   // Returns array of superconductor sheet attributes.
   mfem::Array<int> GetAttrList() const;

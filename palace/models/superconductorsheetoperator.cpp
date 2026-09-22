@@ -3,6 +3,7 @@
 
 #include "superconductorsheetoperator.hpp"
 
+#include <cmath>
 #include <set>
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -75,13 +76,16 @@ void SuperconductorSheetOperator::SetUpBoundaryProperties(
     }
   }
 
-  // Superconductor sheets are defined by the kinetic sheet inductance L_ksq [H/sq], either
-  // supplied directly or computed as L_ksq = lambda^2 / d (nondimensional, mu0 absorbed).
+  // Kinetic sheet inductance L_ksq [H/sq]: supplied directly, or from (lambda, d) via the
+  // finite-thickness London sheet L_ksq = lambda*coth(d/lambda) (nondimensional, mu0
+  // absorbed). Reduces to the thin-film Pearl limit lambda^2/d for d << lambda and
+  // saturates at lambda for d >> lambda, capturing the through-thickness current profile
+  // without resolving the film thickness.
   boundaries.reserve(superconductor.size());
   for (const auto &data : superconductor)
   {
     const double Ls =
-        (data.Ls > 0.0) ? data.Ls : (data.lambda_L * data.lambda_L / data.thickness);
+        (data.Ls > 0.0) ? data.Ls : KineticSheetInductance(data.lambda_L, data.thickness);
     MFEM_VERIFY(Ls > 0.0,
                 "Superconductor sheet has non-positive kinetic sheet inductance!");
     auto &bdr = boundaries.emplace_back();
@@ -124,6 +128,15 @@ void SuperconductorSheetOperator::PrintBoundaryInfo(const Units &units,
     }
   }
   Mpi::Print("{}", fmt::to_string(buffer));
+}
+
+double SuperconductorSheetOperator::KineticSheetInductance(double lambda_L,
+                                                           double thickness)
+{
+  // Finite-thickness London sheet inductance L_ksq = lambda * coth(d/lambda), with
+  // coth(x) = 1/tanh(x). Reduces to lambda^2/d for d << lambda; saturates at lambda for
+  // d >> lambda.
+  return lambda_L / std::tanh(thickness / lambda_L);
 }
 
 mfem::Array<int> SuperconductorSheetOperator::GetAttrList() const

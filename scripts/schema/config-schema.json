@@ -302,7 +302,7 @@
         },
         "Superconductor": {
           "type": "array",
-          "description": "Array of thin-film superconductor sheet boundaries for magnetostatic simulations. Each sheet contributes a London kinetic-inductance term to the extracted total inductance, modeled by the kinetic sheet inductance L_ksq = mu0 * lambda^2 / d, specified either via the penetration depth and film thickness or directly. Only available for magnetostatic simulations.",
+          "description": "Array of thin-film superconductor sheet boundaries for magnetostatic simulations. Each sheet contributes a London kinetic-inductance term to the extracted total inductance, modeled by the finite-thickness London kinetic sheet inductance L_ksq = mu0 * lambda * coth(d/lambda), specified either via the penetration depth and film thickness or directly (as the thin-film limit lambda^2/d when d << lambda). Only available for magnetostatic simulations.",
           "additionalItems": false,
           "items": {
             "$ref": "#/$defs/Superconductor"
@@ -947,12 +947,12 @@
         },
         "PenetrationDepth": {
           "type": "number",
-          "description": "London penetration depth λ of the superconducting film, specified in mesh length units. Used with Thickness to compute the kinetic sheet inductance L_ksq = mu0 * lambda^2 / d. Mutually exclusive with KineticInductance.",
+          "description": "London penetration depth λ of the superconducting film, specified in mesh length units. Used with Thickness to compute the finite-thickness kinetic sheet inductance L_ksq = mu0 * lambda * coth(d/lambda). Mutually exclusive with KineticInductance.",
           "default": 0.0
         },
         "Thickness": {
           "type": "number",
-          "description": "Superconducting film thickness d, specified in mesh length units. Used with PenetrationDepth to compute the kinetic sheet inductance L_ksq = mu0 * lambda^2 / d. Mutually exclusive with KineticInductance.",
+          "description": "Superconducting film thickness d, specified in mesh length units. Used with PenetrationDepth to compute the finite-thickness kinetic sheet inductance L_ksq = mu0 * lambda * coth(d/lambda). Mutually exclusive with KineticInductance.",
           "default": 0.0
         },
         "KineticInductance": {

@@ -49,11 +49,14 @@ Whether a film screens perfectly or penetrates is set by how its attribute is de
 
     ```math
     \tfrac{1}{2}\int_\Sigma \frac{1}{L_{\mathrm{ksq}}}\,\lvert \mathbf{A}_t - \mathbf{a}_h\rvert^2\,dS,
-    \qquad L_{\mathrm{ksq}} = \frac{\mu_0 \lambda^2}{d},
+    \qquad L_{\mathrm{ksq}} = \mu_0 \lambda \coth\!\left(\frac{d}{\lambda}\right),
     ```
 
     where ``\lambda`` (`"PenetrationDepth"`) is the penetration depth and ``d``
-    (`"Thickness"`) the film thickness. The film interior ``\mathbf{A}_t`` is then a free
+    (`"Thickness"`) the film thickness. This finite-thickness London sheet inductance reduces
+    to the thin-film limit ``\mu_0\lambda^2/d`` for ``d \ll \lambda`` and saturates at
+    ``\mu_0\lambda`` for ``d \gg \lambda`` (matching the measured thickness dependence of
+    Tolpygo et al. [[2]](#References)). The film interior ``\mathbf{A}_t`` is then a free
     unknown: the field penetrates over ``\sim\lambda`` and stores additional kinetic energy, so
     the extracted inductance is the **total** ``L = L_\text{geom} + L_\text{kin}``. As
     ``\lambda \to 0`` the penalty forces ``\mathbf{A}_t \to \mathbf{a}_h`` and the perfect-screening
@@ -197,22 +200,22 @@ The fields have the following meaning:
   - `"FluxAmounts"`: prescribed nondimensional flux-loop amplitude through the hole.
   - `"Direction"`: surface normal direction for flux orientation.
   - `"Superconductor"`: the same film attribute, with penetration depth ``\lambda`` and
-    thickness ``d`` (both in ``\mu\text{m}``) setting the sheet inductance
-    ``L_{\mathrm{ksq}} = \mu_0\lambda^2/d``.
+    thickness ``d`` (both in ``\mu\text{m}``) setting the finite-thickness sheet inductance
+    ``L_{\mathrm{ksq}} = \mu_0\lambda\coth(d/\lambda)``.
 
 Sweeping ``\lambda`` at fixed ``d = 0.1\,\mu\text{m}`` shows the kinetic inductance adding to the
 geometric baseline as the film penetration grows, and the ``\lambda\to0`` value reproducing the
 perfect-conductor limit:
 
-| ``\lambda`` (μm) | ``L_{\mathrm{ksq}} = \lambda^2/d`` | ``L`` (pH) |
-|:----------------:|:----------------------------------:|:----------:|
-| ``0`` (PEC)      | ``0``                              | ``2.853``  |
-| ``0.1``          | ``0.1``                            | ``3.288``  |
-| ``0.2``          | ``0.4``                            | ``4.017``  |
-| ``0.4``          | ``1.6``                            | ``5.157``  |
+| ``\lambda`` (μm) | ``L_{\mathrm{ksq}} = \lambda\coth(d/\lambda)`` (μm) | ``L`` (pH) |
+|:----------------:|:--------------------------------------------------:|:----------:|
+| ``0`` (PEC)      | ``0``                                              | ``2.853``  |
+| ``0.1``          | ``0.131``                                          | ``3.388``  |
+| ``0.2``          | ``0.433``                                          | ``4.075``  |
+| ``0.4``          | ``1.633``                                          | ``5.173``  |
 
-At ``\lambda = 0.4\,\mu\text{m}`` the self-inductance is ``L = 5.157\,\text{pH}``, of which
-``2.853\,\text{pH}`` is geometric and ``\approx 2.30\,\text{pH}`` kinetic. The geometric value
+At ``\lambda = 0.4\,\mu\text{m}`` the self-inductance is ``L = 5.173\,\text{pH}``, of which
+``2.853\,\text{pH}`` is geometric and ``\approx 2.32\,\text{pH}`` kinetic. The geometric value
 corresponds to a stored magnetic energy of ``E = \Phi_0^2/(2L)`` for one flux quantum
 ``\Phi_0 = 2.0678\times10^{-15}\,\text{Wb}`` trapped in the hole.
 
@@ -295,8 +298,8 @@ inductance. For ``\lambda = 0.4\,\mu\text{m}``, ``d = 0.1\,\mu\text{m}`` the com
 
 ```math
 M = \begin{pmatrix}
-4.510 & -0.136 \\
--0.136 & 4.500
+4.523 & -0.135 \\
+-0.135 & 4.513
 \end{pmatrix} \text{pH}
 ```
 
@@ -306,7 +309,7 @@ film. The mutual inductance is small and negative — about 3% of the self-induc
 holes on the shared film are weakly coupled: flux forced through one hole only modestly
 influences the shielding currents around the other at this separation. The energy of the
 antisymmetric (``+1/-1`` vortex–antivortex) state follows from this matrix as
-``M_{11}+M_{22}-2M_{12} \approx 9.28\,\text{pH}``.
+``M_{11}+M_{22}-2M_{12} \approx 9.31\,\text{pH}``.
 
 The figures below show the same field quantities for the two-hole geometry with unit flux
 through each hole:
@@ -373,8 +376,8 @@ For ``\lambda = 0.4\,\mu\text{m}``, ``d = 0.1\,\mu\text{m}`` the inductance matr
 
 ```math
 M = \begin{pmatrix}
-4.888 & 0.000 \\
-0.000 & 4.872
+4.897 & 0.000 \\
+0.000 & 4.881
 \end{pmatrix} \text{pH}
 ```
 
@@ -389,3 +392,7 @@ effectively decoupled — in contrast to the shared-plate case above.
 
 [1] J. M. Jaycox and M. B. Ketchen, Planar coupling scheme for ultra low noise DC SQUIDs, _IEEE
 Transactions on Magnetics_ 17 (1981) 400-403.
+
+[2] S. K. Tolpygo, E. B. Golden, T. J. Weir and V. Bolkhovsky, Inductance of superconductor
+integrated circuit features with sizes down to 120 nm, _Superconductor Science and Technology_
+34 (2021) 085005.
