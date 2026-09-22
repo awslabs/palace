@@ -7,6 +7,7 @@ import csv
 import hashlib
 import json
 import math
+import re
 from pathlib import Path
 import tomllib
 
@@ -188,6 +189,8 @@ PHYSICS_RUN_KEY = "PhysicsRun"
 JOB_POLICY_KEY = "JobPolicy"
 JOB_POLICY_MODES = ("speed", "frugal", "fixed")
 REDUCER_BLOCK_SIZE_KEY = "ReducerBlockSize"
+FROZEN_EXECUTABLE_KEY = "FrozenExecutable"
+SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 
 
 def validate_physics_run(recipe):
@@ -220,6 +223,17 @@ def validate_physics_run(recipe):
         if (not isinstance(value, int) or isinstance(value, bool) or value < 1 or
                 not isinstance(reducer_block_size.get("Rule"), str) or not reducer_block_size["Rule"]):
             raise ValueError("PhysicsRun.ReducerBlockSize must carry Value (int >= 1) and a Rule")
+    frozen = block.get(FROZEN_EXECUTABLE_KEY)
+    if frozen is not None:
+        # The recorded default frozen Palace executable of every qualify stage (decision 63):
+        # SHA256 (64 lowercase hex), the PreviousSHA256 it replaced (or None), Rule, Provenance.
+        digest = frozen.get("SHA256") if isinstance(frozen, dict) else None
+        previous = frozen.get("PreviousSHA256") if isinstance(frozen, dict) else None
+        if (not isinstance(digest, str) or not SHA256_HEX.match(digest) or
+                (previous is not None and (not isinstance(previous, str) or not SHA256_HEX.match(previous))) or
+                any(not isinstance(frozen.get(key), str) or not frozen[key] for key in ("Rule", "Provenance"))):
+            raise ValueError("PhysicsRun.FrozenExecutable must carry SHA256 (64 hex), PreviousSHA256 (64 hex or null), "
+                             "Rule and Provenance")
     return block
 SCOPE_KEY = "Scope"
 UNSUPPORTED_CLASS_KEY = "UnsupportedClass"

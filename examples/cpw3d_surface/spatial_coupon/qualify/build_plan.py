@@ -32,8 +32,24 @@ REDUCER_BLOCK_SIZE_RULE = ("PALACE_RESPONSE_BLOCK_SIZE = b: the reducer keeps 2b
                            "evaluates every source ceil(N / b) times; b = 48 -> 96 resident fields, estimated 350-450 GB of "
                            "the r8g.48xlarge's 1,485 GiB (b = 6 measured 194 GB); the per-entry sums are identical in "
                            "identical sample order, so the matrices are independent of b (decision 62(1) acceptance: "
-                           "bit-identical CSVs at b = 6 and b = 48)")
+                           "bit-identical CSVs at b = 6 and b = 48). With the streaming one-pass Gram executable "
+                           "(decision 62(4), SHA-256 170439c4...) the reducer evaluates every source once whatever b and "
+                           "keeps N x (4 Q_local + L_local) x 8 bytes resident, so b = N (a single block) is permitted "
+                           "(decision 63 rule; PBS 46718: p4 78 sources at b = 48 peak 33.3 GB vs 91.2 GB with b28); the "
+                           "default stays 48")
 PLAN_VERSION = 3
+# The frozen Palace executable every qualify stage runs (decision 63): the streaming
+# one-pass Gram build 170439c4... (decision 62(4), PBS 46717 build of the b1e7e9e9d
+# source freeze b3103728...) replaced the b28f089a... executable of every earlier
+# campaign (physics-01..-13, gallery, the decision-58 library run, the decision-61
+# acceptances); --frozen-binary-sha256 overrides, the manifest's
+# ProductionRecipe.PhysicsRun.FrozenExecutable records the library default.
+DEFAULT_FROZEN_BINARY_SHA256 = "170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b"
+PREVIOUS_FROZEN_BINARY_SHA256 = "b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27"
+FROZEN_BINARY_RULE = ("the frozen palace-archive-estimate-<sha256>.bin under the remote root runs every stage; the plan pins "
+                      "the digest and run_stages verifies it in the preflight; 170439c4... (streaming one-pass Gram, decision "
+                      "62(4)) reproduces b28f089a... at p3 bit for bit and at p4 to 8.4e-13 per entry (PBS 46718); "
+                      "--frozen-binary-sha256 overrides the default and the origin is recorded per coupon")
 
 
 def reducer_environment(block_size):

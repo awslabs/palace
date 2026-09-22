@@ -382,6 +382,7 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
     stages = [(item["EstimateKey"], item["Order"], item["Sources"]) for item in layout if item["Kind"] == "response"]
     local_edge = next((item for item in layout if item["Kind"] == "local-edge"), None)
     reducer_block_size = reducer_block_size_of(args, physics_run)
+    frozen_binary = frozen_binary_of(args, physics_run)
     try:
         estimate = estimate_stages.estimate(counts, stages, model=cost_model, profile=profile,
                                             local_edge=(local_edge["EstimateKey"], local_edge["Order"], local_edge["Sources"]),
@@ -400,6 +401,7 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
     write_json(case_root / "preflight" / "stage-estimate.json", estimate)
     record["JobPolicy"] = policy
     record["ReducerBlockSize"] = reducer_block_size
+    record["FrozenExecutable"] = frozen_binary
     record["Estimate"] = {"Path": str(case_root / "preflight" / "stage-estimate.json"), "FitsOneJob": estimate["FitsOneJob"],
                          "Decision": estimate["Decision"], "H1ByOrder": estimate["Mesh"]["H1ByOrder"],
                          "JobSecondsEstimateByPCGFactor": estimate["JobSecondsEstimateByPCGFactor"],
@@ -446,7 +448,7 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                          "ReferenceConfigRole": reference["ConfigRole"] if reference else None,
                          "ReferenceOrder": reference_order, "LinearTol": physics_run["LinearTol"], "Order": physics_run["Order"]}
     trace_pins = {f"{remote_traces}/{source['Name']}": source["SHA256"] for source in sources}
-    binary = f"{remote_root}/{profile['BinaryPattern'].format(sha256=args.frozen_binary_sha256)}"
+    binary = f"{remote_root}/{profile['BinaryPattern'].format(sha256=frozen_binary['SHA256'])}"
     mpiexec = f"{remote_root}/{profile['MPIExecWrapper']}"
     purpose = (f"coupon-library qualify of {case_id} (identity mesh {identity['SHA256']}, {len(indices)} sources, "
                f"{len(zero_trace)} contract zero-trace knots; config derived from the case's sources at the recipe Order "
@@ -460,7 +462,7 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
         plan = build_plan.build_plan(case_id=case_id, remote_case_root=remote_case,
                                      mesh={"Remote": remote_mesh, "SHA256": identity["SHA256"], "Local": identity["Path"]},
                                      stage_layout=layout, estimate=estimate, config_digests=config_digests, trace_pins=trace_pins,
-                                     profile=profile, binary=binary, binary_sha256=args.frozen_binary_sha256, mpiexec=mpiexec,
+                                     profile=profile, binary=binary, binary_sha256=frozen_binary["SHA256"], mpiexec=mpiexec,
                                      purpose=purpose, factors=factors, reducer_block_size=reducer_block_size["Value"])
         write_json(case_root / "main" / "plan.json", plan)
         job_script = build_plan.render_job_script(profile=profile, remote_root=remote_root, remote_case_root=remote_case,
@@ -481,7 +483,7 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                                              mesh={"Remote": remote_mesh, "SHA256": identity["SHA256"], "Local": identity["Path"]},
                                              stage_layout=layout, split_job=split_job, estimate=estimate, config_digests=config_digests,
                                              trace_pins=trace_pins, profile=profile, binary=binary,
-                                             binary_sha256=args.frozen_binary_sha256, mpiexec=mpiexec,
+                                             binary_sha256=frozen_binary["SHA256"], mpiexec=mpiexec,
                                              purpose=f"{purpose}; job {name} of the split {split['Decision']}", factors=factors,
                                              reducer_block_size=reducer_block_size["Value"])
             write_json(directory_ / "plan.json", plan)
@@ -529,6 +531,20 @@ def reducer_block_size_of(args, physics_run):
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
         raise CaseStop("ReducerBlockSize", f"the reducer block size must be an integer >= 1, not {value!r} ({origin})")
     return {"Value": value, "Origin": origin, "Rule": build_plan.REDUCER_BLOCK_SIZE_RULE}
+
+
+def frozen_binary_of(args, physics_run):
+    """The frozen Palace executable's SHA-256: --frozen-binary-sha256, else the manifest's
+    PhysicsRun.FrozenExecutable, else build_plan.DEFAULT_FROZEN_BINARY_SHA256 (decision 63)."""
+    if args.frozen_binary_sha256 is not None:
+        value, origin = args.frozen_binary_sha256, "--frozen-binary-sha256"
+    elif physics_run.get("FrozenExecutableSHA256") is not None:
+        value, origin = physics_run["FrozenExecutableSHA256"], "manifest ProductionRecipe.PhysicsRun.FrozenExecutable"
+    else:
+        value, origin = build_plan.DEFAULT_FROZEN_BINARY_SHA256, "built-in default build_plan.DEFAULT_FROZEN_BINARY_SHA256"
+    if not isinstance(value, str) or not value:
+        raise CaseStop("FrozenExecutable", f"the frozen executable digest must be a non-empty string, not {value!r} ({origin})")
+    return {"SHA256": value, "Origin": origin, "Rule": build_plan.FROZEN_BINARY_RULE}
 
 
 def job_policy_of(args, physics_run, profile):
@@ -1084,7 +1100,11 @@ def library_totals(records, *, args, remote, profile, wall_seconds, first_submis
             "DryRun": args.dry_run, "Remote": remote,
             "Orders": [f"p{order}" for order in (args.orders or [])], "OrdersRule": ORDERS_RULE,
             "Controls": [f"p{order}" for order in args.controls],
-            "FrozenBinarySHA256": args.frozen_binary_sha256, "ClusterProfile": profile["Name"]}
+            "FrozenBinarySHA256": {"CommandLine": args.frozen_binary_sha256,
+                                   "PerCase": {record["Case"]: record["FrozenExecutable"] for record in records
+                                               if record.get("FrozenExecutable")},
+                                   "Default": build_plan.DEFAULT_FROZEN_BINARY_SHA256, "Rule": build_plan.FROZEN_BINARY_RULE},
+            "ClusterProfile": profile["Name"]}
 
 
 def tool_commit():
@@ -1315,7 +1335,9 @@ def add_arguments(parser):
     parser.add_argument("--reducer-block-size", type=int, default=None,
                         help="PALACE_RESPONSE_BLOCK_SIZE of every reducer stage (decision 62(1)); default: the manifest's "
                              f"ProductionRecipe.PhysicsRun.ReducerBlockSize, else {build_plan.DEFAULT_REDUCER_BLOCK_SIZE}")
-    parser.add_argument("--frozen-binary-sha256", required=True, help="SHA-256 of the frozen Palace executable under ROOT")
+    parser.add_argument("--frozen-binary-sha256", default=None,
+                        help="SHA-256 of the frozen Palace executable under ROOT (decision 63); default: the manifest's "
+                             f"ProductionRecipe.PhysicsRun.FrozenExecutable, else {build_plan.DEFAULT_FROZEN_BINARY_SHA256[:12]}...")
     parser.add_argument("--stage-prefix", help="stage name prefix (default: the case id)")
     parser.add_argument("--case", action="append", default=None, help="case id (repeatable; default: every case of the build record)")
     parser.add_argument("--root", type=Path, help="local run root (default /tmp/coupon-library-qualify-<commit>-<ts>)")

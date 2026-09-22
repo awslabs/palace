@@ -416,6 +416,49 @@ class JobSplitTest(unittest.TestCase):
         self.assertEqual(parser.parse_args(["--build-record", "b", "--reference", "none", "--remote", "h:/r", "--frozen-binary-sha256", "f",
                                             "--reducer-block-size", "12"]).reducer_block_size, 12)
 
+    def test_manifest_frozen_executable_default_and_command_line_override(self):
+        """Decision 63: the production recipe records PhysicsRun.FrozenExecutable 170439c4...
+        (PreviousSHA256 b28f089a..., the streaming one-pass Gram executable of decision 62(4));
+        case_inputs and general_mesh_manifest validate it; --frozen-binary-sha256 overrides
+        it and the origin is recorded; the ReducerBlockSize rule records that b = N is
+        permitted with the streaming executable."""
+        from general_mesh_manifest import validate_physics_run
+        manifest = json.loads(MANIFEST.read_text())
+        manifest["Path"] = str(MANIFEST)
+        block = manifest["ProductionRecipe"]["PhysicsRun"]["FrozenExecutable"]
+        self.assertEqual(block["SHA256"], "170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b")
+        self.assertEqual(block["PreviousSHA256"], BINARY_SHA256)
+        self.assertEqual(block["SHA256"], build_plan.DEFAULT_FROZEN_BINARY_SHA256)
+        self.assertEqual(block["PreviousSHA256"], build_plan.PREVIOUS_FROZEN_BINARY_SHA256)
+        self.assertIn("62(4)", block["Provenance"])
+        self.assertIn("b = N", manifest["ProductionRecipe"]["PhysicsRun"]["ReducerBlockSize"]["Rule"])
+        self.assertIn("b = N", build_plan.REDUCER_BLOCK_SIZE_RULE)
+        physics_run = case_inputs.physics_run_parameters(manifest)
+        self.assertEqual(physics_run["FrozenExecutableSHA256"], block["SHA256"])
+        validate_physics_run(manifest["ProductionRecipe"])
+        for broken in ({"SHA256": "abc", "Rule": "x", "Provenance": "y"}, {"SHA256": block["SHA256"]},
+                       {"SHA256": block["SHA256"], "PreviousSHA256": "b28", "Rule": "x", "Provenance": "y"}, block["SHA256"]):
+            recipe = json.loads(json.dumps(manifest["ProductionRecipe"]))
+            recipe["PhysicsRun"]["FrozenExecutable"] = broken
+            with self.assertRaisesRegex(ValueError, "FrozenExecutable"):
+                validate_physics_run(recipe)
+            if not (isinstance(broken, dict) and broken.get("Rule") and broken.get("PreviousSHA256") == "b28"):
+                with self.assertRaisesRegex(case_inputs.CaseInputError, "FrozenExecutable"):
+                    case_inputs.physics_run_parameters({**manifest, "ProductionRecipe": recipe})
+        chosen = qualify_library.frozen_binary_of(argparse.Namespace(frozen_binary_sha256=None), physics_run)
+        self.assertEqual((chosen["SHA256"], chosen["Origin"]), (block["SHA256"], "manifest ProductionRecipe.PhysicsRun.FrozenExecutable"))
+        chosen = qualify_library.frozen_binary_of(argparse.Namespace(frozen_binary_sha256=BINARY_SHA256), physics_run)
+        self.assertEqual((chosen["SHA256"], chosen["Origin"]), (BINARY_SHA256, "--frozen-binary-sha256"))
+        chosen = qualify_library.frozen_binary_of(argparse.Namespace(frozen_binary_sha256=None), {"Order": 4})
+        self.assertEqual((chosen["SHA256"], chosen["Origin"]),
+                         (build_plan.DEFAULT_FROZEN_BINARY_SHA256, "built-in default build_plan.DEFAULT_FROZEN_BINARY_SHA256"))
+        self.assertIn("8.4e-13", chosen["Rule"])
+        parser = argparse.ArgumentParser()
+        qualify_library.add_arguments(parser)
+        self.assertIsNone(parser.parse_args(["--build-record", "b", "--reference", "none", "--remote", "h:/r"]).frozen_binary_sha256)
+        self.assertEqual(parser.parse_args(["--build-record", "b", "--reference", "none", "--remote", "h:/r",
+                                            "--frozen-binary-sha256", "f"]).frozen_binary_sha256, "f")
+
     def test_compare_split_matrices_reports_roundoff_and_differences(self):
         tmp = Path(tempfile.mkdtemp(prefix="split-compare-"))
         try:

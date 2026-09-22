@@ -2469,9 +2469,16 @@ python3 coupon_library.py qualify \
   --reference <graded_v2 campaign dir or none> \
   --remote soca-green-job:/data/home/simlap/coupon_accuracy_assessment_20260913 \
   [--orders p5] --controls p3,p5 --max-jobs 40 [--job-policy speed|frugal|fixed [--fixed-jobs N]] \
-  --frozen-binary-sha256 b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27 \
+  [--frozen-binary-sha256 HEX] [--reducer-block-size N] \
   [--case ID ...] [--stage-prefix NAME] [--control-source I ...] [--root DIR] [--dry-run] [--resume]
 ```
+
+The frozen executable defaults to the manifest's `ProductionRecipe.PhysicsRun.FrozenExecutable`
+(`170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b`, the streaming one-pass Gram
+build of decision 62(4); `PreviousSHA256 b28f089a…` with its provenance; decision 63), else
+`build_plan.DEFAULT_FROZEN_BINARY_SHA256` (the same digest); `--frozen-binary-sha256` overrides
+and the origin is recorded per coupon (`FrozenExecutable {SHA256, Origin, Rule}`). The reducer
+block size defaults to `PhysicsRun.ReducerBlockSize` (48; `--reducer-block-size` overrides).
 
 Every constant the physics runs edited per copy is an argument or a record field:
 the mesh path and SHA-256 (the build record's identity variant, re-hashed before
@@ -3141,18 +3148,22 @@ bound, since the Gram kernel is also faster): 10-edge p4 3,969 -> ~280 s, 5-edge
 s (-3.1 node-h of the 8.26 node-h run; b = 48 alone: -2.77). The reducer stops being the deadline
 floor of the source split (`job_split`): a coupon's job is the worker.
 
-**Candidate frozen executable - what the main-tree integration changes** (not switched here):
-(1) every `qualify` invocation's `--frozen-binary-sha256` (the plans' `Binary` / `BinarySHA256`)
-from `b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27` to
-`170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b` (the file exists under the
-remote root); (2) the cost model's reducer rates were measured with b28 at b = 6 - the streaming
-reducer's stage estimate should be re-measured on one coupon (the evaluation part becomes N
-evaluations; `ReducerResidentFieldGBPerMillionH1` no longer applies: the peak is flat) and
-`estimate_stages` updated in the same step; (3) the worker path is unchanged in the new executable
-(the p4 worker of PBS 46718 ran b28 by design; a first worker run with the new executable should
-be compared to a b28 archive bit for bit - the solve code is untouched, only the reduce-only branch
-skips the stiffness assembly); (4) `CODE-AND-EXECUTABLE-TRACKING.md` of the assessment records the
-new freeze (`linux-build/evidence/`).
+**Integration (decision 63, 2026-09-22; merge commit 4fb1f26d7 of simlapointe/perf-reducer
+af52cb0d8..79a2500b9 into the MA-shell tree 4ef0a21ac).** (1) The frozen executable of every
+`qualify` stage is now `170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b`:
+recorded as `ProductionRecipe.PhysicsRun.FrozenExecutable {SHA256, PreviousSHA256
+b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27, Rule, Provenance}` (validated by
+`general_mesh_manifest.validate_physics_run` and `case_inputs.physics_run_parameters`),
+`build_plan.DEFAULT_FROZEN_BINARY_SHA256` / `PREVIOUS_FROZEN_BINARY_SHA256` / `FROZEN_BINARY_RULE`;
+`--frozen-binary-sha256` is optional and overrides (origin recorded per coupon and in the library
+record). (2) The reducer block-size rule records that with the streaming executable the work is
+independent of b and b = N (one block; N x (4 Q_local + L_local) x 8 bytes resident) is permitted;
+the default stays 48. (3) The cost model's reducer rates remain the b28 / b = 6 measurements (a
+conservative upper bound for the streaming reducer; re-measuring them is not part of this
+integration). (4) The worker path is unchanged in the new executable; the merged qualify's live
+acceptance (below) compares its p3 control matrices to PBS 46718's. The three manifests were
+re-frozen after the merge (`general_mesh_manifest.py` ff44e45b8d2b -> be9ed95f8f2c) and again with the
+`FrozenExecutable` validation (-> 9bb1b89600c1).
 
 ## Preflight
 

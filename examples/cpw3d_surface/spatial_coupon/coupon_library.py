@@ -13,7 +13,7 @@
   coupon_library.py qualify --build-record library-build.json --reference <campaign dir or none>
                             --remote HOST:ROOT [--orders p5] --controls p3,p5 --max-jobs N
                             [--job-policy speed|frugal|fixed [--fixed-jobs N]]
-                            --frozen-binary-sha256 HEX [--case ID ...] [--root DIR] [--dry-run]
+                            [--frozen-binary-sha256 HEX] [--reducer-block-size N] [--case ID ...] [--root DIR] [--dry-run]
 
 `build --device` maps a device layout to coupon source directories first
 (device_coupons.py: discovery closure by Palace geometry preflights -> the planner's

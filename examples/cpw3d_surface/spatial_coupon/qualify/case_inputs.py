@@ -32,6 +32,7 @@ difference outside those paths and the recipe's Order / Tol.
 import csv
 import hashlib
 import json
+import re
 from pathlib import Path
 import sys
 import tomllib
@@ -51,6 +52,8 @@ PHYSICS_RUN_KEY = "PhysicsRun"
 JOB_POLICY_KEY = "JobPolicy"
 JOB_POLICY_MODES = ("speed", "frugal", "fixed")
 REDUCER_BLOCK_SIZE_KEY = "ReducerBlockSize"
+FROZEN_EXECUTABLE_KEY = "FrozenExecutable"
+SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 TRACES_DIRECTORY = "traces"
 ZERO_TRACE_FILE = "zero-trace.csv"
 # Paths a derived config carries that differ from a reference config by construction.
@@ -106,6 +109,14 @@ def physics_run_parameters(manifest, case=None):
                 not isinstance(reducer_block_size.get("Rule"), str) or not reducer_block_size["Rule"]):
             raise CaseInputError(f"PhysicsRun.ReducerBlockSize must be {{Value (int >= 1), Rule}}, not {reducer_block_size!r}")
         parameters["ReducerBlockSize"] = reducer_block_size["Value"]
+    frozen = block.get(FROZEN_EXECUTABLE_KEY)
+    if frozen is not None:
+        # The manifest-recorded default frozen Palace executable (decision 63);
+        # --frozen-binary-sha256 on the command line overrides it.
+        if (not isinstance(frozen, dict) or not isinstance(frozen.get("SHA256"), str) or not SHA256_HEX.match(frozen["SHA256"]) or
+                not isinstance(frozen.get("Rule"), str) or not frozen["Rule"]):
+            raise CaseInputError(f"PhysicsRun.FrozenExecutable must be {{SHA256 (64 hex), Rule}}, not {frozen!r}")
+        parameters["FrozenExecutableSHA256"] = frozen["SHA256"]
     deviation_block = ((case or {}).get("Calibration") or {}).get(PHYSICS_RUN_KEY)
     if deviation_block is not None:
         deviation = ((manifest.get("Calibration") or {}).get("GateDeviations") or {}).get("LinearTol")
