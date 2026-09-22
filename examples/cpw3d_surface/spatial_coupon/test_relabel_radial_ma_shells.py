@@ -551,3 +551,54 @@ class ProductionRadialShellsTest(unittest.TestCase):
         self.assertEqual(report["RadialShells"]["PartitionRows"], 4)
         self.assertEqual(report["WholeElementAmbiguityDiagnostics"]["AmbiguousRows"], 1)
         self.assertEqual(report["WholeElementAmbiguityDiagnostics"]["UnresolvedElements"], 1)
+
+
+class LabelOnlyRepublicationTest(unittest.TestCase):
+    """verify_label_only_republication: the re-published (shelled) identity vs the previous
+    production identity - labels only, the census count, the receipt's parent digest."""
+
+    def test_shelled_strip_vs_its_parent_is_labels_only(self):
+        import hashlib
+        import verify_label_only_republication as verifier
+        data, expected = strip_mesh()
+        out, mesh, shells, relabeled, ma_labels = relabel.relabel(data, lines=LINES, radii=RADII)
+        label_only = relabel.assert_label_only(data, out, mesh, relabeled)
+        census = {"Mesh": {"SHA256": hashlib.sha256(out).hexdigest()}, "LabelOnly": label_only,
+                  "Shells": [{"Label": shell["Label"], "Parent": shell["Parent"]} for shell in shells.values()]}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "previous.msh").write_bytes(data)
+            (root / "identity.msh").write_bytes(out)
+            (root / "census.json").write_text(json.dumps(census))
+            (root / "receipt.json").write_text(json.dumps({"ParentLabeledMeshSHA256": hashlib.sha256(data).hexdigest()}))
+            record = verifier.verify(root / "previous.msh", root / "identity.msh", root / "census.json", root / "receipt.json")
+            self.assertEqual(record["Verdict"], "labels-only")
+            self.assertEqual(record["RelabeledElements"], len(expected))
+            self.assertEqual(record["RelabeledPerParent"], {"6001": len(expected)})
+            self.assertTrue(record["Receipt"]["ParentLabeledEqualsPrevious"])
+            self.assertEqual(record["PhysicalNamesRemoved"], [6001])
+            self.assertIn(26001, record["PhysicalNamesAdded"])
+            # A wrong parent digest, a foreign census and a changed node fail closed.
+            (root / "bad-receipt.json").write_text(json.dumps({"ParentLabeledMeshSHA256": "0" * 64}))
+            with self.assertRaisesRegex(verifier.RepublicationError, "ParentLabeledMeshSHA256"):
+                verifier.verify(root / "previous.msh", root / "identity.msh", root / "census.json", root / "bad-receipt.json")
+            foreign = dict(census, Mesh={"SHA256": "1" * 64})
+            (root / "foreign.json").write_text(json.dumps(foreign))
+            with self.assertRaisesRegex(verifier.RepublicationError, "another mesh"):
+                verifier.verify(root / "previous.msh", root / "identity.msh", root / "foreign.json")
+            moved = bytearray(data)
+            moved[mesh["NodesSpan"][0] + 40] ^= 1
+            (root / "moved.msh").write_bytes(bytes(moved))
+            with self.assertRaisesRegex(verifier.RepublicationError, "Nodes"):
+                verifier.verify(root / "moved.msh", root / "identity.msh", root / "census.json")
+            # A relabel that is not a shell of the old label (a foreign MA label) is refused.
+            wrong = bytearray(out)
+            after = relabel.read_msh22_binary(out)
+            index = next(i for i, element in enumerate(after["Elements"]) if element[2][0] >= relabel.SHELL_LABEL_STRIDE)
+            offset = after["Elements"][index][1]
+            struct.pack_into("<i", wrong, offset, 26002)
+            (root / "wrong.msh").write_bytes(bytes(wrong))
+            wrong_census = dict(census, Mesh={"SHA256": hashlib.sha256(bytes(wrong)).hexdigest()})
+            (root / "wrong-census.json").write_text(json.dumps(wrong_census))
+            with self.assertRaisesRegex(verifier.RepublicationError, "not a shell of the old label"):
+                verifier.verify(root / "previous.msh", root / "wrong.msh", root / "wrong-census.json")
