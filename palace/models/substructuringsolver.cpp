@@ -151,6 +151,24 @@ private:
   mutable mfem::Vector td;
 };
 
+// Preconditioner adapter: forwards Solver::Mult to a callable (used to route the region
+// preconditioner through the region-submesh geometric multigrid). SetOperator is a no-op
+// because the underlying multigrid is built once, up front.
+class CallableSolver : public Solver<Operator>
+{
+public:
+  CallableSolver(int h, std::function<void(const mfem::Vector &, mfem::Vector &)> f)
+    : Solver<Operator>(false), apply(std::move(f))
+  {
+    height = width = h;
+  }
+  void SetOperator(const Operator &) override {}
+  void Mult(const mfem::Vector &x, mfem::Vector &y) const override { apply(x, y); }
+
+private:
+  std::function<void(const mfem::Vector &, mfem::Vector &)> apply;
+};
+
 // Materialized DtN: applies a replicated dense interface operator S_E (computed once) to a
 // distributed interface vector via a gather (Allreduce over the global interface
 // enumeration) and a local dense apply on owned interface rows. Cheap and reusable across
@@ -234,6 +252,21 @@ struct SubstructuringSolver::Impl
   mfem::Array<int> env_ess;  // solve-space essential true DOFs (Gamma + env Dirichlet)
   mutable mfem::ParGridFunction env_pgf, env_sgf;  // parent / submesh transfer buffers
   mutable mfem::Vector env_srhs, env_ssol;
+  // Region-solve geometric multigrid (Phase C): the region preconditioner runs on the
+  // region ParSubMesh (region Dirichlet terminals essential, interface Gamma free), avoiding
+  // the all-identity ranks of the parent-space region-free operator.
+  std::vector<std::unique_ptr<Mesh>> reg_mesh_vec;
+  mfem::ParSubMesh *reg_submesh = nullptr;
+  mfem::ParFiniteElementSpace *reg_solve_fes = nullptr;
+  std::vector<std::unique_ptr<mfem::H1_FECollection>> reg_fecs;
+  std::unique_ptr<FiniteElementSpaceHierarchy> reg_hierarchy;
+  std::unique_ptr<MultigridOperator> reg_mg_op;
+  std::vector<mfem::Array<int>> reg_dbc_lists;
+  std::unique_ptr<KspSolver> reg_gmg_ksp;  // inner GMG solve on the region submesh
+  mfem::Array<int> reg_ess;
+  bool region_gmg = false;
+  mutable mfem::ParGridFunction reg_pgf, reg_sgf;
+  mutable mfem::Vector reg_srhs, reg_ssol;
   // Energy (QoI) operators. Electrostatic: alias the solve operators. Magnetostatic: pure
   // curl-curl (no mass), so the magnetic energy / inductance is physical.
   std::unique_ptr<mfem::HypreParMatrix> A_region_energy, A_env_energy;
@@ -734,6 +767,179 @@ struct SubstructuringSolver::Impl
       }
     }
   }
+
+  // Region-solve geometric multigrid preconditioner on the region submesh (order>=2 H1).
+  // Returns false to fall back to the single-level wrapped BoomerAMG preconditioner.
+  bool BuildRegionGmg()
+  {
+    const int order = iodata.solver.order;
+    const int dim = parent.Dimension();
+    const int mg_levels = iodata.solver.linear.mg_max_levels;
+    if (magnetostatic || order <= 1 || mg_levels <= 1)
+    {
+      return false;
+    }
+
+    reg_mesh_vec.clear();
+    reg_mesh_vec.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParSubMesh>(
+        mfem::ParSubMesh::CreateFromDomain(parent, ra_arr))));
+    reg_submesh = dynamic_cast<mfem::ParSubMesh *>(&reg_mesh_vec[0]->Get());
+    reg_mesh_vec[0]->RebuildCeedAttributes();
+    reg_pgf.SetSpace(&parent_fes);
+
+    // Essential submesh DOFs = the region Dirichlet terminals (Gamma stays free), found by
+    // transferring the parent Dirichlet marker onto a scratch order-p space.
+    auto scratch = std::make_unique<mfem::ParFiniteElementSpace>(reg_submesh, fec.get());
+    std::set<int> ess_set;
+    {
+      mfem::Vector t(nt);
+      t = 0.0;
+      for (int i = 0; i < dbc_tdofs.Size(); i++)
+      {
+        t(dbc_tdofs[i]) = 1.0;
+      }
+      mfem::ParGridFunction pg(&parent_fes), sg(scratch.get());
+      pg.SetFromTrueDofs(t);
+      sg = 0.0;
+      reg_submesh->Transfer(pg, sg);
+      mfem::Vector st(scratch->GetTrueVSize());
+      sg.GetTrueDofs(st);
+      for (int i = 0; i < st.Size(); i++)
+      {
+        if (std::abs(st(i)) > 0.5)
+        {
+          ess_set.insert(i);
+        }
+      }
+    }
+    // Global essential-attribute decision (identical on every rank, see BuildEnvGmg).
+    MPI_Comm comm = reg_submesh->GetComm();
+    const int lbmax =
+        reg_submesh->bdr_attributes.Size() ? reg_submesh->bdr_attributes.Max() : 0;
+    int bmax = 0;
+    MPI_Allreduce(&lbmax, &bmax, 1, MPI_INT, MPI_MAX, comm);
+    std::vector<int> all_in(bmax, 1), has_dofs(bmax, 0);
+    for (int a = 1; a <= bmax; a++)
+    {
+      mfem::Array<int> m(bmax);
+      m = 0;
+      m[a - 1] = 1;
+      mfem::Array<int> adofs;
+      scratch->GetEssentialTrueDofs(m, adofs);
+      if (adofs.Size() > 0)
+      {
+        has_dofs[a - 1] = 1;
+      }
+      for (int d : adofs)
+      {
+        if (!ess_set.count(d))
+        {
+          all_in[a - 1] = 0;
+          break;
+        }
+      }
+    }
+    std::vector<int> g_all_in(bmax), g_has(bmax);
+    MPI_Allreduce(all_in.data(), g_all_in.data(), bmax, MPI_INT, MPI_LAND, comm);
+    MPI_Allreduce(has_dofs.data(), g_has.data(), bmax, MPI_INT, MPI_LOR, comm);
+    mfem::Array<int> ess_attr;
+    for (int a = 1; a <= bmax; a++)
+    {
+      if (g_all_in[a - 1] && g_has[a - 1])
+      {
+        ess_attr.Append(a);
+      }
+    }
+    if (ess_attr.Size() == 0)
+    {
+      return false;  // pure-Neumann region block: keep the single-level preconditioner
+    }
+
+    reg_fecs = fem::ConstructFECollections<mfem::H1_FECollection>(
+        order, dim, mg_levels, iodata.solver.linear.mg_coarsening, false);
+    reg_dbc_lists.clear();
+    reg_hierarchy = std::make_unique<FiniteElementSpaceHierarchy>(
+        fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+            mg_levels, reg_mesh_vec, reg_fecs, &ess_attr, &reg_dbc_lists));
+    if (reg_hierarchy->GetNumLevels() < 2)
+    {
+      reg_hierarchy.reset();
+      reg_fecs.clear();
+      return false;
+    }
+    reg_solve_fes = &reg_hierarchy->GetFinestFESpace().Get();
+
+    MaterialOperator reg_mat_op(iodata, *reg_mesh_vec[0]);
+    MaterialPropertyCoefficient coef(reg_mat_op.GetAttributeToMaterial(),
+                                     reg_mat_op.GetPermittivityReal());
+    BilinearForm a(reg_hierarchy->GetFinestFESpace());
+    a.AddDomainIntegrator<DiffusionIntegrator>(coef);
+    auto a_vec = a.Assemble(*reg_hierarchy, false);
+
+    const std::size_t nl = reg_hierarchy->GetNumLevels();
+    reg_mg_op = std::make_unique<MultigridOperator>(nl);
+    for (std::size_t l = 0; l < nl; l++)
+    {
+      auto &fes_l = reg_hierarchy->GetFESpaceAtLevel(l);
+      auto A_l = std::make_unique<ParOperator>(std::move(a_vec[l]), fes_l);
+      A_l->SetEssentialTrueDofs(reg_dbc_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+      reg_mg_op->AddOperator(std::move(A_l));
+    }
+    reg_ess = reg_dbc_lists.back();
+
+    auto amg = std::make_unique<MfemWrapperSolver<Operator>>(
+        std::make_unique<BoomerAmgSolver>(1, 1, true, 0));
+    amg->SetDropSmallEntries(false);
+    auto gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
+        iodata, comm, std::move(amg), reg_hierarchy->GetProlongationOperators());
+    auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
+    pcg->SetInitialGuess(false);
+    pcg->SetRelTol(1.0e-10);
+    pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
+    pcg->SetMaxIter(1000);
+    reg_gmg_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(gmg));
+    reg_gmg_ksp->SetOperators(*reg_mg_op, *reg_mg_op);
+
+    reg_sgf.SetSpace(reg_solve_fes);
+    reg_srhs.SetSize(reg_solve_fes->GetTrueVSize());
+    reg_ssol.SetSize(reg_solve_fes->GetTrueVSize());
+    region_gmg = true;
+    return true;
+  }
+
+  // Region preconditioner apply (approximates A_region_free^-1): identity on the
+  // non-region-free DOFs (A_region_free is identity there), and the region-submesh GMG solve
+  // on the region-free DOFs (transfer parent -> submesh, solve, transfer back, restrict).
+  void ApplyRegionGmgPc(const mfem::Vector &r, mfem::Vector &z) const
+  {
+    z.SetSize(nt);
+    for (int i = 0; i < nt; i++)
+    {
+      z(i) = is_region_free[i] ? 0.0 : r(i);
+    }
+    reg_pgf.SetFromTrueDofs(r);
+    reg_sgf = 0.0;
+    reg_submesh->Transfer(reg_pgf, reg_sgf);
+    reg_sgf.GetTrueDofs(reg_srhs);
+    for (int i = 0; i < reg_ess.Size(); i++)
+    {
+      reg_srhs(reg_ess[i]) = 0.0;
+    }
+    reg_ssol = 0.0;
+    reg_gmg_ksp->Mult(reg_srhs, reg_ssol);
+    reg_sgf.SetFromTrueDofs(reg_ssol);
+    reg_pgf = 0.0;
+    reg_submesh->Transfer(reg_sgf, reg_pgf);
+    mfem::Vector zr(nt);
+    reg_pgf.GetTrueDofs(zr);
+    for (int i = 0; i < nt; i++)
+    {
+      if (is_region_free[i])
+      {
+        z(i) = zr(i);
+      }
+    }
+  }
 };
 
 SubstructuringSolver::SubstructuringSolver(const IoData &iodata,
@@ -888,7 +1094,15 @@ void SubstructuringSolver::CondenseEnvironment()
   // singular-problem option.
   {
     std::unique_ptr<Solver<Operator>> pc;
-    if (impl->magnetostatic)
+    if (impl->BuildRegionGmg())
+    {
+      // Order>=2 H1: geometric multigrid on the region submesh, routed through the region
+      // preconditioner apply.
+      pc = std::make_unique<CallableSolver>(
+          impl->A_region_free->Height(),
+          [pi](const mfem::Vector &r, mfem::Vector &z) { pi->ApplyRegionGmgPc(r, z); });
+    }
+    else if (impl->magnetostatic)
     {
       auto ams = std::make_unique<mfem::HypreAMS>(&impl->parent_fes);
       ams->SetPrintLevel(0);
