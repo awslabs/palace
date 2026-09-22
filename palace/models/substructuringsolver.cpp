@@ -1057,6 +1057,34 @@ void SubstructuringSolver::CondenseEnvironment()
   impl->S_dense.SetSize(nG);
   impl->S_dense = 0.0;
 
+  // Interface true-DOF coordinates in the current gamma_global order (H1 only), replicated
+  // across ranks. Lets a saved S_E be re-ordered onto the current interface when the region
+  // has been re-meshed or re-partitioned (the interface Gamma is held fixed, so the DOF
+  // coordinates match; only the global numbering changes).
+  const int sdim = impl->parent.Dimension();
+  auto gamma_coords = [&]()
+  {
+    std::vector<double> loc(static_cast<std::size_t>(nG) * 3, 0.0),
+        glob(static_cast<std::size_t>(nG) * 3, 0.0);
+    mfem::ParGridFunction gf(&impl->parent_fes);
+    Vector td(impl->nt);
+    for (int d = 0; d < sdim; d++)
+    {
+      mfem::FunctionCoefficient xc([d](const mfem::Vector &x) { return x(d); });
+      gf.ProjectCoefficient(xc);
+      gf.GetTrueDofs(td);
+      for (int i = 0; i < impl->nt; i++)
+      {
+        if (impl->is_gamma[i])
+        {
+          loc[static_cast<std::size_t>(impl->gamma_global[i]) * 3 + d] = td(i);
+        }
+      }
+    }
+    MPI_Allreduce(loc.data(), glob.data(), nG * 3, MPI_DOUBLE, MPI_SUM, comm);
+    return glob;
+  };
+
   // Offline/online: the interface enumeration above is cheap and deterministic to rebuild,
   // but materializing S_E costs |Gamma| environment solves. In Online mode with a saved
   // model, load S_E instead; in Offline mode with a path set, materialize and save it.
@@ -1077,16 +1105,83 @@ void SubstructuringSolver::CondenseEnvironment()
       }
     }
     MPI_Bcast(&nG_file, 1, MPI_INT, 0, comm);
-    MFEM_VERIFY(nG_file == nG, "Saved substructuring model interface size ("
-                                   << nG_file << ") does not match this run (" << nG
-                                   << "); the mesh and partition count must be identical.");
+    MFEM_VERIFY(nG_file == nG,
+                "Saved substructuring model interface size ("
+                    << nG_file << ") does not match this run (" << nG
+                    << "); the interface (Gamma) must be identical between the offline and "
+                       "online runs.");
+    int has_coords = 0;
     if (rank == 0)
     {
       std::ifstream f(model_path, std::ios::binary);
       f.seekg(sizeof(int));
+      f.read(reinterpret_cast<char *>(&has_coords), sizeof(int));
+    }
+    MPI_Bcast(&has_coords, 1, MPI_INT, 0, comm);
+    std::vector<double> saved_coords;
+    if (has_coords)
+    {
+      saved_coords.assign(static_cast<std::size_t>(nG) * 3, 0.0);
+      if (rank == 0)
+      {
+        std::ifstream f(model_path, std::ios::binary);
+        f.seekg(2 * sizeof(int));
+        f.read(reinterpret_cast<char *>(saved_coords.data()), sizeof(double) * nG * 3);
+      }
+      MPI_Bcast(saved_coords.data(), nG * 3, MPI_DOUBLE, 0, comm);
+    }
+    if (rank == 0)
+    {
+      std::ifstream f(model_path, std::ios::binary);
+      f.seekg(static_cast<std::streamoff>(2 * sizeof(int) +
+                                          (has_coords ? sizeof(double) * nG * 3 : 0)));
       f.read(reinterpret_cast<char *>(impl->S_dense.GetData()), sizeof(double) * nG * nG);
     }
     MPI_Bcast(impl->S_dense.GetData(), nG * nG, MPI_DOUBLE, 0, comm);
+    // Re-order the saved S_E (in the offline interface numbering) onto the current interface
+    // DOFs by matching interface coordinates -- supports region re-meshing / re-partitioning
+    // under a fixed Gamma (H1). Without coordinates (magnetostatic H(curl)), the mesh and
+    // partition must be identical.
+    if (has_coords && !impl->magnetostatic)
+    {
+      const std::vector<double> cur = gamma_coords();
+      std::vector<int> perm(nG, -1);
+      double worst = 0.0;
+      for (int g = 0; g < nG; g++)
+      {
+        int best = 0;
+        double bd = 1e300;
+        for (int s = 0; s < nG; s++)
+        {
+          double dd = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            const double t = cur[static_cast<std::size_t>(g) * 3 + d] -
+                             saved_coords[static_cast<std::size_t>(s) * 3 + d];
+            dd += t * t;
+          }
+          if (dd < bd)
+          {
+            bd = dd;
+            best = s;
+          }
+        }
+        perm[g] = best;
+        worst = std::max(worst, bd);
+      }
+      MFEM_VERIFY(std::sqrt(worst) < 1e-8,
+                  "Online interface DOFs do not match the saved model's interface "
+                  "coordinates (max mismatch "
+                      << std::sqrt(worst)
+                      << "); the interface Gamma must be geometrically identical.");
+      for (int i = 0; i < impl->nt; i++)
+      {
+        if (impl->is_gamma[i])
+        {
+          impl->gamma_global[i] = perm[impl->gamma_global[i]];
+        }
+      }
+    }
     loaded = true;
   }
   if (!loaded)
@@ -1110,12 +1205,26 @@ void SubstructuringSolver::CondenseEnvironment()
         impl->S_dense(r, c) = col[r];
       }
     }
-    if (!model_path.empty() && rank == 0)
+    if (!model_path.empty())
     {
-      std::ofstream f(model_path, std::ios::binary);
-      f.write(reinterpret_cast<const char *>(&nG), sizeof(int));
-      f.write(reinterpret_cast<const char *>(impl->S_dense.GetData()),
-              sizeof(double) * nG * nG);
+      const int has_coords = impl->magnetostatic ? 0 : 1;
+      std::vector<double> coords;
+      if (has_coords)
+      {
+        coords = gamma_coords();  // collective: all ranks participate
+      }
+      if (rank == 0)
+      {
+        std::ofstream f(model_path, std::ios::binary);
+        f.write(reinterpret_cast<const char *>(&nG), sizeof(int));
+        f.write(reinterpret_cast<const char *>(&has_coords), sizeof(int));
+        if (has_coords)
+        {
+          f.write(reinterpret_cast<const char *>(coords.data()), sizeof(double) * nG * 3);
+        }
+        f.write(reinterpret_cast<const char *>(impl->S_dense.GetData()),
+                sizeof(double) * nG * nG);
+      }
     }
   }
   // g_E is excitation-dependent; it is computed per excitation in the region solve.
