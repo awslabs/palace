@@ -1057,6 +1057,76 @@ void SubstructuringSolver::CondenseEnvironment()
   impl->S_dense.SetSize(nG);
   impl->S_dense = 0.0;
 
+  // Interface true-DOF geometric signature in the current gamma_global order, replicated
+  // across ranks. Lets a saved S_E be re-ordered onto the current interface when the region
+  // has been re-meshed / re-partitioned (fixed Gamma). H1: the DOF coordinates (width 3).
+  // H(curl): per-edge (tangential-integral) moments of {e_x,e_y,e_z} = the signed edge vector
+  // (dx,dy,dz), and of {x e_x, y e_y, z e_z} = (dx*xm, dy*ym, dz*zm), width 6 -- these encode
+  // position + orientation (with sign) so edge DOFs match up to an orientation flip.
+  const int sdim = impl->parent.Dimension();
+  const int sig_w = impl->magnetostatic ? 12 : 3;
+  auto gamma_sig = [&]()
+  {
+    std::vector<double> loc(static_cast<std::size_t>(nG) * sig_w, 0.0),
+        glob(static_cast<std::size_t>(nG) * sig_w, 0.0);
+    mfem::ParGridFunction gf(&impl->parent_fes);
+    Vector td(impl->nt);
+    auto stamp = [&](int slot, mfem::Coefficient *sc, mfem::VectorCoefficient *vc)
+    {
+      if (sc)
+      {
+        gf.ProjectCoefficient(*sc);
+      }
+      else
+      {
+        gf.ProjectCoefficient(*vc);
+      }
+      gf.GetTrueDofs(td);
+      for (int i = 0; i < impl->nt; i++)
+      {
+        if (impl->is_gamma[i])
+        {
+          loc[static_cast<std::size_t>(impl->gamma_global[i]) * sig_w + slot] = td(i);
+        }
+      }
+    };
+    if (!impl->magnetostatic)
+    {
+      for (int d = 0; d < sdim; d++)
+      {
+        mfem::FunctionCoefficient xc([d](const mfem::Vector &x) { return x(d); });
+        stamp(d, &xc, nullptr);
+      }
+    }
+    else
+    {
+      // Edge (tangential-integral) moments: o_b = dof(e_b) = edge vector; and
+      // M[a][b] = dof(x_a e_b) = (edge vector)_b * midpoint_a. Together (12 numbers) these
+      // uniquely identify an edge DOF up to an orientation flip (both are linear in the
+      // tangent, so a flip negates all of them).
+      for (int b = 0; b < 3; b++)
+      {
+        mfem::Vector e(3);
+        e = 0.0;
+        e(b) = 1.0;
+        mfem::VectorConstantCoefficient ec(e);
+        stamp(b, nullptr, &ec);
+      }
+      for (int a = 0; a < 3; a++)
+      {
+        for (int b = 0; b < 3; b++)
+        {
+          mfem::VectorFunctionCoefficient xc(
+              3, [a, b](const mfem::Vector &x, mfem::Vector &v)
+              { v = 0.0; v(b) = x(a); });
+          stamp(3 + a * 3 + b, nullptr, &xc);
+        }
+      }
+    }
+    MPI_Allreduce(loc.data(), glob.data(), nG * sig_w, MPI_DOUBLE, MPI_SUM, comm);
+    return glob;
+  };
+
   // Offline/online: the interface enumeration above is cheap and deterministic to rebuild,
   // but materializing S_E costs |Gamma| environment solves. In Online mode with a saved
   // model, load S_E instead; in Offline mode with a path set, materialize and save it.
@@ -1077,16 +1147,135 @@ void SubstructuringSolver::CondenseEnvironment()
       }
     }
     MPI_Bcast(&nG_file, 1, MPI_INT, 0, comm);
-    MFEM_VERIFY(nG_file == nG, "Saved substructuring model interface size ("
-                                   << nG_file << ") does not match this run (" << nG
-                                   << "); the mesh and partition count must be identical.");
+    MFEM_VERIFY(nG_file == nG,
+                "Saved substructuring model interface size ("
+                    << nG_file << ") does not match this run (" << nG
+                    << "); the interface (Gamma) must be identical between the offline and "
+                       "online runs.");
+    int sig_type = 0;  // 0: none (identical mesh), 1: H1 coords, 2: H(curl) edge signature
     if (rank == 0)
     {
       std::ifstream f(model_path, std::ios::binary);
       f.seekg(sizeof(int));
+      f.read(reinterpret_cast<char *>(&sig_type), sizeof(int));
+    }
+    MPI_Bcast(&sig_type, 1, MPI_INT, 0, comm);
+    const int file_w = (sig_type == 2) ? 12 : (sig_type == 1 ? 3 : 0);
+    std::vector<double> saved_sig;
+    if (file_w > 0)
+    {
+      saved_sig.assign(static_cast<std::size_t>(nG) * file_w, 0.0);
+      if (rank == 0)
+      {
+        std::ifstream f(model_path, std::ios::binary);
+        f.seekg(2 * sizeof(int));
+        f.read(reinterpret_cast<char *>(saved_sig.data()),
+               sizeof(double) * nG * file_w);
+      }
+      MPI_Bcast(saved_sig.data(), nG * file_w, MPI_DOUBLE, 0, comm);
+    }
+    if (rank == 0)
+    {
+      std::ifstream f(model_path, std::ios::binary);
+      f.seekg(static_cast<std::streamoff>(2 * sizeof(int) +
+                                          sizeof(double) * nG * file_w));
       f.read(reinterpret_cast<char *>(impl->S_dense.GetData()), sizeof(double) * nG * nG);
     }
     MPI_Bcast(impl->S_dense.GetData(), nG * nG, MPI_DOUBLE, 0, comm);
+    // Re-order the saved S_E (offline interface numbering) onto the current interface DOFs by
+    // matching interface signatures -- supports region re-meshing / re-partitioning under a
+    // fixed Gamma. H1: coordinate match (no sign). H(curl): signed edge-signature match, with
+    // the orientation sign baked into S_E (symmetric): S_on[i][j] = s_i s_j S_off[p_i][p_j].
+    if (sig_type == 1 && !impl->magnetostatic)
+    {
+      const std::vector<double> cur = gamma_sig();
+      double worst = 0.0;
+      for (int i = 0; i < impl->nt; i++)
+      {
+        if (!impl->is_gamma[i])
+        {
+          continue;
+        }
+        const int g = impl->gamma_global[i];
+        int best = 0;
+        double bd = 1e300;
+        for (int s = 0; s < nG; s++)
+        {
+          double dd = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            const double t = cur[static_cast<std::size_t>(g) * 3 + d] -
+                             saved_sig[static_cast<std::size_t>(s) * 3 + d];
+            dd += t * t;
+          }
+          if (dd < bd)
+          {
+            bd = dd;
+            best = s;
+          }
+        }
+        impl->gamma_global[i] = best;  // remap local DOF -> saved interface index
+        worst = std::max(worst, bd);
+      }
+      double gworst = 0.0;
+      MPI_Allreduce(&worst, &gworst, 1, MPI_DOUBLE, MPI_MAX, comm);
+      MFEM_VERIFY(std::sqrt(gworst) < 1e-8,
+                  "Online interface DOFs do not match the saved model's coordinates (max "
+                  "mismatch "
+                      << std::sqrt(gworst) << "); the interface Gamma must be identical.");
+    }
+    else if (sig_type == 2 && impl->magnetostatic)
+    {
+      const std::vector<double> cur = gamma_sig();
+      std::vector<int> perm(nG, 0);
+      std::vector<double> sgn(nG, 1.0);
+      double worst = 0.0;
+      for (int g = 0; g < nG; g++)
+      {
+        int best = 0;
+        double bs = 1.0, bd = 1e300;
+        for (int s = 0; s < nG; s++)
+        {
+          double dp = 0.0, dm = 0.0;
+          for (int d = 0; d < 12; d++)
+          {
+            const double a = cur[static_cast<std::size_t>(g) * 12 + d];
+            const double b = saved_sig[static_cast<std::size_t>(s) * 12 + d];
+            dp += (a - b) * (a - b);
+            dm += (a + b) * (a + b);
+          }
+          if (dp < bd)
+          {
+            bd = dp;
+            best = s;
+            bs = 1.0;
+          }
+          if (dm < bd)
+          {
+            bd = dm;
+            best = s;
+            bs = -1.0;
+          }
+        }
+        perm[g] = best;
+        sgn[g] = bs;
+        worst = std::max(worst, bd);
+      }
+      double gworst = 0.0;
+      MPI_Allreduce(&worst, &gworst, 1, MPI_DOUBLE, MPI_MAX, comm);
+      MFEM_VERIFY(std::sqrt(gworst) < 1e-8,
+                  "Online interface edge DOFs do not match the saved model (max mismatch "
+                      << std::sqrt(gworst) << "); the interface Gamma must be identical.");
+      // S_on[i][j] = sgn_i sgn_j S_off[perm_i][perm_j]; keep the fresh gamma_global.
+      mfem::DenseMatrix S_off(impl->S_dense);
+      for (int i = 0; i < nG; i++)
+      {
+        for (int j = 0; j < nG; j++)
+        {
+          impl->S_dense(i, j) = sgn[i] * sgn[j] * S_off(perm[i], perm[j]);
+        }
+      }
+    }
     loaded = true;
   }
   if (!loaded)
@@ -1110,12 +1299,20 @@ void SubstructuringSolver::CondenseEnvironment()
         impl->S_dense(r, c) = col[r];
       }
     }
-    if (!model_path.empty() && rank == 0)
+    if (!model_path.empty())
     {
-      std::ofstream f(model_path, std::ios::binary);
-      f.write(reinterpret_cast<const char *>(&nG), sizeof(int));
-      f.write(reinterpret_cast<const char *>(impl->S_dense.GetData()),
-              sizeof(double) * nG * nG);
+      const int sig_type = impl->magnetostatic ? 2 : 1;
+      const std::vector<double> sig = gamma_sig();  // collective: all ranks participate
+      if (rank == 0)
+      {
+        std::ofstream f(model_path, std::ios::binary);
+        f.write(reinterpret_cast<const char *>(&nG), sizeof(int));
+        f.write(reinterpret_cast<const char *>(&sig_type), sizeof(int));
+        f.write(reinterpret_cast<const char *>(sig.data()),
+                sizeof(double) * nG * sig_w);
+        f.write(reinterpret_cast<const char *>(impl->S_dense.GetData()),
+                sizeof(double) * nG * nG);
+      }
     }
   }
   // g_E is excitation-dependent; it is computed per excitation in the region solve.
