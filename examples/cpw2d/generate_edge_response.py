@@ -178,7 +178,30 @@ def write_heldout(output, traces, radius, metal_thickness):
     return trace
 
 
-def dielectric(index, attributes, interface_type, thickness, permittivity):
+# The localized-energy radii of every interface (um): the historical 0.2 alone, or the
+# radial shells of a --edge-distances run (decision 66 part C: the 3D thin coupon's ring
+# radii 2 (2^k - 1) nm so the 2D MA is reported per shell and MA_sharp follows the same
+# r^(-2/3) estimator; Q_total is independent of the list).
+DEFAULT_EDGE_DISTANCES = [0.2]
+EDGE_DISTANCES = list(DEFAULT_EDGE_DISTANCES)
+
+
+def shells_requested():
+    return EDGE_DISTANCES != DEFAULT_EDGE_DISTANCES
+
+
+def ma_edge_attributes(foot, sidewall):
+    """The edge points of a fabricated MA entry: historically the MS curve's free endpoint
+    (the metal foot corner at the process plane) alone; under --edge-distances shells the
+    sidewall curve's endpoints - the bottom AND the top metal edge - so every MA quadrature
+    point is attributed to its nearest metal edge and reported under that edge's CSV `edge`
+    row (the 3D radial shells' nearest-metal-edge-line rule; Palace and the 2D
+    qualification sum the edges' Q_total).  Palace orders the points by (x, y): the bottom
+    corner precedes the top corner of each sidewall (ma_shells_2d.py relies on it)."""
+    return sidewall if shells_requested() else foot
+
+
+def dielectric(index, attributes, interface_type, thickness, permittivity, edge_attributes=(2,)):
     _, loss_tangent = INTERFACE_PROPERTIES[interface_type]
     return {
         "Index": index,
@@ -187,9 +210,9 @@ def dielectric(index, attributes, interface_type, thickness, permittivity):
         "Thickness": thickness,
         "Permittivity": permittivity,
         "LossTan": loss_tangent,
-        "EdgeAttributes": [2],
+        "EdgeAttributes": list(edge_attributes),
         "EdgeExcludeAttributes": [1],
-        "EdgeDistances": [0.2],
+        "EdgeDistances": sorted(EDGE_DISTANCES),
         "LocalizeEdgeEnergy": True,
         "SaveLocalEdgeEnergy": False,
         "EdgeFrameNormal": [0.0, 1.0, 0.0],
@@ -212,7 +235,8 @@ def make_config(
         interfaces = [
             dielectric(1, [5, 6], "SA", *interface_layers["SA"]),
             dielectric(2, [2], "MS", *interface_layers["MS"]),
-            dielectric(3, [3, 4], "MA", *interface_layers["MA"]),
+            dielectric(3, [3, 4], "MA", *interface_layers["MA"],
+                       edge_attributes=ma_edge_attributes([2], [4])),
         ]
     else:
         ground = [2]
@@ -340,11 +364,19 @@ def main():
     parser.add_argument("--ms-permittivity", type=float, default=11.47)
     parser.add_argument("--ma-thickness", type=float, default=0.002)
     parser.add_argument("--ma-permittivity", type=float, default=10.0)
+    parser.add_argument("--edge-distances", type=float, nargs="+", default=None,
+                        help="localized-energy radii (um) of every interface, e.g. the 3D shell radii "
+                             "(default 0.2 alone; the largest must be 0.2, the historical coupon radius)")
     parser.add_argument("--library-name", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--thin-mesh", type=Path)
     parser.add_argument("--fabricated-mesh", type=Path)
     args = parser.parse_args()
+    if args.edge_distances is not None:
+        distances = sorted(set(args.edge_distances))
+        if not distances or any(d <= 0.0 for d in distances) or max(distances) != DEFAULT_EDGE_DISTANCES[0]:
+            parser.error("--edge-distances must be positive and end at the coupon radius 0.2")
+        EDGE_DISTANCES[:] = distances
     material_values = (
         args.substrate_permittivity,
         args.sa_thickness,

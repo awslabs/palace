@@ -3075,6 +3075,12 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             thin_census = copy.deepcopy(census)
             thin_census["Scope"]["ExhibitedClasses"] = sorted(thin_census["Scope"]["ExhibitedClasses"] + ["ThinMetal"])
             thin_census["PrismTubes"]["Section"].update({"Kind": "thin", "TubesPerSide": 1})
+            # A thin coupon etches nothing: its census records no footprint polygon.
+            with self.assertRaisesRegex(ValueError, "Thin coupon census records etch footprint polygons"):
+                validate_gmsh_build_census(thin_report, thin_census, semantic)
+            thin_census["FootprintPolygons"] = []
+            thin_census["FootprintSimplification"].update({"Polygons": 0, "RemovedVertices": 0,
+                                                           "MaximumRelativeDeviation": 0.0})
             with self.assertRaisesRegex(ValueError, "TubesPerSide x the straight sides"):
                 validate_gmsh_build_census(thin_report, thin_census, semantic)
             thin_census["PrismTubes"]["TubeCount"] //= 2
@@ -3465,7 +3471,8 @@ class AchievedAnisotropyDesignGateTest(unittest.TestCase):
         # with the bound trace basis only - a basis-binding case (four-edge) executes it
         # exactly once at 0.5, a case without a trace basis (the first fixture) never.
         self.assertEqual(self.production["ProductionRecipe"]["BuildCommandOptions"]["--trace-basis-size-ratio"], 0.5)
-        stages = {"gmsh-build": {"Command": ["julia", "mesh.jl", "--lc-tangent", ".05",
+        # The mesher names the case kind as a positional token (decision 66).
+        stages = {"gmsh-build": {"Command": ["julia", "mesh.jl", "fabricated", "--lc-tangent", ".05",
                                              "--edge-size", "0.00025", "--edge-growth-ratio", "2",
                                              "--corner-size", ".00025", "--far-growth", "0.5",
                                              "--prism-tubes", "true"]}}
@@ -3475,13 +3482,16 @@ class AchievedAnisotropyDesignGateTest(unittest.TestCase):
         validate_production_recipe_commands({}, case, stages)                 # no recipe block
         validate_production_recipe_commands(self.production, {**case, "Calibration": {}}, stages)
         good = stages["gmsh-build"]["Command"]
-        for command in (good[:2] + ["--lc-tangent", ".1"] + good[4:],
+        for command in (good[:3] + ["--lc-tangent", ".1"] + good[5:],
                         [token for token in good if token not in ("--far-growth", "0.5")],
                         good + ["--edge-size", "0.00025"],
-                        good[:2] + ["--edge-size", "0.004"] + good[6:]):
+                        good[:3] + ["--edge-size", "0.004"] + good[7:]):
             with self.assertRaisesRegex(ValueError, "gmsh-build command does not execute the production recipe"):
                 validate_production_recipe_commands(self.production, case,
                                                     {"gmsh-build": {"Command": command}})
+        with self.assertRaisesRegex(ValueError, "does not name the case kind fabricated"):
+            validate_production_recipe_commands(self.production, case,
+                                                {"gmsh-build": {"Command": good[:2] + good[3:]}})
         with self.assertRaisesRegex(ValueError, "without a bound trace basis"):
             validate_production_recipe_commands(self.production, case,
                                                 {"gmsh-build": {"Command": good + ["--trace-basis-size-ratio", "0.5"]}})
