@@ -26,8 +26,17 @@ mesher stop at a recipe scope guard ("ScopeGuard[<id>]" in the gmsh-build log,
 supervisor decision 48) is recorded as an unsupported class with the guard id,
 distinctly from any other failure.
 
+--labels-only (decision 62(2), the registration probe): the headroom gate, the source
+validation and the mesher with exactly the gmsh-build command's options plus
+`--labels-only ROOT/build-census.json` - it stops after the CAD-entity labelling, before
+any mesh generation, and writes the label set (InterfaceAreas[].Attribute) the contract
+derivation consumes; no mesh, no publication, no build record.  The pass runs under the
+stage bounds outside the frozen gmsh-build stage contract (it produces no gmsh-mesh
+artifact); the production build still fails closed when its census labels differ from
+the contract (mesh_stage_contract.validate_gmsh_build_census).
+
 usage: run_gmsh_only_case.py CASE_ID [--manifest PATH] [--root DIR] [--julia PATH]
-       [--python PATH] [--stages-only] [--audits-only]
+       [--python PATH] [--stages-only] [--census-only | --labels-only | --audits-only]
 """
 import argparse
 import csv
@@ -117,8 +126,14 @@ def main():
                         help="stop after the canonical stages (headroom gate, source validation, gmsh-build with its "
                              "census, canonical publication and build record): the registration probe, whose "
                              "provisional contract cannot judge the placements yet")
+    parser.add_argument("--labels-only", action="store_true",
+                        help="stop after the mesher's CAD-entity labelling (decision 62(2)): the headroom gate, the "
+                             "source validation and the labels-only mesher pass writing ROOT/build-census.json with "
+                             "the label set; the registration probe (no mesh is generated)")
     parser.add_argument("--audits-only", action="store_true")
     args = parser.parse_args()
+    if sum(map(bool, (args.census_only, args.labels_only, args.audits_only))) > 1:
+        parser.error("--census-only, --labels-only and --audits-only exclude each other")
     manifest_path = args.manifest.resolve()
     manifest = json.loads(manifest_path.read_text())
     if manifest.get("Pipeline") != "gmsh-only":
@@ -246,12 +261,7 @@ def main():
         # Multi-slot coupons need the mesher's surface-partition postprocessor.
         ownership_report = (["--interface-ownership-report", f"{root}/build-interface-ownership.csv"]
                             if len(slots) > 1 else [])
-        launch("gmsh-build", "--log", f"{root}/gmsh-build.log", "--stage", "gmsh-build",
-               "--input", f"source-signature={S['Signature']}", "--input", f"source-boundary={S['Boundary']}",
-               "--input", f"source-mask={S['Mask']}", "--input", f"canonical-semantic-contract={root}/canonical-semantic.json",
-               *etch_inputs, *basis_inputs,
-               "--artifact", f"gmsh-mesh={root}/gmsh-build.msh", "--artifact", f"build-census={root}/build-census.json",
-               "--tool", f"runtime={julia}", "--tool", f"mesher={tools['mesh_spatial_coupon.jl']}", "--",
+        mesher_command = [
                julia, "--startup-file=no", f"--project={args.julia_project}", str(tools["mesh_spatial_coupon.jl"]),
                S["Signature"], "fabricated", f"{root}/gmsh-build.msh", "--mask", S["Mask"], "--boundary", S["Boundary"],
                "--radius", number(process["Radius"]), "--metal-thickness", number(process["MetalThickness"]),
@@ -265,7 +275,22 @@ def main():
                "--maximum-corner-aspect", number(judged["MaximumCornerAspect"]),
                "--minimum-scaled-jacobian", number(judged["MinimumScaledJacobian"]),
                "--maximum-jacobian-condition", number(judged["MaximumJacobianCondition"]),
-               "--maximum-quality-displacement-over-normal", "0.75")
+               "--maximum-quality-displacement-over-normal", "0.75"]
+        if args.labels_only:
+            # The same mesher command as the gmsh-build stage plus the labels-only output:
+            # the label set comes from the production code path on the production options.
+            launch("gmsh-build", "--log", f"{root}/gmsh-build.log", "--artifact", f"{root}/build-census.json", "--",
+                   *mesher_command, "--labels-only", f"{root}/build-census.json")
+            write_summary("built", stage="labels-only")
+            print(f"LABELS_DONE {root}", flush=True)
+            print(root); return
+        launch("gmsh-build", "--log", f"{root}/gmsh-build.log", "--stage", "gmsh-build",
+               "--input", f"source-signature={S['Signature']}", "--input", f"source-boundary={S['Boundary']}",
+               "--input", f"source-mask={S['Mask']}", "--input", f"canonical-semantic-contract={root}/canonical-semantic.json",
+               *etch_inputs, *basis_inputs,
+               "--artifact", f"gmsh-mesh={root}/gmsh-build.msh", "--artifact", f"build-census={root}/build-census.json",
+               "--tool", f"runtime={julia}", "--tool", f"mesher={tools['mesh_spatial_coupon.jl']}", "--",
+               *mesher_command)
         launch("canonical-publish", "--log", f"{root}/canonical-publish.log", "--stage", "canonical-gmsh-publication",
                "--input", f"gmsh-mesh={root}/gmsh-build.msh", "--input", f"source-process={S['Process']}",
                "--input", f"source-signature={S['Signature']}", "--input", f"source-boundary={S['Boundary']}",

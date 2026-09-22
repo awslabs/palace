@@ -87,7 +87,7 @@ def census_probe(labels):
         Path(log).write_text("stub probe\n")
         (root / "build-census.json").write_text(json.dumps(
             {"InterfaceAreas": [{"Attribute": label, "Area": 1.0} for label in labels]}))
-        return {"Case": case_id, "Commit": "stub", "Root": str(root), "Status": "built", "Stage": "census-only",
+        return {"Case": case_id, "Commit": "stub", "Root": str(root), "Status": "built", "Stage": "labels-only",
                 "ReturnCode": 0, "ScopeGuard": None, "Message": None}
     return probe
 
@@ -193,9 +193,21 @@ class DeviceCouponsTest(unittest.TestCase):
         def probe(probe_manifest, case_id, root, log):
             return census_probe(labels[case_id])(probe_manifest, case_id, root, log)
         registered = device_coupons.register_device_sources(record, manifest_path=self.manifest_path,
-                                                            work=self.tmp / "register", log=lambda message: None, probe=probe)
+                                                            work=self.tmp / "register", log=lambda message: None, probe=probe,
+                                                            jobs=3)
         manifest = json.loads(self.manifest_path.read_text())
         by_id = {case["Id"]: case for case in manifest["Cases"]}
+        # Decision 62(2): the probes / derivations ran in a pool of 3, the manifest appends
+        # serially in the device record's coupon order.
+        self.assertEqual(registered["RegistrationPool"]["Jobs"], 3)
+        self.assertEqual([case["Id"] for case in manifest["Cases"] if case["Id"] in by_id and case["Id"].startswith("spatial-")],
+                         [coupon["Case"] for coupon in registered["Coupons"]])
+        with self.assertRaises(device_coupons.DeviceAdapterError):
+            device_coupons.register_device_sources(record, manifest_path=self.manifest_path, work=self.tmp / "register-0",
+                                                   log=lambda message: None, probe=probe, jobs=0)
+        parser = coupon_library.build_parser()
+        self.assertEqual(parser.parse_args(["build", "--root", "r"]).register_jobs, device_coupons.DEFAULT_REGISTER_JOBS)
+        self.assertEqual(parser.parse_args(["build", "--root", "r", "--register-jobs", "3"]).register_jobs, 3)
         for coupon in registered["Coupons"]:
             self.assertEqual(coupon["Registration"]["Status"], register_case.STATUS_REGISTERED, coupon["Registration"])
             case = by_id[coupon["Case"]]

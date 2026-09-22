@@ -21,13 +21,15 @@ Registration:
    (mesh_stage_contract.scope_classes_of_case_inputs) - a class the recipe guards
    stops the registration as "unsupported-class" with the guard id, no probe built;
 2. the two-pass contract derivation of derive_semantic_contract.py, orchestrated:
-   a PROVISIONAL contract from the inputs, a census-only probe build of a staging copy
-   (run_gmsh_only_case.py --census-only under the production recipe: headroom gate,
-   source validation, gmsh-build with its census, canonical publication - not the
-   placements, which the provisional contract cannot judge when the footprint leaves
-   an un-etched plane; a mesher ScopeGuard stop is recorded as unsupported-class), then
-   the final contract from the probe's gmsh-build census (--build-census), written to
-   SOURCE_DIR/semantic-contract.json;
+   a PROVISIONAL contract from the inputs, a labels-only probe of a staging copy
+   (run_gmsh_only_case.py --labels-only under the production recipe, decision 62(2):
+   headroom gate, source validation, the mesher with the production gmsh-build options
+   stopping right after the CAD-entity labelling - the label set is the only thing the
+   derivation learns from a build and it exists before any mesh is generated; a mesher
+   ScopeGuard stop is recorded as unsupported-class), then the final contract from the
+   probe's label census (--build-census), written to SOURCE_DIR/semantic-contract.json;
+   the production build that follows fails closed when its own census labels differ
+   from the contract (mesh_stage_contract.validate_gmsh_build_census);
 3. the manifest case: the source file digests, the production Variants (identity and
    rotate-z) / TransformComparison / SignatureColumns shared by every existing case
    (fail closed when they differ), InventoryStatus, Features (default: the exhibited
@@ -202,10 +204,13 @@ def case_directory(case, repository):
     return directory if directory.is_absolute() else repository / directory
 
 
+PROBE_MODE = "--labels-only"
+
+
 def run_probe_build(python, julia, manifest_path, case_id, root, log):
-    """The census-only probe build of the staging case; returns its build summary."""
+    """The labels-only probe of the staging case (decision 62(2)); returns its build summary."""
     command = [python, str(HERE / "run_gmsh_only_case.py"), case_id, "--manifest", str(manifest_path),
-               "--root", str(root), "--census-only"]
+               "--root", str(root), PROBE_MODE]
     if julia is not None:
         command += ["--julia", str(julia)]
     with open(log, "w") as stream:
@@ -218,8 +223,8 @@ def run_probe_build(python, julia, manifest_path, case_id, root, log):
 
 
 def derive_two_pass(manifest, repository, case, paths, recipe_path, work, probe):
-    """Provisional contract -> census-only probe build of a staging copy -> final
-    contract from the probe census.  Returns (contract, probe root, probe summary);
+    """Provisional contract -> labels-only probe of a staging copy -> final contract
+    from the probe's label census.  Returns (contract, probe root, probe summary);
     raises RegistrationError with the probe summary attached when the probe stopped."""
     staging = work / "probe-source"
     staging.mkdir(parents=True)
@@ -265,16 +270,50 @@ def retired_entry(old_case, new_entries, version, reason, evidence):
             "RetiredBinding": changed, "Reason": reason, "Evidence": evidence}
 
 
-def register(case_id, directory, *, footprint, inventory_status, manifest_path, mesh_recipe=None,
-             features=None, provenance=None, work=None, python=sys.executable, julia=None,
-             probe=None, refreeze_calibration=None):
-    """Register (or reuse / supersede) the case; returns the registration record."""
+class PreparedRegistration:
+    """The outcome of the manifest-free part of a registration (prepare_registration):
+    the record so far and, for a case to register, the manifest case entry, its derived
+    contract, the probe root / summary and the source paths the commit needs."""
+
+    def __init__(self, record, work, *, case=None, contract=None, probe_root=None, summary=None, directory=None,
+                 footprint=None, scope=None, provenance=None, features=None, error=None):
+        self.record, self.work = record, work
+        self.case, self.contract, self.probe_root, self.summary = case, contract, probe_root, summary
+        self.directory, self.footprint, self.scope, self.provenance, self.features = directory, footprint, scope, provenance, features
+        self.error = error
+
+    @property
+    def done(self):
+        """True when the outcome is final (reused / unsupported / failed): nothing to commit."""
+        return self.case is None
+
+
+def finish_record(record, work, status, **fields):
+    record.update(Status=status, **fields)
+    (work / REGISTRATION_RECORD).write_text(json.dumps(record, indent=2) + "\n")
+    return record
+
+
+def load_production_manifest(manifest_path):
     manifest_path = Path(manifest_path).resolve()
     manifest = json.loads(manifest_path.read_text())
     if manifest.get("Pipeline") != "gmsh-only" or "Calibration" in manifest:
         raise RegistrationError("cases are registered into the Gmsh-only production manifest only")
     repository = (manifest_path.parent / manifest["RepositoryRoot"]).resolve()
     validate_manifest(manifest, manifest_path)
+    return manifest_path, manifest, repository
+
+
+def prepare_registration(case_id, directory, *, footprint, inventory_status, manifest_path, mesh_recipe=None,
+                         features=None, provenance=None, work=None, python=sys.executable, julia=None, probe=None):
+    """Steps 1-2 of a registration (the manifest is read, never written): the source
+    digests, the scope classes, the reuse-by-content check against the recorded case,
+    then the two-pass contract derivation with the labels-only probe.  Independent per
+    case, so device_coupons runs it for several coupons at once; commit_registration
+    appends the outcome to the manifest serially.  Returns a PreparedRegistration; a
+    final outcome (reused / unsupported / failed) carries `error` (the RegistrationError
+    of a stop) instead of a case to commit."""
+    manifest_path, manifest, repository = load_production_manifest(manifest_path)
     if inventory_status not in INVENTORY_STATUSES:
         raise RegistrationError(f"--inventory-status must be one of {list(INVENTORY_STATUSES)}")
     if not case_id or any(character in case_id for character in "/ \t\n"):
@@ -293,9 +332,7 @@ def register(case_id, directory, *, footprint, inventory_status, manifest_path, 
               "RetiredVersion": None, "Message": None}
 
     def finish(status, **fields):
-        record.update(Status=status, **fields)
-        (work / REGISTRATION_RECORD).write_text(json.dumps(record, indent=2) + "\n")
-        return record
+        return finish_record(record, work, status, **fields)
 
     try:
         paths = source_files(directory, footprint)
@@ -319,23 +356,23 @@ def register(case_id, directory, *, footprint, inventory_status, manifest_path, 
             if not contract.is_file() or sha256(contract) != old_entries["SemanticContract"]["SHA256"]:
                 finish(STATUS_FAILED, Message=f"the frozen contract of {case_id} ({contract}) differs from the "
                                               f"recorded digest while every source is unchanged: restore it")
-                raise RegistrationError(record["Message"])
-            return finish(STATUS_REUSED, FixtureVersion=existing.get("FixtureVersion"),
-                          ContractSHA256=old_entries["SemanticContract"]["SHA256"],
-                          Message=f"every recorded source digest equals the directory's: case reused "
-                                  f"(recorded directory {existing['Source']['Directory']})")
+                return PreparedRegistration(record, work, error=RegistrationError(record["Message"]))
+            finish(STATUS_REUSED, FixtureVersion=existing.get("FixtureVersion"),
+                   ContractSHA256=old_entries["SemanticContract"]["SHA256"],
+                   Message=f"every recorded source digest equals the directory's: case reused "
+                           f"(recorded directory {existing['Source']['Directory']})")
+            return PreparedRegistration(record, work)
     if scope["UnsupportedClasses"]:
         guard = scope["UnsupportedClasses"][0]
         finish(STATUS_UNSUPPORTED, StoppedBy={"Kind": "ScopeGuard", "Id": guard, "Stage": "inputs"},
                Message=f"unsupported class {guard} (from the inputs; no probe built)")
-        raise RegistrationError(record["Message"])
-    version = 1 if existing is None else int(existing.get("FixtureVersion") or 1) + 1
+        return PreparedRegistration(record, work, error=RegistrationError(record["Message"]))
     case = {"Id": case_id, "InventoryStatus": inventory_status, "Frozen": True,
             "Features": list(features) if features else list(scope["ExhibitedClasses"]),
             "Variants": shared["Variants"], "TransformComparison": shared["TransformComparison"],
             "Source": {"Directory": recorded_directory(directory, repository), "SignatureRole": "Signature",
                        "SignatureColumns": shared["SignatureColumns"], "Files": dict(entries)},
-            "FixtureVersion": version, "Provenance": None}
+            "FixtureVersion": None, "Provenance": None}
     if footprint != FOOTPRINT_BOUND:
         case["Source"]["EtchFootprint"] = PRODUCER_DEFAULT_ETCH_FOOTPRINT
     probe = probe if probe is not None else (
@@ -356,19 +393,41 @@ def register(case_id, directory, *, footprint, inventory_status, manifest_path, 
                            "Id": summary.get("Stage"), "ReturnCode": summary.get("ReturnCode")}
             finish(STATUS_FAILED, ProbeRoot=str(getattr(error, "probe_root", "")) or None, StoppedBy=stopped,
                    Message=str(error))
-        raise
+        return PreparedRegistration(record, work, error=error)
+    return PreparedRegistration(record, work, case=case, contract=contract, probe_root=probe_root, summary=summary,
+                                directory=directory, footprint=footprint, scope=scope, provenance=provenance,
+                                features=features)
+
+
+def commit_registration(prepared, *, manifest_path, refreeze_calibration=None):
+    """Step 3-4 of a registration: the contract written to the source directory, the
+    case appended to (or superseding its version in) the manifest read afresh, the
+    manifest validated and written, the tools refrozen.  Serial: one manifest
+    read-modify-write per call."""
+    if prepared.done:
+        if prepared.error is not None:
+            raise prepared.error
+        return prepared.record
+    record, work, case, directory = prepared.record, prepared.work, prepared.case, prepared.directory
+    case_id, commit = record["Case"], record["Commit"]
+    manifest_path, manifest, repository = load_production_manifest(manifest_path)
+    entries = case["Source"]["Files"]
+    existing = next((item for item in manifest["Cases"] if item["Id"] == case_id), None)
+    version = 1 if existing is None else int(existing.get("FixtureVersion") or 1) + 1
+    case["FixtureVersion"] = version
     contract_path = directory / SEMANTIC_CONTRACT_FILE
-    contract_path.write_text(json.dumps(contract, indent=2) + "\n")
+    contract_path.write_text(json.dumps(prepared.contract, indent=2) + "\n")
     case["Source"]["Files"]["SemanticContract"] = {"Name": SEMANTIC_CONTRACT_FILE, "SHA256": sha256(contract_path)}
     case["Provenance"] = (
         f"Registered by register_case.py at {commit} ({time.strftime('%Y-%m-%d')}), fixture version {version}: "
-        f"source directory {case['Source']['Directory']}, etch footprint {footprint}, recipe scope classes "
-        f"{scope['ExhibitedClasses']}; the contract is derived by derive_semantic_contract.py from the inputs "
-        f"and the gmsh-build census of a census-only production-option probe build ({probe_root}, commit "
-        f"{summary.get('Commit')})"
-        + (f"; {provenance}" if provenance else "")
+        f"source directory {case['Source']['Directory']}, etch footprint {prepared.footprint}, recipe scope classes "
+        f"{prepared.scope['ExhibitedClasses']}; the contract is derived by derive_semantic_contract.py from the inputs "
+        f"and the label census of a labels-only production-option probe pass (run_gmsh_only_case.py --labels-only, "
+        f"decision 62(2); {prepared.probe_root}, commit {prepared.summary.get('Commit')})"
+        + (f"; {prepared.provenance}" if prepared.provenance else "")
         + (f"; version {version - 1} retired in RetiredFixtures" if existing is not None else ""))
     if existing is not None:
+        old_entries = existing["Source"]["Files"]
         changed = sorted(role for role in set(old_entries) | set(entries)
                          if role != "SemanticContract" and
                          old_entries.get(role, {}).get("SHA256") != entries.get(role, {}).get("SHA256"))
@@ -377,7 +436,7 @@ def register(case_id, directory, *, footprint, inventory_status, manifest_path, 
             existing, case["Source"]["Files"], version - 1,
             f"source roles changed: {changed}; re-derived and re-registered by register_case.py as "
             f"FixtureVersion {version} at {commit}",
-            f"{work / REGISTRATION_RECORD}; probe root {probe_root}"))
+            f"{work / REGISTRATION_RECORD}; probe root {prepared.probe_root}"))
         record["RetiredVersion"] = version - 1
         manifest["Cases"] = [case if item["Id"] == case_id else item for item in manifest["Cases"]]
     else:
@@ -394,10 +453,21 @@ def register(case_id, directory, *, footprint, inventory_status, manifest_path, 
         refrozen = {"Changes": [list(change) for change in changes], "MirrorUpdated": mirror_stale}
     else:
         refrozen = f"skipped: the manifest is not in {HERE} (stage tools are frozen relative to it)"
-    return finish(STATUS_REGISTERED, FixtureVersion=version, ProbeRoot=str(probe_root),
-                  ContractSHA256=case["Source"]["Files"]["SemanticContract"]["SHA256"],
-                  Refreeze=refrozen,
-                  Message=f"registered {case_id} as FixtureVersion {version}")
+    return finish_record(record, work, STATUS_REGISTERED, FixtureVersion=version, ProbeRoot=str(prepared.probe_root),
+                         ContractSHA256=case["Source"]["Files"]["SemanticContract"]["SHA256"],
+                         Refreeze=refrozen,
+                         Message=f"registered {case_id} as FixtureVersion {version}")
+
+
+def register(case_id, directory, *, footprint, inventory_status, manifest_path, mesh_recipe=None,
+             features=None, provenance=None, work=None, python=sys.executable, julia=None,
+             probe=None, refreeze_calibration=None):
+    """Register (or reuse / supersede) the case; returns the registration record
+    (prepare_registration then commit_registration)."""
+    prepared = prepare_registration(case_id, directory, footprint=footprint, inventory_status=inventory_status,
+                                    manifest_path=manifest_path, mesh_recipe=mesh_recipe, features=features,
+                                    provenance=provenance, work=work, python=python, julia=julia, probe=probe)
+    return commit_registration(prepared, manifest_path=manifest_path, refreeze_calibration=refreeze_calibration)
 
 
 def add_arguments(parser):

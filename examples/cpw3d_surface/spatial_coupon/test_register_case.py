@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import unittest
 
+import register_case
 from register_case import (FOOTPRINT_BOUND, REGISTRATION_RECORD, STATUS_REGISTERED, STATUS_REUSED,
                            STATUS_UNSUPPORTED, RegistrationError, register, sha256)
 
@@ -20,16 +21,16 @@ SOURCE_FIXTURE = HERE / "testdata" / "two-edge-8dd4bc70f183"
 
 
 def census_probe(labels, summary_status="built", guard=None):
-    """A probe standing in for the census-only build: writes the census labels the
-    real build would record (from the frozen contract) and the build summary."""
+    """A probe standing in for the labels-only pass: writes the label census the real
+    pass would record (from the frozen contract) and the build summary."""
     def probe(probe_manifest, case_id, root, log):
         root.mkdir(parents=True)
         Path(log).write_text("stub probe\n")
         (root / "build-census.json").write_text(json.dumps(
-            {"InterfaceAreas": [{"Attribute": label, "Area": 1.0} for label in labels]}))
+            {"LabelsOnly": True, "InterfaceAreas": [{"Attribute": label, "Name": f"surface_{label}"} for label in labels]}))
         probe.manifests.append(json.loads(Path(probe_manifest).read_text()))
         return {"Case": case_id, "Commit": "stub", "Root": str(root), "Status": summary_status,
-                "Stage": "gmsh-build" if guard else "census-only", "ReturnCode": 0 if guard is None else 1,
+                "Stage": "gmsh-build" if guard else "labels-only", "ReturnCode": 0 if guard is None else 1,
                 "ScopeGuard": guard, "Message": None if guard is None else f"unsupported class {guard}"}
     probe.manifests = []
     return probe
@@ -160,6 +161,73 @@ class RegisterCaseTest(unittest.TestCase):
         self.assertEqual(record["Status"], STATUS_REGISTERED)
         case = next(c for c in self.manifest()["Cases"] if c["Id"] == "registered-copy")
         self.assertEqual(case["Source"]["Files"]["MeshRecipe"]["Name"], "mesh-recipe.json")
+
+    @unittest.skipIf(shutil.which("julia") is None, "julia is required for the labels-only probe")
+    def test_labels_only_probe_reproduces_the_frozen_label_set_before_any_mesh(self):
+        """Decision 62(2): the real probe (run_gmsh_only_case.py --labels-only) runs the
+        production mesher command up to the CAD-entity labelling and writes the label set;
+        the derived contract equals the frozen one (labels, corners, topology, supports);
+        no mesh, publication or build record is produced."""
+        record = self.register(probe=None)
+        self.assertEqual(record["Status"], STATUS_REGISTERED)
+        probe = Path(record["ProbeRoot"])
+        census = json.loads((probe / "build-census.json").read_text())
+        self.assertTrue(census["LabelsOnly"])
+        self.assertEqual([row["Attribute"] for row in census["InterfaceAreas"]], sorted(self.labels))
+        self.assertTrue(all(row["CADSurfaces"] >= 1 and "Area" not in row for row in census["InterfaceAreas"]))
+        self.assertIn("TraceBasis", census["Scope"]["ExhibitedClasses"])
+        self.assertEqual(census["SemanticContractSHA256"],
+                         sha256(Path(record["Work"]) / "probe" / "canonical-semantic.json"))
+        for name in ("gmsh-build.msh", "canonical.msh", "canonical-build.json", "canonical-publish.log"):
+            self.assertFalse((probe / name).exists(), name)
+        summary = json.loads((probe / "build-summary.json").read_text())
+        self.assertEqual((summary["Status"], summary["Stage"]), ("built", "labels-only"))
+        report = json.loads((probe / "gmsh-build.log.json").read_text())
+        self.assertEqual(report["ReturnCode"], 0)
+        self.assertNotIn("Stage", report)   # outside the frozen gmsh-build stage contract: no mesh artifact
+        self.assertIn("--labels-only", report["Command"])
+        self.assertIn("--prism-tubes", report["Command"])
+        contract = json.loads((self.source / "semantic-contract.json").read_text())
+        for key in ("BoundaryLabels", "SemanticCorners", "FeatureTopology", "ProtectedSupports"):
+            self.assertEqual(contract[key], self.frozen[key], key)
+        self.assertEqual(contract["Derivation"]["BuildCensusInterfaceLabels"], sorted(self.labels))
+        self.assertIn("labels-only", self.manifest()["Cases"][-1]["Provenance"])
+
+    def test_prepare_then_commit_equals_register_and_commits_serially(self):
+        """Decision 62(2): prepare_registration (probe + derivation, manifest read only)
+        for several cases, then commit_registration in order - the same manifest entries
+        as register(); a prepared reuse / stop is final at commit."""
+        before = self.manifest_path.read_text()
+        second = self.tmp / "source-2"
+        shutil.copytree(self.source, second)
+        provenance = json.loads((second / "provenance.json").read_text())
+        provenance["Copy"] = "second"
+        (second / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
+        prepared = [register_case.prepare_registration(case_id, directory, footprint="producer-default",
+                                                       inventory_status="RepositoryAssessmentFixture",
+                                                       manifest_path=self.manifest_path, mesh_recipe=self.recipe,
+                                                       work=self.tmp / f"prepare-{case_id}", probe=census_probe(self.labels))
+                    for case_id, directory in (("first-copy", self.source), ("second-copy", second))]
+        self.assertEqual(self.manifest_path.read_text(), before)   # nothing written by the preparation
+        self.assertTrue(all(not item.done for item in prepared))
+        self.assertFalse((self.source / "semantic-contract.json").exists())
+        records = [register_case.commit_registration(item, manifest_path=self.manifest_path) for item in prepared]
+        self.assertEqual([record["Status"] for record in records], [STATUS_REGISTERED] * 2)
+        self.assertEqual([(case["Id"], case["FixtureVersion"]) for case in self.manifest()["Cases"][-2:]],
+                         [("first-copy", 1), ("second-copy", 1)])
+        reused = register_case.prepare_registration("first-copy", self.source, footprint="producer-default",
+                                                    inventory_status="RepositoryAssessmentFixture", manifest_path=self.manifest_path,
+                                                    mesh_recipe=self.recipe, work=self.tmp / "prepare-again", probe=census_probe([]))
+        self.assertTrue(reused.done)
+        self.assertEqual(register_case.commit_registration(reused, manifest_path=self.manifest_path)["Status"], STATUS_REUSED)
+        stopped = register_case.prepare_registration(
+            "third-copy", self.source, footprint="producer-default", inventory_status="RepositoryAssessmentFixture",
+            manifest_path=self.manifest_path, mesh_recipe=self.recipe, work=self.tmp / "prepare-guard",
+            probe=census_probe([], summary_status="unsupported-class", guard="NarrowHoles"))
+        self.assertTrue(stopped.done)
+        self.assertEqual(stopped.record["Status"], STATUS_UNSUPPORTED)
+        with self.assertRaises(RegistrationError):
+            register_case.commit_registration(stopped, manifest_path=self.manifest_path)
 
     def test_unsupported_class_is_recorded_distinctly_and_never_registered(self):
         # From the inputs: a rounded process is guarded before any probe.

@@ -169,7 +169,7 @@
     },
     "gmsh-build": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "f0f3afba6e7e8014fa727ab3a74c0a1892b01d9cce693dfe7468e91f060f8611"
+      "mesher": "34838a16aa28be7a2c0f8c6c77cb3c24396ffe5981c13fe07ca533acb4b0134b"
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",

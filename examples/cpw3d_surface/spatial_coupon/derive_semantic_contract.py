@@ -32,13 +32,17 @@ executable):
 
 Two-pass workflow (by design): the un-etched plane set is a producer outcome, so a
 contract is derived twice - (1) without --build-census (PROVISIONAL: the required
-label set only), (2) a stages-only probe build of the same inputs under the
-production options with that provisional contract, then this tool again with
---build-census PROBE/build-census.json.  The probe census is NOT validated by the stage
-contract here (only its InterfaceAreas labels are read, and only labels inside the
-derived families are accepted); the production build that follows binds the final
-contract and validates its own census.  Because the contract enters the build through
-its SemanticCorners only, the probe's gmsh-build.msh equals the production one.
+label set only), (2) a probe of the same inputs under the production options with that
+provisional contract - the labels-only mesher pass of run_gmsh_only_case.py
+--labels-only (decision 62(2): the physical surface groups are assigned on the CAD
+entities before any mesh generation, so the pass stops there; register_case.py) or a
+full census-only build - then this tool again with --build-census PROBE/build-census.json.
+The probe census is NOT validated by the stage contract here (only its InterfaceAreas
+labels are read, and only labels inside the derived families are accepted); the
+production build that follows binds the final contract and validates its own census
+against it (fail closed on a label mismatch).  Because the contract enters the build
+through its SemanticCorners only, the label set of the labels-only pass (and the
+gmsh-build.msh of a full probe) equals the production one.
 
 The inputs are SOURCE_DIR/mesh-signature.csv, plan-view-boundary.csv and
 process-library.json unless the case binds other file names (--signature,
