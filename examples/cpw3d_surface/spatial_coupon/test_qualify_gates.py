@@ -439,6 +439,19 @@ class ControlsPlanAndEstimateRuleTest(unittest.TestCase):
         self.assertAlmostEqual(sum(parts48.values()), at48["ReducerSecondsEstimate"])
         self.assertLess(at48["ReducerSecondsEstimate"], at6["ReducerSecondsEstimate"])
         self.assertGreater(at48["ReducerSecondsEstimate"], parts6["Setup"] + parts6["Gram"])
+        # The calibration (PBS 46685, two-edge p4 at b = 6 / 48): evaluation fraction 0.97,
+        # 0.068 GB of reducer peak per resident field per million H1 DOFs (84 more fields at b = 48).
+        self.assertEqual((model["ReducerEvaluationFraction"], model["ReducerResidentFieldGBPerMillionH1"]), (0.97, 0.068))
+        self.assertAlmostEqual(at6["ReducerPalacePeakGBEstimate"], measured["ReducerPalacePeakGB"])
+        self.assertAlmostEqual(at48["ReducerPalacePeakGBEstimate"] - at6["ReducerPalacePeakGBEstimate"],
+                               84 * 0.068 * measured["H1"] / 1e6)
+        self.assertAlmostEqual(at48["ReducerResidentFieldsGBEstimate"], 84 * 0.068 * measured["H1"] / 1e6)
+        # Reproduces the measured two-edge p4 pair (78 sources, H1 7.97M): 86.9 -> 15.3 s, 45.6 -> 91.1 GB.
+        two_edge = {"Vertices": 91_000, "Edges": 600_000, "TriangleFaces": 1_000_000, "QuadFaces": 40_000,
+                    "Tetrahedra": 470_000, "Prisms": 44_000, "Pyramids": 3_000}
+        e6, e48 = (estimate_stages.estimate_stage(model, 4, 78, two_edge, b) for b in (6, 48))
+        self.assertAlmostEqual(e6["ReducerSecondsEstimateParts"]["Evaluation"] / e48["ReducerSecondsEstimateParts"]["Evaluation"],
+                               1014 / 156)
         whole = estimate_stages.estimate(counts, [("p4-80", 4, 80)], block_size=48)
         self.assertEqual(whole["ReducerBlockSize"], 48)
         self.assertEqual(whole["CostModel"]["MeasuredBlockSize"], 6)

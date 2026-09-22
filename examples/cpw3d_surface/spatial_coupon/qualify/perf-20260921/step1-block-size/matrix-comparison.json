@@ -1,0 +1,124 @@
+{
+  "Version": 1,
+  "PBSJobID": "46685",
+  "Case": "two-edge-8dd4bc70f183",
+  "Executable": "b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27",
+  "Rule": "the same archive reduced at PALACE_RESPONSE_BLOCK_SIZE 6 and 48; every value compared per (interface, edge, R, basis_i, basis_j) key; the CSV row ORDER follows the block-pair emission order and differs between block sizes (every consumer - run_graded_library_case.validate_matrix, compare_matrices, compare_split_matrices - groups rows by key)",
+  "Stages": {
+    "p3-control": {
+      "Matrices": {
+        "domain-response-matrix.csv": {
+          "Rows": 36,
+          "Entries": 36,
+          "BitIdenticalEntries": 36,
+          "MaxRelativeDifference": 0.0,
+          "RowOrderIdentical": false,
+          "SHA256": {
+            "b6": "14e4b9660b010bb6ae0cbe9b6c955480b054434492eb0b7e3863bcab855e4f7f",
+            "b48": "d995d4f30b93861f9396ac32668e618c2df0d574ba6ecb9109906d39e09da28b"
+          }
+        },
+        "surface-response-matrix.csv": {
+          "Rows": 72,
+          "Entries": 432,
+          "BitIdenticalEntries": 432,
+          "MaxRelativeDifference": 0.0,
+          "RowOrderIdentical": false,
+          "SHA256": {
+            "b6": "5d4b7f3cd706d76ae489f1f4c7b46bd3c15812c2e359fb50f7c5c2d3d8673182",
+            "b48": "196251f68a41bf0de6b3d0cbf23d67a8c3f7f6ddcafeb4fe3b55047778321639"
+          }
+        }
+      },
+      "b6": {
+        "WallSeconds": 12.194506966000006,
+        "PalaceTotalSeconds": 10.573,
+        "OperatorConstructionSeconds": 0.865,
+        "BlockPairs": 3,
+        "PalacePeakTotal": "30.0G",
+        "NodePeakUsedGiBSampled": 67.42636108398438,
+        "MaxSingleRankRSSGiB": 0.422027587890625
+      },
+      "b48": {
+        "WallSeconds": 11.802244489000003,
+        "PalaceTotalSeconds": 10.165,
+        "OperatorConstructionSeconds": 0.558,
+        "BlockPairs": 1,
+        "PalacePeakTotal": "28.8G",
+        "NodePeakUsedGiBSampled": 60.311580657958984,
+        "MaxSingleRankRSSGiB": 0.4229240417480469
+      },
+      "Worker": {
+        "WallSeconds": 26.086117579999993,
+        "PalaceTotalSeconds": 22.808,
+        "Sources": 8,
+        "H1": 3388123,
+        "Elements": 521676,
+        "PalacePeakTotal": "39.7G"
+      }
+    },
+    "p4": {
+      "Matrices": {
+        "domain-response-matrix.csv": {
+          "Rows": 3081,
+          "Entries": 3081,
+          "BitIdenticalEntries": 3081,
+          "MaxRelativeDifference": 0.0,
+          "RowOrderIdentical": false,
+          "SHA256": {
+            "b6": "2cb432ee04ae70637b1a90eb320ec676a841d80390a9c54e29b44ac8484ac262",
+            "b48": "e691516374c35f20d7bd41c0b8980d5fb3f358df604f77af2f2034b0fdc8e191"
+          }
+        },
+        "surface-response-matrix.csv": {
+          "Rows": 6162,
+          "Entries": 36972,
+          "BitIdenticalEntries": 36972,
+          "MaxRelativeDifference": 0.0,
+          "RowOrderIdentical": false,
+          "SHA256": {
+            "b6": "d4e2aa53d614753db345f197f98abbb39de0f92a4090d4060833f0bac362c35e",
+            "b48": "21001972a8d390e5e138ad8684d09e8fac28f4457c666d445db9ca0bae24e124"
+          }
+        }
+      },
+      "b6": {
+        "WallSeconds": 99.19279933600001,
+        "PalaceTotalSeconds": 97.534,
+        "OperatorConstructionSeconds": 86.903,
+        "BlockPairs": 91,
+        "PalacePeakTotal": "45.6G",
+        "NodePeakUsedGiBSampled": 90.77812576293945,
+        "MaxSingleRankRSSGiB": 0.4226570129394531
+      },
+      "b48": {
+        "WallSeconds": 28.40243896900006,
+        "PalaceTotalSeconds": 26.604,
+        "OperatorConstructionSeconds": 15.252,
+        "BlockPairs": 3,
+        "PalacePeakTotal": "91.1G",
+        "NodePeakUsedGiBSampled": 136.50836563110352,
+        "MaxSingleRankRSSGiB": 0.8351249694824219
+      },
+      "Worker": {
+        "WallSeconds": 317.99083460299994,
+        "PalaceTotalSeconds": 316.289,
+        "Sources": 78,
+        "H1": 7973827,
+        "Elements": 521676,
+        "PalacePeakTotal": "48.0G"
+      }
+    }
+  },
+  "Calibration": {
+    "Sources": 78,
+    "H1": 7973827,
+    "EvaluationsB6": 1014,
+    "EvaluationsB48": 156,
+    "SecondsPerEvaluation": 0.08350932400932402,
+    "GramSeconds": 2.224545454545453,
+    "ResidentFieldGB": 0.5416666666666666,
+    "ResidentFieldGBPerMillionH1": 0.06793057670635025,
+    "EvaluationFractionAtB6": 0.9744019716863002
+  }
+}

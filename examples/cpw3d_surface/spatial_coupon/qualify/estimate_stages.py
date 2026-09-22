@@ -94,14 +94,20 @@ def estimate_stage(model, order, sources, counts, block_size=DEFAULT_REDUCER_BLO
     reducer_gram = measured["ReducerPairSeconds"] * ratio * (1.0 - evaluation_fraction) * pairs / measured_pairs
     reducer = reducer_setup + reducer_evaluation + reducer_gram
     gb_per_gib = model["PalaceGBPerGiB"]
-    stage = {"Order": order, "Sources": sources, "H1Estimate": h1_dofs_from_counts(counts, order),
+    h1 = h1_dofs_from_counts(counts, order)
+    # 2b archived source fields are resident per block pair: the peak grows from the
+    # measured block size by the measured per-field cost (decision 62(1)).
+    resident_fields_gb = (max(2 * int(block_size) - 2 * model["MeasuredBlockSize"], 0)
+                          * model["ReducerResidentFieldGBPerMillionH1"] * h1 / 1e6)
+    stage = {"Order": order, "Sources": sources, "H1Estimate": h1,
              "DOFRatioVsMeasured": ratio, "ReducerPairs": pairs, "ReducerBlockSize": int(block_size),
              "ReducerBlockPairs": block_pairs(sources, block_size), "ReducerSourceEvaluations": evaluations,
              "ReducerSecondsEstimate": reducer,
              "ReducerSecondsEstimateParts": {"Setup": reducer_setup, "Evaluation": reducer_evaluation, "Gram": reducer_gram},
              "WorkerNonSourceSecondsEstimate": measured["WorkerNonSourceSeconds"] * ratio,
              "WorkerPalacePeakGBEstimate": measured["WorkerPalacePeakGB"] * ratio,
-             "ReducerPalacePeakGBEstimate": measured["ReducerPalacePeakGB"] * ratio,
+             "ReducerPalacePeakGBEstimate": measured["ReducerPalacePeakGB"] * ratio + resident_fields_gb,
+             "ReducerResidentFieldsGBEstimate": resident_fields_gb,
              "ArchiveGBEstimate": measured["ArchiveGB"] * ratio * sources / measured["Sources"],
              "ByPCGFactor": {}}
     stage["NodeUsedGiBEstimateWorker"] = (measured["WorkerNodeUsedGiB"] - measured["WorkerPalacePeakGB"] / gb_per_gib
@@ -150,7 +156,8 @@ def estimate(counts, stages, *, local_edge=None, model=None, profile=None, block
                     "H1ByOrder": {f"p{p}": h1_dofs_from_counts(counts, p) for p in (1, 2, 3, 4, 5)}},
            "CostModel": {"Path": model["Path"], "SHA256": model["SHA256"], "MeasuredMesh": model["MeasuredMesh"]["SHA256"],
                          "ClosedFormCheck": model.get("ClosedFormCheck"), "MeasuredBlockSize": model["MeasuredBlockSize"],
-                         "ReducerEvaluationFraction": model["ReducerEvaluationFraction"]},
+                         "ReducerEvaluationFraction": model["ReducerEvaluationFraction"],
+                         "ReducerResidentFieldGBPerMillionH1": model["ReducerResidentFieldGBPerMillionH1"]},
            "ReducerBlockSize": int(block_size),
            "Stages": {}}
     for name, order, sources in stages:
