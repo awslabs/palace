@@ -3,6 +3,7 @@
 
 #include "substructuringsolver.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <functional>
 #include <limits>
@@ -1400,6 +1401,72 @@ double SubstructuringSolver::MutualEnergy(const Vector &ui, const Vector &uj) co
 long long int SubstructuringSolver::RegionGlobalTrueVSize() const
 {
   return impl->parent_fes.GlobalTrueVSize();
+}
+
+std::vector<double> SubstructuringSolver::InterfaceSingularValues() const
+{
+  MFEM_VERIFY(impl->mat_dtn,
+              "CondenseEnvironment must be called before InterfaceSingularValues!");
+  // S_E is symmetric SPD, so singular values = eigenvalues. This mfem build has no LAPACK, so
+  // use a self-contained cyclic Jacobi eigenvalue iteration on the (symmetrized) dense S_E.
+  const int n = impl->S_dense.Height();
+  std::vector<double> A(static_cast<std::size_t>(n) * n);
+  for (int i = 0; i < n; i++)
+  {
+    for (int j = 0; j < n; j++)
+    {
+      A[static_cast<std::size_t>(i) * n + j] =
+          0.5 * (impl->S_dense(i, j) + impl->S_dense(j, i));
+    }
+  }
+  auto at = [&](int i, int j) -> double & { return A[static_cast<std::size_t>(i) * n + j]; };
+  for (int sweep = 0; sweep < 100; sweep++)
+  {
+    double off = 0.0;
+    for (int p = 0; p < n; p++)
+    {
+      for (int q = p + 1; q < n; q++)
+      {
+        off += at(p, q) * at(p, q);
+      }
+    }
+    if (off < 1e-28)
+    {
+      break;
+    }
+    for (int p = 0; p < n; p++)
+    {
+      for (int q = p + 1; q < n; q++)
+      {
+        const double apq = at(p, q);
+        if (std::abs(apq) < 1e-300)
+        {
+          continue;
+        }
+        const double phi = 0.5 * std::atan2(2.0 * apq, at(q, q) - at(p, p));
+        const double c = std::cos(phi), s = std::sin(phi);
+        for (int k = 0; k < n; k++)
+        {
+          const double akp = at(k, p), akq = at(k, q);
+          at(k, p) = c * akp - s * akq;
+          at(k, q) = s * akp + c * akq;
+        }
+        for (int k = 0; k < n; k++)
+        {
+          const double apk = at(p, k), aqk = at(q, k);
+          at(p, k) = c * apk - s * aqk;
+          at(q, k) = s * apk + c * aqk;
+        }
+      }
+    }
+  }
+  std::vector<double> out(n);
+  for (int i = 0; i < n; i++)
+  {
+    out[i] = std::abs(at(i, i));
+  }
+  std::sort(out.begin(), out.end(), std::greater<double>());
+  return out;
 }
 
 void SubstructuringSolver::WriteParaView(const std::string &dir,
