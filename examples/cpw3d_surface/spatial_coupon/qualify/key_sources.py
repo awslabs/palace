@@ -16,7 +16,7 @@ import json
 import math
 from pathlib import Path
 
-OFFSET_KEYS = ("E_rel", "p_SA_rel", "p_MS_rel", "p_MA_rel")
+OFFSET_KEYS = ("E_rel", "p_SA_rel", "p_MS_rel", "p_MA_rel", "p_MA_sharp_rel")
 DEFAULT_TOP = 8
 
 

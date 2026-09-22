@@ -19,7 +19,8 @@ import math
 from pathlib import Path
 import statistics
 
-OFFSET_KEYS = ["p_MA_rel", "p_MS_rel", "p_SA_rel", "E_rel"]
+# p_MA_sharp_rel = the sharp-edge extrapolated MA offset (ma_tail.py), present on radial-shell runs.
+OFFSET_KEYS = ["p_MA_rel", "p_MA_sharp_rel", "p_MS_rel", "p_SA_rel", "E_rel"]
 DEFAULT_STRONGEST = 20
 
 

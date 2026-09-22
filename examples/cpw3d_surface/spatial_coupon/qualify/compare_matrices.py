@@ -289,10 +289,15 @@ def read_locations(path):
 
 def write_comparison(reference_dir, run_dir, out_prefix, *, zero_trace_indices=(), locations=None,
                      reference_label="reference", run_label="run", max_entry_rows=0, interface_types=None,
-                     reference_interface_types=None):
-    """CSV + Markdown + JSON at out_prefix; returns the JSON summary."""
+                     reference_interface_types=None, run_ma_tails=None, reference_ma_side=None):
+    """CSV + Markdown + JSON at out_prefix; returns the JSON summary.  `run_ma_tails`
+    (ma_tail.tails of the run directory) and `reference_ma_side` (ma_tail.reference_side)
+    add the sharp-edge MA offsets p_MA_sharp_rel next to the raw p_MA_rel (decision 61a)."""
     comparison = compare(reference_dir, run_dir, zero_trace_indices=zero_trace_indices, locations=locations,
                          interface_types=interface_types, reference_interface_types=reference_interface_types)
+    if run_ma_tails is not None and reference_ma_side is not None:
+        import ma_tail
+        ma_tail.sharp_offsets(comparison["PerSource"], run_ma_tails, reference_ma_side)
     out_prefix = Path(out_prefix)
     out_prefix.parent.mkdir(parents=True, exist_ok=True)
     with open(f"{out_prefix}.csv", "w", newline="") as stream:

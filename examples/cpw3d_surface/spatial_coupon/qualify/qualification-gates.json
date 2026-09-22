@@ -29,6 +29,8 @@
     },
     "p_MA": {
       "Statement": "free signed median within 1%, reference-p_MA-weighted mean within 1%, every strongest-reference-MA source within 2%, every free source within 5%",
+      "Quantity": "p_MA_sharp",
+      "QuantityRule": "user decision 60(1) / supervisor decision 61a: the MA statements are evaluated on the sharp-edge extrapolated participation p_MA_sharp = (MA_raw + MA_tail) / E of the run (ma_tail.py: MA_raw the sum of the per-ring MA shells, MA_tail the `Consistent` estimator - the top edge's -2/3 law anchored on ring 2 with the ring-1 factor measured on this run, the bottom edge's own rings-2..4 law) against the reference's sharp-edge p_MA: extrapolated by the same rule when its ring / edge sizing is recorded, else modelled from its edge size via the eps^(1/3) law and annotated 'reference unextrapolated' (raw-vs-raw is recorded next to it); a run without radial shells is gated on the raw p_MA and says so",
       "MaximumAbsoluteSignedMedian": 0.01,
       "MaximumAbsoluteWeightedMean": 0.01,
       "StrongestCount": 20,
@@ -47,7 +49,9 @@
       "MinimumFractionWithin5Percent": 0.9
     },
     "PSequenceControls": {
-      "Statement": "for every control source the p-step d45 = (p_high - p_main) / |p_high| of the domain energy is within 1% and that of every participation p_MA / p_MS / p_SA within 5% (controls at the orders below and above the main order)",
+      "Statement": "for every control source the p-step d45 = (p_high - p_main) / |p_high| of the domain energy is within 1% and that of every participation p_MA_sharp / p_MS / p_SA within 5% (controls at the orders below and above the main order)",
+      "MAObservable": "p_MA_sharp",
+      "MAObservableRule": "decision 61a: the p-sequence gate on the MA evaluates the sharp-edge extrapolated p_MA_sharp (the tail measured at each order from that order's own shells) in place of the raw p_MA, whose step is dominated by the innermost ring's resolution; the raw p_MA step is still recorded",
       "MaximumAbsoluteEnergyStep": 0.01,
       "MaximumAbsoluteParticipationStep": 0.05
     }

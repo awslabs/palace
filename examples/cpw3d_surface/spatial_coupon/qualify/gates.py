@@ -36,7 +36,7 @@ import sys
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from ma_ms_offsets import reference_p_ma, strongest_sources, weighted  # noqa: E402
-from p_sequence import GATED_OBSERVABLES  # noqa: E402
+from p_sequence import GATED_OBSERVABLES, SHARP_GATED_OBSERVABLES  # noqa: E402
 
 GATES_FILE = HERE / "qualification-gates.json"
 VERDICT_PASSED, VERDICT_FAILED, VERDICT_PENDING = "Passed", "Failed", "PendingQualification"
@@ -76,8 +76,21 @@ def evaluate_energy(gate, per_source, classes, free, wide_classes):
             "Bound": bound, "FailingSources": failing, "Wide": counts_of(values), "AllFree": counts_of(all_free)}
 
 
+def ma_quantity(gate, per_source):
+    """The per-source offset key the p_MA gate evaluates: the sharp-edge extrapolated
+    p_MA_sharp (gate table Quantity; decision 61a) when the comparison carries it (a
+    radial-shell run), else the raw p_MA - recorded with the reason."""
+    wanted = gate.get("Quantity", "p_MA")
+    if wanted == "p_MA_sharp" and any("p_MA_sharp_rel" in record for record in per_source.values()):
+        return "p_MA_sharp", gate.get("QuantityRule")
+    if wanted == "p_MA_sharp":
+        return "p_MA", "raw p_MA: the comparison carries no sharp-edge extrapolation (no radial MA shells on this run)"
+    return "p_MA", "raw p_MA (the gate table's quantity)"
+
+
 def evaluate_ma(gate, per_source, free, ref_pma):
-    values = free_offsets(per_source, "p_MA_rel", free)
+    quantity, quantity_rule = ma_quantity(gate, per_source)
+    values = free_offsets(per_source, f"{quantity}_rel", free)
     counts = counts_of(values)
     strong = strongest_sources(ref_pma, [i for i in values if i in ref_pma], gate["StrongestCount"])
     strong_values = {i: values[i] for i in strong}
@@ -86,7 +99,9 @@ def evaluate_ma(gate, per_source, free, ref_pma):
               "WeightedMeanWithinBound": weight["weighted_mean"] is not None and abs(weight["weighted_mean"]) < gate["MaximumAbsoluteWeightedMean"],
               "StrongestWithinBound": bool(strong_values) and all(abs(v) < gate["MaximumAbsoluteRelativeOffsetStrongest"] for v in strong_values.values()),
               "FreeWithinBound": bool(values) and all(abs(v) < gate["MaximumAbsoluteRelativeOffsetFree"] for v in values.values())}
-    return {"Statement": gate["Statement"], "Passed": all(checks.values()), "Checks": checks, "Free": counts,
+    return {"Statement": gate["Statement"], "Quantity": quantity, "QuantityRule": quantity_rule,
+            "Passed": all(checks.values()), "Checks": checks, "Free": counts,
+            "RawFree": counts_of(free_offsets(per_source, "p_MA_rel", free)) if quantity != "p_MA" else None,
             "WeightedMean": weight["weighted_mean"], "StrongestSources": strong, "Strongest": counts_of(strong_values),
             "StrongestFailing": sorted(i for i, v in strong_values.items() if abs(v) >= gate["MaximumAbsoluteRelativeOffsetStrongest"]),
             "FreeFailing": sorted(i for i, v in values.items() if abs(v) >= gate["MaximumAbsoluteRelativeOffsetFree"]),
@@ -146,12 +161,20 @@ def not_applicable(gate, interface, interfaces):
                       f"nothing to compare, the gate does not apply"}
 
 
-def applicable_observables(interfaces):
+def gated_observables(gate, p_sequence_summary):
+    """The gated observable names: p_MA_sharp in place of p_MA (gate table MAObservable;
+    decision 61a) when the p-sequence summary carries the sharp-edge MA, else the raw set."""
+    sharp = gate.get("MAObservable") == "p_MA_sharp" and any(
+        "p_MA_sharp" in by_observable for by_observable in (p_sequence_summary or {}).values())
+    return SHARP_GATED_OBSERVABLES if sharp else GATED_OBSERVABLES
+
+
+def applicable_observables(interfaces, observables=GATED_OBSERVABLES):
     """The gated p-sequence observables whose interface the reference declares (E always);
     None (unknown interfaces) gates every observable."""
     if interfaces is None:
-        return list(GATED_OBSERVABLES)
-    return [name for name in GATED_OBSERVABLES if name == "E" or name[len("p_"):] in interfaces]
+        return list(observables)
+    return [name for name in observables if name == "E" or name[len("p_"):].split("_")[0] in interfaces]
 
 
 def evaluate(gates, *, comparison=None, classes=None, ref_pma=None, p_sequence_summary=None, reference_order=None,
@@ -185,10 +208,15 @@ def evaluate(gates, *, comparison=None, classes=None, ref_pma=None, p_sequence_s
             else:
                 record["Gates"][name] = evaluator()
     if p_sequence_summary is not None:
+        observables = gated_observables(table["PSequenceControls"], p_sequence_summary)
         record["Gates"]["PSequenceControls"] = evaluate_p_sequence(table["PSequenceControls"], p_sequence_summary,
-                                                                   observables=applicable_observables(interfaces))
-        skipped = [name for name in GATED_OBSERVABLES if name not in applicable_observables(interfaces)]
+                                                                   observables=applicable_observables(interfaces, observables))
+        skipped = [name for name in observables if name not in applicable_observables(interfaces, observables)]
         record["Gates"]["PSequenceControls"]["NotApplicableObservables"] = skipped
+        record["Gates"]["PSequenceControls"]["MAObservable"] = "p_MA_sharp" if "p_MA_sharp" in observables else "p_MA"
+        record["Gates"]["PSequenceControls"]["MAObservableRule"] = (
+            table["PSequenceControls"].get("MAObservableRule") if "p_MA_sharp" in observables else
+            "raw p_MA: the p-sequence carries no sharp-edge extrapolation (no radial MA shells on this run)")
     passed = {name: gate["Passed"] for name, gate in record["Gates"].items()}
     record["GatesPassed"] = passed
     suffix = f" ({', '.join(record['NotApplicable'])} not applicable)" if record["NotApplicable"] else ""

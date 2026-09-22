@@ -24,7 +24,13 @@ from pathlib import Path
 
 INTERFACE_TYPES = ("MA", "MS", "SA")
 OBSERVABLES = ["E", "Q_MA", "Q_MS", "Q_SA", "Q_SA_normal", "Q_SA_tangential", "p_MA", "p_MS", "p_SA"]
+# The sharp-edge extrapolated MA (ma_tail.py) of a radial-shell run: Q_MA_sharp = Q_MA +
+# the tail inside the innermost ring, p_MA_sharp = Q_MA_sharp / E; the tail is measured
+# at every order from that order's own shells.
+SHARP_OBSERVABLES = ["Q_MA_tail", "Q_MA_sharp", "p_MA_sharp"]
 GATED_OBSERVABLES = ("E", "p_MA", "p_MS", "p_SA")
+# The p-sequence gate of a radial-shell run evaluates p_MA_sharp in place of p_MA (decision 61a).
+SHARP_GATED_OBSERVABLES = ("E", "p_MA_sharp", "p_MS", "p_SA")
 
 
 def rows(path):
@@ -32,10 +38,11 @@ def rows(path):
         return [{key.strip(): value.strip() for key, value in row.items()} for row in csv.DictReader(stream)]
 
 
-def observables(directory, interface_types):
+def observables(directory, interface_types, ma_tails=None):
     """Source -> observables of a reducer directory; `interface_types` = the run
     config's interface index -> type map (a participation of a type sums every
-    interface of that type)."""
+    interface of that type); `ma_tails` (ma_tail.tails of the directory) adds the
+    sharp-edge MA observables."""
     if interface_types is None:
         raise ValueError("the interface index -> type map of the run config is required (never assumed)")
     names = {int(index): str(name) for index, name in interface_types.items()}
@@ -70,6 +77,13 @@ def observables(directory, interface_types):
         for name in INTERFACE_TYPES:
             if f"Q_{name}" in record and record.get("E"):
                 record[f"p_{name}"] = record[f"Q_{name}"] / record["E"]
+    if ma_tails is not None:
+        for i, tail in ma_tails.items():
+            record = out.get(i)
+            if record is not None and "Q_MA" in record and record.get("E"):
+                record["Q_MA_tail"] = tail["Q_MA_tail"]
+                record["Q_MA_sharp"] = record["Q_MA"] + tail["Q_MA_tail"]
+                record["p_MA_sharp"] = record["Q_MA_sharp"] / record["E"]
     return out
 
 
@@ -100,17 +114,27 @@ def sequence(low, main, high):
     return {"d_low": d_low, "d_high": d_high, "r": r, "p_inf": p_inf}
 
 
-def p_sequence(runs, controls, interface_types, reference_interface_types=None):
+def p_sequence(runs, controls, interface_types, reference_interface_types=None, ma_tails=None, reference_ma_side=None):
     """`runs` = {"low": dir or None, "main": dir, "high": dir or None, "ref": dir or None};
     returns {control: {observable: {values, seq, vs_ref}}}.  The reference matrices are
-    labeled by `reference_interface_types` (default: the run's map)."""
+    labeled by `reference_interface_types` (default: the run's map).  `ma_tails` =
+    {run key: ma_tail.tails of that directory} adds the sharp-edge MA observables
+    (SHARP_OBSERVABLES); the reference's p_MA_sharp is `reference_ma_side` (ma_tail.
+    reference_side: extrapolated, modelled or raw as recorded there)."""
+    ma_tails = ma_tails or {}
     data = {key: observables(path, reference_interface_types if key == "ref" and reference_interface_types is not None
-                             else interface_types)
+                             else interface_types, ma_tails.get(key))
             for key, path in runs.items() if path is not None}
+    if "ref" in data and reference_ma_side is not None and ma_tails:
+        for i, side in reference_ma_side["PerSource"].items():
+            if i in data["ref"] and "p_MA" in data["ref"][i]:
+                data["ref"][i]["p_MA_sharp"] = side["p_MA_sharp"]
+                data["ref"][i]["Q_MA_sharp"] = side["p_MA_sharp"] * data["ref"][i]["E"]
+    names = OBSERVABLES + (SHARP_OBSERVABLES if ma_tails else [])
     summary = {}
     for i in controls:
         summary[i] = {}
-        for name in OBSERVABLES:
+        for name in names:
             values = {key: data[key].get(i, {}).get(name) for key in ("low", "main", "high", "ref") if key in data}
             seq = sequence(values.get("low"), values.get("main"), values.get("high"))
             vs_ref = {}
@@ -138,10 +162,11 @@ def markdown_report(summary, orders, title):
                                             fmt(values.get("ref")), pc(vs_ref.get("low")), pc(vs_ref.get("main")),
                                             pc(vs_ref.get("high")), pc(vs_ref.get("p_inf"))]) + " |")
         lines.append("")
+    sharp = any("p_MA_sharp" in by_observable for by_observable in summary.values())
     lines += ["## Compact: p_MA, p_MS, E, p_SA at the controls (signed, relative to the reference)", "",
               "| source | quantity | low vs ref | main vs ref | high vs ref | p_inf vs ref | d_low | d_high | r |",
               "|---:|---|---:|---:|---:|---:|---:|---:|---:|"]
-    for name in ("p_MA", "p_MS", "E", "p_SA"):
+    for name in ("p_MA",) + (("p_MA_sharp",) if sharp else ()) + ("p_MS", "E", "p_SA"):
         for i, by_observable in summary.items():
             record = by_observable[name]
             lines.append("| " + " | ".join([str(i), name, pc(record["vs_ref"].get("low")), pc(record["vs_ref"].get("main")),
@@ -151,8 +176,10 @@ def markdown_report(summary, orders, title):
     return "\n".join(lines) + "\n"
 
 
-def write_p_sequence(runs, orders, controls, out_md, out_json, *, title, interface_types, reference_interface_types=None):
-    summary = p_sequence(runs, controls, interface_types, reference_interface_types)
+def write_p_sequence(runs, orders, controls, out_md, out_json, *, title, interface_types, reference_interface_types=None,
+                     ma_tails=None, reference_ma_side=None):
+    summary = p_sequence(runs, controls, interface_types, reference_interface_types, ma_tails=ma_tails,
+                         reference_ma_side=reference_ma_side)
     Path(out_md).write_text(markdown_report(summary, orders, title))
     Path(out_json).write_text(json.dumps({"Orders": orders, "Controls": list(controls),
                                           "Sources": {str(i): record for i, record in summary.items()}}, indent=2) + "\n")

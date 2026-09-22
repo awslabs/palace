@@ -98,6 +98,7 @@ import job_split  # noqa: E402
 import key_sources  # noqa: E402
 import locate_sources  # noqa: E402
 import ma_ms_offsets  # noqa: E402
+import ma_tail  # noqa: E402
 import p_sequence  # noqa: E402
 import reference_campaign  # noqa: E402
 import remote as remote_side  # noqa: E402
@@ -236,18 +237,22 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
         raise CaseStop("Mesh", f"identity mesh SHA256 {actual} differs from the build record {identity['SHA256']}")
     record["Mesh"] = {"Local": identity["Path"], "SHA256": identity["SHA256"], "Verified": True}
     directory = source_directory(manifest_path, manifest, case)
+    # The per-ring MA shells: a production build records them under RadialShells (the
+    # placement stage's census, decision 61a), a calibration relabel under Relabel.
     radial_shells = None
-    if case_record.get("Relabel"):
-        shells = case_record["Relabel"].get("Shells") or {}
+    shell_binding = case_record.get("RadialShells") or case_record.get("Relabel")
+    if shell_binding:
+        shells = shell_binding.get("Shells") or {}
         if not shells.get("Path") or not Path(shells["Path"]).is_file() or sha256(shells["Path"]) != shells.get("SHA256"):
             raise CaseStop("Mesh", f"the build record's radial-shell census of {case_id} is missing or its SHA256 differs ({shells})")
         radial_shells = json.loads(Path(shells["Path"]).read_text())
         if radial_shells.get("Mesh", {}).get("SHA256") != identity["SHA256"]:
             raise CaseStop("Mesh", f"the radial-shell census binds mesh {radial_shells.get('Mesh', {}).get('SHA256')}, the build "
                                    f"record {identity['SHA256']}")
-        record["Mesh"]["Relabel"] = {"Kind": case_record["Relabel"].get("Kind"), "Parent": case_record["Relabel"].get("Parent"),
-                                     "ParentMesh": case_record["Relabel"].get("ParentMesh"), "Shells": shells,
-                                     "ShellCount": len(radial_shells["Shells"])}
+        record["Mesh"]["RadialShells"] = {"Kind": shell_binding.get("Kind"), "Parent": shell_binding.get("Parent"),
+                                          "ParentMesh": shell_binding.get("ParentMesh"), "Shells": shells,
+                                          "ShellCount": len(radial_shells["Shells"]), "RingRadii": radial_shells.get("RingRadii"),
+                                          "Binding": "RadialShells" if case_record.get("RadialShells") else "Relabel"}
     try:
         physics_run = case_inputs.physics_run_parameters(manifest, case)
         signature_layers = locate_sources.signature_layers(
@@ -487,7 +492,10 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
     return record, {"jobs": jobs, "split": split, "sources": sources, "locations": locations, "classes": classes,
                     "layout": layout, "reference": reference, "reference_order": reference_order, "interfaces": interfaces,
                     "interface_types": interface_types, "reference_interface_types": reference_interface_types,
-                    "controls": controls, "zero_trace": zero_trace, "identity": identity}
+                    "controls": controls, "zero_trace": zero_trace, "identity": identity,
+                    "radial_shells": inputs.get("RadialShells"),
+                    "reference_edge_size": (getattr(args, "reference_edge_size_nm", None) / 1000.0
+                                            if getattr(args, "reference_edge_size_nm", None) else None)}
 
 
 def job_policy_of(args, physics_run, profile):
@@ -778,11 +786,33 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
             labels[f"{main['Prefix']}-vs-p{order}-control"] = (main_dir, directory, main["Prefix"], f"p{order} control")
         else:
             labels[f"p{order}-control-vs-{main['Prefix']}"] = (directory, main_dir, f"p{order} control", main["Prefix"])
+    # The sharp-edge MA extrapolation (decision 61a): the tail of every reducer directory
+    # from its own shells; the reference's side extrapolated / modelled / raw as recorded.
+    shell_map = ma_tail.shell_map_of(context["radial_shells"]) if context.get("radial_shells") else None
+    tails_cache = {}
+
+    def tails_of(directory):
+        if shell_map is None:
+            return None
+        key = str(directory)
+        if key not in tails_cache:
+            tails_cache[key] = ma_tail.tails(directory, shell_map, interface_types)
+        return tails_cache[key]
+
+    gated_dir = results / "main" / gated["Prefix"] / "reducer"
+    reference_ma_side = None
+    if reference_dir is not None and shell_map is not None:
+        reference_ma_side = ma_tail.reference_side(
+            ma_ms_offsets.reference_p_ma(reference_dir, reference_interface_types), tails_of(gated_dir),
+            reference_edge_size=context.get("reference_edge_size"), run_inner_radius=context["radial_shells"]["RingRadii"][0])
     for label, (ref, run, ref_label, run_label) in labels.items():
+        against_reference = ref == reference_dir
         comparisons[label] = compare_matrices.write_comparison(
             ref, run, comparison_dir / label, zero_trace_indices=zero_trace, locations=locations, reference_label=ref_label,
             run_label=run_label, max_entry_rows=200, interface_types=interface_types,
-            reference_interface_types=(reference_interface_types if ref == reference_dir else interface_types))
+            reference_interface_types=(reference_interface_types if against_reference else interface_types),
+            run_ma_tails=(tails_of(run) if against_reference else None),
+            reference_ma_side=(reference_ma_side if against_reference else None))
     class_stats = classify_sources.write_class_report(classes, locations, list(comparisons.items()),
                                                       comparison_dir / "source-classes.csv", comparison_dir / "class-statistics.md")
     main_label = f"{gated['Prefix']}-vs-reference"
@@ -800,7 +830,37 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
     p_sequence_summary = p_sequence.write_p_sequence(runs, orders_of, controls, comparison_dir / "p-sequence-controls.md",
                                                      comparison_dir / "p-sequence-controls.json",
                                                      title=f"p-sequence controls of {record['Case']}", interface_types=interface_types,
-                                                     reference_interface_types=reference_interface_types)
+                                                     reference_interface_types=reference_interface_types,
+                                                     ma_tails=({key: tails_of(path) for key, path in runs.items()
+                                                                if path is not None and key != "ref"} if shell_map else None),
+                                                     reference_ma_side=reference_ma_side)
+    ma_tail_record = None
+    if shell_map is not None:
+        ref_pma = ma_ms_offsets.reference_p_ma(reference_dir, reference_interface_types) if reference_dir else {}
+        ma_tail_record = {"Rule": ma_tail.RULE, "Estimator": ma_tail.ESTIMATOR, "RingRadii": context["radial_shells"]["RingRadii"],
+                          "GatedOrder": f"p{gated['Order']}", "Orders": {}, "Reference": reference_ma_side}
+        for item in mains:
+            directory = results / "main" / item["Prefix"] / "reducer"
+            per_source = tails_of(directory)
+            free = [i for i in per_source if i not in set(zero_trace)]
+            strongest = ma_ms_offsets.strongest_sources(ref_pma, [i for i in free if i in ref_pma],
+                                                        gates["Gates"]["p_MA"]["StrongestCount"]) if ref_pma else []
+            csv_path = comparison_dir / f"ma-sharp-{item['Prefix']}.csv"
+            ma_tail.write_csv(csv_path, per_source)
+            ma_tail_record["Orders"][f"p{item['Order']}"] = {
+                "Prefix": item["Prefix"], "Strongest": strongest, "CSV": str(csv_path),
+                "Summary": ma_tail.summary(per_source, free, strongest=strongest),
+                "PerSource": {str(i): {key: per_source[i][key] for key in ("Q_MA_raw", "Q_MA_tail", "Q_MA_sharp", "p_MA_raw",
+                                                                            "p_MA_sharp", "Alpha", "AlphaSE", "Ring1Factor")}
+                              | {"Deficit": per_source[i]["Deficit"]} for i in sorted(per_source)}}
+        ma_tail.write_record(comparison_dir / "ma-tail.json", comparison_dir / "ma-tail.md", ma_tail_record,
+                             f"Sharp-edge MA extrapolation of {record['Case']}")
+        ma_tail_record["Path"] = str(comparison_dir / "ma-tail.json")
+    record["MATail"] = ({key: value for key, value in ma_tail_record.items() if key != "Orders"}
+                        | {"Orders": {order: {key: value for key, value in block.items() if key != "PerSource"}
+                                      for order, block in ma_tail_record["Orders"].items()}}
+                        if ma_tail_record else {"Applied": False, "Reason": "no radial MA shells on this run: the MA is raw"})
+    context["ma_tail"] = ma_tail_record
     offsets = None
     keys = None
     if reference_dir is not None:
@@ -856,6 +916,11 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
                                "ReferenceAnchor": gate_record["ReferenceAnchor"],
                                "GatedStage": gated["Prefix"], "GatedOrder": f"p{gated['Order']}", "GatedComparison": main_label,
                                "Path": str(case_root / "qualification.json"),
+                               "MAQuantity": (gate_record["Gates"].get("p_MA") or {}).get("Quantity"),
+                               "MASharp": ({"Summary": ma_tail_record["Orders"][f"p{gated['Order']}"]["Summary"],
+                                            "Reference": {key: value for key, value in (reference_ma_side or {}).items()
+                                                          if key != "PerSource"} or None}
+                                           if ma_tail_record else None),
                                "ClassStatistics": class_stats.get(main_label),
                                "Offsets": (offsets["Distributions"].get(main_label) if offsets else None),
                                "WeightedPMA": (offsets["Weighted"].get(main_label) if offsets else None),
@@ -925,6 +990,16 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
                                   "ReferenceAnchor": record["Qualification"]["ReferenceAnchor"], "Order": main["Order"]}
         model["LibraryQualified"] = record["Qualification"]["Verdict"] == gate_evaluation.VERDICT_PASSED
         model["SourceProcessLibrary"] = {"Path": str(library_path), "SHA256": sha256(library_path)}
+        tail = context.get("ma_tail")
+        order_block = (tail or {}).get("Orders", {}).get(f"p{main['Order']}")
+        model["MA"] = ({"Rule": tail["Rule"], "Order": main["Order"], "RingRadii": tail["RingRadii"],
+                        "Record": str(Path(tail["Path"]).relative_to(root)),
+                        "MA_raw": {i: entry["Q_MA_raw"] for i, entry in order_block["PerSource"].items()},
+                        "MA_sharp": {i: entry["Q_MA_sharp"] for i, entry in order_block["PerSource"].items()},
+                        "p_MA_raw": {i: entry["p_MA_raw"] for i, entry in order_block["PerSource"].items()},
+                        "p_MA_sharp": {i: entry["p_MA_sharp"] for i, entry in order_block["PerSource"].items()},
+                        "Summary": order_block["Summary"]}
+                       if order_block else {"Rule": "raw MA only: the run carries no radial MA shells", "MA_sharp": None})
         models.append(model)
     merged = None
     if merge_into is not None:
@@ -1204,6 +1279,10 @@ def add_arguments(parser):
     parser.add_argument("--stage-prefix", help="stage name prefix (default: the case id)")
     parser.add_argument("--case", action="append", default=None, help="case id (repeatable; default: every case of the build record)")
     parser.add_argument("--root", type=Path, help="local run root (default /tmp/coupon-library-qualify-<commit>-<ts>)")
+    parser.add_argument("--reference-edge-size-nm", type=float, default=None,
+                        help="edge size (nm) of a reference whose ring / edge sizing is not recorded (the graded_v2 tet "
+                             "references: 0.5): its sharp-edge deficit is modelled per source from the run's by the eps^(1/3) "
+                             "law and recorded 'reference unextrapolated' (ma_tail.py); omitted = the raw reference stands in")
     parser.add_argument("--merge-into", type=Path, default=None,
                         help="a previous qualify run's process-library.json (read only): ROOT/process-library.json holds "
                              "its models this run did not qualify plus this run's (the same Name replaced), MergedFrom recorded")
