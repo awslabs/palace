@@ -69,12 +69,12 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "9bb1b89600c157fa4a463cd28c166f49f6811bb5b03b1124f71a70c40e74c7b9"
+      "SHA256": "901f51264ab042a12520129c668c586b6e309db64ac024d4f8cdbae8daab4bb7"
     },
     {
       "Name": "verify_canonical_case_entries.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/verify_canonical_case_entries.py",
-      "SHA256": "ad51a2dbb635df821599e77a8b27e6ea5c4c9eb9c45ee55bc76ca0982581c9ca"
+      "SHA256": "1b334b1a55060fda2876f4066ab3bf899bc6fc59bc12b912c141a22fa850e9ed"
     },
     {
       "Name": "normalize_general_mesh_evidence.py",
@@ -99,7 +99,7 @@
     {
       "Name": "audit_edge_metric_mesh.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/audit_edge_metric_mesh.py",
-      "SHA256": "0a3e8fa513e52106910e5a49d90b02ed15f032b815639e35f72c2c71e3f9308c"
+      "SHA256": "54105cf6e09e5758560ab7d03ca20a522b7d94237a654b84194462a4548125b0"
     },
     {
       "Name": "edge_volume_metric.py",
@@ -109,12 +109,12 @@
     {
       "Name": "mesh_array_io.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_array_io.py",
-      "SHA256": "642640f9e87399b5e6544bf6212ec0dbb9aea7e9716f540a7e997094540e557c"
+      "SHA256": "5d0e297c318b8e0fccaddd2a9c5be7abf6c80fd8088ace4cceb0d9534202f26f"
     },
     {
       "Name": "mixed_mesh.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mixed_mesh.py",
-      "SHA256": "d7e4bf144e0cffe0f5cbfcb589967f4458b32f73210743f3783b783f5c53f03d"
+      "SHA256": "da2bee428c8b6f73c742da625496a3ba2c28d46477b78548643def975ba8fa91"
     },
     {
       "Name": "run_bounded_mesher.py",
@@ -124,7 +124,7 @@
     {
       "Name": "general_mesh_audit_producer.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_audit_producer.py",
-      "SHA256": "9125f5d9b2193dadf48e5c95b7a71801d23872ecfe2ed31cc26b6f6b74ce3aa7"
+      "SHA256": "93d4e57c5a0b9f67ae47b1d48c788cfb05917dbda1235dbd4e81aba3677e4a1f"
     },
     {
       "Name": "mesh_stage_contract.py",
@@ -139,12 +139,12 @@
     {
       "Name": "publish_rigid_coupon_mesh.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/publish_rigid_coupon_mesh.py",
-      "SHA256": "3403bd0ade6ef93762ab07875d5f8745ab96cca5d590c495db9ee387db1e75cd"
+      "SHA256": "78922083f3c0a04ab67e1b73c7a596079697ad881de84e8079ff36917d14a92d"
     },
     {
       "Name": "audit_rigid_coupon_ownership.jl",
       "Path": "examples/cpw3d_surface/spatial_coupon/audit_rigid_coupon_ownership.jl",
-      "SHA256": "4518b66c0146fbf88e2c6893e144c6f1689702766eb240567cf74cbbbbf92a07"
+      "SHA256": "a60922642ad8470e1702d01adfb76683df0e98aecf319909a5483e7af04e1840"
     },
     {
       "Name": "transform_coupon_source_contract.py",
@@ -187,9 +187,9 @@
     },
     "proper-rigid-publication": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "rigid-publisher": "3403bd0ade6ef93762ab07875d5f8745ab96cca5d590c495db9ee387db1e75cd",
+      "rigid-publisher": "78922083f3c0a04ab67e1b73c7a596079697ad881de84e8079ff36917d14a92d",
       "ownership-runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "ownership-auditor": "4518b66c0146fbf88e2c6893e144c6f1689702766eb240567cf74cbbbbf92a07"
+      "ownership-auditor": "a60922642ad8470e1702d01adfb76683df0e98aecf319909a5483e7af04e1840"
     }
   },
   "ScalingComparisons": [
