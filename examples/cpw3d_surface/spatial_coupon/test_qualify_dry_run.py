@@ -1014,10 +1014,18 @@ class QualifyDryRunTest(unittest.TestCase):
             case_library = qualify_library.source_directory(MANIFEST, manifest, qualify_library.manifest_case(manifest, case_id)) \
                 / qualify_library.manifest_case(manifest, case_id)["Source"]["Files"]["ProcessLibrary"]["Name"]
             model_name = json.loads(case_library.read_text())["Models"][0]["Name"]
+            # A previous run's kept model: the same source model under another name, its
+            # fabricated matrices recorded absolute (the campaign's reducer), no thin matrices.
+            other = dict(json.loads(case_library.read_text())["Models"][0])
+            reducer = ASSESSMENT / spec["Campaign"] / "results" / "main" / f"{spec['Prefix']}-p4" / "reducer"
+            other.update({"Name": "other-coupon", "LibraryQualified": False,
+                          "FabricatedMatrix": str(reducer / "domain-response-matrix.csv"),
+                          "FabricatedSurfaceMatrix": str(reducer / "surface-response-matrix.csv"),
+                          "Qualification": {"Verdict": "PendingQualification", "Record": "/tmp/previous/other/qualification.json"},
+                          "SourceProcessLibrary": {"Path": str(case_library), "SHA256": sha256(case_library)}})
             previous_library = self.tmp / "previous-process-library.json"
             previous_library.write_text(json.dumps({"Version": 1, "Root": "/tmp/previous", "Models": [
-                {"Name": "other-coupon", "LibraryQualified": False},
-                {"Name": model_name, "LibraryQualified": False, "Stale": True}]}))
+                other, {"Name": model_name, "LibraryQualified": False, "Stale": True}]}))
             args = argparse.Namespace(build_record=self.build_record, reference=ASSESSMENT / spec["Campaign"] / "reference", remote="h:/r",
                                       orders=[], controls=[3, 5], control_count=8, control_source=None, max_jobs=2,
                                       frozen_binary_sha256=BINARY_SHA256, stage_prefix=None, case=[case_id], root=self.tmp / "split",
@@ -1087,6 +1095,13 @@ class QualifyDryRunTest(unittest.TestCase):
         # --merge-into: the previous library's other model kept first, the same Name replaced by this run's, provenance recorded.
         merged = json.loads((self.tmp / "split" / "process-library.json").read_text())
         self.assertEqual([model["Name"] for model in merged["Models"]], ["other-coupon", model_name])
+        self.assertEqual(merged["Version"], 3)
+        self.assertEqual(merged["Models"][0]["FabricatedMatrix"], "models/other-coupon/fabricated-domain-response-matrix.csv")
+        self.assertIsNone(merged["Models"][0]["ThinMatrix"])
+        self.assertEqual(merged["Loadable"]["NotLoadable"], ["other-coupon", model_name])
+        preflight = json.loads((self.tmp / "split" / "process-library-preflight.json").read_text())
+        self.assertTrue(preflight["PreflightOnly"])
+        self.assertEqual(preflight["Models"][1]["ThinMatrix"], f"models/{qualify_library.model_slug(model_name)}/thin-domain-response-matrix.csv")
         self.assertNotIn("Stale", merged["Models"][1])
         self.assertEqual(merged["Models"][1]["CouponMesh"]["SHA256"], case["Mesh"]["SHA256"])
         self.assertEqual((merged["MergedFrom"]["Kept"], merged["MergedFrom"]["Replaced"]), (["other-coupon"], [model_name]))

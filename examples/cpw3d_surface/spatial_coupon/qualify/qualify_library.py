@@ -80,14 +80,18 @@ estimate / actual / node-h, the coupon's critical path; library totals: node-h s
 over every job, critical-path wall clock from first submission to last fetch, jobs vs
 the cap, splits, coupons stopped and why),
 ROOT/qualification-gates.json (the table used), ROOT/process-library.json (the
-process-library entries: the case's model with the response matrices, the per-source
-MA_raw / MA_sharp of a shelled coupon and the qualification bound; LibraryQualified only
-when Passed).
+Palace-facing Version-3 library, LIBRARY_RULE: the sources' header, every model's files
+copied under ROOT/models/<slug>/, the per-source MA_raw / MA_sharp of a shelled coupon and
+the qualification bound; LibraryQualified only when Passed; ThinMatrix null + NotLoadable
+until the thin coupon exists), ROOT/process-library-preflight.json (the geometry-only
+variant for palace --surface-response-preflight, PREFLIGHT_RULE).
 """
 import argparse
 import calendar
+import csv
 import hashlib
 import json
+import math
 import re
 from pathlib import Path
 import shutil
@@ -819,6 +823,7 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
     main = mains[0]
     gated = next(item for item in mains if item["Order"] == gated_order([item["Order"] for item in mains], reference_order))
     main_dir = results / "main" / main["Prefix"] / "reducer"
+    record["MainReducer"] = str(main_dir)
     control_dirs = {item["Order"]: results / "main" / item["Prefix"] / "reducer" for item in layout if item["Role"] == "control"}
     reference_dir = Path(reference["Results"]) if reference and reference.get("Results") else None
     comparisons = {}
@@ -1013,14 +1018,175 @@ def reference_node_hours(reference, profile):
     return seconds * nodes / 3600.0 if seconds else None
 
 
+# The library written for Palace (Version 3): the header of the cases' source
+# process-library.json files, every model's files copied under ROOT/models/<slug>/.
+PROCESS_LIBRARY_PREFLIGHT_RECORD = "process-library-preflight.json"
+LIBRARY_HEADER_EXCLUDED = ("Name", "Models")
+MODEL_FILE_NAMES = {"FabricatedMatrix": "fabricated-domain-response-matrix.csv",
+                    "FabricatedSurfaceMatrix": "fabricated-surface-response-matrix.csv",
+                    "ThinMatrix": "thin-domain-response-matrix.csv",
+                    "ThinSurfaceMatrix": "thin-surface-response-matrix.csv",
+                    "BasisPoints": "basis-points.csv"}
+TRACE_MESH_FILE_NAMES = {"Vertices": "trace-vertices.csv", "Triangles": "trace-triangles.csv"}
+THIN_FIELDS = ("ThinMatrix", "ThinSurfaceMatrix")
+REDUCER_FILE_NAMES = {"FabricatedMatrix": "domain-response-matrix.csv", "FabricatedSurfaceMatrix": "surface-response-matrix.csv"}
+LIBRARY_RULE = ("Version-3 library: the header (MatchingRadius, Fabrication.InterfaceLayers, ...) is the cases' source "
+                "process-library.json header (identical across the cases, else the writer stops); every model's matrices, "
+                "basis points and trace mesh are copies under models/<slug>/ (paths relative to this file); an entry is "
+                "LibraryQualified only with the verdict Passed; PendingQualification entries carry their matrices and "
+                "p-sequence controls but no accuracy statement; a model without thin matrices has ThinMatrix null and a "
+                "NotLoadable reason (Palace requires the thin response of every model: this file loads only when "
+                "NotLoadable is null for every model; process-library-preflight.json is the geometry-only variant)")
+PREFLIGHT_RULE = ("geometry-only variant for palace --surface-response-preflight: Palace reads ThinMatrix unconditionally "
+                  "as a string, so a NotLoadable model points ThinMatrix / ThinSurfaceMatrix at the copy paths its thin "
+                  "matrices will take under models/<slug>/ (absent files: a solve fails closed at file open); never a "
+                  "solve input")
+NOT_LOADABLE_THIN = "no thin response matrices: {missing} not produced (the source library's {sources} do not exist)"
+NOT_LOADABLE_SUPPORT = "no SupportPoints (Palace requires the matching-volume corners of a TraceLiftVersion >= 2 model)"
+BASIS_POINTS_FROM_TRACE = ("the producer's basis-points.csv is absent: derived from TraceMesh.Vertices (the rows with basis > 0 in "
+                           "basis order, x / y / z in the library frame - the producer's own definition, byte-identical)")
+
+
+def model_slug(name):
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def library_header(library, path):
+    """The top-level keys of a source process-library.json apart from Name / Models,
+    checked for what Palace requires of a Version-3 library."""
+    if library.get("Version") != 3:
+        raise ValueError(f"{path}: the source process library is Version {library.get('Version')!r}, not 3")
+    if not isinstance(library.get("MatchingRadius"), (int, float)) or library["MatchingRadius"] <= 0.0:
+        raise ValueError(f"{path}: the source process library has no positive MatchingRadius")
+    if not isinstance((library.get("Fabrication") or {}).get("InterfaceLayers"), dict):
+        raise ValueError(f"{path}: the source process library has no Fabrication.InterfaceLayers")
+    return {key: value for key, value in library.items() if key not in LIBRARY_HEADER_EXCLUDED}
+
+
+def same_metadata(first, second):
+    """Structural equality with numbers compared to 1e-12 relative."""
+    if isinstance(first, dict) and isinstance(second, dict):
+        return first.keys() == second.keys() and all(same_metadata(first[key], second[key]) for key in first)
+    if isinstance(first, list) and isinstance(second, list):
+        return len(first) == len(second) and all(same_metadata(a, b) for a, b in zip(first, second))
+    numbers = (int, float)
+    if isinstance(first, numbers) and isinstance(second, numbers) and not isinstance(first, bool) and not isinstance(second, bool):
+        return math.isclose(float(first), float(second), rel_tol=1.0e-12, abs_tol=0.0)
+    return first == second
+
+
+def consistent_header(headers):
+    """One header for the library; the writer stops when two sources disagree on any key."""
+    if not headers:
+        return None
+    first_path, first = headers[0]
+    for path, header in headers[1:]:
+        for key in sorted(first.keys() | header.keys()):
+            if key not in first or key not in header or not same_metadata(first[key], header[key]):
+                raise ValueError(f"the source process libraries disagree on {key}: {first_path} has {first.get(key)!r}, "
+                                 f"{path} has {header.get(key)!r}")
+    return dict(first)
+
+
+def resolve_model_file(value, directories):
+    """An absolute path, or the first of `directories` holding the relative path; None when absent."""
+    path = Path(value)
+    if path.is_absolute():
+        return path if path.is_file() else None
+    for directory in directories:
+        candidate = Path(directory) / path
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def write_basis_points_from_trace_vertices(trace_vertices, destination):
+    """basis-points.csv as generate_spatial_response writes it: the trace vertices with a
+    basis index, in basis order, x / y / z (%.16e, header x,y,z)."""
+    with open(trace_vertices, newline="") as stream:
+        rows = [row for row in csv.DictReader(stream) if int(row["basis"]) > 0]
+    rows.sort(key=lambda row: int(row["basis"]))
+    if [int(row["basis"]) for row in rows] != list(range(1, len(rows) + 1)):
+        raise ValueError(f"{trace_vertices}: the basis indices are not 1..N")
+    with open(destination, "w") as stream:
+        stream.write("x,y,z\n")
+        for row in rows:
+            stream.write(",".join(f"{float(row[name]):.16e}" for name in ("x", "y", "z")) + "\n")
+
+
+def copy_model_files(model, *, root, directories):
+    """Copies the model's matrices, basis points and trace mesh under ROOT/models/<slug>/,
+    rewriting the fields to paths relative to ROOT.  A required file that does not exist
+    stops the writer (BasisPoints is derived from the trace vertices when the producer's
+    file is absent); a missing thin matrix becomes null and is returned as missing."""
+    relative_directory = Path("models") / model_slug(model["Name"])
+    destination = Path(root) / relative_directory
+    destination.mkdir(parents=True, exist_ok=True)
+    missing = []
+    sources = []
+    for field, filename in MODEL_FILE_NAMES.items():
+        value = model.get(field)
+        source = resolve_model_file(value, directories) if value is not None else None
+        if source is None:
+            if field in THIN_FIELDS:
+                missing.append(field)
+                sources.append(str(value))
+                model[field] = None
+                continue
+            if field == "BasisPoints" and "TraceMesh" in model:
+                trace_vertices = resolve_model_file(model["TraceMesh"]["Vertices"], directories)
+                if trace_vertices is not None:
+                    write_basis_points_from_trace_vertices(trace_vertices, destination / filename)
+                    model[field] = str(relative_directory / filename)
+                    model["BasisPointsRule"] = BASIS_POINTS_FROM_TRACE
+                    continue
+            raise FileNotFoundError(f"{model['Name']} {field} {value!r} does not exist under {[str(d) for d in directories]}")
+        shutil.copy2(source, destination / filename)
+        model[field] = str(relative_directory / filename)
+    if "TraceMesh" in model:
+        trace_mesh = dict(model["TraceMesh"])
+        for field, filename in TRACE_MESH_FILE_NAMES.items():
+            source = resolve_model_file(trace_mesh[field], directories)
+            if source is None:
+                raise FileNotFoundError(f"{model['Name']} TraceMesh.{field} {trace_mesh[field]!r} does not exist under "
+                                        f"{[str(d) for d in directories]}")
+            shutil.copy2(source, destination / filename)
+            trace_mesh[field] = str(relative_directory / filename)
+        model["TraceMesh"] = trace_mesh
+    reasons = []
+    if missing:
+        reasons.append(NOT_LOADABLE_THIN.format(missing=" / ".join(missing), sources=" / ".join(sources)))
+    if not model.get("SupportPoints"):
+        reasons.append(NOT_LOADABLE_SUPPORT)
+    model["NotLoadable"] = {"Reason": "; ".join(reasons), "Missing": missing} if reasons else None
+    return model
+
+
+def preflight_process_library(library):
+    """The geometry-only variant of a written library (PREFLIGHT_RULE)."""
+    preflight = json.loads(json.dumps(library))
+    preflight["PreflightOnly"] = True
+    preflight["PreflightRule"] = PREFLIGHT_RULE
+    for model in preflight["Models"]:
+        if model.get("NotLoadable") is None:
+            continue
+        relative_directory = Path("models") / model_slug(model["Name"])
+        for field in model["NotLoadable"]["Missing"]:
+            model[field] = str(relative_directory / MODEL_FILE_NAMES[field])
+    return preflight
+
+
 def process_library_entries(records, contexts, *, manifest_path, manifest, root, merge_into=None):
-    """The process-library entries: every qualified / pending coupon's model (from the
-    case's own process-library.json) with the fetched response matrices and the
-    qualification bound; LibraryQualified only when Passed.  `merge_into` = a previous
-    qualify run's process-library.json (read only): its models this run did not qualify
-    are kept ahead of this run's, a model of the same Name is replaced, and MergedFrom
-    records the file, its digest and the names kept / replaced."""
+    """The process-library entries (LIBRARY_RULE): every qualified / pending coupon's model
+    (from the case's own process-library.json) with the fetched response matrices copied
+    under ROOT/models/<slug>/ and the qualification bound; LibraryQualified only when
+    Passed.  `merge_into` = a previous qualify run's process-library.json (read only): its
+    models this run did not qualify are kept ahead of this run's (their files copied from
+    the previous root, the previous case root or the model's source directory), a model of
+    the same Name is replaced, and MergedFrom records the file, its digest and the names
+    kept / replaced.  The header is the source libraries' (consistent_header)."""
     models = []
+    headers = []
     for record in records:
         context = contexts.get(record["Case"])
         if context is None or record.get("Qualification") is None:
@@ -1029,11 +1195,12 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
         directory = source_directory(manifest_path, manifest, case)
         library_path = directory / case["Source"]["Files"]["ProcessLibrary"]["Name"]
         library = json.loads(library_path.read_text())
+        headers.append((library_path, library_header(library, library_path)))
         model = dict(library["Models"][0])
         main = next(item for item in context["layout"] if item["Role"] == "main")
-        reducer = Path(record["Root"]) / "results" / "main" / main["Prefix"] / "reducer"
-        model["FabricatedMatrix"] = str(reducer.relative_to(root) / "domain-response-matrix.csv")
-        model["FabricatedSurfaceMatrix"] = str(reducer.relative_to(root) / "surface-response-matrix.csv")
+        reducer = Path(record.get("MainReducer") or Path(record["Root"]) / "results" / "main" / main["Prefix"] / "reducer")
+        for field, filename in REDUCER_FILE_NAMES.items():
+            model[field] = str(reducer / filename)
         model["CouponMesh"] = {"Path": record["Mesh"]["Local"], "SHA256": record["Mesh"]["SHA256"]}
         model["Qualification"] = {"Verdict": record["Qualification"]["Verdict"], "Record": record["Qualification"]["Path"],
                                   "ReferenceAnchor": record["Qualification"]["ReferenceAnchor"], "Order": main["Order"]}
@@ -1049,21 +1216,36 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
                         "p_MA_sharp": {i: entry["p_MA_sharp"] for i, entry in order_block["PerSource"].items()},
                         "Summary": order_block["Summary"]}
                        if order_block else {"Rule": "raw MA only: the run carries no radial MA shells", "MA_sharp": None})
-        models.append(model)
+        models.append(copy_model_files(model, root=root, directories=[directory]))
     merged = None
     if merge_into is not None:
-        previous = json.loads(Path(merge_into).read_text())
+        merge_into = Path(merge_into)
+        previous = json.loads(merge_into.read_text())
         names = {model["Name"] for model in models}
-        kept = [model for model in previous["Models"] if model["Name"] not in names]
-        merged = {"Path": str(merge_into), "SHA256": sha256(Path(merge_into)), "Root": previous.get("Root"),
+        kept = []
+        for previous_model in previous["Models"]:
+            if previous_model["Name"] in names:
+                continue
+            model = dict(previous_model)
+            source_library = Path(model["SourceProcessLibrary"]["Path"])
+            headers.append((source_library, library_header(json.loads(source_library.read_text()), source_library)))
+            qualification_record = Path(model["Qualification"]["Record"])
+            kept.append(copy_model_files(model, root=root, directories=[merge_into.parent, qualification_record.parents[1],
+                                                                        source_library.parent]))
+        merged = {"Path": str(merge_into), "SHA256": sha256(merge_into), "Root": previous.get("Root"),
                   "Kept": [model["Name"] for model in kept],
                   "Replaced": [model["Name"] for model in previous["Models"] if model["Name"] in names],
-                  "Rule": "models of the previous library this run did not qualify are kept ahead of this run's; a model "
-                          "of the same Name is replaced by this run's; the previous file is not modified"}
+                  "Rule": "models of the previous library this run did not qualify are kept ahead of this run's (their "
+                          "files copied into this root); a model of the same Name is replaced by this run's; the previous "
+                          "file is not modified"}
         models = kept + models
-    return {"Version": 1, "Name": "coupon-library", "Command": "coupon-library qualify", "Root": str(root),
-            "Rule": "an entry is LibraryQualified only with the verdict Passed; PendingQualification entries carry their "
-                    "matrices and p-sequence controls but no accuracy statement",
+    header = consistent_header(headers) or {}
+    not_loadable = [model["Name"] for model in models if model["NotLoadable"] is not None]
+    return {**header, "Name": "coupon-library", "Command": "coupon-library qualify", "Root": str(root),
+            "Rule": LIBRARY_RULE,
+            "HeaderSources": [{"Path": str(path), "SHA256": sha256(path)} for path, _ in headers],
+            "Loadable": {"Palace": not not_loadable, "Models": len(models) - len(not_loadable), "NotLoadable": not_loadable,
+                         "Preflight": PROCESS_LIBRARY_PREFLIGHT_RECORD},
             "MergedFrom": merged, "Models": models}
 
 
@@ -1307,9 +1489,10 @@ def run_qualify(args, *, log=log_line):
                                         first_submission=first_submission, last_fetch=last_fetch, jobs=jobs,
                                         cap=profile["UserJobCap"])}
     write_json(root / LIBRARY_QUALIFICATION_RECORD, record)
-    write_json(root / PROCESS_LIBRARY_RECORD, process_library_entries(records, contexts, manifest_path=manifest_path,
-                                                                         manifest=manifest, root=root,
-                                                                         merge_into=args.merge_into))
+    library = process_library_entries(records, contexts, manifest_path=manifest_path, manifest=manifest, root=root,
+                                      merge_into=args.merge_into)
+    write_json(root / PROCESS_LIBRARY_RECORD, library)
+    write_json(root / PROCESS_LIBRARY_PREFLIGHT_RECORD, preflight_process_library(library))
     return record
 
 
