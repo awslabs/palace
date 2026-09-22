@@ -171,17 +171,19 @@ private:
   std::function<void(const mfem::Vector &, mfem::Vector &)> apply;
 };
 
-// Materialized DtN: applies a replicated dense interface operator S_E (computed once) to a
-// distributed interface vector via a gather (Allreduce over the global interface
-// enumeration) and a local dense apply on owned interface rows. Cheap and reusable across
+// Materialized DtN: applies the interface operator S_E (computed once) to a distributed
+// interface vector. S_E is stored by contiguous row blocks (each rank owns rows
+// [row_off, row_off + n_rows)); the apply gathers the global interface vector (Allreduce over
+// the interface enumeration) and each rank multiplies only its own rows. Reusable across
 // region solves.
 class MaterializedDtN : public mfem::Operator
 {
 public:
-  MaterializedDtN(const mfem::DenseMatrix &S, const std::vector<int> &gamma_global,
-                  int nG_global, MPI_Comm comm)
-    : mfem::Operator(static_cast<int>(gamma_global.size())), S(S),
-      gamma_global(gamma_global), nG_global(nG_global), comm(comm)
+  MaterializedDtN(const std::vector<double> &S_rows, int row_off, int n_rows,
+                  const std::vector<int> &gamma_global, int nG_global, MPI_Comm comm)
+    : mfem::Operator(static_cast<int>(gamma_global.size())), S_rows(S_rows),
+      row_off(row_off), n_rows(n_rows), gamma_global(gamma_global), nG_global(nG_global),
+      comm(comm)
   {
   }
 
@@ -201,10 +203,12 @@ public:
     {
       if (gamma_global[i] >= 0)
       {
+        const int r = gamma_global[i] - row_off;  // owned row block is contiguous
+        const double *row = &S_rows[static_cast<std::size_t>(r) * nG_global];
         double s = 0.0;
         for (int j = 0; j < nG_global; j++)
         {
-          s += S(gamma_global[i], j) * xg[j];
+          s += row[j] * xg[j];
         }
         y(i) = s;
       }
@@ -212,7 +216,8 @@ public:
   }
 
 private:
-  const mfem::DenseMatrix &S;
+  const std::vector<double> &S_rows;
+  int row_off, n_rows;
   const std::vector<int> &gamma_global;
   int nG_global;
   MPI_Comm comm;
@@ -295,7 +300,12 @@ struct SubstructuringSolver::Impl
   // solves.
   std::vector<int> gamma_global;  // owned parent true DOF -> global interface index, or -1
   int nG_global = 0;
-  mfem::DenseMatrix S_dense;
+  // Distributed dense interface operator S_E: each rank stores the contiguous block of rows
+  // [gamma_off, gamma_off + gamma_nloc) it owns (row-major, gamma_nloc x nG_global), instead
+  // of the full nG x nG matrix replicated on every rank. Cuts per-rank storage O(nG^2) ->
+  // O(nG^2 / P) and parallelizes the apply.
+  std::vector<double> S_rows;
+  int gamma_off = 0, gamma_nloc = 0;
   std::unique_ptr<MaterializedDtN> mat_dtn;
 
   Impl(const IoData &iodata, mfem::ParMesh &parent)
@@ -1106,8 +1116,23 @@ void SubstructuringSolver::CondenseEnvironment()
     }
     MPI_Allreduce(loc.data(), col, nG, MPI_DOUBLE, MPI_SUM, comm);
   };
-  impl->S_dense.SetSize(nG);
-  impl->S_dense = 0.0;
+  impl->gamma_off = off;
+  impl->gamma_nloc = nloc;
+  impl->S_rows.assign(static_cast<std::size_t>(nloc) * nG, 0.0);
+  // Per-rank row counts/displacements for gather/scatter of the distributed S_E (row blocks).
+  const int nranks = Mpi::Size(comm);
+  std::vector<int> row_cnt(nranks), row_disp(nranks);
+  {
+    std::vector<int> nloc_all(nranks);
+    MPI_Allgather(&nloc, 1, MPI_INT, nloc_all.data(), 1, MPI_INT, comm);
+    int acc = 0;
+    for (int r = 0; r < nranks; r++)
+    {
+      row_cnt[r] = nloc_all[r] * nG;
+      row_disp[r] = acc;
+      acc += row_cnt[r];
+    }
+  }
 
   // Interface true-DOF geometric signature in the current gamma_global order, replicated
   // across ranks. Lets a saved S_E be re-ordered onto the current interface when the region
@@ -1226,61 +1251,26 @@ void SubstructuringSolver::CondenseEnvironment()
       }
       MPI_Bcast(saved_sig.data(), nG * file_w, MPI_DOUBLE, 0, comm);
     }
+    // Rank 0 holds the full saved S_E transiently, re-orders it onto the current interface
+    // numbering, then scatters contiguous row blocks -- no replicated full matrix persists.
+    std::vector<double> S_full;
     if (rank == 0)
     {
+      S_full.assign(static_cast<std::size_t>(nG) * nG, 0.0);
       std::ifstream f(model_path, std::ios::binary);
-      f.seekg(static_cast<std::streamoff>(2 * sizeof(int) +
-                                          sizeof(double) * nG * file_w));
-      f.read(reinterpret_cast<char *>(impl->S_dense.GetData()), sizeof(double) * nG * nG);
+      f.seekg(static_cast<std::streamoff>(2 * sizeof(int) + sizeof(double) * nG * file_w));
+      f.read(reinterpret_cast<char *>(S_full.data()), sizeof(double) * nG * nG);
     }
-    MPI_Bcast(impl->S_dense.GetData(), nG * nG, MPI_DOUBLE, 0, comm);
-    // Re-order the saved S_E (offline interface numbering) onto the current interface DOFs by
-    // matching interface signatures -- supports region re-meshing / re-partitioning under a
-    // fixed Gamma. H1: coordinate match (no sign). H(curl): signed edge-signature match, with
-    // the orientation sign baked into S_E (symmetric): S_on[i][j] = s_i s_j S_off[p_i][p_j].
-    if (sig_type == 1 && !impl->magnetostatic)
+    // Signature match -> (perm, sgn): online interface index g corresponds to saved index
+    // perm[g] with orientation sgn[g] (sgn=1 for H1; +/-1 for H(curl)). Computed on all ranks
+    // from the replicated signatures. gamma_global stays fresh (contiguous), and S_E is
+    // re-indexed to the online order: S_on[i][j] = sgn_i sgn_j S_off[perm_i][perm_j].
+    std::vector<int> perm(nG, 0);
+    std::vector<double> sgn(nG, 1.0);
+    if (file_w > 0)
     {
       const std::vector<double> cur = gamma_sig();
-      double worst = 0.0;
-      for (int i = 0; i < impl->nt; i++)
-      {
-        if (!impl->is_gamma[i])
-        {
-          continue;
-        }
-        const int g = impl->gamma_global[i];
-        int best = 0;
-        double bd = 1e300;
-        for (int s = 0; s < nG; s++)
-        {
-          double dd = 0.0;
-          for (int d = 0; d < 3; d++)
-          {
-            const double t = cur[static_cast<std::size_t>(g) * 3 + d] -
-                             saved_sig[static_cast<std::size_t>(s) * 3 + d];
-            dd += t * t;
-          }
-          if (dd < bd)
-          {
-            bd = dd;
-            best = s;
-          }
-        }
-        impl->gamma_global[i] = best;  // remap local DOF -> saved interface index
-        worst = std::max(worst, bd);
-      }
-      double gworst = 0.0;
-      MPI_Allreduce(&worst, &gworst, 1, MPI_DOUBLE, MPI_MAX, comm);
-      MFEM_VERIFY(std::sqrt(gworst) < 1e-8,
-                  "Online interface DOFs do not match the saved model's coordinates (max "
-                  "mismatch "
-                      << std::sqrt(gworst) << "); the interface Gamma must be identical.");
-    }
-    else if (sig_type == 2 && impl->magnetostatic)
-    {
-      const std::vector<double> cur = gamma_sig();
-      std::vector<int> perm(nG, 0);
-      std::vector<double> sgn(nG, 1.0);
+      const bool signed_match = (sig_type == 2);
       double worst = 0.0;
       for (int g = 0; g < nG; g++)
       {
@@ -1289,12 +1279,15 @@ void SubstructuringSolver::CondenseEnvironment()
         for (int s = 0; s < nG; s++)
         {
           double dp = 0.0, dm = 0.0;
-          for (int d = 0; d < 12; d++)
+          for (int d = 0; d < file_w; d++)
           {
-            const double a = cur[static_cast<std::size_t>(g) * 12 + d];
-            const double b = saved_sig[static_cast<std::size_t>(s) * 12 + d];
+            const double a = cur[static_cast<std::size_t>(g) * file_w + d];
+            const double b = saved_sig[static_cast<std::size_t>(s) * file_w + d];
             dp += (a - b) * (a - b);
-            dm += (a + b) * (a + b);
+            if (signed_match)
+            {
+              dm += (a + b) * (a + b);
+            }
           }
           if (dp < bd)
           {
@@ -1302,7 +1295,7 @@ void SubstructuringSolver::CondenseEnvironment()
             best = s;
             bs = 1.0;
           }
-          if (dm < bd)
+          if (signed_match && dm < bd)
           {
             bd = dm;
             best = s;
@@ -1316,18 +1309,23 @@ void SubstructuringSolver::CondenseEnvironment()
       double gworst = 0.0;
       MPI_Allreduce(&worst, &gworst, 1, MPI_DOUBLE, MPI_MAX, comm);
       MFEM_VERIFY(std::sqrt(gworst) < 1e-8,
-                  "Online interface edge DOFs do not match the saved model (max mismatch "
+                  "Online interface DOFs do not match the saved model (max mismatch "
                       << std::sqrt(gworst) << "); the interface Gamma must be identical.");
-      // S_on[i][j] = sgn_i sgn_j S_off[perm_i][perm_j]; keep the fresh gamma_global.
-      mfem::DenseMatrix S_off(impl->S_dense);
+    }
+    if (rank == 0 && file_w > 0)
+    {
+      const std::vector<double> S_off = S_full;
       for (int i = 0; i < nG; i++)
       {
         for (int j = 0; j < nG; j++)
         {
-          impl->S_dense(i, j) = sgn[i] * sgn[j] * S_off(perm[i], perm[j]);
+          S_full[static_cast<std::size_t>(i) * nG + j] =
+              sgn[i] * sgn[j] * S_off[static_cast<std::size_t>(perm[i]) * nG + perm[j]];
         }
       }
     }
+    MPI_Scatterv(rank == 0 ? S_full.data() : nullptr, row_cnt.data(), row_disp.data(),
+                 MPI_DOUBLE, impl->S_rows.data(), nloc * nG, MPI_DOUBLE, 0, comm);
     loaded = true;
   }
   if (!loaded)
@@ -1346,30 +1344,38 @@ void SubstructuringSolver::CondenseEnvironment()
       }
       impl->dtn->Mult(e, y);
       gather_interface(y, col.data());
-      for (int r = 0; r < nG; r++)
+      for (int r = 0; r < nloc; r++)
       {
-        impl->S_dense(r, c) = col[r];
+        impl->S_rows[static_cast<std::size_t>(r) * nG + c] = col[off + r];
       }
     }
     if (!model_path.empty())
     {
       const int sig_type = impl->magnetostatic ? 2 : 1;
       const std::vector<double> sig = gamma_sig();  // collective: all ranks participate
+      // Gather the distributed row blocks to rank 0 to write the full matrix to disk.
+      std::vector<double> S_full;
+      if (rank == 0)
+      {
+        S_full.assign(static_cast<std::size_t>(nG) * nG, 0.0);
+      }
+      MPI_Gatherv(impl->S_rows.data(), nloc * nG, MPI_DOUBLE,
+                  rank == 0 ? S_full.data() : nullptr, row_cnt.data(), row_disp.data(),
+                  MPI_DOUBLE, 0, comm);
       if (rank == 0)
       {
         std::ofstream f(model_path, std::ios::binary);
         f.write(reinterpret_cast<const char *>(&nG), sizeof(int));
         f.write(reinterpret_cast<const char *>(&sig_type), sizeof(int));
-        f.write(reinterpret_cast<const char *>(sig.data()),
-                sizeof(double) * nG * sig_w);
-        f.write(reinterpret_cast<const char *>(impl->S_dense.GetData()),
-                sizeof(double) * nG * nG);
+        f.write(reinterpret_cast<const char *>(sig.data()), sizeof(double) * nG * sig_w);
+        f.write(reinterpret_cast<const char *>(S_full.data()), sizeof(double) * nG * nG);
       }
     }
   }
   // g_E is excitation-dependent; it is computed per excitation in the region solve.
-  impl->mat_dtn = std::make_unique<MaterializedDtN>(impl->S_dense, impl->gamma_global,
-                                                    impl->nG_global, comm);
+  impl->mat_dtn = std::make_unique<MaterializedDtN>(
+      impl->S_rows, impl->gamma_off, impl->gamma_nloc, impl->gamma_global, impl->nG_global,
+      comm);
 
   // Region-condensed solver: Palace CG preconditioned by a wrapped AMS (H(curl)) or
   // BoomerAMG (H1) on the region-free block. Built once and reused across excitations (the
@@ -1657,18 +1663,45 @@ std::vector<double> SubstructuringSolver::InterfaceSingularValues() const
   MFEM_VERIFY(impl->mat_dtn,
               "CondenseEnvironment must be called before InterfaceSingularValues!");
   // S_E is symmetric SPD, so singular values = eigenvalues. This mfem build has no LAPACK, so
-  // use a self-contained cyclic Jacobi eigenvalue iteration on the (symmetrized) dense S_E.
-  const int n = impl->S_dense.Height();
-  std::vector<double> A(static_cast<std::size_t>(n) * n);
-  for (int i = 0; i < n; i++)
+  // use a self-contained cyclic Jacobi eigenvalue iteration on the (symmetrized) matrix. The
+  // distributed row blocks are gathered to rank 0 and the result is broadcast.
+  MPI_Comm comm = impl->parent_fes.GetComm();
+  const int nG = impl->nG_global, rank = Mpi::Rank(comm), nranks = Mpi::Size(comm);
+  std::vector<int> row_cnt(nranks), row_disp(nranks);
   {
-    for (int j = 0; j < n; j++)
+    std::vector<int> nloc_all(nranks);
+    int nl = impl->gamma_nloc;
+    MPI_Allgather(&nl, 1, MPI_INT, nloc_all.data(), 1, MPI_INT, comm);
+    int acc = 0;
+    for (int r = 0; r < nranks; r++)
     {
-      A[static_cast<std::size_t>(i) * n + j] =
-          0.5 * (impl->S_dense(i, j) + impl->S_dense(j, i));
+      row_cnt[r] = nloc_all[r] * nG;
+      row_disp[r] = acc;
+      acc += row_cnt[r];
     }
   }
-  auto at = [&](int i, int j) -> double & { return A[static_cast<std::size_t>(i) * n + j]; };
+  const int n = nG;
+  std::vector<double> A;
+  if (rank == 0)
+  {
+    A.assign(static_cast<std::size_t>(n) * n, 0.0);
+  }
+  MPI_Gatherv(impl->S_rows.data(), impl->gamma_nloc * nG, MPI_DOUBLE,
+              rank == 0 ? A.data() : nullptr, row_cnt.data(), row_disp.data(), MPI_DOUBLE, 0,
+              comm);
+  std::vector<double> out(n, 0.0);
+  if (rank == 0)
+  {
+    for (int i = 0; i < n; i++)
+    {
+      for (int j = i + 1; j < n; j++)
+      {
+        const double s = 0.5 * (A[static_cast<std::size_t>(i) * n + j] +
+                                A[static_cast<std::size_t>(j) * n + i]);
+        A[static_cast<std::size_t>(i) * n + j] = s;
+        A[static_cast<std::size_t>(j) * n + i] = s;
+      }
+    }    auto at = [&](int i, int j) -> double & { return A[static_cast<std::size_t>(i) * n + j]; };
   for (int sweep = 0; sweep < 100; sweep++)
   {
     double off = 0.0;
@@ -1709,12 +1742,13 @@ std::vector<double> SubstructuringSolver::InterfaceSingularValues() const
       }
     }
   }
-  std::vector<double> out(n);
-  for (int i = 0; i < n; i++)
-  {
-    out[i] = std::abs(at(i, i));
+    for (int i = 0; i < n; i++)
+    {
+      out[i] = std::abs(at(i, i));
+    }
+    std::sort(out.begin(), out.end(), std::greater<double>());
   }
-  std::sort(out.begin(), out.end(), std::greater<double>());
+  MPI_Bcast(out.data(), n, MPI_DOUBLE, 0, comm);
   return out;
 }
 
