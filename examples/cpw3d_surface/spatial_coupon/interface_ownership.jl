@@ -7,6 +7,15 @@
 # the selected label on the entire element, not just at sampled points.
 include(joinpath(@__DIR__,"ownership_bernstein.jl"))
 
+# A surface attribute >= SHELL_LABEL_STRIDE is a radial MA shell (relabel_radial_ma_shells.py,
+# supervisor decisions 56 / 61a): attribute = SHELL_LABEL_STRIDE x shell ordinal + parent MA
+# attribute. The shell is label-only: ownership is classified and certified on the parent
+# (its family, conductor and slot), and the classification keeps the shell prefix so the
+# audited surface assignment reproduces the published shell labels element by element.
+const SHELL_LABEL_STRIDE=10000
+shell_parent(attribute)=attribute>=SHELL_LABEL_STRIDE ? mod(attribute,SHELL_LABEL_STRIDE) : attribute
+shell_prefix(attribute)=attribute-shell_parent(attribute)
+
 function build_interface_ownership(edges,loops,radius;
                                    fabricated=false,metal_thickness=0.1,overetch=0.05)
     tolerance=1e-9radius
@@ -47,6 +56,7 @@ function build_interface_ownership(edges,loops,radius;
         return [e for e in layer_edges[layer] if e.conductor==conductor],conductor,distances
     end
     function candidates_at(attribute,point,layer)
+        attribute=shell_parent(attribute)
         family=div(attribute,1000)
         family==3 && return first(sa_selection(point,layer))
         family in (4,5,6) || error("Unsupported physical surface family $attribute")
@@ -56,11 +66,13 @@ function build_interface_ownership(edges,loops,radius;
         return candidates
     end
     function classify(attribute,point)
+        prefix=shell_prefix(attribute)
+        attribute=shell_parent(attribute)
         layer=layer_at(point)
         owner=nearest_edge(candidates_at(attribute,point,layer),point,radius)
         family=div(attribute,1000)
-        return family==3 ? (attribute>=3100 ? 3100 : 3000)+owner.slot :
-               metal_surface_attribute(1000family,owner.slot,mod(attribute,100))
+        return prefix+(family==3 ? (attribute>=3100 ? 3100 : 3000)+owner.slot :
+               metal_surface_attribute(1000family,owner.slot,mod(attribute,100)))
     end
     function stable_slots(candidates,point,r,slot)
         own=Inf;other=Inf
@@ -71,6 +83,7 @@ function build_interface_ownership(edges,loops,radius;
         return isfinite(own) && other-own>2r+4tolerance
     end
     function certify(attribute,center,hull)
+        attribute=shell_parent(attribute)
         layer=layer_at(center)
         lo,hi=bands[layer]
         all(lo-10tolerance<=p[3]<=hi+10tolerance for p in hull) || return false

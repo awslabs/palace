@@ -69,17 +69,17 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "f6c6d2882a5971adc4027d708a87fcc899a6401341a9ac8d88c6fcb7067af492"
+      "SHA256": "ff44e45b8d2be928c74480ac27e507064705ab81bcf3542b4f75c2fdd737a534"
     },
     {
       "Name": "verify_canonical_case_entries.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/verify_canonical_case_entries.py",
-      "SHA256": "1b9d43c6eae19827b2eb4ed7524a14187cd9497a07b02665673860e28c95920e"
+      "SHA256": "ad51a2dbb635df821599e77a8b27e6ea5c4c9eb9c45ee55bc76ca0982581c9ca"
     },
     {
       "Name": "normalize_general_mesh_evidence.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/normalize_general_mesh_evidence.py",
-      "SHA256": "10e3a2e9520f011f21c297890a963d7e7b46f6f53548bbae89d492d51e8d44a5"
+      "SHA256": "a6a4627fd97906ab62d0f9d69afc1fba28e750a8f6868cb123316ee86dcc7a8f"
     },
     {
       "Name": "semantic_mesh_contract.py",
@@ -114,7 +114,7 @@
     {
       "Name": "mixed_mesh.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mixed_mesh.py",
-      "SHA256": "3ce0f30b227ea5160f7574472a3c140e3d1e1a830b37ef1f471c246d7fa8e4cd"
+      "SHA256": "d7e4bf144e0cffe0f5cbfcb589967f4458b32f73210743f3783b783f5c53f03d"
     },
     {
       "Name": "run_bounded_mesher.py",
@@ -124,7 +124,7 @@
     {
       "Name": "general_mesh_audit_producer.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_audit_producer.py",
-      "SHA256": "2b0cb9546abf1823a07bed5a34273c7146eb238fb434c08ec0916a9f176f770a"
+      "SHA256": "9125f5d9b2193dadf48e5c95b7a71801d23872ecfe2ed31cc26b6f6b74ce3aa7"
     },
     {
       "Name": "mesh_stage_contract.py",
@@ -139,7 +139,7 @@
     {
       "Name": "publish_rigid_coupon_mesh.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/publish_rigid_coupon_mesh.py",
-      "SHA256": "18be72a645984b9f513b0fc59d777d4f2dc5e4311bb946d83cac6d72a5df63e5"
+      "SHA256": "3403bd0ade6ef93762ab07875d5f8745ab96cca5d590c495db9ee387db1e75cd"
     },
     {
       "Name": "audit_rigid_coupon_ownership.jl",
@@ -160,6 +160,16 @@
       "Name": "mesh_spatial_coupon_edge_cluster.jl",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_spatial_coupon_edge_cluster.jl",
       "SHA256": "b43a7d2b25239c46196173be08b14d32bde1238a33a9f239144d05ce8f9b3b76"
+    },
+    {
+      "Name": "interface_ownership.jl",
+      "Path": "examples/cpw3d_surface/spatial_coupon/interface_ownership.jl",
+      "SHA256": "c5e1e4b5d5ea83957d48aaa14b548c5cfca5c0f22e62cd5899d6de23c5bc43be"
+    },
+    {
+      "Name": "relabel_radial_ma_shells.py",
+      "Path": "examples/cpw3d_surface/spatial_coupon/relabel_radial_ma_shells.py",
+      "SHA256": "98ce14c1046e6fb3682b29a2bc0d745b4994783f54defc16856478af0a593fb5"
     }
   ],
   "StageToolSHA256": {
@@ -173,11 +183,11 @@
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "publisher": "5233e27ac6c931d9eada6c93c321283082fd7b49420d27f6e2ddb8cf144e1683"
+      "publisher": "1b69b295ed48fe1b93c3727a9ab59c5228def43a66a88c9d265cb02df3f577c2"
     },
     "proper-rigid-publication": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "rigid-publisher": "18be72a645984b9f513b0fc59d777d4f2dc5e4311bb946d83cac6d72a5df63e5",
+      "rigid-publisher": "3403bd0ade6ef93762ab07875d5f8745ab96cca5d590c495db9ee387db1e75cd",
       "ownership-runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
       "ownership-auditor": "4518b66c0146fbf88e2c6893e144c6f1689702766eb240567cf74cbbbbf92a07"
     }

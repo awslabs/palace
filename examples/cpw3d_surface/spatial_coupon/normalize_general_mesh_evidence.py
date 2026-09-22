@@ -113,6 +113,8 @@ def normalize(manifest_path, case_id, variant_id, mesh_path, audit_paths, output
                 raise ValueError("Variant transform was not verified")
             evidence["IdentityMeshSHA256"] = record.get("IdentityMeshSHA256")
             evidence["IdentitySeedMeshSHA256"] = record.get("IdentitySeedMeshSHA256")
+            evidence["ParentLabeledMeshSHA256"] = record.get("ParentLabeledMeshSHA256")
+            evidence["RadialShells"] = record.get("RadialShells")
             evidence["TransformMaximumCoordinateError"] = record.get(
                 "TransformMaximumCoordinateError")
         elif kind == "bounded-run":

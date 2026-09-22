@@ -30,7 +30,8 @@ from general_mesh_manifest import (EDGE_LAYER_QUALITY_RULE_GATE, EDGE_LAYER_QUAL
                                    _finite_number, _physical_comparison_failures,
                                    _validate_bound_records, _validate_mesh,
                                    audit_manifest_evidence, canonical_sha256, case_gates,
-                                   manifest_pipeline, option_values as _option_values, sha256,
+                                   manifest_pipeline, option_values as _option_values, parent_labeled_mesh_sha256,
+                                   sha256,
                                    validate_manifest, validate_production_recipe_commands)
 from semantic_mesh_contract import load_semantic_contract, validate_feature_topology
 
@@ -222,7 +223,7 @@ def covariance_failures(manifest, case, evidence_by_variant):
     transformed = evidence_by_variant.get(comparison["Transformed"])
     if reference is None or transformed is None:
         return ["missing transform evidence"], None
-    identity_digest = reference["Mesh"]["SHA256"]
+    identity_digest = parent_labeled_mesh_sha256(reference)
     coordinate_error = transformed.get("TransformMaximumCoordinateError")
     failures = []
     if (reference.get("IdentityMeshSHA256") != identity_digest or

@@ -29,13 +29,20 @@ from mesh_stage_contract import (GMSH_ONLY_PIPELINE, PIPELINE_BUILD_STAGE, PLACE
                                  canonical_stage_order, dag_pipeline, footprint_segments,
                                  gmsh_build_junction_segments, sha256 as stage_sha256,
                                  stage_order, trace_basis_edges_of_census, validate_stage_dag)
-from mixed_mesh import (SURFACE_KINDS, VOLUME_KINDS, cell_blocks, element_counts, h1_dofs,
-                        simplicial_view, volume_quality)
+from mixed_mesh import (SHELL_LABEL_STRIDE, SURFACE_KINDS, VOLUME_KINDS, cell_blocks, element_counts,
+                        h1_dofs, parent_label_view, shell_labels, shell_parent, simplicial_view,
+                        volume_quality)
 from semantic_mesh_contract import load_semantic_contract
 
 
 KINDS = ("bounded-run", "mesh-topology-quality", "mesh-complexity",
          "mesh-invariants", "variant-transform")
+
+
+def read_audit_mesh(path):
+    """The mesh as the audits judge it: the radial MA shell labels (label-only, decision
+    61a) collapsed to their parent labels (mixed_mesh.parent_label_view)."""
+    return parent_label_view(read_mesh(path))
 
 
 def _producer():
@@ -719,6 +726,33 @@ def _expected_response_owner_attributes(contract):
                   if item["Role"] not in cut_roles)
 
 
+def _parent_partition_rows(rows):
+    """The ownership partition rows summed per parent label: a radial-shell row
+    (attribute >= SHELL_LABEL_STRIDE, label-only) joins its parent's counts, areas and
+    fractions; the per-row quadrature summary fields are kept (identical on every row).
+    Returns (parent rows, shell labels found)."""
+    shells = sorted(int(row["attribute"]) for row in rows if int(row["attribute"]) >= SHELL_LABEL_STRIDE)
+    if not shells:
+        return rows, []
+    merged = {}
+    for row in rows:
+        parent = shell_parent(int(row["attribute"]))
+        target = merged.setdefault(parent, dict(row, attribute=str(parent), elements=0, area=0.0, ambiguous_area=0.0,
+                                                unresolved_elements=0, unresolved_area=0.0))
+        target["elements"] += int(row["elements"])
+        target["area"] += float(row["area"])
+        target["ambiguous_area"] += float(row["ambiguous_area"])
+        target["unresolved_elements"] += int(row["unresolved_elements"])
+        target["unresolved_area"] += float(row["unresolved_area"])
+    out = []
+    for parent in sorted(merged):
+        row = merged[parent]
+        row["ambiguous_fraction"] = row["ambiguous_area"] / row["area"]
+        row["unresolved_fraction"] = row["unresolved_area"] / row["area"]
+        out.append({key: str(value) for key, value in row.items()})
+    return out, shells
+
+
 def _ownership_report(path, quadrature_path, contract):
     with Path(path).open(newline="") as stream:
         rows = list(csv.DictReader(stream))
@@ -730,6 +764,8 @@ def _ownership_report(path, quadrature_path, contract):
                 "quadrature_overlaps", "quadrature_positive_weights"}
     if not rows or not required <= set(rows[0]):
         raise ValueError("Ownership partition report is incomplete")
+    shell_rows = rows
+    rows, shells = _parent_partition_rows(rows)
     fields = ("quadrature_rule", "quadrature_order", "quadrature_points",
               "quadrature_whole_measure", "quadrature_owned_measure",
               "quadrature_relative_closure", "quadrature_closure_tolerance",
@@ -748,10 +784,18 @@ def _ownership_report(path, quadrature_path, contract):
     if (not quadrature or set(quadrature[0]) != {"attribute", "measure"} or
             any(set(row) != {"attribute", "measure"} for row in quadrature)):
         raise ValueError("Quadrature ownership partition is incomplete")
-    attributes = [int(row["attribute"]) for row in quadrature]
-    measures = [float(row["measure"]) for row in quadrature]
+    raw_attributes = [int(row["attribute"]) for row in quadrature]
+    if len(raw_attributes) != len(set(raw_attributes)):
+        raise ValueError("Quadrature owner labels/measures differ from semantic contract")
+    shell_quadrature = {int(row["attribute"]): float(row["measure"]) for row in quadrature}
+    # The shells' quadrature measures sum per parent (label-only partition).
+    by_parent = {}
+    for attribute, measure in shell_quadrature.items():
+        by_parent.setdefault(shell_parent(attribute), []).append(measure)
+    attributes = sorted(by_parent)
+    measures = [math.fsum(by_parent[attribute]) for attribute in attributes]
     expected = _expected_response_owner_attributes(contract)
-    if (attributes != expected or len(attributes) != len(set(attributes)) or
+    if (attributes != expected or
             any(not math.isfinite(value) or value <= 0 for value in measures)):
         raise ValueError("Quadrature owner labels/measures differ from semantic contract")
     quadrature_owned = math.fsum(measures)
@@ -766,6 +810,15 @@ def _ownership_report(path, quadrature_path, contract):
         "PhysicalSurfaceCoverage": {
             "InterfaceElements": sum(int(row["elements"]) for row in rows),
             "PartitionRows": len(rows), "Complete": True},
+        "RadialShells": {
+            "Labels": shells, "PartitionRows": len(shell_rows),
+            "Parents": sorted({shell_parent(label) for label in shells}),
+            "OwnerMeasures": {str(label): shell_quadrature[label] for label in shells},
+            "Rule": "a surface label >= 10000 is a per-ring MA shell (10000 x ordinal + parent, label-only: "
+                    "relabel_radial_ma_shells.py); the ownership auditor classifies and certifies its parent "
+                    "and keeps the shell prefix, so the partition rows are per shell and are summed per parent "
+                    "here against the semantic contract; the shell partition itself is audited by the census "
+                    "bound in the transform receipt (RadialShells)"} if shells else None,
         "ResponseOwnership": {
             "UnmatchedPolicy": "Error", "QuadratureRule": summary["quadrature_rule"],
             "QuadratureOrder": int(summary["quadrature_order"]),
@@ -897,7 +950,7 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
     recorded feature segments; exactly one is given."""
     if (restoration_recipe_path is None) == (build_census_path is None):
         raise ValueError("Exactly one of the restoration recipe and the build census is required")
-    mesh = read_mesh(mesh_path) if mesh is None else mesh
+    mesh = read_audit_mesh(mesh_path) if mesh is None else mesh
     simplicial = simplicial_view(mesh)
     contract = load_semantic_contract(contract_path)
     report, _ = analyze(simplicial, contract, require_material_names=True)
@@ -970,7 +1023,7 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
         if not len(points):
             return points
         return (np.column_stack((points, np.ones(len(points)))) @ matrix.T)[:, :3]
-    reference_mesh = simplicial_view(read_mesh(reference_mesh_path))
+    reference_mesh = simplicial_view(read_audit_mesh(reference_mesh_path))
     transformed_reference = meshio.Mesh(
         (np.column_stack((reference_mesh.points, np.ones(len(reference_mesh.points)))) @
          matrix.T)[:, :3],
@@ -1014,7 +1067,7 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
 
 
 def complexity_record(base, mesh_path, contract_path, recipe_path, *, mesh=None):
-    mesh = read_mesh(mesh_path) if mesh is None else mesh
+    mesh = read_audit_mesh(mesh_path) if mesh is None else mesh
     recipe = json.loads(Path(recipe_path).read_text())
     order = int(recipe["GeometryOrder"])
     topology = load_semantic_contract(contract_path)["FeatureTopology"]
@@ -1046,7 +1099,7 @@ def _mesh_invariants(mesh):
 
 
 def invariants_record(base, mesh_path, *, mesh=None):
-    mesh = read_mesh(mesh_path) if mesh is None else mesh
+    mesh = read_audit_mesh(mesh_path) if mesh is None else mesh
     base["Measurements"] = {"ComparisonInvariants": _mesh_invariants(mesh)}
     return base
 
@@ -1107,13 +1160,13 @@ def _physical_covariance_report(identity, transformed, contract, matrix):
 
 def variant_record(base, mesh_path, identity_mesh_path, identity_seed_mesh_path,
                    transform, contract_path, stage_reports, tolerance=1e-10, *, mesh=None):
-    mesh = read_mesh(mesh_path) if mesh is None else mesh
+    mesh = read_audit_mesh(mesh_path) if mesh is None else mesh
     matrix = np.asarray(transform, dtype=float).reshape(4, 4)
     reports, _ = validate_stage_dag(stage_reports, mesh_path)
     publication = reports["proper-rigid-publication"]
     receipt = json.loads(Path(publication["Artifacts"]["transform-receipt"]["Path"]).read_text())
     canonical_path = Path(publication["Inputs"]["canonical-candidate-mesh"]["Path"])
-    canonical = read_mesh(canonical_path)
+    canonical = read_audit_mesh(canonical_path)
     homogeneous = np.column_stack((canonical.points, np.ones(len(canonical.points))))
     expected = (homogeneous @ matrix.T)[:, :3]
     if mesh.points.shape != expected.shape:
@@ -1134,6 +1187,14 @@ def variant_record(base, mesh_path, identity_mesh_path, identity_seed_mesh_path,
     base["IdentitySeedMeshSHA256"] = sha256(canonical_seed)
     base["TransformMaximumCoordinateError"] = error
     base["TransformVerified"] = True
+    # The published mesh before the radial MA shell relabel (decision 61a; the mesh
+    # itself for a publication without shells): the exact source-seed covariance is
+    # judged on it, the shells being label-only.
+    base["ParentLabeledMeshSHA256"] = receipt.get("ParentLabeledMeshSHA256") or sha256(mesh_path)
+    shells = receipt.get("RadialShells")
+    base["RadialShells"] = ({"Applied": True, "Census": {"Path": shells["Path"], "SHA256": shells["SHA256"]},
+                             "ShellCount": shells["ShellCount"], "RingRadii": shells["RingRadii"]}
+                            if shells and shells.get("Applied") else {"Applied": False})
     base["TransformReceiptSHA256"] = sha256(
         publication["Artifacts"]["transform-receipt"]["Path"])
     base["Measurements"] = {"PhysicalCovariance": _physical_covariance_report(
@@ -1158,7 +1219,7 @@ def _feature_record_paths(reports):
 
 
 def bounded_record(base, mesh_path, stage_reports, *, mesh=None):
-    mesh = read_mesh(mesh_path) if mesh is None else mesh
+    mesh = read_audit_mesh(mesh_path) if mesh is None else mesh
     reports, digests = validate_stage_dag(stage_reports, mesh_path)
     pipeline = dag_pipeline(reports)
     canonical = [reports[name] for name in canonical_stage_order(pipeline)]
@@ -1242,7 +1303,7 @@ def produce_variant_audits(case, variant, mesh, inputs_path, transform_path, out
     for path in outputs.values():
         if Path(path).exists():
             raise ValueError("Audit output must be fresh")
-    loaded_mesh = read_mesh(mesh)
+    loaded_mesh = read_audit_mesh(mesh)
     return {kind: produce(kind, case, variant, mesh, inputs_path, transform_path, outputs[kind],
                           loaded_mesh=loaded_mesh, **options) for kind in KINDS}
 

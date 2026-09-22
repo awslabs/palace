@@ -30,6 +30,48 @@ CORNER_FRAMES = {
     "pyramid": [(0, 1, 3, 4), (1, 2, 0, 4), (2, 3, 1, 4), (3, 0, 2, 4)],
 }
 QUALITY_QUANTILES = (0.0, 0.01, 0.05, 0.5, 0.95, 0.99, 1.0)
+# A surface label >= SHELL_LABEL_STRIDE is a radial MA shell (relabel_radial_ma_shells.py,
+# supervisor decisions 56 / 61a): label = SHELL_LABEL_STRIDE x shell ordinal + parent MA
+# label.  The shells are label-only (the parent surfaces are what the contract, the
+# ownership and the protected-surface audits judge; the shell partition is audited by
+# its own census), so every audit reads the mesh through `parent_label_view`.
+SHELL_LABEL_STRIDE = 10000
+
+
+def shell_parent(label):
+    """The parent label of a radial-shell label; any other label unchanged."""
+    label = int(label)
+    return label % SHELL_LABEL_STRIDE if label >= SHELL_LABEL_STRIDE else label
+
+
+def shell_labels(mesh):
+    """The sorted radial-shell surface labels the mesh carries (empty when none)."""
+    key = _label_key(mesh)
+    found = set()
+    for cell, labels in zip(mesh.cells, mesh.cell_data[key]):
+        if _base_kind(cell.type) in SURFACE_KINDS:
+            values = np.asarray(labels)
+            found.update(int(v) for v in np.unique(values[values >= SHELL_LABEL_STRIDE]))
+    return sorted(found)
+
+
+def parent_label_view(mesh):
+    """The mesh with every radial-shell surface label replaced by its parent (a copy
+    sharing points and connectivity; the same object when the mesh carries no shell)."""
+    key = _label_key(mesh)
+    if not shell_labels(mesh):
+        return mesh
+    data = []
+    for cell, labels in zip(mesh.cells, mesh.cell_data[key]):
+        values = np.asarray(labels).copy()
+        if _base_kind(cell.type) in SURFACE_KINDS:
+            shells = values >= SHELL_LABEL_STRIDE
+            values[shells] = values[shells] % SHELL_LABEL_STRIDE
+        data.append(values)
+    cell_data = dict(mesh.cell_data)
+    cell_data[key] = data
+    return meshio.Mesh(mesh.points, [(cell.type, cell.data) for cell in mesh.cells], cell_data=cell_data,
+                       point_data=dict(mesh.point_data), field_data=dict(mesh.field_data))
 
 
 def _label_key(mesh):

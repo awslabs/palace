@@ -71,6 +71,13 @@ class LibraryBuildRecordTest(unittest.TestCase):
         (root / "per-entry-verification.json").write_text(json.dumps(
             {"Passed": verification_passed, "Failures": [] if verification_passed else ["identity: gate failure: x"],
              "SharedCanonicalBuildId": "c" * 64 if verification_passed else None}))
+        # The identity transform receipt binds the radial MA shell census (decision 61a).
+        (root / "identity-receipt.json").write_text(json.dumps(
+            {"CanonicalMeshSHA256": "p" * 64, "ParentLabeledMeshSHA256": "p" * 64, "OutputMeshSHA256": "i" * 64,
+             "RadialShells": {"Applied": True, "Path": f"{root}/identity.msh.radial-shells.json", "SHA256": "s" * 64,
+                              "Kind": "radial-ma-shells", "Tool": "relabel_radial_ma_shells.py", "ToolSHA256": "t" * 64,
+                              "ShellCount": 30, "MAParents": [6001, 6002], "RingRadii": [0.00025, 0.00075],
+                              "Rule": "label-only"}}))
         stage_report(root, "canonical-source", 0.1, 0.0)
         stage_report(root, "gmsh-build", gmsh_seconds, gmsh_gib)
         stage_report(root, "canonical-publish", 10.0, 1.0)
@@ -83,10 +90,13 @@ class LibraryBuildRecordTest(unittest.TestCase):
         self.write_built_root(root)
         record = self.record(root)
         self.assertEqual(set(record), {"Case", "InventoryStatus", "FixtureVersion", "Calibration", "Scope", "Status", "Passed",
-                                       "StoppedBy", "CanonicalBuildId", "Variants", "Elements", "H1", "Estimate",
-                                       "Stages", "Verification", "HeadroomFlags", "Root", "DriverReturnCode",
+                                       "StoppedBy", "CanonicalBuildId", "Variants", "RadialShells", "Elements", "H1",
+                                       "Estimate", "Stages", "Verification", "HeadroomFlags", "Root", "DriverReturnCode",
                                        "WallSeconds"})
         self.assertEqual((record["Status"], record["Passed"], record["StoppedBy"]), (STATUS_BUILT, True, None))
+        self.assertEqual(record["RadialShells"]["Shells"], {"Path": f"{root}/identity.msh.radial-shells.json", "SHA256": "s" * 64})
+        self.assertEqual((record["RadialShells"]["ShellCount"], record["RadialShells"]["MAParents"],
+                          record["RadialShells"]["ParentMesh"]["SHA256"]), (30, [6001, 6002], "p" * 64))
         self.assertEqual(record["Scope"]["UnsupportedClasses"], [])
         self.assertTrue(record["Scope"]["ExhibitedClasses"])
         self.assertEqual(record["CanonicalBuildId"], "c" * 64)

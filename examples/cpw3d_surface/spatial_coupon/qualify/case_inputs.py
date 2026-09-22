@@ -45,6 +45,7 @@ for path in (str(HERE), str(TOOLS)):
         sys.path.insert(0, path)
 import generate_spatial_response as producer  # noqa: E402
 import trace_basis  # noqa: E402
+from mixed_mesh import SHELL_LABEL_STRIDE  # noqa: E402
 
 PHYSICS_RUN_KEY = "PhysicsRun"
 JOB_POLICY_KEY = "JobPolicy"
@@ -245,6 +246,9 @@ def derive(case, directory, *, mesh_path, physics_run, out_dir, mesh=None, outpu
     available = producer.mesh_boundary_attributes(Path(mesh_path))
     shell_parents = set(shell_labels_by_parent(radial_shells)) if radial_shells is not None else set()
     config_available = available
+    if radial_shells is None and any(int(a) >= SHELL_LABEL_STRIDE for a in available):
+        raise CaseInputError(f"the mesh carries radial-shell labels {sorted(a for a in available if int(a) >= SHELL_LABEL_STRIDE)} "
+                             f"but the build record binds no radial-shell census (RadialShells / Relabel)")
     if shell_parents:
         shell_labels = {int(shell["Label"]) for shell in radial_shells["Shells"]}
         if shell_parents & available or not shell_labels <= available:

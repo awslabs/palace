@@ -19,7 +19,7 @@ from mesh_stage_contract import (GMSH_ONLY_PIPELINE, LEGACY_MMG_PIPELINE, PIPELI
                                  PLACEMENT_STAGE_ORDER, STAGE_TOOLS, TRACE_BASIS_RATIO_OPTION,
                                  canonical_stage_order, pipeline_of, scope_classes_of_case_inputs,
                                  stage_order, unsupported_scope_classes, validate_stage_dag)
-from mixed_mesh import simplicial_view
+from mixed_mesh import parent_label_view, simplicial_view
 from semantic_mesh_contract import (REQUIRED_ROLES, load_semantic_contract,
                                     validate_feature_topology)
 
@@ -51,9 +51,17 @@ def _check_artifact(base, item, description):
     return path
 
 
+def parent_labeled_mesh_sha256(evidence):
+    """The digest the exact source-seed covariance judges: the reference variant's
+    published mesh before the label-only radial MA shell relabel (decision 61a;
+    ParentLabeledMeshSHA256 of its transform receipt) - the canonical mesh itself for an
+    identity placement - or the mesh digest of evidence without that field."""
+    return evidence.get("ParentLabeledMeshSHA256") or evidence["Mesh"]["SHA256"]
+
+
 def _validate_mesh(path, contract):
     try:
-        analyze(simplicial_view(read_mesh(path)), contract, require_material_names=True)
+        analyze(simplicial_view(parent_label_view(read_mesh(path))), contract, require_material_names=True)
     except SystemExit as error:
         raise ValueError("audited mesh is not a readable Gmsh mesh") from error
 
@@ -881,6 +889,9 @@ def _validate_bound_records(evidence_path, evidence, binding, source_paths):
                     evidence.get("IdentityMeshSHA256") != record.get("IdentityMeshSHA256") or
                     evidence.get("IdentitySeedMeshSHA256") !=
                     record.get("IdentitySeedMeshSHA256") or
+                    evidence.get("ParentLabeledMeshSHA256") !=
+                    record.get("ParentLabeledMeshSHA256") or
+                    evidence.get("RadialShells") != record.get("RadialShells") or
                     evidence.get("TransformMaximumCoordinateError") !=
                     record.get("TransformMaximumCoordinateError")):
                 raise ValueError("variant transform result differs from its bound audit")
@@ -952,7 +963,7 @@ def _validate_bound_records(evidence_path, evidence, binding, source_paths):
     from general_mesh_audit_producer import _physical_covariance_report
     matrix = __import__("numpy").asarray(binding["Transform"], dtype=float).reshape(4, 4)
     recomputed_physical = _physical_covariance_report(
-        read_mesh(identity_path), read_mesh(mesh_path),
+        parent_label_view(read_mesh(identity_path)), parent_label_view(read_mesh(mesh_path)),
         load_semantic_contract(source_paths["SemanticContract"]), matrix)
     if measurements.get("PhysicalCovariance") != recomputed_physical:
         raise ValueError("physical covariance differs from independent normalization")
@@ -1519,7 +1530,7 @@ def run_manifest(args):
             comparison_failures.append(case["Id"] + ": missing transform evidence")
             continue
         reference_evidence, transformed_evidence = (evidence_by_key[key] for key in keys)
-        identity_digest = reference_evidence["Mesh"]["SHA256"]
+        identity_digest = parent_labeled_mesh_sha256(reference_evidence)
         identity_seed_digest = reference_evidence.get("IdentitySeedMeshSHA256")
         coordinate_error = transformed_evidence.get("TransformMaximumCoordinateError")
         if (reference_evidence.get("IdentityMeshSHA256") != identity_digest or

@@ -2,9 +2,12 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Calibration-only, label-only postprocess of a built coupon's identity mesh: the MA
-surfaces (6000 + 100 slot + conductor: metal top face and sidewalls) are split into
-radial shells following the prism tube rings (supervisor decision 56).
+"""Label-only postprocess of a built coupon's mesh: the MA surfaces (6000 + 100 slot +
+conductor: metal top face and sidewalls) are split into radial shells following the
+prism tube rings (supervisor decision 56; every production coupon since decision 61a,
+applied by publish_rigid_coupon_mesh.py at the placement stage with the census bound in
+the transform receipt - this module's command line is the calibration-only relabel of an
+already published identity mesh).
 
 Shell of a surface element = the ring interval [r_{k-1}, r_k) of the tube ring set that
 contains the distance of its centroid to the nearest metal edge line (the Physical
@@ -51,8 +54,8 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import general_mesh_manifest  # noqa: E402
+from mixed_mesh import SHELL_LABEL_STRIDE  # noqa: E402
 
-SHELL_LABEL_STRIDE = 10000
 MA_FAMILY = 6
 FAR_ORDINAL = 1
 KINDS = ("far", "top", "bottom")
@@ -244,10 +247,15 @@ def quadrature_points(element_type, corners):
     return np.asarray(points), np.asarray(measures)
 
 
-def relabel(data, *, lines, radii):
-    """The relabeled bytes and the census of the shells of every MA parent label."""
+def relabel(data, *, lines, radii, source_coordinates=None):
+    """The relabeled bytes and the census of the shells of every MA parent label.
+    `source_coordinates` maps mesh points (n x 3) to the source-local frame the edge
+    lines live in (the inverse of a rigid placement); default: the identity."""
     mesh = read_msh22_binary(data)
     coordinates = mesh["Coordinates"]
+    if source_coordinates is None:
+        def source_coordinates(points):
+            return points
     ma_labels = sorted({tag for dimension, tag, _ in mesh["PhysicalNames"] if dimension == 2 and tag // 1000 == MA_FAMILY})
     if not ma_labels:
         raise RelabelError("the mesh defines no MA boundary label (family 6000)")
@@ -258,7 +266,7 @@ def relabel(data, *, lines, radii):
         raise RelabelError("no surface element carries an MA label")
     corners = [np.asarray([coordinates[node] for node in mesh["Elements"][index][3]]) for index in ma_indices]
     centroids = np.asarray([c.mean(axis=0) for c in corners])
-    distances, kinds = edge_distances(centroids, lines)
+    distances, kinds = edge_distances(source_coordinates(centroids), lines)
     ordinals = np.asarray([shell_ordinal(d, k, radii) for d, k in zip(distances, kinds)])
     groups = sorted({(int(ordinal), mesh["Elements"][index][2][0]) for ordinal, index in zip(ordinals, ma_indices)})
     elementary = {group: max_elementary + 1 + position for position, group in enumerate(groups)}
@@ -274,7 +282,7 @@ def relabel(data, *, lines, radii):
         group = (int(ordinals[position]), tags[0])
         shell = shells[group]
         points, measures = quadrature_points(element_type, corners[position])
-        point_distances, point_kinds = edge_distances(points, lines)
+        point_distances, point_kinds = edge_distances(source_coordinates(points), lines)
         straddling = sum(float(m) for m, d, k in zip(measures, point_distances, point_kinds)
                          if shell_ordinal(d, k, radii) != group[0])
         shell["Elements"] += 1
@@ -398,6 +406,41 @@ def tool_commit():
         return None
 
 
+def shell_records(shells, radii):
+    """The census rows of the shells: label / parent / ordinal / kind / ring / radii /
+    counts / area / straddling, ordered by (ordinal, parent)."""
+    records = []
+    for group in sorted(shells):
+        shell = shells[group]
+        kind, ring, inner, outer = ordinal_description(group[0], radii)
+        records.append({"Label": shell["Label"], "Parent": shell["Parent"], "Ordinal": shell["Ordinal"], "Kind": kind,
+                        "Ring": ring, "InnerRadius": inner, "OuterRadius": (None if math.isinf(outer) else outer),
+                        "ElementaryTag": shell["ElementaryTag"], "Elements": shell["Elements"],
+                        "Triangles": shell["Triangles"], "Quadrangles": shell["Quadrangles"], "Area": shell["Area"],
+                        "QuadratureMeasure": shell["QuadratureMeasure"], "StraddlingMeasure": shell["StraddlingMeasure"],
+                        "StraddlingFraction": shell["StraddlingMeasure"] / shell["Area"],
+                        "CentroidDistanceMinimum": shell["CentroidDistanceMinimum"],
+                        "CentroidDistanceMaximum": shell["CentroidDistanceMaximum"]})
+    return records
+
+
+def shell_census(*, kind, case_id, mesh_path, mesh_bytes, parent_mesh, radii, thickness, lines, shells, parents,
+                 label_only, closure, certificate=None, extra=None):
+    """The radial-shell census (identity.msh.radial-shells.json) qualify consumes:
+    label -> parent / kind / ring / radii / area, the ring radii, the edge lines and
+    the label-only / partition assertions."""
+    census = {"Version": 1, "Kind": kind, "Case": case_id,
+              "Tool": Path(__file__).name, "ToolSHA256": sha256(__file__), "ToolCommit": tool_commit(),
+              "ParentMesh": parent_mesh,
+              "Mesh": {"Path": str(mesh_path), "SHA256": hashlib.sha256(mesh_bytes).hexdigest(), "Bytes": len(mesh_bytes)},
+              "RingRadii": list(radii), "TubeRadius": radii[-1], "MetalThickness": thickness, "LengthUnit": "um",
+              "LabelRule": LABEL_RULE, "LabelStride": SHELL_LABEL_STRIDE, "FarOrdinal": FAR_ORDINAL,
+              "EdgeLines": lines, "Parents": {str(k): v for k, v in parents.items()}, "Shells": shell_records(shells, radii),
+              "LabelOnly": label_only, "ParentCertificate": certificate, "RadialQuadrature": closure}
+    census.update(extra or {})
+    return census
+
+
 def load_inputs(case_id, manifest_path, parent_record_path):
     manifest = json.loads(manifest_path.read_text())
     general_mesh_manifest.validate_manifest(manifest, manifest_path)
@@ -461,28 +504,14 @@ def run(case_id, *, manifest_path, parent_record_path, root):
     if hashlib.sha256(out).hexdigest() != mesh_sha:
         raise RelabelError("the written mesh differs from the relabeled bytes")
     radii = inputs["Radii"]
-    shell_records = []
-    for group in sorted(shells):
-        shell = shells[group]
-        kind, ring, inner, outer = ordinal_description(group[0], radii)
-        shell_records.append({"Label": shell["Label"], "Parent": shell["Parent"], "Ordinal": shell["Ordinal"], "Kind": kind,
-                              "Ring": ring, "InnerRadius": inner, "OuterRadius": (None if math.isinf(outer) else outer),
-                              "ElementaryTag": shell["ElementaryTag"], "Elements": shell["Elements"],
-                              "Triangles": shell["Triangles"], "Quadrangles": shell["Quadrangles"], "Area": shell["Area"],
-                              "QuadratureMeasure": shell["QuadratureMeasure"], "StraddlingMeasure": shell["StraddlingMeasure"],
-                              "StraddlingFraction": shell["StraddlingMeasure"] / shell["Area"],
-                              "CentroidDistanceMinimum": shell["CentroidDistanceMinimum"],
-                              "CentroidDistanceMaximum": shell["CentroidDistanceMaximum"]})
-    census = {"Version": 1, "Kind": inputs["Relabel"]["Kind"], "Case": case_id, "BaseCase": inputs["Relabel"]["BaseCase"],
-              "Tool": Path(__file__).name, "ToolSHA256": sha256(__file__), "ToolCommit": tool_commit(),
-              "ParentMesh": {"Path": inputs["Identity"]["Path"], "SHA256": inputs["Identity"]["SHA256"]},
-              "ParentBuildRecord": {"Path": str(inputs["ParentRecordPath"]), "SHA256": sha256(inputs["ParentRecordPath"])},
-              "Mesh": {"Path": str(mesh_path), "SHA256": mesh_sha, "Bytes": len(out)},
-              "RingRadii": radii, "TubeRadius": radii[-1], "MetalThickness": inputs["Thickness"], "LengthUnit": "um",
-              "LabelRule": LABEL_RULE, "LabelStride": SHELL_LABEL_STRIDE, "FarOrdinal": FAR_ORDINAL,
-              "EdgeLines": lines, "Parents": {str(k): v for k, v in parents.items()}, "Shells": shell_records,
-              "LabelOnly": label_only, "ParentCertificate": certificate, "RadialQuadrature": closure,
-              "Seconds": time.time() - start}
+    census = shell_census(kind=inputs["Relabel"]["Kind"], case_id=case_id, mesh_path=mesh_path, mesh_bytes=out,
+                          parent_mesh={"Path": inputs["Identity"]["Path"], "SHA256": inputs["Identity"]["SHA256"]},
+                          radii=radii, thickness=inputs["Thickness"], lines=lines, shells=shells, parents=parents,
+                          label_only=label_only, closure=closure, certificate=certificate,
+                          extra={"BaseCase": inputs["Relabel"]["BaseCase"],
+                                 "ParentBuildRecord": {"Path": str(inputs["ParentRecordPath"]),
+                                                       "SHA256": sha256(inputs["ParentRecordPath"])},
+                                 "Seconds": time.time() - start})
     census_path = Path(str(mesh_path) + CENSUS_SUFFIX)
     census_path.write_text(json.dumps(census, indent=2) + "\n")
     manifest = inputs["Manifest"]
@@ -512,7 +541,7 @@ def run(case_id, *, manifest_path, parent_record_path, root):
                          "Relabel": {"Kind": inputs["Relabel"]["Kind"], "Parent": parent["Case"],
                                      "ParentMesh": census["ParentMesh"], "ParentBuildRecord": census["ParentBuildRecord"],
                                      "ParentRoot": str(parent_root), "Shells": {"Path": str(census_path), "SHA256": sha256(census_path)},
-                                     "ShellCount": len(shell_records), "MAParents": ma_labels,
+                                     "ShellCount": len(census["Shells"]), "MAParents": ma_labels,
                                      "Rule": "geometry, connectivity, element order and every non-MA label of the parent identity "
                                              "mesh are byte-identical (LabelOnly); the parent's audits (mixed-element quality, "
                                              "protected surfaces, ownership quadrature) hold by identity; the shell partition "

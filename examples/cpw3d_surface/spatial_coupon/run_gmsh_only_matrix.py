@@ -138,6 +138,22 @@ def h1_record_of_mesh(mesh_path, order):
     return {"Order": order, "DOFs": h1_dofs_from_counts(counts, order), "EntityCounts": counts}
 
 
+def radial_shells_record(root):
+    """The identity variant's per-ring MA shell census (decision 61a) as the transform
+    receipt binds it: {Kind, Shells {Path, SHA256}, ShellCount, RingRadii, MAParents,
+    ParentMesh}; None when the root has no identity receipt or the receipt records no
+    applied shells (a legacy-pipeline placement).  The census is what coupon-library
+    qualify expands into one MA interface per shell."""
+    receipt = read_json(Path(root) / "identity-receipt.json")
+    shells = (receipt or {}).get("RadialShells")
+    if not shells or not shells.get("Applied"):
+        return None
+    return {"Kind": shells["Kind"], "Shells": {"Path": shells["Path"], "SHA256": shells["SHA256"]},
+            "ShellCount": shells["ShellCount"], "RingRadii": shells["RingRadii"], "MAParents": shells["MAParents"],
+            "ParentMesh": {"SHA256": receipt.get("ParentLabeledMeshSHA256"), "CanonicalMeshSHA256": receipt.get("CanonicalMeshSHA256")},
+            "Tool": shells["Tool"], "Rule": shells["Rule"]}
+
+
 def case_record(manifest, manifest_path, case, root, *, h1_order, driver_return_code, wall_seconds):
     """The library-build record of one case from its root's records alone."""
     root = Path(root)
@@ -172,6 +188,7 @@ def case_record(manifest, manifest_path, case, root, *, h1_order, driver_return_
             variants[variant["Id"]] = None
     built = summary is not None and summary["Status"] == STATUS_BUILT
     passed = bool(built and verification is not None and verification["Passed"])
+    radial_shells = radial_shells_record(root)
     h1 = None
     identity = root / "identity.msh"
     if built and identity.is_file():
@@ -189,7 +206,7 @@ def case_record(manifest, manifest_path, case, root, *, h1_order, driver_return_
                              "ProductionValues": calibration["ProductionValues"]} if calibration else None),
             "Scope": scope, "Status": status, "Passed": passed,
             "StoppedBy": stopped_by(summary, stages, verification) if not passed else None,
-            "CanonicalBuildId": canonical, "Variants": variants,
+            "CanonicalBuildId": canonical, "Variants": variants, "RadialShells": radial_shells,
             "Elements": elements, "H1": h1, "Estimate": estimate_record, "Stages": stages,
             "Verification": (None if verification is None else
                              {"Passed": verification["Passed"], "Failures": verification["Failures"],
@@ -224,7 +241,7 @@ def unbuilt_record(manifest, manifest_path, case, estimate, rank, limit):
             "StoppedBy": {"Kind": "BuildLimit", "Id": "--build-limit", "Stage": None,
                           "Message": f"ranked {rank} by the pre-build element estimate; --build-limit {limit} builds the "
                                      f"{limit} smallest selected cases"},
-            "CanonicalBuildId": None, "Variants": {variant["Id"]: None for variant in case["Variants"]},
+            "CanonicalBuildId": None, "Variants": {variant["Id"]: None for variant in case["Variants"]}, "RadialShells": None,
             "Elements": None, "H1": None,
             "Estimate": {key: estimate[key] for key in ("EstimatedElements", "EstimateOverCap", "MaximumElements", "Passed")}
             | {"ActualElements": None, "EstimateOverActual": None},

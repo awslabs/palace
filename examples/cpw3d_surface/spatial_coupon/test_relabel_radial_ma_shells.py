@@ -12,6 +12,7 @@ shells reproduce the whole-MA participation)."""
 import copy
 import csv
 import json
+import math
 from pathlib import Path
 import struct
 import sys
@@ -410,3 +411,143 @@ class RadialShellRelabelTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProductionRadialShellsTest(unittest.TestCase):
+    """Decision 61a: the shells at the placement stage (publish_rigid_coupon_mesh.
+    apply_radial_shells) on a rotated placement of the synthetic strip, the parent view
+    the audits read and the ownership report's per-parent sums of the shell rows."""
+
+    def canonical_build(self, root, data, radii=RADII):
+        canonical = root / "canonical.msh"
+        canonical.write_bytes(data)
+        census = root / "build-census.json"
+        census.write_text(json.dumps({"PrismTubes": {"Section": {"RingRadii": radii}}}))
+        partition = root / "canonical.msh.interface-partition.csv"
+        with partition.open("w", newline="") as stream:
+            writer = csv.writer(stream)
+            writer.writerow(["attribute", "elements", "area"])
+            writer.writerow([3100, 1, 0.2])
+            writer.writerow([6001, 24, 3 * RADII[-1] + 0.2 + 0.5e-8 + 1e-7])
+        record = {"CanonicalArtifacts": {
+            "canonical-candidate-mesh": {"Path": str(canonical), "SHA256": relabel.sha256(canonical)},
+            "build-census": {"Path": str(census), "SHA256": relabel.sha256(census)},
+            "canonical-ownership-partition": {"Path": str(partition), "SHA256": relabel.sha256(partition)}}}
+        return canonical, record
+
+    def sources(self, root):
+        boundary = root / "plan-view-boundary.csv"
+        boundary.write_text("Loop,Vertex,Conductor,Plane,Hole,Class,X,Y\n"
+                            "0,0,1,0.0,0,Physical,0.0,0.0\n0,1,1,0.0,0,Continuation,0.0,1.0\n"
+                            "0,2,1,0.0,0,Continuation,-1.0,1.0\n0,3,1,0.0,0,Continuation,-1.0,0.0\n")
+        signature = root / "mesh-signature.csv"
+        signature.write_text("Index,Slot,Conductor,Px,Py,Pz,Gx,Gy,Gz,Tx,Ty,Tz,S0,S1,Nz\n"
+                             "0,0,1,0.0,0.5,0.0,1.0,0.0,0.0,0.0,1.0,0.0,-0.5,0.5,1.0\n")
+        process = root / "process.toml"
+        process.write_text('Units = "um"\nRadius = 2.0\nMetalThickness = 0.1\nOveretch = 0.05\n')
+        return boundary, signature, process
+
+    def test_rotated_placement_shells_equal_the_identity_shells(self):
+        import numpy as np
+        import publish_rigid_coupon_mesh as publisher
+        data, expected = strip_mesh()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            canonical, build = self.canonical_build(root, data)
+            boundary, signature, process = self.sources(root)
+            angle = 0.63
+            matrix = np.array([[math.cos(angle), -math.sin(angle), 0, 1.2], [math.sin(angle), math.cos(angle), 0, -0.7],
+                               [0, 0, 1, 0.9], [0, 0, 0, 1]])
+            results = {}
+            for name, transform in (("identity", np.eye(4)), ("rotated", matrix)):
+                output = root / f"{name}.msh"
+                publisher.transform_gmsh22(canonical, output, transform)
+                parent_digest = relabel.sha256(output)
+                record = publisher.apply_radial_shells(
+                    output, Path(str(output) + publisher.RADIAL_SHELLS_SUFFIX), canonical_build=build, matrix=transform,
+                    signature=signature, boundary=boundary, process=process, parent_digest=parent_digest,
+                    canonical_digest=relabel.sha256(canonical))
+                self.assertTrue(record["Applied"])
+                self.assertEqual(record["RingRadii"], RADII)
+                self.assertEqual(record["MAParents"], [6001])
+                self.assertEqual(record["LabelOnly"]["RelabeledElements"], len(expected))
+                self.assertLess(record["ParentAreaMaximumRelativeDifference"], 1e-12)
+                census = json.loads(Path(record["Path"]).read_text())
+                self.assertEqual(census["Mesh"]["SHA256"], relabel.sha256(output))
+                self.assertEqual(census["ParentMesh"]["SHA256"], parent_digest)
+                self.assertEqual(census["Placement"]["Transform"], [float(v) for row in transform for v in row])
+                after = relabel.read_msh22_binary(output.read_bytes())
+                results[name] = ([element[2][0] for element in after["Elements"]], census)
+            # The shells are classified in source-local coordinates: the rotated placement
+            # carries exactly the identity's labels, element by element, and the same areas.
+            self.assertEqual(results["identity"][0], results["rotated"][0])
+            for a, b in zip(results["identity"][1]["Shells"], results["rotated"][1]["Shells"]):
+                self.assertEqual((a["Label"], a["Elements"]), (b["Label"], b["Elements"]))
+                self.assertAlmostEqual(a["Area"], b["Area"], places=14)
+            # The parent view the audits read collapses the shells to 6001 and nothing else.
+            import meshio
+            from mixed_mesh import parent_label_view, shell_labels, shell_parent
+            shelled = meshio.read(root / "rotated.msh")
+            labels = shell_labels(shelled)
+            self.assertEqual(labels[0], 16001)
+            self.assertEqual(sorted({shell_parent(v) for v in labels}), [6001])
+            view = parent_label_view(shelled)
+            surface = np.concatenate([np.asarray(v) for cell, v in zip(view.cells, view.cell_data["gmsh:physical"])
+                                      if cell.type in ("triangle", "quad")])
+            self.assertEqual(sorted(set(surface.tolist())), [1, 3100, 6001] if 1 in surface else [3100, 6001])
+            self.assertIs(parent_label_view(view), view)
+            # The census is refused where it already exists (fresh outputs only).
+            with self.assertRaisesRegex(ValueError, "fresh"):
+                publisher.apply_radial_shells(
+                    root / "identity.msh", Path(str(root / "identity.msh") + publisher.RADIAL_SHELLS_SUFFIX),
+                    canonical_build=build, matrix=np.eye(4), signature=signature, boundary=boundary, process=process,
+                    parent_digest="x", canonical_digest="y")
+            # A canonical build without a gmsh-build census (legacy pipeline) publishes no shell.
+            legacy = {"CanonicalArtifacts": {k: v for k, v in build["CanonicalArtifacts"].items() if k != "build-census"}}
+            output = root / "legacy.msh"
+            publisher.transform_gmsh22(canonical, output, np.eye(4))
+            record = publisher.apply_radial_shells(output, root / "legacy.json", canonical_build=legacy, matrix=np.eye(4),
+                                                   signature=signature, boundary=boundary, process=process,
+                                                   parent_digest="x", canonical_digest="y")
+            self.assertFalse(record["Applied"])
+            self.assertEqual(shell_labels(meshio.read(output)), [])
+            # A gmsh-build census without a ring set fails closed.
+            no_rings = root / "no-rings.json"
+            no_rings.write_text(json.dumps({"PrismTubes": {}}))
+            build_no_rings = json.loads(json.dumps(build))
+            build_no_rings["CanonicalArtifacts"]["build-census"] = {"Path": str(no_rings), "SHA256": relabel.sha256(no_rings)}
+            with self.assertRaisesRegex(ValueError, "ring set"):
+                publisher.apply_radial_shells(output, root / "no-rings-census.json", canonical_build=build_no_rings,
+                                              matrix=np.eye(4), signature=signature, boundary=boundary, process=process,
+                                              parent_digest="x", canonical_digest="y")
+
+    def test_ownership_report_sums_the_shell_rows_per_parent(self):
+        from general_mesh_audit_producer import _ownership_report
+        contract = {"CutSurfaceRoles": ["cut"],
+                    "BoundaryLabels": [{"Attribute": 1, "Role": "cut"}, {"Attribute": 3100, "Role": "sa"},
+                                       {"Attribute": 6001, "Role": "ma-1"}]}
+        summary = ["Gauss4", "4", "120", "1.0", "1.0", "0.0", "1e-12", "0", "0", "1"]
+        header = ("attribute,elements,area,ambiguous_area,ambiguous_fraction,unresolved_elements,unresolved_area,"
+                  "unresolved_fraction,quadrature_rule,quadrature_order,quadrature_points,quadrature_whole_measure,"
+                  "quadrature_owned_measure,quadrature_relative_closure,quadrature_closure_tolerance,quadrature_unmatched,"
+                  "quadrature_overlaps,quadrature_positive_weights")
+        rows = [[3100, 1, 0.2, 0.0, 0.0, 0, 0.0, 0.0], [16001, 1, 0.3, 0.0, 0.0, 0, 0.0, 0.0],
+                [26001, 2, 0.1, 0.05, 0.5, 1, 0.05, 0.5], [96001, 3, 0.4, 0.0, 0.0, 0, 0.0, 0.0]]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            partition = root / "ownership.csv"
+            partition.write_text(header + "\n" + "".join(",".join(str(v) for v in row + summary) + "\n" for row in rows))
+            quadrature = root / "ownership.quadrature.csv"
+            quadrature.write_text("attribute,measure\n3100,0.2\n16001,0.3\n26001,0.1\n96001,0.4\n")
+            report = _ownership_report(partition, quadrature, contract)
+        self.assertEqual(report["ResponseOwnership"]["OwnerAttributes"], [3100, 6001])
+        self.assertAlmostEqual(report["ResponseOwnership"]["OwnerMeasures"][1], 0.8, places=15)
+        self.assertTrue(report["ResponseOwnership"]["NoDuplicateOrMissingOwners"])
+        self.assertTrue(report["ResponseOwnership"]["Exhaustive"])
+        self.assertEqual(report["PhysicalSurfaceCoverage"]["PartitionRows"], 2)
+        self.assertEqual(report["PhysicalSurfaceCoverage"]["InterfaceElements"], 7)
+        self.assertEqual(report["RadialShells"]["Labels"], [16001, 26001, 96001])
+        self.assertEqual(report["RadialShells"]["Parents"], [6001])
+        self.assertEqual(report["RadialShells"]["PartitionRows"], 4)
+        self.assertEqual(report["WholeElementAmbiguityDiagnostics"]["AmbiguousRows"], 1)
+        self.assertEqual(report["WholeElementAmbiguityDiagnostics"]["UnresolvedElements"], 1)

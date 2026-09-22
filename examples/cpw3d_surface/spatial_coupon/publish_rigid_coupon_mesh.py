@@ -2,7 +2,14 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Publish a fresh Gmsh 2.2 mesh through a bound proper rigid transform."""
+"""Publish a fresh Gmsh 2.2 mesh through a bound proper rigid transform, then split its
+MA surfaces into the per-ring radial shells (supervisor decision 61a: every production
+coupon carries the label-only shells of relabel_radial_ma_shells.py; the ring radii are the
+gmsh-build census's tube ring set bound through the canonical build record, the shells are
+classified in source-local coordinates through the inverse rigid map, and the census
+<output>.radial-shells.json is bound by SHA-256 in the transform receipt (RadialShells)).
+The transformed ownership audit runs on the shelled mesh (the auditor's family rule
+re-derives the parent of every shell element and keeps its shell prefix)."""
 import argparse
 import hashlib
 import json
@@ -10,13 +17,19 @@ import math
 from pathlib import Path
 import struct
 import subprocess
+import tomllib
 
 import meshio
 import numpy as np
 
 from general_mesh_audit_producer import _mesh_invariants, _ownership_report, _volume_quality
+from mixed_mesh import parent_label_view
+import relabel_radial_ma_shells as radial_shells
 from transform_coupon_source_contract import (read_transform, transform_semantic_contract,
                                                 transformed_supports)
+
+RADIAL_SHELLS_SUFFIX = ".radial-shells.json"
+RADIAL_SHELLS_KIND = "radial-ma-shells"
 
 
 def sha256(path):
@@ -150,25 +163,103 @@ def _equal_data(left, right):
     return all(np.array_equal(np.asarray(left[key]), np.asarray(right[key])) for key in left)
 
 
-def _exact_mesh_structure(left, right):
+def _exact_mesh_structure(left, right, *, cell_data_keys=None):
+    """Identical cell blocks, connectivity, point data, cell data and field data;
+    `cell_data_keys` restricts the cell data compared and skips the field data (the
+    radial-shell comparison: the physical labels of the parent view, not the shells'
+    own elementary tags and names)."""
+    keys = left.cell_data.keys() if cell_data_keys is None else cell_data_keys
     return (len(left.cells) == len(right.cells) and
             all(a.type == b.type and np.array_equal(a.data, b.data)
                 for a, b in zip(left.cells, right.cells)) and
             _equal_data(left.point_data, right.point_data) and
-            left.cell_data.keys() == right.cell_data.keys() and
-            all(len(left.cell_data[key]) == len(right.cell_data[key]) and
+            (cell_data_keys is not None or left.cell_data.keys() == right.cell_data.keys()) and
+            all(key in right.cell_data and len(left.cell_data[key]) == len(right.cell_data[key]) and
                 all(np.array_equal(a, b) for a, b in zip(left.cell_data[key], right.cell_data[key]))
-                for key in left.cell_data) and
-            _equal_data(left.field_data, right.field_data))
+                for key in keys) and
+            (cell_data_keys is not None or _equal_data(left.field_data, right.field_data)))
+
+
+def _bound_canonical_artifact(canonical_build, name):
+    """The path of a canonical artifact bound in the canonical build record, its
+    SHA-256 verified; None when the record binds no artifact of that name."""
+    item = canonical_build.get("CanonicalArtifacts", {}).get(name)
+    if item is None:
+        return None
+    path = Path(item["Path"])
+    if not path.is_file() or sha256(path) != item.get("SHA256"):
+        raise ValueError(f"Canonical artifact {name} is missing or differs from the bound canonical build")
+    return path
+
+
+def apply_radial_shells(output_mesh, census_path, *, canonical_build, matrix, signature, boundary, process,
+                        parent_digest, canonical_digest):
+    """Split the MA surfaces of the published (parent-labeled) mesh into the per-ring
+    radial shells in place and write the census; returns the receipt record.  The ring
+    radii are the gmsh-build census's PrismTubes.Section.RingRadii (bound through the
+    canonical build record); a canonical build without a gmsh-build census (the legacy
+    MMG pipeline) publishes no shell and records why."""
+    census_path = Path(census_path)
+    if census_path.exists():
+        raise ValueError("Radial-shell census output must be fresh")
+    build_census_path = _bound_canonical_artifact(canonical_build, "build-census")
+    if build_census_path is None:
+        return {"Applied": False, "Reason": "the canonical build binds no gmsh-build census (legacy pipeline): "
+                                            "no tube ring set, the MA surfaces keep their parent labels"}
+    build_census = json.loads(build_census_path.read_text())
+    radii = [float(v) for v in (build_census.get("PrismTubes") or {}).get("Section", {}).get("RingRadii", [])]
+    if not radii:
+        raise ValueError("The gmsh-build census records no prism-tube ring set (PrismTubes.Section.RingRadii): "
+                         "the radial MA shells need the production tubes")
+    partition_path = _bound_canonical_artifact(canonical_build, "canonical-ownership-partition")
+    if partition_path is None:
+        raise ValueError("The canonical build binds no ownership partition: the shell areas cannot be checked")
+    thickness = float(tomllib.loads(Path(process).read_text())["MetalThickness"])
+    lines = radial_shells.metal_edge_lines(radial_shells.read_csv_rows(boundary), radial_shells.read_csv_rows(signature),
+                                           thickness)
+    rotation = np.asarray(matrix, dtype=float)[:3, :3]
+    translation = np.asarray(matrix, dtype=float)[:3, 3]
+
+    def source_coordinates(points):
+        return (np.asarray(points, dtype=float) - translation) @ rotation
+
+    data = Path(output_mesh).read_bytes()
+    out, mesh, shells, relabeled, ma_labels = radial_shells.relabel(data, lines=lines, radii=radii,
+                                                                    source_coordinates=source_coordinates)
+    label_only = radial_shells.assert_label_only(data, out, mesh, relabeled)
+    parents = radial_shells.parent_area_check(shells, ma_labels, partition_path)
+    closure = radial_shells.closure_check(shells)
+    Path(output_mesh).write_bytes(out)
+    census = radial_shells.shell_census(
+        kind=RADIAL_SHELLS_KIND, case_id=None, mesh_path=output_mesh, mesh_bytes=out,
+        parent_mesh={"Path": None, "SHA256": parent_digest, "CanonicalMeshSHA256": canonical_digest,
+                     "Rule": "the rigidly published mesh before the shell relabel (parent MA labels); not written"},
+        radii=radii, thickness=thickness, lines=lines, shells=shells, parents=parents, label_only=label_only,
+        closure=closure, certificate=None,
+        extra={"Placement": {"Transform": [float(v) for row in np.asarray(matrix, dtype=float) for v in row],
+                             "Rule": "shell of an element = ring interval of its centroid distance to the nearest metal "
+                                     "edge line, both taken in source-local coordinates through the inverse rigid map"},
+               "BuildCensus": {"Path": str(build_census_path), "SHA256": sha256(build_census_path)},
+               "CanonicalOwnershipPartition": {"Path": str(partition_path), "SHA256": sha256(partition_path)}})
+    census_path.write_text(json.dumps(census, indent=2) + "\n")
+    return {"Applied": True, "Path": str(census_path.resolve()), "SHA256": sha256(census_path), "Kind": RADIAL_SHELLS_KIND,
+            "Tool": census["Tool"], "ToolSHA256": census["ToolSHA256"], "ShellCount": len(census["Shells"]),
+            "MAParents": ma_labels, "RingRadii": radii, "LabelOnly": label_only,
+            "StraddlingFraction": closure["StraddlingFraction"], "RelativeClosure": closure["RelativeClosure"],
+            "ParentAreaMaximumRelativeDifference": max(item["RelativeDifference"] for item in parents.values()),
+            "Rule": "label-only: the $Nodes block and every element apart from the (physical, elementary) pair of the MA "
+                    "elements are byte-identical to the parent-labeled publication (LabelOnly); the shells sum to the "
+                    "canonical ownership partition's parent areas; the ownership audit below runs on the shelled mesh"}
 
 
 def publish(canonical_mesh, transform_path, output_mesh, receipt_path, *,
             semantic_input, signature, boundary, mask, process, canonical_build_record,
             transformed_semantic, transformed_supports_path, ownership, ownership_quadrature,
             ownership_runtime, ownership_auditor, kind="fabricated", tolerance=1e-12):
+    radial_shells_path = Path(str(output_mesh) + RADIAL_SHELLS_SUFFIX)
     outputs = [Path(value) for value in (output_mesh, receipt_path, transformed_semantic,
                                          transformed_supports_path, ownership,
-                                         ownership_quadrature)]
+                                         ownership_quadrature, radial_shells_path)]
     if any(path.exists() for path in outputs):
         raise ValueError("Every rigid-publication output must be fresh")
     source_inputs = {"source-semantic-contract": Path(semantic_input),
@@ -196,8 +287,8 @@ def publish(canonical_mesh, transform_path, output_mesh, receipt_path, *,
     if coordinate_error > tolerance:
         raise ValueError("Rigid publication coordinate error exceeds the frozen tolerance")
     identity = np.array_equal(np.asarray(matrix), np.eye(4))
-    output_digest = sha256(output_mesh)
-    if not identity and output_digest == canonical_digest:
+    parent_digest = sha256(output_mesh)
+    if not identity and parent_digest == canonical_digest:
         raise ValueError("Nonidentity rigid publication reused canonical mesh bytes")
     quality = _volume_quality(right)
     if quality["PositiveOrientation"] is not True:
@@ -207,6 +298,17 @@ def publish(canonical_mesh, transform_path, output_mesh, receipt_path, *,
                          for key, value in before_invariants.items()), default=0.0)
     if measure_error > 1e-11:
         raise ValueError("Rigid publication changed a material or physical measure")
+    # The per-ring radial MA shells (decision 61a), label-only on the published bytes.
+    shells = apply_radial_shells(output_mesh, radial_shells_path, canonical_build=canonical_build, matrix=matrix,
+                                 signature=signature, boundary=boundary, process=process,
+                                 parent_digest=parent_digest, canonical_digest=canonical_digest)
+    output_digest = sha256(output_mesh)
+    if shells["Applied"]:
+        shelled = parent_label_view(meshio.read(output_mesh))
+        if not _exact_mesh_structure(right, shelled, cell_data_keys=("gmsh:physical",)):
+            raise ValueError("Radial shell relabel changed the mesh beyond the MA shell labels")
+        if _mesh_invariants(shelled) != after_invariants:
+            raise ValueError("Radial shell relabel changed a material or physical measure")
 
     transform_digest = sha256(transform_path)
     semantic_digest = sha256(semantic_input)
@@ -249,6 +351,8 @@ def publish(canonical_mesh, transform_path, output_mesh, receipt_path, *,
         "CanonicalBuildSHA256": canonical_build.get("CanonicalBuildSHA256"),
         "CanonicalMeshSHA256": canonical_digest,
         "OutputMeshSHA256": output_digest,
+        "ParentLabeledMeshSHA256": parent_digest,
+        "RadialShells": shells,
         "TransformSHA256": transform_digest,
         "SourceInputSHA256": {name: sha256(path) for name, path in source_inputs.items()},
         "Transform": [value for row in matrix for value in row],
@@ -258,6 +362,10 @@ def publish(canonical_mesh, transform_path, output_mesh, receipt_path, *,
         "NodeCount": len(before_section["tags"]),
         "NodeTagsExact": True,
         "CellBlocksConnectivityLabelsAndDataExact": True,
+        "CellBlocksConnectivityLabelsAndDataExactRule": "the rigidly published mesh before the radial shell relabel "
+                                                        "(ParentLabeledMeshSHA256) equals the canonical mesh in every "
+                                                        "cell block, connectivity, label and data; the output differs "
+                                                        "from it in the MA shell labels only (RadialShells.LabelOnly)",
         "PositiveOrientation": True,
         "MaximumRelativeMeasureError": measure_error,
         "MeshQuality": quality,

@@ -73,6 +73,7 @@ function surface_elements()
 end
 
 function physical_family(attribute)
+    attribute = shell_parent(attribute)
     family = div(attribute, 1000)
     family == 3 && return attribute >= 3100 ? 3100 : 3000
     family in (4, 5, 6) && return 1000family + mod(attribute, 100)
