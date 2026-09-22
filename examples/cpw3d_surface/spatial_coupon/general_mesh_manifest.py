@@ -12,15 +12,13 @@ from pathlib import Path
 import tomllib
 
 from audit_edge_metric_mesh import (ANISOTROPY_GATE_APPLIED, ANISOTROPY_GATE_NOT_APPLICABLE,
-                                    BAND_GATE_CUTOFFS, LAYER_ADJACENT_BAND_RULE, analyze)
+                                    BAND_GATE_CUTOFFS, LAYER_ADJACENT_BAND_RULE)
 from edge_volume_metric import EDGE_LAYER_QUALITY_RULE
-from mesh_array_io import read_mesh
 from canonical_mesh_build import same_canonical_build, validate_build_record
 from mesh_stage_contract import (GMSH_ONLY_PIPELINE, LEGACY_MMG_PIPELINE, PIPELINE_BUILD_STAGE,
                                  PLACEMENT_STAGE_ORDER, STAGE_TOOLS, TRACE_BASIS_RATIO_OPTION,
                                  canonical_stage_order, pipeline_of, scope_classes_of_case_inputs,
                                  stage_order, unsupported_scope_classes, validate_stage_dag)
-from mixed_mesh import parent_label_view, simplicial_view
 from semantic_mesh_contract import (REQUIRED_ROLES, load_semantic_contract,
                                     validate_feature_topology)
 
@@ -60,9 +58,15 @@ def parent_labeled_mesh_sha256(evidence):
     return evidence.get("ParentLabeledMeshSHA256") or evidence["Mesh"]["SHA256"]
 
 
-def _validate_mesh(path, contract):
+def _validate_mesh(path, contract, *, mesh=None):
+    """The audited mesh reads and analyzes against the contract; `mesh` is the already
+    loaded audit mesh (general_mesh_audit_producer.read_audit_mesh) when the caller reads
+    it once for every check of the variant (decision 62 step 3, proposal 2): the memoized
+    view and analysis are then shared with the recomputation."""
+    from general_mesh_audit_producer import analyze as memoized_analyze, read_audit_mesh, simplicial_view as memoized_view
     try:
-        analyze(simplicial_view(parent_label_view(read_mesh(path))), contract, require_material_names=True)
+        memoized_analyze(memoized_view(read_audit_mesh(path) if mesh is None else mesh), contract,
+                         require_material_names=True)
     except SystemExit as error:
         raise ValueError("audited mesh is not a readable Gmsh mesh") from error
 
@@ -694,8 +698,10 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
     return repository, tool_hashes, matrix
 
 
-def _recompute_mesh_measurements(mesh_path, binding, source_paths, bounded):
-    """Rerun the frozen producer implementation instead of trusting record JSON."""
+def _recompute_mesh_measurements(mesh_path, binding, source_paths, bounded, *, mesh=None):
+    """Rerun the frozen producer implementation instead of trusting record JSON; `mesh`
+    is the loaded audit mesh when the caller reads it once (the three producers then
+    share it and its memoized kernels; decision 62 step 3, proposal 2)."""
     from general_mesh_audit_producer import (bounded_record, complexity_record,
                                              invariants_record, topology_record)
     base = {"Transform": binding["Transform"]}
@@ -710,10 +716,10 @@ def _recompute_mesh_measurements(mesh_path, binding, source_paths, bounded):
         source_paths["MeshRecipe"], source_paths["Process"], source_paths["Signature"],
         reference, ownership, quadrature,
         None if restoration_recipe is None else restoration_recipe["Path"],
-        build_census_path=None if build_census is None else build_census["Path"])["Measurements"]
+        build_census_path=None if build_census is None else build_census["Path"], mesh=mesh)["Measurements"]
     complexity = complexity_record(dict(base), mesh_path, source_paths["SemanticContract"],
-                                   source_paths["MeshRecipe"])["Measurements"]
-    invariants = invariants_record(dict(base), mesh_path)["Measurements"]
+                                   source_paths["MeshRecipe"], mesh=mesh)["Measurements"]
+    invariants = invariants_record(dict(base), mesh_path, mesh=mesh)["Measurements"]
     return {**topology, **complexity, **invariants}
 
 
@@ -857,7 +863,11 @@ def topology_binds_feature_record(topology, bounded):
             "RestorationRecipeSHA256" not in topology)
 
 
-def _validate_bound_records(evidence_path, evidence, binding, source_paths):
+def _validate_bound_records(evidence_path, evidence, binding, source_paths, *, mesh=None, identity_meshes=None):
+    """`mesh` is the loaded audit mesh of the variant (read once by the caller);
+    `identity_meshes` a dict the caller keeps across the variants of one case, caching
+    the loaded canonical (identity) mesh by its SHA-256 so both placements' covariance
+    comparisons share it and its memoized kernels (decision 62 step 3, proposal 2)."""
     records = evidence.get("AuditRecords")
     required = {"bounded-run", "mesh-topology-quality", "mesh-complexity",
                 "mesh-invariants", "variant-transform"}
@@ -967,7 +977,10 @@ def _validate_bound_records(evidence_path, evidence, binding, source_paths):
             publication["ownership-quadrature-partition"]["SHA256"]):
         raise ValueError("topology audit does not bind staged reference/ownership artifacts")
     mesh_path = _artifact_path(evidence_path.parent, evidence["Mesh"])
-    recomputed = _recompute_mesh_measurements(mesh_path, binding, source_paths, bounded)
+    from general_mesh_audit_producer import read_audit_mesh
+    if mesh is None:
+        mesh = read_audit_mesh(mesh_path)
+    recomputed = _recompute_mesh_measurements(mesh_path, binding, source_paths, bounded, mesh=mesh)
     recorded_mesh_measurements = {
         key: value for key, value in measurements.items()
         if key not in {"Resources", "PhysicalCovariance"}
@@ -985,9 +998,15 @@ def _validate_bound_records(evidence_path, evidence, binding, source_paths):
         raise ValueError("variant identity mesh bindings changed")
     from general_mesh_audit_producer import _physical_covariance_report
     matrix = __import__("numpy").asarray(binding["Transform"], dtype=float).reshape(4, 4)
+    identity_digest = variant["IdentityMeshSHA256"]
+    if identity_meshes is None or identity_digest not in identity_meshes:
+        identity_mesh = read_audit_mesh(identity_path)
+        if identity_meshes is not None:
+            identity_meshes[identity_digest] = identity_mesh
+    else:
+        identity_mesh = identity_meshes[identity_digest]
     recomputed_physical = _physical_covariance_report(
-        parent_label_view(read_mesh(identity_path)), parent_label_view(read_mesh(mesh_path)),
-        load_semantic_contract(source_paths["SemanticContract"]), matrix)
+        identity_mesh, mesh, load_semantic_contract(source_paths["SemanticContract"]), matrix)
     if measurements.get("PhysicalCovariance") != recomputed_physical:
         raise ValueError("physical covariance differs from independent normalization")
     resources = measurements.get("Resources", {})

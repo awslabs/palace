@@ -24,6 +24,7 @@ import signal
 import sys
 
 from canonical_mesh_build import same_canonical_build
+from general_mesh_audit_producer import read_audit_mesh
 from general_mesh_manifest import (EDGE_LAYER_QUALITY_RULE_GATE, EDGE_LAYER_QUALITY_RULE_OPTION,
                                    GMSH_ONLY_PIPELINE, LEGACY_MMG_PIPELINE,
                                    PIPELINE_CALIBRATION_PRODUCTION_VALUES_KEY, _check_artifact,
@@ -172,12 +173,15 @@ def verify_variant(case, variant, evidence_path, evidence, contract, hashes, pat
     # its own gates (the layer rule only where declared).
     failures = audit_manifest_evidence(evidence, case_gates(manifest, case), contract, binding)
     mesh_path = _check_artifact(evidence_path.parent, evidence.get("Mesh"), "audited mesh")
-    _validate_mesh(mesh_path, contract)
+    # The audited mesh is read once per variant (its hash verified just above) and every
+    # check below recomputes on that one object (decision 62 step 3, proposal 2).
+    mesh = read_audit_mesh(mesh_path)
+    _validate_mesh(mesh_path, contract, mesh=mesh)
     if evidence["Mesh"]["SHA256"] in shared["meshes"]:
         raise ValueError("audited meshes must be content-distinct per matrix entry")
     shared["meshes"].add(evidence["Mesh"]["SHA256"])
     variant_digests, canonical_digests, canonical_record = _validate_bound_records(
-        evidence_path, evidence, binding, paths)
+        evidence_path, evidence, binding, paths, mesh=mesh, identity_meshes=shared["identity_meshes"])
     bounded_item = next(item for item in evidence["AuditRecords"]
                         if item.get("Kind") == "bounded-run")
     bounded_record = json.loads(_check_artifact(evidence_path.parent, bounded_item,
@@ -246,7 +250,7 @@ def verify_case(manifest_path, audit_root, case_id):
     if case is None:
         raise ValueError(f"case {case_id} is not in the manifest")
     hashes, paths, contract = _immutable_inputs(manifest_path, repository, case)
-    shared = {"meshes": set(), "variant_digests": set(), "canonical": {}}
+    shared = {"meshes": set(), "variant_digests": set(), "canonical": {}, "identity_meshes": {}}
     entries, evidence_by_variant, failures = {}, {}, []
     for variant in case["Variants"]:
         variant_id = variant["Id"]
