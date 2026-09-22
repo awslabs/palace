@@ -292,11 +292,16 @@ DEFAULT_EDGE_DISTANCES = [0.2]
 EDGE_DISTANCES = list(DEFAULT_EDGE_DISTANCES)
 
 
+def shells_requested():
+    return EDGE_DISTANCES != DEFAULT_EDGE_DISTANCES
+
+
 def ma_edge_attributes(foot, sidewall):
     """See generate_edge_response.ma_edge_attributes: the fabricated MA's edge points are
     the sidewall endpoints (bottom and top metal edge of every sidewall) under
-    --edge-distances shells, the foot corners otherwise."""
-    return sidewall if EDGE_DISTANCES != DEFAULT_EDGE_DISTANCES else foot
+    --edge-distances shells (per-edge rows: AggregateResponseMatrix false), the foot
+    corners otherwise."""
+    return sidewall if shells_requested() else foot
 
 
 def dielectric(
@@ -421,7 +426,7 @@ def make_config(
             "Electrostatic": {
                 "Save": 0,
                 "ResponseMatrix": True,
-                "AggregateResponseMatrix": True,
+                "AggregateResponseMatrix": not shells_requested(),
             },
             "Linear": {
                 "Type": "BoomerAMG",

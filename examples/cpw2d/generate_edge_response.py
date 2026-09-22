@@ -197,7 +197,9 @@ def ma_edge_attributes(foot, sidewall):
     point is attributed to its nearest metal edge and reported under that edge's CSV `edge`
     row (the 3D radial shells' nearest-metal-edge-line rule; Palace and the 2D
     qualification sum the edges' Q_total).  Palace orders the points by (x, y): the bottom
-    corner precedes the top corner of each sidewall (ma_shells_2d.py relies on it)."""
+    corner precedes the top corner of each sidewall (ma_shells_2d.py relies on it).  The
+    per-edge rows exist on the localized response path only: a shells run sets
+    AggregateResponseMatrix false (the aggregated path folds every edge into edge 1)."""
     return sidewall if shells_requested() else foot
 
 
@@ -282,7 +284,7 @@ def make_config(
             "Electrostatic": {
                 "Save": 0,
                 "ResponseMatrix": True,
-                "AggregateResponseMatrix": True,
+                "AggregateResponseMatrix": not shells_requested(),
             },
             "Linear": {
                 "Type": "BoomerAMG",

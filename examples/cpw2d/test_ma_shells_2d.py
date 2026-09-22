@@ -159,6 +159,10 @@ class EdgeDistancesOptionTest(unittest.TestCase):
         self.assertEqual(dielectrics["MA"]["EdgeAttributes"], [4])
         self.assertEqual(dielectrics["MS"]["EdgeAttributes"], [2])
         self.assertTrue(all(entry["EdgeDistances"] == RADII_UM for entry in dielectrics.values()))
+        # The per-edge rows exist on the localized path only.
+        self.assertFalse(fabricated["Solver"]["Electrostatic"]["AggregateResponseMatrix"])
+        self.assertTrue(module.make_config(Path("/out"), "edge_fabricated", Path("/m.msh"), [Path("/t.csv")], True, 2,
+                                           1055.0, 11.45, layers)["Solver"]["Electrostatic"]["AggregateResponseMatrix"])
         thin_ma = next(entry for entry in thin["Boundaries"]["Postprocessing"]["Dielectric"] if entry["Type"] == "MA")
         self.assertEqual(thin_ma["EdgeAttributes"], [2])
 
