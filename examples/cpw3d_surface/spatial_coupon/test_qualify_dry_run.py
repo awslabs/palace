@@ -195,7 +195,10 @@ class JobSplitTest(unittest.TestCase):
     def setUpClass(cls):
         build = json.loads((HERE / "qualify" / "device-library-20260921" / "library-build.json").read_text())
         cls.counts = next(case for case in build["Cases"] if case["Case"] == "spatial-3-edge-5d3b5e644745")["H1"]["EntityCounts"]
-        cls.model = estimate_stages.load_cost_model()
+        # The recorded decision-61b split ran on the physics-11 model (PREVIOUS_COST_MODEL since
+        # the decision-64a refit): reproduced with it; the refit model's own 7f03 outcome below.
+        cls.model = estimate_stages.load_cost_model(estimate_stages.PREVIOUS_COST_MODEL)
+        cls.model_refit = estimate_stages.load_cost_model()
         cls.profile = json.loads((HERE / "qualify" / "cluster-profile.json").read_text())
         cls.indices = list(range(1, 226))
         cls.layout = qualify_library.stage_layout("c", [4], [3, 5], 225, 8)

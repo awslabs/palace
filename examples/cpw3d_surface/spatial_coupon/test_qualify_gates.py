@@ -188,9 +188,10 @@ class StoredCampaignGateTest(unittest.TestCase):
         recorded = json.loads((ASSESSMENT / "gallery-physics-06b" / "preflight" / "stage-estimate.json").read_text())
         counts = {"Vertices": 428366, "Edges": 2489399, "TriangleFaces": 3630370, "QuadFaces": 276012,
                   "Tetrahedra": 1659373, "Prisms": 172692, "Pyramids": 13284}
-        # The recorded estimate ran at the cost model's measured block size 6 with the
-        # pair-scaled reducer formula (before decision 62(1)): reproduced as recorded.
-        model = {**estimate_stages.load_cost_model(), "ReducerEvaluationFraction": 0.0}
+        # The recorded estimate ran at the physics-11 model's measured block size 6 with the
+        # pair-scaled reducer formula (before decision 62(1)): reproduced as recorded with
+        # that model (kept as PREVIOUS_COST_MODEL since the decision-64a refit).
+        model = {**estimate_stages.load_cost_model(estimate_stages.PREVIOUS_COST_MODEL), "ReducerEvaluationFraction": 0.0}
         estimate = estimate_stages.estimate(counts, [("p4-135", 4, 135), ("p5-8", 5, 8), ("p3-8", 3, 8)],
                                             local_edge=("local-edge", 4, 8), block_size=6, model=model)
         self.assertTrue(estimate["FitsOneJob"])
@@ -406,7 +407,8 @@ class ControlsPlanAndEstimateRuleTest(unittest.TestCase):
             estimate_stages.estimate(counts, [("p6-1", 6, 1)])
 
     def test_stage_estimate_scales_with_sources_and_dofs(self):
-        model = estimate_stages.load_cost_model()
+        # On the physics-11 model (80 sources measured at block size 6): its own stage reproduces itself.
+        model = estimate_stages.load_cost_model(estimate_stages.PREVIOUS_COST_MODEL)
         counts = model["MeasuredMesh"]["EntityCounts"]
         same = estimate_stages.estimate_stage(model, 4, 80, counts, model["MeasuredBlockSize"])
         self.assertAlmostEqual(same["DOFRatioVsMeasured"], 1.0)
@@ -441,8 +443,9 @@ class ControlsPlanAndEstimateRuleTest(unittest.TestCase):
     def test_reducer_estimate_shrinks_with_the_block_size_evaluation_part_only(self):
         """Decision 62(1): at block size b the reducer evaluates every source ceil(N / b)
         times; the evaluation fraction of the measured pair seconds scales with it, the
-        Gram part with the source pairs, the setup not at all."""
-        model = estimate_stages.load_cost_model()
+        Gram part with the source pairs, the setup not at all (on the physics-11 model, the
+        one measured at block size 6)."""
+        model = estimate_stages.load_cost_model(estimate_stages.PREVIOUS_COST_MODEL)
         counts = model["MeasuredMesh"]["EntityCounts"]
         measured = model["Stages"]["p4"]
         at6 = estimate_stages.estimate_stage(model, 4, 80, counts, 6)
@@ -471,7 +474,7 @@ class ControlsPlanAndEstimateRuleTest(unittest.TestCase):
         e6, e48 = (estimate_stages.estimate_stage(model, 4, 78, two_edge, b) for b in (6, 48))
         self.assertAlmostEqual(e6["ReducerSecondsEstimateParts"]["Evaluation"] / e48["ReducerSecondsEstimateParts"]["Evaluation"],
                                1014 / 156)
-        whole = estimate_stages.estimate(counts, [("p4-80", 4, 80)], block_size=48)
+        whole = estimate_stages.estimate(counts, [("p4-80", 4, 80)], block_size=48, model=model)
         self.assertEqual(whole["ReducerBlockSize"], 48)
         self.assertEqual(whole["CostModel"]["MeasuredBlockSize"], 6)
         with self.assertRaises(ValueError):
