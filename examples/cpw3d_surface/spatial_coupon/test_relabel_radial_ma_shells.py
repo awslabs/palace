@@ -92,6 +92,21 @@ LINES = [{"Kind": "top", "First": [0.0, 0.0], "Last": [0.0, 1.0], "Z": 0.1},
 
 
 class RadialShellRelabelTest(unittest.TestCase):
+    def test_metal_edge_lines_of_two_loops_of_one_conductor(self):
+        """Two plan-view loops of the same conductor and plane (the three-edge gallery
+        coupon 06) both read the conductor's process normal: the first loop must not
+        consume it (the production rebuild of 06 failed on exactly this)."""
+        signature = [{"Conductor": "1", "Pz": "0", "Nz": "1"}]
+        boundary = [{"Loop": "1", "Vertex": "1", "Conductor": "1", "Plane": "0.0", "Class": "Physical", "X": "2.0", "Y": "-8.0"},
+                    {"Loop": "1", "Vertex": "2", "Conductor": "1", "Plane": "0.0", "Class": "Continuation", "X": "2.0", "Y": "8.0"},
+                    {"Loop": "2", "Vertex": "1", "Conductor": "1", "Plane": "0.0", "Class": "Physical", "X": "-6.0", "Y": "6.0"},
+                    {"Loop": "2", "Vertex": "2", "Conductor": "1", "Plane": "0.0", "Class": "Continuation", "X": "-6.0", "Y": "8.0"}]
+        lines = relabel.metal_edge_lines(boundary, signature, 0.1)
+        self.assertEqual([(line["Loop"], line["Kind"], line["Z"]) for line in lines],
+                         [(1, "top", 0.1), (1, "bottom", 0.0), (2, "top", 0.1), (2, "bottom", 0.0)])
+        with self.assertRaisesRegex(relabel.RelabelError, "no unique process normal"):
+            relabel.metal_edge_lines(boundary, signature + [{"Conductor": "1", "Pz": "0", "Nz": "-1"}], 0.1)
+
     def test_strip_relabel_is_label_only_and_ring_aligned(self):
         data, expected = strip_mesh()
         out, mesh, shells, relabeled, ma_labels = relabel.relabel(data, lines=LINES, radii=RADII)

@@ -165,7 +165,7 @@ def metal_edge_lines(boundary_rows, signature_rows, thickness):
         if len(candidates) != 1:
             raise RelabelError(f"loop {loop_index} (conductor {conductor}, plane {plane}) has no unique process normal "
                                f"sign in the signature: {sorted(candidates)}")
-        nz = candidates.pop()
+        nz = next(iter(candidates))  # never pop: the set is shared by every loop of the conductor
         points = [(float(row["X"]), float(row["Y"])) for row in rows]
         for index, row in enumerate(rows):
             if row["Class"] != "Physical":

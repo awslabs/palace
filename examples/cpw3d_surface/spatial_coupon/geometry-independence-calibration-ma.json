@@ -190,7 +190,7 @@
     {
       "Name": "relabel_radial_ma_shells.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/relabel_radial_ma_shells.py",
-      "SHA256": "98ce14c1046e6fb3682b29a2bc0d745b4994783f54defc16856478af0a593fb5"
+      "SHA256": "38a927177e4aef9abde571fa04f667cfd183c95ffda0a52e68ae6766eb279501"
     }
   ],
   "StageToolSHA256": {
