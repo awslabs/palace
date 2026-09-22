@@ -196,6 +196,10 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
   {
     run(1.0, 10.0, 2);
   }
+  SECTION("contrast across interface, order 3")
+  {
+    run(1.0, 10.0, 3);
+  }
 }
 
 TEST_CASE("SubstructuringSolver anisotropic permittivity",
