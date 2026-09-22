@@ -1,0 +1,32 @@
+{
+  "Path": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b.bin",
+  "SHA256": "170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b",
+  "Ldd": "\tlinux-vdso.so.1 (0x0000599c17bad000)\n\tlibm.so.6 => /lib/aarch64-linux-gnu/libm.so.6 (0x0000599c17bd0000)\n\tlibstdc++.so.6 => /opt/gcc/lib64/libstdc++.so.6 (0x0000599c17c70000)\n\tlibceed.so => /data/home/simlap/palace_builds/palace/build_c8g_main/lib/libceed.so (0x0000599c17ee0000)\n\tlibz.so.1 => /lib/aarch64-linux-gnu/libz.so.1 (0x0000599c18300000)\n\tlibmpi_usempif08.so.40 => /opt/openmpi/lib/libmpi_usempif08.so.40 (0x0000599c18330000)\n\tlibmpi_usempi_ignore_tkr.so.40 => /opt/openmpi/lib/libmpi_usempi_ignore_tkr.so.40 (0x0000599c183a0000)\n\tlibmpi_mpifh.so.40 => /opt/openmpi/lib/libmpi_mpifh.so.40 (0x0000599c183d0000)\n\tlibarmpl_lp64.so => /apps/arm/armpl_24.10_gcc/lib/libarmpl_lp64.so (0x0000599c18470000)\n\tlibmpi.so.40 => /opt/openmpi/lib/libmpi.so.40 (0x0000599c1f430000)\n\tlibgfortran.so.5 => /opt/gcc/lib64/libgfortran.so.5 (0x0000599c1f780000)\n\tlibgcc_s.so.1 => /opt/gcc/lib64/libgcc_s.so.1 (0x0000599c1f900000)\n\tlibc.so.6 => /lib/aarch64-linux-gnu/libc.so.6 (0x0000599c1f930000)\n\t/lib/ld-linux-aarch64.so.1 (0x0000599c17b80000)\n\tlibxsmm.so.1 => /data/home/simlap/palace_builds/palace/build_c8g_main/lib/libxsmm.so.1 (0x0000599c1fae0000)\n\tlibopen-pal.so.80 => /opt/openmpi/lib/libopen-pal.so.80 (0x0000599c1fcc0000)\n\tlibfabric.so.1 => /opt/amazon/efa/lib/libfabric.so.1 (0x0000599c1fe00000)\n\tlibnl-route-3.so.200 => /lib/aarch64-linux-gnu/libnl-route-3.so.200 (0x0000599c1ff70000)\n\tlibnl-3.so.200 => /lib/aarch64-linux-gnu/libnl-3.so.200 (0x0000599c20000000)\n\tlibpmix.so.2 => /opt/openmpi/lib/libpmix.so.2 (0x0000599c20040000)\n\tlibevent_core-2.1.so.7 => /opt/openmpi/lib/libevent_core-2.1.so.7 (0x0000599c20270000)\n\tlibevent_pthreads-2.1.so.7 => /opt/openmpi/lib/libevent_pthreads-2.1.so.7 (0x0000599c202d0000)\n\tlibhwloc.so.15 => /lib/aarch64-linux-gnu/libhwloc.so.15 (0x0000599c20300000)\n\tlibefa.so.1 => /lib/aarch64-linux-gnu/libefa.so.1 (0x0000599c20370000)\n\tlibibverbs.so.1 => /lib/aarch64-linux-gnu/libibverbs.so.1 (0x0000599c20390000)\n\tlibudev.so.1 => /lib/aarch64-linux-gnu/libudev.so.1 (0x0000599c203c0000)\n",
+  "DynamicDependenciesSHA256": {
+    "/lib/aarch64-linux-gnu/libm.so.6": "4272b01b52991e751427228625655626ff4e0c51f8724fe14bb95b88b72a76ae",
+    "/opt/gcc/lib64/libstdc++.so.6": "a7b8e47e67aa527d5ffe9934964c531a800f859429d7badaa1c75be3ccc91ce5",
+    "/data/home/simlap/palace_builds/palace/build_c8g_main/lib/libceed.so": "e3fa99f43409db1f453a9d73c3362ec620dd9cd236da0e042ed4d45de54716e7",
+    "/lib/aarch64-linux-gnu/libz.so.1": "8cd4dd1e893bc67102bbe7d2f0e895a98dd142857228c70bef7878a55eb58bb6",
+    "/opt/openmpi/lib/libmpi_usempif08.so.40": "2e0916c75bd6626b795c8008f3c0145be85d4616a0e978770180913e80dc27e7",
+    "/opt/openmpi/lib/libmpi_usempi_ignore_tkr.so.40": "8a2f70f05f78f04e1752fce1a64f0b460ac0a6a83c245d34055b5506282fae67",
+    "/opt/openmpi/lib/libmpi_mpifh.so.40": "422e8cb244c9fffa6209838b6168d658aafbcb149320b6ac4beda1a39ee28996",
+    "/apps/arm/armpl_24.10_gcc/lib/libarmpl_lp64.so": "59174b3e3064f15c689d5809556ee17883dd8e269e9969da2f5590e1d63c42b6",
+    "/opt/openmpi/lib/libmpi.so.40": "ca196960e195d7b0f636d1cda317718c45b526b4b61a56eed3630f5d6ece02e8",
+    "/opt/gcc/lib64/libgfortran.so.5": "fae9aed336ea85ee6d4f9810bb513d4d65292e24cde485d6dcaaf78682090be0",
+    "/opt/gcc/lib64/libgcc_s.so.1": "b85586beb0589ad79fe3f4fc4f7c228506f2ca394f414ef29ad1d16ffd1b07e1",
+    "/lib/aarch64-linux-gnu/libc.so.6": "79fd4ecae5fb5fab4e17ec4f145d2b79026559dce52f01a478b0a04fef3dff06",
+    "/lib/ld-linux-aarch64.so.1": "1f4fe51e11324b5bcc01ef1fd3859b5dd344ec16a8674d74ce618ef65016fbaf",
+    "/data/home/simlap/palace_builds/palace/build_c8g_main/lib/libxsmm.so.1": "f1505f492221aa53884aca34c8ffe6166435747d15b7bbae31a8665c73474dff",
+    "/opt/openmpi/lib/libopen-pal.so.80": "54241b8c81aa7fa7f036563e5f6dd0d5ef46cacdee09cfd52905402cd9025ba2",
+    "/opt/amazon/efa/lib/libfabric.so.1": "f965df9e125e7b4d00473be8d2c588b948e1d3d039fce08dfb97891a2d719b57",
+    "/lib/aarch64-linux-gnu/libnl-route-3.so.200": "077eda34d5d2b7a4bd4ab988a651b7ffb258d48a0477a3f5e41bf24fb6f2b58f",
+    "/lib/aarch64-linux-gnu/libnl-3.so.200": "4d90b397e7d559bf2afee9fd7e95aa169abfcf4c19db14fcf27b4c5c656764f4",
+    "/opt/openmpi/lib/libpmix.so.2": "21a0238162177a8986c65e833b2b40b0a5f84d5e75cdefa4682b085382762383",
+    "/opt/openmpi/lib/libevent_core-2.1.so.7": "5fb4fc28eb4f31d3c7a85d9676af0d210794bb8c132fe1926f3465dafddf24f2",
+    "/opt/openmpi/lib/libevent_pthreads-2.1.so.7": "024c837ebbdeb771a4997c11c9d4ea02d111bfe19325dcf043c08fc1730ce64d",
+    "/lib/aarch64-linux-gnu/libhwloc.so.15": "71af1a40f4649081e756f670234c655dc9c9b52eceb9580a9dd81a3337e64cd5",
+    "/lib/aarch64-linux-gnu/libefa.so.1": "7ff2cfb1f1fb7dafc51408798e6e6ef5eec4df906aa0dcb4dc2981396d0835ab",
+    "/lib/aarch64-linux-gnu/libibverbs.so.1": "b4406387726ec2865132cb0cf07efa8c59c1d69597a943c62fac197e36cb0595",
+    "/lib/aarch64-linux-gnu/libudev.so.1": "38016bd2442b18a38e41002f4b6be60c53c29ee70648e4340e4108d4f0ea9c77"
+  }
+}
