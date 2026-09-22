@@ -5,7 +5,9 @@
 # for the decision-62(4) executable: bounded six-job source-only build of
 # source-freeze-perf62 against the read-only Linux dependencies, then the archive
 # estimate synthetic tests with the new executable. Submitted as one PBS job (the login
-# node has 2 cores / 7 GB).
+# node has 2 cores / 7 GB). The bounds come from the recorded frozen standalone runner
+# source-freeze/tools/run_bounded_mesher.py (the checkout's run_bounded_mesher.py imports
+# mesh_stage_contract, which the freeze does not carry).
 #PBS -N coupon-perf62-build
 #PBS -q normal-g
 #PBS -P DS-EM-FEM
@@ -20,14 +22,15 @@
 set -euo pipefail
 cd /data/home/simlap/coupon_accuracy_assessment_20260913
 trap 'code=$?; printf "{\"ExitCode\":%d,\"CompletedUTC\":\"%s\",\"JobID\":\"%s\"}\n" "$code" "$(date -u +%FT%TZ)" "${PBS_JOBID:-}" > linux-build-perf62-status.json' EXIT
+[ -e linux-build-perf62 ] && { echo "linux-build-perf62 exists: refusing to rebuild"; exit 2; }
 source /etc/profile.d/modules.sh
 module load gcc/14.3.0 openmpi/5.0.8-gcc14 arm/armpl/24.10-gcc
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 BLIS_NUM_THREADS=1 ARMPL_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 PYTHONDONTWRITEBYTECODE=1
 module list
 date -u; hostname
 free -b
-python3 source-freeze-perf62/tools/run_bounded_mesher.py --seconds 1800 --memory-gib 32 --log linux-build-perf62.log -- python3 build_linux_perf62.py
+python3 source-freeze/tools/run_bounded_mesher.py --seconds 1800 --memory-gib 32 --log linux-build-perf62.log -- python3 build_linux_perf62.py
 mkdir linux-synthetic-perf62
 export ARCHIVE_DIAGNOSTIC_SCRATCH="$PWD/linux-synthetic-perf62" TMPDIR="$PWD/linux-synthetic-perf62"
 export ARCHIVE_DIAGNOSTIC_EXE="$(python3 -c 'import json; print(json.load(open("linux-build-perf62/binary.json"))["Path"])')"
-python3 source-freeze-perf62/tools/run_bounded_mesher.py --seconds 600 --memory-gib 6 --log linux-synthetic-perf62/tests.log -- python3 source-freeze-perf62/tools/test_estimate_archived_fields.py -v
+python3 source-freeze/tools/run_bounded_mesher.py --seconds 600 --memory-gib 6 --log linux-synthetic-perf62/tests.log -- python3 source-freeze-perf62/tools/test_estimate_archived_fields.py -v
