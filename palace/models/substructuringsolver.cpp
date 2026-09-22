@@ -179,10 +179,10 @@ private:
 class MaterializedDtN : public mfem::Operator
 {
 public:
-  MaterializedDtN(const std::vector<double> &S_rows, int row_off, int n_rows,
+  MaterializedDtN(const std::vector<double> &S_rows, int row_off,
                   const std::vector<int> &gamma_global, int nG_global, MPI_Comm comm)
     : mfem::Operator(static_cast<int>(gamma_global.size())), S_rows(S_rows),
-      row_off(row_off), n_rows(n_rows), gamma_global(gamma_global), nG_global(nG_global),
+      row_off(row_off), gamma_global(gamma_global), nG_global(nG_global),
       comm(comm)
   {
   }
@@ -217,7 +217,7 @@ public:
 
 private:
   const std::vector<double> &S_rows;
-  int row_off, n_rows;
+  int row_off;
   const std::vector<int> &gamma_global;
   int nG_global;
   MPI_Comm comm;
@@ -1124,18 +1124,6 @@ void SubstructuringSolver::CondenseEnvironment()
   }
 
   const int nG = impl->nG_global;
-  auto gather_interface = [&](const Vector &y, double *col)
-  {
-    std::vector<double> loc(nG, 0.0);
-    for (int i = 0; i < impl->nt; i++)
-    {
-      if (impl->is_gamma[i])
-      {
-        loc[impl->gamma_global[i]] = y(i);
-      }
-    }
-    MPI_Allreduce(loc.data(), col, nG, MPI_DOUBLE, MPI_SUM, comm);
-  };
   impl->gamma_off = off;
   impl->gamma_nloc = nloc;
   impl->S_rows.assign(static_cast<std::size_t>(nloc) * nG, 0.0);
@@ -1362,7 +1350,6 @@ void SubstructuringSolver::CondenseEnvironment()
     }
     Vector e(impl->nt), y(impl->nt);
     e = 0.0;
-    std::vector<double> col(nG);
     int prev = -1;
     for (int c = 0; c < nG; c++)
     {
@@ -1377,10 +1364,11 @@ void SubstructuringSolver::CondenseEnvironment()
         e(prev) = 1.0;
       }
       impl->dtn->Mult(e, y);
-      gather_interface(y, col.data());
+      // y is a complete true-DOF vector (assembled), so each rank stores its own S_E rows
+      // directly from y -- no interface Allreduce needed (removes O(nG^2) communication).
       for (int r = 0; r < nloc; r++)
       {
-        impl->S_rows[static_cast<std::size_t>(r) * nG + c] = col[off + r];
+        impl->S_rows[static_cast<std::size_t>(r) * nG + c] = y(col_to_dof[r]);
       }
     }
     if (!model_path.empty())
@@ -1408,8 +1396,7 @@ void SubstructuringSolver::CondenseEnvironment()
   }
   // g_E is excitation-dependent; it is computed per excitation in the region solve.
   impl->mat_dtn = std::make_unique<MaterializedDtN>(
-      impl->S_rows, impl->gamma_off, impl->gamma_nloc, impl->gamma_global, impl->nG_global,
-      comm);
+      impl->S_rows, impl->gamma_off, impl->gamma_global, impl->nG_global, comm);
 
   // Region-condensed solver: Palace CG preconditioned by a wrapped AMS (H(curl)) or
   // BoomerAMG (H1) on the region-free block. Built once and reused across excitations (the
