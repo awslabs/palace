@@ -1059,4 +1059,48 @@ TEST_CASE("SubstructuringSolver HODLR compressed apply matches dense (parallel)"
   CHECK(std::abs(e_comp - e_dense) / std::abs(e_dense) <= 1.0e-6);
 }
 
+TEST_CASE("SubstructuringSolver HODLR magnetostatic compressed apply matches dense",
+          "[substructure][Parallel]")
+{
+  // HODLR compression on a Nedelec (H(curl)) interface: the clustering coordinate is the edge
+  // midpoint. The region reluctance (self-energy) with a tight-tolerance compressed S_E must
+  // match the dense operator at any process count.
+  const double mu_r = 1.0, mu_e = 4.0;
+  auto energy_at = [&](double tol)
+  {
+    json config = {
+        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permeability", mu_r}, {"Permittivity", 1.0}},
+            {{"Attributes", {2}}, {"Permeability", mu_e}, {"Permittivity", 1.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", 1},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"InterfaceOffdiagTol", tol}}}}}};
+    IoData iodata(config, false);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(6)));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+    const Vector a = ss.SolveExcitation(1);
+    return ss.MutualEnergy(a, a);
+  };
+  const double e_dense = energy_at(0.0);
+  const double e_comp = energy_at(1.0e-8);
+  const double relerr = std::abs(e_comp - e_dense) / std::abs(e_dense);
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::printf("[HODLR-mag] dense=%.10e comp=%.10e relerr=%.3e\n", e_dense, e_comp, relerr);
+  }
+  CHECK(std::abs(e_dense) > 1.0e-12);
+  CHECK(relerr <= 1.0e-5);
+}
+
 }  // namespace palace

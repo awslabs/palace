@@ -1780,24 +1780,46 @@ void SubstructuringSolver::CondenseEnvironment()
     const double hodlr_tol = impl->iodata.solver.substructuring->interface_offdiag_tol;
     if (hodlr_tol > 0.0 && nG > 0)
     {
-      MFEM_VERIFY(!impl->magnetostatic,
-                  "Substructuring InterfaceOffdiagTol (HODLR compression) is currently "
-                  "supported only for electrostatic (H1) problems.");
-      // Interface DOF coordinates (replicated) for the coordinate-median clustering.
+      // Interface DOF coordinates (replicated) for the coordinate-median clustering. Each true
+      // DOF is placed at its interpolation point: H1 -> node coordinate, Nedelec -> edge
+      // midpoint. Computed per element (GetNodes mapped through the element transformation),
+      // reduced onto the owning rank's true DOF, then summed to a replicated array.
       std::vector<double> coords_loc(static_cast<std::size_t>(nG) * 3, 0.0),
           coords(static_cast<std::size_t>(nG) * 3, 0.0);
-      mfem::ParGridFunction gf(&impl->parent_fes);
-      Vector td(impl->nt);
-      for (int d = 0; d < impl->parent.Dimension(); d++)
+      std::vector<double> tdof_xyz(static_cast<std::size_t>(impl->nt) * 3, 0.0);
+      std::vector<char> have(impl->nt, 0);
+      mfem::Array<int> edofs;
+      mfem::Vector phys;
+      for (int e = 0; e < impl->parent_fes.GetNE(); e++)
       {
-        mfem::FunctionCoefficient xc([d](const mfem::Vector &x) { return x(d); });
-        gf.ProjectCoefficient(xc);
-        gf.GetTrueDofs(td);
-        for (int i = 0; i < impl->nt; i++)
+        const mfem::FiniteElement *fe = impl->parent_fes.GetFE(e);
+        mfem::ElementTransformation *T = impl->parent.GetElementTransformation(e);
+        const mfem::IntegrationRule &nodes = fe->GetNodes();
+        impl->parent_fes.GetElementDofs(e, edofs);
+        for (int j = 0; j < edofs.Size(); j++)
         {
-          if (impl->is_gamma[i])
+          const int ldof = edofs[j] >= 0 ? edofs[j] : -1 - edofs[j];
+          const int t = impl->parent_fes.GetLocalTDofNumber(ldof);
+          if (t < 0 || have[t])
           {
-            coords_loc[static_cast<std::size_t>(impl->gamma_global[i]) * 3 + d] = td(i);
+            continue;
+          }
+          T->Transform(nodes.IntPoint(j), phys);
+          for (int d = 0; d < phys.Size() && d < 3; d++)
+          {
+            tdof_xyz[static_cast<std::size_t>(t) * 3 + d] = phys(d);
+          }
+          have[t] = 1;
+        }
+      }
+      for (int i = 0; i < impl->nt; i++)
+      {
+        if (impl->is_gamma[i])
+        {
+          for (int d = 0; d < 3; d++)
+          {
+            coords_loc[static_cast<std::size_t>(impl->gamma_global[i]) * 3 + d] =
+                tdof_xyz[static_cast<std::size_t>(i) * 3 + d];
           }
         }
       }
