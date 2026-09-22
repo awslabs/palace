@@ -142,6 +142,15 @@ def main(argv):
                  "Binary": str(binary), "BinarySHA256": sha(binary), "Pinned": {}, "UTC": time.strftime("%FT%TZ", time.gmtime())}
     if preflight["BinarySHA256"] != binary_sha256:
         raise SystemExit("Executable hash mismatch: " + preflight["BinarySHA256"])
+    # A stage may name its own frozen executable (an executable comparison on one archive,
+    # decision 62(4)): verified here like the plan's; the stage record carries it.
+    preflight["StageBinaries"] = {}
+    for stage in plan["Stages"]:
+        if stage.get("Binary"):
+            actual = sha(stage["Binary"])
+            preflight["StageBinaries"][stage["Binary"]] = {"Expected": stage["BinarySHA256"], "Actual": actual}
+            if actual != stage["BinarySHA256"]:
+                raise SystemExit(f"Stage executable hash mismatch: {stage['Name']} {actual}")
     for path, expected in plan["PinnedSHA256"].items():
         actual = sha(path)
         preflight["Pinned"][path] = {"Expected": expected, "Actual": actual, "OK": actual == expected}
@@ -199,9 +208,11 @@ def main(argv):
         exports = [part for key in stage["Environment"] for part in ("-x", key)]
         log = base / f"{name}.log"
         timefile = base / f"{name}.time"
+        stage_binary = Path(stage["Binary"]) if stage.get("Binary") else binary
         command = ["timeout", "-k", "30", str(int(cap)), "/usr/bin/time", "-v", "-o", str(timefile),
-                   str(mpiexec), *exports, "-n", str(plan["Ranks"]), str(binary), stage["Config"]]
-        record.update(Command=command, CapSeconds=cap, Log=str(log), StartUTC=time.strftime("%FT%TZ", time.gmtime()))
+                   str(mpiexec), *exports, "-n", str(plan["Ranks"]), str(stage_binary), stage["Config"]]
+        record.update(Command=command, CapSeconds=cap, Log=str(log), StartUTC=time.strftime("%FT%TZ", time.gmtime()),
+                      Binary=str(stage_binary), BinarySHA256=stage.get("BinarySHA256") or binary_sha256)
         current_stage[0] = name
         started = time.monotonic()
         with log.open("w") as stream:
