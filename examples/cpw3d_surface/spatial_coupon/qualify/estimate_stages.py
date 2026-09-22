@@ -34,6 +34,10 @@ from mixed_mesh import h1_dofs_from_counts, h1_entity_counts  # noqa: E402
 from build_plan import DEFAULT_REDUCER_BLOCK_SIZE  # noqa: E402
 
 COST_MODEL = HERE / "cost-model.json"
+# The model every qualify run up to the decision-64a refit used (four-edge-physics-11 V-a,
+# b28 executable, reducer block size 6): kept for the recorded estimates it produced;
+# refit_cost_model.py binds it by digest under the current model's Previous.
+PREVIOUS_COST_MODEL = HERE / "cost-model-physics11-b28.json"
 CLUSTER_PROFILE = HERE / "cluster-profile.json"
 
 
