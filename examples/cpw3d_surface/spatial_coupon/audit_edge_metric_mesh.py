@@ -80,10 +80,15 @@ def analyze(mesh,contract,require_material_names=False):
     required=np.flatnonzero((count==1)|(low!=high))
     if not np.array_equal(np.sort(ids),required):raise ValueError('Boundary/interface coverage mismatch')
     expected_adjacency=boundary_adjacency(contract);actual_adjacency={}
+    # The material pair of every boundary face is judged per distinct (low, high) pair of
+    # the label (a one-sided face pairs its material with itself), the same sets as a
+    # face-by-face scan in the same label order (decision 62 step 3, proposal 5).
     for attr in np.unique(labels):
+        selected=ids[labels==attr]
+        pairs=np.unique(np.column_stack((low[selected],np.where(count[selected]==1,low[selected],high[selected]))),axis=0)
         observed=set()
-        for f in ids[labels==attr]:
-            actual={int(low[f])} if count[f]==1 else {int(low[f]),int(high[f])}
+        for a,c in pairs:
+            actual={int(a),int(c)}
             if actual not in expected_adjacency[int(attr)]:
                 raise ValueError('Incorrect material adjacency for '+str(attr))
             observed.update(actual)

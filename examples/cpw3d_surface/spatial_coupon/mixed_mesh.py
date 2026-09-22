@@ -151,6 +151,47 @@ def split_wedge(cell):
     return [(v0, v1, v2, v4), (v0, v4, v2, v5), (v0, v4, v5, v3)]
 
 
+def split_quads(quads):
+    """split_quad over an (n, 4) array: (2n, 3) triangles in the per-cell order of
+    split_quad (the two triangles of cell i are rows 2i and 2i + 1)."""
+    quads = np.asarray(quads, dtype=np.int64).reshape(-1, 4)
+    a, b, c, d = quads.T
+    from_first = np.minimum(a, c) < np.minimum(b, d)
+    first = np.where(from_first[:, None], np.column_stack((a, b, c)), np.column_stack((a, b, d)))
+    second = np.where(from_first[:, None], np.column_stack((a, c, d)), np.column_stack((b, c, d)))
+    return np.stack((first, second), axis=1).reshape(-1, 3)
+
+
+def split_pyramids(cells):
+    """split_pyramid over an (n, 5) array: (2n, 4) tetrahedra in split_pyramid's order."""
+    cells = np.asarray(cells, dtype=np.int64).reshape(-1, 5)
+    a, b, c, d, apex = cells.T
+    from_first = np.minimum(a, c) < np.minimum(b, d)
+    first = np.where(from_first[:, None], np.column_stack((a, b, c, apex)), np.column_stack((a, b, d, apex)))
+    second = np.where(from_first[:, None], np.column_stack((a, c, d, apex)), np.column_stack((b, c, d, apex)))
+    return np.stack((first, second), axis=1).reshape(-1, 4)
+
+
+def split_wedges(cells):
+    """split_wedge over an (n, 6) array: (3n, 4) tetrahedra in split_wedge's order (the
+    same rotation to the smallest vertex and the same diagonal rule per cell)."""
+    cells = np.asarray(cells, dtype=np.int64).reshape(-1, 6)
+    smallest = np.argmin(cells, axis=1)
+    swap = smallest >= 3
+    cells = np.where(swap[:, None], cells[:, [3, 4, 5, 0, 1, 2]], cells)
+    smallest = np.where(swap, smallest - 3, smallest)
+    rotation = (smallest[:, None] + np.arange(3)[None, :]) % 3
+    rows = np.arange(len(cells))[:, None]
+    cells = np.column_stack((cells[rows, rotation], cells[rows, 3 + rotation]))
+    v0, v1, v2, v3, v4, v5 = cells.T
+    first_rule = np.minimum(v1, v5) < np.minimum(v2, v4)
+    rule_a = np.stack((np.column_stack((v0, v1, v2, v5)), np.column_stack((v0, v1, v5, v4)),
+                       np.column_stack((v0, v4, v5, v3))), axis=1)
+    rule_b = np.stack((np.column_stack((v0, v1, v2, v4)), np.column_stack((v0, v4, v2, v5)),
+                       np.column_stack((v0, v4, v5, v3))), axis=1)
+    return np.where(first_rule[:, None, None], rule_a, rule_b).reshape(-1, 4)
+
+
 def _oriented(points, tetrahedra):
     xyz = points[tetrahedra]
     signed = np.einsum("ij,ij->i", np.cross(xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0]),
@@ -176,14 +217,12 @@ def simplicial_view(mesh):
         elif kind == "tetra":
             tetrahedra.append(connectivity); tetra_labels.append(labels)
         elif kind == "quad":
-            split = [split_quad(q) for q in connectivity]
-            triangles.append(np.asarray(split, dtype=np.int64).reshape(-1, 3))
+            triangles.append(split_quads(connectivity))
             triangle_labels.append(np.repeat(labels, 2))
         else:
-            splitter = split_wedge if kind == "wedge" else split_pyramid
+            splitter = split_wedges if kind == "wedge" else split_pyramids
             per_cell = 3 if kind == "wedge" else 2
-            split = [splitter(c) for c in connectivity]
-            cells = np.asarray(split, dtype=np.int64).reshape(-1, 4)
+            cells = splitter(connectivity)
             tetrahedra.append(_oriented(points, cells)); tetra_labels.append(np.repeat(labels, per_cell))
     if not tetrahedra or not triangles:
         raise ValueError("Mesh lacks volume or surface elements")

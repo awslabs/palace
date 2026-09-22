@@ -6,6 +6,7 @@
 import argparse
 import copy
 import csv
+import heapq
 import json
 import math
 import os
@@ -561,24 +562,28 @@ def _normalized_footprint_boundary(xyz, pinches=None):
 
     # Remove degree-two collinear subdivision vertices.  The resulting segment
     # set represents the PL boundary connectivity rather than only its vertices.
+    # Each step removes the smallest removable vertex of the current boundary (the
+    # former scan restarted from the smallest vertex after every removal); the
+    # min-heap of candidates yields the same removal sequence because a vertex found
+    # not removable stays so until a neighbour is removed, which pushes it back
+    # (decision 62 step 3, proposal 5: O(B log B) tests instead of O(B x removals)).
     tolerance = 64.0 * np.finfo(float).eps
-    changed = True
-    while changed:
-        changed = False
-        for vertex in sorted(adjacency):
-            if (vertex not in adjacency or len(adjacency[vertex]) != 2 or
-                    vertex in pinch_vertices):
-                continue
-            first, last = sorted(adjacency[vertex])
-            left, right = points[first] - points[vertex], points[last] - points[vertex]
-            scale = max(np.linalg.norm(left) * np.linalg.norm(right), 1e-300)
-            if (np.linalg.norm(np.cross(left, right)) <= tolerance * scale and
-                    np.dot(left, right) < 0):
-                adjacency[first].remove(vertex); adjacency[first].add(last)
-                adjacency[last].remove(vertex); adjacency[last].add(first)
-                del adjacency[vertex]
-                changed = True
-                break
+    candidates = sorted(adjacency)
+    heapq.heapify(candidates)
+    while candidates:
+        vertex = heapq.heappop(candidates)
+        if (vertex not in adjacency or len(adjacency[vertex]) != 2 or
+                vertex in pinch_vertices):
+            continue
+        first, last = sorted(adjacency[vertex])
+        left, right = points[first] - points[vertex], points[last] - points[vertex]
+        scale = max(np.linalg.norm(left) * np.linalg.norm(right), 1e-300)
+        if (np.linalg.norm(np.cross(left, right)) <= tolerance * scale and
+                np.dot(left, right) < 0):
+            adjacency[first].remove(vertex); adjacency[first].add(last)
+            adjacency[last].remove(vertex); adjacency[last].add(first)
+            del adjacency[vertex]
+            heapq.heappush(candidates, first); heapq.heappush(candidates, last)
     normalized = []
     for first, neighbors in adjacency.items():
         for last in neighbors:
