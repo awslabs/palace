@@ -1263,16 +1263,33 @@ GMSH_BUILD_VOLUME_TYPES = ("Tetrahedron", "Prism", "Pyramid")
 RECIPE_SCOPE_RECIPE = "prism-tubes"
 RECIPE_SCOPE_SUPPORTED_CLASSES = ("ContinuationVertices", "DeviceFootprint", "DownwardLayers",
                                   "ExteriorLoops", "HoleLoops", "MultipleConductors",
-                                  "MultipleLayers", "MultipleSlots", "TraceBasis")
+                                  "MultipleLayers", "MultipleSlots", "ThinMetal", "TraceBasis")
 RECIPE_SCOPE_GUARDS = {
     "TopRounding": "inputs", "TrenchRounding": "inputs", "SlopedSidewalls": "inputs",
-    "ThinMetal": "inputs", "NoTrench": "inputs", "ShallowTrench": "build",
+    "NoTrench": "inputs", "ShallowTrench": "build",
     "NarrowTransverseBound": "build", "NarrowHoles": "build", "NarrowLayerGap": "build",
     "FreeEdgeEnds": "build", "ShortEdges": "build", "FootprintWithoutEdge": "build",
     "FootprintTopology": "build"}
 # Metal thickness option of the mesher command with its default; the top tube of a
 # process layer with normal Nz lies at plane + Nz x MetalThickness (decision 48).
 GMSH_BUILD_THICKNESS_OPTION = ("--metal-thickness", 0.1)
+# Coupon kinds (the mesher command's second positional token): a fabricated coupon
+# carries a top and a bottom tube per straight metal side, a thin coupon (decision 66:
+# ThinMetal is a supported class) one sheet tube per side at the process plane, whose
+# inner ring size is the recorded cutoff of every thin surface participation.
+COUPON_KINDS = ("fabricated", "thin")
+TUBES_PER_SIDE = {"fabricated": 2, "thin": 1}
+TUBE_EDGES = {"fabricated": ("top", "bottom"), "thin": ("sheet",)}
+
+
+def build_coupon_kind(command):
+    """The coupon kind of a mesher / publisher command: the token of COUPON_KINDS it
+    carries (fabricated when it carries none - the production mesher always names its
+    kind; fail closed on both)."""
+    kinds = [kind for kind in COUPON_KINDS if kind in command]
+    if len(kinds) > 1:
+        raise ValueError(f"the command names both coupon kinds {kinds}")
+    return kinds[0] if kinds else "fabricated"
 SCOPE_GUARD_PATTERN = re.compile(r"ScopeGuard\[([A-Za-z]+)\]")
 # Process options of the mesher command with the mesher's defaults (a command without
 # the option builds the default) that classify an input.
@@ -1342,10 +1359,11 @@ def read_csv_rows(path):
         return list(csv.DictReader(stream))
 
 
-def scope_classes_of_case_inputs(signature, boundary, process, *, device_footprint, trace_basis):
+def scope_classes_of_case_inputs(signature, boundary, process, *, device_footprint, trace_basis,
+                                 fabricated=True):
     """The classes of a manifest case from its frozen inputs (signature, boundary,
-    process.toml values; production builds are fabricated)."""
-    return scope_classes(read_csv_rows(signature), read_csv_rows(boundary),
+    process.toml values) and its kind (a thin case exhibits ThinMetal; decision 66)."""
+    return scope_classes(read_csv_rows(signature), read_csv_rows(boundary), fabricated=fabricated,
                          sidewall_angle=float(process["SidewallAngle"]),
                          top_rounding=float(process["TopRounding"]),
                          trench_rounding=float(process["TrenchRounding"]),
@@ -1361,7 +1379,7 @@ def scope_classes_of_build(build_report):
                for option, default in SCOPE_PROCESS_OPTIONS.items()}
     return scope_classes(read_csv_rows(inputs["source-signature"]["Path"]),
                          read_csv_rows(inputs["source-boundary"]["Path"]),
-                         fabricated="thin" not in command,
+                         fabricated=build_coupon_kind(command) == "fabricated",
                          sidewall_angle=process["--sidewall-angle"],
                          top_rounding=process["--top-radius"],
                          trench_rounding=process["--bottom-radius"],
@@ -1395,7 +1413,8 @@ def validate_recipe_scope(build_report, census):
     guarded class lists of this contract with a statement per guard, exhibits exactly
     the classes recomputed from the bound inputs and command (none of them guarded: a
     guarded class never reaches the census), and counts per loop the sides not on the
-    census CouponBox so that TubeCount = 2 x their sum."""
+    census CouponBox so that TubeCount = TubesPerSide x their sum (2 for a fabricated
+    coupon, 1 for a thin one; decision 66)."""
     scope = census.get("Scope")
     if not isinstance(scope, dict) or not isinstance(scope.get("Rule"), str) or not scope["Rule"]:
         raise ValueError("Build census lacks the recipe Scope record")
@@ -1431,8 +1450,22 @@ def validate_recipe_scope(build_report, census):
     if ("HoleLoops" in exhibited) != any(loop["Hole"] for loop in loops):
         raise ValueError("Build census Scope hole loops differ from the exhibited classes")
     tubes = census.get("PrismTubes")
-    if not isinstance(tubes, dict) or tubes.get("TubeCount") != 2 * sum(expected) or sum(expected) <= 0:
-        raise ValueError("Prism tube count is not twice the straight sides of every loop")
+    kind = build_coupon_kind(build_report["Command"])
+    section = tubes.get("Section") if isinstance(tubes, dict) else None
+    if (not isinstance(section, dict) or section.get("Kind") != kind or
+            section.get("TubesPerSide") != TUBES_PER_SIDE[kind] or
+            ("ThinMetal" in exhibited) != (kind == "thin")):
+        raise ValueError("Prism tube section does not name the command's coupon kind and its tubes per side")
+    if tubes.get("TubeCount") != TUBES_PER_SIDE[kind] * sum(expected) or sum(expected) <= 0:
+        raise ValueError("Prism tube count is not TubesPerSide x the straight sides of every loop")
+    cutoff = section.get("ThinCutoff")
+    if kind == "thin":
+        # Decision 66: the thin coupon is recorded at its cutoff (the inner ring size).
+        if (isinstance(cutoff, bool) or not isinstance(cutoff, (int, float)) or
+                cutoff != _option_or_default(build_report["Command"], "--edge-size", None)):
+            raise ValueError("Thin coupon census does not record its cutoff as the tube inner size")
+    elif cutoff is not None:
+        raise ValueError("Fabricated coupon census records a thin cutoff")
     validate_tube_layers(build_report, tubes)
     return scope
 
@@ -1441,9 +1474,11 @@ def validate_tube_layers(build_report, tubes):
     """Every census tube row names its process layer sign (Tubes[].Layer = the signature
     Nz of the rows on its Plane) and lies on that layer's edge: the top tube at
     Plane + Layer x MetalThickness (the command's --metal-thickness), the bottom tube on
-    the Plane (decision 48: b = (0, 0, Nz) is the tube frame)."""
+    the Plane (decision 48: b = (0, 0, Nz) is the tube frame); a thin coupon's sheet
+    tube on the Plane (decision 66)."""
     command = build_report["Command"]
     thickness = _option_or_default(command, *GMSH_BUILD_THICKNESS_OPTION)
+    edges = TUBE_EDGES[build_coupon_kind(command)]
     signs = {}
     for row in read_csv_rows(build_report["Inputs"]["source-signature"]["Path"]):
         signs.setdefault(float(row["Pz"]), set()).add(int(float(row.get("Nz", 1) or 1)))
@@ -1461,7 +1496,7 @@ def validate_tube_layers(build_report, tubes):
         if (isinstance(layer, bool) or layer not in (-1, 1) or matching != [layer] or
                 not isinstance(origin, list) or len(origin) != 3 or
                 any(isinstance(x, bool) or not isinstance(x, (int, float)) for x in origin) or
-                row.get("Edge") not in ("top", "bottom")):
+                row.get("Edge") not in edges):
             raise ValueError("Prism tube row lacks its process layer sign or lies on another layer")
         expected = plane + layer * thickness if row["Edge"] == "top" else plane
         if abs(origin[2] - expected) > 1e-9 * max(1.0, abs(expected)):
