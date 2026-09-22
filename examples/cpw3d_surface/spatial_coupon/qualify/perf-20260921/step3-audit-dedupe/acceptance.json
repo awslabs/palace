@@ -1,0 +1,104 @@
+{
+  "Kind": "decision-62-step-3-acceptance",
+  "Case": "two-edge-8dd4bc70f183",
+  "IdentityMeshSHA256": "179a405dbe5eb0fd",
+  "Before": {
+    "Commit": "f03c7eabd",
+    "Root": "/tmp/coupon-library-build-f03c7eabd-step3-baseline",
+    "BuildWallSeconds": 523.4178190231323
+  },
+  "After": {
+    "Commit": "5590074f8 (tree of 296c403f9 + refreeze)",
+    "Root": "/tmp/coupon-library-build-step3-after",
+    "BuildWallSeconds": 138.22630786895752
+  },
+  "Stages": {
+    "gmsh-build": {
+      "BeforeSeconds": 44.4,
+      "AfterSeconds": 41.6,
+      "BeforePeakGiB": 2.51,
+      "AfterPeakGiB": 2.33
+    },
+    "canonical-publish": {
+      "BeforeSeconds": 14.3,
+      "AfterSeconds": 13.6,
+      "BeforePeakGiB": 1.49,
+      "AfterPeakGiB": 1.55
+    },
+    "identity-publication": {
+      "BeforeSeconds": 54.7,
+      "AfterSeconds": 16.5,
+      "BeforePeakGiB": 1.73,
+      "AfterPeakGiB": 1.56
+    },
+    "rotate-z-0.63-publication": {
+      "BeforeSeconds": 52.5,
+      "AfterSeconds": 16.4,
+      "BeforePeakGiB": 1.7,
+      "AfterPeakGiB": 1.56
+    },
+    "identity-variant-audits": {
+      "BeforeSeconds": 55.6,
+      "AfterSeconds": 12.3,
+      "BeforePeakGiB": 1.02,
+      "AfterPeakGiB": 0.86
+    },
+    "rotate-z-0.63-variant-audits": {
+      "BeforeSeconds": 70.6,
+      "AfterSeconds": 12.2,
+      "BeforePeakGiB": 0.92,
+      "AfterPeakGiB": 0.86
+    },
+    "per-entry-verification": {
+      "BeforeSeconds": 213.8,
+      "AfterSeconds": 21.7,
+      "BeforePeakGiB": 0.95,
+      "AfterPeakGiB": 0.88
+    }
+  },
+  "Comparison": {
+    "Tool": "compare_case_records.py",
+    "RecordsCompared": 41,
+    "ByteIdenticalFiles": 18,
+    "Differences": 0,
+    "IgnoredFieldClasses": "timings, resources, tool digests and the digests / ids derived from them, paths, commands, environments"
+  },
+  "Commits": {
+    "P4": "b88394b4e direct MSH 2.2 reader",
+    "P1": "5ac8ab7a3 per-mesh memo + identity covariance reuse",
+    "P2": "c0fe4193e verification reads once",
+    "P5": "84886b33a footprint heap / adjacency pairs / vectorized splits",
+    "P8": "ebcc756ce H1 entity counts once per connectivity",
+    "P6": "d97d7cf01 Julia array snapshots",
+    "P7": "296c403f9 publication byte-diff proof",
+    "Refreeze": "5590074f8"
+  },
+  "NotDone": {
+    "GlobalDiagonalBandsLengths": "the per-edge 1-D BLAS norm differs from a vectorized norm in the last bit on 203,616 edges; ShortEdgeThreshold (recorded) is the median of those lengths",
+    "JuliaHelperExtraction": "the mesher include costs 2.1 s of the 10.8 s audit; its ownership rules use the mesher's physical_segments / point_primitive_distance / edge chains"
+  },
+  "HarnessTimings": {
+    "IdentityAuditsSeconds": [
+      64.5,
+      23.2,
+      13.4,
+      12.9,
+      13.8
+    ],
+    "RotateZAuditsSeconds": [
+      70.6,
+      38.0,
+      26.2,
+      18.1,
+      16.0,
+      13.8
+    ],
+    "VerificationCoreSeconds": [
+      207,
+      61.4,
+      35.6,
+      22.2
+    ],
+    "Order": "baseline, P4, P1, P5a (footprint), P5b (adjacency+splits), P8"
+  }
+}

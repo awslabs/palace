@@ -3165,6 +3165,56 @@ acceptance (below) compares its p3 control matrices to PBS 46718's. The three ma
 re-frozen after the merge (`general_mesh_manifest.py` ff44e45b8d2b -> be9ed95f8f2c) and again with the
 `FrozenExecutable` validation (-> 9bb1b89600c1).
 
+**Step 3 - audit dedupe / caching (decision 62(3); commits b88394b4e..296c403f9, refreeze 5590074f8;
+records under `qualify/perf-20260921/step3-audit-dedupe/`).** Seven commits, one per proposal of the
+performance review, each leaving every record bit-identical: (4) `mesh_array_io.read_mesh` parses a
+MSH 2.2 binary file directly into the meshio.Mesh `meshio.read` returns (Gmsh writes one header per
+element; meshio issues one `numpy.fromfile` per element: 10.4 s per read of the 602,862-element
+two-edge mesh, 37-40 s of the 2.1M-element four-edge / three-edge meshes, against 0.01-0.06 s;
+checked field by field on 27 recorded production meshes and by `test_mesh_array_io`); (1) the
+producer memoizes `simplicial_view` / `volume_quality` / `analyze` / `_mesh_invariants` / the
+corner-frame aspects per mesh object, the identity covariance comparison uses the canonical mesh
+object itself once the inverse-transformed candidate equals it bit for bit, and bit-identical
+protected patches normalize once; (2) verification reads the audited mesh once per variant and
+passes it to every check (the canonical mesh cached across the case's variants); (5) the collinear
+boundary-vertex removal runs on a min-heap of candidates (the same removal sequence as the restarted
+scan), the material adjacency is judged per distinct (low, high) pair, the prism / pyramid /
+quadrangle splits are vectorized (checked equal cell by cell) - the edge lengths of
+`_global_diagonal_bands` stay scalar: the 1-D BLAS norm differs from a vectorized norm in the last
+bit on this machine and `ShortEdgeThreshold` is their median; (8) the H1 entity counts are computed
+once per volume-connectivity digest (`<case>/h1-entity-counts.json` for the producers of one case;
+the verifier never reads it); (6) the Julia ownership audit snapshots the mesh as tag-sorted arrays
+instead of one Dict entry per element (old and new agree element by element; the same negatives;
+the mesher include, 2.1 s, stays); (7) the rigid publication proves the $Nodes-only change at the
+byte level and parses the output once (the canonical mesh is that parse with the canonical
+coordinates), receipts unchanged. Acceptance: two-edge-8dd4bc70f183 rebuilt before (f03c7eabd) and
+after, compared with `compare_case_records.py` (41 records field by field, 18 meshes / CSVs byte
+for byte; only timings, resources, tool digests and the ids derived from them, paths, commands and
+environments are skipped): **0 differences**.
+
+| two-edge 10 stage | before (s) | after (s) | peak GiB before -> after |
+|---|---|---|---|
+| gmsh-build | 44.4 | 41.6 | 2.51 -> 2.33 |
+| canonical-publish | 14.3 | 13.6 | 1.49 -> 1.55 |
+| identity publication | 54.7 | 16.5 | 1.73 -> 1.56 |
+| rotate-z publication | 52.5 | 16.4 | 1.70 -> 1.56 |
+| identity variant audits | 55.6 | 12.3 | 1.02 -> 0.86 |
+| rotate-z variant audits | 70.6 | 12.2 | 0.92 -> 0.86 |
+| per-entry verification | 213.8 | 21.7 | 0.95 -> 0.88 |
+| **build wall** | **523** | **138** | |
+
+**Integrated before / after and the projected device library.** Registration: 990 -> 32.9 s (step
+2, measured on the six transmon coupons). Build: applying the measured two-edge ratios
+(publications 0.31, audits 0.19, verification 0.10; gmsh-build and canonical-publish unchanged) to
+the decision-58 device library's recorded stage times gives the serial case sum 13,145 -> ~2,940 s
+(10-edge 2,654 -> ~610, 5-edge 2,560 -> ~580, 3-edge 5d3b 3,377 -> ~720, 3-edge 9cd9 1,661 ->
+~370, 4-edge 1,780 -> ~405, 2-edge 1,114 -> ~255) and the pool-of-2 build wall 7,338 -> ~1,500 s
+(the large coupons' meshio reads grew linearly with the element count, so the ratio is, if
+anything, conservative there). Qualify: the reducer stages 12,592 -> ~1,480 s with the new
+executable at b = 48 (step 4), i.e. the 8.26 node-h device-library run -> ~5.2 node-h; the workers
+are unchanged. Every record of the two rebuilt roots is bit-identical apart from timings; the
+physical gates, the quadrature rule / order and the rotate-z policy are untouched.
+
 ## Preflight
 
 ```sh
