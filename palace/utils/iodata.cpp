@@ -665,6 +665,10 @@ void IoData::CheckConfiguration()
   if (solver.substructuring)
   {
     const auto &sub = *solver.substructuring;
+    MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC ||
+                    problem.type == ProblemType::MAGNETOSTATIC,
+                "Substructuring is only supported for electrostatic and magnetostatic "
+                "problem types!");
     MFEM_VERIFY(!sub.region_attributes.empty() && !sub.environment_attributes.empty(),
                 "Substructuring requires nonempty Region and Environment attribute sets!");
     std::set<int> region_set(sub.region_attributes.begin(), sub.region_attributes.end());

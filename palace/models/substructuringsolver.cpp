@@ -67,10 +67,7 @@ public:
 
 // Implicit environment Dirichlet-to-Neumann action on parent true DOFs:
 //   y|_Gamma = A_GG x - A_GE A_EE^-1 A_EG x
-// using the parent-space environment matrix A_env (with A_EE the environment-interior
-// block, realized as A_env with all non-interior true DOFs identity-eliminated) and its
-// solver. All operations are distributed matvecs plus one distributed A_EE solve, so this
-// is parallel by construction.
+// via A_env matvecs and one A_EE solve (A_EE = A_env with non-interior true DOFs eliminated).
 class ImplicitDtN : public mfem::Operator
 {
 public:
@@ -171,11 +168,9 @@ private:
   std::function<void(const mfem::Vector &, mfem::Vector &)> apply;
 };
 
-// Materialized DtN: applies the interface operator S_E (computed once) to a distributed
-// interface vector. S_E is stored by contiguous row blocks (each rank owns rows
-// [row_off, row_off + n_rows)); the apply gathers the global interface vector (Allreduce over
-// the interface enumeration) and each rank multiplies only its own rows. Reusable across
-// region solves.
+// Materialized DtN: applies the precomputed interface operator S_E to a distributed interface
+// vector. S_E is stored by contiguous per-rank row blocks; the apply gathers the global
+// interface vector and each rank multiplies its own rows. Reused across region solves.
 class MaterializedDtN : public mfem::Operator
 {
 public:
@@ -225,12 +220,11 @@ private:
 
 }  // namespace
 
-// Parallel region-condensed static solve (electrostatic H1 or magnetostatic H(curl)).
-// Region/environment operators are assembled on the parent finite element space with
-// domain- restricted material coefficients; the interface is identified in true-DOF space;
-// the environment is condensed through an implicit distributed DtN. The magnetostatic
-// curl-curl operator carries a subdomain mass regularization (gauge-free formulation is a
-// follow-up).
+// Parallel region-condensed static solve (electrostatic H1 or magnetostatic H(curl)):
+// region/environment operators assembled on the parent space with domain-restricted material
+// coefficients, interface identified in true-DOF space, environment condensed via a
+// distributed DtN. Magnetostatics uses a small curl-curl mass regularization (see
+// kMagRegularization).
 struct SubstructuringSolver::Impl
 {
   const IoData &iodata;
@@ -464,11 +458,9 @@ struct SubstructuringSolver::Impl
     }
   }
 
-  // Small mass regularization making the magnetostatic curl-curl solve operator positive
-  // definite (so AMS converges without the singular-problem option). Kept small so the
-  // magnetic energy, measured with the pure curl-curl operators, is physical to ~1e-2 %.
-  // Requires a divergence-free excitation (physical current). Exact (gauge-free, pseudo-
-  // inverse DtN) region solves via a submesh AMS are a follow-up refinement.
+  // Small mass regularization making the singular magnetostatic curl-curl definite (AMS-
+  // convergent). Exact for divergence-free-compatible excitations (flux loops); a gauge-free
+  // (pseudo-inverse) treatment for general surface currents is a follow-up.
   static constexpr double kMagRegularization = 1.0e-3;
 
   // Environment/region size (global true DOFs) below which a sparse-direct factorization is
@@ -512,22 +504,16 @@ struct SubstructuringSolver::Impl
 
   std::map<int, mfem::DenseMatrix> region_eps, env_eps;
 
-  // Build the environment interior solver on the environment submesh: Gamma (the interface,
-  // a new submesh boundary attribute) plus any environment Dirichlet terminals are
-  // essential; the outer environment boundary is natural. This reproduces the parent-space
-  // A_EE^-1 action (env-interior with Gamma held fixed) but as a standard Dirichlet problem
-  // on a mesh whose every rank owns real DOFs (no all-identity ranks) -- enabling
-  // AMG/geometric multigrid at any partition count.
+  // Environment interior solver: A_EE^-1 (env-interior with Gamma + env Dirichlet held fixed),
+  // built on the environment submesh so every rank owns real DOFs (no all-identity ranks).
   void BuildEnvSubmeshSolver()
   {
     const int mg_levels = iodata.solver.linear.mg_max_levels;
 #if defined(MFEM_USE_SUPERLU)
-    // Order >= 2 H(curl): solve the environment interior in PARENT space (A_env with the
-    // non-environment-interior DOFs eliminated) with a SuperLU direct factorization, instead
-    // of the ParSubMesh transfer. The transfer mishandles higher-order tetrahedral edge/face
-    // DOF orientation (DOF transformations) across a partition cut; the parent-space solve
-    // avoids it entirely and is exact. SuperLU tolerates the all-identity ranks that blocked
-    // the original parent-space *iterative* approach.
+    // Order >= 2 H(curl): solve A_EE in PARENT space (A_env with non-env-interior eliminated)
+    // via SuperLU, not the ParSubMesh transfer -- the transfer mishandles higher-order
+    // tetrahedral edge/face DOF orientation across a partition cut. SuperLU tolerates the
+    // all-identity ranks that ruled out the parent-space *iterative* approach.
     if (magnetostatic && iodata.solver.order > 1)
     {
       non_env_int.SetSize(0);
@@ -549,12 +535,9 @@ struct SubstructuringSolver::Impl
       return;
     }
 #endif
-    // A direct factorization of A_EE (factored once, reused across the |Gamma| interface
-    // back-solves + per-excitation recovery) turns the O(|Gamma|) S_E materialization from
-    // |Gamma| iterative solves into one factorization + cheap back-solves -- a genuine speedup
-    // -- and is exact. Default to it whenever the environment is small enough to factor; fall
-    // back to iterative / geometric multigrid for very large environments (where a sparse
-    // direct factorization would not fit) or if SuperLU is unavailable.
+    // Default to a direct A_EE factorization (factor once + cheap back-solves for the |Gamma|
+    // S_E columns) when the environment fits; fall back to iterative / geometric multigrid for
+    // very large environments or if SuperLU is unavailable.
     bool use_direct = false;
 #if defined(MFEM_USE_SUPERLU)
     {
@@ -1142,12 +1125,11 @@ void SubstructuringSolver::CondenseEnvironment()
     }
   }
 
-  // Interface true-DOF geometric signature in the current gamma_global order, replicated
-  // across ranks. Lets a saved S_E be re-ordered onto the current interface when the region
-  // has been re-meshed / re-partitioned (fixed Gamma). H1: the DOF coordinates (width 3).
-  // H(curl): per-edge (tangential-integral) moments of {e_x,e_y,e_z} = the signed edge vector
-  // (dx,dy,dz), and of {x e_x, y e_y, z e_z} = (dx*xm, dy*ym, dz*zm), width 6 -- these encode
-  // position + orientation (with sign) so edge DOFs match up to an orientation flip.
+  // Interface true-DOF geometric signature (replicated), for re-ordering a saved S_E onto the
+  // current interface after region re-meshing / re-partitioning (fixed Gamma). H1: DOF
+  // coordinates (width 3). H(curl): per-edge moments dof(e_b) (edge vector) and dof(x_a e_b)
+  // (edge_b * mid_a), width 12 -- position + signed orientation, matching edge DOFs up to an
+  // orientation flip.
   const int sdim = impl->parent.Dimension();
   const int sig_w = impl->magnetostatic ? 12 : 3;
   auto gamma_sig = [&]()
