@@ -10,14 +10,17 @@ H1 counts are Palace's exact closed form on the mesh's entity counts
 or are computed from the mesh).  Every stage is scaled from the cost model's measured
 rates (per PCG iteration, per source, reducer setup + per pair, Palace peak, node used
 GiB, archive GB) by the H1 ratio, with 1x / 1.5x / 2x the measured mean PCG counts;
-the reducer splits into a setup part (~ the worker's non-source time) and a per-pair
-part scaled with the number of source pairs.  The decision is fail-closed: the job
+the reducer splits into a setup part (~ the worker's non-source time) and a block-pair
+part: the fraction ReducerEvaluationFraction of the measured pair seconds is the field
+read + evaluation work (N x ceil(N / b) source evaluations at block size b, decision 62(1):
+the measured rates ran at MeasuredBlockSize), the remainder the Gram work scaled with the
+number of source pairs.  The decision is fail-closed: the job
 fits when the 2x-PCG total with the preflight and margin factor is below the walltime
 and the largest Palace peak plus the runner's headroom stays under NodeFitFraction of
 the node.
 
 usage: estimate_stages.py --entity-counts JSON --stage ORDER:SOURCES ... [--local-edge ORDER:SOURCES]
-       [--cost-model PATH] [--cluster-profile PATH] [--out PATH]
+       [--reducer-block-size B] [--cost-model PATH] [--cluster-profile PATH] [--out PATH]
 """
 import argparse
 import hashlib
@@ -28,6 +31,7 @@ import sys
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 from mixed_mesh import h1_dofs_from_counts, h1_entity_counts  # noqa: E402
+from build_plan import DEFAULT_REDUCER_BLOCK_SIZE  # noqa: E402
 
 COST_MODEL = HERE / "cost-model.json"
 CLUSTER_PROFILE = HERE / "cluster-profile.json"
@@ -54,28 +58,47 @@ def entity_counts_of_mesh(mesh_path):
     return h1_entity_counts(read_mesh(mesh_path))
 
 
+def blocks_of(sources, block_size):
+    return -(-sources // block_size)
+
+
 def block_pairs(sources, block_size):
-    blocks = -(-sources // block_size)
+    blocks = blocks_of(sources, block_size)
     return blocks * (blocks + 1) // 2
 
 
-def estimate_stage(model, order, sources, counts):
-    """One worker + reducer stage at `order` on `sources` sources."""
+def source_evaluations(sources, block_size):
+    """Archived source fields the reducer reads and evaluates: every source once per block
+    pair its block takes part in (ceil(N / b) block pairs per block)."""
+    return sources * blocks_of(sources, block_size)
+
+
+def estimate_stage(model, order, sources, counts, block_size=DEFAULT_REDUCER_BLOCK_SIZE):
+    """One worker + reducer stage at `order` on `sources` sources, the reducer at
+    PALACE_RESPONSE_BLOCK_SIZE `block_size`."""
     measured = model["Stages"].get(f"p{order}")
     if measured is None:
         raise ValueError(f"the cost model has no measured stage at order {order} (orders {sorted(model['Stages'])})")
+    if int(block_size) < 1:
+        raise ValueError(f"the reducer block size must be an integer >= 1, not {block_size}")
     ratio = h1_dofs_from_counts(counts, order) / measured["H1"]
     pairs = sources * (sources + 1) // 2
     measured_pairs = measured["Sources"] * (measured["Sources"] + 1) // 2
+    evaluations = source_evaluations(sources, block_size)
+    measured_evaluations = source_evaluations(measured["Sources"], model["MeasuredBlockSize"])
+    evaluation_fraction = model["ReducerEvaluationFraction"]
     solve = measured["SecondsPerPCGIteration"] * measured["MeanPCGIterations"] * ratio
     other = (measured["MeanPerSourceSeconds"] - measured["SecondsPerPCGIteration"] * measured["MeanPCGIterations"]) * ratio
-    reducer = ((measured["ReducerPalaceSeconds"] - measured["ReducerPairSeconds"]) * ratio
-               + measured["ReducerPairSeconds"] * ratio * pairs / measured_pairs)
+    reducer_setup = (measured["ReducerPalaceSeconds"] - measured["ReducerPairSeconds"]) * ratio
+    reducer_evaluation = measured["ReducerPairSeconds"] * ratio * evaluation_fraction * evaluations / measured_evaluations
+    reducer_gram = measured["ReducerPairSeconds"] * ratio * (1.0 - evaluation_fraction) * pairs / measured_pairs
+    reducer = reducer_setup + reducer_evaluation + reducer_gram
     gb_per_gib = model["PalaceGBPerGiB"]
     stage = {"Order": order, "Sources": sources, "H1Estimate": h1_dofs_from_counts(counts, order),
-             "DOFRatioVsMeasured": ratio, "ReducerPairs": pairs,
-             "ReducerBlockPairs": block_pairs(sources, model["BlockSize"]),
+             "DOFRatioVsMeasured": ratio, "ReducerPairs": pairs, "ReducerBlockSize": int(block_size),
+             "ReducerBlockPairs": block_pairs(sources, block_size), "ReducerSourceEvaluations": evaluations,
              "ReducerSecondsEstimate": reducer,
+             "ReducerSecondsEstimateParts": {"Setup": reducer_setup, "Evaluation": reducer_evaluation, "Gram": reducer_gram},
              "WorkerNonSourceSecondsEstimate": measured["WorkerNonSourceSeconds"] * ratio,
              "WorkerPalacePeakGBEstimate": measured["WorkerPalacePeakGB"] * ratio,
              "ReducerPalacePeakGBEstimate": measured["ReducerPalacePeakGB"] * ratio,
@@ -114,9 +137,9 @@ def estimate_local_edge(model, order, sources, counts):
     return stage
 
 
-def estimate(counts, stages, *, local_edge=None, model=None, profile=None):
+def estimate(counts, stages, *, local_edge=None, model=None, profile=None, block_size=DEFAULT_REDUCER_BLOCK_SIZE):
     """The estimate record: `stages` = [(name, order, sources), ...] worker + reducer
-    stages, `local_edge` = (name, order, sources) or None."""
+    stages at reducer block size `block_size`, `local_edge` = (name, order, sources) or None."""
     model = model or load_cost_model()
     profile = profile or json.loads(CLUSTER_PROFILE.read_text())
     node_gib, walltime = profile["NodeGiB"], profile["WalltimeSeconds"]
@@ -126,10 +149,12 @@ def estimate(counts, stages, *, local_edge=None, model=None, profile=None):
     out = {"Mesh": {"EntityCounts": counts, "VolumeElements": counts["Tetrahedra"] + counts["Prisms"] + counts["Pyramids"],
                     "H1ByOrder": {f"p{p}": h1_dofs_from_counts(counts, p) for p in (1, 2, 3, 4, 5)}},
            "CostModel": {"Path": model["Path"], "SHA256": model["SHA256"], "MeasuredMesh": model["MeasuredMesh"]["SHA256"],
-                         "ClosedFormCheck": model.get("ClosedFormCheck")},
+                         "ClosedFormCheck": model.get("ClosedFormCheck"), "MeasuredBlockSize": model["MeasuredBlockSize"],
+                         "ReducerEvaluationFraction": model["ReducerEvaluationFraction"]},
+           "ReducerBlockSize": int(block_size),
            "Stages": {}}
     for name, order, sources in stages:
-        stage = estimate_stage(model, order, sources, counts)
+        stage = estimate_stage(model, order, sources, counts, block_size)
         stage["FitsNode"] = max(stage["NodeUsedGiBEstimateWorker"], stage["NodeUsedGiBEstimateReducer"]) < model["NodeFitFraction"] * node_gib
         for factor in factors:
             totals[factor] += stage["ByPCGFactor"][factor]["StageSecondsEstimate"]
@@ -174,6 +199,8 @@ def main(argv=None):
     parser.add_argument("--mesh", type=Path, help="mesh to count the entities of (when no --entity-counts)")
     parser.add_argument("--stage", action="append", default=[], metavar="ORDER:SOURCES", help="worker + reducer stage (repeatable)")
     parser.add_argument("--local-edge", metavar="ORDER:SOURCES", help="the ordinary-path local-edge stage")
+    parser.add_argument("--reducer-block-size", type=int, default=DEFAULT_REDUCER_BLOCK_SIZE,
+                        help=f"PALACE_RESPONSE_BLOCK_SIZE of the reducer stages (default {DEFAULT_REDUCER_BLOCK_SIZE})")
     parser.add_argument("--cost-model", type=Path, default=COST_MODEL)
     parser.add_argument("--cluster-profile", type=Path, default=CLUSTER_PROFILE)
     parser.add_argument("--out", type=Path)
@@ -187,7 +214,7 @@ def main(argv=None):
         order, sources = parse_stage(args.local_edge)
         local = (f"local-edge-p{order}-{sources}", order, sources)
     record = estimate(counts, stages, local_edge=local, model=load_cost_model(args.cost_model),
-                      profile=json.loads(args.cluster_profile.read_text()))
+                      profile=json.loads(args.cluster_profile.read_text()), block_size=args.reducer_block_size)
     text = json.dumps(record, indent=2) + "\n"
     if args.out:
         args.out.write_text(text)

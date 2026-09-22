@@ -16,7 +16,9 @@
       "Pyramids": 13239
     }
   },
-  "BlockSize": 6,
+  "MeasuredBlockSize": 6,
+  "ReducerEvaluationFraction": 0.5,
+  "ReducerEvaluationFractionRule": "the fraction of the measured ReducerPairSeconds that is the per-source-evaluation work (archive read, gradient, face-neighbour exchange, quadrature-point evaluation of every source of a block pair: N x ceil(N / b) evaluations at block size b) - it shrinks with a larger PALACE_RESPONSE_BLOCK_SIZE (decision 62(1): default 6 -> 48); the remainder is the Gram work proportional to the source pairs N (N + 1) / 2, independent of b. PROVISIONAL 0.5 until the decision-62 step-1 acceptance measures the two-edge reducer at b = 6 and b = 48 on the same archive (the calibrated value and its measurement are recorded here)",
   "PCGFactors": [1.0, 1.5, 2.0],
   "PreflightAndMarginFactor": 1.35,
   "PreflightSeconds": 300,

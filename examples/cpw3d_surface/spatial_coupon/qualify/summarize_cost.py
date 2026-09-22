@@ -4,7 +4,8 @@
 
 """Per-source cost metrics, node-hours and full-coupon extrapolation from a
 run_stages.py status.json (four-edge-physics-11 summarize_cost.py; the source count,
-node count and block size are arguments / read from the status).
+node count are arguments; the reducer block size is read from the reducer stage's
+recorded PALACE_RESPONSE_BLOCK_SIZE, else --block-size).
 
 Per worker + reducer stage pair: elements, H1 / ND / RT, per-source solve and total
 seconds, PCG iterations, seconds per PCG iteration, worker / reducer Palace and wall
@@ -18,9 +19,19 @@ import argparse
 import json
 from pathlib import Path
 import statistics
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from build_plan import DEFAULT_REDUCER_BLOCK_SIZE  # noqa: E402
 
 GIB = 2**30
-DEFAULT_BLOCK_SIZE = 6
+DEFAULT_BLOCK_SIZE = DEFAULT_REDUCER_BLOCK_SIZE
+
+
+def reducer_block_size(reducer_stage, fallback):
+    """The block size the reducer stage ran at (its recorded environment), else `fallback`."""
+    recorded = (reducer_stage.get("Environment") or {}).get("PALACE_RESPONSE_BLOCK_SIZE")
+    return int(recorded) if recorded is not None else int(fallback)
 
 
 def stage_cost(stages, prefix, *, full_sources, nodes, block_size=DEFAULT_BLOCK_SIZE):
@@ -34,6 +45,7 @@ def stage_cost(stages, prefix, *, full_sources, nodes, block_size=DEFAULT_BLOCK_
     worker_non_source = parsed_worker["PalaceTotalSeconds"] - sum(per_source_total)
     seconds_per_iteration = sum(per_source_solve) / sum(iterations) if sum(iterations) else None
     pairs = n * (n + 1) // 2
+    block_size = reducer_block_size(reducer, block_size)
     blocks = -(-n // block_size)
     block_pairs = blocks * (blocks + 1) // 2
     # Reducer setup is everything except the block-pair work; approximate it by the
@@ -59,7 +71,8 @@ def stage_cost(stages, prefix, *, full_sources, nodes, block_size=DEFAULT_BLOCK_
             "WorkerPalaceTotalSeconds": parsed_worker["PalaceTotalSeconds"], "WorkerWallSeconds": worker["WallSeconds"],
             "WorkerNonSourceSeconds": worker_non_source,
             "ReducerPalaceTotalSeconds": parsed_reducer["PalaceTotalSeconds"], "ReducerWallSeconds": reducer["WallSeconds"],
-            "ReducerPairs": pairs, "ReducerBlockPairs": block_pairs, "ReducerPairSecondsEstimate": reducer_pair_seconds,
+            "ReducerPairs": pairs, "ReducerBlockSize": block_size, "ReducerBlockPairs": block_pairs,
+            "ReducerSourceEvaluations": n * blocks, "ReducerPairSecondsEstimate": reducer_pair_seconds,
             "StageWallSeconds": wall, "NodeHours": wall * nodes / 3600.0,
             "Memory": {"WorkerNodePeakUsedGiBSampled": (worker.get("NodePeakUsedBytesSampled") or 0) / GIB,
                        "ReducerNodePeakUsedGiBSampled": (reducer.get("NodePeakUsedBytesSampled") or 0) / GIB,
@@ -167,7 +180,9 @@ def main(argv=None):
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--full-sources", type=int, required=True, help="the coupon's source count (extrapolation target)")
     parser.add_argument("--nodes", type=int, default=1)
-    parser.add_argument("--block-size", type=int, default=DEFAULT_BLOCK_SIZE)
+    parser.add_argument("--block-size", type=int, default=DEFAULT_BLOCK_SIZE,
+                        help="reducer block size when the status records no PALACE_RESPONSE_BLOCK_SIZE (default "
+                             f"{DEFAULT_BLOCK_SIZE})")
     args = parser.parse_args(argv)
     summary = summarize(json.loads(args.status.read_text()), full_sources=args.full_sources, nodes=args.nodes,
                         block_size=args.block_size)

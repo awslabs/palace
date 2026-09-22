@@ -49,6 +49,7 @@ import trace_basis  # noqa: E402
 PHYSICS_RUN_KEY = "PhysicsRun"
 JOB_POLICY_KEY = "JobPolicy"
 JOB_POLICY_MODES = ("speed", "frugal", "fixed")
+REDUCER_BLOCK_SIZE_KEY = "ReducerBlockSize"
 TRACES_DIRECTORY = "traces"
 ZERO_TRACE_FILE = "zero-trace.csv"
 # Paths a derived config carries that differ from a reference config by construction.
@@ -95,6 +96,15 @@ def physics_run_parameters(manifest, case=None):
             raise CaseInputError(f"PhysicsRun.JobPolicy must be {{Mode in {JOB_POLICY_MODES}, FixedJobs (int >= 1, fixed only), "
                                  f"Rule}}, not {job_policy!r}")
         parameters["JobPolicy"] = {"Mode": mode, "FixedJobs": fixed if mode == "fixed" else None, "Rule": job_policy["Rule"]}
+    reducer_block_size = block.get(REDUCER_BLOCK_SIZE_KEY)
+    if reducer_block_size is not None:
+        # The manifest-recorded default of the reducer's PALACE_RESPONSE_BLOCK_SIZE
+        # (decision 62(1)); --reducer-block-size on the command line overrides it.
+        if (not isinstance(reducer_block_size, dict) or not isinstance(reducer_block_size.get("Value"), int) or
+                isinstance(reducer_block_size.get("Value"), bool) or reducer_block_size["Value"] < 1 or
+                not isinstance(reducer_block_size.get("Rule"), str) or not reducer_block_size["Rule"]):
+            raise CaseInputError(f"PhysicsRun.ReducerBlockSize must be {{Value (int >= 1), Rule}}, not {reducer_block_size!r}")
+        parameters["ReducerBlockSize"] = reducer_block_size["Value"]
     deviation_block = ((case or {}).get("Calibration") or {}).get(PHYSICS_RUN_KEY)
     if deviation_block is not None:
         deviation = ((manifest.get("Calibration") or {}).get("GateDeviations") or {}).get("LinearTol")
