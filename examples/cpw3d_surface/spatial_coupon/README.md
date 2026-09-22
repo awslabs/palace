@@ -122,9 +122,12 @@ the Julia ownership auditor re-derives the parent of every shell element (the fa
 rule of `interface_ownership.jl`: label >= 10000 is `10000 x ordinal + parent`) and the
 Python audits judge the parent surfaces (`mixed_mesh.parent_label_view`); the library
 build record binds the census (`RadialShells`) and `coupon_library.py qualify` lists
-one MA interface per shell, sums per type and extrapolates the sharp-edge MA per
-source (`qualify/radial_ma_profile.py`: the edge power law and the remainder inside
-the innermost ring from the per-shell matrices). Its command line is the
+one MA interface per shell, sums per type and computes the sharp-edge MA per source
+(`qualify/ma_tail.py`: MA_sharp = MA_raw + the `Consistent` remainder inside the
+innermost ring of `qualify/radial_ma_profile.py`; the p_MA gate and the p-sequence MA
+control evaluate p_MA_sharp against the reference's sharp value, extrapolated when its
+ring / edge sizing is recorded, else modelled from `--reference-edge-size-nm` by the
+eps^(1/3) law and annotated 'reference unextrapolated'). Its command line is the
 calibration-only relabel of an already published identity mesh.
 
 The [graded-library campaign notes](graded-library-campaign-20260910.md) record

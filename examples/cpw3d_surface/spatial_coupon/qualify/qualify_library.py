@@ -19,11 +19,13 @@ Per passed coupon of the build record:
     derived one apart from Model.Mesh, Problem.Output, the DataFile directory,
     Solver.Order and Solver.Linear.Tol (fail closed otherwise); `--reference none` runs
     the coupon on its own inputs (verdict PendingQualification or Failed, never Passed).
-    A radial-shell relabel case (build record `Relabel`, relabel_radial_ma_shells.py) derives
-    its base config against the parent MA labels - the reference comparison view - and
-    runs the shell-expanded config (case_inputs.expand_radial_shells: one MA interface per
-    shell), the reference matrices labeled by the reference's own interface map; a
-    labeled Calibration.PhysicsRun.LinearTol deviation replaces the recipe tolerance;
+    A coupon with per-ring radial MA shells (every production build since decision 61a:
+    build record `RadialShells`, the placement stage's census; a calibration relabel:
+    `Relabel`) derives its base config against the parent MA labels - the reference
+    comparison view - and runs the shell-expanded config (case_inputs.expand_radial_shells:
+    one MA interface per shell), the reference matrices labeled by the reference's own
+    interface map; a labeled Calibration.PhysicsRun.LinearTol deviation replaces the
+    recipe tolerance;
  2. sources: every PrescribedPotential source of the derived config; the control
     sources by geometric class (locate_sources / classify_sources: one per class in
     priority order, cycling) unless --control-source names them;
@@ -60,7 +62,17 @@ Per passed coupon of the build record:
     recipe's PhysicsRun order, then --orders, then the reference's own order when it
     differs; the same-order comparison is gated (the others are informational); a
     participation of an interface the coupon does not postprocess is NotApplicable
-    (gates.py).
+    (gates.py).  The MA of a shelled coupon is the SHARP-EDGE value (user decision 60(1),
+    ma_tail.py): per source and order MA_raw = the shell sum, MA_tail = the `Consistent`
+    remainder inside the innermost ring (top edge -2/3 anchored on ring 2 with the
+    ring-1 factor measured on this run, bottom edge its own rings-2..4 law), MA_sharp =
+    MA_raw + MA_tail, with alpha (rings 2-4) and its standard error, the ring-1 factor
+    and the estimator spread recorded (comparison/ma-tail.{json,md}, ma-sharp-<stage>.csv);
+    the p_MA gate and the p-sequence MA control evaluate p_MA_sharp (the gate table's
+    Quantity / MAObservable) against the reference's sharp value - extrapolated by the same
+    rule when its ring / edge sizing is recorded, else modelled from --reference-edge-size-nm
+    by the eps^(1/3) law and annotated 'reference unextrapolated' (raw-vs-raw recorded
+    next to sharp-vs-modelled); a coupon without shells is gated on the raw p_MA and says so.
 
 Records: ROOT/library-qualification.json (per coupon: verdict per gate and class
 offsets, PCG, node-h, x the reference cost, the job policy and split - N, blocks, per-job
@@ -68,8 +80,9 @@ estimate / actual / node-h, the coupon's critical path; library totals: node-h s
 over every job, critical-path wall clock from first submission to last fetch, jobs vs
 the cap, splits, coupons stopped and why),
 ROOT/qualification-gates.json (the table used), ROOT/process-library.json (the
-process-library entries: the case's model with the response matrices and the
-qualification bound; LibraryQualified only when Passed).
+process-library entries: the case's model with the response matrices, the per-source
+MA_raw / MA_sharp of a shelled coupon and the qualification bound; LibraryQualified only
+when Passed).
 """
 import argparse
 import calendar
