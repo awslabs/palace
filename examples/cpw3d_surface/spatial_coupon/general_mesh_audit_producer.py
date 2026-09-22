@@ -4,6 +4,7 @@
 
 """Produce mesh-bound records for the geometry-independence evidence assembler."""
 import argparse
+import copy
 import csv
 import json
 import math
@@ -17,8 +18,9 @@ import meshio
 import numpy as np
 from scipy.spatial import ConvexHull, QhullError
 
-from audit_edge_metric_mesh import (achieved_anisotropy, analyze, blocks, directional_widths,
+from audit_edge_metric_mesh import (achieved_anisotropy, blocks, directional_widths, physical_names,
                                     planar_patch_key)
+from audit_edge_metric_mesh import analyze as _analyze_uncached
 from edge_volume_metric import (COPLANAR_TOLERANCE, EDGE_LAYER_CELL_RULE,
                                 cluster_coplanar_triangles, edge_layer_cells,
                                 edge_layer_quality, edge_layer_required_reach,
@@ -30,8 +32,9 @@ from mesh_stage_contract import (GMSH_ONLY_PIPELINE, PIPELINE_BUILD_STAGE, PLACE
                                  gmsh_build_junction_segments, sha256 as stage_sha256,
                                  stage_order, trace_basis_edges_of_census, validate_stage_dag)
 from mixed_mesh import (SHELL_LABEL_STRIDE, SURFACE_KINDS, VOLUME_KINDS, cell_blocks, element_counts,
-                        h1_dofs, parent_label_view, shell_labels, shell_parent, simplicial_view,
-                        volume_quality)
+                        h1_dofs, parent_label_view, shell_labels, shell_parent)
+from mixed_mesh import simplicial_view as _simplicial_view_uncached
+from mixed_mesh import volume_quality as _volume_quality_uncached
 from semantic_mesh_contract import load_semantic_contract
 
 
@@ -43,6 +46,46 @@ def read_audit_mesh(path):
     """The mesh as the audits judge it: the radial MA shell labels (label-only, decision
     61a) collapsed to their parent labels (mixed_mesh.parent_label_view)."""
     return parent_label_view(read_mesh(path))
+
+
+# Per-mesh-object memo of the pure kernels the audits evaluate several times on one mesh
+# (decision 62 step 3, proposal 1): the same function on the same arrays returns the same
+# value, so the memo changes no record; every dict result is deep-copied on return (a
+# caller may extend it, e.g. _volume_quality adds EdgeLayer), the arrays are shared
+# read-only.  The memo lives on the mesh object itself (`_audit_memo`), so it dies with
+# it and never outlives a mesh that is read again.
+def _bitwise_equal(left, right):
+    """Two float arrays equal bit for bit (so -0.0 and 0.0 differ: a substitution of one
+    array for the other changes no printed value)."""
+    left, right = np.ascontiguousarray(left, dtype=float), np.ascontiguousarray(right, dtype=float)
+    return left.shape == right.shape and np.array_equal(left.view(np.int64), right.view(np.int64))
+
+
+def _memo(mesh, key, compute):
+    store = mesh.__dict__.setdefault("_audit_memo", {})
+    if key not in store:
+        store[key] = compute()
+    value = store[key]
+    return copy.deepcopy(value) if isinstance(value, dict) else value
+
+
+def simplicial_view(mesh):
+    """mixed_mesh.simplicial_view memoized per mesh object (the view is read-only)."""
+    return _memo(mesh, ("simplicial_view",), lambda: _simplicial_view_uncached(mesh))
+
+
+def volume_quality(mesh):
+    """mixed_mesh.volume_quality memoized per mesh object."""
+    return _memo(mesh, ("volume_quality",), lambda: _volume_quality_uncached(mesh))
+
+
+def analyze(mesh, contract, require_material_names=False):
+    """audit_edge_metric_mesh.analyze memoized per mesh object and contract content: the
+    report dict is deep-copied, the (representatives, patch) arrays are shared."""
+    key = ("analyze", json.dumps(contract, sort_keys=True), bool(require_material_names))
+    report, planes = _memo(mesh, key, lambda: _analyze_uncached(mesh, contract,
+                                                                require_material_names=require_material_names))
+    return copy.deepcopy(report), planes
 
 
 def _producer():
@@ -338,14 +381,22 @@ def _volume_quality(mesh, layer_spans=None, layer_reach=None):
 QUALITY_QUANTILES = (0.0, 0.01, 0.05, 0.5, 0.95, 0.99, 1.0)
 
 
+def _tetrahedron_aspect_frames(mesh):
+    """(corner coordinates, centers, corner-frame aspect) of the tetrahedra, memoized per
+    mesh object (the three neighborhood audits of one mesh share them)."""
+    def compute():
+        tetrahedra, _ = blocks(mesh, "tetra")
+        xyz = mesh.points[tetrahedra]
+        centers = xyz.mean(axis=1)
+        jacobian = np.stack((xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0],
+                             xyz[:, 3] - xyz[:, 0]), axis=2)
+        singular = np.linalg.svd(jacobian, compute_uv=False)
+        return xyz, centers, singular[:, 0] / singular[:, -1]
+    return _memo(mesh, ("tetrahedron_aspect_frames",), compute)
+
+
 def _point_aspects(mesh, points):
-    tetrahedra, _ = blocks(mesh, "tetra")
-    xyz = mesh.points[tetrahedra]
-    centers = xyz.mean(axis=1)
-    jacobian = np.stack((xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0],
-                         xyz[:, 3] - xyz[:, 0]), axis=2)
-    singular = np.linalg.svd(jacobian, compute_uv=False)
-    aspects = singular[:, 0] / singular[:, -1]
+    xyz, centers, aspects = _tetrahedron_aspect_frames(mesh)
     result = []
     for point in np.asarray(points, dtype=float).reshape(-1, 3):
         incident = np.flatnonzero(np.any(np.linalg.norm(xyz - point, axis=2) <= 1e-10, axis=1))
@@ -543,10 +594,15 @@ def _normalized_footprint_boundary(xyz, pinches=None):
 def _footprint_boundary_comparison(left_triangles, right_triangles, diagnostics=None):
     """Compare normalized PL segment sets and planar component/hole topology.
 
-    `diagnostics`, when a dict, receives the pinch vertices of both patches."""
+    `diagnostics`, when a dict, receives the pinch vertices of both patches.  Two
+    patches given by equal corner arrays (the identity placement compared with its own
+    canonical mesh) normalize once: the normalization is a pure function of the array."""
     left_pinches, right_pinches = [], []
     left, left_topology = _normalized_footprint_boundary(left_triangles, left_pinches)
-    right, right_topology = _normalized_footprint_boundary(right_triangles, right_pinches)
+    if _bitwise_equal(left_triangles, right_triangles):
+        right, right_topology, right_pinches = left, copy.deepcopy(left_topology), list(left_pinches)
+    else:
+        right, right_topology = _normalized_footprint_boundary(right_triangles, right_pinches)
     if diagnostics is not None:
         diagnostics["PinchVertices"] = {
             "Reference": len(left_pinches), "Candidate": len(right_pinches),
@@ -1081,7 +1137,12 @@ def complexity_record(base, mesh_path, contract_path, recipe_path, *, mesh=None)
 
 def _mesh_invariants(mesh):
     """Material volumes and label areas on the conforming simplicial view (exact for
-    the planar-faced prisms, pyramids and quadrangles of the tube build)."""
+    the planar-faced prisms, pyramids and quadrangles of the tube build); memoized per
+    mesh object."""
+    return _memo(mesh, ("mesh_invariants",), lambda: _mesh_invariants_uncached(mesh))
+
+
+def _mesh_invariants_uncached(mesh):
     mesh = simplicial_view(mesh)
     tetrahedra, materials = blocks(mesh, "tetra")
     xyz = mesh.points[tetrahedra]
@@ -1124,6 +1185,13 @@ def _same_cell_blocks(left, right):
 
 def _physical_covariance_report(identity, transformed, contract, matrix):
     normalized = _inverse_transformed_mesh(transformed, matrix)
+    if (_bitwise_equal(identity.points, normalized.points) and _same_cell_blocks(identity, normalized) and
+            physical_names(identity, 3) == physical_names(normalized, 3)):
+        # The identity placement: the inverse-transformed candidate equals the canonical
+        # mesh in every point, cell block, label and volume name - the inputs of every
+        # measurement below - so the candidate side is the same object and every kernel
+        # runs once (decision 62 step 3, proposal 1; the values are unchanged).
+        normalized = identity
     identity_view, normalized_view = simplicial_view(identity), simplicial_view(normalized)
     left, _ = analyze(identity_view, contract, require_material_names=True)
     right, _ = analyze(normalized_view, contract, require_material_names=True)
