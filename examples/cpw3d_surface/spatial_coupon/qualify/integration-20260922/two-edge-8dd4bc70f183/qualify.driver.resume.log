@@ -1,0 +1,6 @@
+two-edge-8dd4bc70f183: planned ['two-edge-8dd4bc70f183-p4-worker', 'two-edge-8dd4bc70f183-p4-reducer', 'two-edge-8dd4bc70f183-p3-control-worker', 'two-edge-8dd4bc70f183-p3-control-reducer', 'two-edge-8dd4bc70f183-p4-local-edge'] (policy frugal: N = 1 of at most 1 (blocks [78] sources; controls + local-edge in worker-1); longest job 28 min, critical path 28 min, node time 0.47 h at 2.0x PCG (+35% and preflight) against the 6.0 h walltime)
+two-edge-8dd4bc70f183: resumed single job 46987.ip-192-168-54-24.us-west-2.compute.internal submitted 2026-09-22T06:55:30Z
+== 2026-09-22T08:49:16Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state None stages [('two-edge-8dd4bc70f183-p4-worker', 'complete', 515), ('two-edge-8dd4bc70f183-p4-reducer', 'complete', 16), ('two-edge-8dd4bc70f183-p3-control-worker', 'complete', 32), ('two-edge-8dd4bc70f183-p3-control-reducer', 'complete', 10), ('two-edge-8dd4bc70f183-p4-local-edge', 'complete', 103)]
+two-edge-8dd4bc70f183: Failed (no reference matrices and failing ['PSequenceControls'])
+two-edge-8dd4bc70f183: failed verdict Failed
+LIBRARY attempted 1 qualified 0 pending 0 failed 1 planned 0 skipped 0 unsupported 0 node-h 0.188 jobs 1/1 (cap 40); record /tmp/library-int63-01/library-qualification.json

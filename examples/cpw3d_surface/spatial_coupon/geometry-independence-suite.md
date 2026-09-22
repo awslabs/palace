@@ -3215,6 +3215,30 @@ executable at b = 48 (step 4), i.e. the 8.26 node-h device-library run -> ~5.2 n
 are unchanged. Every record of the two rebuilt roots is bit-identical apart from timings; the
 physical gates, the quadrature rule / order and the rotate-z policy are untouched.
 
+**Live acceptance of the merged qualify (PBS 46987, 2026-09-22; records under
+`qualify/integration-20260922/`).** two-edge-8dd4bc70f183 from the step-3 AFTER build record
+(identity 179a405d), `--reference none --controls p3`, the default executable 170439c4… (origin: the
+manifest's `FrozenExecutable`) and block size 48 (origin: the manifest's `ReducerBlockSize`) on both
+reducers: p4 worker 514.7 s + reducer 15.8 s (Palace peak 33.8 GB), p3 control worker 32.2 s +
+reducer 10.4 s (22.3 GB), local-edge; 0.188 node-h; the job was held / re-queued eleven times by the
+dispatcher (CF:ROLLBACK_COMPLETE, r8g.48xlarge capacity) before running. The verdict is `Failed` on
+`PSequenceControls` alone: with the p3 control only there is no step to the higher order - the run
+design of the smallest sufficient acceptance, not a physics result. Comparison target: **PBS 46730**
+(the decision-61a MA-sharp acceptance: the same qualify inputs - the shelled mesh 179a405d, Tol
+1e-10, the same eight controls - with b28f089a… at b = 6). PBS 46718 is not a valid target: it
+reduced the PBS 46685 archives of the pre-shell mesh 5d01204e at Tol 1e-8 (no MA shell interfaces,
+another solve tolerance), so bit-identity with it is impossible for any implementation (supervisor
+decision, 2026-09-22). Result: the p3 control's 36 domain and 3,456 surface entries are **bit-identical**
+to PBS 46730's (row order differs: (i <= j) vs block-pair order; every consumer is key-based); the
+p4 stage 3,021 / 3,081 domain and 295,746 / 295,776 surface entries bit-identical, max per-entry
+relative difference 9.7e-13 / 6.7e-13 (the CSV print resolution, as PBS 46718's 8.4e-13); the p4
+local-edge output bit-identical including its row order (the worker / direct-solve path of the new
+executable equals b28's). Reducer walls vs PBS 46730: p4 148.6 -> 15.8 s, p3 12.4 -> 10.4 s; Palace
+peak 45.5 -> 33.8 GB and 29.9 -> 22.3 GB. One defect fixed forward on the way: `ma_tail.markdown`
+formatted a `None` strongest-source median with `:.3f` for a run without a reference (the driver
+stopped after the fetch / verification / archive deletion; `f3` prints n/a, test added, the analysis
+completed under `--resume` without a second job).
+
 ## Preflight
 
 ```sh

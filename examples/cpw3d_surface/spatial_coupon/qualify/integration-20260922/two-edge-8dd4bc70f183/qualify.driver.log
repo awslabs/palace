@@ -1,0 +1,98 @@
+two-edge-8dd4bc70f183: planned ['two-edge-8dd4bc70f183-p4-worker', 'two-edge-8dd4bc70f183-p4-reducer', 'two-edge-8dd4bc70f183-p3-control-worker', 'two-edge-8dd4bc70f183-p3-control-reducer', 'two-edge-8dd4bc70f183-p4-local-edge'] (policy frugal: N = 1 of at most 1 (blocks [78] sources; controls + local-edge in worker-1); longest job 28 min, critical path 28 min, node time 0.47 h at 2.0x PCG (+35% and preflight) against the 6.0 h walltime)
+two-edge-8dd4bc70f183: submitted single 46987.ip-192-168-54-24.us-west-2.compute.internal (1 user jobs before, cap 40; /data/home/simlap/coupon_accuracy_assessment_20260913/library-int63-01/two-edge-8dd4bc70f183)
+== 2026-09-22T06:57:00Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T06:58:30Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T07:00:00Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=1:subnet=subnet-0c)
+== 2026-09-22T07:01:30Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=1:subnet=subnet-0c)
+== 2026-09-22T07:03:01Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=1:subnet=subnet-0c)
+== 2026-09-22T07:04:31Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T07:06:01Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T07:07:31Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=2:subnet=subnet-0c)
+== 2026-09-22T07:09:01Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=2:subnet=subnet-0c)
+== 2026-09-22T07:10:31Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=2:subnet=subnet-0c)
+== 2026-09-22T07:12:01Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=2:subnet=subnet-0c)
+== 2026-09-22T07:13:31Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T07:15:02Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T07:16:32Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=3:subnet=subnet-0c)
+== 2026-09-22T07:18:02Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=3:subnet=subnet-0c)
+== 2026-09-22T07:19:32Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=3:subnet=subnet-0c)
+== 2026-09-22T07:21:02Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=3:subnet=subnet-0c)
+== 2026-09-22T07:22:32Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T07:24:03Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T07:25:34Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=4:subnet=subnet-0c)
+== 2026-09-22T07:27:04Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=4:subnet=subnet-0c)
+== 2026-09-22T07:28:34Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=4:subnet=subnet-0c)
+== 2026-09-22T07:30:04Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=4:subnet=subnet-0c)
+== 2026-09-22T07:31:34Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T07:33:04Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T07:34:34Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=5:subnet=subnet-0c)
+== 2026-09-22T07:36:05Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=5:subnet=subnet-0c)
+== 2026-09-22T07:37:35Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=5:subnet=subnet-0c)
+== 2026-09-22T07:39:05Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T07:40:35Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T07:42:05Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=6:subnet=subnet-0c)
+== 2026-09-22T07:43:35Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=6:subnet=subnet-0c)
+== 2026-09-22T07:45:05Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=6:subnet=subnet-0c)
+== 2026-09-22T07:46:35Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=6:subnet=subnet-0c)
+== 2026-09-22T07:48:06Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T07:49:36Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T07:51:06Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=7:subnet=subnet-0c)
+== 2026-09-22T07:52:36Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=7:subnet=subnet-0c)
+== 2026-09-22T07:54:06Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=7:subnet=subnet-0c)
+== 2026-09-22T07:55:36Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=7:subnet=subnet-0c)
+== 2026-09-22T07:57:06Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T07:58:37Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T08:00:07Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=8:subnet=subnet-0c)
+== 2026-09-22T08:01:37Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=8:subnet=subnet-0c)
+== 2026-09-22T08:03:07Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=8:subnet=subnet-0c)
+== 2026-09-22T08:04:37Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T08:06:07Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T08:07:37Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=9:subnet=subnet-0c)
+== 2026-09-22T08:09:08Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=9:subnet=subnet-0c)
+== 2026-09-22T08:10:38Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=9:subnet=subnet-0c)
+== 2026-09-22T08:12:08Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=9:subnet=subnet-0c)
+== 2026-09-22T08:13:38Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T08:15:08Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T08:16:38Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=10:subnet=subnet-0)
+== 2026-09-22T08:18:09Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=10:subnet=subnet-0)
+== 2026-09-22T08:19:39Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=10:subnet=subnet-0)
+== 2026-09-22T08:21:09Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T08:22:39Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T08:24:09Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=11:subnet=subnet-0)
+== 2026-09-22T08:25:39Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=11:subnet=subnet-0)
+== 2026-09-22T08:27:09Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=11:subnet=subnet-0)
+== 2026-09-22T08:28:40Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state H stages None (held, still queued: error_message = CF:ROLLBACK_COMPLETE:retry=11:subnet=subnet-0)
+== 2026-09-22T08:30:10Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state Q stages None
+== 2026-09-22T08:31:40Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state R stages []
+== 2026-09-22T08:33:10Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state R stages []
+== 2026-09-22T08:34:40Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state R stages []
+== 2026-09-22T08:36:10Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state R stages []
+== 2026-09-22T08:37:41Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state R stages []
+== 2026-09-22T08:39:11Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state R stages []
+== 2026-09-22T08:40:41Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state R stages [('two-edge-8dd4bc70f183-p4-worker', 'complete', 515), ('two-edge-8dd4bc70f183-p4-reducer', 'complete', 16), ('two-edge-8dd4bc70f183-p3-control-worker', 'complete', 32)]
+== 2026-09-22T08:42:12Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state R stages [('two-edge-8dd4bc70f183-p4-worker', 'complete', 515), ('two-edge-8dd4bc70f183-p4-reducer', 'complete', 16), ('two-edge-8dd4bc70f183-p3-control-worker', 'complete', 32), ('two-edge-8dd4bc70f183-p3-control-reducer', 'complete', 10)]
+== 2026-09-22T08:43:42Z two-edge-8dd4bc70f183 single job 46987.ip-192-168-54-24.us-west-2.compute.internal state None stages [('two-edge-8dd4bc70f183-p4-worker', 'complete', 515), ('two-edge-8dd4bc70f183-p4-reducer', 'complete', 16), ('two-edge-8dd4bc70f183-p3-control-worker', 'complete', 32), ('two-edge-8dd4bc70f183-p3-control-reducer', 'complete', 10), ('two-edge-8dd4bc70f183-p4-local-edge', 'complete', 103)]
+Traceback (most recent call last):
+  File "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/coupon_library.py", line 160, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/coupon_library.py", line 107, in main
+    return qualify_library.run_from_args(args)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/qualify/qualify_library.py", line 1363, in run_from_args
+    record = run_qualify(args)
+  File "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/qualify/qualify_library.py", line 1292, in run_qualify
+    analyze_case(record, context, results, gates=gates, gates_digest=gates_digest, profile=profile)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/qualify/qualify_library.py", line 905, in analyze_case
+    ma_tail.write_record(comparison_dir / "ma-tail.json", comparison_dir / "ma-tail.md", ma_tail_record,
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                         f"Sharp-edge MA extrapolation of {record['Case']}")
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/qualify/ma_tail.py", line 264, in write_record
+    Path(path_md).write_text(markdown(record, title))
+                             ~~~~~~~~^^^^^^^^^^^^^^^
+  File "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/qualify/ma_tail.py", line 245, in markdown
+    f"{alpha['SEMedian']:.3f}; strongest-{len(block['Strongest'])} median {alpha['StrongestMedian']:.3f}; theory {alpha['Theoretical']:.3f}"
+                                                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: unsupported format string passed to NoneType.__format__

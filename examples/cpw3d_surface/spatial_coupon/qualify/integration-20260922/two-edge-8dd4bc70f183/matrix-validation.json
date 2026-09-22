@@ -1,0 +1,874 @@
+{
+  "two-edge-8dd4bc70f183-p4": {
+    "domain": {
+      "Rows": 3081,
+      "BasisSize": 78,
+      "Groups": {
+        "()": {
+          "Q_ij (J)": {
+            "Frobenius": 9.43208366842874e-16,
+            "MinimumEigenvalueRelative": 0.0035768059146003743
+          }
+        }
+      }
+    },
+    "surface": {
+      "Rows": 49296,
+      "BasisSize": 78,
+      "Groups": {
+        "(2.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 3.3242825079229643e-18,
+            "MinimumEigenvalueRelative": 1.521427649349043e-14
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 3.3242825079229643e-18,
+            "MinimumEigenvalueRelative": 1.521427649349043e-14
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 3.3242825079229643e-18,
+            "MinimumEigenvalueRelative": 1.521427636955351e-14
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 3.3242825079229643e-18,
+            "MinimumEigenvalueRelative": 1.521427636955351e-14
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(3.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 9.782541312144525e-21,
+            "MinimumEigenvalueRelative": 7.064939634099141e-13
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 9.782541312144525e-21,
+            "MinimumEigenvalueRelative": 7.064939634099141e-13
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 9.782541312144525e-21,
+            "MinimumEigenvalueRelative": 7.064939634099141e-13
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 9.782541312144525e-21,
+            "MinimumEigenvalueRelative": 7.064939634099141e-13
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(4.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 1.6669845120410904e-21,
+            "MinimumEigenvalueRelative": 1.1629000515643656e-14
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 1.6669845120410904e-21,
+            "MinimumEigenvalueRelative": 1.1629000515643656e-14
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 1.6669845120410904e-21,
+            "MinimumEigenvalueRelative": 1.1629000515643656e-14
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 1.6669845120410904e-21,
+            "MinimumEigenvalueRelative": 1.1629000515643656e-14
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(5.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 1.1220535896325824e-21,
+            "MinimumEigenvalueRelative": 1.2757693320855697e-14
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 1.1220535896325824e-21,
+            "MinimumEigenvalueRelative": 1.2757693320855697e-14
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 1.1220535896325824e-21,
+            "MinimumEigenvalueRelative": 1.2757710856353288e-14
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 1.1220535896325824e-21,
+            "MinimumEigenvalueRelative": 1.2757710856353288e-14
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(6.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 1.2195909908870693e-21,
+            "MinimumEigenvalueRelative": 6.597831950851055e-15
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 1.2195909908870693e-21,
+            "MinimumEigenvalueRelative": 6.597831950851055e-15
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 1.2195909908870693e-21,
+            "MinimumEigenvalueRelative": 6.597831950851055e-15
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 1.2195909908870693e-21,
+            "MinimumEigenvalueRelative": 6.597831950851055e-15
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(7.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 1.5843755821455628e-21,
+            "MinimumEigenvalueRelative": 5.372699654389624e-15
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 1.5843755821455628e-21,
+            "MinimumEigenvalueRelative": 5.372699654389624e-15
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 1.5843755821455628e-21,
+            "MinimumEigenvalueRelative": 5.372699654389624e-15
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 1.5843755821455628e-21,
+            "MinimumEigenvalueRelative": 5.372699654389624e-15
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(8.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 1.8912188992841512e-21,
+            "MinimumEigenvalueRelative": 1.1183779665648465e-14
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 1.8912188992841512e-21,
+            "MinimumEigenvalueRelative": 1.1183779665648465e-14
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 1.8912188992841512e-21,
+            "MinimumEigenvalueRelative": 1.1183351312480573e-14
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 1.8912188992841512e-21,
+            "MinimumEigenvalueRelative": 1.1183351312480573e-14
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(9.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 2.419433834857275e-21,
+            "MinimumEigenvalueRelative": 2.133070199664294e-14
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 2.419433834857275e-21,
+            "MinimumEigenvalueRelative": 2.133070199664294e-14
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 2.419433834857275e-21,
+            "MinimumEigenvalueRelative": 2.133070199664294e-14
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 2.419433834857275e-21,
+            "MinimumEigenvalueRelative": 2.133070199664294e-14
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(10.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 3.1576063584636074e-21,
+            "MinimumEigenvalueRelative": 6.345701415470386e-14
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 3.1576063584636074e-21,
+            "MinimumEigenvalueRelative": 6.345701415470386e-14
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 3.1576063584636074e-21,
+            "MinimumEigenvalueRelative": 6.345701415470386e-14
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 3.1576063584636074e-21,
+            "MinimumEigenvalueRelative": 6.345701415470386e-14
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(11.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 3.211430917594744e-22,
+            "MinimumEigenvalueRelative": 2.0173036355733373e-14
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 3.211430917594744e-22,
+            "MinimumEigenvalueRelative": 2.0173036355733373e-14
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 3.211430917594744e-22,
+            "MinimumEigenvalueRelative": 2.0173036355733373e-14
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 3.211430917594744e-22,
+            "MinimumEigenvalueRelative": 2.0173036355733373e-14
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(12.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 3.9788112986862266e-22,
+            "MinimumEigenvalueRelative": 1.467133634586179e-14
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 3.9788112986862266e-22,
+            "MinimumEigenvalueRelative": 1.467133634586179e-14
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 3.9788112986862266e-22,
+            "MinimumEigenvalueRelative": 1.4671328200182877e-14
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 3.9788112986862266e-22,
+            "MinimumEigenvalueRelative": 1.4671328200182877e-14
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(13.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 5.946848174210415e-22,
+            "MinimumEigenvalueRelative": 5.9868251047795816e-15
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 5.946848174210415e-22,
+            "MinimumEigenvalueRelative": 5.9868251047795816e-15
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 5.946848174210415e-22,
+            "MinimumEigenvalueRelative": 5.9868144512682074e-15
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 5.946848174210415e-22,
+            "MinimumEigenvalueRelative": 5.9868144512682074e-15
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(14.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 8.8390934832525e-22,
+            "MinimumEigenvalueRelative": 2.077512326724101e-15
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 8.8390934832525e-22,
+            "MinimumEigenvalueRelative": 2.077512326724101e-15
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 8.8390934832525e-22,
+            "MinimumEigenvalueRelative": 2.0775143190234716e-15
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 8.8390934832525e-22,
+            "MinimumEigenvalueRelative": 2.0775143190234716e-15
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(15.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 1.2727709343908946e-21,
+            "MinimumEigenvalueRelative": 2.730350211057573e-15
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 1.2727709343908946e-21,
+            "MinimumEigenvalueRelative": 2.730350211057573e-15
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 1.2727709343908946e-21,
+            "MinimumEigenvalueRelative": 2.730358702084343e-15
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 1.2727709343908946e-21,
+            "MinimumEigenvalueRelative": 2.730358702084343e-15
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(16.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 1.8651411479461698e-21,
+            "MinimumEigenvalueRelative": 4.430216405561492e-15
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 1.8651411479461698e-21,
+            "MinimumEigenvalueRelative": 4.430216405561492e-15
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 1.8651411479461698e-21,
+            "MinimumEigenvalueRelative": 4.430212552074849e-15
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 1.8651411479461698e-21,
+            "MinimumEigenvalueRelative": 4.430212552074849e-15
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(17.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 2.631030195759164e-21,
+            "MinimumEigenvalueRelative": 7.321317303304786e-15
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 2.631030195759164e-21,
+            "MinimumEigenvalueRelative": 7.321317303304786e-15
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 2.631030195759164e-21,
+            "MinimumEigenvalueRelative": 7.321317303304786e-15
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 2.631030195759164e-21,
+            "MinimumEigenvalueRelative": 7.321317303304786e-15
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        }
+      }
+    }
+  },
+  "two-edge-8dd4bc70f183-p3-control": {
+    "domain": {
+      "Rows": 36,
+      "BasisSize": 8,
+      "Groups": {
+        "()": {
+          "Q_ij (J)": {
+            "Frobenius": 3.506734364431858e-16,
+            "MinimumEigenvalueRelative": 0.06269405305415728
+          }
+        }
+      }
+    },
+    "surface": {
+      "Rows": 576,
+      "BasisSize": 8,
+      "Groups": {
+        "(2.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 1.570022869424478e-19,
+            "MinimumEigenvalueRelative": 1.3061588686546203e-06
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 1.570022869424478e-19,
+            "MinimumEigenvalueRelative": 1.3061588686546203e-06
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 1.570022869424478e-19,
+            "MinimumEigenvalueRelative": 1.3061588686546203e-06
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 1.570022869424478e-19,
+            "MinimumEigenvalueRelative": 1.3061588686546203e-06
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(3.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 6.686388187727193e-23,
+            "MinimumEigenvalueRelative": 0.000546157410731372
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 6.686388187727193e-23,
+            "MinimumEigenvalueRelative": 0.000546157410731372
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 6.686388187727193e-23,
+            "MinimumEigenvalueRelative": 0.000546157410731372
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 6.686388187727193e-23,
+            "MinimumEigenvalueRelative": 0.000546157410731372
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(4.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 1.0370377056057963e-23,
+            "MinimumEigenvalueRelative": 0.00040545958423101436
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 1.0370377056057963e-23,
+            "MinimumEigenvalueRelative": 0.00040545958423101436
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 1.0370377056057963e-23,
+            "MinimumEigenvalueRelative": 0.00040545958423101436
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 1.0370377056057963e-23,
+            "MinimumEigenvalueRelative": 0.00040545958423101436
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(5.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 7.592378584179214e-24,
+            "MinimumEigenvalueRelative": 0.0004028035486392027
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 7.592378584179214e-24,
+            "MinimumEigenvalueRelative": 0.0004028035486392027
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 7.592378584179214e-24,
+            "MinimumEigenvalueRelative": 0.0004028035486392027
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 7.592378584179214e-24,
+            "MinimumEigenvalueRelative": 0.0004028035486392027
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(6.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 8.225483972743016e-24,
+            "MinimumEigenvalueRelative": 0.0004003957047299548
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 8.225483972743016e-24,
+            "MinimumEigenvalueRelative": 0.0004003957047299548
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 8.225483972743016e-24,
+            "MinimumEigenvalueRelative": 0.0004003957047299548
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 8.225483972743016e-24,
+            "MinimumEigenvalueRelative": 0.0004003957047299548
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(7.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 1.034581714364934e-23,
+            "MinimumEigenvalueRelative": 0.0003823670814836156
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 1.034581714364934e-23,
+            "MinimumEigenvalueRelative": 0.0003823670814836156
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 1.034581714364934e-23,
+            "MinimumEigenvalueRelative": 0.0003823670814836156
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 1.034581714364934e-23,
+            "MinimumEigenvalueRelative": 0.0003823670814836156
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(8.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 1.2686635383407915e-23,
+            "MinimumEigenvalueRelative": 0.00040197958896258395
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 1.2686635383407915e-23,
+            "MinimumEigenvalueRelative": 0.00040197958896258395
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 1.2686635383407915e-23,
+            "MinimumEigenvalueRelative": 0.00040197958896258395
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 1.2686635383407915e-23,
+            "MinimumEigenvalueRelative": 0.00040197958896258395
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(9.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 1.6697242648385732e-23,
+            "MinimumEigenvalueRelative": 0.00043061668819720727
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 1.6697242648385732e-23,
+            "MinimumEigenvalueRelative": 0.00043061668819720727
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 1.6697242648385732e-23,
+            "MinimumEigenvalueRelative": 0.00043061668819720727
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 1.6697242648385732e-23,
+            "MinimumEigenvalueRelative": 0.00043061668819720727
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(10.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 2.3961382476978332e-23,
+            "MinimumEigenvalueRelative": 0.0004977764920693152
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 2.3961382476978332e-23,
+            "MinimumEigenvalueRelative": 0.0004977764920693152
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 2.3961382476978332e-23,
+            "MinimumEigenvalueRelative": 0.0004977764920693152
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 2.3961382476978332e-23,
+            "MinimumEigenvalueRelative": 0.0004977764920693152
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(11.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 1.616717044858625e-23,
+            "MinimumEigenvalueRelative": 4.587716472572336e-05
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 1.616717044858625e-23,
+            "MinimumEigenvalueRelative": 4.587716472572336e-05
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 1.616717044858625e-23,
+            "MinimumEigenvalueRelative": 4.587716472572336e-05
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 1.616717044858625e-23,
+            "MinimumEigenvalueRelative": 4.587716472572336e-05
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(12.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 1.7479939003564942e-23,
+            "MinimumEigenvalueRelative": 9.490096809729355e-05
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 1.7479939003564942e-23,
+            "MinimumEigenvalueRelative": 9.490096809729355e-05
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 1.7479939003564942e-23,
+            "MinimumEigenvalueRelative": 9.490096809729355e-05
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 1.7479939003564942e-23,
+            "MinimumEigenvalueRelative": 9.490096809729355e-05
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(13.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 2.2489357555064377e-23,
+            "MinimumEigenvalueRelative": 0.0001451521780871502
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 2.2489357555064377e-23,
+            "MinimumEigenvalueRelative": 0.0001451521780871502
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 2.2489357555064377e-23,
+            "MinimumEigenvalueRelative": 0.0001451521780871502
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 2.2489357555064377e-23,
+            "MinimumEigenvalueRelative": 0.0001451521780871502
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(14.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 2.923232095252809e-23,
+            "MinimumEigenvalueRelative": 0.00020071355238938544
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 2.923232095252809e-23,
+            "MinimumEigenvalueRelative": 0.00020071355238938544
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 2.923232095252809e-23,
+            "MinimumEigenvalueRelative": 0.00020071355238938544
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 2.923232095252809e-23,
+            "MinimumEigenvalueRelative": 0.00020071355238938544
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(15.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 3.6681084831166955e-23,
+            "MinimumEigenvalueRelative": 0.0002396063667051485
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 3.6681084831166955e-23,
+            "MinimumEigenvalueRelative": 0.0002396063667051485
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 3.6681084831166955e-23,
+            "MinimumEigenvalueRelative": 0.0002396063667051485
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 3.6681084831166955e-23,
+            "MinimumEigenvalueRelative": 0.0002396063667051485
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(16.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 4.325593967212697e-23,
+            "MinimumEigenvalueRelative": 0.00029911404656328584
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 4.325593967212697e-23,
+            "MinimumEigenvalueRelative": 0.00029911404656328584
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 4.325593967212697e-23,
+            "MinimumEigenvalueRelative": 0.00029911404656328584
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 4.325593967212697e-23,
+            "MinimumEigenvalueRelative": 0.00029911404656328584
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        },
+        "(17.0, 1.0, 2e-06)": {
+          "Q_ij (J)": {
+            "Frobenius": 4.6835959898380456e-23,
+            "MinimumEigenvalueRelative": 0.000391462147563245
+          },
+          "Q_ij normal (J)": {
+            "Frobenius": 4.6835959898380456e-23,
+            "MinimumEigenvalueRelative": 0.000391462147563245
+          },
+          "Q_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          },
+          "Q_total_ij (J)": {
+            "Frobenius": 4.6835959898380456e-23,
+            "MinimumEigenvalueRelative": 0.000391462147563245
+          },
+          "Q_total_ij normal (J)": {
+            "Frobenius": 4.6835959898380456e-23,
+            "MinimumEigenvalueRelative": 0.000391462147563245
+          },
+          "Q_total_ij tangential (J)": {
+            "Frobenius": 0.0,
+            "MinimumEigenvalueRelative": 0.0
+          }
+        }
+      }
+    }
+  }
+}

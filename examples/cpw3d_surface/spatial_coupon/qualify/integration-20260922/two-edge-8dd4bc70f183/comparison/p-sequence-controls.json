@@ -1,0 +1,1282 @@
+{
+  "Orders": {
+    "main": 4,
+    "low": 3
+  },
+  "Controls": [
+    1,
+    2,
+    3,
+    5,
+    6,
+    20,
+    25,
+    49
+  ],
+  "Sources": {
+    "1": {
+      "E": {
+        "values": {
+          "low": 6.358682317388e-17,
+          "main": 6.35682698803e-17
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA": {
+        "values": {
+          "low": 2.59967447790668e-23,
+          "main": 2.6143726608428703e-23
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MS": {
+        "values": {
+          "low": 1.162736149586e-21,
+          "main": 1.158513366989e-21
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA_normal": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA_tangential": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MA": {
+        "values": {
+          "low": 4.088385530438901e-07,
+          "main": 4.112700669320988e-07
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MS": {
+        "values": {
+          "low": 1.828580343456481e-05,
+          "main": 1.8224711309124788e-05
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_SA": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA_tail": {
+        "values": {
+          "low": 9.211082333944793e-25,
+          "main": 7.87929341140643e-25
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA_sharp": {
+        "values": {
+          "low": 2.691785301246128e-23,
+          "main": 2.693165594956935e-23
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MA_sharp": {
+        "values": {
+          "low": 4.2332438811817406e-07,
+          "main": 4.236650769366864e-07
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      }
+    },
+    "2": {
+      "E": {
+        "values": {
+          "low": 1.304449328895e-16,
+          "main": 1.304179316636e-16
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA": {
+        "values": {
+          "low": 8.109081762436642e-23,
+          "main": 8.189139990680461e-23
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MS": {
+        "values": {
+          "low": 3.441680843687e-21,
+          "main": 3.428635720551e-21
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA_normal": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA_tangential": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MA": {
+        "values": {
+          "low": 6.21647892548333e-07,
+          "main": 6.279151866787404e-07
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MS": {
+        "values": {
+          "low": 2.6384166616900713e-05,
+          "main": 2.6289603559998352e-05
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_SA": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA_tail": {
+        "values": {
+          "low": 2.7054675827866396e-24,
+          "main": 2.3552969746987364e-24
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA_sharp": {
+        "values": {
+          "low": 8.379628520715306e-23,
+          "main": 8.424669688150335e-23
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MA_sharp": {
+        "values": {
+          "low": 6.423881966970457e-07,
+          "main": 6.459747966162296e-07
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      }
+    },
+    "3": {
+      "E": {
+        "values": {
+          "low": 1.701201617921e-16,
+          "main": 1.698433386161e-16
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA": {
+        "values": {
+          "low": 3.14212737840392e-23,
+          "main": 3.10668966754942e-23
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MS": {
+        "values": {
+          "low": 1.419766216886e-21,
+          "main": 1.41193922072e-21
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA_normal": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA_tangential": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MA": {
+        "values": {
+          "low": 1.8470046967412617e-07,
+          "main": 1.8291501408668884e-07
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MS": {
+        "values": {
+          "low": 8.345666979914257e-06,
+          "main": 8.313185740604356e-06
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_SA": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA_tail": {
+        "values": {
+          "low": 1.0624776343583948e-24,
+          "main": 9.143222302040664e-25
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA_sharp": {
+        "values": {
+          "low": 3.2483751418397596e-23,
+          "main": 3.198121890569826e-23
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MA_sharp": {
+        "values": {
+          "low": 1.909459236118953e-07,
+          "main": 1.88298341084698e-07
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      }
+    },
+    "5": {
+      "E": {
+        "values": {
+          "low": 1.725460298441e-16,
+          "main": 1.721691240427e-16
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA": {
+        "values": {
+          "low": 7.326637825083e-23,
+          "main": 7.269548957118899e-23
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MS": {
+        "values": {
+          "low": 5.697326684667e-21,
+          "main": 5.667359831951e-21
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA_normal": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA_tangential": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MA": {
+        "values": {
+          "low": 4.2461932225869326e-07,
+          "main": 4.222330221832321e-07
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MS": {
+        "values": {
+          "low": 3.301916995606731e-05,
+          "main": 3.2917399466732645e-05
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_SA": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA_tail": {
+        "values": {
+          "low": 2.1960179440344342e-24,
+          "main": 1.890271684976663e-24
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA_sharp": {
+        "values": {
+          "low": 7.546239619486444e-23,
+          "main": 7.458576125616565e-23
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MA_sharp": {
+        "values": {
+          "low": 4.3734646495805643e-07,
+          "main": 4.332121782629706e-07
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      }
+    },
+    "6": {
+      "E": {
+        "values": {
+          "low": 1.759350089189e-16,
+          "main": 1.735657099507e-16
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA": {
+        "values": {
+          "low": 1.0249759901256999e-23,
+          "main": 1.0185118937464502e-23
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MS": {
+        "values": {
+          "low": 1.317656400642e-21,
+          "main": 1.311655370847e-21
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA_normal": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA_tangential": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MA": {
+        "values": {
+          "low": 5.825878524257663e-08,
+          "main": 5.868163095324247e-08
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MS": {
+        "values": {
+          "low": 7.489449704972559e-06,
+          "main": 7.55711120139782e-06
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_SA": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA_tail": {
+        "values": {
+          "low": 2.918302773359058e-25,
+          "main": 2.5189194669673e-25
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA_sharp": {
+        "values": {
+          "low": 1.0541590178592905e-23,
+          "main": 1.0437010884161231e-23
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MA_sharp": {
+        "values": {
+          "low": 5.991752433679767e-08,
+          "main": 6.013290809069248e-08
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      }
+    },
+    "20": {
+      "E": {
+        "values": {
+          "low": 6.148408351024e-17,
+          "main": 6.140486057704e-17
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA": {
+        "values": {
+          "low": 7.524474349174372e-23,
+          "main": 7.557702453677079e-23
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MS": {
+        "values": {
+          "low": 2.895792938156e-21,
+          "main": 2.876805505728e-21
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA_normal": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA_tangential": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MA": {
+        "values": {
+          "low": 1.2238084914970218e-06,
+          "main": 1.2307987319985859e-06
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MS": {
+        "values": {
+          "low": 4.709825328491257e-05,
+          "main": 4.6849801118246846e-05
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_SA": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA_tail": {
+        "values": {
+          "low": 2.6241487642977945e-24,
+          "main": 2.240910310703056e-24
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA_sharp": {
+        "values": {
+          "low": 7.786889225604151e-23,
+          "main": 7.781793484747385e-23
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MA_sharp": {
+        "values": {
+          "low": 1.26648862291446e-06,
+          "main": 1.2672927536386408e-06
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      }
+    },
+    "25": {
+      "E": {
+        "values": {
+          "low": 5.145912708868e-17,
+          "main": 5.126660472902e-17
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA": {
+        "values": {
+          "low": 2.6038448496573204e-22,
+          "main": 2.6164029950112504e-22
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MS": {
+        "values": {
+          "low": 1.563658303391e-19,
+          "main": 1.555693496428e-19
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA_normal": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA_tangential": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MA": {
+        "values": {
+          "low": 5.060025299632639e-06,
+          "main": 5.1035230611443395e-06
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MS": {
+        "values": {
+          "low": 0.0030386413292559995,
+          "main": 0.0030345163379766073
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_SA": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA_tail": {
+        "values": {
+          "low": 1.0216815430995909e-23,
+          "main": 9.409898220572822e-24
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA_sharp": {
+        "values": {
+          "low": 2.7060130039672793e-22,
+          "main": 2.7105019772169787e-22
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MA_sharp": {
+        "values": {
+          "low": 5.258567638164521e-06,
+          "main": 5.287071362622676e-06
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      }
+    },
+    "49": {
+      "E": {
+        "values": {
+          "low": 1.449886781157e-17,
+          "main": 1.445980020095e-17
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA": {
+        "values": {
+          "low": 7.513125246635203e-24,
+          "main": 7.525203187910054e-24
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MS": {
+        "values": {
+          "low": 1.297595280764e-23,
+          "main": 1.291295771503e-23
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA_normal": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_SA_tangential": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MA": {
+        "values": {
+          "low": 5.181870297927525e-07,
+          "main": 5.204223490872062e-07
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MS": {
+        "values": {
+          "low": 8.949631775582695e-07,
+          "main": 8.930246293570243e-07
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_SA": {
+        "values": {
+          "low": null,
+          "main": null
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA_tail": {
+        "values": {
+          "low": 3.3820317318867997e-25,
+          "main": 2.9066936553794593e-25
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "Q_MA_sharp": {
+        "values": {
+          "low": 7.851328419823883e-24,
+          "main": 7.815872553448e-24
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      },
+      "p_MA_sharp": {
+        "values": {
+          "low": 5.415132079181089e-07,
+          "main": 5.405242427163345e-07
+        },
+        "seq": {
+          "d_low": null,
+          "d_high": null,
+          "r": null,
+          "p_inf": null
+        },
+        "vs_ref": {}
+      }
+    }
+  }
+}

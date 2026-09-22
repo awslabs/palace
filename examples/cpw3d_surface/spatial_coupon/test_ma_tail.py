@@ -214,6 +214,13 @@ class MATailRuleTest(unittest.TestCase):
         self.assertIn("ring-1 factor", text)
         self.assertIn("reference unextrapolated", text)
         self.assertEqual(len((self.tmp / "ma-sharp.csv").read_text().splitlines()), 1 + len(self.sources))
+        # A run without a reference has no strongest-source set: the markdown prints n/a
+        # (the live acceptance of decision 63 with --reference none stopped here).
+        no_reference = {"Rule": ma_tail.RULE, "Orders": {"p4": {"Prefix": "x-p4", "Strongest": [],
+                                                               "Summary": ma_tail.summary(tails, self.sources, strongest=[])}},
+                        "Reference": None}
+        ma_tail.write_record(self.tmp / "ma-tail-none.json", self.tmp / "ma-tail-none.md", no_reference, "test")
+        self.assertIn("strongest-0 median n/a", (self.tmp / "ma-tail-none.md").read_text())
 
 
 @unittest.skipUnless((RADIAL_RUN / "library-qualification.json").is_file(), "the stored radial run is not available")

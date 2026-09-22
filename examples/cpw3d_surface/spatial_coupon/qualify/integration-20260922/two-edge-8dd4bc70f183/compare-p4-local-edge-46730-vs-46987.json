@@ -1,0 +1,18 @@
+{
+  "domain-response-matrix.csv": {
+    "Rows": 36,
+    "Entries": 36,
+    "BitIdenticalEntries": 36,
+    "MaxRelativeDifferencePerEntry": 0.0,
+    "MaxRelativeDifferenceAt": null,
+    "RowOrderIdentical": true
+  },
+  "surface-response-matrix.csv": {
+    "Rows": 576,
+    "Entries": 3456,
+    "BitIdenticalEntries": 3456,
+    "MaxRelativeDifferencePerEntry": 0.0,
+    "MaxRelativeDifferenceAt": null,
+    "RowOrderIdentical": true
+  }
+}

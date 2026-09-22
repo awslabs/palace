@@ -1,0 +1,179 @@
+{
+ "sources": 77,
+ "box": [
+  -5.0,
+  3.999999999999999,
+  -2.0000000000000018,
+  3.0000000000000027
+ ],
+ "z_levels": [
+  "bottom face z=-2.05",
+  "substrate/trench level z=-0.05",
+  "substrate/trench level z=0",
+  "metal-top level z=0.1",
+  "top face z=2.1"
+ ],
+ "physical_metal_edges": [
+  [
+   [
+    -1.0,
+    0.0
+   ],
+   [
+    -1.0,
+    1.0
+   ],
+   1
+  ],
+  [
+   [
+    -1.0,
+    1.0
+   ],
+   [
+    -5.0,
+    1.0
+   ],
+   1
+  ],
+  [
+   [
+    -5.0,
+    0.0
+   ],
+   [
+    -1.0,
+    0.0
+   ],
+   1
+  ],
+  [
+   [
+    4.0,
+    1.0
+   ],
+   [
+    0.0,
+    1.0
+   ],
+   2
+  ],
+  [
+   [
+    0.0,
+    1.0
+   ],
+   [
+    0.0,
+    0.0
+   ],
+   2
+  ],
+  [
+   [
+    0.0,
+    0.0
+   ],
+   [
+    4.0,
+    0.0
+   ],
+   2
+  ]
+ ],
+ "continuation_edges": [
+  [
+   [
+    -5.0,
+    1.0
+   ],
+   [
+    -5.0,
+    0.0
+   ],
+   1
+  ],
+  [
+   [
+    4.0,
+    0.0
+   ],
+   [
+    4.0,
+    1.0
+   ],
+   2
+  ]
+ ],
+ "metal_edge_cut_junctions": [
+  [
+   [
+    -5.0,
+    1.0
+   ],
+   1
+  ],
+  [
+   [
+    -5.0,
+    0.0
+   ],
+   1
+  ],
+  [
+   [
+    4.0,
+    1.0
+   ],
+   2
+  ],
+  [
+   [
+    4.0,
+    0.0
+   ],
+   2
+  ]
+ ],
+ "sources_at_junctions": [
+  6,
+  10,
+  16,
+  19,
+  25,
+  29,
+  35,
+  38,
+  64,
+  68,
+  74,
+  77
+ ],
+ "sources_on_metal_cross_section": [],
+ "box_corner_3d_sources": [
+  1,
+  4,
+  11,
+  14,
+  59,
+  62,
+  69,
+  72
+ ],
+ "face_interior_sources": [],
+ "per_z_level": {
+  "bottom face z=-2.05": 19,
+  "substrate/trench level z=-0.05": 19,
+  "substrate/trench level z=0": 10,
+  "metal-top level z=0.1": 10,
+  "top face z=2.1": 19
+ },
+ "retained_etch_bound": false,
+ "layers": [
+  [
+   0.0,
+   1
+  ]
+ ],
+ "layer_rule": "one upward layer (Nz = +1): metal-top = the highest intermediate apex level"
+}

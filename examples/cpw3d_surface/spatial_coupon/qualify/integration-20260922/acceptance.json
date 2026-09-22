@@ -1,0 +1,130 @@
+{
+  "Kind": "decision-63-live-acceptance",
+  "Case": "two-edge-8dd4bc70f183",
+  "PBSJobID": "46987",
+  "Root": "/tmp/library-int63-01",
+  "Remote": "coupon_accuracy_assessment_20260913/library-int63-01",
+  "Command": "coupon_library.py qualify --build-record /tmp/coupon-library-build-step3-after/library-build.json --case two-edge-8dd4bc70f183 --reference none --remote soca-green-job:/data/home/simlap/coupon_accuracy_assessment_20260913 --controls p3 --max-jobs 1 --monitor-interval 90 --root /tmp/library-int63-01 (then --resume after the ma_tail markdown fix)",
+  "BuildRecord": {
+    "Root": "/tmp/coupon-library-build-step3-after",
+    "Tree": "5590074f8 (step-3 refreeze)",
+    "IdentityMeshSHA256": "179a405dbe5eb0fd583e2b42cf5ab200775a32a0f968a3ace5f5669ed6c8238d"
+  },
+  "FrozenExecutable": {
+    "SHA256": "170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b",
+    "Origin": "manifest ProductionRecipe.PhysicsRun.FrozenExecutable"
+  },
+  "ReducerBlockSize": {
+    "Value": 48,
+    "Origin": "manifest ProductionRecipe.PhysicsRun.ReducerBlockSize"
+  },
+  "Stages": [
+    "p4-worker (78 sources, 514.7 s, Palace peak 48.2G)",
+    "p4-reducer (15.8 s, b = 48, peak 33.8G)",
+    "p3-control-worker (8 sources, 32.2 s)",
+    "p3-control-reducer (10.4 s, b = 48, peak 22.3G)",
+    "p4-local-edge"
+  ],
+  "NodeHours": 0.188,
+  "Queue": "submitted 06:55Z, held / re-queued 11 times (CF:ROLLBACK_COMPLETE, r8g.48xlarge capacity), running 08:31Z, complete 08:49Z",
+  "Verdict": "Failed (PSequenceControls only: the run had the p3 control alone, no p5 control, so StepToHigherOrder is null by construction; no reference matrices) - the run design of the smallest sufficient acceptance, not a physics outcome",
+  "ComparisonTarget": {
+    "Chosen": "PBS 46730 (decision 61a MA-sharp acceptance, root /tmp/library-ma-sharp-01): the same qualify inputs - shelled identity mesh 179a405d, recipe Tol 1e-10, the same 8 control sources by class - with the b28f089a executable at block size 6",
+    "WhyNot46718": "PBS 46718 (the perf-branch step-4 acceptance) reduced the PBS 46685 archives that ran on the pre-shell identity mesh 5d01204e (decision 61b split acceptance) at Tol 1e-8: a different interface set (no MA shells) and a different solve tolerance, so bit-identity is impossible for any implementation; supervisor decision 2026-09-22: substitute 46730",
+    "Criterion": "p3 control: every value bit-identical, row order aside ((i <= j) streaming order vs block-pair order; consumers are key-based); p4: max per-entry relative difference <= 1e-12"
+  },
+  "Results": {
+    "p3-control": {
+      "domain-response-matrix.csv": {
+        "Rows": 36,
+        "Entries": 36,
+        "BitIdenticalEntries": 36,
+        "MaxRelativeDifferencePerEntry": 0.0,
+        "MaxRelativeDifferenceAt": null,
+        "RowOrderIdentical": false
+      },
+      "surface-response-matrix.csv": {
+        "Rows": 576,
+        "Entries": 3456,
+        "BitIdenticalEntries": 3456,
+        "MaxRelativeDifferencePerEntry": 0.0,
+        "MaxRelativeDifferenceAt": null,
+        "RowOrderIdentical": false
+      }
+    },
+    "p4": {
+      "domain-response-matrix.csv": {
+        "Rows": 3081,
+        "Entries": 3081,
+        "BitIdenticalEntries": 3021,
+        "MaxRelativeDifferencePerEntry": 9.668835153998121e-13,
+        "MaxRelativeDifferenceAt": [
+          "2.40e+01",
+          "4.40e+01",
+          "Q_ij (J)",
+          "-1.034267870124e-21",
+          "-1.034267870125e-21"
+        ],
+        "RowOrderIdentical": false
+      },
+      "surface-response-matrix.csv": {
+        "Rows": 49296,
+        "Entries": 295776,
+        "BitIdenticalEntries": 295746,
+        "MaxRelativeDifferencePerEntry": 6.654816638503086e-13,
+        "MaxRelativeDifferenceAt": [
+          "2.00e+00",
+          "1.00e+00",
+          "+2.000000000000e-06",
+          "1.40e+01",
+          "7.80e+01",
+          "Q_ij (J)",
+          "+1.502528073250e-24",
+          "+1.502528073249e-24"
+        ],
+        "RowOrderIdentical": false
+      }
+    },
+    "p4-local-edge": {
+      "domain-response-matrix.csv": {
+        "Rows": 36,
+        "Entries": 36,
+        "BitIdenticalEntries": 36,
+        "MaxRelativeDifferencePerEntry": 0.0,
+        "MaxRelativeDifferenceAt": null,
+        "RowOrderIdentical": true
+      },
+      "surface-response-matrix.csv": {
+        "Rows": 576,
+        "Entries": 3456,
+        "BitIdenticalEntries": 3456,
+        "MaxRelativeDifferencePerEntry": 0.0,
+        "MaxRelativeDifferenceAt": null,
+        "RowOrderIdentical": true
+      }
+    },
+    "Summary": "p3 control 36 domain + 3,456 surface entries all bit-identical (row order differs); p4 domain 3,021 / 3,081 bit-identical, max rel 9.7e-13, surface 295,746 / 295,776 bit-identical, max rel 6.7e-13 (the CSV print resolution, as PBS 46718's 8.4e-13); p4 local-edge output bit-identical including row order (the worker / direct-solve path of the new executable equals b28)"
+  },
+  "ReducerWallSeconds": {
+    "p4": {
+      "PBS46730_b28_b6": 148.6,
+      "PBS46987_new_b48": 15.8
+    },
+    "p3": {
+      "PBS46730_b28_b6": 12.4,
+      "PBS46987_new_b48": 10.4
+    }
+  },
+  "ReducerPalacePeak": {
+    "p4": {
+      "PBS46730": "45.5G",
+      "PBS46987": "33.8G"
+    },
+    "p3": {
+      "PBS46730": "29.9G",
+      "PBS46987": "22.3G"
+    }
+  },
+  "FixForward": "qualify/ma_tail.markdown formatted None with :.3f when the run has no strongest-source set (no reference): the driver stopped after the fetch / verification / archive deletion; fixed (f3 helper, test), the analysis completed with --resume (submission adopted, no second job)",
+  "Archives": "deleted after digest verification (remote-archive-deletion.json); other users' jobs untouched; no qdel"
+}

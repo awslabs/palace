@@ -1,0 +1,33 @@
+{
+  "domain-response-matrix.csv": {
+    "Rows": 3081,
+    "Entries": 3081,
+    "BitIdenticalEntries": 3021,
+    "MaxRelativeDifferencePerEntry": 9.668835153998121e-13,
+    "MaxRelativeDifferenceAt": [
+      "2.40e+01",
+      "4.40e+01",
+      "Q_ij (J)",
+      "-1.034267870124e-21",
+      "-1.034267870125e-21"
+    ],
+    "RowOrderIdentical": false
+  },
+  "surface-response-matrix.csv": {
+    "Rows": 49296,
+    "Entries": 295776,
+    "BitIdenticalEntries": 295746,
+    "MaxRelativeDifferencePerEntry": 6.654816638503086e-13,
+    "MaxRelativeDifferenceAt": [
+      "2.00e+00",
+      "1.00e+00",
+      "+2.000000000000e-06",
+      "1.40e+01",
+      "7.80e+01",
+      "Q_ij (J)",
+      "+1.502528073250e-24",
+      "+1.502528073249e-24"
+    ],
+    "RowOrderIdentical": false
+  }
+}

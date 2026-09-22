@@ -1,0 +1,278 @@
+{
+ "p3-control-vs-two-edge-8dd4bc70f183-p4": {
+  "wide hats, bottom/top faces": {
+   "n": 2,
+   "members": [
+    2,
+    3
+   ],
+   "E_rel": {
+    "n": 2,
+    "abs_median": 0.0009171073692808508,
+    "abs_max": 0.001627221447968564,
+    "signed_median": -0.0009171073692808508,
+    "worst_source": 3,
+    "worst_offset": -0.001627221447968564,
+    "within_1pct": 2,
+    "within_2pct": 2,
+    "within_5pct": 2
+   },
+   "p_MA_rel": {
+    "n": 2,
+    "abs_median": 0.009874252658744781,
+    "abs_max": 0.010081742744619695,
+    "signed_median": 0.00020749008587491336,
+    "worst_source": 2,
+    "worst_offset": 0.010081742744619695,
+    "within_1pct": 1,
+    "within_2pct": 2,
+    "within_5pct": 2
+   },
+   "p_MS_rel": {
+    "n": 2,
+    "abs_median": 0.0037380359766950614,
+    "abs_max": 0.0038919884280159255,
+    "signed_median": -0.0037380359766950614,
+    "worst_source": 3,
+    "worst_offset": -0.0038919884280159255,
+    "within_1pct": 2,
+    "within_2pct": 2,
+    "within_5pct": 2
+   }
+  },
+  "box 3D corners (bottom/top faces)": {
+   "n": 1,
+   "members": [
+    1
+   ],
+   "E_rel": {
+    "n": 1,
+    "abs_median": 0.0002917789040861503,
+    "abs_max": 0.0002917789040861503,
+    "signed_median": -0.0002917789040861503,
+    "worst_source": 1,
+    "worst_offset": -0.0002917789040861503,
+    "within_1pct": 1,
+    "within_2pct": 1,
+    "within_5pct": 1
+   },
+   "p_MA_rel": {
+    "n": 1,
+    "abs_median": 0.0059473693713704215,
+    "abs_max": 0.0059473693713704215,
+    "signed_median": 0.0059473693713704215,
+    "worst_source": 1,
+    "worst_offset": 0.0059473693713704215,
+    "within_1pct": 1,
+    "within_2pct": 1,
+    "within_5pct": 1
+   },
+   "p_MS_rel": {
+    "n": 1,
+    "abs_median": 0.0033409593217295142,
+    "abs_max": 0.0033409593217295142,
+    "signed_median": -0.0033409593217295142,
+    "worst_source": 1,
+    "worst_offset": -0.0033409593217295142,
+    "within_1pct": 1,
+    "within_2pct": 1,
+    "within_5pct": 1
+   }
+  },
+  "wide hats, metal-top ring": {
+   "n": 1,
+   "members": [
+    49
+   ],
+   "E_rel": {
+    "n": 1,
+    "abs_median": 0.002694528367851201,
+    "abs_max": 0.002694528367851201,
+    "signed_median": -0.002694528367851201,
+    "worst_source": 49,
+    "worst_offset": -0.002694528367851201,
+    "within_1pct": 1,
+    "within_2pct": 1,
+    "within_5pct": 1
+   },
+   "p_MA_rel": {
+    "n": 1,
+    "abs_median": 0.004313730691692188,
+    "abs_max": 0.004313730691692188,
+    "signed_median": 0.004313730691692188,
+    "worst_source": 49,
+    "worst_offset": 0.004313730691692188,
+    "within_1pct": 1,
+    "within_2pct": 1,
+    "within_5pct": 1
+   },
+   "p_MS_rel": {
+    "n": 1,
+    "abs_median": 0.0021660647609370153,
+    "abs_max": 0.0021660647609370153,
+    "signed_median": -0.0021660647609370153,
+    "worst_source": 49,
+    "worst_offset": -0.0021660647609370153,
+    "within_1pct": 1,
+    "within_2pct": 1,
+    "within_5pct": 1
+   }
+  },
+  "wide hats, substrate/trench rings": {
+   "n": 1,
+   "members": [
+    20
+   ],
+   "E_rel": {
+    "n": 1,
+    "abs_median": 0.0012885112483916102,
+    "abs_max": 0.0012885112483916102,
+    "signed_median": -0.0012885112483916102,
+    "worst_source": 20,
+    "worst_offset": -0.0012885112483916102,
+    "within_1pct": 1,
+    "within_2pct": 1,
+    "within_5pct": 1
+   },
+   "p_MA_rel": {
+    "n": 1,
+    "abs_median": 0.005711874488641514,
+    "abs_max": 0.005711874488641514,
+    "signed_median": 0.005711874488641514,
+    "worst_source": 20,
+    "worst_offset": 0.005711874488641514,
+    "within_1pct": 1,
+    "within_2pct": 1,
+    "within_5pct": 1
+   },
+   "p_MS_rel": {
+    "n": 1,
+    "abs_median": 0.005275188554504493,
+    "abs_max": 0.005275188554504493,
+    "signed_median": -0.005275188554504493,
+    "worst_source": 20,
+    "worst_offset": -0.005275188554504493,
+    "within_1pct": 1,
+    "within_2pct": 1,
+    "within_5pct": 1
+   }
+  },
+  "near-junction hats (0.1 <= w, junction < 0.6 um)": {
+   "n": 1,
+   "members": [
+    5
+   ],
+   "E_rel": {
+    "n": 1,
+    "abs_median": 0.002184378288741561,
+    "abs_max": 0.002184378288741561,
+    "signed_median": -0.002184378288741561,
+    "worst_source": 5,
+    "worst_offset": -0.002184378288741561,
+    "within_1pct": 1,
+    "within_2pct": 1,
+    "within_5pct": 1
+   },
+   "p_MA_rel": {
+    "n": 1,
+    "abs_median": 0.0056198574826211425,
+    "abs_max": 0.0056198574826211425,
+    "signed_median": -0.0056198574826211425,
+    "worst_source": 5,
+    "worst_offset": -0.0056198574826211425,
+    "within_1pct": 1,
+    "within_2pct": 1,
+    "within_5pct": 1
+   },
+   "p_MS_rel": {
+    "n": 1,
+    "abs_median": 0.003082163769412514,
+    "abs_max": 0.003082163769412514,
+    "signed_median": -0.003082163769412514,
+    "worst_source": 5,
+    "worst_offset": -0.003082163769412514,
+    "within_1pct": 1,
+    "within_2pct": 1,
+    "within_5pct": 1
+   }
+  },
+  "junction columns on the bottom/top faces": {
+   "n": 1,
+   "members": [
+    6
+   ],
+   "E_rel": {
+    "n": 1,
+    "abs_median": 0.013466898843834754,
+    "abs_max": 0.013466898843834754,
+    "signed_median": -0.013466898843834754,
+    "worst_source": 6,
+    "worst_offset": -0.013466898843834754,
+    "within_1pct": 0,
+    "within_2pct": 1,
+    "within_5pct": 1
+   },
+   "p_MA_rel": {
+    "n": 1,
+    "abs_median": 0.007258059173482455,
+    "abs_max": 0.007258059173482455,
+    "signed_median": 0.007258059173482455,
+    "worst_source": 6,
+    "worst_offset": 0.007258059173482455,
+    "within_1pct": 1,
+    "within_2pct": 1,
+    "within_5pct": 1
+   },
+   "p_MS_rel": {
+    "n": 1,
+    "abs_median": 0.009034241378286895,
+    "abs_max": 0.009034241378286895,
+    "signed_median": 0.009034241378286895,
+    "worst_source": 6,
+    "worst_offset": 0.009034241378286895,
+    "within_1pct": 1,
+    "within_2pct": 1,
+    "within_5pct": 1
+   }
+  },
+  "junction rings (metal edge meets cut)": {
+   "n": 1,
+   "members": [
+    25
+   ],
+   "E_rel": {
+    "n": 1,
+    "abs_median": 0.003741267498149015,
+    "abs_max": 0.003741267498149015,
+    "signed_median": -0.003741267498149015,
+    "worst_source": 25,
+    "worst_offset": -0.003741267498149015,
+    "within_1pct": 1,
+    "within_2pct": 1,
+    "within_5pct": 1
+   },
+   "p_MA_rel": {
+    "n": 1,
+    "abs_median": 0.00859635257453328,
+    "abs_max": 0.00859635257453328,
+    "signed_median": 0.00859635257453328,
+    "worst_source": 25,
+    "worst_offset": 0.00859635257453328,
+    "within_1pct": 1,
+    "within_2pct": 1,
+    "within_5pct": 1
+   },
+   "p_MS_rel": {
+    "n": 1,
+    "abs_median": 0.0013575117404205808,
+    "abs_max": 0.0013575117404205808,
+    "signed_median": -0.0013575117404205808,
+    "worst_source": 25,
+    "worst_offset": -0.0013575117404205808,
+    "within_1pct": 1,
+    "within_2pct": 1,
+    "within_5pct": 1
+   }
+  }
+ }
+}

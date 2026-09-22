@@ -234,6 +234,12 @@ def pc(x, digits=2):
     return "n/a" if x is None or not math.isfinite(x) else f"{100 * x:+.{digits}f}%"
 
 
+def f3(x):
+    """A fitted value to three decimals; n/a when the fit has no sample (a run without a
+    reference has no strongest-source set)."""
+    return "n/a" if x is None or not math.isfinite(x) else f"{x:.3f}"
+
+
 def markdown(record, title):
     lines = [f"# {title}", "", record["Rule"], ""]
     for order, block in record["Orders"].items():
@@ -241,11 +247,12 @@ def markdown(record, title):
         alpha, ring1 = s["Alpha"], s["Ring1Factor"]
         q = alpha["Quartiles"] or [None, None]
         lines += [f"## {order} ({block['Prefix']}; {s['Sources']} sources)", "",
-                  f"- alpha (top edge, rings 2-4): median {alpha['Median']:.3f} (quartiles {q[0]:.3f} / {q[1]:.3f}), se median "
-                  f"{alpha['SEMedian']:.3f}; strongest-{len(block['Strongest'])} median {alpha['StrongestMedian']:.3f}; theory {alpha['Theoretical']:.3f}"
+                  f"- alpha (top edge, rings 2-4): median {f3(alpha['Median'])} (quartiles {f3(q[0])} / {f3(q[1])}), se median "
+                  f"{f3(alpha['SEMedian'])}; strongest-{len(block['Strongest'])} median {f3(alpha['StrongestMedian'])}; theory {f3(alpha['Theoretical'])}"
                   if alpha["Median"] is not None else "- alpha: no top-edge fit",
-                  f"- ring-1 factor (resolved / -2/3 anchored on ring 2, top edge): median {ring1['Median']:.3f}, range "
-                  f"{ring1['Range'][0]:.3f}-{ring1['Range'][1]:.3f}" if ring1["Median"] is not None else "- ring-1 factor: n/a",
+                  f"- ring-1 factor (resolved / -2/3 anchored on ring 2, top edge): median {f3(ring1['Median'])}, range "
+                  f"{f3((ring1['Range'] or [None, None])[0])}-{f3((ring1['Range'] or [None, None])[1])}"
+                  if ring1["Median"] is not None else "- ring-1 factor: n/a",
                   "", "| deficit estimator | median (quartiles) | strongest median | " + " | ".join(f"at {i}" for i in s["Deficit"][ESTIMATOR]["At"]) + " |",
                   "|---|---|---:|" + "---:|" * len(s["Deficit"][ESTIMATOR]["At"])]
         for name, d in s["Deficit"].items():

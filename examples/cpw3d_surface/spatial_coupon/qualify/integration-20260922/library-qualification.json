@@ -1,0 +1,2336 @@
+{
+  "Version": 1,
+  "Command": "coupon-library qualify",
+  "Root": "/tmp/library-int63-01",
+  "ToolCommit": "68641372b",
+  "BuildRecord": {
+    "Path": "/private/tmp/coupon-library-build-step3-after/library-build.json",
+    "SHA256": "d9f5015de1d84d7ad6e4aee43eb914ef36f526417a42791448336241526e6c94",
+    "Commit": "296c403f9"
+  },
+  "Gates": {
+    "Path": "/tmp/library-int63-01/qualification-gates.json",
+    "SHA256": "0bee514a86dd53bc67a47ec4b9e3856779990ef8ff04490c4355dc2476e3c09d"
+  },
+  "CostModel": {
+    "Path": "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/qualify/cost-model.json",
+    "SHA256": "22ee226d91c081f9b9275b020e7f68220941f27b32829245d54344da8e8f5ee9"
+  },
+  "ClusterProfile": {
+    "Path": "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/qualify/cluster-profile.json",
+    "SHA256": "451966ed3529cbc90b1776dbb6a2c9019a5cde9ffe389a73d2d6b6efb6694f0a"
+  },
+  "Cases": [
+    {
+      "Case": "two-edge-8dd4bc70f183",
+      "Status": "failed",
+      "StoppedBy": null,
+      "BuildStatus": "built",
+      "BuildPassed": true,
+      "Mesh": {
+        "Local": "/private/tmp/coupon-library-build-step3-after/two-edge-8dd4bc70f183/identity.msh",
+        "SHA256": "179a405dbe5eb0fd583e2b42cf5ab200775a32a0f968a3ace5f5669ed6c8238d",
+        "Verified": true,
+        "RadialShells": {
+          "Kind": "radial-ma-shells",
+          "Parent": null,
+          "ParentMesh": {
+            "SHA256": "5d01204e3396744cdbcf6f53fd1ff85d9f8c218eec1f0b9e11fc6a58aa469b04",
+            "CanonicalMeshSHA256": "5d01204e3396744cdbcf6f53fd1ff85d9f8c218eec1f0b9e11fc6a58aa469b04"
+          },
+          "Shells": {
+            "Path": "/private/tmp/coupon-library-build-step3-after/two-edge-8dd4bc70f183/identity.msh.radial-shells.json",
+            "SHA256": "ab666f93d4acb84e04e0c3a253fcc7d081d003d998dbfa96728080311f19a290"
+          },
+          "ShellCount": 30,
+          "RingRadii": [
+            0.00025,
+            0.00075,
+            0.00175,
+            0.00375,
+            0.00775,
+            0.01575,
+            0.03175
+          ],
+          "Binding": "RadialShells"
+        }
+      },
+      "Reference": {
+        "Rule": "--reference none: the coupon runs on its own inputs; without reference matrices the verdict is PendingQualification (every p-sequence control passed) or Failed, never Passed"
+      },
+      "Sources": {
+        "Count": 78,
+        "Indices": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62,
+          63,
+          64,
+          65,
+          66,
+          67,
+          68,
+          69,
+          70,
+          71,
+          72,
+          73,
+          74,
+          75,
+          76,
+          77,
+          78
+        ],
+        "ZeroTrace": [],
+        "Free": 77,
+        "Terminals": [
+          78
+        ],
+        "Classes": {
+          "1": "box 3D corners (bottom/top faces)",
+          "2": "wide hats, bottom/top faces",
+          "3": "wide hats, bottom/top faces",
+          "4": "box 3D corners (bottom/top faces)",
+          "5": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "6": "junction columns on the bottom/top faces",
+          "7": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "8": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "9": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "10": "junction columns on the bottom/top faces",
+          "11": "box 3D corners (bottom/top faces)",
+          "12": "wide hats, bottom/top faces",
+          "13": "wide hats, bottom/top faces",
+          "14": "box 3D corners (bottom/top faces)",
+          "15": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "16": "junction columns on the bottom/top faces",
+          "17": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "18": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "19": "junction columns on the bottom/top faces",
+          "20": "wide hats, substrate/trench rings",
+          "21": "wide hats, substrate/trench rings",
+          "22": "wide hats, substrate/trench rings",
+          "23": "wide hats, substrate/trench rings",
+          "24": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "25": "junction rings (metal edge meets cut)",
+          "26": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "27": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "28": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "29": "junction rings (metal edge meets cut)",
+          "30": "wide hats, substrate/trench rings",
+          "31": "wide hats, substrate/trench rings",
+          "32": "wide hats, substrate/trench rings",
+          "33": "wide hats, substrate/trench rings",
+          "34": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "35": "junction rings (metal edge meets cut)",
+          "36": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "37": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "38": "junction rings (metal edge meets cut)",
+          "39": "wide hats, substrate/trench rings",
+          "40": "wide hats, substrate/trench rings",
+          "41": "wide hats, substrate/trench rings",
+          "42": "wide hats, substrate/trench rings",
+          "43": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "44": "wide hats, substrate/trench rings",
+          "45": "wide hats, substrate/trench rings",
+          "46": "wide hats, substrate/trench rings",
+          "47": "wide hats, substrate/trench rings",
+          "48": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "49": "wide hats, metal-top ring",
+          "50": "wide hats, metal-top ring",
+          "51": "wide hats, metal-top ring",
+          "52": "wide hats, metal-top ring",
+          "53": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "54": "wide hats, metal-top ring",
+          "55": "wide hats, metal-top ring",
+          "56": "wide hats, metal-top ring",
+          "57": "wide hats, metal-top ring",
+          "58": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "59": "box 3D corners (bottom/top faces)",
+          "60": "wide hats, bottom/top faces",
+          "61": "wide hats, bottom/top faces",
+          "62": "box 3D corners (bottom/top faces)",
+          "63": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "64": "junction columns on the bottom/top faces",
+          "65": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "66": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "67": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "68": "junction columns on the bottom/top faces",
+          "69": "box 3D corners (bottom/top faces)",
+          "70": "wide hats, bottom/top faces",
+          "71": "wide hats, bottom/top faces",
+          "72": "box 3D corners (bottom/top faces)",
+          "73": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "74": "junction columns on the bottom/top faces",
+          "75": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "76": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "77": "junction columns on the bottom/top faces",
+          "78": "conductor terminal (TerminalAttributes source)"
+        },
+        "Geometry": {
+          "box": [
+            -5.0,
+            3.999999999999999,
+            -2.0000000000000018,
+            3.0000000000000027
+          ],
+          "z_levels": [
+            "bottom face z=-2.05",
+            "substrate/trench level z=-0.05",
+            "substrate/trench level z=0",
+            "metal-top level z=0.1",
+            "top face z=2.1"
+          ],
+          "per_z_level": {
+            "bottom face z=-2.05": 19,
+            "substrate/trench level z=-0.05": 19,
+            "substrate/trench level z=0": 10,
+            "metal-top level z=0.1": 10,
+            "top face z=2.1": 19
+          },
+          "layers": [
+            [
+              0.0,
+              1
+            ]
+          ]
+        }
+      },
+      "Controls": {
+        "Indices": [
+          1,
+          2,
+          3,
+          5,
+          6,
+          20,
+          25,
+          49
+        ],
+        "Rule": "8 by class (classify_sources.choose_controls: one per class in priority order, cycling)",
+        "Classes": {
+          "1": "box 3D corners (bottom/top faces)",
+          "2": "wide hats, bottom/top faces",
+          "3": "wide hats, bottom/top faces",
+          "5": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "6": "junction columns on the bottom/top faces",
+          "20": "wide hats, substrate/trench rings",
+          "25": "junction rings (metal edge meets cut)",
+          "49": "wide hats, metal-top ring"
+        }
+      },
+      "StagePrefix": "two-edge-8dd4bc70f183",
+      "Stages": [
+        {
+          "Prefix": "two-edge-8dd4bc70f183-p4",
+          "Kind": "response",
+          "Order": 4,
+          "Sources": 78,
+          "EstimateKey": "p4-78",
+          "Role": "main"
+        },
+        {
+          "Prefix": "two-edge-8dd4bc70f183-p3-control",
+          "Kind": "response",
+          "Order": 3,
+          "Sources": 8,
+          "EstimateKey": "p3-control-8",
+          "Role": "control"
+        },
+        {
+          "Prefix": "two-edge-8dd4bc70f183-p4-local-edge",
+          "Kind": "local-edge",
+          "Order": 4,
+          "Sources": 8,
+          "EstimateKey": "local-edge-p4-8",
+          "Role": "local-edge"
+        }
+      ],
+      "Estimate": {
+        "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/preflight/stage-estimate.json",
+        "FitsOneJob": true,
+        "Decision": "every stage fits ONE job of 6 h: runner total 10 min at the measured PCG counts, 17 min at 2.0x (+35% and preflight: 28 min); largest Palace peak 80 GB of 1485 GiB",
+        "H1ByOrder": {
+          "p1": 134926,
+          "p2": 1019728,
+          "p3": 3388123,
+          "p4": 7973827,
+          "p5": 15510556
+        },
+        "JobSecondsEstimateByPCGFactor": {
+          "1.0": 591.8084731518832,
+          "1.5": 815.1317889490658,
+          "2.0": 1038.4551047462485
+        },
+        "JobSecondsEstimateWithPreflightAndMargin": {
+          "1.0": 1098.9414387550423,
+          "1.5": 1400.427915081239,
+          "2.0": 1701.9143914074355
+        },
+        "MaxPalacePeakGBEstimate": 80.23252462036233,
+        "ReducerBlockSize": 48,
+        "MainStageNodeHoursEstimate": {
+          "1.0": 0.12491684694714054,
+          "1.5": 0.1792137905300494,
+          "2.0": 0.23351073411295825
+        }
+      },
+      "Plan": {
+        "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/main/plan.json",
+        "Pins": 84,
+        "StageNames": [
+          "two-edge-8dd4bc70f183-p4-worker",
+          "two-edge-8dd4bc70f183-p4-reducer",
+          "two-edge-8dd4bc70f183-p3-control-worker",
+          "two-edge-8dd4bc70f183-p3-control-reducer",
+          "two-edge-8dd4bc70f183-p4-local-edge"
+        ],
+        "Caps": {
+          "two-edge-8dd4bc70f183-p4-worker": [
+            1800,
+            600
+          ],
+          "two-edge-8dd4bc70f183-p4-reducer": [
+            300,
+            300
+          ],
+          "two-edge-8dd4bc70f183-p3-control-worker": [
+            300,
+            300
+          ],
+          "two-edge-8dd4bc70f183-p3-control-reducer": [
+            300,
+            300
+          ],
+          "two-edge-8dd4bc70f183-p4-local-edge": [
+            300,
+            300
+          ]
+        },
+        "JobScript": "/tmp/library-int63-01/two-edge-8dd4bc70f183/main/job.pbs"
+      },
+      "Configs": {
+        "Directories": {
+          "two-edge-8dd4bc70f183-p4": "/tmp/library-int63-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p4",
+          "two-edge-8dd4bc70f183-p3-control": "/tmp/library-int63-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p3-control",
+          "two-edge-8dd4bc70f183-p4-local-edge": "/tmp/library-int63-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p4-local-edge"
+        },
+        "SHA256": {
+          "two-edge-8dd4bc70f183-p4": {
+            "worker.json": "972de0707b738e572d3de379c06979d2c662f4e5a596fdbfd5d06b72dba365e5",
+            "reducer.json": "c4d33594c0cff18c5235bbe62759a1e45e9a50841169d0109dcdfcabc858cda7"
+          },
+          "two-edge-8dd4bc70f183-p3-control": {
+            "worker.json": "09ffe315ee1f32e71958bbfa18be02ff007ff2edd89fd8169a9696939001c70b",
+            "reducer.json": "e3a06a5f77bb2aca20a8e8317c4e388dec1063a50e8bb6af09970d2dd963cb26"
+          },
+          "two-edge-8dd4bc70f183-p4-local-edge": {
+            "config.json": "f5170440e30ccc3c42709001337f59c1ed40ecec3efb394af1754f5313d475a1"
+          }
+        },
+        "DerivedFrom": "the case's own sources (case_inputs.derive) and the recipe PhysicsRun",
+        "RunConfig": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/run-config.json",
+        "RunConfigSHA256": "bb4563d037055daa55fa6ce11392ef2c70a856219b68cc23e4772ac729154723",
+        "ReferenceConfig": null,
+        "ReferenceConfigSHA256": null,
+        "ReferenceConfigRole": null,
+        "ReferenceOrder": null,
+        "LinearTol": 1e-10,
+        "Order": 4
+      },
+      "Root": "/tmp/library-int63-01/two-edge-8dd4bc70f183",
+      "Remote": {
+        "Root": "/data/home/simlap/coupon_accuracy_assessment_20260913",
+        "Run": "/data/home/simlap/coupon_accuracy_assessment_20260913/library-int63-01",
+        "Case": "/data/home/simlap/coupon_accuracy_assessment_20260913/library-int63-01/two-edge-8dd4bc70f183",
+        "Mesh": "/data/home/simlap/coupon_accuracy_assessment_20260913/library-int63-01/two-edge-8dd4bc70f183/mesh/identity-179a405dbe5e.msh",
+        "Traces": "/data/home/simlap/coupon_accuracy_assessment_20260913/library-int63-01/two-edge-8dd4bc70f183/inputs/traces",
+        "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b.bin",
+        "MPIExec": "/data/home/simlap/coupon_accuracy_assessment_20260913/mpiexec_bound.sh"
+      },
+      "Inputs": {
+        "Origin": "case",
+        "Directory": "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/testdata/two-edge-8dd4bc70f183",
+        "Model": "spatialedgecluster_edgecount-2_8dd4bc70f183",
+        "SourceSHA256": {
+          "Signature": "389982d17eb28513b9900ee8ae8be37f7583ebac09a3493b033c5cd4697f8d20",
+          "Boundary": "0a926635709754e14771c12323548a3ca97688650dcec621bd23139e074db98d",
+          "Mask": "2070d684e43e29d816273666afe65104f41d70c9ed49eb2094e85346243f09bc",
+          "Process": "883b8b345d4943faaf498fdaaea14a54a9be3e7dbf520210b4fcd475ac5bc569",
+          "ProcessLibrary": "7d9052ca0df35a9edd464b2d06a4b1c84af93e205ac3b3b5c5de7bde2df74b8f",
+          "BasisContract": "9bcbd95c82c0ebc2f5aa58692028814ebebf334fd0ec6d631729375509dc4691",
+          "TraceVertices": "bd698b85dd3ed1b41165a8f839a6b13919ddca3d88fc4d8952424058fa30b765",
+          "TraceTriangles": "6a19c6d838b2288896dc63cd21ec884ab39b3c0eb88488bc6a5d0297b6528441",
+          "Provenance": "ad0e49052dbf174c0372e3f9cd20d9d8363312ec990de6062cc72c19b97be19c",
+          "SemanticContract": "f2f5fbe5ff36d414ff5d9231835aed43191e8a4ffb00e4afd4ffe6d00449b336",
+          "MeshRecipe": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
+        },
+        "PhysicsRun": {
+          "Order": 4,
+          "LinearTol": 1e-10,
+          "Provenance": "calibrated by the four-edge reference campaigns: graded_v2 input 07 (worker.json Order 4, Linear.Tol 1e-10, PBS 45175 physics-13 anchor) and every recorded four-edge / gallery-05 / gallery-06 qualification (physics-11 PASS, gallery-05 / -06b PASS at p4, Tol 1e-10; decisions 42, 49, 50); the producer's default Tol 1e-8 (generate_spatial_response.make_config: sub-4e-4% worst-energy change vs 1e-10 at ~25% lower solve time) is NOT the library value - the gallery-10 / ten-edge references ran the producer default at Order 5 and are compared at their own order (the reference order is added as a main stage) with this Tol, recorded as the reference-derived config's only Solver difference (decision 52, 2026-09-20)",
+          "JobPolicy": {
+            "Mode": "frugal",
+            "FixedJobs": null,
+            "Rule": "coupon-library qualify splits a coupon's main-order source set into N contiguous blocks run as N independent worker jobs archiving into one archive directory, then one reducer job on the union (decision 61b; qualify/job_split.py): frugal = the fewest jobs whose every job fits the cluster walltime at 2x the measured PCG counts with the preflight-and-margin factor; speed = the N (<= --max-jobs and the user job cap) minimizing the estimated critical path; fixed = FixedJobs. This block is the library default; --job-policy / --fixed-jobs on the command line override it and the run records the policy used (library-qualification.json JobPolicy per coupon)"
+          },
+          "ReducerBlockSize": 48,
+          "FrozenExecutableSHA256": "170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b"
+        },
+        "Interfaces": {
+          "3": "MA",
+          "4": "MA",
+          "5": "MA",
+          "6": "MA",
+          "7": "MA",
+          "8": "MA",
+          "9": "MA",
+          "10": "MA",
+          "11": "MA",
+          "12": "MA",
+          "13": "MA",
+          "14": "MA",
+          "15": "MA",
+          "16": "MA",
+          "17": "MA",
+          "2": "MS"
+        },
+        "InterfaceTypes": [
+          "MA",
+          "MS"
+        ],
+        "Sources": [
+          {
+            "Index": 1,
+            "Name": "basis-0001.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0001.csv",
+            "SHA256": "30528c27d9f571f3245fcd159987d1fdaad08554a030268a072d9ed3e1e3e708",
+            "Terminal": false
+          },
+          {
+            "Index": 2,
+            "Name": "basis-0002.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0002.csv",
+            "SHA256": "47a1422f775b4a7b1144124c5ce3d5165a54564c8d8c84e04c72376e5a2de12a",
+            "Terminal": false
+          },
+          {
+            "Index": 3,
+            "Name": "basis-0003.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0003.csv",
+            "SHA256": "172108be95a7f66a4732040a913a630452860ca8d1a4f69e5cff9fde5d96e7a2",
+            "Terminal": false
+          },
+          {
+            "Index": 4,
+            "Name": "basis-0004.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0004.csv",
+            "SHA256": "f681071247beb28493486dfa2012d692767c935ce508a941b9f2813edc261a99",
+            "Terminal": false
+          },
+          {
+            "Index": 5,
+            "Name": "basis-0005.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0005.csv",
+            "SHA256": "f989421e3564c6bb3f7e00e4df95d47e95415f178aa2b37bac7729152103114e",
+            "Terminal": false
+          },
+          {
+            "Index": 6,
+            "Name": "basis-0006.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0006.csv",
+            "SHA256": "63a49999ac4174dafa24dce3dedd9c2bda5fb923e524924d7af5ab4bbdacce58",
+            "Terminal": false
+          },
+          {
+            "Index": 7,
+            "Name": "basis-0007.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0007.csv",
+            "SHA256": "18a6024e8b5acc69e29679d4cb164e9e0216a585f85ec88c7298acfcdfa9698e",
+            "Terminal": false
+          },
+          {
+            "Index": 8,
+            "Name": "basis-0008.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0008.csv",
+            "SHA256": "9932cdaf4e888af4c6c0bfaa2153b8643e80e350aa0435bd37e8603a8b453152",
+            "Terminal": false
+          },
+          {
+            "Index": 9,
+            "Name": "basis-0009.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0009.csv",
+            "SHA256": "9c5d2108c7310034851ac908fe168a574de3c5a91a59e26ccd5e2725c923f9bb",
+            "Terminal": false
+          },
+          {
+            "Index": 10,
+            "Name": "basis-0010.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0010.csv",
+            "SHA256": "b4f24ea4db245c7276d69de725c3cb72ba15c0aaa3e05d2d5ead9fe8850dea1f",
+            "Terminal": false
+          },
+          {
+            "Index": 11,
+            "Name": "basis-0011.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0011.csv",
+            "SHA256": "f0a1c08e589c727ef5a00be52c338d2f8021a9f36e75aa8ab031185c1ac26c7c",
+            "Terminal": false
+          },
+          {
+            "Index": 12,
+            "Name": "basis-0012.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0012.csv",
+            "SHA256": "eba7bc8c92c9cdd65ba3089c5b78c6e168f545db4109fca7588b215ed07e170a",
+            "Terminal": false
+          },
+          {
+            "Index": 13,
+            "Name": "basis-0013.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0013.csv",
+            "SHA256": "4dd4b29e63195dfc5e34d17e97c71b0cd1a5646fc2e78190b7f46ab12db104c4",
+            "Terminal": false
+          },
+          {
+            "Index": 14,
+            "Name": "basis-0014.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0014.csv",
+            "SHA256": "8a56f7028a9f88f53f36ab45103d07e8359e0782c0efe145ca2891e960005eca",
+            "Terminal": false
+          },
+          {
+            "Index": 15,
+            "Name": "basis-0015.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0015.csv",
+            "SHA256": "6e85c66f11d3cac330e27525730c8aa436903b8be12bd183d1d2beb616764821",
+            "Terminal": false
+          },
+          {
+            "Index": 16,
+            "Name": "basis-0016.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0016.csv",
+            "SHA256": "1acca88c55a9a82c365a8d7c089b2565290ade285ca368250b47da25ed083861",
+            "Terminal": false
+          },
+          {
+            "Index": 17,
+            "Name": "basis-0017.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0017.csv",
+            "SHA256": "10f2536d55fd949a6af285a3531e44208be049593b48d25ea4bc0ab6dd1c6029",
+            "Terminal": false
+          },
+          {
+            "Index": 18,
+            "Name": "basis-0018.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0018.csv",
+            "SHA256": "16c2b46c747089ff5fc3965cb0f4fab87a0fe9474aa48f89f6f4dfd7ce2915d5",
+            "Terminal": false
+          },
+          {
+            "Index": 19,
+            "Name": "basis-0019.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0019.csv",
+            "SHA256": "517dd54f2c92d2eb92893bb5abfb8d60da6f9bbdbc2842cfbce3ff12814a2043",
+            "Terminal": false
+          },
+          {
+            "Index": 20,
+            "Name": "basis-0020.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0020.csv",
+            "SHA256": "4c651e5639201fa33dcd9aee6435abd9a496bb3e23801fc397183d59367446b2",
+            "Terminal": false
+          },
+          {
+            "Index": 21,
+            "Name": "basis-0021.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0021.csv",
+            "SHA256": "a05b2f37cfaa8485403f5762b94e15dbc49836b3e8ccb592752e7f54fc230399",
+            "Terminal": false
+          },
+          {
+            "Index": 22,
+            "Name": "basis-0022.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0022.csv",
+            "SHA256": "1a9c6d537be488f3109449544023aeed5efd78a0fbbb04a9debc6b6c93edae0e",
+            "Terminal": false
+          },
+          {
+            "Index": 23,
+            "Name": "basis-0023.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0023.csv",
+            "SHA256": "08029453954ac01f9035ddfca2b85f94bbbbc2847073d80c9fa8972db45801a3",
+            "Terminal": false
+          },
+          {
+            "Index": 24,
+            "Name": "basis-0024.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0024.csv",
+            "SHA256": "bc9df354cc5405ae1cfe21fb3cc003207d21e8c4924edfbf8fc991f1971b8e73",
+            "Terminal": false
+          },
+          {
+            "Index": 25,
+            "Name": "basis-0025.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0025.csv",
+            "SHA256": "7812010484c93a07c802eedcaa1255adc28c480a85a7581ffe2467b7635abe31",
+            "Terminal": false
+          },
+          {
+            "Index": 26,
+            "Name": "basis-0026.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0026.csv",
+            "SHA256": "5e3092dc28f662a2ba7159c8c51c6f88d7614c4e8f6a7d8fe7959bab71d5a8f9",
+            "Terminal": false
+          },
+          {
+            "Index": 27,
+            "Name": "basis-0027.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0027.csv",
+            "SHA256": "629eb11a73d2496230135f98706ded35def5944352876e70abfd8bbbbcacdc93",
+            "Terminal": false
+          },
+          {
+            "Index": 28,
+            "Name": "basis-0028.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0028.csv",
+            "SHA256": "7a7d6ebf142c11c2ceb1e045d4180f9470ddd62e2275a8ae7c65f742708dcb57",
+            "Terminal": false
+          },
+          {
+            "Index": 29,
+            "Name": "basis-0029.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0029.csv",
+            "SHA256": "6935665d561599b005452cc84bfb2ba69a7314e8bece15b80fc6096f7db9367b",
+            "Terminal": false
+          },
+          {
+            "Index": 30,
+            "Name": "basis-0030.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0030.csv",
+            "SHA256": "3b499f759734de890d3f0d6a8542dbcd2a05666091f1088e1098679e83449ad4",
+            "Terminal": false
+          },
+          {
+            "Index": 31,
+            "Name": "basis-0031.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0031.csv",
+            "SHA256": "a7c4de27025147c2cfa3719d63470c36407d8a1980d5af5ad5c9a36a57e227bc",
+            "Terminal": false
+          },
+          {
+            "Index": 32,
+            "Name": "basis-0032.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0032.csv",
+            "SHA256": "460b6b76c90160600947aec10e25b0ffbf1bbff2fea4904572d2a5301733b3e2",
+            "Terminal": false
+          },
+          {
+            "Index": 33,
+            "Name": "basis-0033.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0033.csv",
+            "SHA256": "16d9f53274e5ea01e6d1473df0bbc51b23ccfd9a288f4fdd81d6bcbd4df3d0d7",
+            "Terminal": false
+          },
+          {
+            "Index": 34,
+            "Name": "basis-0034.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0034.csv",
+            "SHA256": "f713b62941bfaf80bcd29485aa3a10495d289eb3feef78d238b2e0decf16da72",
+            "Terminal": false
+          },
+          {
+            "Index": 35,
+            "Name": "basis-0035.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0035.csv",
+            "SHA256": "b04fb8b87eab08c0512990697ae0d025d68a86b343fd1e78f862662b8be8e682",
+            "Terminal": false
+          },
+          {
+            "Index": 36,
+            "Name": "basis-0036.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0036.csv",
+            "SHA256": "a945c382809d93d8308a456ebeaad5fd0a0d9cf193077727aa3e66d4a26d0b01",
+            "Terminal": false
+          },
+          {
+            "Index": 37,
+            "Name": "basis-0037.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0037.csv",
+            "SHA256": "506221516424224d39ece03f16e48d00120e2f92a82f7d3fd016c1122a17ed04",
+            "Terminal": false
+          },
+          {
+            "Index": 38,
+            "Name": "basis-0038.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0038.csv",
+            "SHA256": "77c1edef9f5d410cc1fb36b5a9ab5c80d09bfc1739f29d007047e43efeba9f18",
+            "Terminal": false
+          },
+          {
+            "Index": 39,
+            "Name": "basis-0039.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0039.csv",
+            "SHA256": "af9db1e0536ff541d3d492b2ba573f19bf6c4ffb1e6a42347e330dd8e8d250fd",
+            "Terminal": false
+          },
+          {
+            "Index": 40,
+            "Name": "basis-0040.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0040.csv",
+            "SHA256": "bb3caad8f16d7fbb688ecd2b3314a092cb943a36038bb8c37ddb16ffeb74d2f2",
+            "Terminal": false
+          },
+          {
+            "Index": 41,
+            "Name": "basis-0041.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0041.csv",
+            "SHA256": "08598656797c85cc15c4ca6d5cd6df20fcbe8b24f16271f068ec6646545a9248",
+            "Terminal": false
+          },
+          {
+            "Index": 42,
+            "Name": "basis-0042.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0042.csv",
+            "SHA256": "f70c033725a50cedfc76de7d366257d5a78fe1bf7fb94a465014ed5c57b6caa9",
+            "Terminal": false
+          },
+          {
+            "Index": 43,
+            "Name": "basis-0043.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0043.csv",
+            "SHA256": "456c441357acc72e46486c0688aecce822790f6992910eadb6e093042ce6fc91",
+            "Terminal": false
+          },
+          {
+            "Index": 44,
+            "Name": "basis-0044.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0044.csv",
+            "SHA256": "b26ed41e6beab54bd1ba130e910c8c7db587669c60b71695d390269c518252d2",
+            "Terminal": false
+          },
+          {
+            "Index": 45,
+            "Name": "basis-0045.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0045.csv",
+            "SHA256": "d8ef26a5a82658348232df63fa4dc357c906b33a197712adab53fa4f81893e1c",
+            "Terminal": false
+          },
+          {
+            "Index": 46,
+            "Name": "basis-0046.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0046.csv",
+            "SHA256": "f4f1764d428c633caedf309e6028b16ed928e11117bf0f9f71dd22e423a95a0e",
+            "Terminal": false
+          },
+          {
+            "Index": 47,
+            "Name": "basis-0047.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0047.csv",
+            "SHA256": "485655fe78ccf07dd440976ebdad870896a9e7f8cb156bbf16c1c9377d3e04ca",
+            "Terminal": false
+          },
+          {
+            "Index": 48,
+            "Name": "basis-0048.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0048.csv",
+            "SHA256": "68a33711563e3c37625c5a84889bbb54b95fb1f3fee3e24789ebe79d6af2098b",
+            "Terminal": false
+          },
+          {
+            "Index": 49,
+            "Name": "basis-0049.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0049.csv",
+            "SHA256": "697e1c6bcf20af2006fa368ef05d16a1ed70bb5c6d7713798e9878fcf838fd9d",
+            "Terminal": false
+          },
+          {
+            "Index": 50,
+            "Name": "basis-0050.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0050.csv",
+            "SHA256": "7df95801adb355765f2ecb10a2198f4bee59fa7e92ab46b1cbf88356e1d6883a",
+            "Terminal": false
+          },
+          {
+            "Index": 51,
+            "Name": "basis-0051.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0051.csv",
+            "SHA256": "825d3bd25cc2e67c9f1bbbc8931b63f012b5d8e9f764333f82984d7208503d71",
+            "Terminal": false
+          },
+          {
+            "Index": 52,
+            "Name": "basis-0052.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0052.csv",
+            "SHA256": "922e7c7dbd0735e0951827f1109cf30ab261acae9aba0db76d553a0bb423f01c",
+            "Terminal": false
+          },
+          {
+            "Index": 53,
+            "Name": "basis-0053.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0053.csv",
+            "SHA256": "69580da50a1fe101ae9335d075652996bccda162b7259f13eba4ec76b6418a69",
+            "Terminal": false
+          },
+          {
+            "Index": 54,
+            "Name": "basis-0054.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0054.csv",
+            "SHA256": "7492f67242019f62707786fb2e30aaea3246eb96e14e23f8890f7c828c9def38",
+            "Terminal": false
+          },
+          {
+            "Index": 55,
+            "Name": "basis-0055.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0055.csv",
+            "SHA256": "0e07b169c8bdec814b88ea84bb9551fdcc8f7c4c32d6928363da72907b927721",
+            "Terminal": false
+          },
+          {
+            "Index": 56,
+            "Name": "basis-0056.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0056.csv",
+            "SHA256": "4995293e4294f92ab6f880b3a0237e50fdfd22dbc1dea673018e39add71a50a2",
+            "Terminal": false
+          },
+          {
+            "Index": 57,
+            "Name": "basis-0057.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0057.csv",
+            "SHA256": "236740beae2127bce2420399b3086010c4c67e919ea1b5d9166e6ab0565f190e",
+            "Terminal": false
+          },
+          {
+            "Index": 58,
+            "Name": "basis-0058.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0058.csv",
+            "SHA256": "101c4b8b3fb498cb95b4ed2385e0523cf67c9dfe3003d2a129653435803e0c56",
+            "Terminal": false
+          },
+          {
+            "Index": 59,
+            "Name": "basis-0059.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0059.csv",
+            "SHA256": "09eabc95b0aa2a5b61c708ab42a2e930cc7dd4352260d41d76ab8a22ae5e9650",
+            "Terminal": false
+          },
+          {
+            "Index": 60,
+            "Name": "basis-0060.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0060.csv",
+            "SHA256": "823986921068caa3af37f5df15228dacb5c36d35ad74e7c64e915e5a8225adc6",
+            "Terminal": false
+          },
+          {
+            "Index": 61,
+            "Name": "basis-0061.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0061.csv",
+            "SHA256": "550fbb0f9149a22b7749b083a6cca9962e45194c7fd4e5af8c062062babc1bcf",
+            "Terminal": false
+          },
+          {
+            "Index": 62,
+            "Name": "basis-0062.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0062.csv",
+            "SHA256": "63e7a28bb55860b53a2571729b17f0865d2d0cff3632b97f66d843e83f6f084d",
+            "Terminal": false
+          },
+          {
+            "Index": 63,
+            "Name": "basis-0063.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0063.csv",
+            "SHA256": "c50af0ae102b9c8162ca7b29d8af916e78ceb40168042b9a675e7bbdfff37f38",
+            "Terminal": false
+          },
+          {
+            "Index": 64,
+            "Name": "basis-0064.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0064.csv",
+            "SHA256": "a8e402cf6b064173b809c3d652598380f6761869bec28b5ddbe94768af0f777c",
+            "Terminal": false
+          },
+          {
+            "Index": 65,
+            "Name": "basis-0065.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0065.csv",
+            "SHA256": "d1a4b1b9d2c97a8e898998084d497b6ff2272879c59d32797c25038e37269ccb",
+            "Terminal": false
+          },
+          {
+            "Index": 66,
+            "Name": "basis-0066.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0066.csv",
+            "SHA256": "c5f23c33e879186ee1af97bdc97bb1ef01389bd45e7c33aa99d8645430c5d011",
+            "Terminal": false
+          },
+          {
+            "Index": 67,
+            "Name": "basis-0067.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0067.csv",
+            "SHA256": "7e77723e820960d6e0add9f764e019d08ae296dda2b2b6b8ed43c789c9059e72",
+            "Terminal": false
+          },
+          {
+            "Index": 68,
+            "Name": "basis-0068.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0068.csv",
+            "SHA256": "f28936327627037031dd7028bd37bca9f8789cd09cc23b469628268a08cae875",
+            "Terminal": false
+          },
+          {
+            "Index": 69,
+            "Name": "basis-0069.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0069.csv",
+            "SHA256": "19d3b4fc782851ac4148427609cc0c0d85e659c734d043662da297f56915132c",
+            "Terminal": false
+          },
+          {
+            "Index": 70,
+            "Name": "basis-0070.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0070.csv",
+            "SHA256": "c2c9e236773ece3ce698d2afaacb6999f93899587c8b9c0b72ce2a2265f82128",
+            "Terminal": false
+          },
+          {
+            "Index": 71,
+            "Name": "basis-0071.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0071.csv",
+            "SHA256": "ac8018d73f9585e4a314f1c974413c03f0d1615ec28c29a1e09c18aef75d868d",
+            "Terminal": false
+          },
+          {
+            "Index": 72,
+            "Name": "basis-0072.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0072.csv",
+            "SHA256": "1c95105340f05058aeb5c8c377bb3955bddcad7e1db27e4ff2aa23aaeaf2507f",
+            "Terminal": false
+          },
+          {
+            "Index": 73,
+            "Name": "basis-0073.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0073.csv",
+            "SHA256": "1ad48efe7d2620adfa03fc4d46764a506b2432be7d00cc77c1c5434c1afb302c",
+            "Terminal": false
+          },
+          {
+            "Index": 74,
+            "Name": "basis-0074.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0074.csv",
+            "SHA256": "2efe4ac4a031692f7e2884dc0ca7283cdd6fbad0286667e9bb3d3b18c26a93c9",
+            "Terminal": false
+          },
+          {
+            "Index": 75,
+            "Name": "basis-0075.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0075.csv",
+            "SHA256": "e4e4f5513e5dbd4b98aa4f15c21dcb7363da0648169df964309ebbeb786e13e6",
+            "Terminal": false
+          },
+          {
+            "Index": 76,
+            "Name": "basis-0076.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0076.csv",
+            "SHA256": "78140e7c1175dbb4b25e77f5a2efeff59d3d777ad77b2796bd7f15f8cd3816a3",
+            "Terminal": false
+          },
+          {
+            "Index": 77,
+            "Name": "basis-0077.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/basis-0077.csv",
+            "SHA256": "813f2900e7f45a419fec4034c09fe10045fec6e525e535f3149ef992c1cd0805",
+            "Terminal": false
+          },
+          {
+            "Index": 78,
+            "Name": "conductor-2.csv",
+            "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/conductor-2.csv",
+            "SHA256": "313790145f532a997a347f59fcd84b4d773935ce6971223863b741f7792ad3d8",
+            "Terminal": true
+          }
+        ],
+        "ZeroTraceIndices": [],
+        "Traces": {
+          "Directory": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces",
+          "Rule": "regenerated from the bound trace basis in the mesh frame (trace_basis.load_trace_basis; producer format); coordinates within the contract's FrameFitResidual of the producer's own trace files",
+          "FrameFitResidual": 3.552713678800501e-15,
+          "ZeroTrace": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/traces/zero-trace.csv",
+          "ZeroTraceSHA256": "bc00718c3343e82c103a9d1a0481f210113bb34950c0be21f479c8bffb8fe796",
+          "ContractOutputSourceSHA256Identical": false
+        },
+        "PlanViewBoundary": "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/testdata/two-edge-8dd4bc70f183/plan-view-boundary.csv",
+        "RetainedEtch": null,
+        "Signature": "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/testdata/two-edge-8dd4bc70f183/mesh-signature.csv",
+        "MeshAttributes": [
+          1,
+          3100,
+          5001,
+          5002,
+          16001,
+          16002,
+          26001,
+          26002,
+          36001,
+          36002,
+          46001,
+          46002,
+          56001,
+          56002,
+          66001,
+          66002,
+          76001,
+          76002,
+          86001,
+          86002,
+          96001,
+          96002,
+          106001,
+          106002,
+          116001,
+          116002,
+          126001,
+          126002,
+          136001,
+          136002,
+          146001,
+          146002,
+          156001,
+          156002
+        ],
+        "AttributeCheck": {
+          "Passed": true,
+          "Named": {
+            "Ground": [
+              5001,
+              16001,
+              26001,
+              36001,
+              46001,
+              56001,
+              66001,
+              76001,
+              86001,
+              96001,
+              106001,
+              116001,
+              126001,
+              136001,
+              146001,
+              156001,
+              5002,
+              16002,
+              26002,
+              36002,
+              46002,
+              56002,
+              66002,
+              76002,
+              86002,
+              96002,
+              106002,
+              116002,
+              126002,
+              136002,
+              146002,
+              156002
+            ],
+            "PrescribedPotential": [
+              1
+            ],
+            "TerminalAttributes": [
+              5002,
+              16002,
+              26002,
+              36002,
+              46002,
+              56002,
+              66002,
+              76002,
+              86002,
+              96002,
+              106002,
+              116002,
+              126002,
+              136002,
+              146002,
+              156002
+            ],
+            "Dielectric[3].Attributes": [
+              16001,
+              16002
+            ],
+            "Dielectric[3].EdgeAttributes": [
+              3100
+            ],
+            "Dielectric[3].EdgeExcludeAttributes": [
+              1
+            ],
+            "Dielectric[4].Attributes": [
+              26001,
+              26002
+            ],
+            "Dielectric[4].EdgeAttributes": [
+              3100
+            ],
+            "Dielectric[4].EdgeExcludeAttributes": [
+              1
+            ],
+            "Dielectric[5].Attributes": [
+              36001,
+              36002
+            ],
+            "Dielectric[5].EdgeAttributes": [
+              3100
+            ],
+            "Dielectric[5].EdgeExcludeAttributes": [
+              1
+            ],
+            "Dielectric[6].Attributes": [
+              46001,
+              46002
+            ],
+            "Dielectric[6].EdgeAttributes": [
+              3100
+            ],
+            "Dielectric[6].EdgeExcludeAttributes": [
+              1
+            ],
+            "Dielectric[7].Attributes": [
+              56001,
+              56002
+            ],
+            "Dielectric[7].EdgeAttributes": [
+              3100
+            ],
+            "Dielectric[7].EdgeExcludeAttributes": [
+              1
+            ],
+            "Dielectric[8].Attributes": [
+              66001,
+              66002
+            ],
+            "Dielectric[8].EdgeAttributes": [
+              3100
+            ],
+            "Dielectric[8].EdgeExcludeAttributes": [
+              1
+            ],
+            "Dielectric[9].Attributes": [
+              76001,
+              76002
+            ],
+            "Dielectric[9].EdgeAttributes": [
+              3100
+            ],
+            "Dielectric[9].EdgeExcludeAttributes": [
+              1
+            ],
+            "Dielectric[10].Attributes": [
+              86001,
+              86002
+            ],
+            "Dielectric[10].EdgeAttributes": [
+              3100
+            ],
+            "Dielectric[10].EdgeExcludeAttributes": [
+              1
+            ],
+            "Dielectric[11].Attributes": [
+              96001,
+              96002
+            ],
+            "Dielectric[11].EdgeAttributes": [
+              3100
+            ],
+            "Dielectric[11].EdgeExcludeAttributes": [
+              1
+            ],
+            "Dielectric[12].Attributes": [
+              106001,
+              106002
+            ],
+            "Dielectric[12].EdgeAttributes": [
+              3100
+            ],
+            "Dielectric[12].EdgeExcludeAttributes": [
+              1
+            ],
+            "Dielectric[13].Attributes": [
+              116001,
+              116002
+            ],
+            "Dielectric[13].EdgeAttributes": [
+              3100
+            ],
+            "Dielectric[13].EdgeExcludeAttributes": [
+              1
+            ],
+            "Dielectric[14].Attributes": [
+              126001,
+              126002
+            ],
+            "Dielectric[14].EdgeAttributes": [
+              3100
+            ],
+            "Dielectric[14].EdgeExcludeAttributes": [
+              1
+            ],
+            "Dielectric[15].Attributes": [
+              136001,
+              136002
+            ],
+            "Dielectric[15].EdgeAttributes": [
+              3100
+            ],
+            "Dielectric[15].EdgeExcludeAttributes": [
+              1
+            ],
+            "Dielectric[16].Attributes": [
+              146001,
+              146002
+            ],
+            "Dielectric[16].EdgeAttributes": [
+              3100
+            ],
+            "Dielectric[16].EdgeExcludeAttributes": [
+              1
+            ],
+            "Dielectric[17].Attributes": [
+              156001,
+              156002
+            ],
+            "Dielectric[17].EdgeAttributes": [
+              3100
+            ],
+            "Dielectric[17].EdgeExcludeAttributes": [
+              1
+            ],
+            "Dielectric[2].Attributes": [
+              5001,
+              5002
+            ],
+            "Dielectric[2].EdgeAttributes": [
+              3100
+            ],
+            "Dielectric[2].EdgeExcludeAttributes": [
+              1
+            ]
+          },
+          "MeshBoundaryAttributes": [
+            1,
+            3100,
+            5001,
+            5002,
+            16001,
+            16002,
+            26001,
+            26002,
+            36001,
+            36002,
+            46001,
+            46002,
+            56001,
+            56002,
+            66001,
+            66002,
+            76001,
+            76002,
+            86001,
+            86002,
+            96001,
+            96002,
+            106001,
+            106002,
+            116001,
+            116002,
+            126001,
+            126002,
+            136001,
+            136002,
+            146001,
+            146002,
+            156001,
+            156002
+          ]
+        },
+        "BaseInterfaces": {
+          "1": "MA",
+          "2": "MS"
+        },
+        "RadialShells": {
+          "Rule": "the base config (derived against the parent MA labels; the reference comparison view) expanded by expand_radial_shells: one MA Dielectric entry per shell ordinal, the parent labels replaced by the shell labels in every attribute list",
+          "Census": {
+            "Path": "/tmp/coupon-library-build-step3-after/two-edge-8dd4bc70f183/identity.msh",
+            "SHA256": "179a405dbe5eb0fd583e2b42cf5ab200775a32a0f968a3ace5f5669ed6c8238d",
+            "Bytes": 28360844
+          },
+          "RingRadii": [
+            0.00025,
+            0.00075,
+            0.00175,
+            0.00375,
+            0.00775,
+            0.01575,
+            0.03175
+          ],
+          "Interfaces": {
+            "3": {
+              "BaseIndex": 1,
+              "Type": "MA",
+              "Ordinal": 1,
+              "Kind": "far",
+              "Ring": 0,
+              "InnerRadius": 0.03175,
+              "OuterRadius": null,
+              "Labels": [
+                16001,
+                16002
+              ],
+              "Parents": [
+                6001,
+                6002
+              ],
+              "Area": 8.08844352324517
+            },
+            "4": {
+              "BaseIndex": 1,
+              "Type": "MA",
+              "Ordinal": 2,
+              "Kind": "top",
+              "Ring": 1,
+              "InnerRadius": 0.0,
+              "OuterRadius": 0.00025,
+              "Labels": [
+                26001,
+                26002
+              ],
+              "Parents": [
+                6001,
+                6002
+              ],
+              "Area": 0.008803137307227836
+            },
+            "5": {
+              "BaseIndex": 1,
+              "Type": "MA",
+              "Ordinal": 3,
+              "Kind": "top",
+              "Ring": 2,
+              "InnerRadius": 0.00025,
+              "OuterRadius": 0.00075,
+              "Labels": [
+                36001,
+                36002
+              ],
+              "Parents": [
+                6001,
+                6002
+              ],
+              "Area": 0.017699436884164903
+            },
+            "6": {
+              "BaseIndex": 1,
+              "Type": "MA",
+              "Ordinal": 4,
+              "Kind": "top",
+              "Ring": 3,
+              "InnerRadius": 0.00075,
+              "OuterRadius": 0.00175,
+              "Labels": [
+                46001,
+                46002
+              ],
+              "Parents": [
+                6001,
+                6002
+              ],
+              "Area": 0.03564049709944536
+            },
+            "7": {
+              "BaseIndex": 1,
+              "Type": "MA",
+              "Ordinal": 5,
+              "Kind": "top",
+              "Ring": 4,
+              "InnerRadius": 0.00175,
+              "OuterRadius": 0.00375,
+              "Labels": [
+                56001,
+                56002
+              ],
+              "Parents": [
+                6001,
+                6002
+              ],
+              "Area": 0.07256517076470412
+            },
+            "8": {
+              "BaseIndex": 1,
+              "Type": "MA",
+              "Ordinal": 6,
+              "Kind": "top",
+              "Ring": 5,
+              "InnerRadius": 0.00375,
+              "OuterRadius": 0.00775,
+              "Labels": [
+                66001,
+                66002
+              ],
+              "Parents": [
+                6001,
+                6002
+              ],
+              "Area": 0.14422748111043482
+            },
+            "9": {
+              "BaseIndex": 1,
+              "Type": "MA",
+              "Ordinal": 7,
+              "Kind": "top",
+              "Ring": 6,
+              "InnerRadius": 0.00775,
+              "OuterRadius": 0.01575,
+              "Labels": [
+                76001,
+                76002
+              ],
+              "Parents": [
+                6001,
+                6002
+              ],
+              "Area": 0.28756584703278715
+            },
+            "10": {
+              "BaseIndex": 1,
+              "Type": "MA",
+              "Ordinal": 8,
+              "Kind": "top",
+              "Ring": 7,
+              "InnerRadius": 0.01575,
+              "OuterRadius": 0.03175,
+              "Labels": [
+                86001,
+                86002
+              ],
+              "Parents": [
+                6001,
+                6002
+              ],
+              "Area": 0.5730276132211995
+            },
+            "11": {
+              "BaseIndex": 1,
+              "Type": "MA",
+              "Ordinal": 9,
+              "Kind": "bottom",
+              "Ring": 1,
+              "InnerRadius": 0.0,
+              "OuterRadius": 0.00025,
+              "Labels": [
+                96001,
+                96002
+              ],
+              "Parents": [
+                6001,
+                6002
+              ],
+              "Area": 0.0044058885595178255
+            },
+            "12": {
+              "BaseIndex": 1,
+              "Type": "MA",
+              "Ordinal": 10,
+              "Kind": "bottom",
+              "Ring": 2,
+              "InnerRadius": 0.00025,
+              "OuterRadius": 0.00075,
+              "Labels": [
+                106001,
+                106002
+              ],
+              "Parents": [
+                6001,
+                6002
+              ],
+              "Area": 0.008885389176435308
+            },
+            "13": {
+              "BaseIndex": 1,
+              "Type": "MA",
+              "Ordinal": 11,
+              "Kind": "bottom",
+              "Ring": 3,
+              "InnerRadius": 0.00075,
+              "OuterRadius": 0.00175,
+              "Labels": [
+                116001,
+                116002
+              ],
+              "Parents": [
+                6001,
+                6002
+              ],
+              "Area": 0.01807372305431644
+            },
+            "14": {
+              "BaseIndex": 1,
+              "Type": "MA",
+              "Ordinal": 12,
+              "Kind": "bottom",
+              "Ring": 4,
+              "InnerRadius": 0.00175,
+              "OuterRadius": 0.00375,
+              "Labels": [
+                126001,
+                126002
+              ],
+              "Parents": [
+                6001,
+                6002
+              ],
+              "Area": 0.03612361139444746
+            },
+            "15": {
+              "BaseIndex": 1,
+              "Type": "MA",
+              "Ordinal": 13,
+              "Kind": "bottom",
+              "Ring": 5,
+              "InnerRadius": 0.00375,
+              "OuterRadius": 0.00775,
+              "Labels": [
+                136001,
+                136002
+              ],
+              "Parents": [
+                6001,
+                6002
+              ],
+              "Area": 0.07181377388397553
+            },
+            "16": {
+              "BaseIndex": 1,
+              "Type": "MA",
+              "Ordinal": 14,
+              "Kind": "bottom",
+              "Ring": 6,
+              "InnerRadius": 0.00775,
+              "OuterRadius": 0.01575,
+              "Labels": [
+                146001,
+                146002
+              ],
+              "Parents": [
+                6001,
+                6002
+              ],
+              "Area": 0.1442715159869351
+            },
+            "17": {
+              "BaseIndex": 1,
+              "Type": "MA",
+              "Ordinal": 15,
+              "Kind": "bottom",
+              "Ring": 7,
+              "InnerRadius": 0.01575,
+              "OuterRadius": 0.03175,
+              "Labels": [
+                156001,
+                156002
+              ],
+              "Parents": [
+                6001,
+                6002
+              ],
+              "Area": 0.28845339127923914
+            }
+          }
+        },
+        "BaseConfigPath": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/base-run-config.json",
+        "BaseConfigSHA256": "b243c7159713a9d5f0d633e5077d4c5d42cff8302e4a83e39d9f1ca18cabb476",
+        "Config": "/tmp/library-int63-01/two-edge-8dd4bc70f183/inputs/run-config.json",
+        "ConfigSHA256": "bb4563d037055daa55fa6ce11392ef2c70a856219b68cc23e4772ac729154723"
+      },
+      "Orders": {
+        "Main": [
+          "p4"
+        ],
+        "Controls": [
+          "p3"
+        ],
+        "RecipeOrder": "p4",
+        "RecipeLinearTol": 1e-10,
+        "ReferenceOrder": null,
+        "Gated": "p4",
+        "Rule": "main stages at the recipe's PhysicsRun order (the library order: cost coupon, local-edge stage, p-sequence main), then every --orders order, then the reference's own order when it differs (the same-order comparison is the gated one)"
+      },
+      "JobPolicy": {
+        "Mode": "frugal",
+        "MaxJobs": 1,
+        "WalltimeSeconds": 21600.0,
+        "FixedJobs": null,
+        "UserJobCap": 40,
+        "Origin": "manifest ProductionRecipe.PhysicsRun.JobPolicy",
+        "Rule": "N contiguous source blocks as N independent worker jobs at every main order (job 1 also runs the p-sequence controls and the local-edge stage), every block archived into the stage's one archive directory; one reducer job per coupon on the archive union after every worker job completed; N = 1 is the single job of the recorded campaigns; estimates per job = the cost model at the largest PCG factor x PreflightAndMarginFactor + PreflightSeconds; a job fits when that is below the walltime"
+      },
+      "ReducerBlockSize": {
+        "Value": 48,
+        "Origin": "manifest ProductionRecipe.PhysicsRun.ReducerBlockSize",
+        "Rule": "PALACE_RESPONSE_BLOCK_SIZE = b: the reducer keeps 2b archived source fields resident per block pair (each ~14 MB per rank at p4: V, E and their grid functions with ghosts, ~2.7 GB node-wide) and evaluates every source ceil(N / b) times; b = 48 -> 96 resident fields, estimated 350-450 GB of the r8g.48xlarge's 1,485 GiB (b = 6 measured 194 GB); the per-entry sums are identical in identical sample order, so the matrices are independent of b (decision 62(1) acceptance: bit-identical CSVs at b = 6 and b = 48). With the streaming one-pass Gram executable (decision 62(4), SHA-256 170439c4...) the reducer evaluates every source once whatever b and keeps N x (4 Q_local + L_local) x 8 bytes resident, so b = N (a single block) is permitted (decision 63 rule; PBS 46718: p4 78 sources at b = 48 peak 33.3 GB vs 91.2 GB with b28); the default stays 48"
+      },
+      "FrozenExecutable": {
+        "SHA256": "170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b",
+        "Origin": "manifest ProductionRecipe.PhysicsRun.FrozenExecutable",
+        "Rule": "the frozen palace-archive-estimate-<sha256>.bin under the remote root runs every stage; the plan pins the digest and run_stages verifies it in the preflight; 170439c4... (streaming one-pass Gram, decision 62(4)) reproduces b28f089a... at p3 bit for bit and at p4 to 8.4e-13 per entry (PBS 46718); --frozen-binary-sha256 overrides the default and the origin is recorded per coupon"
+      },
+      "Split": {
+        "N": 1,
+        "Fits": true,
+        "Decision": "policy frugal: N = 1 of at most 1 (blocks [78] sources; controls + local-edge in worker-1); longest job 28 min, critical path 28 min, node time 0.47 h at 2.0x PCG (+35% and preflight) against the 6.0 h walltime",
+        "ControlsJob": "worker-1",
+        "LargestSplit": 1,
+        "Candidates": [
+          {
+            "N": 1,
+            "Fits": true,
+            "ControlsJob": "worker-1",
+            "LongestJobSeconds": 1701.9143914074355,
+            "CriticalPathSeconds": 1701.9143914074355,
+            "NodeSeconds": 1701.9143914074355
+          }
+        ],
+        "CriticalPathEstimateSeconds": {
+          "1.0": 1098.9414387550423,
+          "1.5": 1400.427915081239,
+          "2.0": 1701.9143914074355
+        },
+        "NodeSecondsEstimate": {
+          "1.0": 1098.9414387550423,
+          "1.5": 1400.427915081239,
+          "2.0": 1701.9143914074355
+        },
+        "WorstPCGFactor": "2.0",
+        "Blocks": [
+          78
+        ],
+        "Rule": "N contiguous source blocks as N independent worker jobs at every main order (job 1 also runs the p-sequence controls and the local-edge stage), every block archived into the stage's one archive directory; one reducer job per coupon on the archive union after every worker job completed; N = 1 is the single job of the recorded campaigns; estimates per job = the cost model at the largest PCG factor x PreflightAndMarginFactor + PreflightSeconds; a job fits when that is below the walltime"
+      },
+      "Jobs": [
+        {
+          "Name": "single",
+          "Kind": "single",
+          "Block": 1,
+          "Sources": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63,
+            64,
+            65,
+            66,
+            67,
+            68,
+            69,
+            70,
+            71,
+            72,
+            73,
+            74,
+            75,
+            76,
+            77,
+            78
+          ],
+          "Requires": [],
+          "Directory": "/tmp/library-int63-01/two-edge-8dd4bc70f183/main",
+          "RemoteDirectory": "/data/home/simlap/coupon_accuracy_assessment_20260913/library-int63-01/two-edge-8dd4bc70f183/main",
+          "SubmissionRecord": "/tmp/library-int63-01/two-edge-8dd4bc70f183/submission.json",
+          "StageNames": [
+            "two-edge-8dd4bc70f183-p4-worker",
+            "two-edge-8dd4bc70f183-p4-reducer",
+            "two-edge-8dd4bc70f183-p3-control-worker",
+            "two-edge-8dd4bc70f183-p3-control-reducer",
+            "two-edge-8dd4bc70f183-p4-local-edge"
+          ],
+          "Estimate": {
+            "1.0": 1098.9414387550423,
+            "1.5": 1400.427915081239,
+            "2.0": 1701.9143914074355
+          },
+          "Plan": "/tmp/library-int63-01/two-edge-8dd4bc70f183/main/plan.json",
+          "Submission": {
+            "Job": "46987.ip-192-168-54-24.us-west-2.compute.internal",
+            "UTC": "2026-09-22T06:55:30Z",
+            "UserJobsBefore": 1,
+            "JobCap": 40,
+            "Command": "cd /data/home/simlap/coupon_accuracy_assessment_20260913/library-int63-01/two-edge-8dd4bc70f183/main && /opt/soca/soca-green1/schedulers/default/pbs/bin/qsub /data/home/simlap/coupon_accuracy_assessment_20260913/library-int63-01/two-edge-8dd4bc70f183/main/job.pbs"
+          },
+          "Monitor": {
+            "Polls": 1,
+            "LastJobState": null,
+            "LastStages": [
+              [
+                "two-edge-8dd4bc70f183-p4-worker",
+                "complete",
+                515
+              ],
+              [
+                "two-edge-8dd4bc70f183-p4-reducer",
+                "complete",
+                16
+              ],
+              [
+                "two-edge-8dd4bc70f183-p3-control-worker",
+                "complete",
+                32
+              ],
+              [
+                "two-edge-8dd4bc70f183-p3-control-reducer",
+                "complete",
+                10
+              ],
+              [
+                "two-edge-8dd4bc70f183-p4-local-edge",
+                "complete",
+                103
+              ]
+            ],
+            "Resumed": true,
+            "LastPollUTC": "2026-09-22T08:49:16Z"
+          },
+          "SubmittedAt": 1790060130,
+          "Upload": {
+            "Resumed": true,
+            "SubmissionRecord": "/tmp/library-int63-01/two-edge-8dd4bc70f183/submission.json"
+          },
+          "FinishedAt": 1790066956.5274298
+        }
+      ],
+      "Submission": {
+        "Job": "46987.ip-192-168-54-24.us-west-2.compute.internal",
+        "UTC": "2026-09-22T06:55:30Z",
+        "UserJobsBefore": 1,
+        "JobCap": 40,
+        "Command": "cd /data/home/simlap/coupon_accuracy_assessment_20260913/library-int63-01/two-edge-8dd4bc70f183/main && /opt/soca/soca-green1/schedulers/default/pbs/bin/qsub /data/home/simlap/coupon_accuracy_assessment_20260913/library-int63-01/two-edge-8dd4bc70f183/main/job.pbs"
+      },
+      "Monitor": {
+        "Polls": 1,
+        "LastJobState": null,
+        "LastStages": [
+          [
+            "two-edge-8dd4bc70f183-p4-worker",
+            "complete",
+            515
+          ],
+          [
+            "two-edge-8dd4bc70f183-p4-reducer",
+            "complete",
+            16
+          ],
+          [
+            "two-edge-8dd4bc70f183-p3-control-worker",
+            "complete",
+            32
+          ],
+          [
+            "two-edge-8dd4bc70f183-p3-control-reducer",
+            "complete",
+            10
+          ],
+          [
+            "two-edge-8dd4bc70f183-p4-local-edge",
+            "complete",
+            103
+          ]
+        ],
+        "Resumed": true,
+        "LastPollUTC": "2026-09-22T08:49:16Z"
+      },
+      "SubmittedAt": 1790060130,
+      "Upload": {
+        "Resumed": true,
+        "SubmissionRecords": [
+          "/tmp/library-int63-01/two-edge-8dd4bc70f183/submission.json"
+        ]
+      },
+      "Fetch": {
+        "Command": [
+          "rsync",
+          "-a",
+          "--exclude",
+          "archive/",
+          "--exclude",
+          "tmp/",
+          "soca-green-job:/data/home/simlap/coupon_accuracy_assessment_20260913/library-int63-01/two-edge-8dd4bc70f183/main/",
+          "/tmp/library-int63-01/two-edge-8dd4bc70f183/results/main/"
+        ],
+        "UTC": "2026-09-22T08:49:16Z",
+        "QStatHistory": "Job Id: 46987.ip-192-168-54-24.us-west-2.compute.internal\n    Job_Name = coupon-qualify-two-edge-8dd4bc70f183\n    Job_Owner = simlap@ip-192-168-148-82.us-west-2.compute.internal\n    resources_used.cpupercent = 43371\n    resources_used.cput = 34:41:08\n    resources_used.mem = 18296kb\n    resources_used.ncpus = 192\n    resources_used.vmem = 112212kb\n    resources_used.walltime = 00:11:18\n    job_state = F\n    queue = normal-g\n    server = ip-192-168-54-24.us-west-2.compute.internal\n    Checkpoint = u\n    ctime = Tue Sep 22 06:55:30 2026\n    Error_Path = ip-192-168-148-82.us-west-2.compute.internal:/data/home/simlap\n\t/coupon_accuracy_assessment_20260913/library-int63-01/two-edge-8dd4bc70\n\tf183/main/coupon-qualify-two-edge-8dd4bc70f183.e46987\n    exec_host = 192.168.61.0/0*192\n    exec_vnode = (192.168.61.0:ncpus=192)\n    Hold_Types = n\n    Join_Path = oe\n    Keep_Files = n\n    Mail_Points = a\n    mtime = Tue Sep 22 08:42:33 2026\n    Output_Path = ip-192-168-148-82:/data/home/simlap/coupon_accuracy_assessmen\n\tt_20260913/library-int63-01/two-edge-8dd4bc70f183/main/pbs.log\n    Priority = 0\n    qtime = Tue Sep 22 06:55:30 2026\n    Rerunable = False\n    Resource_List.efa_support = True\n    Resource_List.instance_type = r8g.48xlarge\n    Resource_List.mpiprocs = 192\n    Resource_List.ncpus = 192\n    Resource_List.nodect = 1\n    Resource_List.place = scatter:excl\n    Resource_List.retry_attempt = 11\n    Resource_List.retry_az_index = 0\n    Resource_List.retry_user_pinned_subnet = true\n    Resource_List.select = 1:ncpus=192:mpiprocs=192:compute_node=job46987\n    Resource_List.stack_id = soca-green1-job-46987\n    Resource_List.subnet_id = subnet-0c98d793bbcebb39a\n    Resource_List.walltime = 06:00:00\n    stime = Tue Sep 22 08:31:12 2026\n    obittime = Tue Sep 22 08:42:31 2026\n    session_id = 5181\n    jobdir = /data/home/simlap\n    substate = 92\n    Variable_List = PBS_O_HOME=/data/home/simlap,PBS_O_LANG=C.UTF-8,\n\tPBS_O_LOGNAME=simlap,\n\tPBS_O_PATH=/apps/comsol/comsol61/multiphysics/bin:/usr/local/sbin:/usr\n\t/local/bin:/sbin:/bin:/usr/sbin:/usr/bin:/opt/pbs/bin:/opt/pbs/sbin:/op\n\tt/pbs/bin:/opt/soca/soca-green1,PBS_O_SHELL=/bin/bash,\n\tPBS_O_WORKDIR=/data/home/simlap/coupon_accuracy_assessment_20260913/li\n\tbrary-int63-01/two-edge-8dd4bc70f183/main,PBS_O_SYSTEM=Linux,\n\tPBS_O_QUEUE=normal-g,\n\tPBS_O_HOST=ip-192-168-148-82.us-west-2.compute.internal\n    comment = Job run at Tue Sep 22 at 08:31 on (192.168.61.0:ncpus=192) and fi\n\tnished\n    etime = Tue Sep 22 08:29:11 2026\n    run_count = 1\n    Stageout_status = 1\n    Exit_status = 0\n    Submit_arguments = /data/home/simlap/coupon_accuracy_assessment_20260913/li\n\tbrary-int63-01/two-edge-8dd4bc70f183/main/job.pbs\n    history_timestamp = 1790066553\n    project = DS-EM-FEM\n    Submit_Host = ip-192-168-148-82.us-west-2.compute.internal\n\n"
+      },
+      "ResultDigests": {
+        "main/memory-samples.csv": {
+          "Local": "5090a6f52a819f8e68b8b86357230eada89fe72455b04a71d71c26e117ca9ed1",
+          "Remote": "5090a6f52a819f8e68b8b86357230eada89fe72455b04a71d71c26e117ca9ed1",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p3-control/reducer/domain-response-matrix.csv": {
+          "Local": "2bc7bd2f6cc88ff2642a8455db420be385ada2c6bd4bcb08eb4f4e280a972f83",
+          "Remote": "2bc7bd2f6cc88ff2642a8455db420be385ada2c6bd4bcb08eb4f4e280a972f83",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p3-control/reducer/surface-response-matrix.csv": {
+          "Local": "9859a7ef44cb7402736bc6146993ee3b747055d174743a363d8dc311507d8732",
+          "Remote": "9859a7ef44cb7402736bc6146993ee3b747055d174743a363d8dc311507d8732",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p4/reducer/domain-response-matrix.csv": {
+          "Local": "2336d66842506830c968173d72e7fbc94c4cff36e2b990973332970977bb6fe0",
+          "Remote": "2336d66842506830c968173d72e7fbc94c4cff36e2b990973332970977bb6fe0",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p4/reducer/surface-response-matrix.csv": {
+          "Local": "f20da946bd732c80568c75187d22cff5d2fd0ba20c60b12d2c3aba87e34add98",
+          "Remote": "f20da946bd732c80568c75187d22cff5d2fd0ba20c60b12d2c3aba87e34add98",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p4-local-edge/output/domain-E.csv": {
+          "Local": "fabd46c068c73abb50d21bd68896f74f9376450b27c221b48360de7ccf5115f5",
+          "Remote": "fabd46c068c73abb50d21bd68896f74f9376450b27c221b48360de7ccf5115f5",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p4-local-edge/output/domain-response-matrix.csv": {
+          "Local": "d1666f1a64571b252db2c3cbbc0e315a1767680db636e045f6fc98020d9e3bc2",
+          "Remote": "d1666f1a64571b252db2c3cbbc0e315a1767680db636e045f6fc98020d9e3bc2",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p4-local-edge/output/error-indicators.csv": {
+          "Local": "a8a12a193d4015c7886e9abb83699e0d74c8a582b23e4e3d1dce36b7d50f1e31",
+          "Remote": "a8a12a193d4015c7886e9abb83699e0d74c8a582b23e4e3d1dce36b7d50f1e31",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p4-local-edge/output/surface-Q-edge-local.csv": {
+          "Local": "de54cb1425c3efafd5ef6d3e38cef8c3f6fe18e8c4aba4817bd60f5a8a0ce231",
+          "Remote": "de54cb1425c3efafd5ef6d3e38cef8c3f6fe18e8c4aba4817bd60f5a8a0ce231",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p4-local-edge/output/surface-Q-edge.csv": {
+          "Local": "5dfed9bd0b994648943e98df9d16b4348f192bac4d5bf4bb063de1ff27548faf",
+          "Remote": "5dfed9bd0b994648943e98df9d16b4348f192bac4d5bf4bb063de1ff27548faf",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p4-local-edge/output/surface-Q.csv": {
+          "Local": "d621d32e9a09a3635f90e17f688b5994332db7b0a215fb174729cc155022859b",
+          "Remote": "d621d32e9a09a3635f90e17f688b5994332db7b0a215fb174729cc155022859b",
+          "OK": true
+        },
+        "main/two-edge-8dd4bc70f183-p4-local-edge/output/surface-response-matrix.csv": {
+          "Local": "f5f5bf417cc4071b34118919743e2457de75af52f62bb74649346fa6a7eb829a",
+          "Remote": "f5f5bf417cc4071b34118919743e2457de75af52f62bb74649346fa6a7eb829a",
+          "OK": true
+        }
+      },
+      "MatrixValidation": {
+        "two-edge-8dd4bc70f183-p4": {
+          "domain": {
+            "Rows": 3081,
+            "BasisSize": 78
+          },
+          "surface": {
+            "Rows": 49296,
+            "BasisSize": 78
+          }
+        },
+        "two-edge-8dd4bc70f183-p3-control": {
+          "domain": {
+            "Rows": 36,
+            "BasisSize": 8
+          },
+          "surface": {
+            "Rows": 576,
+            "BasisSize": 8
+          }
+        }
+      },
+      "ArchiveDeletion": {
+        "Archives": [
+          "/data/home/simlap/coupon_accuracy_assessment_20260913/library-int63-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p4/archive",
+          "/data/home/simlap/coupon_accuracy_assessment_20260913/library-int63-01/two-edge-8dd4bc70f183/main/two-edge-8dd4bc70f183-p3-control/archive"
+        ],
+        "SizesBeforeDeletion": "",
+        "DeletedUTC": "2026-09-22T08:49:18Z",
+        "Remaining": ""
+      },
+      "FetchedAt": 1790066958.547415,
+      "MATail": {
+        "Rule": "MA_sharp = MA_raw + MA_tail per source; MA_raw = the sum of the per-ring MA shells; MA_tail = the `Consistent` estimator of radial_ma_profile.py: the top (sharp 90-degree) edge's -2/3 law anchored on ring 2 (Theory@2) plus the bottom (metal / trench) edge's own law fitted over rings 2-4 (Fit2-4), each remainder = the law's ring-1 energy minus the resolved ring 1; the ring-1 factor is measured on this run at each order",
+        "Estimator": "Consistent",
+        "RingRadii": [
+          0.00025,
+          0.00075,
+          0.00175,
+          0.00375,
+          0.00775,
+          0.01575,
+          0.03175
+        ],
+        "GatedOrder": "p4",
+        "Reference": null,
+        "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/comparison/ma-tail.json",
+        "Orders": {
+          "p4": {
+            "Prefix": "two-edge-8dd4bc70f183-p4",
+            "Strongest": [],
+            "CSV": "/tmp/library-int63-01/two-edge-8dd4bc70f183/comparison/ma-sharp-two-edge-8dd4bc70f183-p4.csv",
+            "Summary": {
+              "Sources": 78,
+              "Estimator": "Consistent",
+              "Alpha": {
+                "Estimator": "Fit2-4",
+                "Edge": "top",
+                "Median": -0.6479540941452809,
+                "Quartiles": [
+                  -0.6572169624427335,
+                  -0.6127974188863101
+                ],
+                "SEMedian": 0.005769817355608104,
+                "StrongestMedian": null,
+                "At": {
+                  "53": [
+                    -0.6714771952490866,
+                    0.0022011505743680304
+                  ],
+                  "58": [
+                    -0.6714764624714766,
+                    0.002200932843261793
+                  ]
+                },
+                "Theoretical": -0.6666666666666666
+              },
+              "Ring1Factor": {
+                "Estimator": "Theory@2",
+                "Edge": "top",
+                "Median": 0.6649362915571164,
+                "Range": [
+                  0.648082246798856,
+                  0.6682484406707634
+                ]
+              },
+              "Deficit": {
+                "Fit2-4": {
+                  "Median": 0.022053504491540955,
+                  "Quartiles": [
+                    0.013418458091169396,
+                    0.031994316231131935
+                  ],
+                  "StrongestMedian": null,
+                  "At": {
+                    "53": 0.05395823815314659,
+                    "58": 0.053968050900790876
+                  }
+                },
+                "Theory@2": {
+                  "Median": 0.048787015064552984,
+                  "Quartiles": [
+                    0.039282423543014755,
+                    0.05234390682245202
+                  ],
+                  "StrongestMedian": null,
+                  "At": {
+                    "53": 0.05196482642560334,
+                    "58": 0.05197443233507421
+                  }
+                },
+                "Consistent": {
+                  "Median": 0.030694392360006102,
+                  "Quartiles": [
+                    0.025357579003666367,
+                    0.03559326704971431
+                  ],
+                  "StrongestMedian": null,
+                  "At": {
+                    "53": 0.051102971334579306,
+                    "58": 0.05111267568483063
+                  }
+                }
+              },
+              "EstimatorSpread": {
+                "Median": [
+                  0.022053504491540955,
+                  0.030694392360006102
+                ],
+                "At": {
+                  "53": [
+                    0.05395823815314659,
+                    0.051102971334579306
+                  ],
+                  "58": [
+                    0.053968050900790876,
+                    0.05111267568483063
+                  ]
+                },
+                "Rule": "Fit2-4 and Consistent (Theory@2 top) deficits: the realised uncertainty of the tail"
+              }
+            }
+          }
+        }
+      },
+      "Qualification": {
+        "Verdict": "Failed",
+        "Reason": "no reference matrices and failing ['PSequenceControls']",
+        "GatesPassed": {
+          "PSequenceControls": false
+        },
+        "NotApplicable": [],
+        "ReferenceAnchor": null,
+        "GatedStage": "two-edge-8dd4bc70f183-p4",
+        "GatedOrder": "p4",
+        "GatedComparison": "two-edge-8dd4bc70f183-p4-vs-reference",
+        "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/qualification.json",
+        "MAQuantity": null,
+        "MASharp": {
+          "Summary": {
+            "Sources": 78,
+            "Estimator": "Consistent",
+            "Alpha": {
+              "Estimator": "Fit2-4",
+              "Edge": "top",
+              "Median": -0.6479540941452809,
+              "Quartiles": [
+                -0.6572169624427335,
+                -0.6127974188863101
+              ],
+              "SEMedian": 0.005769817355608104,
+              "StrongestMedian": null,
+              "At": {
+                "53": [
+                  -0.6714771952490866,
+                  0.0022011505743680304
+                ],
+                "58": [
+                  -0.6714764624714766,
+                  0.002200932843261793
+                ]
+              },
+              "Theoretical": -0.6666666666666666
+            },
+            "Ring1Factor": {
+              "Estimator": "Theory@2",
+              "Edge": "top",
+              "Median": 0.6649362915571164,
+              "Range": [
+                0.648082246798856,
+                0.6682484406707634
+              ]
+            },
+            "Deficit": {
+              "Fit2-4": {
+                "Median": 0.022053504491540955,
+                "Quartiles": [
+                  0.013418458091169396,
+                  0.031994316231131935
+                ],
+                "StrongestMedian": null,
+                "At": {
+                  "53": 0.05395823815314659,
+                  "58": 0.053968050900790876
+                }
+              },
+              "Theory@2": {
+                "Median": 0.048787015064552984,
+                "Quartiles": [
+                  0.039282423543014755,
+                  0.05234390682245202
+                ],
+                "StrongestMedian": null,
+                "At": {
+                  "53": 0.05196482642560334,
+                  "58": 0.05197443233507421
+                }
+              },
+              "Consistent": {
+                "Median": 0.030694392360006102,
+                "Quartiles": [
+                  0.025357579003666367,
+                  0.03559326704971431
+                ],
+                "StrongestMedian": null,
+                "At": {
+                  "53": 0.051102971334579306,
+                  "58": 0.05111267568483063
+                }
+              }
+            },
+            "EstimatorSpread": {
+              "Median": [
+                0.022053504491540955,
+                0.030694392360006102
+              ],
+              "At": {
+                "53": [
+                  0.05395823815314659,
+                  0.051102971334579306
+                ],
+                "58": [
+                  0.053968050900790876,
+                  0.05111267568483063
+                ]
+              },
+              "Rule": "Fit2-4 and Consistent (Theory@2 top) deficits: the realised uncertainty of the tail"
+            }
+          },
+          "Reference": null
+        },
+        "ClassStatistics": null,
+        "Offsets": null,
+        "WeightedPMA": null,
+        "Informational": {}
+      },
+      "Cost": {
+        "MainStage": {
+          "H1": 7973827,
+          "Order": 4,
+          "MeanPCGIterations": 20.858974358974358,
+          "MaxPCGIterations": 42,
+          "SecondsPerPCGIteration": 0.2989723290878918,
+          "WorkerWallSeconds": 514.650353764,
+          "ReducerWallSeconds": 15.780654079999977,
+          "StageWallSeconds": 530.431007844,
+          "NodeHours": 0.14734194662333333
+        },
+        "MainStages": {
+          "two-edge-8dd4bc70f183-p4": {
+            "H1": 7973827,
+            "Order": 4,
+            "MeanPCGIterations": 20.858974358974358,
+            "MaxPCGIterations": 42,
+            "SecondsPerPCGIteration": 0.2989723290878918,
+            "WorkerWallSeconds": 514.650353764,
+            "ReducerWallSeconds": 15.780654079999977,
+            "StageWallSeconds": 530.431007844,
+            "NodeHours": 0.14734194662333333
+          }
+        },
+        "JobNodeHours": 0.18802691275194444,
+        "JobTotalSeconds": 676.896885907,
+        "Jobs": {
+          "single": {
+            "Kind": "single",
+            "Block": 1,
+            "SourceCount": 78,
+            "PBSJobID": "46987.ip-192-168-54-24.us-west-2.compute.internal",
+            "SubmittedUTC": "2026-09-22T06:55:30Z",
+            "EstimateSecondsWithPreflightAndMargin": 1701.9143914074355,
+            "ActualSeconds": 676.896885907,
+            "ActualOverEstimate": 0.39772675366310595,
+            "NodeHours": 0.18802691275194444,
+            "StartUTC": "2026-09-22T08:31:13Z",
+            "EndUTC": "2026-09-22T08:42:29Z",
+            "Host": "ip-192-168-61-0"
+          }
+        },
+        "Split": {
+          "N": 1,
+          "Blocks": [
+            78
+          ],
+          "ControlsJob": "worker-1",
+          "Policy": "frugal",
+          "CriticalPathEstimateSeconds": 1701.9143914074355,
+          "NodeSecondsEstimate": 1701.9143914074355
+        },
+        "CriticalPathSeconds": 6828.547415018082,
+        "CriticalPathRule": "first submission of the coupon's jobs to its fetch (a split coupon: the worker jobs in parallel, then the reducer job's queue wait and run)",
+        "ReferenceNodeHours": null,
+        "MainStageOverReference": null,
+        "Path": "/tmp/library-int63-01/two-edge-8dd4bc70f183/cost-summary.json"
+      }
+    }
+  ],
+  "Library": {
+    "CouponsAttempted": 1,
+    "CouponsQualified": 0,
+    "CouponsPending": 0,
+    "CouponsFailed": 1,
+    "CouponsPlanned": 0,
+    "CouponsSkipped": 0,
+    "CouponsUnsupported": 0,
+    "StoppedCoupons": {},
+    "NodeHours": 0.18802691275194444,
+    "CriticalPathSeconds": 6828.547415018082,
+    "CriticalPathRule": "first submission to the last fetch of this run (the jobs of different coupons overlap up to MaxJobs)",
+    "JobWallSeconds": {
+      "two-edge-8dd4bc70f183": 676.896885907
+    },
+    "WallClockSeconds": 98.34576511383057,
+    "JobsSubmitted": 1,
+    "UserJobCap": 40,
+    "MaxJobs": 1,
+    "JobsRule": "every qsub of this run is counted at submission (a stop after the submission keeps its job counted); a split coupon counts N worker jobs and its reducer job",
+    "JobPolicy": {
+      "Mode": "manifest default or frugal",
+      "FixedJobs": null,
+      "MaxJobs": 1,
+      "Rule": "N contiguous source blocks as N independent worker jobs at every main order (job 1 also runs the p-sequence controls and the local-edge stage), every block archived into the stage's one archive directory; one reducer job per coupon on the archive union after every worker job completed; N = 1 is the single job of the recorded campaigns; estimates per job = the cost model at the largest PCG factor x PreflightAndMarginFactor + PreflightSeconds; a job fits when that is below the walltime"
+    },
+    "ReducerBlockSize": {
+      "CommandLine": null,
+      "PerCase": {
+        "two-edge-8dd4bc70f183": {
+          "Value": 48,
+          "Origin": "manifest ProductionRecipe.PhysicsRun.ReducerBlockSize",
+          "Rule": "PALACE_RESPONSE_BLOCK_SIZE = b: the reducer keeps 2b archived source fields resident per block pair (each ~14 MB per rank at p4: V, E and their grid functions with ghosts, ~2.7 GB node-wide) and evaluates every source ceil(N / b) times; b = 48 -> 96 resident fields, estimated 350-450 GB of the r8g.48xlarge's 1,485 GiB (b = 6 measured 194 GB); the per-entry sums are identical in identical sample order, so the matrices are independent of b (decision 62(1) acceptance: bit-identical CSVs at b = 6 and b = 48). With the streaming one-pass Gram executable (decision 62(4), SHA-256 170439c4...) the reducer evaluates every source once whatever b and keeps N x (4 Q_local + L_local) x 8 bytes resident, so b = N (a single block) is permitted (decision 63 rule; PBS 46718: p4 78 sources at b = 48 peak 33.3 GB vs 91.2 GB with b28); the default stays 48"
+        }
+      },
+      "Rule": "PALACE_RESPONSE_BLOCK_SIZE = b: the reducer keeps 2b archived source fields resident per block pair (each ~14 MB per rank at p4: V, E and their grid functions with ghosts, ~2.7 GB node-wide) and evaluates every source ceil(N / b) times; b = 48 -> 96 resident fields, estimated 350-450 GB of the r8g.48xlarge's 1,485 GiB (b = 6 measured 194 GB); the per-entry sums are identical in identical sample order, so the matrices are independent of b (decision 62(1) acceptance: bit-identical CSVs at b = 6 and b = 48). With the streaming one-pass Gram executable (decision 62(4), SHA-256 170439c4...) the reducer evaluates every source once whatever b and keeps N x (4 Q_local + L_local) x 8 bytes resident, so b = N (a single block) is permitted (decision 63 rule; PBS 46718: p4 78 sources at b = 48 peak 33.3 GB vs 91.2 GB with b28); the default stays 48"
+    },
+    "Splits": {
+      "two-edge-8dd4bc70f183": {
+        "N": 1,
+        "Blocks": [
+          78
+        ],
+        "Policy": "frugal",
+        "CriticalPathSeconds": 6828.547415018082,
+        "NodeHours": 0.18802691275194444
+      }
+    },
+    "DryRun": false,
+    "Remote": {
+      "Host": "soca-green-job",
+      "Root": "/data/home/simlap/coupon_accuracy_assessment_20260913"
+    },
+    "Orders": [],
+    "OrdersRule": "main stages at the recipe's PhysicsRun order (the library order: cost coupon, local-edge stage, p-sequence main), then every --orders order, then the reference's own order when it differs (the same-order comparison is the gated one)",
+    "Controls": [
+      "p3"
+    ],
+    "FrozenBinarySHA256": {
+      "CommandLine": null,
+      "PerCase": {
+        "two-edge-8dd4bc70f183": {
+          "SHA256": "170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b",
+          "Origin": "manifest ProductionRecipe.PhysicsRun.FrozenExecutable",
+          "Rule": "the frozen palace-archive-estimate-<sha256>.bin under the remote root runs every stage; the plan pins the digest and run_stages verifies it in the preflight; 170439c4... (streaming one-pass Gram, decision 62(4)) reproduces b28f089a... at p3 bit for bit and at p4 to 8.4e-13 per entry (PBS 46718); --frozen-binary-sha256 overrides the default and the origin is recorded per coupon"
+        }
+      },
+      "Default": "170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b",
+      "Rule": "the frozen palace-archive-estimate-<sha256>.bin under the remote root runs every stage; the plan pins the digest and run_stages verifies it in the preflight; 170439c4... (streaming one-pass Gram, decision 62(4)) reproduces b28f089a... at p3 bit for bit and at p4 to 8.4e-13 per entry (PBS 46718); --frozen-binary-sha256 overrides the default and the origin is recorded per coupon"
+    },
+    "ClusterProfile": "soca-green normal-g r8g.48xlarge"
+  }
+}

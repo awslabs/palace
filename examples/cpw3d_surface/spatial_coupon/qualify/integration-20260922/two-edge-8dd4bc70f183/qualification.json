@@ -1,0 +1,361 @@
+{
+  "GatesFile": "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/qualify/qualification-gates.json",
+  "GatesSHA256": "0bee514a86dd53bc67a47ec4b9e3856779990ef8ff04490c4355dc2476e3c09d",
+  "FreeView": "every source of the reference that is not a contract ZeroTraceIndices knot (PEC-constrained library knots whose 3D coupon energies are nonzero) and whose reference and run diagonal domain energies are nonzero",
+  "ReferenceAnchor": null,
+  "GatedOrder": 4,
+  "AnchorRule": "the main stage at the reference order is gated when the run has one (same-order comparison); otherwise the first main order against the anchor",
+  "Interfaces": [
+    "MA",
+    "MS"
+  ],
+  "NotApplicable": [],
+  "Gates": {
+    "PSequenceControls": {
+      "Statement": "for every control source the p-step d45 = (p_high - p_main) / |p_high| of the domain energy is within 1% and that of every participation p_MA_sharp / p_MS / p_SA within 5% (controls at the orders below and above the main order)",
+      "Passed": false,
+      "Controls": {
+        "1": {
+          "E": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.01,
+            "Passed": false,
+            "r": null
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.05,
+            "Passed": false,
+            "r": null
+          },
+          "p_MS": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.05,
+            "Passed": false,
+            "r": null
+          }
+        },
+        "2": {
+          "E": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.01,
+            "Passed": false,
+            "r": null
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.05,
+            "Passed": false,
+            "r": null
+          },
+          "p_MS": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.05,
+            "Passed": false,
+            "r": null
+          }
+        },
+        "3": {
+          "E": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.01,
+            "Passed": false,
+            "r": null
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.05,
+            "Passed": false,
+            "r": null
+          },
+          "p_MS": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.05,
+            "Passed": false,
+            "r": null
+          }
+        },
+        "5": {
+          "E": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.01,
+            "Passed": false,
+            "r": null
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.05,
+            "Passed": false,
+            "r": null
+          },
+          "p_MS": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.05,
+            "Passed": false,
+            "r": null
+          }
+        },
+        "6": {
+          "E": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.01,
+            "Passed": false,
+            "r": null
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.05,
+            "Passed": false,
+            "r": null
+          },
+          "p_MS": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.05,
+            "Passed": false,
+            "r": null
+          }
+        },
+        "20": {
+          "E": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.01,
+            "Passed": false,
+            "r": null
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.05,
+            "Passed": false,
+            "r": null
+          },
+          "p_MS": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.05,
+            "Passed": false,
+            "r": null
+          }
+        },
+        "25": {
+          "E": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.01,
+            "Passed": false,
+            "r": null
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.05,
+            "Passed": false,
+            "r": null
+          },
+          "p_MS": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.05,
+            "Passed": false,
+            "r": null
+          }
+        },
+        "49": {
+          "E": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.01,
+            "Passed": false,
+            "r": null
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.05,
+            "Passed": false,
+            "r": null
+          },
+          "p_MS": {
+            "StepToHigherOrder": null,
+            "StepFromLowerOrder": null,
+            "Bound": 0.05,
+            "Passed": false,
+            "r": null
+          }
+        }
+      },
+      "Failing": [
+        {
+          "Control": 1,
+          "Observable": "E",
+          "StepToHigherOrder": null,
+          "Bound": 0.01
+        },
+        {
+          "Control": 1,
+          "Observable": "p_MA_sharp",
+          "StepToHigherOrder": null,
+          "Bound": 0.05
+        },
+        {
+          "Control": 1,
+          "Observable": "p_MS",
+          "StepToHigherOrder": null,
+          "Bound": 0.05
+        },
+        {
+          "Control": 2,
+          "Observable": "E",
+          "StepToHigherOrder": null,
+          "Bound": 0.01
+        },
+        {
+          "Control": 2,
+          "Observable": "p_MA_sharp",
+          "StepToHigherOrder": null,
+          "Bound": 0.05
+        },
+        {
+          "Control": 2,
+          "Observable": "p_MS",
+          "StepToHigherOrder": null,
+          "Bound": 0.05
+        },
+        {
+          "Control": 3,
+          "Observable": "E",
+          "StepToHigherOrder": null,
+          "Bound": 0.01
+        },
+        {
+          "Control": 3,
+          "Observable": "p_MA_sharp",
+          "StepToHigherOrder": null,
+          "Bound": 0.05
+        },
+        {
+          "Control": 3,
+          "Observable": "p_MS",
+          "StepToHigherOrder": null,
+          "Bound": 0.05
+        },
+        {
+          "Control": 5,
+          "Observable": "E",
+          "StepToHigherOrder": null,
+          "Bound": 0.01
+        },
+        {
+          "Control": 5,
+          "Observable": "p_MA_sharp",
+          "StepToHigherOrder": null,
+          "Bound": 0.05
+        },
+        {
+          "Control": 5,
+          "Observable": "p_MS",
+          "StepToHigherOrder": null,
+          "Bound": 0.05
+        },
+        {
+          "Control": 6,
+          "Observable": "E",
+          "StepToHigherOrder": null,
+          "Bound": 0.01
+        },
+        {
+          "Control": 6,
+          "Observable": "p_MA_sharp",
+          "StepToHigherOrder": null,
+          "Bound": 0.05
+        },
+        {
+          "Control": 6,
+          "Observable": "p_MS",
+          "StepToHigherOrder": null,
+          "Bound": 0.05
+        },
+        {
+          "Control": 20,
+          "Observable": "E",
+          "StepToHigherOrder": null,
+          "Bound": 0.01
+        },
+        {
+          "Control": 20,
+          "Observable": "p_MA_sharp",
+          "StepToHigherOrder": null,
+          "Bound": 0.05
+        },
+        {
+          "Control": 20,
+          "Observable": "p_MS",
+          "StepToHigherOrder": null,
+          "Bound": 0.05
+        },
+        {
+          "Control": 25,
+          "Observable": "E",
+          "StepToHigherOrder": null,
+          "Bound": 0.01
+        },
+        {
+          "Control": 25,
+          "Observable": "p_MA_sharp",
+          "StepToHigherOrder": null,
+          "Bound": 0.05
+        },
+        {
+          "Control": 25,
+          "Observable": "p_MS",
+          "StepToHigherOrder": null,
+          "Bound": 0.05
+        },
+        {
+          "Control": 49,
+          "Observable": "E",
+          "StepToHigherOrder": null,
+          "Bound": 0.01
+        },
+        {
+          "Control": 49,
+          "Observable": "p_MA_sharp",
+          "StepToHigherOrder": null,
+          "Bound": 0.05
+        },
+        {
+          "Control": 49,
+          "Observable": "p_MS",
+          "StepToHigherOrder": null,
+          "Bound": 0.05
+        }
+      ],
+      "NotApplicableObservables": [
+        "p_SA"
+      ],
+      "MAObservable": "p_MA_sharp",
+      "MAObservableRule": "decision 61a: the p-sequence gate on the MA evaluates the sharp-edge extrapolated p_MA_sharp (the tail measured at each order from that order's own shells) in place of the raw p_MA, whose step is dominated by the innermost ring's resolution; the raw p_MA step is still recorded"
+    }
+  },
+  "GatesPassed": {
+    "PSequenceControls": false
+  },
+  "Verdict": "Failed",
+  "Reason": "no reference matrices and failing ['PSequenceControls']"
+}
