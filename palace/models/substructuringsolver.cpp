@@ -169,55 +169,9 @@ private:
   std::function<void(const mfem::Vector &, mfem::Vector &)> apply;
 };
 
-// Materialized DtN: applies the precomputed interface operator S_E to a distributed interface
-// vector. S_E is stored by contiguous per-rank row blocks; the apply gathers the global
-// interface vector and each rank multiplies its own rows. Reused across region solves.
-class MaterializedDtN : public mfem::Operator
-{
-public:
-  MaterializedDtN(const std::vector<double> &S_rows, int row_off,
-                  const std::vector<int> &gamma_global, int nG_global, MPI_Comm comm)
-    : mfem::Operator(static_cast<int>(gamma_global.size())), S_rows(S_rows),
-      row_off(row_off), gamma_global(gamma_global), nG_global(nG_global),
-      comm(comm)
-  {
-  }
+// (MaterializedDtN is defined after the Hodlr helpers below, since it can apply either the
+// dense per-rank row blocks or a compressed hierarchical operator.)
 
-  void Mult(const mfem::Vector &x, mfem::Vector &y) const override
-  {
-    std::vector<double> xl(nG_global, 0.0), xg(nG_global, 0.0);
-    for (int i = 0; i < height; i++)
-    {
-      if (gamma_global[i] >= 0)
-      {
-        xl[gamma_global[i]] = x(i);
-      }
-    }
-    MPI_Allreduce(xl.data(), xg.data(), nG_global, MPI_DOUBLE, MPI_SUM, comm);
-    y = 0.0;
-    for (int i = 0; i < height; i++)
-    {
-      if (gamma_global[i] >= 0)
-      {
-        const int r = gamma_global[i] - row_off;  // owned row block is contiguous
-        const double *row = &S_rows[static_cast<std::size_t>(r) * nG_global];
-        double s = 0.0;
-        for (int j = 0; j < nG_global; j++)
-        {
-          s += row[j] * xg[j];
-        }
-        y(i) = s;
-      }
-    }
-  }
-
-private:
-  const std::vector<double> &S_rows;
-  int row_off;
-  const std::vector<int> &gamma_global;
-  int nG_global;
-  MPI_Comm comm;
-};
 
 // Symmetric eigendecomposition by cyclic Jacobi (this mfem build has no LAPACK): A (n x n,
 // row-major, destroyed), eigenvectors -> V (row-major, columns are eigenvectors), eigenvalues
@@ -285,18 +239,203 @@ inline void SymEig(std::vector<double> &A, int n, std::vector<double> &V,
   }
 }
 
-// In-place hierarchical (HODLR) off-diagonal low-rank compression of a dense symmetric S
-// (n x n, row-major): split the index set at the median of its widest coordinate axis,
-// replace the off-diagonal block S[I1,I2] (and its transpose) by a truncated SVD to relative
-// tolerance `tol`, and recurse on the diagonal blocks. `coords` is n x 3. Returns the number
-// of doubles retained (compressed storage) so the caller can report the compression ratio.
-inline long long HodlrCompress(std::vector<double> &S, int n, const std::vector<int> &idx,
-                               const std::vector<double> &coords, double tol, int leaf)
+// Hierarchical off-diagonal low-rank (HODLR) representation of the symmetric interface operator
+// S_E. The interface DOFs are permuted (recursive coordinate-median clustering); diagonal leaf
+// blocks are stored dense, and each internal node's off-diagonal coupling S[I1,I2] is stored as
+// a low-rank factor pair U V^T (symmetry gives the transpose block V U^T). Storage and apply are
+// O(nG * (leaf + rank * log nG)) instead of O(nG^2). Replicated across ranks (small once
+// compressed); serializable for MPI broadcast and file I/O.
+struct Hodlr
+{
+  struct Leaf
+  {
+    int s, m;               // start (permuted), size
+    std::vector<double> D;  // m x m, row-major
+  };
+  struct Block
+  {
+    int s1, m1, s2, m2, r;  // row/col starts+sizes (permuted), rank
+    std::vector<double> U;  // m1 x r, row-major
+    std::vector<double> V;  // m2 x r, row-major (B[I1,I2] ~= U V^T)
+  };
+  int n = 0;
+  std::vector<int> perm;  // permuted position -> interface global index
+  std::vector<Leaf> leaves;
+  std::vector<Block> blocks;
+
+  long long Storage() const
+  {
+    long long s = 0;
+    for (const auto &lf : leaves)
+    {
+      s += static_cast<long long>(lf.m) * lf.m;
+    }
+    for (const auto &b : blocks)
+    {
+      s += static_cast<long long>(b.r) * (b.m1 + b.m2);
+    }
+    return s;
+  }
+
+  // y = S x, both in the permuted ordering (length n).
+  void Mult(const double *xp, double *yp) const
+  {
+    std::fill(yp, yp + n, 0.0);
+    for (const auto &lf : leaves)
+    {
+      for (int i = 0; i < lf.m; i++)
+      {
+        const double *row = &lf.D[static_cast<std::size_t>(i) * lf.m];
+        double acc = 0.0;
+        for (int j = 0; j < lf.m; j++)
+        {
+          acc += row[j] * xp[lf.s + j];
+        }
+        yp[lf.s + i] += acc;
+      }
+    }
+    std::vector<double> t;
+    for (const auto &b : blocks)
+    {
+      t.assign(b.r, 0.0);  // t = V^T x2
+      for (int j = 0; j < b.m2; j++)
+      {
+        const double *vj = &b.V[static_cast<std::size_t>(j) * b.r];
+        const double xj = xp[b.s2 + j];
+        for (int k = 0; k < b.r; k++)
+        {
+          t[k] += vj[k] * xj;
+        }
+      }
+      for (int i = 0; i < b.m1; i++)  // y1 += U t
+      {
+        const double *ui = &b.U[static_cast<std::size_t>(i) * b.r];
+        double acc = 0.0;
+        for (int k = 0; k < b.r; k++)
+        {
+          acc += ui[k] * t[k];
+        }
+        yp[b.s1 + i] += acc;
+      }
+      t.assign(b.r, 0.0);  // t = U^T x1
+      for (int i = 0; i < b.m1; i++)
+      {
+        const double *ui = &b.U[static_cast<std::size_t>(i) * b.r];
+        const double xi = xp[b.s1 + i];
+        for (int k = 0; k < b.r; k++)
+        {
+          t[k] += ui[k] * xi;
+        }
+      }
+      for (int j = 0; j < b.m2; j++)  // y2 += V t
+      {
+        const double *vj = &b.V[static_cast<std::size_t>(j) * b.r];
+        double acc = 0.0;
+        for (int k = 0; k < b.r; k++)
+        {
+          acc += vj[k] * t[k];
+        }
+        yp[b.s2 + j] += acc;
+      }
+    }
+  }
+
+  // Flatten to a double buffer (indices packed as doubles) for MPI_Bcast and file I/O.
+  std::vector<double> Serialize() const
+  {
+    std::vector<double> b;
+    b.push_back(n);
+    b.push_back(static_cast<double>(leaves.size()));
+    b.push_back(static_cast<double>(blocks.size()));
+    for (int p : perm)
+    {
+      b.push_back(p);
+    }
+    for (const auto &lf : leaves)
+    {
+      b.push_back(lf.s);
+      b.push_back(lf.m);
+      b.insert(b.end(), lf.D.begin(), lf.D.end());
+    }
+    for (const auto &bl : blocks)
+    {
+      b.push_back(bl.s1);
+      b.push_back(bl.m1);
+      b.push_back(bl.s2);
+      b.push_back(bl.m2);
+      b.push_back(bl.r);
+      b.insert(b.end(), bl.U.begin(), bl.U.end());
+      b.insert(b.end(), bl.V.begin(), bl.V.end());
+    }
+    return b;
+  }
+
+  static Hodlr Deserialize(const std::vector<double> &b)
+  {
+    Hodlr h;
+    std::size_t p = 0;
+    h.n = static_cast<int>(b[p++]);
+    const int nleaf = static_cast<int>(b[p++]);
+    const int nblk = static_cast<int>(b[p++]);
+    h.perm.resize(h.n);
+    for (int i = 0; i < h.n; i++)
+    {
+      h.perm[i] = static_cast<int>(b[p++]);
+    }
+    for (int i = 0; i < nleaf; i++)
+    {
+      Leaf lf;
+      lf.s = static_cast<int>(b[p++]);
+      lf.m = static_cast<int>(b[p++]);
+      lf.D.assign(b.begin() + p, b.begin() + p + static_cast<std::size_t>(lf.m) * lf.m);
+      p += static_cast<std::size_t>(lf.m) * lf.m;
+      h.leaves.push_back(std::move(lf));
+    }
+    for (int i = 0; i < nblk; i++)
+    {
+      Block bl;
+      bl.s1 = static_cast<int>(b[p++]);
+      bl.m1 = static_cast<int>(b[p++]);
+      bl.s2 = static_cast<int>(b[p++]);
+      bl.m2 = static_cast<int>(b[p++]);
+      bl.r = static_cast<int>(b[p++]);
+      bl.U.assign(b.begin() + p, b.begin() + p + static_cast<std::size_t>(bl.m1) * bl.r);
+      p += static_cast<std::size_t>(bl.m1) * bl.r;
+      bl.V.assign(b.begin() + p, b.begin() + p + static_cast<std::size_t>(bl.m2) * bl.r);
+      p += static_cast<std::size_t>(bl.m2) * bl.r;
+      h.blocks.push_back(std::move(bl));
+    }
+    return h;
+  }
+};
+
+// Recursively build a Hodlr from a dense symmetric S (n x n, row-major): split the index set
+// `idx` at the median of its widest coordinate axis, compress the off-diagonal block via a
+// truncated SVD to relative tolerance `tol`, recurse on the diagonal blocks. Leaf blocks
+// (size <= `leaf`) are stored dense. `base` is the permuted offset of this block. `coords` is
+// n x 3 (global-index order).
+inline void BuildHodlr(const std::vector<double> &S, int n, const std::vector<int> &idx,
+                       int base, const std::vector<double> &coords, double tol, int leaf,
+                       Hodlr &h)
 {
   const int m = static_cast<int>(idx.size());
   if (m <= leaf)
   {
-    return static_cast<long long>(m) * m;
+    Hodlr::Leaf lf;
+    lf.s = base;
+    lf.m = m;
+    lf.D.assign(static_cast<std::size_t>(m) * m, 0.0);
+    for (int i = 0; i < m; i++)
+    {
+      for (int j = 0; j < m; j++)
+      {
+        lf.D[static_cast<std::size_t>(i) * m + j] =
+            S[static_cast<std::size_t>(idx[i]) * n + idx[j]];
+      }
+      h.perm[base + i] = idx[i];
+    }
+    h.leaves.push_back(std::move(lf));
+    return;
   }
   int axis = 0;
   double best = -1.0;
@@ -316,12 +455,21 @@ inline long long HodlrCompress(std::vector<double> &S, int n, const std::vector<
     }
   }
   std::vector<int> s(idx);
-  std::sort(s.begin(), s.end(), [&](int i, int j)
-            { return coords[static_cast<std::size_t>(i) * 3 + axis] <
-                     coords[static_cast<std::size_t>(j) * 3 + axis]; });
+  std::sort(s.begin(), s.end(),
+            [&](int i, int j) {
+              return coords[static_cast<std::size_t>(i) * 3 + axis] <
+                     coords[static_cast<std::size_t>(j) * 3 + axis];
+            });
   std::vector<int> I1(s.begin(), s.begin() + m / 2), I2(s.begin() + m / 2, s.end());
   const int m1 = static_cast<int>(I1.size()), m2 = static_cast<int>(I2.size());
-  // C = B^T B for B = S[I1, I2] (m1 x m2); sing. values of B are sqrt(eig(C)).
+  // Recurse first so the final permuted order within each child range is fixed; the
+  // off-diagonal factors below are then indexed consistently with `perm` (the recursion
+  // reorders I1/I2 internally).
+  BuildHodlr(S, n, I1, base, coords, tol, leaf, h);
+  BuildHodlr(S, n, I2, base + m1, coords, tol, leaf, h);
+  // Off-diagonal block B = S[rows, cols] with rows/cols the final permuted indices.
+  const int *rows = &h.perm[base], *cols = &h.perm[base + m1];
+  // C = B^T B (m2 x m2); singular values of B are sqrt(eig(C)).
   std::vector<double> C(static_cast<std::size_t>(m2) * m2, 0.0);
   for (int a = 0; a < m2; a++)
   {
@@ -330,15 +478,15 @@ inline long long HodlrCompress(std::vector<double> &S, int n, const std::vector<
       double acc = 0.0;
       for (int k = 0; k < m1; k++)
       {
-        acc += S[static_cast<std::size_t>(I1[k]) * n + I2[a]] *
-               S[static_cast<std::size_t>(I1[k]) * n + I2[b]];
+        acc += S[static_cast<std::size_t>(rows[k]) * n + cols[a]] *
+               S[static_cast<std::size_t>(rows[k]) * n + cols[b]];
       }
       C[static_cast<std::size_t>(a) * m2 + b] = acc;
       C[static_cast<std::size_t>(b) * m2 + a] = acc;
     }
   }
-  std::vector<double> V, lam;
-  SymEig(C, m2, V, lam);
+  std::vector<double> Vc, lam;
+  SymEig(C, m2, Vc, lam);
   double lmax = 0.0;
   for (double l : lam)
   {
@@ -353,8 +501,15 @@ inline long long HodlrCompress(std::vector<double> &S, int n, const std::vector<
     }
   }
   const int rB = static_cast<int>(keep.size());
-  // B ~= sum_k (B v_k) v_k^T over kept modes. Bv[i][kk] = sum_l S[I1[i],I2[l]] V[l,keep[kk]].
-  std::vector<double> Bv(static_cast<std::size_t>(m1) * rB, 0.0);
+  // B ~= (B V_keep) V_keep^T; store U := B V_keep (m1 x rB), V := V_keep (m2 x rB).
+  Hodlr::Block bl;
+  bl.s1 = base;
+  bl.m1 = m1;
+  bl.s2 = base + m1;
+  bl.m2 = m2;
+  bl.r = rB;
+  bl.U.assign(static_cast<std::size_t>(m1) * rB, 0.0);
+  bl.V.assign(static_cast<std::size_t>(m2) * rB, 0.0);
   for (int i = 0; i < m1; i++)
   {
     for (int kk = 0; kk < rB; kk++)
@@ -362,30 +517,98 @@ inline long long HodlrCompress(std::vector<double> &S, int n, const std::vector<
       double acc = 0.0;
       for (int l = 0; l < m2; l++)
       {
-        acc += S[static_cast<std::size_t>(I1[i]) * n + I2[l]] *
-               V[static_cast<std::size_t>(l) * m2 + keep[kk]];
+        acc += S[static_cast<std::size_t>(rows[i]) * n + cols[l]] *
+               Vc[static_cast<std::size_t>(l) * m2 + keep[kk]];
       }
-      Bv[static_cast<std::size_t>(i) * rB + kk] = acc;
+      bl.U[static_cast<std::size_t>(i) * rB + kk] = acc;
     }
   }
-  for (int i = 0; i < m1; i++)
+  for (int j = 0; j < m2; j++)
   {
-    for (int j = 0; j < m2; j++)
+    for (int kk = 0; kk < rB; kk++)
     {
-      double acc = 0.0;
-      for (int kk = 0; kk < rB; kk++)
-      {
-        acc += Bv[static_cast<std::size_t>(i) * rB + kk] *
-               V[static_cast<std::size_t>(j) * m2 + keep[kk]];
-      }
-      S[static_cast<std::size_t>(I1[i]) * n + I2[j]] = acc;
-      S[static_cast<std::size_t>(I2[j]) * n + I1[i]] = acc;  // symmetric
+      bl.V[static_cast<std::size_t>(j) * rB + kk] =
+          Vc[static_cast<std::size_t>(j) * m2 + keep[kk]];
     }
   }
-  return static_cast<long long>(rB) * (m1 + m2) +
-         HodlrCompress(S, n, I1, coords, tol, leaf) +
-         HodlrCompress(S, n, I2, coords, tol, leaf);
+  h.blocks.push_back(std::move(bl));
 }
+
+// Materialized DtN: applies the precomputed interface operator S_E to a distributed interface
+// vector. The global interface vector is gathered by an Allreduce, then either each rank
+// multiplies its own dense row block (S_rows) or -- when a compressed Hodlr is supplied -- the
+// replicated hierarchical operator is applied and each rank reads back its interface rows.
+class MaterializedDtN : public mfem::Operator
+{
+public:
+  MaterializedDtN(const std::vector<double> &S_rows, int row_off,
+                  const std::vector<int> &gamma_global, int nG_global, MPI_Comm comm,
+                  const Hodlr *hodlr = nullptr)
+    : mfem::Operator(static_cast<int>(gamma_global.size())), S_rows(S_rows),
+      row_off(row_off), gamma_global(gamma_global), nG_global(nG_global), comm(comm),
+      hodlr(hodlr)
+  {
+  }
+
+  void Mult(const mfem::Vector &x, mfem::Vector &y) const override
+  {
+    std::vector<double> xl(nG_global, 0.0), xg(nG_global, 0.0);
+    for (int i = 0; i < height; i++)
+    {
+      if (gamma_global[i] >= 0)
+      {
+        xl[gamma_global[i]] = x(i);
+      }
+    }
+    MPI_Allreduce(xl.data(), xg.data(), nG_global, MPI_DOUBLE, MPI_SUM, comm);
+    y = 0.0;
+    if (hodlr)
+    {
+      // Compressed apply: permute to tree order, apply the replicated Hodlr, un-permute, and
+      // read back this rank's interface rows.
+      std::vector<double> xp(nG_global), yp(nG_global), yg(nG_global);
+      for (int k = 0; k < nG_global; k++)
+      {
+        xp[k] = xg[hodlr->perm[k]];
+      }
+      hodlr->Mult(xp.data(), yp.data());
+      for (int k = 0; k < nG_global; k++)
+      {
+        yg[hodlr->perm[k]] = yp[k];
+      }
+      for (int i = 0; i < height; i++)
+      {
+        if (gamma_global[i] >= 0)
+        {
+          y(i) = yg[gamma_global[i]];
+        }
+      }
+      return;
+    }
+    for (int i = 0; i < height; i++)
+    {
+      if (gamma_global[i] >= 0)
+      {
+        const int r = gamma_global[i] - row_off;  // owned row block is contiguous
+        const double *row = &S_rows[static_cast<std::size_t>(r) * nG_global];
+        double s = 0.0;
+        for (int j = 0; j < nG_global; j++)
+        {
+          s += row[j] * xg[j];
+        }
+        y(i) = s;
+      }
+    }
+  }
+
+private:
+  const std::vector<double> &S_rows;
+  int row_off;
+  const std::vector<int> &gamma_global;
+  int nG_global;
+  MPI_Comm comm;
+  const Hodlr *hodlr;
+};
 
 }  // namespace
 
@@ -469,6 +692,9 @@ struct SubstructuringSolver::Impl
   // O(nG^2 / P) and parallelizes the apply.
   std::vector<double> S_rows;
   int gamma_off = 0, gamma_nloc = 0;
+  // Optional compressed (HODLR) form of S_E, used in place of S_rows when interface compression
+  // is requested (replicated across ranks).
+  std::unique_ptr<Hodlr> hodlr;
   std::unique_ptr<MaterializedDtN> mat_dtn;
 
   Impl(const IoData &iodata, mfem::ParMesh &parent)
@@ -1545,16 +1771,21 @@ void SubstructuringSolver::CondenseEnvironment()
       }
     }
   }
-  // Optional hierarchical (HODLR) off-diagonal compression of the freshly materialized S_E
-  // (serial proof-of-concept, H1): the DtN's well-separated interface-block couplings are
-  // low-rank, so this compresses S_E storage to a controlled relative tolerance while the
-  // near-field / diagonal is kept exact (unlike a global low-rank, which fails -- S_E is full
-  // rank). Reconstructs an approximate dense S_E and reports the compression ratio.
+  // Optional hierarchical (HODLR) off-diagonal compression of the assembled S_E: the DtN's
+  // well-separated interface-block couplings are low-rank, so this compresses S_E storage +
+  // apply to a controlled relative tolerance while the near-field / diagonal stays exact
+  // (unlike a global low-rank, which fails -- S_E is full rank). Built on rank 0 from the
+  // gathered dense S_E, then broadcast (compressed) and applied replicated on every rank.
   {
     const double hodlr_tol = impl->iodata.solver.substructuring->interface_offdiag_tol;
-    if (hodlr_tol > 0.0 && nG > 0 && Mpi::Size(comm) == 1 && !impl->magnetostatic)
+    if (hodlr_tol > 0.0 && nG > 0)
     {
-      std::vector<double> coords(static_cast<std::size_t>(nG) * 3, 0.0);
+      MFEM_VERIFY(!impl->magnetostatic,
+                  "Substructuring InterfaceOffdiagTol (HODLR compression) is currently "
+                  "supported only for electrostatic (H1) problems.");
+      // Interface DOF coordinates (replicated) for the coordinate-median clustering.
+      std::vector<double> coords_loc(static_cast<std::size_t>(nG) * 3, 0.0),
+          coords(static_cast<std::size_t>(nG) * 3, 0.0);
       mfem::ParGridFunction gf(&impl->parent_fes);
       Vector td(impl->nt);
       for (int d = 0; d < impl->parent.Dimension(); d++)
@@ -1566,13 +1797,42 @@ void SubstructuringSolver::CondenseEnvironment()
         {
           if (impl->is_gamma[i])
           {
-            coords[static_cast<std::size_t>(impl->gamma_global[i]) * 3 + d] = td(i);
+            coords_loc[static_cast<std::size_t>(impl->gamma_global[i]) * 3 + d] = td(i);
           }
         }
       }
-      std::vector<int> idx(nG);
-      std::iota(idx.begin(), idx.end(), 0);
-      const long long ret = HodlrCompress(impl->S_rows, nG, idx, coords, hodlr_tol, 32);
+      MPI_Allreduce(coords_loc.data(), coords.data(), nG * 3, MPI_DOUBLE, MPI_SUM, comm);
+      // Gather the dense S_E to rank 0 and build the Hodlr there.
+      std::vector<double> S_full;
+      if (rank == 0)
+      {
+        S_full.assign(static_cast<std::size_t>(nG) * nG, 0.0);
+      }
+      MPI_Gatherv(impl->S_rows.data(), nloc * nG, MPI_DOUBLE,
+                  rank == 0 ? S_full.data() : nullptr, row_cnt.data(), row_disp.data(),
+                  MPI_DOUBLE, 0, comm);
+      std::vector<double> buf;
+      int buflen = 0;
+      if (rank == 0)
+      {
+        Hodlr h;
+        h.n = nG;
+        h.perm.assign(nG, 0);
+        std::vector<int> idx(nG);
+        std::iota(idx.begin(), idx.end(), 0);
+        BuildHodlr(S_full, nG, idx, 0, coords, hodlr_tol, 32, h);
+        buf = h.Serialize();
+        buflen = static_cast<int>(buf.size());
+      }
+      MPI_Bcast(&buflen, 1, MPI_INT, 0, comm);
+      buf.resize(buflen);
+      MPI_Bcast(buf.data(), buflen, MPI_DOUBLE, 0, comm);
+      impl->hodlr = std::make_unique<Hodlr>(Hodlr::Deserialize(buf));
+      // The compressed operator supplants the dense row blocks; free them to realize the
+      // memory saving.
+      const long long ret = impl->hodlr->Storage();
+      impl->S_rows.clear();
+      impl->S_rows.shrink_to_fit();
       Mpi::Print("[HODLR] tol={:.1e}: S_E storage {:d}/{:d} = {:.3f} of dense\n", hodlr_tol,
                  ret, static_cast<long long>(nG) * nG,
                  static_cast<double>(ret) / (static_cast<double>(nG) * nG));
@@ -1581,7 +1841,8 @@ void SubstructuringSolver::CondenseEnvironment()
 
   // g_E is excitation-dependent; it is computed per excitation in the region solve.
   impl->mat_dtn = std::make_unique<MaterializedDtN>(
-      impl->S_rows, impl->gamma_off, impl->gamma_global, impl->nG_global, comm);
+      impl->S_rows, impl->gamma_off, impl->gamma_global, impl->nG_global, comm,
+      impl->hodlr.get());
 
   // Region-condensed solver: Palace CG preconditioned by a wrapped AMS (H(curl)) or
   // BoomerAMG (H1) on the region-free block. Built once and reused across excitations (the

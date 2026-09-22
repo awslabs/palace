@@ -1022,4 +1022,41 @@ TEST_CASE("SubstructuringSolver HODLR off-diagonal compression accuracy vs toler
   CHECK(relerr <= 1.0e-6);
 }
 
+TEST_CASE("SubstructuringSolver HODLR compressed apply matches dense (parallel)",
+          "[substructure][Parallel]")
+{
+  // Exercises the parallel build (gather -> build on rank 0 -> broadcast) and the replicated
+  // compressed apply: the region energy with a tight-tolerance compressed S_E must match the
+  // dense S_E at any process count.
+  auto energy_at = [](double tol)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+            {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", 1},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"InterfaceOffdiagTol", tol}}}}}};
+    IoData iodata(config, false);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(8)));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+    return ss.ElectrostaticEnergy(ss.SolveExcitation(1));
+  };
+  const double e_dense = energy_at(0.0);
+  const double e_comp = energy_at(1.0e-8);
+  CHECK(e_dense > 1.0e-12);
+  CHECK(std::abs(e_comp - e_dense) / std::abs(e_dense) <= 1.0e-6);
+}
+
 }  // namespace palace
