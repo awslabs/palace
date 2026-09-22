@@ -1,0 +1,441 @@
+{
+  "GatesFile": "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/qualify/qualification-gates.json",
+  "GatesSHA256": "0bee514a86dd53bc67a47ec4b9e3856779990ef8ff04490c4355dc2476e3c09d",
+  "FreeView": "every source of the reference that is not a contract ZeroTraceIndices knot (PEC-constrained library knots whose 3D coupon energies are nonzero) and whose reference and run diagonal domain energies are nonzero",
+  "ReferenceAnchor": "vs p5 anchor",
+  "GatedOrder": 5,
+  "AnchorRule": "the main stage at the reference order is gated when the run has one (same-order comparison); otherwise the first main order against the anchor",
+  "Interfaces": [
+    "MA",
+    "MS"
+  ],
+  "NotApplicable": [
+    "p_SA"
+  ],
+  "Gates": {
+    "E": {
+      "Statement": "every source of the wide classes within 1% of the reference domain energy",
+      "Passed": true,
+      "WideClasses": [
+        "wide hats, bottom/top faces",
+        "box 3D corners (bottom/top faces)",
+        "wide hats, metal-top ring",
+        "wide hats, substrate/trench rings"
+      ],
+      "WideSources": 40,
+      "WithinBound": 40,
+      "Bound": 0.01,
+      "FailingSources": [],
+      "Wide": {
+        "n": 40,
+        "within_1pct": 40,
+        "within_2pct": 40,
+        "within_5pct": 40,
+        "signed_median": 0.00041078170814749706,
+        "abs_median": 0.00041078170814749706,
+        "worst_source": 39,
+        "worst_offset": 0.0022071590259021808
+      },
+      "AllFree": {
+        "n": 78,
+        "within_1pct": 78,
+        "within_2pct": 78,
+        "within_5pct": 78,
+        "signed_median": 0.0009277237124347082,
+        "abs_median": 0.0009277237124347082,
+        "worst_source": 7,
+        "worst_offset": 0.006778069147503466
+      }
+    },
+    "p_MA": {
+      "Statement": "free signed median within 1%, reference-p_MA-weighted mean within 1%, every strongest-reference-MA source within 2%, every free source within 5%",
+      "Quantity": "p_MA_sharp",
+      "QuantityRule": "user decision 60(1) / supervisor decision 61a: the MA statements are evaluated on the sharp-edge extrapolated participation p_MA_sharp = (MA_raw + MA_tail) / E of the run (ma_tail.py: MA_raw the sum of the per-ring MA shells, MA_tail the `Consistent` estimator - the top edge's -2/3 law anchored on ring 2 with the ring-1 factor measured on this run, the bottom edge's own rings-2..4 law) against the reference's sharp-edge p_MA: extrapolated by the same rule when its ring / edge sizing is recorded, else modelled from its edge size via the eps^(1/3) law and annotated 'reference unextrapolated' (raw-vs-raw is recorded next to it); a run without radial shells is gated on the raw p_MA and says so",
+      "Passed": false,
+      "Checks": {
+        "SignedMedianWithinBound": true,
+        "WeightedMeanWithinBound": true,
+        "StrongestWithinBound": false,
+        "FreeWithinBound": true
+      },
+      "Free": {
+        "n": 78,
+        "within_1pct": 51,
+        "within_2pct": 76,
+        "within_5pct": 78,
+        "signed_median": 0.0055262551513634945,
+        "abs_median": 0.006998755899687906,
+        "worst_source": 53,
+        "worst_offset": 0.02373821761479635
+      },
+      "RawFree": {
+        "n": 78,
+        "within_1pct": 34,
+        "within_2pct": 60,
+        "within_5pct": 78,
+        "signed_median": 0.012491095390561358,
+        "abs_median": 0.012491095390561358,
+        "worst_source": 53,
+        "worst_offset": 0.03504630045887717
+      },
+      "WeightedMean": 0.0042337776280143525,
+      "StrongestSources": [
+        78,
+        77,
+        58,
+        53,
+        29,
+        38,
+        25,
+        35,
+        76,
+        69,
+        19,
+        68,
+        48,
+        43,
+        24,
+        34,
+        63,
+        71,
+        31,
+        21
+      ],
+      "Strongest": {
+        "n": 20,
+        "within_1pct": 15,
+        "within_2pct": 18,
+        "within_5pct": 20,
+        "signed_median": 0.004559188796494887,
+        "abs_median": 0.006762846528509973,
+        "worst_source": 53,
+        "worst_offset": 0.02373821761479635
+      },
+      "StrongestFailing": [
+        53,
+        58
+      ],
+      "FreeFailing": [],
+      "Bounds": {
+        "MaximumAbsoluteSignedMedian": 0.01,
+        "MaximumAbsoluteWeightedMean": 0.01,
+        "MaximumAbsoluteRelativeOffsetStrongest": 0.02,
+        "MaximumAbsoluteRelativeOffsetFree": 0.05
+      }
+    },
+    "p_MS": {
+      "Statement": "free |median| within 1%, every free source within 5%",
+      "Passed": true,
+      "Checks": {
+        "SignedMedianWithinBound": true,
+        "FreeWithinBound": true
+      },
+      "Free": {
+        "n": 78,
+        "within_1pct": 77,
+        "within_2pct": 78,
+        "within_5pct": 78,
+        "signed_median": 0.0006652949263220814,
+        "abs_median": 0.001117626413754963,
+        "worst_source": 27,
+        "worst_offset": 0.013827803388470068
+      },
+      "FreeFailing": [],
+      "Bounds": {
+        "MaximumAbsoluteSignedMedian": 0.01,
+        "MaximumAbsoluteRelativeOffsetFree": 0.05
+      }
+    },
+    "p_SA": {
+      "Statement": "at least 2/3 of the free sources within 2% and at least 90% within 5% (the EL4c level: 40 / 56 of 60)",
+      "Passed": true,
+      "NotApplicable": true,
+      "Reason": "the reference config postprocesses no SA interface (declared ['MA', 'MS']): nothing to compare, the gate does not apply"
+    },
+    "PSequenceControls": {
+      "Statement": "for every control source the p-step d45 = (p_high - p_main) / |p_high| of the domain energy is within 1% and that of every participation p_MA_sharp / p_MS / p_SA within 5% (controls at the orders below and above the main order)",
+      "Passed": true,
+      "Controls": {
+        "1": {
+          "E": {
+            "StepToHigherOrder": -0.0002397403200696038,
+            "StepFromLowerOrder": -0.0002919340354469337,
+            "Bound": 0.01,
+            "Passed": true,
+            "r": 0.8212140105643235
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": 0.00094297653331674,
+            "StepFromLowerOrder": 0.0008033882788082847,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": 1.1737494287513321
+          },
+          "p_MS": {
+            "StepToHigherOrder": 0.002142831251725892,
+            "StepFromLowerOrder": -0.0033449756372202965,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": -0.6406119159380793
+          }
+        },
+        "2": {
+          "E": {
+            "StepToHigherOrder": -0.00018232993459387422,
+            "StepFromLowerOrder": -0.00020707389457310646,
+            "Bound": 0.01,
+            "Passed": true,
+            "r": 0.8805066180348654
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": 0.00660993668992328,
+            "StepFromLowerOrder": 0.005515528995015422,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": 1.1984229791733327
+          },
+          "p_MS": {
+            "StepToHigherOrder": 0.002129959786851142,
+            "StepFromLowerOrder": -0.0035893139726692735,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": -0.5934169601961986
+          }
+        },
+        "3": {
+          "E": {
+            "StepToHigherOrder": -0.0005391688476895231,
+            "StepFromLowerOrder": -0.0016307523903475005,
+            "Bound": 0.01,
+            "Passed": true,
+            "r": 0.3306258208670358
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": 0.0151939217038504,
+            "StepFromLowerOrder": -0.013846937527727773,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": -1.097276684712801
+          },
+          "p_MS": {
+            "StepToHigherOrder": 0.0034249117792237546,
+            "StepFromLowerOrder": -0.0038938133876497976,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": -0.8795777912949599
+          }
+        },
+        "5": {
+          "E": {
+            "StepToHigherOrder": -0.0008313727098294264,
+            "StepFromLowerOrder": -0.0021909802509299577,
+            "Bound": 0.01,
+            "Passed": true,
+            "r": 0.3794523978372474
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": 0.01206707371293292,
+            "StepFromLowerOrder": -0.009428169746203446,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": -1.2798956783517939
+          },
+          "p_MS": {
+            "StepToHigherOrder": 0.0037564428425501633,
+            "StepFromLowerOrder": -0.003080079105607565,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": -1.2195929759437725
+          }
+        },
+        "6": {
+          "E": {
+            "StepToHigherOrder": -0.0025387943261421194,
+            "StepFromLowerOrder": -0.013685388269676548,
+            "Bound": 0.01,
+            "Passed": true,
+            "r": 0.18551131148887187
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": 0.012735086447650047,
+            "StepFromLowerOrder": 0.0035361806026217167,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": 3.601367655885076
+          },
+          "p_MS": {
+            "StepToHigherOrder": 0.004591927565678103,
+            "StepFromLowerOrder": 0.008912241455734271,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": 0.5152382359124245
+          }
+        },
+        "20": {
+          "E": {
+            "StepToHigherOrder": -0.0003317809477553392,
+            "StepFromLowerOrder": -0.0012906017066910598,
+            "Bound": 0.01,
+            "Passed": true,
+            "r": 0.2570746234374537
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": 0.0010279681314454448,
+            "StepFromLowerOrder": 0.0006338741392755252,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": 1.6217227802041934
+          },
+          "p_MS": {
+            "StepToHigherOrder": 0.003669613277326513,
+            "StepFromLowerOrder": -0.005283703183101378,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": -0.6945154090151897
+          }
+        },
+        "25": {
+          "E": {
+            "StepToHigherOrder": -0.0025998509991294726,
+            "StepFromLowerOrder": -0.003765080409154777,
+            "Bound": 0.01,
+            "Passed": true,
+            "r": 0.6905167264975127
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": 0.0014121366613759844,
+            "StepFromLowerOrder": 0.005383599227558341,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": 0.26230345196338845
+          },
+          "p_MS": {
+            "StepToHigherOrder": 0.002495190548509135,
+            "StepFromLowerOrder": -0.00135596522867392,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": -1.8401582103615826
+          }
+        },
+        "49": {
+          "E": {
+            "StepToHigherOrder": -0.0009939509293339318,
+            "StepFromLowerOrder": -0.0027044939324482064,
+            "Bound": 0.01,
+            "Passed": true,
+            "r": 0.36751826928085257
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": 0.004368838677262476,
+            "StepFromLowerOrder": -0.0018216473832926548,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": -2.398289985938846
+          },
+          "p_MS": {
+            "StepToHigherOrder": 0.0032533021619922825,
+            "StepFromLowerOrder": -0.002163704622102256,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": -1.503579614684824
+          }
+        }
+      },
+      "Failing": [],
+      "NotApplicableObservables": [
+        "p_SA"
+      ],
+      "MAObservable": "p_MA_sharp",
+      "MAObservableRule": "decision 61a: the p-sequence gate on the MA evaluates the sharp-edge extrapolated p_MA_sharp (the tail measured at each order from that order's own shells) in place of the raw p_MA, whose step is dominated by the innermost ring's resolution; the raw p_MA step is still recorded"
+    }
+  },
+  "Free": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+    63,
+    64,
+    65,
+    66,
+    67,
+    68,
+    69,
+    70,
+    71,
+    72,
+    73,
+    74,
+    75,
+    76,
+    77,
+    78
+  ],
+  "GatesPassed": {
+    "E": true,
+    "p_MA": false,
+    "p_MS": true,
+    "p_SA": true,
+    "PSequenceControls": true
+  },
+  "Verdict": "Failed",
+  "Reason": "failing gates ['p_MA'] (p_SA not applicable)"
+}

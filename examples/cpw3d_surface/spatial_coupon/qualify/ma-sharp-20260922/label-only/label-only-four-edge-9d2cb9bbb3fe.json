@@ -1,0 +1,68 @@
+{
+  "NodesBlockIdentical": true,
+  "ElementsIdenticalApartFromShellLabels": true,
+  "Elements": 2169612,
+  "RelabeledElements": 27033,
+  "RelabeledPerParent": {
+    "6001": 27033
+  },
+  "CensusRelabeledElements": 27033,
+  "ShellLabels": [
+    16001,
+    26001,
+    36001,
+    46001,
+    56001,
+    66001,
+    76001,
+    86001,
+    96001,
+    106001,
+    116001,
+    126001,
+    136001,
+    146001,
+    156001
+  ],
+  "PhysicalNamesAdded": [
+    16001,
+    26001,
+    36001,
+    46001,
+    56001,
+    66001,
+    76001,
+    86001,
+    96001,
+    106001,
+    116001,
+    126001,
+    136001,
+    146001,
+    156001
+  ],
+  "PhysicalNamesRemoved": [
+    6001
+  ],
+  "Previous": {
+    "Path": "/tmp/coupon-library-build-96ec539c4-20260920-125056/four-edge-9d2cb9bbb3fe/identity.msh",
+    "SHA256": "1d536c448885cda2d8af7441c63a9b7b591c18b0b127366c1958ba65030a9ba5",
+    "Bytes": 99247632
+  },
+  "Current": {
+    "Path": "/tmp/coupon-library-build-73dd25a22-20260922-013409/four-edge-9d2cb9bbb3fe/identity.msh",
+    "SHA256": "f36d2d838e562dcc532956d3420f6a1eb400168b4957563c29a179cb7c054719",
+    "Bytes": 99248088
+  },
+  "Census": {
+    "Path": "/tmp/coupon-library-build-73dd25a22-20260922-013409/four-edge-9d2cb9bbb3fe/identity.msh.radial-shells.json",
+    "SHA256": "fb314667793477a7e1688a00f7936e8f9c39cf87610b865148abcc407737a8da"
+  },
+  "Receipt": {
+    "Path": "/tmp/coupon-library-build-73dd25a22-20260922-013409/four-edge-9d2cb9bbb3fe/identity-receipt.json",
+    "ParentLabeledMeshSHA256": "1d536c448885cda2d8af7441c63a9b7b591c18b0b127366c1958ba65030a9ba5",
+    "ParentLabeledEqualsPrevious": true
+  },
+  "Verdict": "labels-only",
+  "Rule": "the current identity equals the previous production identity in the $Nodes block and in every element apart from the (physical, elementary) pair of the MA elements, whose new label is a shell (10000 x ordinal + parent) of the old label bound in the census"
+}

@@ -1,0 +1,131 @@
+Job Id: 46729.ip-192-168-54-24.us-west-2.compute.internal
+    Job_Name = coupon-qualify-four-edge-9d2cb9bbb3fe
+    Job_Owner = simlap@ip-192-168-148-82.us-west-2.compute.internal
+    resources_used.cpupercent = 63081
+    resources_used.cput = 156:29:36
+    resources_used.mem = 19020kb
+    resources_used.ncpus = 192
+    resources_used.vmem = 112144kb
+    resources_used.walltime = 00:49:28
+    job_state = F
+    queue = normal-g
+    server = ip-192-168-54-24.us-west-2.compute.internal
+    Checkpoint = u
+    ctime = Tue Sep 22 03:12:36 2026
+    Error_Path = ip-192-168-148-82.us-west-2.compute.internal:/data/home/simlap
+	/coupon_accuracy_assessment_20260913/library-ma-sharp-01/four-edge-9d2c
+	b9bbb3fe/main/coupon-qualify-four-edge-9d2cb9bbb3fe.e46729
+    exec_host = 192.168.50.255/0*192
+    exec_vnode = (192.168.50.255:ncpus=192)
+    Hold_Types = n
+    Join_Path = oe
+    Keep_Files = n
+    Mail_Points = a
+    mtime = Tue Sep 22 04:04:46 2026
+    Output_Path = ip-192-168-148-82:/data/home/simlap/coupon_accuracy_assessmen
+	t_20260913/library-ma-sharp-01/four-edge-9d2cb9bbb3fe/main/pbs.log
+    Priority = 0
+    qtime = Tue Sep 22 03:12:36 2026
+    Rerunable = False
+    Resource_List.efa_support = True
+    Resource_List.instance_type = r8g.48xlarge
+    Resource_List.mpiprocs = 192
+    Resource_List.ncpus = 192
+    Resource_List.nodect = 1
+    Resource_List.place = scatter:excl
+    Resource_List.select = 1:ncpus=192:mpiprocs=192:compute_node=job46729
+    Resource_List.stack_id = soca-green1-job-46729
+    Resource_List.subnet_id = subnet-0c98d793bbcebb39a
+    Resource_List.walltime = 06:00:00
+    stime = Tue Sep 22 03:15:16 2026
+    obittime = Tue Sep 22 04:04:44 2026
+    session_id = 5150
+    jobdir = /data/home/simlap
+    substate = 92
+    Variable_List = PBS_O_HOME=/data/home/simlap,PBS_O_LANG=C.UTF-8,
+	PBS_O_LOGNAME=simlap,
+	PBS_O_PATH=/apps/comsol/comsol61/multiphysics/bin:/usr/local/sbin:/usr
+	/local/bin:/sbin:/bin:/usr/sbin:/usr/bin:/opt/pbs/bin:/opt/pbs/sbin:/op
+	t/pbs/bin:/opt/soca/soca-green1,PBS_O_SHELL=/bin/bash,
+	PBS_O_WORKDIR=/data/home/simlap/coupon_accuracy_assessment_20260913/li
+	brary-ma-sharp-01/four-edge-9d2cb9bbb3fe/main,PBS_O_SYSTEM=Linux,
+	PBS_O_QUEUE=normal-g,
+	PBS_O_HOST=ip-192-168-148-82.us-west-2.compute.internal
+    comment = Job run at Tue Sep 22 at 03:15 on (192.168.50.255:ncpus=192) and 
+	finished
+    etime = Tue Sep 22 03:12:36 2026
+    run_count = 1
+    Stageout_status = 1
+    Exit_status = 0
+    Submit_arguments = /data/home/simlap/coupon_accuracy_assessment_20260913/li
+	brary-ma-sharp-01/four-edge-9d2cb9bbb3fe/main/job.pbs
+    history_timestamp = 1790049886
+    project = DS-EM-FEM
+    Submit_Host = ip-192-168-148-82.us-west-2.compute.internal
+
+====
+Job Id: 46730.ip-192-168-54-24.us-west-2.compute.internal
+    Job_Name = coupon-qualify-two-edge-8dd4bc70f183
+    Job_Owner = simlap@ip-192-168-148-82.us-west-2.compute.internal
+    resources_used.cpupercent = 80453
+    resources_used.cput = 177:55:59
+    resources_used.mem = 18196kb
+    resources_used.ncpus = 192
+    resources_used.vmem = 113168kb
+    resources_used.walltime = 00:56:21
+    job_state = F
+    queue = normal-g
+    server = ip-192-168-54-24.us-west-2.compute.internal
+    Checkpoint = u
+    ctime = Tue Sep 22 03:12:44 2026
+    Error_Path = ip-192-168-148-82.us-west-2.compute.internal:/data/home/simlap
+	/coupon_accuracy_assessment_20260913/library-ma-sharp-01/two-edge-8dd4b
+	c70f183/main/coupon-qualify-two-edge-8dd4bc70f183.e46730
+    exec_host = 192.168.51.62/0*192
+    exec_vnode = (192.168.51.62:ncpus=192)
+    Hold_Types = n
+    Join_Path = oe
+    Keep_Files = n
+    Mail_Points = a
+    mtime = Tue Sep 22 04:11:40 2026
+    Output_Path = ip-192-168-148-82:/data/home/simlap/coupon_accuracy_assessmen
+	t_20260913/library-ma-sharp-01/two-edge-8dd4bc70f183/main/pbs.log
+    Priority = 0
+    qtime = Tue Sep 22 03:12:44 2026
+    Rerunable = False
+    Resource_List.efa_support = True
+    Resource_List.instance_type = r8g.48xlarge
+    Resource_List.mpiprocs = 192
+    Resource_List.ncpus = 192
+    Resource_List.nodect = 1
+    Resource_List.place = scatter:excl
+    Resource_List.select = 1:ncpus=192:mpiprocs=192:compute_node=job46730
+    Resource_List.stack_id = soca-green1-job-46730
+    Resource_List.subnet_id = subnet-0c98d793bbcebb39a
+    Resource_List.walltime = 06:00:00
+    stime = Tue Sep 22 03:15:16 2026
+    obittime = Tue Sep 22 04:11:39 2026
+    session_id = 5075
+    jobdir = /data/home/simlap
+    substate = 92
+    Variable_List = PBS_O_HOME=/data/home/simlap,PBS_O_LANG=C.UTF-8,
+	PBS_O_LOGNAME=simlap,
+	PBS_O_PATH=/apps/comsol/comsol61/multiphysics/bin:/usr/local/sbin:/usr
+	/local/bin:/sbin:/bin:/usr/sbin:/usr/bin:/opt/pbs/bin:/opt/pbs/sbin:/op
+	t/pbs/bin:/opt/soca/soca-green1,PBS_O_SHELL=/bin/bash,
+	PBS_O_WORKDIR=/data/home/simlap/coupon_accuracy_assessment_20260913/li
+	brary-ma-sharp-01/two-edge-8dd4bc70f183/main,PBS_O_SYSTEM=Linux,
+	PBS_O_QUEUE=normal-g,
+	PBS_O_HOST=ip-192-168-148-82.us-west-2.compute.internal
+    comment = Job run at Tue Sep 22 at 03:15 on (192.168.51.62:ncpus=192) and f
+	inished
+    etime = Tue Sep 22 03:12:44 2026
+    run_count = 1
+    Stageout_status = 1
+    Exit_status = 0
+    Submit_arguments = /data/home/simlap/coupon_accuracy_assessment_20260913/li
+	brary-ma-sharp-01/two-edge-8dd4bc70f183/main/job.pbs
+    history_timestamp = 1790050300
+    project = DS-EM-FEM
+    Submit_Host = ip-192-168-148-82.us-west-2.compute.internal
+

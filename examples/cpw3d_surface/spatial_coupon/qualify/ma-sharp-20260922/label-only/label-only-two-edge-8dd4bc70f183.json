@@ -1,0 +1,100 @@
+{
+  "NodesBlockIdentical": true,
+  "ElementsIdenticalApartFromShellLabels": true,
+  "Elements": 602862,
+  "RelabeledElements": 14575,
+  "RelabeledPerParent": {
+    "6001": 7273,
+    "6002": 7302
+  },
+  "CensusRelabeledElements": 14575,
+  "ShellLabels": [
+    16001,
+    16002,
+    26001,
+    26002,
+    36001,
+    36002,
+    46001,
+    46002,
+    56001,
+    56002,
+    66001,
+    66002,
+    76001,
+    76002,
+    86001,
+    86002,
+    96001,
+    96002,
+    106001,
+    106002,
+    116001,
+    116002,
+    126001,
+    126002,
+    136001,
+    136002,
+    146001,
+    146002,
+    156001,
+    156002
+  ],
+  "PhysicalNamesAdded": [
+    16001,
+    16002,
+    26001,
+    26002,
+    36001,
+    36002,
+    46001,
+    46002,
+    56001,
+    56002,
+    66001,
+    66002,
+    76001,
+    76002,
+    86001,
+    86002,
+    96001,
+    96002,
+    106001,
+    106002,
+    116001,
+    116002,
+    126001,
+    126002,
+    136001,
+    136002,
+    146001,
+    146002,
+    156001,
+    156002
+  ],
+  "PhysicalNamesRemoved": [
+    6001,
+    6002
+  ],
+  "Previous": {
+    "Path": "/tmp/coupon-library-build-96ec539c4-20260920-125056/two-edge-8dd4bc70f183/identity.msh",
+    "SHA256": "5d01204e3396744cdbcf6f53fd1ff85d9f8c218eec1f0b9e11fc6a58aa469b04",
+    "Bytes": 28359933
+  },
+  "Current": {
+    "Path": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-8dd4bc70f183/identity.msh",
+    "SHA256": "179a405dbe5eb0fd583e2b42cf5ab200775a32a0f968a3ace5f5669ed6c8238d",
+    "Bytes": 28360844
+  },
+  "Census": {
+    "Path": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-8dd4bc70f183/identity.msh.radial-shells.json",
+    "SHA256": "18b1b88de41d6a9bef107aa5f206e114fbe815284f078855d6b7cd2fa5ce3f14"
+  },
+  "Receipt": {
+    "Path": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-8dd4bc70f183/identity-receipt.json",
+    "ParentLabeledMeshSHA256": "5d01204e3396744cdbcf6f53fd1ff85d9f8c218eec1f0b9e11fc6a58aa469b04",
+    "ParentLabeledEqualsPrevious": true
+  },
+  "Verdict": "labels-only",
+  "Rule": "the current identity equals the previous production identity in the $Nodes block and in every element apart from the (physical, elementary) pair of the MA elements, whose new label is a shell (10000 x ordinal + parent) of the old label bound in the census"
+}

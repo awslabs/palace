@@ -1,0 +1,859 @@
+{
+  "Version": 1,
+  "Command": "coupon-library build",
+  "Root": "/tmp/coupon-library-build-73dd25a22-20260922-013409",
+  "Cases": [
+    {
+      "Case": "two-edge-8dd4bc70f183",
+      "InventoryStatus": "RemoteVerified",
+      "FixtureVersion": null,
+      "Calibration": null,
+      "Scope": {
+        "ExhibitedClasses": [
+          "ContinuationVertices",
+          "ExteriorLoops",
+          "MultipleConductors",
+          "TraceBasis"
+        ],
+        "UnsupportedClasses": []
+      },
+      "Status": "built",
+      "Passed": true,
+      "StoppedBy": null,
+      "CanonicalBuildId": "0f110e7491f956c01a7a9af4827cbf2d35afcd9b00449f6aca4de91795d44685",
+      "Variants": {
+        "identity": {
+          "Path": "/private/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-8dd4bc70f183/identity.msh",
+          "SHA256": "179a405dbe5eb0fd583e2b42cf5ab200775a32a0f968a3ace5f5669ed6c8238d"
+        },
+        "rotate-z-0.63": {
+          "Path": "/private/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-8dd4bc70f183/rotate-z-0.63.msh",
+          "SHA256": "5cd5bb85780fe253163142bb21687df925037f3b6ffeb2c338e848ea3f1fcbea"
+        }
+      },
+      "RadialShells": {
+        "Kind": "radial-ma-shells",
+        "Shells": {
+          "Path": "/private/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-8dd4bc70f183/identity.msh.radial-shells.json",
+          "SHA256": "18b1b88de41d6a9bef107aa5f206e114fbe815284f078855d6b7cd2fa5ce3f14"
+        },
+        "ShellCount": 30,
+        "RingRadii": [
+          0.00025,
+          0.00075,
+          0.00175,
+          0.00375,
+          0.00775,
+          0.01575,
+          0.03175
+        ],
+        "MAParents": [
+          6001,
+          6002
+        ],
+        "ParentMesh": {
+          "SHA256": "5d01204e3396744cdbcf6f53fd1ff85d9f8c218eec1f0b9e11fc6a58aa469b04",
+          "CanonicalMeshSHA256": "5d01204e3396744cdbcf6f53fd1ff85d9f8c218eec1f0b9e11fc6a58aa469b04"
+        },
+        "Tool": "relabel_radial_ma_shells.py",
+        "Rule": "label-only: the $Nodes block and every element apart from the (physical, elementary) pair of the MA elements are byte-identical to the parent-labeled publication (LabelOnly); the shells sum to the canonical ownership partition's parent areas; the ownership audit below runs on the shelled mesh"
+      },
+      "Elements": {
+        "Tetrahedron": 425916,
+        "Prism": 88920,
+        "Pyramid": 6840,
+        "Total": 521676
+      },
+      "H1": {
+        "Order": 4,
+        "DOFs": 7973827,
+        "EntityCounts": {
+          "Vertices": 134926,
+          "Edges": 735842,
+          "TriangleFaces": 980473,
+          "QuadFaces": 142120,
+          "Tetrahedra": 425916,
+          "Prisms": 88920,
+          "Pyramids": 6840
+        }
+      },
+      "Estimate": {
+        "EstimatedElements": 560104.9559104523,
+        "EstimateOverCap": 0.09335082598507538,
+        "MaximumElements": 6000000,
+        "Passed": true,
+        "ActualElements": 521676,
+        "EstimateOverActual": 1.0736644122222458
+      },
+      "Stages": {
+        "canonical-publish": {
+          "Seconds": 14.308928875019774,
+          "PeakGiB": 1.442840576171875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-8dd4bc70f183/canonical-publish.log.json"
+        },
+        "canonical-source": {
+          "Seconds": 0.0931745000416413,
+          "PeakGiB": 0.0001068115234375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-8dd4bc70f183/canonical-source.log.json"
+        },
+        "gmsh-build": {
+          "Seconds": 45.0291510829702,
+          "PeakGiB": 2.47314453125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-8dd4bc70f183/gmsh-build.log.json"
+        },
+        "identity-publication": {
+          "Seconds": 51.85130220791325,
+          "PeakGiB": 1.7610931396484375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-8dd4bc70f183/identity-publication.log.json"
+        },
+        "identity-variant-audits": {
+          "Seconds": 68.52497237490024,
+          "PeakGiB": 1.015899658203125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-8dd4bc70f183/identity-variant-audits.audit.log.json"
+        },
+        "per-entry-verification": {
+          "Seconds": 238.42178991693072,
+          "PeakGiB": 0.9186248779296875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-8dd4bc70f183/per-entry-verification.audit.log.json"
+        },
+        "rotate-z-0.63-publication": {
+          "Seconds": 56.092960999929346,
+          "PeakGiB": 1.6715087890625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-8dd4bc70f183/rotate-z-0.63-publication.log.json"
+        },
+        "rotate-z-0.63-variant-audits": {
+          "Seconds": 85.4763731249841,
+          "PeakGiB": 0.9131622314453125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-8dd4bc70f183/rotate-z-0.63-variant-audits.audit.log.json"
+        }
+      },
+      "Verification": {
+        "Passed": true,
+        "Failures": [],
+        "Path": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-8dd4bc70f183/per-entry-verification.json"
+      },
+      "HeadroomFlags": [],
+      "Root": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-8dd4bc70f183",
+      "DriverReturnCode": 0,
+      "WallSeconds": 563.2583432197571
+    },
+    {
+      "Case": "two-edge-3f8992613e95",
+      "InventoryStatus": "RemoteVerified",
+      "FixtureVersion": null,
+      "Calibration": null,
+      "Scope": {
+        "ExhibitedClasses": [
+          "ContinuationVertices",
+          "ExteriorLoops",
+          "TraceBasis"
+        ],
+        "UnsupportedClasses": []
+      },
+      "Status": "built",
+      "Passed": true,
+      "StoppedBy": null,
+      "CanonicalBuildId": "1cb4c7448f8fab4e0a908384217f1e74ae2ade2d21346638abb9d09cf9446a2e",
+      "Variants": {
+        "identity": {
+          "Path": "/private/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-3f8992613e95/identity.msh",
+          "SHA256": "86cfad22ea541d66b2dcd14ce828a7b37bdc42cef95c3d6b96d8f450fc0de3cf"
+        },
+        "rotate-z-0.63": {
+          "Path": "/private/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-3f8992613e95/rotate-z-0.63.msh",
+          "SHA256": "5c9b3d794a7496239b47dbbc6687310f3798f3781409021b37d161fb301a1da7"
+        }
+      },
+      "RadialShells": {
+        "Kind": "radial-ma-shells",
+        "Shells": {
+          "Path": "/private/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-3f8992613e95/identity.msh.radial-shells.json",
+          "SHA256": "bc07a5e6a4139e172da84607927098dbf6e58129b3e5f0f8afbe317d2d33dc46"
+        },
+        "ShellCount": 15,
+        "RingRadii": [
+          0.00025,
+          0.00075,
+          0.00175,
+          0.00375,
+          0.00775,
+          0.01575,
+          0.03175
+        ],
+        "MAParents": [
+          6001
+        ],
+        "ParentMesh": {
+          "SHA256": "9f011ed3a76e93f1245f3f893ad17dc0b924791161efc0e26b2e794fa9e51b6c",
+          "CanonicalMeshSHA256": "9f011ed3a76e93f1245f3f893ad17dc0b924791161efc0e26b2e794fa9e51b6c"
+        },
+        "Tool": "relabel_radial_ma_shells.py",
+        "Rule": "label-only: the $Nodes block and every element apart from the (physical, elementary) pair of the MA elements are byte-identical to the parent-labeled publication (LabelOnly); the shells sum to the canonical ownership partition's parent areas; the ownership audit below runs on the shelled mesh"
+      },
+      "Elements": {
+        "Tetrahedron": 1322026,
+        "Prism": 151398,
+        "Pyramid": 11646,
+        "Total": 1485070
+      },
+      "H1": {
+        "Order": 4,
+        "DOFs": 20327496,
+        "EntityCounts": {
+          "Vertices": 351848,
+          "Edges": 2020844,
+          "TriangleFaces": 2912088,
+          "QuadFaces": 241978,
+          "Tetrahedra": 1322026,
+          "Prisms": 151398,
+          "Pyramids": 11646
+        }
+      },
+      "Estimate": {
+        "EstimatedElements": 1486170.9607719143,
+        "EstimateOverCap": 0.2476951601286524,
+        "MaximumElements": 6000000,
+        "Passed": true,
+        "ActualElements": 1485070,
+        "EstimateOverActual": 1.0007413527792726
+      },
+      "Stages": {
+        "canonical-publish": {
+          "Seconds": 24.153993000043556,
+          "PeakGiB": 2.87896728515625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-3f8992613e95/canonical-publish.log.json"
+        },
+        "canonical-source": {
+          "Seconds": 0.09896070801187307,
+          "PeakGiB": 3.0517578125e-05,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-3f8992613e95/canonical-source.log.json"
+        },
+        "gmsh-build": {
+          "Seconds": 89.24480291700456,
+          "PeakGiB": 4.216094970703125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-3f8992613e95/gmsh-build.log.json"
+        },
+        "identity-publication": {
+          "Seconds": 139.56665429100394,
+          "PeakGiB": 3.294525146484375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-3f8992613e95/identity-publication.log.json"
+        },
+        "identity-variant-audits": {
+          "Seconds": 177.35535254108254,
+          "PeakGiB": 2.49078369140625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-3f8992613e95/identity-variant-audits.audit.log.json"
+        },
+        "per-entry-verification": {
+          "Seconds": 713.6031932909973,
+          "PeakGiB": 2.49761962890625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-3f8992613e95/per-entry-verification.audit.log.json"
+        },
+        "rotate-z-0.63-publication": {
+          "Seconds": 139.7055252919672,
+          "PeakGiB": 3.180206298828125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-3f8992613e95/rotate-z-0.63-publication.log.json"
+        },
+        "rotate-z-0.63-variant-audits": {
+          "Seconds": 234.9567949170014,
+          "PeakGiB": 2.4347991943359375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-3f8992613e95/rotate-z-0.63-variant-audits.audit.log.json"
+        }
+      },
+      "Verification": {
+        "Passed": true,
+        "Failures": [],
+        "Path": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-3f8992613e95/per-entry-verification.json"
+      },
+      "HeadroomFlags": [],
+      "Root": "/tmp/coupon-library-build-73dd25a22-20260922-013409/two-edge-3f8992613e95",
+      "DriverReturnCode": 0,
+      "WallSeconds": 1522.9958369731903
+    },
+    {
+      "Case": "three-edge-419576fdab24",
+      "InventoryStatus": "RemoteVerified",
+      "FixtureVersion": null,
+      "Calibration": null,
+      "Scope": {
+        "ExhibitedClasses": [
+          "ContinuationVertices",
+          "ExteriorLoops",
+          "TraceBasis"
+        ],
+        "UnsupportedClasses": []
+      },
+      "Status": "failed",
+      "Passed": false,
+      "StoppedBy": {
+        "Kind": "Stage",
+        "Id": "identity-publication",
+        "Stage": "identity-publication",
+        "Message": "stage identity-publication failed rc=2",
+        "StopReason": null,
+        "ReturnCode": 2
+      },
+      "CanonicalBuildId": "ef4ebd7b793e97c6ed830d85a88c055d18bf4d25e8cce5db2c649facefa55489",
+      "Variants": {
+        "identity": {
+          "Path": "/tmp/coupon-library-build-73dd25a22-20260922-013409/three-edge-419576fdab24/identity.msh",
+          "SHA256": "95837ed5aca05bd52a571b27ba935014a4b40f16d1bd1c9cb9437a3bb5205a70"
+        },
+        "rotate-z-0.63": null
+      },
+      "RadialShells": null,
+      "Elements": {
+        "Tetrahedron": 1659373,
+        "Prism": 172692,
+        "Pyramid": 13284,
+        "Total": 1845349
+      },
+      "H1": null,
+      "Estimate": {
+        "EstimatedElements": 1886489.374546443,
+        "EstimateOverCap": 0.3144148957577405,
+        "MaximumElements": 6000000,
+        "Passed": true,
+        "ActualElements": 1845349,
+        "EstimateOverActual": 1.0222940888398038
+      },
+      "Stages": {
+        "canonical-publish": {
+          "Seconds": 27.68120887503028,
+          "PeakGiB": 3.15606689453125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/three-edge-419576fdab24/canonical-publish.log.json"
+        },
+        "canonical-source": {
+          "Seconds": 0.19082941696979105,
+          "PeakGiB": 3.0517578125e-05,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/three-edge-419576fdab24/canonical-source.log.json"
+        },
+        "gmsh-build": {
+          "Seconds": 114.49551612499636,
+          "PeakGiB": 4.6320953369140625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/three-edge-419576fdab24/gmsh-build.log.json"
+        },
+        "identity-publication": {
+          "Seconds": 88.26959108398296,
+          "PeakGiB": 1.65863037109375,
+          "ReturnCode": 2,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/three-edge-419576fdab24/identity-publication.log.json"
+        }
+      },
+      "Verification": null,
+      "HeadroomFlags": [],
+      "Root": "/tmp/coupon-library-build-73dd25a22-20260922-013409/three-edge-419576fdab24",
+      "DriverReturnCode": 1,
+      "WallSeconds": 232.39478993415833
+    },
+    {
+      "Case": "four-edge-9d2cb9bbb3fe",
+      "InventoryStatus": "RemoteVerified",
+      "FixtureVersion": null,
+      "Calibration": null,
+      "Scope": {
+        "ExhibitedClasses": [
+          "ContinuationVertices",
+          "DeviceFootprint",
+          "ExteriorLoops",
+          "TraceBasis"
+        ],
+        "UnsupportedClasses": []
+      },
+      "Status": "built",
+      "Passed": true,
+      "StoppedBy": null,
+      "CanonicalBuildId": "ae185d268c49cac1f5dc5c1eff9a7010086671fc263dbc79cbf1ce3861bfc2fe",
+      "Variants": {
+        "identity": {
+          "Path": "/private/tmp/coupon-library-build-73dd25a22-20260922-013409/four-edge-9d2cb9bbb3fe/identity.msh",
+          "SHA256": "f36d2d838e562dcc532956d3420f6a1eb400168b4957563c29a179cb7c054719"
+        },
+        "rotate-z-0.63": {
+          "Path": "/private/tmp/coupon-library-build-73dd25a22-20260922-013409/four-edge-9d2cb9bbb3fe/rotate-z-0.63.msh",
+          "SHA256": "b4eb910c55ad005e318eb7c5105c3dc778bc474f1d38278d36f7534996386c09"
+        }
+      },
+      "RadialShells": {
+        "Kind": "radial-ma-shells",
+        "Shells": {
+          "Path": "/private/tmp/coupon-library-build-73dd25a22-20260922-013409/four-edge-9d2cb9bbb3fe/identity.msh.radial-shells.json",
+          "SHA256": "fb314667793477a7e1688a00f7936e8f9c39cf87610b865148abcc407737a8da"
+        },
+        "ShellCount": 15,
+        "RingRadii": [
+          0.00025,
+          0.00075,
+          0.00175,
+          0.00375,
+          0.00775,
+          0.01575,
+          0.03175
+        ],
+        "MAParents": [
+          6001
+        ],
+        "ParentMesh": {
+          "SHA256": "1d536c448885cda2d8af7441c63a9b7b591c18b0b127366c1958ba65030a9ba5",
+          "CanonicalMeshSHA256": "1d536c448885cda2d8af7441c63a9b7b591c18b0b127366c1958ba65030a9ba5"
+        },
+        "Tool": "relabel_radial_ma_shells.py",
+        "Rule": "label-only: the $Nodes block and every element apart from the (physical, elementary) pair of the MA elements are byte-identical to the parent-labeled publication (LabelOnly); the shells sum to the canonical ownership partition's parent areas; the ownership audit below runs on the shelled mesh"
+      },
+      "Elements": {
+        "Tetrahedron": 1731140,
+        "Prism": 172107,
+        "Pyramid": 13239,
+        "Total": 1916486
+      },
+      "H1": {
+        "Order": 4,
+        "DOFs": 25392150,
+        "EntityCounts": {
+          "Vertices": 426520,
+          "Edges": 2534619,
+          "TriangleFaces": 3749508,
+          "QuadFaces": 275077,
+          "Tetrahedra": 1731140,
+          "Prisms": 172107,
+          "Pyramids": 13239
+        }
+      },
+      "Estimate": {
+        "EstimatedElements": 1966878.512576444,
+        "EstimateOverCap": 0.32781308542940735,
+        "MaximumElements": 6000000,
+        "Passed": true,
+        "ActualElements": 1916486,
+        "EstimateOverActual": 1.0262942242084963
+      },
+      "Stages": {
+        "canonical-publish": {
+          "Seconds": 28.706833791919053,
+          "PeakGiB": 3.4143829345703125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/four-edge-9d2cb9bbb3fe/canonical-publish.log.json"
+        },
+        "canonical-source": {
+          "Seconds": 0.09789679199457169,
+          "PeakGiB": 3.0517578125e-05,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/four-edge-9d2cb9bbb3fe/canonical-source.log.json"
+        },
+        "gmsh-build": {
+          "Seconds": 120.35171699989587,
+          "PeakGiB": 4.5840911865234375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/four-edge-9d2cb9bbb3fe/gmsh-build.log.json"
+        },
+        "identity-publication": {
+          "Seconds": 170.87521458405536,
+          "PeakGiB": 3.8474273681640625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/four-edge-9d2cb9bbb3fe/identity-publication.log.json"
+        },
+        "identity-variant-audits": {
+          "Seconds": 286.0878541659331,
+          "PeakGiB": 2.7617034912109375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/four-edge-9d2cb9bbb3fe/identity-variant-audits.audit.log.json"
+        },
+        "per-entry-verification": {
+          "Seconds": 1154.828733125003,
+          "PeakGiB": 3.045562744140625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/four-edge-9d2cb9bbb3fe/per-entry-verification.audit.log.json"
+        },
+        "rotate-z-0.63-publication": {
+          "Seconds": 168.6848467090167,
+          "PeakGiB": 3.829681396484375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/four-edge-9d2cb9bbb3fe/rotate-z-0.63-publication.log.json"
+        },
+        "rotate-z-0.63-variant-audits": {
+          "Seconds": 347.1086570000043,
+          "PeakGiB": 2.546966552734375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/four-edge-9d2cb9bbb3fe/rotate-z-0.63-variant-audits.audit.log.json"
+        }
+      },
+      "Verification": {
+        "Passed": true,
+        "Failures": [],
+        "Path": "/tmp/coupon-library-build-73dd25a22-20260922-013409/four-edge-9d2cb9bbb3fe/per-entry-verification.json"
+      },
+      "HeadroomFlags": [],
+      "Root": "/tmp/coupon-library-build-73dd25a22-20260922-013409/four-edge-9d2cb9bbb3fe",
+      "DriverReturnCode": 0,
+      "WallSeconds": 2281.3143599033356
+    },
+    {
+      "Case": "ten-edge-6791f1c84123",
+      "InventoryStatus": "RemoteVerified",
+      "FixtureVersion": null,
+      "Calibration": null,
+      "Scope": {
+        "ExhibitedClasses": [
+          "ContinuationVertices",
+          "ExteriorLoops",
+          "MultipleConductors",
+          "MultipleSlots",
+          "TraceBasis"
+        ],
+        "UnsupportedClasses": []
+      },
+      "Status": "built",
+      "Passed": true,
+      "StoppedBy": null,
+      "CanonicalBuildId": "11a25739910ed1bd06c60de2532f8c6381e3fd4e724b39086a7d2503a39a7a37",
+      "Variants": {
+        "identity": {
+          "Path": "/private/tmp/coupon-library-build-73dd25a22-20260922-013409/ten-edge-6791f1c84123/identity.msh",
+          "SHA256": "e1a680754573f5de0c063e45c8839b4733081bbc8838bd4a17b8e44d99ca3bb7"
+        },
+        "rotate-z-0.63": {
+          "Path": "/private/tmp/coupon-library-build-73dd25a22-20260922-013409/ten-edge-6791f1c84123/rotate-z-0.63.msh",
+          "SHA256": "b3a6490663217fcc2ea399b6ce8d849b382bed7f1f0beb125fe594261332d32f"
+        }
+      },
+      "RadialShells": {
+        "Kind": "radial-ma-shells",
+        "Shells": {
+          "Path": "/private/tmp/coupon-library-build-73dd25a22-20260922-013409/ten-edge-6791f1c84123/identity.msh.radial-shells.json",
+          "SHA256": "c9773cc119f83a6587d794dc088b4fbf72c7d01defaeb2c148caca2ef323a017"
+        },
+        "ShellCount": 60,
+        "RingRadii": [
+          0.00025,
+          0.00075,
+          0.00175,
+          0.00375,
+          0.00775,
+          0.01575,
+          0.03175
+        ],
+        "MAParents": [
+          6001,
+          6002,
+          6101,
+          6102
+        ],
+        "ParentMesh": {
+          "SHA256": "8a871f222da9370da81df84585e9a3c772a62aa67188d5934a239f697a2ca75a",
+          "CanonicalMeshSHA256": "8a871f222da9370da81df84585e9a3c772a62aa67188d5934a239f697a2ca75a"
+        },
+        "Tool": "relabel_radial_ma_shells.py",
+        "Rule": "label-only: the $Nodes block and every element apart from the (physical, elementary) pair of the MA elements are byte-identical to the parent-labeled publication (LabelOnly); the shells sum to the canonical ownership partition's parent areas; the ownership audit below runs on the shelled mesh"
+      },
+      "Elements": {
+        "Tetrahedron": 3208149,
+        "Prism": 269568,
+        "Pyramid": 20736,
+        "Total": 3498453
+      },
+      "H1": {
+        "Order": 4,
+        "DOFs": 46053187,
+        "EntityCounts": {
+          "Vertices": 814867,
+          "Edges": 4734723,
+          "TriangleFaces": 6987462,
+          "QuadFaces": 430848,
+          "Tetrahedra": 3208149,
+          "Prisms": 269568,
+          "Pyramids": 20736
+        }
+      },
+      "Estimate": {
+        "EstimatedElements": 3561694.5643423186,
+        "EstimateOverCap": 0.5936157607237198,
+        "MaximumElements": 6000000,
+        "Passed": true,
+        "ActualElements": 3498453,
+        "EstimateOverActual": 1.0180770084212418
+      },
+      "Stages": {
+        "canonical-publish": {
+          "Seconds": 48.33348166698124,
+          "PeakGiB": 5.701263427734375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/ten-edge-6791f1c84123/canonical-publish.log.json"
+        },
+        "canonical-source": {
+          "Seconds": 0.10216350003611296,
+          "PeakGiB": 3.0517578125e-05,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/ten-edge-6791f1c84123/canonical-source.log.json"
+        },
+        "gmsh-build": {
+          "Seconds": 309.30022920807824,
+          "PeakGiB": 5.863922119140625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/ten-edge-6791f1c84123/gmsh-build.log.json"
+        },
+        "identity-publication": {
+          "Seconds": 345.33860470808577,
+          "PeakGiB": 6.245941162109375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/ten-edge-6791f1c84123/identity-publication.log.json"
+        },
+        "identity-variant-audits": {
+          "Seconds": 535.4380648329388,
+          "PeakGiB": 4.921600341796875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/ten-edge-6791f1c84123/identity-variant-audits.audit.log.json"
+        },
+        "per-entry-verification": {
+          "Seconds": 1752.3794188339962,
+          "PeakGiB": 5.4206390380859375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/ten-edge-6791f1c84123/per-entry-verification.audit.log.json"
+        },
+        "rotate-z-0.63-publication": {
+          "Seconds": 411.52603316598106,
+          "PeakGiB": 5.9175262451171875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/ten-edge-6791f1c84123/rotate-z-0.63-publication.log.json"
+        },
+        "rotate-z-0.63-variant-audits": {
+          "Seconds": 604.2473898329772,
+          "PeakGiB": 4.7912445068359375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-73dd25a22-20260922-013409/ten-edge-6791f1c84123/rotate-z-0.63-variant-audits.audit.log.json"
+        }
+      },
+      "Verification": {
+        "Passed": true,
+        "Failures": [],
+        "Path": "/tmp/coupon-library-build-73dd25a22-20260922-013409/ten-edge-6791f1c84123/per-entry-verification.json"
+      },
+      "HeadroomFlags": [],
+      "Root": "/tmp/coupon-library-build-73dd25a22-20260922-013409/ten-edge-6791f1c84123",
+      "DriverReturnCode": 0,
+      "WallSeconds": 4012.358587026596
+    }
+  ],
+  "Library": {
+    "CasesAttempted": 5,
+    "CasesBuilt": 4,
+    "CasesPassed": 4,
+    "CasesUnsupported": 0,
+    "CasesFailed": 1,
+    "CasesUnbuilt": 0,
+    "FlaggedCases": [],
+    "WallClockSeconds": 5673.76277422905,
+    "Jobs": 2,
+    "Commit": "73dd25a22",
+    "Bounds": {
+      "MaximumElements": 6000000,
+      "MaximumSeconds": 3600,
+      "MaximumRSSGiB": 12.0
+    },
+    "HeadroomFraction": 0.9,
+    "HeadroomRule": "a case is flagged when its element count or pre-build estimate reaches 0.9 x MaximumElements, or any bounded stage's wall seconds or peak process-tree RSS reaches 0.9 x its limit (the ten-edge production root sat at 0.87 of the 4M cap and 0.96 of the 8 GiB bound of decision 42: the margin rule the throughput plan lacked; the bounds are the manifest's Gates - guidelines since decision 61c, 6M / 3600 s / 12 GiB, recorded under Gates.PreviousValues with their history)",
+    "Manifest": {
+      "Path": "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/geometry-independence-suite.json",
+      "SHA256": "65231eb0dd3d54d46d9df67dfc08c02372edc8c68b7053b24c8ce5c921f3baad",
+      "Kind": "production",
+      "ProductionManifest": null
+    }
+  }
+}

@@ -1,0 +1,1253 @@
+{
+  "MainPairing": "four-edge-9d2cb9bbb3fe-p4-vs-reference",
+  "Free": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    40,
+    47,
+    48,
+    49,
+    50,
+    51,
+    56,
+    63,
+    64,
+    65,
+    66,
+    67,
+    68,
+    69,
+    70,
+    71,
+    72,
+    73,
+    74,
+    75,
+    76,
+    77,
+    78,
+    79,
+    80
+  ],
+  "Named": [],
+  "Quantities": {
+    "E_rel": {
+      "Counts": {
+        "four-edge-9d2cb9bbb3fe-p4-vs-reference": {
+          "n": 60,
+          "within_1pct": 60,
+          "within_2pct": 60,
+          "within_5pct": 60,
+          "Worst": [
+            {
+              "Source": 10,
+              "Offset": -0.009882818004055717
+            },
+            {
+              "Source": 74,
+              "Offset": -0.009616298287599055
+            }
+          ]
+        },
+        "four-edge-9d2cb9bbb3fe-p5-control-vs-reference": {
+          "n": 8,
+          "within_1pct": 7,
+          "within_2pct": 8,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 10,
+              "Offset": -0.014654699313403548
+            },
+            {
+              "Source": 5,
+              "Offset": 0.001934689301497663
+            }
+          ]
+        },
+        "four-edge-9d2cb9bbb3fe-p3-control-vs-reference": {
+          "n": 8,
+          "within_1pct": 8,
+          "within_2pct": 8,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 5,
+              "Offset": 0.009193327889771206
+            },
+            {
+              "Source": 17,
+              "Offset": 0.007331847050736771
+            }
+          ]
+        },
+        "four-edge-9d2cb9bbb3fe-p4-vs-p5-control": {
+          "n": 8,
+          "within_1pct": 8,
+          "within_2pct": 8,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 10,
+              "Offset": -0.004819511666011445
+            },
+            {
+              "Source": 5,
+              "Offset": -0.0023248477722336448
+            }
+          ]
+        },
+        "p3-control-vs-four-edge-9d2cb9bbb3fe-p4": {
+          "n": 8,
+          "within_1pct": 7,
+          "within_2pct": 8,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 10,
+              "Offset": -0.015231911500264334
+            },
+            {
+              "Source": 17,
+              "Offset": -0.006475418537547348
+            }
+          ]
+        }
+      },
+      "Named": {},
+      "Largest": [
+        {
+          "Source": 10,
+          "Offset": -0.009882818004055717
+        },
+        {
+          "Source": 74,
+          "Offset": -0.009616298287599055
+        },
+        {
+          "Source": 13,
+          "Offset": 0.006074519486862464
+        },
+        {
+          "Source": 77,
+          "Offset": 0.005101310909585424
+        },
+        {
+          "Source": 12,
+          "Offset": 0.004686583167313538
+        },
+        {
+          "Source": 48,
+          "Offset": 0.004644639016035947
+        },
+        {
+          "Source": 5,
+          "Offset": 0.004269462925101364
+        },
+        {
+          "Source": 69,
+          "Offset": 0.0036511238434792535
+        }
+      ],
+      "Movers": {
+        "four-edge-9d2cb9bbb3fe-p5-control-vs-reference": [
+          {
+            "Source": 10,
+            "Offset": -0.014654699313403548
+          },
+          {
+            "Source": 5,
+            "Offset": 0.001934689301497663
+          },
+          {
+            "Source": 49,
+            "Offset": 0.0005125708150572415
+          },
+          {
+            "Source": 4,
+            "Offset": 0.00029789660701762575
+          },
+          {
+            "Source": 20,
+            "Offset": 0.00010698035072310473
+          },
+          {
+            "Source": 17,
+            "Offset": 6.352815157611932e-05
+          },
+          {
+            "Source": 2,
+            "Offset": 4.597897713682677e-05
+          },
+          {
+            "Source": 1,
+            "Offset": 4.0249384675962254e-05
+          }
+        ],
+        "four-edge-9d2cb9bbb3fe-p3-control-vs-reference": [
+          {
+            "Source": 5,
+            "Offset": 0.009193327889771206
+          },
+          {
+            "Source": 17,
+            "Offset": 0.007331847050736771
+          },
+          {
+            "Source": 10,
+            "Offset": 0.0054318306601078
+          },
+          {
+            "Source": 49,
+            "Offset": 0.0029067806213110793
+          },
+          {
+            "Source": 4,
+            "Offset": 0.0011160544651004356
+          },
+          {
+            "Source": 20,
+            "Offset": 0.0008396873514823004
+          },
+          {
+            "Source": 1,
+            "Offset": 0.00012310773001938626
+          },
+          {
+            "Source": 2,
+            "Offset": 9.709177885188271e-05
+          }
+        ],
+        "four-edge-9d2cb9bbb3fe-p4-vs-p5-control": [
+          {
+            "Source": 10,
+            "Offset": -0.004819511666011445
+          },
+          {
+            "Source": 5,
+            "Offset": -0.0023248477722336448
+          },
+          {
+            "Source": 17,
+            "Offset": -0.000744821059018631
+          },
+          {
+            "Source": 49,
+            "Offset": -0.0004185250104295334
+          },
+          {
+            "Source": 4,
+            "Offset": -0.00016703584927097785
+          },
+          {
+            "Source": 20,
+            "Offset": -8.642757377955674e-05
+          },
+          {
+            "Source": 1,
+            "Offset": -2.578604727290624e-05
+          },
+          {
+            "Source": 2,
+            "Offset": -1.5353984094923906e-06
+          }
+        ],
+        "p3-control-vs-four-edge-9d2cb9bbb3fe-p4": [
+          {
+            "Source": 10,
+            "Offset": -0.015231911500264334
+          },
+          {
+            "Source": 17,
+            "Offset": -0.006475418537547348
+          },
+          {
+            "Source": 5,
+            "Offset": -0.0048790106202601154
+          },
+          {
+            "Source": 49,
+            "Offset": -0.001969569838333847
+          },
+          {
+            "Source": 4,
+            "Offset": -0.0006503185445345408
+          },
+          {
+            "Source": 20,
+            "Offset": -0.0006457205064153158
+          },
+          {
+            "Source": 1,
+            "Offset": -5.706357026723604e-05
+          },
+          {
+            "Source": 2,
+            "Offset": -4.957251726807117e-05
+          }
+        ]
+      }
+    },
+    "p_SA_rel": {
+      "Counts": {
+        "four-edge-9d2cb9bbb3fe-p4-vs-reference": {
+          "n": 60,
+          "within_1pct": 34,
+          "within_2pct": 46,
+          "within_5pct": 58,
+          "Worst": [
+            {
+              "Source": 23,
+              "Offset": -0.057208618292189005
+            },
+            {
+              "Source": 48,
+              "Offset": -0.051609826784112425
+            }
+          ]
+        },
+        "four-edge-9d2cb9bbb3fe-p5-control-vs-reference": {
+          "n": 8,
+          "within_1pct": 6,
+          "within_2pct": 7,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 5,
+              "Offset": -0.026822573331743947
+            },
+            {
+              "Source": 4,
+              "Offset": -0.017729279633452413
+            }
+          ]
+        },
+        "four-edge-9d2cb9bbb3fe-p3-control-vs-reference": {
+          "n": 8,
+          "within_1pct": 4,
+          "within_2pct": 4,
+          "within_5pct": 6,
+          "Worst": [
+            {
+              "Source": 5,
+              "Offset": -0.055449923710940735
+            },
+            {
+              "Source": 17,
+              "Offset": -0.050693182822199714
+            }
+          ]
+        },
+        "four-edge-9d2cb9bbb3fe-p4-vs-p5-control": {
+          "n": 8,
+          "within_1pct": 5,
+          "within_2pct": 8,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 10,
+              "Offset": 0.015242781640846404
+            },
+            {
+              "Source": 17,
+              "Offset": 0.013190707707718146
+            }
+          ]
+        },
+        "p3-control-vs-four-edge-9d2cb9bbb3fe-p4": {
+          "n": 8,
+          "within_1pct": 4,
+          "within_2pct": 6,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 17,
+              "Offset": 0.03154225402675002
+            },
+            {
+              "Source": 10,
+              "Offset": 0.024826561109897054
+            }
+          ]
+        }
+      },
+      "Named": {},
+      "Largest": [
+        {
+          "Source": 23,
+          "Offset": -0.057208618292189005
+        },
+        {
+          "Source": 48,
+          "Offset": -0.051609826784112425
+        },
+        {
+          "Source": 32,
+          "Offset": -0.04396319910969451
+        },
+        {
+          "Source": 5,
+          "Offset": -0.03754251869066455
+        },
+        {
+          "Source": 6,
+          "Offset": -0.03737318270941119
+        },
+        {
+          "Source": 28,
+          "Offset": -0.03260627734300831
+        },
+        {
+          "Source": 13,
+          "Offset": -0.0320349710883064
+        },
+        {
+          "Source": 12,
+          "Offset": -0.030222158193757925
+        }
+      ],
+      "Movers": {
+        "four-edge-9d2cb9bbb3fe-p5-control-vs-reference": [
+          {
+            "Source": 5,
+            "Offset": -0.026822573331743947
+          },
+          {
+            "Source": 4,
+            "Offset": -0.017729279633452413
+          },
+          {
+            "Source": 17,
+            "Offset": -0.00783290428334203
+          },
+          {
+            "Source": 20,
+            "Offset": -0.005275644148761688
+          },
+          {
+            "Source": 10,
+            "Offset": -0.0033401451654217233
+          },
+          {
+            "Source": 1,
+            "Offset": -0.0019804627682056533
+          },
+          {
+            "Source": 2,
+            "Offset": -0.0012231386846724573
+          },
+          {
+            "Source": 49,
+            "Offset": -0.0009513640700589775
+          }
+        ],
+        "four-edge-9d2cb9bbb3fe-p3-control-vs-reference": [
+          {
+            "Source": 5,
+            "Offset": -0.055449923710940735
+          },
+          {
+            "Source": 17,
+            "Offset": -0.050693182822199714
+          },
+          {
+            "Source": 10,
+            "Offset": -0.04208564340038872
+          },
+          {
+            "Source": 4,
+            "Offset": -0.03408348704849363
+          },
+          {
+            "Source": 49,
+            "Offset": -0.005442038294464685
+          },
+          {
+            "Source": 1,
+            "Offset": -0.004360514066671557
+          },
+          {
+            "Source": 2,
+            "Offset": -0.0034497457567861764
+          },
+          {
+            "Source": 20,
+            "Offset": -0.0016487826328628614
+          }
+        ],
+        "four-edge-9d2cb9bbb3fe-p4-vs-p5-control": [
+          {
+            "Source": 10,
+            "Offset": 0.015242781640846404
+          },
+          {
+            "Source": 17,
+            "Offset": 0.013190707707718146
+          },
+          {
+            "Source": 5,
+            "Offset": 0.011138097596100655
+          },
+          {
+            "Source": 4,
+            "Offset": 0.006529403141540446
+          },
+          {
+            "Source": 20,
+            "Offset": -0.002409835277832145
+          },
+          {
+            "Source": 1,
+            "Offset": 0.0008819839410316523
+          },
+          {
+            "Source": 2,
+            "Offset": 0.000772476458403362
+          },
+          {
+            "Source": 49,
+            "Offset": 0.0005909932186794274
+          }
+        ],
+        "p3-control-vs-four-edge-9d2cb9bbb3fe-p4": [
+          {
+            "Source": 17,
+            "Offset": 0.03154225402675002
+          },
+          {
+            "Source": 10,
+            "Offset": 0.024826561109897054
+          },
+          {
+            "Source": 5,
+            "Offset": 0.018958661345548408
+          },
+          {
+            "Source": 4,
+            "Offset": 0.010334404004123299
+          },
+          {
+            "Source": 49,
+            "Offset": 0.003921935312196541
+          },
+          {
+            "Source": 1,
+            "Offset": 0.001507161764817356
+          },
+          {
+            "Source": 2,
+            "Offset": 0.0014607100678829372
+          },
+          {
+            "Source": 20,
+            "Offset": -0.0012259704069308422
+          }
+        ]
+      }
+    },
+    "p_MS_rel": {
+      "Counts": {
+        "four-edge-9d2cb9bbb3fe-p4-vs-reference": {
+          "n": 60,
+          "within_1pct": 47,
+          "within_2pct": 59,
+          "within_5pct": 60,
+          "Worst": [
+            {
+              "Source": 26,
+              "Offset": 0.0299037363670786
+            },
+            {
+              "Source": 30,
+              "Offset": 0.017562385629748864
+            }
+          ]
+        },
+        "four-edge-9d2cb9bbb3fe-p5-control-vs-reference": {
+          "n": 8,
+          "within_1pct": 7,
+          "within_2pct": 8,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 10,
+              "Offset": 0.017987502275877813
+            },
+            {
+              "Source": 49,
+              "Offset": -0.005023825293952165
+            }
+          ]
+        },
+        "four-edge-9d2cb9bbb3fe-p3-control-vs-reference": {
+          "n": 8,
+          "within_1pct": 7,
+          "within_2pct": 8,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 20,
+              "Offset": 0.01625198880885663
+            },
+            {
+              "Source": 5,
+              "Offset": -0.0099858660042489
+            }
+          ]
+        },
+        "four-edge-9d2cb9bbb3fe-p4-vs-p5-control": {
+          "n": 8,
+          "within_1pct": 8,
+          "within_2pct": 8,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 10,
+              "Offset": 0.008924055856916364
+            },
+            {
+              "Source": 4,
+              "Offset": 0.0031819713063469665
+            }
+          ]
+        },
+        "p3-control-vs-four-edge-9d2cb9bbb3fe-p4": {
+          "n": 8,
+          "within_1pct": 7,
+          "within_2pct": 8,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 20,
+              "Offset": -0.012255530012445207
+            },
+            {
+              "Source": 10,
+              "Offset": 0.009449117137759106
+            }
+          ]
+        }
+      },
+      "Named": {},
+      "Largest": [
+        {
+          "Source": 26,
+          "Offset": 0.0299037363670786
+        },
+        {
+          "Source": 30,
+          "Offset": 0.017562385629748864
+        },
+        {
+          "Source": 29,
+          "Offset": -0.015537895333995314
+        },
+        {
+          "Source": 35,
+          "Offset": -0.012321469397507343
+        },
+        {
+          "Source": 27,
+          "Offset": 0.01216338031009063
+        },
+        {
+          "Source": 23,
+          "Offset": 0.011841029742537746
+        },
+        {
+          "Source": 48,
+          "Offset": -0.011240090593247534
+        },
+        {
+          "Source": 51,
+          "Offset": -0.010719656413789452
+        }
+      ],
+      "Movers": {
+        "four-edge-9d2cb9bbb3fe-p5-control-vs-reference": [
+          {
+            "Source": 10,
+            "Offset": 0.017987502275877813
+          },
+          {
+            "Source": 49,
+            "Offset": -0.005023825293952165
+          },
+          {
+            "Source": 2,
+            "Offset": -0.0049607612490018705
+          },
+          {
+            "Source": 1,
+            "Offset": -0.004323838178202327
+          },
+          {
+            "Source": 4,
+            "Offset": -0.004233636019968356
+          },
+          {
+            "Source": 20,
+            "Offset": 0.004149413847005364
+          },
+          {
+            "Source": 17,
+            "Offset": -0.00405608053716865
+          },
+          {
+            "Source": 5,
+            "Offset": -0.003400535716068155
+          }
+        ],
+        "four-edge-9d2cb9bbb3fe-p3-control-vs-reference": [
+          {
+            "Source": 20,
+            "Offset": 0.01625198880885663
+          },
+          {
+            "Source": 5,
+            "Offset": -0.0099858660042489
+          },
+          {
+            "Source": 17,
+            "Offset": -0.009236378209880028
+          },
+          {
+            "Source": 49,
+            "Offset": -0.005456429788334113
+          },
+          {
+            "Source": 4,
+            "Offset": -0.002986613298063826
+          },
+          {
+            "Source": 2,
+            "Offset": -0.0029029204055443262
+          },
+          {
+            "Source": 1,
+            "Offset": -0.0024824277287560253
+          },
+          {
+            "Source": 10,
+            "Offset": -0.00046147744909649346
+          }
+        ],
+        "four-edge-9d2cb9bbb3fe-p4-vs-p5-control": [
+          {
+            "Source": 10,
+            "Offset": 0.008924055856916364
+          },
+          {
+            "Source": 4,
+            "Offset": 0.0031819713063469665
+          },
+          {
+            "Source": 5,
+            "Offset": 0.002920539496995686
+          },
+          {
+            "Source": 17,
+            "Offset": 0.002626248197963532
+          },
+          {
+            "Source": 49,
+            "Offset": 0.002445575081475013
+          },
+          {
+            "Source": 2,
+            "Offset": 0.0022906698856906636
+          },
+          {
+            "Source": 1,
+            "Offset": 0.001978962733111364
+          },
+          {
+            "Source": 20,
+            "Offset": 0.0003507997017886217
+          }
+        ],
+        "p3-control-vs-four-edge-9d2cb9bbb3fe-p4": [
+          {
+            "Source": 20,
+            "Offset": -0.012255530012445207
+          },
+          {
+            "Source": 10,
+            "Offset": 0.009449117137759106
+          },
+          {
+            "Source": 4,
+            "Offset": -0.004418669479985431
+          },
+          {
+            "Source": 2,
+            "Offset": -0.004344549939413445
+          },
+          {
+            "Source": 1,
+            "Offset": -0.0038174012319767536
+          },
+          {
+            "Source": 5,
+            "Offset": 0.0037203488875604887
+          },
+          {
+            "Source": 17,
+            "Offset": 0.0025955262218889824
+          },
+          {
+            "Source": 49,
+            "Offset": -0.0020056920900119353
+          }
+        ]
+      }
+    },
+    "p_MA_rel": {
+      "Counts": {
+        "four-edge-9d2cb9bbb3fe-p4-vs-reference": {
+          "n": 60,
+          "within_1pct": 30,
+          "within_2pct": 53,
+          "within_5pct": 60,
+          "Worst": [
+            {
+              "Source": 74,
+              "Offset": 0.0392040055671069
+            },
+            {
+              "Source": 79,
+              "Offset": 0.028507505071563445
+            }
+          ]
+        },
+        "four-edge-9d2cb9bbb3fe-p5-control-vs-reference": {
+          "n": 8,
+          "within_1pct": 3,
+          "within_2pct": 6,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 10,
+              "Offset": 0.030206825561122978
+            },
+            {
+              "Source": 4,
+              "Offset": 0.023842198319991008
+            }
+          ]
+        },
+        "four-edge-9d2cb9bbb3fe-p3-control-vs-reference": {
+          "n": 8,
+          "within_1pct": 3,
+          "within_2pct": 3,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 17,
+              "Offset": -0.03725858691023471
+            },
+            {
+              "Source": 1,
+              "Offset": -0.03426587450111389
+            }
+          ]
+        },
+        "four-edge-9d2cb9bbb3fe-p4-vs-p5-control": {
+          "n": 8,
+          "within_1pct": 3,
+          "within_2pct": 7,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 4,
+              "Offset": 0.02085172767279639
+            },
+            {
+              "Source": 5,
+              "Offset": 0.01474097278032218
+            }
+          ]
+        },
+        "p3-control-vs-four-edge-9d2cb9bbb3fe-p4": {
+          "n": 8,
+          "within_1pct": 2,
+          "within_2pct": 8,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 10,
+              "Offset": 0.019801504660612947
+            },
+            {
+              "Source": 17,
+              "Offset": 0.01978935281197049
+            }
+          ]
+        }
+      },
+      "Named": {},
+      "Largest": [
+        {
+          "Source": 74,
+          "Offset": 0.0392040055671069
+        },
+        {
+          "Source": 79,
+          "Offset": 0.028507505071563445
+        },
+        {
+          "Source": 51,
+          "Offset": 0.02608420253894486
+        },
+        {
+          "Source": 56,
+          "Offset": 0.024552943757321293
+        },
+        {
+          "Source": 33,
+          "Offset": -0.02176399005287149
+        },
+        {
+          "Source": 10,
+          "Offset": 0.021722833803821572
+        },
+        {
+          "Source": 1,
+          "Offset": -0.020681044266978872
+        },
+        {
+          "Source": 26,
+          "Offset": 0.019960400602036542
+        }
+      ],
+      "Movers": {
+        "four-edge-9d2cb9bbb3fe-p5-control-vs-reference": [
+          {
+            "Source": 10,
+            "Offset": 0.030206825561122978
+          },
+          {
+            "Source": 4,
+            "Offset": 0.023842198319991008
+          },
+          {
+            "Source": 5,
+            "Offset": 0.016783224927082063
+          },
+          {
+            "Source": 20,
+            "Offset": 0.012643554289456304
+          },
+          {
+            "Source": 1,
+            "Offset": -0.01053989695159769
+          },
+          {
+            "Source": 17,
+            "Offset": -0.00801240231960189
+          },
+          {
+            "Source": 49,
+            "Offset": -0.006946512488820457
+          },
+          {
+            "Source": 2,
+            "Offset": -0.001858070577183033
+          }
+        ],
+        "four-edge-9d2cb9bbb3fe-p3-control-vs-reference": [
+          {
+            "Source": 17,
+            "Offset": -0.03725858691023471
+          },
+          {
+            "Source": 1,
+            "Offset": -0.03426587450111389
+          },
+          {
+            "Source": 49,
+            "Offset": -0.03152627572080213
+          },
+          {
+            "Source": 4,
+            "Offset": 0.022667745991015825
+          },
+          {
+            "Source": 2,
+            "Offset": -0.02137497436777131
+          },
+          {
+            "Source": 5,
+            "Offset": 0.006596412634314212
+          },
+          {
+            "Source": 20,
+            "Offset": 0.005191589106717777
+          },
+          {
+            "Source": 10,
+            "Offset": 0.0018840226597312576
+          }
+        ],
+        "four-edge-9d2cb9bbb3fe-p4-vs-p5-control": [
+          {
+            "Source": 4,
+            "Offset": 0.02085172767279639
+          },
+          {
+            "Source": 5,
+            "Offset": 0.01474097278032218
+          },
+          {
+            "Source": 17,
+            "Offset": 0.010383197379598311
+          },
+          {
+            "Source": 1,
+            "Offset": 0.010355305854148941
+          },
+          {
+            "Source": 49,
+            "Offset": 0.010258890353976646
+          },
+          {
+            "Source": 2,
+            "Offset": 0.009834323613123882
+          },
+          {
+            "Source": 10,
+            "Offset": 0.008303613736140102
+          },
+          {
+            "Source": 20,
+            "Offset": 0.0018175697152817707
+          }
+        ],
+        "p3-control-vs-four-edge-9d2cb9bbb3fe-p4": [
+          {
+            "Source": 10,
+            "Offset": 0.019801504660612947
+          },
+          {
+            "Source": 17,
+            "Offset": 0.01978935281197049
+          },
+          {
+            "Source": 4,
+            "Offset": -0.019300851345790425
+          },
+          {
+            "Source": 49,
+            "Offset": 0.014967457003838626
+          },
+          {
+            "Source": 1,
+            "Offset": 0.014066842907842018
+          },
+          {
+            "Source": 2,
+            "Offset": 0.01001041962384977
+          },
+          {
+            "Source": 20,
+            "Offset": 0.005585755239104381
+          },
+          {
+            "Source": 5,
+            "Offset": -0.004553789270618105
+          }
+        ]
+      }
+    },
+    "p_MA_sharp_rel": {
+      "Counts": {
+        "four-edge-9d2cb9bbb3fe-p4-vs-reference": {
+          "n": 60,
+          "within_1pct": 44,
+          "within_2pct": 53,
+          "within_5pct": 60,
+          "Worst": [
+            {
+              "Source": 74,
+              "Offset": 0.032851562068950256
+            },
+            {
+              "Source": 33,
+              "Offset": -0.029357460242984402
+            }
+          ]
+        },
+        "four-edge-9d2cb9bbb3fe-p5-control-vs-reference": {
+          "n": 8,
+          "within_1pct": 2,
+          "within_2pct": 6,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 1,
+              "Offset": -0.021556880539839306
+            },
+            {
+              "Source": 10,
+              "Offset": 0.02126902405780734
+            }
+          ]
+        },
+        "four-edge-9d2cb9bbb3fe-p3-control-vs-reference": {
+          "n": 8,
+          "within_1pct": 3,
+          "within_2pct": 4,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 17,
+              "Offset": -0.0399969801679464
+            },
+            {
+              "Source": 1,
+              "Offset": -0.03702743071314585
+            }
+          ]
+        }
+      },
+      "Named": {},
+      "Largest": [
+        {
+          "Source": 74,
+          "Offset": 0.032851562068950256
+        },
+        {
+          "Source": 33,
+          "Offset": -0.029357460242984402
+        },
+        {
+          "Source": 1,
+          "Offset": -0.028203894716181527
+        },
+        {
+          "Source": 65,
+          "Offset": -0.028087433091103127
+        },
+        {
+          "Source": 26,
+          "Offset": -0.026112625311666554
+        },
+        {
+          "Source": 17,
+          "Offset": -0.025851782063788332
+        },
+        {
+          "Source": 49,
+          "Offset": -0.024893929007877014
+        },
+        {
+          "Source": 2,
+          "Offset": -0.01915467156384144
+        }
+      ],
+      "Movers": {
+        "four-edge-9d2cb9bbb3fe-p5-control-vs-reference": [
+          {
+            "Source": 1,
+            "Offset": -0.021556880539839306
+          },
+          {
+            "Source": 10,
+            "Offset": 0.02126902405780734
+          },
+          {
+            "Source": 17,
+            "Offset": -0.01924399836938126
+          },
+          {
+            "Source": 49,
+            "Offset": -0.01850206078180487
+          },
+          {
+            "Source": 2,
+            "Offset": -0.013068413954933609
+          },
+          {
+            "Source": 4,
+            "Offset": 0.01269464037774731
+          },
+          {
+            "Source": 5,
+            "Offset": 0.007158394414444724
+          },
+          {
+            "Source": 20,
+            "Offset": 0.0036345258015925952
+          }
+        ],
+        "four-edge-9d2cb9bbb3fe-p3-control-vs-reference": [
+          {
+            "Source": 17,
+            "Offset": -0.0399969801679464
+          },
+          {
+            "Source": 1,
+            "Offset": -0.03702743071314585
+          },
+          {
+            "Source": 49,
+            "Offset": -0.034373222212254306
+          },
+          {
+            "Source": 2,
+            "Offset": -0.024096662769377518
+          },
+          {
+            "Source": 4,
+            "Offset": 0.01946442618903813
+          },
+          {
+            "Source": 5,
+            "Offset": 0.003983189327519448
+          },
+          {
+            "Source": 20,
+            "Offset": 0.0021468763515898655
+          },
+          {
+            "Source": 10,
+            "Offset": -0.00047791781144180737
+          }
+        ]
+      }
+    }
+  }
+}

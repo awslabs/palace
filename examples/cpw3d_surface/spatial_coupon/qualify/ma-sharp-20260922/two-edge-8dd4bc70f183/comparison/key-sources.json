@@ -1,0 +1,1220 @@
+{
+  "MainPairing": "two-edge-8dd4bc70f183-p4-vs-reference",
+  "Free": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+    63,
+    64,
+    65,
+    66,
+    67,
+    68,
+    69,
+    70,
+    71,
+    72,
+    73,
+    74,
+    75,
+    76,
+    77,
+    78
+  ],
+  "Named": [],
+  "Quantities": {
+    "E_rel": {
+      "Counts": {
+        "two-edge-8dd4bc70f183-p4-vs-reference": {
+          "n": 78,
+          "within_1pct": 76,
+          "within_2pct": 78,
+          "within_5pct": 78,
+          "Worst": [
+            {
+              "Source": 67,
+              "Offset": 0.010557929624290838
+            },
+            {
+              "Source": 7,
+              "Offset": 0.010093801250379631
+            }
+          ]
+        },
+        "two-edge-8dd4bc70f183-p5-vs-reference": {
+          "n": 78,
+          "within_1pct": 78,
+          "within_2pct": 78,
+          "within_5pct": 78,
+          "Worst": [
+            {
+              "Source": 7,
+              "Offset": 0.006778069147503466
+            },
+            {
+              "Source": 9,
+              "Offset": 0.005847812220648163
+            }
+          ]
+        },
+        "two-edge-8dd4bc70f183-p5-control-vs-reference": {
+          "n": 8,
+          "within_1pct": 8,
+          "within_2pct": 8,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 6,
+              "Offset": 0.005213176214852236
+            },
+            {
+              "Source": 25,
+              "Offset": 0.0014288869631343634
+            }
+          ]
+        },
+        "two-edge-8dd4bc70f183-p3-control-vs-reference": {
+          "n": 8,
+          "within_1pct": 7,
+          "within_2pct": 7,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 6,
+              "Offset": 0.021521938333484845
+            },
+            {
+              "Source": 25,
+              "Offset": 0.0078029131389291545
+            }
+          ]
+        },
+        "two-edge-8dd4bc70f183-p4-vs-p5-control": {
+          "n": 8,
+          "within_1pct": 8,
+          "within_2pct": 8,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 25,
+              "Offset": -0.00259310930132158
+            },
+            {
+              "Source": 6,
+              "Offset": -0.0025323651718122024
+            }
+          ]
+        },
+        "p3-control-vs-two-edge-8dd4bc70f183-p4": {
+          "n": 8,
+          "within_1pct": 7,
+          "within_2pct": 8,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 6,
+              "Offset": -0.013466898843834754
+            },
+            {
+              "Source": 25,
+              "Offset": -0.003741267498149015
+            }
+          ]
+        }
+      },
+      "Named": {},
+      "Largest": [
+        {
+          "Source": 67,
+          "Offset": 0.010557929624290838
+        },
+        {
+          "Source": 7,
+          "Offset": 0.010093801250379631
+        },
+        {
+          "Source": 9,
+          "Offset": 0.009711081241491022
+        },
+        {
+          "Source": 65,
+          "Offset": 0.009694114391727925
+        },
+        {
+          "Source": 18,
+          "Offset": 0.008757067459878124
+        },
+        {
+          "Source": 76,
+          "Offset": 0.00815640177035777
+        },
+        {
+          "Source": 6,
+          "Offset": 0.007765205723189801
+        },
+        {
+          "Source": 74,
+          "Offset": 0.0073547073954330746
+        }
+      ],
+      "Movers": {
+        "two-edge-8dd4bc70f183-p5-vs-reference": [
+          {
+            "Source": 7,
+            "Offset": 0.006778069147503466
+          },
+          {
+            "Source": 9,
+            "Offset": 0.005847812220648163
+          },
+          {
+            "Source": 65,
+            "Offset": 0.005771764811863099
+          },
+          {
+            "Source": 67,
+            "Offset": 0.005645312480110435
+          },
+          {
+            "Source": 16,
+            "Offset": 0.005443178035996037
+          },
+          {
+            "Source": 74,
+            "Offset": 0.0052232567222589045
+          },
+          {
+            "Source": 6,
+            "Offset": 0.005213176214852236
+          },
+          {
+            "Source": 75,
+            "Offset": 0.004724475017331546
+          }
+        ],
+        "two-edge-8dd4bc70f183-p5-control-vs-reference": [
+          {
+            "Source": 6,
+            "Offset": 0.005213176214852236
+          },
+          {
+            "Source": 25,
+            "Offset": 0.0014288869631343634
+          },
+          {
+            "Source": 49,
+            "Offset": 0.0009583066568972267
+          },
+          {
+            "Source": 3,
+            "Offset": 0.0008038287536288228
+          },
+          {
+            "Source": 5,
+            "Offset": 0.000653617806061956
+          },
+          {
+            "Source": 2,
+            "Offset": 0.00013999946839288047
+          },
+          {
+            "Source": 20,
+            "Offset": 8.939798082838223e-05
+          },
+          {
+            "Source": 1,
+            "Offset": -2.0838949686358433e-05
+          }
+        ],
+        "two-edge-8dd4bc70f183-p3-control-vs-reference": [
+          {
+            "Source": 6,
+            "Offset": 0.021521938333484845
+          },
+          {
+            "Source": 25,
+            "Offset": 0.0078029131389291545
+          },
+          {
+            "Source": 49,
+            "Offset": 0.004660295763010578
+          },
+          {
+            "Source": 5,
+            "Offset": 0.0036779462305326963
+          },
+          {
+            "Source": 3,
+            "Offset": 0.0029754942367500904
+          },
+          {
+            "Source": 20,
+            "Offset": 0.00171192567300822
+          },
+          {
+            "Source": 2,
+            "Offset": 0.0005294578138889347
+          },
+          {
+            "Source": 1,
+            "Offset": 0.0005108243262950349
+          }
+        ],
+        "two-edge-8dd4bc70f183-p4-vs-p5-control": [
+          {
+            "Source": 25,
+            "Offset": -0.00259310930132158
+          },
+          {
+            "Source": 6,
+            "Offset": -0.0025323651718122024
+          },
+          {
+            "Source": 49,
+            "Offset": -0.0009929639718712952
+          },
+          {
+            "Source": 5,
+            "Offset": -0.0008306821033981176
+          },
+          {
+            "Source": 3,
+            "Offset": -0.000538878301296768
+          },
+          {
+            "Source": 20,
+            "Offset": -0.0003316709056679139
+          },
+          {
+            "Source": 1,
+            "Offset": -0.00023968285842440994
+          },
+          {
+            "Source": 2,
+            "Offset": -0.00018229669644913396
+          }
+        ],
+        "p3-control-vs-two-edge-8dd4bc70f183-p4": [
+          {
+            "Source": 6,
+            "Offset": -0.013466898843834754
+          },
+          {
+            "Source": 25,
+            "Offset": -0.003741267498149015
+          },
+          {
+            "Source": 49,
+            "Offset": -0.002694528367851201
+          },
+          {
+            "Source": 5,
+            "Offset": -0.002184378288741561
+          },
+          {
+            "Source": 3,
+            "Offset": -0.001627221447968564
+          },
+          {
+            "Source": 20,
+            "Offset": -0.0012885112483916102
+          },
+          {
+            "Source": 1,
+            "Offset": -0.0002917789040861503
+          },
+          {
+            "Source": 2,
+            "Offset": -0.00020699329059313762
+          }
+        ]
+      }
+    },
+    "p_SA_rel": {
+      "Counts": {},
+      "Named": {},
+      "Largest": [],
+      "Movers": {}
+    },
+    "p_MS_rel": {
+      "Counts": {
+        "two-edge-8dd4bc70f183-p4-vs-reference": {
+          "n": 78,
+          "within_1pct": 73,
+          "within_2pct": 77,
+          "within_5pct": 78,
+          "Worst": [
+            {
+              "Source": 35,
+              "Offset": 0.02613292108995739
+            },
+            {
+              "Source": 7,
+              "Offset": -0.012555846301626738
+            }
+          ]
+        },
+        "two-edge-8dd4bc70f183-p5-vs-reference": {
+          "n": 78,
+          "within_1pct": 77,
+          "within_2pct": 78,
+          "within_5pct": 78,
+          "Worst": [
+            {
+              "Source": 27,
+              "Offset": 0.013827803388470068
+            },
+            {
+              "Source": 35,
+              "Offset": -0.00990968367951417
+            }
+          ]
+        },
+        "two-edge-8dd4bc70f183-p5-control-vs-reference": {
+          "n": 8,
+          "within_1pct": 8,
+          "within_2pct": 8,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 6,
+              "Offset": -0.0038026187957935957
+            },
+            {
+              "Source": 25,
+              "Offset": 0.002001279268630182
+            }
+          ]
+        },
+        "two-edge-8dd4bc70f183-p3-control-vs-reference": {
+          "n": 8,
+          "within_1pct": 7,
+          "within_2pct": 8,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 6,
+              "Offset": -0.017255436610263575
+            },
+            {
+              "Source": 20,
+              "Offset": 0.003122931180964668
+            }
+          ]
+        },
+        "two-edge-8dd4bc70f183-p4-vs-p5-control": {
+          "n": 8,
+          "within_1pct": 8,
+          "within_2pct": 8,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 6,
+              "Offset": 0.004613110635569097
+            },
+            {
+              "Source": 5,
+              "Offset": 0.003770606911896427
+            }
+          ]
+        },
+        "p3-control-vs-two-edge-8dd4bc70f183-p4": {
+          "n": 8,
+          "within_1pct": 8,
+          "within_2pct": 8,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 6,
+              "Offset": 0.009034241378286895
+            },
+            {
+              "Source": 20,
+              "Offset": -0.005275188554504493
+            }
+          ]
+        }
+      },
+      "Named": {},
+      "Largest": [
+        {
+          "Source": 35,
+          "Offset": 0.02613292108995739
+        },
+        {
+          "Source": 7,
+          "Offset": -0.012555846301626738
+        },
+        {
+          "Source": 9,
+          "Offset": -0.011740819108765012
+        },
+        {
+          "Source": 67,
+          "Offset": -0.011713742289648593
+        },
+        {
+          "Source": 18,
+          "Offset": -0.011624849349471549
+        },
+        {
+          "Source": 65,
+          "Offset": -0.009930887935528866
+        },
+        {
+          "Source": 74,
+          "Offset": -0.008869912824165325
+        },
+        {
+          "Source": 64,
+          "Offset": -0.008500190153793104
+        }
+      ],
+      "Movers": {
+        "two-edge-8dd4bc70f183-p5-vs-reference": [
+          {
+            "Source": 27,
+            "Offset": 0.013827803388470068
+          },
+          {
+            "Source": 35,
+            "Offset": -0.00990968367951417
+          },
+          {
+            "Source": 36,
+            "Offset": 0.005687533735182151
+          },
+          {
+            "Source": 7,
+            "Offset": -0.005265699005106425
+          },
+          {
+            "Source": 16,
+            "Offset": -0.004555020195650619
+          },
+          {
+            "Source": 17,
+            "Offset": -0.004135769617021358
+          },
+          {
+            "Source": 9,
+            "Offset": -0.004086658519995069
+          },
+          {
+            "Source": 6,
+            "Offset": -0.0038026187957935957
+          }
+        ],
+        "two-edge-8dd4bc70f183-p5-control-vs-reference": [
+          {
+            "Source": 6,
+            "Offset": -0.0038026187957935957
+          },
+          {
+            "Source": 25,
+            "Offset": 0.002001279268630182
+          },
+          {
+            "Source": 20,
+            "Offset": 0.0015064097943467874
+          },
+          {
+            "Source": 5,
+            "Offset": 0.0011894654896319296
+          },
+          {
+            "Source": 1,
+            "Offset": 0.001100278006860652
+          },
+          {
+            "Source": 3,
+            "Offset": 0.0009396374110682727
+          },
+          {
+            "Source": 2,
+            "Offset": 0.0006453685325397831
+          },
+          {
+            "Source": 49,
+            "Offset": 0.0001549300855608675
+          }
+        ],
+        "two-edge-8dd4bc70f183-p3-control-vs-reference": [
+          {
+            "Source": 6,
+            "Offset": -0.017255436610263575
+          },
+          {
+            "Source": 20,
+            "Offset": 0.003122931180964668
+          },
+          {
+            "Source": 1,
+            "Offset": 0.002303745085383487
+          },
+          {
+            "Source": 2,
+            "Offset": 0.002105664539627272
+          },
+          {
+            "Source": 3,
+            "Offset": 0.001408979616987703
+          },
+          {
+            "Source": 49,
+            "Offset": -0.0009348362657692411
+          },
+          {
+            "Source": 25,
+            "Offset": 0.0008597740407800824
+          },
+          {
+            "Source": 5,
+            "Offset": 0.0005122972413657993
+          }
+        ],
+        "two-edge-8dd4bc70f183-p4-vs-p5-control": [
+          {
+            "Source": 6,
+            "Offset": 0.004613110635569097
+          },
+          {
+            "Source": 5,
+            "Offset": 0.003770606911896427
+          },
+          {
+            "Source": 20,
+            "Offset": 0.003683128936172798
+          },
+          {
+            "Source": 3,
+            "Offset": 0.003436682112271521
+          },
+          {
+            "Source": 49,
+            "Offset": 0.003263920682204269
+          },
+          {
+            "Source": 25,
+            "Offset": 0.0025014320982383966
+          },
+          {
+            "Source": 1,
+            "Offset": 0.0021474328379219735
+          },
+          {
+            "Source": 2,
+            "Offset": 0.0021345061992202657
+          }
+        ],
+        "p3-control-vs-two-edge-8dd4bc70f183-p4": [
+          {
+            "Source": 6,
+            "Offset": 0.009034241378286895
+          },
+          {
+            "Source": 20,
+            "Offset": -0.005275188554504493
+          },
+          {
+            "Source": 3,
+            "Offset": -0.0038919884280159255
+          },
+          {
+            "Source": 2,
+            "Offset": -0.003584083525374197
+          },
+          {
+            "Source": 1,
+            "Offset": -0.0033409593217295142
+          },
+          {
+            "Source": 5,
+            "Offset": -0.003082163769412514
+          },
+          {
+            "Source": 49,
+            "Offset": -0.0021660647609370153
+          },
+          {
+            "Source": 25,
+            "Offset": -0.0013575117404205808
+          }
+        ]
+      }
+    },
+    "p_MA_rel": {
+      "Counts": {
+        "two-edge-8dd4bc70f183-p4-vs-reference": {
+          "n": 78,
+          "within_1pct": 56,
+          "within_2pct": 76,
+          "within_5pct": 78,
+          "Worst": [
+            {
+              "Source": 53,
+              "Offset": 0.02668677808810773
+            },
+            {
+              "Source": 58,
+              "Offset": 0.026603183036462794
+            }
+          ]
+        },
+        "two-edge-8dd4bc70f183-p5-vs-reference": {
+          "n": 78,
+          "within_1pct": 34,
+          "within_2pct": 60,
+          "within_5pct": 78,
+          "Worst": [
+            {
+              "Source": 53,
+              "Offset": 0.03504630045887717
+            },
+            {
+              "Source": 58,
+              "Offset": 0.03463653720177848
+            }
+          ]
+        },
+        "two-edge-8dd4bc70f183-p5-control-vs-reference": {
+          "n": 8,
+          "within_1pct": 3,
+          "within_2pct": 7,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 49,
+              "Offset": 0.02377102513729692
+            },
+            {
+              "Source": 20,
+              "Offset": 0.017547993952708296
+            }
+          ]
+        },
+        "two-edge-8dd4bc70f183-p3-control-vs-reference": {
+          "n": 8,
+          "within_1pct": 4,
+          "within_2pct": 7,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 2,
+              "Offset": -0.020103031976297515
+            },
+            {
+              "Source": 6,
+              "Offset": -0.018118229517900843
+            }
+          ]
+        },
+        "two-edge-8dd4bc70f183-p4-vs-p5-control": {
+          "n": 8,
+          "within_1pct": 5,
+          "within_2pct": 8,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 3,
+              "Offset": 0.01930424376367882
+            },
+            {
+              "Source": 6,
+              "Offset": 0.01595707954931123
+            }
+          ]
+        },
+        "p3-control-vs-two-edge-8dd4bc70f183-p4": {
+          "n": 8,
+          "within_1pct": 7,
+          "within_2pct": 8,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 2,
+              "Offset": 0.010081742744619695
+            },
+            {
+              "Source": 3,
+              "Offset": -0.009666762572869868
+            }
+          ]
+        }
+      },
+      "Named": {},
+      "Largest": [
+        {
+          "Source": 53,
+          "Offset": 0.02668677808810773
+        },
+        {
+          "Source": 58,
+          "Offset": 0.026603183036462794
+        },
+        {
+          "Source": 59,
+          "Offset": 0.017744499337710423
+        },
+        {
+          "Source": 57,
+          "Offset": 0.01520411024582933
+        },
+        {
+          "Source": 73,
+          "Offset": 0.014771906833782177
+        },
+        {
+          "Source": 52,
+          "Offset": 0.014680474349560112
+        },
+        {
+          "Source": 49,
+          "Offset": 0.01448490921265992
+        },
+        {
+          "Source": 54,
+          "Offset": 0.0139777426914357
+        }
+      ],
+      "Movers": {
+        "two-edge-8dd4bc70f183-p5-vs-reference": [
+          {
+            "Source": 53,
+            "Offset": 0.03504630045887717
+          },
+          {
+            "Source": 58,
+            "Offset": 0.03463653720177848
+          },
+          {
+            "Source": 59,
+            "Offset": 0.02636015317034817
+          },
+          {
+            "Source": 74,
+            "Offset": 0.02441408904668171
+          },
+          {
+            "Source": 57,
+            "Offset": 0.024257264582295372
+          },
+          {
+            "Source": 49,
+            "Offset": 0.02377102513729692
+          },
+          {
+            "Source": 47,
+            "Offset": 0.023768902969738707
+          },
+          {
+            "Source": 56,
+            "Offset": 0.023440209317837427
+          }
+        ],
+        "two-edge-8dd4bc70f183-p5-control-vs-reference": [
+          {
+            "Source": 49,
+            "Offset": 0.02377102513729692
+          },
+          {
+            "Source": 20,
+            "Offset": 0.017547993952708296
+          },
+          {
+            "Source": 1,
+            "Offset": 0.016412442843214275
+          },
+          {
+            "Source": 3,
+            "Offset": 0.012614685759113982
+          },
+          {
+            "Source": 5,
+            "Offset": 0.011060202347911389
+          },
+          {
+            "Source": 6,
+            "Offset": 0.004790011014092711
+          },
+          {
+            "Source": 25,
+            "Offset": 0.0012615253183522986
+          },
+          {
+            "Source": 2,
+            "Offset": -0.00036976709219751943
+          }
+        ],
+        "two-edge-8dd4bc70f183-p3-control-vs-reference": [
+          {
+            "Source": 2,
+            "Offset": -0.020103031976297515
+          },
+          {
+            "Source": 6,
+            "Offset": -0.018118229517900843
+          },
+          {
+            "Source": 25,
+            "Offset": -0.01051476267470535
+          },
+          {
+            "Source": 49,
+            "Offset": 0.010127491251127897
+          },
+          {
+            "Source": 20,
+            "Offset": 0.007043528335447114
+          },
+          {
+            "Source": 1,
+            "Offset": 0.005740228510281248
+          },
+          {
+            "Source": 3,
+            "Offset": 0.0031341932512741802
+          },
+          {
+            "Source": 5,
+            "Offset": 0.0012286751643009843
+          }
+        ],
+        "two-edge-8dd4bc70f183-p4-vs-p5-control": [
+          {
+            "Source": 3,
+            "Offset": 0.01930424376367882
+          },
+          {
+            "Source": 6,
+            "Offset": 0.01595707954931123
+          },
+          {
+            "Source": 5,
+            "Offset": 0.015526576886125992
+          },
+          {
+            "Source": 2,
+            "Offset": 0.009955985360498522
+          },
+          {
+            "Source": 49,
+            "Offset": 0.009153527903972414
+          },
+          {
+            "Source": 20,
+            "Offset": 0.004692318189947383
+          },
+          {
+            "Source": 1,
+            "Offset": 0.004636359514812649
+          },
+          {
+            "Source": 25,
+            "Offset": 0.0032769066715997307
+          }
+        ],
+        "p3-control-vs-two-edge-8dd4bc70f183-p4": [
+          {
+            "Source": 2,
+            "Offset": 0.010081742744619695
+          },
+          {
+            "Source": 3,
+            "Offset": -0.009666762572869868
+          },
+          {
+            "Source": 25,
+            "Offset": 0.00859635257453328
+          },
+          {
+            "Source": 6,
+            "Offset": 0.007258059173482455
+          },
+          {
+            "Source": 1,
+            "Offset": 0.0059473693713704215
+          },
+          {
+            "Source": 20,
+            "Offset": 0.005711874488641514
+          },
+          {
+            "Source": 5,
+            "Offset": -0.0056198574826211425
+          },
+          {
+            "Source": 49,
+            "Offset": 0.004313730691692188
+          }
+        ]
+      }
+    },
+    "p_MA_sharp_rel": {
+      "Counts": {
+        "two-edge-8dd4bc70f183-p4-vs-reference": {
+          "n": 78,
+          "within_1pct": 57,
+          "within_2pct": 76,
+          "within_5pct": 78,
+          "Worst": [
+            {
+              "Source": 53,
+              "Offset": 0.022003775528500823
+            },
+            {
+              "Source": 58,
+              "Offset": 0.021940953877209075
+            }
+          ]
+        },
+        "two-edge-8dd4bc70f183-p5-vs-reference": {
+          "n": 78,
+          "within_1pct": 51,
+          "within_2pct": 76,
+          "within_5pct": 78,
+          "Worst": [
+            {
+              "Source": 53,
+              "Offset": 0.02373821761479635
+            },
+            {
+              "Source": 58,
+              "Offset": 0.0233350984697534
+            }
+          ]
+        },
+        "two-edge-8dd4bc70f183-p5-control-vs-reference": {
+          "n": 8,
+          "within_1pct": 6,
+          "within_2pct": 8,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 49,
+              "Offset": 0.01516347120343604
+            },
+            {
+              "Source": 20,
+              "Offset": 0.01091527060366549
+            }
+          ]
+        },
+        "two-edge-8dd4bc70f183-p3-control-vs-reference": {
+          "n": 8,
+          "within_1pct": 4,
+          "within_2pct": 8,
+          "within_5pct": 8,
+          "Worst": [
+            {
+              "Source": 2,
+              "Offset": -0.018807551268225756
+            },
+            {
+              "Source": 6,
+              "Offset": -0.016973074067270166
+            }
+          ]
+        }
+      },
+      "Named": {},
+      "Largest": [
+        {
+          "Source": 53,
+          "Offset": 0.022003775528500823
+        },
+        {
+          "Source": 58,
+          "Offset": 0.021940953877209075
+        },
+        {
+          "Source": 28,
+          "Offset": -0.017521011540086732
+        },
+        {
+          "Source": 7,
+          "Offset": -0.015713883954621383
+        },
+        {
+          "Source": 9,
+          "Offset": -0.014193983874140332
+        },
+        {
+          "Source": 59,
+          "Offset": 0.01402492066186079
+        },
+        {
+          "Source": 12,
+          "Offset": -0.013836737682349156
+        },
+        {
+          "Source": 6,
+          "Offset": -0.01343941622959126
+        }
+      ],
+      "Movers": {
+        "two-edge-8dd4bc70f183-p5-vs-reference": [
+          {
+            "Source": 53,
+            "Offset": 0.02373821761479635
+          },
+          {
+            "Source": 58,
+            "Offset": 0.0233350984697534
+          },
+          {
+            "Source": 59,
+            "Offset": 0.017596365319615823
+          },
+          {
+            "Source": 74,
+            "Offset": 0.01581369705472237
+          },
+          {
+            "Source": 57,
+            "Offset": 0.015538690728243692
+          },
+          {
+            "Source": 72,
+            "Offset": 0.015400669143448016
+          },
+          {
+            "Source": 56,
+            "Offset": 0.015234592286522297
+          },
+          {
+            "Source": 47,
+            "Offset": 0.015226464473398803
+          }
+        ],
+        "two-edge-8dd4bc70f183-p5-control-vs-reference": [
+          {
+            "Source": 49,
+            "Offset": 0.01516347120343604
+          },
+          {
+            "Source": 20,
+            "Offset": 0.01091527060366549
+          },
+          {
+            "Source": 1,
+            "Offset": 0.009674266858832258
+          },
+          {
+            "Source": 25,
+            "Offset": -0.0072334083113557174
+          },
+          {
+            "Source": 2,
+            "Offset": -0.006764103488020095
+          },
+          {
+            "Source": 3,
+            "Offset": 0.006107968970430227
+          },
+          {
+            "Source": 5,
+            "Offset": 0.0052714562677662466
+          },
+          {
+            "Source": 6,
+            "Offset": -0.0007134151860078727
+          }
+        ],
+        "two-edge-8dd4bc70f183-p3-control-vs-reference": [
+          {
+            "Source": 2,
+            "Offset": -0.018807551268225756
+          },
+          {
+            "Source": 6,
+            "Offset": -0.016973074067270166
+          },
+          {
+            "Source": 25,
+            "Offset": -0.013979987867829089
+          },
+          {
+            "Source": 49,
+            "Offset": 0.012577655647630663
+          },
+          {
+            "Source": 20,
+            "Offset": 0.009235288874858654
+          },
+          {
+            "Source": 1,
+            "Offset": 0.00791100724748186
+          },
+          {
+            "Source": 3,
+            "Offset": 0.004752757456756181
+          },
+          {
+            "Source": 5,
+            "Offset": 0.002618641434181323
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "main/four-edge-9d2cb9bbb3fe-p3-control/reducer/domain-response-matrix.csv": {
+    "Local": "e807c91d26518ebb3cd780ba144f7e2ebae4bb8d5f593dcba23183e7ad717e44",
+    "Remote": "e807c91d26518ebb3cd780ba144f7e2ebae4bb8d5f593dcba23183e7ad717e44",
+    "OK": true
+  },
+  "main/four-edge-9d2cb9bbb3fe-p3-control/reducer/surface-response-matrix.csv": {
+    "Local": "2dbaa0a386689597eb9d3bd129a6d6dd2becf474c5695eaeba0bf8c5ae8d5e30",
+    "Remote": "2dbaa0a386689597eb9d3bd129a6d6dd2becf474c5695eaeba0bf8c5ae8d5e30",
+    "OK": true
+  },
+  "main/four-edge-9d2cb9bbb3fe-p4/reducer/domain-response-matrix.csv": {
+    "Local": "1f7e2acd76aeaf027ccb57c383239e0dcac173a8ada337c9652db54829a86e37",
+    "Remote": "1f7e2acd76aeaf027ccb57c383239e0dcac173a8ada337c9652db54829a86e37",
+    "OK": true
+  },
+  "main/four-edge-9d2cb9bbb3fe-p4/reducer/surface-response-matrix.csv": {
+    "Local": "b462dac3a0b7d7c11a8f8614bac06d7ca173c7b4761caee2b7a23a6f5188b7dd",
+    "Remote": "b462dac3a0b7d7c11a8f8614bac06d7ca173c7b4761caee2b7a23a6f5188b7dd",
+    "OK": true
+  },
+  "main/four-edge-9d2cb9bbb3fe-p4-local-edge/output/domain-E.csv": {
+    "Local": "eb9fc591303067e47e301231223fb2edb13ca016783d4f99c5d1b10f07015e54",
+    "Remote": "eb9fc591303067e47e301231223fb2edb13ca016783d4f99c5d1b10f07015e54",
+    "OK": true
+  },
+  "main/four-edge-9d2cb9bbb3fe-p4-local-edge/output/domain-response-matrix.csv": {
+    "Local": "8fc30f4349404dc95957df34117122c171815e1071611e5f87011ef9615ee333",
+    "Remote": "8fc30f4349404dc95957df34117122c171815e1071611e5f87011ef9615ee333",
+    "OK": true
+  },
+  "main/four-edge-9d2cb9bbb3fe-p4-local-edge/output/error-indicators.csv": {
+    "Local": "c45534794067fe2a07e33c40e359609d2739f6aa94b2d53b56c770d71e70132d",
+    "Remote": "c45534794067fe2a07e33c40e359609d2739f6aa94b2d53b56c770d71e70132d",
+    "OK": true
+  },
+  "main/four-edge-9d2cb9bbb3fe-p4-local-edge/output/surface-Q-edge-local.csv": {
+    "Local": "7041303f244b7bbe5c4c30ba3fcf0e5b13d33fe6f6e648d7f40e86a7394e6fa9",
+    "Remote": "7041303f244b7bbe5c4c30ba3fcf0e5b13d33fe6f6e648d7f40e86a7394e6fa9",
+    "OK": true
+  },
+  "main/four-edge-9d2cb9bbb3fe-p4-local-edge/output/surface-Q-edge.csv": {
+    "Local": "d1167b914f3cd8a2036be20a4d7162f35910568a7e54e7a1507d96838de58c89",
+    "Remote": "d1167b914f3cd8a2036be20a4d7162f35910568a7e54e7a1507d96838de58c89",
+    "OK": true
+  },
+  "main/four-edge-9d2cb9bbb3fe-p4-local-edge/output/surface-Q.csv": {
+    "Local": "e00b0b84d59938b2343f13332adaacd1fd068b6177c39edc9afbe8585dcf4603",
+    "Remote": "e00b0b84d59938b2343f13332adaacd1fd068b6177c39edc9afbe8585dcf4603",
+    "OK": true
+  },
+  "main/four-edge-9d2cb9bbb3fe-p4-local-edge/output/surface-response-matrix.csv": {
+    "Local": "efe4cef15b0e3f0d4dbec8847eb1eb2c56fcc36123396f1085aac286c1df937a",
+    "Remote": "efe4cef15b0e3f0d4dbec8847eb1eb2c56fcc36123396f1085aac286c1df937a",
+    "OK": true
+  },
+  "main/four-edge-9d2cb9bbb3fe-p5-control/reducer/domain-response-matrix.csv": {
+    "Local": "608b80c9f6561828a11773bc2ada9d4e5ee3c01228009e8d2d75f74ad6e65238",
+    "Remote": "608b80c9f6561828a11773bc2ada9d4e5ee3c01228009e8d2d75f74ad6e65238",
+    "OK": true
+  },
+  "main/four-edge-9d2cb9bbb3fe-p5-control/reducer/surface-response-matrix.csv": {
+    "Local": "a8e8aa54c09aa6f0c3a418f5545883621ae05f44ae1e91323c53015fffb6d639",
+    "Remote": "a8e8aa54c09aa6f0c3a418f5545883621ae05f44ae1e91323c53015fffb6d639",
+    "OK": true
+  },
+  "main/memory-samples.csv": {
+    "Local": "9d181177e4c7104b1b2073816b27f627b6d3013f485f89005a61de83404951a3",
+    "Remote": "9d181177e4c7104b1b2073816b27f627b6d3013f485f89005a61de83404951a3",
+    "OK": true
+  }
+}

@@ -1,0 +1,212 @@
+{
+  "Version": 1,
+  "Command": "coupon-library build",
+  "Root": "/tmp/coupon-library-build-79df1f416-20260922-023049",
+  "Cases": [
+    {
+      "Case": "three-edge-419576fdab24",
+      "InventoryStatus": "RemoteVerified",
+      "FixtureVersion": null,
+      "Calibration": null,
+      "Scope": {
+        "ExhibitedClasses": [
+          "ContinuationVertices",
+          "ExteriorLoops",
+          "TraceBasis"
+        ],
+        "UnsupportedClasses": []
+      },
+      "Status": "built",
+      "Passed": true,
+      "StoppedBy": null,
+      "CanonicalBuildId": "ef4ebd7b793e97c6ed830d85a88c055d18bf4d25e8cce5db2c649facefa55489",
+      "Variants": {
+        "identity": {
+          "Path": "/private/tmp/coupon-library-build-79df1f416-20260922-023049/three-edge-419576fdab24/identity.msh",
+          "SHA256": "4e2adbe12b26b7df5e3066f230d15dc860fa027c56ab12bebc9f064f0e4b5dd8"
+        },
+        "rotate-z-0.63": {
+          "Path": "/private/tmp/coupon-library-build-79df1f416-20260922-023049/three-edge-419576fdab24/rotate-z-0.63.msh",
+          "SHA256": "82849d9b43900331fcc2e7142a5428fb6c703b48a2234a196d9230848b20ce01"
+        }
+      },
+      "RadialShells": {
+        "Kind": "radial-ma-shells",
+        "Shells": {
+          "Path": "/private/tmp/coupon-library-build-79df1f416-20260922-023049/three-edge-419576fdab24/identity.msh.radial-shells.json",
+          "SHA256": "d1559f82fd3210c053f9c4e14f56393457c8969cb315b0005b7745a265199ff9"
+        },
+        "ShellCount": 15,
+        "RingRadii": [
+          0.00025,
+          0.00075,
+          0.00175,
+          0.00375,
+          0.00775,
+          0.01575,
+          0.03175
+        ],
+        "MAParents": [
+          6001
+        ],
+        "ParentMesh": {
+          "SHA256": "95837ed5aca05bd52a571b27ba935014a4b40f16d1bd1c9cb9437a3bb5205a70",
+          "CanonicalMeshSHA256": "95837ed5aca05bd52a571b27ba935014a4b40f16d1bd1c9cb9437a3bb5205a70"
+        },
+        "Tool": "relabel_radial_ma_shells.py",
+        "Rule": "label-only: the $Nodes block and every element apart from the (physical, elementary) pair of the MA elements are byte-identical to the parent-labeled publication (LabelOnly); the shells sum to the canonical ownership partition's parent areas; the ownership audit below runs on the shelled mesh"
+      },
+      "Elements": {
+        "Tetrahedron": 1659373,
+        "Prism": 172692,
+        "Pyramid": 13284,
+        "Total": 1845349
+      },
+      "H1": {
+        "Order": 4,
+        "DOFs": 24844050,
+        "EntityCounts": {
+          "Vertices": 428366,
+          "Edges": 2489399,
+          "TriangleFaces": 3630370,
+          "QuadFaces": 276012,
+          "Tetrahedra": 1659373,
+          "Prisms": 172692,
+          "Pyramids": 13284
+        }
+      },
+      "Estimate": {
+        "EstimatedElements": 1886489.374546443,
+        "EstimateOverCap": 0.3144148957577405,
+        "MaximumElements": 6000000,
+        "Passed": true,
+        "ActualElements": 1845349,
+        "EstimateOverActual": 1.0222940888398038
+      },
+      "Stages": {
+        "canonical-publish": {
+          "Seconds": 26.919630208984017,
+          "PeakGiB": 3.163970947265625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-79df1f416-20260922-023049/three-edge-419576fdab24/canonical-publish.log.json"
+        },
+        "canonical-source": {
+          "Seconds": 0.10495062510017306,
+          "PeakGiB": 3.0517578125e-05,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-79df1f416-20260922-023049/three-edge-419576fdab24/canonical-source.log.json"
+        },
+        "gmsh-build": {
+          "Seconds": 111.66820558300242,
+          "PeakGiB": 4.6676025390625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-79df1f416-20260922-023049/three-edge-419576fdab24/gmsh-build.log.json"
+        },
+        "identity-publication": {
+          "Seconds": 163.86308554199059,
+          "PeakGiB": 3.629608154296875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-79df1f416-20260922-023049/three-edge-419576fdab24/identity-publication.log.json"
+        },
+        "identity-variant-audits": {
+          "Seconds": 224.35905691597145,
+          "PeakGiB": 2.684539794921875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-79df1f416-20260922-023049/three-edge-419576fdab24/identity-variant-audits.audit.log.json"
+        },
+        "per-entry-verification": {
+          "Seconds": 908.5920516249025,
+          "PeakGiB": 2.84722900390625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-79df1f416-20260922-023049/three-edge-419576fdab24/per-entry-verification.audit.log.json"
+        },
+        "rotate-z-0.63-publication": {
+          "Seconds": 155.67273175006267,
+          "PeakGiB": 3.6220703125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-79df1f416-20260922-023049/three-edge-419576fdab24/rotate-z-0.63-publication.log.json"
+        },
+        "rotate-z-0.63-variant-audits": {
+          "Seconds": 326.5102548749419,
+          "PeakGiB": 2.7427978515625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-library-build-79df1f416-20260922-023049/three-edge-419576fdab24/rotate-z-0.63-variant-audits.audit.log.json"
+        }
+      },
+      "Verification": {
+        "Passed": true,
+        "Failures": [],
+        "Path": "/tmp/coupon-library-build-79df1f416-20260922-023049/three-edge-419576fdab24/per-entry-verification.json"
+      },
+      "HeadroomFlags": [],
+      "Root": "/tmp/coupon-library-build-79df1f416-20260922-023049/three-edge-419576fdab24",
+      "DriverReturnCode": 0,
+      "WallSeconds": 1922.3665890693665
+    }
+  ],
+  "Library": {
+    "CasesAttempted": 1,
+    "CasesBuilt": 1,
+    "CasesPassed": 1,
+    "CasesUnsupported": 0,
+    "CasesFailed": 0,
+    "CasesUnbuilt": 0,
+    "FlaggedCases": [],
+    "WallClockSeconds": 1981.9318647384644,
+    "Jobs": 1,
+    "Commit": "79df1f416",
+    "Bounds": {
+      "MaximumElements": 6000000,
+      "MaximumSeconds": 3600,
+      "MaximumRSSGiB": 12.0
+    },
+    "HeadroomFraction": 0.9,
+    "HeadroomRule": "a case is flagged when its element count or pre-build estimate reaches 0.9 x MaximumElements, or any bounded stage's wall seconds or peak process-tree RSS reaches 0.9 x its limit (the ten-edge production root sat at 0.87 of the 4M cap and 0.96 of the 8 GiB bound of decision 42: the margin rule the throughput plan lacked; the bounds are the manifest's Gates - guidelines since decision 61c, 6M / 3600 s / 12 GiB, recorded under Gates.PreviousValues with their history)",
+    "Manifest": {
+      "Path": "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/geometry-independence-suite.json",
+      "SHA256": "65231eb0dd3d54d46d9df67dfc08c02372edc8c68b7053b24c8ce5c921f3baad",
+      "Kind": "production",
+      "ProductionManifest": null
+    }
+  }
+}
