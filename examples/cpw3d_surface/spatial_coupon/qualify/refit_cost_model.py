@@ -45,6 +45,7 @@ from mixed_mesh import h1_dofs_from_counts  # noqa: E402
 GIB = 2**30
 MEMORY_UNITS = {"K": 2**10, "M": 2**20, "G": 2**30, "T": 2**40}
 LINEAR_SOLVE_TIMERS = ("Linear Solve", "Setup", "Preconditioner", "Coarse Solve")
+REDUCTION_TIMERS = ("Archive Reduction", "Archive Read", "Sample Evaluation", "Gram Assembly", "Domain Gram")
 KEPT_KEYS = ("ReducerEvaluationFraction", "ReducerEvaluationFractionRule", "ReducerResidentFieldGBPerMillionH1",
              "ReducerResidentFieldGBRule", "PCGFactors", "PreflightAndMarginFactor", "PreflightSeconds", "NodeFitFraction",
              "PalaceGBPerGiB")
@@ -125,38 +126,67 @@ def resolve(record_dir, case, name, recorded):
     raise RefitError(f"{case}: {name} is neither at {copied} nor at the recorded {recorded}")
 
 
-def load_status(record_dir, case_record):
-    """The run_stages status carrying the local-edge stage (the controls job's) and every
-    stage's elapsed-time report: copied under <case>/results/<job>/status.json, else the
-    run's results tree."""
+def load_statuses(record_dir, case_record):
+    """The run_stages status of every job of the coupon (job name -> status): copied under
+    <case>/results/<job>/status.json, else the run's results tree."""
     case = case_record["Case"]
-    jobs = case_record["Cost"]["Jobs"]
-    candidates = [record_dir / case / "results" / name / "status.json" for name in jobs]
     root = Path(case_record["Root"])
-    candidates.append(root / "results" / "main" / "status.json")
-    for name in jobs:
-        candidates.append(root / "results" / "main" / name / "status.json")
-    statuses = [json.loads(path.read_text()) for path in candidates if path.exists()]
-    if not statuses:
-        raise RefitError(f"{case}: no run_stages status.json under {record_dir / case / 'results'} or {root / 'results'}")
+    statuses = {}
+    for job in case_record["Jobs"]:
+        name = job["Name"]
+        relative = Path(job["RemoteDirectory"]).relative_to(case_record["Remote"]["Case"] + "/main")
+        candidates = [record_dir / case / "results" / name / "status.json", root / "results" / "main" / relative / "status.json"]
+        path = next((path for path in candidates if path.exists()), None)
+        if path is None:
+            raise RefitError(f"{case}: no status.json of job {name} at {candidates}")
+        statuses[name] = json.loads(path.read_text())
     return statuses
 
 
-def stage_measurement(cost_stage, *, wall_based=True):
-    """The measured quantities of one worker + reducer stage of summarize_cost."""
+def stage_index(statuses):
+    """Stage name -> (job name, stage record) over the coupon's jobs."""
+    index = {}
+    for job, status in statuses.items():
+        for stage in status["Stages"]:
+            index[stage["Name"]] = (job, stage)
+    return index
+
+
+def stage_measurement(prefix, cost_stage, stages):
+    """The measured quantities of one worker + reducer stage: the merged per-source rates
+    of summarize_cost, the worker's non-source wall per JOB (the largest block's wall minus
+    its sources' total seconds: one launch per worker job) and the reducer's wall split by
+    Palace's elapsed-time report into the setup and the per-source reduction work."""
     n = len(cost_stage["Sources"])
     mean_total = cost_stage["MeanPerSourceTotalSeconds"]
-    worker_wall = cost_stage["WorkerWallSeconds"]
-    reducer_wall = cost_stage["ReducerWallSeconds"]
-    pair = cost_stage["ReducerPairSecondsEstimate"]
+    blocks = []
+    for name, (job, stage) in stages.items():
+        if name == f"{prefix}-worker" or name.startswith(f"{prefix}-worker-block"):
+            timings = stage["Parsed"].get("SourceTiming") or []
+            total = sum(t["TotalSeconds"] for t in timings)
+            blocks.append({"Name": name, "Job": job, "Sources": len(timings), "WallSeconds": stage["WallSeconds"],
+                           "NonSourceSeconds": max(stage["WallSeconds"] - total, 0.0),
+                           "MeanPerSourceSeconds": total / len(timings) if timings else None})
+    if not blocks:
+        raise RefitError(f"{prefix}: no worker stage in the statuses")
+    # Contiguous source blocks differ in their PCG counts: the per-source seconds the
+    # planner budgets every block with are the largest block mean (= the coupon mean for
+    # a single worker job), so every worker job of the run is covered.
+    block_mean = max(block["MeanPerSourceSeconds"] for block in blocks if block["MeanPerSourceSeconds"] is not None)
+    reducer_job, reducer = stages[f"{prefix}-reducer"]
+    timers = parse_elapsed_time_report(reducer["Parsed"]["ElapsedTimeReport"])
+    reduction_fraction = sum(timers.get(name, 0.0) for name in REDUCTION_TIMERS) / sum(timers.values())
+    reducer_wall = reducer["WallSeconds"]
+    pair = reducer_wall * reduction_fraction
     return {"H1": cost_stage["H1"], "Sources": n, "Order": cost_stage["Order"],
             "SecondsPerPCGIteration": cost_stage["SecondsPerPCGIteration"],
             "MeanPCGIterations": cost_stage["MeanPCGIterations"], "MaxPCGIterations": cost_stage["MaxPCGIterations"],
-            "MeanPerSourceSeconds": mean_total,
-            "PerSourceNonSolveSeconds": mean_total - cost_stage["SecondsPerPCGIteration"] * cost_stage["MeanPCGIterations"],
-            "WorkerWallSeconds": worker_wall, "WorkerNonSourceSeconds": max(worker_wall - n * mean_total, 0.0),
-            "ReducerWallSeconds": reducer_wall, "ReducerPairSeconds": pair,
-            "ReducerSetupSeconds": max(reducer_wall - pair, 0.0),
+            "MeanPerSourceSeconds": mean_total, "LargestBlockMeanPerSourceSeconds": block_mean,
+            "PerSourceNonSolveSeconds": block_mean - cost_stage["SecondsPerPCGIteration"] * cost_stage["MeanPCGIterations"],
+            "WorkerWallSeconds": cost_stage["WorkerWallSeconds"], "WorkerBlocks": blocks,
+            "WorkerNonSourceSeconds": max(block["NonSourceSeconds"] for block in blocks),
+            "ReducerWallSeconds": reducer_wall, "ReducerReductionFraction": reduction_fraction,
+            "ReducerPairSeconds": pair, "ReducerSetupSeconds": reducer_wall - pair, "ReducerJob": reducer_job,
             "ReducerBlockSize": cost_stage["ReducerBlockSize"], "StageWallSeconds": cost_stage["StageWallSeconds"],
             "WorkerPalacePeakGB": memory_gb(cost_stage["Memory"]["WorkerPalacePeakTotal"]),
             "ReducerPalacePeakGB": memory_gb(cost_stage["Memory"]["ReducerPalacePeakTotal"]),
@@ -164,56 +194,54 @@ def stage_measurement(cost_stage, *, wall_based=True):
             "ReducerNodeUsedGiB": cost_stage["Memory"]["ReducerNodePeakUsedGiBSampled"]}
 
 
-def local_edge_measurement(statuses, cost_summary):
-    name, stage = next(((name, stage) for name, stage in cost_summary["Stages"].items() if name.endswith("-local-edge")), (None, None))
-    if stage is None:
-        raise RefitError("no local-edge stage in the cost summary")
-    parsed = None
-    node_used = None
-    for status in statuses:
-        for item in status["Stages"]:
-            if item["Name"] == name:
-                parsed = item["Parsed"]
-                node_used = (item.get("NodePeakUsedBytesSampled") or 0) / GIB
-    if parsed is None:
-        raise RefitError(f"{name}: not in any status.json")
+def local_edge_measurement(name, stages):
+    job, stage = stages[name]
+    parsed = stage["Parsed"]
     timers = parse_elapsed_time_report(parsed["ElapsedTimeReport"])
     solve = linear_solve_seconds(timers)
     wall = stage["WallSeconds"]
-    return {"Name": name, "Order": parsed["Order"], "H1": parsed["H1"], "Sources": len(parsed["Iterations"]),
+    return {"Name": name, "Job": job, "Order": parsed["Order"], "H1": parsed["H1"], "Sources": len(parsed["Iterations"]),
             "WallSeconds": wall, "PalaceTotalSeconds": parsed["PalaceTotalSeconds"],
             "LinearSolveSeconds": solve, "NonSolveSeconds": max(wall - solve, 0.0),
-            "PalacePeakGB": memory_gb(parsed["PalacePeakMemory"]["Total"]), "NodeUsedGiB": node_used,
-            "PCG": parsed.get("PCG")}
+            "PalacePeakGB": memory_gb(parsed["PalacePeakMemory"]["Total"]),
+            "NodeUsedGiB": (stage.get("NodePeakUsedBytesSampled") or 0) / GIB, "PCG": parsed.get("PCG")}
 
 
 def measure_case(record_dir, case_record, build_case):
     case = case_record["Case"]
     cost_summary = json.loads(resolve(record_dir, case, "cost-summary.json", case_record["Cost"]["Path"]).read_text())
-    statuses = load_status(record_dir, case_record)
+    statuses = load_statuses(record_dir, case_record)
+    stages = stage_index(statuses)
     counts = build_case["H1"]["EntityCounts"]
-    stages = {}
+    measured_stages = {}
+    local = None
     for item in case_record["Stages"]:
-        if item["Kind"] != "response":
+        if item["Kind"] == "response":
+            cost_stage = cost_summary["Stages"].get(item["Prefix"])
+            if not cost_stage or "H1" not in cost_stage:
+                raise RefitError(f"{case}: stage {item['Prefix']} has no complete cost record")
+            measured = stage_measurement(item["Prefix"], cost_stage, stages)
+            measured["Role"] = item["Role"]
+            measured_stages[f"p{item['Order']}"] = measured
+        elif item["Kind"] == "local-edge":
+            measured = local = local_edge_measurement(item["Prefix"], stages)
+        else:
             continue
-        cost_stage = cost_summary["Stages"].get(item["Prefix"])
-        if not cost_stage or "H1" not in cost_stage:
-            raise RefitError(f"{case}: stage {item['Prefix']} has no complete cost record")
-        measured = stage_measurement(cost_stage)
         closed = h1_dofs_from_counts(counts, item["Order"])
         if closed != measured["H1"]:
             raise RefitError(f"{case}: closed-form H1 {closed} at p{item['Order']} differs from the run's {measured['H1']}")
-        measured["Role"] = item["Role"]
-        stages[f"p{item['Order']}"] = measured
-    local = local_edge_measurement(statuses, cost_summary)
-    if h1_dofs_from_counts(counts, local["Order"]) != local["H1"]:
-        raise RefitError(f"{case}: closed-form H1 at the local-edge order differs from the run's {local['H1']}")
+    if local is None:
+        raise RefitError(f"{case}: no local-edge stage")
+    jobs = {}
+    for name, status in statuses.items():
+        job = case_record["Cost"]["Jobs"][name]
+        jobs[name] = {"PBSJobID": job["PBSJobID"], "ActualSeconds": job["ActualSeconds"],
+                      "EstimateSecondsWithPreflightAndMargin": job["EstimateSecondsWithPreflightAndMargin"],
+                      "Stages": [{"Name": stage["Name"], "WallSeconds": stage["WallSeconds"],
+                                  "Sources": len(stage["Parsed"].get("SourceTiming") or [])} for stage in status["Stages"]]}
     return {"Case": case, "EntityCounts": counts, "MeshSHA256": case_record["Mesh"]["SHA256"],
-            "Elements": build_case["Elements"], "Stages": stages, "LocalEdge": local,
-            "ArchiveGB": archive_gb(case_record.get("ArchiveDeletion")),
-            "Jobs": {name: {"PBSJobID": job["PBSJobID"], "ActualSeconds": job["ActualSeconds"],
-                            "EstimateSecondsWithPreflightAndMargin": job["EstimateSecondsWithPreflightAndMargin"]}
-                     for name, job in case_record["Cost"]["Jobs"].items()}}
+            "Elements": build_case["Elements"], "Stages": measured_stages, "LocalEdge": local,
+            "ArchiveGB": archive_gb(case_record.get("ArchiveDeletion")), "Jobs": jobs}
 
 
 def _largest(values):
@@ -306,41 +334,63 @@ def refit_local_edge(measurements, reference):
 
 
 def self_check(model, measurements, block_size, profile):
-    """estimate_stages on every coupon of the run under `model`: the 1.0x estimate of
-    every stage against its measured wall (>= 1 required), the job at the worst PCG
-    factor with preflight and margin against the sum of the measured stage walls."""
+    """estimate_stages on every coupon of the run under `model`, read per JOB as the split
+    planner does: a worker job costs the non-source estimate plus its sources x the
+    per-source estimate for every block it ran, plus the control and local-edge stages it
+    carried; the reducer job the reducer estimate.  Per job: the 1.0x estimate over the
+    sum of its measured stage walls (>= 1 required), the worst-PCG-factor estimate with
+    preflight and margin over the job's runner total (the recorded ActualOverEstimate
+    inverted).  Per coupon: the single-job estimate and whether it fits."""
     factors = [f"{factor:.1f}" for factor in model["PCGFactors"]]
     worst = max(factors, key=float)
+    margin, preflight = model["PreflightAndMarginFactor"], model["PreflightSeconds"]
     out = {}
     for m in measurements:
         stages = [(f"{order}-{s['Sources']}", int(order[1:]), s["Sources"]) for order, s in m["Stages"].items()]
         local = m["LocalEdge"]
         estimate = estimate_stages.estimate(m["EntityCounts"], stages, model=model, profile=profile, block_size=block_size,
                                             local_edge=(local["Name"], local["Order"], local["Sources"]))
-        per_stage = {}
-        actual_total = 0.0
+        by_prefix = {}
         for order, s in m["Stages"].items():
-            est = estimate["Stages"][f"{order}-{s['Sources']}"]
-            worker = est["ByPCGFactor"]["1.0"]["WorkerSecondsEstimate"]
-            reducer = est["ReducerSecondsEstimate"]
-            per_stage[order] = {"WorkerEstimateOverActual": worker / s["WorkerWallSeconds"],
-                                "ReducerEstimateOverActual": reducer / s["ReducerWallSeconds"],
-                                "StageEstimateOverActual": (worker + reducer) / s["StageWallSeconds"],
-                                "ActualStageWallSeconds": s["StageWallSeconds"], "Estimate1xSeconds": worker + reducer}
-            actual_total += s["StageWallSeconds"]
-        est_local = estimate["Stages"][local["Name"]]["ByPCGFactor"]["1.0"]["StageSecondsEstimate"]
-        per_stage["local-edge"] = {"StageEstimateOverActual": est_local / local["WallSeconds"],
-                                   "ActualStageWallSeconds": local["WallSeconds"], "Estimate1xSeconds": est_local}
-        actual_total += local["WallSeconds"]
-        out[m["Case"]] = {"Stages": per_stage,
-                          "ActualStageWallSecondsTotal": actual_total,
-                          "Estimate1xOverActual": estimate["JobSecondsEstimateByPCGFactor"]["1.0"] / actual_total,
-                          "EstimateWorstWithMarginOverActual": estimate["JobSecondsEstimateWithPreflightAndMargin"][worst] / actual_total,
-                          "FitsOneJob": estimate["FitsOneJob"],
-                          "JobSecondsEstimateWithPreflightAndMargin": estimate["JobSecondsEstimateWithPreflightAndMargin"],
-                          "MaxPalacePeakGBEstimate": estimate["MaxPalacePeakGBEstimate"]}
-    out["MinimumStageEstimateOverActual"] = min(stage["StageEstimateOverActual"]
-                                                for case in out.values() for stage in case["Stages"].values())
+            by_prefix[order] = estimate["Stages"][f"{order}-{s['Sources']}"]
+        prefixes = {order: (f"{m['Case']}-p{order[1:]}" if s["Role"] == "main" else f"{m['Case']}-p{order[1:]}-control")
+                    for order, s in m["Stages"].items()}
+
+        def stage_estimate(stage, factor):
+            name, sources = stage["Name"], stage["Sources"]
+            if name == local["Name"]:
+                return estimate["Stages"][name]["ByPCGFactor"][factor]["StageSecondsEstimate"]
+            for order, prefix in prefixes.items():
+                est = by_prefix[order]
+                if name == f"{prefix}-reducer":
+                    return est["ReducerSecondsEstimate"]
+                if name == f"{prefix}-worker" or name.startswith(f"{prefix}-worker-block"):
+                    return est["WorkerNonSourceSecondsEstimate"] + sources * est["ByPCGFactor"][factor]["PerSourceSecondsEstimate"]
+            raise RefitError(f"{m['Case']}: stage {name} is not in the estimate")
+
+        jobs = {}
+        for name, job in m["Jobs"].items():
+            actual_stages = sum(stage["WallSeconds"] for stage in job["Stages"])
+            est_1x = sum(stage_estimate(stage, "1.0") for stage in job["Stages"])
+            est_worst = sum(stage_estimate(stage, worst) for stage in job["Stages"]) * margin + preflight
+            jobs[name] = {"Stages": [stage["Name"] for stage in job["Stages"]], "ActualStageWallSeconds": actual_stages,
+                          "ActualJobSeconds": job["ActualSeconds"], "Estimate1xSeconds": est_1x,
+                          "Estimate1xOverStageWall": est_1x / actual_stages,
+                          "EstimateWorstWithMarginSeconds": est_worst,
+                          "EstimateWorstWithMarginOverJob": est_worst / job["ActualSeconds"] if job["ActualSeconds"] else None,
+                          "PerStage": {stage["Name"]: stage_estimate(stage, "1.0") / stage["WallSeconds"] for stage in job["Stages"]}}
+        out[m["Case"]] = {"Jobs": jobs,
+                          "MinimumJobEstimate1xOverStageWall": min(job["Estimate1xOverStageWall"] for job in jobs.values()),
+                          "MinimumStageEstimate1xOverWall": min(ratio for job in jobs.values() for ratio in job["PerStage"].values()),
+                          "SingleJob": {"FitsOneJob": estimate["FitsOneJob"],
+                                        "JobSecondsEstimateByPCGFactor": estimate["JobSecondsEstimateByPCGFactor"],
+                                        "JobSecondsEstimateWithPreflightAndMargin": estimate["JobSecondsEstimateWithPreflightAndMargin"],
+                                        "MaxPalacePeakGBEstimate": estimate["MaxPalacePeakGBEstimate"]},
+                          "ActualNodeSeconds": sum(job["ActualSeconds"] for job in m["Jobs"].values()),
+                          "EstimateWorstWithMarginOverActualNodeSeconds": (
+                              sum(job["EstimateWorstWithMarginSeconds"] for job in jobs.values())
+                              / sum(job["ActualSeconds"] for job in m["Jobs"].values()))}
+    out["MinimumStageEstimateOverActual"] = min(case["MinimumStageEstimate1xOverWall"] for case in out.values())
     out["Conservative"] = out["MinimumStageEstimateOverActual"] >= 1.0 - 1e-9
     return out
 
@@ -414,6 +464,8 @@ def refit(qualification_path, *, build_record_path=None, previous_path, previous
     model["Stages"] = stages
     model["LocalEdge"] = local_edge
     model["RateRule"] = ("per stage and quantity the largest value over the run's coupons after scaling to the reference H1 "
+                         "(the per-source non-solve seconds from the largest worker-block mean per-source seconds of the coupon, so "
+                         "every block of a split coupon is covered; the worker's non-source seconds per worker job) "
                          "(times, peaks: x H1_ref / H1_c; node used GiB: the largest non-Palace remainder plus the reference peak; "
                          "the reducer block-pair seconds: divided by the estimator's evaluation / Gram scale of the coupon relative to "
                          "the reference source count; per-source archive GB: x H1 ratio / sources); the worker's non-source and the "
@@ -434,20 +486,26 @@ def refit(qualification_path, *, build_record_path=None, previous_path, previous
     check = self_check({**model, "Path": "refit", "SHA256": None}, measurements, block_size, profile)
     check_previous = self_check({**previous, "Path": str(previous_path), "SHA256": sha256(previous_path)}, measurements,
                                 block_size, profile)
-    model["SelfCheck"] = {"Rule": ("estimate_stages on every coupon of the run under this model at the measured PCG counts: every "
-                                   "stage's estimate over its measured wall is >= 1 (MinimumStageEstimateOverActual), the job at the "
-                                   "worst PCG factor with preflight and margin over the sum of the measured stage walls is the "
-                                   "conservatism ratio; PreviousModel is the same check under the previous model"),
+    model["SelfCheck"] = {"Rule": ("estimate_stages on every coupon of the run under this model, read per job as the split planner "
+                                   "does: at the measured PCG counts every stage's estimate over its measured wall is >= 1 "
+                                   "(MinimumStageEstimateOverActual) and so is every job's; the jobs at the worst PCG factor with "
+                                   "preflight and margin over the coupon's measured node seconds is the conservatism ratio "
+                                   "(EstimateWorstWithMarginOverActual); FitsOneJob is the single-job decision under this model; "
+                                   "PreviousModel is the same check under the previous model"),
                           "MinimumStageEstimateOverActual": check["MinimumStageEstimateOverActual"],
                           "Conservative": check["Conservative"],
-                          "EstimateWorstWithMarginOverActual": {case: check[case]["EstimateWorstWithMarginOverActual"]
+                          "EstimateWorstWithMarginOverActual": {case: check[case]["EstimateWorstWithMarginOverActualNodeSeconds"]
                                                                 for case in check if case in model["Provenance"]["Coupons"]},
-                          "Estimate1xOverActual": {case: check[case]["Estimate1xOverActual"]
-                                                   for case in check if case in model["Provenance"]["Coupons"]},
+                          "MinimumJobEstimate1xOverStageWall": {case: check[case]["MinimumJobEstimate1xOverStageWall"]
+                                                                for case in check if case in model["Provenance"]["Coupons"]},
+                          "FitsOneJob": {case: check[case]["SingleJob"]["FitsOneJob"]
+                                         for case in check if case in model["Provenance"]["Coupons"]},
                           "PreviousModel": {"MinimumStageEstimateOverActual": check_previous["MinimumStageEstimateOverActual"],
                                             "EstimateWorstWithMarginOverActual": {
-                                                case: check_previous[case]["EstimateWorstWithMarginOverActual"]
-                                                for case in check_previous if case in model["Provenance"]["Coupons"]}}}
+                                                case: check_previous[case]["EstimateWorstWithMarginOverActualNodeSeconds"]
+                                                for case in check_previous if case in model["Provenance"]["Coupons"]},
+                                            "FitsOneJob": {case: check_previous[case]["SingleJob"]["FitsOneJob"]
+                                                           for case in check_previous if case in model["Provenance"]["Coupons"]}}}
     if not check["Conservative"]:
         raise RefitError(f"the refit is not conservative: minimum stage estimate / actual {check['MinimumStageEstimateOverActual']:.3f}")
     record = {"Model": {key: model[key] for key in ("Version", "MeasuredMesh", "MeasuredBlockSize", "Stages", "LocalEdge", "Previous")},
