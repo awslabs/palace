@@ -27,6 +27,7 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <map>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -770,9 +771,20 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // prescribed BC values.
   BlockTimer bt0(Timer::CONSTRUCT);
   LaplaceOperator laplace_op(iodata, mesh);
-  auto K = laplace_op.GetStiffnessMatrix();
+  // The archive reduction solves nothing: it needs the gradient, the electric energy mass
+  // operator and the grid functions, not the stiffness matrix nor the preconditioner
+  // setup (decision 62(4)).
+  const bool archive_reduce_only = EnvironmentFlag("PALACE_RESPONSE_REDUCE_ONLY");
+  decltype(laplace_op.GetStiffnessMatrix()) K;
+  if (!archive_reduce_only)
+  {
+    K = laplace_op.GetStiffnessMatrix();
+  }
   if (EnvironmentFlag("PALACE_RESPONSE_ESTIMATE_ONLY"))
   {
+    MFEM_VERIFY(!archive_reduce_only,
+                "PALACE_RESPONSE_ESTIMATE_ONLY and PALACE_RESPONSE_REDUCE_ONLY exclude each "
+                "other!");
     ValidateArchiveEstimateOptions(iodata, laplace_op.GetComm(), false);
     SaveMetadata(laplace_op.GetH1Spaces());
     auto indicator = EstimateArchivedFields(laplace_op, *K, *ResponseArchiveDirectory());
@@ -786,6 +798,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       response_config && response_config->IncludesPostprocessing();
   const bool self_consistent_response =
       response_config && response_config->IncludesSelfConsistent();
+  MFEM_VERIFY(!archive_reduce_only || !response_config,
+              "PALACE_RESPONSE_REDUCE_ONLY reduces archived fields of a configuration "
+              "without ResponseCorrection!");
   std::unique_ptr<SurfaceResponseOperator> response_correction;
   std::unique_ptr<SumOperator> corrected_K;
   const Operator *system_K = K.get();
@@ -839,7 +854,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // enabled. The corrected solve uses the same assembled thin operator as its
   // preconditioner.
   KspSolver ksp(iodata, laplace_op.GetH1Spaces());
-  ksp.SetOperators(*K, *K);
+  if (!archive_reduce_only)
+  {
+    ksp.SetOperators(*K, *K);
+  }
 
   // Source indices are either equipotential terminals or prescribed potential traces.
   PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace_op, nullptr,
@@ -849,7 +867,6 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
               "No terminal or prescribed potential boundaries specified for electrostatic "
               "simulation!");
   const auto response_archive = ResponseArchiveDirectory();
-  const bool archive_reduce_only = EnvironmentFlag("PALACE_RESPONSE_REDUCE_ONLY");
   const bool archive_stream_only = EnvironmentFlag("PALACE_RESPONSE_ARCHIVE_ONLY");
   const bool response_source_timing = EnvironmentFlag("PALACE_RESPONSE_SOURCE_TIMING");
   const bool archive_recycle_initial_guess =
@@ -1532,122 +1549,134 @@ void ElectrostaticSolver::PostprocessArchivedResponseMatrix(
         entry.energy_total_tangential(local_i, local_j));
   };
 
+  // Streaming one-pass Gram (decision 62(4)): the interface samples are cached once,
+  // every archived source is read, differentiated and evaluated ONCE into its amplitude
+  // rows (one row per localized interface), the domain Gram takes one mass matvec per
+  // source against the resident potentials, and the interface matrices are assembled
+  // from the rows at the end. The quadrature rule, order, weights, sample set and
+  // ownership selection are those of the batched traversal; `block_size` no longer
+  // changes the work or the result (recorded for the log only). Memory: base + N x
+  // (sum over interfaces of components x Q_local + L_local) x 8 bytes.
+  BlockTimer bt_reduction(Timer::POSTPRO_REDUCTION);
   auto &V_gf = post_op.GetVGridFunction().Real();
   auto &D_gf = post_op.GetDomainPostOp().D;
-  const std::size_t block = static_cast<std::size_t>(block_size);
-  const std::size_t block_count = (basis_size + block - 1) / block;
-  std::size_t completed = 0;
-  const std::size_t total_blocks = block_count * (block_count + 1) / 2;
-  for (std::size_t first_block = 0; first_block < block_count; first_block++)
+  const auto samples = post_op.CacheInterfaceResponseSamples();
+  std::size_t local_sample_count = 0;
+  for (const auto &interface_samples : samples)
   {
-    const std::size_t first_begin = first_block * block;
-    const std::size_t first_end = std::min(first_begin + block, basis_size);
-    const std::size_t first_count = first_end - first_begin;
-    for (std::size_t second_block = first_block; second_block < block_count; second_block++)
+    local_sample_count += interface_samples.Count();
+  }
+  {
+    // Per-rank sample counts (the load balance of the interface faces across ranks).
+    long long counts[3] = {static_cast<long long>(local_sample_count),
+                           static_cast<long long>(local_sample_count),
+                           static_cast<long long>(local_sample_count)};
+    Mpi::GlobalMin(1, &counts[0], post_op.GetComm());
+    Mpi::GlobalMax(1, &counts[1], post_op.GetComm());
+    Mpi::GlobalSum(1, &counts[2], post_op.GetComm());
+    Mpi::Print(" Archived response reduction: {:d} sources, {:d} interfaces, quadrature "
+               "samples per rank min {:d}, max {:d}, total {:d} (streaming; block size {:d} "
+               "recorded)\n",
+               static_cast<int>(basis_size), static_cast<int>(samples.size()), counts[0],
+               counts[1], counts[2], block_size);
+    for (const auto &interface_samples : samples)
     {
-      const std::size_t second_begin = second_block * block;
-      const std::size_t second_end = std::min(second_begin + block, basis_size);
-      const std::size_t second_count = second_end - second_begin;
-      const bool diagonal_block = first_block == second_block;
-
-      std::vector<std::size_t> global_indices;
-      global_indices.reserve(first_count + (diagonal_block ? 0 : second_count));
-      for (std::size_t i = first_begin; i < first_end; i++)
-      {
-        global_indices.push_back(i);
-      }
-      if (!diagonal_block)
-      {
-        for (std::size_t i = second_begin; i < second_end; i++)
-        {
-          global_indices.push_back(i);
-        }
-      }
-
-      std::vector<Vector> V, D, E_basis, V_local;
-      V.reserve(global_indices.size());
-      if (archive_has_flux)
-      {
-        D.reserve(global_indices.size());
-      }
-      E_basis.resize(global_indices.size());
-      V_local.resize(global_indices.size());
-      for (std::size_t local = 0; local < global_indices.size(); local++)
-      {
-        const int source = basis_indices[global_indices[local]];
-        V.push_back(ReadArchivedVector(archive, source, ArchivedField::POTENTIAL,
-                                       laplace_op.GetComm()));
-        if (archive_has_flux)
-        {
-          D.push_back(ReadArchivedVector(archive, source, ArchivedField::FLUX,
-                                         laplace_op.GetComm()));
-        }
-        MFEM_VERIFY(V.back().Size() == Grad.Width(),
-                    "Archived potential field has an incompatible local size!");
-        E_basis[local].SetSize(Grad.Height());
-        E_basis[local] = 0.0;
-        Grad.AddMult(V.back(), E_basis[local], -1.0);
-        V_gf.SetFromTrueDofs(V.back());
-        V_local[local] = V_gf;
-      }
-
-      const auto surface_matrices = post_op.GetInterfaceElectricFieldEnergyMatrices(
-          E_basis, archive_has_flux ? &D : nullptr);
-      mfem::DenseMatrix local_domain(static_cast<int>(first_count),
-                                     static_cast<int>(second_count));
-      local_domain = 0.0;
-      for (std::size_t local_i = 0; local_i < first_count; local_i++)
-      {
-        post_op.GetDomainPostOp().M_elec->Mult(V_local[local_i], D_gf);
-        for (std::size_t local_j = 0; local_j < second_count; local_j++)
-        {
-          const std::size_t union_j = diagonal_block ? local_j : first_count + local_j;
-          if (diagonal_block && local_j < local_i)
-          {
-            continue;
-          }
-          local_domain(static_cast<int>(local_i), static_cast<int>(local_j)) =
-              0.5 * linalg::LocalDot(V_local[union_j], D_gf);
-        }
-      }
-      Mpi::GlobalSum(local_domain.Height() * local_domain.Width(), local_domain.GetData(),
-                     post_op.GetComm());
-
-      for (std::size_t local_i = 0; local_i < first_count; local_i++)
-      {
-        const std::size_t global_i = first_begin + local_i;
-        for (std::size_t local_j = 0; local_j < second_count; local_j++)
-        {
-          if (diagonal_block && local_j < local_i)
-          {
-            continue;
-          }
-          const std::size_t global_j = second_begin + local_j;
-          const int union_i = static_cast<int>(local_i);
-          const int union_j =
-              static_cast<int>(diagonal_block ? local_j : first_count + local_j);
-          for (const auto &[interface, entries] : surface_matrices)
-          {
-            for (const auto &entry : entries)
-            {
-              AppendSurface(interface, entry.distance, global_i, global_j, entry, union_i,
-                            union_j);
-            }
-          }
-          if (root)
-          {
-            domain_output.table["basis_i"] << basis_indices[global_i];
-            domain_output.table["basis_j"] << basis_indices[global_j];
-            domain_output.table["Q"] << iodata.units.Dimensionalize<VT::ENERGY>(
-                local_domain(static_cast<int>(local_i), static_cast<int>(local_j)));
-          }
-        }
-      }
-      completed++;
-      Mpi::Print(" Archived response block pair {:d}/{:d}\n", static_cast<int>(completed),
-                 static_cast<int>(total_blocks));
+      long long per_interface[3] = {static_cast<long long>(interface_samples.Count()),
+                                    static_cast<long long>(interface_samples.Count()),
+                                    static_cast<long long>(interface_samples.Count())};
+      Mpi::GlobalMin(1, &per_interface[0], post_op.GetComm());
+      Mpi::GlobalMax(1, &per_interface[1], post_op.GetComm());
+      Mpi::GlobalSum(1, &per_interface[2], post_op.GetComm());
+      Mpi::Print("  interface {:d}: samples per rank min {:d}, max {:d}, total {:d}\n",
+                 interface_samples.interface_index, per_interface[0], per_interface[1],
+                 per_interface[2]);
     }
   }
+  std::vector<std::vector<double>> rows(samples.size());
+  for (std::size_t k = 0; k < samples.size(); k++)
+  {
+    rows[k].assign(basis_size * samples[k].RowSize(), 0.0);
+  }
+  std::vector<Vector> V_local(basis_size);
+  mfem::DenseMatrix local_domain(static_cast<int>(basis_size));
+  local_domain = 0.0;
+  Vector E_basis(Grad.Height()), D_source;
+  for (std::size_t i = 0; i < basis_size; i++)
+  {
+    const int source = basis_indices[i];
+    {
+      BlockTimer bt_read(Timer::POSTPRO_REDUCTION_READ);
+      Vector V = ReadArchivedVector(archive, source, ArchivedField::POTENTIAL,
+                                    laplace_op.GetComm());
+      MFEM_VERIFY(V.Size() == Grad.Width(),
+                  "Archived potential field has an incompatible local size!");
+      if (archive_has_flux)
+      {
+        D_source =
+            ReadArchivedVector(archive, source, ArchivedField::FLUX, laplace_op.GetComm());
+      }
+      E_basis = 0.0;
+      Grad.AddMult(V, E_basis, -1.0);
+      V_gf.SetFromTrueDofs(V);
+      V_local[i] = V_gf;
+    }
+    {
+      BlockTimer bt_eval(Timer::POSTPRO_REDUCTION_EVAL);
+      post_op.SetInterfaceResponseField(E_basis, archive_has_flux ? &D_source : nullptr);
+      for (std::size_t k = 0; k < samples.size(); k++)
+      {
+        post_op.EvaluateInterfaceResponseRow(samples[k], rows[k].data() + i * samples[k].RowSize());
+      }
+    }
+    {
+      BlockTimer bt_domain(Timer::POSTPRO_REDUCTION_DOMAIN);
+      post_op.GetDomainPostOp().M_elec->Mult(V_local[i], D_gf);
+      for (std::size_t j = 0; j <= i; j++)
+      {
+        local_domain(static_cast<int>(j), static_cast<int>(i)) =
+            0.5 * linalg::LocalDot(V_local[j], D_gf);
+      }
+    }
+    Mpi::Print(" Archived response source {:d}/{:d}\n", static_cast<int>(i + 1),
+               static_cast<int>(basis_size));
+  }
+  Mpi::GlobalSum(local_domain.Height() * local_domain.Width(), local_domain.GetData(),
+                 post_op.GetComm());
+
+  std::map<int, std::vector<SurfacePostOperator::InterfaceResponseMatrix>> surface_matrices;
+  {
+    BlockTimer bt_gram(Timer::POSTPRO_REDUCTION_GRAM);
+    for (std::size_t k = 0; k < samples.size(); k++)
+    {
+      surface_matrices.emplace(samples[k].interface_index,
+                               post_op.AssembleInterfaceResponseMatrices(
+                                   samples[k], rows[k].data(), static_cast<int>(basis_size)));
+      std::vector<double>().swap(rows[k]);
+    }
+  }
+  for (std::size_t i = 0; i < basis_size; i++)
+  {
+    for (std::size_t j = i; j < basis_size; j++)
+    {
+      for (const auto &[interface, entries] : surface_matrices)
+      {
+        for (const auto &entry : entries)
+        {
+          AppendSurface(interface, entry.distance, i, j, entry, static_cast<int>(i),
+                        static_cast<int>(j));
+        }
+      }
+      if (root)
+      {
+        domain_output.table["basis_i"] << basis_indices[i];
+        domain_output.table["basis_j"] << basis_indices[j];
+        domain_output.table["Q"] << iodata.units.Dimensionalize<VT::ENERGY>(
+            local_domain(static_cast<int>(i), static_cast<int>(j)));
+      }
+    }
+  }
+  Mpi::Print(" Archived response reduction complete: {:d} sources streamed once\n",
+             static_cast<int>(basis_size));
   if (root)
   {
     surface_output.WriteFullTableTrunc();

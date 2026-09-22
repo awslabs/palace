@@ -162,6 +162,27 @@ private:
       std::vector<InterfaceQuadratureRule> *quadrature_rules) const;
 
 public:
+  // The rank-local quadrature samples of one interface response matrix (the streaming
+  // one-pass Gram of the archive reduction): the same boundary elements, quadrature
+  // rule, points, physical weights, edge distances and ownership selection the batched
+  // GetInterfaceElectricFieldEnergyMatrices traversal visits, cached once so that every
+  // basis field is evaluated once into its amplitude row (Count() samples x components
+  // doubles: the normal amplitude, then the tangential ones, per sample).
+  struct InterfaceResponseSamples
+  {
+    int interface_index;
+    const InterfaceDielectricData *data;
+    int components;
+    std::vector<int> elements;
+    std::vector<const mfem::IntegrationRule *> rules;
+    std::vector<int> points;
+    std::vector<double> weights;
+    std::vector<double> distances;
+
+    std::size_t Count() const { return weights.size(); }
+    std::size_t RowSize() const { return Count() * static_cast<std::size_t>(components); }
+  };
+
   struct InterfaceEdgeEnergy
   {
     double distance;
@@ -248,6 +269,30 @@ public:
       const std::vector<const GridFunction *> &E,
       const std::vector<const GridFunction *> &D = {}, int quadrature_extra = 0,
       std::vector<InterfaceQuadratureRule> *quadrature_rules = nullptr) const;
+
+  // Streaming one-pass assembly of the same matrices (the archive reduction): cache the
+  // samples of every localized interface once (the default quadrature rule of the batched
+  // traversal, no extra order), evaluate each basis field once into its amplitude row
+  // (already scaled by sqrt(0.5 x physical weight), so that the Gram of the rows is the
+  // energy matrix), then assemble S = F W F^T per interface with a cache-blocked symmetric
+  // rank-k update - the total matrices and the inside-radius ones (W = the edge-distance
+  // window per sample) - and reduce over `comm`. The quadrature rule, order, weights,
+  // sample set and ownership selection are those of the batched traversal.
+  std::vector<InterfaceResponseSamples> CacheInterfaceResponseSamples() const;
+  void EvaluateInterfaceResponseRow(const InterfaceResponseSamples &samples,
+                                    const GridFunction &E, const GridFunction *D,
+                                    double *row) const;
+
+private:
+  template <InterfaceDielectric Type>
+  void EvaluateInterfaceResponseRowImpl(const InterfaceResponseSamples &samples,
+                                        const GridFunction &E, const GridFunction *D,
+                                        double *row) const;
+
+public:
+  std::vector<InterfaceResponseMatrix>
+  AssembleInterfaceResponseMatrices(const InterfaceResponseSamples &samples,
+                                    const double *rows, int basis_size, MPI_Comm comm) const;
 
   std::size_t GetNInterfaceEdgeEntries() const;
   std::size_t GetNInterfaceLocalEdgeEntries() const;
