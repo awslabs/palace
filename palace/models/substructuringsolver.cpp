@@ -8,14 +8,23 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <set>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/bilinearform.hpp"
+#include "fem/fespace.hpp"
+#include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
+#include "fem/multigrid.hpp"
 #include "fem/substructure.hpp"
 #include "linalg/amg.hpp"
+#include "linalg/gmg.hpp"
 #include "linalg/iterative.hpp"
 #include "linalg/ksp.hpp"
+#include "linalg/operator.hpp"
+#include "linalg/rap.hpp"
 #include "linalg/solver.hpp"
+#include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
@@ -211,11 +220,18 @@ struct SubstructuringSolver::Impl
   // avoids the all-identity ranks of the parent-space eliminated operator and enables
   // geometric multigrid on a standard Dirichlet problem.
   mfem::Array<int> ra_arr, ea_arr;
-  std::unique_ptr<mfem::ParSubMesh> env_submesh;
-  std::unique_ptr<mfem::ParFiniteElementSpace> env_sfes;
-  std::unique_ptr<mfem::HypreParMatrix> env_A_ee;  // submesh operator, essential eliminated
+  std::unique_ptr<mfem::ParSubMesh> env_submesh_owned;   // single-level ownership
+  std::vector<std::unique_ptr<Mesh>> env_mesh_vec;       // GMG: [0] owns the ParSubMesh
+  mfem::ParSubMesh *env_submesh = nullptr;               // raw ptr to the owned submesh
+  std::unique_ptr<mfem::ParFiniteElementSpace> env_sfes;  // single-level solve space
+  mfem::ParFiniteElementSpace *env_solve_fes = nullptr;   // fespace the solver acts on
+  std::vector<std::unique_ptr<mfem::H1_FECollection>> env_fecs;
+  std::unique_ptr<FiniteElementSpaceHierarchy> env_hierarchy;
+  std::unique_ptr<MultigridOperator> env_mg_op;
+  std::vector<mfem::Array<int>> env_dbc_lists;  // per-level essential (ParOperator MakeRefs)
+  std::unique_ptr<mfem::HypreParMatrix> env_A_ee;  // single-level submesh operator
   std::unique_ptr<KspSolver> env_ksp;
-  mfem::Array<int> env_ess;  // submesh essential true DOFs (Gamma + env Dirichlet)
+  mfem::Array<int> env_ess;  // solve-space essential true DOFs (Gamma + env Dirichlet)
   mutable mfem::ParGridFunction env_pgf, env_sgf;  // parent / submesh transfer buffers
   mutable mfem::Vector env_srhs, env_ssol;
   // Energy (QoI) operators. Electrostatic: alias the solve operators. Magnetostatic: pure
@@ -445,62 +461,223 @@ struct SubstructuringSolver::Impl
   // AMG/geometric multigrid at any partition count.
   void BuildEnvSubmeshSolver()
   {
-    env_submesh = std::make_unique<mfem::ParSubMesh>(
-        mfem::ParSubMesh::CreateFromDomain(parent, ea_arr));
-    env_sfes = std::make_unique<mfem::ParFiniteElementSpace>(env_submesh.get(), fec.get());
+    const int mg_levels = iodata.solver.linear.mg_max_levels;
+    const bool use_gmg = !magnetostatic && iodata.solver.order > 1 && mg_levels > 1;
+
+    // Create the environment submesh. For the GMG path it must be owned by a Palace Mesh
+    // (for the CEED attribute maps + the FE-space hierarchy); otherwise a standalone
+    // ParSubMesh suffices for the MFEM assembly + transfer.
+    if (use_gmg)
+    {
+      env_mesh_vec.clear();
+      env_mesh_vec.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParSubMesh>(
+          mfem::ParSubMesh::CreateFromDomain(parent, ea_arr))));
+      env_submesh = dynamic_cast<mfem::ParSubMesh *>(&env_mesh_vec[0]->Get());
+      env_mesh_vec[0]->RebuildCeedAttributes();
+    }
+    else
+    {
+      env_submesh_owned = std::make_unique<mfem::ParSubMesh>(
+          mfem::ParSubMesh::CreateFromDomain(parent, ea_arr));
+      env_submesh = env_submesh_owned.get();
+    }
     env_pgf.SetSpace(&parent_fes);
-    env_sgf.SetSpace(env_sfes.get());
-    // Essential submesh DOFs = the parent non-(environment-interior) DOFs (interface Gamma
-    // + environment Dirichlet), mapped onto the submesh by transferring the parent marker.
-    // This is robust to Palace inserting material-interface boundary elements (so no
-    // reliance on a "new" boundary attribute at Gamma).
+
+    if (!(use_gmg && BuildEnvGmg()))
+    {
+      // Single-level submesh Dirichlet solve (order 1, magnetostatic H(curl), or GMG
+      // fallback): standalone FE space + wrapped AMG / AMS.
+      env_sfes = std::make_unique<mfem::ParFiniteElementSpace>(env_submesh, fec.get());
+      env_solve_fes = env_sfes.get();
+      env_sgf.SetSpace(env_solve_fes);
+      ComputeEnvEss();
+      env_A_ee = AssembleEnvSubmesh();
+      {
+        std::unique_ptr<mfem::HypreParMatrix> e(env_A_ee->EliminateRowsCols(env_ess));
+      }
+      MPI_Comm comm = env_solve_fes->GetComm();
+      std::unique_ptr<Solver<Operator>> pc;
+      if (magnetostatic)
+      {
+        auto ams = std::make_unique<mfem::HypreAMS>(env_solve_fes);
+        ams->SetPrintLevel(0);
+        pc = std::make_unique<MfemWrapperSolver<Operator>>(std::move(ams), true, false,
+                                                           false);
+      }
+      else
+      {
+        pc = std::make_unique<MfemWrapperSolver<Operator>>(
+            std::make_unique<BoomerAmgSolver>(1, 1, true, 0), true, false, false);
+      }
+      auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
+      pcg->SetInitialGuess(false);
+      pcg->SetRelTol(1.0e-12);
+      pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
+      pcg->SetMaxIter(1000);
+      env_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
+      env_ksp->SetOperators(*env_A_ee, *env_A_ee);
+    }
+
+    env_srhs.SetSize(env_solve_fes->GetTrueVSize());
+    env_ssol.SetSize(env_solve_fes->GetTrueVSize());
+  }
+
+  // Essential submesh DOFs = the parent non-(environment-interior) DOFs (interface Gamma +
+  // environment Dirichlet), mapped onto the solve space by transferring the parent marker.
+  // Robust to Palace inserting material-interface boundary elements at Gamma.
+  void ComputeEnvEss()
+  {
+    mfem::Vector t(nt);
+    for (int i = 0; i < nt; i++)
+    {
+      t(i) = is_env_int[i] ? 0.0 : 1.0;
+    }
+    mfem::ParGridFunction pg(&parent_fes), sg(env_solve_fes);
+    pg.SetFromTrueDofs(t);
+    sg = 0.0;
+    env_submesh->Transfer(pg, sg);
+    mfem::Vector st(env_solve_fes->GetTrueVSize());
+    sg.GetTrueDofs(st);
+    env_ess.SetSize(0);
+    for (int i = 0; i < st.Size(); i++)
+    {
+      if (std::abs(st(i)) > 0.5)  // fabs: ND transfer may flip the marker's sign
+      {
+        env_ess.Append(i);
+      }
+    }
+  }
+
+  // Higher-order H1 environment Dirichlet solve via geometric p-multigrid on the submesh.
+  // Returns false (falling back to the single-level solve) if a hierarchy cannot be built.
+  bool BuildEnvGmg()
+  {
+    const int order = iodata.solver.order;
+    const int dim = parent.Dimension();
+    const int mg_levels = iodata.solver.linear.mg_max_levels;
+
+    // Identify essential boundary attributes on the submesh (Gamma + env Dirichlet) from a
+    // marker transfer onto a scratch order-p space: a boundary attribute is essential iff
+    // all of its true DOFs lie in the essential set.
+    auto scratch = std::make_unique<mfem::ParFiniteElementSpace>(env_submesh, fec.get());
+    std::set<int> ess_set;
     {
       mfem::Vector t(nt);
       for (int i = 0; i < nt; i++)
       {
         t(i) = is_env_int[i] ? 0.0 : 1.0;
       }
-      env_pgf.SetFromTrueDofs(t);
-      env_sgf = 0.0;
-      env_submesh->Transfer(env_pgf, env_sgf);
-      mfem::Vector st(env_sfes->GetTrueVSize());
-      env_sgf.GetTrueDofs(st);
-      env_ess.SetSize(0);
+      mfem::ParGridFunction pg(&parent_fes), sg(scratch.get());
+      pg.SetFromTrueDofs(t);
+      sg = 0.0;
+      env_submesh->Transfer(pg, sg);
+      mfem::Vector st(scratch->GetTrueVSize());
+      sg.GetTrueDofs(st);
       for (int i = 0; i < st.Size(); i++)
       {
-        if (std::abs(st(i)) > 0.5)  // fabs: ND transfer may flip the marker's sign
+        if (std::abs(st(i)) > 0.5)
         {
-          env_ess.Append(i);
+          ess_set.insert(i);
         }
       }
     }
-    env_A_ee = AssembleEnvSubmesh();
+    mfem::Array<int> ess_attr;
+    // The essential-attribute decision must be identical on every rank (otherwise ranks
+    // diverge between the GMG and single-level paths and deadlock in the collectives below).
+    // An attribute is essential iff, globally, it has DOFs and none of them are non-essential.
+    MPI_Comm comm = env_submesh->GetComm();
+    const int lbmax =
+        env_submesh->bdr_attributes.Size() ? env_submesh->bdr_attributes.Max() : 0;
+    int bmax = 0;
+    MPI_Allreduce(&lbmax, &bmax, 1, MPI_INT, MPI_MAX, comm);
+    std::vector<int> all_in(bmax, 1), has_dofs(bmax, 0);
+    for (int a = 1; a <= bmax; a++)
     {
-      std::unique_ptr<mfem::HypreParMatrix> e(env_A_ee->EliminateRowsCols(env_ess));
+      mfem::Array<int> m(bmax);
+      m = 0;
+      m[a - 1] = 1;
+      mfem::Array<int> adofs;
+      scratch->GetEssentialTrueDofs(m, adofs);
+      if (adofs.Size() > 0)
+      {
+        has_dofs[a - 1] = 1;
+      }
+      for (int d : adofs)
+      {
+        if (!ess_set.count(d))
+        {
+          all_in[a - 1] = 0;
+          break;
+        }
+      }
     }
-    MPI_Comm comm = env_sfes->GetComm();
-    std::unique_ptr<Solver<Operator>> pc;
-    if (magnetostatic)
+    std::vector<int> g_all_in(bmax), g_has(bmax);
+    MPI_Allreduce(all_in.data(), g_all_in.data(), bmax, MPI_INT, MPI_LAND, comm);
+    MPI_Allreduce(has_dofs.data(), g_has.data(), bmax, MPI_INT, MPI_LOR, comm);
+    for (int a = 1; a <= bmax; a++)
     {
-      auto ams = std::make_unique<mfem::HypreAMS>(env_sfes.get());
-      ams->SetPrintLevel(0);
-      pc =
-          std::make_unique<MfemWrapperSolver<Operator>>(std::move(ams), true, false, false);
+      if (g_all_in[a - 1] && g_has[a - 1])
+      {
+        ess_attr.Append(a);
+      }
     }
-    else
+    if (ess_attr.Size() == 0)
     {
-      pc = std::make_unique<MfemWrapperSolver<Operator>>(
-          std::make_unique<BoomerAmgSolver>(1, 1, true, 0), true, false, false);
+      return false;
     }
+
+    // p-multigrid hierarchy on the submesh, with ess_attr as the Dirichlet boundary.
+    env_fecs = fem::ConstructFECollections<mfem::H1_FECollection>(
+        order, dim, mg_levels, iodata.solver.linear.mg_coarsening, false);
+    std::vector<mfem::Array<int>> &dbc_lists = env_dbc_lists;
+    dbc_lists.clear();
+    env_hierarchy = std::make_unique<FiniteElementSpaceHierarchy>(
+        fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+            mg_levels, env_mesh_vec, env_fecs, &ess_attr, &dbc_lists));
+    if (env_hierarchy->GetNumLevels() < 2)
+    {
+      env_hierarchy.reset();
+      env_fecs.clear();
+      return false;
+    }
+    env_solve_fes = &env_hierarchy->GetFinestFESpace().Get();
+
+    // Ceed-consistent material coefficient (cf. divfree.cpp): built via a MaterialOperator on
+    // the submesh so the attribute-to-material map matches Palace's local CEED numbering (a
+    // hand-built coefficient keyed by global attribute assembles the interior to zero).
+    MaterialOperator env_mat_op(iodata, *env_mesh_vec[0]);
+    MaterialPropertyCoefficient coef(env_mat_op.GetAttributeToMaterial(),
+                                     env_mat_op.GetPermittivityReal());
+    BilinearForm a(env_hierarchy->GetFinestFESpace());
+    a.AddDomainIntegrator<DiffusionIntegrator>(coef);
+    auto a_vec = a.Assemble(*env_hierarchy, false);
+
+    const std::size_t nl = env_hierarchy->GetNumLevels();
+    env_mg_op = std::make_unique<MultigridOperator>(nl);
+    for (std::size_t l = 0; l < nl; l++)
+    {
+      auto &fes_l = env_hierarchy->GetFESpaceAtLevel(l);
+      auto A_l = std::make_unique<ParOperator>(std::move(a_vec[l]), fes_l);
+      A_l->SetEssentialTrueDofs(dbc_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+      env_mg_op->AddOperator(std::move(A_l));
+    }
+    env_ess = dbc_lists.back();  // finest essential, consistent with the operators
+
+    auto amg = std::make_unique<MfemWrapperSolver<Operator>>(
+        std::make_unique<BoomerAmgSolver>(1, 1, true, 0));
+    amg->SetDropSmallEntries(false);
+    auto gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
+        iodata, comm, std::move(amg), env_hierarchy->GetProlongationOperators());
     auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
     pcg->SetInitialGuess(false);
     pcg->SetRelTol(1.0e-12);
     pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
     pcg->SetMaxIter(1000);
-    env_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
-    env_ksp->SetOperators(*env_A_ee, *env_A_ee);
-    env_srhs.SetSize(env_sfes->GetTrueVSize());
-    env_ssol.SetSize(env_sfes->GetTrueVSize());
+    env_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(gmg));
+    env_ksp->SetOperators(*env_mg_op, *env_mg_op);
+
+    env_sgf.SetSpace(env_solve_fes);
+    return true;
   }
 
   std::unique_ptr<mfem::HypreParMatrix> AssembleEnvSubmesh()
