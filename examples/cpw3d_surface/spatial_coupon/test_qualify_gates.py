@@ -419,6 +419,25 @@ class ControlsPlanAndEstimateRuleTest(unittest.TestCase):
         self.assertGreater(more["ByPCGFactor"]["1.0"]["WorkerSecondsEstimate"], same["ByPCGFactor"]["1.0"]["WorkerSecondsEstimate"])
         self.assertGreater(more["ReducerPairs"], same["ReducerPairs"])
 
+    def test_run_stages_parses_the_streaming_reducer_progress(self):
+        """Decision 62(4): the streaming reducer logs one line per source and the per-rank
+        sample counts; run_stages.parse_log records them beside the block-pair progress."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("run_stages", HERE / "qualify" / "run_stages.py")
+        run_stages = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(run_stages)
+        text = (" Archived response reduction: 8 sources, 3 interfaces, quadrature samples per rank min 64665, "
+                "max 100476, total 487776 (streaming; block size 48 recorded)\n"
+                " Archived response source 1/8\n Archived response source 8/8\n"
+                " Archived response reduction complete: 8 sources streamed once\n"
+                "PCG solver converged in 12 iterations\n")
+        parsed = run_stages.parse_log(text)
+        self.assertEqual(parsed["StreamedSourcesProgress"], [[1, 8], [8, 8]])
+        self.assertEqual(parsed["ReductionSamples"], {"Sources": 8, "Interfaces": 3, "PerRankMin": 64665,
+                                                      "PerRankMax": 100476, "Total": 487776})
+        self.assertEqual(parsed["BlockPairsProgress"], [])
+        self.assertEqual(parsed["PCG"], [12])
+
     def test_reducer_estimate_shrinks_with_the_block_size_evaluation_part_only(self):
         """Decision 62(1): at block size b the reducer evaluates every source ceil(N / b)
         times; the evaluation fraction of the measured pair seconds scales with it, the
