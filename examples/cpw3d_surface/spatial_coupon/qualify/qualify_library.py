@@ -107,6 +107,7 @@ for path in (str(HERE), str(TOOLS)):
 import build_configs  # noqa: E402
 import build_plan  # noqa: E402
 import case_inputs  # noqa: E402
+from general_mesh_manifest import FABRICATED_CASE_KEY, case_kind  # noqa: E402
 import classify_sources  # noqa: E402
 import compare_matrices  # noqa: E402
 import estimate_stages  # noqa: E402
@@ -253,6 +254,20 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
     if actual != identity["SHA256"]:
         raise CaseStop("Mesh", f"identity mesh SHA256 {actual} differs from the build record {identity['SHA256']}")
     record["Mesh"] = {"Local": identity["Path"], "SHA256": identity["SHA256"], "Verified": True}
+    record["Kind"] = case_kind(case)
+    if record["Kind"] == "thin":
+        # Decision 66: the thin coupon's cutoff (the census inner ring size) is recorded with
+        # its run and must be the manifest's ThinRecipe.Cutoff.
+        census_path = Path(case_record["Root"] or "") / "build-census.json"
+        if not census_path.is_file():
+            raise CaseStop("Build", f"the build root of the thin case {case_id} has no build-census.json ({census_path})")
+        census = json.loads(census_path.read_text())
+        cutoff = ((census.get("PrismTubes") or {}).get("Section") or {}).get("ThinCutoff")
+        expected = ((manifest.get("ProductionRecipe") or {}).get("ThinRecipe") or {}).get("Cutoff")
+        if not isinstance(cutoff, (int, float)) or isinstance(cutoff, bool) or cutoff != expected:
+            raise CaseStop("Build", f"the thin census cutoff {cutoff!r} of {case_id} is not the manifest ThinRecipe.Cutoff {expected!r}")
+        record["ThinCutoff"] = cutoff
+        record["FabricatedCase"] = case[FABRICATED_CASE_KEY]
     directory = source_directory(manifest_path, manifest, case)
     # The per-ring MA shells: a production build records them under RadialShells (the
     # placement stage's census, decision 61a), a calibration relabel under Relabel.
@@ -1176,6 +1191,78 @@ def preflight_process_library(library):
     return preflight
 
 
+SURFACE_MATRIX_Q_COLUMNS = ("Q_ij (J)", "Q_ij normal (J)", "Q_ij tangential (J)", "Q_total_ij (J)",
+                            "Q_total_ij normal (J)", "Q_total_ij tangential (J)")
+COLLAPSED_SURFACE_MATRIX_RULE = ("the reducer's surface-response-matrix.csv of a radial-shell run labels every MA shell "
+                                 "by its own interface index (case_inputs.expand_radial_shells); Palace reads the "
+                                 "library's Interfaces[].Coupon indices only (ReadSurfaceResponseMatrices), so the "
+                                 "library copy sums the shell rows into their BaseIndex per (edge, R, basis_i, basis_j) "
+                                 "- MA_raw at the ring cutoff, the value Palace uses; MA_sharp stays a post-hoc scaling "
+                                 "recorded under MA")
+THIN_CUTOFF_RULE = ("the thin coupon's MS / MA cutoff (decision 66): the inner ring size of its sheet tube (the census "
+                    "PrismTubes.Section.ThinCutoff = ThinRecipe.Cutoff), recorded and never converged - the thin surface "
+                    "participations are log-divergent in it by construction")
+
+
+def collapse_shell_surface_matrix(source, destination, shell_map):
+    """Write the reducer surface matrix with every shell interface index summed into its
+    BaseIndex (COLLAPSED_SURFACE_MATRIX_RULE); returns the row counts."""
+    base_of = {int(index): int(entry["BaseIndex"]) for index, entry in shell_map.items()}
+    with open(source, newline="") as stream:
+        reader = csv.reader(stream)
+        header = next(reader)
+        names = [name.strip() for name in header]
+        rows = [row for row in reader if row]
+    columns = {name: names.index(name) for name in ("interface", "edge", "R (m)", "basis_i", "basis_j", *SURFACE_MATRIX_Q_COLUMNS)}
+    order, sums, template = [], {}, {}
+    for row in rows:
+        interface = int(float(row[columns["interface"]]))
+        base = base_of.get(interface, interface)
+        key = (base, row[columns["edge"]].strip(), row[columns["R (m)"]].strip(), row[columns["basis_i"]].strip(),
+               row[columns["basis_j"]].strip())
+        if key not in sums:
+            order.append(key)
+            sums[key] = [0.0] * len(SURFACE_MATRIX_Q_COLUMNS)
+            template[key] = row
+        for k, name in enumerate(SURFACE_MATRIX_Q_COLUMNS):
+            sums[key][k] += float(row[columns[name]])
+    with open(destination, "w", newline="") as stream:
+        stream.write(",".join(header) + "\n")
+        for key in order:
+            row = list(template[key])
+            row[columns["interface"]] = f" {float(key[0]):.2e}"
+            for k, name in enumerate(SURFACE_MATRIX_Q_COLUMNS):
+                row[columns[name]] = f" {sums[key][k]:+.12e}"
+            stream.write(",".join(row) + "\n")
+    return {"Rows": len(rows), "CollapsedRows": len(order), "ShellIndices": sorted(base_of),
+            "BaseIndices": sorted(set(base_of.values())), "Rule": COLLAPSED_SURFACE_MATRIX_RULE}
+
+
+def thin_results(records, contexts, *, manifest):
+    """FabricatedCase -> the thin case's reducer matrices, cutoff and qualification of every
+    analyzed thin case of the run (decision 66)."""
+    results = {}
+    for record in records:
+        case = manifest_case_or_none(manifest, record["Case"])
+        context = contexts.get(record["Case"])
+        if case is None or case_kind(case) != "thin" or context is None or record.get("Qualification") is None:
+            continue
+        main = next(item for item in context["layout"] if item["Role"] == "main")
+        reducer = Path(record.get("MainReducer") or Path(record["Root"]) / "results" / "main" / main["Prefix"] / "reducer")
+        results[case[FABRICATED_CASE_KEY]] = {
+            "ThinCase": record["Case"], "ThinMatrix": str(reducer / REDUCER_FILE_NAMES["FabricatedMatrix"]),
+            "ThinSurfaceMatrix": str(reducer / REDUCER_FILE_NAMES["FabricatedSurfaceMatrix"]),
+            "ThinCutoff": record.get("ThinCutoff"),
+            "ThinQualification": {"Verdict": record["Qualification"]["Verdict"], "Record": record["Qualification"]["Path"],
+                                  "Order": main["Order"]},
+            "ThinCouponMesh": {"Path": record["Mesh"]["Local"], "SHA256": record["Mesh"]["SHA256"]}}
+    return results
+
+
+def manifest_case_or_none(manifest, case_id):
+    return next((item for item in manifest["Cases"] if item["Id"] == case_id), None) if manifest else None
+
+
 def process_library_entries(records, contexts, *, manifest_path, manifest, root, merge_into=None):
     """The process-library entries (LIBRARY_RULE): every qualified / pending coupon's model
     (from the case's own process-library.json) with the fetched response matrices copied
@@ -1187,10 +1274,13 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
     kept / replaced.  The header is the source libraries' (consistent_header)."""
     models = []
     headers = []
+    thin = thin_results(records, contexts, manifest=manifest)
+    paired = set()
+    collapsed = {}
     for record in records:
         # The header of every case of the run that reached the manifest (a planned / stopped
         # case still binds the header); a model only for an analyzed case.
-        case = next((item for item in manifest["Cases"] if item["Id"] == record["Case"]), None) if manifest else None
+        case = manifest_case_or_none(manifest, record["Case"])
         if case is None:
             continue
         directory = source_directory(manifest_path, manifest, case)
@@ -1200,14 +1290,27 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
         library = json.loads(library_path.read_text())
         headers.append((library_path, library_header(library, library_path)))
         context = contexts.get(record["Case"])
-        if context is None or record.get("Qualification") is None:
+        if context is None or record.get("Qualification") is None or case_kind(case) == "thin":
+            # A thin case is the thin response of its fabricated model (decision 66), not a model.
             continue
         model = dict(library["Models"][0])
         main = next(item for item in context["layout"] if item["Role"] == "main")
         reducer = Path(record.get("MainReducer") or Path(record["Root"]) / "results" / "main" / main["Prefix"] / "reducer")
         for field, filename in REDUCER_FILE_NAMES.items():
             model[field] = str(reducer / filename)
+        shell_map = ((record.get("Inputs") or {}).get("RadialShells") or {}).get("Interfaces")
+        if shell_map:
+            # Palace needs the model's interface indices: the shell rows summed into their base.
+            collapsed_path = Path(root) / "models" / model_slug(model["Name"]) / "fabricated-surface-response-matrix.collapsed.csv"
+            collapsed_path.parent.mkdir(parents=True, exist_ok=True)
+            collapsed[model["Name"]] = collapse_shell_surface_matrix(model["FabricatedSurfaceMatrix"], collapsed_path, shell_map)
+            model["FabricatedSurfaceMatrixShelled"] = model["FabricatedSurfaceMatrix"]
+            model["FabricatedSurfaceMatrix"] = str(collapsed_path)
         model["CouponMesh"] = {"Path": record["Mesh"]["Local"], "SHA256": record["Mesh"]["SHA256"]}
+        if record["Case"] in thin:
+            model.update(thin[record["Case"]])
+            model["ThinCutoffRule"] = THIN_CUTOFF_RULE
+            paired.add(record["Case"])
         model["Qualification"] = {"Verdict": record["Qualification"]["Verdict"], "Record": record["Qualification"]["Path"],
                                   "ReferenceAnchor": record["Qualification"]["ReferenceAnchor"], "Order": main["Order"]}
         model["LibraryQualified"] = record["Qualification"]["Verdict"] == gate_evaluation.VERDICT_PASSED
@@ -1236,6 +1339,18 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
             source_library = Path(model["SourceProcessLibrary"]["Path"])
             headers.append((source_library, library_header(json.loads(source_library.read_text()), source_library)))
             qualification_record = Path(model["Qualification"]["Record"])
+            # A thin case of this run pairs with a kept fabricated model of the previous
+            # library by model Name (the thin qualify run follows the fabricated one; decision 66).
+            fabricated_case = next((case_id for case_id in thin
+                                    if manifest_case_or_none(manifest, case_id) is not None and
+                                    library_model_name(manifest_path, manifest, manifest_case_or_none(manifest, case_id)) == model["Name"]),
+                                   None)
+            if fabricated_case is not None:
+                for field in THIN_FIELDS:
+                    model.pop(field, None)
+                model.update(thin[fabricated_case])
+                model["ThinCutoffRule"] = THIN_CUTOFF_RULE
+                paired.add(fabricated_case)
             kept.append(copy_model_files(model, root=root, directories=[merge_into.parent, qualification_record.parents[1],
                                                                         source_library.parent]))
         merged = {"Path": str(merge_into), "SHA256": sha256(merge_into), "Root": previous.get("Root"),
@@ -1247,12 +1362,23 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
         models = kept + models
     header = consistent_header(headers) or {}
     not_loadable = [model["Name"] for model in models if model["NotLoadable"] is not None]
+    unpaired = {case_id: result["ThinCase"] for case_id, result in thin.items() if case_id not in paired}
     return {**header, "Name": "coupon-library", "Command": "coupon-library qualify", "Root": str(root),
             "Rule": LIBRARY_RULE,
             "HeaderSources": [{"Path": str(path), "SHA256": sha256(path)} for path, _ in headers],
             "Loadable": {"Palace": bool(header) and not not_loadable, "Models": len(models) - len(not_loadable),
                          "NotLoadable": not_loadable, "Preflight": PROCESS_LIBRARY_PREFLIGHT_RECORD},
+            "Thin": {"Rule": THIN_CUTOFF_RULE, "Paired": sorted(paired),
+                     "Unpaired": unpaired, "UnpairedRule": "thin cases of this run whose fabricated model is neither in "
+                                                           "this run nor in --merge-into: their matrices enter no entry"},
+            "CollapsedSurfaceMatrices": collapsed or None,
             "MergedFrom": merged, "Models": models}
+
+
+def library_model_name(manifest_path, manifest, case):
+    directory = source_directory(manifest_path, manifest, case)
+    library_path = directory / case["Source"]["Files"]["ProcessLibrary"]["Name"]
+    return json.loads(library_path.read_text())["Models"][0]["Name"] if library_path.is_file() else None
 
 
 def library_totals(records, *, args, remote, profile, wall_seconds, first_submission, last_fetch, jobs, cap):

@@ -94,7 +94,11 @@ class ProcessLibraryWriterTest(unittest.TestCase):
         return record, context, manifest
 
     def write(self, cases, root, merge_into=None):
-        manifest = {"RepositoryRoot": ".", "Cases": [case[2]["Cases"][0] for case in cases]}
+        entries = {}
+        for case in cases:
+            for entry in case[2]["Cases"]:
+                entries.setdefault(entry["Id"], entry)
+        manifest = {"RepositoryRoot": ".", "Cases": list(entries.values())}
         return qualify_library.process_library_entries([case[0] for case in cases], {case[0]["Case"]: case[1] for case in cases},
                                                        manifest_path=self.tmp / "manifest.json", manifest=manifest, root=root,
                                                        merge_into=merge_into)
@@ -140,6 +144,96 @@ class ProcessLibraryWriterTest(unittest.TestCase):
         self.assertIsNotNone(preflight["Models"][0]["NotLoadable"])
         # The honest file is untouched by the variant.
         self.assertIsNone(library["Models"][0]["ThinMatrix"])
+
+    def thin_case(self, fabricated, *, root, name, verdict="PendingQualification"):
+        """The thin pair of a fabricated case (decision 66): Kind thin, its own reducer, the
+        recorded cutoff; the manifest case names FabricatedCase."""
+        record, context, manifest = fabricated
+        case_id = record["Case"] + "-thin"
+        reducer = root / case_id / "results" / "main" / f"{case_id}-p4" / "reducer"
+        reducer.mkdir(parents=True, exist_ok=True)
+        (reducer / "domain-response-matrix.csv").write_text("basis_i,basis_j,Q_ij (J)\n1,1,0.25\n")
+        (reducer / "surface-response-matrix.csv").write_text("interface,basis_i,basis_j,Q_ij (J)\n1,1,1,0.05\n")
+        thin_manifest = json.loads(json.dumps(manifest))
+        thin_case = json.loads(json.dumps(manifest["Cases"][0]))
+        thin_case.update({"Id": case_id, "Kind": "thin", "FabricatedCase": record["Case"]})
+        thin_manifest["Cases"].append(thin_case)   # the manifest carries the pair
+        thin_record = {"Case": case_id, "Kind": "thin", "FabricatedCase": record["Case"], "ThinCutoff": 0.002,
+                       "Root": str(root / case_id), "MainReducer": str(reducer),
+                       "Mesh": {"Local": "/nowhere/identity-thin.msh", "SHA256": "1" * 64},
+                       "Qualification": {"Verdict": verdict, "Path": str(root / case_id / "qualification.json"), "ReferenceAnchor": None}}
+        thin_context = {"layout": [{"Role": "main", "Prefix": f"{case_id}-p4", "Order": 4}], "ma_tail": None}
+        return thin_record, thin_context, thin_manifest
+
+    def test_thin_case_supplies_the_thin_matrices_of_its_fabricated_model(self):
+        """Decision 66: a thin case is not a model; its reducer matrices become the ThinMatrix /
+        ThinSurfaceMatrix of its fabricated model (copied, loadable), with the recorded cutoff;
+        an unpaired thin case is recorded, not an entry."""
+        root = self.tmp / "root"
+        fabricated = self.case("case-a", "model_a", thin=False, root=root)
+        thin = self.thin_case(fabricated, root=root, name="model_a")
+        library = self.write([fabricated, thin], root)
+        self.assertEqual([model["Name"] for model in library["Models"]], ["model_a"])
+        model = library["Models"][0]
+        self.assertIsNone(model["NotLoadable"])
+        self.assertTrue(library["Loadable"]["Palace"])
+        self.assertEqual(model["ThinMatrix"], "models/model-a/thin-domain-response-matrix.csv")
+        self.assertEqual((root / model["ThinMatrix"]).read_text(), "basis_i,basis_j,Q_ij (J)\n1,1,0.25\n")
+        self.assertEqual((root / model["ThinSurfaceMatrix"]).read_text(), "interface,basis_i,basis_j,Q_ij (J)\n1,1,1,0.05\n")
+        self.assertEqual((model["ThinCase"], model["ThinCutoff"], model["ThinQualification"]["Order"]), ("case-a-thin", 0.002, 4))
+        self.assertEqual(model["ThinCutoffRule"], qualify_library.THIN_CUTOFF_RULE)
+        self.assertEqual(library["Thin"]["Paired"], ["case-a"])
+        self.assertEqual(library["Thin"]["Unpaired"], {})
+        # The thin case alone: no entry, recorded unpaired.
+        alone = self.write([thin], root / "alone")
+        self.assertEqual(alone["Models"], [])
+        self.assertEqual(alone["Thin"]["Unpaired"], {"case-a": "case-a-thin"})
+        # Merge: the thin run follows the fabricated run - the kept model takes the thin matrices.
+        first = root / "first"
+        previous = self.write([self.case("case-a", "model_a", thin=False, root=first)], first)
+        (first / "process-library.json").write_text(json.dumps(previous, indent=2) + "\n")
+        self.assertIsNotNone(previous["Models"][0]["NotLoadable"])
+        second = root / "second"
+        merged = self.write([self.thin_case(self.case("case-a", "model_a", thin=False, root=first), root=second, name="model_a")],
+                            second, merge_into=first / "process-library.json")
+        self.assertEqual(merged["MergedFrom"]["Kept"], ["model_a"])
+        model = merged["Models"][0]
+        self.assertIsNone(model["NotLoadable"])
+        self.assertEqual(model["ThinCase"], "case-a-thin")
+        self.assertEqual((second / model["ThinMatrix"]).read_text(), "basis_i,basis_j,Q_ij (J)\n1,1,0.25\n")
+        self.assertEqual((second / model["FabricatedMatrix"]).read_text(), "basis_i,basis_j,Q_ij (J)\n1,1,1.5\n")
+        self.assertTrue(merged["Loadable"]["Palace"])
+
+    def test_shelled_surface_matrix_is_collapsed_to_the_model_interfaces(self):
+        """A radial-shell run labels the MA shells by their own interface indices; the library
+        copy sums them into the BaseIndex (the value Palace reads), per (edge, R, basis pair)."""
+        root = self.tmp / "root"
+        record, context, manifest = self.case("case-a", "model_a", thin=True, root=root)
+        header = ("interface,     edge,                      R (m),  basis_i,  basis_j,                   Q_ij (J),"
+                  "            Q_ij normal (J),        Q_ij tangential (J),             Q_total_ij (J),"
+                  "      Q_total_ij normal (J),  Q_total_ij tangential (J)\n")
+        def row(interface, edge, i, j, q):
+            return (f" {interface:.2e}, {edge:.2e},        +2.000000000000e-06, {i:.2e}, {j:.2e},        {q:+.12e},"
+                    f"        {q:+.12e},        +0.000000000000e+00,        {2 * q:+.12e},        {2 * q:+.12e},        +0.000000000000e+00\n")
+        Path(record["MainReducer"], "surface-response-matrix.csv").write_text(
+            header + row(2, 1, 1, 1, 0.5) + row(4, 1, 1, 1, 1.0) + row(5, 1, 1, 1, 2.0) + row(4, 2, 1, 1, 8.0) + row(3, 1, 1, 1, 0.25))
+        record["Inputs"] = {"RadialShells": {"Interfaces": {"4": {"BaseIndex": 1, "Type": "MA", "Ordinal": 1},
+                                                             "5": {"BaseIndex": 1, "Type": "MA", "Ordinal": 2}}}}
+        library = self.write([(record, context, manifest)], root)
+        model = library["Models"][0]
+        self.assertEqual(model["FabricatedSurfaceMatrix"], "models/model-a/fabricated-surface-response-matrix.csv")
+        self.assertTrue(model["FabricatedSurfaceMatrixShelled"].endswith("reducer/surface-response-matrix.csv"))
+        self.assertEqual(library["CollapsedSurfaceMatrices"]["model_a"]["ShellIndices"], [4, 5])
+        self.assertEqual(library["CollapsedSurfaceMatrices"]["model_a"]["CollapsedRows"], 4)
+        import csv
+        with open(root / model["FabricatedSurfaceMatrix"], newline="") as stream:
+            rows = [[cell.strip() for cell in line] for line in csv.reader(stream)]
+        self.assertEqual(rows[0][0], "interface")
+        by_key = {(int(float(r[0])), int(float(r[1]))): float(r[8]) for r in rows[1:]}
+        self.assertEqual(set(by_key), {(2, 1), (1, 1), (1, 2), (3, 1)})
+        self.assertAlmostEqual(by_key[(1, 1)], 2 * (1.0 + 2.0))
+        self.assertAlmostEqual(by_key[(1, 2)], 16.0)
+        self.assertAlmostEqual(by_key[(2, 1)], 1.0)
 
     def test_missing_support_points_are_not_loadable(self):
         root = self.tmp / "root"
