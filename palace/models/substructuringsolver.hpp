@@ -64,10 +64,6 @@ public:
   // Global parent H1 true-DOF size, for reporting.
   long long int RegionGlobalTrueVSize() const;
 
-  // Singular values (descending) of the materialized interface operator S_E, for a
-  // compressibility / low-rank study. S_E is replicated across ranks, so this returns the
-  // same vector on every rank. Requires CondenseEnvironment first.
-  std::vector<double> InterfaceSingularValues() const;
 
   // Write the recovered full parent-space potentials to a ParaView collection under dir,
   // one time step per excitation (time = terminal index).

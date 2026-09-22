@@ -471,6 +471,12 @@ struct SubstructuringSolver::Impl
   // inverse DtN) region solves via a submesh AMS are a follow-up refinement.
   static constexpr double kMagRegularization = 1.0e-3;
 
+  // Environment/region size (global true DOFs) below which a sparse-direct factorization is
+  // used by default for the interior solve; above it, fall back to iterative / GMG. Chosen so
+  // typical region-in-chip environments factor comfortably while very large domains do not
+  // exhaust memory on the SuperLU factorization.
+  static constexpr long long kDirectMaxDofs = 2000000;
+
   std::unique_ptr<mfem::HypreParMatrix>
   AssembleParent(const std::map<int, mfem::DenseMatrix> &coef_by_attr, bool with_mass)
   {
@@ -544,12 +550,26 @@ struct SubstructuringSolver::Impl
     }
 #endif
     // A direct factorization of A_EE (factored once, reused across the |Gamma| interface
-    // back-solves + per-excitation recovery) is far cheaper than |Gamma| iterative solves for
-    // the S_E materialization, and is exact. Selected when the user configures a direct linear
-    // solver; otherwise the iterative / geometric-multigrid path is used.
+    // back-solves + per-excitation recovery) turns the O(|Gamma|) S_E materialization from
+    // |Gamma| iterative solves into one factorization + cheap back-solves -- a genuine speedup
+    // -- and is exact. Default to it whenever the environment is small enough to factor; fall
+    // back to iterative / geometric multigrid for very large environments (where a sparse
+    // direct factorization would not fit) or if SuperLU is unavailable.
     bool use_direct = false;
 #if defined(MFEM_USE_SUPERLU)
-    use_direct = (iodata.solver.linear.type == LinearSolver::SUPERLU);
+    {
+      long long env_loc = 0;
+      for (int i = 0; i < nt; i++)
+      {
+        if (is_env_int[i] || is_gamma[i])
+        {
+          env_loc++;
+        }
+      }
+      long long env_glob = 0;
+      MPI_Allreduce(&env_loc, &env_glob, 1, MPI_LONG_LONG, MPI_SUM, parent_fes.GetComm());
+      use_direct = (env_glob <= kDirectMaxDofs);
+    }
 #endif
     const bool use_gmg =
         !use_direct && !magnetostatic && iodata.solver.order > 1 && mg_levels > 1;
@@ -1330,17 +1350,31 @@ void SubstructuringSolver::CondenseEnvironment()
   }
   if (!loaded)
   {
+    // Map each owned interface column (global index in [off, off+nloc)) to its local true DOF,
+    // so each unit-vector RHS is set in O(1) instead of scanning all true DOFs per column.
+    std::vector<int> col_to_dof(nloc, -1);
+    for (int i = 0; i < impl->nt; i++)
+    {
+      if (impl->is_gamma[i])
+      {
+        col_to_dof[impl->gamma_global[i] - off] = i;
+      }
+    }
     Vector e(impl->nt), y(impl->nt);
+    e = 0.0;
     std::vector<double> col(nG);
+    int prev = -1;
     for (int c = 0; c < nG; c++)
     {
-      e = 0.0;
-      for (int i = 0; i < impl->nt; i++)
+      if (prev >= 0)
       {
-        if (impl->is_gamma[i] && impl->gamma_global[i] == c)
-        {
-          e(i) = 1.0;
-        }
+        e(prev) = 0.0;  // clear the previous column's unit entry
+        prev = -1;
+      }
+      if (c >= off && c < off + nloc)
+      {
+        prev = col_to_dof[c - off];
+        e(prev) = 1.0;
       }
       impl->dtn->Mult(e, y);
       gather_interface(y, col.data());
@@ -1386,7 +1420,22 @@ void SubstructuringSolver::CondenseEnvironment()
     std::unique_ptr<Solver<Operator>> pc;
     bool use_direct = false;
 #if defined(MFEM_USE_SUPERLU)
-    use_direct = (impl->iodata.solver.linear.type == LinearSolver::SUPERLU);
+    // Default to a direct factorization of A_region_free when the region is small enough to
+    // factor (a near-exact preconditioner -> the outer CG converges in a few iterations); fall
+    // back to GMG / AMG for very large regions.
+    {
+      long long reg_loc = 0;
+      for (int i = 0; i < impl->nt; i++)
+      {
+        if (impl->is_region_free[i])
+        {
+          reg_loc++;
+        }
+      }
+      long long reg_glob = 0;
+      MPI_Allreduce(&reg_loc, &reg_glob, 1, MPI_LONG_LONG, MPI_SUM, comm);
+      use_direct = (reg_glob <= Impl::kDirectMaxDofs);
+    }
 #endif
 #if defined(MFEM_USE_SUPERLU)
     if (use_direct)
@@ -1656,100 +1705,6 @@ double SubstructuringSolver::MutualEnergy(const Vector &ui, const Vector &uj) co
 long long int SubstructuringSolver::RegionGlobalTrueVSize() const
 {
   return impl->parent_fes.GlobalTrueVSize();
-}
-
-std::vector<double> SubstructuringSolver::InterfaceSingularValues() const
-{
-  MFEM_VERIFY(impl->mat_dtn,
-              "CondenseEnvironment must be called before InterfaceSingularValues!");
-  // S_E is symmetric SPD, so singular values = eigenvalues. This mfem build has no LAPACK, so
-  // use a self-contained cyclic Jacobi eigenvalue iteration on the (symmetrized) matrix. The
-  // distributed row blocks are gathered to rank 0 and the result is broadcast.
-  MPI_Comm comm = impl->parent_fes.GetComm();
-  const int nG = impl->nG_global, rank = Mpi::Rank(comm), nranks = Mpi::Size(comm);
-  std::vector<int> row_cnt(nranks), row_disp(nranks);
-  {
-    std::vector<int> nloc_all(nranks);
-    int nl = impl->gamma_nloc;
-    MPI_Allgather(&nl, 1, MPI_INT, nloc_all.data(), 1, MPI_INT, comm);
-    int acc = 0;
-    for (int r = 0; r < nranks; r++)
-    {
-      row_cnt[r] = nloc_all[r] * nG;
-      row_disp[r] = acc;
-      acc += row_cnt[r];
-    }
-  }
-  const int n = nG;
-  std::vector<double> A;
-  if (rank == 0)
-  {
-    A.assign(static_cast<std::size_t>(n) * n, 0.0);
-  }
-  MPI_Gatherv(impl->S_rows.data(), impl->gamma_nloc * nG, MPI_DOUBLE,
-              rank == 0 ? A.data() : nullptr, row_cnt.data(), row_disp.data(), MPI_DOUBLE, 0,
-              comm);
-  std::vector<double> out(n, 0.0);
-  if (rank == 0)
-  {
-    for (int i = 0; i < n; i++)
-    {
-      for (int j = i + 1; j < n; j++)
-      {
-        const double s = 0.5 * (A[static_cast<std::size_t>(i) * n + j] +
-                                A[static_cast<std::size_t>(j) * n + i]);
-        A[static_cast<std::size_t>(i) * n + j] = s;
-        A[static_cast<std::size_t>(j) * n + i] = s;
-      }
-    }    auto at = [&](int i, int j) -> double & { return A[static_cast<std::size_t>(i) * n + j]; };
-  for (int sweep = 0; sweep < 100; sweep++)
-  {
-    double off = 0.0;
-    for (int p = 0; p < n; p++)
-    {
-      for (int q = p + 1; q < n; q++)
-      {
-        off += at(p, q) * at(p, q);
-      }
-    }
-    if (off < 1e-28)
-    {
-      break;
-    }
-    for (int p = 0; p < n; p++)
-    {
-      for (int q = p + 1; q < n; q++)
-      {
-        const double apq = at(p, q);
-        if (std::abs(apq) < 1e-300)
-        {
-          continue;
-        }
-        const double phi = 0.5 * std::atan2(2.0 * apq, at(q, q) - at(p, p));
-        const double c = std::cos(phi), s = std::sin(phi);
-        for (int k = 0; k < n; k++)
-        {
-          const double akp = at(k, p), akq = at(k, q);
-          at(k, p) = c * akp - s * akq;
-          at(k, q) = s * akp + c * akq;
-        }
-        for (int k = 0; k < n; k++)
-        {
-          const double apk = at(p, k), aqk = at(q, k);
-          at(p, k) = c * apk - s * aqk;
-          at(q, k) = s * apk + c * aqk;
-        }
-      }
-    }
-  }
-    for (int i = 0; i < n; i++)
-    {
-      out[i] = std::abs(at(i, i));
-    }
-    std::sort(out.begin(), out.end(), std::greater<double>());
-  }
-  MPI_Bcast(out.data(), n, MPI_DOUBLE, 0, comm);
-  return out;
 }
 
 void SubstructuringSolver::WriteParaView(const std::string &dir,
