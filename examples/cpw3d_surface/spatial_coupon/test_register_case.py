@@ -11,7 +11,7 @@ import unittest
 
 import register_case
 from register_case import (FOOTPRINT_BOUND, REGISTRATION_RECORD, STATUS_REGISTERED, STATUS_REUSED,
-                           STATUS_UNSUPPORTED, RegistrationError, register, sha256)
+                           STATUS_UNSUPPORTED, THIN_SEMANTIC_CONTRACT_FILE, RegistrationError, register, sha256)
 
 HERE = Path(__file__).resolve().parent
 PRODUCTION_MANIFEST = HERE / "geometry-independence-suite.json"
@@ -106,6 +106,63 @@ class RegisterCaseTest(unittest.TestCase):
         self.assertEqual(again["Status"], STATUS_REUSED)
         self.assertEqual(again["FixtureVersion"], 1)
         self.assertEqual(self.manifest_path.read_text(), written)
+
+    def test_thin_pair_registers_with_its_own_contract_and_the_thin_recipe(self):
+        """Decision 66: the thin counterpart of a registered fabricated case shares its
+        frozen sources, derives the thin label families (1, 3000 + slot, 4000 + 100 slot +
+        conductor: final from the inputs, no optional label) into semantic-contract-thin.json,
+        records Kind / FabricatedCase, exhibits ThinMetal, and is reused by content; it
+        needs the fabricated case and the manifest's ThinRecipe."""
+        from general_mesh_manifest import case_build_option_values, validate_manifest
+        with self.assertRaisesRegex(RegistrationError, "not registered"):
+            self.register("registered-copy-thin", kind="thin", fabricated_case="registered-copy")
+        self.register()
+        from derive_semantic_contract import derive as derive_contract
+        thin_labels = [item["Attribute"] for item in derive_contract(self.source, None, kind="thin")["BoundaryLabels"]]
+        record = self.register("registered-copy-thin", kind="thin", fabricated_case="registered-copy",
+                               probe=census_probe(thin_labels))
+        self.assertEqual((record["Status"], record["Kind"], record["FabricatedCase"]),
+                         (STATUS_REGISTERED, "thin", "registered-copy"))
+        manifest = self.manifest()
+        validate_manifest(manifest, self.manifest_path)
+        thin, fabricated = manifest["Cases"][-1], manifest["Cases"][-2]
+        self.assertEqual((thin["Id"], thin["Kind"], thin["FabricatedCase"]), ("registered-copy-thin", "thin", "registered-copy"))
+        self.assertNotIn("Kind", fabricated)
+        self.assertEqual(thin["Source"]["Directory"], fabricated["Source"]["Directory"])
+        self.assertEqual({role: entry["SHA256"] for role, entry in thin["Source"]["Files"].items() if role != "SemanticContract"},
+                         {role: entry["SHA256"] for role, entry in fabricated["Source"]["Files"].items() if role != "SemanticContract"})
+        self.assertEqual(thin["Source"]["Files"]["SemanticContract"]["Name"], THIN_SEMANTIC_CONTRACT_FILE)
+        contract = json.loads((self.source / THIN_SEMANTIC_CONTRACT_FILE).read_text())
+        self.assertEqual(contract["Derivation"]["CouponKind"], "thin")
+        families = sorted(item["Attribute"] // 1000 for item in contract["BoundaryLabels"])
+        self.assertEqual(set(families), {0, 3, 4})
+        self.assertFalse(any(3100 <= item["Attribute"] < 4000 for item in contract["BoundaryLabels"]))
+        self.assertEqual(contract["SemanticCorners"], self.frozen["SemanticCorners"])
+        self.assertEqual(contract["FeatureTopology"], self.frozen["FeatureTopology"])
+        self.assertIn("ThinMetal", record["Scope"]["ExhibitedClasses"])
+        self.assertEqual(record["Scope"]["UnsupportedClasses"], [])
+        self.assertIn("ThinMetal", thin["Features"])
+        # The thin build options: the fabricated recipe overridden by the ThinRecipe.
+        options = case_build_option_values(manifest, thin)
+        recipe = manifest["ProductionRecipe"]
+        self.assertEqual(options["--edge-size"], recipe["ThinRecipe"]["BuildCommandOptions"]["--edge-size"])
+        self.assertEqual(options["--corner-size"], options["--edge-size"])
+        self.assertEqual(options["--lc-tangent"], recipe["BuildCommandOptions"]["--lc-tangent"])
+        self.assertEqual(case_build_option_values(manifest, fabricated), recipe["BuildCommandOptions"])
+        # Reused by content; a fabricated re-registration of the thin id is refused.
+        written = self.manifest_path.read_text()
+        again = self.register("registered-copy-thin", kind="thin", fabricated_case="registered-copy", probe=census_probe([]))
+        self.assertEqual(again["Status"], STATUS_REUSED)
+        self.assertEqual(self.manifest_path.read_text(), written)
+        with self.assertRaisesRegex(RegistrationError, "never changes kind"):
+            self.register("registered-copy-thin", probe=census_probe([]))
+        # A manifest without the ThinRecipe cannot register a thin case.
+        stripped = self.manifest()
+        del stripped["ProductionRecipe"]["ThinRecipe"]
+        stripped["Cases"] = [case for case in stripped["Cases"] if case.get("Kind") != "thin"]
+        self.manifest_path.write_text(json.dumps(stripped, indent=2) + "\n")
+        with self.assertRaisesRegex(RegistrationError, "no ThinRecipe"):
+            self.register("registered-copy-thin", kind="thin", fabricated_case="registered-copy", probe=census_probe([]))
 
     def test_changed_source_is_a_new_version_with_the_old_binding_retired(self):
         first = self.register()

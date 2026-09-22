@@ -69,7 +69,7 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "901f51264ab042a12520129c668c586b6e309db64ac024d4f8cdbae8daab4bb7"
+      "SHA256": "3659e8a8ff7410d75fc3b3f57b56aa781d93358fd97f7c17fa988123378cf315"
     },
     {
       "Name": "verify_canonical_case_entries.py",
@@ -94,7 +94,7 @@
     {
       "Name": "estimate_build_cost.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/estimate_build_cost.py",
-      "SHA256": "289ed7dd5923bf6ebaee17539eb0ddc9a1a4cdde10a67563bdb4d7666bd43a99"
+      "SHA256": "5bfd4c38a47b8da6d066b39a9b5661a9fdfd4dd144b2b3328a1d55b98f8cd23e"
     },
     {
       "Name": "audit_edge_metric_mesh.py",
@@ -129,7 +129,7 @@
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "eff237ff66095d25ed4d9fd796854bc384e64bf24d155918ff5e2a7b63e29a4b"
+      "SHA256": "e49081a059084d560421bf338af2408ef923db1dd45d5305e72f4c3d2a0ce1df"
     },
     {
       "Name": "canonical_mesh_build.py",
@@ -139,7 +139,7 @@
     {
       "Name": "publish_rigid_coupon_mesh.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/publish_rigid_coupon_mesh.py",
-      "SHA256": "78922083f3c0a04ab67e1b73c7a596079697ad881de84e8079ff36917d14a92d"
+      "SHA256": "87e9e17ea6edfeac2c81a83418b3968faa260517e2816fb8d89b56dcc7016731"
     },
     {
       "Name": "audit_rigid_coupon_ownership.jl",
@@ -179,7 +179,7 @@
     },
     "gmsh-build": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "34838a16aa28be7a2c0f8c6c77cb3c24396ffe5981c13fe07ca533acb4b0134b"
+      "mesher": "789f1fe09cb0ed8fe721b07465f3ddd61822173231f602846141331068a51a60"
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
@@ -187,7 +187,7 @@
     },
     "proper-rigid-publication": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "rigid-publisher": "78922083f3c0a04ab67e1b73c7a596079697ad881de84e8079ff36917d14a92d",
+      "rigid-publisher": "87e9e17ea6edfeac2c81a83418b3968faa260517e2816fb8d89b56dcc7016731",
       "ownership-runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
       "ownership-auditor": "a60922642ad8470e1702d01adfb76683df0e98aecf319909a5483e7af04e1840"
     }

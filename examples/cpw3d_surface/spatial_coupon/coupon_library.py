@@ -6,7 +6,7 @@
 (supervisor decision 48): `build` (the mesh path) and `qualify` (the physics path).
 
   coupon_library.py build [--register CASE_ID=SOURCE_DIR ... --footprint {bound,producer-default}
-                           --inventory-status STATUS [--mesh-recipe PATH] [--provenance TEXT]]
+                           --inventory-status STATUS [--mesh-recipe PATH] [--provenance TEXT]] [--no-thin]
                           [--device PALACE_CONFIG --palace PATH [--device-output DIR] [--ring-size N]
                            [--cap-triangulation METHOD]]
                           [--case ID ...] [--jobs N] [--build-limit N] [--root DIR] [--output PATH] [--manifest PATH]
@@ -81,6 +81,10 @@ def build_parser():
     build.add_argument("--mesh-recipe", help="repository path of the frozen mesh recipe for registered "
                                              "directories without their own mesh-recipe.json")
     build.add_argument("--provenance", help="text appended to the Provenance of every registered case")
+    build.add_argument("--no-thin", action="store_true",
+                       help="register the fabricated cases only; by default every registered directory (--register and "
+                            "--device) also registers and builds its thin counterpart <case>-thin (decision 66: the "
+                            "device correction needs both responses of every model)")
     build.add_argument("--work", type=Path, help="parent of the registration work directories")
     build.add_argument("--register-jobs", type=int, default=device_coupons.DEFAULT_REGISTER_JOBS,
                        help="device coupons whose labels-only probe / contract derivation run at once (default "
@@ -124,7 +128,7 @@ def main(argv=None):
                 cap_triangulation=args.cap_triangulation, python=args.python)
             device_coupons.register_device_sources(device_record, manifest_path=args.manifest, mesh_recipe=args.mesh_recipe,
                                                    work=(args.work or device_output / "register"), python=args.python,
-                                                   julia=args.julia, jobs=args.register_jobs)
+                                                   julia=args.julia, jobs=args.register_jobs, thin=not args.no_thin)
         except device_coupons.DeviceAdapterError as error:
             print(f"DEVICE_ADAPTER_FAILED: {error}", file=sys.stderr)
             return 1
@@ -132,22 +136,30 @@ def main(argv=None):
             status = (coupon["Registration"] or {}).get("Status")
             if status in (register_case.STATUS_REGISTERED, register_case.STATUS_REUSED):
                 registered.append(coupon["Case"])
+            thin_status = (coupon.get("ThinRegistration") or {}).get("Status")
+            if thin_status in (register_case.STATUS_REGISTERED, register_case.STATUS_REUSED):
+                registered.append(coupon["ThinCase"])
         extra = {"Device": {key: device_record[key] for key in ("Device", "ProcessLibrary", "Discovery", "Plan", "TraceBasis",
                                                                 "OutOfScope", "MeshRecipe", "Output")},
                  "DeviceCoupons": device_record["Coupons"]}
         if args.case is None:
             args.case = []
     for case_id, directory in args.register:
-        try:
-            record = register_case.register(
-                case_id, directory, footprint=args.footprint, inventory_status=args.inventory_status,
-                manifest_path=args.manifest, mesh_recipe=args.mesh_recipe, provenance=args.provenance,
-                work=(args.work / case_id) if args.work is not None else None, python=args.python, julia=args.julia)
-        except register_case.RegistrationError as error:
-            print(f"REGISTRATION_FAILED {case_id}: {error}", file=sys.stderr)
-            return 1
-        print(f"{record['Status'].upper()} {case_id}: {record['Message']}", flush=True)
-        registered.append(case_id)
+        pairs = [(case_id, "fabricated", None)]
+        if not args.no_thin:
+            pairs.append((register_case.thin_case_id(case_id), "thin", case_id))
+        for registered_id, kind, fabricated_case in pairs:
+            try:
+                record = register_case.register(
+                    registered_id, directory, footprint=args.footprint, inventory_status=args.inventory_status,
+                    manifest_path=args.manifest, mesh_recipe=args.mesh_recipe, provenance=args.provenance,
+                    work=(args.work / registered_id) if args.work is not None else None, python=args.python, julia=args.julia,
+                    kind=kind, fabricated_case=fabricated_case)
+            except register_case.RegistrationError as error:
+                print(f"REGISTRATION_FAILED {registered_id}: {error}", file=sys.stderr)
+                return 1
+            print(f"{record['Status'].upper()} {registered_id}: {record['Message']}", flush=True)
+            registered.append(registered_id)
     if args.case is not None:
         args.case = list(dict.fromkeys(args.case + registered))
     if args.device is not None and not args.case:

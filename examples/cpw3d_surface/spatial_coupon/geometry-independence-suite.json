@@ -44,6 +44,15 @@
       "--far-growth": 0.5,
       "--trace-basis-size-ratio": 0.5
     },
+    "ThinRecipe": {
+      "BuildCommandOptions": {
+        "--edge-size": 0.002,
+        "--corner-size": 0.002
+      },
+      "Cutoff": 0.002,
+      "Rule": "a thin case (Case.Kind thin, paired with its fabricated case through FabricatedCase: the same frozen sources, its own contract with the thin label families) executes the fabricated BuildCommandOptions overridden by these options: EdgeSize = CornerSize = the inner ring size of the one sheet tube per straight metal side at the process plane (mesh_spatial_coupon.jl thin kind under --prism-tubes, decision 66); the thin coupon is the device-consistent thin-metal term and is NOT converged - its MS / MA surface participations are log-divergent in the cutoff by construction, so the cutoff (Cutoff = EdgeSize, recorded as PrismTubes.Section.ThinCutoff in every thin census and as ThinCutoff in every library entry) is a recorded convention, never tuned or extrapolated (no radial MA shells on a thin coupon); the fabricated recipe is untouched (0.25 nm rings, MA_sharp by the ma_tail extrapolation)",
+      "Provenance": "USER decision 66 (2026-09-22): inherit the existing thin convention. The 2D StraightEdgeBuilder thin variant (examples/cpw2d/mesh/mesh_edge_coupon.jl, the isolated-edge / same-conductor-strip / different-conductor-gap models of this process) meshes lc_fine = 0.002 um UNIFORM within DistMin 0.02 um of every interface curve (Threshold field, order 1), i.e. element edges of 1.54-2.09 nm (median 2.00 nm, measured on the isolated edge, decision 65 part 2) at the sheet edge: an MS / MA cutoff of ~h = 2 nm. The device thin mesh (examples/transmon/mesh/transmon_surface_p1.msh2) is a coarse DeviceLayout mesh whose edge discretization is what the library corrects, not a convention to inherit. Hence EdgeSize = CornerSize = 0.002 um: the innermost prism ring of the thin sheet tube is 2 nm (ratio 2 up to the CornerIsotropyRadius bound 0.1 um: 5 rings, 62 nm tube radius at the production sizes; the fabricated tubes: 7 rings bounded by Overetch 0.05), 8 x the fabricated 0.25 nm ring, the same cutoff as the 2D thin models of the same library"
+    },
     "PhysicsRun": {
       "Order": 4,
       "LinearTol": 1e-10,
@@ -160,7 +169,7 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "901f51264ab042a12520129c668c586b6e309db64ac024d4f8cdbae8daab4bb7"
+      "SHA256": "3659e8a8ff7410d75fc3b3f57b56aa781d93358fd97f7c17fa988123378cf315"
     },
     {
       "Name": "verify_canonical_case_entries.py",
@@ -185,7 +194,7 @@
     {
       "Name": "estimate_build_cost.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/estimate_build_cost.py",
-      "SHA256": "289ed7dd5923bf6ebaee17539eb0ddc9a1a4cdde10a67563bdb4d7666bd43a99"
+      "SHA256": "5bfd4c38a47b8da6d066b39a9b5661a9fdfd4dd144b2b3328a1d55b98f8cd23e"
     },
     {
       "Name": "audit_edge_metric_mesh.py",
@@ -220,7 +229,7 @@
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "eff237ff66095d25ed4d9fd796854bc384e64bf24d155918ff5e2a7b63e29a4b"
+      "SHA256": "e49081a059084d560421bf338af2408ef923db1dd45d5305e72f4c3d2a0ce1df"
     },
     {
       "Name": "canonical_mesh_build.py",
@@ -230,7 +239,7 @@
     {
       "Name": "publish_rigid_coupon_mesh.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/publish_rigid_coupon_mesh.py",
-      "SHA256": "78922083f3c0a04ab67e1b73c7a596079697ad881de84e8079ff36917d14a92d"
+      "SHA256": "87e9e17ea6edfeac2c81a83418b3968faa260517e2816fb8d89b56dcc7016731"
     },
     {
       "Name": "audit_rigid_coupon_ownership.jl",
@@ -404,6 +413,122 @@
       },
       "FixtureVersion": 2,
       "Provenance": "Fixture version 2 (supervisor decision 46, 2026-09-19): re-bound to the Radius-2 sharp production process (testdata/four-edge-9d2cb9bbb3fe/process.toml, the box the boundary loop was authored on: [-4, 4] x [-8, 8]), contract re-derived by derive_semantic_contract.py; version 1 retired in RetiredFixtures"
+    },
+    {
+      "Id": "one-edge-straight-thin",
+      "InventoryStatus": "RepositoryFixture",
+      "Frozen": true,
+      "Features": [
+        "single-slot",
+        "straight",
+        "thin"
+      ],
+      "Variants": [
+        {
+          "Id": "identity",
+          "Transform": [
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        },
+        {
+          "Id": "rotate-z-0.63",
+          "Transform": [
+            0.8080275083121519,
+            -0.5891447579422695,
+            0,
+            0,
+            0.5891447579422695,
+            0.8080275083121519,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        }
+      ],
+      "TransformComparison": {
+        "Reference": "identity",
+        "Transformed": "rotate-z-0.63",
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
+      },
+      "Source": {
+        "Directory": "examples/cpw3d_surface/spatial_coupon/testdata",
+        "SignatureRole": "Signature",
+        "SignatureColumns": [
+          "Index",
+          "Slot",
+          "Conductor",
+          "Px",
+          "Py",
+          "Pz",
+          "Gx",
+          "Gy",
+          "Gz",
+          "Tx",
+          "Ty",
+          "Tz",
+          "S0",
+          "S1"
+        ],
+        "Files": {
+          "Signature": {
+            "Name": "straight-edge-signature.csv",
+            "SHA256": "d5f9a7c3a58d556445febcaaddded09d1fa2fcd9022a4aeca0d91467a7828ebd"
+          },
+          "Boundary": {
+            "Name": "one-edge-masked-boundary.csv",
+            "SHA256": "d9808f1852dd6a459b85126939a270a17fd852330018691edb009ae6b7d93055"
+          },
+          "Mask": {
+            "Name": "one-edge-masked-mask.csv",
+            "SHA256": "21f2c12a47defa76b4727d90f3ce34c6f7fe9524219ae1b0fbaf66578fe5d8d9"
+          },
+          "Process": {
+            "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/four-edge-9d2cb9bbb3fe/process.toml",
+            "SHA256": "883b8b345d4943faaf498fdaaea14a54a9be3e7dbf520210b4fcd475ac5bc569"
+          },
+          "SemanticContract": {
+            "Name": "one-edge-semantic-thin.json",
+            "SHA256": "bb673f424ef2b9768c007dfe6a21b501821564c9e1e9c15ed9c2087ab1e59382"
+          },
+          "MeshRecipe": {
+            "Name": "generality-mesh-recipe.json",
+            "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
+          }
+        },
+        "EtchFootprint": "producer-default"
+      },
+      "FixtureVersion": 2,
+      "Provenance": "Thin counterpart of one-edge-straight (decision 66, 2026-09-22): the same frozen sources; the contract derived by derive_semantic_contract.py --kind thin (labels 1, 3000, 4001: the plane and the two-sided sheet, final from the inputs - no optional label); built with ProductionRecipe.ThinRecipe (EdgeSize = CornerSize = 0.002 um)",
+      "Kind": "thin",
+      "FabricatedCase": "one-edge-straight"
     },
     {
       "Id": "one-edge-cad-subdivided",
@@ -2100,7 +2225,7 @@
     },
     "gmsh-build": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "34838a16aa28be7a2c0f8c6c77cb3c24396ffe5981c13fe07ca533acb4b0134b"
+      "mesher": "789f1fe09cb0ed8fe721b07465f3ddd61822173231f602846141331068a51a60"
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
@@ -2108,7 +2233,7 @@
     },
     "proper-rigid-publication": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
-      "rigid-publisher": "78922083f3c0a04ab67e1b73c7a596079697ad881de84e8079ff36917d14a92d",
+      "rigid-publisher": "87e9e17ea6edfeac2c81a83418b3968faa260517e2816fb8d89b56dcc7016731",
       "ownership-runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
       "ownership-auditor": "a60922642ad8470e1702d01adfb76683df0e98aecf319909a5483e7af04e1840"
     }

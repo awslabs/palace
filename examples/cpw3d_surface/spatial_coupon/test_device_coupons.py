@@ -185,10 +185,12 @@ class DeviceCouponsTest(unittest.TestCase):
         labels = {}
         for coupon in record["Coupons"]:
             directory = Path(coupon["Directory"])
-            provisional = derive_contract(directory, None, signature=directory / "mesh-signature.csv",
-                                          boundary=directory / "plan-view-boundary.csv",
-                                          process_library=directory / "process-library.json")
-            labels[coupon["Case"]] = [item["Attribute"] for item in provisional["BoundaryLabels"]]
+            for kind in ("fabricated", "thin"):
+                provisional = derive_contract(directory, None, signature=directory / "mesh-signature.csv",
+                                              boundary=directory / "plan-view-boundary.csv",
+                                              process_library=directory / "process-library.json", kind=kind)
+                case_id = coupon["Case"] if kind == "fabricated" else register_case.thin_case_id(coupon["Case"])
+                labels[case_id] = [item["Attribute"] for item in provisional["BoundaryLabels"]]
 
         def probe(probe_manifest, case_id, root, log):
             return census_probe(labels[case_id])(probe_manifest, case_id, root, log)
@@ -200,8 +202,21 @@ class DeviceCouponsTest(unittest.TestCase):
         # Decision 62(2): the probes / derivations ran in a pool of 3, the manifest appends
         # serially in the device record's coupon order.
         self.assertEqual(registered["RegistrationPool"]["Jobs"], 3)
+        # Decision 66: every fabricated device coupon is followed by its thin pair (Kind
+        # thin, FabricatedCase, the same directory, its own thin contract file).
         self.assertEqual([case["Id"] for case in manifest["Cases"] if case["Id"] in by_id and case["Id"].startswith("spatial-")],
-                         [coupon["Case"] for coupon in registered["Coupons"]])
+                         [coupon["Case"] for coupon in registered["Coupons"]]
+                         + [coupon["ThinCase"] for coupon in registered["Coupons"]])
+        for coupon in registered["Coupons"]:
+            self.assertEqual(coupon["ThinRegistration"]["Status"], register_case.STATUS_REGISTERED, coupon["ThinRegistration"])
+            thin = by_id[coupon["ThinCase"]]
+            self.assertEqual((thin["Kind"], thin["FabricatedCase"]), ("thin", coupon["Case"]))
+            self.assertEqual(thin["Source"]["Directory"], by_id[coupon["Case"]]["Source"]["Directory"])
+            self.assertEqual(thin["Source"]["Files"]["SemanticContract"]["Name"], register_case.THIN_SEMANTIC_CONTRACT_FILE)
+            self.assertIn("ThinMetal", thin["Features"])
+            thin_contract = json.loads((Path(coupon["Directory"]) / register_case.THIN_SEMANTIC_CONTRACT_FILE).read_text())
+            self.assertEqual(sorted(item["Attribute"] // 1000 for item in thin_contract["BoundaryLabels"]),
+                             sorted([0, 3] + [4] * (len(thin_contract["BoundaryLabels"]) - 2)))
         with self.assertRaises(device_coupons.DeviceAdapterError):
             device_coupons.register_device_sources(record, manifest_path=self.manifest_path, work=self.tmp / "register-0",
                                                    log=lambda message: None, probe=probe, jobs=0)
@@ -219,14 +234,24 @@ class DeviceCouponsTest(unittest.TestCase):
         again = device_coupons.register_device_sources(record, manifest_path=self.manifest_path, work=self.tmp / "register-2",
                                                        log=lambda message: None, probe=probe)
         self.assertTrue(all(coupon["Registration"]["Status"] == register_case.STATUS_REUSED for coupon in again["Coupons"]))
+        self.assertTrue(all(coupon["ThinRegistration"]["Status"] == register_case.STATUS_REUSED for coupon in again["Coupons"]))
+        fresh = json.loads(json.dumps(self.record))
+        fresh["Coupons"] = sorted(fresh["Coupons"], key=lambda coupon: coupon["Sources"])[:2]
+        without = device_coupons.register_device_sources(fresh, manifest_path=self.manifest_path, work=self.tmp / "register-3",
+                                                         log=lambda message: None, probe=probe, thin=False)
+        self.assertTrue(all("ThinCase" not in coupon for coupon in without["Coupons"]))
         result = subprocess.run([sys.executable, str(HERE / "run_general_mesh_suite.py"), "--manifest", str(self.manifest_path),
                                  "--root", str(self.tmp / "preflight"), "--preflight-only"], text=True, capture_output=True)
         summary = json.loads((self.tmp / "preflight" / "summary.json").read_text())
         self.assertTrue(summary["PreflightPassed"], result.stdout + result.stderr)
         preflight = {case["Id"]: case for case in summary["Cases"]}
         for coupon in registered["Coupons"]:
-            self.assertTrue(preflight[coupon["Case"]]["Passed"], preflight[coupon["Case"]])
-            self.assertTrue(preflight[coupon["Case"]]["BuildCostEstimate"]["Passed"])
+            for case_id in (coupon["Case"], coupon["ThinCase"]):
+                self.assertTrue(preflight[case_id]["Passed"], preflight[case_id])
+                self.assertTrue(preflight[case_id]["BuildCostEstimate"]["Passed"])
+            # The thin estimate: one tube per side, fewer prisms than the fabricated pair.
+            self.assertLess(preflight[coupon["ThinCase"]]["BuildCostEstimate"]["EstimatedPrisms"],
+                            preflight[coupon["Case"]]["BuildCostEstimate"]["EstimatedPrisms"])
 
 
 if __name__ == "__main__":

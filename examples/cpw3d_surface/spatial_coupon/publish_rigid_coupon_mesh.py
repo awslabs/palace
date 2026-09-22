@@ -324,9 +324,16 @@ def publish(canonical_mesh, transform_path, output_mesh, receipt_path, *,
     if measure_error > 1e-11:
         raise ValueError("Rigid publication changed a material or physical measure")
     # The per-ring radial MA shells (decision 61a), label-only on the published bytes.
-    shells = apply_radial_shells(output_mesh, radial_shells_path, canonical_build=canonical_build, matrix=matrix,
-                                 signature=signature, boundary=boundary, process=process,
-                                 parent_digest=parent_digest, canonical_digest=canonical_digest)
+    # A thin coupon carries none (decision 66): its MS / MA are the two sides of one
+    # sheet label and its participations are recorded at the recipe cutoff, never
+    # extrapolated.
+    shells = (apply_radial_shells(output_mesh, radial_shells_path, canonical_build=canonical_build, matrix=matrix,
+                                  signature=signature, boundary=boundary, process=process,
+                                  parent_digest=parent_digest, canonical_digest=canonical_digest)
+              if kind == "fabricated" else
+              {"Applied": False, "Reason": "thin coupon (decision 66): no radial MA shells - the sheet label carries "
+                                           "both MS and MA and the thin participations are recorded at the recipe "
+                                           "cutoff (the tube inner size), never extrapolated"})
     output_digest = sha256(output_mesh)
     if shells["Applied"]:
         shelled = parent_label_view(read_mesh(output_mesh))

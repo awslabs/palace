@@ -183,7 +183,85 @@ def validate_production_recipe(manifest):
     if manifest_pipeline(manifest) == GMSH_ONLY_PIPELINE:
         validate_build_cost_estimate_model(recipe)
         validate_physics_run(recipe)
+        validate_thin_recipe(recipe)
     return recipe
+
+
+# Thin coupons (decision 66): a production case of Kind "thin" is the zero-thickness
+# metal counterpart of the fabricated case it names (FabricatedCase: the same frozen
+# sources apart from the derived contract); it executes the fabricated recipe's
+# BuildCommandOptions overridden by ThinRecipe.BuildCommandOptions - the RECORDED
+# thin convention (Cutoff = its --edge-size, the inner ring size = the MA / MS cutoff
+# of every thin surface participation, never converged) with its Provenance.
+CASE_KIND_KEY = "Kind"
+CASE_KINDS = ("fabricated", "thin")
+FABRICATED_CASE_KEY = "FabricatedCase"
+THIN_RECIPE_KEY = "ThinRecipe"
+THIN_RECIPE_OPTIONS = ("--edge-size", "--corner-size")
+
+
+def case_kind(case):
+    kind = case.get(CASE_KIND_KEY, "fabricated")
+    if kind not in CASE_KINDS:
+        raise ValueError(f"{case.get('Id')} has an unknown coupon kind {kind!r} (one of {CASE_KINDS})")
+    return kind
+
+
+def validate_thin_recipe(recipe):
+    """ProductionRecipe.ThinRecipe (if present): BuildCommandOptions binding exactly
+    --edge-size and --corner-size to one equal positive value (the prism-tube recipe
+    requires CornerSize == EdgeSize), Cutoff equal to it, a Rule and a Provenance
+    naming the convention it is inherited from.  Returns the block or None."""
+    block = recipe.get(THIN_RECIPE_KEY)
+    if block is None:
+        return None
+    options = block.get("BuildCommandOptions") if isinstance(block, dict) else None
+    if (not isinstance(options, dict) or sorted(options) != sorted(THIN_RECIPE_OPTIONS) or
+            any(not _finite_number(options[option], positive=True) for option in THIN_RECIPE_OPTIONS) or
+            options["--edge-size"] != options["--corner-size"] or
+            not _finite_number(block.get("Cutoff"), positive=True) or block["Cutoff"] != options["--edge-size"] or
+            any(not isinstance(block.get(key), str) or not block[key] for key in ("Rule", "Provenance"))):
+        raise ValueError(f"{THIN_RECIPE_KEY} must bind BuildCommandOptions {{--edge-size, --corner-size}} to one "
+                         f"positive value, Cutoff equal to it, a Rule and a Provenance")
+    return block
+
+
+def thin_build_options(recipe):
+    """The build options of a thin case: the fabricated BuildCommandOptions overridden by
+    ThinRecipe.BuildCommandOptions (fail closed without a ThinRecipe)."""
+    block = validate_thin_recipe(recipe)
+    if block is None:
+        raise ValueError(f"the production recipe carries no {THIN_RECIPE_KEY}: a thin case cannot be built")
+    return dict(recipe["BuildCommandOptions"], **block["BuildCommandOptions"])
+
+
+def case_build_option_values(manifest, case):
+    """The recipe option values a production case executes (fabricated or thin)."""
+    recipe = manifest[PRODUCTION_RECIPE_KEY]
+    return thin_build_options(recipe) if case_kind(case) == "thin" else dict(recipe["BuildCommandOptions"])
+
+
+def validate_case_kind(manifest, case, by_id):
+    """A thin case names an existing fabricated case (FabricatedCase) whose frozen
+    sources it shares (every Source.Files digest but the derived SemanticContract), in
+    a production manifest carrying the ThinRecipe; a fabricated case names none."""
+    kind = case_kind(case)
+    paired = case.get(FABRICATED_CASE_KEY)
+    if kind == "fabricated":
+        if paired is not None:
+            raise ValueError(f"{case['Id']} is fabricated but names a {FABRICATED_CASE_KEY}")
+        return
+    if "Calibration" in manifest or validate_thin_recipe(manifest.get(PRODUCTION_RECIPE_KEY) or {}) is None:
+        raise ValueError(f"{case['Id']} is thin but the manifest carries no ProductionRecipe.{THIN_RECIPE_KEY}")
+    fabricated = by_id.get(paired)
+    if fabricated is None or case_kind(fabricated) != "fabricated":
+        raise ValueError(f"{case['Id']} names {FABRICATED_CASE_KEY} {paired!r}, not a fabricated case of the manifest")
+    own = {role: entry.get("SHA256") for role, entry in case["Source"]["Files"].items() if role != "SemanticContract"}
+    theirs = {role: entry.get("SHA256") for role, entry in fabricated["Source"]["Files"].items() if role != "SemanticContract"}
+    if own != theirs or case["Source"].get("Directory") != fabricated["Source"].get("Directory"):
+        raise ValueError(f"{case['Id']} does not share the frozen sources of its fabricated case {paired}")
+    if case["Source"]["Files"]["SemanticContract"]["SHA256"] == fabricated["Source"]["Files"]["SemanticContract"]["SHA256"]:
+        raise ValueError(f"{case['Id']} binds the fabricated contract: a thin case derives its own (thin label families)")
 
 
 BUILD_COST_ESTIMATE_KEY = "BuildCostEstimate"
@@ -261,7 +339,8 @@ def preflight_recipe_scope(manifest, paths, case):
     process = tomllib.loads(paths["Process"].read_text())
     classes = scope_classes_of_case_inputs(paths["Signature"], paths["Boundary"], process,
                                           device_footprint="RetainedEtch" in paths,
-                                          trace_basis="BasisContract" in paths)
+                                          trace_basis="BasisContract" in paths,
+                                          fabricated=case_kind(case) == "fabricated")
     return {"ExhibitedClasses": classes, "UnsupportedClasses": unsupported_scope_classes(classes)}
 
 
@@ -308,7 +387,12 @@ def validate_production_recipe_commands(manifest, case, bounded_stages):
     trace_basis_bound = all(role in files for role in TRACE_BASIS_ROLES)
     for stage, key in PIPELINE_PRODUCTION_RECIPE_STAGE_OPTIONS[manifest_pipeline(manifest)].items():
         command = bounded_stages[stage]["Command"]
-        for option, value in recipe[key].items():
+        # A thin case executes the fabricated options overridden by the ThinRecipe's
+        # (decision 66) and names its kind as the mesher's second positional token.
+        options = case_build_option_values(manifest, case) if key == "BuildCommandOptions" else recipe[key]
+        if key == "BuildCommandOptions" and case_kind(case) not in command:
+            raise ValueError(f"{stage} command does not name the case kind {case_kind(case)}")
+        for option, value in options.items():
             executed = option_values(command, option)
             expected = [float(value)]
             if option == TRACE_BASIS_RATIO_OPTION and not trace_basis_bound:
@@ -559,6 +643,7 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
     identifiers = [case.get("Id") for case in manifest["Cases"]]
     if any(not value for value in identifiers) or len(set(identifiers)) != len(identifiers):
         raise ValueError("Manifest case identifiers must be nonempty and unique")
+    cases_by_id = {case.get("Id"): case for case in manifest["Cases"]}
     gates = manifest.get("Gates", {})
     required_gates = ("CornerTolerance", "MaximumNormalFactor", "MinimumAchievedAspect",
                       "MaximumCornerAspect", "MinimumNoncornerAspect",
@@ -611,6 +696,7 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
         files = source.get("Files")
         if not isinstance(files, dict) or any(role not in files for role in REQUIRED_ROLES):
             raise ValueError(f"{case['Id']} lacks a required immutable role")
+        validate_case_kind(manifest, case, cases_by_id)
         if "MeshRecipe" not in files:
             raise ValueError(f"{case['Id']} lacks a frozen mesh recipe")
         # The etched footprint is a recorded choice, never an omission: either a

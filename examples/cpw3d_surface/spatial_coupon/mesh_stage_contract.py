@@ -581,11 +581,22 @@ def footprint_provenance(census):
     return digest
 
 
+def census_coupon_kind(census):
+    """The coupon kind a Gmsh-only build census records (PrismTubes.Section.Kind, decision
+    66); fabricated for a census without the record (the legacy seed census)."""
+    section = (census.get("PrismTubes") or {}).get("Section") if isinstance(census, dict) else None
+    kind = section.get("Kind", "fabricated") if isinstance(section, dict) else "fabricated"
+    if kind not in COUPON_KINDS:
+        raise ValueError(f"the census records an unknown coupon kind {kind!r}")
+    return kind
+
+
 def footprint_segments(census):
     """Every edge of every simplified footprint polygon as a 3D segment
-    [x0, y0, z, x1, y1, z] on the polygon's process plane, in census order."""
+    [x0, y0, z, x1, y1, z] on the polygon's process plane, in census order (none for a
+    thin coupon)."""
     segments = []
-    for polygon in validate_footprint_polygons(census):
+    for polygon in validate_footprint_polygons(census, census_coupon_kind(census)):
         points, plane = polygon["Points"], float(polygon["Plane"])
         for index, point in enumerate(points):
             following = points[(index + 1) % len(points)]
@@ -643,17 +654,19 @@ def validate_junction_segments(recipe, census):
     return record
 
 
-def validate_footprint_polygons(census):
+def validate_footprint_polygons(census, kind="fabricated"):
     """The seed simplified every etch footprint polygon (device or producer default)
     with the shared collinearity tolerance before CAD face creation and recorded the
-    result: removed vertices and a maximum deviation within tolerance x local scale."""
+    result: removed vertices and a maximum deviation within tolerance x local scale.
+    A thin coupon (decision 66) etches nothing: it records no polygon."""
     tolerance = census.get("FootprintCollinearTolerance")
     if isinstance(tolerance, bool) or tolerance != COPLANAR_TOLERANCE:
         raise ValueError("Seed census footprint collinearity tolerance differs from COPLANAR_TOLERANCE")
     polygons = census.get("FootprintPolygons")
     summary = census.get("FootprintSimplification")
-    if not isinstance(polygons, list) or not polygons or not isinstance(summary, dict):
-        raise ValueError("Seed census lacks the simplified footprint polygons")
+    if not isinstance(polygons, list) or (bool(polygons) != (kind == "fabricated")) or not isinstance(summary, dict):
+        raise ValueError("Seed census lacks the simplified footprint polygons" if kind == "fabricated" else
+                         "Thin coupon census records etch footprint polygons")
     removed, worst = 0, 0.0
     for polygon in polygons:
         record = polygon.get("Simplification") if isinstance(polygon, dict) else None
@@ -1610,7 +1623,7 @@ def validate_gmsh_build_census(build_report, census, semantic):
     labels = [row["Attribute"] for row in areas]
     if len(labels) != len(set(labels)) or set(labels) != boundary_attributes(semantic):
         raise ValueError("Build census interface-area labels differ from the semantic contract")
-    validate_footprint_polygons(census)
+    validate_footprint_polygons(census, build_coupon_kind(command))
     gmsh_build_junction_segments(census)
     validate_build_trace_basis(build_report, census)
     if census.get("EdgeLayer") is not None:

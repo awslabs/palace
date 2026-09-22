@@ -62,8 +62,9 @@ import time
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from derive_semantic_contract import derive as derive_contract  # noqa: E402
-from general_mesh_manifest import (PRODUCER_DEFAULT_ETCH_FOOTPRINT, TRACE_BASIS_ROLES,  # noqa: E402
-                                   preflight_recipe_scope, validate_manifest)
+from general_mesh_manifest import (CASE_KIND_KEY, CASE_KINDS, FABRICATED_CASE_KEY,  # noqa: E402
+                                   PRODUCER_DEFAULT_ETCH_FOOTPRINT, TRACE_BASIS_ROLES, case_kind,
+                                   preflight_recipe_scope, validate_manifest, validate_thin_recipe)
 from refreeze_manifest_tools import CALIBRATION_MANIFESTS, PRODUCTION_MANIFEST, refreeze  # noqa: E402
 from run_gmsh_only_case import BUILD_SUMMARY  # noqa: E402
 
@@ -74,6 +75,15 @@ OPTIONAL_SOURCE_FILES = {"ProcessLibrary": "process-library.json", "BasisContrac
                          "Provenance": "provenance.json"}
 RETAINED_ETCH_FILE = "retained-etch.csv"
 SEMANTIC_CONTRACT_FILE = "semantic-contract.json"
+# The thin case of a source directory (decision 66) shares every frozen source of its
+# fabricated case and derives its own contract (the thin label families) into this file.
+THIN_SEMANTIC_CONTRACT_FILE = "semantic-contract-thin.json"
+THIN_CASE_SUFFIX = "-thin"
+CONTRACT_FILES = {"fabricated": SEMANTIC_CONTRACT_FILE, "thin": THIN_SEMANTIC_CONTRACT_FILE}
+
+
+def thin_case_id(fabricated_case_id):
+    return fabricated_case_id + THIN_CASE_SUFFIX
 MESH_RECIPE_FILE = "mesh-recipe.json"
 FOOTPRINT_BOUND = "bound"
 FOOTPRINT_DECLARATIONS = (FOOTPRINT_BOUND, PRODUCER_DEFAULT_ETCH_FOOTPRINT)
@@ -233,10 +243,11 @@ def derive_two_pass(manifest, repository, case, paths, recipe_path, work, probe)
         shutil.copyfile(path, staging / path.name)
         staged[role] = staging / path.name
     process_library = staged.get("ProcessLibrary")
+    kind = case_kind(case)
     provisional = derive_contract(staging, None, signature=staged["Signature"],
-                                  boundary=staged["Boundary"], process_library=process_library)
-    (staging / SEMANTIC_CONTRACT_FILE).write_text(json.dumps(provisional, indent=2) + "\n")
-    staged["SemanticContract"] = staging / SEMANTIC_CONTRACT_FILE
+                                  boundary=staged["Boundary"], process_library=process_library, kind=kind)
+    (staging / CONTRACT_FILES[kind]).write_text(json.dumps(provisional, indent=2) + "\n")
+    staged["SemanticContract"] = staging / CONTRACT_FILES[kind]
     recipe_entry = dict(case["Source"]["Files"]["MeshRecipe"])
     if "Name" in recipe_entry:
         shutil.copyfile(recipe_path, staging / recipe_entry["Name"])
@@ -246,6 +257,13 @@ def derive_two_pass(manifest, repository, case, paths, recipe_path, work, probe)
     probe_manifest = copy.deepcopy(manifest)
     probe_manifest["RepositoryRoot"] = str(repository)
     probe_manifest["Cases"] = [item for item in manifest["Cases"] if item["Id"] != case["Id"]] + [probe_case]
+    if kind == "thin":
+        # The probe's fabricated case shares the staging sources (validate_case_kind).
+        fabricated = copy.deepcopy(next(item for item in probe_manifest["Cases"] if item["Id"] == case[FABRICATED_CASE_KEY]))
+        fabricated["Source"]["Directory"] = str(staging)
+        fabricated["Source"]["Files"] = {role: (entry if role == "SemanticContract" else probe_case["Source"]["Files"][role])
+                                         for role, entry in fabricated["Source"]["Files"].items()}
+        probe_manifest["Cases"] = [fabricated if item["Id"] == fabricated["Id"] else item for item in probe_manifest["Cases"]]
     probe_manifest_path = work / "probe-manifest.json"
     probe_manifest_path.write_text(json.dumps(probe_manifest, indent=2) + "\n")
     probe_root = work / "probe"
@@ -255,7 +273,7 @@ def derive_two_pass(manifest, repository, case, paths, recipe_path, work, probe)
         error.summary, error.probe_root = summary, probe_root
         raise error
     contract = derive_contract(staging, probe_root / "build-census.json", signature=staged["Signature"],
-                               boundary=staged["Boundary"], process_library=process_library)
+                               boundary=staged["Boundary"], process_library=process_library, kind=kind)
     return contract, probe_root, summary
 
 
@@ -305,7 +323,8 @@ def load_production_manifest(manifest_path):
 
 
 def prepare_registration(case_id, directory, *, footprint, inventory_status, manifest_path, mesh_recipe=None,
-                         features=None, provenance=None, work=None, python=sys.executable, julia=None, probe=None):
+                         features=None, provenance=None, work=None, python=sys.executable, julia=None, probe=None,
+                         kind="fabricated", fabricated_case=None):
     """Steps 1-2 of a registration (the manifest is read, never written): the source
     digests, the scope classes, the reuse-by-content check against the recorded case,
     then the two-pass contract derivation with the labels-only probe.  Independent per
@@ -318,6 +337,19 @@ def prepare_registration(case_id, directory, *, footprint, inventory_status, man
         raise RegistrationError(f"--inventory-status must be one of {list(INVENTORY_STATUSES)}")
     if not case_id or any(character in case_id for character in "/ \t\n"):
         raise RegistrationError("the case id must be a nonempty token")
+    if kind not in CASE_KINDS or (kind == "thin") != (fabricated_case is not None):
+        raise RegistrationError(f"the kind must be one of {list(CASE_KINDS)}; a thin case names its fabricated case")
+    if kind == "thin":
+        # Decision 66: the thin case pairs with a registered fabricated case of the same
+        # source directory under a manifest recording the thin convention (ThinRecipe).
+        if validate_thin_recipe(manifest.get("ProductionRecipe") or {}) is None:
+            raise RegistrationError("the manifest's ProductionRecipe carries no ThinRecipe: no thin convention to build")
+        paired = next((item for item in manifest["Cases"] if item["Id"] == fabricated_case), None)
+        if paired is None or case_kind(paired) != "fabricated":
+            raise RegistrationError(f"the fabricated case {fabricated_case!r} is not registered")
+        if case_directory(paired, repository).resolve() != Path(directory).resolve():
+            raise RegistrationError(f"the fabricated case {fabricated_case} was registered from another directory "
+                                    f"({paired['Source']['Directory']})")
     directory = Path(directory).resolve()
     if not directory.is_dir():
         raise RegistrationError(f"source directory {directory} does not exist")
@@ -325,7 +357,8 @@ def prepare_registration(case_id, directory, *, footprint, inventory_status, man
     work = Path(work) if work is not None else Path(
         f"/tmp/coupon-register-{case_id}-{commit}-{time.strftime('%Y%m%d-%H%M%S')}")
     work.mkdir(parents=True, exist_ok=True)
-    record = {"Case": case_id, "Manifest": str(manifest_path), "SourceDirectory": str(directory),
+    record = {"Case": case_id, "Kind": kind, "FabricatedCase": fabricated_case,
+              "Manifest": str(manifest_path), "SourceDirectory": str(directory),
               "Footprint": footprint, "InventoryStatus": inventory_status, "Commit": commit,
               "Work": str(work), "Status": None, "FixtureVersion": None, "SourceSHA256": None,
               "Scope": None, "StoppedBy": None, "ProbeRoot": None, "ContractSHA256": None,
@@ -343,9 +376,12 @@ def prepare_registration(case_id, directory, *, footprint, inventory_status, man
         raise
     entries = file_entries(paths, recipe_entry)
     record["SourceSHA256"] = source_digests(entries)
-    scope = preflight_recipe_scope(manifest, paths, {"Source": {"Files": entries}})
+    scope = preflight_recipe_scope(manifest, paths, {"Source": {"Files": entries}, CASE_KIND_KEY: kind})
     record["Scope"] = scope
     existing = next((item for item in manifest["Cases"] if item["Id"] == case_id), None)
+    if existing is not None and case_kind(existing) != kind:
+        finish(STATUS_FAILED, Message=f"{case_id} is registered as a {case_kind(existing)} case: a case never changes kind")
+        return PreparedRegistration(record, work, error=RegistrationError(record["Message"]))
     if existing is not None:
         old_entries = existing["Source"]["Files"]
         if source_digests(old_entries) == source_digests(entries):
@@ -373,6 +409,9 @@ def prepare_registration(case_id, directory, *, footprint, inventory_status, man
             "Source": {"Directory": recorded_directory(directory, repository), "SignatureRole": "Signature",
                        "SignatureColumns": shared["SignatureColumns"], "Files": dict(entries)},
             "FixtureVersion": None, "Provenance": None}
+    if kind == "thin":
+        case[CASE_KIND_KEY] = kind
+        case[FABRICATED_CASE_KEY] = fabricated_case
     if footprint != FOOTPRINT_BOUND:
         case["Source"]["EtchFootprint"] = PRODUCER_DEFAULT_ETCH_FOOTPRINT
     probe = probe if probe is not None else (
@@ -415,12 +454,15 @@ def commit_registration(prepared, *, manifest_path, refreeze_calibration=None):
     existing = next((item for item in manifest["Cases"] if item["Id"] == case_id), None)
     version = 1 if existing is None else int(existing.get("FixtureVersion") or 1) + 1
     case["FixtureVersion"] = version
-    contract_path = directory / SEMANTIC_CONTRACT_FILE
+    contract_file = CONTRACT_FILES[case_kind(case)]
+    contract_path = directory / contract_file
     contract_path.write_text(json.dumps(prepared.contract, indent=2) + "\n")
-    case["Source"]["Files"]["SemanticContract"] = {"Name": SEMANTIC_CONTRACT_FILE, "SHA256": sha256(contract_path)}
+    case["Source"]["Files"]["SemanticContract"] = {"Name": contract_file, "SHA256": sha256(contract_path)}
     case["Provenance"] = (
         f"Registered by register_case.py at {commit} ({time.strftime('%Y-%m-%d')}), fixture version {version}: "
-        f"source directory {case['Source']['Directory']}, etch footprint {prepared.footprint}, recipe scope classes "
+        + (f"THIN case of {case[FABRICATED_CASE_KEY]} (decision 66: the same frozen sources, the thin label "
+           f"families, the ThinRecipe options), " if case_kind(case) == "thin" else "")
+        + f"source directory {case['Source']['Directory']}, etch footprint {prepared.footprint}, recipe scope classes "
         f"{prepared.scope['ExhibitedClasses']}; the contract is derived by derive_semantic_contract.py from the inputs "
         f"and the label census of a labels-only production-option probe pass (run_gmsh_only_case.py --labels-only, "
         f"decision 62(2); {prepared.probe_root}, commit {prepared.summary.get('Commit')})"
@@ -461,12 +503,15 @@ def commit_registration(prepared, *, manifest_path, refreeze_calibration=None):
 
 def register(case_id, directory, *, footprint, inventory_status, manifest_path, mesh_recipe=None,
              features=None, provenance=None, work=None, python=sys.executable, julia=None,
-             probe=None, refreeze_calibration=None):
+             probe=None, refreeze_calibration=None, kind="fabricated", fabricated_case=None):
     """Register (or reuse / supersede) the case; returns the registration record
-    (prepare_registration then commit_registration)."""
+    (prepare_registration then commit_registration).  `kind` thin with
+    `fabricated_case` registers the thin counterpart of a registered fabricated case
+    (decision 66)."""
     prepared = prepare_registration(case_id, directory, footprint=footprint, inventory_status=inventory_status,
                                     manifest_path=manifest_path, mesh_recipe=mesh_recipe, features=features,
-                                    provenance=provenance, work=work, python=python, julia=julia, probe=probe)
+                                    provenance=provenance, work=work, python=python, julia=julia, probe=probe,
+                                    kind=kind, fabricated_case=fabricated_case)
     return commit_registration(prepared, manifest_path=manifest_path, refreeze_calibration=refreeze_calibration)
 
 
@@ -485,6 +530,9 @@ def add_arguments(parser):
     parser.add_argument("--work", type=Path, help="work directory (default /tmp/coupon-register-<case>-<commit>-<ts>)")
     parser.add_argument("--julia", default=shutil.which("julia"))
     parser.add_argument("--python", default=sys.executable)
+    parser.add_argument("--thin-of", metavar="FABRICATED_CASE_ID",
+                        help="register CASE_ID as the thin counterpart of this registered fabricated case of the same "
+                             "source directory (decision 66; the manifest must carry ProductionRecipe.ThinRecipe)")
 
 
 def main(argv=None):
@@ -495,7 +543,8 @@ def main(argv=None):
         record = register(args.case_id, args.source_dir, footprint=args.footprint,
                           inventory_status=args.inventory_status, manifest_path=args.manifest,
                           mesh_recipe=args.mesh_recipe, features=args.feature, provenance=args.provenance,
-                          work=args.work, python=args.python, julia=args.julia)
+                          work=args.work, python=args.python, julia=args.julia,
+                          kind="thin" if args.thin_of else "fabricated", fabricated_case=args.thin_of)
     except RegistrationError as error:
         print(f"REGISTRATION_FAILED {args.case_id}: {error}", file=sys.stderr)
         return 1

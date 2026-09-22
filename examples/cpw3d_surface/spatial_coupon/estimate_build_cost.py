@@ -31,6 +31,12 @@ recipe, trace basis, build options):
   perimeter inside the box; the census JunctionCurves length is recorded next to the
   proxy after every build.
 
+A THIN case (decision 66; the mesher's thin kind under the prism tubes) has one
+full-turn sheet tube per straight metal side at the process plane (Sectors = 360 /
+SectorDegrees, the tube band and the corner balls entirely dielectric), no trench, and
+its junction lines are the substrate-vacuum plane's box edges (the box perimeter at the
+plane, exactly known from the inputs) instead of the trench proxy.
+
 TetrahedraPerCubicSize is the one dimensionless model constant: the number of
 tetrahedra Gmsh realizes per h^3 of prescribed volume (an equilateral tetrahedron of
 edge h has volume h^3 / (6 sqrt 2) = 0.1179 h^3; Delaunay meshes of a graded field
@@ -52,8 +58,15 @@ import tomllib
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
+import sys  # noqa: E402
+sys.path.insert(0, str(HERE))
+from general_mesh_manifest import case_kind, thin_build_options  # noqa: E402
 TUBE_SECTOR_SPAN_DEGREES = 270.0   # the dielectric side of a metal edge (3 / 4 turn)
 DIELECTRIC_FRACTION = 0.75         # of a ball / cylinder around a metal edge or corner
+# Thin sheet (decision 66): the whole turn around the sheet edge is dielectric.
+THIN_TUBE_SECTOR_SPAN_DEGREES = 360.0
+THIN_DIELECTRIC_FRACTION = 1.0
+THIN_TUBES_PER_SIDE, FABRICATED_TUBES_PER_SIDE = 1, 2
 TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING = 0.5
 BAND_RADIAL_GROWTH = 1.0
 BAND_PROTECTED_DISTANCE_OVER_NORMAL = 2.0
@@ -193,9 +206,10 @@ def metal_sides(loops, lower, upper, tolerance):
     return sides, caps
 
 
-def tube_rings(edge_size, ratio, overetch, metal_thickness, corner_radius):
-    """Largest K with r_K + h_K <= min(Overetch, MetalThickness / 2, CornerIsotropyRadius)."""
-    bound = min(overetch, metal_thickness / 2.0, corner_radius)
+def tube_rings(edge_size, ratio, overetch, metal_thickness, corner_radius, *, thin=False):
+    """Largest K with r_K + h_K <= min(Overetch, MetalThickness / 2, CornerIsotropyRadius)
+    (a thin sheet: CornerIsotropyRadius alone, decision 66)."""
+    bound = corner_radius if thin else min(overetch, metal_thickness / 2.0, corner_radius)
     sizes, radius = [], 0.0
     size = edge_size
     while radius + size + size <= bound or not sizes:
@@ -265,8 +279,12 @@ def trace_basis_integral(vertices_path, triangles_path, ratio, far, growth):
             "Integral": integral}
 
 
-def estimate(paths, options, tetrahedra_per_cubic_size):
-    """Component integrals and the element estimate of one case from its frozen inputs."""
+def estimate(paths, options, tetrahedra_per_cubic_size, kind="fabricated"):
+    """Component integrals and the element estimate of one case from its frozen inputs
+    (kind fabricated or thin)."""
+    thin = kind == "thin"
+    tubes_per_side = THIN_TUBES_PER_SIDE if thin else FABRICATED_TUBES_PER_SIDE
+    dielectric_fraction = THIN_DIELECTRIC_FRACTION if thin else DIELECTRIC_FRACTION
     process = tomllib.loads(Path(paths["Process"]).read_text())
     recipe = json.loads(Path(paths["MeshRecipe"]).read_text())
     radius, thickness, overetch = process["Radius"], process["MetalThickness"], process["Overetch"]
@@ -285,29 +303,35 @@ def estimate(paths, options, tetrahedra_per_cubic_size):
     loops = read_loops(paths["Boundary"])
     sides, caps = metal_sides(loops, lower, upper, tolerance)
     corners = sum(1 for loop in loops for _, cls, _ in loop if cls == "Physical")
-    ring_sizes, tube_radius = tube_rings(edge_size, growth_ratio, overetch, thickness, corner_radius)
-    sectors = int(round(TUBE_SECTOR_SPAN_DEGREES / 30.0))
+    ring_sizes, tube_radius = tube_rings(edge_size, growth_ratio, overetch, thickness, corner_radius, thin=thin)
+    sectors = int(round((THIN_TUBE_SECTOR_SPAN_DEGREES if thin else TUBE_SECTOR_SPAN_DEGREES) / 30.0))
     rings = len(ring_sizes)
-    tube_length = 2.0 * sum(sides)
-    layers = sum(2 * math.ceil(side / tangent) for side in sides)
+    tube_length = tubes_per_side * sum(sides)
+    # The caps counted by metal_sides are per side end for two tubes; one tube has half.
+    caps = caps * tubes_per_side // FABRICATED_TUBES_PER_SIDE
+    layers = sum(tubes_per_side * math.ceil(side / tangent) for side in sides)
     prisms = layers * (sectors + 2 * sectors * (rings - 1))
     pyramids = layers * sectors
     offset = tube_radius + TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING * ring_sizes[-1]
     reach = offset + (far - normal) / far_growth
     tube_band = tube_length * shell_integral(
         offset, reach, lambda r: np.minimum(far, normal + far_growth * (r - offset)),
-        lambda r: DIELECTRIC_FRACTION * 2.0 * math.pi * r)
+        lambda r: dielectric_fraction * 2.0 * math.pi * r)
     ball_reach = corner_radius + (far - normal) / far_growth
     ball = shell_integral(0.0, ball_reach,
                           lambda r: corner_ball_law(r, corner_size, growth_ratio, normal, corner_radius, far, far_growth),
-                          lambda r: DIELECTRIC_FRACTION * 4.0 * math.pi * r ** 2)
+                          lambda r: dielectric_fraction * 4.0 * math.pi * r ** 2)
     corner_balls = (corners + caps) * ball
     perimeter = sum(math.dist(loop[i][0], loop[(i + 1) % len(loop)][0])
                     for loop in loops for i in range(len(loop)))
     band_reach = BAND_PROTECTED_DISTANCE_OVER_NORMAL * normal + (far - 3.0 * normal) / far_growth
     band_per_length = shell_integral(0.0, band_reach, lambda r: band_law(r, normal, far, far_growth),
                                      lambda r: 2.0 * math.pi * r)
-    junction = perimeter * band_per_length
+    # Thin: the junction lines are the plane's box edges (one plane per layer sign
+    # set; every distinct plane of the signature), not the trench proxy.
+    planes = len({round(edge["point"][2], 12) for edge in edges})
+    junction_length = planes * 2.0 * (extent[0] + extent[1]) if thin else perimeter
+    junction = junction_length * band_per_length
     far_field = volume / far ** 3
     trace = None
     if "TraceVertices" in paths:
@@ -319,7 +343,11 @@ def estimate(paths, options, tetrahedra_per_cubic_size):
     tetrahedra = total_integral / tetrahedra_per_cubic_size
     return {"Rule": ("N = FarField + TubeBand + CornerBallsAndCaps + JunctionProxy + TraceBasis size-field "
                      "integrals of dV / h^3 divided by TetrahedraPerCubicSize, plus the tube prisms and "
-                     "pyramids; compared with MaximumElements before the build (fail closed)"),
+                     "pyramids; compared with MaximumElements before the build (fail closed)"
+                     + ("; THIN kind (decision 66): one full-turn sheet tube per side, dielectric fraction 1, "
+                        "the junction lines = the plane's box edges" if thin else "")),
+            "Kind": kind, "TubesPerSide": tubes_per_side, "DielectricFraction": dielectric_fraction,
+            "JunctionProxyLength": junction_length,
             "Box": {"Lower": lower.tolist(), "Upper": upper.tolist(), "Volume": volume},
             "Sizes": {"NormalSize": normal, "TangentialSize": tangent, "RequestedTangentialSize": requested_tangent,
                       "FarSize": far, "CornerIsotropyRadius": corner_radius, "EdgeSize": edge_size,
@@ -364,6 +392,11 @@ def build_options_and_model(manifest, manifest_path, case):
             options = dict(calibration["ProductionValues"], **calibration["BuildCommandOptions"])
             origin = {"Options": "Calibration.ProductionValues overridden by Calibration.BuildCommandOptions",
                       "Model": str(production)}
+    elif case_kind(case) == "thin":
+        recipe = manifest["ProductionRecipe"]
+        options = thin_build_options(recipe)
+        origin = {"Options": "ProductionRecipe.BuildCommandOptions overridden by ProductionRecipe.ThinRecipe."
+                             "BuildCommandOptions (a thin case, decision 66)", "Model": str(manifest_path)}
     else:
         recipe = manifest["ProductionRecipe"]
         options = dict(recipe["BuildCommandOptions"])
@@ -377,12 +410,13 @@ def gate(manifest, manifest_path, case):
     calibration case is estimated with its own build options (labeled deviations
     included) and the production manifest's model."""
     options, model, origin = build_options_and_model(manifest, manifest_path, case)
-    result = estimate(case_paths(manifest, manifest_path, case), options, model["TetrahedraPerCubicSize"])
+    result = estimate(case_paths(manifest, manifest_path, case), options, model["TetrahedraPerCubicSize"],
+                      kind=case_kind(case) if "Calibration" not in manifest else "fabricated")
     result["Options"] = options
     result["Origin"] = origin
     cap = manifest["Gates"]["MaximumElements"]
     result.update({"MaximumElements": cap, "EstimateOverCap": result["EstimatedElements"] / cap,
-                   "Passed": result["EstimatedElements"] <= cap})
+                   "Passed": bool(result["EstimatedElements"] <= cap)})
     return result
 
 
