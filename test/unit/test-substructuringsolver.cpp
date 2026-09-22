@@ -579,7 +579,9 @@ TEST_CASE("SubstructuringSolver magnetostatic inductance matrix",
   // (pure curl-curl energy). The region-condensed matrix must match a monolith computing
   // the same quantities, and be symmetric.
   const int order = GENERATE(1, 2);
+  const bool tet = GENERATE(false, true);
   CAPTURE(order);
+  CAPTURE(tet);
   const double mu_r = 1.0, mu_e = 4.0;
   json config = {
       {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
@@ -598,7 +600,7 @@ TEST_CASE("SubstructuringSolver magnetostatic inductance matrix",
   IoData iodata(config, false);
 
   std::vector<std::unique_ptr<Mesh>> mesh;
-  mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(6)));
+  mesh.push_back(std::make_unique<Mesh>(tet ? MakeWavyTetSplit(6) : MakeSplitCube(6)));
   SubstructuringSolver ss(iodata, mesh);
   ss.CondenseEnvironment();
   std::vector<Vector> As = {ss.SolveExcitation(1), ss.SolveExcitation(2)};
