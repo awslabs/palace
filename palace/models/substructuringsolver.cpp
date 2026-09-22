@@ -252,6 +252,7 @@ struct SubstructuringSolver::Impl
   std::unique_ptr<KspSolver> env_ksp;
 #if defined(MFEM_USE_SUPERLU)
   std::unique_ptr<SuperLUSolver> env_lu;  // direct A_EE factorization (many-RHS materialization)
+  std::unique_ptr<SuperLUSolver> reg_lu;  // direct A_region_free factorization (region pc)
 #endif
   mfem::Array<int> env_ess;  // solve-space essential true DOFs (Gamma + env Dirichlet)
   mutable mfem::ParGridFunction env_pgf, env_sgf;  // parent / submesh transfer buffers
@@ -1127,6 +1128,23 @@ void SubstructuringSolver::CondenseEnvironment()
   // singular-problem option.
   {
     std::unique_ptr<Solver<Operator>> pc;
+    bool use_direct = false;
+#if defined(MFEM_USE_SUPERLU)
+    use_direct = (impl->iodata.solver.linear.type == LinearSolver::SUPERLU);
+#endif
+#if defined(MFEM_USE_SUPERLU)
+    if (use_direct)
+    {
+      // Direct factorization of A_region_free: an (near-)exact region preconditioner, so the
+      // outer CG on the condensed operator converges in a few iterations.
+      impl->reg_lu = std::make_unique<SuperLUSolver>(impl->iodata, comm, 0);
+      impl->reg_lu->SetOperator(*impl->A_region_free);
+      pc = std::make_unique<CallableSolver>(
+          impl->A_region_free->Height(),
+          [pi](const mfem::Vector &r, mfem::Vector &z) { pi->reg_lu->Mult(r, z); });
+    }
+    else
+#endif
     if (impl->BuildRegionGmg())
     {
       // Order>=2 H1: geometric multigrid on the region submesh, routed through the region
