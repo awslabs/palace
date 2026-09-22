@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
@@ -86,12 +87,44 @@ std::unique_ptr<mfem::ParMesh> MakeColumnSplit(int nx)
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
 }
 
+// An unstructured tetrahedral cube split by a wavy (non-planar) interface into region (attr 1)
+// and environment (attr 2). Tets + a curved interface exercise the DOF maps and interface
+// identification on a more realistic mesh than the structured hex half-space split, while
+// keeping the x=0 / x=1 terminal-face convention (bdr attr 1 / 2, sides 3).
+std::unique_ptr<mfem::ParMesh> MakeWavyTetSplit(int nx)
+{
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(nx, nx, nx, mfem::Element::TETRAHEDRON);
+  auto iface = [](double y, double z)
+  { return 0.5 + 0.15 * std::sin(M_PI * y) * std::sin(M_PI * z); };
+  for (int e = 0; e < serial.GetNE(); e++)
+  {
+    mfem::Vector c;
+    serial.GetElementCenter(e, c);
+    serial.SetAttribute(e, (c(0) < iface(c(1), c(2))) ? 1 : 2);
+  }
+  for (int b = 0; b < serial.GetNBE(); b++)
+  {
+    mfem::Array<int> vtx;
+    serial.GetBdrElementVertices(b, vtx);
+    double xc = 0.0;
+    for (int j = 0; j < vtx.Size(); j++)
+    {
+      xc += serial.GetVertex(vtx[j])[0];
+    }
+    xc /= vtx.Size();
+    serial.SetBdrAttribute(b, xc < 1e-9 ? 1 : (xc > 1.0 - 1e-9 ? 2 : 3));
+  }
+  serial.SetAttributes();
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
 }  // namespace
 
 TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
           "[substructure][Serial][Parallel]")
 {
-  auto run = [](double eps_r, double eps_e, int order)
+  auto run = [](double eps_r, double eps_e, int order,
+                const std::function<std::unique_ptr<mfem::ParMesh>()> &make_mesh)
   {
     json config = {
         {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
@@ -110,7 +143,7 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
     IoData iodata(config, false);
 
     std::vector<std::unique_ptr<Mesh>> mesh;
-    mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(6)));
+    mesh.push_back(std::make_unique<Mesh>(make_mesh()));
 
     // Region-condensed solve (parent true-DOF solution).
     SubstructuringSolver ss(iodata, mesh);
@@ -223,19 +256,28 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
 
   SECTION("uniform permittivity, order 1")
   {
-    run(1.0, 1.0, 1);
+    run(1.0, 1.0, 1, [] { return MakeSplitCube(6); });
   }
   SECTION("contrast across interface, order 1")
   {
-    run(1.0, 10.0, 1);
+    run(1.0, 10.0, 1, [] { return MakeSplitCube(6); });
   }
   SECTION("contrast across interface, order 2")
   {
-    run(1.0, 10.0, 2);
+    run(1.0, 10.0, 2, [] { return MakeSplitCube(6); });
   }
   SECTION("contrast across interface, order 3")
   {
-    run(1.0, 10.0, 3);
+    run(1.0, 10.0, 3, [] { return MakeSplitCube(6); });
+  }
+  // Unstructured tets + a curved (wavy) interface, vs the monolith.
+  SECTION("wavy tet interface, contrast, order 1")
+  {
+    run(1.0, 10.0, 1, [] { return MakeWavyTetSplit(8); });
+  }
+  SECTION("wavy tet interface, contrast, order 2")
+  {
+    run(1.0, 10.0, 2, [] { return MakeWavyTetSplit(8); });
   }
 }
 
