@@ -188,8 +188,11 @@ class StoredCampaignGateTest(unittest.TestCase):
         recorded = json.loads((ASSESSMENT / "gallery-physics-06b" / "preflight" / "stage-estimate.json").read_text())
         counts = {"Vertices": 428366, "Edges": 2489399, "TriangleFaces": 3630370, "QuadFaces": 276012,
                   "Tetrahedra": 1659373, "Prisms": 172692, "Pyramids": 13284}
+        # The recorded estimate ran at the cost model's measured block size 6 with the
+        # pair-scaled reducer formula (before decision 62(1)): reproduced as recorded.
+        model = {**estimate_stages.load_cost_model(), "ReducerEvaluationFraction": 0.0}
         estimate = estimate_stages.estimate(counts, [("p4-135", 4, 135), ("p5-8", 5, 8), ("p3-8", 3, 8)],
-                                            local_edge=("local-edge", 4, 8))
+                                            local_edge=("local-edge", 4, 8), block_size=6, model=model)
         self.assertTrue(estimate["FitsOneJob"])
         for name in ("p4-135", "p5-8", "p3-8", "local-edge"):
             for factor in ("1.0", "1.5", "2.0"):
@@ -380,7 +383,9 @@ class ControlsPlanAndEstimateRuleTest(unittest.TestCase):
         self.assertEqual([s["Name"] for s in plan["Stages"]], ["x-p4-worker", "x-p4-reducer", "x-p4-local-edge"])
         self.assertEqual(plan["Stages"][1]["Requires"], ["x-p4-worker"])
         self.assertEqual(plan["Stages"][0]["Environment"]["PALACE_RESPONSE_ARCHIVE_ONLY"], "1")
-        self.assertEqual(plan["Stages"][1]["Environment"]["PALACE_RESPONSE_BLOCK_SIZE"], "6")
+        self.assertEqual(plan["Stages"][1]["Environment"]["PALACE_RESPONSE_BLOCK_SIZE"], "48")
+        self.assertEqual(plan["ReducerBlockSize"], 48)
+        self.assertEqual(build_plan.DEFAULT_REDUCER_BLOCK_SIZE, 48)
         self.assertEqual(plan["Stages"][2]["Environment"], {})
         self.assertEqual(len(plan["PinnedSHA256"]), 5)
         self.assertEqual(plan["BinarySHA256"], "f" * 64)
@@ -403,14 +408,88 @@ class ControlsPlanAndEstimateRuleTest(unittest.TestCase):
     def test_stage_estimate_scales_with_sources_and_dofs(self):
         model = estimate_stages.load_cost_model()
         counts = model["MeasuredMesh"]["EntityCounts"]
-        same = estimate_stages.estimate_stage(model, 4, 80, counts)
+        same = estimate_stages.estimate_stage(model, 4, 80, counts, model["MeasuredBlockSize"])
         self.assertAlmostEqual(same["DOFRatioVsMeasured"], 1.0)
         self.assertAlmostEqual(same["ReducerSecondsEstimate"], model["Stages"]["p4"]["ReducerPalaceSeconds"], places=6)
+        self.assertEqual(same["ReducerBlockPairs"], 105)
+        self.assertEqual(same["ReducerSourceEvaluations"], 80 * 14)
         self.assertAlmostEqual(same["ByPCGFactor"]["1.0"]["WorkerSecondsEstimate"],
                                model["Stages"]["p4"]["WorkerNonSourceSeconds"] + 80 * model["Stages"]["p4"]["MeanPerSourceSeconds"], places=6)
-        more = estimate_stages.estimate_stage(model, 4, 160, counts)
+        more = estimate_stages.estimate_stage(model, 4, 160, counts, model["MeasuredBlockSize"])
         self.assertGreater(more["ByPCGFactor"]["1.0"]["WorkerSecondsEstimate"], same["ByPCGFactor"]["1.0"]["WorkerSecondsEstimate"])
         self.assertGreater(more["ReducerPairs"], same["ReducerPairs"])
+
+    def test_run_stages_parses_the_streaming_reducer_progress(self):
+        """Decision 62(4): the streaming reducer logs one line per source and the per-rank
+        sample counts; run_stages.parse_log records them beside the block-pair progress."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("run_stages", HERE / "qualify" / "run_stages.py")
+        run_stages = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(run_stages)
+        text = (" Archived response reduction: 8 sources, 3 interfaces, quadrature samples per rank min 64665, "
+                "max 100476, total 487776 (streaming; block size 48 recorded)\n"
+                " Archived response source 1/8\n Archived response source 8/8\n"
+                " Archived response reduction complete: 8 sources streamed once\n"
+                "PCG solver converged in 12 iterations\n")
+        parsed = run_stages.parse_log(text)
+        self.assertEqual(parsed["StreamedSourcesProgress"], [[1, 8], [8, 8]])
+        self.assertEqual(parsed["ReductionSamples"], {"Sources": 8, "Interfaces": 3, "PerRankMin": 64665,
+                                                      "PerRankMax": 100476, "Total": 487776})
+        self.assertEqual(parsed["BlockPairsProgress"], [])
+        self.assertEqual(parsed["PCG"], [12])
+
+    def test_reducer_estimate_shrinks_with_the_block_size_evaluation_part_only(self):
+        """Decision 62(1): at block size b the reducer evaluates every source ceil(N / b)
+        times; the evaluation fraction of the measured pair seconds scales with it, the
+        Gram part with the source pairs, the setup not at all."""
+        model = estimate_stages.load_cost_model()
+        counts = model["MeasuredMesh"]["EntityCounts"]
+        measured = model["Stages"]["p4"]
+        at6 = estimate_stages.estimate_stage(model, 4, 80, counts, 6)
+        at48 = estimate_stages.estimate_stage(model, 4, 80, counts, 48)
+        default = estimate_stages.estimate_stage(model, 4, 80, counts)
+        self.assertEqual(default["ReducerBlockSize"], build_plan.DEFAULT_REDUCER_BLOCK_SIZE)
+        self.assertEqual((at48["ReducerBlockPairs"], at48["ReducerSourceEvaluations"]), (3, 160))
+        parts6, parts48 = at6["ReducerSecondsEstimateParts"], at48["ReducerSecondsEstimateParts"]
+        self.assertAlmostEqual(parts6["Setup"], parts48["Setup"])
+        self.assertAlmostEqual(parts6["Gram"], parts48["Gram"])
+        self.assertAlmostEqual(parts48["Evaluation"], parts6["Evaluation"] * 160 / 1120)
+        self.assertAlmostEqual(parts6["Evaluation"], measured["ReducerPairSeconds"] * model["ReducerEvaluationFraction"])
+        self.assertAlmostEqual(sum(parts48.values()), at48["ReducerSecondsEstimate"])
+        self.assertLess(at48["ReducerSecondsEstimate"], at6["ReducerSecondsEstimate"])
+        self.assertGreater(at48["ReducerSecondsEstimate"], parts6["Setup"] + parts6["Gram"])
+        # The calibration (PBS 46685, two-edge p4 at b = 6 / 48): evaluation fraction 0.97,
+        # 0.068 GB of reducer peak per resident field per million H1 DOFs (84 more fields at b = 48).
+        self.assertEqual((model["ReducerEvaluationFraction"], model["ReducerResidentFieldGBPerMillionH1"]), (0.97, 0.068))
+        self.assertAlmostEqual(at6["ReducerPalacePeakGBEstimate"], measured["ReducerPalacePeakGB"])
+        self.assertAlmostEqual(at48["ReducerPalacePeakGBEstimate"] - at6["ReducerPalacePeakGBEstimate"],
+                               84 * 0.068 * measured["H1"] / 1e6)
+        self.assertAlmostEqual(at48["ReducerResidentFieldsGBEstimate"], 84 * 0.068 * measured["H1"] / 1e6)
+        # Reproduces the measured two-edge p4 pair (78 sources, H1 7.97M): 86.9 -> 15.3 s, 45.6 -> 91.1 GB.
+        two_edge = {"Vertices": 91_000, "Edges": 600_000, "TriangleFaces": 1_000_000, "QuadFaces": 40_000,
+                    "Tetrahedra": 470_000, "Prisms": 44_000, "Pyramids": 3_000}
+        e6, e48 = (estimate_stages.estimate_stage(model, 4, 78, two_edge, b) for b in (6, 48))
+        self.assertAlmostEqual(e6["ReducerSecondsEstimateParts"]["Evaluation"] / e48["ReducerSecondsEstimateParts"]["Evaluation"],
+                               1014 / 156)
+        whole = estimate_stages.estimate(counts, [("p4-80", 4, 80)], block_size=48)
+        self.assertEqual(whole["ReducerBlockSize"], 48)
+        self.assertEqual(whole["CostModel"]["MeasuredBlockSize"], 6)
+        with self.assertRaises(ValueError):
+            estimate_stages.estimate_stage(model, 4, 80, counts, 0)
+        with self.assertRaises(ValueError):
+            build_plan.reducer_environment(0)
+        self.assertEqual(build_plan.reducer_environment(7), {"PALACE_RESPONSE_REDUCE_ONLY": "1", "PALACE_RESPONSE_BLOCK_SIZE": "7"})
+        # summarize_cost reads the block size the reducer stage ran at.
+        if not campaign_available("four-edge-physics-11"):
+            self.skipTest("four-edge-physics-11 campaign not available")
+        status = json.loads((StoredCampaign("four-edge-physics-11").results / "status.json").read_text())
+        summary = summarize_cost.summarize(status, full_sources=80, nodes=1)
+        main = summary["Stages"]["va-p4"]
+        self.assertEqual((main["ReducerBlockSize"], main["ReducerBlockPairs"], main["ReducerSourceEvaluations"]), (6, 105, 1120))
+        for stage in status["Stages"]:
+            stage["Environment"].pop("PALACE_RESPONSE_BLOCK_SIZE", None)
+        main = summarize_cost.summarize(status, full_sources=80, nodes=1, block_size=48)["Stages"]["va-p4"]
+        self.assertEqual((main["ReducerBlockSize"], main["ReducerBlockPairs"]), (48, 3))
 
     def test_compare_offsets_and_free_view(self):
         tmp = Path(tempfile.mkdtemp())

@@ -210,6 +210,63 @@ TEST_CASE("Interface ownership exhaustive surface quadrature",
       CHECK_THAT(sum, Catch::Matchers::WithinAbs(reference * (i + 1) * (j + 1), 1e-12));
     }
   }
+  // The streaming one-pass Gram (the archive reduction, decision 62(4)) reproduces the
+  // batched matrices to roundoff: the same samples (ownership selection included), each
+  // field evaluated once into its amplitude row, S = F W F^T assembled from the rows.
+  {
+    const auto samples = matrix_post.CacheInterfaceResponseSamples();
+    REQUIRE(samples.size() == 2);
+    std::size_t sample_total = 0;
+    for (const auto &interface_samples : samples)
+    {
+      CHECK(interface_samples.components == 4);
+      CHECK(interface_samples.Count() == interface_samples.elements.size());
+      CHECK(interface_samples.Count() == interface_samples.distances.size());
+      sample_total += interface_samples.Count();
+    }
+    Mpi::GlobalSum(1, &sample_total, Mpi::World());
+    CHECK(sample_total > 0);
+    const GridFunction *fields[2] = {&field, &second};
+    for (const auto &interface_samples : samples)
+    {
+      std::vector<double> rows(2 * interface_samples.RowSize(), 0.0);
+      for (int i = 0; i < 2; i++)
+      {
+        matrix_post.EvaluateInterfaceResponseRow(interface_samples, *fields[i], nullptr,
+                                                 rows.data() + i * interface_samples.RowSize());
+      }
+      const auto streamed = matrix_post.AssembleInterfaceResponseMatrices(
+          interface_samples, rows.data(), 2, Mpi::World());
+      const auto &batched = matrices.at(interface_samples.interface_index);
+      REQUIRE(streamed.size() == batched.size());
+      for (std::size_t entry = 0; entry < batched.size(); entry++)
+      {
+        CHECK(streamed[entry].distance == batched[entry].distance);
+        const mfem::DenseMatrix *pairs[6][2] = {
+            {&streamed[entry].energy_total, &batched[entry].energy_total},
+            {&streamed[entry].energy_inside, &batched[entry].energy_inside},
+            {&streamed[entry].energy_total_normal, &batched[entry].energy_total_normal},
+            {&streamed[entry].energy_inside_normal, &batched[entry].energy_inside_normal},
+            {&streamed[entry].energy_total_tangential,
+             &batched[entry].energy_total_tangential},
+            {&streamed[entry].energy_inside_tangential,
+             &batched[entry].energy_inside_tangential}};
+        for (const auto &pair : pairs)
+        {
+          for (int i = 0; i < 2; i++)
+          {
+            for (int j = 0; j < 2; j++)
+            {
+              const double scale = std::max(std::abs((*pair[1])(i, j)), 1e-300);
+              CHECK_THAT((*pair[0])(i, j) - (*pair[1])(i, j),
+                         Catch::Matchers::WithinAbs(0.0, 1e-12 * std::max(scale, reference)));
+              CHECK((*pair[0])(i, j) == (*pair[0])(j, i));
+            }
+          }
+        }
+      }
+    }
+  }
   partitioned.dielectric.erase(2);
   CHECK_THROWS(SurfacePostOperator(partitioned, ProblemType::ELECTROSTATIC, materials,
                                    h1_space, nd_space));

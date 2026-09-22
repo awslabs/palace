@@ -201,8 +201,14 @@ class JobSplitTest(unittest.TestCase):
         cls.layout = qualify_library.stage_layout("c", [4], [3, 5], 225, 8)
         stages = [(item["EstimateKey"], item["Order"], item["Sources"]) for item in cls.layout if item["Kind"] == "response"]
         local = next(item for item in cls.layout if item["Kind"] == "local-edge")
-        cls.estimate = estimate_stages.estimate(cls.counts, stages, model=cls.model, profile=cls.profile,
+        # The recorded 7f03 estimate and split (decision 61b) ran at the cost model's
+        # measured block size 6 with the pair-scaled reducer formula (before decision
+        # 62(1) split the block-pair part into evaluation + Gram): reproduced as recorded.
+        cls.estimate = estimate_stages.estimate(cls.counts, stages, model={**cls.model, "ReducerEvaluationFraction": 0.0},
+                                                profile=cls.profile, block_size=6,
                                                 local_edge=(local["EstimateKey"], local["Order"], local["Sources"]))
+        cls.estimate_default = estimate_stages.estimate(cls.counts, stages, model=cls.model, profile=cls.profile,
+                                                        local_edge=(local["EstimateKey"], local["Order"], local["Sources"]))
 
     def split(self, mode, max_jobs, fixed=None):
         policy = job_split.normalize_policy(mode, max_jobs=max_jobs, walltime_seconds=self.profile["WalltimeSeconds"],
@@ -213,6 +219,13 @@ class JobSplitTest(unittest.TestCase):
     def test_single_job_estimate_is_the_recorded_fail_closed_one(self):
         self.assertFalse(self.estimate["FitsOneJob"])
         self.assertAlmostEqual(self.estimate["JobSecondsEstimateWithPreflightAndMargin"]["2.0"], 29271.5, delta=1.0)
+        # At the decision-62(1) default (b = 48) the reducer estimate shrinks (its evaluation
+        # part 38 -> 5 block rows) but 7f03 still does not fit one job: fail closed unchanged.
+        self.assertEqual(self.estimate_default["ReducerBlockSize"], 48)
+        self.assertLess(self.estimate_default["Stages"]["p4-225"]["ReducerSecondsEstimate"],
+                        self.estimate["Stages"]["p4-225"]["ReducerSecondsEstimate"])
+        self.assertFalse(self.estimate_default["FitsOneJob"])
+        self.assertGreater(self.estimate_default["JobSecondsEstimateWithPreflightAndMargin"]["2.0"], self.profile["WalltimeSeconds"])
         single = self.split("fixed", 4, fixed=1)
         self.assertFalse(single["Fits"])
         self.assertIsNone(single["N"])
@@ -368,6 +381,41 @@ class JobSplitTest(unittest.TestCase):
         with self.assertRaises(qualify_library.CaseStop):
             qualify_library.job_policy_of(argparse.Namespace(job_policy="fixed", fixed_jobs=None, max_jobs=2), physics_run, self.profile)
 
+    def test_manifest_reducer_block_size_default_and_command_line_override(self):
+        """Decision 62(1): the production recipe records PhysicsRun.ReducerBlockSize 48
+        (PreviousValue 6); case_inputs and general_mesh_manifest validate it; the command
+        line overrides it and the origin is recorded; the plan's reducer stages carry it."""
+        from general_mesh_manifest import validate_physics_run
+        manifest = json.loads(MANIFEST.read_text())
+        manifest["Path"] = str(MANIFEST)
+        block = manifest["ProductionRecipe"]["PhysicsRun"]["ReducerBlockSize"]
+        self.assertEqual((block["Value"], block["PreviousValue"]), (48, 6))
+        self.assertIn("62(1)", block["Provenance"])
+        physics_run = case_inputs.physics_run_parameters(manifest)
+        self.assertEqual(physics_run["ReducerBlockSize"], 48)
+        validate_physics_run(manifest["ProductionRecipe"])
+        for broken in ({"Value": 0, "Rule": "x"}, {"Value": 6}, {"Value": "6", "Rule": "x"}, {"Value": True, "Rule": "x"}, 6):
+            recipe = json.loads(json.dumps(manifest["ProductionRecipe"]))
+            recipe["PhysicsRun"]["ReducerBlockSize"] = broken
+            with self.assertRaisesRegex(ValueError, "ReducerBlockSize"):
+                validate_physics_run(recipe)
+            with self.assertRaisesRegex(case_inputs.CaseInputError, "ReducerBlockSize"):
+                case_inputs.physics_run_parameters({**manifest, "ProductionRecipe": recipe})
+        chosen = qualify_library.reducer_block_size_of(argparse.Namespace(reducer_block_size=None), physics_run)
+        self.assertEqual((chosen["Value"], chosen["Origin"]), (48, "manifest ProductionRecipe.PhysicsRun.ReducerBlockSize"))
+        chosen = qualify_library.reducer_block_size_of(argparse.Namespace(reducer_block_size=6), physics_run)
+        self.assertEqual((chosen["Value"], chosen["Origin"]), (6, "--reducer-block-size"))
+        chosen = qualify_library.reducer_block_size_of(argparse.Namespace(reducer_block_size=None), {"Order": 4})
+        self.assertEqual((chosen["Value"], chosen["Origin"]), (48, "built-in default build_plan.DEFAULT_REDUCER_BLOCK_SIZE"))
+        self.assertIn("14 MB", chosen["Rule"])
+        with self.assertRaises(qualify_library.CaseStop):
+            qualify_library.reducer_block_size_of(argparse.Namespace(reducer_block_size=0), physics_run)
+        parser = argparse.ArgumentParser()
+        qualify_library.add_arguments(parser)
+        self.assertIsNone(parser.parse_args(["--build-record", "b", "--reference", "none", "--remote", "h:/r", "--frozen-binary-sha256", "f"]).reducer_block_size)
+        self.assertEqual(parser.parse_args(["--build-record", "b", "--reference", "none", "--remote", "h:/r", "--frozen-binary-sha256", "f",
+                                            "--reducer-block-size", "12"]).reducer_block_size, 12)
+
     def test_compare_split_matrices_reports_roundoff_and_differences(self):
         tmp = Path(tempfile.mkdtemp(prefix="split-compare-"))
         try:
@@ -488,10 +536,15 @@ class QualifyDryRunTest(unittest.TestCase):
         spec = CASES[case_id]
         campaign = ASSESSMENT / spec["Campaign"]
         root = self.tmp / f"dry-{spec['Prefix']}"
-        record = self.dry_run(case_id, root)
+        # The recorded campaigns reduced at PALACE_RESPONSE_BLOCK_SIZE 6 (before decision
+        # 62(1)): the command-line override reproduces their plans; the origin is recorded.
+        record = self.dry_run(case_id, root, extra=("--reducer-block-size", "6"))
         case = record["Cases"][0]
         self.assertEqual(case["Status"], "planned", case.get("StoppedBy"))
         self.assertIsNone(case["StoppedBy"])
+        self.assertEqual((case["ReducerBlockSize"]["Value"], case["ReducerBlockSize"]["Origin"]), (6, "--reducer-block-size"))
+        self.assertEqual(record["Library"]["ReducerBlockSize"]["CommandLine"], 6)
+        self.assertEqual(case["Estimate"]["ReducerBlockSize"], 6)
         self.assertEqual(case["Sources"]["Count"], spec["Sources"])
         self.assertEqual(case["Controls"]["Indices"], spec["Controls"])
         self.assertTrue(case["Estimate"]["FitsOneJob"])
@@ -568,7 +621,7 @@ class QualifyDryRunTest(unittest.TestCase):
         manifest["Path"] = str(MANIFEST)
         args = argparse.Namespace(reference=reference, control_source=controls or spec["Controls"], control_count=8,
                                   stage_prefix=spec["Prefix"], orders=[], controls=[3, 5], frozen_binary_sha256=BINARY_SHA256,
-                                  max_jobs=2, job_policy=None, fixed_jobs=None)
+                                  max_jobs=2, job_policy=None, fixed_jobs=None, reducer_block_size=None)
         profile = json.loads((HERE / "qualify" / "cluster-profile.json").read_text())
         model = estimate_stages.load_cost_model()
         table, digest = gates.load_gates()
@@ -640,7 +693,7 @@ class QualifyDryRunTest(unittest.TestCase):
         campaign = ASSESSMENT / spec["Campaign"]
         args = argparse.Namespace(reference=campaign / "reference", control_source=spec["Controls"], control_count=8,
                                   stage_prefix=spec["Prefix"], orders=[], controls=[3, 5], frozen_binary_sha256=BINARY_SHA256,
-                                  max_jobs=2, job_policy=None, fixed_jobs=None)
+                                  max_jobs=2, job_policy=None, fixed_jobs=None, reducer_block_size=None)
         profile = json.loads((HERE / "qualify" / "cluster-profile.json").read_text())
         model = estimate_stages.load_cost_model()
         table, digest = gates.load_gates()
@@ -758,7 +811,7 @@ class QualifyDryRunTest(unittest.TestCase):
                                       stage_prefix=None, case=None, root=self.tmp / "concurrent", dry_run=False, resume=False,
                                       monitor_interval=0, monitor_polls=10, cluster_profile=HERE / "qualify" / "cluster-profile.json",
                                       cost_model=estimate_stages.COST_MODEL, gates=gates.GATES_FILE, job_policy=None, fixed_jobs=None,
-                                      merge_into=None)
+                                      merge_into=None, reducer_block_size=None)
             # Each coupon binds its own reference campaign: a directory holding both inputs trees.
             reference = self.tmp / "both-references"
             if not reference.exists():
@@ -927,7 +980,8 @@ class QualifyDryRunTest(unittest.TestCase):
                                       frozen_binary_sha256=BINARY_SHA256, stage_prefix=None, case=[case_id], root=self.tmp / "split",
                                       dry_run=False, resume=False, monitor_interval=0, monitor_polls=10,
                                       cluster_profile=HERE / "qualify" / "cluster-profile.json", cost_model=estimate_stages.COST_MODEL,
-                                      gates=gates.GATES_FILE, job_policy="fixed", fixed_jobs=2, merge_into=previous_library)
+                                      gates=gates.GATES_FILE, job_policy="fixed", fixed_jobs=2, merge_into=previous_library,
+                                      reducer_block_size=None)
             record = qualify_library.run_qualify(args, log=lambda message: None)
         finally:
             for name, fake in saved.items():

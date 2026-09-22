@@ -38,6 +38,7 @@ usage: device_coupons.py DEVICE_CONFIG --palace PATH --output DIR [--manifest PA
        [--mesh-recipe REPOSITORY_PATH] [--ring-size N] [--cap-triangulation METHOD] [--register]
 """
 import argparse
+import concurrent.futures
 import copy
 import hashlib
 import json
@@ -275,17 +276,27 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
     return record
 
 
+DEFAULT_REGISTER_JOBS = 2
+
+
 def register_device_sources(record, *, manifest_path, mesh_recipe=None, work=None, python=sys.executable, julia=None,
-                            log=print, probe=None):
+                            log=print, probe=None, jobs=DEFAULT_REGISTER_JOBS):
     """Step 4: register every produced source directory (idempotent by content); the
-    registration record of each is attached to the device record and written back."""
+    registration record of each is attached to the device record and written back.
+    The manifest-free part (digests, scope, the labels-only probe and the contract
+    derivation: register_case.prepare_registration) runs for `jobs` coupons at once;
+    the manifest append (register_case.commit_registration) is serial, in the device
+    record's coupon order (decision 62(2))."""
     manifest_path = Path(manifest_path).resolve()
     manifest = json.loads(manifest_path.read_text())
     recipe = mesh_recipe or shared_mesh_recipe(manifest)
-    for coupon in record["Coupons"]:
+    if not isinstance(jobs, int) or isinstance(jobs, bool) or jobs < 1:
+        raise DeviceAdapterError(f"the registration pool size must be an integer >= 1, not {jobs!r}")
+
+    def prepare(coupon):
         case_id = coupon["Case"]
         try:
-            registration = register_case.register(
+            return register_case.prepare_registration(
                 case_id, coupon["Directory"], footprint=register_case.PRODUCER_DEFAULT_ETCH_FOOTPRINT,
                 inventory_status=INVENTORY_STATUS, manifest_path=manifest_path, mesh_recipe=recipe,
                 provenance=f"device {record['Device']['Config']} (SHA256 {record['Device']['SHA256'][:12]}...), requirement "
@@ -293,14 +304,36 @@ def register_device_sources(record, *, manifest_path, mesh_recipe=None, work=Non
                 work=(Path(work) / case_id) if work is not None else None, python=python, julia=julia,
                 **({"probe": probe} if probe is not None else {}))
         except (register_case.RegistrationError, ValueError) as error:
+            return error
+
+    def outcome(coupon, prepared):
+        case_id = coupon["Case"]
+        try:
+            if isinstance(prepared, Exception):
+                raise prepared
+            return register_case.commit_registration(prepared, manifest_path=manifest_path)
+        except (register_case.RegistrationError, ValueError) as error:
             registration = {"Status": register_case.STATUS_FAILED, "Message": str(error)}
             failed = Path(work) / case_id / register_case.REGISTRATION_RECORD if work is not None else None
             if failed is not None and failed.is_file():
                 registration = json.loads(failed.read_text())
+            return registration
+
+    coupons = list(record["Coupons"])
+    started = time.monotonic()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(jobs, max(len(coupons), 1))) as pool:
+        prepared = list(pool.map(prepare, coupons))
+    prepare_seconds = time.monotonic() - started
+    for coupon, item in zip(coupons, prepared):
+        registration = outcome(coupon, item)
         coupon["Registration"] = {key: registration.get(key) for key in
                                   ("Status", "Message", "FixtureVersion", "ContractSHA256", "Scope", "StoppedBy", "Work")}
-        log(f"{case_id}: registration {registration.get('Status')} - {registration.get('Message')}")
+        log(f"{coupon['Case']}: registration {registration.get('Status')} - {registration.get('Message')}")
     record["MeshRecipe"] = recipe
+    record["RegistrationPool"] = {"Jobs": jobs, "PrepareSeconds": prepare_seconds, "TotalSeconds": time.monotonic() - started,
+                                  "Rule": "register_case.prepare_registration (digests, scope, labels-only probe, contract "
+                                          "derivation) for Jobs coupons at once, then commit_registration serially in "
+                                          "coupon order (decision 62(2))"}
     (Path(record["Output"]) / DEVICE_RECORD).write_text(json.dumps(record, indent=2) + "\n")
     return record
 
@@ -321,13 +354,16 @@ def main(argv=None):
     parser.add_argument("--work", type=Path, help="parent of the registration work directories")
     parser.add_argument("--julia", default=shutil.which("julia"))
     parser.add_argument("--python", default=sys.executable)
+    parser.add_argument("--register-jobs", type=int, default=DEFAULT_REGISTER_JOBS,
+                        help=f"coupons whose labels-only probe / contract derivation run at once (default {DEFAULT_REGISTER_JOBS}; "
+                             "the manifest append stays serial)")
     args = parser.parse_args(argv)
     try:
         record = prepare_device_sources(args.device_config, palace=args.palace, output=args.output, manifest_path=args.manifest,
                                         ring_size=args.ring_size, cap_triangulation=args.cap_triangulation, python=args.python)
         if args.register:
             register_device_sources(record, manifest_path=args.manifest, mesh_recipe=args.mesh_recipe, work=args.work,
-                                    python=args.python, julia=args.julia)
+                                    python=args.python, julia=args.julia, jobs=args.register_jobs)
     except DeviceAdapterError as error:
         print(f"DEVICE_ADAPTER_FAILED: {error}", file=sys.stderr)
         return 1

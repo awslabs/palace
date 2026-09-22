@@ -1128,6 +1128,234 @@ SurfacePostOperator::GetInterfaceElectricFieldEnergyMatrices(
   return result;
 }
 
+namespace
+{
+
+// Cache-blocked symmetric rank-k update of the response Gram: for basis rows i >= j,
+// normal(i, j) += sum_s w_s a_i(s, 0) a_j(s, 0) and tangential(i, j) += sum_s w_s
+// sum_{c >= 1} a_i(s, c) a_j(s, c), a_i = rows + i x row_size (sample-major, `components`
+// amplitudes per sample), w_s = sample_weights[s] or 1. Rows are visited in blocks of
+// basis fields over chunks of samples so every product streams contiguous memory.
+void AccumulateInterfaceResponseGram(const double *rows, int basis_size,
+                                     std::size_t sample_count, int components,
+                                     const double *sample_weights, mfem::DenseMatrix &normal,
+                                     mfem::DenseMatrix &tangential)
+{
+  constexpr int basis_block = 8;
+  constexpr std::size_t sample_chunk = 2048;
+  const std::size_t row_size = sample_count * static_cast<std::size_t>(components);
+  for (int ib = 0; ib < basis_size; ib += basis_block)
+  {
+    const int ie = std::min(ib + basis_block, basis_size);
+    for (int jb = 0; jb <= ib; jb += basis_block)
+    {
+      const int je = std::min(jb + basis_block, basis_size);
+      for (std::size_t sb = 0; sb < sample_count; sb += sample_chunk)
+      {
+        const std::size_t se = std::min(sb + sample_chunk, sample_count);
+        for (int i = ib; i < ie; i++)
+        {
+          const double *a = rows + static_cast<std::size_t>(i) * row_size;
+          for (int j = jb; j < std::min(je, i + 1); j++)
+          {
+            const double *b = rows + static_cast<std::size_t>(j) * row_size;
+            double n = 0.0, t = 0.0;
+            for (std::size_t sample = sb; sample < se; sample++)
+            {
+              const double *as = a + sample * components;
+              const double *bs = b + sample * components;
+              double tangential_product = 0.0;
+              for (int c = 1; c < components; c++)
+              {
+                tangential_product += as[c] * bs[c];
+              }
+              const double w = sample_weights ? sample_weights[sample] : 1.0;
+              n += w * (as[0] * bs[0]);
+              t += w * tangential_product;
+            }
+            normal(i, j) += n;
+            tangential(i, j) += t;
+          }
+        }
+      }
+    }
+  }
+  for (int i = 0; i < basis_size; i++)
+  {
+    for (int j = 0; j < i; j++)
+    {
+      normal(j, i) = normal(i, j);
+      tangential(j, i) = tangential(i, j);
+    }
+  }
+}
+
+}  // namespace
+
+std::vector<SurfacePostOperator::InterfaceResponseSamples>
+SurfacePostOperator::CacheInterfaceResponseSamples() const
+{
+  const auto &mesh = *h1_fespace.GetParMesh();
+  const int sdim = mesh.SpaceDimension();
+  const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  std::vector<InterfaceResponseSamples> result;
+  mfem::Vector point(sdim);
+  for (const auto &[idx, data] : eps_surfs)
+  {
+    if (!data.localize_edge_energy)
+    {
+      continue;
+    }
+    InterfaceResponseSamples samples;
+    samples.interface_index = idx;
+    samples.data = &data;
+    samples.components = sdim + 1;
+    const auto attr_marker = mesh::AttrToMarker(bdr_attr_max, data.attr_list);
+    for (int be = 0; be < mesh.GetNBE(); be++)
+    {
+      const int attr = mesh.GetBdrAttribute(be);
+      if (attr <= 0 || attr > attr_marker.Size() || !attr_marker[attr - 1])
+      {
+        continue;
+      }
+      auto *T = const_cast<mfem::ParMesh &>(mesh).GetBdrElementTransformation(be);
+      const auto *fe = h1_fespace.GetBE(be);
+      const auto &ir = data.ownership_rule
+                           ? data.ownership_rule->Get(fe->GetGeomType())
+                           : mfem::IntRules.Get(fe->GetGeomType(),
+                                                fem::DefaultIntegrationOrder::Get(*T));
+      for (int q = 0; q < ir.GetNPoints(); q++)
+      {
+        const auto &ip = ir.IntPoint(q);
+        T->SetIntPoint(&ip);
+        T->Transform(ip, point);
+        if (data.ownership && data.ownership->SelectSlot(point) != data.ownership_slot)
+        {
+          continue;
+        }
+        const auto nearest = data.edge_distance_tree->Nearest(point);
+        MFEM_VERIFY(!data.ownership || ip.weight >= 0.0,
+                    "Ownership matrix quadrature requires nonnegative weights!");
+        samples.elements.push_back(be);
+        samples.rules.push_back(&ir);
+        samples.points.push_back(q);
+        samples.weights.push_back(ip.weight * T->Weight());
+        samples.distances.push_back(std::sqrt(nearest.distance_squared));
+      }
+    }
+    result.push_back(std::move(samples));
+  }
+  return result;
+}
+
+template <InterfaceDielectric Type>
+void SurfacePostOperator::EvaluateInterfaceResponseRowImpl(
+    const InterfaceResponseSamples &samples, const GridFunction &E, const GridFunction *D,
+    double *row) const
+{
+  const auto &data = *samples.data;
+  MFEM_VERIFY(!data.flux_recovery || D,
+              "Streamed interface response requires recovered electric flux!");
+  const auto &mesh = *h1_fespace.GetParMesh();
+  InterfaceDielectricCoefficient<Type> evaluator(E, mat_op, data.t, data.epsilon,
+                                                 data.flux_recovery ? D : nullptr);
+  mfem::Vector field;
+  mfem::ElementTransformation *T = nullptr;
+  int element = -1;
+  for (std::size_t sample = 0; sample < samples.Count(); sample++)
+  {
+    if (samples.elements[sample] != element)
+    {
+      element = samples.elements[sample];
+      T = const_cast<mfem::ParMesh &>(mesh).GetBdrElementTransformation(element);
+    }
+    const auto &ip = samples.rules[sample]->IntPoint(samples.points[sample]);
+    T->SetIntPoint(&ip);
+    evaluator.EvalEnergyField(*T, ip, field);
+    MFEM_ASSERT(field.Size() == samples.components,
+                "Invalid streamed interface energy field size!");
+    const double scale = std::sqrt(0.5 * samples.weights[sample]);
+    double *out = row + sample * static_cast<std::size_t>(samples.components);
+    for (int c = 0; c < samples.components; c++)
+    {
+      out[c] = scale * field[c];
+    }
+  }
+}
+
+void SurfacePostOperator::EvaluateInterfaceResponseRow(
+    const InterfaceResponseSamples &samples, const GridFunction &E, const GridFunction *D,
+    double *row) const
+{
+  switch (samples.data->type)
+  {
+    case InterfaceDielectric::DEFAULT:
+      EvaluateInterfaceResponseRowImpl<InterfaceDielectric::DEFAULT>(samples, E, D, row);
+      break;
+    case InterfaceDielectric::MA:
+      EvaluateInterfaceResponseRowImpl<InterfaceDielectric::MA>(samples, E, D, row);
+      break;
+    case InterfaceDielectric::MS:
+      EvaluateInterfaceResponseRowImpl<InterfaceDielectric::MS>(samples, E, D, row);
+      break;
+    case InterfaceDielectric::SA:
+      EvaluateInterfaceResponseRowImpl<InterfaceDielectric::SA>(samples, E, D, row);
+      break;
+  }
+}
+
+std::vector<SurfacePostOperator::InterfaceResponseMatrix>
+SurfacePostOperator::AssembleInterfaceResponseMatrices(const InterfaceResponseSamples &samples,
+                                                       const double *rows, int basis_size,
+                                                       MPI_Comm comm) const
+{
+  MFEM_VERIFY(basis_size > 0, "Streamed interface response requires basis fields!");
+  const auto &data = *samples.data;
+  auto Assemble = [&](const std::vector<double> *inside_weights, mfem::DenseMatrix &normal,
+                      mfem::DenseMatrix &tangential)
+  {
+    normal.SetSize(basis_size);
+    normal = 0.0;
+    tangential.SetSize(basis_size);
+    tangential = 0.0;
+    if (samples.Count() > 0)
+    {
+      AccumulateInterfaceResponseGram(rows, basis_size, samples.Count(), samples.components,
+                                      inside_weights ? inside_weights->data() : nullptr,
+                                      normal, tangential);
+    }
+    Mpi::GlobalSum(normal.Height() * normal.Width(), normal.GetData(), comm);
+    Mpi::GlobalSum(tangential.Height() * tangential.Width(), tangential.GetData(), comm);
+  };
+
+  mfem::DenseMatrix total_normal, total_tangential;
+  Assemble(nullptr, total_normal, total_tangential);
+
+  std::vector<InterfaceResponseMatrix> result;
+  result.reserve(data.edge_distances.size());
+  std::vector<double> inside_weights(samples.Count());
+  for (const double radius : data.edge_distances)
+  {
+    for (std::size_t sample = 0; sample < samples.Count(); sample++)
+    {
+      inside_weights[sample] =
+          1.0 - EdgeDistanceOutsideWeight(samples.distances[sample], radius,
+                                          data.edge_distance_smoothing);
+    }
+    InterfaceResponseMatrix entry;
+    entry.distance = radius;
+    entry.energy_total_normal = total_normal;
+    entry.energy_total_tangential = total_tangential;
+    Assemble(&inside_weights, entry.energy_inside_normal, entry.energy_inside_tangential);
+    entry.energy_total = entry.energy_total_normal;
+    entry.energy_total += entry.energy_total_tangential;
+    entry.energy_inside = entry.energy_inside_normal;
+    entry.energy_inside += entry.energy_inside_tangential;
+    result.push_back(std::move(entry));
+  }
+  return result;
+}
+
 const SurfacePostOperator::LocalVolumeEdgeEnergyCache &
 SurfacePostOperator::GetLocalVolumeEdgeElectricFieldEnergies(
     const InterfaceDielectricData &data, const GridFunction &E) const

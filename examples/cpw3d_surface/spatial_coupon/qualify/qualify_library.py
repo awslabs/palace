@@ -381,12 +381,15 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
         counts_origin = "computed from the identity mesh (the build record carries no entity counts)"
     stages = [(item["EstimateKey"], item["Order"], item["Sources"]) for item in layout if item["Kind"] == "response"]
     local_edge = next((item for item in layout if item["Kind"] == "local-edge"), None)
+    reducer_block_size = reducer_block_size_of(args, physics_run)
     try:
         estimate = estimate_stages.estimate(counts, stages, model=cost_model, profile=profile,
-                                            local_edge=(local_edge["EstimateKey"], local_edge["Order"], local_edge["Sources"]))
+                                            local_edge=(local_edge["EstimateKey"], local_edge["Order"], local_edge["Sources"]),
+                                            block_size=reducer_block_size["Value"])
     except ValueError as error:
         raise CaseStop("Estimate", str(error))
     estimate["EntityCountsOrigin"] = counts_origin
+    estimate["ReducerBlockSizeOrigin"] = reducer_block_size["Origin"]
     policy = job_policy_of(args, physics_run, profile)
     try:
         split = job_split.plan_split(indices=indices, layout=layout, estimate=estimate, policy=policy, model=cost_model,
@@ -396,11 +399,13 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
     estimate["Split"] = split
     write_json(case_root / "preflight" / "stage-estimate.json", estimate)
     record["JobPolicy"] = policy
+    record["ReducerBlockSize"] = reducer_block_size
     record["Estimate"] = {"Path": str(case_root / "preflight" / "stage-estimate.json"), "FitsOneJob": estimate["FitsOneJob"],
                          "Decision": estimate["Decision"], "H1ByOrder": estimate["Mesh"]["H1ByOrder"],
                          "JobSecondsEstimateByPCGFactor": estimate["JobSecondsEstimateByPCGFactor"],
                          "JobSecondsEstimateWithPreflightAndMargin": estimate["JobSecondsEstimateWithPreflightAndMargin"],
                          "MaxPalacePeakGBEstimate": estimate["MaxPalacePeakGBEstimate"],
+                         "ReducerBlockSize": estimate["ReducerBlockSize"],
                          "MainStageNodeHoursEstimate": {
                              factor: value["StageSecondsEstimate"] * profile["Nodes"] / 3600.0
                              for factor, value in estimate["Stages"][layout[0]["EstimateKey"]]["ByPCGFactor"].items()}}
@@ -456,7 +461,7 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                                      mesh={"Remote": remote_mesh, "SHA256": identity["SHA256"], "Local": identity["Path"]},
                                      stage_layout=layout, estimate=estimate, config_digests=config_digests, trace_pins=trace_pins,
                                      profile=profile, binary=binary, binary_sha256=args.frozen_binary_sha256, mpiexec=mpiexec,
-                                     purpose=purpose, factors=factors)
+                                     purpose=purpose, factors=factors, reducer_block_size=reducer_block_size["Value"])
         write_json(case_root / "main" / "plan.json", plan)
         job_script = build_plan.render_job_script(profile=profile, remote_root=remote_root, remote_case_root=remote_case,
                                                   runner=f"{remote_run}/run_stages.py",
@@ -477,7 +482,8 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                                              stage_layout=layout, split_job=split_job, estimate=estimate, config_digests=config_digests,
                                              trace_pins=trace_pins, profile=profile, binary=binary,
                                              binary_sha256=args.frozen_binary_sha256, mpiexec=mpiexec,
-                                             purpose=f"{purpose}; job {name} of the split {split['Decision']}", factors=factors)
+                                             purpose=f"{purpose}; job {name} of the split {split['Decision']}", factors=factors,
+                                             reducer_block_size=reducer_block_size["Value"])
             write_json(directory_ / "plan.json", plan)
             job_script = build_plan.render_job_script(profile=profile, remote_root=remote_root, remote_case_root=remote_case,
                                                       runner=f"{remote_run}/run_stages.py",
@@ -509,6 +515,20 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                     "radial_shells": inputs.get("RadialShells"),
                     "reference_edge_size": (getattr(args, "reference_edge_size_nm", None) / 1000.0
                                             if getattr(args, "reference_edge_size_nm", None) else None)}
+
+
+def reducer_block_size_of(args, physics_run):
+    """The reducer's PALACE_RESPONSE_BLOCK_SIZE: --reducer-block-size, else the manifest's
+    PhysicsRun.ReducerBlockSize, else build_plan.DEFAULT_REDUCER_BLOCK_SIZE (decision 62(1))."""
+    if args.reducer_block_size is not None:
+        value, origin = args.reducer_block_size, "--reducer-block-size"
+    elif physics_run.get("ReducerBlockSize") is not None:
+        value, origin = physics_run["ReducerBlockSize"], "manifest ProductionRecipe.PhysicsRun.ReducerBlockSize"
+    else:
+        value, origin = build_plan.DEFAULT_REDUCER_BLOCK_SIZE, "built-in default build_plan.DEFAULT_REDUCER_BLOCK_SIZE"
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise CaseStop("ReducerBlockSize", f"the reducer block size must be an integer >= 1, not {value!r} ({origin})")
+    return {"Value": value, "Origin": origin, "Rule": build_plan.REDUCER_BLOCK_SIZE_RULE}
 
 
 def job_policy_of(args, physics_run, profile):
@@ -1052,6 +1072,10 @@ def library_totals(records, *, args, remote, profile, wall_seconds, first_submis
                                                    "and its reducer job",
             "JobPolicy": {"Mode": args.job_policy or "manifest default or frugal", "FixedJobs": args.fixed_jobs,
                           "MaxJobs": args.max_jobs, "Rule": job_split.SPLIT_RULE},
+            "ReducerBlockSize": {"CommandLine": args.reducer_block_size,
+                                 "PerCase": {record["Case"]: record["ReducerBlockSize"] for record in records
+                                             if record.get("ReducerBlockSize")},
+                                 "Rule": build_plan.REDUCER_BLOCK_SIZE_RULE},
             "Splits": {record["Case"]: {"N": record["Split"]["N"], "Blocks": record["Split"]["Blocks"],
                                         "Policy": record["JobPolicy"]["Mode"],
                                         "CriticalPathSeconds": (record.get("Cost") or {}).get("CriticalPathSeconds"),
@@ -1288,6 +1312,9 @@ def add_arguments(parser):
                              "estimated critical path, frugal = the fewest jobs that fit the walltime, fixed = --fixed-jobs; "
                              "default: the manifest's ProductionRecipe.PhysicsRun.JobPolicy, else frugal")
     parser.add_argument("--fixed-jobs", type=int, default=None, help="N of --job-policy fixed")
+    parser.add_argument("--reducer-block-size", type=int, default=None,
+                        help="PALACE_RESPONSE_BLOCK_SIZE of every reducer stage (decision 62(1)); default: the manifest's "
+                             f"ProductionRecipe.PhysicsRun.ReducerBlockSize, else {build_plan.DEFAULT_REDUCER_BLOCK_SIZE}")
     parser.add_argument("--frozen-binary-sha256", required=True, help="SHA-256 of the frozen Palace executable under ROOT")
     parser.add_argument("--stage-prefix", help="stage name prefix (default: the case id)")
     parser.add_argument("--case", action="append", default=None, help="case id (repeatable; default: every case of the build record)")

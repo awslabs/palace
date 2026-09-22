@@ -1,0 +1,271 @@
+{
+  "spatial-10-edge-65450ff47b9b": {
+    "ContractTopLevelEqual": {
+      "BoundaryLabels": true,
+      "CutSurfaceRoles": true,
+      "Derivation": false,
+      "FeatureTopology": true,
+      "MetricSurfaceRoles": true,
+      "ProtectedSupports": true,
+      "SemanticCorners": true,
+      "UnmatchedPolicy": true,
+      "Version": true,
+      "VolumeMaterials": true
+    },
+    "DerivationKeysDiffering": [
+      "BuildCensusSHA256"
+    ],
+    "LabelsEqual": true,
+    "SourceRoleDigestsEqual": {
+      "Signature": true,
+      "Boundary": true,
+      "Mask": true,
+      "Process": true,
+      "ProcessLibrary": true,
+      "BasisContract": true,
+      "TraceVertices": true,
+      "TraceTriangles": true,
+      "Provenance": true,
+      "MeshRecipe": true,
+      "SemanticContract": false
+    },
+    "FixtureVersion": [
+      1,
+      1
+    ],
+    "ProbeSeconds": 15.085089665954001,
+    "ProbePeakGiB": 0.89886474609375,
+    "Labels": [
+      1,
+      3100,
+      3101,
+      5001,
+      5002,
+      5101,
+      5102,
+      6001,
+      6002,
+      6101,
+      6102
+    ]
+  },
+  "spatial-2-edge-8ce3fb213a2d": {
+    "ContractTopLevelEqual": {
+      "BoundaryLabels": true,
+      "CutSurfaceRoles": true,
+      "Derivation": false,
+      "FeatureTopology": true,
+      "MetricSurfaceRoles": true,
+      "ProtectedSupports": true,
+      "SemanticCorners": true,
+      "UnmatchedPolicy": true,
+      "Version": true,
+      "VolumeMaterials": true
+    },
+    "DerivationKeysDiffering": [
+      "BuildCensusSHA256"
+    ],
+    "LabelsEqual": true,
+    "SourceRoleDigestsEqual": {
+      "Signature": true,
+      "Boundary": true,
+      "Mask": true,
+      "Process": true,
+      "ProcessLibrary": true,
+      "BasisContract": true,
+      "TraceVertices": true,
+      "TraceTriangles": true,
+      "Provenance": true,
+      "MeshRecipe": true,
+      "SemanticContract": false
+    },
+    "FixtureVersion": [
+      1,
+      1
+    ],
+    "ProbeSeconds": 14.543678916059434,
+    "ProbePeakGiB": 0.8860015869140625,
+    "Labels": [
+      1,
+      3100,
+      5001,
+      6001
+    ]
+  },
+  "spatial-3-edge-9cd906b81cbe": {
+    "ContractTopLevelEqual": {
+      "BoundaryLabels": true,
+      "CutSurfaceRoles": true,
+      "Derivation": false,
+      "FeatureTopology": true,
+      "MetricSurfaceRoles": true,
+      "ProtectedSupports": true,
+      "SemanticCorners": true,
+      "UnmatchedPolicy": true,
+      "Version": true,
+      "VolumeMaterials": true
+    },
+    "DerivationKeysDiffering": [
+      "BuildCensusSHA256"
+    ],
+    "LabelsEqual": true,
+    "SourceRoleDigestsEqual": {
+      "Signature": true,
+      "Boundary": true,
+      "Mask": true,
+      "Process": true,
+      "ProcessLibrary": true,
+      "BasisContract": true,
+      "TraceVertices": true,
+      "TraceTriangles": true,
+      "Provenance": true,
+      "MeshRecipe": true,
+      "SemanticContract": false
+    },
+    "FixtureVersion": [
+      1,
+      1
+    ],
+    "ProbeSeconds": 14.592024332960136,
+    "ProbePeakGiB": 0.8990325927734375,
+    "Labels": [
+      1,
+      3100,
+      5001,
+      6001
+    ]
+  },
+  "spatial-3-edge-5d3b5e644745": {
+    "ContractTopLevelEqual": {
+      "BoundaryLabels": true,
+      "CutSurfaceRoles": true,
+      "Derivation": false,
+      "FeatureTopology": true,
+      "MetricSurfaceRoles": true,
+      "ProtectedSupports": true,
+      "SemanticCorners": true,
+      "UnmatchedPolicy": true,
+      "Version": true,
+      "VolumeMaterials": true
+    },
+    "DerivationKeysDiffering": [
+      "BuildCensusSHA256"
+    ],
+    "LabelsEqual": true,
+    "SourceRoleDigestsEqual": {
+      "Signature": true,
+      "Boundary": true,
+      "Mask": true,
+      "Process": true,
+      "ProcessLibrary": true,
+      "BasisContract": true,
+      "TraceVertices": true,
+      "TraceTriangles": true,
+      "Provenance": true,
+      "MeshRecipe": true,
+      "SemanticContract": false
+    },
+    "FixtureVersion": [
+      1,
+      1
+    ],
+    "ProbeSeconds": 15.427568208076991,
+    "ProbePeakGiB": 0.87811279296875,
+    "Labels": [
+      1,
+      3100,
+      5001,
+      6001
+    ]
+  },
+  "spatial-4-edge-e51d7380245e": {
+    "ContractTopLevelEqual": {
+      "BoundaryLabels": true,
+      "CutSurfaceRoles": true,
+      "Derivation": false,
+      "FeatureTopology": true,
+      "MetricSurfaceRoles": true,
+      "ProtectedSupports": true,
+      "SemanticCorners": true,
+      "UnmatchedPolicy": true,
+      "Version": true,
+      "VolumeMaterials": true
+    },
+    "DerivationKeysDiffering": [
+      "BuildCensusSHA256"
+    ],
+    "LabelsEqual": true,
+    "SourceRoleDigestsEqual": {
+      "Signature": true,
+      "Boundary": true,
+      "Mask": true,
+      "Process": true,
+      "ProcessLibrary": true,
+      "BasisContract": true,
+      "TraceVertices": true,
+      "TraceTriangles": true,
+      "Provenance": true,
+      "MeshRecipe": true,
+      "SemanticContract": false
+    },
+    "FixtureVersion": [
+      1,
+      1
+    ],
+    "ProbeSeconds": 15.415762374992482,
+    "ProbePeakGiB": 0.8753814697265625,
+    "Labels": [
+      1,
+      3000,
+      3100,
+      5001,
+      6001
+    ]
+  },
+  "spatial-5-edge-9bfa8265e2e7": {
+    "ContractTopLevelEqual": {
+      "BoundaryLabels": true,
+      "CutSurfaceRoles": true,
+      "Derivation": false,
+      "FeatureTopology": true,
+      "MetricSurfaceRoles": true,
+      "ProtectedSupports": true,
+      "SemanticCorners": true,
+      "UnmatchedPolicy": true,
+      "Version": true,
+      "VolumeMaterials": true
+    },
+    "DerivationKeysDiffering": [
+      "BuildCensusSHA256"
+    ],
+    "LabelsEqual": true,
+    "SourceRoleDigestsEqual": {
+      "Signature": true,
+      "Boundary": true,
+      "Mask": true,
+      "Process": true,
+      "ProcessLibrary": true,
+      "BasisContract": true,
+      "TraceVertices": true,
+      "TraceTriangles": true,
+      "Provenance": true,
+      "MeshRecipe": true,
+      "SemanticContract": false
+    },
+    "FixtureVersion": [
+      1,
+      1
+    ],
+    "ProbeSeconds": 15.41245466703549,
+    "ProbePeakGiB": 0.87994384765625,
+    "Labels": [
+      1,
+      3100,
+      3101,
+      5001,
+      5101,
+      6001,
+      6101
+    ]
+  }
+}

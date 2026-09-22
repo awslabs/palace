@@ -187,6 +187,7 @@ PHYSICS_RUN_KEY = "PhysicsRun"
 
 JOB_POLICY_KEY = "JobPolicy"
 JOB_POLICY_MODES = ("speed", "frugal", "fixed")
+REDUCER_BLOCK_SIZE_KEY = "ReducerBlockSize"
 
 
 def validate_physics_run(recipe):
@@ -211,6 +212,14 @@ def validate_physics_run(recipe):
                 not isinstance(policy.get("Rule"), str) or not policy["Rule"]):
             raise ValueError("PhysicsRun.JobPolicy must carry Mode speed | frugal | fixed, FixedJobs (int >= 1) "
                              "exactly for fixed, and a Rule")
+    reducer_block_size = block.get(REDUCER_BLOCK_SIZE_KEY)
+    if reducer_block_size is not None:
+        # The recorded default of the reducer's PALACE_RESPONSE_BLOCK_SIZE (decision 62(1)):
+        # Value (int >= 1) with a Rule text (the memory rationale).
+        value = reducer_block_size.get("Value") if isinstance(reducer_block_size, dict) else None
+        if (not isinstance(value, int) or isinstance(value, bool) or value < 1 or
+                not isinstance(reducer_block_size.get("Rule"), str) or not reducer_block_size["Rule"]):
+            raise ValueError("PhysicsRun.ReducerBlockSize must carry Value (int >= 1) and a Rule")
     return block
 SCOPE_KEY = "Scope"
 UNSUPPORTED_CLASS_KEY = "UnsupportedClass"

@@ -58,6 +58,11 @@ public:
     POSTPRO_RESPONSE,             // Surface response postprocessing
     POSTPRO_RESPONSE_COUPON,      // Surface response coupon evaluation
     POSTPRO_RESPONSE_ENERGY,      // Surface response corrected-field energies
+    POSTPRO_REDUCTION,            // Archived response reduction (streaming Gram)
+    POSTPRO_REDUCTION_READ,       // Archived field reads
+    POSTPRO_REDUCTION_EVAL,       // Interface sample evaluation of the archived fields
+    POSTPRO_REDUCTION_GRAM,       // Interface Gram assembly
+    POSTPRO_REDUCTION_DOMAIN,     // Domain energy Gram (mass matvec + dots)
     IO,                           // Disk I/O
     TOTAL,
     NUM_TIMINGS
@@ -95,6 +100,11 @@ public:
       "  Surface Response",
       "    Coupon Evaluation",
       "    Corrected Energies",
+      "  Archive Reduction",
+      "    Archive Read",
+      "    Sample Evaluation",
+      "    Gram Assembly",
+      "    Domain Gram",
       "Disk IO",
       "Total"};
   // clang-format on

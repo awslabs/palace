@@ -275,7 +275,8 @@ class StoredRadialRunAnalysisTest(unittest.TestCase):
         case = next(item for item in build["Cases"] if item["Case"] == RADIAL_CASE)
         args = argparse.Namespace(reference=REFERENCE_CAMPAIGN, control_source=[1, 2, 3, 5, 6, 20, 25, 49, 53, 58], control_count=8,
                                   stage_prefix=RADIAL_CASE, orders=[4, 5], controls=[3, 5], frozen_binary_sha256=BINARY_SHA256,
-                                  max_jobs=1, job_policy=None, fixed_jobs=None, reference_edge_size_nm=0.5)
+                                  max_jobs=1, job_policy=None, fixed_jobs=None, reducer_block_size=None,
+                                  reference_edge_size_nm=0.5)
         profile = json.loads((HERE / "qualify" / "cluster-profile.json").read_text())
         table, digest = gates.load_gates()
         results = RADIAL_RUN / RADIAL_CASE / "results"

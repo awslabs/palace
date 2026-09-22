@@ -82,6 +82,9 @@ def build_parser():
                                              "directories without their own mesh-recipe.json")
     build.add_argument("--provenance", help="text appended to the Provenance of every registered case")
     build.add_argument("--work", type=Path, help="parent of the registration work directories")
+    build.add_argument("--register-jobs", type=int, default=device_coupons.DEFAULT_REGISTER_JOBS,
+                       help="device coupons whose labels-only probe / contract derivation run at once (default "
+                            f"{device_coupons.DEFAULT_REGISTER_JOBS}; the manifest append stays serial; decision 62(2))")
     build.add_argument("--device", type=Path, help="a device's Palace config (its ResponseCorrection Library is the "
                                                   "process seed): discovery -> source directories -> registration")
     build.add_argument("--palace", type=Path, help="Palace executable for the discovery preflights (with --device)")
@@ -121,7 +124,7 @@ def main(argv=None):
                 cap_triangulation=args.cap_triangulation, python=args.python)
             device_coupons.register_device_sources(device_record, manifest_path=args.manifest, mesh_recipe=args.mesh_recipe,
                                                    work=(args.work or device_output / "register"), python=args.python,
-                                                   julia=args.julia)
+                                                   julia=args.julia, jobs=args.register_jobs)
         except device_coupons.DeviceAdapterError as error:
             print(f"DEVICE_ADAPTER_FAILED: {error}", file=sys.stderr)
             return 1

@@ -1,0 +1,303 @@
+{
+  "Version": 1,
+  "PBSJobID": "46718",
+  "Case": "two-edge-8dd4bc70f183",
+  "OldExecutable": "b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27",
+  "NewExecutable": "170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b",
+  "Rule": "block size 48 for every reducer; the perf-reducer-01 archives (PBS 46685) reduced by the new executable and compared with the recorded b28 reductions at b = 48 (compare-p3-b28-vs-new.json, compare-p4-b28-vs-new.json); a fresh p4 worker archive (b28 worker) reduced by both executables in the same job (compare-p4-fresh-old-vs-new.json); the fresh archive's b28 reduction equals PBS 46685's bit for bit (compare-p4-archives-old.json). Values compared per (interface, edge, R, basis_i, basis_j) key; the streaming reducer emits rows in (i <= j) order",
+  "Stages": {
+    "p3-control-reducer-new": {
+      "BinarySHA256": "170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b",
+      "WallSeconds": 12.025027745000003,
+      "PalaceTotalSeconds": 8.794,
+      "PalacePeakTotal": "22.0G",
+      "NodePeakUsedGiBSampled": 60.2248649597168,
+      "MaxSingleRankRSSGiB": 0.4113502502441406,
+      "OperatorConstructionSeconds": {
+        "Min": 0.175,
+        "Max": 0.218,
+        "Avg": 0.2
+      },
+      "ArchiveReductionSeconds": {
+        "Min": 0.003,
+        "Max": 0.03,
+        "Avg": 0.019
+      },
+      "ArchiveReadSeconds": {
+        "Min": 0.052,
+        "Max": 0.202,
+        "Avg": 0.129
+      },
+      "SampleEvaluationSeconds": {
+        "Min": 0.019,
+        "Max": 0.167,
+        "Avg": 0.093
+      },
+      "GramAssemblySeconds": {
+        "Min": 0.006,
+        "Max": 0.006,
+        "Avg": 0.006
+      },
+      "DomainGramSeconds": {
+        "Min": 0.014,
+        "Max": 0.038,
+        "Avg": 0.02
+      },
+      "ReductionSamples": {
+        "Sources": 8,
+        "Interfaces": 2,
+        "PerRankMin": 0,
+        "PerRankMax": 5960,
+        "Total": 299288
+      }
+    },
+    "p4-reducer-new": {
+      "BinarySHA256": "170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b",
+      "WallSeconds": 15.988010123999999,
+      "PalaceTotalSeconds": 14.331,
+      "PalacePeakTotal": "33.4G",
+      "NodePeakUsedGiBSampled": 77.8696060180664,
+      "MaxSingleRankRSSGiB": 0.42307281494140625,
+      "OperatorConstructionSeconds": {
+        "Min": 0.285,
+        "Max": 0.392,
+        "Avg": 0.329
+      },
+      "ArchiveReductionSeconds": {
+        "Min": 0.033,
+        "Max": 0.115,
+        "Avg": 0.096
+      },
+      "ArchiveReadSeconds": {
+        "Min": 0.759,
+        "Max": 4.588,
+        "Avg": 2.735
+      },
+      "SampleEvaluationSeconds": {
+        "Min": 0.291,
+        "Max": 4.212,
+        "Avg": 2.068
+      },
+      "GramAssemblySeconds": {
+        "Min": 0.218,
+        "Max": 0.229,
+        "Avg": 0.219
+      },
+      "DomainGramSeconds": {
+        "Min": 0.351,
+        "Max": 1.054,
+        "Avg": 0.515
+      },
+      "ReductionSamples": {
+        "Sources": 78,
+        "Interfaces": 2,
+        "PerRankMin": 0,
+        "PerRankMax": 8889,
+        "Total": 438064
+      }
+    },
+    "p4-fresh-worker": {
+      "BinarySHA256": "b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27",
+      "WallSeconds": 318.35511804500004,
+      "PalaceTotalSeconds": 316.626,
+      "PalacePeakTotal": "48.1G",
+      "NodePeakUsedGiBSampled": 81.89358520507812,
+      "MaxSingleRankRSSGiB": 0.4219474792480469,
+      "OperatorConstructionSeconds": {
+        "Min": 5.262,
+        "Max": 5.412,
+        "Avg": 5.387
+      },
+      "SetupSeconds": {
+        "Min": 2.269,
+        "Max": 2.295,
+        "Avg": 2.279
+      }
+    },
+    "p4-fresh-reducer-old": {
+      "BinarySHA256": "b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27",
+      "WallSeconds": 28.127977387999977,
+      "PalaceTotalSeconds": 26.294,
+      "PalacePeakTotal": "91.2G",
+      "NodePeakUsedGiBSampled": 136.24506378173828,
+      "MaxSingleRankRSSGiB": 0.8506240844726562,
+      "OperatorConstructionSeconds": {
+        "Min": 15.434,
+        "Max": 15.705,
+        "Avg": 15.619
+      },
+      "SetupSeconds": {
+        "Min": 2.275,
+        "Max": 2.301,
+        "Avg": 2.285
+      }
+    },
+    "p4-fresh-reducer-new": {
+      "BinarySHA256": "170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b",
+      "WallSeconds": 15.52376949699999,
+      "PalaceTotalSeconds": 13.824,
+      "PalacePeakTotal": "33.3G",
+      "NodePeakUsedGiBSampled": 76.18648910522461,
+      "MaxSingleRankRSSGiB": 0.4224090576171875,
+      "OperatorConstructionSeconds": {
+        "Min": 0.291,
+        "Max": 0.38,
+        "Avg": 0.325
+      },
+      "ArchiveReductionSeconds": {
+        "Min": 0.043,
+        "Max": 0.122,
+        "Avg": 0.098
+      },
+      "ArchiveReadSeconds": {
+        "Min": 0.349,
+        "Max": 4.207,
+        "Avg": 2.386
+      },
+      "SampleEvaluationSeconds": {
+        "Min": 0.228,
+        "Max": 4.178,
+        "Avg": 1.968
+      },
+      "GramAssemblySeconds": {
+        "Min": 0.212,
+        "Max": 0.235,
+        "Avg": 0.212
+      },
+      "DomainGramSeconds": {
+        "Min": 0.338,
+        "Max": 1.055,
+        "Avg": 0.513
+      },
+      "ReductionSamples": {
+        "Sources": 78,
+        "Interfaces": 2,
+        "PerRankMin": 0,
+        "PerRankMax": 8889,
+        "Total": 438064
+      }
+    }
+  },
+  "ResultSHA256": {
+    "p3-control-reducer-new": {
+      "surface-response-matrix.csv": "196251f68a41bf0de6b3d0cbf23d67a8c3f7f6ddcafeb4fe3b55047778321639",
+      "domain-response-matrix.csv": "d995d4f30b93861f9396ac32668e618c2df0d574ba6ecb9109906d39e09da28b"
+    },
+    "p4-reducer-new": {
+      "surface-response-matrix.csv": "c2e3c47238393845f1e214faa30dc73664b5d1fdc4fc66b89fc3a9433f01ff24",
+      "domain-response-matrix.csv": "c35ff2a1e393f203e0339e8834070e0db83f9a5595775b542ccbcc5532cf2b69"
+    },
+    "p4-fresh-reducer-old": {
+      "surface-response-matrix.csv": "21001972a8d390e5e138ad8684d09e8fac28f4457c666d445db9ca0bae24e124",
+      "domain-response-matrix.csv": "e691516374c35f20d7bd41c0b8980d5fb3f358df604f77af2f2034b0fdc8e191"
+    },
+    "p4-fresh-reducer-new": {
+      "surface-response-matrix.csv": "c2e3c47238393845f1e214faa30dc73664b5d1fdc4fc66b89fc3a9433f01ff24",
+      "domain-response-matrix.csv": "c35ff2a1e393f203e0339e8834070e0db83f9a5595775b542ccbcc5532cf2b69"
+    }
+  },
+  "Comparison": {
+    "compare-p3-b28-vs-new.json": {
+      "domain-response-matrix.csv": {
+        "Rows": 36,
+        "Entries": 36,
+        "BitIdenticalEntries": 36,
+        "MaxRelativeDifferencePerEntry": 0.0,
+        "MaxRelativeDifferenceAt": null,
+        "RowOrderIdentical": true
+      },
+      "surface-response-matrix.csv": {
+        "Rows": 72,
+        "Entries": 432,
+        "BitIdenticalEntries": 432,
+        "MaxRelativeDifferencePerEntry": 0.0,
+        "MaxRelativeDifferenceAt": null,
+        "RowOrderIdentical": true
+      }
+    },
+    "compare-p4-b28-vs-new.json": {
+      "domain-response-matrix.csv": {
+        "Rows": 3081,
+        "Entries": 3081,
+        "BitIdenticalEntries": 3041,
+        "MaxRelativeDifferencePerEntry": 8.40152654748908e-13,
+        "MaxRelativeDifferenceAt": [
+          "3.00e+00",
+          "3.00e+01",
+          "Q_ij (J)",
+          "-1.190306449632e-19",
+          "-1.190306449631e-19"
+        ],
+        "RowOrderIdentical": false
+      },
+      "surface-response-matrix.csv": {
+        "Rows": 6162,
+        "Entries": 36972,
+        "BitIdenticalEntries": 36956,
+        "MaxRelativeDifferencePerEntry": 3.921242762305558e-13,
+        "MaxRelativeDifferenceAt": [
+          "1.00e+00",
+          "1.00e+00",
+          "+2.000000000000e-06",
+          "3.50e+01",
+          "7.80e+01",
+          "Q_ij (J)",
+          "+2.549852240804e-26",
+          "+2.549852240803e-26"
+        ],
+        "RowOrderIdentical": false
+      }
+    },
+    "compare-p4-fresh-old-vs-new.json": {
+      "domain-response-matrix.csv": {
+        "Rows": 3081,
+        "Entries": 3081,
+        "BitIdenticalEntries": 3041,
+        "MaxRelativeDifferencePerEntry": 8.40152654748908e-13,
+        "MaxRelativeDifferenceAt": [
+          "3.00e+00",
+          "3.00e+01",
+          "Q_ij (J)",
+          "-1.190306449632e-19",
+          "-1.190306449631e-19"
+        ],
+        "RowOrderIdentical": false
+      },
+      "surface-response-matrix.csv": {
+        "Rows": 6162,
+        "Entries": 36972,
+        "BitIdenticalEntries": 36956,
+        "MaxRelativeDifferencePerEntry": 3.921242762305558e-13,
+        "MaxRelativeDifferenceAt": [
+          "1.00e+00",
+          "1.00e+00",
+          "+2.000000000000e-06",
+          "3.50e+01",
+          "7.80e+01",
+          "Q_ij (J)",
+          "+2.549852240804e-26",
+          "+2.549852240803e-26"
+        ],
+        "RowOrderIdentical": false
+      }
+    },
+    "compare-p4-archives-old.json": {
+      "domain-response-matrix.csv": {
+        "Rows": 3081,
+        "Entries": 3081,
+        "BitIdenticalEntries": 3081,
+        "MaxRelativeDifferencePerEntry": 0.0,
+        "MaxRelativeDifferenceAt": null,
+        "RowOrderIdentical": true
+      },
+      "surface-response-matrix.csv": {
+        "Rows": 6162,
+        "Entries": 36972,
+        "BitIdenticalEntries": 36972,
+        "MaxRelativeDifferencePerEntry": 0.0,
+        "MaxRelativeDifferenceAt": null,
+        "RowOrderIdentical": true
+      }
+    }
+  }
+}

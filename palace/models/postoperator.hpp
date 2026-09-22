@@ -783,6 +783,53 @@ public:
         e_ptr, d_ptr, quadrature_extra, quadrature_rules);
   }
 
+  // Streaming one-pass form of the above (the archive reduction, decision 62(4)): the
+  // interface samples are cached once, each basis field is set as the E grid function
+  // (and the recovered flux, when archived) and evaluated once into its amplitude rows,
+  // then the Gram matrices are assembled per interface from the rows.
+  template <ProblemType U = solver_t>
+  auto CacheInterfaceResponseSamples() const
+      -> std::enable_if_t<U == ProblemType::ELECTROSTATIC,
+                          std::vector<SurfacePostOperator::InterfaceResponseSamples>>
+  {
+    return surf_post_op.CacheInterfaceResponseSamples();
+  }
+
+  template <ProblemType U = solver_t>
+  auto SetInterfaceResponseField(const Vector &e, const Vector *d)
+      -> std::enable_if_t<U == ProblemType::ELECTROSTATIC, void>
+  {
+    MFEM_VERIFY(!NeedsRecoveredElectricFlux() || d,
+                "Recovered electric flux is required for interface postprocessing!");
+    MFEM_VERIFY(!d || D_recovered,
+                "Recovered electric flux fields were supplied but not configured!");
+    E->Real().SetFromTrueDofs(e);
+    E->Real().ExchangeFaceNbrData();
+    if (d)
+    {
+      SetRecoveredElectricFlux(*d);
+    }
+  }
+
+  template <ProblemType U = solver_t>
+  auto EvaluateInterfaceResponseRow(
+      const SurfacePostOperator::InterfaceResponseSamples &samples, double *row) const
+      -> std::enable_if_t<U == ProblemType::ELECTROSTATIC, void>
+  {
+    surf_post_op.EvaluateInterfaceResponseRow(samples, *E, D_recovered.get(), row);
+  }
+
+  template <ProblemType U = solver_t>
+  auto AssembleInterfaceResponseMatrices(
+      const SurfacePostOperator::InterfaceResponseSamples &samples, const double *rows,
+      int basis_size) const
+      -> std::enable_if_t<U == ProblemType::ELECTROSTATIC,
+                          std::vector<SurfacePostOperator::InterfaceResponseMatrix>>
+  {
+    return surf_post_op.AssembleInterfaceResponseMatrices(samples, rows, basis_size,
+                                                          GetComm());
+  }
+
   // Whether impedance/voltage postprocessing is configured (mode analysis).
   bool HasImpedancePostprocessing() const { return !impedance_postpro.empty(); }
   bool HasCurrent() const

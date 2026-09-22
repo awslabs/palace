@@ -16,7 +16,11 @@
       "Pyramids": 13239
     }
   },
-  "BlockSize": 6,
+  "MeasuredBlockSize": 6,
+  "ReducerEvaluationFraction": 0.97,
+  "ReducerEvaluationFractionRule": "the fraction of the measured ReducerPairSeconds that is the per-source-evaluation work (archive read, gradient, face-neighbour exchange, quadrature-point evaluation of every source of a block pair: N x ceil(N / b) evaluations at block size b) - it shrinks with a larger PALACE_RESPONSE_BLOCK_SIZE (decision 62(1): default 6 -> 48); the remainder is the Gram work proportional to the source pairs N (N + 1) / 2, independent of b. Measured by the decision-62 step-1 acceptance (PBS 46685, two-edge-8dd4bc70f183 p4, 78 sources, H1 7.97M, frozen b28 executable, the same archive reduced at b = 6 and b = 48): Operator Construction 86.9 s at b = 6 (1,014 evaluations, 91 block pairs) vs 15.25 s at b = 48 (156 evaluations, 3 block pairs) -> 0.0835 s per evaluation, 2.2 s of pair-scaled Gram: evaluation fraction 0.975 at b = 6, recorded as 0.97 (the Gram remainder rounded up: fail-closed side)",
+  "ReducerResidentFieldGBPerMillionH1": 0.068,
+  "ReducerResidentFieldGBRule": "Palace peak memory the reducer adds per resident archived source field (V, E and their grid functions with ghosts), per million H1 DOFs of the stage: 2b fields are resident per block pair, so the reducer peak at block size b is the measured peak (at MeasuredBlockSize) plus 2 (b - MeasuredBlockSize) x this x H1 / 1e6. Measured by the decision-62 step-1 acceptance (PBS 46685, two-edge p4, H1 7,973,827): Palace peak 45.6 GB at b = 6 (12 resident fields) vs 91.1 GB at b = 48 (96 fields) -> 0.542 GB per field = 0.068 GB per million H1 DOFs (node peak used 90.8 -> 136.5 GiB sampled)",
   "PCGFactors": [1.0, 1.5, 2.0],
   "PreflightAndMarginFactor": 1.35,
   "PreflightSeconds": 300,

@@ -2947,6 +2947,13 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
                     validate_gmsh_build_census(broken_report, broken_census, semantic)
             rejected(lambda r: r["Command"].__setitem__(r["Command"].index("true"), "false"),
                      "--prism-tubes true", target="report")
+            # Decision 62(2): the registration probe learns the label set from a labels-only
+            # pass; the production build still fails closed when its own census labels differ
+            # from the contract (a label missing, an extra label, or a labels-only census).
+            rejected(lambda c: c["InterfaceAreas"].pop(), "interface-area labels differ from the semantic contract")
+            rejected(lambda c: c["InterfaceAreas"].append({"Attribute": 3000, "Area": 1.0}),
+                     "interface-area labels differ from the semantic contract")
+            rejected(lambda c: [row.pop("Area") for row in c["InterfaceAreas"]], "Interface area row lacks a finite Area")
             rejected(lambda c: c["PrismTubes"]["Quality"]["Prism"].__setitem__("PositiveOrientation", False),
                      "Prism cells fail orientation")
             rejected(lambda c: c["PrismTubes"]["Quality"]["Pyramid"].__setitem__("MaximumJacobianCondition", 1e4),

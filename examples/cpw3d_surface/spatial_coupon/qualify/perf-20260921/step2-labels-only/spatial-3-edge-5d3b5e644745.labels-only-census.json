@@ -1,0 +1,190 @@
+{
+  "CouponBox": {
+    "Lower": [
+      -8.0,
+      -8.0,
+      -2.05
+    ],
+    "Radius": 2.0,
+    "Upper": [
+      6.0,
+      19.6363636364,
+      2.1
+    ]
+  },
+  "Frame": "SourceLocal",
+  "InterfaceAreas": [
+    {
+      "Attribute": 1,
+      "CADSurfaces": 19,
+      "Name": "matching_surface"
+    },
+    {
+      "Attribute": 3100,
+      "CADSurfaces": 12,
+      "Name": "surface_3100"
+    },
+    {
+      "Attribute": 5001,
+      "CADSurfaces": 7,
+      "Name": "surface_5001"
+    },
+    {
+      "Attribute": 6001,
+      "CADSurfaces": 22,
+      "Name": "surface_6001"
+    }
+  ],
+  "LabelsOnly": true,
+  "Purpose": "Labels-only pass of the production-option build (decision 62(2)): the physical surface groups assigned on the CAD entities, before any mesh generation; the registration probe's census (InterfaceAreas carries the label set, no areas - nothing is meshed)",
+  "Scope": {
+    "ExhibitedClasses": [
+      "ContinuationVertices",
+      "ExteriorLoops",
+      "TraceBasis"
+    ],
+    "GuardedClasses": [
+      "TopRounding",
+      "TrenchRounding",
+      "SlopedSidewalls",
+      "ThinMetal",
+      "NoTrench",
+      "ShallowTrench",
+      "NarrowTransverseBound",
+      "NarrowHoles",
+      "NarrowLayerGap",
+      "FreeEdgeEnds",
+      "ShortEdges",
+      "FootprintWithoutEdge",
+      "FootprintTopology"
+    ],
+    "Guards": [
+      {
+        "DetectedFrom": "inputs",
+        "Id": "TopRounding",
+        "Statement": "rounded metal top edges (TopRounding > 0): the tube rings surround a sharp edge"
+      },
+      {
+        "DetectedFrom": "inputs",
+        "Id": "TrenchRounding",
+        "Statement": "rounded trench edges (TrenchRounding > 0): the bottom tube splits its substrate and vacuum sectors at a sharp trench wall"
+      },
+      {
+        "DetectedFrom": "inputs",
+        "Id": "SlopedSidewalls",
+        "Statement": "sidewall angle below 90 degrees: the tube sections assume vertical metal faces"
+      },
+      {
+        "DetectedFrom": "inputs",
+        "Id": "ThinMetal",
+        "Statement": "thin (non-fabricated) metal: no sidewall and no top / bottom edge pair to tube"
+      },
+      {
+        "DetectedFrom": "inputs",
+        "Id": "NoTrench",
+        "Statement": "Overetch 0: the bottom tube needs an etched trench on its substrate side"
+      },
+      {
+        "DetectedFrom": "build",
+        "Id": "ShallowTrench",
+        "Statement": "trench shallower than the tube radius plus the pyramid height: the pyramids would reach the trench floor"
+      },
+      {
+        "DetectedFrom": "build",
+        "Id": "NarrowTransverseBound",
+        "Statement": "the tube inner size does not fit min(Overetch, MetalThickness / 2, CornerIsotropyRadius): no ring fits"
+      },
+      {
+        "DetectedFrom": "build",
+        "Id": "NarrowHoles",
+        "Statement": "a hole narrower than twice the tube reach (Radius + PyramidHeight + the band's ProtectedDistance): the tubes facing each other across it would overlap"
+      },
+      {
+        "DetectedFrom": "build",
+        "Id": "NarrowLayerGap",
+        "Statement": "a vacuum gap between the metal faces of an upward and a downward process layer narrower than twice the tube reach: the tubes facing each other across it would overlap"
+      },
+      {
+        "DetectedFrom": "build",
+        "Id": "FreeEdgeEnds",
+        "Statement": "a metal edge end that is neither a semantic corner nor on the outer box"
+      },
+      {
+        "DetectedFrom": "build",
+        "Id": "ShortEdges",
+        "Statement": "a metal edge shorter than the corner clearances at its ends: no tube interval remains"
+      },
+      {
+        "DetectedFrom": "build",
+        "Id": "FootprintWithoutEdge",
+        "Statement": "an explicit etch footprint with no side coincident with a metal edge"
+      },
+      {
+        "DetectedFrom": "build",
+        "Id": "FootprintTopology",
+        "Statement": "a producer-default etch collar whose region is not one simple polygon (Physical sides facing each other across a dielectric gap narrower than twice the collar enclose an un-etched island, or the region touches itself): the collar loft takes one simple polygon"
+      }
+    ],
+    "MetalLoops": [
+      {
+        "Conductor": 1,
+        "Hole": false,
+        "Loop": 1,
+        "Plane": 0.0,
+        "Sides": 2,
+        "Vertices": 4
+      },
+      {
+        "Conductor": 1,
+        "Hole": false,
+        "Loop": 2,
+        "Plane": 0.0,
+        "Sides": 3,
+        "Vertices": 6
+      }
+    ],
+    "Recipe": "prism-tubes",
+    "Rule": "the prism-tube recipe builds every input whose classes are all in SupportedClasses; an input exhibiting a class in GuardedClasses fails closed at the guard whose error message carries ScopeGuard[<Id>] (Guards); ExhibitedClasses are the classes of this input among both lists, from the frozen inputs (loops, layers, process); MetalLoops counts per plan-view loop the straight sides not on the outer box, and TubeCount = 2 x their sum (a top and a bottom tube per side of every loop)",
+    "SupportedClasses": [
+      "ContinuationVertices",
+      "DeviceFootprint",
+      "DownwardLayers",
+      "ExteriorLoops",
+      "HoleLoops",
+      "MultipleConductors",
+      "MultipleLayers",
+      "MultipleSlots",
+      "TraceBasis"
+    ]
+  },
+  "SemanticContract": "/tmp/perf-register-01/register/spatial-3-edge-5d3b5e644745/probe/canonical-semantic.json",
+  "SemanticContractSHA256": "f9a98f148c8dc6ba1a2c3cfaaadf736b669715fac896905cb4707f10d5a7fbab",
+  "SemanticCorners": [
+    [
+      -6.0,
+      -8.0,
+      0.0
+    ],
+    [
+      -6.0,
+      9.636363636,
+      0.0
+    ],
+    [
+      0.0,
+      15.636363636,
+      0.0
+    ],
+    [
+      2.0,
+      -8.0,
+      0.0
+    ],
+    [
+      -8.0,
+      15.636363636,
+      0.0
+    ]
+  ],
+  "Version": 1
+}

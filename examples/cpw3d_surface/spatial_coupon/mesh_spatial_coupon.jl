@@ -4823,6 +4823,7 @@ function generate_spatial_coupon(;
     semantic_contract::Union{Nothing, String}=nothing,
     corner_isotropy_radius::Float64=0.0,
     corner_census::Union{Nothing, String}=nothing,
+    labels_only::Union{Nothing, String}=nothing,
     trace_basis_contract::Union{Nothing, String}=nothing,
     trace_vertices::Union{Nothing, String}=nothing,
     trace_triangles::Union{Nothing, String}=nothing,
@@ -4884,6 +4885,14 @@ function generate_spatial_coupon(;
               "and --corner-census together")
     corner_isotropy && corner_census == filename &&
         error("Corner census must not overwrite the mesh output")
+    # The labels-only pass (decision 62(2): the registration probe) stops right after the
+    # CAD-entity labelling, before any mesh generation; it needs the semantic contract
+    # (the census fields it records) and writes neither the mesh nor the corner census
+    # (its output may take the corner census path: it is the probe's census).
+    labels_only === nothing || corner_isotropy ||
+        error("--labels-only requires the semantic-corner isotropy options")
+    labels_only !== nothing && labels_only == filename &&
+        error("Labels-only output must not overwrite the mesh output")
     # The seed-side required-region gates (decision 30) come together and need the
     # corner balls; without them the seed is neither optimized nor gated.
     seed_quality_gates = maximum_corner_aspect > 0.0
@@ -5373,6 +5382,47 @@ function generate_spatial_coupon(;
     for (attribute, surfaces) in sort(collect(boundary_groups))
         unique!(surfaces)
         gmsh.model.addPhysicalGroup(2, surfaces, attribute, "surface_$attribute")
+    end
+
+    if labels_only !== nothing
+        # Decision 62(2): the registration probe learns the label set here - every
+        # physical surface group exists on the CAD entities after the last occ.fragment
+        # (the trace-basis fragments included) - so the pass stops before any mesh
+        # generation.  The record carries the fields the derivation and the registration
+        # consume: InterfaceAreas[].Attribute / Name (no areas: nothing is meshed), the
+        # recipe scope record and the semantic contract identity.
+        ispath(labels_only) && error("Labels-only output already exists")
+        label_rows = [Dict{String, Any}("Attribute" => 1, "Name" => "matching_surface",
+                                        "CADSurfaces" => length(unique(matching)))]
+        for (attribute, surfaces) in sort(collect(boundary_groups))
+            push!(label_rows, Dict{String, Any}("Attribute" => attribute, "Name" => "surface_$attribute",
+                                                "CADSurfaces" => length(surfaces)))
+        end
+        open(labels_only, "w") do stream
+            write_json(stream, Dict{String, Any}(
+                "Version" => 1, "Frame" => "SourceLocal", "LabelsOnly" => true,
+                "Purpose" => "Labels-only pass of the production-option build (decision 62(2)): the " *
+                             "physical surface groups assigned on the CAD entities, before any mesh " *
+                             "generation; the registration probe's census (InterfaceAreas carries the " *
+                             "label set, no areas - nothing is meshed)",
+                "Scope" => prism_tubes ?
+                    recipe_scope_record(scope_classes, boundary_loops, lower, upper, tolerance) :
+                    nothing,
+                "SemanticContract" => semantic_contract,
+                "SemanticContractSHA256" => bytes2hex(sha256(read(semantic_contract))),
+                "SemanticCorners" => [collect(corner) for corner in semantic_corners],
+                "CouponBox" => Dict{String, Any}("Radius" => radius, "Lower" => collect(lower),
+                                                 "Upper" => collect(upper)),
+                "InterfaceAreas" => label_rows))
+            println(stream)
+        end
+        println("Labels-only census: $labels_only")
+        for row in label_rows
+            println("  label $(row["Attribute"]) $(row["Name"]): CAD surfaces=$(row["CADSurfaces"])")
+        end
+        println("Spatial coupon labels only: fabricated=$fabricated, edges=$(length(edges)), " *
+                "layers=$(length(layers)), labels=$(length(label_rows))")
+        return gmsh.finalize()
     end
 
     # Build the refinement source from physical process edges, not every OCC fragment
@@ -6232,6 +6282,7 @@ function parse_options(args)
         "--semantic-contract" => ("semantic_contract", String),
         "--corner-isotropy-radius" => ("corner_isotropy_radius", Float64),
         "--corner-census" => ("corner_census", String),
+        "--labels-only" => ("labels_only", String),
         "--etch-boundary" => ("etch_boundary", String),
         "--trace-basis-contract" => ("trace_basis_contract", String),
         "--trace-vertices" => ("trace_vertices", String),
@@ -6309,6 +6360,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
         semantic_contract = get(options, "semantic_contract", nothing),
         corner_isotropy_radius = get(options, "corner_isotropy_radius", 0.0),
         corner_census   = get(options, "corner_census", nothing),
+        labels_only     = get(options, "labels_only", nothing),
         etch_boundary   = get(options, "etch_boundary", nothing),
         trace_basis_contract = get(options, "trace_basis_contract", nothing),
         trace_vertices  = get(options, "trace_vertices", nothing),

@@ -20,8 +20,30 @@ import math
 CAP_ROUNDING_SECONDS = 300
 CAP_FACTOR = 2.0
 WORKER_ENVIRONMENT = {"PALACE_RESPONSE_ARCHIVE_ONLY": "1", "PALACE_RESPONSE_SOURCE_TIMING": "1"}
-REDUCER_ENVIRONMENT = {"PALACE_RESPONSE_REDUCE_ONLY": "1", "PALACE_RESPONSE_BLOCK_SIZE": "6"}
-PLAN_VERSION = 2
+# The reducer reads, differentiates and evaluates every archived source field once per
+# block pair of PALACE_RESPONSE_BLOCK_SIZE sources (N x ceil(N / b) field evaluations for
+# N sources): b = 6 (physics-01..-13, gallery, the decision-58 library run) evaluated
+# every source 32 times at 191 sources.  Decision 62(1) raises the recorded default to
+# 48; the memory rationale is REDUCER_BLOCK_SIZE_RULE (the plan's MinimumMemAvailableBytes
+# admission guard is unchanged).
+DEFAULT_REDUCER_BLOCK_SIZE = 48
+REDUCER_BLOCK_SIZE_RULE = ("PALACE_RESPONSE_BLOCK_SIZE = b: the reducer keeps 2b archived source fields resident per block pair "
+                           "(each ~14 MB per rank at p4: V, E and their grid functions with ghosts, ~2.7 GB node-wide) and "
+                           "evaluates every source ceil(N / b) times; b = 48 -> 96 resident fields, estimated 350-450 GB of "
+                           "the r8g.48xlarge's 1,485 GiB (b = 6 measured 194 GB); the per-entry sums are identical in "
+                           "identical sample order, so the matrices are independent of b (decision 62(1) acceptance: "
+                           "bit-identical CSVs at b = 6 and b = 48)")
+PLAN_VERSION = 3
+
+
+def reducer_environment(block_size):
+    block_size = int(block_size)
+    if block_size < 1:
+        raise ValueError(f"the reducer block size must be an integer >= 1, not {block_size}")
+    return {"PALACE_RESPONSE_REDUCE_ONLY": "1", "PALACE_RESPONSE_BLOCK_SIZE": str(block_size)}
+
+
+REDUCER_ENVIRONMENT = reducer_environment(DEFAULT_REDUCER_BLOCK_SIZE)
 
 
 def round_up(seconds, rounding=CAP_ROUNDING_SECONDS):
@@ -43,9 +65,9 @@ def stage_caps(estimate_stage, kind, factors, deadline):
     return cap, minimum
 
 
-def stage(remote_case_root, prefix, kind, cap, minimum):
+def stage(remote_case_root, prefix, kind, cap, minimum, reducer_block_size=DEFAULT_REDUCER_BLOCK_SIZE):
     environment = {"PALACE_RESPONSE_ARCHIVE_DIR": f"{remote_case_root}/main/{prefix}/archive"}
-    environment.update(WORKER_ENVIRONMENT if kind == "worker" else REDUCER_ENVIRONMENT)
+    environment.update(WORKER_ENVIRONMENT if kind == "worker" else reducer_environment(reducer_block_size))
     return {"Name": f"{prefix}-{kind}", "Config": f"{remote_case_root}/main/{prefix}/{kind}.json",
             "Environment": environment, "CapSeconds": cap, "MinimumSeconds": minimum,
             "Requires": [] if kind == "worker" else [f"{prefix}-worker"]}
@@ -60,10 +82,11 @@ def ordinary_stage(remote_case_root, prefix, cap, minimum):
 
 
 def build_plan(*, case_id, remote_case_root, mesh, stage_layout, estimate, config_digests, trace_pins,
-               profile, binary, binary_sha256, mpiexec, purpose, factors):
+               profile, binary, binary_sha256, mpiexec, purpose, factors, reducer_block_size=DEFAULT_REDUCER_BLOCK_SIZE):
     """The plan dict.  `stage_layout` = [{"Prefix", "Kind": "response" | "local-edge",
     "Order", "Sources", "EstimateKey"}, ...] in run order; `config_digests` = stage
-    prefix -> {file name -> sha256}; `trace_pins` = remote trace path -> sha256."""
+    prefix -> {file name -> sha256}; `trace_pins` = remote trace path -> sha256;
+    `reducer_block_size` = PALACE_RESPONSE_BLOCK_SIZE of every reducer stage."""
     pinned = {mesh["Remote"]: mesh["SHA256"]}
     for prefix, digests in config_digests.items():
         for name, digest in digests.items():
@@ -76,7 +99,7 @@ def build_plan(*, case_id, remote_case_root, mesh, stage_layout, estimate, confi
         if item["Kind"] == "response":
             for kind in ("worker", "reducer"):
                 cap, minimum = stage_caps(est, kind, factors, deadline)
-                stages.append(stage(remote_case_root, item["Prefix"], kind, cap, minimum))
+                stages.append(stage(remote_case_root, item["Prefix"], kind, cap, minimum, reducer_block_size))
         else:
             cap, minimum = stage_caps(est, "local-edge", factors, deadline)
             stages.append(ordinary_stage(remote_case_root, item["Prefix"], cap, minimum))
@@ -86,6 +109,7 @@ def build_plan(*, case_id, remote_case_root, mesh, stage_layout, estimate, confi
             "MinimumMemAvailableBytes": profile["MinimumMemAvailableBytes"],
             "Binary": binary, "BinarySHA256": binary_sha256, "MPIExec": mpiexec,
             "PinnedSHA256": pinned, "Stages": stages,
+            "ReducerBlockSize": int(reducer_block_size), "ReducerBlockSizeRule": REDUCER_BLOCK_SIZE_RULE,
             "MeshSHA256": mesh["SHA256"], "MeshRemote": mesh["Remote"], "MeshLocal": mesh["Local"],
             "CapRule": (f"CapSeconds = {CAP_FACTOR:g} x the stage estimate at {max(factors, key=float)}x the measured PCG "
                         f"counts rounded up to {CAP_ROUNDING_SECONDS} s and bounded by the deadline; MinimumSeconds = "
@@ -114,7 +138,8 @@ def block_estimate(estimate_stage, block_size, factors):
 
 
 def build_job_plan(*, case_id, job_name, remote_case_root, mesh, stage_layout, split_job, estimate, config_digests,
-                   trace_pins, profile, binary, binary_sha256, mpiexec, purpose, factors):
+                   trace_pins, profile, binary, binary_sha256, mpiexec, purpose, factors,
+                   reducer_block_size=DEFAULT_REDUCER_BLOCK_SIZE):
     """The plan of one job of a split coupon (decision 61b).  `split_job` = a job record
     of job_split.plan_split (Kind worker: the main-stage worker of its block - job 1 also
     the control stages and the local-edge stage; Kind reducer: the main-stage reducers,
@@ -135,7 +160,7 @@ def build_job_plan(*, case_id, job_name, remote_case_root, mesh, stage_layout, s
                 pinned[f"{remote_case_root}/main/{item['Prefix']}/worker-block{block}.json"] = config_digests[item["Prefix"]][f"worker-block{block}.json"]
             elif kind == "reducer":
                 cap, minimum = stage_caps(est, "reducer", factors, deadline)
-                reducer = stage(remote_case_root, item["Prefix"], "reducer", cap, minimum)
+                reducer = stage(remote_case_root, item["Prefix"], "reducer", cap, minimum, reducer_block_size)
                 reducer["Requires"] = []
                 stages.append(reducer)
                 pinned[f"{remote_case_root}/main/{item['Prefix']}/reducer.json"] = config_digests[item["Prefix"]]["reducer.json"]
@@ -145,7 +170,7 @@ def build_job_plan(*, case_id, job_name, remote_case_root, mesh, stage_layout, s
             if item["Kind"] == "response":
                 for stage_kind in ("worker", "reducer"):
                     cap, minimum = stage_caps(est, stage_kind, factors, deadline)
-                    stages.append(stage(remote_case_root, item["Prefix"], stage_kind, cap, minimum))
+                    stages.append(stage(remote_case_root, item["Prefix"], stage_kind, cap, minimum, reducer_block_size))
             else:
                 cap, minimum = stage_caps(est, "local-edge", factors, deadline)
                 stages.append(ordinary_stage(remote_case_root, item["Prefix"], cap, minimum))
@@ -158,6 +183,7 @@ def build_job_plan(*, case_id, job_name, remote_case_root, mesh, stage_layout, s
             "MinimumMemAvailableBytes": profile["MinimumMemAvailableBytes"],
             "Binary": binary, "BinarySHA256": binary_sha256, "MPIExec": mpiexec,
             "PinnedSHA256": pinned, "Stages": stages, "StageNames": stage_names,
+            "ReducerBlockSize": int(reducer_block_size), "ReducerBlockSizeRule": REDUCER_BLOCK_SIZE_RULE,
             "MeshSHA256": mesh["SHA256"], "MeshRemote": mesh["Remote"], "MeshLocal": mesh["Local"],
             "CapRule": (f"CapSeconds = {CAP_FACTOR:g} x the stage estimate at {max(factors, key=float)}x the measured PCG "
                         f"counts rounded up to {CAP_ROUNDING_SECONDS} s and bounded by the deadline; MinimumSeconds = "

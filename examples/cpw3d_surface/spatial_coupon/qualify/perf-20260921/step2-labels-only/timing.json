@@ -1,0 +1,9 @@
+{
+  "WallSeconds": 32.90944790840149,
+  "Pool": {
+    "Jobs": 3,
+    "PrepareSeconds": 32.85033445805311,
+    "TotalSeconds": 32.90871791599784,
+    "Rule": "register_case.prepare_registration (digests, scope, labels-only probe, contract derivation) for Jobs coupons at once, then commit_registration serially in coupon order (decision 62(2))"
+  }
+}

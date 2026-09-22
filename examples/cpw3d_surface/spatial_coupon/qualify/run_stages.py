@@ -37,6 +37,8 @@ PATTERNS = {
     "SourceTiming": r"Response source timing: index=(\d+), iterations=(\d+), solve_seconds=([0-9.eE+\-]+), total_seconds=([0-9.eE+\-]+)",
     "Pairs": r"Interface response matrix: (\d+)/(\d+) basis pairs",
     "Blocks": r"Archived response block pair (\d+)/(\d+)",
+    "StreamedSources": r"Archived response source (\d+)/(\d+)",
+    "ReductionSamples": r"Archived response reduction: (\d+) sources, (\d+) interfaces, quadrature samples per rank min (\d+), max (\d+), total (\d+)",
     "PeakTotal": r"Estimated peak per-node memory usage is: Min\. ([0-9.]+[KMGT]?), Max\. ([0-9.]+[KMGT]?), Avg\. ([0-9.]+[KMGT]?), Total ([0-9.]+[KMGT]?)",
     "Total": r"^Total\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s*$",
 }
@@ -85,6 +87,13 @@ def parse_log(text):
                               for a, b, c, d in re.findall(PATTERNS["SourceTiming"], text)]
     parsed["PairsProgress"] = [[int(a), int(b)] for a, b in re.findall(PATTERNS["Pairs"], text)]
     parsed["BlockPairsProgress"] = [[int(a), int(b)] for a, b in re.findall(PATTERNS["Blocks"], text)]
+    # The decision-62(4) streaming reducer: one pass over the sources, per-rank sample counts.
+    parsed["StreamedSourcesProgress"] = [[int(a), int(b)] for a, b in re.findall(PATTERNS["StreamedSources"], text)]
+    match = re.search(PATTERNS["ReductionSamples"], text)
+    if match:
+        parsed["ReductionSamples"] = {"Sources": int(match.group(1)), "Interfaces": int(match.group(2)),
+                                      "PerRankMin": int(match.group(3)), "PerRankMax": int(match.group(4)),
+                                      "Total": int(match.group(5))}
     match = re.search(PATTERNS["PeakTotal"], text)
     if match:
         parsed["PalacePeakMemory"] = {"Min": match.group(1), "Max": match.group(2), "Avg": match.group(3), "Total": match.group(4)}
@@ -133,6 +142,15 @@ def main(argv):
                  "Binary": str(binary), "BinarySHA256": sha(binary), "Pinned": {}, "UTC": time.strftime("%FT%TZ", time.gmtime())}
     if preflight["BinarySHA256"] != binary_sha256:
         raise SystemExit("Executable hash mismatch: " + preflight["BinarySHA256"])
+    # A stage may name its own frozen executable (an executable comparison on one archive,
+    # decision 62(4)): verified here like the plan's; the stage record carries it.
+    preflight["StageBinaries"] = {}
+    for stage in plan["Stages"]:
+        if stage.get("Binary"):
+            actual = sha(stage["Binary"])
+            preflight["StageBinaries"][stage["Binary"]] = {"Expected": stage["BinarySHA256"], "Actual": actual}
+            if actual != stage["BinarySHA256"]:
+                raise SystemExit(f"Stage executable hash mismatch: {stage['Name']} {actual}")
     for path, expected in plan["PinnedSHA256"].items():
         actual = sha(path)
         preflight["Pinned"][path] = {"Expected": expected, "Actual": actual, "OK": actual == expected}
@@ -190,9 +208,11 @@ def main(argv):
         exports = [part for key in stage["Environment"] for part in ("-x", key)]
         log = base / f"{name}.log"
         timefile = base / f"{name}.time"
+        stage_binary = Path(stage["Binary"]) if stage.get("Binary") else binary
         command = ["timeout", "-k", "30", str(int(cap)), "/usr/bin/time", "-v", "-o", str(timefile),
-                   str(mpiexec), *exports, "-n", str(plan["Ranks"]), str(binary), stage["Config"]]
-        record.update(Command=command, CapSeconds=cap, Log=str(log), StartUTC=time.strftime("%FT%TZ", time.gmtime()))
+                   str(mpiexec), *exports, "-n", str(plan["Ranks"]), str(stage_binary), stage["Config"]]
+        record.update(Command=command, CapSeconds=cap, Log=str(log), StartUTC=time.strftime("%FT%TZ", time.gmtime()),
+                      Binary=str(stage_binary), BinarySHA256=stage.get("BinarySHA256") or binary_sha256)
         current_stage[0] = name
         started = time.monotonic()
         with log.open("w") as stream:

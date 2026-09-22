@@ -3035,6 +3035,125 @@ nm cutoff (decisions 55 / 56). Manual after the run: the 7f03 job split or wallt
 definition, the reference for the device geometries (the accuracy statement), the corner and
 isolated-edge requirements outside the spatial scope.
 
+### Performance (user decision 62, 2026-09-21): reducer block size, labels-only probe, streaming Gram
+
+Records under `qualify/perf-20260921/` (`step1-block-size/`, `step2-labels-only/`,
+`step4-streaming-gram/`, `linux-build/`; no CSV, mesh, archive or binary). Every acceptance is the
+smallest sufficient run: the two-edge-8dd4bc70f183 p3 control (8 sources) / p4 stage (78 sources) on
+the cluster, the six transmon coupons locally. Physical gates, quadrature rule / order / weights /
+sample set / ownership are unchanged; the rotate-z policy and the quadrature order were not touched.
+
+**Step 1 - reducer block size 6 -> 48 (`PALACE_RESPONSE_BLOCK_SIZE`).** The reducer reads,
+differentiates and evaluates every archived source once per block pair its block takes part in
+(N x ceil(N / b) evaluations): b = 6 evaluated every source 32 times at 191 sources. Recorded as
+`ProductionRecipe.PhysicsRun.ReducerBlockSize {Value 48, PreviousValue 6, Rule, Provenance}` (the
+memory rationale: 2b resident fields x ~14 MB per rank at p4, b = 48 -> est. 350-450 GB of 1,485 GiB;
+the `MinimumMemAvailableBytes` admission guard unchanged), `build_plan.DEFAULT_REDUCER_BLOCK_SIZE`
+/ `reducer_environment(b)`, the plan's `ReducerBlockSize` (PLAN_VERSION 3), `qualify
+--reducer-block-size` (the origin recorded per coupon: command line / manifest / built-in default);
+`estimate_stages` takes the block size (cost model `MeasuredBlockSize 6`, the block-pair part split
+into the evaluation part N x ceil(N / b) and the pair-scaled Gram by `ReducerEvaluationFraction`;
+the reducer peak grows by `ReducerResidentFieldGBPerMillionH1` per resident field); `summarize_cost`
+reads the block size the reducer stage ran at. Acceptance (PBS 46685, frozen b28, the p3 control and
+the p4 stage archived once each and reduced at b = 6 and b = 48 from the same archive): every
+surface- / domain-response-matrix VALUE bit-identical (p4: 36,972 surface + 3,081 domain entries;
+p3: 432 + 36); the CSV row ORDER differs (block-pair emission order; every consumer groups rows by
+key). p4 reducer wall 99.2 -> 28.4 s (Operator Construction 86.9 -> 15.3 s; 91 -> 3 block pairs),
+Palace peak 45.6 -> 91.1 GB (node used 90.8 -> 136.5 GiB); p3 12.2 -> 11.8 s (setup-bound).
+Calibration from the pair: 0.0835 s per source evaluation, 2.2 s of pair-scaled Gram -> evaluation
+fraction 0.974 (recorded 0.97, the Gram remainder rounded up); 0.542 GB of peak per resident field
+at H1 7.97M (0.068 GB per million H1 DOFs). Projected library reducers (the decision-58 device
+library, b28 executable, from the recorded b = 6 times with the 0.974 split): 10-edge p4 3,969 ->
+636 s, 5-edge 3,956 -> 647, 3-edge 2,020 -> 344, 2-edge 992 -> 203, 4-edge 1,017 -> 207; controls
+53-116 -> 51-99 s; all reducer stages 12,592 -> 2,607 s (-2.77 node-h of the 8.26 node-h run).
+
+**Step 2 - labels-only registration probe and parallel registration.** The registration learned
+the label set (the un-etched plane 3000 + slot per slot) from a full census-only production build
+of every coupon (947 s of the 990 s stage). `mesh_spatial_coupon.jl --labels-only OUT.json` stops
+right after the CAD-entity labelling - after every `occ.fragment`, before any `mesh.generate` -
+and writes `{InterfaceAreas: [{Attribute, Name, CADSurfaces}]}` with the recipe scope record, the
+semantic contract identity, the corners and the box; `run_gmsh_only_case.py --labels-only` runs
+the headroom gate, the source validation and the gmsh-build mesher command plus `--labels-only`
+under the stage bounds (outside the frozen gmsh-build stage contract: no mesh artifact);
+`register_case.run_probe_build` uses it, `derive_semantic_contract` consumes the census unchanged
+(`BuildCensusInterfaceLabels`), the production build still fails closed on a label mismatch
+(`mesh_stage_contract.validate_gmsh_build_census`). Registration is split into
+`prepare_registration` (digests, scope, probe, derivation; the manifest read only) and
+`commit_registration` (the serial manifest append; the version decided at commit);
+`device_coupons.register_device_sources` prepares coupons in a pool (`--register-jobs`, default 2;
+`coupon-library build` too) and commits in coupon order (`RegistrationPool` recorded). Acceptance
+(local): the six transmon coupons re-registered from copies of their recorded source directories
+into a scratch manifest (pool of 3): identical case ids, identical contracts (BoundaryLabels,
+SemanticCorners, FeatureTopology, ProtectedSupports, CutSurfaceRoles, MetricSurfaceRoles,
+UnmatchedPolicy, VolumeMaterials; the only difference `Derivation.BuildCensusSHA256`, the digest
+of the census file itself), identical source role digests, FixtureVersion 1; labels-only pass
+14.5-15.4 s / 0.9 GiB per coupon; registration wall 990 s -> 32.9 s. Existing registrations are
+untouched (reuse by content); a coupon registered anew carries a new contract digest (its
+`Derivation.BuildCensusSHA256`), hence a new CanonicalBuildId.
+
+**Step 3 (audit dedupe / caching)** belongs to the main tree (not part of this block).
+
+**Step 4 - streaming one-pass Gram in Palace (a new frozen executable).** In the reduce-only path
+`SurfacePostOperator::CacheInterfaceResponseSamples` caches, per localized interface, the
+boundary elements, quadrature rule, points, physical weights, edge distances and ownership
+selection of the batched traversal once; `EvaluateInterfaceResponseRow` evaluates one field once
+into its sqrt(0.5 w)-scaled 4-vector amplitude row; `AssembleInterfaceResponseMatrices` forms S = F
+W F^T per interface (the total and the inside-radius window variants) with a cache-blocked
+symmetric rank-k update over contiguous rows and reduces over the ranks.
+`ElectrostaticSolver::PostprocessArchivedResponseMatrix` streams every archived source once (read,
+gradient, face-neighbour exchange, evaluation into its rows, one `M_elec` matvec against the
+resident potentials for the domain Gram), assembles at the end and emits the CSV rows in (i <= j)
+order; the block size no longer changes the work (recorded in the log); memory = base + N x (sum
+over interfaces of 4 Q_local + L_local) x 8 bytes (the resident potentials, one L-vector per
+source, are what keep the domain Gram at one matvec per source); reduce-only skips the stiffness
+assembly and `ksp.SetOperators` (the AMG setup); BlockTimer sections `Archive Reduction` /
+`Archive Read` / `Sample Evaluation` / `Gram Assembly` / `Domain Gram`; per-rank sample counts
+(min / max / total per interface) logged and parsed by `run_stages` (`ReductionSamples`,
+`StreamedSourcesProgress`). Unit test: the streamed matrices equal the batched
+`GetInterfaceElectricFieldEnergyMatrices` to 1e-12 (ownership-partitioned interfaces, total and
+inside variants, serial and 2 ranks). Local smoke (the device 2-edge coupon, p2, 8 sources, 6
+ranks, the main-tree binary as OLD): max per-entry relative difference 7.1e-13 (domain) / 4.1e-13
+(surface) - the CSV print resolution; reducer 25.5 -> 16.5 s, peak 10.5 -> 6.8 GB. Linux frozen
+executable: `qualify/perf-20260921/linux-build/` (the recorded freeze / build procedure re-pointed
+at `source-freeze-perf62`, HEAD b1e7e9e9d, tar SHA256 b3103728…; PBS 46717, 177 s, six jobs, 1,856
+provenance inputs unchanged) -> `palace-archive-estimate-170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b.bin`
+under the remote root, SHA256 `170439c4…`; the recorded archive-estimate synthetic tests pass with
+it (PBS 46720, 12 tests). **Acceptance (PBS 46718, `step4-streaming-gram/acceptance.json`, block
+size 48 everywhere):** the new executable reduced the PBS 46685 archives - p3 control (8 sources)
+bit-identical to the b28 reduction (468 entries), p4 (78 sources) max per-entry relative difference
+8.4e-13 (domain) / 3.9e-13 (surface), 3,041 / 3,081 and 36,956 / 36,972 entries bit-identical (the
+differences are the last printed digit of the 13-digit CSV); a fresh p4 worker archive reduced by
+b28 and by the new executable in the same job gives the same numbers, and its b28 reduction equals
+PBS 46685's bit for bit (the worker is deterministic across jobs). Reducer wall old (b28, b = 48)
+-> new: p4 28.1 -> 15.5 s (Palace 26.3 -> 13.8 s; Operator Construction 15.6 -> 0.33 s - the
+stiffness / AMG setup gone - the reduction itself ~5 s: archive read max 4.2 s, sample evaluation
+max 4.2 s, Gram 0.2 s, domain Gram 1.1 s; the remaining ~9 s are the mesh preprocessing, the
+initialization and the disk IO of any Palace run), Palace peak 91.2 -> 33.3 GB (node used 136 ->
+76 GiB); p3 12.0 s / 22.0 GB. Per-rank samples: min 0, max 8,889 of 438,064 total (the interface
+faces sit on a subset of the ranks - the sample evaluation is 0.23 s on the lightest rank and 4.2
+s on the heaviest: the next lever, if any, is the surface-face balance of the partition). Against
+the b = 6 baseline of the same stage (PBS 46685: 99.2 s, 45.6 GB): 6.4x faster, 0.73x the peak.
+**Projected library reducers with the new executable** (the decision-58 device library, from the
+recorded b = 6 times: the setup ~ the worker's non-source time minus the stiffness / AMG setup, one
+evaluation per source at the measured per-evaluation rate, the pair-scaled Gram unchanged - an upper
+bound, since the Gram kernel is also faster): 10-edge p4 3,969 -> ~280 s, 5-edge 3,956 -> ~280,
+3-edge 2,020 -> ~150, 4-edge 1,017 -> ~110, 2-edge 992 -> ~90; all reducer stages 12,592 -> ~1,480
+s (-3.1 node-h of the 8.26 node-h run; b = 48 alone: -2.77). The reducer stops being the deadline
+floor of the source split (`job_split`): a coupon's job is the worker.
+
+**Candidate frozen executable - what the main-tree integration changes** (not switched here):
+(1) every `qualify` invocation's `--frozen-binary-sha256` (the plans' `Binary` / `BinarySHA256`)
+from `b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27` to
+`170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b` (the file exists under the
+remote root); (2) the cost model's reducer rates were measured with b28 at b = 6 - the streaming
+reducer's stage estimate should be re-measured on one coupon (the evaluation part becomes N
+evaluations; `ReducerResidentFieldGBPerMillionH1` no longer applies: the peak is flat) and
+`estimate_stages` updated in the same step; (3) the worker path is unchanged in the new executable
+(the p4 worker of PBS 46718 ran b28 by design; a first worker run with the new executable should
+be compared to a b28 archive bit for bit - the solve code is untouched, only the reduce-only branch
+skips the stiffness assembly); (4) `CODE-AND-EXECUTABLE-TRACKING.md` of the assessment records the
+new freeze (`linux-build/evidence/`).
+
 ## Preflight
 
 ```sh
