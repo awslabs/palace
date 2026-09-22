@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <cmath>
+#include <cstdio>
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
@@ -44,6 +45,42 @@ std::unique_ptr<mfem::ParMesh> MakeSplitCube(int nx)
     }
     xc /= vtx.Size();
     serial.SetBdrAttribute(b, xc < 1e-9 ? 1 : (xc > 1.0 - 1e-9 ? 2 : 3));
+  }
+  serial.SetAttributes();
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
+// A central square column (attr 1, region) through a cube (attr 2, environment): the interface
+// is a 4-sided "tube" rather than a flat plane. Region driven at its z=0 footprint (bdr attr
+// 1); the rest of the outer boundary grounds the environment (bdr attr 2). More representative
+// of a compact embedded region than the flat half-space split, for a DtN compressibility study.
+std::unique_ptr<mfem::ParMesh> MakeColumnSplit(int nx)
+{
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(nx, nx, nx, mfem::Element::HEXAHEDRON);
+  auto in_col = [](double x, double y)
+  { return std::abs(x - 0.5) < 1.0 / 6.0 + 1e-9 && std::abs(y - 0.5) < 1.0 / 6.0 + 1e-9; };
+  for (int e = 0; e < serial.GetNE(); e++)
+  {
+    mfem::Vector c;
+    serial.GetElementCenter(e, c);
+    serial.SetAttribute(e, in_col(c(0), c(1)) ? 1 : 2);
+  }
+  for (int b = 0; b < serial.GetNBE(); b++)
+  {
+    mfem::Array<int> vtx;
+    serial.GetBdrElementVertices(b, vtx);
+    double xc = 0, yc = 0, zc = 0;
+    for (int j = 0; j < vtx.Size(); j++)
+    {
+      const double *v = serial.GetVertex(vtx[j]);
+      xc += v[0];
+      yc += v[1];
+      zc += v[2];
+    }
+    xc /= vtx.Size();
+    yc /= vtx.Size();
+    zc /= vtx.Size();
+    serial.SetBdrAttribute(b, (zc < 1e-9 && in_col(xc, yc)) ? 1 : 2);
   }
   serial.SetAttributes();
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
@@ -645,6 +682,67 @@ TEST_CASE("SubstructuringSolver magnetostatic inductance matrix",
       CHECK(std::abs(M_sub(i, j) - M_mono(i, j)) <= 1.0e-5 * scale);
     }
   }
+}
+
+// Interface-operator (S_E) compressibility study: report the singular-value decay and the
+// numerical rank at a few relative tolerances, for a flat half-space interface (worst case for
+// compressibility) vs a compact "column" interface. Informs whether a low-rank / probed S_E is
+// worthwhile (a Phase 2 gate). Characterization only -- asserts basic sanity, not a target rank.
+TEST_CASE("SubstructuringSolver interface operator spectrum", "[substructure][Serial]")
+{
+  auto study = [](const char *label, std::unique_ptr<mfem::ParMesh> pmesh)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+            {{"Attributes", {2}}, {"Permittivity", 1.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", 1},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    IoData iodata(config, false);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(std::move(pmesh)));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+    std::vector<double> sv = ss.InterfaceSingularValues();
+    REQUIRE(sv.size() > 0);
+    CHECK(sv.front() > 0.0);
+    bool descending = true;
+    for (std::size_t i = 1; i < sv.size(); i++)
+    {
+      descending = descending && (sv[i] <= sv[i - 1] + 1e-30);
+    }
+    CHECK(descending);
+    auto rank_at = [&](double rtol)
+    {
+      int r = 0;
+      for (double s : sv)
+      {
+        if (s > rtol * sv.front())
+        {
+          r++;
+        }
+      }
+      return r;
+    };
+    const int n = static_cast<int>(sv.size());
+    if (Mpi::Root(Mpi::World()))
+    {
+      std::printf("[S_E spectrum] %-8s nG=%d  rank(1e-3)=%d  rank(1e-6)=%d  "
+                  "rank(1e-9)=%d  sv[0]=%.3e sv[last]=%.3e\n",
+                  label, n, rank_at(1e-3), rank_at(1e-6), rank_at(1e-9), sv.front(),
+                  sv.back());
+    }
+  };
+  study("flat", MakeSplitCube(8));
+  study("column", MakeColumnSplit(9));
 }
 
 }  // namespace palace

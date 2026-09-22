@@ -3,6 +3,7 @@
 
 #include "substructuringsolver.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <functional>
 #include <limits>
@@ -24,6 +25,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/rap.hpp"
 #include "linalg/solver.hpp"
+#include "linalg/superlu.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
@@ -249,6 +251,10 @@ struct SubstructuringSolver::Impl
   std::vector<mfem::Array<int>> env_dbc_lists;  // per-level essential (ParOperator MakeRefs)
   std::unique_ptr<mfem::HypreParMatrix> env_A_ee;  // single-level submesh operator
   std::unique_ptr<KspSolver> env_ksp;
+#if defined(MFEM_USE_SUPERLU)
+  std::unique_ptr<SuperLUSolver> env_lu;  // direct A_EE factorization (many-RHS materialization)
+  std::unique_ptr<SuperLUSolver> reg_lu;  // direct A_region_free factorization (region pc)
+#endif
   mfem::Array<int> env_ess;  // solve-space essential true DOFs (Gamma + env Dirichlet)
   mutable mfem::ParGridFunction env_pgf, env_sgf;  // parent / submesh transfer buffers
   mutable mfem::Vector env_srhs, env_ssol;
@@ -495,7 +501,16 @@ struct SubstructuringSolver::Impl
   void BuildEnvSubmeshSolver()
   {
     const int mg_levels = iodata.solver.linear.mg_max_levels;
-    const bool use_gmg = !magnetostatic && iodata.solver.order > 1 && mg_levels > 1;
+    // A direct factorization of A_EE (factored once, reused across the |Gamma| interface
+    // back-solves + per-excitation recovery) is far cheaper than |Gamma| iterative solves for
+    // the S_E materialization, and is exact. Selected when the user configures a direct linear
+    // solver; otherwise the iterative / geometric-multigrid path is used.
+    bool use_direct = false;
+#if defined(MFEM_USE_SUPERLU)
+    use_direct = (iodata.solver.linear.type == LinearSolver::SUPERLU);
+#endif
+    const bool use_gmg =
+        !use_direct && !magnetostatic && iodata.solver.order > 1 && mg_levels > 1;
 
     // Create the environment submesh. For the GMG path it must be owned by a Palace Mesh
     // (for the CEED attribute maps + the FE-space hierarchy); otherwise a standalone
@@ -529,26 +544,37 @@ struct SubstructuringSolver::Impl
         std::unique_ptr<mfem::HypreParMatrix> e(env_A_ee->EliminateRowsCols(env_ess));
       }
       MPI_Comm comm = env_solve_fes->GetComm();
-      std::unique_ptr<Solver<Operator>> pc;
-      if (magnetostatic)
+#if defined(MFEM_USE_SUPERLU)
+      if (use_direct)
       {
-        auto ams = std::make_unique<mfem::HypreAMS>(env_solve_fes);
-        ams->SetPrintLevel(0);
-        pc = std::make_unique<MfemWrapperSolver<Operator>>(std::move(ams), true, false,
-                                                           false);
+        // Factor A_EE once; ApplyAeeInv then does cheap direct back-solves.
+        env_lu = std::make_unique<SuperLUSolver>(iodata, comm, 0);
+        env_lu->SetOperator(*env_A_ee);
       }
       else
+#endif
       {
-        pc = std::make_unique<MfemWrapperSolver<Operator>>(
-            std::make_unique<BoomerAmgSolver>(1, 1, true, 0), true, false, false);
+        std::unique_ptr<Solver<Operator>> pc;
+        if (magnetostatic)
+        {
+          auto ams = std::make_unique<mfem::HypreAMS>(env_solve_fes);
+          ams->SetPrintLevel(0);
+          pc = std::make_unique<MfemWrapperSolver<Operator>>(std::move(ams), true, false,
+                                                             false);
+        }
+        else
+        {
+          pc = std::make_unique<MfemWrapperSolver<Operator>>(
+              std::make_unique<BoomerAmgSolver>(1, 1, true, 0), true, false, false);
+        }
+        auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
+        pcg->SetInitialGuess(false);
+        pcg->SetRelTol(1.0e-12);
+        pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
+        pcg->SetMaxIter(1000);
+        env_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
+        env_ksp->SetOperators(*env_A_ee, *env_A_ee);
       }
-      auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
-      pcg->SetInitialGuess(false);
-      pcg->SetRelTol(1.0e-12);
-      pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
-      pcg->SetMaxIter(1000);
-      env_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
-      env_ksp->SetOperators(*env_A_ee, *env_A_ee);
     }
 
     env_srhs.SetSize(env_solve_fes->GetTrueVSize());
@@ -753,7 +779,16 @@ struct SubstructuringSolver::Impl
       env_srhs(env_ess[i]) = 0.0;
     }
     env_ssol = 0.0;
-    env_ksp->Mult(env_srhs, env_ssol);
+#if defined(MFEM_USE_SUPERLU)
+    if (env_lu)
+    {
+      env_lu->Mult(env_srhs, env_ssol);
+    }
+    else
+#endif
+    {
+      env_ksp->Mult(env_srhs, env_ssol);
+    }
     env_sgf.SetFromTrueDofs(env_ssol);
     env_pgf = 0.0;
     env_submesh->Transfer(env_sgf, env_pgf);
@@ -1094,6 +1129,23 @@ void SubstructuringSolver::CondenseEnvironment()
   // singular-problem option.
   {
     std::unique_ptr<Solver<Operator>> pc;
+    bool use_direct = false;
+#if defined(MFEM_USE_SUPERLU)
+    use_direct = (impl->iodata.solver.linear.type == LinearSolver::SUPERLU);
+#endif
+#if defined(MFEM_USE_SUPERLU)
+    if (use_direct)
+    {
+      // Direct factorization of A_region_free: an (near-)exact region preconditioner, so the
+      // outer CG on the condensed operator converges in a few iterations.
+      impl->reg_lu = std::make_unique<SuperLUSolver>(impl->iodata, comm, 0);
+      impl->reg_lu->SetOperator(*impl->A_region_free);
+      pc = std::make_unique<CallableSolver>(
+          impl->A_region_free->Height(),
+          [pi](const mfem::Vector &r, mfem::Vector &z) { pi->reg_lu->Mult(r, z); });
+    }
+    else
+#endif
     if (impl->BuildRegionGmg())
     {
       // Order>=2 H1: geometric multigrid on the region submesh, routed through the region
@@ -1349,6 +1401,72 @@ double SubstructuringSolver::MutualEnergy(const Vector &ui, const Vector &uj) co
 long long int SubstructuringSolver::RegionGlobalTrueVSize() const
 {
   return impl->parent_fes.GlobalTrueVSize();
+}
+
+std::vector<double> SubstructuringSolver::InterfaceSingularValues() const
+{
+  MFEM_VERIFY(impl->mat_dtn,
+              "CondenseEnvironment must be called before InterfaceSingularValues!");
+  // S_E is symmetric SPD, so singular values = eigenvalues. This mfem build has no LAPACK, so
+  // use a self-contained cyclic Jacobi eigenvalue iteration on the (symmetrized) dense S_E.
+  const int n = impl->S_dense.Height();
+  std::vector<double> A(static_cast<std::size_t>(n) * n);
+  for (int i = 0; i < n; i++)
+  {
+    for (int j = 0; j < n; j++)
+    {
+      A[static_cast<std::size_t>(i) * n + j] =
+          0.5 * (impl->S_dense(i, j) + impl->S_dense(j, i));
+    }
+  }
+  auto at = [&](int i, int j) -> double & { return A[static_cast<std::size_t>(i) * n + j]; };
+  for (int sweep = 0; sweep < 100; sweep++)
+  {
+    double off = 0.0;
+    for (int p = 0; p < n; p++)
+    {
+      for (int q = p + 1; q < n; q++)
+      {
+        off += at(p, q) * at(p, q);
+      }
+    }
+    if (off < 1e-28)
+    {
+      break;
+    }
+    for (int p = 0; p < n; p++)
+    {
+      for (int q = p + 1; q < n; q++)
+      {
+        const double apq = at(p, q);
+        if (std::abs(apq) < 1e-300)
+        {
+          continue;
+        }
+        const double phi = 0.5 * std::atan2(2.0 * apq, at(q, q) - at(p, p));
+        const double c = std::cos(phi), s = std::sin(phi);
+        for (int k = 0; k < n; k++)
+        {
+          const double akp = at(k, p), akq = at(k, q);
+          at(k, p) = c * akp - s * akq;
+          at(k, q) = s * akp + c * akq;
+        }
+        for (int k = 0; k < n; k++)
+        {
+          const double apk = at(p, k), aqk = at(q, k);
+          at(p, k) = c * apk - s * aqk;
+          at(q, k) = s * apk + c * aqk;
+        }
+      }
+    }
+  }
+  std::vector<double> out(n);
+  for (int i = 0; i < n; i++)
+  {
+    out[i] = std::abs(at(i, i));
+  }
+  std::sort(out.begin(), out.end(), std::greater<double>());
+  return out;
 }
 
 void SubstructuringSolver::WriteParaView(const std::string &dir,
