@@ -3019,7 +3019,44 @@ inside variants, serial and 2 ranks). Local smoke (the device 2-edge coupon, p2,
 ranks, the main-tree binary as OLD): max per-entry relative difference 7.1e-13 (domain) / 4.1e-13
 (surface) - the CSV print resolution; reducer 25.5 -> 16.5 s, peak 10.5 -> 6.8 GB. Linux frozen
 executable: `qualify/perf-20260921/linux-build/` (the recorded freeze / build procedure re-pointed
-at `source-freeze-perf62`, HEAD b1e7e9e9d, tar SHA256 b3103728…); STEP4_LINUX_PENDING
+at `source-freeze-perf62`, HEAD b1e7e9e9d, tar SHA256 b3103728…; PBS 46717, 177 s, six jobs, 1,856
+provenance inputs unchanged) -> `palace-archive-estimate-170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b.bin`
+under the remote root, SHA256 `170439c4…`; the recorded archive-estimate synthetic tests pass with
+it (PBS 46720, 12 tests). **Acceptance (PBS 46718, `step4-streaming-gram/acceptance.json`, block
+size 48 everywhere):** the new executable reduced the PBS 46685 archives - p3 control (8 sources)
+bit-identical to the b28 reduction (468 entries), p4 (78 sources) max per-entry relative difference
+8.4e-13 (domain) / 3.9e-13 (surface), 3,041 / 3,081 and 36,956 / 36,972 entries bit-identical (the
+differences are the last printed digit of the 13-digit CSV); a fresh p4 worker archive reduced by
+b28 and by the new executable in the same job gives the same numbers, and its b28 reduction equals
+PBS 46685's bit for bit (the worker is deterministic across jobs). Reducer wall old (b28, b = 48)
+-> new: p4 28.1 -> 15.5 s (Palace 26.3 -> 13.8 s; Operator Construction 15.6 -> 0.33 s - the
+stiffness / AMG setup gone - the reduction itself ~5 s: archive read max 4.2 s, sample evaluation
+max 4.2 s, Gram 0.2 s, domain Gram 1.1 s; the remaining ~9 s are the mesh preprocessing, the
+initialization and the disk IO of any Palace run), Palace peak 91.2 -> 33.3 GB (node used 136 ->
+76 GiB); p3 12.0 s / 22.0 GB. Per-rank samples: min 0, max 8,889 of 438,064 total (the interface
+faces sit on a subset of the ranks - the sample evaluation is 0.23 s on the lightest rank and 4.2
+s on the heaviest: the next lever, if any, is the surface-face balance of the partition). Against
+the b = 6 baseline of the same stage (PBS 46685: 99.2 s, 45.6 GB): 6.4x faster, 0.73x the peak.
+**Projected library reducers with the new executable** (the decision-58 device library, from the
+recorded b = 6 times: the setup ~ the worker's non-source time minus the stiffness / AMG setup, one
+evaluation per source at the measured per-evaluation rate, the pair-scaled Gram unchanged - an upper
+bound, since the Gram kernel is also faster): 10-edge p4 3,969 -> ~280 s, 5-edge 3,956 -> ~280,
+3-edge 2,020 -> ~150, 4-edge 1,017 -> ~110, 2-edge 992 -> ~90; all reducer stages 12,592 -> ~1,480
+s (-3.1 node-h of the 8.26 node-h run; b = 48 alone: -2.77). The reducer stops being the deadline
+floor of the source split (`job_split`): a coupon's job is the worker.
+
+**Candidate frozen executable - what the main-tree integration changes** (not switched here):
+(1) every `qualify` invocation's `--frozen-binary-sha256` (the plans' `Binary` / `BinarySHA256`)
+from `b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27` to
+`170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b` (the file exists under the
+remote root); (2) the cost model's reducer rates were measured with b28 at b = 6 - the streaming
+reducer's stage estimate should be re-measured on one coupon (the evaluation part becomes N
+evaluations; `ReducerResidentFieldGBPerMillionH1` no longer applies: the peak is flat) and
+`estimate_stages` updated in the same step; (3) the worker path is unchanged in the new executable
+(the p4 worker of PBS 46718 ran b28 by design; a first worker run with the new executable should
+be compared to a b28 archive bit for bit - the solve code is untouched, only the reduce-only branch
+skips the stiffness assembly); (4) `CODE-AND-EXECUTABLE-TRACKING.md` of the assessment records the
+new freeze (`linux-build/evidence/`).
 
 ## Preflight
 
