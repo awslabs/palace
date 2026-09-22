@@ -1,0 +1,78 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/lumped_wave_synth"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/coaxial.msh",
+    "L0": 1.0e-3  // mm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 2.08,
+        "LossTan": 4.0e-4
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2]
+    },
+    "LumpedPort":
+    [
+      {
+        // Mismatched lumped port (100 Ohm vs ~50 Ohm line): mixed with the wave port below,
+        // its circuit-synthesis coupling map must reproduce the lumped-to-wave scattering.
+        "Index": 1,
+        "Attributes": [3],
+        "R": 100.0,
+        "Direction": "+R",
+        "Excitation": 1
+      }
+    ],
+    "WavePort":
+    [
+      {
+        "Index": 2,
+        "Attributes": [4],
+        "Mode": 1,
+        "Excitation": 2,
+        "Offset": 0.0,
+        "MaxIts": 30,
+        "KSPTol": 1e-8,
+        "EigenTol": 1e-6,
+        "VoltagePath": [[0.8192, 0.0, 40.0], [2.7305, 0.0, 40.0]]
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 3,
+    "Device": "CPU",
+    "Driven":
+    {
+      "MinFreq": 5.0,  // GHz
+      "MaxFreq": 15.0,  // GHz
+      "FreqStep": 0.5,  // GHz
+      "AdaptiveTol": 1.0e-6,
+      "AdaptiveCircuitSynthesis": true
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 200
+    }
+  }
+}

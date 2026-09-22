@@ -2234,6 +2234,7 @@ template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureFinalize(const ErrorIndicator &indicator)
 {
   BlockTimer bt0(Timer::POSTPRO);
+  post_op_csv.FinalizeCSVData();
   // Pass nullptr for the indicator if it is empty (no AMR), so the write functions
   // skip the indicator grid function but still save the mesh and rank partition.
   const ErrorIndicator *ind_ptr = (indicator.Local().Size() > 0) ? &indicator : nullptr;

@@ -128,6 +128,34 @@ if(PALACE_WITH_CUDA)
       "-DCUDSS_DIR=${CUDSS_DIR}"
     )
   endif()
+  if(PALACE_WITH_CUDSS)
+    # cuDSS loads its MPI calls from a small plugin that must be compiled against the same
+    # MPI as Palace. Build it from the source NVIDIA ships with cuDSS rather than using the
+    # bundled Open MPI binary.
+    set(PALACE_CUDSS_COMM_SRC "${CUDSS_DIR}/src/cudss_commlayer_openmpi.cu")
+    if(NOT EXISTS "${PALACE_CUDSS_COMM_SRC}")
+      message(FATAL_ERROR
+        "Could not find ${PALACE_CUDSS_COMM_SRC}. The cuDSS tarball archives include the "
+        "communication layer source under src/; the pip/conda wheels do not. Install the "
+        "archive and set CUDSS_DIR to it."
+      )
+    endif()
+    find_package(cudss CONFIG REQUIRED HINTS "${CUDSS_DIR}/lib/cmake/cudss")
+    add_library(cudss_commlayer_mpi SHARED "${PALACE_CUDSS_COMM_SRC}")
+    target_link_libraries(cudss_commlayer_mpi PRIVATE cudss CUDA::cudart MPI::MPI_CXX)
+    set_target_properties(cudss_commlayer_mpi PROPERTIES
+      CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
+      LIBRARY_OUTPUT_DIRECTORY "${CMAKE_INSTALL_PREFIX}/lib"
+      BUILD_WITH_INSTALL_RPATH ON
+      INSTALL_RPATH_USE_LINK_PATH ON
+    )
+    set(PALACE_CUDSS_COMM_LIB
+      "${CMAKE_INSTALL_PREFIX}/lib/${CMAKE_SHARED_LIBRARY_PREFIX}cudss_commlayer_mpi${CMAKE_SHARED_LIBRARY_SUFFIX}"
+    )
+    message(STATUS "Building cuDSS communication layer for the selected MPI: ${PALACE_CUDSS_COMM_LIB}")
+    list(APPEND MFEM_DEPENDENCIES cudss_commlayer_mpi)
+    list(APPEND MFEM_OPTIONS "-DMFEM_CUDSS_COMM_LIB=${PALACE_CUDSS_COMM_LIB}")
+  endif()
   palace_append_cuda_architectures(MFEM_OPTIONS)
 else()
   list(APPEND MFEM_OPTIONS
@@ -456,6 +484,20 @@ download_mfem_patch(
   mfem_pr5415.diff
   "https://github.com/mfem/mfem/commit/9d1438d8a2502cc927c63e093cf8c855ff17918e.diff"
   482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f
+)
+# https://github.com/mfem/mfem/pull/5494
+# Source-only backport for MFEM 4.9.
+download_mfem_patch(
+  mfem_nc_partition_fixes.diff
+  "https://raw.githubusercontent.com/awslabs/palace/1382ca5e9f72369b33c0ff5e8e0a244ac6597f6a/extern/patch/mfem/mfem_nc_partition_fixes.diff"
+  a28bf879ecf197856d24ef5427d493f84a159224c22e7cd17ec977e06a222ffb
+)
+# https://github.com/mfem/mfem/pull/5502
+# NCMesh: fix 8-bit reference-counter overflow at high-valence vertices.
+download_mfem_patch(
+  mfem_pr5502.diff
+  "https://github.com/mfem/mfem/commit/3091ba40b238c4008b67216314bb26da6738b833.diff"
+  52ccf3332f87aaf7ebc84674448226201c04343a3e298006bea5fd8be8e92533
 )
 
 include(ExternalProject)

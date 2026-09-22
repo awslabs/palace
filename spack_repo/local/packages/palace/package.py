@@ -203,7 +203,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     with when("@0.16:"):
         # +lapack means: use external lapack
         depends_on(
-            "mfem+mpi+metis+lapack@4.9:",
+            "mfem+mpi+metis+lapack@4.9.0",
             patches=[
                 # https://github.com/mfem/mfem/pull/3847
                 patch(
@@ -261,6 +261,25 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                     sha256="482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f",
                     when="@4.9.0",
                 ),
+                # https://github.com/mfem/mfem/pull/5494
+                # Source-only backport for MFEM 4.9.
+                patch(
+                    "https://raw.githubusercontent.com/awslabs/palace/"
+                    "1382ca5e9f72369b33c0ff5e8e0a244ac6597f6a/extern/patch/mfem/"
+                    "mfem_nc_partition_fixes.diff",
+                    sha256="a28bf879ecf197856d24ef5427d493f84a159224c22e7cd17ec977e06a222ffb",
+                    when="@4.9.0",
+                ),
+                # https://github.com/mfem/mfem/pull/5502
+                # NCMesh: fix 8-bit reference-counter overflow at high-valence
+                # vertices. Pulled directly from the PR head commit. Remove once
+                # merged upstream and MFEM is bumped.
+                patch(
+                    "https://github.com/mfem/mfem/commit/"
+                    "3091ba40b238c4008b67216314bb26da6738b833.diff",
+                    sha256="52ccf3332f87aaf7ebc84674448226201c04343a3e298006bea5fd8be8e92533",
+                    when="@4.9.0",
+                ),
             ],
         )
         depends_on("mfem+shared", when="+shared")
@@ -289,7 +308,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     with when("@0.18:"):
         depends_on("mfem+cudss", when="+cudss")
-        depends_on("cudss", when="+cudss")
+        depends_on("cudss+mpi", when="+cudss")
 
     with when("+libxsmm"):
         depends_on("libxsmm@2: blas=0")
@@ -300,7 +319,20 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("libxsmm+shared")
 
     with when("@0.14:"):
-        depends_on("libceed@0.13:")
+        # The builtin recipe has no libCEED release newer than 0.12.0, so an open range
+        # resolves to an unpinned develop. Pin per Palace release. The 0.14-0.17 pins match
+        # cmake/ExternalGitTags.cmake; 0.18 uses the libCEED main merge of the same change
+        # (the superbuild commit predates libCEED's libxsmm 2.0 requirement).
+        depends_on(
+            "libceed@develop commit=204f3be0a8a44f14c6b90cf1319bc5c5bd195020", when="@0.14"
+        )
+        depends_on(
+            "libceed@develop commit=95bd1e908b16e04a70015e3a9a7fddec5e9c3fc8",
+            when="@0.15:0.17",
+        )
+        depends_on(
+            "libceed@develop commit=d6367d2d6a0cca608a0b8e21d79b83c50a49a19a", when="@0.18:"
+        )
         depends_on("libceed+openmp", when="+openmp")
         depends_on("libceed~openmp", when="~openmp")
         depends_on("libceed+shared", when="+shared")

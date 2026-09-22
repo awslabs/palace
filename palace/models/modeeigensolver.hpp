@@ -161,6 +161,12 @@ public:
   // does not have a solver configured (non-port process in wave port mode).
   const ComplexKspSolver *GetLinearSolver() const { return ksp.get(); }
 
+  // Tighten the eigenvalue-convergence and inner linear-solve tolerances, used to solve the
+  // cross-section EVP more accurately when sampling kₙ(ω)/M(ω) for wave-port circuit
+  // synthesis (decoupling the fit from the user's port EigenTol/KSPTol). Takes effect on
+  // the next Solve; a no-op on ranks without a solver configured.
+  void SetSynthesisTol(double eig_tol_new, double ksp_tol_new);
+
 private:
   // Solver parameters.
   int num_modes, num_vec;
@@ -211,8 +217,10 @@ private:
 
   std::unique_ptr<ComplexOperator> opB;
 
-  // Frequency-dependent block A operator (rebuilt each Solve).
-  std::unique_ptr<ComplexOperator> opA;
+  // Frequency-dependent block A operator and sparse-direct preconditioner operator
+  // (rebuilt each Solve). The latter is assembled collectively on the FE space
+  // communicator before non-port ranks return from Solve.
+  std::unique_ptr<ComplexOperator> opA, direct_pc_op;
 
   // Eigenvalue and linear solvers (null on processes without solver_comm).
   std::unique_ptr<EigenvalueSolver> eigen;

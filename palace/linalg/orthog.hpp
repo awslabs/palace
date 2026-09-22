@@ -53,21 +53,20 @@ inline void OrthogonalizeColumnMGS(MPI_Comm comm, const std::vector<VecType> &V,
   }
 }
 
-template <typename VecType, typename ScalarType,
-          typename InnerProductW = IdentityInnerProduct>
+namespace internal
+{
+
+template <typename VecType, typename ScalarType, typename Project>
 inline void OrthogonalizeColumnCGS(MPI_Comm comm, const std::vector<VecType> &V, VecType &w,
-                                   ScalarType *H, std::size_t m, bool refine = false,
-                                   const InnerProductW &dot_op = {})
+                                   ScalarType *H, std::size_t m, bool refine,
+                                   const Project &project)
 {
   MFEM_ASSERT(m <= V.size(), "Out of bounds number of columns for CGS orthogonalization!");
   if (m == 0)
   {
     return;
   }
-  for (std::size_t j = 0; j < m; j++)
-  {
-    H[j] = dot_op(w, V[j]);  // Local inner product
-  }
+  project(w, H);
   Mpi::GlobalSum(m, H, comm);
   for (std::size_t j = 0; j < m; j++)
   {
@@ -76,10 +75,7 @@ inline void OrthogonalizeColumnCGS(MPI_Comm comm, const std::vector<VecType> &V,
   if (refine)
   {
     std::vector<ScalarType> dH(m);
-    for (int j = 0; j < m; j++)
-    {
-      dH[j] = dot_op(w, V[j]);  // Local inner product
-    }
+    project(w, dH.data());
     Mpi::GlobalSum(m, dH.data(), comm);
     for (std::size_t j = 0; j < m; j++)
     {
@@ -87,6 +83,46 @@ inline void OrthogonalizeColumnCGS(MPI_Comm comm, const std::vector<VecType> &V,
       w.Add(-dH[j], V[j]);
     }
   }
+}
+
+}  // namespace internal
+
+template <typename VecType, typename ScalarType,
+          typename InnerProductW = IdentityInnerProduct>
+inline void OrthogonalizeColumnCGS(MPI_Comm comm, const std::vector<VecType> &V, VecType &w,
+                                   ScalarType *H, std::size_t m, bool refine = false,
+                                   const InnerProductW &dot_op = {})
+{
+  internal::OrthogonalizeColumnCGS(comm, V, w, H, m, refine,
+                                   [&V, m, &dot_op](const VecType &x, ScalarType *h)
+                                   {
+                                     for (std::size_t j = 0; j < m; j++)
+                                     {
+                                       h[j] = dot_op(x, V[j]);  // Local inner product
+                                     }
+                                   });
+}
+
+// Operator-weighted CGS needs only one application of W per pass because w is unchanged
+// while computing its projections. Reapply W after the first update when refining.
+// The caller owns the workspace, which must not alias w or any basis vector.
+template <typename VecType, typename ScalarType, typename WeightOperator>
+inline void OrthogonalizeColumnWeightedCGS(MPI_Comm comm, const std::vector<VecType> &V,
+                                           VecType &w, ScalarType *H, std::size_t m,
+                                           const WeightOperator &W, VecType &work,
+                                           bool refine = false)
+{
+  internal::OrthogonalizeColumnCGS(comm, V, w, H, m, refine,
+                                   [&V, m, &W, &work](const VecType &x, ScalarType *h)
+                                   {
+                                     work.SetSize(x.Size());
+                                     work.UseDevice(x.UseDevice());
+                                     W.Mult(x, work);
+                                     for (std::size_t j = 0; j < m; j++)
+                                     {
+                                       h[j] = LocalDot(work, V[j]);
+                                     }
+                                   });
 }
 
 template <typename VecType, typename ScalarType,

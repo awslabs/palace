@@ -222,15 +222,25 @@ numerically to *Palace*'s release version. The coupling is one-directional:
     not bump the schema version.
 
 Because the schema is versioned independently, a single schema version generally spans
-several *Palace* releases. The table below records the schema version shipped by each
-*Palace* release; a listed version applies from that release until the next row. Add a
-row when a release is cut, recording the schema version at that boundary.
+several *Palace* releases. The table below records the first *Palace* release shipping
+each schema version; a schema version applies to that release and all later ones up to
+(but not including) the next entry. Its source is the machine-readable
+[`schema-compatibility.json`](https://github.com/awslabs/palace/blob/main/scripts/schema/schema-compatibility.json)
+file. Add an entry there whenever a release introduces a new schema version; the
+documentation build generates this table from that file.
 
-| Schema version | *Palace* release | Notes                                                                                                                |
-|:--------------:|:----------------:|:-------------------------------------------------------------------------------------------------------------------- |
-| `1-0-0`        | `0.17`           | First explicitly-versioned schema.                                                                                   |
-| `1-6-0`        | `0.18`           |                                                                                                                      |
-| `2-0-0`        | `0.18`           | Rename FluxLoop `FluxLoopPEC` to `FilmAttributes`; add `Superconductor` boundary and FluxLoop `PecPenetrationDepth`. |
+```@raw html
+<!-- BEGIN GENERATED SCHEMA COMPATIBILITY TABLE -->
+```
+
+| Schema version | First *Palace* release | Notes                              |
+|:--------------:|:----------------------:|:---------------------------------- |
+| `1-0-0`        | `0.17.0`               | First explicitly-versioned schema. |
+| `1-6-0`        | `0.18.0`               |                                    |
+
+```@raw html
+<!-- END GENERATED SCHEMA COMPATIBILITY TABLE -->
+```
 
 #### When and how to bump (PR checklist)
 
@@ -265,9 +275,9 @@ schema version bump in that same PR. This means the repository will accumulate m
 
     Place the entry in the section that best describes the *motivation* (typically `New Features` for additions, `Interface Changes` for breaking changes).
 
- 4. Do NOT update the version table in this file (`docs/src/developer/notes.md`).
-    The table maps schema versions to *Palace* releases and is updated only when a release
-    is cut, not per-PR.
+ 4. Do NOT update `scripts/schema/schema-compatibility.json`.
+    The compatibility data maps schema versions to *Palace* releases and is updated only
+    when a release is cut, not per-PR.
 
 ##### Example changelog entry
 

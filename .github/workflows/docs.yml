@@ -53,6 +53,7 @@ jobs:
               - 'docs/**'
               - 'extern/**'
               - 'examples/**'
+              - 'scripts/schema/**'
               - 'spack_repo/**'
               - '.github/workflows/docs.yml'
       - name: Decide whether to build
