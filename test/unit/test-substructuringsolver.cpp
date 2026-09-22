@@ -975,4 +975,51 @@ TEST_CASE("SubstructuringSolver magnetostatic cross-run re-meshing",
   CHECK(d.Norml2() <= 1.0e-5 * (ref.Norml2() + 1.0e-30));
 }
 
+TEST_CASE("SubstructuringSolver HODLR off-diagonal compression accuracy vs tolerance",
+          "[substructure][Serial]")
+{
+  // Hierarchical (HODLR) off-diagonal low-rank compression of S_E: the DtN's well-separated
+  // interface couplings are low-rank (unlike its full spectrum). Measure region-solve energy
+  // error + reported storage ratio vs the compression tolerance.
+  auto energy_at = [](double tol)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+            {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", 1},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"InterfaceOffdiagTol", tol}}}}}};
+    IoData iodata(config, false);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(10)));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+    return ss.ElectrostaticEnergy(ss.SolveExcitation(1));
+  };
+  const double e_exact = energy_at(0.0);
+  CHECK(e_exact > 1.0e-12);
+  double relerr = 1.0;
+  for (double tol : {1e-2, 1e-4, 1e-6, 1e-8})
+  {
+    const double e = energy_at(tol);
+    relerr = std::abs(e - e_exact) / std::abs(e_exact);
+    if (Mpi::Root(Mpi::World()))
+    {
+      std::printf("[HODLR-acc] tol=%.0e  energy=%.10e  relerr=%.3e\n", tol, e, relerr);
+    }
+  }
+  // Tightest tolerance should recover the exact region energy closely.
+  CHECK(relerr <= 1.0e-6);
+}
+
 }  // namespace palace

@@ -1471,6 +1471,7 @@ SubstructuringData::SubstructuringData(const json &substructuring)
                                .get<std::vector<int>>();  // Required
   mode = substructuring.value("Mode", mode);
   save_model = substructuring.value("SaveModel", save_model);
+  interface_offdiag_tol = substructuring.value("InterfaceOffdiagTol", interface_offdiag_tol);
 }
 
 SolverData::SolverData(const json &solver)

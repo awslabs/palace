@@ -9,6 +9,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <numeric>
 #include <set>
 #include <vector>
 #include <mfem.hpp>
@@ -217,6 +218,174 @@ private:
   int nG_global;
   MPI_Comm comm;
 };
+
+// Symmetric eigendecomposition by cyclic Jacobi (this mfem build has no LAPACK): A (n x n,
+// row-major, destroyed), eigenvectors -> V (row-major, columns are eigenvectors), eigenvalues
+// -> lam.
+inline void SymEig(std::vector<double> &A, int n, std::vector<double> &V,
+                   std::vector<double> &lam)
+{
+  V.assign(static_cast<std::size_t>(n) * n, 0.0);
+  for (int i = 0; i < n; i++)
+  {
+    V[static_cast<std::size_t>(i) * n + i] = 1.0;
+  }
+  auto a = [&](int i, int j) -> double & { return A[static_cast<std::size_t>(i) * n + j]; };
+  auto v = [&](int i, int j) -> double & { return V[static_cast<std::size_t>(i) * n + j]; };
+  for (int sweep = 0; sweep < 100; sweep++)
+  {
+    double off = 0.0;
+    for (int p = 0; p < n; p++)
+    {
+      for (int q = p + 1; q < n; q++)
+      {
+        off += a(p, q) * a(p, q);
+      }
+    }
+    if (off < 1e-30)
+    {
+      break;
+    }
+    for (int p = 0; p < n; p++)
+    {
+      for (int q = p + 1; q < n; q++)
+      {
+        const double apq = a(p, q);
+        if (std::abs(apq) < 1e-300)
+        {
+          continue;
+        }
+        const double phi = 0.5 * std::atan2(2.0 * apq, a(q, q) - a(p, p));
+        const double c = std::cos(phi), s = std::sin(phi);
+        for (int k = 0; k < n; k++)
+        {
+          const double kp = a(k, p), kq = a(k, q);
+          a(k, p) = c * kp - s * kq;
+          a(k, q) = s * kp + c * kq;
+        }
+        for (int k = 0; k < n; k++)
+        {
+          const double pk = a(p, k), qk = a(q, k);
+          a(p, k) = c * pk - s * qk;
+          a(q, k) = s * pk + c * qk;
+        }
+        for (int k = 0; k < n; k++)
+        {
+          const double kp = v(k, p), kq = v(k, q);
+          v(k, p) = c * kp - s * kq;
+          v(k, q) = s * kp + c * kq;
+        }
+      }
+    }
+  }
+  lam.assign(n, 0.0);
+  for (int i = 0; i < n; i++)
+  {
+    lam[i] = a(i, i);
+  }
+}
+
+// In-place hierarchical (HODLR) off-diagonal low-rank compression of a dense symmetric S
+// (n x n, row-major): split the index set at the median of its widest coordinate axis,
+// replace the off-diagonal block S[I1,I2] (and its transpose) by a truncated SVD to relative
+// tolerance `tol`, and recurse on the diagonal blocks. `coords` is n x 3. Returns the number
+// of doubles retained (compressed storage) so the caller can report the compression ratio.
+inline long long HodlrCompress(std::vector<double> &S, int n, const std::vector<int> &idx,
+                               const std::vector<double> &coords, double tol, int leaf)
+{
+  const int m = static_cast<int>(idx.size());
+  if (m <= leaf)
+  {
+    return static_cast<long long>(m) * m;
+  }
+  int axis = 0;
+  double best = -1.0;
+  for (int d = 0; d < 3; d++)
+  {
+    double lo = 1e300, hi = -1e300;
+    for (int i : idx)
+    {
+      const double x = coords[static_cast<std::size_t>(i) * 3 + d];
+      lo = std::min(lo, x);
+      hi = std::max(hi, x);
+    }
+    if (hi - lo > best)
+    {
+      best = hi - lo;
+      axis = d;
+    }
+  }
+  std::vector<int> s(idx);
+  std::sort(s.begin(), s.end(), [&](int i, int j)
+            { return coords[static_cast<std::size_t>(i) * 3 + axis] <
+                     coords[static_cast<std::size_t>(j) * 3 + axis]; });
+  std::vector<int> I1(s.begin(), s.begin() + m / 2), I2(s.begin() + m / 2, s.end());
+  const int m1 = static_cast<int>(I1.size()), m2 = static_cast<int>(I2.size());
+  // C = B^T B for B = S[I1, I2] (m1 x m2); sing. values of B are sqrt(eig(C)).
+  std::vector<double> C(static_cast<std::size_t>(m2) * m2, 0.0);
+  for (int a = 0; a < m2; a++)
+  {
+    for (int b = a; b < m2; b++)
+    {
+      double acc = 0.0;
+      for (int k = 0; k < m1; k++)
+      {
+        acc += S[static_cast<std::size_t>(I1[k]) * n + I2[a]] *
+               S[static_cast<std::size_t>(I1[k]) * n + I2[b]];
+      }
+      C[static_cast<std::size_t>(a) * m2 + b] = acc;
+      C[static_cast<std::size_t>(b) * m2 + a] = acc;
+    }
+  }
+  std::vector<double> V, lam;
+  SymEig(C, m2, V, lam);
+  double lmax = 0.0;
+  for (double l : lam)
+  {
+    lmax = std::max(lmax, l);
+  }
+  std::vector<int> keep;
+  for (int k = 0; k < m2; k++)
+  {
+    if (lam[k] > tol * tol * lmax)
+    {
+      keep.push_back(k);
+    }
+  }
+  const int rB = static_cast<int>(keep.size());
+  // B ~= sum_k (B v_k) v_k^T over kept modes. Bv[i][kk] = sum_l S[I1[i],I2[l]] V[l,keep[kk]].
+  std::vector<double> Bv(static_cast<std::size_t>(m1) * rB, 0.0);
+  for (int i = 0; i < m1; i++)
+  {
+    for (int kk = 0; kk < rB; kk++)
+    {
+      double acc = 0.0;
+      for (int l = 0; l < m2; l++)
+      {
+        acc += S[static_cast<std::size_t>(I1[i]) * n + I2[l]] *
+               V[static_cast<std::size_t>(l) * m2 + keep[kk]];
+      }
+      Bv[static_cast<std::size_t>(i) * rB + kk] = acc;
+    }
+  }
+  for (int i = 0; i < m1; i++)
+  {
+    for (int j = 0; j < m2; j++)
+    {
+      double acc = 0.0;
+      for (int kk = 0; kk < rB; kk++)
+      {
+        acc += Bv[static_cast<std::size_t>(i) * rB + kk] *
+               V[static_cast<std::size_t>(j) * m2 + keep[kk]];
+      }
+      S[static_cast<std::size_t>(I1[i]) * n + I2[j]] = acc;
+      S[static_cast<std::size_t>(I2[j]) * n + I1[i]] = acc;  // symmetric
+    }
+  }
+  return static_cast<long long>(rB) * (m1 + m2) +
+         HodlrCompress(S, n, I1, coords, tol, leaf) +
+         HodlrCompress(S, n, I2, coords, tol, leaf);
+}
 
 }  // namespace
 
@@ -1376,6 +1545,40 @@ void SubstructuringSolver::CondenseEnvironment()
       }
     }
   }
+  // Optional hierarchical (HODLR) off-diagonal compression of the freshly materialized S_E
+  // (serial proof-of-concept, H1): the DtN's well-separated interface-block couplings are
+  // low-rank, so this compresses S_E storage to a controlled relative tolerance while the
+  // near-field / diagonal is kept exact (unlike a global low-rank, which fails -- S_E is full
+  // rank). Reconstructs an approximate dense S_E and reports the compression ratio.
+  {
+    const double hodlr_tol = impl->iodata.solver.substructuring->interface_offdiag_tol;
+    if (hodlr_tol > 0.0 && nG > 0 && Mpi::Size(comm) == 1 && !impl->magnetostatic)
+    {
+      std::vector<double> coords(static_cast<std::size_t>(nG) * 3, 0.0);
+      mfem::ParGridFunction gf(&impl->parent_fes);
+      Vector td(impl->nt);
+      for (int d = 0; d < impl->parent.Dimension(); d++)
+      {
+        mfem::FunctionCoefficient xc([d](const mfem::Vector &x) { return x(d); });
+        gf.ProjectCoefficient(xc);
+        gf.GetTrueDofs(td);
+        for (int i = 0; i < impl->nt; i++)
+        {
+          if (impl->is_gamma[i])
+          {
+            coords[static_cast<std::size_t>(impl->gamma_global[i]) * 3 + d] = td(i);
+          }
+        }
+      }
+      std::vector<int> idx(nG);
+      std::iota(idx.begin(), idx.end(), 0);
+      const long long ret = HodlrCompress(impl->S_rows, nG, idx, coords, hodlr_tol, 32);
+      Mpi::Print("[HODLR] tol={:.1e}: S_E storage {:d}/{:d} = {:.3f} of dense\n", hodlr_tol,
+                 ret, static_cast<long long>(nG) * nG,
+                 static_cast<double>(ret) / (static_cast<double>(nG) * nG));
+    }
+  }
+
   // g_E is excitation-dependent; it is computed per excitation in the region solve.
   impl->mat_dtn = std::make_unique<MaterializedDtN>(
       impl->S_rows, impl->gamma_off, impl->gamma_global, impl->nG_global, comm);
