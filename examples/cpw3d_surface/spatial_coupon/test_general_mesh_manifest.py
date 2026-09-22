@@ -2953,7 +2953,7 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             rejected(lambda c: c["InterfaceAreas"].pop(), "interface-area labels differ from the semantic contract")
             rejected(lambda c: c["InterfaceAreas"].append({"Attribute": 3000, "Area": 1.0}),
                      "interface-area labels differ from the semantic contract")
-            rejected(lambda c: [row.pop("Area") for row in c["InterfaceAreas"]], "positive per-label interface areas")
+            rejected(lambda c: [row.pop("Area") for row in c["InterfaceAreas"]], "Interface area row lacks a finite Area")
             rejected(lambda c: c["PrismTubes"]["Quality"]["Prism"].__setitem__("PositiveOrientation", False),
                      "Prism cells fail orientation")
             rejected(lambda c: c["PrismTubes"]["Quality"]["Pyramid"].__setitem__("MaximumJacobianCondition", 1e4),
