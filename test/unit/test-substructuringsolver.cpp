@@ -661,13 +661,6 @@ TEST_CASE("SubstructuringSolver magnetostatic inductance matrix",
   const bool tet = GENERATE(false, true);
   CAPTURE(order);
   CAPTURE(tet);
-  // Known limitation: order >= 2 H(curl) on tetrahedra is exact serially but wrong in parallel
-  // (higher-order tetrahedral edge/face DOF orientation across a partition cut is mishandled in
-  // the interface identification; order-1 tets and order-2 hexes are fine). Skip in parallel.
-  if (tet && order >= 2 && Mpi::Size(Mpi::World()) > 1)
-  {
-    return;
-  }
   const double mu_r = 1.0, mu_e = 4.0;
   json config = {
       {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},

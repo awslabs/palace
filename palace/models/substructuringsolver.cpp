@@ -254,7 +254,11 @@ struct SubstructuringSolver::Impl
 #if defined(MFEM_USE_SUPERLU)
   std::unique_ptr<SuperLUSolver> env_lu;  // direct A_EE factorization (many-RHS materialization)
   std::unique_ptr<SuperLUSolver> reg_lu;  // direct A_region_free factorization (region pc)
+  std::unique_ptr<mfem::HypreParMatrix> env_A_ee_parent;  // parent-space env A_EE (eliminated)
+  std::unique_ptr<SuperLUSolver> env_lu_parent;  // parent-space direct env solve (no transfer)
 #endif
+  mfem::Array<int> non_env_int;  // parent true DOFs that are not environment-interior
+  bool env_parent_direct = false;
   mfem::Array<int> env_ess;  // solve-space essential true DOFs (Gamma + env Dirichlet)
   mutable mfem::ParGridFunction env_pgf, env_sgf;  // parent / submesh transfer buffers
   mutable mfem::Vector env_srhs, env_ssol;
@@ -501,6 +505,34 @@ struct SubstructuringSolver::Impl
   void BuildEnvSubmeshSolver()
   {
     const int mg_levels = iodata.solver.linear.mg_max_levels;
+#if defined(MFEM_USE_SUPERLU)
+    // Order >= 2 H(curl): solve the environment interior in PARENT space (A_env with the
+    // non-environment-interior DOFs eliminated) with a SuperLU direct factorization, instead
+    // of the ParSubMesh transfer. The transfer mishandles higher-order tetrahedral edge/face
+    // DOF orientation (DOF transformations) across a partition cut; the parent-space solve
+    // avoids it entirely and is exact. SuperLU tolerates the all-identity ranks that blocked
+    // the original parent-space *iterative* approach.
+    if (magnetostatic && iodata.solver.order > 1)
+    {
+      non_env_int.SetSize(0);
+      for (int i = 0; i < nt; i++)
+      {
+        if (!is_env_int[i])
+        {
+          non_env_int.Append(i);
+        }
+      }
+      env_A_ee_parent = std::make_unique<mfem::HypreParMatrix>(*A_env);
+      {
+        std::unique_ptr<mfem::HypreParMatrix> e(
+            env_A_ee_parent->EliminateRowsCols(non_env_int));
+      }
+      env_lu_parent = std::make_unique<SuperLUSolver>(iodata, parent_fes.GetComm(), 0);
+      env_lu_parent->SetOperator(*env_A_ee_parent);
+      env_parent_direct = true;
+      return;
+    }
+#endif
     // A direct factorization of A_EE (factored once, reused across the |Gamma| interface
     // back-solves + per-excitation recovery) is far cheaper than |Gamma| iterative solves for
     // the S_E materialization, and is exact. Selected when the user configures a direct linear
@@ -770,6 +802,26 @@ struct SubstructuringSolver::Impl
   // the environment interior.
   void ApplyAeeInv(const mfem::Vector &x_parent, mfem::Vector &y_parent) const
   {
+#if defined(MFEM_USE_SUPERLU)
+    if (env_parent_direct)
+    {
+      // Parent-space direct env interior solve (no submesh transfer): zero the rhs outside
+      // the environment interior, solve the eliminated A_env, and keep the interior.
+      mfem::Vector rhs(nt), sol(nt);
+      for (int i = 0; i < nt; i++)
+      {
+        rhs(i) = is_env_int[i] ? x_parent(i) : 0.0;
+      }
+      sol = 0.0;
+      env_lu_parent->Mult(rhs, sol);
+      y_parent.SetSize(nt);
+      for (int i = 0; i < nt; i++)
+      {
+        y_parent(i) = is_env_int[i] ? sol(i) : 0.0;
+      }
+      return;
+    }
+#endif
     env_pgf.SetFromTrueDofs(x_parent);
     env_sgf = 0.0;
     env_submesh->Transfer(env_pgf, env_sgf);
