@@ -1,0 +1,6 @@
+deleted perf-reducer-01/two-edge-8dd4bc70f183/main/p3-control/archive files=1536 size=214M 2026-09-22T02:20:07Z
+deleted perf-reducer-01/two-edge-8dd4bc70f183/main/p4/archive files=14976 size=4.8G 2026-09-22T02:20:17Z
+deleted perf-gram-01/two-edge-8dd4bc70f183/main/p4-fresh/archive files=14976 size=4.8G 2026-09-22T02:20:26Z
+--------------- -------- -------- ---------- ------ --- --- ------ ----- - -----
+46013.ip-192-1* simlap   normal-g single-tr*   5185  20 38*    --  96:00 R 32:31
+{"ExitCode":0,"CompletedUTC":"2026-09-22T02:13:13Z","JobID":"46720.ip-192-168-54-24.us-west-2.compute.internal"}

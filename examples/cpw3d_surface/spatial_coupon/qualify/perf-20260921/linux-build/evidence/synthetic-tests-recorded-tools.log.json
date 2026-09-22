@@ -1,0 +1,15 @@
+{
+  "Command": [
+    "python3",
+    "source-freeze/tools/test_estimate_archived_fields.py",
+    "-v"
+  ],
+  "Seconds": 44.37947995899998,
+  "PeakProcessTreeRSSBytes": 218218496,
+  "ReturnCode": 0,
+  "StopReason": null,
+  "Limits": {
+    "Seconds": 900.0,
+    "MemoryGiB": 6.0
+  }
+}
