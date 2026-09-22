@@ -1188,14 +1188,20 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
     models = []
     headers = []
     for record in records:
+        # The header of every case of the run that reached the manifest (a planned / stopped
+        # case still binds the header); a model only for an analyzed case.
+        case = next((item for item in manifest["Cases"] if item["Id"] == record["Case"]), None) if manifest else None
+        if case is None:
+            continue
+        directory = source_directory(manifest_path, manifest, case)
+        library_path = directory / case["Source"]["Files"]["ProcessLibrary"]["Name"]
+        if not library_path.is_file():
+            continue
+        library = json.loads(library_path.read_text())
+        headers.append((library_path, library_header(library, library_path)))
         context = contexts.get(record["Case"])
         if context is None or record.get("Qualification") is None:
             continue
-        case = manifest_case(manifest, record["Case"])
-        directory = source_directory(manifest_path, manifest, case)
-        library_path = directory / case["Source"]["Files"]["ProcessLibrary"]["Name"]
-        library = json.loads(library_path.read_text())
-        headers.append((library_path, library_header(library, library_path)))
         model = dict(library["Models"][0])
         main = next(item for item in context["layout"] if item["Role"] == "main")
         reducer = Path(record.get("MainReducer") or Path(record["Root"]) / "results" / "main" / main["Prefix"] / "reducer")
@@ -1244,8 +1250,8 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
     return {**header, "Name": "coupon-library", "Command": "coupon-library qualify", "Root": str(root),
             "Rule": LIBRARY_RULE,
             "HeaderSources": [{"Path": str(path), "SHA256": sha256(path)} for path, _ in headers],
-            "Loadable": {"Palace": not not_loadable, "Models": len(models) - len(not_loadable), "NotLoadable": not_loadable,
-                         "Preflight": PROCESS_LIBRARY_PREFLIGHT_RECORD},
+            "Loadable": {"Palace": bool(header) and not not_loadable, "Models": len(models) - len(not_loadable),
+                         "NotLoadable": not_loadable, "Preflight": PROCESS_LIBRARY_PREFLIGHT_RECORD},
             "MergedFrom": merged, "Models": models}
 
 
