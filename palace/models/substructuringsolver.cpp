@@ -206,7 +206,18 @@ struct SubstructuringSolver::Impl
   mfem::ParFiniteElementSpace parent_fes;
   int nt;
 
-  std::unique_ptr<mfem::HypreParMatrix> A_region, A_env, A_env_int, A_region_free;
+  std::unique_ptr<mfem::HypreParMatrix> A_region, A_env, A_region_free;
+  // Environment interior solve on the environment submesh (Gamma as an essential boundary):
+  // avoids the all-identity ranks of the parent-space eliminated operator and enables
+  // geometric multigrid on a standard Dirichlet problem.
+  mfem::Array<int> ra_arr, ea_arr;
+  std::unique_ptr<mfem::ParSubMesh> env_submesh;
+  std::unique_ptr<mfem::ParFiniteElementSpace> env_sfes;
+  std::unique_ptr<mfem::HypreParMatrix> env_A_ee;  // submesh operator, essential eliminated
+  std::unique_ptr<KspSolver> env_ksp;
+  mfem::Array<int> env_ess;  // submesh essential true DOFs (Gamma + env Dirichlet)
+  mutable mfem::ParGridFunction env_pgf, env_sgf;  // parent / submesh transfer buffers
+  mutable mfem::Vector env_srhs, env_ssol;
   // Energy (QoI) operators. Electrostatic: alias the solve operators. Magnetostatic: pure
   // curl-curl (no mass), so the magnetic energy / inductance is physical.
   std::unique_ptr<mfem::HypreParMatrix> A_region_energy, A_env_energy;
@@ -218,7 +229,6 @@ struct SubstructuringSolver::Impl
 
   std::unique_ptr<RegionCondensedOperator> region_op;
   std::unique_ptr<KspSolver> region_ksp;  // Palace CG + wrapped AMG/AMS on the region block
-  std::unique_ptr<KspSolver> solver_env;  // Palace CG + wrapped AMG/AMS (config-consistent)
   std::unique_ptr<ImplicitDtN> dtn;
 
   // Materialized (reusable) interface operator: replicated dense S_E + load g_E over a
@@ -245,6 +255,8 @@ struct SubstructuringSolver::Impl
     std::copy(sub.region_attributes.begin(), sub.region_attributes.end(), ra.begin());
     std::copy(sub.environment_attributes.begin(), sub.environment_attributes.end(),
               ea.begin());
+    ra_arr = ra;
+    ea_arr = ea;
 
     // Interface / region / environment true-DOF markers.
     mfem::Array<int> rm, em, im;
@@ -424,6 +436,127 @@ struct SubstructuringSolver::Impl
   }
 
   std::map<int, mfem::DenseMatrix> region_eps, env_eps;
+
+  // Build the environment interior solver on the environment submesh: Gamma (the interface,
+  // a new submesh boundary attribute) plus any environment Dirichlet terminals are
+  // essential; the outer environment boundary is natural. This reproduces the parent-space
+  // A_EE^-1 action (env-interior with Gamma held fixed) but as a standard Dirichlet problem
+  // on a mesh whose every rank owns real DOFs (no all-identity ranks) -- enabling
+  // AMG/geometric multigrid at any partition count.
+  void BuildEnvSubmeshSolver()
+  {
+    env_submesh = std::make_unique<mfem::ParSubMesh>(
+        mfem::ParSubMesh::CreateFromDomain(parent, ea_arr));
+    env_sfes = std::make_unique<mfem::ParFiniteElementSpace>(env_submesh.get(), fec.get());
+    env_pgf.SetSpace(&parent_fes);
+    env_sgf.SetSpace(env_sfes.get());
+    // Essential submesh DOFs = the parent non-(environment-interior) DOFs (interface Gamma
+    // + environment Dirichlet), mapped onto the submesh by transferring the parent marker.
+    // This is robust to Palace inserting material-interface boundary elements (so no
+    // reliance on a "new" boundary attribute at Gamma).
+    {
+      mfem::Vector t(nt);
+      for (int i = 0; i < nt; i++)
+      {
+        t(i) = is_env_int[i] ? 0.0 : 1.0;
+      }
+      env_pgf.SetFromTrueDofs(t);
+      env_sgf = 0.0;
+      env_submesh->Transfer(env_pgf, env_sgf);
+      mfem::Vector st(env_sfes->GetTrueVSize());
+      env_sgf.GetTrueDofs(st);
+      env_ess.SetSize(0);
+      for (int i = 0; i < st.Size(); i++)
+      {
+        if (std::abs(st(i)) > 0.5)  // fabs: ND transfer may flip the marker's sign
+        {
+          env_ess.Append(i);
+        }
+      }
+    }
+    env_A_ee = AssembleEnvSubmesh();
+    {
+      std::unique_ptr<mfem::HypreParMatrix> e(env_A_ee->EliminateRowsCols(env_ess));
+    }
+    MPI_Comm comm = env_sfes->GetComm();
+    std::unique_ptr<Solver<Operator>> pc;
+    if (magnetostatic)
+    {
+      auto ams = std::make_unique<mfem::HypreAMS>(env_sfes.get());
+      ams->SetPrintLevel(0);
+      pc =
+          std::make_unique<MfemWrapperSolver<Operator>>(std::move(ams), true, false, false);
+    }
+    else
+    {
+      pc = std::make_unique<MfemWrapperSolver<Operator>>(
+          std::make_unique<BoomerAmgSolver>(1, 1, true, 0), true, false, false);
+    }
+    auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
+    pcg->SetInitialGuess(false);
+    pcg->SetRelTol(1.0e-12);
+    pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
+    pcg->SetMaxIter(1000);
+    env_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
+    env_ksp->SetOperators(*env_A_ee, *env_A_ee);
+    env_srhs.SetSize(env_sfes->GetTrueVSize());
+    env_ssol.SetSize(env_sfes->GetTrueVSize());
+  }
+
+  std::unique_ptr<mfem::HypreParMatrix> AssembleEnvSubmesh()
+  {
+    PWMatrixCoefficient coef(parent.Dimension(), env_eps);
+    mfem::ParBilinearForm a(env_sfes.get());
+    if (magnetostatic)
+    {
+      a.AddDomainIntegrator(new mfem::CurlCurlIntegrator(coef));
+      const int am = env_submesh->attributes.Size() ? env_submesh->attributes.Max() : 1;
+      mfem::Vector mass(am);
+      mass = 0.0;
+      for (const auto &[attr, t] : env_eps)
+      {
+        mass(attr - 1) = kMagRegularization;
+      }
+      mfem::PWConstCoefficient mcoef(mass);
+      a.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(mcoef));
+      a.Assemble();
+      a.Finalize();
+      return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
+    }
+    a.AddDomainIntegrator(new mfem::DiffusionIntegrator(coef));
+    a.Assemble();
+    a.Finalize();
+    return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
+  }
+
+  // Apply A_EE^-1 to a parent true-DOF vector (nonzero on the environment interior):
+  // transfer to the submesh, solve the Dirichlet problem, transfer back, and restrict to
+  // the environment interior.
+  void ApplyAeeInv(const mfem::Vector &x_parent, mfem::Vector &y_parent) const
+  {
+    env_pgf.SetFromTrueDofs(x_parent);
+    env_sgf = 0.0;
+    env_submesh->Transfer(env_pgf, env_sgf);
+    env_sgf.GetTrueDofs(env_srhs);
+    for (int i = 0; i < env_ess.Size(); i++)
+    {
+      env_srhs(env_ess[i]) = 0.0;
+    }
+    env_ssol = 0.0;
+    env_ksp->Mult(env_srhs, env_ssol);
+    env_sgf.SetFromTrueDofs(env_ssol);
+    env_pgf = 0.0;
+    env_submesh->Transfer(env_sgf, env_pgf);
+    y_parent.SetSize(nt);
+    env_pgf.GetTrueDofs(y_parent);
+    for (int i = 0; i < nt; i++)
+    {
+      if (!is_env_int[i])
+      {
+        y_parent(i) = 0.0;
+      }
+    }
+  }
 };
 
 SubstructuringSolver::SubstructuringSolver(const IoData &iodata,
@@ -438,54 +571,14 @@ SubstructuringSolver::~SubstructuringSolver() = default;
 
 void SubstructuringSolver::CondenseEnvironment()
 {
-  // A_EE: the environment operator with all non-(environment-interior) true DOFs
-  // identity-eliminated, so its inverse acts only on the environment interior.
-  impl->A_env_int = std::make_unique<mfem::HypreParMatrix>(*impl->A_env);
-  mfem::Array<int> non_int;
-  for (int i = 0; i < impl->nt; i++)
-  {
-    if (!impl->is_env_int[i])
-    {
-      non_int.Append(i);
-    }
-  }
-  {
-    std::unique_ptr<mfem::HypreParMatrix> tmp(impl->A_env_int->EliminateRowsCols(non_int));
-  }
-  // Environment interior solver: Palace's configurable Krylov (CG) preconditioned by a
-  // wrapped hypre BoomerAMG (H1) or AMS (H(curl)). This routes the dominant offline cost
-  // (|Gamma| environment back-solves) through Palace's solver stack -- consistent, config-
-  // driven, complex-ready, and upgradeable to geometric multigrid. The tolerance is kept
-  // tight since it sets the accuracy of the condensed DtN operator.
-  {
-    MPI_Comm comm = impl->parent_fes.GetComm();
-    std::unique_ptr<Solver<Operator>> pc;
-    if (impl->magnetostatic)
-    {
-      auto ams = std::make_unique<mfem::HypreAMS>(&impl->parent_fes);
-      ams->SetPrintLevel(0);
-      pc = std::make_unique<MfemWrapperSolver<Operator>>(
-          std::move(ams), /*save_assembled=*/true, /*complex_matrix=*/false,
-          /*drop_small_entries=*/false);
-    }
-    else
-    {
-      auto amg = std::make_unique<MfemWrapperSolver<Operator>>(
-          std::make_unique<BoomerAmgSolver>(1, 1, true, 0), /*save_assembled=*/true,
-          /*complex_matrix=*/false, /*drop_small_entries=*/false);
-      pc = std::move(amg);
-    }
-    auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
-    pcg->SetInitialGuess(false);
-    pcg->SetRelTol(1.0e-12);
-    pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
-    pcg->SetMaxIter(1000);
-    impl->solver_env = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
-    impl->solver_env->SetOperators(*impl->A_env_int, *impl->A_env_int);
-  }
-  KspSolver *se = impl->solver_env.get();
+  // Environment interior solve on the environment submesh (Gamma held fixed as an essential
+  // boundary). Replaces the parent-space eliminate-non-env-interior operator + solve: the
+  // submesh has only environment DOFs (no all-identity ranks), so AMG / geometric multigrid
+  // work at any partition count.
+  impl->BuildEnvSubmeshSolver();
+  Impl *pi = impl.get();
   impl->dtn = std::make_unique<ImplicitDtN>(
-      *impl->A_env, [se](const mfem::Vector &x, mfem::Vector &y) { se->Mult(x, y); },
+      *impl->A_env, [pi](const mfem::Vector &x, mfem::Vector &y) { pi->ApplyAeeInv(x, y); },
       impl->is_gamma, impl->is_env_int);
 
   // A_region restricted to region-free true DOFs (non-region-free pinned to identity).
@@ -743,7 +836,7 @@ Vector SubstructuringSolver::SolveWithCurrentDbc()
     }
     Vector uE(nt);
     uE = 0.0;
-    impl->solver_env->Mult(rhs, uE);
+    impl->ApplyAeeInv(rhs, uE);
     for (int i = 0; i < nt; i++)
     {
       if (impl->is_env_int[i])
@@ -779,7 +872,7 @@ Vector SubstructuringSolver::SolveSource(const Vector &f)
     }
   }
   w = 0.0;
-  impl->solver_env->Mult(fE, w);
+  impl->ApplyAeeInv(fE, w);
   impl->A_env->Mult(w, Aw);
   std::vector<double> src_glob(impl->nG_global, 0.0), loc(impl->nG_global, 0.0);
   for (int i = 0; i < nt; i++)
@@ -825,7 +918,7 @@ Vector SubstructuringSolver::SolveSource(const Vector &f)
     }
   }
   uE = 0.0;
-  impl->solver_env->Mult(rhs, uE);
+  impl->ApplyAeeInv(rhs, uE);
   for (int i = 0; i < nt; i++)
   {
     if (impl->is_env_int[i])
