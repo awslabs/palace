@@ -2888,6 +2888,12 @@
         "SaveModel": {
           "type": "string",
           "description": "Optional path for the serialized environment DtN model, for offline/online reuse."
+        },
+        "InterfaceOffdiagTol": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0,
+          "description": "Relative tolerance for hierarchical (HODLR) off-diagonal low-rank compression of the interface operator S_E; 0 keeps it dense."
         }
       }
     },
