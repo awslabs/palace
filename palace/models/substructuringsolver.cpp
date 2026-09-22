@@ -24,6 +24,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/rap.hpp"
 #include "linalg/solver.hpp"
+#include "linalg/superlu.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
@@ -249,6 +250,9 @@ struct SubstructuringSolver::Impl
   std::vector<mfem::Array<int>> env_dbc_lists;  // per-level essential (ParOperator MakeRefs)
   std::unique_ptr<mfem::HypreParMatrix> env_A_ee;  // single-level submesh operator
   std::unique_ptr<KspSolver> env_ksp;
+#if defined(MFEM_USE_SUPERLU)
+  std::unique_ptr<SuperLUSolver> env_lu;  // direct A_EE factorization (many-RHS materialization)
+#endif
   mfem::Array<int> env_ess;  // solve-space essential true DOFs (Gamma + env Dirichlet)
   mutable mfem::ParGridFunction env_pgf, env_sgf;  // parent / submesh transfer buffers
   mutable mfem::Vector env_srhs, env_ssol;
@@ -495,7 +499,16 @@ struct SubstructuringSolver::Impl
   void BuildEnvSubmeshSolver()
   {
     const int mg_levels = iodata.solver.linear.mg_max_levels;
-    const bool use_gmg = !magnetostatic && iodata.solver.order > 1 && mg_levels > 1;
+    // A direct factorization of A_EE (factored once, reused across the |Gamma| interface
+    // back-solves + per-excitation recovery) is far cheaper than |Gamma| iterative solves for
+    // the S_E materialization, and is exact. Selected when the user configures a direct linear
+    // solver; otherwise the iterative / geometric-multigrid path is used.
+    bool use_direct = false;
+#if defined(MFEM_USE_SUPERLU)
+    use_direct = (iodata.solver.linear.type == LinearSolver::SUPERLU);
+#endif
+    const bool use_gmg =
+        !use_direct && !magnetostatic && iodata.solver.order > 1 && mg_levels > 1;
 
     // Create the environment submesh. For the GMG path it must be owned by a Palace Mesh
     // (for the CEED attribute maps + the FE-space hierarchy); otherwise a standalone
@@ -529,26 +542,37 @@ struct SubstructuringSolver::Impl
         std::unique_ptr<mfem::HypreParMatrix> e(env_A_ee->EliminateRowsCols(env_ess));
       }
       MPI_Comm comm = env_solve_fes->GetComm();
-      std::unique_ptr<Solver<Operator>> pc;
-      if (magnetostatic)
+#if defined(MFEM_USE_SUPERLU)
+      if (use_direct)
       {
-        auto ams = std::make_unique<mfem::HypreAMS>(env_solve_fes);
-        ams->SetPrintLevel(0);
-        pc = std::make_unique<MfemWrapperSolver<Operator>>(std::move(ams), true, false,
-                                                           false);
+        // Factor A_EE once; ApplyAeeInv then does cheap direct back-solves.
+        env_lu = std::make_unique<SuperLUSolver>(iodata, comm, 0);
+        env_lu->SetOperator(*env_A_ee);
       }
       else
+#endif
       {
-        pc = std::make_unique<MfemWrapperSolver<Operator>>(
-            std::make_unique<BoomerAmgSolver>(1, 1, true, 0), true, false, false);
+        std::unique_ptr<Solver<Operator>> pc;
+        if (magnetostatic)
+        {
+          auto ams = std::make_unique<mfem::HypreAMS>(env_solve_fes);
+          ams->SetPrintLevel(0);
+          pc = std::make_unique<MfemWrapperSolver<Operator>>(std::move(ams), true, false,
+                                                             false);
+        }
+        else
+        {
+          pc = std::make_unique<MfemWrapperSolver<Operator>>(
+              std::make_unique<BoomerAmgSolver>(1, 1, true, 0), true, false, false);
+        }
+        auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
+        pcg->SetInitialGuess(false);
+        pcg->SetRelTol(1.0e-12);
+        pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
+        pcg->SetMaxIter(1000);
+        env_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
+        env_ksp->SetOperators(*env_A_ee, *env_A_ee);
       }
-      auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
-      pcg->SetInitialGuess(false);
-      pcg->SetRelTol(1.0e-12);
-      pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
-      pcg->SetMaxIter(1000);
-      env_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
-      env_ksp->SetOperators(*env_A_ee, *env_A_ee);
     }
 
     env_srhs.SetSize(env_solve_fes->GetTrueVSize());
@@ -753,7 +777,16 @@ struct SubstructuringSolver::Impl
       env_srhs(env_ess[i]) = 0.0;
     }
     env_ssol = 0.0;
-    env_ksp->Mult(env_srhs, env_ssol);
+#if defined(MFEM_USE_SUPERLU)
+    if (env_lu)
+    {
+      env_lu->Mult(env_srhs, env_ssol);
+    }
+    else
+#endif
+    {
+      env_ksp->Mult(env_srhs, env_ssol);
+    }
     env_sgf.SetFromTrueDofs(env_ssol);
     env_pgf = 0.0;
     env_submesh->Transfer(env_sgf, env_pgf);
