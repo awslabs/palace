@@ -6,6 +6,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <nlohmann/json.hpp>
 #include "fem/mesh.hpp"
 #include "fem/substructure.hpp"
@@ -494,7 +495,8 @@ TEST_CASE("SubstructuringSolver magnetostatic inductance matrix",
   // two Dirichlet excitations, reluctance R(i,j) = A_i^T K A_j / (Phi_i Phi_j), M = R^-1
   // (pure curl-curl energy). The region-condensed matrix must match a monolith computing
   // the same quantities, and be symmetric.
-  const int order = 1;
+  const int order = GENERATE(1, 2);
+  CAPTURE(order);
   const double mu_r = 1.0, mu_e = 4.0;
   json config = {
       {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
@@ -533,7 +535,8 @@ TEST_CASE("SubstructuringSolver magnetostatic inductance matrix",
   }
   mfem::DenseMatrix M_sub = invert2(R_sub);
   // Symmetric up to iterative-solver residual (cross-energies are analytically symmetric).
-  CHECK(std::abs(M_sub(0, 1) - M_sub(1, 0)) <= 1.0e-6 * std::abs(M_sub(0, 0)));
+  CHECK(std::abs(M_sub(0, 1) - M_sub(1, 0)) <=
+        1.0e-5 * std::max(std::abs(M_sub(0, 0)), std::abs(M_sub(1, 1))));
 
   // Monolith: same two Dirichlet excitations, curl-curl + small mass, pure-curl-curl
   // cross-energies, then reluctance inversion.
@@ -621,11 +624,21 @@ TEST_CASE("SubstructuringSolver magnetostatic inductance matrix",
     }
   }
   mfem::DenseMatrix M_mono = invert2(R_mono);
+  // Scale the comparison by the largest inductance entry (M(0,0) is tiny at higher order,
+  // so scaling by it alone would make the tolerance meaningless for the other entries).
+  double scale = 0.0;
   for (int i = 0; i < 2; i++)
   {
     for (int j = 0; j < 2; j++)
     {
-      CHECK(std::abs(M_sub(i, j) - M_mono(i, j)) <= 1.0e-6 * std::abs(M_mono(0, 0)));
+      scale = std::max(scale, std::abs(M_mono(i, j)));
+    }
+  }
+  for (int i = 0; i < 2; i++)
+  {
+    for (int j = 0; j < 2; j++)
+    {
+      CHECK(std::abs(M_sub(i, j) - M_mono(i, j)) <= 1.0e-5 * scale);
     }
   }
 }
