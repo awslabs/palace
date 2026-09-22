@@ -132,9 +132,9 @@ def headroom_flags(elements, estimate, stages, gates):
 def h1_record_of_mesh(mesh_path, order):
     """H1 DOFs at `order` with the entity counts they are computed from (the qualify
     step estimates the other orders from the same counts without re-reading the mesh)."""
-    from mesh_array_io import read_mesh
-    from mixed_mesh import h1_dofs_from_counts, h1_entity_counts
-    counts = h1_entity_counts(read_mesh(mesh_path))
+    from general_mesh_audit_producer import H1_ENTITY_COUNTS_CACHE, cached_h1_entity_counts, read_audit_mesh
+    from mixed_mesh import h1_dofs_from_counts
+    counts = cached_h1_entity_counts(read_audit_mesh(mesh_path), Path(mesh_path).resolve().parent / H1_ENTITY_COUNTS_CACHE)
     return {"Order": order, "DOFs": h1_dofs_from_counts(counts, order), "EntityCounts": counts}
 
 

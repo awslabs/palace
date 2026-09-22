@@ -6,6 +6,7 @@
 import argparse
 import copy
 import csv
+import hashlib
 import heapq
 import json
 import math
@@ -32,8 +33,8 @@ from mesh_stage_contract import (GMSH_ONLY_PIPELINE, PIPELINE_BUILD_STAGE, PLACE
                                  canonical_stage_order, dag_pipeline, footprint_segments,
                                  gmsh_build_junction_segments, sha256 as stage_sha256,
                                  stage_order, trace_basis_edges_of_census, validate_stage_dag)
-from mixed_mesh import (SHELL_LABEL_STRIDE, SURFACE_KINDS, VOLUME_KINDS, cell_blocks, element_counts,
-                        h1_dofs, parent_label_view, shell_labels, shell_parent)
+from mixed_mesh import (H1_ENTITY_NAMES, SHELL_LABEL_STRIDE, SURFACE_KINDS, VOLUME_KINDS, cell_blocks, element_counts,
+                        h1_dofs_from_counts, h1_entity_counts, parent_label_view, shell_labels, shell_parent)
 from mixed_mesh import simplicial_view as _simplicial_view_uncached
 from mixed_mesh import volume_quality as _volume_quality_uncached
 from semantic_mesh_contract import load_semantic_contract
@@ -1127,13 +1128,62 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
     return base
 
 
-def complexity_record(base, mesh_path, contract_path, recipe_path, *, mesh=None):
+H1_ENTITY_COUNTS_CACHE = "h1-entity-counts.json"
+H1_ENTITY_COUNTS_RULE = ("the H1 entity counts (unique vertices, edges, faces, cells by type) depend on the volume "
+                         "connectivity alone - a rigid invariant shared by every placement of one canonical build - "
+                         "so they are computed once per distinct volume connectivity (SHA-256 of the volume cell "
+                         "kinds and arrays) and kept in this file beside the case's meshes for the other placements' "
+                         "audits; an independent verification never reads it (decision 62 step 3, proposal 8)")
+_H1_ENTITY_COUNTS = {}
+
+
+def volume_connectivity_sha256(mesh):
+    """SHA-256 of the volume cell kinds and 0-based connectivity arrays, in block order."""
+    digest = hashlib.sha256()
+    for kind, connectivity, _ in cell_blocks(mesh, VOLUME_KINDS):
+        digest.update(kind.encode()); digest.update(np.ascontiguousarray(connectivity, dtype=np.int64).tobytes())
+    return digest.hexdigest()
+
+
+def cached_h1_entity_counts(mesh, cache_path=None):
+    """mixed_mesh.h1_entity_counts memoized per volume connectivity digest within the
+    process and, when `cache_path` is given (the audit producers of one case; never the
+    verifier), through that JSON file: {VolumeConnectivitySHA256, Counts, Rule}.  A file
+    whose digest differs is recomputed and rewritten; a write failure is ignored."""
+    digest = volume_connectivity_sha256(mesh)
+    if digest in _H1_ENTITY_COUNTS:
+        return dict(_H1_ENTITY_COUNTS[digest])
+    counts = None
+    if cache_path is not None and Path(cache_path).is_file():
+        try:
+            cached = json.loads(Path(cache_path).read_text())
+        except (OSError, ValueError):
+            cached = None
+        if (isinstance(cached, dict) and cached.get("VolumeConnectivitySHA256") == digest and
+                isinstance(cached.get("Counts"), dict) and set(cached["Counts"]) == set(H1_ENTITY_NAMES) and
+                all(isinstance(cached["Counts"][name], int) for name in H1_ENTITY_NAMES)):
+            counts = {name: int(cached["Counts"][name]) for name in H1_ENTITY_NAMES}
+    if counts is None:
+        counts = h1_entity_counts(mesh)
+        if cache_path is not None:
+            try:
+                Path(cache_path).write_text(json.dumps({"VolumeConnectivitySHA256": digest, "Counts": counts,
+                                                        "Rule": H1_ENTITY_COUNTS_RULE}, indent=2) + "\n")
+            except OSError:
+                pass
+    _H1_ENTITY_COUNTS[digest] = dict(counts)
+    return counts
+
+
+def complexity_record(base, mesh_path, contract_path, recipe_path, *, mesh=None, entity_counts_cache=None):
+    """`entity_counts_cache`: the case's H1 entity-count cache file (cached_h1_entity_counts),
+    used by the audit producers only."""
     mesh = read_audit_mesh(mesh_path) if mesh is None else mesh
     recipe = json.loads(Path(recipe_path).read_text())
     order = int(recipe["GeometryOrder"])
     topology = load_semantic_contract(contract_path)["FeatureTopology"]
     base["Measurements"] = {"Complexity": {
-        "H1DOFs": int(h1_dofs(mesh, order)),
+        "H1DOFs": int(h1_dofs_from_counts(cached_h1_entity_counts(mesh, entity_counts_cache), order)),
         "ElementCounts": element_counts(mesh),
         "FeatureCount": topology["PhysicalFeatureCount"],
         "CADSubdivisionCount": topology["CADSubdivisionCount"]}}
@@ -1348,7 +1398,8 @@ def produce(kind, case, variant, mesh, inputs_path, transform_path, output, *,
                                   "MeshRecipe": sha256(recipe), "Process": sha256(process),
                                   "Signature": sha256(signature)}
     elif kind == "mesh-complexity":
-        record = complexity_record(base, mesh, contract, recipe, mesh=loaded_mesh)
+        record = complexity_record(base, mesh, contract, recipe, mesh=loaded_mesh,
+                                   entity_counts_cache=Path(mesh).resolve().parent / H1_ENTITY_COUNTS_CACHE)
         record["Dependencies"] = {"MeshRecipe": sha256(recipe),
                                   "SemanticContract": sha256(contract)}
     elif kind == "mesh-invariants":
