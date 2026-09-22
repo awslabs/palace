@@ -23,6 +23,7 @@ import meshio
 import numpy as np
 
 from general_mesh_audit_producer import _mesh_invariants, _ownership_report, _volume_quality
+from mesh_array_io import read_mesh
 from mixed_mesh import parent_label_view
 import relabel_radial_ma_shells as radial_shells
 from transform_coupon_source_contract import (read_transform, transform_semantic_contract,
@@ -157,6 +158,18 @@ def transform_gmsh22(source, output, matrix):
     return section, actual, error
 
 
+def _nodes_only_change(source, output, before_section, after_section):
+    """Byte-level proof that the published file differs from the source in the $Nodes
+    records alone: identical bytes before the records and after them (the $MeshFormat,
+    $PhysicalNames, $Elements and every other section), the same node count.  What the
+    meshio structure comparison established through two full reads follows from it
+    (decision 62 step 3, proposal 7)."""
+    data, published = Path(source).read_bytes(), Path(output).read_bytes()
+    return (before_section["count"] == after_section["count"] and
+            data[:before_section["start"]] == published[:after_section["start"]] and
+            data[before_section["end"]:] == published[after_section["end"]:])
+
+
 def _equal_data(left, right):
     if left.keys() != right.keys():
         return False
@@ -278,9 +291,21 @@ def publish(canonical_mesh, transform_path, output_mesh, receipt_path, *,
         canonical_mesh, output_mesh, matrix)
     if before_section["tags"] != after_section["tags"]:
         raise ValueError("Rigid publication changed node tags")
-    left, right = meshio.read(canonical_mesh), meshio.read(output_mesh)
-    if not _exact_mesh_structure(left, right):
-        raise ValueError("Rigid publication changed cell blocks, connectivity, labels, or data")
+    if before_section["binary"] and after_section["binary"]:
+        # Binary publication: the byte-diff proof that only the $Nodes records changed,
+        # then one parse of the output; the canonical mesh is that parse with the
+        # canonical coordinates (its node records are the same doubles the parse of the
+        # canonical file would give, its cells and data the byte-identical sections).
+        if not _nodes_only_change(canonical_mesh, output_mesh, before_section, after_section):
+            raise ValueError("Rigid publication changed cell blocks, connectivity, labels, or data")
+        right = read_mesh(output_mesh)
+        left = meshio.Mesh(np.ascontiguousarray(before_section["points"], dtype=float),
+                           [(cell.type, cell.data) for cell in right.cells], point_data=dict(right.point_data),
+                           cell_data=dict(right.cell_data), field_data=dict(right.field_data))
+    else:
+        left, right = meshio.read(canonical_mesh), meshio.read(output_mesh)
+        if not _exact_mesh_structure(left, right):
+            raise ValueError("Rigid publication changed cell blocks, connectivity, labels, or data")
     expected = left.points @ np.asarray(matrix)[:3, :3].T + np.asarray(matrix)[:3, 3]
     coordinate_error = max(coordinate_error,
                            float(np.max(np.linalg.norm(right.points - expected, axis=1))))
@@ -304,7 +329,7 @@ def publish(canonical_mesh, transform_path, output_mesh, receipt_path, *,
                                  parent_digest=parent_digest, canonical_digest=canonical_digest)
     output_digest = sha256(output_mesh)
     if shells["Applied"]:
-        shelled = parent_label_view(meshio.read(output_mesh))
+        shelled = parent_label_view(read_mesh(output_mesh))
         if not _exact_mesh_structure(right, shelled, cell_data_keys=("gmsh:physical",)):
             raise ValueError("Radial shell relabel changed the mesh beyond the MA shell labels")
         if _mesh_invariants(shelled) != after_invariants:
