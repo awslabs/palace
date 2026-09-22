@@ -9,32 +9,56 @@ using TOML
 include(joinpath(@__DIR__, "mesh_spatial_coupon.jl"))
 include(joinpath(@__DIR__, "label_interface_patches.jl"))
 
+# Snapshots of the mesh the audit must leave unchanged, as tag-sorted arrays per element
+# type (decision 62 step 3, proposal 6): the same guarantee as a per-element dictionary -
+# every element's type, tag, owner attribute and node list, independent of the order Gmsh
+# returns them in - without one vector allocation per element (the 3M-element device
+# coupons peaked near the 8 GiB stage bound with the dictionaries).
+function sorted_by_tag(elements, connectivity, nnode)
+    order = sortperm(elements)
+    nodes = reshape(connectivity, Int(nnode), :)[:, order]
+    return elements[order], vec(nodes)
+end
+
 function surface_assignment()
-    result = Dict{UInt64,Tuple{Int,Vector{UInt64}}}()
+    by_type = Dict{Int,Tuple{Vector{UInt64},Vector{Int},Vector{UInt64}}}()
     for (_, attribute) in gmsh.model.getPhysicalGroups(2)
         for entity in gmsh.model.getEntitiesForPhysicalGroup(2, attribute)
             types, tags, nodes = gmsh.model.mesh.getElements(2, entity)
             for (type, elements, connectivity) in zip(types, tags, nodes)
-                _, _, _, nnode, _, _ = gmsh.model.mesh.getElementProperties(type)
-                for (i, element) in enumerate(elements)
-                    haskey(result, element) && error("Surface element has multiple owners")
-                    result[element] = (Int(attribute), collect(connectivity[(i-1)*nnode+1:i*nnode]))
+                record = get!(by_type, Int(type)) do
+                    (UInt64[], Int[], UInt64[])
                 end
+                append!(record[1], elements)
+                append!(record[2], fill(Int(attribute), length(elements)))
+                append!(record[3], connectivity)
             end
         end
     end
+    result = Tuple{Int,Vector{UInt64},Vector{Int},Vector{UInt64}}[]
+    for type in sort!(collect(keys(by_type)))
+        elements, attributes, connectivity = by_type[type]
+        _, _, _, nnode, _, _ = gmsh.model.mesh.getElementProperties(type)
+        order = sortperm(elements)
+        sorted = elements[order]
+        any(sorted[i] == sorted[i + 1] for i in 1:(length(sorted) - 1)) &&
+            error("Surface element has multiple owners")
+        push!(result, (type, sorted, attributes[order], vec(reshape(connectivity, Int(nnode), :)[:, order])))
+    end
+    all_tags = reduce(vcat, (r[2] for r in result); init=UInt64[])
+    length(unique(all_tags)) == length(all_tags) || error("Surface element has multiple owners")
     return result
 end
 
 function all_elements(dimension)
-    result = Dict{UInt64,Tuple{Int,Vector{UInt64}}}()
     types, tags, nodes = gmsh.model.mesh.getElements(dimension)
+    result = Tuple{Int,Vector{UInt64},Vector{UInt64}}[]
     for (type, elements, connectivity) in zip(types, tags, nodes)
         _, _, _, nnode, _, _ = gmsh.model.mesh.getElementProperties(type)
-        for (i, element) in enumerate(elements)
-            result[element] = (Int(type), collect(connectivity[(i-1)*nnode+1:i*nnode]))
-        end
+        sorted, sorted_nodes = sorted_by_tag(elements, connectivity, nnode)
+        push!(result, (Int(type), sorted, sorted_nodes))
     end
+    sort!(result; by=first)
     return result
 end
 
