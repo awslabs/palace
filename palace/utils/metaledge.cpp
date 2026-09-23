@@ -693,6 +693,13 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   constexpr double corner_angle_tolerance_degrees = 30.0;
   const double straight_dot_tolerance =
       -std::cos(corner_angle_tolerance_degrees * std::acos(-1.0) / 180.0);
+  // The turn test compares direction cosines on a fixed 1e-12 grid so that a roundoff-level
+  // perturbation of the vertex coordinates cannot flip a vertex between REGULAR and CORNER
+  // (the same direction quantum as the classification's parallelism tests).
+  constexpr double direction_quantum = 1.0e-12;
+  auto QuantizeDirection = [](double cosine)
+  { return std::round(cosine / direction_quantum); };
+  const double quantized_straight_dot_tolerance = QuantizeDirection(straight_dot_tolerance);
   auto ClassifyVertex = [&](std::size_t vertex_index,
                             bool physical) -> std::optional<MetalEdgeVertexType>
   {
@@ -743,8 +750,9 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
     {
       dot += directions[0][d] * directions[1][d];
     }
-    return dot <= straight_dot_tolerance ? MetalEdgeVertexType::REGULAR
-                                         : MetalEdgeVertexType::CORNER;
+    return QuantizeDirection(dot) <= quantized_straight_dot_tolerance
+               ? MetalEdgeVertexType::REGULAR
+               : MetalEdgeVertexType::CORNER;
   };
   for (std::size_t vertex_index = 0; vertex_index < result.vertices.size(); vertex_index++)
   {

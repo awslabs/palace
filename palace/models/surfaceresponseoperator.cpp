@@ -2225,6 +2225,57 @@ double Distance(const Point3D &a, const Point3D &b)
   return Norm(Subtract(a, b));
 }
 
+// Roundoff-robust comparisons for the classification decisions. The decisions compare a
+// geometric distance with the interaction distance 2R (or a multiple of it) and layouts
+// routinely place metal edges at exactly 2R or R apart, where the roundoff of the computed
+// distance (~eps x the coordinate magnitude) exceeds any relative margin applied to 2R, so
+// a roundoff-level perturbation of the input coordinates would flip the decision. Both
+// operands are rounded to the same grid of kDecisionLengthQuantumRelativeToMatchingRadius
+// x R before they are compared: the rule is symmetric in the operands and deterministic,
+// and a distance within half a quantum of the threshold is AT the threshold (not strictly
+// within it). Direction cosines (parallelism tests) are compared on the fixed
+// kDecisionDirectionQuantum grid for the same reason. Both constants are recorded in the
+// requirements output under Library.DecisionQuantization.
+constexpr double kDecisionLengthQuantumRelativeToMatchingRadius = 1.0e-8;
+constexpr double kDecisionDirectionQuantum = 1.0e-12;
+
+class DecisionQuantizer
+{
+private:
+  double length_quantum;
+
+public:
+  explicit DecisionQuantizer(double matching_radius)
+    : length_quantum(kDecisionLengthQuantumRelativeToMatchingRadius * matching_radius)
+  {
+    MFEM_VERIFY(std::isfinite(length_quantum) && length_quantum > 0.0,
+                "Invalid matching radius for quantized classification decisions!");
+  }
+
+  double Length(double length) const { return std::round(length / length_quantum); }
+  bool LengthLess(double first, double second) const
+  {
+    return Length(first) < Length(second);
+  }
+  bool LengthAtMost(double first, double second) const
+  {
+    return Length(first) <= Length(second);
+  }
+  bool LengthSquaredLess(double first_squared, double second) const
+  {
+    return LengthLess(std::sqrt(first_squared), second);
+  }
+
+  static double Direction(double cosine)
+  {
+    return std::round(cosine / kDecisionDirectionQuantum);
+  }
+  static bool DirectionLess(double first, double second)
+  {
+    return Direction(first) < Direction(second);
+  }
+};
+
 struct PlanViewFacet
 {
   int conductor = 0;
@@ -3966,7 +4017,11 @@ public:
         {"Library",
          {{"Path", library_path},
           {"Name", library_name},
-          {"MatchingRadius", matching_radius}}},
+          {"MatchingRadius", matching_radius},
+          {"DecisionQuantization",
+           {{"LengthRelativeToMatchingRadius",
+             kDecisionLengthQuantumRelativeToMatchingRadius},
+            {"Direction", kDecisionDirectionQuantum}}}}},
         {"LengthUnit", "mesh"},
         {"Summary", {{"Counts", counts}, {"TotalEdgeLengths", lengths}}},
         {"Requirements", std::move(entries)}};
@@ -4137,6 +4192,8 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
 
     std::vector<int> component(sites.size(), -1);
     int component_count = 0;
+    const DecisionQuantizer quantizer(group.matching_radius);
+    const double interaction_distance = 2.0 * group.matching_radius;
     for (std::size_t seed = 0; seed < sites.size(); seed++)
     {
       if (component[seed] >= 0)
@@ -4151,9 +4208,8 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
         for (std::size_t neighbor = 0; neighbor < sites.size(); neighbor++)
         {
           if (component[neighbor] < 0 &&
-              Distance(sites[current].point, sites[neighbor].point) <
-                  2.0 * group.matching_radius *
-                      (1.0 - 16.0 * std::numeric_limits<double>::epsilon()))
+              quantizer.LengthLess(Distance(sites[current].point, sites[neighbor].point),
+                                   interaction_distance))
           {
             component[neighbor] = component_count;
             queue.push_back(neighbor);
@@ -5897,10 +5953,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     }
   }
 
-  const double global_interaction_distance =
-      2.0 * library.matching_radius * (1.0 - 16.0 * std::numeric_limits<double>::epsilon());
-  const double global_interaction_distance_squared =
-      global_interaction_distance * global_interaction_distance;
+  const double global_interaction_distance = 2.0 * library.matching_radius;
+  const DecisionQuantizer global_quantizer(library.matching_radius);
   struct GlobalSpatialInteractionEvent
   {
     std::size_t first = 0;
@@ -5935,7 +5989,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     const auto closest =
         ClosestSegmentApproach(global_segments[i].p0, global_segments[i].p1,
                                global_segments[j].p0, global_segments[j].p1);
-    if (closest.distance_squared >= global_interaction_distance_squared)
+    if (!global_quantizer.LengthSquaredLess(closest.distance_squared,
+                                            global_interaction_distance))
     {
       continue;
     }
@@ -5991,10 +6046,11 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
           std::all_of(event_component.begin(), event_component.end(),
                       [&](std::size_t member)
                       {
-                        return Distance(global_spatial_events[member].center,
-                                        global_spatial_events[candidate].center) <
-                               (exhaustive_spatial_closure ? 4.0 : 1.0) *
-                                   global_interaction_distance;
+                        return global_quantizer.LengthLess(
+                            Distance(global_spatial_events[member].center,
+                                     global_spatial_events[candidate].center),
+                            (exhaustive_spatial_closure ? 4.0 : 1.0) *
+                                global_interaction_distance);
                       }))
       {
         visited_global_event[candidate] = true;
@@ -6028,9 +6084,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       continue;
     }
     const double maximum_global_event_diameter = 4.0 * global_interaction_distance;
-    MFEM_VERIFY(event_diameter <= maximum_global_event_diameter * (1.0 + 1.0e-12),
-                "Cross-interface spatial-event clustering produced an oversized "
-                "component. Split the component or increase the matching radius!");
+    MFEM_VERIFY(
+        global_quantizer.LengthAtMost(event_diameter, maximum_global_event_diameter),
+        "Cross-interface spatial-event clustering produced an oversized "
+        "component. Split the component or increase the matching radius!");
 
     std::map<int, std::vector<Point3D>> points_by_chain;
     for (const std::size_t event_index : event_component)
@@ -6319,8 +6376,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                              {
                                return interaction.first_chain == first_chain &&
                                       interaction.second_chain == second_chain &&
-                                      Distance(interaction.center, center) <
-                                          global_interaction_distance;
+                                      global_quantizer.LengthLess(
+                                          Distance(interaction.center, center),
+                                          global_interaction_distance);
                              });
                        });
   };
@@ -6346,9 +6404,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     double group_modeled_corner_neighborhood_length = 0.0;
     double group_maximum_curvature_ratio = 0.0;
     double group_maximum_library_distance = 0.0;
-    const double interaction_distance =
-        2.0 * group.matching_radius * (1.0 - 16.0 * std::numeric_limits<double>::epsilon());
-    const double interaction_distance_squared = interaction_distance * interaction_distance;
+    const double interaction_distance = 2.0 * group.matching_radius;
+    const DecisionQuantizer quantizer(group.matching_radius);
     const std::set<std::size_t> group_segment_indices(group.segments.begin(),
                                                       group.segments.end());
     std::vector<std::size_t> usable_segment_indices;
@@ -6381,7 +6438,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         const auto &q0 = geometry.vertices[other.vertices[0]].coordinate;
         const auto &q1 = geometry.vertices[other.vertices[1]].coordinate;
         const double distance_squared = SegmentDistanceSquared(p0, p1, q0, q1);
-        if (distance_squared < interaction_distance_squared &&
+        if (quantizer.LengthSquaredLess(distance_squared, interaction_distance) &&
             !IsCrossInterfaceSpatiallyMatched(source, p0, p1, other, q0, q1))
         {
           auto conflict = conflicts.find(other.physical_chain);
@@ -6547,10 +6604,12 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                        neighborhood.physical_chains.end() &&
                    neighborhood.physical_chains.find(second_source.physical_chain) !=
                        neighborhood.physical_chains.end() &&
-                   PointSegmentDistanceSquared(neighborhood.point, segments[first]) <
-                       interaction_distance_squared &&
-                   PointSegmentDistanceSquared(neighborhood.point, segments[second]) <
-                       interaction_distance_squared;
+                   quantizer.LengthSquaredLess(
+                       PointSegmentDistanceSquared(neighborhood.point, segments[first]),
+                       interaction_distance) &&
+                   quantizer.LengthSquaredLess(
+                       PointSegmentDistanceSquared(neighborhood.point, segments[second]),
+                       interaction_distance);
           });
     };
 
@@ -6579,7 +6638,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       }
       const auto closest = ClosestSegmentApproach(segments[i].p0, segments[i].p1,
                                                   segments[j].p0, segments[j].p1);
-      if (closest.distance_squared >= interaction_distance_squared)
+      if (!quantizer.LengthSquaredLess(closest.distance_squared, interaction_distance))
       {
         continue;
       }
@@ -6636,10 +6695,11 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
             std::all_of(event_component.begin(), event_component.end(),
                         [&](std::size_t member)
                         {
-                          return Distance(spatial_events[member].center,
-                                          spatial_events[candidate].center) <
-                                 (exhaustive_spatial_closure ? 4.0 : 1.0) *
-                                     interaction_distance;
+                          return quantizer.LengthLess(
+                              Distance(spatial_events[member].center,
+                                       spatial_events[candidate].center),
+                              (exhaustive_spatial_closure ? 4.0 : 1.0) *
+                                  interaction_distance);
                         }))
         {
           visited_spatial_event[candidate] = true;
@@ -6658,7 +6718,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         }
       }
       const double maximum_event_diameter = 4.0 * interaction_distance;
-      MFEM_VERIFY(event_diameter <= maximum_event_diameter * (1.0 + 1.0e-12),
+      MFEM_VERIFY(quantizer.LengthAtMost(event_diameter, maximum_event_diameter),
                   "Spatial-event clustering produced an oversized component. Split the "
                   "component or increase the matching radius!");
 
@@ -6923,15 +6983,16 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
           0.5,
           Add(Interpolate(segments[first], closest.first * segments[first].length),
               Interpolate(segments[second], closest.second * segments[second].length)));
-      return std::any_of(interactions.begin(), interactions.end(),
-                         [&](const auto &interaction)
-                         {
-                           return interaction.first_chain == first_chain &&
-                                  interaction.second_chain == second_chain &&
-                                  (exhaustive_spatial_closure ||
-                                   Distance(interaction.center, center) <
-                                       interaction_distance);
-                         });
+      return std::any_of(
+          interactions.begin(), interactions.end(),
+          [&](const auto &interaction)
+          {
+            return interaction.first_chain == first_chain &&
+                   interaction.second_chain == second_chain &&
+                   (exhaustive_spatial_closure ||
+                    quantizer.LengthLess(Distance(interaction.center, center),
+                                         interaction_distance));
+          });
     };
     std::vector<SpatialClusterSelection3D::InteractionNeighborhood>
         candidate_spatial_interactions;
@@ -7013,8 +7074,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       const auto &second_source = geometry.segments[segments[j].geometry_index];
       if (first_source.physical_chain == second_source.physical_chain ||
           SegmentsShareVertex(first_source, second_source) ||
-          SegmentDistanceSquared(segments[i].p0, segments[i].p1, segments[j].p0,
-                                 segments[j].p1) >= interaction_distance_squared)
+          !quantizer.LengthSquaredLess(
+              SegmentDistanceSquared(segments[i].p0, segments[i].p1, segments[j].p0,
+                                     segments[j].p1),
+              interaction_distance))
       {
         continue;
       }
@@ -7025,7 +7088,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       }
 
       const double tangent_dot = Dot(segments[i].tangent, segments[j].tangent);
-      if (std::abs(tangent_dot) < 1.0 - 1.0e-8)
+      if (DecisionQuantizer::DirectionLess(std::abs(tangent_dot), 1.0 - 1.0e-8))
       {
         RejectInteraction(i, j, nonparallel_interactions,
                           "Nearby three-dimensional metal edges are not parallel!");
@@ -8424,8 +8487,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       const auto &second_source = geometry.segments[segments[j].geometry_index];
       if (first_source.physical_chain == second_source.physical_chain ||
           SegmentsShareVertex(first_source, second_source) ||
-          SegmentDistanceSquared(segments[i].p0, segments[i].p1, segments[j].p0,
-                                 segments[j].p1) >= interaction_distance_squared)
+          !quantizer.LengthSquaredLess(
+              SegmentDistanceSquared(segments[i].p0, segments[i].p1, segments[j].p0,
+                                     segments[j].p1),
+              interaction_distance))
       {
         continue;
       }
@@ -8436,7 +8501,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       }
 
       const double tangent_dot = Dot(segments[i].tangent, segments[j].tangent);
-      if (std::abs(tangent_dot) < 1.0 - 1.0e-8)
+      if (DecisionQuantizer::DirectionLess(std::abs(tangent_dot), 1.0 - 1.0e-8))
       {
         Mpi::Warning("Nearby three-dimensional metal edges are not parallel; correction is "
                      "disabled for this interface group!\n");
