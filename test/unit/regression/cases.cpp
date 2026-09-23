@@ -862,6 +862,20 @@ TEST_CASE("circular_hole_london_flux", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
+// Two-sided (two-port) London film at d > λ. Locks the MPI-assembled cross-face coupling
+// and its consistent use in the stiffness, flux RHS, and inductance postprocessing.
+TEST_CASE("circular_hole_london_two_sided", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "Norm"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("circular_hole_london", "circular_hole_two_sided.json",
+                                  "two_sided", opts);
+}
+
 // Two London holes on a shared film, each an independent flux loop. Locks the London-London
 // off-diagonal cross-energy correction: a bare AᵀM_mag A mutual corrupts the inverted
 // selves.
