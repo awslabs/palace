@@ -62,6 +62,14 @@ Whether a film screens perfectly or penetrates is set by how its attribute is de
     ``\lambda \to 0`` the penalty forces ``\mathbf{A}_t \to \mathbf{a}_h`` and the perfect-screening
     (geometric) limit is recovered.
 
+    Setting [`"TwoSided": true`](../config/reference.md#config-boundaries-superconductor) models
+    the film instead as two coupled coincident faces (a cracked interface), so the tangential
+    field can jump across it. Each face carries the self-term ``\mu_0\lambda\coth(d/\lambda)`` and
+    the faces are coupled by ``-\mu_0/[\lambda\sinh(d/\lambda)]``, capturing two-sided screening
+    when ``d \gtrsim \lambda``. The single-sheet form above suffices when the film screens on one
+    side (e.g. a film over a ground plane); the two-sided form matters for a film with different
+    fields on its two faces, such as a shared ground plane in a multilayer stack.
+
 Because a flux loop is enforced through a single scalar fluxoid constraint, **each hole must be
 its own flux loop** (one entry in `"HoleAttributes"`); several holes are modeled as several
 `"FluxLoop"` excitations, from which the full self/mutual inductance matrix — and any signed
