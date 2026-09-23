@@ -62,8 +62,9 @@ p3, 192 ranks (48246; 3,019 segments / 4 spatial patches, 69 omitted): cycle 1 -
 p4, 192 ranks on 2 nodes (48256; 48250 identical through cycle 10): cycle 10 (23.6M) +1.3 / +4.7 / +7.3 / +0.2; final (63.7M DOFs)
 **+1.6 / +5.1 / +7.6 (sharp +16.8) / +0.1 %** - vs the 768-rank p4 final -3.0 / -0.8 / +0.3 / +0.1 on the same raw values (-0.4 / +10.6 / -49.1).
 Raw values are rank-independent (p4 final: -0.4 / +10.6 / -49.1 % at both counts); the 4.6 / 5.9 / 7.3-point difference in the
-corrected SA / MS / MA is entirely the partition-dependent classification (192 ranks drop 52 segments = 42 "missing library model" + 26
-nonparallel, and 2 of the 6 spatial patches; 768 ranks match 3,071 / 6, the 6-rank local preflight 3,068 / 6). On the coarse mesh
+corrected SA / MS / MA is entirely the partition-dependent classification (192 ranks omit 69 of 3,086 segments = 42 "missing library
+model" + 26 nonparallel + 1, and 2 of the 6 spatial patches; 768 ranks omit 17 = 12 within 2R of another interface + 2 + 3 unsupported
+and match 3,071 / 6, the 6-rank local preflight 3,068 / 6). On the coarse mesh
 this was <= 0.3 points (decision 66); at the AMR operating point it is the largest single effect after the mesh itself.
 
 ## Context and side-by-side
