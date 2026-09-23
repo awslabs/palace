@@ -326,8 +326,7 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
       std::vector<Point> corner_vertices(vertices.Size());
       for (int i = 0; i < vertices.Size(); i++)
       {
-        const double *point = mesh.GetVertex(vertices[i]);
-        std::copy_n(point, 3, corner_vertices[i].begin());
+        corner_vertices[i] = mesh::GetVertexCoordinates(mesh, vertices[i]);
       }
 
       if (surface.retain_faces)

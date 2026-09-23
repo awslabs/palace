@@ -330,6 +330,13 @@ struct BoundaryEdgeSegment
   std::array<double, 3> p1{};
 };
 
+// Coordinates of a mesh vertex which do not depend on the MPI partition. When the mesh
+// carries a nodal grid function, MFEM fills the vertex array from it by averaging the nodal
+// value over the LOCAL elements sharing the vertex (Mesh::SetVerticesFromNodes), so
+// mesh.GetVertex() differs by roundoff between partitions; the vertex node of the grid
+// function itself is an exact copy of the serial mesh on every rank.
+std::array<double, 3> GetVertexCoordinates(const mfem::Mesh &mesh, int vertex);
+
 // Return a piecewise-linear representation of one topological mesh edge. Linear edges
 // produce one segment. High-order edges are sampled to a fixed geometric tolerance while
 // retaining their exact topological endpoints.

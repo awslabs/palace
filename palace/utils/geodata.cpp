@@ -1630,6 +1630,34 @@ public:
 
 using EdgePoint = std::array<double, 3>;
 
+// Canonical coordinate of every gathered vertex key: the mean of the distinct coordinate
+// copies which share the key, summed in their sorted order. The set of distinct copies is
+// a property of the global mesh, so the result does not depend on the MPI partition or on
+// the order in which ranks contributed them.
+std::map<std::array<std::int64_t, 3>, EdgePoint> CanonicalPointCoordinates(
+    const std::map<std::array<std::int64_t, 3>, std::set<EdgePoint>> &distinct_points)
+{
+  std::map<std::array<std::int64_t, 3>, EdgePoint> points;
+  for (const auto &[key, copies] : distinct_points)
+  {
+    MFEM_ASSERT(!copies.empty(), "Vertex key without a coordinate!");
+    EdgePoint coordinate{};
+    for (const auto &copy : copies)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        coordinate[d] += copy[d];
+      }
+    }
+    for (double &x : coordinate)
+    {
+      x /= static_cast<double>(copies.size());
+    }
+    points.emplace(key, coordinate);
+  }
+  return points;
+}
+
 std::vector<BoundaryEdgeSegment>
 SampleEdgeTransformation(mfem::ElementTransformation &transformation,
                          const EdgePoint &endpoint0, const EdgePoint &endpoint1)
@@ -1786,18 +1814,38 @@ SampleEdgeTransformation(mfem::ElementTransformation &transformation,
 
 }  // namespace
 
+std::array<double, 3> GetVertexCoordinates(const mfem::Mesh &mesh, int vertex)
+{
+  std::array<double, 3> coordinates{};
+  const auto *nodes = mesh.GetNodes();
+  if (nodes && !nodes->FESpace()->IsDGSpace())
+  {
+    const auto *fespace = nodes->FESpace();
+    mfem::Array<int> dofs;
+    fespace->GetVertexDofs(vertex, dofs);
+    MFEM_ASSERT(dofs.Size() == 1, "Unexpected vertex node count for mesh coordinates!");
+    for (int d = 0; d < mesh.SpaceDimension(); d++)
+    {
+      coordinates[d] = (*nodes)(fespace->DofToVDof(dofs[0], d));
+    }
+    return coordinates;
+  }
+  const double *x = mesh.GetVertex(vertex);
+  for (int d = 0; d < mesh.SpaceDimension(); d++)
+  {
+    coordinates[d] = x[d];
+  }
+  return coordinates;
+}
+
 std::vector<BoundaryEdgeSegment> GetMeshEdgeSegments(const mfem::Mesh &mesh, int edge)
 {
   mfem::Array<int> vertices;
   mesh.GetEdgeVertices(edge, vertices);
   MFEM_VERIFY(vertices.Size() == 2, "Unexpected mesh edge geometry!");
 
-  EdgePoint endpoint0{}, endpoint1{};
-  for (int d = 0; d < 3; d++)
-  {
-    endpoint0[d] = d < mesh.SpaceDimension() ? mesh.GetVertex(vertices[0])[d] : 0.0;
-    endpoint1[d] = d < mesh.SpaceDimension() ? mesh.GetVertex(vertices[1])[d] : 0.0;
-  }
+  const EdgePoint endpoint0 = GetVertexCoordinates(mesh, vertices[0]);
+  const EdgePoint endpoint1 = GetVertexCoordinates(mesh, vertices[1]);
   mfem::IsoparametricTransformation transformation;
   mesh.GetEdgeTransformation(edge, &transformation);
   return SampleEdgeTransformation(transformation, endpoint0, endpoint1);
@@ -1862,12 +1910,8 @@ GetBoundaryElementEdgeSegments(const mfem::ParMesh &mesh, const mfem::Array<int>
       mesh.GetBdrElementVertices(be, vertices);
       MFEM_ASSERT(vertices.Size() == 2,
                   "Unexpected boundary element geometry in 2D edge extraction!");
-      EdgePoint endpoint0{}, endpoint1{};
-      for (int d = 0; d < 3; d++)
-      {
-        endpoint0[d] = d < mesh.SpaceDimension() ? mesh.GetVertex(vertices[0])[d] : 0.0;
-        endpoint1[d] = d < mesh.SpaceDimension() ? mesh.GetVertex(vertices[1])[d] : 0.0;
-      }
+      const EdgePoint endpoint0 = GetVertexCoordinates(mesh, vertices[0]);
+      const EdgePoint endpoint1 = GetVertexCoordinates(mesh, vertices[1]);
       auto &mutable_mesh = const_cast<mfem::ParMesh &>(mesh);
       auto *transformation = mutable_mesh.GetBdrElementTransformation(be);
       for (const auto &segment :
@@ -1979,11 +2023,8 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
       local_side_attributes.push_back(0);
       for (const int vertex : vertices)
       {
-        const double *x = mesh.GetVertex(vertex);
-        for (int d = 0; d < 3; d++)
-        {
-          local_coordinates.push_back(d < mesh.SpaceDimension() ? x[d] : 0.0);
-        }
+        const auto x = GetVertexCoordinates(mesh, vertex);
+        local_coordinates.insert(local_coordinates.end(), x.begin(), x.end());
       }
     }
   }
@@ -2131,12 +2172,11 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
       return key;
     };
 
-    struct PointData
-    {
-      Point coordinate{};
-      int count = 0;
-    };
-    std::map<PointKey, PointData> points;
+    // Coincident copies of a vertex (crack duplicates displaced by the crack
+    // perturbation) carry different coordinates and arrive in rank order. The canonical
+    // coordinate is the mean of the distinct copies summed in sorted order, so it is a
+    // function of the global mesh only and not of the partition.
+    std::map<PointKey, std::set<Point>> distinct_points;
     std::set<SegmentKey> unique_segments;
     for (int i = 0; i < total_entities; i++)
     {
@@ -2145,30 +2185,15 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
       std::copy_n(global_coordinates.data() + 6 * i + 3, 3, p1.begin());
       PointKey k0 = GetPointKey(p0);
       PointKey k1 = GetPointKey(p1);
-      for (const auto &[key, point] : {std::pair<const PointKey &, const Point &>{k0, p0},
-                                       std::pair<const PointKey &, const Point &>{k1, p1}})
-      {
-        auto &data = points[key];
-        for (int d = 0; d < 3; d++)
-        {
-          data.coordinate[d] += point[d];
-        }
-        data.count++;
-      }
+      distinct_points[k0].insert(p0);
+      distinct_points[k1].insert(p1);
       if (k1 < k0)
       {
         std::swap(k0, k1);
       }
       unique_segments.emplace(k0, k1);
     }
-
-    for (auto &[key, data] : points)
-    {
-      for (double &x : data.coordinate)
-      {
-        x /= data.count;
-      }
-    }
+    const auto points = CanonicalPointCoordinates(distinct_points);
 
     // Cracked sides can acquire different nonconforming subdivisions. Split every
     // gathered segment at all canonical vertices which lie on it, then deduplicate the
@@ -2178,18 +2203,18 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
     std::vector<Point> search_coordinates;
     search_points.reserve(points.size());
     search_coordinates.reserve(points.size());
-    for (const auto &[key, data] : points)
+    for (const auto &[key, coordinate] : points)
     {
-      search_points.emplace_back(key, data.coordinate);
-      search_coordinates.push_back(data.coordinate);
+      search_points.emplace_back(key, coordinate);
+      search_coordinates.push_back(coordinate);
     }
     const PointBoxTree point_tree(search_coordinates);
     std::vector<std::size_t> point_candidates;
     std::set<SegmentKey> atomic_segments;
     for (const auto &[k0, k1] : unique_segments)
     {
-      const auto &p0 = points.at(k0).coordinate;
-      const auto &p1 = points.at(k1).coordinate;
+      const auto &p0 = points.at(k0);
+      const auto &p1 = points.at(k1);
       Point direction;
       double length_squared = 0.0;
       for (int d = 0; d < 3; d++)
@@ -2257,7 +2282,7 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
     {
       if (incidence == 1)
       {
-        const Point &point = points.at(key).coordinate;
+        const Point &point = points.at(key);
         perimeter.push_back({point, point});
       }
     }
@@ -2352,16 +2377,17 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
     }
   }
 
-  struct PointData
-  {
-    Point coordinate{};
-    int count = 0;
-  };
+  // Coincident copies of a vertex (crack duplicates displaced by the crack perturbation)
+  // carry different coordinates and arrive in rank order. The canonical coordinate of a
+  // vertex key is the mean of its distinct copies summed in sorted order, shared by all
+  // components, so the perimeter geometry is a function of the global mesh only and not of
+  // the partition or of the component numbering.
   struct ComponentData
   {
-    std::map<PointKey, PointData> points;
+    std::set<PointKey> points;
     std::vector<SegmentKey> segments;
   };
+  std::map<PointKey, std::set<Point>> distinct_points;
   std::map<int, ComponentData> components;
   for (int i = 0; i < total_entities; i++)
   {
@@ -2373,16 +2399,10 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
     std::copy_n(global_coordinates.data() + 6 * i + 3, 3, p1.begin());
     PointKey k0 = GetPointKey(p0);
     PointKey k1 = GetPointKey(p1);
-    for (const auto &[key, point] : {std::pair<const PointKey &, const Point &>{k0, p0},
-                                     std::pair<const PointKey &, const Point &>{k1, p1}})
-    {
-      auto &point_data = data.points[key];
-      for (int d = 0; d < 3; d++)
-      {
-        point_data.coordinate[d] += point[d];
-      }
-      point_data.count++;
-    }
+    distinct_points[k0].insert(p0);
+    distinct_points[k1].insert(p1);
+    data.points.insert(k0);
+    data.points.insert(k1);
     if (k1 < k0)
     {
       std::swap(k0, k1);
@@ -2392,26 +2412,20 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
       data.segments.emplace_back(k0, k1);
     }
   }
+  const auto points = CanonicalPointCoordinates(distinct_points);
 
   std::map<SegmentKey, BoundaryEdgeSegment> unique_perimeter;
   for (auto &[component, data] : components)
   {
-    for (auto &[key, point] : data.points)
-    {
-      for (double &x : point.coordinate)
-      {
-        x /= point.count;
-      }
-    }
-
     std::vector<std::pair<PointKey, Point>> search_points;
     std::vector<Point> search_coordinates;
     search_points.reserve(data.points.size());
     search_coordinates.reserve(data.points.size());
-    for (const auto &[key, point] : data.points)
+    for (const auto &key : data.points)
     {
-      search_points.emplace_back(key, point.coordinate);
-      search_coordinates.push_back(point.coordinate);
+      const auto &coordinate = points.at(key);
+      search_points.emplace_back(key, coordinate);
+      search_coordinates.push_back(coordinate);
     }
     const PointBoxTree point_tree(search_coordinates);
     std::vector<std::size_t> point_candidates;
@@ -2424,8 +2438,8 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
         continue;
       }
 
-      const auto &p0 = data.points.at(k0).coordinate;
-      const auto &p1 = data.points.at(k1).coordinate;
+      const auto &p0 = points.at(k0);
+      const auto &p1 = points.at(k1);
       Point direction;
       double length_squared = 0.0;
       for (int d = 0; d < 3; d++)
@@ -2487,8 +2501,7 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
         continue;
       }
       unique_perimeter.try_emplace(
-          key, BoundaryEdgeSegment{data.points.at(key.first).coordinate,
-                                   data.points.at(key.second).coordinate});
+          key, BoundaryEdgeSegment{points.at(key.first), points.at(key.second)});
     }
   }
 
