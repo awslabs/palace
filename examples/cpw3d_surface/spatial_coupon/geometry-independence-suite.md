@@ -3239,6 +3239,60 @@ formatted a `None` strongest-source median with `:.3f` for a run without a refer
 stopped after the fetch / verification / archive deletion; `f3` prints n/a, test added, the analysis
 completed under `--resume` without a second job).
 
+### Device library end to end, 2026-09-22 (user decision 64a: the real before / after totals)
+
+The decision-58 transmon library rebuilt and re-qualified with the integrated tooling (labels-only probes,
+audit dedupe / caching, MA shells, the streaming Gram executable `170439c4…` at b = 48, the decision-61b
+split under `--job-policy speed --max-jobs 6`). Build at `307086ae7` (root `/tmp/coupon-device-transmon-20260922`),
+qualify at `7c7bb5fe5` (root `/tmp/library-device-transmon-03`, PBS 47080-47467); records under
+`qualify/device-library-20260922/` (`DEVICE-LIBRARY-2.md` there is the full account). **Label-only check:**
+every 2026-09-22 identity mesh equals the 2026-09-21 Delaunay identity in the `$Nodes` block and in every
+element apart from the MA elements' (physical, elementary) pair (the ring shells), the receipt's
+`ParentLabeledMeshSHA256` being the 2026-09-21 digest (`label-only-vs-20260921/`, 6/6); element counts, H1
+counts, PCG counts and every p-sequence maximum (same values, same sources) are those of 2026-09-21 - the
+worker path is unchanged, the reducer's values were bit-identical / 1e-12-identical in the decision-63 acceptance.
+
+| quantity | 2026-09-21 (decision 58) | 2026-09-22 (decision 64a) |
+|---|---|---|
+| registration of the six coupons | 990 s | 33 s |
+| build pool wall / end to end (6 cores) | 7,338 / 8,493 s (pool of 2) | 1,462 / 1,527 s (pool of 3) |
+| serial sum of the case walls (publications / audits / verification) | 13,175 s (1,483 / 4,137 / 6,500) | 3,591 s (584 / 921 / 771) |
+| qualify node-h | 8.257 (5 coupons; 7f03 fail-closed as one job) | 7.203 (6 coupons; the same five 5.21; 7f03 2.00 as 6 + 1 jobs) |
+| reducer seconds / share of the job seconds | 11,964 s / 40.3% | 626 s / 2.4% |
+| jobs / concurrency | 5 / 2 | 35 / 6 |
+| critical path (first submission -> last fetch) | 24,313 s (17,155 without the outage dead time) | 28,167 s (119,824 job-s of r8g capacity holds) |
+
+Per coupon (node-h, jobs): 10-edge 1.37 (5+1), 5-edge 1.34 (5+1), 7f03 2.00 (6+1), 3-edge 9cd9 0.94 (5+1),
+4-edge 0.86 (4+1), 2-edge 0.69 (4+1); reducers 133 / 135 / 158 / 78 / 71 / 52 s (3,972 / 3,958 / - / 2,022 /
+1,019 / 994 s on 2026-09-21). Verdicts: 6/6 `PendingQualification` on the p-sequence controls alone
+(E |d45| <= 0.49%, participations <= 2.68%), `LibraryQualified false` (decision 59). MA_sharp tail 2.4-3.3%
+of MA_raw at the median source of five coupons, 0.01% on the 5-edge; ring-1 factor 0.666-0.667 everywhere.
+The critical path is longer than 2026-09-21's despite 5x less job time: the dispatcher held the jobs for
+capacity (`CF:ROLLBACK_COMPLETE`, up to 15 retries; per-job queue waits 3-133 min, median ~47) - the planner's
+per-coupon critical path (77-96 min at 2.0x PCG) assumes immediate starts and is a lower bound. Every
+job's 2.0x-with-margin estimate under the physics-11 / b28 model was 2.5-4.4x the worker job and 8-12x the
+reducer job. Transport failures 16:17-17:00Z and 22:27-22:43Z (126 polls, every job kept active); the driver
+ran unattended 16:09 -> 00:00Z. Every archive deleted after digest verification.
+
+**Cost-model refit (`qualify/refit_cost_model.py`; `qualify/cost-model.json` since `05f664772`, record
+`qualify/device-library-20260922/cost-model-refit.json`).** Every rate is the largest the six coupons imply once
+scaled to the 7f03 reference mesh (p4 225 sources, H1 42,696,378) by the exact H1 ratio: p4 1.45471 s per
+PCG iteration (set by the four-edge), mean PCG 18.354 / max 40, 31.30 s per source (the largest worker-block
+mean: contiguous blocks differ in their PCG counts), worker non-source 78.2 s per job, reducer 259.9 s (setup
+57.9 + block pairs 202.0, the wall split by Palace's elapsed-time report; measured 157.5 s on this mesh, 1,050 s
+under the previous model at b = 48), Palace peaks 178 / 171 GB, archive 74.9 GB; p3 / p5 controls and the
+local-edge stage likewise; `ReducerEvaluationFraction` 0.97 and the resident-field rate KEPT (one block size
+cannot separate them; upper bound under the streaming Gram); the previous model kept byte for byte as
+`cost-model-physics11-b28.json` (`22ee226d…`) under `Previous`, and every test that reproduces a recorded
+estimate loads it explicitly. Self-check per job as the split planner budgets: minimum stage estimate /
+measured wall **1.002** over every stage of every job of every coupon (the previous model's minimum was
+0.835 on the two-edge p5 control worker: its per-source and peak rates did not cover the smallest coupon,
+whose fixed overheads scale least with H1), 1x job estimate / stage wall 1.02-1.24, worst-PCG-with-margin over
+the coupon's node seconds 3.18-3.76 (previous 3.02-3.62) - conservative, slightly more than before. Under the
+refit 7f03 still does not fit one 6 h job (22,681 s at 2.0x + margin) and the speed split reproduces the
+recorded N = 6 (blocks 0 / 45 x 5). Tests: `test_refit_cost_model` (RecordedRefitTest on the committed
+records), `JobSplitTest` refit-model statement.
+
 ## Preflight
 
 ```sh
