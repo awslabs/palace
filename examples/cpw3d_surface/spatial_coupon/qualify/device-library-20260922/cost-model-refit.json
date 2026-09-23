@@ -1,0 +1,1602 @@
+{
+  "Model": {
+    "Version": 2,
+    "MeasuredMesh": {
+      "Label": "spatial-3-edge-5d3b5e644745 identity (device library 2026-09-22; 2,635,846 tets + 373,347 prisms + 28,719 pyramids, 714,404 nodes)",
+      "SHA256": "39341124dbdac781836caa2558d334b75b17e89cca04ea6402da447683e1d019",
+      "EntityCounts": {
+        "Vertices": 714404,
+        "Edges": 4109961,
+        "TriangleFaces": 5836752,
+        "QuadFaces": 596717,
+        "Tetrahedra": 2635846,
+        "Prisms": 373347,
+        "Pyramids": 28719
+      }
+    },
+    "MeasuredBlockSize": 48,
+    "Stages": {
+      "p3": {
+        "H1": 18134392,
+        "Sources": 8,
+        "SecondsPerPCGIteration": 0.52076,
+        "MeanPCGIterations": 21.625,
+        "MaxPCGIterations": 27,
+        "MeanPerSourceSeconds": 11.708,
+        "WorkerNonSourceSeconds": 65.1,
+        "ReducerPalaceSeconds": 59.29,
+        "ReducerPairSeconds": 1.63,
+        "WorkerPalacePeakGB": 132.0,
+        "ReducerPalacePeakGB": 74.3,
+        "WorkerNodeUsedGiB": 168.94,
+        "ReducerNodeUsedGiB": 117.84,
+        "ArchiveGB": 1.14
+      },
+      "p4": {
+        "H1": 42696378,
+        "Sources": 225,
+        "SecondsPerPCGIteration": 1.45471,
+        "MeanPCGIterations": 18.354,
+        "MaxPCGIterations": 40,
+        "MeanPerSourceSeconds": 31.299,
+        "WorkerNonSourceSeconds": 78.21,
+        "ReducerPalaceSeconds": 259.86,
+        "ReducerPairSeconds": 201.96,
+        "WorkerPalacePeakGB": 178.1,
+        "ReducerPalacePeakGB": 171.2,
+        "WorkerNodeUsedGiB": 213.44,
+        "ReducerNodeUsedGiB": 221.11,
+        "ArchiveGB": 74.91
+      },
+      "p5": {
+        "H1": 83063960,
+        "Sources": 8,
+        "SecondsPerPCGIteration": 5.48049,
+        "MeanPCGIterations": 21.0,
+        "MaxPCGIterations": 38,
+        "MeanPerSourceSeconds": 115.862,
+        "WorkerNonSourceSeconds": 121.4,
+        "ReducerPalaceSeconds": 72.81,
+        "ReducerPairSeconds": 12.87,
+        "WorkerPalacePeakGB": 277.6,
+        "ReducerPalacePeakGB": 156.0,
+        "WorkerNodeUsedGiB": 308.55,
+        "ReducerNodeUsedGiB": 198.89,
+        "ArchiveGB": 4.99
+      }
+    },
+    "LocalEdge": {
+      "Order": 4,
+      "H1": 42696378,
+      "Sources": 8,
+      "PalacePeakGB": 359.6,
+      "NodeUsedGiB": 439.3,
+      "PalaceTotalSeconds": 587.6,
+      "LinearSolveSeconds": 253.1,
+      "NonSolveSeconds": 334.5
+    },
+    "Previous": {
+      "Path": "cost-model-physics11-b28.json",
+      "SHA256": "22ee226d91c081f9b9275b020e7f68220941f27b32829245d54344da8e8f5ee9",
+      "Provenance": "the model every qualify run up to this refit used: Measured per-stage cost rates of the Palace response worker / reducer / ordinary local-edge stages on one r8g.48xlarge node (192 ranks, frozen b28 executable), from the four-edge-physics-11 V-a run (PBS 45145; results/main/cost-summary.json and status.json of coupon-accuracy-assessment-20260913/four-edge-physics-11). estimate_stages.py scales them to another hybrid prism-tube coupon mesh by the exact H1 DOF ratio (time per PCG iteration, reducer, memory) with 1x / 1.5x / 2x the measured mean PCG counts; the same method predicted the physics-11 V-a run from physics-09 GO within 2% (47 vs 48 min, 187 vs 187 GB) and the gallery-06b run from V-a."
+    }
+  },
+  "SelfCheck": {
+    "spatial-10-edge-65450ff47b9b": {
+      "Jobs": {
+        "worker-1": {
+          "Stages": [
+            "spatial-10-edge-65450ff47b9b-p5-control-worker",
+            "spatial-10-edge-65450ff47b9b-p5-control-reducer",
+            "spatial-10-edge-65450ff47b9b-p3-control-worker",
+            "spatial-10-edge-65450ff47b9b-p3-control-reducer",
+            "spatial-10-edge-65450ff47b9b-p4-local-edge"
+          ],
+          "ActualStageWallSeconds": 1234.8840130950002,
+          "ActualJobSeconds": 1235.914801377,
+          "Estimate1xSeconds": 1617.8610710151495,
+          "Estimate1xOverStageWall": 1.3101320074265848,
+          "EstimateWorstWithMarginSeconds": 3916.6373421911467,
+          "EstimateWorstWithMarginOverJob": 3.1690188820680905,
+          "PerStage": {
+            "spatial-10-edge-65450ff47b9b-p5-control-worker": 1.4862138964783902,
+            "spatial-10-edge-65450ff47b9b-p5-control-reducer": 1.0311907980464192,
+            "spatial-10-edge-65450ff47b9b-p3-control-worker": 1.2066650057432047,
+            "spatial-10-edge-65450ff47b9b-p3-control-reducer": 1.0221104068900964,
+            "spatial-10-edge-65450ff47b9b-p4-local-edge": 1.1634542232950982
+          }
+        },
+        "worker-2": {
+          "Stages": [
+            "spatial-10-edge-65450ff47b9b-p4-worker-block2"
+          ],
+          "ActualStageWallSeconds": 947.554693143,
+          "ActualJobSeconds": 948.562194742,
+          "Estimate1xSeconds": 1327.5360542537355,
+          "Estimate1xOverStageWall": 1.4010125894161876,
+          "EstimateWorstWithMarginSeconds": 3545.3454214680664,
+          "EstimateWorstWithMarginOverJob": 3.737599327825169,
+          "PerStage": {
+            "spatial-10-edge-65450ff47b9b-p4-worker-block2": 1.4010125894161876
+          }
+        },
+        "worker-3": {
+          "Stages": [
+            "spatial-10-edge-65450ff47b9b-p4-worker-block3"
+          ],
+          "ActualStageWallSeconds": 875.3193804240001,
+          "ActualJobSeconds": 876.1618700059998,
+          "Estimate1xSeconds": 1327.5360542537355,
+          "Estimate1xOverStageWall": 1.5166304824767893,
+          "EstimateWorstWithMarginSeconds": 3545.3454214680664,
+          "EstimateWorstWithMarginOverJob": 4.046450254042427,
+          "PerStage": {
+            "spatial-10-edge-65450ff47b9b-p4-worker-block3": 1.5166304824767893
+          }
+        },
+        "worker-4": {
+          "Stages": [
+            "spatial-10-edge-65450ff47b9b-p4-worker-block4"
+          ],
+          "ActualStageWallSeconds": 894.6908313030001,
+          "ActualJobSeconds": 895.6547437720001,
+          "Estimate1xSeconds": 1327.5360542537355,
+          "Estimate1xOverStageWall": 1.4837930688530172,
+          "EstimateWorstWithMarginSeconds": 3545.3454214680664,
+          "EstimateWorstWithMarginOverJob": 3.9583840158508417,
+          "PerStage": {
+            "spatial-10-edge-65450ff47b9b-p4-worker-block4": 1.4837930688530172
+          }
+        },
+        "worker-5": {
+          "Stages": [
+            "spatial-10-edge-65450ff47b9b-p4-worker-block5"
+          ],
+          "ActualStageWallSeconds": 847.0244734580001,
+          "ActualJobSeconds": 848.0190764419999,
+          "Estimate1xSeconds": 1301.2475878967768,
+          "Estimate1xOverStageWall": 1.5362573676111138,
+          "EstimateWorstWithMarginSeconds": 3479.581580464807,
+          "EstimateWorstWithMarginOverJob": 4.1031878611315555,
+          "PerStage": {
+            "spatial-10-edge-65450ff47b9b-p4-worker-block5": 1.5362573676111138
+          }
+        },
+        "reducer": {
+          "Stages": [
+            "spatial-10-edge-65450ff47b9b-p4-reducer"
+          ],
+          "ActualStageWallSeconds": 133.05556688400003,
+          "ActualJobSeconds": 134.228232963,
+          "Estimate1xSeconds": 164.04205142660624,
+          "Estimate1xOverStageWall": 1.2328837888430533,
+          "EstimateWorstWithMarginSeconds": 521.4567694259184,
+          "EstimateWorstWithMarginOverJob": 3.884851628566532,
+          "PerStage": {
+            "spatial-10-edge-65450ff47b9b-p4-reducer": 1.2328837888430533
+          }
+        }
+      },
+      "MinimumJobEstimate1xOverStageWall": 1.2328837888430533,
+      "MinimumStageEstimate1xOverWall": 1.0221104068900964,
+      "SingleJob": {
+        "FitsOneJob": true,
+        "JobSecondsEstimateByPCGFactor": {
+          "1.0": 6868.689865740614,
+          "1.5": 9540.88893159299,
+          "2.0": 12213.087997445371
+        },
+        "JobSecondsEstimateWithPreflightAndMargin": {
+          "1.0": 9572.73131874983,
+          "1.5": 13180.200057650538,
+          "2.0": 16787.66879655125
+        },
+        "MaxPalacePeakGBEstimate": 302.03305223689
+      },
+      "ActualNodeSeconds": 4938.540919302,
+      "EstimateWorstWithMarginOverActualNodeSeconds": 3.7569217831060113
+    },
+    "spatial-2-edge-8ce3fb213a2d": {
+      "Jobs": {
+        "worker-1": {
+          "Stages": [
+            "spatial-2-edge-8ce3fb213a2d-p5-control-worker",
+            "spatial-2-edge-8ce3fb213a2d-p5-control-reducer",
+            "spatial-2-edge-8ce3fb213a2d-p3-control-worker",
+            "spatial-2-edge-8ce3fb213a2d-p3-control-reducer",
+            "spatial-2-edge-8ce3fb213a2d-p4-local-edge"
+          ],
+          "ActualStageWallSeconds": 713.902901141,
+          "ActualJobSeconds": 714.7748016099999,
+          "Estimate1xSeconds": 771.8132485080378,
+          "Estimate1xOverStageWall": 1.081117960544049,
+          "EstimateWorstWithMarginSeconds": 2025.5148483940548,
+          "EstimateWorstWithMarginOverJob": 2.8337804352247287,
+          "PerStage": {
+            "spatial-2-edge-8ce3fb213a2d-p5-control-worker": 1.019725781307206,
+            "spatial-2-edge-8ce3fb213a2d-p5-control-reducer": 1.120064518238055,
+            "spatial-2-edge-8ce3fb213a2d-p3-control-worker": 1.0170129408064599,
+            "spatial-2-edge-8ce3fb213a2d-p3-control-reducer": 1.111153766690722,
+            "spatial-2-edge-8ce3fb213a2d-p4-local-edge": 1.2249789437083582
+          }
+        },
+        "worker-2": {
+          "Stages": [
+            "spatial-2-edge-8ce3fb213a2d-p4-worker-block2"
+          ],
+          "ActualStageWallSeconds": 610.537423244,
+          "ActualJobSeconds": 611.3265769149999,
+          "Estimate1xSeconds": 658.0859883618231,
+          "Estimate1xOverStageWall": 1.0778798535643905,
+          "EstimateWorstWithMarginSeconds": 1910.210826836176,
+          "EstimateWorstWithMarginOverJob": 3.1246978275930175,
+          "PerStage": {
+            "spatial-2-edge-8ce3fb213a2d-p4-worker-block2": 1.0778798535643905
+          }
+        },
+        "worker-3": {
+          "Stages": [
+            "spatial-2-edge-8ce3fb213a2d-p4-worker-block3"
+          ],
+          "ActualStageWallSeconds": 542.615509932,
+          "ActualJobSeconds": 543.384142774,
+          "Estimate1xSeconds": 658.0859883618231,
+          "Estimate1xOverStageWall": 1.212803497718474,
+          "EstimateWorstWithMarginSeconds": 1910.210826836176,
+          "EstimateWorstWithMarginOverJob": 3.5153967082743076,
+          "PerStage": {
+            "spatial-2-edge-8ce3fb213a2d-p4-worker-block3": 1.212803497718474
+          }
+        },
+        "worker-4": {
+          "Stages": [
+            "spatial-2-edge-8ce3fb213a2d-p4-worker-block4"
+          ],
+          "ActualStageWallSeconds": 548.060654278,
+          "ActualJobSeconds": 548.99190542,
+          "Estimate1xSeconds": 658.0859883618231,
+          "Estimate1xOverStageWall": 1.2007539370414528,
+          "EstimateWorstWithMarginSeconds": 1910.210826836176,
+          "EstimateWorstWithMarginOverJob": 3.4794881454122555,
+          "PerStage": {
+            "spatial-2-edge-8ce3fb213a2d-p4-worker-block4": 1.2007539370414528
+          }
+        },
+        "reducer": {
+          "Stages": [
+            "spatial-2-edge-8ce3fb213a2d-p4-reducer"
+          ],
+          "ActualStageWallSeconds": 51.76838145500001,
+          "ActualJobSeconds": 52.85213825600002,
+          "Estimate1xSeconds": 66.1143397335142,
+          "Estimate1xOverStageWall": 1.2771181535004046,
+          "EstimateWorstWithMarginSeconds": 389.25435864024416,
+          "EstimateWorstWithMarginOverJob": 7.364968977315771,
+          "PerStage": {
+            "spatial-2-edge-8ce3fb213a2d-p4-reducer": 1.2771181535004046
+          }
+        }
+      },
+      "MinimumJobEstimate1xOverStageWall": 1.0778798535643905,
+      "MinimumStageEstimate1xOverWall": 1.0170129408064599,
+      "SingleJob": {
+        "FitsOneJob": true,
+        "JobSecondsEstimateByPCGFactor": {
+          "1.0": 2749.5393044531706,
+          "1.5": 3804.7064120647806,
+          "2.0": 4859.873519676392
+        },
+        "JobSecondsEstimateWithPreflightAndMargin": {
+          "1.0": 4011.8780610117806,
+          "1.5": 5436.353656287454,
+          "2.0": 6860.829251563129
+        },
+        "MaxPalacePeakGBEstimate": 144.01988936860172
+      },
+      "ActualNodeSeconds": 2471.329564975,
+      "EstimateWorstWithMarginOverActualNodeSeconds": 3.2959593099130937
+    },
+    "spatial-3-edge-9cd906b81cbe": {
+      "Jobs": {
+        "worker-1": {
+          "Stages": [
+            "spatial-3-edge-9cd906b81cbe-p5-control-worker",
+            "spatial-3-edge-9cd906b81cbe-p5-control-reducer",
+            "spatial-3-edge-9cd906b81cbe-p3-control-worker",
+            "spatial-3-edge-9cd906b81cbe-p3-control-reducer",
+            "spatial-3-edge-9cd906b81cbe-p4-local-edge"
+          ],
+          "ActualStageWallSeconds": 791.034729081,
+          "ActualJobSeconds": 792.1954311139999,
+          "Estimate1xSeconds": 1032.306521004724,
+          "Estimate1xOverStageWall": 1.3050078372716025,
+          "EstimateWorstWithMarginSeconds": 2607.571424139138,
+          "EstimateWorstWithMarginOverJob": 3.291575944173678,
+          "PerStage": {
+            "spatial-3-edge-9cd906b81cbe-p5-control-worker": 1.3907531134120439,
+            "spatial-3-edge-9cd906b81cbe-p5-control-reducer": 1.0668033230196299,
+            "spatial-3-edge-9cd906b81cbe-p3-control-worker": 1.1799543137601027,
+            "spatial-3-edge-9cd906b81cbe-p3-control-reducer": 1.0752747481324332,
+            "spatial-3-edge-9cd906b81cbe-p4-local-edge": 1.264609329525008
+          }
+        },
+        "worker-2": {
+          "Stages": [
+            "spatial-3-edge-9cd906b81cbe-p4-worker-block2"
+          ],
+          "ActualStageWallSeconds": 621.5043535560001,
+          "ActualJobSeconds": 622.352121149,
+          "Estimate1xSeconds": 780.1043106453667,
+          "Estimate1xOverStageWall": 1.2551872021200188,
+          "EstimateWorstWithMarginSeconds": 2203.2487144221973,
+          "EstimateWorstWithMarginOverJob": 3.540196360790916,
+          "PerStage": {
+            "spatial-3-edge-9cd906b81cbe-p4-worker-block2": 1.2551872021200188
+          }
+        },
+        "worker-3": {
+          "Stages": [
+            "spatial-3-edge-9cd906b81cbe-p4-worker-block3"
+          ],
+          "ActualStageWallSeconds": 616.838460506,
+          "ActualJobSeconds": 617.8658343550001,
+          "Estimate1xSeconds": 780.1043106453667,
+          "Estimate1xOverStageWall": 1.2646816964127654,
+          "EstimateWorstWithMarginSeconds": 2203.2487144221973,
+          "EstimateWorstWithMarginOverJob": 3.5659015143994868,
+          "PerStage": {
+            "spatial-3-edge-9cd906b81cbe-p4-worker-block3": 1.2646816964127654
+          }
+        },
+        "worker-4": {
+          "Stages": [
+            "spatial-3-edge-9cd906b81cbe-p4-worker-block4"
+          ],
+          "ActualStageWallSeconds": 675.540518703,
+          "ActualJobSeconds": 676.3077748300001,
+          "Estimate1xSeconds": 780.1043106453667,
+          "Estimate1xOverStageWall": 1.1547853741521283,
+          "EstimateWorstWithMarginSeconds": 2203.2487144221973,
+          "EstimateWorstWithMarginOverJob": 3.257760440468123,
+          "PerStage": {
+            "spatial-3-edge-9cd906b81cbe-p4-worker-block4": 1.1547853741521283
+          }
+        },
+        "worker-5": {
+          "Stages": [
+            "spatial-3-edge-9cd906b81cbe-p4-worker-block5"
+          ],
+          "ActualStageWallSeconds": 608.490904833,
+          "ActualJobSeconds": 609.62082583,
+          "Estimate1xSeconds": 763.3274415836398,
+          "Estimate1xOverStageWall": 1.2544599032143868,
+          "EstimateWorstWithMarginSeconds": 2161.279307210435,
+          "EstimateWorstWithMarginOverJob": 3.545284569745217,
+          "PerStage": {
+            "spatial-3-edge-9cd906b81cbe-p4-worker-block5": 1.2544599032143868
+          }
+        },
+        "reducer": {
+          "Stages": [
+            "spatial-3-edge-9cd906b81cbe-p4-reducer"
+          ],
+          "ActualStageWallSeconds": 77.57547824800001,
+          "ActualJobSeconds": 78.55484015,
+          "Estimate1xSeconds": 98.34020436736917,
+          "Estimate1xOverStageWall": 1.2676712614389134,
+          "EstimateWorstWithMarginSeconds": 432.75927589594835,
+          "EstimateWorstWithMarginOverJob": 5.509008420990955,
+          "PerStage": {
+            "spatial-3-edge-9cd906b81cbe-p4-reducer": 1.2676712614389134
+          }
+        }
+      },
+      "MinimumJobEstimate1xOverStageWall": 1.1547853741521283,
+      "MinimumStageEstimate1xOverWall": 1.0668033230196299,
+      "SingleJob": {
+        "FitsOneJob": true,
+        "JobSecondsEstimateByPCGFactor": {
+          "1.0": 4108.5208831036925,
+          "1.5": 5699.287019032633,
+          "2.0": 7290.0531549615735
+        },
+        "JobSecondsEstimateWithPreflightAndMargin": {
+          "1.0": 5846.503192189985,
+          "1.5": 7994.0374756940555,
+          "2.0": 10141.571759198125
+        },
+        "MaxPalacePeakGBEstimate": 192.7525516660922
+      },
+      "ActualNodeSeconds": 3396.896827428,
+      "EstimateWorstWithMarginOverActualNodeSeconds": 3.4771018227996104
+    },
+    "spatial-3-edge-5d3b5e644745": {
+      "Jobs": {
+        "worker-1": {
+          "Stages": [
+            "spatial-3-edge-5d3b5e644745-p5-control-worker",
+            "spatial-3-edge-5d3b5e644745-p5-control-reducer",
+            "spatial-3-edge-5d3b5e644745-p3-control-worker",
+            "spatial-3-edge-5d3b5e644745-p3-control-reducer",
+            "spatial-3-edge-5d3b5e644745-p4-local-edge"
+          ],
+          "ActualStageWallSeconds": 1495.1012355880002,
+          "ActualJobSeconds": 1496.599209468,
+          "Estimate1xSeconds": 1926.76,
+          "Estimate1xOverStageWall": 1.2887154087878436,
+          "EstimateWorstWithMarginSeconds": 4607.40963,
+          "EstimateWorstWithMarginOverJob": 3.0785861711351616,
+          "PerStage": {
+            "spatial-3-edge-5d3b5e644745-p5-control-worker": 1.328476344363754,
+            "spatial-3-edge-5d3b5e644745-p5-control-reducer": 1.0920316102158818,
+            "spatial-3-edge-5d3b5e644745-p3-control-worker": 1.1483135490149865,
+            "spatial-3-edge-5d3b5e644745-p3-control-reducer": 1.0720509931073092,
+            "spatial-3-edge-5d3b5e644745-p4-local-edge": 1.3181766750598625
+          }
+        },
+        "worker-2": {
+          "Stages": [
+            "spatial-3-edge-5d3b5e644745-p4-worker-block2"
+          ],
+          "ActualStageWallSeconds": 1201.451951926,
+          "ActualJobSeconds": 1202.905220601,
+          "Estimate1xSeconds": 1486.665,
+          "Estimate1xOverStageWall": 1.237390307300085,
+          "EstimateWorstWithMarginSeconds": 3929.007400905,
+          "EstimateWorstWithMarginOverJob": 3.2662651500855358,
+          "PerStage": {
+            "spatial-3-edge-5d3b5e644745-p4-worker-block2": 1.237390307300085
+          }
+        },
+        "worker-3": {
+          "Stages": [
+            "spatial-3-edge-5d3b5e644745-p4-worker-block3"
+          ],
+          "ActualStageWallSeconds": 1141.7619649990002,
+          "ActualJobSeconds": 1142.8317850859999,
+          "Estimate1xSeconds": 1486.665,
+          "Estimate1xOverStageWall": 1.3020796326853485,
+          "EstimateWorstWithMarginSeconds": 3929.007400905,
+          "EstimateWorstWithMarginOverJob": 3.4379577573696345,
+          "PerStage": {
+            "spatial-3-edge-5d3b5e644745-p4-worker-block3": 1.3020796326853485
+          }
+        },
+        "worker-4": {
+          "Stages": [
+            "spatial-3-edge-5d3b5e644745-p4-worker-block4"
+          ],
+          "ActualStageWallSeconds": 973.7991305060001,
+          "ActualJobSeconds": 974.755846296,
+          "Estimate1xSeconds": 1486.665,
+          "Estimate1xOverStageWall": 1.5266649490922295,
+          "EstimateWorstWithMarginSeconds": 3929.007400905,
+          "EstimateWorstWithMarginOverJob": 4.030760539508368,
+          "PerStage": {
+            "spatial-3-edge-5d3b5e644745-p4-worker-block4": 1.5266649490922295
+          }
+        },
+        "worker-5": {
+          "Stages": [
+            "spatial-3-edge-5d3b5e644745-p4-worker-block5"
+          ],
+          "ActualStageWallSeconds": 1136.970993357,
+          "ActualJobSeconds": 1137.999544476,
+          "Estimate1xSeconds": 1486.665,
+          "Estimate1xOverStageWall": 1.3075663395866413,
+          "EstimateWorstWithMarginSeconds": 3929.007400905,
+          "EstimateWorstWithMarginOverJob": 3.4525562158411405,
+          "PerStage": {
+            "spatial-3-edge-5d3b5e644745-p4-worker-block5": 1.3075663395866413
+          }
+        },
+        "worker-6": {
+          "Stages": [
+            "spatial-3-edge-5d3b5e644745-p4-worker-block6"
+          ],
+          "ActualStageWallSeconds": 1073.389317202,
+          "ActualJobSeconds": 1074.369557984,
+          "Estimate1xSeconds": 1486.665,
+          "Estimate1xOverStageWall": 1.3850193738421808,
+          "EstimateWorstWithMarginSeconds": 3929.007400905,
+          "EstimateWorstWithMarginOverJob": 3.657035301965911,
+          "PerStage": {
+            "spatial-3-edge-5d3b5e644745-p4-worker-block6": 1.3850193738421808
+          }
+        },
+        "reducer": {
+          "Stages": [
+            "spatial-3-edge-5d3b5e644745-p4-reducer"
+          ],
+          "ActualStageWallSeconds": 157.531289078,
+          "ActualJobSeconds": 158.86895423800001,
+          "Estimate1xSeconds": 259.86,
+          "Estimate1xOverStageWall": 1.6495770555862908,
+          "EstimateWorstWithMarginSeconds": 650.811,
+          "EstimateWorstWithMarginOverJob": 4.096527248646872,
+          "PerStage": {
+            "spatial-3-edge-5d3b5e644745-p4-reducer": 1.6495770555862908
+          }
+        }
+      },
+      "MinimumJobEstimate1xOverStageWall": 1.237390307300085,
+      "MinimumStageEstimate1xOverWall": 1.0720509931073092,
+      "SingleJob": {
+        "FitsOneJob": false,
+        "JobSecondsEstimateByPCGFactor": {
+          "1.0": 9307.105,
+          "1.5": 12942.783475749999,
+          "2.0": 16578.461951499998
+        },
+        "JobSecondsEstimateWithPreflightAndMargin": {
+          "1.0": 12864.59175,
+          "1.5": 17772.757692262498,
+          "2.0": 22680.923634525
+        },
+        "MaxPalacePeakGBEstimate": 359.6
+      },
+      "ActualNodeSeconds": 7188.330118149,
+      "EstimateWorstWithMarginOverActualNodeSeconds": 3.464400942250772
+    },
+    "spatial-4-edge-e51d7380245e": {
+      "Jobs": {
+        "worker-1": {
+          "Stages": [
+            "spatial-4-edge-e51d7380245e-p5-control-worker",
+            "spatial-4-edge-e51d7380245e-p5-control-reducer",
+            "spatial-4-edge-e51d7380245e-p3-control-worker",
+            "spatial-4-edge-e51d7380245e-p3-control-reducer",
+            "spatial-4-edge-e51d7380245e-p4-local-edge"
+          ],
+          "ActualStageWallSeconds": 980.2737498349999,
+          "ActualJobSeconds": 981.353317005,
+          "Estimate1xSeconds": 1135.4177576303978,
+          "Estimate1xOverStageWall": 1.1582660025544005,
+          "EstimateWorstWithMarginSeconds": 2838.1570457765315,
+          "EstimateWorstWithMarginOverJob": 2.8920848348873225,
+          "PerStage": {
+            "spatial-4-edge-e51d7380245e-p5-control-worker": 1.1502558463953794,
+            "spatial-4-edge-e51d7380245e-p5-control-reducer": 1.0223839895936693,
+            "spatial-4-edge-e51d7380245e-p3-control-worker": 1.085054666592854,
+            "spatial-4-edge-e51d7380245e-p3-control-reducer": 1.0210788155011081,
+            "spatial-4-edge-e51d7380245e-p4-local-edge": 1.233106424607437
+          }
+        },
+        "worker-2": {
+          "Stages": [
+            "spatial-4-edge-e51d7380245e-p4-worker-block2"
+          ],
+          "ActualStageWallSeconds": 715.681193397,
+          "ActualJobSeconds": 716.483438638,
+          "Estimate1xSeconds": 784.0860278387081,
+          "Estimate1xOverStageWall": 1.0955800362966404,
+          "EstimateWorstWithMarginSeconds": 2208.395880134228,
+          "EstimateWorstWithMarginOverJob": 3.082270658387136,
+          "PerStage": {
+            "spatial-4-edge-e51d7380245e-p4-worker-block2": 1.0955800362966404
+          }
+        },
+        "worker-3": {
+          "Stages": [
+            "spatial-4-edge-e51d7380245e-p4-worker-block3"
+          ],
+          "ActualStageWallSeconds": 669.76128384,
+          "ActualJobSeconds": 670.747997823,
+          "Estimate1xSeconds": 784.0860278387081,
+          "Estimate1xOverStageWall": 1.1706947635779126,
+          "EstimateWorstWithMarginSeconds": 2208.395880134228,
+          "EstimateWorstWithMarginOverJob": 3.292437528403908,
+          "PerStage": {
+            "spatial-4-edge-e51d7380245e-p4-worker-block3": 1.1706947635779126
+          }
+        },
+        "worker-4": {
+          "Stages": [
+            "spatial-4-edge-e51d7380245e-p4-worker-block4"
+          ],
+          "ActualStageWallSeconds": 663.18781884,
+          "ActualJobSeconds": 663.989358966,
+          "Estimate1xSeconds": 784.0860278387081,
+          "Estimate1xOverStageWall": 1.1822985971156323,
+          "EstimateWorstWithMarginSeconds": 2208.395880134228,
+          "EstimateWorstWithMarginOverJob": 3.3259507103747277,
+          "PerStage": {
+            "spatial-4-edge-e51d7380245e-p4-worker-block4": 1.1822985971156323
+          }
+        },
+        "reducer": {
+          "Stages": [
+            "spatial-4-edge-e51d7380245e-p4-reducer"
+          ],
+          "ActualStageWallSeconds": 70.532403344,
+          "ActualJobSeconds": 71.69536534599999,
+          "Estimate1xSeconds": 72.1022022424041,
+          "Estimate1xOverStageWall": 1.022256421502439,
+          "EstimateWorstWithMarginSeconds": 397.33797302724554,
+          "EstimateWorstWithMarginOverJob": 5.542031498266348,
+          "PerStage": {
+            "spatial-4-edge-e51d7380245e-p4-reducer": 1.022256421502439
+          }
+        }
+      },
+      "MinimumJobEstimate1xOverStageWall": 1.022256421502439,
+      "MinimumStageEstimate1xOverWall": 1.0210788155011081,
+      "SingleJob": {
+        "FitsOneJob": true,
+        "JobSecondsEstimateByPCGFactor": {
+          "1.0": 3467.5742375035647,
+          "1.5": 4784.234348848532,
+          "2.0": 6100.894460193498
+        },
+        "JobSecondsEstimateWithPreflightAndMargin": {
+          "1.0": 4981.225220629813,
+          "1.5": 6758.716370945519,
+          "2.0": 8536.207521261224
+        },
+        "MaxPalacePeakGBEstimate": 211.97090267469528
+      },
+      "ActualNodeSeconds": 3104.2694777780002,
+      "EstimateWorstWithMarginOverActualNodeSeconds": 3.176490549481749
+    },
+    "spatial-5-edge-9bfa8265e2e7": {
+      "Jobs": {
+        "worker-1": {
+          "Stages": [
+            "spatial-5-edge-9bfa8265e2e7-p5-control-worker",
+            "spatial-5-edge-9bfa8265e2e7-p5-control-reducer",
+            "spatial-5-edge-9bfa8265e2e7-p3-control-worker",
+            "spatial-5-edge-9bfa8265e2e7-p3-control-reducer",
+            "spatial-5-edge-9bfa8265e2e7-p4-local-edge"
+          ],
+          "ActualStageWallSeconds": 1307.540616922,
+          "ActualJobSeconds": 1308.553496853,
+          "Estimate1xSeconds": 1621.7362367622816,
+          "Estimate1xOverStageWall": 1.2402951126519572,
+          "EstimateWorstWithMarginSeconds": 3925.4419522566427,
+          "EstimateWorstWithMarginOverJob": 2.999832992458556,
+          "PerStage": {
+            "spatial-5-edge-9bfa8265e2e7-p5-control-worker": 1.3844515843697296,
+            "spatial-5-edge-9bfa8265e2e7-p5-control-reducer": 1.009008165536064,
+            "spatial-5-edge-9bfa8265e2e7-p3-control-worker": 1.1703843578824293,
+            "spatial-5-edge-9bfa8265e2e7-p3-control-reducer": 1.0019499229392426,
+            "spatial-5-edge-9bfa8265e2e7-p4-local-edge": 1.110211580264936
+          }
+        },
+        "worker-2": {
+          "Stages": [
+            "spatial-5-edge-9bfa8265e2e7-p4-worker-block2"
+          ],
+          "ActualStageWallSeconds": 1024.940162489,
+          "ActualJobSeconds": 1025.905579962,
+          "Estimate1xSeconds": 1304.1419437706636,
+          "Estimate1xOverStageWall": 1.2724078843818944,
+          "EstimateWorstWithMarginSeconds": 3486.6539014508508,
+          "EstimateWorstWithMarginOverJob": 3.3986109146418695,
+          "PerStage": {
+            "spatial-5-edge-9bfa8265e2e7-p4-worker-block2": 1.2724078843818944
+          }
+        },
+        "worker-3": {
+          "Stages": [
+            "spatial-5-edge-9bfa8265e2e7-p4-worker-block3"
+          ],
+          "ActualStageWallSeconds": 772.740855784,
+          "ActualJobSeconds": 774.1530012290001,
+          "Estimate1xSeconds": 1277.7950041625545,
+          "Estimate1xOverStageWall": 1.653587997319155,
+          "EstimateWorstWithMarginSeconds": 3420.743782397766,
+          "EstimateWorstWithMarginOverJob": 4.418692140916838,
+          "PerStage": {
+            "spatial-5-edge-9bfa8265e2e7-p4-worker-block3": 1.653587997319155
+          }
+        },
+        "worker-4": {
+          "Stages": [
+            "spatial-5-edge-9bfa8265e2e7-p4-worker-block4"
+          ],
+          "ActualStageWallSeconds": 735.380690708,
+          "ActualJobSeconds": 736.346816151,
+          "Estimate1xSeconds": 1277.7950041625545,
+          "Estimate1xOverStageWall": 1.7375966221418409,
+          "EstimateWorstWithMarginSeconds": 3420.743782397766,
+          "EstimateWorstWithMarginOverJob": 4.645560634428392,
+          "PerStage": {
+            "spatial-5-edge-9bfa8265e2e7-p4-worker-block4": 1.7375966221418409
+          }
+        },
+        "worker-5": {
+          "Stages": [
+            "spatial-5-edge-9bfa8265e2e7-p4-worker-block5"
+          ],
+          "ActualStageWallSeconds": 849.7965156749999,
+          "ActualJobSeconds": 850.697969962,
+          "Estimate1xSeconds": 1277.7950041625545,
+          "Estimate1xOverStageWall": 1.5036482035321033,
+          "EstimateWorstWithMarginSeconds": 3420.743782397766,
+          "EstimateWorstWithMarginOverJob": 4.021102557174984,
+          "PerStage": {
+            "spatial-5-edge-9bfa8265e2e7-p4-worker-block5": 1.5036482035321033
+          }
+        },
+        "reducer": {
+          "Stages": [
+            "spatial-5-edge-9bfa8265e2e7-p4-reducer"
+          ],
+          "ActualStageWallSeconds": 135.32647533800002,
+          "ActualJobSeconds": 136.654934271,
+          "Estimate1xSeconds": 160.66205579065263,
+          "Estimate1xOverStageWall": 1.1872182098098163,
+          "EstimateWorstWithMarginSeconds": 516.893775317381,
+          "EstimateWorstWithMarginOverJob": 3.782474288797582,
+          "PerStage": {
+            "spatial-5-edge-9bfa8265e2e7-p4-reducer": 1.1872182098098163
+          }
+        }
+      },
+      "MinimumJobEstimate1xOverStageWall": 1.1872182098098163,
+      "MinimumStageEstimate1xOverWall": 1.0019499229392426,
+      "SingleJob": {
+        "FitsOneJob": true,
+        "JobSecondsEstimateByPCGFactor": {
+          "1.0": 6722.41790224266,
+          "1.5": 9333.277861621538,
+          "2.0": 11944.137821000415
+        },
+        "JobSecondsEstimateWithPreflightAndMargin": {
+          "1.0": 9375.264168027592,
+          "1.5": 12899.925113189078,
+          "2.0": 16424.586058350564
+        },
+        "MaxPalacePeakGBEstimate": 302.70486223445
+      },
+      "ActualNodeSeconds": 4832.311798428,
+      "EstimateWorstWithMarginOverActualNodeSeconds": 3.7644965256869316
+    },
+    "MinimumStageEstimateOverActual": 1.0019499229392426,
+    "Conservative": true
+  },
+  "SelfCheckPreviousModel": {
+    "spatial-10-edge-65450ff47b9b": {
+      "Jobs": {
+        "worker-1": {
+          "Stages": [
+            "spatial-10-edge-65450ff47b9b-p5-control-worker",
+            "spatial-10-edge-65450ff47b9b-p5-control-reducer",
+            "spatial-10-edge-65450ff47b9b-p3-control-worker",
+            "spatial-10-edge-65450ff47b9b-p3-control-reducer",
+            "spatial-10-edge-65450ff47b9b-p4-local-edge"
+          ],
+          "ActualStageWallSeconds": 1234.8840130950002,
+          "ActualJobSeconds": 1235.914801377,
+          "Estimate1xSeconds": 1479.797570208226,
+          "Estimate1xOverStageWall": 1.1983291989499458,
+          "EstimateWorstWithMarginSeconds": 3465.887546910471,
+          "EstimateWorstWithMarginOverJob": 2.8043094419202172,
+          "PerStage": {
+            "spatial-10-edge-65450ff47b9b-p5-control-worker": 1.2170757639492604,
+            "spatial-10-edge-65450ff47b9b-p5-control-reducer": 2.0254988630482846,
+            "spatial-10-edge-65450ff47b9b-p3-control-worker": 1.0442240297791925,
+            "spatial-10-edge-65450ff47b9b-p3-control-reducer": 1.0889957271213997,
+            "spatial-10-edge-65450ff47b9b-p4-local-edge": 1.1093627873558134
+          }
+        },
+        "worker-2": {
+          "Stages": [
+            "spatial-10-edge-65450ff47b9b-p4-worker-block2"
+          ],
+          "ActualStageWallSeconds": 947.554693143,
+          "ActualJobSeconds": 948.562194742,
+          "Estimate1xSeconds": 1161.8353166770273,
+          "Estimate1xOverStageWall": 1.2261406387247866,
+          "EstimateWorstWithMarginSeconds": 3329.1314922703814,
+          "EstimateWorstWithMarginOverJob": 3.509660737824233,
+          "PerStage": {
+            "spatial-10-edge-65450ff47b9b-p4-worker-block2": 1.2261406387247866
+          }
+        },
+        "worker-3": {
+          "Stages": [
+            "spatial-10-edge-65450ff47b9b-p4-worker-block3"
+          ],
+          "ActualStageWallSeconds": 875.3193804240001,
+          "ActualJobSeconds": 876.1618700059998,
+          "Estimate1xSeconds": 1161.8353166770273,
+          "Estimate1xOverStageWall": 1.3273273077927743,
+          "EstimateWorstWithMarginSeconds": 3329.1314922703814,
+          "EstimateWorstWithMarginOverJob": 3.7996762998229814,
+          "PerStage": {
+            "spatial-10-edge-65450ff47b9b-p4-worker-block3": 1.3273273077927743
+          }
+        },
+        "worker-4": {
+          "Stages": [
+            "spatial-10-edge-65450ff47b9b-p4-worker-block4"
+          ],
+          "ActualStageWallSeconds": 894.6908313030001,
+          "ActualJobSeconds": 895.6547437720001,
+          "Estimate1xSeconds": 1161.8353166770273,
+          "Estimate1xOverStageWall": 1.2985886029311,
+          "EstimateWorstWithMarginSeconds": 3329.1314922703814,
+          "EstimateWorstWithMarginOverJob": 3.7169808069680172,
+          "PerStage": {
+            "spatial-10-edge-65450ff47b9b-p4-worker-block4": 1.2985886029311
+          }
+        },
+        "worker-5": {
+          "Stages": [
+            "spatial-10-edge-65450ff47b9b-p4-worker-block5"
+          ],
+          "ActualStageWallSeconds": 847.0244734580001,
+          "ActualJobSeconds": 848.0190764419999,
+          "Estimate1xSeconds": 1138.9472325811107,
+          "Estimate1xOverStageWall": 1.3446450111781636,
+          "EstimateWorstWithMarginSeconds": 3267.802290933469,
+          "EstimateWorstWithMarginOverJob": 3.853453750880296,
+          "PerStage": {
+            "spatial-10-edge-65450ff47b9b-p4-worker-block5": 1.3446450111781636
+          }
+        },
+        "reducer": {
+          "Stages": [
+            "spatial-10-edge-65450ff47b9b-p4-reducer"
+          ],
+          "ActualStageWallSeconds": 133.05556688400003,
+          "ActualJobSeconds": 134.228232963,
+          "Estimate1xSeconds": 626.1341684781535,
+          "Estimate1xOverStageWall": 4.705809633835368,
+          "EstimateWorstWithMarginSeconds": 1145.281127445507,
+          "EstimateWorstWithMarginOverJob": 8.532341536234062,
+          "PerStage": {
+            "spatial-10-edge-65450ff47b9b-p4-reducer": 4.705809633835368
+          }
+        }
+      },
+      "MinimumJobEstimate1xOverStageWall": 1.1983291989499458,
+      "MinimumStageEstimate1xOverWall": 1.0442240297791925,
+      "SingleJob": {
+        "FitsOneJob": true,
+        "JobSecondsEstimateByPCGFactor": {
+          "1.0": 6540.763081079469,
+          "1.5": 9126.076339726698,
+          "2.0": 11711.389598373926
+        },
+        "JobSecondsEstimateWithPreflightAndMargin": {
+          "1.0": 9130.030159457283,
+          "1.5": 12620.203058631043,
+          "2.0": 16110.375957804801
+        },
+        "MaxPalacePeakGBEstimate": 655.9607766672673
+      },
+      "ActualNodeSeconds": 4938.540919302,
+      "EstimateWorstWithMarginOverActualNodeSeconds": 3.6177417042898123
+    },
+    "spatial-2-edge-8ce3fb213a2d": {
+      "Jobs": {
+        "worker-1": {
+          "Stages": [
+            "spatial-2-edge-8ce3fb213a2d-p5-control-worker",
+            "spatial-2-edge-8ce3fb213a2d-p5-control-reducer",
+            "spatial-2-edge-8ce3fb213a2d-p3-control-worker",
+            "spatial-2-edge-8ce3fb213a2d-p3-control-reducer",
+            "spatial-2-edge-8ce3fb213a2d-p4-local-edge"
+          ],
+          "ActualStageWallSeconds": 713.902901141,
+          "ActualJobSeconds": 714.7748016099999,
+          "Estimate1xSeconds": 705.9369796484951,
+          "Estimate1xOverStageWall": 0.9888417297649676,
+          "EstimateWorstWithMarginSeconds": 1810.4212936626307,
+          "EstimateWorstWithMarginOverJob": 2.532855508594782,
+          "PerStage": {
+            "spatial-2-edge-8ce3fb213a2d-p5-control-worker": 0.8350638742135256,
+            "spatial-2-edge-8ce3fb213a2d-p5-control-reducer": 2.2000675457247243,
+            "spatial-2-edge-8ce3fb213a2d-p3-control-worker": 0.8801028838425724,
+            "spatial-2-edge-8ce3fb213a2d-p3-control-reducer": 1.1838659463244816,
+            "spatial-2-edge-8ce3fb213a2d-p4-local-edge": 1.1680270940060886
+          }
+        },
+        "worker-2": {
+          "Stages": [
+            "spatial-2-edge-8ce3fb213a2d-p4-worker-block2"
+          ],
+          "ActualStageWallSeconds": 610.537423244,
+          "ActualJobSeconds": 611.3265769149999,
+          "Estimate1xSeconds": 575.8312580791902,
+          "Estimate1xOverStageWall": 0.9431547291885831,
+          "EstimateWorstWithMarginSeconds": 1802.883305721532,
+          "EstimateWorstWithMarginOverJob": 2.9491328756220727,
+          "PerStage": {
+            "spatial-2-edge-8ce3fb213a2d-p4-worker-block2": 0.9431547291885831
+          }
+        },
+        "worker-3": {
+          "Stages": [
+            "spatial-2-edge-8ce3fb213a2d-p4-worker-block3"
+          ],
+          "ActualStageWallSeconds": 542.615509932,
+          "ActualJobSeconds": 543.384142774,
+          "Estimate1xSeconds": 575.8312580791902,
+          "Estimate1xOverStageWall": 1.0612141517137113,
+          "EstimateWorstWithMarginSeconds": 1802.883305721532,
+          "EstimateWorstWithMarginOverJob": 3.317879863990387,
+          "PerStage": {
+            "spatial-2-edge-8ce3fb213a2d-p4-worker-block3": 1.0612141517137113
+          }
+        },
+        "worker-4": {
+          "Stages": [
+            "spatial-2-edge-8ce3fb213a2d-p4-worker-block4"
+          ],
+          "ActualStageWallSeconds": 548.060654278,
+          "ActualJobSeconds": 548.99190542,
+          "Estimate1xSeconds": 575.8312580791902,
+          "Estimate1xOverStageWall": 1.0506706759268725,
+          "EstimateWorstWithMarginSeconds": 1802.883305721532,
+          "EstimateWorstWithMarginOverJob": 3.2839888674538047,
+          "PerStage": {
+            "spatial-2-edge-8ce3fb213a2d-p4-worker-block4": 1.0506706759268725
+          }
+        },
+        "reducer": {
+          "Stages": [
+            "spatial-2-edge-8ce3fb213a2d-p4-reducer"
+          ],
+          "ActualStageWallSeconds": 51.76838145500001,
+          "ActualJobSeconds": 52.85213825600002,
+          "Estimate1xSeconds": 231.75114014472396,
+          "Estimate1xOverStageWall": 4.476692792610777,
+          "EstimateWorstWithMarginSeconds": 612.8640391953774,
+          "EstimateWorstWithMarginOverJob": 11.595822977432748,
+          "PerStage": {
+            "spatial-2-edge-8ce3fb213a2d-p4-reducer": 4.476692792610777
+          }
+        }
+      },
+      "MinimumJobEstimate1xOverStageWall": 0.9431547291885831,
+      "MinimumStageEstimate1xOverWall": 0.8350638742135256,
+      "SingleJob": {
+        "FitsOneJob": true,
+        "JobSecondsEstimateByPCGFactor": {
+          "1.0": 2604.90302444357,
+          "1.5": 3617.473281140251,
+          "2.0": 4630.043537836931
+        },
+        "JobSecondsEstimateWithPreflightAndMargin": {
+          "1.0": 3816.6190829988195,
+          "1.5": 5183.588929539339,
+          "2.0": 6550.558776079857
+        },
+        "MaxPalacePeakGBEstimate": 313.14933533012186
+      },
+      "ActualNodeSeconds": 2471.329564975,
+      "EstimateWorstWithMarginOverActualNodeSeconds": 3.169118097813002
+    },
+    "spatial-3-edge-9cd906b81cbe": {
+      "Jobs": {
+        "worker-1": {
+          "Stages": [
+            "spatial-3-edge-9cd906b81cbe-p5-control-worker",
+            "spatial-3-edge-9cd906b81cbe-p5-control-reducer",
+            "spatial-3-edge-9cd906b81cbe-p3-control-worker",
+            "spatial-3-edge-9cd906b81cbe-p3-control-reducer",
+            "spatial-3-edge-9cd906b81cbe-p4-local-edge"
+          ],
+          "ActualStageWallSeconds": 791.034729081,
+          "ActualJobSeconds": 792.1954311139999,
+          "Estimate1xSeconds": 944.2189070714256,
+          "Estimate1xOverStageWall": 1.1936503826682683,
+          "EstimateWorstWithMarginSeconds": 2319.9941769387447,
+          "EstimateWorstWithMarginOverJob": 2.928562935128679,
+          "PerStage": {
+            "spatial-3-edge-9cd906b81cbe-p5-control-worker": 1.1389019521224666,
+            "spatial-3-edge-9cd906b81cbe-p5-control-reducer": 2.0954501552632383,
+            "spatial-3-edge-9cd906b81cbe-p3-control-worker": 1.021109125238138,
+            "spatial-3-edge-9cd906b81cbe-p3-control-reducer": 1.1456390604226272,
+            "spatial-3-edge-9cd906b81cbe-p4-local-edge": 1.205814979763235
+          }
+        },
+        "worker-2": {
+          "Stages": [
+            "spatial-3-edge-9cd906b81cbe-p4-worker-block2"
+          ],
+          "ActualStageWallSeconds": 621.5043535560001,
+          "ActualJobSeconds": 622.352121149,
+          "Estimate1xSeconds": 683.0370846119536,
+          "Estimate1xOverStageWall": 1.0990061142836534,
+          "EstimateWorstWithMarginSeconds": 2076.584980669748,
+          "EstimateWorstWithMarginOverJob": 3.336672134797117,
+          "PerStage": {
+            "spatial-3-edge-9cd906b81cbe-p4-worker-block2": 1.0990061142836534
+          }
+        },
+        "worker-3": {
+          "Stages": [
+            "spatial-3-edge-9cd906b81cbe-p4-worker-block3"
+          ],
+          "ActualStageWallSeconds": 616.838460506,
+          "ActualJobSeconds": 617.8658343550001,
+          "Estimate1xSeconds": 683.0370846119536,
+          "Estimate1xOverStageWall": 1.1073192226886275,
+          "EstimateWorstWithMarginSeconds": 2076.584980669748,
+          "EstimateWorstWithMarginOverJob": 3.3608995111981357,
+          "PerStage": {
+            "spatial-3-edge-9cd906b81cbe-p4-worker-block3": 1.1073192226886275
+          }
+        },
+        "worker-4": {
+          "Stages": [
+            "spatial-3-edge-9cd906b81cbe-p4-worker-block4"
+          ],
+          "ActualStageWallSeconds": 675.540518703,
+          "ActualJobSeconds": 676.3077748300001,
+          "Estimate1xSeconds": 683.0370846119536,
+          "Estimate1xOverStageWall": 1.0110971373313722,
+          "EstimateWorstWithMarginSeconds": 2076.584980669748,
+          "EstimateWorstWithMarginOverJob": 3.070473322876893,
+          "PerStage": {
+            "spatial-3-edge-9cd906b81cbe-p4-worker-block4": 1.0110971373313722
+          }
+        },
+        "worker-5": {
+          "Stages": [
+            "spatial-3-edge-9cd906b81cbe-p4-worker-block5"
+          ],
+          "ActualStageWallSeconds": 608.490904833,
+          "ActualJobSeconds": 609.62082583,
+          "Estimate1xSeconds": 668.4302838675907,
+          "Estimate1xOverStageWall": 1.0985049711647557,
+          "EstimateWorstWithMarginSeconds": 2037.4456879275035,
+          "EstimateWorstWithMarginOverJob": 3.342152370128624,
+          "PerStage": {
+            "spatial-3-edge-9cd906b81cbe-p4-worker-block5": 1.0985049711647557
+          }
+        },
+        "reducer": {
+          "Stages": [
+            "spatial-3-edge-9cd906b81cbe-p4-reducer"
+          ],
+          "ActualStageWallSeconds": 77.57547824800001,
+          "ActualJobSeconds": 78.55484015,
+          "Estimate1xSeconds": 363.8933186159432,
+          "Estimate1xOverStageWall": 4.690829200596322,
+          "EstimateWorstWithMarginSeconds": 791.2559801315233,
+          "EstimateWorstWithMarginOverJob": 10.072657249644003,
+          "PerStage": {
+            "spatial-3-edge-9cd906b81cbe-p4-reducer": 4.690829200596322
+          }
+        }
+      },
+      "MinimumJobEstimate1xOverStageWall": 1.0110971373313722,
+      "MinimumStageEstimate1xOverWall": 1.0110971373313722,
+      "SingleJob": {
+        "FitsOneJob": true,
+        "JobSecondsEstimateByPCGFactor": {
+          "1.0": 3904.6402078108654,
+          "1.5": 5439.387691673609,
+          "2.0": 6974.135175536352
+        },
+        "JobSecondsEstimateWithPreflightAndMargin": {
+          "1.0": 5571.2642805446685,
+          "1.5": 7643.173383759373,
+          "2.0": 9715.082486974075
+        },
+        "MaxPalacePeakGBEstimate": 418.4303305680585
+      },
+      "ActualNodeSeconds": 3396.896827428,
+      "EstimateWorstWithMarginOverActualNodeSeconds": 3.349660400378525
+    },
+    "spatial-3-edge-5d3b5e644745": {
+      "Jobs": {
+        "worker-1": {
+          "Stages": [
+            "spatial-3-edge-5d3b5e644745-p5-control-worker",
+            "spatial-3-edge-5d3b5e644745-p5-control-reducer",
+            "spatial-3-edge-5d3b5e644745-p3-control-worker",
+            "spatial-3-edge-5d3b5e644745-p3-control-reducer",
+            "spatial-3-edge-5d3b5e644745-p4-local-edge"
+          ],
+          "ActualStageWallSeconds": 1495.1012355880002,
+          "ActualJobSeconds": 1496.599209468,
+          "Estimate1xSeconds": 1762.3184242259317,
+          "Estimate1xOverStageWall": 1.1787284916080207,
+          "EstimateWorstWithMarginSeconds": 4070.5108416767366,
+          "EstimateWorstWithMarginOverJob": 2.7198402992098942,
+          "PerStage": {
+            "spatial-3-edge-5d3b5e644745-p5-control-worker": 1.0879028688509815,
+            "spatial-3-edge-5d3b5e644745-p5-control-reducer": 2.1450043862837944,
+            "spatial-3-edge-5d3b5e644745-p3-control-worker": 0.9937278332389629,
+            "spatial-3-edge-5d3b5e644745-p3-control-reducer": 1.1422043478671335,
+            "spatial-3-edge-5d3b5e644745-p4-local-edge": 1.2568918666436617
+          }
+        },
+        "worker-2": {
+          "Stages": [
+            "spatial-3-edge-5d3b5e644745-p4-worker-block2"
+          ],
+          "ActualStageWallSeconds": 1201.451951926,
+          "ActualJobSeconds": 1202.905220601,
+          "Estimate1xSeconds": 1301.5274713909969,
+          "Estimate1xOverStageWall": 1.0832954820245368,
+          "EstimateWorstWithMarginSeconds": 3687.423113599242,
+          "EstimateWorstWithMarginOverJob": 3.0654311332666073,
+          "PerStage": {
+            "spatial-3-edge-5d3b5e644745-p4-worker-block2": 1.0832954820245368
+          }
+        },
+        "worker-3": {
+          "Stages": [
+            "spatial-3-edge-5d3b5e644745-p4-worker-block3"
+          ],
+          "ActualStageWallSeconds": 1141.7619649990002,
+          "ActualJobSeconds": 1142.8317850859999,
+          "Estimate1xSeconds": 1301.5274713909969,
+          "Estimate1xOverStageWall": 1.1399289092557368,
+          "EstimateWorstWithMarginSeconds": 3687.423113599242,
+          "EstimateWorstWithMarginOverJob": 3.2265668156243636,
+          "PerStage": {
+            "spatial-3-edge-5d3b5e644745-p4-worker-block3": 1.1399289092557368
+          }
+        },
+        "worker-4": {
+          "Stages": [
+            "spatial-3-edge-5d3b5e644745-p4-worker-block4"
+          ],
+          "ActualStageWallSeconds": 973.7991305060001,
+          "ActualJobSeconds": 974.755846296,
+          "Estimate1xSeconds": 1301.5274713909969,
+          "Estimate1xOverStageWall": 1.3365461424418241,
+          "EstimateWorstWithMarginSeconds": 3687.423113599242,
+          "EstimateWorstWithMarginOverJob": 3.7829197204727487,
+          "PerStage": {
+            "spatial-3-edge-5d3b5e644745-p4-worker-block4": 1.3365461424418241
+          }
+        },
+        "worker-5": {
+          "Stages": [
+            "spatial-3-edge-5d3b5e644745-p4-worker-block5"
+          ],
+          "ActualStageWallSeconds": 1136.970993357,
+          "ActualJobSeconds": 1137.999544476,
+          "Estimate1xSeconds": 1301.5274713909969,
+          "Estimate1xOverStageWall": 1.1447323449722586,
+          "EstimateWorstWithMarginSeconds": 3687.423113599242,
+          "EstimateWorstWithMarginOverJob": 3.2402676534436945,
+          "PerStage": {
+            "spatial-3-edge-5d3b5e644745-p4-worker-block5": 1.1447323449722586
+          }
+        },
+        "worker-6": {
+          "Stages": [
+            "spatial-3-edge-5d3b5e644745-p4-worker-block6"
+          ],
+          "ActualStageWallSeconds": 1073.389317202,
+          "ActualJobSeconds": 1074.369557984,
+          "Estimate1xSeconds": 1301.5274713909969,
+          "Estimate1xOverStageWall": 1.2125399894827384,
+          "EstimateWorstWithMarginSeconds": 3687.423113599242,
+          "EstimateWorstWithMarginOverJob": 3.4321738606578767,
+          "PerStage": {
+            "spatial-3-edge-5d3b5e644745-p4-worker-block6": 1.2125399894827384
+          }
+        },
+        "reducer": {
+          "Stages": [
+            "spatial-3-edge-5d3b5e644745-p4-reducer"
+          ],
+          "ActualStageWallSeconds": 157.531289078,
+          "ActualJobSeconds": 158.86895423800001,
+          "Estimate1xSeconds": 1050.4064663799913,
+          "Estimate1xOverStageWall": 6.667922750634596,
+          "EstimateWorstWithMarginSeconds": 1718.0487296129884,
+          "EstimateWorstWithMarginOverJob": 10.814250889064182,
+          "PerStage": {
+            "spatial-3-edge-5d3b5e644745-p4-reducer": 6.667922750634596
+          }
+        }
+      },
+      "MinimumJobEstimate1xOverStageWall": 1.0832954820245368,
+      "MinimumStageEstimate1xOverWall": 0.9937278332389629,
+      "SingleJob": {
+        "FitsOneJob": false,
+        "JobSecondsEstimateByPCGFactor": {
+          "1.0": 9019.344359009609,
+          "1.5": 12553.857731260981,
+          "2.0": 16088.371103512354
+        },
+        "JobSecondsEstimateWithPreflightAndMargin": {
+          "1.0": 12476.114884662973,
+          "1.5": 17247.707937202325,
+          "2.0": 22019.30098974168
+        },
+        "MaxPalacePeakGBEstimate": 781.5199976410813
+      },
+      "ActualNodeSeconds": 7188.330118149,
+      "EstimateWorstWithMarginOverActualNodeSeconds": 3.370139481786079
+    },
+    "spatial-4-edge-e51d7380245e": {
+      "Jobs": {
+        "worker-1": {
+          "Stages": [
+            "spatial-4-edge-e51d7380245e-p5-control-worker",
+            "spatial-4-edge-e51d7380245e-p5-control-reducer",
+            "spatial-4-edge-e51d7380245e-p3-control-worker",
+            "spatial-4-edge-e51d7380245e-p3-control-reducer",
+            "spatial-4-edge-e51d7380245e-p4-local-edge"
+          ],
+          "ActualStageWallSeconds": 980.2737498349999,
+          "ActualJobSeconds": 981.353317005,
+          "Estimate1xSeconds": 1038.52501348715,
+          "Estimate1xOverStageWall": 1.0594234658042767,
+          "EstimateWorstWithMarginSeconds": 2521.822152951911,
+          "EstimateWorstWithMarginOverJob": 2.569739266432889,
+          "PerStage": {
+            "spatial-4-edge-e51d7380245e-p5-control-worker": 0.9419562798504052,
+            "spatial-4-edge-e51d7380245e-p5-control-reducer": 2.0082002403860937,
+            "spatial-4-edge-e51d7380245e-p3-control-worker": 0.9389848475654187,
+            "spatial-4-edge-e51d7380245e-p3-control-reducer": 1.0878966299914117,
+            "spatial-4-edge-e51d7380245e-p4-local-edge": 1.175776711209632
+          }
+        },
+        "worker-2": {
+          "Stages": [
+            "spatial-4-edge-e51d7380245e-p4-worker-block2"
+          ],
+          "ActualStageWallSeconds": 715.681193397,
+          "ActualJobSeconds": 716.483438638,
+          "Estimate1xSeconds": 686.8864732797766,
+          "Estimate1xOverStageWall": 0.9597659958332166,
+          "EstimateWorstWithMarginSeconds": 2081.552328164536,
+          "EstimateWorstWithMarginOverJob": 2.9052343933049802,
+          "PerStage": {
+            "spatial-4-edge-e51d7380245e-p4-worker-block2": 0.9597659958332166
+          }
+        },
+        "worker-3": {
+          "Stages": [
+            "spatial-4-edge-e51d7380245e-p4-worker-block3"
+          ],
+          "ActualStageWallSeconds": 669.76128384,
+          "ActualJobSeconds": 670.747997823,
+          "Estimate1xSeconds": 686.8864732797766,
+          "Estimate1xOverStageWall": 1.0255690943220714,
+          "EstimateWorstWithMarginSeconds": 2081.552328164536,
+          "EstimateWorstWithMarginOverJob": 3.1033299166311124,
+          "PerStage": {
+            "spatial-4-edge-e51d7380245e-p4-worker-block3": 1.0255690943220714
+          }
+        },
+        "worker-4": {
+          "Stages": [
+            "spatial-4-edge-e51d7380245e-p4-worker-block4"
+          ],
+          "ActualStageWallSeconds": 663.18781884,
+          "ActualJobSeconds": 663.989358966,
+          "Estimate1xSeconds": 686.8864732797766,
+          "Estimate1xOverStageWall": 1.0357344537498119,
+          "EstimateWorstWithMarginSeconds": 2081.552328164536,
+          "EstimateWorstWithMarginOverJob": 3.134918203216451,
+          "PerStage": {
+            "spatial-4-edge-e51d7380245e-p4-worker-block4": 1.0357344537498119
+          }
+        },
+        "reducer": {
+          "Stages": [
+            "spatial-4-edge-e51d7380245e-p4-reducer"
+          ],
+          "ActualStageWallSeconds": 70.532403344,
+          "ActualJobSeconds": 71.69536534599999,
+          "Estimate1xSeconds": 224.44683554023212,
+          "Estimate1xOverStageWall": 3.1821804574779913,
+          "EstimateWorstWithMarginSeconds": 603.0032279793134,
+          "EstimateWorstWithMarginOverJob": 8.41063052080473,
+          "PerStage": {
+            "spatial-4-edge-e51d7380245e-p4-reducer": 3.1821804574779913
+          }
+        }
+      },
+      "MinimumJobEstimate1xOverStageWall": 0.9597659958332166,
+      "MinimumStageEstimate1xOverWall": 0.9389848475654187,
+      "SingleJob": {
+        "FitsOneJob": true,
+        "JobSecondsEstimateByPCGFactor": {
+          "1.0": 3234.9118117512367,
+          "1.5": 4487.719275623374,
+          "2.0": 5740.526739495513
+        },
+        "JobSecondsEstimateWithPreflightAndMargin": {
+          "1.0": 4667.13094586417,
+          "1.5": 6358.421022091556,
+          "2.0": 8049.711098318942
+        },
+        "MaxPalacePeakGBEstimate": 460.3473862043494
+      },
+      "ActualNodeSeconds": 3104.2694777780002,
+      "EstimateWorstWithMarginOverActualNodeSeconds": 3.0182567694256357
+    },
+    "spatial-5-edge-9bfa8265e2e7": {
+      "Jobs": {
+        "worker-1": {
+          "Stages": [
+            "spatial-5-edge-9bfa8265e2e7-p5-control-worker",
+            "spatial-5-edge-9bfa8265e2e7-p5-control-reducer",
+            "spatial-5-edge-9bfa8265e2e7-p3-control-worker",
+            "spatial-5-edge-9bfa8265e2e7-p3-control-reducer",
+            "spatial-5-edge-9bfa8265e2e7-p4-local-edge"
+          ],
+          "ActualStageWallSeconds": 1307.540616922,
+          "ActualJobSeconds": 1308.553496853,
+          "Estimate1xSeconds": 1483.3322776414109,
+          "Estimate1xOverStageWall": 1.134444512426108,
+          "EstimateWorstWithMarginSeconds": 3473.563125950114,
+          "EstimateWorstWithMarginOverJob": 2.6545060131693847,
+          "PerStage": {
+            "spatial-5-edge-9bfa8265e2e7-p5-control-worker": 1.133741565524416,
+            "spatial-5-edge-9bfa8265e2e7-p5-control-reducer": 1.9819270070791823,
+            "spatial-5-edge-9bfa8265e2e7-p3-control-worker": 1.0128274747022972,
+            "spatial-5-edge-9bfa8265e2e7-p3-control-reducer": 1.0675159723598968,
+            "spatial-5-edge-9bfa8265e2e7-p4-local-edge": 1.0585955068771298
+          }
+        },
+        "worker-2": {
+          "Stages": [
+            "spatial-5-edge-9bfa8265e2e7-p4-worker-block2"
+          ],
+          "ActualStageWallSeconds": 1024.940162489,
+          "ActualJobSeconds": 1025.905579962,
+          "Estimate1xSeconds": 1141.480584914157,
+          "Estimate1xOverStageWall": 1.113704610952259,
+          "EstimateWorstWithMarginSeconds": 3274.4035527326805,
+          "EstimateWorstWithMarginOverJob": 3.1917201901309142,
+          "PerStage": {
+            "spatial-5-edge-9bfa8265e2e7-p4-worker-block2": 1.113704610952259
+          }
+        },
+        "worker-3": {
+          "Stages": [
+            "spatial-5-edge-9bfa8265e2e7-p4-worker-block3"
+          ],
+          "ActualStageWallSeconds": 772.740855784,
+          "ActualJobSeconds": 774.1530012290001,
+          "Estimate1xSeconds": 1118.5415910134798,
+          "Estimate1xOverStageWall": 1.4474989676566803,
+          "EstimateWorstWithMarginSeconds": 3212.9379372838184,
+          "EstimateWorstWithMarginOverJob": 4.150262199052572,
+          "PerStage": {
+            "spatial-5-edge-9bfa8265e2e7-p4-worker-block3": 1.4474989676566803
+          }
+        },
+        "worker-4": {
+          "Stages": [
+            "spatial-5-edge-9bfa8265e2e7-p4-worker-block4"
+          ],
+          "ActualStageWallSeconds": 735.380690708,
+          "ActualJobSeconds": 736.346816151,
+          "Estimate1xSeconds": 1118.5415910134798,
+          "Estimate1xOverStageWall": 1.5210374777947804,
+          "EstimateWorstWithMarginSeconds": 3212.9379372838184,
+          "EstimateWorstWithMarginOverJob": 4.363348719396042,
+          "PerStage": {
+            "spatial-5-edge-9bfa8265e2e7-p4-worker-block4": 1.5210374777947804
+          }
+        },
+        "worker-5": {
+          "Stages": [
+            "spatial-5-edge-9bfa8265e2e7-p4-worker-block5"
+          ],
+          "ActualStageWallSeconds": 849.7965156749999,
+          "ActualJobSeconds": 850.697969962,
+          "Estimate1xSeconds": 1118.5415910134798,
+          "Estimate1xOverStageWall": 1.3162463841417538,
+          "EstimateWorstWithMarginSeconds": 3212.9379372838184,
+          "EstimateWorstWithMarginOverJob": 3.7768256781279703,
+          "PerStage": {
+            "spatial-5-edge-9bfa8265e2e7-p4-worker-block5": 1.3162463841417538
+          }
+        },
+        "reducer": {
+          "Stages": [
+            "spatial-5-edge-9bfa8265e2e7-p4-reducer"
+          ],
+          "ActualStageWallSeconds": 135.32647533800002,
+          "ActualJobSeconds": 136.654934271,
+          "Estimate1xSeconds": 606.3170158962376,
+          "Estimate1xOverStageWall": 4.480402037974178,
+          "EstimateWorstWithMarginSeconds": 1118.527971459921,
+          "EstimateWorstWithMarginOverJob": 8.185053671327896,
+          "PerStage": {
+            "spatial-5-edge-9bfa8265e2e7-p4-reducer": 4.480402037974178
+          }
+        }
+      },
+      "MinimumJobEstimate1xOverStageWall": 1.113704610952259,
+      "MinimumStageEstimate1xOverWall": 1.0128274747022972,
+      "SingleJob": {
+        "FitsOneJob": true,
+        "JobSecondsEstimateByPCGFactor": {
+          "1.0": 6396.711036745249,
+          "1.5": 8920.114622848818,
+          "2.0": 11443.518208952391
+        },
+        "JobSecondsEstimateWithPreflightAndMargin": {
+          "1.0": 8935.559899606087,
+          "1.5": 12342.154740845905,
+          "2.0": 15748.74958208573
+        },
+        "MaxPalacePeakGBEstimate": 657.7140321581015
+      },
+      "ActualNodeSeconds": 4832.311798428,
+      "EstimateWorstWithMarginOverActualNodeSeconds": 3.622553591779576
+    },
+    "MinimumStageEstimateOverActual": 0.8350638742135256,
+    "Conservative": false
+  },
+  "SetBy": {
+    "p3": {
+      "SecondsPerPCGIteration": {
+        "Value": 0.5207521613796161,
+        "SetBy": "spatial-4-edge-e51d7380245e"
+      },
+      "PerSourceNonSolveSeconds": {
+        "Value": 0.44587964253668483,
+        "SetBy": "spatial-3-edge-9cd906b81cbe"
+      },
+      "WorkerNonSourceSeconds": {
+        "Value": 65.09103796952783,
+        "SetBy": "spatial-2-edge-8ce3fb213a2d"
+      },
+      "ReducerSetupSeconds": {
+        "Value": 57.66375632504925,
+        "SetBy": "spatial-5-edge-9bfa8265e2e7"
+      },
+      "ReducerPairSeconds": {
+        "Value": 1.6261600051422724,
+        "SetBy": "spatial-2-edge-8ce3fb213a2d"
+      },
+      "WorkerPalacePeakGB": {
+        "Value": 131.9413901569785,
+        "SetBy": "spatial-2-edge-8ce3fb213a2d"
+      },
+      "ReducerPalacePeakGB": {
+        "Value": 74.21703196330043,
+        "SetBy": "spatial-2-edge-8ce3fb213a2d"
+      },
+      "WorkerNodeOverheadGiB": {
+        "Value": 46.053525953283085,
+        "SetBy": "spatial-3-edge-5d3b5e644745"
+      },
+      "ReducerNodeOverheadGiB": {
+        "Value": 48.71207037697716,
+        "SetBy": "spatial-5-edge-9bfa8265e2e7"
+      },
+      "MeanPCGIterations": {
+        "Value": 21.625,
+        "SetBy": "spatial-2-edge-8ce3fb213a2d"
+      },
+      "MaxPCGIterations": {
+        "Value": 27,
+        "SetBy": "spatial-2-edge-8ce3fb213a2d"
+      },
+      "ArchiveGBPerSource": {
+        "Value": 0.14182297866418705,
+        "SetBy": "previous model (scaled)"
+      }
+    },
+    "p4": {
+      "SecondsPerPCGIteration": {
+        "Value": 1.4547024745211596,
+        "SetBy": "spatial-4-edge-e51d7380245e"
+      },
+      "PerSourceNonSolveSeconds": {
+        "Value": 4.599698317711323,
+        "SetBy": "spatial-5-edge-9bfa8265e2e7"
+      },
+      "WorkerNonSourceSeconds": {
+        "Value": 78.20412618110979,
+        "SetBy": "spatial-2-edge-8ce3fb213a2d"
+      },
+      "ReducerSetupSeconds": {
+        "Value": 57.89471506499609,
+        "SetBy": "spatial-5-edge-9bfa8265e2e7"
+      },
+      "ReducerPairSeconds": {
+        "Value": 201.9586158491793,
+        "SetBy": "spatial-4-edge-e51d7380245e"
+      },
+      "WorkerPalacePeakGB": {
+        "Value": 178.0273551966063,
+        "SetBy": "spatial-2-edge-8ce3fb213a2d"
+      },
+      "ReducerPalacePeakGB": {
+        "Value": 171.2,
+        "SetBy": "spatial-3-edge-5d3b5e644745"
+      },
+      "WorkerNodeOverheadGiB": {
+        "Value": 47.62777379083825,
+        "SetBy": "spatial-3-edge-5d3b5e644745"
+      },
+      "ReducerNodeOverheadGiB": {
+        "Value": 61.66028167704715,
+        "SetBy": "spatial-3-edge-5d3b5e644745"
+      },
+      "ArchiveGBPerSource": {
+        "Value": 0.33291698026480837,
+        "SetBy": "spatial-2-edge-8ce3fb213a2d"
+      },
+      "MeanPCGIterations": {
+        "Value": 18.35333333333333,
+        "SetBy": "spatial-2-edge-8ce3fb213a2d"
+      },
+      "MaxPCGIterations": {
+        "Value": 40,
+        "SetBy": "spatial-10-edge-65450ff47b9b"
+      }
+    },
+    "p5": {
+      "SecondsPerPCGIteration": {
+        "Value": 5.480481776501813,
+        "SetBy": "spatial-4-edge-e51d7380245e"
+      },
+      "PerSourceNonSolveSeconds": {
+        "Value": 0.7710944037499985,
+        "SetBy": "spatial-3-edge-5d3b5e644745"
+      },
+      "WorkerNonSourceSeconds": {
+        "Value": 121.39348072203899,
+        "SetBy": "spatial-2-edge-8ce3fb213a2d"
+      },
+      "ReducerSetupSeconds": {
+        "Value": 59.93281145188176,
+        "SetBy": "spatial-5-edge-9bfa8265e2e7"
+      },
+      "ReducerPairSeconds": {
+        "Value": 12.868564430176173,
+        "SetBy": "spatial-3-edge-9cd906b81cbe"
+      },
+      "WorkerPalacePeakGB": {
+        "Value": 277.51942582305986,
+        "SetBy": "spatial-2-edge-8ce3fb213a2d"
+      },
+      "ReducerPalacePeakGB": {
+        "Value": 155.97989311098237,
+        "SetBy": "spatial-2-edge-8ce3fb213a2d"
+      },
+      "WorkerNodeOverheadGiB": {
+        "Value": 50.072858216565606,
+        "SetBy": "spatial-3-edge-5d3b5e644745"
+      },
+      "ReducerNodeOverheadGiB": {
+        "Value": 53.61289477146261,
+        "SetBy": "spatial-3-edge-5d3b5e644745"
+      },
+      "MeanPCGIterations": {
+        "Value": 21,
+        "SetBy": "spatial-2-edge-8ce3fb213a2d"
+      },
+      "MaxPCGIterations": {
+        "Value": 38,
+        "SetBy": "spatial-2-edge-8ce3fb213a2d"
+      },
+      "ArchiveGBPerSource": {
+        "Value": 0.6235785073887504,
+        "SetBy": "previous model (scaled)"
+      }
+    },
+    "LocalEdge": {
+      "NonSolveSeconds": {
+        "Value": 334.4663022101917,
+        "SetBy": "spatial-5-edge-9bfa8265e2e7"
+      },
+      "LinearSolveSeconds": {
+        "Value": 253.0909790293633,
+        "SetBy": "spatial-2-edge-8ce3fb213a2d"
+      },
+      "PalacePeakGB": {
+        "Value": 359.5503386859931,
+        "SetBy": "spatial-2-edge-8ce3fb213a2d"
+      },
+      "NodeUsedGiB": {
+        "Value": 439.28789175465823,
+        "SetBy": "spatial-2-edge-8ce3fb213a2d"
+      }
+    }
+  }
+}

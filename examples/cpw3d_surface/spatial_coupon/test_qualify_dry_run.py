@@ -236,6 +236,29 @@ class JobSplitTest(unittest.TestCase):
         self.assertAlmostEqual(single["Candidates"][0]["LongestJobSeconds"],
                                self.estimate["JobSecondsEstimateWithPreflightAndMargin"]["2.0"], places=6)
 
+    def test_refit_model_keeps_7f03_fail_closed_as_one_job_and_reproduces_the_recorded_speed_split(self):
+        # The decision-64a refit model (qualify/cost-model.json, from the 2026-09-22 run): 7f03
+        # still does not fit one 6 h job at 2.0x PCG with preflight and margin, and the speed
+        # policy at --max-jobs 6 gives the split the run recorded (PBS 47214-47300: six
+        # worker jobs, the controls + local-edge alone in job 1, blocks of 45 sources).
+        stages = [(item["EstimateKey"], item["Order"], item["Sources"]) for item in self.layout if item["Kind"] == "response"]
+        local = next(item for item in self.layout if item["Kind"] == "local-edge")
+        estimate = estimate_stages.estimate(self.counts, stages, model=self.model_refit, profile=self.profile,
+                                            local_edge=(local["EstimateKey"], local["Order"], local["Sources"]))
+        self.assertEqual(estimate["ReducerBlockSize"], 48)
+        self.assertFalse(estimate["FitsOneJob"])
+        self.assertGreater(estimate["JobSecondsEstimateWithPreflightAndMargin"]["2.0"], self.profile["WalltimeSeconds"])
+        # The refit's reducer rate (streaming Gram at b = 48) is far below the b28 / b = 6 one.
+        self.assertLess(estimate["Stages"]["p4-225"]["ReducerSecondsEstimate"],
+                        0.5 * self.estimate_default["Stages"]["p4-225"]["ReducerSecondsEstimate"])
+        policy = job_split.normalize_policy("speed", max_jobs=6, walltime_seconds=self.profile["WalltimeSeconds"],
+                                            user_job_cap=self.profile["UserJobCap"])
+        record = job_split.plan_split(indices=self.indices, layout=self.layout, estimate=estimate, policy=policy,
+                                      model=self.model_refit, profile=self.profile)
+        self.assertEqual((record["N"], record["ControlsJob"]), (6, "separate"))
+        self.assertEqual([len(block) for block in record["Blocks"]], [0, 45, 45, 45, 45, 45])
+        self.assertEqual([item["Fits"] for item in record["Candidates"]], [False, True, True, True, True, True])
+
     def test_frugal_is_the_fewest_jobs_that_fit(self):
         record = self.split("frugal", 4)
         self.assertEqual(record["N"], 2)

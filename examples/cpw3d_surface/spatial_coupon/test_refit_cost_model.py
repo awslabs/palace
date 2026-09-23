@@ -90,16 +90,27 @@ class RecordedRefitTest(unittest.TestCase):
         self.assertIn("KEPT", loaded["ReducerEvaluationFractionRule"])
         self.assertIn("KEPT", loaded["ReducerResidentFieldGBRule"])
 
-    def test_refit_is_conservative_on_every_stage_of_every_coupon(self):
+    def test_refit_is_conservative_on_every_stage_and_job_of_every_coupon(self):
         check = self.record["SelfCheck"]
         self.assertTrue(check["Conservative"])
         self.assertGreaterEqual(check["MinimumStageEstimateOverActual"], 1.0 - 1e-9)
         coupons = self.model["Provenance"]["Coupons"]
         self.assertEqual(len(coupons), 6)
         for case in coupons:
-            for name, stage in check[case]["Stages"].items():
-                self.assertGreaterEqual(stage["StageEstimateOverActual"], 1.0 - 1e-9, (case, name))
-            self.assertGreater(check[case]["EstimateWorstWithMarginOverActual"], 1.0, case)
+            jobs = check[case]["Jobs"]
+            self.assertEqual(set(jobs), set(coupons[case]["Jobs"]), case)
+            for job, record in jobs.items():
+                for name, ratio in record["PerStage"].items():
+                    self.assertGreaterEqual(ratio, 1.0 - 1e-9, (case, job, name))
+                self.assertGreaterEqual(record["Estimate1xOverStageWall"], 1.0 - 1e-9, (case, job))
+                self.assertGreater(record["EstimateWorstWithMarginOverJob"], 1.0, (case, job))
+            self.assertGreater(check[case]["EstimateWorstWithMarginOverActualNodeSeconds"], 1.0, case)
+            self.assertEqual(self.model["SelfCheck"]["EstimateWorstWithMarginOverActual"][case],
+                             check[case]["EstimateWorstWithMarginOverActualNodeSeconds"])
+        # Every coupon ran split (policy speed): the single-job decision is recorded, not exercised.
+        self.assertEqual(set(self.model["SelfCheck"]["FitsOneJob"]), set(coupons))
+        # The previous model was not conservative on this run (the reason for the refit).
+        self.assertLess(self.model["SelfCheck"]["PreviousModel"]["MinimumStageEstimateOverActual"], 1.0)
         # The reference coupon sets at least one rate at exactly its measurement (ratio 1).
         reference = self.model["Provenance"]["ReferenceCase"]
         set_by = {item["SetBy"] for stage in self.model["Provenance"]["SetBy"].values() for item in stage.values()}

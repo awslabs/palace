@@ -1,50 +1,1917 @@
 {
-  "Version": 1,
+  "Version": 2,
   "Copyright": "Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
   "SPDX-License-Identifier": "Apache-2.0",
-  "Purpose": "Measured per-stage cost rates of the Palace response worker / reducer / ordinary local-edge stages on one r8g.48xlarge node (192 ranks, frozen b28 executable), from the four-edge-physics-11 V-a run (PBS 45145; results/main/cost-summary.json and status.json of coupon-accuracy-assessment-20260913/four-edge-physics-11). estimate_stages.py scales them to another hybrid prism-tube coupon mesh by the exact H1 DOF ratio (time per PCG iteration, reducer, memory) with 1x / 1.5x / 2x the measured mean PCG counts; the same method predicted the physics-11 V-a run from physics-09 GO within 2% (47 vs 48 min, 187 vs 187 GB) and the gallery-06b run from V-a.",
+  "Purpose": "Measured per-stage cost rates of the Palace response worker / reducer / ordinary local-edge stages on one r8g.48xlarge node (192 ranks, frozen executable 170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b, streaming one-pass Gram reducer at block size 48) refit by refit_cost_model.py from the 6-coupon device library qualification library-qualification.json (tool commit 7c7bb5fe5, PBS 47080, 47081, 47082, 47083, 47084, 47086, 47105, 47106, 47107, 47108, 47109, 47110, 47207, 47212, 47213, 47214, 47215, 47216, 47218, 47219, 47250, 47256, 47289, 47290, 47291, 47298, 47300, 47301, 47335, 47336, 47348, 47349, 47356, 47358, 47467). Every rate is on the reference mesh spatial-3-edge-5d3b5e644745 and is the LARGEST the run's coupons imply once scaled to it by the exact H1 ratio (fail-closed: the 1x estimate is at least the measured wall of every stage of every coupon; SelfCheck). estimate_stages.py scales them to another hybrid prism-tube coupon mesh by the exact H1 DOF ratio with 1x / 1.5x / 2x the measured mean PCG counts.",
   "MeasuredMesh": {
-    "Label": "four-edge V-a = decision-42 production root (80966c7d...; 1,683,863 tets + 172,107 prisms + 13,239 pyramids, 414,758 nodes)",
-    "SHA256": "80966c7db44dabc49ac7bb068bbaee0e0828e413b115cee8c066c886866b6108",
+    "Label": "spatial-3-edge-5d3b5e644745 identity (device library 2026-09-22; 2,635,846 tets + 373,347 prisms + 28,719 pyramids, 714,404 nodes)",
+    "SHA256": "39341124dbdac781836caa2558d334b75b17e89cca04ea6402da447683e1d019",
     "EntityCounts": {
-      "Vertices": 414758,
-      "Edges": 2468137,
-      "TriangleFaces": 3647511,
-      "QuadFaces": 275077,
-      "Tetrahedra": 1683863,
-      "Prisms": 172107,
-      "Pyramids": 13239
+      "Vertices": 714404,
+      "Edges": 4109961,
+      "TriangleFaces": 5836752,
+      "QuadFaces": 596717,
+      "Tetrahedra": 2635846,
+      "Prisms": 373347,
+      "Pyramids": 28719
     }
   },
-  "MeasuredBlockSize": 6,
+  "MeasuredBlockSize": 48,
   "ReducerEvaluationFraction": 0.97,
-  "ReducerEvaluationFractionRule": "the fraction of the measured ReducerPairSeconds that is the per-source-evaluation work (archive read, gradient, face-neighbour exchange, quadrature-point evaluation of every source of a block pair: N x ceil(N / b) evaluations at block size b) - it shrinks with a larger PALACE_RESPONSE_BLOCK_SIZE (decision 62(1): default 6 -> 48); the remainder is the Gram work proportional to the source pairs N (N + 1) / 2, independent of b. Measured by the decision-62 step-1 acceptance (PBS 46685, two-edge-8dd4bc70f183 p4, 78 sources, H1 7.97M, frozen b28 executable, the same archive reduced at b = 6 and b = 48): Operator Construction 86.9 s at b = 6 (1,014 evaluations, 91 block pairs) vs 15.25 s at b = 48 (156 evaluations, 3 block pairs) -> 0.0835 s per evaluation, 2.2 s of pair-scaled Gram: evaluation fraction 0.975 at b = 6, recorded as 0.97 (the Gram remainder rounded up: fail-closed side)",
+  "ReducerEvaluationFractionRule": "the fraction of the measured ReducerPairSeconds that is the per-source-evaluation work (archive read, gradient, face-neighbour exchange, quadrature-point evaluation of every source of a block pair: N x ceil(N / b) evaluations at block size b) - it shrinks with a larger PALACE_RESPONSE_BLOCK_SIZE (decision 62(1): default 6 -> 48); the remainder is the Gram work proportional to the source pairs N (N + 1) / 2, independent of b. Measured by the decision-62 step-1 acceptance (PBS 46685, two-edge-8dd4bc70f183 p4, 78 sources, H1 7.97M, frozen b28 executable, the same archive reduced at b = 6 and b = 48): Operator Construction 86.9 s at b = 6 (1,014 evaluations, 91 block pairs) vs 15.25 s at b = 48 (156 evaluations, 3 block pairs) -> 0.0835 s per evaluation, 2.2 s of pair-scaled Gram: evaluation fraction 0.975 at b = 6, recorded as 0.97 (the Gram remainder rounded up: fail-closed side) KEPT by the library-qualification.json refit: one block size (48) cannot separate the evaluation and Gram parts; ReducerPairSeconds is inverted through this split at the reference source count so the 1x reducer estimate covers every coupon of the run",
   "ReducerResidentFieldGBPerMillionH1": 0.068,
-  "ReducerResidentFieldGBRule": "Palace peak memory the reducer adds per resident archived source field (V, E and their grid functions with ghosts), per million H1 DOFs of the stage: 2b fields are resident per block pair, so the reducer peak at block size b is the measured peak (at MeasuredBlockSize) plus 2 (b - MeasuredBlockSize) x this x H1 / 1e6. Measured by the decision-62 step-1 acceptance (PBS 46685, two-edge p4, H1 7,973,827): Palace peak 45.6 GB at b = 6 (12 resident fields) vs 91.1 GB at b = 48 (96 fields) -> 0.542 GB per field = 0.068 GB per million H1 DOFs (node peak used 90.8 -> 136.5 GiB sampled)",
-  "PCGFactors": [1.0, 1.5, 2.0],
+  "ReducerResidentFieldGBRule": "Palace peak memory the reducer adds per resident archived source field (V, E and their grid functions with ghosts), per million H1 DOFs of the stage: 2b fields are resident per block pair, so the reducer peak at block size b is the measured peak (at MeasuredBlockSize) plus 2 (b - MeasuredBlockSize) x this x H1 / 1e6. Measured by the decision-62 step-1 acceptance (PBS 46685, two-edge p4, H1 7,973,827): Palace peak 45.6 GB at b = 6 (12 resident fields) vs 91.1 GB at b = 48 (96 fields) -> 0.542 GB per field = 0.068 GB per million H1 DOFs (node peak used 90.8 -> 136.5 GiB sampled) KEPT by the library-qualification.json refit as an upper bound: the streaming one-pass Gram executable keeps N x (4 Q_local + L_local) x 8 bytes resident whatever b, so any b > 48 adds at most this much (not re-measured: every reducer ran at b = 48)",
+  "PCGFactors": [
+    1.0,
+    1.5,
+    2.0
+  ],
   "PreflightAndMarginFactor": 1.35,
   "PreflightSeconds": 300,
   "NodeFitFraction": 0.75,
   "PalaceGBPerGiB": 1.0737,
   "Stages": {
     "p3": {
-      "H1": 10548977, "Sources": 8, "SecondsPerPCGIteration": 0.28206, "MeanPCGIterations": 19.125, "MaxPCGIterations": 25,
-      "MeanPerSourceSeconds": 5.554, "WorkerNonSourceSeconds": 35.49, "ReducerPalaceSeconds": 37.93, "ReducerPairSeconds": 2.44,
-      "WorkerPalacePeakGB": 64.7, "ReducerPalacePeakGB": 59.9, "WorkerNodeUsedGiB": 101.1, "ReducerNodeUsedGiB": 102.5, "ArchiveGB": 0.66
+      "H1": 18134392,
+      "Sources": 8,
+      "SecondsPerPCGIteration": 0.52076,
+      "MeanPCGIterations": 21.625,
+      "MaxPCGIterations": 27,
+      "MeanPerSourceSeconds": 11.708,
+      "WorkerNonSourceSeconds": 65.1,
+      "ReducerPalaceSeconds": 59.29,
+      "ReducerPairSeconds": 1.63,
+      "WorkerPalacePeakGB": 132.0,
+      "ReducerPalacePeakGB": 74.3,
+      "WorkerNodeUsedGiB": 168.94,
+      "ReducerNodeUsedGiB": 117.84,
+      "ArchiveGB": 1.14
     },
     "p4": {
-      "H1": 24827674, "Sources": 80, "SecondsPerPCGIteration": 0.78618, "MeanPCGIterations": 19.85, "MaxPCGIterations": 39,
-      "MeanPerSourceSeconds": 15.846, "WorkerNonSourceSeconds": 43.76, "ReducerPalaceSeconds": 512.49, "ReducerPairSeconds": 468.73,
-      "WorkerPalacePeakGB": 92.1, "ReducerPalacePeakGB": 108.0, "WorkerNodeUsedGiB": 125.36, "ReducerNodeUsedGiB": 153.67, "ArchiveGB": 15.0
+      "H1": 42696378,
+      "Sources": 225,
+      "SecondsPerPCGIteration": 1.45471,
+      "MeanPCGIterations": 18.354,
+      "MaxPCGIterations": 40,
+      "MeanPerSourceSeconds": 31.299,
+      "WorkerNonSourceSeconds": 78.21,
+      "ReducerPalaceSeconds": 259.86,
+      "ReducerPairSeconds": 201.96,
+      "WorkerPalacePeakGB": 178.1,
+      "ReducerPalacePeakGB": 171.2,
+      "WorkerNodeUsedGiB": 213.44,
+      "ReducerNodeUsedGiB": 221.11,
+      "ArchiveGB": 74.91
     },
     "p5": {
-      "H1": 48286920, "Sources": 8, "SecondsPerPCGIteration": 2.95662, "MeanPCGIterations": 18.0, "MaxPCGIterations": 25,
-      "MeanPerSourceSeconds": 53.504, "WorkerNonSourceSeconds": 71.01, "ReducerPalaceSeconds": 94.56, "ReducerPairSeconds": 23.55,
-      "WorkerPalacePeakGB": 149.4, "ReducerPalacePeakGB": 178.5, "WorkerNodeUsedGiB": 183.0, "ReducerNodeUsedGiB": 223.0, "ArchiveGB": 2.9
+      "H1": 83063960,
+      "Sources": 8,
+      "SecondsPerPCGIteration": 5.48049,
+      "MeanPCGIterations": 21.0,
+      "MaxPCGIterations": 38,
+      "MeanPerSourceSeconds": 115.862,
+      "WorkerNonSourceSeconds": 121.4,
+      "ReducerPalaceSeconds": 72.81,
+      "ReducerPairSeconds": 12.87,
+      "WorkerPalacePeakGB": 277.6,
+      "ReducerPalacePeakGB": 156.0,
+      "WorkerNodeUsedGiB": 308.55,
+      "ReducerNodeUsedGiB": 198.89,
+      "ArchiveGB": 4.99
     }
   },
   "LocalEdge": {
-    "Order": 4, "H1": 24827674, "Sources": 8, "PalacePeakGB": 196.7, "NodeUsedGiB": 222.3,
-    "PalaceTotalSeconds": 325.8, "LinearSolveSeconds": 130.3, "NonSolveSeconds": 195.5
+    "Order": 4,
+    "H1": 42696378,
+    "Sources": 8,
+    "PalacePeakGB": 359.6,
+    "NodeUsedGiB": 439.3,
+    "PalaceTotalSeconds": 587.6,
+    "LinearSolveSeconds": 253.1,
+    "NonSolveSeconds": 334.5
+  },
+  "RateRule": "per stage and quantity the largest value over the run's coupons after scaling to the reference H1 (the per-source non-solve seconds from the largest worker-block mean per-source seconds of the coupon, so every block of a split coupon is covered; the worker's non-source seconds per worker job) (times, peaks: x H1_ref / H1_c; node used GiB: the largest non-Palace remainder plus the reference peak; the reducer block-pair seconds: divided by the estimator's evaluation / Gram scale of the coupon relative to the reference source count; per-source archive GB: x H1 ratio / sources); the worker's non-source and the reducer's setup seconds are wall-based (wall - sources x mean per-source seconds / wall - block-pair seconds) so launch overhead is inside the estimate; MeanPerSourceSeconds = the largest per-source non-solve seconds + the largest seconds per PCG iteration x the largest mean PCG count",
+  "Provenance": {
+    "Qualification": {
+      "Path": "qualify/device-library-20260922/library-qualification.json",
+      "SHA256": "1064a8bb7ed7a4f045ab4cb8ec8dd98aedd4aeed1fe4abaa672d0428a98aa328",
+      "ToolCommit": "7c7bb5fe5",
+      "Root": "/tmp/library-device-transmon-03"
+    },
+    "BuildRecord": {
+      "Path": "qualify/device-library-20260922/library-build.json",
+      "SHA256": "378879f49c1b2375d15c6bd71a88209505d81e10466cacb422c838711289437e",
+      "Commit": "307086ae7"
+    },
+    "PBSJobs": [
+      "47080",
+      "47081",
+      "47082",
+      "47083",
+      "47084",
+      "47086",
+      "47105",
+      "47106",
+      "47107",
+      "47108",
+      "47109",
+      "47110",
+      "47207",
+      "47212",
+      "47213",
+      "47214",
+      "47215",
+      "47216",
+      "47218",
+      "47219",
+      "47250",
+      "47256",
+      "47289",
+      "47290",
+      "47291",
+      "47298",
+      "47300",
+      "47301",
+      "47335",
+      "47336",
+      "47348",
+      "47349",
+      "47356",
+      "47358",
+      "47467"
+    ],
+    "FrozenExecutable": "170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b",
+    "ReferenceCase": "spatial-3-edge-5d3b5e644745",
+    "Coupons": {
+      "spatial-10-edge-65450ff47b9b": {
+        "EntityCounts": {
+          "Vertices": 603397,
+          "Edges": 3535281,
+          "TriangleFaces": 5144942,
+          "QuadFaces": 430848,
+          "Tetrahedra": 2353601,
+          "Prisms": 269568,
+          "Pyramids": 20736
+        },
+        "MeshSHA256": "431441f5251f17d51bcf7bcf2cd5cef86de0ed562605002f030b6429971e90b0",
+        "Stages": {
+          "p4": {
+            "H1": 35861283,
+            "Sources": 191,
+            "Order": 4,
+            "SecondsPerPCGIteration": 1.151419020558123,
+            "MeanPCGIterations": 14.727748691099476,
+            "MaxPCGIterations": 40,
+            "MeanPerSourceSeconds": 17.37937924397906,
+            "LargestBlockMeanPerSourceSeconds": 18.466367759375,
+            "PerSourceNonSolveSeconds": 1.5085577864430633,
+            "WorkerWallSeconds": 3564.5893783280003,
+            "WorkerBlocks": [
+              {
+                "Name": "spatial-10-edge-65450ff47b9b-p4-worker-block2",
+                "Job": "worker-2",
+                "Sources": 48,
+                "WallSeconds": 947.554693143,
+                "NonSourceSeconds": 61.169040693000056,
+                "MeanPerSourceSeconds": 18.466367759375
+              },
+              {
+                "Name": "spatial-10-edge-65450ff47b9b-p4-worker-block3",
+                "Job": "worker-3",
+                "Sources": 48,
+                "WallSeconds": 875.3193804240001,
+                "NonSourceSeconds": 61.21220299400011,
+                "MeanPerSourceSeconds": 16.960566196458334
+              },
+              {
+                "Name": "spatial-10-edge-65450ff47b9b-p4-worker-block4",
+                "Job": "worker-4",
+                "Sources": 48,
+                "WallSeconds": 894.6908313030001,
+                "NonSourceSeconds": 61.38865811300013,
+                "MeanPerSourceSeconds": 17.360461941458333
+              },
+              {
+                "Name": "spatial-10-edge-65450ff47b9b-p4-worker-block5",
+                "Job": "worker-5",
+                "Sources": 47,
+                "WallSeconds": 847.0244734580001,
+                "NonSourceSeconds": 61.35804092800015,
+                "MeanPerSourceSeconds": 16.716307075106382
+              }
+            ],
+            "WorkerNonSourceSeconds": 61.38865811300013,
+            "ReducerWallSeconds": 133.05556688400003,
+            "ReducerReductionFraction": 0.643905125280258,
+            "ReducerPairSeconds": 85.67516146367778,
+            "ReducerSetupSeconds": 47.38040542032225,
+            "ReducerJob": "reducer",
+            "ReducerBlockSize": 48,
+            "StageWallSeconds": 3697.6449452120005,
+            "WorkerPalacePeakGB": 116.1,
+            "ReducerPalacePeakGB": 141.1,
+            "WorkerNodeUsedGiB": 150.3224868774414,
+            "ReducerNodeUsedGiB": 186.68503189086914,
+            "Role": "main"
+          },
+          "p5": {
+            "H1": 69718881,
+            "Sources": 8,
+            "Order": 5,
+            "SecondsPerPCGIteration": 4.324005390431035,
+            "MeanPCGIterations": 14.5,
+            "MaxPCGIterations": 23,
+            "MeanPerSourceSeconds": 63.3297650125,
+            "LargestBlockMeanPerSourceSeconds": 63.3297650125,
+            "PerSourceNonSolveSeconds": 0.6316868512499951,
+            "WorkerWallSeconds": 592.025464238,
+            "WorkerBlocks": [
+              {
+                "Name": "spatial-10-edge-65450ff47b9b-p5-control-worker",
+                "Job": "worker-1",
+                "Sources": 8,
+                "WallSeconds": 592.025464238,
+                "NonSourceSeconds": 85.38734413800006,
+                "MeanPerSourceSeconds": 63.3297650125
+              }
+            ],
+            "WorkerNonSourceSeconds": 85.38734413800006,
+            "ReducerWallSeconds": 59.26383865299999,
+            "ReducerReductionFraction": 0.16822804651332338,
+            "ReducerPairSeconds": 9.969839805474974,
+            "ReducerSetupSeconds": 49.29399884752502,
+            "ReducerJob": "worker-1",
+            "ReducerBlockSize": 48,
+            "StageWallSeconds": 651.289302891,
+            "WorkerPalacePeakGB": 200.7,
+            "ReducerPalacePeakGB": 116.7,
+            "WorkerNodeUsedGiB": 234.0451316833496,
+            "ReducerNodeUsedGiB": 160.94136810302734,
+            "Role": "control"
+          },
+          "p3": {
+            "H1": 15247317,
+            "Sources": 8,
+            "Order": 3,
+            "SecondsPerPCGIteration": 0.40886990738235296,
+            "MeanPCGIterations": 17,
+            "MaxPCGIterations": 24,
+            "MeanPerSourceSeconds": 7.289893409,
+            "LargestBlockMeanPerSourceSeconds": 7.289893409,
+            "PerSourceNonSolveSeconds": 0.3391049834999995,
+            "WorkerWallSeconds": 110.62562681700001,
+            "WorkerBlocks": [
+              {
+                "Name": "spatial-10-edge-65450ff47b9b-p3-control-worker",
+                "Job": "worker-1",
+                "Sources": 8,
+                "WallSeconds": 110.62562681700001,
+                "NonSourceSeconds": 52.30647954500001,
+                "MeanPerSourceSeconds": 7.289893409
+              }
+            ],
+            "WorkerNonSourceSeconds": 52.30647954500001,
+            "ReducerWallSeconds": 48.77239364800005,
+            "ReducerReductionFraction": 0.02445426603549234,
+            "ReducerPairSeconds": 1.19269308945595,
+            "ReducerSetupSeconds": 47.5797005585441,
+            "ReducerJob": "worker-1",
+            "ReducerBlockSize": 48,
+            "StageWallSeconds": 159.39802046500006,
+            "WorkerPalacePeakGB": 82.3,
+            "ReducerPalacePeakGB": 50.8,
+            "WorkerNodeUsedGiB": 116.84457015991211,
+            "ReducerNodeUsedGiB": 82.05804443359375,
+            "Role": "control"
+          }
+        },
+        "LocalEdge": {
+          "Name": "spatial-10-edge-65450ff47b9b-p4-local-edge",
+          "Job": "worker-1",
+          "Order": 4,
+          "H1": 35861283,
+          "Sources": 8,
+          "WallSeconds": 424.196689739,
+          "PalaceTotalSeconds": 421.737,
+          "LinearSolveSeconds": 150.703,
+          "NonSolveSeconds": 273.49368973900005,
+          "PalacePeakGB": 268.3,
+          "NodeUsedGiB": 301.8714408874512,
+          "PCG": [
+            11,
+            12,
+            16,
+            22,
+            14,
+            22,
+            11,
+            14
+          ]
+        },
+        "ArchiveGB": 51.0,
+        "Jobs": {
+          "worker-1": {
+            "PBSJobID": "47080.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 1235.914801377,
+            "EstimateSecondsWithPreflightAndMargin": 3465.887546910471,
+            "Stages": [
+              {
+                "Name": "spatial-10-edge-65450ff47b9b-p5-control-worker",
+                "WallSeconds": 592.025464238,
+                "Sources": 8
+              },
+              {
+                "Name": "spatial-10-edge-65450ff47b9b-p5-control-reducer",
+                "WallSeconds": 59.26383865299999,
+                "Sources": 0
+              },
+              {
+                "Name": "spatial-10-edge-65450ff47b9b-p3-control-worker",
+                "WallSeconds": 110.62562681700001,
+                "Sources": 8
+              },
+              {
+                "Name": "spatial-10-edge-65450ff47b9b-p3-control-reducer",
+                "WallSeconds": 48.77239364800005,
+                "Sources": 0
+              },
+              {
+                "Name": "spatial-10-edge-65450ff47b9b-p4-local-edge",
+                "WallSeconds": 424.196689739,
+                "Sources": 0
+              }
+            ]
+          },
+          "worker-2": {
+            "PBSJobID": "47081.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 948.562194742,
+            "EstimateSecondsWithPreflightAndMargin": 3329.1314922703814,
+            "Stages": [
+              {
+                "Name": "spatial-10-edge-65450ff47b9b-p4-worker-block2",
+                "WallSeconds": 947.554693143,
+                "Sources": 48
+              }
+            ]
+          },
+          "worker-3": {
+            "PBSJobID": "47082.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 876.1618700059998,
+            "EstimateSecondsWithPreflightAndMargin": 3329.1314922703814,
+            "Stages": [
+              {
+                "Name": "spatial-10-edge-65450ff47b9b-p4-worker-block3",
+                "WallSeconds": 875.3193804240001,
+                "Sources": 48
+              }
+            ]
+          },
+          "worker-4": {
+            "PBSJobID": "47083.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 895.6547437720001,
+            "EstimateSecondsWithPreflightAndMargin": 3329.1314922703814,
+            "Stages": [
+              {
+                "Name": "spatial-10-edge-65450ff47b9b-p4-worker-block4",
+                "WallSeconds": 894.6908313030001,
+                "Sources": 48
+              }
+            ]
+          },
+          "worker-5": {
+            "PBSJobID": "47084.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 848.0190764419999,
+            "EstimateSecondsWithPreflightAndMargin": 3267.802290933469,
+            "Stages": [
+              {
+                "Name": "spatial-10-edge-65450ff47b9b-p4-worker-block5",
+                "WallSeconds": 847.0244734580001,
+                "Sources": 47
+              }
+            ]
+          },
+          "reducer": {
+            "PBSJobID": "47108.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 134.228232963,
+            "EstimateSecondsWithPreflightAndMargin": 1145.281127445507,
+            "Stages": [
+              {
+                "Name": "spatial-10-edge-65450ff47b9b-p4-reducer",
+                "WallSeconds": 133.05556688400003,
+                "Sources": 0
+              }
+            ]
+          }
+        }
+      },
+      "spatial-2-edge-8ce3fb213a2d": {
+        "EntityCounts": {
+          "Vertices": 284010,
+          "Edges": 1639707,
+          "TriangleFaces": 2329679,
+          "QuadFaces": 241978,
+          "Tetrahedra": 1052916,
+          "Prisms": 151398,
+          "Pyramids": 11646
+        },
+        "MeshSHA256": "f52b58c294c6535ac612685028745a7bd234842438233c8928cc82d918f6a511",
+        "Stages": {
+          "p4": {
+            "H1": 17099910,
+            "Sources": 150,
+            "Order": 4,
+            "SecondsPerPCGIteration": 0.5711438804079186,
+            "MeanPCGIterations": 18.35333333333333,
+            "MaxPCGIterations": 39,
+            "MeanPerSourceSeconds": 10.72860170836,
+            "LargestBlockMeanPerSourceSeconds": 11.59485209424,
+            "PerSourceNonSolveSeconds": 1.1124580758200011,
+            "WorkerWallSeconds": 1701.213587454,
+            "WorkerBlocks": [
+              {
+                "Name": "spatial-2-edge-8ce3fb213a2d-p4-worker-block2",
+                "Job": "worker-2",
+                "Sources": 50,
+                "WallSeconds": 610.537423244,
+                "NonSourceSeconds": 30.794818532000022,
+                "MeanPerSourceSeconds": 11.59485209424
+              },
+              {
+                "Name": "spatial-2-edge-8ce3fb213a2d-p4-worker-block3",
+                "Job": "worker-3",
+                "Sources": 50,
+                "WallSeconds": 542.615509932,
+                "NonSourceSeconds": 29.807740696999986,
+                "MeanPerSourceSeconds": 10.256155384700001
+              },
+              {
+                "Name": "spatial-2-edge-8ce3fb213a2d-p4-worker-block4",
+                "Job": "worker-4",
+                "Sources": 50,
+                "WallSeconds": 548.060654278,
+                "NonSourceSeconds": 31.320771971,
+                "MeanPerSourceSeconds": 10.33479764614
+              }
+            ],
+            "WorkerNonSourceSeconds": 31.320771971,
+            "ReducerWallSeconds": 51.76838145500001,
+            "ReducerReductionFraction": 0.6157577603271628,
+            "ReducerPairSeconds": 31.876782620493035,
+            "ReducerSetupSeconds": 19.891598834506976,
+            "ReducerJob": "reducer",
+            "ReducerBlockSize": 48,
+            "StageWallSeconds": 1752.981968909,
+            "WorkerPalacePeakGB": 71.3,
+            "ReducerPalacePeakGB": 66.4,
+            "WorkerNodeUsedGiB": 104.05704116821289,
+            "ReducerNodeUsedGiB": 110.61363983154297,
+            "Role": "main"
+          },
+          "p5": {
+            "H1": 33283120,
+            "Sources": 8,
+            "Order": 5,
+            "SecondsPerPCGIteration": 2.148376988154762,
+            "MeanPCGIterations": 21,
+            "MaxPCGIterations": 38,
+            "MeanPerSourceSeconds": 45.409702525,
+            "LargestBlockMeanPerSourceSeconds": 45.409702525,
+            "PerSourceNonSolveSeconds": 0.2937857737500025,
+            "WorkerWallSeconds": 411.919098238,
+            "WorkerBlocks": [
+              {
+                "Name": "spatial-2-edge-8ce3fb213a2d-p5-control-worker",
+                "Job": "worker-1",
+                "Sources": 8,
+                "WallSeconds": 411.919098238,
+                "NonSourceSeconds": 48.641478038,
+                "MeanPerSourceSeconds": 45.409702525
+              }
+            ],
+            "WorkerNonSourceSeconds": 48.641478038,
+            "ReducerWallSeconds": 26.04710077300001,
+            "ReducerReductionFraction": 0.1900109569028488,
+            "ReducerPairSeconds": 4.949234542422665,
+            "ReducerSetupSeconds": 21.097866230577345,
+            "ReducerJob": "worker-1",
+            "ReducerBlockSize": 48,
+            "StageWallSeconds": 437.966199011,
+            "WorkerPalacePeakGB": 111.2,
+            "ReducerPalacePeakGB": 62.5,
+            "WorkerNodeUsedGiB": 143.41270446777344,
+            "ReducerNodeUsedGiB": 108.11802673339844,
+            "Role": "control"
+          },
+          "p3": {
+            "H1": 7256979,
+            "Sources": 8,
+            "Order": 3,
+            "SecondsPerPCGIteration": 0.20265021789017343,
+            "MeanPCGIterations": 21.625,
+            "MaxPCGIterations": 27,
+            "MeanPerSourceSeconds": 4.552876713875,
+            "LargestBlockMeanPerSourceSeconds": 4.552876713875,
+            "PerSourceNonSolveSeconds": 0.1705657519999999,
+            "WorkerWallSeconds": 62.47099456600006,
+            "WorkerBlocks": [
+              {
+                "Name": "spatial-2-edge-8ce3fb213a2d-p3-control-worker",
+                "Job": "worker-1",
+                "Sources": 8,
+                "WallSeconds": 62.47099456600006,
+                "NonSourceSeconds": 26.047980855000056,
+                "MeanPerSourceSeconds": 4.552876713875
+              }
+            ],
+            "WorkerNonSourceSeconds": 26.047980855000056,
+            "ReducerWallSeconds": 21.353061677000028,
+            "ReducerReductionFraction": 0.030475861274340363,
+            "ReducerPairSeconds": 0.6507529454506864,
+            "ReducerSetupSeconds": 20.70230873154934,
+            "ReducerJob": "worker-1",
+            "ReducerBlockSize": 48,
+            "StageWallSeconds": 83.82405624300009,
+            "WorkerPalacePeakGB": 52.8,
+            "ReducerPalacePeakGB": 29.7,
+            "WorkerNodeUsedGiB": 87.28700256347656,
+            "ReducerNodeUsedGiB": 74.8519287109375,
+            "Role": "control"
+          }
+        },
+        "LocalEdge": {
+          "Name": "spatial-2-edge-8ce3fb213a2d-p4-local-edge",
+          "Job": "worker-1",
+          "Order": 4,
+          "H1": 17099910,
+          "Sources": 8,
+          "WallSeconds": 192.11264588699999,
+          "PalaceTotalSeconds": 189.979,
+          "LinearSolveSeconds": 101.363,
+          "NonSolveSeconds": 90.74964588699999,
+          "PalacePeakGB": 144.0,
+          "NodeUsedGiB": 175.93490982055664,
+          "PCG": [
+            18,
+            21,
+            21,
+            21,
+            20,
+            17,
+            33,
+            15
+          ]
+        },
+        "ArchiveGB": 20.0,
+        "Jobs": {
+          "worker-1": {
+            "PBSJobID": "47086.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 714.7748016099999,
+            "EstimateSecondsWithPreflightAndMargin": 1810.4212936626307,
+            "Stages": [
+              {
+                "Name": "spatial-2-edge-8ce3fb213a2d-p5-control-worker",
+                "WallSeconds": 411.919098238,
+                "Sources": 8
+              },
+              {
+                "Name": "spatial-2-edge-8ce3fb213a2d-p5-control-reducer",
+                "WallSeconds": 26.04710077300001,
+                "Sources": 0
+              },
+              {
+                "Name": "spatial-2-edge-8ce3fb213a2d-p3-control-worker",
+                "WallSeconds": 62.47099456600006,
+                "Sources": 8
+              },
+              {
+                "Name": "spatial-2-edge-8ce3fb213a2d-p3-control-reducer",
+                "WallSeconds": 21.353061677000028,
+                "Sources": 0
+              },
+              {
+                "Name": "spatial-2-edge-8ce3fb213a2d-p4-local-edge",
+                "WallSeconds": 192.11264588699999,
+                "Sources": 0
+              }
+            ]
+          },
+          "worker-2": {
+            "PBSJobID": "47105.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 611.3265769149999,
+            "EstimateSecondsWithPreflightAndMargin": 1802.883305721532,
+            "Stages": [
+              {
+                "Name": "spatial-2-edge-8ce3fb213a2d-p4-worker-block2",
+                "WallSeconds": 610.537423244,
+                "Sources": 50
+              }
+            ]
+          },
+          "worker-3": {
+            "PBSJobID": "47106.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 543.384142774,
+            "EstimateSecondsWithPreflightAndMargin": 1802.883305721532,
+            "Stages": [
+              {
+                "Name": "spatial-2-edge-8ce3fb213a2d-p4-worker-block3",
+                "WallSeconds": 542.615509932,
+                "Sources": 50
+              }
+            ]
+          },
+          "worker-4": {
+            "PBSJobID": "47107.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 548.99190542,
+            "EstimateSecondsWithPreflightAndMargin": 1802.883305721532,
+            "Stages": [
+              {
+                "Name": "spatial-2-edge-8ce3fb213a2d-p4-worker-block4",
+                "WallSeconds": 548.060654278,
+                "Sources": 50
+              }
+            ]
+          },
+          "reducer": {
+            "PBSJobID": "47218.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 52.85213825600002,
+            "EstimateSecondsWithPreflightAndMargin": 612.8640391953774,
+            "Stages": [
+              {
+                "Name": "spatial-2-edge-8ce3fb213a2d-p4-reducer",
+                "WallSeconds": 51.76838145500001,
+                "Sources": 0
+              }
+            ]
+          }
+        }
+      },
+      "spatial-3-edge-9cd906b81cbe": {
+        "EntityCounts": {
+          "Vertices": 387911,
+          "Edges": 2259161,
+          "TriangleFaces": 3276225,
+          "QuadFaces": 276012,
+          "Tetrahedra": 1495011,
+          "Prisms": 172692,
+          "Pyramids": 13284
+        },
+        "MeshSHA256": "0fe0aa73ff86289ab5be7f4e8814d50a4c8869eefd0e9c9d734ecb11ba39673f",
+        "Stages": {
+          "p4": {
+            "H1": 22886084,
+            "Sources": 175,
+            "Order": 4,
+            "SecondsPerPCGIteration": 0.7380677349338212,
+            "MeanPCGIterations": 17.96,
+            "MaxPCGIterations": 40,
+            "MeanPerSourceSeconds": 13.54032163112,
+            "LargestBlockMeanPerSourceSeconds": 14.489858856318182,
+            "PerSourceNonSolveSeconds": 1.2341623369067545,
+            "WorkerWallSeconds": 2522.374237598,
+            "WorkerBlocks": [
+              {
+                "Name": "spatial-3-edge-9cd906b81cbe-p4-worker-block2",
+                "Job": "worker-2",
+                "Sources": 44,
+                "WallSeconds": 621.5043535560001,
+                "NonSourceSeconds": 38.61233035300006,
+                "MeanPerSourceSeconds": 13.247545981886363
+              },
+              {
+                "Name": "spatial-3-edge-9cd906b81cbe-p4-worker-block3",
+                "Job": "worker-3",
+                "Sources": 44,
+                "WallSeconds": 616.838460506,
+                "NonSourceSeconds": 38.0390358950001,
+                "MeanPerSourceSeconds": 13.154532377522726
+              },
+              {
+                "Name": "spatial-3-edge-9cd906b81cbe-p4-worker-block4",
+                "Job": "worker-4",
+                "Sources": 44,
+                "WallSeconds": 675.540518703,
+                "NonSourceSeconds": 37.98672902499993,
+                "MeanPerSourceSeconds": 14.489858856318182
+              },
+              {
+                "Name": "spatial-3-edge-9cd906b81cbe-p4-worker-block5",
+                "Job": "worker-5",
+                "Sources": 43,
+                "WallSeconds": 608.490904833,
+                "NonSourceSeconds": 38.179856879,
+                "MeanPerSourceSeconds": 13.263047626837208
+              }
+            ],
+            "WorkerNonSourceSeconds": 38.61233035300006,
+            "ReducerWallSeconds": 77.57547824800001,
+            "ReducerReductionFraction": 0.6387963595311433,
+            "ReducerPairSeconds": 49.554933093709806,
+            "ReducerSetupSeconds": 28.020545154290204,
+            "ReducerJob": "reducer",
+            "ReducerBlockSize": 48,
+            "StageWallSeconds": 2599.949715846,
+            "WorkerPalacePeakGB": 86.3,
+            "ReducerPalacePeakGB": 90.5,
+            "WorkerNodeUsedGiB": 119.86285018920898,
+            "ReducerNodeUsedGiB": 137.27928161621094,
+            "Role": "main"
+          },
+          "p5": {
+            "H1": 44472925,
+            "Sources": 8,
+            "Order": 5,
+            "SecondsPerPCGIteration": 2.819573529512195,
+            "MeanPCGIterations": 15.375,
+            "MaxPCGIterations": 22,
+            "MeanPerSourceSeconds": 43.76291158125,
+            "LargestBlockMeanPerSourceSeconds": 43.76291158125,
+            "PerSourceNonSolveSeconds": 0.41196856500000223,
+            "WorkerWallSeconds": 403.56821139,
+            "WorkerBlocks": [
+              {
+                "Name": "spatial-3-edge-9cd906b81cbe-p5-control-worker",
+                "Job": "worker-1",
+                "Sources": 8,
+                "WallSeconds": 403.56821139,
+                "NonSourceSeconds": 53.46491873999997,
+                "MeanPerSourceSeconds": 43.76291158125
+              }
+            ],
+            "WorkerNonSourceSeconds": 53.46491873999997,
+            "ReducerWallSeconds": 36.54178293199993,
+            "ReducerReductionFraction": 0.18854865123752435,
+            "ReducerPairSeconds": 6.889903885642975,
+            "ReducerSetupSeconds": 29.651879046356957,
+            "ReducerJob": "worker-1",
+            "ReducerBlockSize": 48,
+            "StageWallSeconds": 440.1099943219999,
+            "WorkerPalacePeakGB": 138.9,
+            "ReducerPalacePeakGB": 78.6,
+            "WorkerNodeUsedGiB": 171.39914321899414,
+            "ReducerNodeUsedGiB": 123.46302795410156,
+            "Role": "control"
+          },
+          "p3": {
+            "H1": 9738162,
+            "Sources": 8,
+            "Order": 3,
+            "SecondsPerPCGIteration": 0.2670087170212766,
+            "MeanPCGIterations": 17.625,
+            "MaxPCGIterations": 23,
+            "MeanPerSourceSeconds": 4.945465845625,
+            "LargestBlockMeanPerSourceSeconds": 4.945465845625,
+            "PerSourceNonSolveSeconds": 0.23943720812499958,
+            "WorkerWallSeconds": 72.25382378300003,
+            "WorkerBlocks": [
+              {
+                "Name": "spatial-3-edge-9cd906b81cbe-p3-control-worker",
+                "Job": "worker-1",
+                "Sources": 8,
+                "WallSeconds": 72.25382378300003,
+                "NonSourceSeconds": 32.69009701800003,
+                "MeanPerSourceSeconds": 4.945465845625
+              }
+            ],
+            "WorkerNonSourceSeconds": 32.69009701800003,
+            "ReducerWallSeconds": 29.60983580300001,
+            "ReducerReductionFraction": 0.02694540320050204,
+            "ReducerPairSeconds": 0.7978489644124963,
+            "ReducerSetupSeconds": 28.811986838587515,
+            "ReducerJob": "worker-1",
+            "ReducerBlockSize": 48,
+            "StageWallSeconds": 101.86365958600004,
+            "WorkerPalacePeakGB": 61.3,
+            "ReducerPalacePeakGB": 36.2,
+            "WorkerNodeUsedGiB": 98.13258361816406,
+            "ReducerNodeUsedGiB": 81.93228530883789,
+            "Role": "control"
+          }
+        },
+        "LocalEdge": {
+          "Name": "spatial-3-edge-9cd906b81cbe-p4-local-edge",
+          "Job": "worker-1",
+          "Order": 4,
+          "H1": 22886084,
+          "Sources": 8,
+          "WallSeconds": 249.06107517300006,
+          "PalaceTotalSeconds": 246.677,
+          "LinearSolveSeconds": 104.122,
+          "NonSolveSeconds": 144.93907517300005,
+          "PalacePeakGB": 181.6,
+          "NodeUsedGiB": 214.7411003112793,
+          "PCG": [
+            11,
+            11,
+            22,
+            20,
+            17,
+            11,
+            22,
+            17
+          ]
+        },
+        "ArchiveGB": 30.0,
+        "Jobs": {
+          "worker-1": {
+            "PBSJobID": "47109.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 792.1954311139999,
+            "EstimateSecondsWithPreflightAndMargin": 2319.9941769387447,
+            "Stages": [
+              {
+                "Name": "spatial-3-edge-9cd906b81cbe-p5-control-worker",
+                "WallSeconds": 403.56821139,
+                "Sources": 8
+              },
+              {
+                "Name": "spatial-3-edge-9cd906b81cbe-p5-control-reducer",
+                "WallSeconds": 36.54178293199993,
+                "Sources": 0
+              },
+              {
+                "Name": "spatial-3-edge-9cd906b81cbe-p3-control-worker",
+                "WallSeconds": 72.25382378300003,
+                "Sources": 8
+              },
+              {
+                "Name": "spatial-3-edge-9cd906b81cbe-p3-control-reducer",
+                "WallSeconds": 29.60983580300001,
+                "Sources": 0
+              },
+              {
+                "Name": "spatial-3-edge-9cd906b81cbe-p4-local-edge",
+                "WallSeconds": 249.06107517300006,
+                "Sources": 0
+              }
+            ]
+          },
+          "worker-2": {
+            "PBSJobID": "47110.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 622.352121149,
+            "EstimateSecondsWithPreflightAndMargin": 2076.584980669748,
+            "Stages": [
+              {
+                "Name": "spatial-3-edge-9cd906b81cbe-p4-worker-block2",
+                "WallSeconds": 621.5043535560001,
+                "Sources": 44
+              }
+            ]
+          },
+          "worker-3": {
+            "PBSJobID": "47207.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 617.8658343550001,
+            "EstimateSecondsWithPreflightAndMargin": 2076.584980669748,
+            "Stages": [
+              {
+                "Name": "spatial-3-edge-9cd906b81cbe-p4-worker-block3",
+                "WallSeconds": 616.838460506,
+                "Sources": 44
+              }
+            ]
+          },
+          "worker-4": {
+            "PBSJobID": "47212.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 676.3077748300001,
+            "EstimateSecondsWithPreflightAndMargin": 2076.584980669748,
+            "Stages": [
+              {
+                "Name": "spatial-3-edge-9cd906b81cbe-p4-worker-block4",
+                "WallSeconds": 675.540518703,
+                "Sources": 44
+              }
+            ]
+          },
+          "worker-5": {
+            "PBSJobID": "47213.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 609.62082583,
+            "EstimateSecondsWithPreflightAndMargin": 2037.4456879275035,
+            "Stages": [
+              {
+                "Name": "spatial-3-edge-9cd906b81cbe-p4-worker-block5",
+                "WallSeconds": 608.490904833,
+                "Sources": 43
+              }
+            ]
+          },
+          "reducer": {
+            "PBSJobID": "47289.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 78.55484015,
+            "EstimateSecondsWithPreflightAndMargin": 791.2559801315233,
+            "Stages": [
+              {
+                "Name": "spatial-3-edge-9cd906b81cbe-p4-reducer",
+                "WallSeconds": 77.57547824800001,
+                "Sources": 0
+              }
+            ]
+          }
+        }
+      },
+      "spatial-3-edge-5d3b5e644745": {
+        "EntityCounts": {
+          "Vertices": 714404,
+          "Edges": 4109961,
+          "TriangleFaces": 5836752,
+          "QuadFaces": 596717,
+          "Tetrahedra": 2635846,
+          "Prisms": 373347,
+          "Pyramids": 28719
+        },
+        "MeshSHA256": "39341124dbdac781836caa2558d334b75b17e89cca04ea6402da447683e1d019",
+        "Stages": {
+          "p4": {
+            "H1": 42696378,
+            "Sources": 225,
+            "Order": 4,
+            "SecondsPerPCGIteration": 1.2815050833937107,
+            "MeanPCGIterations": 17.666666666666668,
+            "MaxPCGIterations": 40,
+            "MeanPerSourceSeconds": 23.100555115777777,
+            "LargestBlockMeanPerSourceSeconds": 25.238541063777777,
+            "PerSourceNonSolveSeconds": 2.5986179238222213,
+            "WorkerWallSeconds": 5527.37335799,
+            "WorkerBlocks": [
+              {
+                "Name": "spatial-3-edge-5d3b5e644745-p4-worker-block2",
+                "Job": "worker-2",
+                "Sources": 45,
+                "WallSeconds": 1201.451951926,
+                "NonSourceSeconds": 65.71760405600003,
+                "MeanPerSourceSeconds": 25.238541063777777
+              },
+              {
+                "Name": "spatial-3-edge-5d3b5e644745-p4-worker-block3",
+                "Job": "worker-3",
+                "Sources": 45,
+                "WallSeconds": 1141.7619649990002,
+                "NonSourceSeconds": 66.43255289900026,
+                "MeanPerSourceSeconds": 23.896209157777776
+              },
+              {
+                "Name": "spatial-3-edge-5d3b5e644745-p4-worker-block4",
+                "Job": "worker-4",
+                "Sources": 45,
+                "WallSeconds": 973.7991305060001,
+                "NonSourceSeconds": 65.55734698600008,
+                "MeanPerSourceSeconds": 20.183150744888888
+              },
+              {
+                "Name": "spatial-3-edge-5d3b5e644745-p4-worker-block5",
+                "Job": "worker-5",
+                "Sources": 45,
+                "WallSeconds": 1136.970993357,
+                "NonSourceSeconds": 65.98172840699999,
+                "MeanPerSourceSeconds": 23.799761443333335
+              },
+              {
+                "Name": "spatial-3-edge-5d3b5e644745-p4-worker-block6",
+                "Job": "worker-6",
+                "Sources": 45,
+                "WallSeconds": 1073.389317202,
+                "NonSourceSeconds": 66.05922459200008,
+                "MeanPerSourceSeconds": 22.38511316911111
+              }
+            ],
+            "WorkerNonSourceSeconds": 66.43255289900026,
+            "ReducerWallSeconds": 157.531289078,
+            "ReducerReductionFraction": 0.6568247438990625,
+            "ReducerPairSeconds": 103.47044860474652,
+            "ReducerSetupSeconds": 54.060840473253464,
+            "ReducerJob": "reducer",
+            "ReducerBlockSize": 48,
+            "StageWallSeconds": 5684.904647068,
+            "WorkerPalacePeakGB": 124.9,
+            "ReducerPalacePeakGB": 171.2,
+            "WorkerNodeUsedGiB": 163.95449447631836,
+            "ReducerNodeUsedGiB": 221.10891723632812,
+            "Role": "main"
+          },
+          "p5": {
+            "H1": 83063960,
+            "Sources": 8,
+            "Order": 5,
+            "SecondsPerPCGIteration": 4.7641725217808215,
+            "MeanPCGIterations": 18.25,
+            "MaxPCGIterations": 27,
+            "MeanPerSourceSeconds": 87.71724292625,
+            "LargestBlockMeanPerSourceSeconds": 87.71724292625,
+            "PerSourceNonSolveSeconds": 0.7710944037499985,
+            "WorkerWallSeconds": 789.0964746550001,
+            "WorkerBlocks": [
+              {
+                "Name": "spatial-3-edge-5d3b5e644745-p5-control-worker",
+                "Job": "worker-1",
+                "Sources": 8,
+                "WallSeconds": 789.0964746550001,
+                "NonSourceSeconds": 87.35853124500011,
+                "MeanPerSourceSeconds": 87.71724292625
+              }
+            ],
+            "WorkerNonSourceSeconds": 87.35853124500011,
+            "ReducerWallSeconds": 66.67389416099991,
+            "ReducerReductionFraction": 0.15112659473234302,
+            "ReducerPairSeconds": 10.076198582096564,
+            "ReducerSetupSeconds": 56.59769557890334,
+            "ReducerJob": "worker-1",
+            "ReducerBlockSize": 48,
+            "StageWallSeconds": 855.770368816,
+            "WorkerPalacePeakGB": 227.0,
+            "ReducerPalacePeakGB": 128.2,
+            "WorkerNodeUsedGiB": 261.49131774902344,
+            "ReducerNodeUsedGiB": 173.01309967041016,
+            "Role": "control"
+          },
+          "p3": {
+            "H1": 18134392,
+            "Sources": 8,
+            "Order": 3,
+            "SecondsPerPCGIteration": 0.45624078956626507,
+            "MeanPCGIterations": 20.75,
+            "MaxPCGIterations": 23,
+            "MeanPerSourceSeconds": 9.844695823,
+            "LargestBlockMeanPerSourceSeconds": 9.844695823,
+            "PerSourceNonSolveSeconds": 0.3776994395000006,
+            "WorkerWallSeconds": 138.25840523800002,
+            "WorkerBlocks": [
+              {
+                "Name": "spatial-3-edge-5d3b5e644745-p3-control-worker",
+                "Job": "worker-1",
+                "Sources": 8,
+                "WallSeconds": 138.25840523800002,
+                "NonSourceSeconds": 59.50083865400002,
+                "MeanPerSourceSeconds": 9.844695823
+              }
+            ],
+            "WorkerNonSourceSeconds": 59.50083865400002,
+            "ReducerWallSeconds": 55.30520505200002,
+            "ReducerReductionFraction": 0.022912712544269867,
+            "ReducerPairSeconds": 1.267192265558378,
+            "ReducerSetupSeconds": 54.03801278644164,
+            "ReducerJob": "worker-1",
+            "ReducerBlockSize": 48,
+            "StageWallSeconds": 193.56361029000004,
+            "WorkerPalacePeakGB": 85.1,
+            "ReducerPalacePeakGB": 51.1,
+            "WorkerNodeUsedGiB": 125.31216430664062,
+            "ReducerNodeUsedGiB": 71.35807037353516,
+            "Role": "control"
+          }
+        },
+        "LocalEdge": {
+          "Name": "spatial-3-edge-5d3b5e644745-p4-local-edge",
+          "Job": "worker-1",
+          "Order": 4,
+          "H1": 42696378,
+          "Sources": 8,
+          "WallSeconds": 445.7672564820002,
+          "PalaceTotalSeconds": 443.209,
+          "LinearSolveSeconds": 208.946,
+          "NonSolveSeconds": 236.82125648200022,
+          "PalacePeakGB": 305.3,
+          "NodeUsedGiB": 332.51340103149414,
+          "PCG": [
+            18,
+            22,
+            21,
+            18,
+            16,
+            21,
+            16,
+            25
+          ]
+        },
+        "ArchiveGB": 71.0,
+        "Jobs": {
+          "worker-1": {
+            "PBSJobID": "47214.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 1496.599209468,
+            "EstimateSecondsWithPreflightAndMargin": 4070.5108416767366,
+            "Stages": [
+              {
+                "Name": "spatial-3-edge-5d3b5e644745-p5-control-worker",
+                "WallSeconds": 789.0964746550001,
+                "Sources": 8
+              },
+              {
+                "Name": "spatial-3-edge-5d3b5e644745-p5-control-reducer",
+                "WallSeconds": 66.67389416099991,
+                "Sources": 0
+              },
+              {
+                "Name": "spatial-3-edge-5d3b5e644745-p3-control-worker",
+                "WallSeconds": 138.25840523800002,
+                "Sources": 8
+              },
+              {
+                "Name": "spatial-3-edge-5d3b5e644745-p3-control-reducer",
+                "WallSeconds": 55.30520505200002,
+                "Sources": 0
+              },
+              {
+                "Name": "spatial-3-edge-5d3b5e644745-p4-local-edge",
+                "WallSeconds": 445.7672564820002,
+                "Sources": 0
+              }
+            ]
+          },
+          "worker-2": {
+            "PBSJobID": "47215.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 1202.905220601,
+            "EstimateSecondsWithPreflightAndMargin": 3687.423113599242,
+            "Stages": [
+              {
+                "Name": "spatial-3-edge-5d3b5e644745-p4-worker-block2",
+                "WallSeconds": 1201.451951926,
+                "Sources": 45
+              }
+            ]
+          },
+          "worker-3": {
+            "PBSJobID": "47216.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 1142.8317850859999,
+            "EstimateSecondsWithPreflightAndMargin": 3687.423113599242,
+            "Stages": [
+              {
+                "Name": "spatial-3-edge-5d3b5e644745-p4-worker-block3",
+                "WallSeconds": 1141.7619649990002,
+                "Sources": 45
+              }
+            ]
+          },
+          "worker-4": {
+            "PBSJobID": "47219.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 974.755846296,
+            "EstimateSecondsWithPreflightAndMargin": 3687.423113599242,
+            "Stages": [
+              {
+                "Name": "spatial-3-edge-5d3b5e644745-p4-worker-block4",
+                "WallSeconds": 973.7991305060001,
+                "Sources": 45
+              }
+            ]
+          },
+          "worker-5": {
+            "PBSJobID": "47250.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 1137.999544476,
+            "EstimateSecondsWithPreflightAndMargin": 3687.423113599242,
+            "Stages": [
+              {
+                "Name": "spatial-3-edge-5d3b5e644745-p4-worker-block5",
+                "WallSeconds": 1136.970993357,
+                "Sources": 45
+              }
+            ]
+          },
+          "worker-6": {
+            "PBSJobID": "47256.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 1074.369557984,
+            "EstimateSecondsWithPreflightAndMargin": 3687.423113599242,
+            "Stages": [
+              {
+                "Name": "spatial-3-edge-5d3b5e644745-p4-worker-block6",
+                "WallSeconds": 1073.389317202,
+                "Sources": 45
+              }
+            ]
+          },
+          "reducer": {
+            "PBSJobID": "47300.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 158.86895423800001,
+            "EstimateSecondsWithPreflightAndMargin": 1718.0487296129884,
+            "Stages": [
+              {
+                "Name": "spatial-3-edge-5d3b5e644745-p4-reducer",
+                "WallSeconds": 157.531289078,
+                "Sources": 0
+              }
+            ]
+          }
+        }
+      },
+      "spatial-4-edge-e51d7380245e": {
+        "EntityCounts": {
+          "Vertices": 422877,
+          "Edges": 2510035,
+          "TriangleFaces": 3707568,
+          "QuadFaces": 275077,
+          "Tetrahedra": 1710141,
+          "Prisms": 172107,
+          "Pyramids": 13239
+        },
+        "MeshSHA256": "7cc03aaf3c0a348dc02fe3762f4c8440514caad0010195f710881ee9f424a8f7",
+        "Stages": {
+          "p4": {
+            "H1": 25167936,
+            "Sources": 120,
+            "Order": 4,
+            "SecondsPerPCGIteration": 0.8574933165944469,
+            "MeanPCGIterations": 18.308333333333334,
+            "MaxPCGIterations": 40,
+            "MeanPerSourceSeconds": 16.018691479116665,
+            "LargestBlockMeanPerSourceSeconds": 16.831125914,
+            "PerSourceNonSolveSeconds": 1.1318524426833356,
+            "WorkerWallSeconds": 2048.630296077,
+            "WorkerBlocks": [
+              {
+                "Name": "spatial-4-edge-e51d7380245e-p4-worker-block2",
+                "Job": "worker-2",
+                "Sources": 40,
+                "WallSeconds": 715.681193397,
+                "NonSourceSeconds": 42.436156837,
+                "MeanPerSourceSeconds": 16.831125914
+              },
+              {
+                "Name": "spatial-4-edge-e51d7380245e-p4-worker-block3",
+                "Job": "worker-3",
+                "Sources": 40,
+                "WallSeconds": 669.76128384,
+                "NonSourceSeconds": 41.61482094600001,
+                "MeanPerSourceSeconds": 15.70366157235
+              },
+              {
+                "Name": "spatial-4-edge-e51d7380245e-p4-worker-block4",
+                "Job": "worker-4",
+                "Sources": 40,
+                "WallSeconds": 663.18781884,
+                "NonSourceSeconds": 42.336340800000016,
+                "MeanPerSourceSeconds": 15.521286950999999
+              }
+            ],
+            "WorkerNonSourceSeconds": 42.436156837,
+            "ReducerWallSeconds": 70.532403344,
+            "ReducerReductionFraction": 0.5383629541559223,
+            "ReducerPairSeconds": 37.97203302799289,
+            "ReducerSetupSeconds": 32.56037031600711,
+            "ReducerJob": "reducer",
+            "ReducerBlockSize": 48,
+            "StageWallSeconds": 2119.162699421,
+            "WorkerPalacePeakGB": 92.5,
+            "ReducerPalacePeakGB": 82.4,
+            "WorkerNodeUsedGiB": 126.64798355102539,
+            "ReducerNodeUsedGiB": 128.71347427368164,
+            "Role": "main"
+          },
+          "p5": {
+            "H1": 48928085,
+            "Sources": 8,
+            "Order": 5,
+            "SecondsPerPCGIteration": 3.2282289238513515,
+            "MeanPCGIterations": 18.5,
+            "MaxPCGIterations": 38,
+            "MeanPerSourceSeconds": 60.16462906875,
+            "LargestBlockMeanPerSourceSeconds": 60.16462906875,
+            "PerSourceNonSolveSeconds": 0.44239397749999654,
+            "WorkerWallSeconds": 536.827883663,
+            "WorkerBlocks": [
+              {
+                "Name": "spatial-4-edge-e51d7380245e-p5-control-worker",
+                "Job": "worker-1",
+                "Sources": 8,
+                "WallSeconds": 536.827883663,
+                "NonSourceSeconds": 55.510851112999944,
+                "MeanPerSourceSeconds": 60.16462906875
+              }
+            ],
+            "WorkerNonSourceSeconds": 55.510851112999944,
+            "ReducerWallSeconds": 41.949093224999956,
+            "ReducerReductionFraction": 0.17776126926852565,
+            "ReducerPairSeconds": 7.456924056339702,
+            "ReducerSetupSeconds": 34.492169168660254,
+            "ReducerJob": "worker-1",
+            "ReducerBlockSize": 48,
+            "StageWallSeconds": 578.7769768879999,
+            "WorkerPalacePeakGB": 150.1,
+            "ReducerPalacePeakGB": 84.1,
+            "WorkerNodeUsedGiB": 183.23162841796875,
+            "ReducerNodeUsedGiB": 129.57366180419922,
+            "Role": "control"
+          },
+          "p3": {
+            "H1": 10700949,
+            "Sources": 8,
+            "Order": 3,
+            "SecondsPerPCGIteration": 0.3072913787549669,
+            "MeanPCGIterations": 18.875,
+            "MaxPCGIterations": 27,
+            "MeanPerSourceSeconds": 6.001325342,
+            "LargestBlockMeanPerSourceSeconds": 6.001325342,
+            "PerSourceNonSolveSeconds": 0.20120056799999997,
+            "WorkerWallSeconds": 86.34152359799998,
+            "WorkerBlocks": [
+              {
+                "Name": "spatial-4-edge-e51d7380245e-p3-control-worker",
+                "Job": "worker-1",
+                "Sources": 8,
+                "WallSeconds": 86.34152359799998,
+                "NonSourceSeconds": 38.33092086199998,
+                "MeanPerSourceSeconds": 6.001325342
+              }
+            ],
+            "WorkerNonSourceSeconds": 38.33092086199998,
+            "ReducerWallSeconds": 34.26426966099996,
+            "ReducerReductionFraction": 0.027014485067453346,
+            "ReducerPairSeconds": 0.9256316011042781,
+            "ReducerSetupSeconds": 33.33863805989568,
+            "ReducerJob": "worker-1",
+            "ReducerBlockSize": 48,
+            "StageWallSeconds": 120.60579325899994,
+            "WorkerPalacePeakGB": 64.8,
+            "ReducerPalacePeakGB": 38.8,
+            "WorkerNodeUsedGiB": 102.54520416259766,
+            "ReducerNodeUsedGiB": 61.294071197509766,
+            "Role": "control"
+          }
+        },
+        "LocalEdge": {
+          "Name": "spatial-4-edge-e51d7380245e-p4-local-edge",
+          "Job": "worker-1",
+          "Order": 4,
+          "H1": 25167936,
+          "Sources": 8,
+          "WallSeconds": 280.890979688,
+          "PalaceTotalSeconds": 278.582,
+          "LinearSolveSeconds": 134.084,
+          "NonSolveSeconds": 146.806979688,
+          "PalacePeakGB": 198.5,
+          "NodeUsedGiB": 231.65827178955078,
+          "PCG": [
+            14,
+            16,
+            23,
+            22,
+            14,
+            14,
+            34,
+            13
+          ]
+        },
+        "ArchiveGB": 23.0,
+        "Jobs": {
+          "worker-1": {
+            "PBSJobID": "47290.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 981.353317005,
+            "EstimateSecondsWithPreflightAndMargin": 2521.822152951911,
+            "Stages": [
+              {
+                "Name": "spatial-4-edge-e51d7380245e-p5-control-worker",
+                "WallSeconds": 536.827883663,
+                "Sources": 8
+              },
+              {
+                "Name": "spatial-4-edge-e51d7380245e-p5-control-reducer",
+                "WallSeconds": 41.949093224999956,
+                "Sources": 0
+              },
+              {
+                "Name": "spatial-4-edge-e51d7380245e-p3-control-worker",
+                "WallSeconds": 86.34152359799998,
+                "Sources": 8
+              },
+              {
+                "Name": "spatial-4-edge-e51d7380245e-p3-control-reducer",
+                "WallSeconds": 34.26426966099996,
+                "Sources": 0
+              },
+              {
+                "Name": "spatial-4-edge-e51d7380245e-p4-local-edge",
+                "WallSeconds": 280.890979688,
+                "Sources": 0
+              }
+            ]
+          },
+          "worker-2": {
+            "PBSJobID": "47291.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 716.483438638,
+            "EstimateSecondsWithPreflightAndMargin": 2081.552328164536,
+            "Stages": [
+              {
+                "Name": "spatial-4-edge-e51d7380245e-p4-worker-block2",
+                "WallSeconds": 715.681193397,
+                "Sources": 40
+              }
+            ]
+          },
+          "worker-3": {
+            "PBSJobID": "47298.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 670.747997823,
+            "EstimateSecondsWithPreflightAndMargin": 2081.552328164536,
+            "Stages": [
+              {
+                "Name": "spatial-4-edge-e51d7380245e-p4-worker-block3",
+                "WallSeconds": 669.76128384,
+                "Sources": 40
+              }
+            ]
+          },
+          "worker-4": {
+            "PBSJobID": "47301.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 663.989358966,
+            "EstimateSecondsWithPreflightAndMargin": 2081.552328164536,
+            "Stages": [
+              {
+                "Name": "spatial-4-edge-e51d7380245e-p4-worker-block4",
+                "WallSeconds": 663.18781884,
+                "Sources": 40
+              }
+            ]
+          },
+          "reducer": {
+            "PBSJobID": "47358.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 71.69536534599999,
+            "EstimateSecondsWithPreflightAndMargin": 603.0032279793134,
+            "Stages": [
+              {
+                "Name": "spatial-4-edge-e51d7380245e-p4-reducer",
+                "WallSeconds": 70.532403344,
+                "Sources": 0
+              }
+            ]
+          }
+        }
+      },
+      "spatial-5-edge-9bfa8265e2e7": {
+        "EntityCounts": {
+          "Vertices": 599304,
+          "Edges": 3565335,
+          "TriangleFaces": 5258303,
+          "QuadFaces": 404668,
+          "Tetrahedra": 2424275,
+          "Prisms": 253188,
+          "Pyramids": 19476
+        },
+        "MeshSHA256": "d74be12f717a6de4d2e180e05d058c49c7dd23d602e41b3fc84a1a3e5b78c2af",
+        "Stages": {
+          "p4": {
+            "H1": 35941049,
+            "Sources": 185,
+            "Order": 4,
+            "SecondsPerPCGIteration": 1.1761199547059498,
+            "MeanPCGIterations": 14.172972972972973,
+            "MaxPCGIterations": 40,
+            "MeanPerSourceSeconds": 16.99157545301081,
+            "LargestBlockMeanPerSourceSeconds": 20.54106028425532,
+            "PerSourceNonSolveSeconds": 3.8719439532336963,
+            "WorkerWallSeconds": 3382.858224656,
+            "WorkerBlocks": [
+              {
+                "Name": "spatial-5-edge-9bfa8265e2e7-p4-worker-block2",
+                "Job": "worker-2",
+                "Sources": 47,
+                "WallSeconds": 1024.940162489,
+                "NonSourceSeconds": 59.510329128999956,
+                "MeanPerSourceSeconds": 20.54106028425532
+              },
+              {
+                "Name": "spatial-5-edge-9bfa8265e2e7-p4-worker-block3",
+                "Job": "worker-3",
+                "Sources": 46,
+                "WallSeconds": 772.740855784,
+                "NonSourceSeconds": 59.943651327,
+                "MeanPerSourceSeconds": 15.49559140123913
+              },
+              {
+                "Name": "spatial-5-edge-9bfa8265e2e7-p4-worker-block4",
+                "Job": "worker-4",
+                "Sources": 46,
+                "WallSeconds": 735.380690708,
+                "NonSourceSeconds": 59.93909512799996,
+                "MeanPerSourceSeconds": 14.683512947391305
+              },
+              {
+                "Name": "spatial-5-edge-9bfa8265e2e7-p4-worker-block5",
+                "Job": "worker-5",
+                "Sources": 46,
+                "WallSeconds": 849.7965156749999,
+                "NonSourceSeconds": 60.023690264999914,
+                "MeanPerSourceSeconds": 17.168974465434783
+              }
+            ],
+            "WorkerNonSourceSeconds": 60.023690264999914,
+            "ReducerWallSeconds": 135.32647533800002,
+            "ReducerReductionFraction": 0.639872849894815,
+            "ReducerPairSeconds": 86.59173744074647,
+            "ReducerSetupSeconds": 48.73473789725355,
+            "ReducerJob": "reducer",
+            "ReducerBlockSize": 48,
+            "StageWallSeconds": 3518.184699994,
+            "WorkerPalacePeakGB": 111.2,
+            "ReducerPalacePeakGB": 133.8,
+            "WorkerNodeUsedGiB": 148.49887466430664,
+            "ReducerNodeUsedGiB": 180.73993682861328,
+            "Role": "main"
+          },
+          "p5": {
+            "H1": 69905226,
+            "Sources": 8,
+            "Order": 5,
+            "SecondsPerPCGIteration": 4.35881247007874,
+            "MeanPCGIterations": 15.875,
+            "MaxPCGIterations": 23,
+            "MeanPerSourceSeconds": 69.70174723875,
+            "LargestBlockMeanPerSourceSeconds": 69.70174723875,
+            "PerSourceNonSolveSeconds": 0.5055992762500097,
+            "WorkerWallSeconds": 637.240204385,
+            "WorkerBlocks": [
+              {
+                "Name": "spatial-5-edge-9bfa8265e2e7-p5-control-worker",
+                "Job": "worker-1",
+                "Sources": 8,
+                "WallSeconds": 637.240204385,
+                "NonSourceSeconds": 79.62622647499995,
+                "MeanPerSourceSeconds": 69.70174723875
+              }
+            ],
+            "WorkerNonSourceSeconds": 79.62622647499995,
+            "ReducerWallSeconds": 60.72861302799993,
+            "ReducerReductionFraction": 0.169445184198846,
+            "ReducerPairSeconds": 10.290171020669886,
+            "ReducerSetupSeconds": 50.43844200733004,
+            "ReducerJob": "worker-1",
+            "ReducerBlockSize": 48,
+            "StageWallSeconds": 697.9688174129999,
+            "WorkerPalacePeakGB": 197.5,
+            "ReducerPalacePeakGB": 111.8,
+            "WorkerNodeUsedGiB": 232.22344970703125,
+            "ReducerNodeUsedGiB": 157.5714874267578,
+            "Role": "control"
+          },
+          "p3": {
+            "H1": 15269133,
+            "Sources": 8,
+            "Order": 3,
+            "SecondsPerPCGIteration": 0.4112792598181818,
+            "MeanPCGIterations": 17.875,
+            "MaxPCGIterations": 23,
+            "MeanPerSourceSeconds": 7.58693046,
+            "LargestBlockMeanPerSourceSeconds": 7.58693046,
+            "PerSourceNonSolveSeconds": 0.23531369074999997,
+            "WorkerWallSeconds": 114.21809226000005,
+            "WorkerBlocks": [
+              {
+                "Name": "spatial-5-edge-9bfa8265e2e7-p3-control-worker",
+                "Job": "worker-1",
+                "Sources": 8,
+                "WallSeconds": 114.21809226000005,
+                "NonSourceSeconds": 53.52264858000005,
+                "MeanPerSourceSeconds": 7.58693046
+              }
+            ],
+            "WorkerNonSourceSeconds": 53.52264858000005,
+            "ReducerWallSeconds": 49.824943254000004,
+            "ReducerReductionFraction": 0.02553219419344958,
+            "ReducerPairSeconds": 1.2721401268387338,
+            "ReducerSetupSeconds": 48.55280312716127,
+            "ReducerJob": "worker-1",
+            "ReducerBlockSize": 48,
+            "StageWallSeconds": 164.04303551400005,
+            "WorkerPalacePeakGB": 75.4,
+            "ReducerPalacePeakGB": 44.6,
+            "WorkerNodeUsedGiB": 114.1775131225586,
+            "ReducerNodeUsedGiB": 90.25067520141602,
+            "Role": "control"
+          }
+        },
+        "LocalEdge": {
+          "Name": "spatial-5-edge-9bfa8265e2e7-p4-local-edge",
+          "Job": "worker-1",
+          "Order": 4,
+          "H1": 35941049,
+          "Sources": 8,
+          "WallSeconds": 445.52876399499996,
+          "PalaceTotalSeconds": 443.148,
+          "LinearSolveSeconds": 163.98100000000002,
+          "NonSolveSeconds": 281.54776399499997,
+          "PalacePeakGB": 267.9,
+          "NodeUsedGiB": 302.02684783935547,
+          "PCG": [
+            11,
+            18,
+            22,
+            22,
+            15,
+            10,
+            22,
+            15
+          ]
+        },
+        "ArchiveGB": 50.0,
+        "Jobs": {
+          "worker-1": {
+            "PBSJobID": "47335.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 1308.553496853,
+            "EstimateSecondsWithPreflightAndMargin": 3473.563125950114,
+            "Stages": [
+              {
+                "Name": "spatial-5-edge-9bfa8265e2e7-p5-control-worker",
+                "WallSeconds": 637.240204385,
+                "Sources": 8
+              },
+              {
+                "Name": "spatial-5-edge-9bfa8265e2e7-p5-control-reducer",
+                "WallSeconds": 60.72861302799993,
+                "Sources": 0
+              },
+              {
+                "Name": "spatial-5-edge-9bfa8265e2e7-p3-control-worker",
+                "WallSeconds": 114.21809226000005,
+                "Sources": 8
+              },
+              {
+                "Name": "spatial-5-edge-9bfa8265e2e7-p3-control-reducer",
+                "WallSeconds": 49.824943254000004,
+                "Sources": 0
+              },
+              {
+                "Name": "spatial-5-edge-9bfa8265e2e7-p4-local-edge",
+                "WallSeconds": 445.52876399499996,
+                "Sources": 0
+              }
+            ]
+          },
+          "worker-2": {
+            "PBSJobID": "47336.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 1025.905579962,
+            "EstimateSecondsWithPreflightAndMargin": 3274.4035527326805,
+            "Stages": [
+              {
+                "Name": "spatial-5-edge-9bfa8265e2e7-p4-worker-block2",
+                "WallSeconds": 1024.940162489,
+                "Sources": 47
+              }
+            ]
+          },
+          "worker-3": {
+            "PBSJobID": "47348.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 774.1530012290001,
+            "EstimateSecondsWithPreflightAndMargin": 3212.9379372838184,
+            "Stages": [
+              {
+                "Name": "spatial-5-edge-9bfa8265e2e7-p4-worker-block3",
+                "WallSeconds": 772.740855784,
+                "Sources": 46
+              }
+            ]
+          },
+          "worker-4": {
+            "PBSJobID": "47349.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 736.346816151,
+            "EstimateSecondsWithPreflightAndMargin": 3212.9379372838184,
+            "Stages": [
+              {
+                "Name": "spatial-5-edge-9bfa8265e2e7-p4-worker-block4",
+                "WallSeconds": 735.380690708,
+                "Sources": 46
+              }
+            ]
+          },
+          "worker-5": {
+            "PBSJobID": "47356.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 850.697969962,
+            "EstimateSecondsWithPreflightAndMargin": 3212.9379372838184,
+            "Stages": [
+              {
+                "Name": "spatial-5-edge-9bfa8265e2e7-p4-worker-block5",
+                "WallSeconds": 849.7965156749999,
+                "Sources": 46
+              }
+            ]
+          },
+          "reducer": {
+            "PBSJobID": "47467.ip-192-168-54-24.us-west-2.compute.internal",
+            "ActualSeconds": 136.654934271,
+            "EstimateSecondsWithPreflightAndMargin": 1118.527971459921,
+            "Stages": [
+              {
+                "Name": "spatial-5-edge-9bfa8265e2e7-p4-reducer",
+                "WallSeconds": 135.32647533800002,
+                "Sources": 0
+              }
+            ]
+          }
+        }
+      }
+    },
+    "SetBy": {
+      "p3": {
+        "SecondsPerPCGIteration": {
+          "Value": 0.5207521613796161,
+          "SetBy": "spatial-4-edge-e51d7380245e"
+        },
+        "PerSourceNonSolveSeconds": {
+          "Value": 0.44587964253668483,
+          "SetBy": "spatial-3-edge-9cd906b81cbe"
+        },
+        "WorkerNonSourceSeconds": {
+          "Value": 65.09103796952783,
+          "SetBy": "spatial-2-edge-8ce3fb213a2d"
+        },
+        "ReducerSetupSeconds": {
+          "Value": 57.66375632504925,
+          "SetBy": "spatial-5-edge-9bfa8265e2e7"
+        },
+        "ReducerPairSeconds": {
+          "Value": 1.6261600051422724,
+          "SetBy": "spatial-2-edge-8ce3fb213a2d"
+        },
+        "WorkerPalacePeakGB": {
+          "Value": 131.9413901569785,
+          "SetBy": "spatial-2-edge-8ce3fb213a2d"
+        },
+        "ReducerPalacePeakGB": {
+          "Value": 74.21703196330043,
+          "SetBy": "spatial-2-edge-8ce3fb213a2d"
+        },
+        "WorkerNodeOverheadGiB": {
+          "Value": 46.053525953283085,
+          "SetBy": "spatial-3-edge-5d3b5e644745"
+        },
+        "ReducerNodeOverheadGiB": {
+          "Value": 48.71207037697716,
+          "SetBy": "spatial-5-edge-9bfa8265e2e7"
+        },
+        "MeanPCGIterations": {
+          "Value": 21.625,
+          "SetBy": "spatial-2-edge-8ce3fb213a2d"
+        },
+        "MaxPCGIterations": {
+          "Value": 27,
+          "SetBy": "spatial-2-edge-8ce3fb213a2d"
+        },
+        "ArchiveGBPerSource": {
+          "Value": 0.14182297866418705,
+          "SetBy": "previous model (scaled)"
+        }
+      },
+      "p4": {
+        "SecondsPerPCGIteration": {
+          "Value": 1.4547024745211596,
+          "SetBy": "spatial-4-edge-e51d7380245e"
+        },
+        "PerSourceNonSolveSeconds": {
+          "Value": 4.599698317711323,
+          "SetBy": "spatial-5-edge-9bfa8265e2e7"
+        },
+        "WorkerNonSourceSeconds": {
+          "Value": 78.20412618110979,
+          "SetBy": "spatial-2-edge-8ce3fb213a2d"
+        },
+        "ReducerSetupSeconds": {
+          "Value": 57.89471506499609,
+          "SetBy": "spatial-5-edge-9bfa8265e2e7"
+        },
+        "ReducerPairSeconds": {
+          "Value": 201.9586158491793,
+          "SetBy": "spatial-4-edge-e51d7380245e"
+        },
+        "WorkerPalacePeakGB": {
+          "Value": 178.0273551966063,
+          "SetBy": "spatial-2-edge-8ce3fb213a2d"
+        },
+        "ReducerPalacePeakGB": {
+          "Value": 171.2,
+          "SetBy": "spatial-3-edge-5d3b5e644745"
+        },
+        "WorkerNodeOverheadGiB": {
+          "Value": 47.62777379083825,
+          "SetBy": "spatial-3-edge-5d3b5e644745"
+        },
+        "ReducerNodeOverheadGiB": {
+          "Value": 61.66028167704715,
+          "SetBy": "spatial-3-edge-5d3b5e644745"
+        },
+        "ArchiveGBPerSource": {
+          "Value": 0.33291698026480837,
+          "SetBy": "spatial-2-edge-8ce3fb213a2d"
+        },
+        "MeanPCGIterations": {
+          "Value": 18.35333333333333,
+          "SetBy": "spatial-2-edge-8ce3fb213a2d"
+        },
+        "MaxPCGIterations": {
+          "Value": 40,
+          "SetBy": "spatial-10-edge-65450ff47b9b"
+        }
+      },
+      "p5": {
+        "SecondsPerPCGIteration": {
+          "Value": 5.480481776501813,
+          "SetBy": "spatial-4-edge-e51d7380245e"
+        },
+        "PerSourceNonSolveSeconds": {
+          "Value": 0.7710944037499985,
+          "SetBy": "spatial-3-edge-5d3b5e644745"
+        },
+        "WorkerNonSourceSeconds": {
+          "Value": 121.39348072203899,
+          "SetBy": "spatial-2-edge-8ce3fb213a2d"
+        },
+        "ReducerSetupSeconds": {
+          "Value": 59.93281145188176,
+          "SetBy": "spatial-5-edge-9bfa8265e2e7"
+        },
+        "ReducerPairSeconds": {
+          "Value": 12.868564430176173,
+          "SetBy": "spatial-3-edge-9cd906b81cbe"
+        },
+        "WorkerPalacePeakGB": {
+          "Value": 277.51942582305986,
+          "SetBy": "spatial-2-edge-8ce3fb213a2d"
+        },
+        "ReducerPalacePeakGB": {
+          "Value": 155.97989311098237,
+          "SetBy": "spatial-2-edge-8ce3fb213a2d"
+        },
+        "WorkerNodeOverheadGiB": {
+          "Value": 50.072858216565606,
+          "SetBy": "spatial-3-edge-5d3b5e644745"
+        },
+        "ReducerNodeOverheadGiB": {
+          "Value": 53.61289477146261,
+          "SetBy": "spatial-3-edge-5d3b5e644745"
+        },
+        "MeanPCGIterations": {
+          "Value": 21,
+          "SetBy": "spatial-2-edge-8ce3fb213a2d"
+        },
+        "MaxPCGIterations": {
+          "Value": 38,
+          "SetBy": "spatial-2-edge-8ce3fb213a2d"
+        },
+        "ArchiveGBPerSource": {
+          "Value": 0.6235785073887504,
+          "SetBy": "previous model (scaled)"
+        }
+      },
+      "LocalEdge": {
+        "NonSolveSeconds": {
+          "Value": 334.4663022101917,
+          "SetBy": "spatial-5-edge-9bfa8265e2e7"
+        },
+        "LinearSolveSeconds": {
+          "Value": 253.0909790293633,
+          "SetBy": "spatial-2-edge-8ce3fb213a2d"
+        },
+        "PalacePeakGB": {
+          "Value": 359.5503386859931,
+          "SetBy": "spatial-2-edge-8ce3fb213a2d"
+        },
+        "NodeUsedGiB": {
+          "Value": 439.28789175465823,
+          "SetBy": "spatial-2-edge-8ce3fb213a2d"
+        }
+      }
+    }
+  },
+  "Previous": {
+    "Path": "cost-model-physics11-b28.json",
+    "SHA256": "22ee226d91c081f9b9275b020e7f68220941f27b32829245d54344da8e8f5ee9",
+    "Provenance": "the model every qualify run up to this refit used: Measured per-stage cost rates of the Palace response worker / reducer / ordinary local-edge stages on one r8g.48xlarge node (192 ranks, frozen b28 executable), from the four-edge-physics-11 V-a run (PBS 45145; results/main/cost-summary.json and status.json of coupon-accuracy-assessment-20260913/four-edge-physics-11). estimate_stages.py scales them to another hybrid prism-tube coupon mesh by the exact H1 DOF ratio (time per PCG iteration, reducer, memory) with 1x / 1.5x / 2x the measured mean PCG counts; the same method predicted the physics-11 V-a run from physics-09 GO within 2% (47 vs 48 min, 187 vs 187 GB) and the gallery-06b run from V-a."
+  },
+  "SelfCheck": {
+    "Rule": "estimate_stages on every coupon of the run under this model, read per job as the split planner does: at the measured PCG counts every stage's estimate over its measured wall is >= 1 (MinimumStageEstimateOverActual) and so is every job's; the jobs at the worst PCG factor with preflight and margin over the coupon's measured node seconds is the conservatism ratio (EstimateWorstWithMarginOverActual); FitsOneJob is the single-job decision under this model; PreviousModel is the same check under the previous model",
+    "MinimumStageEstimateOverActual": 1.0019499229392426,
+    "Conservative": true,
+    "EstimateWorstWithMarginOverActual": {
+      "spatial-10-edge-65450ff47b9b": 3.7569217831060113,
+      "spatial-2-edge-8ce3fb213a2d": 3.2959593099130937,
+      "spatial-3-edge-9cd906b81cbe": 3.4771018227996104,
+      "spatial-3-edge-5d3b5e644745": 3.464400942250772,
+      "spatial-4-edge-e51d7380245e": 3.176490549481749,
+      "spatial-5-edge-9bfa8265e2e7": 3.7644965256869316
+    },
+    "MinimumJobEstimate1xOverStageWall": {
+      "spatial-10-edge-65450ff47b9b": 1.2328837888430533,
+      "spatial-2-edge-8ce3fb213a2d": 1.0778798535643905,
+      "spatial-3-edge-9cd906b81cbe": 1.1547853741521283,
+      "spatial-3-edge-5d3b5e644745": 1.237390307300085,
+      "spatial-4-edge-e51d7380245e": 1.022256421502439,
+      "spatial-5-edge-9bfa8265e2e7": 1.1872182098098163
+    },
+    "FitsOneJob": {
+      "spatial-10-edge-65450ff47b9b": true,
+      "spatial-2-edge-8ce3fb213a2d": true,
+      "spatial-3-edge-9cd906b81cbe": true,
+      "spatial-3-edge-5d3b5e644745": false,
+      "spatial-4-edge-e51d7380245e": true,
+      "spatial-5-edge-9bfa8265e2e7": true
+    },
+    "PreviousModel": {
+      "MinimumStageEstimateOverActual": 0.8350638742135256,
+      "EstimateWorstWithMarginOverActual": {
+        "spatial-10-edge-65450ff47b9b": 3.6177417042898123,
+        "spatial-2-edge-8ce3fb213a2d": 3.169118097813002,
+        "spatial-3-edge-9cd906b81cbe": 3.349660400378525,
+        "spatial-3-edge-5d3b5e644745": 3.370139481786079,
+        "spatial-4-edge-e51d7380245e": 3.0182567694256357,
+        "spatial-5-edge-9bfa8265e2e7": 3.622553591779576
+      },
+      "FitsOneJob": {
+        "spatial-10-edge-65450ff47b9b": true,
+        "spatial-2-edge-8ce3fb213a2d": true,
+        "spatial-3-edge-9cd906b81cbe": true,
+        "spatial-3-edge-5d3b5e644745": false,
+        "spatial-4-edge-e51d7380245e": true,
+        "spatial-5-edge-9bfa8265e2e7": true
+      }
+    }
   }
 }
