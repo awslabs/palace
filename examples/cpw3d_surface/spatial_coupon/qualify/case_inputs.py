@@ -45,6 +45,7 @@ for path in (str(HERE), str(TOOLS)):
     if path not in sys.path:
         sys.path.insert(0, path)
 import generate_spatial_response as producer  # noqa: E402
+from general_mesh_manifest import FABRICATED_CASE_KEY, case_kind  # noqa: E402
 import trace_basis  # noqa: E402
 from mixed_mesh import SHELL_LABEL_STRIDE  # noqa: E402
 
@@ -278,10 +279,15 @@ def derive(case, directory, *, mesh_path, physics_run, out_dir, mesh=None, outpu
         # The base config sees the parent labels the producer knows; the expansion maps them.
         config_available = (available - shell_labels) | shell_parents
     traces_remote = traces_remote or str(trace_dir)
+    # The coupon kind (decision 66): a thin case runs the producer's thin config - the
+    # sheet family 4000 + 100 slot + conductor under both MS and MA, SA = 3000 + slot.
+    fabricated = case_kind(case) == "fabricated"
+    if not fabricated and radial_shells is not None:
+        raise CaseInputError("a thin case carries no radial MA shells (decision 66: recorded at its cutoff)")
     config = producer.make_config(
         Path(output_root), "run", mesh if mesh is not None else str(mesh_path),
         [f"{traces_remote}/{path.name}" for path in traces], f"{traces_remote}/{zero_trace.name}",
-        terminal_conductors, True, physics_run["Order"], radius, float(fabrication["SubstratePermittivity"]),
+        terminal_conductors, fabricated, physics_run["Order"], radius, float(fabrication["SubstratePermittivity"]),
         layers, interfaces, edges, available_attributes=config_available,
         terminal_traces={conductor: f"{traces_remote}/{path.name}" for conductor, path in conductor_traces.items()})
     config["Problem"]["Output"] = output_root
@@ -300,6 +306,7 @@ def derive(case, directory, *, mesh_path, physics_run, out_dir, mesh=None, outpu
                         "Terminal": bool(entry.get("TerminalAttributes"))})
     zero_indices = [int(i) for i in contract.get("ZeroTraceIndices", [])]
     record = {"Origin": "case", "Directory": str(directory), "Model": model["Name"],
+              "Kind": "fabricated" if fabricated else "thin", "FabricatedCase": case.get(FABRICATED_CASE_KEY),
               "SourceSHA256": {role: files[role]["SHA256"] for role in files},
               "PhysicsRun": dict(physics_run), "Interfaces": interface_types(config),
               "InterfaceTypes": sorted(set(interface_types(config).values())),

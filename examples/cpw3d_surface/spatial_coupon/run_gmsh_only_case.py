@@ -53,7 +53,8 @@ import tomllib
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from estimate_build_cost import gate as estimate_gate  # noqa: E402
-from general_mesh_manifest import case_gates  # noqa: E402
+from general_mesh_manifest import (FABRICATED_CASE_KEY, THIN_RECIPE_KEY, case_gates, case_kind,  # noqa: E402
+                                   thin_build_options)
 from mesh_stage_contract import scope_guard_in_text  # noqa: E402
 BUILD_SUMMARY = "build-summary.json"
 TRACE_BASIS = {"BasisContract": ("source-basis-contract", "--trace-basis-contract"),
@@ -82,8 +83,10 @@ def number(value):
 
 def case_build_options(manifest, case):
     """The gmsh-build recipe options of a case: a production case executes the
-    manifest's ProductionRecipe.BuildCommandOptions; a case of a labeled calibration
-    manifest executes its Calibration.ProductionValues overridden by its
+    manifest's ProductionRecipe.BuildCommandOptions - a thin case (Kind thin, decision
+    66) overridden by ProductionRecipe.ThinRecipe.BuildCommandOptions (the recorded thin
+    convention; general_mesh_manifest.thin_build_options); a case of a labeled
+    calibration manifest executes its Calibration.ProductionValues overridden by its
     Calibration.BuildCommandOptions (decision 41).  Returns (options without the trace
     basis ratio, trace basis ratio or None, label); the ratio is taken from the
     options alone (no default; production 0.5 since decision 42) and is passed with
@@ -94,9 +97,15 @@ def case_build_options(manifest, case):
         if calibration.get("Relabel") is not None:
             raise ValueError(f"{case['Id']} is a label-only relabel of {calibration['Relabel'].get('BaseCase')} "
                              f"({calibration['Relabel'].get('Tool')}): the mesher never builds it")
+        if case_kind(case) != "fabricated":
+            raise ValueError(f"{case['Id']} is a thin case of a calibration manifest: thin coupons are production cases")
         options = dict(calibration["ProductionValues"], **calibration["BuildCommandOptions"])
         label = (f"CALIBRATION build {case['Id']} ({calibration['Label']}): options "
                  f"{calibration['BuildCommandOptions']} against production {calibration['ProductionValues']}")
+    elif case_kind(case) == "thin":
+        options = thin_build_options(manifest["ProductionRecipe"])
+        label = (f"Gmsh-only production build {case['Id']} (THIN, paired with {case[FABRICATED_CASE_KEY]}: "
+                 f"ThinRecipe options {manifest['ProductionRecipe'][THIN_RECIPE_KEY]['BuildCommandOptions']})")
     else:
         options = dict(manifest["ProductionRecipe"]["BuildCommandOptions"])
         label = f"Gmsh-only production build {case['Id']}"
@@ -177,6 +186,9 @@ def main():
     env = dict(os.environ, OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", JULIA_NUM_THREADS="1")
     S = {role: str(path) for role, path in paths.items()}
     variants = [variant["Id"] for variant in case["Variants"]]
+    # The coupon kind (fabricated / thin) is the mesher's, the publisher's and the
+    # ownership auditor's second positional token (decision 66).
+    kind = case_kind(case)
 
     def write_summary(status, *, stage=None, return_code=0, scope_guard=None, message=None):
         """The machine-readable outcome of this run (decision 48): Status "built",
@@ -263,7 +275,7 @@ def main():
                             if len(slots) > 1 else [])
         mesher_command = [
                julia, "--startup-file=no", f"--project={args.julia_project}", str(tools["mesh_spatial_coupon.jl"]),
-               S["Signature"], "fabricated", f"{root}/gmsh-build.msh", "--mask", S["Mask"], "--boundary", S["Boundary"],
+               S["Signature"], kind, f"{root}/gmsh-build.msh", "--mask", S["Mask"], "--boundary", S["Boundary"],
                "--radius", number(process["Radius"]), "--metal-thickness", number(process["MetalThickness"]),
                "--overetch", number(process["Overetch"]), "--sidewall-angle", number(process["SidewallAngle"]),
                "--top-radius", number(process["TopRounding"]), "--bottom-radius", number(process["TrenchRounding"]),
@@ -299,7 +311,7 @@ def main():
                "--artifact", f"canonical-ownership-quadrature-partition={root}/canonical.msh.interface-partition.csv.quadrature.csv",
                "--tool", f"runtime={julia}", "--tool", f"publisher={tools['relabel_frozen_interface_mesh.jl']}", "--",
                julia, "--startup-file=no", f"--project={args.julia_project}", str(tools["relabel_frozen_interface_mesh.jl"]),
-               str(directory), "fabricated", f"{root}/gmsh-build.msh", f"{root}/canonical.msh", "--process", S["Process"],
+               str(directory), kind, f"{root}/gmsh-build.msh", f"{root}/canonical.msh", "--process", S["Process"],
                "--signature", S["Signature"], "--boundary", S["Boundary"])
         subprocess.run([python, str(tools["canonical_mesh_build.py"]), f"{root}/input-hashes.json", f"{root}/gates.json",
                         f"{root}/canonical-tool-hashes.json", f"{root}/canonical-build.json",
@@ -330,7 +342,7 @@ def main():
                    "--canonical-build-record", f"{root}/canonical-build.json", "--transformed-semantic", f"{root}/{variant}-semantic.json",
                    "--transformed-supports", f"{root}/{variant}-supports.json", "--ownership", ownership,
                    "--ownership-quadrature", f"{ownership}.quadrature.csv", "--ownership-runtime", julia,
-                   "--ownership-auditor", str(tools["audit_rigid_coupon_ownership.jl"]), "--kind", "fabricated")
+                   "--ownership-auditor", str(tools["audit_rigid_coupon_ownership.jl"]), "--kind", kind)
         (root / "stages.done").touch()
         print(f"STAGES_DONE {root}", flush=True)
     if args.stages_only:

@@ -189,9 +189,11 @@ class StoredCampaignGateTest(unittest.TestCase):
         counts = {"Vertices": 428366, "Edges": 2489399, "TriangleFaces": 3630370, "QuadFaces": 276012,
                   "Tetrahedra": 1659373, "Prisms": 172692, "Pyramids": 13284}
         # The recorded estimate ran at the physics-11 model's measured block size 6 with the
-        # pair-scaled reducer formula (before decision 62(1)): reproduced as recorded with
-        # that model (kept as PREVIOUS_COST_MODEL since the decision-64a refit).
+        # pair-scaled reducer formula (before decision 62(1)) and the pre-streaming reducer
+        # peak: reproduced as recorded with that model (kept as PREVIOUS_COST_MODEL since the
+        # decision-64a refit; it carries no ReducerPeakStreaming block).
         model = {**estimate_stages.load_cost_model(estimate_stages.PREVIOUS_COST_MODEL), "ReducerEvaluationFraction": 0.0}
+        self.assertNotIn("ReducerPeakStreaming", model)
         estimate = estimate_stages.estimate(counts, [("p4-135", 4, 135), ("p5-8", 5, 8), ("p3-8", 3, 8)],
                                             local_edge=("local-edge", 4, 8), block_size=6, model=model)
         self.assertTrue(estimate["FitsOneJob"])
@@ -373,7 +375,7 @@ class ControlsPlanAndEstimateRuleTest(unittest.TestCase):
         profile = json.loads((HERE / "qualify" / "cluster-profile.json").read_text())
         estimate = {"Stages": {"p4-10": stage, "le": stage}, "JobSecondsEstimateByPCGFactor": {},
                     "JobSecondsEstimateWithPreflightAndMargin": {}, "MaxPalacePeakGBEstimate": 1.0, "FitsOneJob": True,
-                    "Decision": "fits"}
+                    "Decision": "fits", "CostModel": {"PalaceGBPerGiB": 1.0737}}
         plan = build_plan.build_plan(case_id="c", remote_case_root="/r/run/c", mesh={"Remote": "/r/m.msh", "SHA256": "a" * 64, "Local": "/l"},
                                      stage_layout=[{"Prefix": "x-p4", "Kind": "response", "EstimateKey": "p4-10"},
                                                    {"Prefix": "x-p4-local-edge", "Kind": "local-edge", "EstimateKey": "le"}],
@@ -390,9 +392,13 @@ class ControlsPlanAndEstimateRuleTest(unittest.TestCase):
         self.assertEqual(plan["Stages"][2]["Environment"], {})
         self.assertEqual(len(plan["PinnedSHA256"]), 5)
         self.assertEqual(plan["BinarySHA256"], "f" * 64)
+        self.assertEqual(plan["Instance"]["Type"], "m8g.48xlarge")
+        self.assertEqual(plan["MinimumMemAvailableBytes"], plan["Instance"]["MinimumMemAvailableBytes"])
         script = build_plan.render_job_script(profile=profile, remote_root="/r", remote_case_root="/r/run/c",
-                                              runner="/r/run/run_stages.py", job_name="j", walltime_seconds=21600)
+                                              runner="/r/run/run_stages.py", job_name="j", walltime_seconds=21600,
+                                              instance_type=plan["Instance"]["Type"])
         self.assertIn("#PBS -l walltime=06:00:00", script)
+        self.assertIn("#PBS -l instance_type=m8g.48xlarge", script)
         self.assertIn('python3 "/r/run/run_stages.py" "$D/plan.json"', script)
 
     def test_cost_model_closed_form_is_consistent_and_a_too_large_coupon_fails_closed(self):
@@ -464,10 +470,38 @@ class ControlsPlanAndEstimateRuleTest(unittest.TestCase):
         # The calibration (PBS 46685, two-edge p4 at b = 6 / 48): evaluation fraction 0.97,
         # 0.068 GB of reducer peak per resident field per million H1 DOFs (84 more fields at b = 48).
         self.assertEqual((model["ReducerEvaluationFraction"], model["ReducerResidentFieldGBPerMillionH1"]), (0.97, 0.068))
-        self.assertAlmostEqual(at6["ReducerPalacePeakGBEstimate"], measured["ReducerPalacePeakGB"])
-        self.assertAlmostEqual(at48["ReducerPalacePeakGBEstimate"] - at6["ReducerPalacePeakGBEstimate"],
+        self.assertAlmostEqual(at6["ReducerPalacePeakGBEstimatePrevious"], measured["ReducerPalacePeakGB"])
+        self.assertAlmostEqual(at48["ReducerPalacePeakGBEstimatePrevious"] - at6["ReducerPalacePeakGBEstimatePrevious"],
                                84 * 0.068 * measured["H1"] / 1e6)
         self.assertAlmostEqual(at48["ReducerResidentFieldsGBEstimate"], 84 * 0.068 * measured["H1"] / 1e6)
+        # The physics-11 model carries no streaming block: its reducer peak IS the previous term.
+        self.assertEqual(at48["ReducerPalacePeakGBEstimate"], at48["ReducerPalacePeakGBEstimatePrevious"])
+        # USER decision 2026-09-22 (B), on the current (decision-64a refit) model: the reducer
+        # peak of every stage is the streaming executable's node-used line (independent of b),
+        # >= 1.5x every measured node-used peak of the library-device-thin-01 calibration;
+        # the previous term (measured peak x H1 ratio + resident fields) stays recorded.
+        current = estimate_stages.load_cost_model()
+        streaming = current["ReducerPeakStreaming"]
+        self.assertEqual(streaming["Executable"], build_plan.DEFAULT_FROZEN_BINARY_SHA256)
+        self.assertEqual(streaming["Executable"], current["Provenance"]["FrozenExecutable"])
+        counts_now, sources_now = current["MeasuredMesh"]["EntityCounts"], current["Stages"]["p4"]["Sources"]
+        now6, now48 = (estimate_stages.estimate_stage(current, 4, sources_now, counts_now, b) for b in (6, 48))
+        self.assertEqual(now48["ReducerPalacePeakGBEstimate"], now6["ReducerPalacePeakGBEstimate"])
+        self.assertAlmostEqual(now48["ReducerPalacePeakGBEstimate"],
+                               estimate_stages.streaming_reducer_peak_gb(current, now48["H1Estimate"], sources_now))
+        self.assertAlmostEqual(now48["NodeUsedGiBEstimateReducer"], now48["ReducerPalacePeakGBEstimate"] / current["PalaceGBPerGiB"])
+        # The refit measured at b = 48: its previous term at b = 48 is the measured peak itself.
+        self.assertEqual(current["MeasuredBlockSize"], 48)
+        self.assertAlmostEqual(now48["ReducerPalacePeakGBEstimatePrevious"], current["Stages"]["p4"]["ReducerPalacePeakGB"])
+        self.assertIn("ReducerPeakStreaming", now48["ReducerPalacePeakGBRule"])
+        self.assertGreaterEqual(len(streaming["Measured"]), 9)
+        for row in streaming["Measured"]:
+            estimate_gib = estimate_stages.streaming_reducer_peak_gb(current, row["H1"], row["Sources"]) / current["PalaceGBPerGiB"]
+            self.assertGreaterEqual(estimate_gib, streaming["SafetyFactor"] * row["NodeUsedGiB"], row)
+            self.assertLess(estimate_gib, 2.5 * row["NodeUsedGiB"], row)
+        # The largest thin coupon's p5 control reducer (H1 67.7M, 8 sources) fits m8g.48xlarge.
+        big = estimate_stages.streaming_reducer_peak_gb(current, 67_716_756, 8) / current["PalaceGBPerGiB"]
+        self.assertLess(big, 0.6 * 768)
         # Reproduces the measured two-edge p4 pair (78 sources, H1 7.97M): 86.9 -> 15.3 s, 45.6 -> 91.1 GB.
         two_edge = {"Vertices": 91_000, "Edges": 600_000, "TriangleFaces": 1_000_000, "QuadFaces": 40_000,
                     "Tetrahedra": 470_000, "Prisms": 44_000, "Pyramids": 3_000}

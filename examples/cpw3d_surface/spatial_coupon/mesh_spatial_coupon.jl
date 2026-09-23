@@ -1019,8 +1019,13 @@ function required_region_cells(points, tetrahedra, corners, radius, spans, reach
     return required, span_distance, in_layer
 end
 
-# Movement basis of every surface vertex: null space of its triangle normals.
-function surface_movement_bases(points, triangles)
+# Movement basis of every surface vertex: null space of its triangle normals and,
+# for a vertex on a CAD curve (a line element), of the plane orthogonal to the
+# curve: the vertex stays on the curve.  A curve between two coplanar faces (the
+# thin sheet edge between the metal sheet and the SA plane, decision 66) is
+# invisible to the triangle normals alone, and a sheet-edge vertex moved in-plane
+# would change the metal footprint.
+function surface_movement_bases(points, triangles, lines=NTuple{2, Int}[])
     normals = Dict{Int, Vector{Vector{Float64}}}()
     for triangle in triangles
         a, b, c = (points[:, i] for i in triangle)
@@ -1029,6 +1034,16 @@ function surface_movement_bases(points, triangles)
         length_n > 0.0 || continue
         for i in triangle
             push!(get!(normals, i, Vector{Float64}[]), n ./ length_n)
+        end
+    end
+    for line in lines
+        a, b = (points[:, i] for i in line)
+        d = b .- a
+        length_d = norm(d)
+        length_d > 0.0 || continue
+        complement = nullspace(reshape(d ./ length_d, 1, 3))
+        for i in line, column in eachcol(complement)
+            push!(get!(normals, i, Vector{Float64}[]), collect(column))
         end
     end
     bases = Dict{Int, Matrix{Float64}}()
@@ -1490,7 +1505,7 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
     for (k, cell) in enumerate(tetrahedra), i in cell
         push!(incident[i], k)
     end
-    bases = surface_movement_bases(points, triangles)
+    bases = surface_movement_bases(points, triangles, lines)
     scaled_target = 2.0 * minimum_scaled_jacobian
     corner_target = 0.95 * maximum_corner_aspect
     original_scaled = [tetrahedron_scaled_jacobian([points[:, i] for i in cell])
@@ -3919,7 +3934,7 @@ end
 const RECIPE_SCOPE_RECIPE = "prism-tubes"
 const RECIPE_SCOPE_SUPPORTED_CLASSES = [
     "ContinuationVertices", "DeviceFootprint", "DownwardLayers", "ExteriorLoops", "HoleLoops",
-    "MultipleConductors", "MultipleLayers", "MultipleSlots", "TraceBasis"]
+    "MultipleConductors", "MultipleLayers", "MultipleSlots", "ThinMetal", "TraceBasis"]
 const RECIPE_SCOPE_GUARDS = [
     ("TopRounding", "inputs",
      "rounded metal top edges (TopRounding > 0): the tube rings surround a sharp edge"),
@@ -3928,8 +3943,6 @@ const RECIPE_SCOPE_GUARDS = [
      "vacuum sectors at a sharp trench wall"),
     ("SlopedSidewalls", "inputs",
      "sidewall angle below 90 degrees: the tube sections assume vertical metal faces"),
-    ("ThinMetal", "inputs",
-     "thin (non-fabricated) metal: no sidewall and no top / bottom edge pair to tube"),
     ("NoTrench", "inputs",
      "Overetch 0: the bottom tube needs an etched trench on its substrate side"),
     ("ShallowTrench", "build",
@@ -3960,7 +3973,8 @@ const RECIPE_SCOPE_RULE =
     "error message carries ScopeGuard[<Id>] (Guards); ExhibitedClasses are the classes " *
     "of this input among both lists, from the frozen inputs (loops, layers, process); " *
     "MetalLoops counts per plan-view loop the straight sides not on the outer box, and " *
-    "TubeCount = 2 x their sum (a top and a bottom tube per side of every loop)"
+    "TubeCount = TubesPerSide x their sum (a top and a bottom tube per side of every loop " *
+    "of a fabricated coupon, one sheet tube per side of a thin coupon; decision 66)"
 
 scope_guard_statement(id) = RECIPE_SCOPE_GUARDS[findfirst(guard -> guard[1] == id, RECIPE_SCOPE_GUARDS)][3]
 
@@ -4177,29 +4191,39 @@ const TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING = 0.5
 # pairs, the edge segments and the section description for the census.
 function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, ratio,
                            sector_degrees, metal_thickness, overetch, corner_radius, lc_tangent,
-                           lc_fine, lower, upper, tolerance)
-    overetch > 0.0 || scope_error("NoTrench", "Overetch $overetch")
+                           lc_fine, lower, upper, tolerance; fabricated::Bool=true)
+    fabricated && (overetch > 0.0 || scope_error("NoTrench", "Overetch $overetch"))
     sectors = round(Int, 270.0 / sector_degrees)
     abs(sectors * sector_degrees - 270.0) <= 1.0e-9 || error("Tube sector angle must divide 270 degrees")
     per_quadrant = round(Int, 90.0 / sector_degrees)
     abs(per_quadrant * sector_degrees - 90.0) <= 1.0e-9 || error("Tube sector angle must divide 90 degrees")
-    bound = min(overetch, 0.5 * metal_thickness, corner_radius)
+    # Thin metal (decision 66): the sheet has no thickness and no trench, so the only
+    # transverse bound is the corner isotropy radius (the facing rules below still hold).
+    bound = fabricated ? min(overetch, 0.5 * metal_thickness, corner_radius) : corner_radius
     rings = tube_ring_count(edge_size, ratio, bound)
     # Top edge: vacuum from the sidewall ray (-90) through the outward normal (0)
     # and up (90) to the top-face ray (180). Bottom edge: substrate from the
     # metal bottom face ray (180) to the trench wall ray (270), vacuum from the
     # trench wall past the outward normal (360) to the sidewall ray (450).
+    # Thin sheet edge: one full-turn section split by the sheet plane on the whole
+    # diameter - substrate from the sheet's substrate side (180) down (270) to the SA
+    # floor ray (360), vacuum from the SA floor up (450) to the sheet's vacuum side
+    # (540 = 180: a closed section, the sheet ray is both bounding rays).
     top_section = TubeSection(edge_size, ratio, rings,
                               [-90.0 + sector_degrees * j for j in 0:sectors], fill(2, sectors))
     bottom_section = TubeSection(edge_size, ratio, rings,
                                  [180.0 + sector_degrees * j for j in 0:sectors],
                                  vcat(fill(1, per_quadrant), fill(2, sectors - per_quadrant)))
+    full_turn = 4 * per_quadrant
+    sheet_section = TubeSection(edge_size, ratio, rings,
+                                [180.0 + sector_degrees * j for j in 0:full_turn],
+                                vcat(fill(1, 2 * per_quadrant), fill(2, 2 * per_quadrant)))
     radius = tube_radius(top_section)
     outer_ring = ring_sizes(top_section)[end]
     pyramid_height = TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING * outer_ring
-    radius + pyramid_height < overetch ||
+    fabricated && (radius + pyramid_height < overetch ||
         scope_error("ShallowTrench", "tube radius $radius + pyramid height $pyramid_height " *
-                                     "against Overetch $overetch")
+                                     "against Overetch $overetch"))
     clearance(angle) = (angle < pi - 1.0e-9 ? radius / tan(0.5 * angle) : 0.0) + outer_ring
     # Facing tubes (the sides of a hole carry tubes pointing into it): the hole must be
     # wider than two tube reaches, a reach being the tube radius, the pyramid height and
@@ -4220,9 +4244,10 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
     # Facing process layers (an upward layer below a downward one, the only pair
     # layer_groups admits): the vacuum gap between their metal top faces must exceed
     # two tube reaches, like the width of a hole.
+    face_offset = fabricated ? metal_thickness : 0.0
     for lower_layer in layers, upper_layer in layers
         lower_layer.sign > 0 && upper_layer.sign < 0 || continue
-        gap = (upper_layer.plane - metal_thickness) - (lower_layer.plane + metal_thickness)
+        gap = (upper_layer.plane - face_offset) - (lower_layer.plane + face_offset)
         gap > 2.0 * facing_reach ||
             scope_error("NarrowLayerGap", "vacuum gap $gap between the metal faces of the layers " *
                                           "at z = $(lower_layer.plane) (Nz = 1) and z = " *
@@ -4249,8 +4274,11 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
             e = cross(n, b)
             along = dot(e[1:2], segment.direction)
             abs(abs(along) - 1.0) <= 1.0e-12 || error("Tube frame is not aligned with the edge")
-            for (z, section) in ((layer.plane + layer.sign * metal_thickness, top_section),
-                                 (layer.plane, bottom_section))
+            placements = fabricated ?
+                ((layer.plane + layer.sign * metal_thickness, top_section),
+                 (layer.plane, bottom_section)) :
+                ((layer.plane, sheet_section),)
+            for (z, section) in placements
                 tube = if along > 0.0
                     EdgeTube([segment.start[1], segment.start[2], z], n, b, segment.s_start,
                              segment.s_end, lc_tangent)
@@ -4271,8 +4299,21 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
         "Rings" => rings, "RingSizes" => ring_sizes(top_section),
         "RingRadii" => copy(top_section.ring_radii), "Radius" => radius,
         "TransverseBound" => bound,
-        "RingRule" => "largest K with r_K + h_K <= min(Overetch, MetalThickness / 2, " *
-                      "CornerIsotropyRadius)",
+        "RingRule" => fabricated ?
+                      "largest K with r_K + h_K <= min(Overetch, MetalThickness / 2, " *
+                      "CornerIsotropyRadius)" :
+                      "largest K with r_K + h_K <= CornerIsotropyRadius (thin sheet: no " *
+                      "trench and no thickness bound the tube)",
+        "Kind" => fabricated ? "fabricated" : "thin",
+        "TubesPerSide" => fabricated ? 2 : 1,
+        "TubesPerSideRule" => fabricated ?
+                              "a top tube and a bottom tube per straight metal side" :
+                              "one sheet tube per straight metal side at the process plane " *
+                              "(decision 66: the thin sheet edge is one line where the metal " *
+                              "sheet, the SA floor and both dielectrics meet)",
+        # The thin coupon is recorded at its cutoff, never converged (decision 66): the
+        # inner ring size is the MA / MS cutoff of every thin surface participation.
+        "ThinCutoff" => fabricated ? nothing : edge_size,
         "SectorDegrees" => sector_degrees, "Sectors" => sectors,
         "PyramidHeight" => pyramid_height,
         "PyramidHeightOverOuterRing" => TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING,
@@ -4288,9 +4329,12 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
         "TubeFrameRule" => "b = (0, 0, Nz) of the tube's process layer, n the horizontal " *
                            "normal away from the metal, e = n x b; the top tube lies on the " *
                            "metal top face at plane + Nz x MetalThickness, the bottom tube on " *
-                           "the plane (Tubes[].Layer records Nz)",
-        "Top" => Dict("Angles" => top_section.angles, "Materials" => top_section.materials),
-        "Bottom" => Dict("Angles" => bottom_section.angles, "Materials" => bottom_section.materials))
+                           "the plane (Tubes[].Layer records Nz); a thin sheet tube lies on the plane",
+        "Top" => fabricated ? Dict("Angles" => top_section.angles, "Materials" => top_section.materials) : nothing,
+        "Bottom" => fabricated ? Dict("Angles" => bottom_section.angles, "Materials" => bottom_section.materials) : nothing,
+        "Sheet" => fabricated ? nothing :
+                   Dict("Angles" => sheet_section.angles, "Materials" => sheet_section.materials,
+                        "Closed" => sheet_section.closed))
     return tools, records, tubes, segments, description
 end
 
@@ -4621,8 +4665,9 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
     lower, upper, box_tolerance = box
     on_box(point) = on_outer_box(vcat(point, point), lower, upper, box_tolerance)
     tube_rows = Dict{String, Any}[]
+    tubes_per_side = description["TubesPerSide"]
     for (k, (tube, section)) in enumerate(tubes)
-        segment = segments[(k + 1) ÷ 2]
+        segment = segments[(k + tubes_per_side - 1) ÷ tubes_per_side]
         start_point = tube_point(tube, 0.0, 0.0, tube.s_start)
         end_point = tube_point(tube, 0.0, 0.0, tube.s_end)
         push!(tube_rows, Dict{String, Any}(
@@ -4635,7 +4680,7 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
             "Materials" => section.materials, "Conductor" => segment.conductor,
             "Plane" => segment.plane, "Hole" => segment.hole, "Layer" => segment.layer_sign,
             "CornerAngles" => collect(segment.corner_angles),
-            "Edge" => isodd(k) ? "top" : "bottom"))
+            "Edge" => tubes_per_side == 1 ? "sheet" : isodd(k) ? "top" : "bottom"))
     end
     thicknesses = reduce(vcat, tube_layer_thicknesses(tube) for (tube, _) in tubes)
     spacings = [row["Spacing"] for row in tube_rows]
@@ -4978,7 +5023,6 @@ function generate_spatial_coupon(;
             error("Prism tubes require --far-growth > 0 (band grading around the tubes)")
         isfinite(tube_sector_degrees) && 0.0 < tube_sector_degrees <= 90.0 ||
             error("Tube sector angle must lie in (0, 90] degrees")
-        fabricated || scope_error("ThinMetal", "kind thin")
         sidewall_angle == 90.0 || scope_error("SlopedSidewalls", "SidewallAngle $sidewall_angle")
         top_rounding == 0.0 || scope_error("TopRounding", "TopRounding $top_rounding")
         trench_rounding == 0.0 || scope_error("TrenchRounding", "TrenchRounding $trench_rounding")
@@ -5015,8 +5059,11 @@ function generate_spatial_coupon(;
     pullback_metal = metal_thickness / tan(deg2rad(sidewall_angle))
     etch_loops = etch_boundary === nothing ? nothing : read_boundary(etch_boundary)
     if etch_loops !== nothing
-        fabricated && sidewall_angle == 90.0 && top_rounding == 0.0 &&
-            trench_rounding == 0.0 || error("Explicit etch footprints require sharp vertical fabricated geometry")
+        # The bound footprint is the trench's plan view: a fabricated build lofts it and
+        # needs sharp vertical geometry; a thin build (decision 66) etches nothing - it
+        # checks the footprint carries every metal edge and records the bound file.
+        !fabricated || (sidewall_angle == 90.0 && top_rounding == 0.0 && trench_rounding == 0.0) ||
+            error("Explicit etch footprints require sharp vertical fabricated geometry")
         isempty(etch_loops) && error("Empty explicit etch footprint")
     end
     pullback_trench = overetch > 0.0 ? overetch / tan(deg2rad(sidewall_angle)) : 0.0
@@ -5246,6 +5293,10 @@ function generate_spatial_coupon(;
         vacuum, _ = occ.cut([outer], substrates, -1, true, false)
         tools = Tuple{Int32, Int32}[]
         depth = upper[3] - lower[3]
+        # Thin metal under the prism tubes (decision 66): one sheet tube per straight
+        # metal side at the process plane, fragmented together with the sheet faces.
+        prism_tubes && isempty(boundary_loops) &&
+            error("Prism tubes on thin metal require the classified plan-view boundary")
         for conductor in sort!(unique(edge.conductor for edge in edges))
             conductor_edges = [edge for edge in edges if edge.conductor == conductor]
             conductor_facets = [facet for facet in facets if facet.conductor == conductor]
@@ -5268,12 +5319,33 @@ function generate_spatial_coupon(;
             end
             append!(tools, conductor_tools)
         end
-        domains, domain_map = occ.fragment(vcat(substrates, vacuum), tools)
+        sheet_tools = length(tools)
+        if prism_tubes
+            tube_tools, tube_records, tubes, tube_segments, tube_sections =
+                build_edge_tubes!(occ, layers, boundary_loops, etch_loops, semantic_corners,
+                                  edge_size, edge_growth_ratio, tube_sector_degrees,
+                                  metal_thickness, overetch, corner_isotropy_radius,
+                                  lc_tangent, lc_fine, lower, upper, tolerance; fabricated=false)
+            append!(tools, tube_tools)
+        end
+        objects = vcat(substrates, vacuum)
+        domains, domain_map = occ.fragment(objects, tools)
         substrate_seed = domain_map[1:length(substrates)] |> Iterators.flatten |> collect
         vacuum_seed =
             domain_map[(length(substrates) + 1):(length(substrates) + length(vacuum))] |>
             Iterators.flatten |>
             collect
+        if prism_tubes
+            # The tube tools follow the sheet tools in the fragment map.
+            tube_volumes = Int32[tube_volume_after_fragment(record, index, domain_map,
+                                                            length(objects) + sheet_tools)
+                                 for (index, record) in enumerate(tube_records)]
+            for (index, record) in enumerate(tube_records)
+                material_seed = record.group[3] == 1 ? substrate_seed : vacuum_seed
+                (3, tube_volumes[index]) in material_seed ||
+                    error("Tube volume $(tube_volumes[index]) material differs from its section material")
+            end
+        end
     end
     surface_tools = surface_constraints === nothing ? Tuple{Int32,Int32}[] :
         surface_constraints(occ, boundary_loops, [(layer.plane,layer.sign) for layer in layers], tolerance)

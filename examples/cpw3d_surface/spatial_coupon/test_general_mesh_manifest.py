@@ -3064,7 +3064,35 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             rejected(lambda c: c["Scope"]["MetalLoops"][0].__setitem__("Sides", 3), "metal loops differ")
             rejected(lambda c: c["Scope"]["MetalLoops"][0].__setitem__("Hole", True), "hole loops differ")
             rejected(lambda c: c["PrismTubes"].__setitem__("TubeCount", 2) or c["PrismTubes"]["Tubes"].__delitem__(slice(2, 4)),
-                     "twice the straight sides")
+                     "TubesPerSide x the straight sides")
+            # Decision 66: the section names the command's kind and its tubes per side; a
+            # thin census records its cutoff as the inner size, a fabricated one none.
+            rejected(lambda c: c["PrismTubes"]["Section"].__setitem__("Kind", "thin"), "coupon kind and its tubes per side")
+            rejected(lambda c: c["PrismTubes"]["Section"].__setitem__("TubesPerSide", 1), "coupon kind and its tubes per side")
+            rejected(lambda c: c["PrismTubes"]["Section"].__setitem__("ThinCutoff", 0.001), "records a thin cutoff")
+            thin_report = copy.deepcopy(report)
+            thin_report["Command"].insert(2, "thin")
+            thin_census = copy.deepcopy(census)
+            thin_census["Scope"]["ExhibitedClasses"] = sorted(thin_census["Scope"]["ExhibitedClasses"] + ["ThinMetal"])
+            thin_census["PrismTubes"]["Section"].update({"Kind": "thin", "TubesPerSide": 1})
+            # A thin coupon etches nothing: its census records no footprint polygon.
+            with self.assertRaisesRegex(ValueError, "Thin coupon census records etch footprint polygons"):
+                validate_gmsh_build_census(thin_report, thin_census, semantic)
+            thin_census["FootprintPolygons"] = []
+            thin_census["FootprintSimplification"].update({"Polygons": 0, "RemovedVertices": 0,
+                                                           "MaximumRelativeDeviation": 0.0})
+            with self.assertRaisesRegex(ValueError, "TubesPerSide x the straight sides"):
+                validate_gmsh_build_census(thin_report, thin_census, semantic)
+            thin_census["PrismTubes"]["TubeCount"] //= 2
+            del thin_census["PrismTubes"]["Tubes"][1::2]
+            with self.assertRaisesRegex(ValueError, "does not record its cutoff"):
+                validate_gmsh_build_census(thin_report, thin_census, semantic)
+            thin_census["PrismTubes"]["Section"]["ThinCutoff"] = thin_census["PrismTubes"]["InnerSize"]
+            with self.assertRaisesRegex(ValueError, "lies on another layer"):
+                validate_gmsh_build_census(thin_report, thin_census, semantic)
+            for row in thin_census["PrismTubes"]["Tubes"]:
+                row["Edge"], row["Origin"][2] = "sheet", 0.0
+            self.assertIs(validate_gmsh_build_census(thin_report, thin_census, semantic), thin_census)
             # A hole loop in the bound inputs is a supported class: its sides count tubes
             # like the exterior loop's (TubeCount = 2 x the sides of ALL loops) and the
             # census must exhibit it; a guarded class (a downward layer) is rejected even
@@ -3083,7 +3111,7 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "metal loops differ"):
                 validate_gmsh_build_census(holed_report, holed, semantic)
             holed["Scope"]["MetalLoops"].append(dict(holed["Scope"]["MetalLoops"][0], Loop=2, Hole=True))
-            with self.assertRaisesRegex(ValueError, "twice the straight sides"):
+            with self.assertRaisesRegex(ValueError, "TubesPerSide x the straight sides"):
                 validate_gmsh_build_census(holed_report, holed, semantic)
             holed["PrismTubes"]["Tubes"] = 2 * holed["PrismTubes"]["Tubes"]
             holed["PrismTubes"]["TubeCount"] = 8
@@ -3443,7 +3471,8 @@ class AchievedAnisotropyDesignGateTest(unittest.TestCase):
         # with the bound trace basis only - a basis-binding case (four-edge) executes it
         # exactly once at 0.5, a case without a trace basis (the first fixture) never.
         self.assertEqual(self.production["ProductionRecipe"]["BuildCommandOptions"]["--trace-basis-size-ratio"], 0.5)
-        stages = {"gmsh-build": {"Command": ["julia", "mesh.jl", "--lc-tangent", ".05",
+        # The mesher names the case kind as a positional token (decision 66).
+        stages = {"gmsh-build": {"Command": ["julia", "mesh.jl", "fabricated", "--lc-tangent", ".05",
                                              "--edge-size", "0.00025", "--edge-growth-ratio", "2",
                                              "--corner-size", ".00025", "--far-growth", "0.5",
                                              "--prism-tubes", "true"]}}
@@ -3453,13 +3482,16 @@ class AchievedAnisotropyDesignGateTest(unittest.TestCase):
         validate_production_recipe_commands({}, case, stages)                 # no recipe block
         validate_production_recipe_commands(self.production, {**case, "Calibration": {}}, stages)
         good = stages["gmsh-build"]["Command"]
-        for command in (good[:2] + ["--lc-tangent", ".1"] + good[4:],
+        for command in (good[:3] + ["--lc-tangent", ".1"] + good[5:],
                         [token for token in good if token not in ("--far-growth", "0.5")],
                         good + ["--edge-size", "0.00025"],
-                        good[:2] + ["--edge-size", "0.004"] + good[6:]):
+                        good[:3] + ["--edge-size", "0.004"] + good[7:]):
             with self.assertRaisesRegex(ValueError, "gmsh-build command does not execute the production recipe"):
                 validate_production_recipe_commands(self.production, case,
                                                     {"gmsh-build": {"Command": command}})
+        with self.assertRaisesRegex(ValueError, "does not name the case kind fabricated"):
+            validate_production_recipe_commands(self.production, case,
+                                                {"gmsh-build": {"Command": good[:2] + good[3:]}})
         with self.assertRaisesRegex(ValueError, "without a bound trace basis"):
             validate_production_recipe_commands(self.production, case,
                                                 {"gmsh-build": {"Command": good + ["--trace-basis-size-ratio", "0.5"]}})

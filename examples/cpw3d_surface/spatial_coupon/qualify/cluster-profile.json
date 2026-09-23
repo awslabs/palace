@@ -2,23 +2,42 @@
   "Version": 1,
   "Copyright": "Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
   "SPDX-License-Identifier": "Apache-2.0",
-  "Purpose": "The PBS cluster facts every physics campaign of coupon-accuracy-assessment-20260913 ran with (physics-01..-13, gallery-05/06/06b/10): one exclusive r8g.48xlarge node, 192 MPI ranks through the bounded mpiexec wrapper, a 6 h walltime with the runner deadline 15 min inside it, the frozen response-archive executable under the remote root. `coupon-library qualify` reads it (default: this file; --cluster-profile overrides) and never hard-codes any of it; the host and the remote root come from --remote HOST:ROOT.",
-  "Name": "soca-green normal-g r8g.48xlarge",
+  "Purpose": "The PBS cluster facts every physics campaign of coupon-accuracy-assessment-20260913 ran with (physics-01..-13, gallery-05/06/06b/10, the decision-64a device library): one exclusive 192-vCPU Graviton4 node, 192 MPI ranks through the bounded mpiexec wrapper, a 6 h walltime with the runner deadline 15 min inside it, the frozen response-archive executable under the remote root. `coupon-library qualify` reads it (default: this file; --cluster-profile overrides) and never hard-codes any of it; the host and the remote root come from --remote HOST:ROOT. The instance type is chosen per job from Instances by the estimated Palace peak (InstanceRule; USER decision 2026-09-22: m8g.48xlarge default, r8g.48xlarge fallback; every campaign before that decision ran on r8g.48xlarge).",
+  "Name": "soca-green normal-g m8g.48xlarge (r8g.48xlarge fallback)",
   "PBSBin": "/opt/soca/soca-green1/schedulers/default/pbs/bin",
   "Queue": "normal-g",
   "Project": "DS-EM-FEM",
-  "InstanceType": "r8g.48xlarge",
+  "Instances": [
+    {
+      "Type": "m8g.48xlarge",
+      "vCPUs": 192,
+      "MemoryGiB": 768,
+      "NodeGiB": 742.49,
+      "NodeGiBOrigin": "measured MemTotal 797,242,068,992 B of the first m8g.48xlarge job's node (PBS 47537, library-device-thin-01 2-edge thin worker-1, 2026-09-23; MemAvailable at the preflight 746,798,010,368 B = 695.5 GiB against the 460.8 GiB guard)"
+    },
+    {
+      "Type": "r8g.48xlarge",
+      "vCPUs": 192,
+      "MemoryGiB": 1536,
+      "NodeGiB": 1485.13,
+      "NodeGiBOrigin": "measured MemTotal of the physics campaigns' nodes"
+    }
+  ],
+  "MemoryFitFraction": 0.6,
+  "InstanceRule": "a job runs on the first instance of Instances whose MemoryFitFraction x MemoryGiB holds the job's largest estimated Palace peak (the stage estimates' GB / the cost model's PalaceGBPerGiB): m8g.48xlarge (768 GiB, 192 Graviton4 vCPUs) is the default, r8g.48xlarge (1,536 GiB) the fallback for an estimated peak above 0.6 x 768 = 460.8 GiB (the device library's largest estimate is 338 GB, 7f03's p5 control; measured node peaks <= ~240 GiB; the streaming reducer ~34 GB); c8g.48xlarge (384 GiB) is deliberately absent - not safe for the p5 control stages of the largest coupons (USER decision 2026-09-22). The plan records the chosen instance (Instance) and its admission guard MinimumMemAvailableBytes = MemoryFitFraction x MemoryGiB, checked by run_stages before the first stage; the job script's #PBS -l instance_type is the chosen type",
   "SelectResources": "select=1:ncpus=192:mpiprocs=192",
   "PlaceResources": "place=scatter:excl",
   "ExtraResources": "efa_support=True,subnet_id=subnet-0c98d793bbcebb39a",
   "Nodes": 1,
   "Ranks": 192,
-  "NodeGiB": 1485.13,
   "WalltimeSeconds": 21600,
   "DeadlineSeconds": 20700,
   "DeadlineMarginSeconds": 120,
-  "MinimumMemAvailableBytes": 1073741824000,
-  "Modules": ["gcc/14.3.0", "openmpi/5.0.8-gcc14", "arm/armpl/24.10-gcc"],
+  "Modules": [
+    "gcc/14.3.0",
+    "openmpi/5.0.8-gcc14",
+    "arm/armpl/24.10-gcc"
+  ],
   "MPIExecWrapper": "mpiexec_bound.sh",
   "BinaryPattern": "palace-archive-estimate-{sha256}.bin",
   "UserJobCap": 40,

@@ -59,8 +59,11 @@ class RecordedRefitTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.previous = HERE / "qualify" / estimate_stages.PREVIOUS_COST_MODEL.name
+        # The ReducerPeakStreaming block (USER decision 2026-09-22 (B), calibrated on
+        # library-device-thin-01's node-used peaks) is carried, not refit: the committed model
+        # is the refit of the recorded run with that block carried.
         cls.model, cls.record = refit_cost_model.refit(RECORDS / "library-qualification.json", previous_path=cls.previous,
-                                                       previous_kept=cls.previous)
+                                                       previous_kept=cls.previous, streaming_path=estimate_stages.COST_MODEL)
         cls.committed = json.loads(estimate_stages.COST_MODEL.read_text())
 
     def test_previous_model_is_kept_byte_for_byte(self):
@@ -72,6 +75,37 @@ class RecordedRefitTest(unittest.TestCase):
 
     def test_committed_model_is_the_refit_of_the_recorded_run(self):
         self.assertEqual(self.committed, self.model)
+        # Without a streaming source the physics-11 previous model yields a model without the
+        # block (the pre-streaming reducer peak term), otherwise identical.
+        without, _ = refit_cost_model.refit(RECORDS / "library-qualification.json", previous_path=self.previous,
+                                            previous_kept=self.previous)
+        self.assertNotIn("ReducerPeakStreaming", without)
+        self.assertEqual({k: v for k, v in self.model.items() if k != "ReducerPeakStreaming"}, without)
+
+    def test_streaming_block_is_carried_unchanged_and_bound_to_the_frozen_executable(self):
+        streaming = self.committed["ReducerPeakStreaming"]
+        self.assertEqual(streaming["Executable"], self.committed["Provenance"]["FrozenExecutable"])
+        self.assertIn("carried", streaming["CarriedRule"])
+        self.assertEqual((streaming["NodeBaselineGiB"], streaming["NodeUsedGiBPerMillionH1"],
+                          streaming["NodeUsedGiBPerMillionH1PerSource"], streaming["SafetyFactor"]), (60.0, 2.2, 0.015, 1.5))
+        # Calibrated on the thin run's nine reducers, the line covers every measured reducer of
+        # the fabricated run this model is refit from by the same safety factor (18 stages).
+        stages = [stage for coupon in self.committed["Provenance"]["Coupons"].values() for stage in coupon["Stages"].values()]
+        self.assertEqual(len(stages), 18)
+        for stage in stages:
+            estimate_gib = (estimate_stages.streaming_reducer_peak_gb(self.committed, stage["H1"], stage["Sources"])
+                            / self.committed["PalaceGBPerGiB"])
+            self.assertGreaterEqual(estimate_gib, streaming["SafetyFactor"] * stage["ReducerNodeUsedGiB"], stage)
+        with tempfile.TemporaryDirectory() as tmp:
+            other = Path(tmp) / "other.json"
+            other.write_text(json.dumps({"ReducerPeakStreaming": {**streaming, "Executable": "0" * 64}}))
+            with self.assertRaises(refit_cost_model.RefitError):
+                refit_cost_model.refit(RECORDS / "library-qualification.json", previous_path=self.previous,
+                                       previous_kept=self.previous, streaming_path=other)
+            other.write_text(json.dumps({}))
+            with self.assertRaises(refit_cost_model.RefitError):
+                refit_cost_model.refit(RECORDS / "library-qualification.json", previous_path=self.previous,
+                                       previous_kept=self.previous, streaming_path=other)
 
     def test_refit_passes_the_closed_form_self_check_and_measured_block_size_48(self):
         with tempfile.TemporaryDirectory() as tmp:

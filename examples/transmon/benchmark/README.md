@@ -55,7 +55,28 @@ For thick-reference comparisons, use
 `../prepare_surface_response_electrostatic.py` to create the thin electrostatic config.
 It sets the same isotropic substrate permittivity used by the finite-metal reference
 (default `11.45`), includes port patches 6 and 7 in the grounded metal union, and uses the
-separately tagged transmon island as terminal attribute 9.
+separately tagged transmon island as terminal attribute 9. The checked-in
+`mesh/transmon_surface_p1.msh2` carries the whole metal sheet as physical surface 5;
+`../tag_island_conductor.py --mesh mesh/transmon_surface_p1.msh2 --output <mesh>` derives the
+tagged mesh (the edge-connected metal component touching no port patch becomes 9 "island";
+the ground plane and the feedline joined to it by the port patches stay 5). The library
+`Fabrication.InterfaceLayers.MS` permittivity must match the config's MS layer to 1e-10:
+when it differs from the substrate value (11.47 vs 11.45 for the transmon process), edit the
+MS `Permittivity` of the produced config and record it.
+
+The corrected device solve is meant to run with AMR (`--amr-max-its N`: the Refinement block of
+the recorded prism-library device runs, `--trace-coupling SurfaceMortar --mortar-oversampling 2`;
+the default stays one solve). On the coarse tagged mesh the refinement is marked at the metal
+edges and reproduces the same element path at every order (138k -> 6.3M elements, min h
+0.95 um -> 9 nm after 10 cycles, never below the 2 nm thin cutoff of the library); the corrected
+SA / MS / MA / C at p4-p5 land within -3 / -1 / +0.5 (MA raw-cutoff) / +0.1 % of the r5nm-t5um p5
+finite-metal reference for ~0.5-0.65 node-h (the reference: 50 node-h). Use a rank count whose
+partition keeps the full edge matching (768 ranks match 3,071 segments; 192 ranks drop 52 and
+shift the corrected values by 4-7 points; 384 ranks abort in ExtractMetalEdgeGeometry with the
+frozen 170439c4 executable). Record: `examples/cpw3d_surface/spatial_coupon/qualify/
+device-verification-20260923/amr/DEVICE-AMR-VERIFICATION.md`. `../amr_edge_resolution.py`
+reports the near-edge element sizes of an adapted mesh written with `--save-adapt-mesh`
+(only the final mesh survives a run: Palace writes through the iteration symlink).
 
 ## Corrected p=1 eigenmode benchmark
 

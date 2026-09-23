@@ -279,22 +279,29 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
 DEFAULT_REGISTER_JOBS = 2
 
 
+REGISTRATION_KEYS = ("Status", "Message", "FixtureVersion", "ContractSHA256", "Scope", "StoppedBy", "Work")
+
+
 def register_device_sources(record, *, manifest_path, mesh_recipe=None, work=None, python=sys.executable, julia=None,
-                            log=print, probe=None, jobs=DEFAULT_REGISTER_JOBS):
+                            log=print, probe=None, jobs=DEFAULT_REGISTER_JOBS, thin=True):
     """Step 4: register every produced source directory (idempotent by content); the
     registration record of each is attached to the device record and written back.
     The manifest-free part (digests, scope, the labels-only probe and the contract
     derivation: register_case.prepare_registration) runs for `jobs` coupons at once;
     the manifest append (register_case.commit_registration) is serial, in the device
-    record's coupon order (decision 62(2))."""
+    record's coupon order (decision 62(2)).  With `thin` (the default; decision 66) the
+    thin counterpart of every registered / reused fabricated coupon (<case>-thin, Kind
+    thin, the same source directory) is registered the same way afterwards - the device
+    correction needs the fabricated AND the thin response of every model - and recorded
+    under ThinCase / ThinRegistration."""
     manifest_path = Path(manifest_path).resolve()
     manifest = json.loads(manifest_path.read_text())
     recipe = mesh_recipe or shared_mesh_recipe(manifest)
     if not isinstance(jobs, int) or isinstance(jobs, bool) or jobs < 1:
         raise DeviceAdapterError(f"the registration pool size must be an integer >= 1, not {jobs!r}")
 
-    def prepare(coupon):
-        case_id = coupon["Case"]
+    def prepare(coupon, kind="fabricated"):
+        case_id = coupon["Case"] if kind == "fabricated" else register_case.thin_case_id(coupon["Case"])
         try:
             return register_case.prepare_registration(
                 case_id, coupon["Directory"], footprint=register_case.PRODUCER_DEFAULT_ETCH_FOOTPRINT,
@@ -302,12 +309,12 @@ def register_device_sources(record, *, manifest_path, mesh_recipe=None, work=Non
                 provenance=f"device {record['Device']['Config']} (SHA256 {record['Device']['SHA256'][:12]}...), requirement "
                            f"{coupon['Requirement']}, content hash {coupon['ContentHash'][:12]}",
                 work=(Path(work) / case_id) if work is not None else None, python=python, julia=julia,
+                kind=kind, fabricated_case=coupon["Case"] if kind == "thin" else None,
                 **({"probe": probe} if probe is not None else {}))
         except (register_case.RegistrationError, ValueError) as error:
             return error
 
-    def outcome(coupon, prepared):
-        case_id = coupon["Case"]
+    def outcome(case_id, prepared):
         try:
             if isinstance(prepared, Exception):
                 raise prepared
@@ -325,15 +332,32 @@ def register_device_sources(record, *, manifest_path, mesh_recipe=None, work=Non
         prepared = list(pool.map(prepare, coupons))
     prepare_seconds = time.monotonic() - started
     for coupon, item in zip(coupons, prepared):
-        registration = outcome(coupon, item)
-        coupon["Registration"] = {key: registration.get(key) for key in
-                                  ("Status", "Message", "FixtureVersion", "ContractSHA256", "Scope", "StoppedBy", "Work")}
+        registration = outcome(coupon["Case"], item)
+        coupon["Registration"] = {key: registration.get(key) for key in REGISTRATION_KEYS}
         log(f"{coupon['Case']}: registration {registration.get('Status')} - {registration.get('Message')}")
+    thin_seconds = None
+    if thin:
+        # The thin pair of every fabricated coupon now in the manifest (its prepare needs
+        # the fabricated case registered: validate_case_kind binds the pair).
+        eligible = [coupon for coupon in coupons if coupon["Registration"]["Status"] in
+                    (register_case.STATUS_REGISTERED, register_case.STATUS_REUSED)]
+        thin_started = time.monotonic()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(jobs, max(len(eligible), 1))) as pool:
+            thin_prepared = list(pool.map(lambda coupon: prepare(coupon, "thin"), eligible))
+        for coupon in coupons:
+            coupon["ThinCase"] = register_case.thin_case_id(coupon["Case"]) if coupon in eligible else None
+            coupon["ThinRegistration"] = None
+        for coupon, item in zip(eligible, thin_prepared):
+            registration = outcome(coupon["ThinCase"], item)
+            coupon["ThinRegistration"] = {key: registration.get(key) for key in REGISTRATION_KEYS}
+            log(f"{coupon['ThinCase']}: registration {registration.get('Status')} - {registration.get('Message')}")
+        thin_seconds = time.monotonic() - thin_started
     record["MeshRecipe"] = recipe
-    record["RegistrationPool"] = {"Jobs": jobs, "PrepareSeconds": prepare_seconds, "TotalSeconds": time.monotonic() - started,
+    record["RegistrationPool"] = {"Jobs": jobs, "PrepareSeconds": prepare_seconds, "ThinSeconds": thin_seconds,
+                                  "TotalSeconds": time.monotonic() - started,
                                   "Rule": "register_case.prepare_registration (digests, scope, labels-only probe, contract "
                                           "derivation) for Jobs coupons at once, then commit_registration serially in "
-                                          "coupon order (decision 62(2))"}
+                                          "coupon order (decision 62(2)); then the thin counterparts likewise (decision 66)"}
     (Path(record["Output"]) / DEVICE_RECORD).write_text(json.dumps(record, indent=2) + "\n")
     return record
 

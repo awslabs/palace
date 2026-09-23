@@ -25,35 +25,46 @@ struct TubeSection
     ring_radii::Vector{Float64}      # cumulative radii r_1 < ... < r_K (um), r_0 = 0 is the edge
     angles::Vector{Float64}          # rays theta_0 < ... < theta_J (degrees), J sectors
     materials::Vector{Int}           # material attribute of each sector (1 substrate, 2 vacuum)
+    closed::Bool                     # theta_J = theta_0 + 360: ray J is ray 0 (a full-turn sheet section)
 end
 
+# A section is closed when its rays span a full turn (the thin sheet edge: the metal
+# sheet ray is both the first and the last ray); its last ray shares the first ray's
+# nodes and CAD entities.
 function TubeSection(inner_size, ratio, rings, angles, materials)
     inner_size > 0.0 || error("tube inner size must be positive")
     ratio > 1.0 || error("tube ring ratio must exceed 1")
     rings >= 1 || error("at least one ring")
     length(materials) == length(angles) - 1 || error("one material per angular sector")
     all(diff(angles) .> 0.0) || error("rays must increase")
+    span = angles[end] - angles[1]
+    span <= 360.0 + 1.0e-9 || error("tube rays span more than a full turn")
     radii = [inner_size * (ratio^k - 1.0) / (ratio - 1.0) for k in 1:rings]
-    return TubeSection(radii, collect(Float64, angles), collect(Int, materials))
+    return TubeSection(radii, collect(Float64, angles), collect(Int, materials),
+                       abs(span - 360.0) <= 1.0e-9)
 end
 
 ring_sizes(section::TubeSection) = diff(vcat(0.0, section.ring_radii))
 tube_radius(section::TubeSection) = section.ring_radii[end]
 ring_count(section::TubeSection) = length(section.ring_radii)
 ray_count(section::TubeSection) = length(section.angles)
+# Rays with their own nodes: every ray of an open section, all but the last of a closed one.
+distinct_ray_count(section::TubeSection) = ray_count(section) - (section.closed ? 1 : 0)
 
 # Cross-section node (k, j): k = 0 the edge point (one node), k >= 1 ring k, ray j
-# (0-based). Returns the 1-based local index within one cross-section.
+# (0-based; the last ray of a closed section folds onto ray 0). Returns the 1-based
+# local index within one cross-section.
 function section_node(section::TubeSection, k, j)
     k == 0 && return 1
-    return 1 + (k - 1) * ray_count(section) + j + 1
+    j = section.closed ? mod(j, distinct_ray_count(section)) : j
+    return 1 + (k - 1) * distinct_ray_count(section) + j + 1
 end
-section_node_count(section::TubeSection) = 1 + ring_count(section) * ray_count(section)
+section_node_count(section::TubeSection) = 1 + ring_count(section) * distinct_ray_count(section)
 
 # Local (u, w) coordinates of every cross-section node, u along n, w along b.
 function section_coordinates(section::TubeSection)
     uw = zeros(2, section_node_count(section))
-    for k in 1:ring_count(section), j in 0:(ray_count(section) - 1)
+    for k in 1:ring_count(section), j in 0:(distinct_ray_count(section) - 1)
         theta = deg2rad(section.angles[j + 1])
         uw[:, section_node(section, k, j)] .= section.ring_radii[k] .* (cos(theta), sin(theta))
     end

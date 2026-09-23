@@ -287,6 +287,23 @@ def write_heldout(
     return trace
 
 
+# See generate_edge_response.EDGE_DISTANCES (the same rule; decision 66 part C).
+DEFAULT_EDGE_DISTANCES = [0.2]
+EDGE_DISTANCES = list(DEFAULT_EDGE_DISTANCES)
+
+
+def shells_requested():
+    return EDGE_DISTANCES != DEFAULT_EDGE_DISTANCES
+
+
+def ma_edge_attributes(foot, sidewall):
+    """See generate_edge_response.ma_edge_attributes: the fabricated MA's edge points are
+    the sidewall endpoints (bottom and top metal edge of every sidewall) under
+    --edge-distances shells (per-edge rows: AggregateResponseMatrix false), the foot
+    corners otherwise."""
+    return sidewall if shells_requested() else foot
+
+
 def dielectric(
     index, attributes, interface_type, edge_attributes, thickness, permittivity
 ):
@@ -300,7 +317,7 @@ def dielectric(
         "LossTan": loss_tangent,
         "EdgeAttributes": edge_attributes,
         "EdgeExcludeAttributes": [1],
-        "EdgeDistances": [0.2],
+        "EdgeDistances": sorted(EDGE_DISTANCES),
         "LocalizeEdgeEnergy": True,
         "SaveLocalEdgeEnergy": False,
         "EdgeFrameNormal": [0.0, 1.0, 0.0],
@@ -338,7 +355,7 @@ def make_config(
                 3,
                 [4, 5, 8, 9] if different_conductors else [4, 5],
                 "MA",
-                edge_attributes,
+                ma_edge_attributes(edge_attributes, [5, 9] if different_conductors else [5]),
                 *interface_layers["MA"],
             ),
         ]
@@ -409,7 +426,7 @@ def make_config(
             "Electrostatic": {
                 "Save": 0,
                 "ResponseMatrix": True,
-                "AggregateResponseMatrix": True,
+                "AggregateResponseMatrix": not shells_requested(),
             },
             "Linear": {
                 "Type": "BoomerAMG",
@@ -530,12 +547,19 @@ def main():
         default="100nm-metal-50nm-overetch-paired-edge-prototype",
     )
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--edge-distances", type=float, nargs="+", default=None,
+                        help="localized-energy radii (um) of every interface (default 0.2 alone; the largest must be 0.2)")
     parser.add_argument("--thin-mesh", type=Path)
     parser.add_argument("--fabricated-mesh", type=Path)
     topology = parser.add_mutually_exclusive_group()
     topology.add_argument("--different-conductors", action="store_true")
     topology.add_argument("--strip", action="store_true")
     args = parser.parse_args()
+    if args.edge_distances is not None:
+        distances = sorted(set(args.edge_distances))
+        if not distances or any(d <= 0.0 for d in distances) or max(distances) != DEFAULT_EDGE_DISTANCES[0]:
+            parser.error("--edge-distances must be positive and end at the coupon radius 0.2")
+        EDGE_DISTANCES[:] = distances
     material_values = (
         args.substrate_permittivity,
         args.sa_thickness,

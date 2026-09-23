@@ -325,12 +325,13 @@ write_strip_inputs(directory, sign; x=0.6, y=0.2, plane=0.0) =
 
 # Build the loop coupon under coarse prism-tube options at Radius 0.5; returns the
 # census and the mesh path.
-function build_strip_coupon(directory, sign; points=nothing, stem=sign > 0 ? "up" : "down")
+function build_strip_coupon(directory, sign; points=nothing, stem=sign > 0 ? "up" : "down",
+                            fabricated=true)
     signature, boundary, mask, semantic = points === nothing ?
         write_strip_inputs(directory, sign) : write_loop_inputs(directory, points, sign)
     mesh = joinpath(directory, "coupon-$stem.msh")
     census = joinpath(directory, "census-$stem.json")
-    generate_spatial_coupon(; signature=signature, mask=mask, boundary=boundary, fabricated=true,
+    generate_spatial_coupon(; signature=signature, mask=mask, boundary=boundary, fabricated=fabricated,
                             filename=mesh, radius=0.5, metal_thickness=0.1, overetch=0.05,
                             sidewall_angle=90.0, top_rounding=0.0, trench_rounding=0.0,
                             lc_fine=0.05, lc_tangent=0.1, lc_far=0.3, max_nodes=2_000_000,
@@ -484,6 +485,76 @@ end
     end
 end
 
+@testset "thin sheet under the prism tubes: closed section, one tube per side, sheet labels (decision 66)" begin
+    # The sheet section spans a full turn: the sheet ray (180) is both bounding rays, the
+    # last ray folds onto the first (shared nodes, one CAD face), substrate below the plane
+    # (180..360) and vacuum above (360..540); the fabricated sections stay open.
+    sheet = TubeSection(0.01, 2.0, 3, [180.0 + 30.0 * j for j in 0:12], vcat(fill(1, 6), fill(2, 6)))
+    @test sheet.closed && ray_count(sheet) == 13 && distinct_ray_count(sheet) == 12
+    @test section_node(sheet, 2, 12) == section_node(sheet, 2, 0) && section_node(sheet, 1, 11) != section_node(sheet, 1, 0)
+    @test section_node_count(sheet) == 1 + 3 * 12 && size(section_coordinates(sheet), 2) == section_node_count(sheet)
+    @test material_groups(sheet) == [(0, 5, 1), (6, 11, 2)]
+    open_section = TubeSection(0.01, 2.0, 3, [-90.0 + 30.0 * j for j in 0:9], fill(2, 9))
+    @test !open_section.closed && distinct_ray_count(open_section) == 10 &&
+          section_node(open_section, 1, 9) != section_node(open_section, 1, 0)
+    @test_throws ErrorException TubeSection(0.01, 2.0, 3, [0.0, 200.0, 400.0], [1, 2])
+    # build_edge_tubes! on thin metal: one tube per side at the plane, the closed sheet
+    # section, the corner radius as the only transverse bound, no trench guard.
+    points = [(-0.6, -0.2), (0.6, -0.2), (0.6, 0.2), (-0.6, 0.2)]
+    loop = (conductor=1, plane=0.0, hole=false, points=points, classes=fill("Physical", 4))
+    corners = [(p[1], p[2], 0.0) for p in points]
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    gmsh.model.add("thin-frames")
+    lower = [-2.1, -1.7]; upper = [2.1, 1.7]
+    _, records, thin_tubes, segments, description = build_edge_tubes!(
+        gmsh.model.occ, [(plane=0.0, sign=1, edges=nothing)], [loop], nothing, corners,
+        0.01, 2.0, 30.0, 0.1, 0.0, 0.1, 0.1, 0.05, lower, upper, 1.0e-9; fabricated=false)
+    @test length(thin_tubes) == 4 == length(segments) && length(records) == 8
+    @test all(tube.origin[3] == 0.0 && section.closed && section.materials == vcat(fill(1, 6), fill(2, 6))
+              for (tube, section) in thin_tubes)
+    @test description["Kind"] == "thin" && description["TubesPerSide"] == 1 && description["ThinCutoff"] == 0.01
+    @test description["TransverseBound"] == 0.1 && description["Top"] === nothing && description["Sheet"]["Closed"]
+    @test description["Rings"] == tube_ring_count(0.01, 2.0, 0.1)
+    _, _, fab_tubes, _, fab_description = build_edge_tubes!(
+        gmsh.model.occ, [(plane=0.0, sign=1, edges=nothing)], [loop], nothing, corners,
+        0.01, 2.0, 30.0, 0.1, 0.05, 0.1, 0.1, 0.05, lower, upper, 1.0e-9)
+    @test length(fab_tubes) == 8 && fab_description["Kind"] == "fabricated" &&
+          fab_description["TubesPerSide"] == 2 && fab_description["ThinCutoff"] === nothing
+    gmsh.finalize()
+    # The thin strip coupon builds and passes every gate: one sheet label (4000 family,
+    # MS below / MA above one surface) and the SA plane (3000), the tube rows on the
+    # plane with Edge "sheet", the cutoff recorded, ThinMetal exhibited.
+    mktempdir() do directory
+        census, mesh = build_strip_coupon(directory, 1; stem="thin", fabricated=false)
+        tubes = census["PrismTubes"]
+        @test tubes["TubeCount"] == 4 && tubes["Section"]["Kind"] == "thin" &&
+              tubes["Section"]["TubesPerSide"] == 1 && tubes["Section"]["ThinCutoff"] == 0.01
+        @test all(row["Edge"] == "sheet" && row["Origin"][3] == 0.0 && row["Layer"] == 1 for row in tubes["Tubes"])
+        @test census["Scope"]["ExhibitedClasses"] == ["ExteriorLoops", "ThinMetal"]
+        areas = Dict(row["Attribute"] => row["Area"] for row in census["InterfaceAreas"])
+        @test sort(collect(keys(areas))) == [1, 3000, 4001]
+        @test isapprox(areas[4001], 1.2 * 0.4; atol=1.0e-9)
+        box = census["CouponBox"]
+        plane_area = (box["Upper"][1] - box["Lower"][1]) * (box["Upper"][2] - box["Lower"][2])
+        @test isapprox(areas[3000] + areas[4001], plane_area; atol=1.0e-9)
+        quality = tubes["Quality"]
+        for kind in ("Tetrahedron", "Prism", "Pyramid")
+            @test quality[kind]["PositiveOrientation"] && quality[kind]["MaximumJacobianCondition"] <= 1000.0
+        end
+        @test quality["Tetrahedron"]["MinimumScaledJacobian"] >= 0.01
+        @test all(<=(4.0), census["SeedQualityOptimization"]["CornerAspectsAfter"])
+        # Twelve sectors per layer over K rings: 12 x (1 + 2 (K - 1)) prisms and 12 pyramids per layer.
+        rings = tubes["Section"]["Rings"]
+        @test rings == tube_ring_count(0.01, 2.0, 0.1)
+        @test tubes["Prisms"] == 12 * (1 + 2 * (rings - 1)) * tubes["Layers"] && tubes["Pyramids"] == 12 * tubes["Layers"]
+        # The sheet is one physical surface: no node is duplicated at the folded ray.
+        _, cells = read_mesh_cells(mesh)
+        @test size(cells[6], 2) == tubes["Prisms"] && size(cells[7], 2) == tubes["Pyramids"]
+        @info "thin strip coupon" elements=quality["Total"] prisms=tubes["Prisms"]
+    end
+end
+
 @testset "un-etched plane of a Radius-0.5 coupon is labeled 3000 (decisions 48 / 49)" begin
     # The producer-default collar (3 x Radius) of an L-shaped conductor leaves the box
     # corner opposite its notch un-etched: box [-1.5, 2.7] x [-1.5, 2.5] minus the
@@ -630,6 +701,8 @@ end
     @test "DownwardLayers" in RECIPE_SCOPE_SUPPORTED_CLASSES
     @test exhibited_scope_classes(edges, [loop], layers, false, 80.0, 0.005, 0.001, 0.0, false, false) ==
           ["ExteriorLoops", "NoTrench", "SlopedSidewalls", "ThinMetal", "TopRounding", "TrenchRounding"]
+    # Decision 66: thin metal is a supported class of the recipe (one sheet tube per side).
+    @test "ThinMetal" in RECIPE_SCOPE_SUPPORTED_CLASSES && !("ThinMetal" in ids)
     # The metal loop records count the sides not on the box: the L-shaped loop has
     # three (its four other sides lie on the box faces).
     records = metal_loop_records([loop, hole], lower, upper, 1.0e-9)

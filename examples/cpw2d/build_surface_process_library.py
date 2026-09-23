@@ -11,6 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import ma_shells_2d
+
 
 ROOT = Path(__file__).resolve().parent
 EDGE_MESH_GENERATOR = ROOT / "mesh" / "mesh_edge_coupon.jl"
@@ -90,6 +92,23 @@ def write_json(path, data):
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
+def write_ma_shells(args, directory, solves):
+    """The per-shell MA records of a --edge-distances run (ma_shells_2d.py: MA_raw / MA_tail /
+    MA_sharp of the fabricated solve, MA_raw at the cutoff of the thin one) next to the
+    coupon's library; {solve: record path} (empty without shells)."""
+    if not getattr(args, "edge_distances", None):
+        return {}
+    records = {}
+    for solve in solves:
+        kind = "thin" if solve.endswith("_thin") else "fabricated"
+        record = ma_shells_2d.analyze(directory / "postpro" / solve, kind=kind)
+        path = directory / f"ma-shells-{kind}.json"
+        write_json(path, record)
+        (directory / f"ma-shells-{kind}.md").write_text(ma_shells_2d.markdown(record))
+        records[solve] = str(path)
+    return records
+
+
 def generator_fingerprint(paths):
     digest = hashlib.sha256()
     for path in paths:
@@ -158,6 +177,12 @@ def pair_mesh_command(args, kind, width, mode, output):
     ]
 
 
+def edge_distance_options(args):
+    """--edge-distances of both response generators when the builder names shells."""
+    distances = getattr(args, "edge_distances", None)
+    return ["--edge-distances", *[str(d) for d in distances]] if distances else []
+
+
 def pair_response_command(args, width, topology_flag, directory):
     command = [
         sys.executable,
@@ -183,6 +208,7 @@ def pair_response_command(args, width, topology_flag, directory):
         "--output",
         directory,
         *material_options(args),
+        *edge_distance_options(args),
     ]
     if topology_flag:
         command.append(topology_flag)
@@ -219,6 +245,7 @@ def edge_response_command(args, directory):
         "--output",
         directory,
         *material_options(args),
+        *edge_distance_options(args),
     ]
 
 
@@ -261,6 +288,12 @@ def coupon_spec(args, topology, width):
             "FineSize": args.lc_fine,
             "FarSize": args.lc_far,
             "Order": args.mesh_order,
+        },
+        "MAShells": {
+            "EdgeDistances": sorted(args.edge_distances) if args.edge_distances else [0.2],
+            "Rule": ("localized interface energies at every EdgeDistances radius (surface-response-matrix.csv rows per "
+                     "R (m)); with the 3D thin ring radii the 2D MA is reported per shell and MA_sharp follows the "
+                     "spatial coupons' estimator (ma_shells_2d.py; decision 66 part C)"),
         },
         "Response": {
             "BasisSize": args.basis_size,
@@ -308,7 +341,7 @@ def build_isolated(args, work):
         directory / "heldout_edge_fabricated.json",
     ]
     if args.prepare_only:
-        return directory / "process-library.json", configs, False
+        return directory / "process-library.json", configs, False, {}
 
     solves = ("edge_thin", "edge_fabricated")
     heldout_solves = ("heldout_edge_thin", "heldout_edge_fabricated")
@@ -325,7 +358,7 @@ def build_isolated(args, work):
             raise RuntimeError("Palace did not write all isolated-edge response matrices")
         if not heldout_complete(directory, heldout_solves):
             raise RuntimeError("Palace did not complete isolated-edge held-out solves")
-    return directory / "process-library.json", configs, True
+    return directory / "process-library.json", configs, True, write_ma_shells(args, directory, solves)
 
 
 def build_coupon(args, topology, mode, topology_flag, width, work):
@@ -351,7 +384,7 @@ def build_coupon(args, topology, mode, topology_flag, width, work):
         directory / "heldout_edge_pair_fabricated.json",
     ]
     if args.prepare_only:
-        return directory / "process-library.json", configs, False
+        return directory / "process-library.json", configs, False, {}
 
     solves = ("edge_pair_thin", "edge_pair_fabricated")
     heldout_solves = (
@@ -376,7 +409,7 @@ def build_coupon(args, topology, mode, topology_flag, width, work):
             raise RuntimeError(
                 f"Palace did not complete held-out {topology} solve at w={width:g} um"
             )
-    return directory / "process-library.json", configs, True
+    return directory / "process-library.json", configs, True, write_ma_shells(args, directory, solves)
 
 
 def add_process_metadata(path, args, width_sets):
@@ -429,6 +462,8 @@ def parse_args():
     parser.add_argument("--top-radius", type=float, default=0.01)
     parser.add_argument("--bottom-radius", type=float, default=0.01)
     parser.add_argument("--lc-fine", type=float, default=0.002)
+    parser.add_argument("--edge-distances", type=float, nargs="+", default=None,
+                        help="localized-energy radii (um) of every interface, ending at 0.2 (default 0.2 alone)")
     parser.add_argument("--lc-far", type=float, default=0.05)
     parser.add_argument("--mesh-order", type=int, default=2)
     parser.add_argument("--basis-size", type=int, default=96)
@@ -543,7 +578,7 @@ def main():
         library_has_topology(path, "IsolatedEdge") for path in libraries
     )
     if not args.skip_isolated and not base_has_isolated:
-        library, configs, complete = build_isolated(args, work)
+        library, configs, complete, shells = build_isolated(args, work)
         libraries.append(library)
         manifest["Coupons"].append(
             {
@@ -551,6 +586,7 @@ def main():
                 "Library": str(library),
                 "Configs": [str(path) for path in configs],
                 "Complete": complete,
+                "MAShells": shells or None,
             }
         )
         write_json(output / "build-manifest.json", manifest)
@@ -561,7 +597,7 @@ def main():
         widths = getattr(args, attribute)
         width_sets[topology] = widths
         for width in widths:
-            library, configs, complete = build_coupon(
+            library, configs, complete, shells = build_coupon(
                 args, topology, mode, topology_flag, width, work
             )
             libraries.append(library)
@@ -572,6 +608,7 @@ def main():
                     "Library": str(library),
                     "Configs": [str(path) for path in configs],
                     "Complete": complete,
+                    "MAShells": shells or None,
                 }
             )
             write_json(output / "build-manifest.json", manifest)

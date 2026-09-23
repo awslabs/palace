@@ -922,6 +922,7 @@ def build_straight(coupons, args, parameters, cache):
             "FineSize": args.straight_lc_fine,
             "FarSize": args.straight_lc_far,
             "Order": args.mesh_order,
+            "EdgeDistances": sorted(getattr(args, "straight_edge_distances", None) or [0.2]),
         },
         "ProcessResolution": resolution,
         "Response": {
@@ -1003,6 +1004,8 @@ def build_straight(coupons, args, parameters, cache):
             args.coupon_depth,
             *material_options(parameters),
         ]
+        if getattr(args, "straight_edge_distances", None):
+            command.extend(["--edge-distances", *[str(d) for d in args.straight_edge_distances]])
         if args.julia_project:
             command.extend(["--julia-project", args.julia_project])
         if not isolated:
@@ -2438,6 +2441,16 @@ def parse_args():
         help=(
             "Coarse-to-fine multipliers on --cluster-lc-fine used for the "
             "mesh-resolution convergence gate"
+        ),
+    )
+    parser.add_argument(
+        "--straight-edge-distances",
+        type=float,
+        nargs="+",
+        default=None,
+        help=(
+            "localized-energy radii (um) of the StraightEdgeBuilder interfaces, ending at 0.2 "
+            "(default 0.2 alone); the 3D thin ring radii give the 2D MA per shell (decision 66 part C)"
         ),
     )
     parser.add_argument("--corner-lc-fine", type=float, default=0.02)

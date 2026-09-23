@@ -23,10 +23,15 @@ non-solve wall from Palace's elapsed-time report.  ReducerEvaluationFraction and
 ReducerResidentFieldGBPerMillionH1 cannot be re-measured from a run at one block
 size and keep the previous values (the resident-field growth for b > 48 is an upper
 bound under the streaming Gram).  The previous model is kept as a file and bound by
-digest under Previous.
+digest under Previous.  The ReducerPeakStreaming block (USER decision 2026-09-22 (B):
+the reducer peak as a node-used line of the streaming executable, calibrated on measured
+node-used peaks, not on the Palace peaks this refit reads) is carried from
+--reducer-peak-streaming (default: the --previous model when it carries one) and must
+name the run's frozen executable.
 
 usage: refit_cost_model.py --qualification library-qualification.json [--build-record library-build.json]
-       --previous cost-model.json --previous-kept PATH [--reference-case CASE] --out cost-model.json --record refit.json
+       --previous cost-model.json --previous-kept PATH [--reducer-peak-streaming MODEL] [--reference-case CASE]
+       --out cost-model.json --record refit.json
 """
 import argparse
 import hashlib
@@ -395,7 +400,8 @@ def self_check(model, measurements, block_size, profile):
     return out
 
 
-def refit(qualification_path, *, build_record_path=None, previous_path, previous_kept, reference_case=None, profile=None):
+def refit(qualification_path, *, build_record_path=None, previous_path, previous_kept, streaming_path=None,
+          reference_case=None, profile=None):
     qualification_path = Path(qualification_path)
     record_dir = qualification_path.parent
     qualification = json.loads(qualification_path.read_text())
@@ -434,6 +440,13 @@ def refit(qualification_path, *, build_record_path=None, previous_path, previous
     if len(executables) != 1 or executables[0] is None:
         raise RefitError(f"the coupons ran different frozen executables {executables}")
     executable = executables[0]
+    streaming_source = json.loads(Path(streaming_path).read_text()) if streaming_path else previous
+    streaming = streaming_source.get("ReducerPeakStreaming")
+    if streaming_path and streaming is None:
+        raise RefitError(f"--reducer-peak-streaming {streaming_path} carries no ReducerPeakStreaming block")
+    if streaming is not None and streaming.get("Executable") != executable:
+        raise RefitError(f"the ReducerPeakStreaming calibration names executable {streaming.get('Executable')}, "
+                         f"the run's frozen executable is {executable}")
     pbs = sorted(job["PBSJobID"].split(".")[0] for m in measurements for job in m["Jobs"].values() if job.get("PBSJobID"))
     model = {"Version": 2,
              "Copyright": previous["Copyright"], "SPDX-License-Identifier": previous["SPDX-License-Identifier"],
@@ -461,6 +474,16 @@ def refit(qualification_path, *, build_record_path=None, previous_path, previous
                                           + f" KEPT by the {qualification_path.name} refit as an upper bound: the streaming one-pass "
                                           "Gram executable keeps N x (4 Q_local + L_local) x 8 bytes resident whatever b, so any "
                                           f"b > {block_size} adds at most this much (not re-measured: every reducer ran at b = {block_size})")
+    if streaming is not None:
+        # A node-used calibration of the streaming executable (measured node peaks, not the
+        # Palace peaks this refit scales): carried as stated.
+        model["ReducerPeakStreaming"] = {**streaming,
+                                         "CarriedRule": (f"carried by the {qualification_path.name} refit unchanged: the block is a "
+                                                         "node-used calibration of the streaming executable (USER decision "
+                                                         "2026-09-22 (B), library-device-thin-01's reducers), not re-derivable from "
+                                                         "the Palace peaks this refit reads; its Executable is checked against the "
+                                                         "run's frozen executable; estimate_stages applies it to every reducer "
+                                                         "stage of this model")}
     model["Stages"] = stages
     model["LocalEdge"] = local_edge
     model["RateRule"] = ("per stage and quantity the largest value over the run's coupons after scaling to the reference H1 "
@@ -519,13 +542,16 @@ def main(argv=None):
     parser.add_argument("--build-record", type=Path, help="library-build.json (default: next to the qualification, else its recorded path)")
     parser.add_argument("--previous", type=Path, default=estimate_stages.COST_MODEL, help="the model to replace")
     parser.add_argument("--previous-kept", type=Path, required=True, help="the byte-identical copy of --previous that stays in the tree")
+    parser.add_argument("--reducer-peak-streaming", type=Path,
+                        help="the model whose ReducerPeakStreaming block is carried (default: --previous when it has one)")
     parser.add_argument("--reference-case", help="the coupon whose mesh the rates are expressed on (default: the largest H1)")
     parser.add_argument("--cluster-profile", type=Path, default=estimate_stages.CLUSTER_PROFILE)
     parser.add_argument("--out", type=Path, required=True, help="the refit cost model")
     parser.add_argument("--record", type=Path, required=True, help="the refit record (measurements, maxima, self-check)")
     args = parser.parse_args(argv)
     model, record = refit(args.qualification, build_record_path=args.build_record, previous_path=args.previous,
-                          previous_kept=args.previous_kept, reference_case=args.reference_case,
+                          previous_kept=args.previous_kept, streaming_path=args.reducer_peak_streaming,
+                          reference_case=args.reference_case,
                           profile=json.loads(args.cluster_profile.read_text()))
     args.out.write_text(json.dumps(model, indent=2) + "\n")
     args.record.write_text(json.dumps(record, indent=2) + "\n")
