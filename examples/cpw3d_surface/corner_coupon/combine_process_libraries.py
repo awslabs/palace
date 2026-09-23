@@ -3,6 +3,7 @@
 """Combine response models into one portable fabrication-process library."""
 
 import argparse
+import hashlib
 import json
 import math
 import re
@@ -25,6 +26,16 @@ PATH_NAMES = {
     "ThinSurfaceMatrix": "thin-surface-response-matrix.csv",
     "BasisPoints": "basis-points.csv",
 }
+
+
+def sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def source_record(path, library):
+    """Provenance of one input library: its path, digest, name and model names."""
+    return {"Path": str(path), "SHA256": sha256(path), "Name": library.get("Name"),
+            "Version": library["Version"], "Models": [model.get("Name") for model in library["Models"]]}
 
 
 def model_directory(index, name):
@@ -140,11 +151,13 @@ def main():
         result["TraceLiftVersion"] = trace_lift_version
     if known_fabrication and len(known_fabrication) == len(fabrication):
         result["Fabrication"] = merged_fabrication
+    result["Sources"] = [source_record(path, library) for path, library in loaded]
     names = set()
     index = 0
     interpolation = []
     for source_path, library in loaded:
         source_root = source_path.parent
+        combined_from = {"Path": str(source_path), "SHA256": sha256(source_path)}
         default_depth = library.get("CouponDepth")
         for source_model in library["Models"]:
             if (
@@ -169,9 +182,17 @@ def main():
             relative_directory = model_directory(index, name)
             model_destination = destination / relative_directory
             model_destination.mkdir(parents=True, exist_ok=True)
+            model["CombinedFrom"] = combined_from
             for field in PATH_FIELDS:
                 if field not in model:
                     continue
+                if not isinstance(model[field], str):
+                    # Palace reads every matrix path as a string (ThinMatrix unconditionally):
+                    # a model without the file (a qualify NotLoadable entry) cannot be combined.
+                    raise ValueError(
+                        f"{name} field {field} is {model[field]!r}, not a file path"
+                        + (f" ({model['NotLoadable'].get('Reason')})" if isinstance(model.get("NotLoadable"), dict) else "")
+                    )
                 source = Path(model[field])
                 if not source.is_absolute():
                     source = source_root / source

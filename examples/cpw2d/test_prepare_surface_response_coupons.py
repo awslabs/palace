@@ -230,6 +230,42 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             self.assertEqual(combined["Models"], [])
             self.assertEqual(combined["Fabrication"], {"InterfaceLayers": {}})
 
+    def test_combiner_records_source_libraries_and_refuses_a_null_matrix_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            header = '"Version": 3, "MatchingRadius": 2.0, "Fabrication": {"InterfaceLayers": {}}, '
+            (root / "a").mkdir()
+            (root / "a" / "fab.csv").write_text("basis_i\n")
+            (root / "a" / "thin.csv").write_text("basis_i\n")
+            first = root / "a" / "process-library.json"
+            first.write_text(
+                '{' + header + '"Name": "spatial", "Models": [{"Name": "cluster", '
+                '"FabricatedMatrix": "fab.csv", "ThinMatrix": "thin.csv"}]}\n'
+            )
+            second = root / "b.json"
+            second.write_text(
+                '{' + header + '"Name": "corners", "Models": [{"Name": "corner", '
+                '"FabricatedMatrix": "' + str(root / "a" / "fab.csv") + '", "ThinMatrix": null, '
+                '"NotLoadable": {"Reason": "no thin matrices"}}]}\n'
+            )
+            output = root / "combined"
+            argv = ["combine_process_libraries.py", "--output", str(output), str(first)]
+            with mock.patch.object(sys, "argv", argv):
+                COMBINER.main()
+            combined = PREPARE.load_json(output / "process-library.json")
+            resolved = str(first.resolve())
+            self.assertEqual(
+                combined["Sources"],
+                [{"Path": resolved, "SHA256": COMBINER.sha256(first), "Name": "spatial",
+                  "Version": 3, "Models": ["cluster"]}],
+            )
+            self.assertEqual(combined["Models"][0]["CombinedFrom"],
+                             {"Path": resolved, "SHA256": COMBINER.sha256(first)})
+            self.assertTrue((output / combined["Models"][0]["ThinMatrix"]).is_file())
+            with mock.patch.object(sys, "argv", argv + [str(second)]):
+                with self.assertRaisesRegex(ValueError, "corner field ThinMatrix is None.*no thin matrices"):
+                    COMBINER.main()
+
     def test_corner_radius_interpolation_qualification(self):
         metadata = {
             "MatchingRadius": 2.0,
