@@ -1,0 +1,23 @@
+	Command being timed: "/data/home/simlap/coupon_accuracy_assessment_20260913/mpiexec_bound.sh -x PALACE_RESPONSE_ARCHIVE_DIR -x PALACE_RESPONSE_REDUCE_ONLY -x PALACE_RESPONSE_BLOCK_SIZE -n 192 /data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b.bin /data/home/simlap/coupon_accuracy_assessment_20260913/library-device-transmon-03/spatial-10-edge-65450ff47b9b/main/spatial-10-edge-65450ff47b9b-p4/reducer.json"
+	User time (seconds): 23658.12
+	System time (seconds): 670.00
+	Percent of CPU this job got: 18285%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 2:13.04
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 1722484
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 73252
+	Minor (reclaiming a frame) page faults: 76932001
+	Voluntary context switches: 1327241
+	Involuntary context switches: 1735510
+	Swaps: 0
+	File system inputs: 107214536
+	File system outputs: 286264
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

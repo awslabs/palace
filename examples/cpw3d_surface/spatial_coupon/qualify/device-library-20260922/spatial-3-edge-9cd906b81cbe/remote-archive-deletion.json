@@ -1,0 +1,10 @@
+{
+  "Archives": [
+    "/data/home/simlap/coupon_accuracy_assessment_20260913/library-device-transmon-03/spatial-3-edge-9cd906b81cbe/main/spatial-3-edge-9cd906b81cbe-p4/archive",
+    "/data/home/simlap/coupon_accuracy_assessment_20260913/library-device-transmon-03/spatial-3-edge-9cd906b81cbe/main/spatial-3-edge-9cd906b81cbe-p5-control/archive",
+    "/data/home/simlap/coupon_accuracy_assessment_20260913/library-device-transmon-03/spatial-3-edge-9cd906b81cbe/main/spatial-3-edge-9cd906b81cbe-p3-control/archive"
+  ],
+  "SizesBeforeDeletion": "30G\t/data/home/simlap/coupon_accuracy_assessment_20260913/library-device-transmon-03/spatial-3-edge-9cd906b81cbe/main/spatial-3-edge-9cd906b81cbe-p4/archive\n2.7G\t/data/home/simlap/coupon_accuracy_assessment_20260913/library-device-transmon-03/spatial-3-edge-9cd906b81cbe/main/spatial-3-edge-9cd906b81cbe-p5-control/archive\n603M\t/data/home/simlap/coupon_accuracy_assessment_20260913/library-device-transmon-03/spatial-3-edge-9cd906b81cbe/main/spatial-3-edge-9cd906b81cbe-p3-control/archive",
+  "DeletedUTC": "2026-09-22T20:40:44Z",
+  "Remaining": ""
+}

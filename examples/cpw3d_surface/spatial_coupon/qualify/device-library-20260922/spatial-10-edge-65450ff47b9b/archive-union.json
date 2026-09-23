@@ -1,0 +1,12 @@
+{
+  "UTC": "2026-09-22T17:19:11Z",
+  "Stages": {
+    "spatial-10-edge-65450ff47b9b-p4": {
+      "Directory": "/data/home/simlap/coupon_accuracy_assessment_20260913/library-device-transmon-03/spatial-10-edge-65450ff47b9b/main/spatial-10-edge-65450ff47b9b-p4/archive",
+      "Expected": 36672,
+      "Found": 36672,
+      "OK": true,
+      "Rule": "sources x ranks files source-*-rank-*-V.bin (one potential per source and rank)"
+    }
+  }
+}

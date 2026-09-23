@@ -1,0 +1,68 @@
+{
+  "NodesBlockIdentical": true,
+  "ElementsIdenticalApartFromShellLabels": true,
+  "Elements": 3420977,
+  "RelabeledElements": 62207,
+  "RelabeledPerParent": {
+    "6001": 62207
+  },
+  "CensusRelabeledElements": 62207,
+  "ShellLabels": [
+    16001,
+    26001,
+    36001,
+    46001,
+    56001,
+    66001,
+    76001,
+    86001,
+    96001,
+    106001,
+    116001,
+    126001,
+    136001,
+    146001,
+    156001
+  ],
+  "PhysicalNamesAdded": [
+    16001,
+    26001,
+    36001,
+    46001,
+    56001,
+    66001,
+    76001,
+    86001,
+    96001,
+    106001,
+    116001,
+    126001,
+    136001,
+    146001,
+    156001
+  ],
+  "PhysicalNamesRemoved": [
+    6001
+  ],
+  "Previous": {
+    "Path": "/tmp/coupon-device-transmon-delaunay-20260921/spatial-3-edge-5d3b5e644745/identity.msh",
+    "SHA256": "e038c5efbb50145aacc18f768317344f03b8af1a47e0482a0296d9ab1ffe62fc",
+    "Bytes": 158635446
+  },
+  "Current": {
+    "Path": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-5d3b5e644745/identity.msh",
+    "SHA256": "39341124dbdac781836caa2558d334b75b17e89cca04ea6402da447683e1d019",
+    "Bytes": 158635902
+  },
+  "Census": {
+    "Path": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-5d3b5e644745/identity.msh.radial-shells.json",
+    "SHA256": "1813327183aca2e602de0c97f94c1d5d620bcb7a64a44ca8bc5256e9619a4dda"
+  },
+  "Receipt": {
+    "Path": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-5d3b5e644745/identity-receipt.json",
+    "ParentLabeledMeshSHA256": "e038c5efbb50145aacc18f768317344f03b8af1a47e0482a0296d9ab1ffe62fc",
+    "ParentLabeledEqualsPrevious": true
+  },
+  "Verdict": "labels-only",
+  "Rule": "the current identity equals the previous production identity in the $Nodes block and in every element apart from the (physical, elementary) pair of the MA elements, whose new label is a shell (10000 x ordinal + parent) of the old label bound in the census"
+}

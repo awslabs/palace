@@ -1,0 +1,271 @@
+{
+  "GatesFile": "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/spatial_coupon/qualify/qualification-gates.json",
+  "GatesSHA256": "0bee514a86dd53bc67a47ec4b9e3856779990ef8ff04490c4355dc2476e3c09d",
+  "FreeView": "every source of the reference that is not a contract ZeroTraceIndices knot (PEC-constrained library knots whose 3D coupon energies are nonzero) and whose reference and run diagonal domain energies are nonzero",
+  "ReferenceAnchor": null,
+  "GatedOrder": 4,
+  "AnchorRule": "the main stage at the reference order is gated when the run has one (same-order comparison); otherwise the first main order against the anchor",
+  "Interfaces": [
+    "MA",
+    "MS",
+    "SA"
+  ],
+  "NotApplicable": [],
+  "Gates": {
+    "PSequenceControls": {
+      "Statement": "for every control source the p-step d45 = (p_high - p_main) / |p_high| of the domain energy is within 1% and that of every participation p_MA_sharp / p_MS / p_SA within 5% (controls at the orders below and above the main order)",
+      "Passed": true,
+      "Controls": {
+        "1": {
+          "E": {
+            "StepToHigherOrder": 2.2172591893686547e-05,
+            "StepFromLowerOrder": -0.00019288454271046703,
+            "Bound": 0.01,
+            "Passed": true,
+            "r": -0.11495266329852638
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": 0.007177379372992912,
+            "StepFromLowerOrder": 0.010214033504231817,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": 0.7026978489956219
+          },
+          "p_MS": {
+            "StepToHigherOrder": 0.0018534056942086047,
+            "StepFromLowerOrder": -0.003506371214071439,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": -0.5285822809549346
+          },
+          "p_SA": {
+            "StepToHigherOrder": 0.0011280938322778134,
+            "StepFromLowerOrder": 0.0026062882638312784,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": 0.43283540348660454
+          }
+        },
+        "2": {
+          "E": {
+            "StepToHigherOrder": -2.6650472243200718e-05,
+            "StepFromLowerOrder": -0.0001852361774395794,
+            "Bound": 0.01,
+            "Passed": true,
+            "r": 0.14387293352505942
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": 0.006059964808833514,
+            "StepFromLowerOrder": 0.007822911483698765,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": 0.7746431519084875
+          },
+          "p_MS": {
+            "StepToHigherOrder": 0.0024249210136078657,
+            "StepFromLowerOrder": -0.004318000478487966,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": -0.5615842392071713
+          },
+          "p_SA": {
+            "StepToHigherOrder": 0.0009256543835790746,
+            "StepFromLowerOrder": 0.0018727325632595143,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": 0.4942800705979938
+          }
+        },
+        "3": {
+          "E": {
+            "StepToHigherOrder": -1.263978326751915e-05,
+            "StepFromLowerOrder": -4.8074438729574786e-05,
+            "Bound": 0.01,
+            "Passed": true,
+            "r": 0.26292107825989686
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": 0.007933702504503164,
+            "StepFromLowerOrder": -0.007320289471645602,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": -1.0837962809030375
+          },
+          "p_MS": {
+            "StepToHigherOrder": 0.0019808992296942284,
+            "StepFromLowerOrder": -0.0034744735081913324,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": -0.5701293231979204
+          },
+          "p_SA": {
+            "StepToHigherOrder": 0.00463917918187413,
+            "StepFromLowerOrder": 0.007036173957130853,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": 0.6593326444370418
+          }
+        },
+        "7": {
+          "E": {
+            "StepToHigherOrder": -8.19715493962676e-05,
+            "StepFromLowerOrder": -0.0010707285763350053,
+            "Bound": 0.01,
+            "Passed": true,
+            "r": 0.07655679619278291
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": 0.005989251118069122,
+            "StepFromLowerOrder": -0.007207794022854272,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": -0.8309409368634247
+          },
+          "p_MS": {
+            "StepToHigherOrder": 0.0024282241848220094,
+            "StepFromLowerOrder": -0.00306017312042336,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": -0.7934924232280285
+          },
+          "p_SA": {
+            "StepToHigherOrder": 0.003039121505413087,
+            "StepFromLowerOrder": 0.005787773923365455,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": 0.5250933339230895
+          }
+        },
+        "15": {
+          "E": {
+            "StepToHigherOrder": -0.004866220756633262,
+            "StepFromLowerOrder": -0.015443933069634935,
+            "Bound": 0.01,
+            "Passed": true,
+            "r": 0.31508947459769654
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": 0.005348286034371884,
+            "StepFromLowerOrder": 0.012853850818608306,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": 0.4160843400041067
+          },
+          "p_MS": {
+            "StepToHigherOrder": 0.006711086671599967,
+            "StepFromLowerOrder": 0.004418250996596239,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": 1.518946451156826
+          },
+          "p_SA": {
+            "StepToHigherOrder": 0.012082652467664733,
+            "StepFromLowerOrder": 0.018361160928308994,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": 0.65805492990565
+          }
+        },
+        "25": {
+          "E": {
+            "StepToHigherOrder": -9.73689081063206e-05,
+            "StepFromLowerOrder": -0.0009164986315607991,
+            "Bound": 0.01,
+            "Passed": true,
+            "r": 0.10624010200702771
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": 0.007247749385483202,
+            "StepFromLowerOrder": 0.010904728417533843,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": 0.6646428143803618
+          },
+          "p_MS": {
+            "StepToHigherOrder": 0.0018890373464926162,
+            "StepFromLowerOrder": -0.002716772028141803,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": -0.6953242034756467
+          },
+          "p_SA": {
+            "StepToHigherOrder": -0.002749713426194321,
+            "StepFromLowerOrder": -0.004770184055769596,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": 0.5764375952891188
+          }
+        },
+        "31": {
+          "E": {
+            "StepToHigherOrder": -0.00016459214073986946,
+            "StepFromLowerOrder": -0.0009806104303395715,
+            "Bound": 0.01,
+            "Passed": true,
+            "r": 0.16784661436129486
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": -0.0007339853819136734,
+            "StepFromLowerOrder": 0.0027221172503219013,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": -0.26963768067921273
+          },
+          "p_MS": {
+            "StepToHigherOrder": -0.0007863470121458942,
+            "StepFromLowerOrder": -0.004942249997306344,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": 0.15910708939743515
+          },
+          "p_SA": {
+            "StepToHigherOrder": 0.0028212989996307526,
+            "StepFromLowerOrder": 0.002232416568919062,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": 1.2637869826404433
+          }
+        },
+        "73": {
+          "E": {
+            "StepToHigherOrder": -0.0004463392747617147,
+            "StepFromLowerOrder": -0.001916813042401138,
+            "Bound": 0.01,
+            "Passed": true,
+            "r": 0.2328548819777426
+          },
+          "p_MA_sharp": {
+            "StepToHigherOrder": 0.007699772264523206,
+            "StepFromLowerOrder": 0.011763981705707091,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": 0.6545209315301634
+          },
+          "p_MS": {
+            "StepToHigherOrder": 0.0023928770927107925,
+            "StepFromLowerOrder": -0.0018019752990609348,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": -1.3279189198419061
+          },
+          "p_SA": {
+            "StepToHigherOrder": -0.00021650559022409866,
+            "StepFromLowerOrder": 0.004576860942734152,
+            "Bound": 0.05,
+            "Passed": true,
+            "r": -0.047304384584330686
+          }
+        }
+      },
+      "Failing": [],
+      "NotApplicableObservables": [],
+      "MAObservable": "p_MA_sharp",
+      "MAObservableRule": "decision 61a: the p-sequence gate on the MA evaluates the sharp-edge extrapolated p_MA_sharp (the tail measured at each order from that order's own shells) in place of the raw p_MA, whose step is dominated by the innermost ring's resolution; the raw p_MA step is still recorded"
+    }
+  },
+  "GatesPassed": {
+    "PSequenceControls": true
+  },
+  "Verdict": "PendingQualification",
+  "Reason": "no reference matrices: only the p-sequence controls were evaluated (passed); never Passed"
+}

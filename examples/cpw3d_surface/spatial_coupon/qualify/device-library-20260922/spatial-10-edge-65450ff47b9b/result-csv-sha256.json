@@ -1,0 +1,97 @@
+{
+  "main/jobs/reducer/memory-samples.csv": {
+    "Local": "808215e4092f5c997acec6c1f550e15b7458ace44c1629e0af40f6c1c839004c",
+    "Remote": "808215e4092f5c997acec6c1f550e15b7458ace44c1629e0af40f6c1c839004c",
+    "OK": true
+  },
+  "main/jobs/worker-1/memory-samples.csv": {
+    "Local": "245affd631450e08c0b33a9f999d7fb16c35c26728856cde8cd54cca090a0330",
+    "Remote": "245affd631450e08c0b33a9f999d7fb16c35c26728856cde8cd54cca090a0330",
+    "OK": true
+  },
+  "main/jobs/worker-2/memory-samples.csv": {
+    "Local": "bb23875afe976867b3a1eeada27aa07908d9be0d9ca17da16dd29c7fd782c155",
+    "Remote": "bb23875afe976867b3a1eeada27aa07908d9be0d9ca17da16dd29c7fd782c155",
+    "OK": true
+  },
+  "main/jobs/worker-3/memory-samples.csv": {
+    "Local": "24c43492f82af22250de403d9f3d4274f2f11853cf0b33324971d5a8252b1f0d",
+    "Remote": "24c43492f82af22250de403d9f3d4274f2f11853cf0b33324971d5a8252b1f0d",
+    "OK": true
+  },
+  "main/jobs/worker-4/memory-samples.csv": {
+    "Local": "54f0e42938b1fae0f8a3da0d771cd293e64d62ea02f2454171129174c41cba99",
+    "Remote": "54f0e42938b1fae0f8a3da0d771cd293e64d62ea02f2454171129174c41cba99",
+    "OK": true
+  },
+  "main/jobs/worker-5/memory-samples.csv": {
+    "Local": "985cfb43027beef50080b194ba209209c705c4bb4e66c678cd472b4aab6e30ee",
+    "Remote": "985cfb43027beef50080b194ba209209c705c4bb4e66c678cd472b4aab6e30ee",
+    "OK": true
+  },
+  "main/spatial-10-edge-65450ff47b9b-p3-control/reducer/domain-response-matrix.csv": {
+    "Local": "ea03030c4b5fab71cd18283303663ca7aea46438c2a6cb5a236a8c6edcfbb367",
+    "Remote": "ea03030c4b5fab71cd18283303663ca7aea46438c2a6cb5a236a8c6edcfbb367",
+    "OK": true
+  },
+  "main/spatial-10-edge-65450ff47b9b-p3-control/reducer/surface-response-matrix.csv": {
+    "Local": "cc787cb4c39744f05b358e6d2f47ef72e03da58207e84c28cc4bf916d75585d6",
+    "Remote": "cc787cb4c39744f05b358e6d2f47ef72e03da58207e84c28cc4bf916d75585d6",
+    "OK": true
+  },
+  "main/spatial-10-edge-65450ff47b9b-p4/reducer/domain-response-matrix.csv": {
+    "Local": "8bd0832a0b29bd1fcc80bd27398be465e0b6b60986bb5e52d6da9777f55d1bb6",
+    "Remote": "8bd0832a0b29bd1fcc80bd27398be465e0b6b60986bb5e52d6da9777f55d1bb6",
+    "OK": true
+  },
+  "main/spatial-10-edge-65450ff47b9b-p4/reducer/surface-response-matrix.csv": {
+    "Local": "c6e05e735918a5d2a0606c77054df54ad1b3a960a95063c722ef95aaf2d2a5ce",
+    "Remote": "c6e05e735918a5d2a0606c77054df54ad1b3a960a95063c722ef95aaf2d2a5ce",
+    "OK": true
+  },
+  "main/spatial-10-edge-65450ff47b9b-p4-local-edge/output/domain-E.csv": {
+    "Local": "a0e98c1d0c99569766c023ab9bb6d045d930ecdfb4fb507d106b798bba61dce1",
+    "Remote": "a0e98c1d0c99569766c023ab9bb6d045d930ecdfb4fb507d106b798bba61dce1",
+    "OK": true
+  },
+  "main/spatial-10-edge-65450ff47b9b-p4-local-edge/output/domain-response-matrix.csv": {
+    "Local": "0ac0d564f4646ce4c7582b720f7e36b6b019ed6038f0630f3123030f719c5e4e",
+    "Remote": "0ac0d564f4646ce4c7582b720f7e36b6b019ed6038f0630f3123030f719c5e4e",
+    "OK": true
+  },
+  "main/spatial-10-edge-65450ff47b9b-p4-local-edge/output/error-indicators.csv": {
+    "Local": "7c44748097091ecd2c477b289645da02681a72b86f22a78cf511287e0d6889cf",
+    "Remote": "7c44748097091ecd2c477b289645da02681a72b86f22a78cf511287e0d6889cf",
+    "OK": true
+  },
+  "main/spatial-10-edge-65450ff47b9b-p4-local-edge/output/surface-Q-edge-local.csv": {
+    "Local": "842f3aceb56153fc561dfe6d4a3272a1af945c7de1adc803fe29704b011f1c1b",
+    "Remote": "842f3aceb56153fc561dfe6d4a3272a1af945c7de1adc803fe29704b011f1c1b",
+    "OK": true
+  },
+  "main/spatial-10-edge-65450ff47b9b-p4-local-edge/output/surface-Q-edge.csv": {
+    "Local": "fd4a2bdbc2f1e4262a5b7d57e756ee7737adcf99747e86e0ce90c827a2424ad1",
+    "Remote": "fd4a2bdbc2f1e4262a5b7d57e756ee7737adcf99747e86e0ce90c827a2424ad1",
+    "OK": true
+  },
+  "main/spatial-10-edge-65450ff47b9b-p4-local-edge/output/surface-Q.csv": {
+    "Local": "684e937515516fc7a99006892834b26f862862554bdc21512ff803ac7183dccd",
+    "Remote": "684e937515516fc7a99006892834b26f862862554bdc21512ff803ac7183dccd",
+    "OK": true
+  },
+  "main/spatial-10-edge-65450ff47b9b-p4-local-edge/output/surface-response-matrix.csv": {
+    "Local": "3358c4b7fb3b98116e4d0f596854f9602e5db740db1b960fd6c7048664d2d128",
+    "Remote": "3358c4b7fb3b98116e4d0f596854f9602e5db740db1b960fd6c7048664d2d128",
+    "OK": true
+  },
+  "main/spatial-10-edge-65450ff47b9b-p5-control/reducer/domain-response-matrix.csv": {
+    "Local": "d3e6d771ed0782c9a0e258321b4fcef951a27045574a08e252a506808f8b9b11",
+    "Remote": "d3e6d771ed0782c9a0e258321b4fcef951a27045574a08e252a506808f8b9b11",
+    "OK": true
+  },
+  "main/spatial-10-edge-65450ff47b9b-p5-control/reducer/surface-response-matrix.csv": {
+    "Local": "d6562fad8a1a4ebe3577f6723868b7620beca51c35433c982af937f101013639",
+    "Remote": "d6562fad8a1a4ebe3577f6723868b7620beca51c35433c982af937f101013639",
+    "OK": true
+  }
+}

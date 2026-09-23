@@ -1,0 +1,102 @@
+{
+  "main/jobs/reducer/memory-samples.csv": {
+    "Local": "f6b3b5ccd827b06a9e2f837edcb56ff486ec2c4baf6fba532a3c6ea2c4615204",
+    "Remote": "f6b3b5ccd827b06a9e2f837edcb56ff486ec2c4baf6fba532a3c6ea2c4615204",
+    "OK": true
+  },
+  "main/jobs/worker-1/memory-samples.csv": {
+    "Local": "c3bc1a09f49a992d99034262ea6c4b7bbc09816eecf182ffecb90364103e2ca1",
+    "Remote": "c3bc1a09f49a992d99034262ea6c4b7bbc09816eecf182ffecb90364103e2ca1",
+    "OK": true
+  },
+  "main/jobs/worker-2/memory-samples.csv": {
+    "Local": "d7ce4c6a2f937a71ed8fea96a730c3ed754ee91ddc92f44898828f161ff9ae8b",
+    "Remote": "d7ce4c6a2f937a71ed8fea96a730c3ed754ee91ddc92f44898828f161ff9ae8b",
+    "OK": true
+  },
+  "main/jobs/worker-3/memory-samples.csv": {
+    "Local": "da264c3898295149614fc71794f544499073a751c7179418535378feb9c0b725",
+    "Remote": "da264c3898295149614fc71794f544499073a751c7179418535378feb9c0b725",
+    "OK": true
+  },
+  "main/jobs/worker-4/memory-samples.csv": {
+    "Local": "124803dda1c5f6a0ed614e77ca56f2a3b6739eae9c73e32dbc6a62bda8ae4f25",
+    "Remote": "124803dda1c5f6a0ed614e77ca56f2a3b6739eae9c73e32dbc6a62bda8ae4f25",
+    "OK": true
+  },
+  "main/jobs/worker-5/memory-samples.csv": {
+    "Local": "fb850bb622cd96ac6fadd9ddfe9105cfe9055e906d0dfbb3f5fac1558ce36040",
+    "Remote": "fb850bb622cd96ac6fadd9ddfe9105cfe9055e906d0dfbb3f5fac1558ce36040",
+    "OK": true
+  },
+  "main/jobs/worker-6/memory-samples.csv": {
+    "Local": "2d5c731c1702b6742259ec62d8fd9e5b23f96a88889390e23b034c8f314fb970",
+    "Remote": "2d5c731c1702b6742259ec62d8fd9e5b23f96a88889390e23b034c8f314fb970",
+    "OK": true
+  },
+  "main/spatial-3-edge-5d3b5e644745-p3-control/reducer/domain-response-matrix.csv": {
+    "Local": "a2a3f03ad64ca36c7a308d6fc4d0dc9d698dec7f6c4d187d4d9b7651c06e4be6",
+    "Remote": "a2a3f03ad64ca36c7a308d6fc4d0dc9d698dec7f6c4d187d4d9b7651c06e4be6",
+    "OK": true
+  },
+  "main/spatial-3-edge-5d3b5e644745-p3-control/reducer/surface-response-matrix.csv": {
+    "Local": "9a03ff95be4d9ee24e1d74c575610b49e214f87a060062d26e3a5e08a82e5891",
+    "Remote": "9a03ff95be4d9ee24e1d74c575610b49e214f87a060062d26e3a5e08a82e5891",
+    "OK": true
+  },
+  "main/spatial-3-edge-5d3b5e644745-p4/reducer/domain-response-matrix.csv": {
+    "Local": "194c30eb196f800143f3f0df16c2b8366e687364e6bef3cb6d2f567b2df41de3",
+    "Remote": "194c30eb196f800143f3f0df16c2b8366e687364e6bef3cb6d2f567b2df41de3",
+    "OK": true
+  },
+  "main/spatial-3-edge-5d3b5e644745-p4/reducer/surface-response-matrix.csv": {
+    "Local": "153993750aa16da052b3bc21e148bc01327262052c834d0e69a56c221bd81a18",
+    "Remote": "153993750aa16da052b3bc21e148bc01327262052c834d0e69a56c221bd81a18",
+    "OK": true
+  },
+  "main/spatial-3-edge-5d3b5e644745-p4-local-edge/output/domain-E.csv": {
+    "Local": "c902f56c39393f0c6da84badbe972c67f87369cabb43116cd6bc51acfede3238",
+    "Remote": "c902f56c39393f0c6da84badbe972c67f87369cabb43116cd6bc51acfede3238",
+    "OK": true
+  },
+  "main/spatial-3-edge-5d3b5e644745-p4-local-edge/output/domain-response-matrix.csv": {
+    "Local": "f2897efeb856eed0d3e6874a9170987737927b00885d077136e22b58fa31331a",
+    "Remote": "f2897efeb856eed0d3e6874a9170987737927b00885d077136e22b58fa31331a",
+    "OK": true
+  },
+  "main/spatial-3-edge-5d3b5e644745-p4-local-edge/output/error-indicators.csv": {
+    "Local": "60dbc980f312fbcfd7806341014fff617f3e9b74b81206a92918bd1b555025f3",
+    "Remote": "60dbc980f312fbcfd7806341014fff617f3e9b74b81206a92918bd1b555025f3",
+    "OK": true
+  },
+  "main/spatial-3-edge-5d3b5e644745-p4-local-edge/output/surface-Q-edge-local.csv": {
+    "Local": "8e0cfe673cc5da3fff0b9e759df1cdb6f899f925806bb3512f0dd57ce29f2941",
+    "Remote": "8e0cfe673cc5da3fff0b9e759df1cdb6f899f925806bb3512f0dd57ce29f2941",
+    "OK": true
+  },
+  "main/spatial-3-edge-5d3b5e644745-p4-local-edge/output/surface-Q-edge.csv": {
+    "Local": "44211d4743512dab671c8ffafdf1372a4f0954536a6d1e000ba984dba7702f17",
+    "Remote": "44211d4743512dab671c8ffafdf1372a4f0954536a6d1e000ba984dba7702f17",
+    "OK": true
+  },
+  "main/spatial-3-edge-5d3b5e644745-p4-local-edge/output/surface-Q.csv": {
+    "Local": "e09baa641a2e9c03a98f4286ff60f73060ce3683ab66fb90c342879756d6dda3",
+    "Remote": "e09baa641a2e9c03a98f4286ff60f73060ce3683ab66fb90c342879756d6dda3",
+    "OK": true
+  },
+  "main/spatial-3-edge-5d3b5e644745-p4-local-edge/output/surface-response-matrix.csv": {
+    "Local": "e2ef329eeb22c884c9d10b9f00577b03ae02bc6e3645220103f3f044298b3e92",
+    "Remote": "e2ef329eeb22c884c9d10b9f00577b03ae02bc6e3645220103f3f044298b3e92",
+    "OK": true
+  },
+  "main/spatial-3-edge-5d3b5e644745-p5-control/reducer/domain-response-matrix.csv": {
+    "Local": "e69de424b4f5336233522f244bf25380f6476ef8b6b96e9f7998ad182d88ebf7",
+    "Remote": "e69de424b4f5336233522f244bf25380f6476ef8b6b96e9f7998ad182d88ebf7",
+    "OK": true
+  },
+  "main/spatial-3-edge-5d3b5e644745-p5-control/reducer/surface-response-matrix.csv": {
+    "Local": "7257069c2b114e5a0a99349a7743332fbf8ad633c859c2c75f3ac2704d9c732a",
+    "Remote": "7257069c2b114e5a0a99349a7743332fbf8ad633c859c2c75f3ac2704d9c732a",
+    "OK": true
+  }
+}

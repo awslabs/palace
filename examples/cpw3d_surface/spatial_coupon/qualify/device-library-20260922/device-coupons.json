@@ -1,0 +1,395 @@
+{
+  "Version": 1,
+  "Command": "coupon-library build --device",
+  "Commit": "307086ae7",
+  "Device": {
+    "Config": "/private/tmp/coupon-device-transmon-20260922/device.json",
+    "SHA256": "3c06bac88d4ee6ad65847161cceb748865a2f8062b1cc17460d9171838826e8d"
+  },
+  "ProcessLibrary": {
+    "Path": "/private/tmp/coupon-device-transmon-20260922/process-seed.json",
+    "SHA256": "98bd6e43684e36bc5099d7a4fc437ba3d5ab62a56eb70483e3a968b80889dbab",
+    "MatchingRadius": 2.0,
+    "Fabrication": {
+      "LengthUnit": "um",
+      "MetalThickness": 0.1,
+      "OveretchDepth": 0.05,
+      "SidewallAngleDegrees": 90.0,
+      "TopRoundingRadius": 0.0,
+      "BottomRoundingRadius": 0.0,
+      "SubstratePermittivity": 11.45,
+      "InterfaceLayers": {
+        "SA": {
+          "Thickness": 0.002,
+          "Permittivity": 4.0
+        },
+        "MS": {
+          "Thickness": 0.002,
+          "Permittivity": 11.47
+        },
+        "MA": {
+          "Thickness": 0.002,
+          "Permittivity": 10.0
+        }
+      }
+    }
+  },
+  "Discovery": {
+    "Manifest": "/private/tmp/coupon-device-transmon-20260922/device/discovery/surface-response-requirements.json",
+    "SHA256": "1b05837e1fd5941de726773e8d9ebe15cfe2f4ae037fa4f9b18d85ba2f711ec4",
+    "Summary": {
+      "Counts": {
+        "Exact": 0,
+        "Interpolated": 0,
+        "Missing": 3120
+      },
+      "TotalEdgeLengths": {
+        "Exact": 0.0,
+        "Interpolated": 0.0,
+        "Missing": 35296.80977799022
+      }
+    },
+    "Complete": false
+  },
+  "Plan": {
+    "Path": "/private/tmp/coupon-device-transmon-20260922/device/coupon-plan.json",
+    "Summary": {
+      "CouponCount": 9,
+      "AutomaticallyPreparatable": 9,
+      "Unsupported": 0
+    }
+  },
+  "TraceBasis": {
+    "RingSize": 16,
+    "CapTriangulation": "delaunay",
+    "DefaultCapTriangulation": "delaunay",
+    "Rule": "generate_spatial_response.build_matching_surface with the planner's default ring size (prepare_surface_response_coupons --spatial-ring-size), the basis every gallery case was produced with; CapTriangulation delaunay (the device default, decision 57) re-triangulates the two box caps without needle ears, ear-clipping is the gallery producer's (an explicit option; device coupons only, never a gallery reference)"
+  },
+  "Coupons": [
+    {
+      "Case": "spatial-10-edge-65450ff47b9b",
+      "Requirement": "spatialedgecluster_edgecount-10_6791f1c84123",
+      "EdgeCount": 10,
+      "Directory": "/private/tmp/coupon-device-transmon-20260922/device/sources/spatial-10-edge-65450ff47b9b",
+      "ContentHash": "65450ff47b9b31bccaf3790cff9fc9f347d8208677ccfb1ceafbfc22b46acfec",
+      "Status": "written",
+      "Sources": 191,
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 0,
+          "Target": 2,
+          "Type": "MS"
+        },
+        {
+          "Slot": 1,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 1,
+          "Target": 2,
+          "Type": "MS"
+        },
+        {
+          "Slot": 1,
+          "Target": 1,
+          "Type": "SA"
+        }
+      ],
+      "DeviceOccurrences": 1,
+      "DeviceEdgeLength": 26.452380952400002,
+      "Registration": {
+        "Status": "registered",
+        "Message": "registered spatial-10-edge-65450ff47b9b as FixtureVersion 1",
+        "FixtureVersion": 1,
+        "ContractSHA256": "f231e5b913ea4d5937fe12a64eb6d1a815b42c4b474cb16fc1569628a61939a4",
+        "Scope": {
+          "ExhibitedClasses": [
+            "ContinuationVertices",
+            "ExteriorLoops",
+            "MultipleConductors",
+            "MultipleSlots",
+            "TraceBasis"
+          ],
+          "UnsupportedClasses": []
+        },
+        "StoppedBy": null,
+        "Work": "/tmp/coupon-device-transmon-20260922/device/register/spatial-10-edge-65450ff47b9b"
+      }
+    },
+    {
+      "Case": "spatial-2-edge-8ce3fb213a2d",
+      "Requirement": "spatialedgecluster_edgecount-2_3f8992613e95",
+      "EdgeCount": 2,
+      "Directory": "/private/tmp/coupon-device-transmon-20260922/device/sources/spatial-2-edge-8ce3fb213a2d",
+      "ContentHash": "8ce3fb213a2d77ee68b45ebcfe2f844e65eadea24fe558f3444948bcbefbf7c9",
+      "Status": "written",
+      "Sources": 150,
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 0,
+          "Target": 2,
+          "Type": "MS"
+        },
+        {
+          "Slot": 0,
+          "Target": 1,
+          "Type": "SA"
+        }
+      ],
+      "DeviceOccurrences": 1,
+      "DeviceEdgeLength": 8.0,
+      "Registration": {
+        "Status": "registered",
+        "Message": "registered spatial-2-edge-8ce3fb213a2d as FixtureVersion 1",
+        "FixtureVersion": 1,
+        "ContractSHA256": "b91001b9b0e322c1b5da53c1b62972f26448e9c7f7daaf19378c78eddd63b257",
+        "Scope": {
+          "ExhibitedClasses": [
+            "ContinuationVertices",
+            "ExteriorLoops",
+            "TraceBasis"
+          ],
+          "UnsupportedClasses": []
+        },
+        "StoppedBy": null,
+        "Work": "/tmp/coupon-device-transmon-20260922/device/register/spatial-2-edge-8ce3fb213a2d"
+      }
+    },
+    {
+      "Case": "spatial-3-edge-9cd906b81cbe",
+      "Requirement": "spatialedgecluster_edgecount-3_419576fdab24",
+      "EdgeCount": 3,
+      "Directory": "/private/tmp/coupon-device-transmon-20260922/device/sources/spatial-3-edge-9cd906b81cbe",
+      "ContentHash": "9cd906b81cbef7300f8cb65998c374a3c3c26467de8e3b0f409442ba1467b1bc",
+      "Status": "written",
+      "Sources": 175,
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 0,
+          "Target": 2,
+          "Type": "MS"
+        },
+        {
+          "Slot": 0,
+          "Target": 1,
+          "Type": "SA"
+        }
+      ],
+      "DeviceOccurrences": 1,
+      "DeviceEdgeLength": 8.0,
+      "Registration": {
+        "Status": "registered",
+        "Message": "registered spatial-3-edge-9cd906b81cbe as FixtureVersion 1",
+        "FixtureVersion": 1,
+        "ContractSHA256": "8414a7fc016a239791c5a0129fade6ae285ad149a064255aa754faea6888d52e",
+        "Scope": {
+          "ExhibitedClasses": [
+            "ContinuationVertices",
+            "ExteriorLoops",
+            "TraceBasis"
+          ],
+          "UnsupportedClasses": []
+        },
+        "StoppedBy": null,
+        "Work": "/tmp/coupon-device-transmon-20260922/device/register/spatial-3-edge-9cd906b81cbe"
+      }
+    },
+    {
+      "Case": "spatial-3-edge-5d3b5e644745",
+      "Requirement": "spatialedgecluster_edgecount-3_7f03270dca8e",
+      "EdgeCount": 3,
+      "Directory": "/private/tmp/coupon-device-transmon-20260922/device/sources/spatial-3-edge-5d3b5e644745",
+      "ContentHash": "5d3b5e644745d7c95638fc3a2e7a9c3529e4c5312fad536449129b78d93870c5",
+      "Status": "written",
+      "Sources": 225,
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 0,
+          "Target": 2,
+          "Type": "MS"
+        },
+        {
+          "Slot": 0,
+          "Target": 1,
+          "Type": "SA"
+        }
+      ],
+      "DeviceOccurrences": 1,
+      "DeviceEdgeLength": 10.0,
+      "Registration": {
+        "Status": "registered",
+        "Message": "registered spatial-3-edge-5d3b5e644745 as FixtureVersion 1",
+        "FixtureVersion": 1,
+        "ContractSHA256": "0f29aa4a27680667b89918b6fe5fc36dce9d19eeb9f113964db4acbdfa322616",
+        "Scope": {
+          "ExhibitedClasses": [
+            "ContinuationVertices",
+            "ExteriorLoops",
+            "TraceBasis"
+          ],
+          "UnsupportedClasses": []
+        },
+        "StoppedBy": null,
+        "Work": "/tmp/coupon-device-transmon-20260922/device/register/spatial-3-edge-5d3b5e644745"
+      }
+    },
+    {
+      "Case": "spatial-4-edge-e51d7380245e",
+      "Requirement": "spatialedgecluster_edgecount-4_9d2cb9bbb3fe",
+      "EdgeCount": 4,
+      "Directory": "/private/tmp/coupon-device-transmon-20260922/device/sources/spatial-4-edge-e51d7380245e",
+      "ContentHash": "e51d7380245e07cdab162c71f84ffb289e1ec9b3e6903603d6e89f033aa8c67f",
+      "Status": "written",
+      "Sources": 120,
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 0,
+          "Target": 2,
+          "Type": "MS"
+        },
+        {
+          "Slot": 0,
+          "Target": 1,
+          "Type": "SA"
+        }
+      ],
+      "DeviceOccurrences": 2,
+      "DeviceEdgeLength": 24.0,
+      "Registration": {
+        "Status": "registered",
+        "Message": "registered spatial-4-edge-e51d7380245e as FixtureVersion 1",
+        "FixtureVersion": 1,
+        "ContractSHA256": "6cbda5a88abf5a9ff659ad8856907e2484ea0b0439a2407ea12cde127459187f",
+        "Scope": {
+          "ExhibitedClasses": [
+            "ContinuationVertices",
+            "ExteriorLoops",
+            "TraceBasis"
+          ],
+          "UnsupportedClasses": []
+        },
+        "StoppedBy": null,
+        "Work": "/tmp/coupon-device-transmon-20260922/device/register/spatial-4-edge-e51d7380245e"
+      }
+    },
+    {
+      "Case": "spatial-5-edge-9bfa8265e2e7",
+      "Requirement": "spatialedgecluster_edgecount-5_938a30f63a3d",
+      "EdgeCount": 5,
+      "Directory": "/private/tmp/coupon-device-transmon-20260922/device/sources/spatial-5-edge-9bfa8265e2e7",
+      "ContentHash": "9bfa8265e2e739f4e0e8b6f9b73308de36feea9bf7111a0dc740dc0db130b5df",
+      "Status": "written",
+      "Sources": 185,
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 0,
+          "Target": 2,
+          "Type": "MS"
+        },
+        {
+          "Slot": 0,
+          "Target": 1,
+          "Type": "SA"
+        },
+        {
+          "Slot": 1,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 1,
+          "Target": 2,
+          "Type": "MS"
+        }
+      ],
+      "DeviceOccurrences": 2,
+      "DeviceEdgeLength": 32.0,
+      "Registration": {
+        "Status": "registered",
+        "Message": "registered spatial-5-edge-9bfa8265e2e7 as FixtureVersion 1",
+        "FixtureVersion": 1,
+        "ContractSHA256": "ee933f1fca8aff3c28f35f88771ec6666f9ff38cfdd6aebc7e9c4272075cbac9",
+        "Scope": {
+          "ExhibitedClasses": [
+            "ContinuationVertices",
+            "ExteriorLoops",
+            "MultipleSlots",
+            "TraceBasis"
+          ],
+          "UnsupportedClasses": []
+        },
+        "StoppedBy": null,
+        "Work": "/tmp/coupon-device-transmon-20260922/device/register/spatial-5-edge-9bfa8265e2e7"
+      }
+    }
+  ],
+  "OutOfScope": [
+    {
+      "Id": "concavecorner_angledegrees-90_cornerradius-0_977cefce7c4a",
+      "Topology": "ConcaveCorner",
+      "Method": "CornerCoupon",
+      "Reason": null,
+      "DeviceOccurrences": 18,
+      "DeviceEdgeLength": 72.0,
+      "Rule": "not a coupon of the Gmsh-only spatial library: built by its own family (CornerCoupon)"
+    },
+    {
+      "Id": "convexcorner_angledegrees-90_cornerradius-0_90951f493ec3",
+      "Topology": "ConvexCorner",
+      "Method": "CornerCoupon",
+      "Reason": null,
+      "DeviceOccurrences": 12,
+      "DeviceEdgeLength": 48.0,
+      "Rule": "not a coupon of the Gmsh-only spatial library: built by its own family (CornerCoupon)"
+    },
+    {
+      "Id": "isolatededge_edgecount-1_c16a871d29dd",
+      "Topology": "IsolatedEdge",
+      "Method": "StraightEdgeBuilder",
+      "Reason": null,
+      "DeviceOccurrences": 3082,
+      "DeviceEdgeLength": 35068.35739703781,
+      "Rule": "not a coupon of the Gmsh-only spatial library: built by its own family (StraightEdgeBuilder)"
+    }
+  ],
+  "Manifest": "/private/tmp/coupon-device-transmon-20260922/manifest.json",
+  "Output": "/private/tmp/coupon-device-transmon-20260922/device",
+  "MeshRecipe": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
+  "RegistrationPool": {
+    "Jobs": 3,
+    "PrepareSeconds": 29.112096583936363,
+    "TotalSeconds": 29.192808459047228,
+    "Rule": "register_case.prepare_registration (digests, scope, labels-only probe, contract derivation) for Jobs coupons at once, then commit_registration serially in coupon order (decision 62(2))"
+  }
+}

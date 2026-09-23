@@ -1,0 +1,1504 @@
+{
+  "Version": 1,
+  "Command": "coupon-library build",
+  "Root": "/tmp/coupon-device-transmon-20260922",
+  "Cases": [
+    {
+      "Case": "spatial-10-edge-65450ff47b9b",
+      "InventoryStatus": "DeviceDerived",
+      "FixtureVersion": 1,
+      "Calibration": null,
+      "Scope": {
+        "ExhibitedClasses": [
+          "ContinuationVertices",
+          "ExteriorLoops",
+          "MultipleConductors",
+          "MultipleSlots",
+          "TraceBasis"
+        ],
+        "UnsupportedClasses": []
+      },
+      "Status": "built",
+      "Passed": true,
+      "StoppedBy": null,
+      "CanonicalBuildId": "6e7a2e9667010c9c4eb6795fcd4e56b5c1942854d59e774047cad9a3f0a8aa90",
+      "Variants": {
+        "identity": {
+          "Path": "/private/tmp/coupon-device-transmon-20260922/spatial-10-edge-65450ff47b9b/identity.msh",
+          "SHA256": "431441f5251f17d51bcf7bcf2cd5cef86de0ed562605002f030b6429971e90b0"
+        },
+        "rotate-z-0.63": {
+          "Path": "/private/tmp/coupon-device-transmon-20260922/spatial-10-edge-65450ff47b9b/rotate-z-0.63.msh",
+          "SHA256": "775573bf925eb17eb66d7ab7394308c57591ee7b21a12784780b945921c1eb2c"
+        }
+      },
+      "RadialShells": {
+        "Kind": "radial-ma-shells",
+        "Shells": {
+          "Path": "/private/tmp/coupon-device-transmon-20260922/spatial-10-edge-65450ff47b9b/identity.msh.radial-shells.json",
+          "SHA256": "c9aa92ed939f94a4bde9c3c03f6c2a65064ccbbbac4900f9ac980ad71fdc44bd"
+        },
+        "ShellCount": 60,
+        "RingRadii": [
+          0.00025,
+          0.00075,
+          0.00175,
+          0.00375,
+          0.00775,
+          0.01575,
+          0.03175
+        ],
+        "MAParents": [
+          6001,
+          6002,
+          6101,
+          6102
+        ],
+        "ParentMesh": {
+          "SHA256": "316d7a1898c2f3f76ecf491d0c7bfe7109af32fb5dfd94d5e9cea2f57958e5da",
+          "CanonicalMeshSHA256": "316d7a1898c2f3f76ecf491d0c7bfe7109af32fb5dfd94d5e9cea2f57958e5da"
+        },
+        "Tool": "relabel_radial_ma_shells.py",
+        "Rule": "label-only: the $Nodes block and every element apart from the (physical, elementary) pair of the MA elements are byte-identical to the parent-labeled publication (LabelOnly); the shells sum to the canonical ownership partition's parent areas; the ownership audit below runs on the shelled mesh"
+      },
+      "Elements": {
+        "Tetrahedron": 2353601,
+        "Prism": 269568,
+        "Pyramid": 20736,
+        "Total": 2643905
+      },
+      "H1": {
+        "Order": 4,
+        "DOFs": 35861283,
+        "EntityCounts": {
+          "Vertices": 603397,
+          "Edges": 3535281,
+          "TriangleFaces": 5144942,
+          "QuadFaces": 430848,
+          "Tetrahedra": 2353601,
+          "Prisms": 269568,
+          "Pyramids": 20736
+        }
+      },
+      "Estimate": {
+        "EstimatedElements": 2837463.1401317683,
+        "EstimateOverCap": 0.4729105233552947,
+        "MaximumElements": 6000000,
+        "Passed": true,
+        "ActualElements": 2643905,
+        "EstimateOverActual": 1.073209188730975
+      },
+      "Stages": {
+        "canonical-publish": {
+          "Seconds": 45.43848445801996,
+          "PeakGiB": 4.6929931640625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-10-edge-65450ff47b9b/canonical-publish.log.json"
+        },
+        "canonical-source": {
+          "Seconds": 0.10351337492465973,
+          "PeakGiB": 3.0517578125e-05,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-10-edge-65450ff47b9b/canonical-source.log.json"
+        },
+        "gmsh-build": {
+          "Seconds": 245.560417749919,
+          "PeakGiB": 4.522918701171875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-10-edge-65450ff47b9b/gmsh-build.log.json"
+        },
+        "identity-publication": {
+          "Seconds": 69.75360099994577,
+          "PeakGiB": 4.55718994140625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-10-edge-65450ff47b9b/identity-publication.log.json"
+        },
+        "identity-variant-audits": {
+          "Seconds": 106.88958241697401,
+          "PeakGiB": 3.3536529541015625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-10-edge-65450ff47b9b/identity-variant-audits.audit.log.json"
+        },
+        "per-entry-verification": {
+          "Seconds": 161.4635318329092,
+          "PeakGiB": 3.869720458984375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-10-edge-65450ff47b9b/per-entry-verification.audit.log.json"
+        },
+        "rotate-z-0.63-publication": {
+          "Seconds": 71.276500958018,
+          "PeakGiB": 4.517364501953125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-10-edge-65450ff47b9b/rotate-z-0.63-publication.log.json"
+        },
+        "rotate-z-0.63-variant-audits": {
+          "Seconds": 107.77138654189184,
+          "PeakGiB": 3.2915802001953125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-10-edge-65450ff47b9b/rotate-z-0.63-variant-audits.audit.log.json"
+        }
+      },
+      "Verification": {
+        "Passed": true,
+        "Failures": [],
+        "Path": "/tmp/coupon-device-transmon-20260922/spatial-10-edge-65450ff47b9b/per-entry-verification.json"
+      },
+      "HeadroomFlags": [],
+      "Root": "/tmp/coupon-device-transmon-20260922/spatial-10-edge-65450ff47b9b",
+      "DriverReturnCode": 0,
+      "WallSeconds": 814.281090259552
+    },
+    {
+      "Case": "spatial-2-edge-8ce3fb213a2d",
+      "InventoryStatus": "DeviceDerived",
+      "FixtureVersion": 1,
+      "Calibration": null,
+      "Scope": {
+        "ExhibitedClasses": [
+          "ContinuationVertices",
+          "ExteriorLoops",
+          "TraceBasis"
+        ],
+        "UnsupportedClasses": []
+      },
+      "Status": "built",
+      "Passed": true,
+      "StoppedBy": null,
+      "CanonicalBuildId": "efd06c6e8dde0eb3acf99345a566a486fbf65aa811497d9f141ec483d9a14ec7",
+      "Variants": {
+        "identity": {
+          "Path": "/private/tmp/coupon-device-transmon-20260922/spatial-2-edge-8ce3fb213a2d/identity.msh",
+          "SHA256": "f52b58c294c6535ac612685028745a7bd234842438233c8928cc82d918f6a511"
+        },
+        "rotate-z-0.63": {
+          "Path": "/private/tmp/coupon-device-transmon-20260922/spatial-2-edge-8ce3fb213a2d/rotate-z-0.63.msh",
+          "SHA256": "68b21418a4571faba99e745d9ddab4f92d76bc8c24ecf3e21a0a30bf0bc28a85"
+        }
+      },
+      "RadialShells": {
+        "Kind": "radial-ma-shells",
+        "Shells": {
+          "Path": "/private/tmp/coupon-device-transmon-20260922/spatial-2-edge-8ce3fb213a2d/identity.msh.radial-shells.json",
+          "SHA256": "9eb07b77766953cb29cc50e0e4b33607091566ba2235050bdad3902d190facf8"
+        },
+        "ShellCount": 15,
+        "RingRadii": [
+          0.00025,
+          0.00075,
+          0.00175,
+          0.00375,
+          0.00775,
+          0.01575,
+          0.03175
+        ],
+        "MAParents": [
+          6001
+        ],
+        "ParentMesh": {
+          "SHA256": "7839a4f6341ab5681e2aa18b240946dbeff8097869190bb7ffaf6989a98a8e16",
+          "CanonicalMeshSHA256": "7839a4f6341ab5681e2aa18b240946dbeff8097869190bb7ffaf6989a98a8e16"
+        },
+        "Tool": "relabel_radial_ma_shells.py",
+        "Rule": "label-only: the $Nodes block and every element apart from the (physical, elementary) pair of the MA elements are byte-identical to the parent-labeled publication (LabelOnly); the shells sum to the canonical ownership partition's parent areas; the ownership audit below runs on the shelled mesh"
+      },
+      "Elements": {
+        "Tetrahedron": 1052916,
+        "Prism": 151398,
+        "Pyramid": 11646,
+        "Total": 1215960
+      },
+      "H1": {
+        "Order": 4,
+        "DOFs": 17099910,
+        "EntityCounts": {
+          "Vertices": 284010,
+          "Edges": 1639707,
+          "TriangleFaces": 2329679,
+          "QuadFaces": 241978,
+          "Tetrahedra": 1052916,
+          "Prisms": 151398,
+          "Pyramids": 11646
+        }
+      },
+      "Estimate": {
+        "EstimatedElements": 1254183.433717683,
+        "EstimateOverCap": 0.2090305722862805,
+        "MaximumElements": 6000000,
+        "Passed": true,
+        "ActualElements": 1215960,
+        "EstimateOverActual": 1.0314347788723996
+      },
+      "Stages": {
+        "canonical-publish": {
+          "Seconds": 24.693339249817654,
+          "PeakGiB": 2.2662811279296875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-2-edge-8ce3fb213a2d/canonical-publish.log.json"
+        },
+        "canonical-source": {
+          "Seconds": 0.09852020791731775,
+          "PeakGiB": 0.005767822265625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-2-edge-8ce3fb213a2d/canonical-source.log.json"
+        },
+        "gmsh-build": {
+          "Seconds": 82.23032045806758,
+          "PeakGiB": 2.8059844970703125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-2-edge-8ce3fb213a2d/gmsh-build.log.json"
+        },
+        "identity-publication": {
+          "Seconds": 26.225726790959015,
+          "PeakGiB": 2.7138214111328125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-2-edge-8ce3fb213a2d/identity-publication.log.json"
+        },
+        "identity-variant-audits": {
+          "Seconds": 43.37081358395517,
+          "PeakGiB": 1.83941650390625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-2-edge-8ce3fb213a2d/identity-variant-audits.audit.log.json"
+        },
+        "per-entry-verification": {
+          "Seconds": 69.12628720817156,
+          "PeakGiB": 1.8142242431640625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-2-edge-8ce3fb213a2d/per-entry-verification.audit.log.json"
+        },
+        "rotate-z-0.63-publication": {
+          "Seconds": 28.499460624996573,
+          "PeakGiB": 2.757232666015625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-2-edge-8ce3fb213a2d/rotate-z-0.63-publication.log.json"
+        },
+        "rotate-z-0.63-variant-audits": {
+          "Seconds": 43.370362707879394,
+          "PeakGiB": 1.673004150390625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-2-edge-8ce3fb213a2d/rotate-z-0.63-variant-audits.audit.log.json"
+        }
+      },
+      "Verification": {
+        "Passed": true,
+        "Failures": [],
+        "Path": "/tmp/coupon-device-transmon-20260922/spatial-2-edge-8ce3fb213a2d/per-entry-verification.json"
+      },
+      "HeadroomFlags": [],
+      "Root": "/tmp/coupon-device-transmon-20260922/spatial-2-edge-8ce3fb213a2d",
+      "DriverReturnCode": 0,
+      "WallSeconds": 322.1259877681732
+    },
+    {
+      "Case": "spatial-3-edge-9cd906b81cbe",
+      "InventoryStatus": "DeviceDerived",
+      "FixtureVersion": 1,
+      "Calibration": null,
+      "Scope": {
+        "ExhibitedClasses": [
+          "ContinuationVertices",
+          "ExteriorLoops",
+          "TraceBasis"
+        ],
+        "UnsupportedClasses": []
+      },
+      "Status": "built",
+      "Passed": true,
+      "StoppedBy": null,
+      "CanonicalBuildId": "b4c8c4955a113f13ad0f52cc7a7010988820711b0cd690d047ad435d9ea6650a",
+      "Variants": {
+        "identity": {
+          "Path": "/private/tmp/coupon-device-transmon-20260922/spatial-3-edge-9cd906b81cbe/identity.msh",
+          "SHA256": "0fe0aa73ff86289ab5be7f4e8814d50a4c8869eefd0e9c9d734ecb11ba39673f"
+        },
+        "rotate-z-0.63": {
+          "Path": "/private/tmp/coupon-device-transmon-20260922/spatial-3-edge-9cd906b81cbe/rotate-z-0.63.msh",
+          "SHA256": "be986b31821e84d006c3b05f097bebf4cb8cba9be16e6d923642243e1ada94a7"
+        }
+      },
+      "RadialShells": {
+        "Kind": "radial-ma-shells",
+        "Shells": {
+          "Path": "/private/tmp/coupon-device-transmon-20260922/spatial-3-edge-9cd906b81cbe/identity.msh.radial-shells.json",
+          "SHA256": "5b886d8205a948eb9d05cc218ea9124634371c82611096c627cfe1ffec3ffd51"
+        },
+        "ShellCount": 15,
+        "RingRadii": [
+          0.00025,
+          0.00075,
+          0.00175,
+          0.00375,
+          0.00775,
+          0.01575,
+          0.03175
+        ],
+        "MAParents": [
+          6001
+        ],
+        "ParentMesh": {
+          "SHA256": "9b2bd97cbe74ed06b40d995ba4a72ce504cc013a637c8e7e404680aedd882a93",
+          "CanonicalMeshSHA256": "9b2bd97cbe74ed06b40d995ba4a72ce504cc013a637c8e7e404680aedd882a93"
+        },
+        "Tool": "relabel_radial_ma_shells.py",
+        "Rule": "label-only: the $Nodes block and every element apart from the (physical, elementary) pair of the MA elements are byte-identical to the parent-labeled publication (LabelOnly); the shells sum to the canonical ownership partition's parent areas; the ownership audit below runs on the shelled mesh"
+      },
+      "Elements": {
+        "Tetrahedron": 1495011,
+        "Prism": 172692,
+        "Pyramid": 13284,
+        "Total": 1680987
+      },
+      "H1": {
+        "Order": 4,
+        "DOFs": 22886084,
+        "EntityCounts": {
+          "Vertices": 387911,
+          "Edges": 2259161,
+          "TriangleFaces": 3276225,
+          "QuadFaces": 276012,
+          "Tetrahedra": 1495011,
+          "Prisms": 172692,
+          "Pyramids": 13284
+        }
+      },
+      "Estimate": {
+        "EstimatedElements": 1763366.0466352294,
+        "EstimateOverCap": 0.29389434110587154,
+        "MaximumElements": 6000000,
+        "Passed": true,
+        "ActualElements": 1680987,
+        "EstimateOverActual": 1.049006355572785
+      },
+      "Stages": {
+        "canonical-publish": {
+          "Seconds": 30.5380724160932,
+          "PeakGiB": 3.146209716796875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-9cd906b81cbe/canonical-publish.log.json"
+        },
+        "canonical-source": {
+          "Seconds": 0.10425987490452826,
+          "PeakGiB": 3.0517578125e-05,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-9cd906b81cbe/canonical-source.log.json"
+        },
+        "gmsh-build": {
+          "Seconds": 122.3796511250548,
+          "PeakGiB": 3.727020263671875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-9cd906b81cbe/gmsh-build.log.json"
+        },
+        "identity-publication": {
+          "Seconds": 40.32427670806646,
+          "PeakGiB": 3.0069580078125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-9cd906b81cbe/identity-publication.log.json"
+        },
+        "identity-variant-audits": {
+          "Seconds": 59.1451944578439,
+          "PeakGiB": 2.2227630615234375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-9cd906b81cbe/identity-variant-audits.audit.log.json"
+        },
+        "per-entry-verification": {
+          "Seconds": 109.82899116701446,
+          "PeakGiB": 2.4079742431640625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-9cd906b81cbe/per-entry-verification.audit.log.json"
+        },
+        "rotate-z-0.63-publication": {
+          "Seconds": 41.47673329198733,
+          "PeakGiB": 3.1462249755859375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-9cd906b81cbe/rotate-z-0.63-publication.log.json"
+        },
+        "rotate-z-0.63-variant-audits": {
+          "Seconds": 61.939226916991174,
+          "PeakGiB": 2.27130126953125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-9cd906b81cbe/rotate-z-0.63-variant-audits.audit.log.json"
+        }
+      },
+      "Verification": {
+        "Passed": true,
+        "Failures": [],
+        "Path": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-9cd906b81cbe/per-entry-verification.json"
+      },
+      "HeadroomFlags": [],
+      "Root": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-9cd906b81cbe",
+      "DriverReturnCode": 0,
+      "WallSeconds": 470.51107931137085
+    },
+    {
+      "Case": "spatial-3-edge-5d3b5e644745",
+      "InventoryStatus": "DeviceDerived",
+      "FixtureVersion": 1,
+      "Calibration": null,
+      "Scope": {
+        "ExhibitedClasses": [
+          "ContinuationVertices",
+          "ExteriorLoops",
+          "TraceBasis"
+        ],
+        "UnsupportedClasses": []
+      },
+      "Status": "built",
+      "Passed": true,
+      "StoppedBy": null,
+      "CanonicalBuildId": "768de9fde2f1a298612d3eb9c0d93fa9941bced4406ef41df1de494490748974",
+      "Variants": {
+        "identity": {
+          "Path": "/private/tmp/coupon-device-transmon-20260922/spatial-3-edge-5d3b5e644745/identity.msh",
+          "SHA256": "39341124dbdac781836caa2558d334b75b17e89cca04ea6402da447683e1d019"
+        },
+        "rotate-z-0.63": {
+          "Path": "/private/tmp/coupon-device-transmon-20260922/spatial-3-edge-5d3b5e644745/rotate-z-0.63.msh",
+          "SHA256": "47ce5e97bc1b70519e4d7288a7a5fa12aaab5bc06763152809c1d0c1d3ec73d8"
+        }
+      },
+      "RadialShells": {
+        "Kind": "radial-ma-shells",
+        "Shells": {
+          "Path": "/private/tmp/coupon-device-transmon-20260922/spatial-3-edge-5d3b5e644745/identity.msh.radial-shells.json",
+          "SHA256": "1813327183aca2e602de0c97f94c1d5d620bcb7a64a44ca8bc5256e9619a4dda"
+        },
+        "ShellCount": 15,
+        "RingRadii": [
+          0.00025,
+          0.00075,
+          0.00175,
+          0.00375,
+          0.00775,
+          0.01575,
+          0.03175
+        ],
+        "MAParents": [
+          6001
+        ],
+        "ParentMesh": {
+          "SHA256": "e038c5efbb50145aacc18f768317344f03b8af1a47e0482a0296d9ab1ffe62fc",
+          "CanonicalMeshSHA256": "e038c5efbb50145aacc18f768317344f03b8af1a47e0482a0296d9ab1ffe62fc"
+        },
+        "Tool": "relabel_radial_ma_shells.py",
+        "Rule": "label-only: the $Nodes block and every element apart from the (physical, elementary) pair of the MA elements are byte-identical to the parent-labeled publication (LabelOnly); the shells sum to the canonical ownership partition's parent areas; the ownership audit below runs on the shelled mesh"
+      },
+      "Elements": {
+        "Tetrahedron": 2635846,
+        "Prism": 373347,
+        "Pyramid": 28719,
+        "Total": 3037912
+      },
+      "H1": {
+        "Order": 4,
+        "DOFs": 42696378,
+        "EntityCounts": {
+          "Vertices": 714404,
+          "Edges": 4109961,
+          "TriangleFaces": 5836752,
+          "QuadFaces": 596717,
+          "Tetrahedra": 2635846,
+          "Prisms": 373347,
+          "Pyramids": 28719
+        }
+      },
+      "Estimate": {
+        "EstimatedElements": 3135223.9752248586,
+        "EstimateOverCap": 0.5225373292041431,
+        "MaximumElements": 6000000,
+        "Passed": true,
+        "ActualElements": 3037912,
+        "EstimateOverActual": 1.0320325194491673
+      },
+      "Stages": {
+        "canonical-publish": {
+          "Seconds": 51.32022475008853,
+          "PeakGiB": 4.9209442138671875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-5d3b5e644745/canonical-publish.log.json"
+        },
+        "canonical-source": {
+          "Seconds": 0.10412749997340143,
+          "PeakGiB": 3.0517578125e-05,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-5d3b5e644745/canonical-source.log.json"
+        },
+        "gmsh-build": {
+          "Seconds": 254.42843049997464,
+          "PeakGiB": 5.4943389892578125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-5d3b5e644745/gmsh-build.log.json"
+        },
+        "identity-publication": {
+          "Seconds": 63.42216487484984,
+          "PeakGiB": 5.1992645263671875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-5d3b5e644745/identity-publication.log.json"
+        },
+        "identity-variant-audits": {
+          "Seconds": 103.89804429211654,
+          "PeakGiB": 4.04998779296875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-5d3b5e644745/identity-variant-audits.audit.log.json"
+        },
+        "per-entry-verification": {
+          "Seconds": 177.03978470806032,
+          "PeakGiB": 4.2557525634765625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-5d3b5e644745/per-entry-verification.audit.log.json"
+        },
+        "rotate-z-0.63-publication": {
+          "Seconds": 63.52855029189959,
+          "PeakGiB": 4.783660888671875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-5d3b5e644745/rotate-z-0.63-publication.log.json"
+        },
+        "rotate-z-0.63-variant-audits": {
+          "Seconds": 115.57569216587581,
+          "PeakGiB": 4.048431396484375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-5d3b5e644745/rotate-z-0.63-variant-audits.audit.log.json"
+        }
+      },
+      "Verification": {
+        "Passed": true,
+        "Failures": [],
+        "Path": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-5d3b5e644745/per-entry-verification.json"
+      },
+      "HeadroomFlags": [],
+      "Root": "/tmp/coupon-device-transmon-20260922/spatial-3-edge-5d3b5e644745",
+      "DriverReturnCode": 0,
+      "WallSeconds": 835.2604138851166
+    },
+    {
+      "Case": "spatial-4-edge-e51d7380245e",
+      "InventoryStatus": "DeviceDerived",
+      "FixtureVersion": 1,
+      "Calibration": null,
+      "Scope": {
+        "ExhibitedClasses": [
+          "ContinuationVertices",
+          "ExteriorLoops",
+          "TraceBasis"
+        ],
+        "UnsupportedClasses": []
+      },
+      "Status": "built",
+      "Passed": true,
+      "StoppedBy": null,
+      "CanonicalBuildId": "2117a39fed130add4fcfa9845bdca18790ac7653a0ff50a65e0fda9a953ed4fb",
+      "Variants": {
+        "identity": {
+          "Path": "/private/tmp/coupon-device-transmon-20260922/spatial-4-edge-e51d7380245e/identity.msh",
+          "SHA256": "7cc03aaf3c0a348dc02fe3762f4c8440514caad0010195f710881ee9f424a8f7"
+        },
+        "rotate-z-0.63": {
+          "Path": "/private/tmp/coupon-device-transmon-20260922/spatial-4-edge-e51d7380245e/rotate-z-0.63.msh",
+          "SHA256": "ab55e6a1c20a168a949850d57095efd946fe9d5e6107e072c2cdad45eb418739"
+        }
+      },
+      "RadialShells": {
+        "Kind": "radial-ma-shells",
+        "Shells": {
+          "Path": "/private/tmp/coupon-device-transmon-20260922/spatial-4-edge-e51d7380245e/identity.msh.radial-shells.json",
+          "SHA256": "870563e3671c5721ca7dce4d88cc68d4500faa7b333646783c0acd8c776324cd"
+        },
+        "ShellCount": 15,
+        "RingRadii": [
+          0.00025,
+          0.00075,
+          0.00175,
+          0.00375,
+          0.00775,
+          0.01575,
+          0.03175
+        ],
+        "MAParents": [
+          6001
+        ],
+        "ParentMesh": {
+          "SHA256": "957e3129b4950053536745b2c9a5e4552ac4bacc3cc05ff684c2ca9b0fb3dbce",
+          "CanonicalMeshSHA256": "957e3129b4950053536745b2c9a5e4552ac4bacc3cc05ff684c2ca9b0fb3dbce"
+        },
+        "Tool": "relabel_radial_ma_shells.py",
+        "Rule": "label-only: the $Nodes block and every element apart from the (physical, elementary) pair of the MA elements are byte-identical to the parent-labeled publication (LabelOnly); the shells sum to the canonical ownership partition's parent areas; the ownership audit below runs on the shelled mesh"
+      },
+      "Elements": {
+        "Tetrahedron": 1710141,
+        "Prism": 172107,
+        "Pyramid": 13239,
+        "Total": 1895487
+      },
+      "H1": {
+        "Order": 4,
+        "DOFs": 25167936,
+        "EntityCounts": {
+          "Vertices": 422877,
+          "Edges": 2510035,
+          "TriangleFaces": 3707568,
+          "QuadFaces": 275077,
+          "Tetrahedra": 1710141,
+          "Prisms": 172107,
+          "Pyramids": 13239
+        }
+      },
+      "Estimate": {
+        "EstimatedElements": 1968009.5178464693,
+        "EstimateOverCap": 0.3280015863077449,
+        "MaximumElements": 6000000,
+        "Passed": true,
+        "ActualElements": 1895487,
+        "EstimateOverActual": 1.03826062528863
+      },
+      "Stages": {
+        "canonical-publish": {
+          "Seconds": 31.64964204118587,
+          "PeakGiB": 3.2293243408203125,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-4-edge-e51d7380245e/canonical-publish.log.json"
+        },
+        "canonical-source": {
+          "Seconds": 0.10715737496502697,
+          "PeakGiB": 3.0517578125e-05,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-4-edge-e51d7380245e/canonical-source.log.json"
+        },
+        "gmsh-build": {
+          "Seconds": 159.99067295808345,
+          "PeakGiB": 3.5081939697265625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-4-edge-e51d7380245e/gmsh-build.log.json"
+        },
+        "identity-publication": {
+          "Seconds": 37.360714707989246,
+          "PeakGiB": 3.3674468994140625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-4-edge-e51d7380245e/identity-publication.log.json"
+        },
+        "identity-variant-audits": {
+          "Seconds": 59.899402250070125,
+          "PeakGiB": 2.3914031982421875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-4-edge-e51d7380245e/identity-variant-audits.audit.log.json"
+        },
+        "per-entry-verification": {
+          "Seconds": 113.12876733299345,
+          "PeakGiB": 2.7769012451171875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-4-edge-e51d7380245e/per-entry-verification.audit.log.json"
+        },
+        "rotate-z-0.63-publication": {
+          "Seconds": 34.4029634159524,
+          "PeakGiB": 3.4094085693359375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-4-edge-e51d7380245e/rotate-z-0.63-publication.log.json"
+        },
+        "rotate-z-0.63-variant-audits": {
+          "Seconds": 59.28681837487966,
+          "PeakGiB": 2.45941162109375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-4-edge-e51d7380245e/rotate-z-0.63-variant-audits.audit.log.json"
+        }
+      },
+      "Verification": {
+        "Passed": true,
+        "Failures": [],
+        "Path": "/tmp/coupon-device-transmon-20260922/spatial-4-edge-e51d7380245e/per-entry-verification.json"
+      },
+      "HeadroomFlags": [],
+      "Root": "/tmp/coupon-device-transmon-20260922/spatial-4-edge-e51d7380245e",
+      "DriverReturnCode": 0,
+      "WallSeconds": 501.0220341682434
+    },
+    {
+      "Case": "spatial-5-edge-9bfa8265e2e7",
+      "InventoryStatus": "DeviceDerived",
+      "FixtureVersion": 1,
+      "Calibration": null,
+      "Scope": {
+        "ExhibitedClasses": [
+          "ContinuationVertices",
+          "ExteriorLoops",
+          "MultipleSlots",
+          "TraceBasis"
+        ],
+        "UnsupportedClasses": []
+      },
+      "Status": "built",
+      "Passed": true,
+      "StoppedBy": null,
+      "CanonicalBuildId": "68a63032def17e111cf0bba91bd40fd1f2847390cfd1bac9bdfea8e753d9cdc2",
+      "Variants": {
+        "identity": {
+          "Path": "/private/tmp/coupon-device-transmon-20260922/spatial-5-edge-9bfa8265e2e7/identity.msh",
+          "SHA256": "d74be12f717a6de4d2e180e05d058c49c7dd23d602e41b3fc84a1a3e5b78c2af"
+        },
+        "rotate-z-0.63": {
+          "Path": "/private/tmp/coupon-device-transmon-20260922/spatial-5-edge-9bfa8265e2e7/rotate-z-0.63.msh",
+          "SHA256": "7687774b9e3d99f4829bdc95bb17b65bc224a9585deeb3bf5512e2ba7eb6bf1a"
+        }
+      },
+      "RadialShells": {
+        "Kind": "radial-ma-shells",
+        "Shells": {
+          "Path": "/private/tmp/coupon-device-transmon-20260922/spatial-5-edge-9bfa8265e2e7/identity.msh.radial-shells.json",
+          "SHA256": "9082a15cb92e4dc55e0cde628cbc3cfb0feab1a6ca24cd34f40605efca3f0a36"
+        },
+        "ShellCount": 30,
+        "RingRadii": [
+          0.00025,
+          0.00075,
+          0.00175,
+          0.00375,
+          0.00775,
+          0.01575,
+          0.03175
+        ],
+        "MAParents": [
+          6001,
+          6101
+        ],
+        "ParentMesh": {
+          "SHA256": "ddf1081b694fba74f604e79442e5dc82ce52b1821b05273ca8b24e2281452895",
+          "CanonicalMeshSHA256": "ddf1081b694fba74f604e79442e5dc82ce52b1821b05273ca8b24e2281452895"
+        },
+        "Tool": "relabel_radial_ma_shells.py",
+        "Rule": "label-only: the $Nodes block and every element apart from the (physical, elementary) pair of the MA elements are byte-identical to the parent-labeled publication (LabelOnly); the shells sum to the canonical ownership partition's parent areas; the ownership audit below runs on the shelled mesh"
+      },
+      "Elements": {
+        "Tetrahedron": 2424275,
+        "Prism": 253188,
+        "Pyramid": 19476,
+        "Total": 2696939
+      },
+      "H1": {
+        "Order": 4,
+        "DOFs": 35941049,
+        "EntityCounts": {
+          "Vertices": 599304,
+          "Edges": 3565335,
+          "TriangleFaces": 5258303,
+          "QuadFaces": 404668,
+          "Tetrahedra": 2424275,
+          "Prisms": 253188,
+          "Pyramids": 19476
+        }
+      },
+      "Estimate": {
+        "EstimatedElements": 2905084.558384487,
+        "EstimateOverCap": 0.4841807597307478,
+        "MaximumElements": 6000000,
+        "Passed": true,
+        "ActualElements": 2696939,
+        "EstimateOverActual": 1.0771784450387965
+      },
+      "Stages": {
+        "canonical-publish": {
+          "Seconds": 37.38237087498419,
+          "PeakGiB": 4.720367431640625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-5-edge-9bfa8265e2e7/canonical-publish.log.json"
+        },
+        "canonical-source": {
+          "Seconds": 0.18902354198507965,
+          "PeakGiB": 3.0517578125e-05,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-5-edge-9bfa8265e2e7/canonical-source.log.json"
+        },
+        "gmsh-build": {
+          "Seconds": 197.61472808290273,
+          "PeakGiB": 4.515289306640625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-5-edge-9bfa8265e2e7/gmsh-build.log.json"
+        },
+        "identity-publication": {
+          "Seconds": 53.44186458387412,
+          "PeakGiB": 4.83160400390625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-5-edge-9bfa8265e2e7/identity-publication.log.json"
+        },
+        "identity-variant-audits": {
+          "Seconds": 77.20765954209492,
+          "PeakGiB": 3.422271728515625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-5-edge-9bfa8265e2e7/identity-variant-audits.audit.log.json"
+        },
+        "per-entry-verification": {
+          "Seconds": 139.9983078329824,
+          "PeakGiB": 3.602508544921875,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-5-edge-9bfa8265e2e7/per-entry-verification.audit.log.json"
+        },
+        "rotate-z-0.63-publication": {
+          "Seconds": 53.56299416697584,
+          "PeakGiB": 4.4252777099609375,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-5-edge-9bfa8265e2e7/rotate-z-0.63-publication.log.json"
+        },
+        "rotate-z-0.63-variant-audits": {
+          "Seconds": 82.75424950011075,
+          "PeakGiB": 3.427978515625,
+          "ReturnCode": 0,
+          "StopReason": null,
+          "Limits": {
+            "Seconds": 3600.0,
+            "MemoryGiB": 12.0
+          },
+          "Report": "/tmp/coupon-device-transmon-20260922/spatial-5-edge-9bfa8265e2e7/rotate-z-0.63-variant-audits.audit.log.json"
+        }
+      },
+      "Verification": {
+        "Passed": true,
+        "Failures": [],
+        "Path": "/tmp/coupon-device-transmon-20260922/spatial-5-edge-9bfa8265e2e7/per-entry-verification.json"
+      },
+      "HeadroomFlags": [],
+      "Root": "/tmp/coupon-device-transmon-20260922/spatial-5-edge-9bfa8265e2e7",
+      "DriverReturnCode": 0,
+      "WallSeconds": 647.7903921604156
+    }
+  ],
+  "Library": {
+    "CasesAttempted": 6,
+    "CasesBuilt": 6,
+    "CasesPassed": 6,
+    "CasesUnsupported": 0,
+    "CasesFailed": 0,
+    "CasesUnbuilt": 0,
+    "FlaggedCases": [],
+    "WallClockSeconds": 1462.3278641700745,
+    "Jobs": 3,
+    "Commit": "307086ae7",
+    "Bounds": {
+      "MaximumElements": 6000000,
+      "MaximumSeconds": 3600,
+      "MaximumRSSGiB": 12.0
+    },
+    "HeadroomFraction": 0.9,
+    "HeadroomRule": "a case is flagged when its element count or pre-build estimate reaches 0.9 x MaximumElements, or any bounded stage's wall seconds or peak process-tree RSS reaches 0.9 x its limit (the ten-edge production root sat at 0.87 of the 4M cap and 0.96 of the 8 GiB bound of decision 42: the margin rule the throughput plan lacked; the bounds are the manifest's Gates - guidelines since decision 61c, 6M / 3600 s / 12 GiB, recorded under Gates.PreviousValues with their history)",
+    "Manifest": {
+      "Path": "/private/tmp/coupon-device-transmon-20260922/manifest.json",
+      "SHA256": "4173b40934d43c535efb666c9a950c78fa6c516a9a3d64f585bdef95ff5e9630",
+      "Kind": "production",
+      "ProductionManifest": null
+    }
+  },
+  "Device": {
+    "Device": {
+      "Config": "/private/tmp/coupon-device-transmon-20260922/device.json",
+      "SHA256": "3c06bac88d4ee6ad65847161cceb748865a2f8062b1cc17460d9171838826e8d"
+    },
+    "ProcessLibrary": {
+      "Path": "/private/tmp/coupon-device-transmon-20260922/process-seed.json",
+      "SHA256": "98bd6e43684e36bc5099d7a4fc437ba3d5ab62a56eb70483e3a968b80889dbab",
+      "MatchingRadius": 2.0,
+      "Fabrication": {
+        "LengthUnit": "um",
+        "MetalThickness": 0.1,
+        "OveretchDepth": 0.05,
+        "SidewallAngleDegrees": 90.0,
+        "TopRoundingRadius": 0.0,
+        "BottomRoundingRadius": 0.0,
+        "SubstratePermittivity": 11.45,
+        "InterfaceLayers": {
+          "SA": {
+            "Thickness": 0.002,
+            "Permittivity": 4.0
+          },
+          "MS": {
+            "Thickness": 0.002,
+            "Permittivity": 11.47
+          },
+          "MA": {
+            "Thickness": 0.002,
+            "Permittivity": 10.0
+          }
+        }
+      }
+    },
+    "Discovery": {
+      "Manifest": "/private/tmp/coupon-device-transmon-20260922/device/discovery/surface-response-requirements.json",
+      "SHA256": "1b05837e1fd5941de726773e8d9ebe15cfe2f4ae037fa4f9b18d85ba2f711ec4",
+      "Summary": {
+        "Counts": {
+          "Exact": 0,
+          "Interpolated": 0,
+          "Missing": 3120
+        },
+        "TotalEdgeLengths": {
+          "Exact": 0.0,
+          "Interpolated": 0.0,
+          "Missing": 35296.80977799022
+        }
+      },
+      "Complete": false
+    },
+    "Plan": {
+      "Path": "/private/tmp/coupon-device-transmon-20260922/device/coupon-plan.json",
+      "Summary": {
+        "CouponCount": 9,
+        "AutomaticallyPreparatable": 9,
+        "Unsupported": 0
+      }
+    },
+    "TraceBasis": {
+      "RingSize": 16,
+      "CapTriangulation": "delaunay",
+      "DefaultCapTriangulation": "delaunay",
+      "Rule": "generate_spatial_response.build_matching_surface with the planner's default ring size (prepare_surface_response_coupons --spatial-ring-size), the basis every gallery case was produced with; CapTriangulation delaunay (the device default, decision 57) re-triangulates the two box caps without needle ears, ear-clipping is the gallery producer's (an explicit option; device coupons only, never a gallery reference)"
+    },
+    "OutOfScope": [
+      {
+        "Id": "concavecorner_angledegrees-90_cornerradius-0_977cefce7c4a",
+        "Topology": "ConcaveCorner",
+        "Method": "CornerCoupon",
+        "Reason": null,
+        "DeviceOccurrences": 18,
+        "DeviceEdgeLength": 72.0,
+        "Rule": "not a coupon of the Gmsh-only spatial library: built by its own family (CornerCoupon)"
+      },
+      {
+        "Id": "convexcorner_angledegrees-90_cornerradius-0_90951f493ec3",
+        "Topology": "ConvexCorner",
+        "Method": "CornerCoupon",
+        "Reason": null,
+        "DeviceOccurrences": 12,
+        "DeviceEdgeLength": 48.0,
+        "Rule": "not a coupon of the Gmsh-only spatial library: built by its own family (CornerCoupon)"
+      },
+      {
+        "Id": "isolatededge_edgecount-1_c16a871d29dd",
+        "Topology": "IsolatedEdge",
+        "Method": "StraightEdgeBuilder",
+        "Reason": null,
+        "DeviceOccurrences": 3082,
+        "DeviceEdgeLength": 35068.35739703781,
+        "Rule": "not a coupon of the Gmsh-only spatial library: built by its own family (StraightEdgeBuilder)"
+      }
+    ],
+    "MeshRecipe": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
+    "Output": "/private/tmp/coupon-device-transmon-20260922/device"
+  },
+  "DeviceCoupons": [
+    {
+      "Case": "spatial-10-edge-65450ff47b9b",
+      "Requirement": "spatialedgecluster_edgecount-10_6791f1c84123",
+      "EdgeCount": 10,
+      "Directory": "/private/tmp/coupon-device-transmon-20260922/device/sources/spatial-10-edge-65450ff47b9b",
+      "ContentHash": "65450ff47b9b31bccaf3790cff9fc9f347d8208677ccfb1ceafbfc22b46acfec",
+      "Status": "written",
+      "Sources": 191,
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 0,
+          "Target": 2,
+          "Type": "MS"
+        },
+        {
+          "Slot": 1,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 1,
+          "Target": 2,
+          "Type": "MS"
+        },
+        {
+          "Slot": 1,
+          "Target": 1,
+          "Type": "SA"
+        }
+      ],
+      "DeviceOccurrences": 1,
+      "DeviceEdgeLength": 26.452380952400002,
+      "Registration": {
+        "Status": "registered",
+        "Message": "registered spatial-10-edge-65450ff47b9b as FixtureVersion 1",
+        "FixtureVersion": 1,
+        "ContractSHA256": "f231e5b913ea4d5937fe12a64eb6d1a815b42c4b474cb16fc1569628a61939a4",
+        "Scope": {
+          "ExhibitedClasses": [
+            "ContinuationVertices",
+            "ExteriorLoops",
+            "MultipleConductors",
+            "MultipleSlots",
+            "TraceBasis"
+          ],
+          "UnsupportedClasses": []
+        },
+        "StoppedBy": null,
+        "Work": "/tmp/coupon-device-transmon-20260922/device/register/spatial-10-edge-65450ff47b9b"
+      }
+    },
+    {
+      "Case": "spatial-2-edge-8ce3fb213a2d",
+      "Requirement": "spatialedgecluster_edgecount-2_3f8992613e95",
+      "EdgeCount": 2,
+      "Directory": "/private/tmp/coupon-device-transmon-20260922/device/sources/spatial-2-edge-8ce3fb213a2d",
+      "ContentHash": "8ce3fb213a2d77ee68b45ebcfe2f844e65eadea24fe558f3444948bcbefbf7c9",
+      "Status": "written",
+      "Sources": 150,
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 0,
+          "Target": 2,
+          "Type": "MS"
+        },
+        {
+          "Slot": 0,
+          "Target": 1,
+          "Type": "SA"
+        }
+      ],
+      "DeviceOccurrences": 1,
+      "DeviceEdgeLength": 8.0,
+      "Registration": {
+        "Status": "registered",
+        "Message": "registered spatial-2-edge-8ce3fb213a2d as FixtureVersion 1",
+        "FixtureVersion": 1,
+        "ContractSHA256": "b91001b9b0e322c1b5da53c1b62972f26448e9c7f7daaf19378c78eddd63b257",
+        "Scope": {
+          "ExhibitedClasses": [
+            "ContinuationVertices",
+            "ExteriorLoops",
+            "TraceBasis"
+          ],
+          "UnsupportedClasses": []
+        },
+        "StoppedBy": null,
+        "Work": "/tmp/coupon-device-transmon-20260922/device/register/spatial-2-edge-8ce3fb213a2d"
+      }
+    },
+    {
+      "Case": "spatial-3-edge-9cd906b81cbe",
+      "Requirement": "spatialedgecluster_edgecount-3_419576fdab24",
+      "EdgeCount": 3,
+      "Directory": "/private/tmp/coupon-device-transmon-20260922/device/sources/spatial-3-edge-9cd906b81cbe",
+      "ContentHash": "9cd906b81cbef7300f8cb65998c374a3c3c26467de8e3b0f409442ba1467b1bc",
+      "Status": "written",
+      "Sources": 175,
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 0,
+          "Target": 2,
+          "Type": "MS"
+        },
+        {
+          "Slot": 0,
+          "Target": 1,
+          "Type": "SA"
+        }
+      ],
+      "DeviceOccurrences": 1,
+      "DeviceEdgeLength": 8.0,
+      "Registration": {
+        "Status": "registered",
+        "Message": "registered spatial-3-edge-9cd906b81cbe as FixtureVersion 1",
+        "FixtureVersion": 1,
+        "ContractSHA256": "8414a7fc016a239791c5a0129fade6ae285ad149a064255aa754faea6888d52e",
+        "Scope": {
+          "ExhibitedClasses": [
+            "ContinuationVertices",
+            "ExteriorLoops",
+            "TraceBasis"
+          ],
+          "UnsupportedClasses": []
+        },
+        "StoppedBy": null,
+        "Work": "/tmp/coupon-device-transmon-20260922/device/register/spatial-3-edge-9cd906b81cbe"
+      }
+    },
+    {
+      "Case": "spatial-3-edge-5d3b5e644745",
+      "Requirement": "spatialedgecluster_edgecount-3_7f03270dca8e",
+      "EdgeCount": 3,
+      "Directory": "/private/tmp/coupon-device-transmon-20260922/device/sources/spatial-3-edge-5d3b5e644745",
+      "ContentHash": "5d3b5e644745d7c95638fc3a2e7a9c3529e4c5312fad536449129b78d93870c5",
+      "Status": "written",
+      "Sources": 225,
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 0,
+          "Target": 2,
+          "Type": "MS"
+        },
+        {
+          "Slot": 0,
+          "Target": 1,
+          "Type": "SA"
+        }
+      ],
+      "DeviceOccurrences": 1,
+      "DeviceEdgeLength": 10.0,
+      "Registration": {
+        "Status": "registered",
+        "Message": "registered spatial-3-edge-5d3b5e644745 as FixtureVersion 1",
+        "FixtureVersion": 1,
+        "ContractSHA256": "0f29aa4a27680667b89918b6fe5fc36dce9d19eeb9f113964db4acbdfa322616",
+        "Scope": {
+          "ExhibitedClasses": [
+            "ContinuationVertices",
+            "ExteriorLoops",
+            "TraceBasis"
+          ],
+          "UnsupportedClasses": []
+        },
+        "StoppedBy": null,
+        "Work": "/tmp/coupon-device-transmon-20260922/device/register/spatial-3-edge-5d3b5e644745"
+      }
+    },
+    {
+      "Case": "spatial-4-edge-e51d7380245e",
+      "Requirement": "spatialedgecluster_edgecount-4_9d2cb9bbb3fe",
+      "EdgeCount": 4,
+      "Directory": "/private/tmp/coupon-device-transmon-20260922/device/sources/spatial-4-edge-e51d7380245e",
+      "ContentHash": "e51d7380245e07cdab162c71f84ffb289e1ec9b3e6903603d6e89f033aa8c67f",
+      "Status": "written",
+      "Sources": 120,
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 0,
+          "Target": 2,
+          "Type": "MS"
+        },
+        {
+          "Slot": 0,
+          "Target": 1,
+          "Type": "SA"
+        }
+      ],
+      "DeviceOccurrences": 2,
+      "DeviceEdgeLength": 24.0,
+      "Registration": {
+        "Status": "registered",
+        "Message": "registered spatial-4-edge-e51d7380245e as FixtureVersion 1",
+        "FixtureVersion": 1,
+        "ContractSHA256": "6cbda5a88abf5a9ff659ad8856907e2484ea0b0439a2407ea12cde127459187f",
+        "Scope": {
+          "ExhibitedClasses": [
+            "ContinuationVertices",
+            "ExteriorLoops",
+            "TraceBasis"
+          ],
+          "UnsupportedClasses": []
+        },
+        "StoppedBy": null,
+        "Work": "/tmp/coupon-device-transmon-20260922/device/register/spatial-4-edge-e51d7380245e"
+      }
+    },
+    {
+      "Case": "spatial-5-edge-9bfa8265e2e7",
+      "Requirement": "spatialedgecluster_edgecount-5_938a30f63a3d",
+      "EdgeCount": 5,
+      "Directory": "/private/tmp/coupon-device-transmon-20260922/device/sources/spatial-5-edge-9bfa8265e2e7",
+      "ContentHash": "9bfa8265e2e739f4e0e8b6f9b73308de36feea9bf7111a0dc740dc0db130b5df",
+      "Status": "written",
+      "Sources": 185,
+      "Interfaces": [
+        {
+          "Slot": 0,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 0,
+          "Target": 2,
+          "Type": "MS"
+        },
+        {
+          "Slot": 0,
+          "Target": 1,
+          "Type": "SA"
+        },
+        {
+          "Slot": 1,
+          "Target": 3,
+          "Type": "MA"
+        },
+        {
+          "Slot": 1,
+          "Target": 2,
+          "Type": "MS"
+        }
+      ],
+      "DeviceOccurrences": 2,
+      "DeviceEdgeLength": 32.0,
+      "Registration": {
+        "Status": "registered",
+        "Message": "registered spatial-5-edge-9bfa8265e2e7 as FixtureVersion 1",
+        "FixtureVersion": 1,
+        "ContractSHA256": "ee933f1fca8aff3c28f35f88771ec6666f9ff38cfdd6aebc7e9c4272075cbac9",
+        "Scope": {
+          "ExhibitedClasses": [
+            "ContinuationVertices",
+            "ExteriorLoops",
+            "MultipleSlots",
+            "TraceBasis"
+          ],
+          "UnsupportedClasses": []
+        },
+        "StoppedBy": null,
+        "Work": "/tmp/coupon-device-transmon-20260922/device/register/spatial-5-edge-9bfa8265e2e7"
+      }
+    }
+  ]
+}
