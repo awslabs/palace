@@ -1,0 +1,43 @@
+#!/bin/bash
+# Decision 68 AMR device verification, order 5 on 4 m8g.48xlarge node(s) (768 ranks): the island-tagged coarse transmon mesh,
+# the full Version-3 device library, prism-era Refinement block (MaxIts 10, Tol 0.01, UpdateFraction 0.7, Nonconformal), SurfaceMortar
+# oversampling 2, SaveAdaptIterations + SaveAdaptMesh; then the near-edge element-size diagnostic on every adapted mesh.
+# Node count from the memory estimate (coarse p5 58 GB/node at 3.07M DOFs; prism-era p5: 98M DOFs = 1.2 TB on 2 m8g, 284M = 3.2 TB on
+# 4 r8g -> ~9 KB/DOF + ~0.8 GB/rank): p3 ~22M DOFs (1 node), p4 ~51M (2 nodes), p5 ~98M (4 nodes, USER decision 68).
+#PBS -N device-amr-p5
+#PBS -q normal-g
+#PBS -P DS-EM-FEM
+#PBS -r n
+#PBS -l select=4:ncpus=192:mpiprocs=192
+#PBS -l place=scatter:excl
+#PBS -l instance_type=m8g.48xlarge
+#PBS -l efa_support=True,subnet_id=subnet-0c98d793bbcebb39a
+#PBS -l walltime=04:00:00
+#PBS -j oe
+#PBS -o /data/home/simlap/coupon_accuracy_assessment_20260913/device-verification-01/amr/p5/pbs.log
+set -euo pipefail
+unset PYTHONOPTIMIZE
+source /etc/profile.d/modules.sh
+module load gcc/14.3.0 openmpi/5.0.8-gcc14 arm/armpl/24.10-gcc
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 BLIS_NUM_THREADS=1 ARMPL_NUM_THREADS=1 PYTHONDONTWRITEBYTECODE=1
+for name in ${!PALACE_RESPONSE_@}; do unset "$name"; done
+R=/data/home/simlap/coupon_accuracy_assessment_20260913
+D=$R/device-verification-01/amr/p5
+BIN=$R/palace-archive-estimate-170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b.bin
+PY=/apps/python-conda/miniforge-26.1.1-3-arm64/envs/cqc/bin/python3
+trap 'code=$?; printf "{\"ExitCode\":%d,\"JobID\":\"%s\",\"UTC\":\"%s\"}\n" "$code" "${PBS_JOBID:-}" "$(date -u +%FT%TZ)" > "$D/pbs-status.json"' EXIT
+mkdir -p "$D/tmp"; export TMPDIR="$D/tmp"
+date -u +%FT%TZ; hostname; cat "$PBS_NODEFILE" | sort -u; grep MemTotal /proc/meminfo
+sha256sum "$BIN" | tee "$D/binary-sha256.txt"
+sha256sum "$R/device-verification-01/library/process-library.json" "$R/device-verification-01/mesh/transmon_surface_p1_island9.msh2" | tee "$D/inputs-sha256.txt"
+echo "=== palace p5 ranks 768 start $(date -u +%FT%TZ)"
+/usr/bin/time -v -o "$D/time.txt" "$R/mpiexec_bound.sh" --hostfile "$PBS_NODEFILE" -n 768 "$BIN" "$D/config-p5-amr10-remote.json" > "$D/palace.log" 2>&1 || echo "palace RC=$?" | tee -a "$D/palace.log"
+echo "=== palace end $(date -u +%FT%TZ)"
+# Near-edge diagnostic on every adapted mesh (iterationN/ holds the mesh solved at cycle N >= 2; the top-level mesh is the final cycle).
+for mesh in "$D"/postpro/iteration*/transmon_surface_p1_island9.mesh "$D"/postpro/transmon_surface_p1_island9.mesh; do
+  [ -f "$mesh" ] || continue
+  tag=$(basename "$(dirname "$mesh")"); [ "$tag" = postpro ] && tag=final
+  echo "=== edge resolution $tag start $(date -u +%FT%TZ)"
+  "$PY" "$R/device-verification-01/amr/amr_edge_resolution.py" --mesh "$mesh" --band 2.0 0.5 0.1 --json "$D/edge-resolution-$tag.json" || echo "edge resolution $tag failed RC=$?"
+done
+echo "=== done $(date -u +%FT%TZ)"
