@@ -357,6 +357,78 @@ class ProcessLibraryWriterTest(unittest.TestCase):
             write_process_library.main(["--previous", str(first / "process-library.json"), "--root", str(self.tmp / "root4"),
                                         "--run", str(run_record), "--run", str(run_record)])
 
+    SHELLED_HEADER = ("interface,     edge,                      R (m),  basis_i,  basis_j,                   Q_ij (J),"
+                      "            Q_ij normal (J),        Q_ij tangential (J),             Q_total_ij (J),"
+                      "      Q_total_ij normal (J),  Q_total_ij tangential (J)\n")
+
+    @staticmethod
+    def shelled_row(interface, edge, i, j, q):
+        return (f" {interface:.2e}, {edge:.2e},        +2.000000000000e-06, {i:.2e}, {j:.2e},        {q:+.12e},"
+                f"        {q:+.12e},        +0.000000000000e+00,        {2 * q:+.12e},        {2 * q:+.12e},        +0.000000000000e+00\n")
+
+    def previous_version_1_library(self, *, shelled, records):
+        """A Version-1 previous library (root-relative reducer paths) whose model maps MA / MS / SA
+        to coupon interfaces 1 / 2 / 3; the reducer's surface matrix carries the MA as shells 4
+        and 5 when `shelled`; `records` writes the root's library-qualification.json with the
+        RadialShells interfaces of the case."""
+        previous_root = self.tmp / "previous"
+        source = write_source(self.tmp / "sources" / "case-p", "model_p", thin=True)
+        reducer = previous_root / "case-p" / "results" / "main" / "case-p-p4" / "reducer"
+        write_reducer(reducer)
+        ma_rows = ((self.shelled_row(4, 1, 1, 1, 1.0) + self.shelled_row(5, 1, 1, 1, 2.0)) if shelled
+                   else self.shelled_row(1, 1, 1, 1, 3.0))
+        (reducer / "surface-response-matrix.csv").write_text(
+            self.SHELLED_HEADER + self.shelled_row(2, 1, 1, 1, 0.5) + ma_rows + self.shelled_row(3, 1, 1, 1, 0.25))
+        (source.parent / "generated" / "thin" / "surface-response-matrix.csv").write_text(
+            self.SHELLED_HEADER + "".join(self.shelled_row(k, 1, 1, 1, 0.1 * k) for k in (1, 2, 3)))
+        model = json.loads(source.read_text())["Models"][0]
+        model.update({"FabricatedMatrix": "case-p/results/main/case-p-p4/reducer/domain-response-matrix.csv",
+                      "FabricatedSurfaceMatrix": "case-p/results/main/case-p-p4/reducer/surface-response-matrix.csv",
+                      "Interfaces": [{"Slot": 0, "Type": "MA", "Coupon": 1}, {"Slot": 0, "Type": "MS", "Coupon": 2},
+                                     {"Slot": 0, "Type": "SA", "Coupon": 3}],
+                      "Qualification": {"Verdict": "PendingQualification", "Record": str(previous_root / "case-p" / "qualification.json")},
+                      "LibraryQualified": False, "SourceProcessLibrary": {"Path": str(source), "SHA256": "x"}})
+        previous = previous_root / "process-library.json"
+        previous.write_text(json.dumps({"Version": 1, "Root": str(previous_root), "Models": [model]}))
+        if records:
+            (previous_root / "library-qualification.json").write_text(json.dumps({"Cases": [
+                {"Case": "case-p", "Inputs": {"Model": "model_p", "RadialShells": {"Interfaces": {
+                    "4": {"BaseIndex": 1, "Type": "MA", "Ordinal": 1}, "5": {"BaseIndex": 1, "Type": "MA", "Ordinal": 2}}}}}]}))
+        return previous
+
+    def test_kept_shelled_model_of_a_previous_library_is_collapsed(self):
+        """The device library of 2026-09-22: the fabricated run's Version-1 file pointed the kept
+        models at the reducer's shelled surface matrices (MA shells 4.., no MA base index 1);
+        Palace aborted the device solve on the missing coupon interface. A kept model whose
+        previous root records RadialShells is collapsed like a case of the run."""
+        previous = self.previous_version_1_library(shelled=True, records=True)
+        root = self.tmp / "root"
+        write_process_library.main(["--previous", str(previous), "--root", str(root)])
+        library = json.loads((root / "process-library.json").read_text())
+        model = library["Models"][0]
+        self.assertIsNone(model["NotLoadable"])
+        self.assertEqual(model["FabricatedSurfaceMatrix"], "models/model-p/fabricated-surface-response-matrix.csv")
+        self.assertTrue(model["FabricatedSurfaceMatrixShelled"].endswith("reducer/surface-response-matrix.csv"))
+        self.assertEqual(library["CollapsedSurfaceMatrices"]["model_p"]["ShellIndices"], [4, 5])
+        self.assertEqual(qualify_library.surface_matrix_interfaces(root / model["FabricatedSurfaceMatrix"]), {1, 2, 3})
+        import csv
+        with open(root / model["FabricatedSurfaceMatrix"], newline="") as stream:
+            rows = [[cell.strip() for cell in line] for line in csv.reader(stream)][1:]
+        self.assertAlmostEqual({int(float(r[0])): float(r[8]) for r in rows}[1], 2 * (1.0 + 2.0))
+
+    def test_interfaces_absent_from_a_surface_matrix_stop_the_writer(self):
+        """Without the shell record the shelled file cannot be collapsed: the writer stops on the
+        coupon interface Palace would fail to find instead of writing a library that loads in
+        the preflight and aborts the solve."""
+        previous = self.previous_version_1_library(shelled=True, records=False)
+        with self.assertRaisesRegex(ValueError, "model_p FabricatedSurfaceMatrix: Interfaces refer to coupon interfaces \\[1\\]"):
+            write_process_library.main(["--previous", str(previous), "--root", str(self.tmp / "root")])
+        unshelled = self.previous_version_1_library(shelled=False, records=False)
+        write_process_library.main(["--previous", str(unshelled), "--root", str(self.tmp / "root2")])
+        library = json.loads((self.tmp / "root2" / "process-library.json").read_text())
+        self.assertIsNone(library["CollapsedSurfaceMatrices"])
+        self.assertTrue(library["Loadable"]["Palace"])
+
 
 if __name__ == "__main__":
     unittest.main()

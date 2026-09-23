@@ -1241,6 +1241,50 @@ def collapse_shell_surface_matrix(source, destination, shell_map):
             "BaseIndices": sorted(set(base_of.values())), "Rule": COLLAPSED_SURFACE_MATRIX_RULE}
 
 
+def surface_matrix_interfaces(path):
+    """The interface indices a surface response matrix CSV carries (the reducer's `interface`
+    column: '2.00e+00' or '2')."""
+    with open(path, newline="") as stream:
+        reader = csv.reader(stream)
+        column = [name.strip() for name in next(reader)].index("interface")
+        return {int(float(row[column])) for row in reader if row}
+
+
+SURFACE_INTERFACES_RULE = ("Palace's BuildSurfaceResponseMatrices looks every Interfaces[].Coupon index up in both surface "
+                           "matrices and aborts the solve on a missing one (a geometry-only preflight does not read them): "
+                           "the writer checks the copied files")
+
+
+def check_surface_matrix_interfaces(model, *, root):
+    """Stop when a Coupon index of the model's Interfaces is absent from its copied fabricated or
+    thin surface matrix (SURFACE_INTERFACES_RULE); a model without thin matrices is skipped."""
+    if model.get("NotLoadable") is not None or not model.get("Interfaces"):
+        return
+    wanted = {int(mapping["Coupon"]) for mapping in model["Interfaces"]}
+    for field in ("FabricatedSurfaceMatrix", "ThinSurfaceMatrix"):
+        present = surface_matrix_interfaces(Path(root) / model[field])
+        if not wanted <= present:
+            raise ValueError(f"{model['Name']} {field}: Interfaces refer to coupon interfaces {sorted(wanted - present)} "
+                             f"absent from {model[field]} (present {sorted(present)}); {SURFACE_INTERFACES_RULE}")
+
+
+def previous_shell_maps(previous):
+    """Model Name -> RadialShells.Interfaces of the previous library's qualify records (ROOT/
+    library-qualification.json of its Root), for kept models whose surface matrix is the
+    reducer's shelled file (a Version-1 previous library; a Version-3 one is already collapsed
+    and says so with FabricatedSurfaceMatrixShelled)."""
+    record_path = Path(previous.get("Root") or "") / LIBRARY_QUALIFICATION_RECORD
+    if not previous.get("Root") or not record_path.is_file():
+        return {}
+    maps = {}
+    for record in json.loads(record_path.read_text()).get("Cases", []):
+        inputs = record.get("Inputs") or {}
+        shell_map = (inputs.get("RadialShells") or {}).get("Interfaces")
+        if inputs.get("Model") and shell_map:
+            maps[inputs["Model"]] = shell_map
+    return maps
+
+
 def thin_results(records, contexts, *, manifest):
     """FabricatedCase -> the thin case's reducer matrices, cutoff and qualification of every
     analyzed thin case of the run (decision 66)."""
@@ -1329,10 +1373,12 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
                         "Summary": order_block["Summary"]}
                        if order_block else {"Rule": "raw MA only: the run carries no radial MA shells", "MA_sharp": None})
         models.append(copy_model_files(model, root=root, directories=[directory]))
+        check_surface_matrix_interfaces(models[-1], root=root)
     merged = None
     if merge_into is not None:
         merge_into = Path(merge_into)
         previous = json.loads(merge_into.read_text())
+        previous_shells = previous_shell_maps(previous)
         names = {model["Name"] for model in models}
         kept = []
         for previous_model in previous["Models"]:
@@ -1342,6 +1388,20 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
             source_library = Path(model["SourceProcessLibrary"]["Path"])
             headers.append((source_library, library_header(json.loads(source_library.read_text()), source_library)))
             qualification_record = Path(model["Qualification"]["Record"])
+            directories = [merge_into.parent, qualification_record.parents[1], source_library.parent]
+            shell_map = previous_shells.get(model["Name"])
+            if shell_map and not model.get("FabricatedSurfaceMatrixShelled"):
+                # A kept model of a shelled coupon whose previous library still points at the
+                # reducer's shelled file: collapsed here like a case of this run.
+                shelled = resolve_model_file(model["FabricatedSurfaceMatrix"], directories)
+                if shelled is None:
+                    raise FileNotFoundError(f"{model['Name']} FabricatedSurfaceMatrix {model['FabricatedSurfaceMatrix']!r} does not "
+                                            f"exist under {[str(d) for d in directories]}")
+                collapsed_path = Path(root) / "models" / model_slug(model["Name"]) / "fabricated-surface-response-matrix.collapsed.csv"
+                collapsed_path.parent.mkdir(parents=True, exist_ok=True)
+                collapsed[model["Name"]] = collapse_shell_surface_matrix(shelled, collapsed_path, shell_map)
+                model["FabricatedSurfaceMatrixShelled"] = str(shelled)
+                model["FabricatedSurfaceMatrix"] = str(collapsed_path)
             # A thin case of this run pairs with a kept fabricated model of the previous
             # library by model Name (the thin qualify run follows the fabricated one; decision 66).
             fabricated_case = next((case_id for case_id in thin
@@ -1354,8 +1414,8 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
                 model.update(thin[fabricated_case])
                 model["ThinCutoffRule"] = THIN_CUTOFF_RULE
                 paired.add(fabricated_case)
-            kept.append(copy_model_files(model, root=root, directories=[merge_into.parent, qualification_record.parents[1],
-                                                                        source_library.parent]))
+            kept.append(copy_model_files(model, root=root, directories=directories))
+            check_surface_matrix_interfaces(kept[-1], root=root)
         merged = {"Path": str(merge_into), "SHA256": sha256(merge_into), "Root": previous.get("Root"),
                   "Kept": [model["Name"] for model in kept],
                   "Replaced": [model["Name"] for model in previous["Models"] if model["Name"] in names],
