@@ -372,7 +372,7 @@ class ControlsPlanAndEstimateRuleTest(unittest.TestCase):
         profile = json.loads((HERE / "qualify" / "cluster-profile.json").read_text())
         estimate = {"Stages": {"p4-10": stage, "le": stage}, "JobSecondsEstimateByPCGFactor": {},
                     "JobSecondsEstimateWithPreflightAndMargin": {}, "MaxPalacePeakGBEstimate": 1.0, "FitsOneJob": True,
-                    "Decision": "fits"}
+                    "Decision": "fits", "CostModel": {"PalaceGBPerGiB": 1.0737}}
         plan = build_plan.build_plan(case_id="c", remote_case_root="/r/run/c", mesh={"Remote": "/r/m.msh", "SHA256": "a" * 64, "Local": "/l"},
                                      stage_layout=[{"Prefix": "x-p4", "Kind": "response", "EstimateKey": "p4-10"},
                                                    {"Prefix": "x-p4-local-edge", "Kind": "local-edge", "EstimateKey": "le"}],
@@ -389,9 +389,13 @@ class ControlsPlanAndEstimateRuleTest(unittest.TestCase):
         self.assertEqual(plan["Stages"][2]["Environment"], {})
         self.assertEqual(len(plan["PinnedSHA256"]), 5)
         self.assertEqual(plan["BinarySHA256"], "f" * 64)
+        self.assertEqual(plan["Instance"]["Type"], "m8g.48xlarge")
+        self.assertEqual(plan["MinimumMemAvailableBytes"], plan["Instance"]["MinimumMemAvailableBytes"])
         script = build_plan.render_job_script(profile=profile, remote_root="/r", remote_case_root="/r/run/c",
-                                              runner="/r/run/run_stages.py", job_name="j", walltime_seconds=21600)
+                                              runner="/r/run/run_stages.py", job_name="j", walltime_seconds=21600,
+                                              instance_type=plan["Instance"]["Type"])
         self.assertIn("#PBS -l walltime=06:00:00", script)
+        self.assertIn("#PBS -l instance_type=m8g.48xlarge", script)
         self.assertIn('python3 "/r/run/run_stages.py" "$D/plan.json"', script)
 
     def test_cost_model_closed_form_is_consistent_and_a_too_large_coupon_fails_closed(self):

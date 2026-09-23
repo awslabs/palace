@@ -338,12 +338,69 @@ class JobSplitTest(unittest.TestCase):
         # A block's cap follows its own source count: block 2 (70 sources) above block 1 (17).
         self.assertGreater(plans["worker-2"]["Stages"][0]["CapSeconds"], plans["worker-1"]["Stages"][0]["CapSeconds"])
         script = build_plan.render_job_script(profile=self.profile, remote_root="/r", remote_case_root="/r/case", runner="/r/run/run_stages.py",
-                                              job_name="j", walltime_seconds=21600, job_directory="/r/case/main/jobs/worker-2")
+                                              job_name="j", walltime_seconds=21600, job_directory="/r/case/main/jobs/worker-2",
+                                              instance_type=plans["worker-2"]["Instance"]["Type"])
         self.assertIn("D=/r/case/main/jobs/worker-2\n", script)
         self.assertIn("#PBS -o /r/case/main/jobs/worker-2/pbs.log", script)
+        self.assertIn("#PBS -l instance_type=m8g.48xlarge\n", script)
         single = build_plan.render_job_script(profile=self.profile, remote_root="/r", remote_case_root="/r/case", runner="/r/run/run_stages.py",
-                                              job_name="j", walltime_seconds=21600)
+                                              job_name="j", walltime_seconds=21600, instance_type="r8g.48xlarge")
         self.assertIn("D=/r/case/main\n", single)
+        self.assertIn("#PBS -l instance_type=r8g.48xlarge\n", single)
+        with self.assertRaisesRegex(ValueError, "c8g.48xlarge.*not an instance"):
+            build_plan.render_job_script(profile=self.profile, remote_root="/r", remote_case_root="/r/case", runner="/r/run/run_stages.py",
+                                         job_name="j", walltime_seconds=21600, instance_type="c8g.48xlarge")
+
+    def test_instance_per_job_by_estimated_peak(self):
+        """USER decision 2026-09-22: m8g.48xlarge (768 GiB) is the default instance, r8g.48xlarge
+        (1,536 GiB) the fallback when a job's estimated Palace peak exceeds MemoryFitFraction
+        (0.6) x the m8g memory; the plan records the instance and its admission guard
+        MinimumMemAvailableBytes = 0.6 x the chosen memory; every job of the device library
+        (largest estimate 338 GB) runs on m8g."""
+        self.assertEqual([item["Type"] for item in self.profile["Instances"]], ["m8g.48xlarge", "r8g.48xlarge"])
+        self.assertNotIn("c8g.48xlarge", [item["Type"] for item in self.profile["Instances"]])
+        self.assertIn("c8g.48xlarge (384 GiB) is deliberately absent", self.profile["InstanceRule"])
+        gb_per_gib = self.model["PalaceGBPerGiB"]
+        small = build_plan.select_instance(self.profile, 338.0, gb_per_gib)
+        self.assertEqual((small["Type"], small["MemoryGiB"], small["Fits"]), ("m8g.48xlarge", 768, True))
+        self.assertEqual(small["MinimumMemAvailableBytes"], int(0.6 * 768 * 1024 ** 3))
+        self.assertAlmostEqual(small["EstimatedPalacePeakGiB"], 338.0 / gb_per_gib)
+        edge = build_plan.select_instance(self.profile, 0.6 * 768 * gb_per_gib, gb_per_gib)
+        self.assertEqual(edge["Type"], "m8g.48xlarge")
+        large = build_plan.select_instance(self.profile, 0.6 * 768 * gb_per_gib * 1.001, gb_per_gib)
+        self.assertEqual((large["Type"], large["Fits"]), ("r8g.48xlarge", True))
+        self.assertEqual(large["MinimumMemAvailableBytes"], int(0.6 * 1536 * 1024 ** 3))
+        huge = build_plan.select_instance(self.profile, 2000.0 * gb_per_gib, gb_per_gib)
+        self.assertEqual((huge["Type"], huge["Fits"]), ("r8g.48xlarge", False))
+        self.assertEqual(build_plan.largest_node_gib(self.profile), 1485.13)
+        # Every job plan of the split carries its own instance from the stages it runs: the
+        # reducer job's peak is the reducer estimate, a block worker's the worker estimate,
+        # job 1 also the controls and the local-edge stage.
+        record = self.split("speed", 4)
+        digests = {"c-p4": {f"worker-block{k}.json": f"{k}" * 64 for k in range(1, 5)} | {"reducer.json": "r" * 64},
+                   "c-p5-control": {"worker.json": "a" * 64, "reducer.json": "b" * 64},
+                   "c-p3-control": {"worker.json": "c" * 64, "reducer.json": "d" * 64},
+                   "c-p4-local-edge": {"config.json": "e" * 64}}
+        common = dict(case_id="c", remote_case_root="/r/case", mesh={"Remote": "/r/case/mesh/m.msh", "SHA256": "m" * 64, "Local": "/l/m.msh"},
+                      stage_layout=self.layout, estimate=self.estimate, config_digests=digests, trace_pins={},
+                      profile=self.profile, binary="/r/b.bin", binary_sha256="0" * 64, mpiexec="/r/mpiexec_bound.sh",
+                      purpose="test", factors=["1.0", "1.5", "2.0"])
+        plans = {job["Name"]: build_plan.build_job_plan(job_name=job["Name"], split_job=job, **common) for job in record["Jobs"]}
+        stages = self.estimate["Stages"]
+        main, p5, p3, local = (next(item["EstimateKey"] for item in self.layout if item["Prefix"] == prefix)
+                               for prefix in ("c-p4", "c-p5-control", "c-p3-control", "c-p4-local-edge"))
+        self.assertEqual(plans["reducer"]["Instance"]["EstimatedPalacePeakGB"], stages[main]["ReducerPalacePeakGBEstimate"])
+        self.assertEqual(plans["worker-2"]["Instance"]["EstimatedPalacePeakGB"], stages[main]["WorkerPalacePeakGBEstimate"])
+        self.assertEqual(plans["worker-1"]["Instance"]["EstimatedPalacePeakGB"],
+                         max(stages[main]["WorkerPalacePeakGBEstimate"], stages[p5]["WorkerPalacePeakGBEstimate"],
+                             stages[p5]["ReducerPalacePeakGBEstimate"], stages[p3]["WorkerPalacePeakGBEstimate"],
+                             stages[p3]["ReducerPalacePeakGBEstimate"], stages[local]["PalacePeakGBEstimate"]))
+        for plan in plans.values():
+            self.assertEqual(plan["Instance"]["Type"], "m8g.48xlarge")
+            self.assertEqual(plan["MinimumMemAvailableBytes"], plan["Instance"]["MinimumMemAvailableBytes"])
+        whole = build_plan.build_plan(**common)
+        self.assertEqual(whole["Instance"]["EstimatedPalacePeakGB"], self.estimate["MaxPalacePeakGBEstimate"])
+        self.assertEqual(whole["Instance"]["Type"], "m8g.48xlarge")
 
     def test_manifest_job_policy_default_and_command_line_override(self):
         """The production recipe records the default policy (frugal) under
@@ -622,7 +679,14 @@ class QualifyDryRunTest(unittest.TestCase):
         self.assertEqual(plan["MeshSHA256"], sha256(local_identity_mesh(case_id)))
         self.assertEqual(plan["Ranks"], recorded_plan["Ranks"])
         self.assertEqual(plan["DeadlineSeconds"], recorded_plan["DeadlineSeconds"])
-        self.assertEqual(plan["MinimumMemAvailableBytes"], recorded_plan["MinimumMemAvailableBytes"])
+        # The recorded campaign ran on r8g.48xlarge with a 1,000 GiB guard; since the instance
+        # decision the plan chooses its instance by the estimated peak (m8g here) and its guard
+        # is 0.6 x that instance's memory.
+        self.assertEqual(recorded_plan["MinimumMemAvailableBytes"], 1073741824000)
+        self.assertEqual(plan["Instance"]["Type"], "m8g.48xlarge")
+        self.assertEqual(plan["MinimumMemAvailableBytes"], plan["Instance"]["MinimumMemAvailableBytes"])
+        self.assertEqual(plan["MinimumMemAvailableBytes"], int(0.6 * 768 * 1024 ** 3))
+        self.assertIn("#PBS -l instance_type=m8g.48xlarge\n", (root / case_id / "main" / "job.pbs").read_text())
         self.assertEqual(plan["BinarySHA256"], BINARY_SHA256)
         self.assertTrue(plan["Binary"].endswith(f"palace-archive-estimate-{BINARY_SHA256}.bin"))
         for stage in plan["Stages"]:

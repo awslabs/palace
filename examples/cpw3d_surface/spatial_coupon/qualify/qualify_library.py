@@ -434,7 +434,8 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                                                     "CriticalPathEstimateSeconds", "NodeSecondsEstimate", "WorstPCGFactor")}
     record["Split"]["Blocks"] = [len(block) for block in split["Blocks"]] if split["Blocks"] else None
     record["Split"]["Rule"] = job_split.SPLIT_RULE
-    fits_memory = estimate["MaxPalacePeakGBEstimate"] / cost_model["PalaceGBPerGiB"] + 60 < cost_model["NodeFitFraction"] * profile["NodeGiB"]
+    fits_memory = (estimate["MaxPalacePeakGBEstimate"] / cost_model["PalaceGBPerGiB"] + 60
+                   < cost_model["NodeFitFraction"] * build_plan.largest_node_gib(profile))
     if not fits_memory:
         raise CaseStop("Estimate", estimate["Decision"], Estimate=record["Estimate"])
     if not split["Fits"]:
@@ -487,9 +488,9 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
         job_script = build_plan.render_job_script(profile=profile, remote_root=remote_root, remote_case_root=remote_case,
                                                   runner=f"{remote_run}/run_stages.py",
                                                   job_name=f"{profile['JobNamePrefix']}-{case_id}"[:64],
-                                                  walltime_seconds=profile["WalltimeSeconds"])
+                                                  walltime_seconds=profile["WalltimeSeconds"], instance_type=plan["Instance"]["Type"])
         (case_root / "main" / "job.pbs").write_text(job_script)
-        jobs.append({"Name": "single", "Kind": "single", "Block": 1, "Sources": indices, "Requires": [],
+        jobs.append({"Name": "single", "Kind": "single", "Block": 1, "Sources": indices, "Requires": [], "Instance": plan["Instance"]["Type"],
                      "Directory": str(case_root / "main"), "RemoteDirectory": f"{remote_case}/main",
                      "SubmissionRecord": str(case_root / "submission.json"), "StageNames": [stage["Name"] for stage in plan["Stages"]],
                      "Estimate": split["Jobs"][0]["SecondsEstimateWithPreflightAndMargin"], "Plan": str(case_root / "main" / "plan.json")})
@@ -509,9 +510,11 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
             job_script = build_plan.render_job_script(profile=profile, remote_root=remote_root, remote_case_root=remote_case,
                                                       runner=f"{remote_run}/run_stages.py",
                                                       job_name=f"{profile['JobNamePrefix']}-{case_id}-{name}"[:64],
-                                                      walltime_seconds=profile["WalltimeSeconds"], job_directory=remote_directory)
+                                                      walltime_seconds=profile["WalltimeSeconds"], instance_type=plan["Instance"]["Type"],
+                                                      job_directory=remote_directory)
             (directory_ / "job.pbs").write_text(job_script)
             jobs.append({"Name": name, "Kind": split_job["Kind"], "Block": split_job["Block"], "Sources": split_job["Sources"],
+                         "Instance": plan["Instance"]["Type"],
                          "Requires": ([job["Name"] for job in split["Jobs"] if job["Kind"] == "worker"]
                                       if split_job["Kind"] == "reducer" else []),
                          "Directory": str(directory_), "RemoteDirectory": remote_directory,

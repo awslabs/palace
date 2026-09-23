@@ -52,6 +52,32 @@ FROZEN_BINARY_RULE = ("the frozen palace-archive-estimate-<sha256>.bin under the
                       "--frozen-binary-sha256 overrides the default and the origin is recorded per coupon")
 
 
+GIB = 1024 ** 3
+
+
+def largest_node_gib(profile):
+    """The OS-visible memory of the profile's largest instance (the fallback): the node the
+    whole-coupon fit checks are made against."""
+    return max(instance["NodeGiB"] for instance in profile["Instances"])
+
+
+def select_instance(profile, peak_gb, gb_per_gib):
+    """The instance a job runs on (profile InstanceRule): the first of Instances whose
+    MemoryFitFraction x MemoryGiB holds the job's largest estimated Palace peak, else the
+    last (largest) one with Fits false (the caller's whole-coupon fit check stops the case);
+    the record carries the admission guard MinimumMemAvailableBytes = the fraction of the
+    chosen instance's memory."""
+    fraction = float(profile["MemoryFitFraction"])
+    peak_gib = float(peak_gb) / float(gb_per_gib)
+    instances = profile["Instances"]
+    chosen = next((item for item in instances if peak_gib <= fraction * item["MemoryGiB"]), instances[-1])
+    return {"Type": chosen["Type"], "vCPUs": chosen["vCPUs"], "MemoryGiB": chosen["MemoryGiB"], "NodeGiB": chosen["NodeGiB"],
+            "EstimatedPalacePeakGB": float(peak_gb), "EstimatedPalacePeakGiB": peak_gib, "MemoryFitFraction": fraction,
+            "Fits": peak_gib <= fraction * chosen["MemoryGiB"],
+            "MinimumMemAvailableBytes": int(fraction * chosen["MemoryGiB"] * GIB),
+            "Candidates": [item["Type"] for item in instances], "Rule": profile["InstanceRule"]}
+
+
 def reducer_environment(block_size):
     block_size = int(block_size)
     if block_size < 1:
@@ -119,10 +145,11 @@ def build_plan(*, case_id, remote_case_root, mesh, stage_layout, estimate, confi
         else:
             cap, minimum = stage_caps(est, "local-edge", factors, deadline)
             stages.append(ordinary_stage(remote_case_root, item["Prefix"], cap, minimum))
+    instance = select_instance(profile, estimate["MaxPalacePeakGBEstimate"], estimate["CostModel"]["PalaceGBPerGiB"])
     return {"Version": PLAN_VERSION, "Case": case_id, "Purpose": purpose,
             "Ranks": profile["Ranks"], "DeadlineSeconds": profile["DeadlineSeconds"],
             "DeadlineMarginSeconds": profile["DeadlineMarginSeconds"],
-            "MinimumMemAvailableBytes": profile["MinimumMemAvailableBytes"],
+            "Instance": instance, "MinimumMemAvailableBytes": instance["MinimumMemAvailableBytes"],
             "Binary": binary, "BinarySHA256": binary_sha256, "MPIExec": mpiexec,
             "PinnedSHA256": pinned, "Stages": stages,
             "ReducerBlockSize": int(reducer_block_size), "ReducerBlockSizeRule": REDUCER_BLOCK_SIZE_RULE,
@@ -166,6 +193,7 @@ def build_job_plan(*, case_id, job_name, remote_case_root, mesh, stage_layout, s
     stage_names = []
     deadline = profile["DeadlineSeconds"] - profile["DeadlineMarginSeconds"]
     stages = []
+    peak_gb = 0.0   # the largest estimated Palace peak of the stages THIS job runs (its instance)
     pinned = {mesh["Remote"]: mesh["SHA256"]}
     for item in stage_layout:
         est = estimate["Stages"][item["EstimateKey"]]
@@ -173,12 +201,14 @@ def build_job_plan(*, case_id, job_name, remote_case_root, mesh, stage_layout, s
             if kind == "worker" and split_job["Sources"]:
                 cap, minimum = stage_caps(block_estimate(est, len(split_job["Sources"]), factors), "worker", factors, deadline)
                 stages.append(block_stage(remote_case_root, item["Prefix"], block, cap, minimum))
+                peak_gb = max(peak_gb, est["WorkerPalacePeakGBEstimate"])
                 pinned[f"{remote_case_root}/main/{item['Prefix']}/worker-block{block}.json"] = config_digests[item["Prefix"]][f"worker-block{block}.json"]
             elif kind == "reducer":
                 cap, minimum = stage_caps(est, "reducer", factors, deadline)
                 reducer = stage(remote_case_root, item["Prefix"], "reducer", cap, minimum, reducer_block_size)
                 reducer["Requires"] = []
                 stages.append(reducer)
+                peak_gb = max(peak_gb, est["ReducerPalacePeakGBEstimate"])
                 pinned[f"{remote_case_root}/main/{item['Prefix']}/reducer.json"] = config_digests[item["Prefix"]]["reducer.json"]
         elif kind == "worker" and block == 1:
             for name, digest in config_digests[item["Prefix"]].items():
@@ -187,16 +217,19 @@ def build_job_plan(*, case_id, job_name, remote_case_root, mesh, stage_layout, s
                 for stage_kind in ("worker", "reducer"):
                     cap, minimum = stage_caps(est, stage_kind, factors, deadline)
                     stages.append(stage(remote_case_root, item["Prefix"], stage_kind, cap, minimum, reducer_block_size))
+                peak_gb = max(peak_gb, est["WorkerPalacePeakGBEstimate"], est["ReducerPalacePeakGBEstimate"])
             else:
                 cap, minimum = stage_caps(est, "local-edge", factors, deadline)
                 stages.append(ordinary_stage(remote_case_root, item["Prefix"], cap, minimum))
+                peak_gb = max(peak_gb, est["PalacePeakGBEstimate"])
     pinned.update(trace_pins)
     stage_names = [item["Name"] for item in stages]
+    instance = select_instance(profile, peak_gb, estimate["CostModel"]["PalaceGBPerGiB"])
     return {"Version": PLAN_VERSION, "Case": case_id, "Job": job_name, "JobKind": kind, "Block": block,
             "BlockSources": split_job["Sources"] if kind == "worker" else None, "Purpose": purpose,
             "Ranks": profile["Ranks"], "DeadlineSeconds": profile["DeadlineSeconds"],
             "DeadlineMarginSeconds": profile["DeadlineMarginSeconds"],
-            "MinimumMemAvailableBytes": profile["MinimumMemAvailableBytes"],
+            "Instance": instance, "MinimumMemAvailableBytes": instance["MinimumMemAvailableBytes"],
             "Binary": binary, "BinarySHA256": binary_sha256, "MPIExec": mpiexec,
             "PinnedSHA256": pinned, "Stages": stages, "StageNames": stage_names,
             "ReducerBlockSize": int(reducer_block_size), "ReducerBlockSizeRule": REDUCER_BLOCK_SIZE_RULE,
@@ -209,9 +242,13 @@ def build_job_plan(*, case_id, job_name, remote_case_root, mesh, stage_layout, s
                                 "Fits": split_job["Fits"]}}
 
 
-def render_job_script(*, profile, remote_root, remote_case_root, runner, job_name, walltime_seconds, job_directory=None):
-    """The PBS job script of one coupon job (one exclusive node; the runner reads the plan
-    of `job_directory`, default <case>/main - the single job of a coupon)."""
+def render_job_script(*, profile, remote_root, remote_case_root, runner, job_name, walltime_seconds, instance_type,
+                      job_directory=None):
+    """The PBS job script of one coupon job (one exclusive node of `instance_type`, the
+    plan's chosen instance; the runner reads the plan of `job_directory`, default
+    <case>/main - the single job of a coupon)."""
+    if instance_type not in {item["Type"] for item in profile["Instances"]}:
+        raise ValueError(f"{instance_type!r} is not an instance of the cluster profile")
     job_directory = job_directory or f"{remote_case_root}/main"
     hours, rest = divmod(int(walltime_seconds), 3600)
     minutes, seconds = divmod(rest, 60)
@@ -225,7 +262,7 @@ def render_job_script(*, profile, remote_root, remote_case_root, runner, job_nam
              "#PBS -r n",
              f"#PBS -l {profile['SelectResources']}",
              f"#PBS -l {profile['PlaceResources']}",
-             f"#PBS -l instance_type={profile['InstanceType']}",
+             f"#PBS -l instance_type={instance_type}",
              f"#PBS -l {profile['ExtraResources']}",
              f"#PBS -l walltime={hours:02d}:{minutes:02d}:{seconds:02d}",
              "#PBS -j oe",

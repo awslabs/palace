@@ -139,6 +139,7 @@ def main(argv):
         raise SystemExit("Conflicting native processes: " + repr(conflicts))
     memory0 = meminfo()
     preflight = {"MemTotalBytes": memory0["MemTotal"], "MemAvailableBytes": memory0["MemAvailable"],
+                 "MinimumMemAvailableBytes": plan["MinimumMemAvailableBytes"], "Instance": plan.get("Instance"),
                  "Binary": str(binary), "BinarySHA256": sha(binary), "Pinned": {}, "UTC": time.strftime("%FT%TZ", time.gmtime())}
     if preflight["BinarySHA256"] != binary_sha256:
         raise SystemExit("Executable hash mismatch: " + preflight["BinarySHA256"])
@@ -157,7 +158,8 @@ def main(argv):
         if actual != expected:
             raise SystemExit(f"Pinned input mismatch: {path} {actual} != {expected}")
     if memory0["MemAvailable"] < plan["MinimumMemAvailableBytes"]:
-        raise SystemExit(f"Admission failed: MemAvailable={memory0['MemAvailable']}")
+        raise SystemExit(f"Admission failed: MemAvailable={memory0['MemAvailable']} < the plan's MinimumMemAvailableBytes "
+                         f"{plan['MinimumMemAvailableBytes']} ({(plan.get('Instance') or {}).get('Type')})")
     for stage in plan["Stages"]:
         output = Path(json.loads(Path(stage["Config"]).read_text())["Problem"]["Output"])
         if output.exists():

@@ -31,7 +31,7 @@ import sys
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 from mixed_mesh import h1_dofs_from_counts, h1_entity_counts  # noqa: E402
-from build_plan import DEFAULT_REDUCER_BLOCK_SIZE  # noqa: E402
+from build_plan import DEFAULT_REDUCER_BLOCK_SIZE, largest_node_gib  # noqa: E402
 
 COST_MODEL = HERE / "cost-model.json"
 CLUSTER_PROFILE = HERE / "cluster-profile.json"
@@ -148,7 +148,7 @@ def estimate(counts, stages, *, local_edge=None, model=None, profile=None, block
     stages at reducer block size `block_size`, `local_edge` = (name, order, sources) or None."""
     model = model or load_cost_model()
     profile = profile or json.loads(CLUSTER_PROFILE.read_text())
-    node_gib, walltime = profile["NodeGiB"], profile["WalltimeSeconds"]
+    node_gib, walltime = largest_node_gib(profile), profile["WalltimeSeconds"]
     factors = [f"{factor:.1f}" for factor in model["PCGFactors"]]
     totals = {factor: 0.0 for factor in factors}
     peak_gb = 0.0
@@ -157,7 +157,8 @@ def estimate(counts, stages, *, local_edge=None, model=None, profile=None, block
            "CostModel": {"Path": model["Path"], "SHA256": model["SHA256"], "MeasuredMesh": model["MeasuredMesh"]["SHA256"],
                          "ClosedFormCheck": model.get("ClosedFormCheck"), "MeasuredBlockSize": model["MeasuredBlockSize"],
                          "ReducerEvaluationFraction": model["ReducerEvaluationFraction"],
-                         "ReducerResidentFieldGBPerMillionH1": model["ReducerResidentFieldGBPerMillionH1"]},
+                         "ReducerResidentFieldGBPerMillionH1": model["ReducerResidentFieldGBPerMillionH1"],
+                         "PalaceGBPerGiB": model["PalaceGBPerGiB"]},
            "ReducerBlockSize": int(block_size),
            "Stages": {}}
     for name, order, sources in stages:
