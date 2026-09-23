@@ -2216,6 +2216,147 @@
       },
       "Provenance": "Fixture version 2 (supervisor decision 48, 2026-09-20): downward process layers (Nz = -1) entered the prism-tube recipe scope (tube frame b = (0, 0, Nz), facing-layer gap check, per-layer-sign box padding); the contract is re-derived by derive_semantic_contract.py from the fixture inputs and the gmsh-build census of a production-option probe build (8 semantic corners = the Physical vertices of both loops; un-etched planes 3000 / 3001 and trenches 3100 / 3101 of both layers); version 1 retired in RetiredFixtures. Fixture source: run_general_mesh_suite.py under the repository Apache-2.0 license; no field archive",
       "FixtureVersion": 2
+    },
+    {
+      "Id": "four-edge-9d2cb9bbb3fe-thin",
+      "InventoryStatus": "RemoteVerified",
+      "Frozen": true,
+      "Features": [
+        "ContinuationVertices",
+        "DeviceFootprint",
+        "ExteriorLoops",
+        "ThinMetal",
+        "TraceBasis"
+      ],
+      "Variants": [
+        {
+          "Id": "identity",
+          "Transform": [
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        },
+        {
+          "Id": "rotate-z-0.63",
+          "Transform": [
+            0.8080275083121519,
+            -0.5891447579422695,
+            0,
+            0,
+            0.5891447579422695,
+            0.8080275083121519,
+            0,
+            0,
+            0,
+            0,
+            1.0,
+            0,
+            0,
+            0,
+            0,
+            1.0
+          ]
+        }
+      ],
+      "TransformComparison": {
+        "Reference": "identity",
+        "Transformed": "rotate-z-0.63",
+        "MaximumRelativeVolumeError": 0.0005,
+        "MaximumRelativeSurfaceMeasureError": 0.0005,
+        "MaximumProtectedSupportHausdorff": 1e-08,
+        "MaximumProtectedMeasureError": 1e-08,
+        "MaximumQualityDistributionRelativeError": 0.35,
+        "MaximumAnisotropyRelativeError": 0.35,
+        "MaximumComplexityRatio": 1.1
+      },
+      "Source": {
+        "Directory": "examples/cpw3d_surface/spatial_coupon/testdata/four-edge-9d2cb9bbb3fe",
+        "SignatureRole": "Signature",
+        "SignatureColumns": [
+          "Index",
+          "Slot",
+          "Conductor",
+          "Px",
+          "Py",
+          "Pz",
+          "Gx",
+          "Gy",
+          "Gz",
+          "Tx",
+          "Ty",
+          "Tz",
+          "S0",
+          "S1"
+        ],
+        "Files": {
+          "Signature": {
+            "Name": "mesh-signature.csv",
+            "SHA256": "0c0816dddab14379f9e05f7094279aa52cbb741c89c950364c0333621ed73fae"
+          },
+          "Boundary": {
+            "Name": "plan-view-boundary.csv",
+            "SHA256": "903d003a94897b932f2689ba9988b9ed2002d73c2dfa6e537d72ed6eff7b0c1b"
+          },
+          "Mask": {
+            "Name": "plan-view-mask.csv",
+            "SHA256": "217d15e21136c2e745456835f0aadc626f991e33ee910333b3edfedc43543549"
+          },
+          "Process": {
+            "Name": "process.toml",
+            "SHA256": "883b8b345d4943faaf498fdaaea14a54a9be3e7dbf520210b4fcd475ac5bc569"
+          },
+          "ProcessLibrary": {
+            "Name": "process-library.json",
+            "SHA256": "5ef30568188b2313d23cea157ed02d735522a5c0d6c38651926c2e9ce38f36d5"
+          },
+          "BasisContract": {
+            "Name": "basis-contract.json",
+            "SHA256": "81172a499268938d0dcb2d405584f425a3aabbae8ca764469d99e4696bbcde34"
+          },
+          "TraceVertices": {
+            "Name": "trace-vertices.csv",
+            "SHA256": "415150d8a05c317b2d5d319509bda4f30fb07cc0ea5947527814ed0d40db84ac"
+          },
+          "TraceTriangles": {
+            "Name": "trace-triangles.csv",
+            "SHA256": "5a8f6332495c504ddab13d3525c323124ec8cf9d38cda481458af23547740d32"
+          },
+          "Provenance": {
+            "Name": "provenance.json",
+            "SHA256": "4fb45b71a58e1be0f395b429ad6c6874a1785e65016514e52f81a86f98d6027e"
+          },
+          "RetainedEtch": {
+            "Name": "retained-etch.csv",
+            "SHA256": "49fe5072ce73fea6c70fee3eacc0adb3c1b018227e46e1f103c1e444e99d86d6"
+          },
+          "MeshRecipe": {
+            "RepositoryPath": "examples/cpw3d_surface/spatial_coupon/testdata/generality-mesh-recipe.json",
+            "SHA256": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb"
+          },
+          "SemanticContract": {
+            "Name": "semantic-contract-thin.json",
+            "SHA256": "a1e81135511ade70ce59f06acad7a7a621f7196dc4f41b4d487e45e488ea6ccd"
+          }
+        }
+      },
+      "FixtureVersion": 1,
+      "Provenance": "Registered by register_case.py at 9940be22b (2026-09-22), fixture version 1: THIN case of four-edge-9d2cb9bbb3fe (decision 66: the same frozen sources, the thin label families, the ThinRecipe options), source directory examples/cpw3d_surface/spatial_coupon/testdata/four-edge-9d2cb9bbb3fe, etch footprint bound, recipe scope classes ['ContinuationVertices', 'DeviceFootprint', 'ExteriorLoops', 'ThinMetal', 'TraceBasis']; the contract is derived by derive_semantic_contract.py from the inputs and the label census of a labels-only production-option probe pass (run_gmsh_only_case.py --labels-only, decision 62(2); /tmp/coupon-gallery-thin-20260922/register/probe, commit 9940be22b); THIN case of the gallery four-edge-9d2cb9bbb3fe (decision 66 PART A: the same frozen graded_v2 input-07 sources incl. the bound retained etch the thin build records but does not loft, the thin label families, the ThinRecipe options) for a later thin-vs-graded_v2-thin check",
+      "Kind": "thin",
+      "FabricatedCase": "four-edge-9d2cb9bbb3fe"
     }
   ],
   "StageToolSHA256": {
@@ -2225,7 +2366,7 @@
     },
     "gmsh-build": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "789f1fe09cb0ed8fe721b07465f3ddd61822173231f602846141331068a51a60"
+      "mesher": "289d125f2c6665a0f5302dffd0759150c7c4a955d29b6af592fe5897366d7974"
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",

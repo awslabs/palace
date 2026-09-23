@@ -5059,8 +5059,11 @@ function generate_spatial_coupon(;
     pullback_metal = metal_thickness / tan(deg2rad(sidewall_angle))
     etch_loops = etch_boundary === nothing ? nothing : read_boundary(etch_boundary)
     if etch_loops !== nothing
-        fabricated && sidewall_angle == 90.0 && top_rounding == 0.0 &&
-            trench_rounding == 0.0 || error("Explicit etch footprints require sharp vertical fabricated geometry")
+        # The bound footprint is the trench's plan view: a fabricated build lofts it and
+        # needs sharp vertical geometry; a thin build (decision 66) etches nothing - it
+        # checks the footprint carries every metal edge and records the bound file.
+        !fabricated || (sidewall_angle == 90.0 && top_rounding == 0.0 && trench_rounding == 0.0) ||
+            error("Explicit etch footprints require sharp vertical fabricated geometry")
         isempty(etch_loops) && error("Empty explicit etch footprint")
     end
     pullback_trench = overetch > 0.0 ? overetch / tan(deg2rad(sidewall_angle)) : 0.0

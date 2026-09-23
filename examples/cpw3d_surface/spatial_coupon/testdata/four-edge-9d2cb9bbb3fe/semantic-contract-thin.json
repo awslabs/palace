@@ -1,0 +1,127 @@
+{
+  "Version": 1,
+  "Derivation": {
+    "ProcessLibrarySHA256": "5ef30568188b2313d23cea157ed02d735522a5c0d6c38651926c2e9ce38f36d5",
+    "SlotConductorSource": "process-library.json Models[0].Edges, equal to the signature's Slot / Conductor pairs",
+    "PlanViewBoundarySHA256": "903d003a94897b932f2689ba9988b9ed2002d73c2dfa6e537d72ed6eff7b0c1b",
+    "SignatureSHA256": "0c0816dddab14379f9e05f7094279aa52cbb741c89c950364c0333621ed73fae",
+    "CouponKind": "thin",
+    "Rules": "materials and physical label families follow the frozen fabricated spatial-coupon producer (substrate 1 / vacuum 2; matching surface 1; substrate-vacuum interface 3000 + slot in the metal plane (un-etched) and 3100 + slot recessed; MS 5000 + 100 slot + conductor; MA 6000 + 100 slot + conductor); slots/conductors come from Models[0].Edges and agree with the signature (from the signature alone when no process library is bound); semantic corners are plan-view vertices classified Physical; the un-etched plane labels present are those of the recorded gmsh-build census of the same inputs (a producer outcome of the etch footprint and the coupon box), every census label belonging to a derived family; thin kind (decision 66): the metal is a zero-thickness PEC sheet in the process plane, so there is no trench (no 3100 + slot label; the substrate-vacuum plane 3000 + slot is always present) and the sheet of conductor c in slot s is ONE physical surface 4000 + 100 s + c carrying both sides - MS below and MA above (the producer's thin convention: make_config lists the 4000 family under both interface types)",
+    "BuildCensusSHA256": "125c9df161796cdcbb167f1924a260c1d0cfa5a4612e9974dd95a5a87324bb4c",
+    "BuildCensusInterfaceLabels": [
+      1,
+      3000,
+      4001
+    ]
+  },
+  "VolumeMaterials": [
+    {
+      "Attribute": 1,
+      "Material": "substrate"
+    },
+    {
+      "Attribute": 2,
+      "Material": "vacuum"
+    }
+  ],
+  "BoundaryLabels": [
+    {
+      "Attribute": 1,
+      "Role": "matching-surface",
+      "AdjacentMaterials": [
+        1,
+        2
+      ],
+      "Protected": true,
+      "AdjacentMaterialSets": [
+        [
+          1
+        ],
+        [
+          2
+        ]
+      ]
+    },
+    {
+      "Attribute": 3000,
+      "Role": "substrate-vacuum-slot-0",
+      "AdjacentMaterials": [
+        1,
+        2
+      ],
+      "Protected": true
+    },
+    {
+      "Attribute": 4001,
+      "Role": "conductor-1-slot-0-thin-sheet",
+      "AdjacentMaterials": [
+        1,
+        2
+      ],
+      "Protected": true
+    }
+  ],
+  "SemanticCorners": [
+    [
+      10.0,
+      0.0,
+      0.0
+    ],
+    [
+      2.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      8.0,
+      0.0
+    ],
+    [
+      0.0,
+      -2.0,
+      0.0
+    ]
+  ],
+  "ProtectedSupports": [
+    "matching-surface",
+    "substrate-vacuum-slot-0",
+    "conductor-1-slot-0-thin-sheet"
+  ],
+  "MetricSurfaceRoles": [
+    "conductor-1-slot-0-thin-sheet"
+  ],
+  "UnmatchedPolicy": "Error",
+  "CutSurfaceRoles": [
+    "matching-surface"
+  ],
+  "FeatureTopology": {
+    "PhysicalFeatureCount": 4,
+    "CADSubdivisionCount": 0,
+    "BoundaryPhysicalVertexCount": 4,
+    "BoundaryContinuationVertexCount": 2,
+    "CADSubdivisionEndpoints": [],
+    "CutEndpoints": [
+      [
+        0.0,
+        2.0,
+        0.0
+      ],
+      [
+        2.0,
+        2.0,
+        0.0
+      ],
+      [
+        4.0,
+        -2.0,
+        0.0
+      ],
+      [
+        4.0,
+        0.0,
+        0.0
+      ]
+    ]
+  }
+}
