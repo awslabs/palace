@@ -21,30 +21,191 @@
   "ReducerEvaluationFractionRule": "the fraction of the measured ReducerPairSeconds that is the per-source-evaluation work (archive read, gradient, face-neighbour exchange, quadrature-point evaluation of every source of a block pair: N x ceil(N / b) evaluations at block size b) - it shrinks with a larger PALACE_RESPONSE_BLOCK_SIZE (decision 62(1): default 6 -> 48); the remainder is the Gram work proportional to the source pairs N (N + 1) / 2, independent of b. Measured by the decision-62 step-1 acceptance (PBS 46685, two-edge-8dd4bc70f183 p4, 78 sources, H1 7.97M, frozen b28 executable, the same archive reduced at b = 6 and b = 48): Operator Construction 86.9 s at b = 6 (1,014 evaluations, 91 block pairs) vs 15.25 s at b = 48 (156 evaluations, 3 block pairs) -> 0.0835 s per evaluation, 2.2 s of pair-scaled Gram: evaluation fraction 0.975 at b = 6, recorded as 0.97 (the Gram remainder rounded up: fail-closed side)",
   "ReducerResidentFieldGBPerMillionH1": 0.068,
   "ReducerResidentFieldGBRule": "Palace peak memory the reducer adds per resident archived source field (V, E and their grid functions with ghosts), per million H1 DOFs of the stage: 2b fields are resident per block pair, so the reducer peak at block size b is the measured peak (at MeasuredBlockSize) plus 2 (b - MeasuredBlockSize) x this x H1 / 1e6. Measured by the decision-62 step-1 acceptance (PBS 46685, two-edge p4, H1 7,973,827): Palace peak 45.6 GB at b = 6 (12 resident fields) vs 91.1 GB at b = 48 (96 fields) -> 0.542 GB per field = 0.068 GB per million H1 DOFs (node peak used 90.8 -> 136.5 GiB sampled)",
-  "PCGFactors": [1.0, 1.5, 2.0],
+  "ReducerPeakStreaming": {
+    "Executable": "170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b",
+    "NodeBaselineGiB": 60.0,
+    "NodeUsedGiBPerMillionH1": 2.2,
+    "NodeUsedGiBPerMillionH1PerSource": 0.015,
+    "SafetyFactor": 1.5,
+    "Rule": "ReducerPalacePeakGBEstimate of every reducer stage under the streaming one-pass Gram executable (decision 62(4)): SafetyFactor x PalaceGBPerGiB x (NodeBaselineGiB + (NodeUsedGiBPerMillionH1 + NodeUsedGiBPerMillionH1PerSource x sources) x H1 / 1e6) - a conservative NODE-USED figure (>= SafetyFactor x every measured node-used peak below), not Palace's own peak: the streaming reducer evaluates every source once and keeps N x (4 Q_local + L_local) x 8 bytes resident, so its peak no longer grows with PALACE_RESPONSE_BLOCK_SIZE (the Previous term's resident-field growth, 84 x 0.068 GB per million H1 at b = 48, was 2-3x the measured streaming peaks and sent the p5-control jobs of the largest thin coupons to the r8g fallback; USER decision 2026-09-22 (B): re-measured on library-device-thin-01's p3 / p4 / p5 reducers, the previous term kept as ReducerPalacePeakGBEstimatePrevious). Estimate / measured node-used ratios on the measured rows: 1.53-2.05 (the line itself holds every row without the factor; the coefficients are the tightest round values doing so: measured p5 controls 1.9-2.2 GiB per million H1 above a ~40 GiB baseline, the p4 main reducers 3.7-4.6 with 120-175 sources - the per-source term; the p3 controls are baseline-dominated). At these coefficients every device coupon of decision 64a (fabricated and thin) plans on m8g.48xlarge: the largest job estimate is the fabricated 3-edge-5d3b p4 reducer, 447 GiB of the 460.8 GiB threshold",
+    "Measured": [
+      {
+        "Case": "spatial-2-edge-8ce3fb213a2d-thin",
+        "Job": "library-device-thin-01 (m8g.48xlarge, 2026-09-23)",
+        "Stage": "p5-control-reducer",
+        "Order": 5,
+        "Sources": 8,
+        "H1": 26932096,
+        "NodeUsedGiB": 98.7,
+        "EstimateGiB": 183.7,
+        "EstimateOverMeasured": 1.86
+      },
+      {
+        "Case": "spatial-2-edge-8ce3fb213a2d-thin",
+        "Job": "library-device-thin-01 (m8g.48xlarge, 2026-09-23)",
+        "Stage": "p4-reducer",
+        "Order": 4,
+        "Sources": 150,
+        "H1": 13819721,
+        "NodeUsedGiB": 101.8,
+        "EstimateGiB": 182.2,
+        "EstimateOverMeasured": 1.79
+      },
+      {
+        "Case": "spatial-2-edge-8ce3fb213a2d-thin",
+        "Job": "library-device-thin-01 (m8g.48xlarge, 2026-09-23)",
+        "Stage": "p3-control-reducer",
+        "Order": 3,
+        "Sources": 8,
+        "H1": 5852003,
+        "NodeUsedGiB": 58.7,
+        "EstimateGiB": 110.4,
+        "EstimateOverMeasured": 1.88
+      },
+      {
+        "Case": "spatial-3-edge-9cd906b81cbe-thin",
+        "Job": "library-device-thin-01 (m8g.48xlarge, 2026-09-23)",
+        "Stage": "p5-control-reducer",
+        "Order": 5,
+        "Sources": 8,
+        "H1": 37410566,
+        "NodeUsedGiB": 113.7,
+        "EstimateGiB": 220.2,
+        "EstimateOverMeasured": 1.94
+      },
+      {
+        "Case": "spatial-3-edge-9cd906b81cbe-thin",
+        "Job": "library-device-thin-01 (m8g.48xlarge, 2026-09-23)",
+        "Stage": "p4-reducer",
+        "Order": 4,
+        "Sources": 175,
+        "H1": 19224411,
+        "NodeUsedGiB": 127.5,
+        "EstimateGiB": 229.1,
+        "EstimateOverMeasured": 1.8
+      },
+      {
+        "Case": "spatial-3-edge-9cd906b81cbe-thin",
+        "Job": "library-device-thin-01 (m8g.48xlarge, 2026-09-23)",
+        "Stage": "p3-control-reducer",
+        "Order": 3,
+        "Sources": 8,
+        "H1": 8159775,
+        "NodeUsedGiB": 77.5,
+        "EstimateGiB": 118.4,
+        "EstimateOverMeasured": 1.53
+      },
+      {
+        "Case": "spatial-4-edge-e51d7380245e-thin",
+        "Job": "library-device-thin-01 (m8g.48xlarge, 2026-09-23)",
+        "Stage": "p5-control-reducer",
+        "Order": 5,
+        "Sources": 8,
+        "H1": 41363301,
+        "NodeUsedGiB": 120.4,
+        "EstimateGiB": 233.9,
+        "EstimateOverMeasured": 1.94
+      },
+      {
+        "Case": "spatial-4-edge-e51d7380245e-thin",
+        "Job": "library-device-thin-01 (m8g.48xlarge, 2026-09-23)",
+        "Stage": "p4-reducer",
+        "Order": 4,
+        "Sources": 120,
+        "H1": 21260917,
+        "NodeUsedGiB": 119.1,
+        "EstimateGiB": 217.6,
+        "EstimateOverMeasured": 1.83
+      },
+      {
+        "Case": "spatial-4-edge-e51d7380245e-thin",
+        "Job": "library-device-thin-01 (m8g.48xlarge, 2026-09-23)",
+        "Stage": "p3-control-reducer",
+        "Order": 3,
+        "Sources": 8,
+        "H1": 9027556,
+        "NodeUsedGiB": 59.1,
+        "EstimateGiB": 121.4,
+        "EstimateOverMeasured": 2.05
+      }
+    ],
+    "Previous": {
+      "Rule": "measured per-stage ReducerPalacePeakGB (b28f089a... executable at block size 6, four-edge-physics-11) x the H1 ratio + 2 (b - 6) x ReducerResidentFieldGBPerMillionH1 x H1 / 1e6 resident fields (decision 62(1) calibration, PBS 46685)",
+      "ReducerResidentFieldGBPerMillionH1": 0.068,
+      "ReducerPalacePeakGB": {
+        "p3": 59.9,
+        "p4": 108.0,
+        "p5": 178.5
+      }
+    }
+  },
+  "PCGFactors": [
+    1.0,
+    1.5,
+    2.0
+  ],
   "PreflightAndMarginFactor": 1.35,
   "PreflightSeconds": 300,
   "NodeFitFraction": 0.75,
   "PalaceGBPerGiB": 1.0737,
   "Stages": {
     "p3": {
-      "H1": 10548977, "Sources": 8, "SecondsPerPCGIteration": 0.28206, "MeanPCGIterations": 19.125, "MaxPCGIterations": 25,
-      "MeanPerSourceSeconds": 5.554, "WorkerNonSourceSeconds": 35.49, "ReducerPalaceSeconds": 37.93, "ReducerPairSeconds": 2.44,
-      "WorkerPalacePeakGB": 64.7, "ReducerPalacePeakGB": 59.9, "WorkerNodeUsedGiB": 101.1, "ReducerNodeUsedGiB": 102.5, "ArchiveGB": 0.66
+      "H1": 10548977,
+      "Sources": 8,
+      "SecondsPerPCGIteration": 0.28206,
+      "MeanPCGIterations": 19.125,
+      "MaxPCGIterations": 25,
+      "MeanPerSourceSeconds": 5.554,
+      "WorkerNonSourceSeconds": 35.49,
+      "ReducerPalaceSeconds": 37.93,
+      "ReducerPairSeconds": 2.44,
+      "WorkerPalacePeakGB": 64.7,
+      "ReducerPalacePeakGB": 59.9,
+      "WorkerNodeUsedGiB": 101.1,
+      "ReducerNodeUsedGiB": 102.5,
+      "ArchiveGB": 0.66
     },
     "p4": {
-      "H1": 24827674, "Sources": 80, "SecondsPerPCGIteration": 0.78618, "MeanPCGIterations": 19.85, "MaxPCGIterations": 39,
-      "MeanPerSourceSeconds": 15.846, "WorkerNonSourceSeconds": 43.76, "ReducerPalaceSeconds": 512.49, "ReducerPairSeconds": 468.73,
-      "WorkerPalacePeakGB": 92.1, "ReducerPalacePeakGB": 108.0, "WorkerNodeUsedGiB": 125.36, "ReducerNodeUsedGiB": 153.67, "ArchiveGB": 15.0
+      "H1": 24827674,
+      "Sources": 80,
+      "SecondsPerPCGIteration": 0.78618,
+      "MeanPCGIterations": 19.85,
+      "MaxPCGIterations": 39,
+      "MeanPerSourceSeconds": 15.846,
+      "WorkerNonSourceSeconds": 43.76,
+      "ReducerPalaceSeconds": 512.49,
+      "ReducerPairSeconds": 468.73,
+      "WorkerPalacePeakGB": 92.1,
+      "ReducerPalacePeakGB": 108.0,
+      "WorkerNodeUsedGiB": 125.36,
+      "ReducerNodeUsedGiB": 153.67,
+      "ArchiveGB": 15.0
     },
     "p5": {
-      "H1": 48286920, "Sources": 8, "SecondsPerPCGIteration": 2.95662, "MeanPCGIterations": 18.0, "MaxPCGIterations": 25,
-      "MeanPerSourceSeconds": 53.504, "WorkerNonSourceSeconds": 71.01, "ReducerPalaceSeconds": 94.56, "ReducerPairSeconds": 23.55,
-      "WorkerPalacePeakGB": 149.4, "ReducerPalacePeakGB": 178.5, "WorkerNodeUsedGiB": 183.0, "ReducerNodeUsedGiB": 223.0, "ArchiveGB": 2.9
+      "H1": 48286920,
+      "Sources": 8,
+      "SecondsPerPCGIteration": 2.95662,
+      "MeanPCGIterations": 18.0,
+      "MaxPCGIterations": 25,
+      "MeanPerSourceSeconds": 53.504,
+      "WorkerNonSourceSeconds": 71.01,
+      "ReducerPalaceSeconds": 94.56,
+      "ReducerPairSeconds": 23.55,
+      "WorkerPalacePeakGB": 149.4,
+      "ReducerPalacePeakGB": 178.5,
+      "WorkerNodeUsedGiB": 183.0,
+      "ReducerNodeUsedGiB": 223.0,
+      "ArchiveGB": 2.9
     }
   },
   "LocalEdge": {
-    "Order": 4, "H1": 24827674, "Sources": 8, "PalacePeakGB": 196.7, "NodeUsedGiB": 222.3,
-    "PalaceTotalSeconds": 325.8, "LinearSolveSeconds": 130.3, "NonSolveSeconds": 195.5
+    "Order": 4,
+    "H1": 24827674,
+    "Sources": 8,
+    "PalacePeakGB": 196.7,
+    "NodeUsedGiB": 222.3,
+    "PalaceTotalSeconds": 325.8,
+    "LinearSolveSeconds": 130.3,
+    "NonSolveSeconds": 195.5
   }
 }

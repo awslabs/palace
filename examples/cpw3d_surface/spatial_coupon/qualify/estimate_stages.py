@@ -73,6 +73,17 @@ def source_evaluations(sources, block_size):
     return sources * blocks_of(sources, block_size)
 
 
+def streaming_reducer_peak_gb(model, h1, sources):
+    """The reducer peak estimate (GB) under the streaming one-pass executable
+    (cost-model ReducerPeakStreaming.Rule): SafetyFactor x PalaceGBPerGiB x the node-used
+    line (baseline + (per-million-H1 + per-source-per-million-H1 x sources) x H1 / 1e6) -
+    conservative by construction against every measured node-used peak of the calibration."""
+    streaming = model["ReducerPeakStreaming"]
+    node_used_gib = (streaming["NodeBaselineGiB"]
+                     + (streaming["NodeUsedGiBPerMillionH1"] + streaming["NodeUsedGiBPerMillionH1PerSource"] * sources) * h1 / 1e6)
+    return streaming["SafetyFactor"] * model["PalaceGBPerGiB"] * node_used_gib
+
+
 def estimate_stage(model, order, sources, counts, block_size=DEFAULT_REDUCER_BLOCK_SIZE):
     """One worker + reducer stage at `order` on `sources` sources, the reducer at
     PALACE_RESPONSE_BLOCK_SIZE `block_size`."""
@@ -99,6 +110,9 @@ def estimate_stage(model, order, sources, counts, block_size=DEFAULT_REDUCER_BLO
     # measured block size by the measured per-field cost (decision 62(1)).
     resident_fields_gb = (max(2 * int(block_size) - 2 * model["MeasuredBlockSize"], 0)
                           * model["ReducerResidentFieldGBPerMillionH1"] * h1 / 1e6)
+    previous_reducer_peak = measured["ReducerPalacePeakGB"] * ratio + resident_fields_gb
+    streaming = model.get("ReducerPeakStreaming")
+    reducer_peak = streaming_reducer_peak_gb(model, h1, sources) if streaming else previous_reducer_peak
     stage = {"Order": order, "Sources": sources, "H1Estimate": h1,
              "DOFRatioVsMeasured": ratio, "ReducerPairs": pairs, "ReducerBlockSize": int(block_size),
              "ReducerBlockPairs": block_pairs(sources, block_size), "ReducerSourceEvaluations": evaluations,
@@ -106,13 +120,18 @@ def estimate_stage(model, order, sources, counts, block_size=DEFAULT_REDUCER_BLO
              "ReducerSecondsEstimateParts": {"Setup": reducer_setup, "Evaluation": reducer_evaluation, "Gram": reducer_gram},
              "WorkerNonSourceSecondsEstimate": measured["WorkerNonSourceSeconds"] * ratio,
              "WorkerPalacePeakGBEstimate": measured["WorkerPalacePeakGB"] * ratio,
-             "ReducerPalacePeakGBEstimate": measured["ReducerPalacePeakGB"] * ratio + resident_fields_gb,
+             "ReducerPalacePeakGBEstimate": reducer_peak,
+             "ReducerPalacePeakGBEstimatePrevious": previous_reducer_peak,
+             "ReducerPalacePeakGBRule": ("ReducerPeakStreaming (a node-used figure at the streaming executable; the Previous term "
+                                         "recorded)" if streaming else "Previous: measured peak x H1 ratio + resident fields"),
              "ReducerResidentFieldsGBEstimate": resident_fields_gb,
              "ArchiveGBEstimate": measured["ArchiveGB"] * ratio * sources / measured["Sources"],
              "ByPCGFactor": {}}
     stage["NodeUsedGiBEstimateWorker"] = (measured["WorkerNodeUsedGiB"] - measured["WorkerPalacePeakGB"] / gb_per_gib
                                           + stage["WorkerPalacePeakGBEstimate"] / gb_per_gib)
-    stage["NodeUsedGiBEstimateReducer"] = (measured["ReducerNodeUsedGiB"] - measured["ReducerPalacePeakGB"] / gb_per_gib
+    # The streaming estimate already is a conservative node-used figure (baseline included).
+    stage["NodeUsedGiBEstimateReducer"] = (reducer_peak / gb_per_gib if streaming else
+                                           measured["ReducerNodeUsedGiB"] - measured["ReducerPalacePeakGB"] / gb_per_gib
                                            + stage["ReducerPalacePeakGBEstimate"] / gb_per_gib)
     for factor in model["PCGFactors"]:
         worker = measured["WorkerNonSourceSeconds"] * ratio + sources * (other + solve * factor)

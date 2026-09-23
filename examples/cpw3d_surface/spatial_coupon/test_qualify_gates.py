@@ -191,6 +191,7 @@ class StoredCampaignGateTest(unittest.TestCase):
         # The recorded estimate ran at the cost model's measured block size 6 with the
         # pair-scaled reducer formula (before decision 62(1)): reproduced as recorded.
         model = {**estimate_stages.load_cost_model(), "ReducerEvaluationFraction": 0.0}
+        model.pop("ReducerPeakStreaming")   # the recorded run's reducer peak is the pre-streaming term
         estimate = estimate_stages.estimate(counts, [("p4-135", 4, 135), ("p5-8", 5, 8), ("p3-8", 3, 8)],
                                             local_edge=("local-edge", 4, 8), block_size=6, model=model)
         self.assertTrue(estimate["FitsOneJob"])
@@ -465,10 +466,28 @@ class ControlsPlanAndEstimateRuleTest(unittest.TestCase):
         # The calibration (PBS 46685, two-edge p4 at b = 6 / 48): evaluation fraction 0.97,
         # 0.068 GB of reducer peak per resident field per million H1 DOFs (84 more fields at b = 48).
         self.assertEqual((model["ReducerEvaluationFraction"], model["ReducerResidentFieldGBPerMillionH1"]), (0.97, 0.068))
-        self.assertAlmostEqual(at6["ReducerPalacePeakGBEstimate"], measured["ReducerPalacePeakGB"])
-        self.assertAlmostEqual(at48["ReducerPalacePeakGBEstimate"] - at6["ReducerPalacePeakGBEstimate"],
+        self.assertAlmostEqual(at6["ReducerPalacePeakGBEstimatePrevious"], measured["ReducerPalacePeakGB"])
+        self.assertAlmostEqual(at48["ReducerPalacePeakGBEstimatePrevious"] - at6["ReducerPalacePeakGBEstimatePrevious"],
                                84 * 0.068 * measured["H1"] / 1e6)
         self.assertAlmostEqual(at48["ReducerResidentFieldsGBEstimate"], 84 * 0.068 * measured["H1"] / 1e6)
+        # USER decision 2026-09-22 (B): the reducer peak of every stage is the streaming
+        # executable's node-used line (independent of b), >= 1.5x every measured node-used
+        # peak of the library-device-thin-01 calibration; the previous term stays recorded.
+        streaming = model["ReducerPeakStreaming"]
+        self.assertEqual(streaming["Executable"], build_plan.DEFAULT_FROZEN_BINARY_SHA256)
+        self.assertEqual(at48["ReducerPalacePeakGBEstimate"], at6["ReducerPalacePeakGBEstimate"])
+        self.assertAlmostEqual(at48["ReducerPalacePeakGBEstimate"],
+                               estimate_stages.streaming_reducer_peak_gb(model, at48["H1Estimate"], 80))
+        self.assertAlmostEqual(at48["NodeUsedGiBEstimateReducer"], at48["ReducerPalacePeakGBEstimate"] / model["PalaceGBPerGiB"])
+        self.assertGreaterEqual(len(streaming["Measured"]), 9)
+        for row in streaming["Measured"]:
+            estimate_gib = estimate_stages.streaming_reducer_peak_gb(model, row["H1"], row["Sources"]) / model["PalaceGBPerGiB"]
+            self.assertGreaterEqual(estimate_gib, streaming["SafetyFactor"] * row["NodeUsedGiB"], row)
+            self.assertLess(estimate_gib, 2.5 * row["NodeUsedGiB"], row)
+        # The largest thin coupon's p5 control reducer (H1 67.7M, 8 sources) now fits m8g.48xlarge.
+        big = estimate_stages.streaming_reducer_peak_gb(model, 67_716_756, 8) / model["PalaceGBPerGiB"]
+        self.assertLess(big, 0.6 * 768)
+        self.assertGreater(at48["ReducerPalacePeakGBEstimatePrevious"], at48["ReducerPalacePeakGBEstimate"] * 0.5)
         # Reproduces the measured two-edge p4 pair (78 sources, H1 7.97M): 86.9 -> 15.3 s, 45.6 -> 91.1 GB.
         two_edge = {"Vertices": 91_000, "Edges": 600_000, "TriangleFaces": 1_000_000, "QuadFaces": 40_000,
                     "Tetrahedra": 470_000, "Prisms": 44_000, "Pyramids": 3_000}
