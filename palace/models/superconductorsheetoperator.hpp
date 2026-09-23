@@ -90,10 +90,11 @@ public:
   void AddStiffnessBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb) const;
 
   // Build the cross-face coupling matrix -1/(mu0*lambda*sinh(d/lambda)) * ∫_Σ A_t^+ · v_t^-
-  // for two-sided sheets, on the true dofs of the given ND space (serial). Pairs the two
-  // coincident cracked faces by centroid and integrates the cross mass by evaluating each
-  // face's Piola basis at shared physical quadrature points. Returns nullptr if none.
-  std::unique_ptr<mfem::SparseMatrix>
+  // for two-sided sheets, as a true-dof HypreParMatrix on the given ND space. The two
+  // coincident cracked faces may live on different MPI ranks, so per-face data (basis at
+  // shared quadrature points and global true-dof numbers) is gathered across ranks and each
+  // rank assembles the rows it owns. Returns nullptr if no two-sided sheet.
+  std::unique_ptr<mfem::HypreParMatrix>
   BuildTwoPortCoupling(mfem::ParFiniteElementSpace &nd_fespace) const;
 };
 

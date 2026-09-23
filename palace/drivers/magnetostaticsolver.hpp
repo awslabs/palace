@@ -33,7 +33,8 @@ private:
                             const std::vector<double> &Phi_inc,
                             const mfem::DenseMatrix &linked_flux,
                             const std::vector<Vector> &london_rhs,
-                            const std::vector<Vector> &london_ah) const;
+                            const std::vector<Vector> &london_ah,
+                            const mfem::Operator *two_port_coupling) const;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;

@@ -103,18 +103,11 @@ private:
   // Operator for thin-film superconductor sheet (kinetic inductance) boundaries.
   SuperconductorSheetOperator sc_sheet_op;
 
-  // Two-sided (two-port) sheet cross-face coupling on the finest ND space, built lazily by
-  // GetTwoPortCoupling. The SparseMatrix backs the (non-owning) HypreCSRMatrix, which backs
-  // the matrix-free ParOperator that is summed into both the stiffness and the sheet-mass
-  // operator (so the operator, the flux RHS, and the penalty energy stay consistent). Null
-  // unless a two-sided film is present.
-  mutable std::unique_ptr<mfem::SparseMatrix> two_port_coupling_;
-  mutable std::unique_ptr<hypre::HypreCSRMatrix> two_port_C_local_;
-  mutable std::unique_ptr<ParOperator> two_port_C_par_;
-
-  // Lazily builds and returns the two-port cross-face coupling ParOperator, or nullptr if
-  // no two-sided sheet is configured.
-  ParOperator *GetTwoPortCoupling();
+  // Two-sided (two-port) sheet cross-face coupling as a true-dof HypreParMatrix on the
+  // finest ND space, built lazily by GetTwoPortCoupling and summed into both the stiffness
+  // and the sheet-mass operator (so the operator, the flux RHS, and the penalty energy stay
+  // consistent). Null unless a two-sided film is present.
+  mutable std::unique_ptr<mfem::HypreParMatrix> two_port_coupling_;
 
   // Flux-loop indices whose film is (partly) a Superconductor sheet — i.e.
   // London flux films. Populated at construction after surf_flux_op is set.
@@ -164,6 +157,10 @@ public:
   const auto &GetSurfaceFluxOp() const { return surf_flux_op; }
   auto &GetSuperconductorOp() { return sc_sheet_op; }
   const auto &GetSuperconductorOp() const { return sc_sheet_op; }
+
+  // Lazily builds and returns the two-sided (two-port) sheet cross-face coupling matrix, or
+  // nullptr if no two-sided sheet is configured.
+  mfem::HypreParMatrix *GetTwoPortCoupling();
 
   // Return the parallel finite element space objects.
   auto &GetNDSpaces() { return nd_fespaces; }

@@ -40,10 +40,6 @@ public:
 
   // Bilinear forms for computing field energy integrals over domains.
   std::unique_ptr<Operator> M_elec, M_mag;
-
-  // Two-sided (two-port) sheet cross-face coupling folded into M_mag so AᵀM_mag·A includes
-  // the full sheet energy (backs the matrix-free ParOperator summed into M_mag).
-  std::unique_ptr<mfem::SparseMatrix> two_port_coupling_;
   std::map<int, std::pair<std::unique_ptr<Operator>, std::unique_ptr<Operator>>> M_i;
 
   DomainPostOperator() = default;

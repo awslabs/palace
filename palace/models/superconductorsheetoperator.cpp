@@ -3,10 +3,12 @@
 
 #include "superconductorsheetoperator.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <map>
 #include <set>
+#include <vector>
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -161,7 +163,7 @@ double SuperconductorSheetOperator::KineticSheetInductance(double lambda_L,
   return lambda_L / std::tanh(thickness / lambda_L);
 }
 
-std::unique_ptr<mfem::SparseMatrix> SuperconductorSheetOperator::BuildTwoPortCoupling(
+std::unique_ptr<mfem::HypreParMatrix> SuperconductorSheetOperator::BuildTwoPortCoupling(
     mfem::ParFiniteElementSpace &nd_fespace) const
 {
   if (!has_two_port_)
@@ -169,158 +171,218 @@ std::unique_ptr<mfem::SparseMatrix> SuperconductorSheetOperator::BuildTwoPortCou
     return nullptr;
   }
   mfem::ParMesh &pmesh = *nd_fespace.GetParMesh();
+  MPI_Comm comm = nd_fespace.GetComm();
   const int sd = pmesh.SpaceDimension();
-  auto C =
-      std::make_unique<mfem::SparseMatrix>(nd_fespace.GetVSize(), nd_fespace.GetVSize());
-  int n_unpaired = 0;
 
+  // Cross-face coupling coefficient -1/(lambda*sinh(d/lambda)) per two-sided attribute.
+  std::unordered_map<int, double> attr_off;
   for (const auto &bdr : boundaries)
   {
     if (!bdr.two_sided)
     {
       continue;
     }
-    // Cross-face coupling coefficient -1/(lambda*sinh(d/lambda)).
     const double off = -1.0 / (bdr.lambda_L * std::sinh(bdr.thickness / bdr.lambda_L));
     for (auto attr : bdr.attr_list)
     {
-      // Group this attribute's boundary elements by centroid: the two coincident cracked
-      // faces.
-      std::map<std::array<long, 3>, std::vector<int>> by_centroid;
-      for (int be = 0; be < pmesh.GetNBE(); be++)
+      attr_off[attr] = off;
+    }
+  }
+
+  // Reference triangle FE and quadrature, consistent across ranks (needed even where the
+  // film is absent). Only triangular film faces are supported.
+  const mfem::FiniteElement *tri_fe =
+      nd_fespace.FEColl()->FiniteElementForGeometry(mfem::Geometry::TRIANGLE);
+  MFEM_VERIFY(tri_fe, "Two-sided superconductor sheets require a triangular surface mesh!");
+  const int nd = tri_fe->GetDof();
+  const mfem::IntegrationRule &ir =
+      mfem::IntRules.Get(mfem::Geometry::TRIANGLE, 2 * tri_fe->GetOrder() + 2);
+  const int nqp = ir.GetNPoints();
+
+  // Fixed-size per-face record so records concatenate for an Allgatherv. The two coincident
+  // faces may be on different ranks, so we gather every film face and each rank assembles
+  // the matrix rows it owns. Layout: off | 3*sd canonical vertex coords (sorted, identical
+  // for the two faces) | nd global true-dofs | nd signs | nqp*nd*sd Piola basis | nqp
+  // weights.
+  const int o_vert = 1, o_gtd = o_vert + 3 * sd, o_sgn = o_gtd + nd, o_vsh = o_sgn + nd,
+            o_w = o_vsh + nqp * nd * sd, rec = o_w + nqp;
+
+  std::vector<double> local;
+  mfem::DenseMatrix vsh(nd, sd);
+  mfem::Array<int> vids, dofs;
+  for (int be = 0; be < pmesh.GetNBE(); be++)
+  {
+    auto it = attr_off.find(pmesh.GetBdrAttribute(be));
+    if (it == attr_off.end())
+    {
+      continue;
+    }
+    pmesh.GetBdrElementVertices(be, vids);
+    MFEM_VERIFY(vids.Size() == 3, "Two-sided sheet faces must be triangles!");
+    // Canonical vertex order (sorted lexicographically), identical for the two coincident
+    // faces regardless of how cracking ordered their local vertices.
+    int canon[3] = {0, 1, 2};
+    auto less = [&](int p, int q)
+    {
+      const double *a = pmesh.GetVertex(vids[p]), *b = pmesh.GetVertex(vids[q]);
+      for (int d = 0; d < sd; d++)
       {
-        if (pmesh.GetBdrAttribute(be) != attr)
+        if (a[d] != b[d])
         {
-          continue;
+          return a[d] < b[d];
         }
-        mfem::Array<int> v;
-        pmesh.GetBdrElementVertices(be, v);
-        double cc[3] = {0.0, 0.0, 0.0};
-        for (int k = 0; k < v.Size(); k++)
-        {
-          const double *x = pmesh.GetVertex(v[k]);
-          cc[0] += x[0];
-          cc[1] += x[1];
-          cc[2] += x[2];
-        }
-        const double inv = 1.0 / v.Size(), q = 1e6;
-        by_centroid[{std::lround(cc[0] * inv * q), std::lround(cc[1] * inv * q),
-                     std::lround(cc[2] * inv * q)}]
-            .push_back(be);
       }
-      mfem::DenseMatrix vshp, vshm, cross;
-      for (auto &[key, bes] : by_centroid)
+      return false;
+    };
+    std::sort(canon, canon + 3, less);
+
+    const mfem::FiniteElement *fe = nd_fespace.GetBE(be);
+    mfem::ElementTransformation *T = pmesh.GetBdrElementTransformation(be);
+    nd_fespace.GetBdrElementDofs(be, dofs);
+
+    const std::size_t base = local.size();
+    local.resize(base + rec, 0.0);
+    local[base] = it->second;  // off
+    for (int k = 0; k < 3; k++)
+    {
+      const double *x = pmesh.GetVertex(vids[canon[k]]);
+      for (int d = 0; d < sd; d++)
       {
-        if (bes.size() != 2)
+        local[base + o_vert + k * sd + d] = x[d];
+      }
+    }
+    for (int a = 0; a < nd; a++)
+    {
+      int ld = dofs[a];
+      double sgn = 1.0;
+      if (ld < 0)
+      {
+        ld = -1 - ld;
+        sgn = -1.0;
+      }
+      local[base + o_gtd + a] = static_cast<double>(nd_fespace.GetGlobalTDofNumber(ld));
+      local[base + o_sgn + a] = sgn;
+    }
+    for (int q = 0; q < nqp; q++)
+    {
+      // Barycentric (b0,b1,b2) on canonical vertices -> element reference coords. The
+      // physical quadrature point is then identical for the two coincident faces.
+      const mfem::IntegrationPoint &ip = ir.IntPoint(q);
+      const double bc[3] = {1.0 - ip.x - ip.y, ip.x, ip.y};
+      double eb[3];
+      for (int k = 0; k < 3; k++)
+      {
+        eb[canon[k]] = bc[k];
+      }
+      mfem::IntegrationPoint ipe;
+      ipe.Set2(eb[1], eb[2]);
+      T->SetIntPoint(&ipe);
+      fe->CalcVShape(*T, vsh);
+      local[base + o_w + q] = ip.weight * T->Weight();
+      for (int a = 0; a < nd; a++)
+      {
+        for (int d = 0; d < sd; d++)
         {
-          n_unpaired += static_cast<int>(bes.size());
-          continue;  // Only genuine coincident pairs couple.
-        }
-        const int bp = bes[0], bm = bes[1];
-        const mfem::FiniteElement *fep = nd_fespace.GetBE(bp), *fem = nd_fespace.GetBE(bm);
-        mfem::ElementTransformation *Tp = pmesh.GetBdrElementTransformation(bp);
-        mfem::ElementTransformation *Tm = pmesh.GetBdrElementTransformation(bm);
-        const int nd = fep->GetDof();
-        mfem::Array<int> dp, dm;
-        nd_fespace.GetBdrElementDofs(bp, dp);
-        nd_fespace.GetBdrElementDofs(bm, dm);
-        cross.SetSize(nd);
-        cross = 0.0;
-        vshp.SetSize(nd, sd);
-        vshm.SetSize(nd, sd);
-        // Face-p reference points map to face-m by the triangle vertex permutation (the
-        // faces coincide but cracking may reorder local vertices); exact, and avoids
-        // TransformBack, which is unreliable for a surface element.
-        mfem::Array<int> vp, vm;
-        pmesh.GetBdrElementVertices(bp, vp);
-        pmesh.GetBdrElementVertices(bm, vm);
-        int perm[3] = {0, 1, 2};
-        for (int i = 0; i < vp.Size(); i++)
-        {
-          const double *xi = pmesh.GetVertex(vp[i]);
-          for (int j = 0; j < vm.Size(); j++)
-          {
-            const double *xj = pmesh.GetVertex(vm[j]);
-            double d2 = 0.0;
-            for (int dd = 0; dd < sd; dd++)
-            {
-              d2 += (xi[dd] - xj[dd]) * (xi[dd] - xj[dd]);
-            }
-            if (d2 < 1.0e-18)
-            {
-              perm[i] = j;
-              break;
-            }
-          }
-        }
-        const mfem::IntegrationRule &ir =
-            mfem::IntRules.Get(fep->GetGeomType(), 2 * fep->GetOrder() + 2);
-        for (int iq = 0; iq < ir.GetNPoints(); iq++)
-        {
-          const mfem::IntegrationPoint &ip = ir.IntPoint(iq);
-          Tp->SetIntPoint(&ip);
-          const double w = ip.weight * Tp->Weight();
-          fep->CalcVShape(*Tp, vshp);
-          // Permute barycentric coordinates (v0,v1,v2) -> (perm) to land on the same
-          // physical point in face m.
-          double bary[3] = {1.0 - ip.x - ip.y, ip.x, ip.y}, barym[3] = {0.0, 0.0, 0.0};
-          barym[perm[0]] = bary[0];
-          barym[perm[1]] = bary[1];
-          barym[perm[2]] = bary[2];
-          mfem::IntegrationPoint ipm;
-          ipm.Set2(barym[1], barym[2]);
-          Tm->SetIntPoint(&ipm);
-          fem->CalcVShape(*Tm, vshm);
-          for (int a = 0; a < nd; a++)
-          {
-            for (int b = 0; b < nd; b++)
-            {
-              double dot = 0.0;
-              for (int dd = 0; dd < sd; dd++)
-              {
-                dot += vshp(a, dd) * vshm(b, dd);
-              }
-              cross(a, b) += w * dot;
-            }
-          }
-        }
-        for (int a = 0; a < nd; a++)
-        {
-          int ga = dp[a];
-          double sa = 1.0;
-          if (ga < 0)
-          {
-            ga = -1 - ga;
-            sa = -1.0;
-          }
-          for (int b = 0; b < nd; b++)
-          {
-            int gb = dm[b];
-            double sb = 1.0;
-            if (gb < 0)
-            {
-              gb = -1 - gb;
-              sb = -1.0;
-            }
-            const double val = off * sa * sb * cross(a, b);
-            C->Add(ga, gb, val);
-            C->Add(gb, ga, val);  // symmetric partner <phi_b^-, phi_a^+>
-          }
+          local[base + o_vsh + (q * nd + a) * sd + d] = vsh(a, d);
         }
       }
     }
   }
-  C->Finalize();
-  Mpi::GlobalSum(1, &n_unpaired, nd_fespace.GetComm());
-  if (n_unpaired > 0)
+
+  // Gather all film-face records across ranks.
+  int sendcount = static_cast<int>(local.size()), nranks;
+  MPI_Comm_size(comm, &nranks);
+  std::vector<int> counts(nranks), displs(nranks);
+  Mpi::Allgather(1, &sendcount, counts.data(), comm);
+  int total = 0;
+  for (int r = 0; r < nranks; r++)
   {
-    Mpi::Warning(
-        "Two-sided sheet has {:d} unpaired face(s): the two coincident faces of a "
-        "cracked interface must be on the same MPI rank (cross-rank two-port coupling "
-        "is not supported) and the film must be fully interior. Results may be "
-        "incorrect!\n",
-        n_unpaired);
+    displs[r] = total;
+    total += counts[r];
   }
+  std::vector<double> all(total);
+  Mpi::Allgatherv(sendcount, local.data(), all.data(), counts.data(), displs.data(), comm);
+
+  // Group faces by canonical vertex key; each physical film triangle appears exactly twice.
+  std::map<std::array<long, 9>, std::vector<int>> by_key;  // key -> record start offsets
+  for (int off = 0; off + rec <= total; off += rec)
+  {
+    std::array<long, 9> key{};
+    for (int i = 0; i < 3 * sd && i < 9; i++)
+    {
+      key[i] = std::lround(all[off + o_vert + i] * 1e6);
+    }
+    by_key[key].push_back(off);
+  }
+
+  // Assemble C(row, col) = off * sign_p[a] * sign_m[b] * <phi_a^p, phi_b^m> into the rows
+  // this rank owns; columns use global true-dof numbers.
+  const HYPRE_BigInt my_off = nd_fespace.GetMyTDofOffset();
+  const int lt = nd_fespace.GetTrueVSize();
+  const HYPRE_BigInt glob = nd_fespace.GlobalTrueVSize();
+  mfem::SparseMatrix Cloc(lt, static_cast<int>(glob));
+  int n_unpaired = 0;
+  for (auto &[key, recs] : by_key)
+  {
+    if (recs.size() != 2)
+    {
+      n_unpaired += static_cast<int>(recs.size());
+      continue;
+    }
+    const int P = recs[0], M = recs[1];
+    const double off = all[P];
+    auto add_block = [&](int R, int S)  // rows from face R, columns from face S
+    {
+      for (int a = 0; a < nd; a++)
+      {
+        const HYPRE_BigInt row = static_cast<HYPRE_BigInt>(all[R + o_gtd + a]);
+        if (row < my_off || row >= my_off + lt)
+        {
+          continue;
+        }
+        const double sa = all[R + o_sgn + a];
+        for (int b = 0; b < nd; b++)
+        {
+          double crossab = 0.0;
+          for (int q = 0; q < nqp; q++)
+          {
+            double dot = 0.0;
+            for (int d = 0; d < sd; d++)
+            {
+              dot += all[R + o_vsh + (q * nd + a) * sd + d] *
+                     all[S + o_vsh + (q * nd + b) * sd + d];
+            }
+            crossab += all[R + o_w + q] * dot;
+          }
+          const double val = off * sa * all[S + o_sgn + b] * crossab;
+          Cloc.Add(static_cast<int>(row - my_off), static_cast<int>(all[S + o_gtd + b]),
+                   val);
+        }
+      }
+    };
+    add_block(P, M);
+    add_block(M, P);
+  }
+  Cloc.Finalize();
+  Mpi::GlobalSum(1, &n_unpaired, comm);
+  MFEM_VERIFY(
+      n_unpaired == 0,
+      "Two-sided (two-port) sheet has "
+          << n_unpaired
+          << " unpaired face(s): each cracked film face must have a coincident twin "
+             "(the film must be fully interior).");
+
+  // Build the parallel matrix from local rows with global column indices.
+  std::vector<HYPRE_BigInt> J(Cloc.NumNonZeroElems());
+  for (int k = 0; k < Cloc.NumNonZeroElems(); k++)
+  {
+    J[k] = Cloc.GetJ()[k];
+  }
+  HYPRE_BigInt *rows = nd_fespace.GetTrueDofOffsets();
+  auto C = std::make_unique<mfem::HypreParMatrix>(comm, lt, glob, glob, Cloc.GetI(),
+                                                  J.data(), Cloc.GetData(), rows, rows);
+  C->CopyRowStarts();
+  C->CopyColStarts();
   return C;
 }
 

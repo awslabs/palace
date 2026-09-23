@@ -469,7 +469,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   SaveMetadata(ksp);
   PostprocessTerminals(post_op, curlcurl_op.GetSurfaceCurrentOp(),
                        curlcurl_op.GetSurfaceFluxOp(), A, I_inc, Phi_inc, linked_flux,
-                       london_rhs, london_ah);
+                       london_rhs, london_ah, curlcurl_op.GetTwoPortCoupling());
   post_op.MeasureFinalize(indicator);
   return {indicator, curlcurl_op.GlobalTrueVSize()};
 }
@@ -479,7 +479,8 @@ void MagnetostaticSolver::PostprocessTerminals(
     const SurfaceCurrentOperator &surf_j_op, const SurfaceFluxOperator &surf_flux_op,
     const std::vector<Vector> &A, const std::vector<double> &I_inc,
     const std::vector<double> &Phi_inc, const mfem::DenseMatrix &linked_flux,
-    const std::vector<Vector> &london_rhs, const std::vector<Vector> &london_ah) const
+    const std::vector<Vector> &london_rhs, const std::vector<Vector> &london_ah,
+    const Operator *two_port_coupling) const
 {
   // Postprocess the Maxwell inductance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the magnetic field energy based on a current
@@ -580,6 +581,7 @@ void MagnetostaticSolver::PostprocessTerminals(
 
   mfem::DenseMatrix cross_energy(n);
   cross_energy = nan;
+  Vector cAi;  // C * A[i], the two-sided sheet cross-face energy contribution A_j^T C A_i
   for (int i = 0; i < n; i++)
   {
     auto &A_gf = post_op.GetAGridFunction().Real();
@@ -588,6 +590,14 @@ void MagnetostaticSolver::PostprocessTerminals(
     post_op.GetDomainPostOp().M_mag->Mult(A_gf, H_gf);
     cross_energy(i, i) = linalg::Dot<Vector>(post_op.GetComm(), A_gf, H_gf);
     cross_energy(i, i) += london_correction(i, i);
+    // Two-port sheets carry the coupling C outside M_mag (it needs global columns for the
+    // cross-rank case), so add A_j^T C A_i to the cross-energies explicitly.
+    if (two_port_coupling)
+    {
+      cAi.SetSize(A[i].Size());
+      two_port_coupling->Mult(A[i], cAi);
+      cross_energy(i, i) += linalg::Dot<Vector>(post_op.GetComm(), A[i], cAi);
+    }
 
     // Off-diagonal cross-energies (only for reciprocal Open-Open pairs).
     for (int j = i + 1; j < n; j++)
@@ -597,8 +607,13 @@ void MagnetostaticSolver::PostprocessTerminals(
         continue;
       }
       A_gf.SetFromTrueDofs(A[j]);
-      cross_energy(i, j) = cross_energy(j, i) =
+      double e =
           linalg::Dot<Vector>(post_op.GetComm(), A_gf, H_gf) + london_correction(i, j);
+      if (two_port_coupling)
+      {
+        e += linalg::Dot<Vector>(post_op.GetComm(), A[j], cAi);
+      }
+      cross_energy(i, j) = cross_energy(j, i) = e;
     }
   }
 

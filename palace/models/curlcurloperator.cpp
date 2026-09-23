@@ -388,19 +388,17 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   return K;
 }
 
-ParOperator *CurlCurlOperator::GetTwoPortCoupling()
+mfem::HypreParMatrix *CurlCurlOperator::GetTwoPortCoupling()
 {
   if (!sc_sheet_op.HasTwoPort())
   {
     return nullptr;
   }
-  if (!two_port_C_par_)
+  if (!two_port_coupling_)
   {
     two_port_coupling_ = sc_sheet_op.BuildTwoPortCoupling(GetNDSpace().Get());
-    two_port_C_local_ = std::make_unique<hypre::HypreCSRMatrix>(*two_port_coupling_);
-    two_port_C_par_ = std::make_unique<ParOperator>(*two_port_C_local_, GetNDSpace());
   }
-  return two_port_C_par_.get();
+  return two_port_coupling_.get();
 }
 
 std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
