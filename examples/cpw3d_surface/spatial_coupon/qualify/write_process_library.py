@@ -27,12 +27,17 @@ sys.path.insert(0, str(HERE))
 import qualify_library  # noqa: E402
 
 
-def run_cases(run_path):
+def run_cases(run_path, build_record=None):
     """The records of a finished qualify run with the contexts process_library_entries reads
     (the recorded stage layout; the MA tail record re-read from its file) and the run's
-    manifest (through its build record, as run_qualify binds it)."""
+    manifest (through its build record, as run_qualify binds it; a partial checkpoint of a
+    driver stopped before its final record carries none - `build_record` of a sibling run
+    of the same root then binds the manifest)."""
     run = json.loads(run_path.read_text())
-    build = json.loads(Path(run["BuildRecord"]["Path"]).read_text())
+    build_path = (run.get("BuildRecord") or {}).get("Path") or build_record
+    if build_path is None:
+        raise ValueError(f"{run_path} is a partial record without a build record and no other --run supplies one")
+    build = json.loads(Path(build_path).read_text())
     manifest_path = Path(build["Library"]["Manifest"]["Path"])
     manifest = json.loads(manifest_path.read_text())
     records = [record for record in run["Cases"] if record.get("Stages") and record.get("Qualification")]
@@ -56,8 +61,11 @@ def main(argv=None):
     root = args.root.expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     records, contexts, manifest_path, manifest = [], {}, None, None
-    for run_path in args.run:
-        run_records, run_contexts, run_manifest_path, run_manifest = run_cases(run_path.expanduser().resolve())
+    runs = [path.expanduser().resolve() for path in args.run]
+    build_record = next(((json.loads(path.read_text()).get("BuildRecord") or {}).get("Path") for path in runs
+                         if (json.loads(path.read_text()).get("BuildRecord") or {}).get("Path")), None)
+    for run_path in runs:
+        run_records, run_contexts, run_manifest_path, run_manifest = run_cases(run_path, build_record)
         if manifest_path is not None and run_manifest_path != manifest_path:
             raise ValueError(f"the runs bind different manifests: {manifest_path} and {run_manifest_path}")
         duplicated = {record["Case"] for record in run_records} & {record["Case"] for record in records}

@@ -344,9 +344,12 @@ class ProcessLibraryWriterTest(unittest.TestCase):
         self.assertEqual(library["MergedFrom"]["Kept"], ["model_a"])
         self.assertEqual(library["Thin"]["Paired"], ["case-a"])
         # --run repeats (a root relaunched for other cases); the same case twice is refused.
-        other = second / "library-qualification-other.json"
-        other.write_text(json.dumps({"BuildRecord": {"Path": str(build_record)},
+        other = second / "library-qualification-other.json"   # a partial checkpoint: no BuildRecord
+        other.write_text(json.dumps({"Partial": True,
                                      "Cases": [{"Case": "case-c-thin", "Stages": None, "Qualification": None}]}) + "\n")
+        with self.assertRaisesRegex(ValueError, "partial record without a build record"):
+            write_process_library.main(["--previous", str(first / "process-library.json"), "--root", str(self.tmp / "root5"),
+                                        "--run", str(other)])
         write_process_library.main(["--previous", str(first / "process-library.json"), "--root", str(self.tmp / "root3"),
                                     "--run", str(run_record), "--run", str(other)])
         self.assertEqual(json.loads((self.tmp / "root3" / "process-library.json").read_text())["Thin"]["Paired"], ["case-a"])
