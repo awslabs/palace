@@ -462,6 +462,7 @@ SuperconductorData::SuperconductorData(const json &boundary)
   lambda_L = boundary.value("PenetrationDepth", lambda_L);
   thickness = boundary.value("Thickness", thickness);
   Ls = boundary.value("KineticInductance", Ls);
+  two_sided = boundary.value("TwoSided", two_sided);
 
   // Require exactly one of {(PenetrationDepth, Thickness), KineticInductance}. The (λ, d)
   // form defines the kinetic sheet inductance as L_ksq = mu0 * lambda^2 / d; the direct
@@ -483,6 +484,9 @@ SuperconductorData::SuperconductorData(const json &boundary)
     MFEM_VERIFY(Ls > 0.0,
                 "Superconductor boundary \"KineticInductance\" must be positive!");
   }
+  MFEM_VERIFY(!two_sided || has_lambda_d,
+              "Superconductor boundary \"TwoSided\" requires the (\"PenetrationDepth\", "
+              "\"Thickness\") form!");
 }
 
 LumpedPortData::LumpedPortData(const json &port)

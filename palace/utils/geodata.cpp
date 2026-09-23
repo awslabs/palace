@@ -2977,11 +2977,13 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
         cba.erase(std::remove_if(cba.begin(), cba.end(), attr_in_elem), cba.end());
       }
     }
-    // PROTOTYPE (two-port): force-crack superconductor films when PALACE_LONDON_FORCE_CRACK is
-    // set. Superconductor/FluxLoop attributes are not otherwise crack candidates.
-    if (std::getenv("PALACE_LONDON_FORCE_CRACK"))
+    // Two-sided (two-port) superconductor films must crack so their two coincident faces
+    // get independent DOFs; they are not otherwise crack candidates.
+    // PALACE_LONDON_FORCE_CRACK forces cracking for all superconductor films (debug).
+    const bool force_all = std::getenv("PALACE_LONDON_FORCE_CRACK") != nullptr;
+    for (const auto &sc : iodata.boundaries.superconductor)
     {
-      for (const auto &sc : iodata.boundaries.superconductor)
+      if (sc.two_sided || force_all)
       {
         cba.insert(cba.end(), sc.attributes.begin(), sc.attributes.end());
       }
