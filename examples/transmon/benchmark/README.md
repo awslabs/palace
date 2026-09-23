@@ -55,7 +55,14 @@ For thick-reference comparisons, use
 `../prepare_surface_response_electrostatic.py` to create the thin electrostatic config.
 It sets the same isotropic substrate permittivity used by the finite-metal reference
 (default `11.45`), includes port patches 6 and 7 in the grounded metal union, and uses the
-separately tagged transmon island as terminal attribute 9.
+separately tagged transmon island as terminal attribute 9. The checked-in
+`mesh/transmon_surface_p1.msh2` carries the whole metal sheet as physical surface 5;
+`../tag_island_conductor.py --mesh mesh/transmon_surface_p1.msh2 --output <mesh>` derives the
+tagged mesh (the edge-connected metal component touching no port patch becomes 9 "island";
+the ground plane and the feedline joined to it by the port patches stay 5). The library
+`Fabrication.InterfaceLayers.MS` permittivity must match the config's MS layer to 1e-10:
+when it differs from the substrate value (11.47 vs 11.45 for the transmon process), edit the
+MS `Permittivity` of the produced config and record it.
 
 ## Corrected p=1 eigenmode benchmark
 

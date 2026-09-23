@@ -1,0 +1,35 @@
+#!/bin/bash
+# Device-level verification (decision 66, branch simlapointe/device-verification): the coarse thin transmon
+# electrostatic solve with Solver.Electrostatic.ResponseCorrection against the full Version-3 device library
+# (/tmp/library-device-full-01/process-library.json), p2 then p3, UnmatchedPolicy Warn, CorrectionMode Both.
+#PBS -N device-verif-transmon
+#PBS -q normal-g
+#PBS -P DS-EM-FEM
+#PBS -r n
+#PBS -l select=1:ncpus=192:mpiprocs=192
+#PBS -l place=scatter:excl
+#PBS -l instance_type=m8g.48xlarge
+#PBS -l efa_support=True,subnet_id=subnet-0c98d793bbcebb39a
+#PBS -l walltime=06:00:00
+#PBS -j oe
+#PBS -o /data/home/simlap/coupon_accuracy_assessment_20260913/device-verification-01/pbs.log
+set -euo pipefail
+unset PYTHONOPTIMIZE
+source /etc/profile.d/modules.sh
+module load gcc/14.3.0 openmpi/5.0.8-gcc14 arm/armpl/24.10-gcc
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 BLIS_NUM_THREADS=1 ARMPL_NUM_THREADS=1 PYTHONDONTWRITEBYTECODE=1
+for name in ${!PALACE_RESPONSE_@}; do unset "$name"; done
+R=/data/home/simlap/coupon_accuracy_assessment_20260913
+D=$R/device-verification-01
+BIN=$R/palace-archive-estimate-170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b.bin
+trap 'code=$?; printf "{\"ExitCode\":%d,\"JobID\":\"%s\",\"UTC\":\"%s\"}\n" "$code" "${PBS_JOBID:-}" "$(date -u +%FT%TZ)" > "$D/pbs-status.json"' EXIT
+mkdir -p "$D/tmp"; export TMPDIR="$D/tmp"
+date -u +%FT%TZ; hostname; cat "$PBS_NODEFILE"; grep MemTotal /proc/meminfo
+sha256sum "$BIN" | tee "$D/binary-sha256.txt"
+for order in 2 3; do
+  mkdir -p "$D/p$order"
+  echo "=== p$order start $(date -u +%FT%TZ)"
+  /usr/bin/time -v -o "$D/p$order/time.txt" "$R/mpiexec_bound.sh" -n 192 "$BIN" "$D/config-p$order-remote.json" > "$D/p$order/palace.log" 2>&1 || echo "p$order RC=$?" | tee -a "$D/p$order/palace.log"
+  echo "=== p$order end $(date -u +%FT%TZ)"
+  ls "$D/p$order/postpro" || true
+done
