@@ -172,6 +172,7 @@ std::unique_ptr<mfem::SparseMatrix> SuperconductorSheetOperator::BuildTwoPortCou
   const int sd = pmesh.SpaceDimension();
   auto C =
       std::make_unique<mfem::SparseMatrix>(nd_fespace.GetVSize(), nd_fespace.GetVSize());
+  int n_unpaired = 0;
 
   for (const auto &bdr : boundaries)
   {
@@ -212,6 +213,7 @@ std::unique_ptr<mfem::SparseMatrix> SuperconductorSheetOperator::BuildTwoPortCou
       {
         if (bes.size() != 2)
         {
+          n_unpaired += static_cast<int>(bes.size());
           continue;  // Only genuine coincident pairs couple.
         }
         const int bp = bes[0], bm = bes[1];
@@ -226,10 +228,9 @@ std::unique_ptr<mfem::SparseMatrix> SuperconductorSheetOperator::BuildTwoPortCou
         cross = 0.0;
         vshp.SetSize(nd, sd);
         vshm.SetSize(nd, sd);
-        // Map face-p reference points to face-m by the triangle vertex permutation (the
-        // faces are geometrically coincident, but cracking may reorder their local
-        // vertices). This is exact and avoids ElementTransformation::TransformBack, which
-        // is unreliable for a surface element (2D reference in 3D space).
+        // Face-p reference points map to face-m by the triangle vertex permutation (the
+        // faces coincide but cracking may reorder local vertices); exact, and avoids
+        // TransformBack, which is unreliable for a surface element.
         mfem::Array<int> vp, vm;
         pmesh.GetBdrElementVertices(bp, vp);
         pmesh.GetBdrElementVertices(bm, vm);
@@ -310,6 +311,16 @@ std::unique_ptr<mfem::SparseMatrix> SuperconductorSheetOperator::BuildTwoPortCou
     }
   }
   C->Finalize();
+  Mpi::GlobalSum(1, &n_unpaired, nd_fespace.GetComm());
+  if (n_unpaired > 0)
+  {
+    Mpi::Warning(
+        "Two-sided sheet has {:d} unpaired face(s): the two coincident faces of a "
+        "cracked interface must be on the same MPI rank (cross-rank two-port coupling "
+        "is not supported) and the film must be fully interior. Results may be "
+        "incorrect!\n",
+        n_unpaired);
+  }
   return C;
 }
 
