@@ -12,8 +12,8 @@
       "Type": "m8g.48xlarge",
       "vCPUs": 192,
       "MemoryGiB": 768,
-      "NodeGiB": 742.57,
-      "NodeGiBOrigin": "estimated: 768 x the r8g.48xlarge's measured MemTotal / nominal ratio (1485.13 / 1536); replace by the first m8g job's preflight MemTotalBytes"
+      "NodeGiB": 742.49,
+      "NodeGiBOrigin": "measured MemTotal 797,242,068,992 B of the first m8g.48xlarge job's node (PBS 47537, library-device-thin-01 2-edge thin worker-1, 2026-09-23; MemAvailable at the preflight 746,798,010,368 B = 695.5 GiB against the 460.8 GiB guard)"
     },
     {
       "Type": "r8g.48xlarge",
