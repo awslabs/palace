@@ -30,7 +30,7 @@ inputs:
   spack-packages-commit:
     description: 'spack-packages commit used by the builtin Spack repository'
     required: false
-    default: 'c3b260e171988c0ef05220174e8ada7efdbd6499'
+    default: '807d581bbaba3a1936b932c9cc200c013dc23816'
   test-cases:
     description: 'Test cases: "default", "long", or space-separated list'
     required: false
