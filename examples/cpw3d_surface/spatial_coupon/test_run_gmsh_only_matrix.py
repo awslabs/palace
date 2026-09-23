@@ -257,17 +257,29 @@ class LibraryBuildEndToEndTest(unittest.TestCase):
         for key in frozen:
             if key != "Derivation":
                 self.assertEqual(derived[key], frozen[key], key)
-        registered = json.loads(manifest_path.read_text())["Cases"][-1]
-        self.assertEqual(registered["Id"], copy_id)
-        # Build: both cases built and verified as one library of two jobs.
+        # The registered directory also registers its thin counterpart (decision 66: the
+        # default of coupon-library build; --no-thin opts out), after the fabricated case.
+        thin_id = f"{copy_id}-thin"
+        registered = json.loads(manifest_path.read_text())["Cases"][-2:]
+        self.assertEqual([case["Id"] for case in registered], [copy_id, thin_id])
+        self.assertEqual((registered[1]["Kind"], registered[1]["FabricatedCase"]), ("thin", copy_id))
+        self.assertEqual(registered[1]["Source"]["Files"]["SemanticContract"]["Name"], "semantic-contract-thin.json")
+        # Build: the three cases built and verified as one library of two jobs.
         totals = record["Library"]
         self.assertEqual({key: totals[key] for key in ("CasesAttempted", "CasesBuilt", "CasesPassed",
                                                        "CasesUnsupported", "CasesFailed")},
-                         {"CasesAttempted": 2, "CasesBuilt": 2, "CasesPassed": 2, "CasesUnsupported": 0,
+                         {"CasesAttempted": 3, "CasesBuilt": 3, "CasesPassed": 3, "CasesUnsupported": 0,
                           "CasesFailed": 0})
         self.assertEqual(totals["Jobs"], 2)
         by_case = {case["Case"]: case for case in record["Cases"]}
-        self.assertEqual(set(by_case), {fixture, copy_id})
+        self.assertEqual(set(by_case), {fixture, copy_id, thin_id})
+        # The thin pair is recorded: the thin census carries the kind, one sheet tube per side
+        # and the manifest's recorded cutoff; no radial MA shells on a thin coupon.
+        thin_census = json.loads((root / "library" / thin_id / "build-census.json").read_text())["PrismTubes"]["Section"]
+        self.assertEqual((thin_census["Kind"], thin_census["TubesPerSide"]), ("thin", 1))
+        self.assertEqual(thin_census["ThinCutoff"], manifest["ProductionRecipe"]["ThinRecipe"]["Cutoff"])
+        self.assertIsNone(by_case[thin_id]["RadialShells"])
+        self.assertIn("ThinMetal", by_case[thin_id]["Scope"]["ExhibitedClasses"])
         for case in record["Cases"]:
             self.assertTrue(case["Passed"], case["StoppedBy"])
             self.assertIsNone(case["StoppedBy"])
