@@ -5516,6 +5516,14 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       }
       MFEM_VERIFY(offset == end, "Invalid gathered plan-view facet data!");
     }
+    // The facets arrive in rank order; order them by geometry so that every consumer sees
+    // the same sequence regardless of the partition.
+    std::sort(result.facets.begin(), result.facets.end(),
+              [](const PlanViewFacet &first, const PlanViewFacet &second)
+              {
+                return std::tie(first.conductor, first.points) <
+                       std::tie(second.conductor, second.points);
+              });
     return result;
   };
   auto HasOverlappingConductorStrips = [&](const std::vector<SpatialEdgeSite3D> &sites)
