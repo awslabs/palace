@@ -143,6 +143,24 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       bound_op = &op;
     }
   };
+
+  // A two-sided sheet's cross-face coupling C is matrix-free (it needs global columns), so
+  // the Krylov operator is the assembled stiffness plus C while the assembled stiffness
+  // (which AMS can build) preconditions it. Wraps a stiffness as K + C, or nullptr if there
+  // is no C.
+  auto *two_port_C = curlcurl_op.GetTwoPortCoupling();
+  auto with_coupling = [&](const Operator &Kmg) -> std::unique_ptr<Operator>
+  {
+    if (!two_port_C)
+    {
+      return nullptr;
+    }
+    auto sum = std::make_unique<SumOperator>(Kmg, 1.0);
+    sum->AddOperator(*two_port_C);
+    return sum;
+  };
+  auto base_op = with_coupling(*K);
+  const Operator &K_op = base_op ? *base_op : *K;
   // Base preconditioner: gauge-shifted P_london (SPD) on the London path, else K itself.
   const Operator &K_pc = P_london ? *P_london : *K;
 
@@ -283,14 +301,15 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         // elimination injects no spurious values on edges shared with the active port.
         const Operator &K_step = curlcurl_op.GetScreenedStiffnessMatrix(short_attrs);
         curlcurl_op.ZeroEssentialTrueDofs(short_attrs, RHS);
+        auto step_op = with_coupling(K_step);
         const Operator *step_pc = curlcurl_op.GetScreenedPreconditionerMatrix(short_attrs);
-        set_operator(K_step, step_pc ? *step_pc : K_step);
+        set_operator(step_op ? *step_op : K_step, step_pc ? *step_pc : K_step);
         ksp.Mult(RHS, A[step]);
       }
       else
       {
         // No inactive ports shorted for this step: all inactive ports are open.
-        set_operator(*K, K_pc);
+        set_operator(K_op, K_pc);
         ksp.Mult(RHS, A[step]);
       }
       if (!ksp.GetConverged())
@@ -320,7 +339,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       Phi_inc[step] = data.GetExcitationFlux();  // Exact via the flux constraint.
 
       // Solve 3D magnetostatic problem (flux loops use the base operator).
-      set_operator(*K, K_pc);
+      set_operator(K_op, K_pc);
 
       // London flux film: range-space (two-solve) solution of the bordered flux-constrained
       // system. RHS holds the shifted-penalty drive b = M_sheet·a_h, boundary_values holds

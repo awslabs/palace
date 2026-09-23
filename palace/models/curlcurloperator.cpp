@@ -376,15 +376,9 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
 
   print_hdr = false;
 
-  // Two-sided (two-port) sheets add a cross-face coupling that is not an element-local
-  // integrator. Fold it in matrix-free as the true operator K + C (the Krylov solver only
-  // needs Mult); the SPD preconditioner P_london omits C, which the AMS gate showed still
-  // converges. C is on the finest ND space; screened current-port steps are not yet
-  // supported.
-  if (auto *C_par = GetTwoPortCoupling())
-  {
-    return std::make_unique<SumOperator>(std::move(K), *C_par);
-  }
+  // Two-sided (two-port) sheets add a cross-face coupling C that is not an element-local
+  // integrator; the caller forms the Krylov operator K + C matrix-free (GetTwoPortCoupling)
+  // and preconditions with this assembled K, which the AMS gate showed converges.
   return K;
 }
 
