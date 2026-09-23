@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <memory>
 #include <numeric>
@@ -65,6 +66,70 @@ void SortAndUnique(std::vector<MetalBoundaryCondition> &conditions)
                                [](const auto &a, const auto &b)
                                { return a.type == b.type && a.index == b.index; }),
                    conditions.end());
+}
+
+struct SegmentVectorContribution
+{
+  std::size_t segment;
+  std::array<double, 3> vector;
+};
+
+// Sum per-segment vector contributions from every rank in a canonical order (segment
+// index, then the contribution itself). The per-face contributions of a segment are a
+// property of the global mesh while their distribution over ranks is not, so an
+// MPI_Allreduce of rank-local partial sums would make the result depend on the partition
+// through floating-point roundoff.
+std::vector<double>
+SumSegmentVectorsInCanonicalOrder(MPI_Comm comm, std::size_t segment_count,
+                                  const std::vector<SegmentVectorContribution> &local)
+{
+  std::vector<double> local_records;
+  local_records.reserve(4 * local.size());
+  for (const auto &contribution : local)
+  {
+    local_records.push_back(static_cast<double>(contribution.segment));
+    local_records.insert(local_records.end(), contribution.vector.begin(),
+                         contribution.vector.end());
+  }
+  MFEM_VERIFY(local_records.size() <=
+                  static_cast<std::size_t>(std::numeric_limits<int>::max()),
+              "Local metal edge frame data exceeds the MPI count limit!");
+  const int local_count = static_cast<int>(local_records.size());
+  std::vector<int> counts(Mpi::Size(comm));
+  Mpi::Allgather(1, &local_count, counts.data(), comm);
+  std::vector<int> offsets(counts.size());
+  int total = 0;
+  for (std::size_t rank = 0; rank < counts.size(); rank++)
+  {
+    offsets[rank] = total;
+    MFEM_VERIFY(counts[rank] <= std::numeric_limits<int>::max() - total,
+                "Global metal edge frame data exceeds the MPI count limit!");
+    total += counts[rank];
+  }
+  std::vector<double> records(total);
+  Mpi::Allgatherv(local_count, local_records.data(), records.data(), counts.data(),
+                  offsets.data(), comm);
+
+  std::vector<SegmentVectorContribution> contributions(total / 4);
+  for (std::size_t i = 0; i < contributions.size(); i++)
+  {
+    contributions[i].segment = static_cast<std::size_t>(std::llround(records[4 * i]));
+    std::copy_n(records.data() + 4 * i + 1, 3, contributions[i].vector.begin());
+  }
+  std::sort(contributions.begin(), contributions.end(), [](const auto &a, const auto &b)
+            { return std::tie(a.segment, a.vector) < std::tie(b.segment, b.vector); });
+
+  std::vector<double> sum(3 * segment_count, 0.0);
+  for (const auto &contribution : contributions)
+  {
+    MFEM_VERIFY(contribution.segment < segment_count,
+                "Invalid segment index in a gathered metal edge frame contribution!");
+    for (int d = 0; d < 3; d++)
+    {
+      sum[3 * contribution.segment + d] += contribution.vector[d];
+    }
+  }
+  return sum;
 }
 
 }  // namespace
@@ -874,7 +939,8 @@ BuildMetalEdgeProcessNormals(const mfem::ParMesh &mesh, const MetalEdgeGeometry 
   Mpi::GlobalMax(static_cast<int>(maximum_score.size()), maximum_score.data(),
                  mesh.GetComm());
 
-  std::vector<double> normal_sum(3 * segment_indices.size(), 0.0);
+  std::vector<SegmentVectorContribution> normal_contributions;
+  normal_contributions.reserve(candidates.size());
   for (const auto &candidate : candidates)
   {
     const double minimum = minimum_score[candidate.segment];
@@ -907,12 +973,15 @@ BuildMetalEdgeProcessNormals(const mfem::ParMesh &mesh, const MetalEdgeGeometry 
       }
       sign = candidate.normal[dominant] >= 0.0 ? 1.0 : -1.0;
     }
+    std::array<double, 3> signed_normal{};
     for (int d = 0; d < 3; d++)
     {
-      normal_sum[3 * candidate.segment + d] += sign * candidate.normal[d];
+      signed_normal[d] = sign * candidate.normal[d];
     }
+    normal_contributions.push_back({candidate.segment, signed_normal});
   }
-  Mpi::GlobalSum(static_cast<int>(normal_sum.size()), normal_sum.data(), mesh.GetComm());
+  const auto normal_sum = SumSegmentVectorsInCanonicalOrder(
+      mesh.GetComm(), segment_indices.size(), normal_contributions);
 
   std::vector<std::array<double, 3>> process_normals(segment_indices.size());
   for (std::size_t i = 0; i < segment_indices.size(); i++)
@@ -1040,7 +1109,7 @@ BuildMetalEdgeGapDirections(const mfem::ParMesh &mesh, const MetalEdgeGeometry &
                                segment.metal_attributes.end());
   }
 
-  std::vector<double> inward_sum(3 * segment_indices.size(), 0.0);
+  std::vector<SegmentVectorContribution> inward_contributions;
   mesh::MeshEdgeSegmentCache edge_segment_cache(mesh);
   auto &mutable_mesh = const_cast<mfem::ParMesh &>(mesh);
   mfem::Array<int> edges, orientations;
@@ -1104,14 +1173,17 @@ BuildMetalEdgeGapDirections(const mfem::ParMesh &mesh, const MetalEdgeGeometry &
           continue;
         }
         const double inverse_norm = 1.0 / std::sqrt(inward_norm_squared);
+        std::array<double, 3> inward_unit{};
         for (int d = 0; d < 3; d++)
         {
-          inward_sum[3 * local_index + d] += inward[d] * inverse_norm;
+          inward_unit[d] = inward[d] * inverse_norm;
         }
+        inward_contributions.push_back({local_index, inward_unit});
       }
     }
   }
-  Mpi::GlobalSum(static_cast<int>(inward_sum.size()), inward_sum.data(), mesh.GetComm());
+  const auto inward_sum = SumSegmentVectorsInCanonicalOrder(
+      mesh.GetComm(), segment_indices.size(), inward_contributions);
 
   std::vector<std::array<double, 3>> gap_directions(segment_indices.size());
   for (std::size_t i = 0; i < segment_indices.size(); i++)

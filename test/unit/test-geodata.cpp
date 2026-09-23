@@ -1443,6 +1443,139 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
   }
 }
 
+TEST_CASE("Automatic metal edge classification is partition independent",
+          "[geodata][metaledge][Serial][Parallel]")
+{
+  // The metal perimeter and its edge frames must be a function of the global mesh only.
+  // Palace's interior-boundary cracking displaces the duplicated crack vertices by
+  // CrackDisplacementFactor x h_min, so coincident copies of a perimeter vertex carry
+  // ulp-different coordinates; the canonical geometry gathered from all ranks must not
+  // depend on which rank contributes which copy. Every rank loads the preprocessed serial
+  // mesh, classifies it on MPI_COMM_SELF as the reference, and compares bit for bit
+  // against two different distributions of the same mesh over MPI_COMM_WORLD.
+  const auto config_path = fs::path(__FILE__).parent_path().parent_path().parent_path() /
+                           "examples/transmon/transmon_surface_coarse.json";
+  IoData iodata(config_path.c_str(), false);
+  iodata.model.mesh = config_path.parent_path() / iodata.model.mesh;
+  iodata.model.refinement.max_it = 0;
+  auto serial_mesh = mesh::Load(iodata, MPI_COMM_SELF);
+  REQUIRE(serial_mesh);
+  const int ne = serial_mesh->GetNE();
+  const int size = Mpi::Size(Mpi::World());
+
+  struct Classification
+  {
+    std::vector<mesh::BoundaryEdgeSegment> perimeter;
+    MetalEdgeGeometry geometry;
+    std::vector<std::array<double, 3>> process_normals;
+    std::vector<std::array<double, 3>> gap_directions;
+  };
+  auto Classify = [&](mfem::ParMesh &mesh)
+  {
+    Classification result;
+    auto marker = mesh::BdrAttrToMarker(mesh, std::vector<int>{5}, true);
+    result.perimeter = mesh::GetBoundaryEdgeSegments(mesh, marker);
+    MetalSurfaceExtraction surface;
+    surface.classify_components = true;
+    surface.retain_faces = true;
+    result.geometry = ExtractMetalEdgeGeometry(mesh, iodata.boundaries, surface);
+    const auto ms_indices =
+        GetInterfaceMetalEdgeSegmentIndices(result.geometry, 2, InterfaceDielectric::MS);
+    result.process_normals = BuildMetalEdgeProcessNormals(
+        mesh, result.geometry, ms_indices,
+        [](int material_attribute) { return material_attribute == 2 ? 1.0 : 0.0; });
+    result.gap_directions = BuildMetalEdgeGapDirections(mesh, result.geometry, ms_indices,
+                                                        result.process_normals);
+    return result;
+  };
+  auto CompareToReference = [&](const Classification &reference,
+                                const Classification &candidate, const char *label)
+  {
+    CAPTURE(label);
+    REQUIRE(candidate.perimeter.size() == reference.perimeter.size());
+    REQUIRE(candidate.geometry.vertices.size() == reference.geometry.vertices.size());
+    REQUIRE(candidate.geometry.segments.size() == reference.geometry.segments.size());
+    REQUIRE(candidate.process_normals.size() == reference.process_normals.size());
+    REQUIRE(candidate.gap_directions.size() == reference.gap_directions.size());
+    CHECK(candidate.geometry.components == reference.geometry.components);
+    CHECK(candidate.geometry.physical_components == reference.geometry.physical_components);
+    CHECK(candidate.geometry.physical_chains == reference.geometry.physical_chains);
+    CHECK(candidate.geometry.metal_components == reference.geometry.metal_components);
+    std::size_t perimeter_mismatches = 0, vertex_mismatches = 0, segment_mismatches = 0,
+                normal_mismatches = 0, gap_mismatches = 0;
+    for (std::size_t i = 0; i < reference.perimeter.size(); i++)
+    {
+      perimeter_mismatches += candidate.perimeter[i].p0 != reference.perimeter[i].p0 ||
+                              candidate.perimeter[i].p1 != reference.perimeter[i].p1;
+    }
+    for (std::size_t i = 0; i < reference.geometry.vertices.size(); i++)
+    {
+      const auto &a = candidate.geometry.vertices[i];
+      const auto &b = reference.geometry.vertices[i];
+      vertex_mismatches += a.coordinate != b.coordinate || a.segments != b.segments ||
+                           a.type != b.type || a.physical_type != b.physical_type ||
+                           a.on_truncation_boundary != b.on_truncation_boundary;
+    }
+    for (std::size_t i = 0; i < reference.geometry.segments.size(); i++)
+    {
+      const auto &a = candidate.geometry.segments[i];
+      const auto &b = reference.geometry.segments[i];
+      segment_mismatches +=
+          a.vertices != b.vertices || a.component != b.component ||
+          a.physical_component != b.physical_component ||
+          a.physical_chain != b.physical_chain || a.metal_component != b.metal_component ||
+          a.type != b.type || a.metal_attributes != b.metal_attributes ||
+          a.sa_interfaces != b.sa_interfaces || a.ms_interfaces != b.ms_interfaces ||
+          a.ma_interfaces != b.ma_interfaces ||
+          a.truncation_attributes != b.truncation_attributes;
+    }
+    for (std::size_t i = 0; i < reference.process_normals.size(); i++)
+    {
+      normal_mismatches += candidate.process_normals[i] != reference.process_normals[i];
+      gap_mismatches += candidate.gap_directions[i] != reference.gap_directions[i];
+    }
+    CAPTURE(perimeter_mismatches, vertex_mismatches, segment_mismatches, normal_mismatches,
+            gap_mismatches);
+    CHECK(perimeter_mismatches == 0);
+    CHECK(vertex_mismatches == 0);
+    CHECK(segment_mismatches == 0);
+    CHECK(normal_mismatches == 0);
+    CHECK(gap_mismatches == 0);
+  };
+
+  Classification reference;
+  {
+    mfem::ParMesh mesh(MPI_COMM_SELF, *serial_mesh);
+    reference = Classify(mesh);
+  }
+  REQUIRE(reference.geometry.segments.size() > 3000);
+  REQUIRE(reference.process_normals.size() == 3088);
+
+  // Round-robin element distribution: every rank owns crack copies from everywhere.
+  std::vector<int> round_robin(ne);
+  for (int e = 0; e < ne; e++)
+  {
+    round_robin[e] = e % size;
+  }
+  {
+    mfem::ParMesh mesh(Mpi::World(), *serial_mesh, round_robin.data());
+    CompareToReference(reference, Classify(mesh), "round-robin partition");
+  }
+
+  // Contiguous blocks in reversed rank order: the gathered contribution order differs
+  // from both the serial order and the round-robin order.
+  const int block = std::max(1, (ne + size - 1) / size);
+  std::vector<int> reversed_blocks(ne);
+  for (int e = 0; e < ne; e++)
+  {
+    reversed_blocks[e] = size - 1 - std::min(size - 1, e / block);
+  }
+  {
+    mfem::ParMesh mesh(Mpi::World(), *serial_mesh, reversed_blocks.data());
+    CompareToReference(reference, Classify(mesh), "reversed block partition");
+  }
+}
+
 TEST_CASE("Boundary edge extraction ignores coincident crack copies", "[geodata][Serial]")
 {
   auto serial_mesh =
