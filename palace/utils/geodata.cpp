@@ -2977,6 +2977,15 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
         cba.erase(std::remove_if(cba.begin(), cba.end(), attr_in_elem), cba.end());
       }
     }
+    // PROTOTYPE (two-port): force-crack superconductor films when PALACE_LONDON_FORCE_CRACK is
+    // set. Superconductor/FluxLoop attributes are not otherwise crack candidates.
+    if (std::getenv("PALACE_LONDON_FORCE_CRACK"))
+    {
+      for (const auto &sc : iodata.boundaries.superconductor)
+      {
+        cba.insert(cba.end(), sc.attributes.begin(), sc.attributes.end());
+      }
+    }
     return cba;
   }();
 
