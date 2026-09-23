@@ -309,6 +309,41 @@ class ProcessLibraryWriterTest(unittest.TestCase):
         self.assertTrue(preflight["PreflightOnly"])
         self.assertEqual(preflight["Models"][0]["ThinMatrix"], "models/model-p/thin-domain-response-matrix.csv")
 
+    def test_run_pairs_a_finished_thin_run_with_the_previous_library(self):
+        """write_process_library --run: the thin qualify run's library-qualification.json (its
+        recorded stage layout and reducer, the manifest through its build record) supplies the
+        thin matrices of the previous fabricated library's model without any job or fetch."""
+        first = self.tmp / "first"
+        fabricated = self.case("case-a", "model_a", thin=False, root=first)
+        previous = self.write([fabricated], first)
+        (first / "process-library.json").write_text(json.dumps(previous, indent=2) + "\n")
+        self.assertEqual(previous["Loadable"]["NotLoadable"], ["model_a"])
+        second = self.tmp / "second"
+        thin_record, thin_context, thin_manifest = self.thin_case(fabricated, root=second, name="model_a")
+        manifest_path = self.tmp / "thin-manifest.json"
+        manifest_path.write_text(json.dumps(thin_manifest, indent=2) + "\n")
+        build_record = self.tmp / "library-build-thin.json"
+        build_record.write_text(json.dumps({"Library": {"Manifest": {"Path": str(manifest_path)}}}) + "\n")
+        run_record = second / "library-qualification.json"
+        run_record.parent.mkdir(parents=True, exist_ok=True)
+        run_record.write_text(json.dumps({"BuildRecord": {"Path": str(build_record)},
+                                          "Cases": [thin_record | {"Stages": thin_context["layout"],
+                                                                   "MATail": {"Applied": False}},
+                                                    {"Case": "case-b-thin", "Stages": None, "Qualification": None}]}) + "\n")
+        root = self.tmp / "root"
+        write_process_library.main(["--previous", str(first / "process-library.json"), "--root", str(root),
+                                    "--run", str(run_record)])
+        library = json.loads((root / "process-library.json").read_text())
+        self.assertEqual([model["Name"] for model in library["Models"]], ["model_a"])
+        model = library["Models"][0]
+        self.assertIsNone(model["NotLoadable"])
+        self.assertTrue(library["Loadable"]["Palace"])
+        self.assertEqual((model["ThinCase"], model["ThinCutoff"], model["ThinQualification"]["Order"]), ("case-a-thin", 0.002, 4))
+        self.assertEqual((root / model["ThinMatrix"]).read_text(), "basis_i,basis_j,Q_ij (J)\n1,1,0.25\n")
+        self.assertEqual((root / model["FabricatedMatrix"]).read_text(), "basis_i,basis_j,Q_ij (J)\n1,1,1.5\n")
+        self.assertEqual(library["MergedFrom"]["Kept"], ["model_a"])
+        self.assertEqual(library["Thin"]["Paired"], ["case-a"])
+
 
 if __name__ == "__main__":
     unittest.main()
