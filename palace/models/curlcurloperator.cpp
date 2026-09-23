@@ -375,7 +375,32 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   }
 
   print_hdr = false;
+
+  // Two-sided (two-port) sheets add a cross-face coupling that is not an element-local
+  // integrator. Fold it in matrix-free as the true operator K + C (the Krylov solver only
+  // needs Mult); the SPD preconditioner P_london omits C, which the AMS gate showed still
+  // converges. C is on the finest ND space; screened current-port steps are not yet
+  // supported.
+  if (auto *C_par = GetTwoPortCoupling())
+  {
+    return std::make_unique<SumOperator>(std::move(K), *C_par);
+  }
   return K;
+}
+
+ParOperator *CurlCurlOperator::GetTwoPortCoupling()
+{
+  if (!sc_sheet_op.HasTwoPort())
+  {
+    return nullptr;
+  }
+  if (!two_port_C_par_)
+  {
+    two_port_coupling_ = sc_sheet_op.BuildTwoPortCoupling(GetNDSpace().Get());
+    two_port_C_local_ = std::make_unique<hypre::HypreCSRMatrix>(*two_port_coupling_);
+    two_port_C_par_ = std::make_unique<ParOperator>(*two_port_C_local_, GetNDSpace());
+  }
+  return two_port_C_par_.get();
 }
 
 std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
@@ -605,7 +630,17 @@ void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
       m.AddBoundaryIntegrator<VectorFEMassIntegrator>(fbr);
     }
     auto m_mat = m.Assemble(GetNDSpaces(), false);
-    M_sheet_ = std::make_unique<ParOperator>(std::move(m_mat.back()), GetNDSpace());
+    auto diag = std::make_unique<ParOperator>(std::move(m_mat.back()), GetNDSpace());
+    // Two-sided sheets: include the cross-face coupling C so the RHS (M_sheet·a_h) and the
+    // kinetic penalty energy match the K + C stiffness operator.
+    if (auto *C_par = GetTwoPortCoupling())
+    {
+      M_sheet_ = std::make_unique<SumOperator>(std::move(diag), *C_par);
+    }
+    else
+    {
+      M_sheet_ = std::move(diag);
+    }
   }
   // Normalize the generator so its exact fluxoid cᵀa_h = ∮a_h·dl equals Φ. The driver still
   // enforces the constraint on the full solution via α; this just keeps the drive

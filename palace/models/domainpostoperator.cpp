@@ -8,6 +8,9 @@
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
+#include "linalg/hypre.hpp"
+#include "linalg/operator.hpp"
+#include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
 #include "models/superconductorsheetoperator.hpp"
 #include "utils/communication.hpp"
@@ -167,6 +170,18 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
         }
       }
       M_mag = m.PartialAssemble();
+      // Two-sided (two-port) sheets: fold the cross-face coupling C into M_mag so AᵀM_mag·A
+      // includes the full sheet energy (diagonal + coupling), matching the M_sheet·a_h used
+      // in the London shifted-energy correction. Matrix-free (M_mag is only applied, never
+      // assembled). const_cast: BuildTwoPortCoupling needs a mutable ND space (prototype).
+      if (sc_sheet_op && sc_sheet_op->HasTwoPort())
+      {
+        two_port_coupling_ = sc_sheet_op->BuildTwoPortCoupling(
+            const_cast<FiniteElementSpace &>(fespace).Get());
+        auto C_local = std::make_unique<hypre::HypreCSRMatrix>(*two_port_coupling_);
+        auto C_par = std::make_unique<ParOperator>(std::move(C_local), fespace);
+        M_mag = std::make_unique<SumOperator>(std::move(M_mag), std::move(C_par));
+      }
       H.SetSize(M_mag->Height());
       H.UseDevice(true);
     }

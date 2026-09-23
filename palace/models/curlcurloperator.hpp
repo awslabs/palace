@@ -11,6 +11,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
+#include "linalg/hypre.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
@@ -102,6 +103,19 @@ private:
   // Operator for thin-film superconductor sheet (kinetic inductance) boundaries.
   SuperconductorSheetOperator sc_sheet_op;
 
+  // Two-sided (two-port) sheet cross-face coupling on the finest ND space, built lazily by
+  // GetTwoPortCoupling. The SparseMatrix backs the (non-owning) HypreCSRMatrix, which backs
+  // the matrix-free ParOperator that is summed into both the stiffness and the sheet-mass
+  // operator (so the operator, the flux RHS, and the penalty energy stay consistent). Null
+  // unless a two-sided film is present.
+  mutable std::unique_ptr<mfem::SparseMatrix> two_port_coupling_;
+  mutable std::unique_ptr<hypre::HypreCSRMatrix> two_port_C_local_;
+  mutable std::unique_ptr<ParOperator> two_port_C_par_;
+
+  // Lazily builds and returns the two-port cross-face coupling ParOperator, or nullptr if
+  // no two-sided sheet is configured.
+  ParOperator *GetTwoPortCoupling();
+
   // Flux-loop indices whose film is (partly) a Superconductor sheet — i.e.
   // London flux films. Populated at construction after surf_flux_op is set.
   std::set<int> london_flux_loops_;
@@ -112,7 +126,7 @@ private:
   // Cached sheet-only mass operator M_sheet (the boundary term ∫_Σ (1/L_ksq) A_t·v_t). The
   // London flux excitation RHS = M_sheet·a_h is the Euler-Lagrange source of the shifted
   // penalty ½∫_Σ (1/L_ksq)|A_t − a_h|². Lazily assembled in GetFluxExcitationVector.
-  mutable std::unique_ptr<ParOperator> M_sheet_;
+  mutable std::unique_ptr<Operator> M_sheet_;
 
   // Fluxoid circulation functional c = Curlᵀ·f_hole per London flux loop (f_hole the RT
   // hole-cap flux functional), so cᵀA = ∮_∂hole A·dl by Stokes. Imposes the scalar
