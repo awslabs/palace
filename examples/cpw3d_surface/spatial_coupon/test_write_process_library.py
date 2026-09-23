@@ -343,6 +343,16 @@ class ProcessLibraryWriterTest(unittest.TestCase):
         self.assertEqual((root / model["FabricatedMatrix"]).read_text(), "basis_i,basis_j,Q_ij (J)\n1,1,1.5\n")
         self.assertEqual(library["MergedFrom"]["Kept"], ["model_a"])
         self.assertEqual(library["Thin"]["Paired"], ["case-a"])
+        # --run repeats (a root relaunched for other cases); the same case twice is refused.
+        other = second / "library-qualification-other.json"
+        other.write_text(json.dumps({"BuildRecord": {"Path": str(build_record)},
+                                     "Cases": [{"Case": "case-c-thin", "Stages": None, "Qualification": None}]}) + "\n")
+        write_process_library.main(["--previous", str(first / "process-library.json"), "--root", str(self.tmp / "root3"),
+                                    "--run", str(run_record), "--run", str(other)])
+        self.assertEqual(json.loads((self.tmp / "root3" / "process-library.json").read_text())["Thin"]["Paired"], ["case-a"])
+        with self.assertRaisesRegex(ValueError, "both analyzed \\['case-a-thin'\\]"):
+            write_process_library.main(["--previous", str(first / "process-library.json"), "--root", str(self.tmp / "root4"),
+                                        "--run", str(run_record), "--run", str(run_record)])
 
 
 if __name__ == "__main__":

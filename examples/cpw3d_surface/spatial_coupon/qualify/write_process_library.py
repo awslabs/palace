@@ -7,9 +7,9 @@ qualify_library.process_library_entries with no case of its own): the header com
 the models' source process-library.json files (consistent_header: the writer stops when
 they disagree), the matrices / basis points / trace mesh are copied under
 ROOT/models/<slug>/, a model without thin matrices gets ThinMatrix null and a NotLoadable
-reason.  With --run, the analyzed cases of that finished qualify run (its
-library-qualification.json; manifest through its build record) enter as the run's own
-cases: a thin case pairs with the previous library's model of the same Name (the thin run
+reason.  With --run (repeatable: the records of one root relaunched for
+different cases), the analyzed cases of those finished qualify runs (library-qualification.json;
+manifest through the build record, one for all) enter as the run's own cases: a thin case pairs with the previous library's model of the same Name (the thin run
 followed the fabricated run, decision 66; the driver's --merge-into without re-running or
 re-fetching anything), a fabricated case replaces the model of its Name.  Writes
 ROOT/process-library.json and ROOT/process-library-preflight.json
@@ -48,15 +48,24 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--previous", type=Path, required=True, help="a qualify run's process-library.json (read only)")
     parser.add_argument("--root", type=Path, required=True, help="output root (ROOT/process-library.json, ROOT/models/)")
-    parser.add_argument("--run", type=Path, default=None,
-                        help="a finished qualify run's library-qualification.json (read only): its analyzed cases enter as "
-                             "this run's - a thin case supplies the thin matrices of the previous library's model of its Name")
+    parser.add_argument("--run", type=Path, action="append", default=[],
+                        help="a finished qualify run's library-qualification.json (read only; repeatable - the runs of one root "
+                             "relaunched for different cases): its analyzed cases enter as this run's - a thin case supplies the "
+                             "thin matrices of the previous library's model of its Name")
     args = parser.parse_args(argv)
     root = args.root.expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     records, contexts, manifest_path, manifest = [], {}, None, None
-    if args.run is not None:
-        records, contexts, manifest_path, manifest = run_cases(args.run.expanduser().resolve())
+    for run_path in args.run:
+        run_records, run_contexts, run_manifest_path, run_manifest = run_cases(run_path.expanduser().resolve())
+        if manifest_path is not None and run_manifest_path != manifest_path:
+            raise ValueError(f"the runs bind different manifests: {manifest_path} and {run_manifest_path}")
+        duplicated = {record["Case"] for record in run_records} & {record["Case"] for record in records}
+        if duplicated:
+            raise ValueError(f"the runs both analyzed {sorted(duplicated)}: pass each case's record once")
+        records += run_records
+        contexts.update(run_contexts)
+        manifest_path, manifest = run_manifest_path, run_manifest
     library = qualify_library.process_library_entries(records, contexts, manifest_path=manifest_path, manifest=manifest,
                                                       root=root, merge_into=args.previous.expanduser().resolve())
     qualify_library.write_json(root / qualify_library.PROCESS_LIBRARY_RECORD, library)
