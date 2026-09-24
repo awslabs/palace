@@ -116,6 +116,7 @@ def main(argv=None):
                         cell["ManifestSha256"] = sha256(manifest_path)
                         cell["DigestFull"] = M.canonical_digest(manifest)
                         cell["DigestGeometryOnly"] = M.canonical_digest(manifest, geometry_only_counts=True)
+                        cell["GeometryDigest"] = manifest.get("Identification", {}).get("GeometryDigest")
                         cell["Summary"] = manifest.get("Summary")
                         cell["Statistics"] = manifest.get("Statistics", {}).get("Geometry")
                         cell["Log"] = M.parse_palace_log(log_path) if os.path.exists(log_path) else None
@@ -149,10 +150,13 @@ def main(argv=None):
         b = M.load_manifest(os.path.join(cell["Directory"], "postpro", "surface-response-requirements.json"))
         diff = M.diff_manifests(a, b)
         diff_geometry = M.diff_manifests(a, b, geometry_only_counts=True)
+        # Version 2: the identification's GeometryDigest is the A3 / A4 / A5 identity.
+        digest_identical = reference.get("GeometryDigest") == cell.get("GeometryDigest") if reference.get("GeometryDigest") else None
         comparisons.append(
             {
                 "Reference": reference["Name"],
                 "Cell": cell["Name"],
+                "GeometryDigestIdentical": digest_identical,
                 "FullIdentical": diff["Identical"],
                 "GeometryOnlyIdentical": diff_geometry["Identical"],
                 "Added": len(diff["Added"]),
@@ -182,12 +186,12 @@ def main(argv=None):
         counts = s.get("Counts", {})
         gates = c.get("Gates")
         gate_text = ", ".join(f"{k.split('-', 1)[-1]}={v[0]}" for k, v in gates.items()) if isinstance(gates, dict) else str(gates)[:40]
-        lines.append(f"| {c['Name']} | {c.get('ExitCode')} | {c.get('Seconds') if c.get('Seconds') is None else round(c['Seconds'], 1)} | {c.get('ManifestSha256', '')[:12]} | {c.get('DigestFull', '')[:12]} | {c.get('DigestGeometryOnly', '')[:12]} | {counts.get('Exact')}/{counts.get('Missing')} | {gate_text} |")
+        lines.append(f"| {c['Name']} | {c.get('ExitCode')} | {c.get('Seconds') if c.get('Seconds') is None else round(c['Seconds'], 1)} | {c.get('ManifestSha256', '')[:12]} | {(c.get('GeometryDigest') or c.get('DigestFull') or '')[:12]} | {c.get('DigestGeometryOnly', '')[:12]} | {counts.get('Exact')}/{counts.get('Missing')} | {gate_text} |")
     lines.append("")
-    lines.append("| Reference | Cell | full identical | geometry-only identical | added | removed | changed |")
-    lines.append("|---|---|---|---|---|---|---|")
+    lines.append("| Reference | Cell | geometry digest identical | full identical | geometry-only identical | added | removed | changed |")
+    lines.append("|---|---|---|---|---|---|---|---|")
     for c in comparisons:
-        lines.append(f"| {c['Reference']} | {c['Cell']} | {c['FullIdentical']} | {c['GeometryOnlyIdentical']} | {c['Added']} {c['AddedGeometry']} | {c['Removed']} {c['RemovedGeometry']} | {c['Changed']} {c['ChangedGeometry'][:6]} |")
+        lines.append(f"| {c['Reference']} | {c['Cell']} | {c['GeometryDigestIdentical']} | {c['FullIdentical']} | {c['GeometryOnlyIdentical']} | {c['Added']} {c['AddedGeometry']} | {c['Removed']} {c['RemovedGeometry']} | {c['Changed']} {c['ChangedGeometry'][:6]} |")
     with open(os.path.join(args.output, "matrix.md"), "w") as target:
         target.write("\n".join(lines) + "\n")
     print("\n".join(lines))

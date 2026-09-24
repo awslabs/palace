@@ -87,7 +87,11 @@ phase 3). Chain tangents are canonical: from the lexicographically smaller endpo
    cluster together with its own window, so an acute corner and the cluster its arms form are
    **one description** (no corner record next to the cluster). Portions are split at the
    region boundary canonically (the analytic interval endpoints on the chain, on the decision
-   grid). Cluster portions have priority over vertex windows and parallel features.
+   grid). Two vertex features closer than 2R have overlapping radius-R windows (invariant A2)
+   and are an event of their own (both vertices are degenerate event cores), so the corners of
+   a strip end or of an aperture narrower than 2R form one cluster instead of overlapping
+   corner descriptions. Cluster portions have priority over vertex windows and parallel
+   features.
 4. **Vertex features.** A corner (2 chains, turn > 30 deg), endpoint (1 chain) or junction
    (>= 3 chains) that is not inside a cluster claims a *window* of length R along each of its
    chains, shortened to half the chain length when the chain ends at another vertex feature
@@ -116,9 +120,10 @@ candidate and each handedness (y = z x x or y = -(z x x)) the cluster is seriali
 as `[x0, y0, x1, y1] / R` on the 1e-8 R grid, gap side, interface types, conductor label by
 first appearance, vertices as `[x, y] / R` + type + turn) and sorted; the lexicographically
 smallest serialisation is the signature, and the handedness that produced it is the
-`Chirality`. A mirror image yields the same signature with the opposite chirality; a rotated
-or translated copy yields the same signature and chirality. Symmetric clusters tie between
-equivalent frames and produce the same string. This replaces the representative-event site
+`Chirality` (+1 / -1; 0 when both handedness values reach the minimal serialisation, i.e. the
+cluster is its own mirror image). A mirror image yields the same signature with the opposite
+chirality; a rotated or translated copy yields the same signature and chirality. Symmetric
+clusters tie between equivalent frames and produce the same string. This replaces the representative-event site
 (first closest pair in candidate order), the exhaustive spatial closure (4 x 2R merging) and the
 "nonparallel" omission of the legacy classifier.
 

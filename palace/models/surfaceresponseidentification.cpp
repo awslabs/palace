@@ -794,6 +794,10 @@ TranslationalSignature CanonicalTranslationalSignature(std::vector<Translational
       best.signature = std::move(candidate);
       best.chirality = orientation;
     }
+    else if (key == best_key)
+    {
+      best.chirality = 0;  // symmetric under the lateral reflection
+    }
   }
   return best;
 }
@@ -843,6 +847,7 @@ CanonicalSignature CanonicalClusterSignature(const std::vector<SignaturePortion>
   CanonicalSignature best;
   std::string best_key;
   bool have = false;
+  std::set<int> minimal_handedness;
   for (const auto &x : candidates)
   {
     for (const int handedness : {1, -1})
@@ -858,8 +863,19 @@ CanonicalSignature CanonicalClusterSignature(const std::vector<SignaturePortion>
         best.chirality = handedness;
         best.origin = origin;
         best.axes = {x, y, n};
+        minimal_handedness = {handedness};
+      }
+      else if (key == best_key)
+      {
+        minimal_handedness.insert(handedness);
       }
     }
+  }
+  // A mirror-symmetric cluster reaches the minimal serialisation with both handedness values:
+  // chirality 0 (its mirror image is itself).
+  if (minimal_handedness.size() == 2)
+  {
+    best.chirality = 0;
   }
   best.key = best_key;
   best.hash = Sha256HexImpl(best_key);
@@ -1696,6 +1712,22 @@ void Identifier::BuildClusters()
       }
       CoresOnRun(a, b, zones_a, zones_b);
       CoresOnRun(b, a, zones_b, zones_a);
+    }
+  }
+
+  // Two vertex sites within 2R have overlapping radius-R windows (invariant A2): they are
+  // an interaction event of their own, with the two points as degenerate cores.
+  for (std::size_t i = 0; i < sites.size(); i++)
+  {
+    for (std::size_t j = i + 1; j < sites.size(); j++)
+    {
+      if (quantizer.Less(Distance(sites[i].point, sites[j].point), interaction))
+      {
+        cores.push_back({std::numeric_limits<std::size_t>::max(), {0.0, 0.0}, sites[i].point,
+                         sites[i].point});
+        cores.push_back({std::numeric_limits<std::size_t>::max(), {0.0, 0.0}, sites[j].point,
+                         sites[j].point});
+      }
     }
   }
 

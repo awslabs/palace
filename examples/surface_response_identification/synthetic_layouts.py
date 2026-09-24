@@ -259,6 +259,62 @@ def within_interaction(distance, radius):
     return distance < 2.0 * radius - 0.5 * 1.0e-8 * radius
 
 
+def design_event_cores(all_edges, corner_points, radius, samples=400):
+    """Event cores of SURFACE-RESPONSE-IDENTIFICATION.md (b) 3 from the polygon edges: sampled
+    points on an edge that are within 2R of a point on a non-parallel edge of another chain,
+    excluding through-vertex pairs (both points within 2R of a vertex the two chains share).
+    Edges joined by a sub-threshold vertex (not a classifier corner) are one chain."""
+    n = len(all_edges)
+    parent = list(range(n))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def is_corner(point):
+        return any(np.linalg.norm(point - q) < 1.0e-9 for q in corner_points)
+
+    shared_vertices = {}
+    for i in range(n):
+        for j in range(i + 1, n):
+            for p in (all_edges[i]["Start"], all_edges[i]["End"]):
+                for q in (all_edges[j]["Start"], all_edges[j]["End"]):
+                    if np.allclose(p, q):
+                        shared_vertices.setdefault((i, j), []).append(p)
+                        if not is_corner(p):
+                            parent[find(i)] = find(j)
+    interaction = 2.0 * radius - 0.5 * 1.0e-8 * radius
+    cores = []
+    ts = np.linspace(0.0, 1.0, samples + 1)
+    for i in range(n):
+        for j in range(n):
+            if i == j or find(i) == find(j):
+                continue
+            a, b = all_edges[i], all_edges[j]
+            if abs(float(a["Tangent"] @ b["Tangent"])) >= 1.0 - 1.0e-8:
+                continue
+            if P.segment_distance(np.append(a["Start"], 0.0), np.append(a["End"], 0.0), np.append(b["Start"], 0.0), np.append(b["End"], 0.0)) >= interaction:
+                continue
+            pa = a["Start"][None, :] + ts[:, None] * (a["End"] - a["Start"])[None, :]
+            pb = b["Start"][None, :] + ts[:, None] * (b["End"] - b["Start"])[None, :]
+            close = np.linalg.norm(pa[:, None, :] - pb[None, :, :], axis=2) < interaction
+            for v in shared_vertices.get((min(i, j), max(i, j)), []):
+                za = np.linalg.norm(pa - v, axis=1) < interaction
+                zb = np.linalg.norm(pb - v, axis=1) < interaction
+                close &= ~(za[:, None] & zb[None, :])
+            hits = pa[close.any(axis=1)]
+            if len(hits):
+                cores.append(hits)
+    # Two corners closer than 2R (overlapping windows) are an event of their own.
+    for i, p in enumerate(corner_points):
+        for q in corner_points[i + 1 :]:
+            if np.linalg.norm(p - q) < interaction:
+                cores.append(np.array([p, q]))
+    return np.concatenate(cores) if cores else np.zeros((0, 2))
+
+
 def _on_box(point, lay, tolerance=1.0e-9):
     x, y = point
     return abs(abs(x) - lay["HalfX"]) < tolerance or abs(abs(y) - lay["HalfY"]) < tolerance
@@ -432,6 +488,9 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
             quantum = 1.0e-8 * radius
             pairs.append(
                 {
+                    "EdgeA": a,
+                    "OverlapStart": max(ia[0], ib[0]),
+                    "OverlapEnd": min(ia[1], ib[1]),
                     "Separation": round(separation, 9),
                     "OverlapLength": round(overlap, 9),
                     "Expected": expected,
@@ -442,22 +501,36 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
             )
     corner_points = [np.array(c["Point"]) for c in corners if c["ClassifierCorner"]]
     corner_pairs_within_2r = sum(1 for i in range(len(corner_points)) for j in range(i + 1, len(corner_points)) if np.linalg.norm(corner_points[i] - corner_points[j]) <= 2.0 * radius * (1 + 1e-9))
+    # Design rule (SURFACE-RESPONSE-IDENTIFICATION.md (b) 3): a corner joins a cluster when
+    # its 2R through-vertex zone reaches a cluster region, i.e. an event core lies within 3R.
+    cores = design_event_cores(all_edges, corner_points, radius)
     for c in corners:
         if not c["ClassifierCorner"]:
             c["Standalone"] = None
             continue
         point = np.array(c["Point"])
-        near_corner = any(0.0 < np.linalg.norm(point - q) and within_interaction(float(np.linalg.norm(point - q)), radius) for q in corner_points)
-        near_edge = False
-        for e in all_edges:
-            if np.allclose(e["Start"], point) or np.allclose(e["End"], point):
-                continue
-            if within_interaction(point_segment_distance(point, e["Start"], e["End"]), radius):
-                near_edge = True
-                break
-        c["Standalone"] = not (near_corner or near_edge)
+        core_distance = float(np.linalg.norm(cores - point, axis=1).min()) if len(cores) else math.inf
+        c["CoreDistance"] = None if math.isinf(core_distance) else round(core_distance, 6)
+        c["Standalone"] = not core_distance < 3.0 * radius
         if not c["Standalone"]:
-            c["Expected"] += " (within 2R of another feature: absorbed into a spatial cluster)"
+            c["Expected"] += " (an interaction event core within 3R: member of a spatial cluster)"
+    # A parallel pair is a feature when part of its overlap survives the cluster regions
+    # (distance to a core >= R) and the corner windows (R along the edge from a corner).
+    for pair in pairs:
+        if not pair["Within2R"]:
+            pair["Survives"] = False
+            continue
+        a = pair["EdgeA"]
+        ts = np.linspace(pair["OverlapStart"], pair["OverlapEnd"], 201)
+        points = a["Start"][None, :] + (ts[:, None] - float(a["Start"] @ a["Tangent"])) * a["Tangent"][None, :]
+        survives = np.ones(len(ts), dtype=bool)
+        if len(cores):
+            survives &= np.linalg.norm(points[:, None, :] - cores[None, :, :], axis=2).min(axis=1) >= radius
+        for end in (a["Start"], a["End"]):
+            if any(np.linalg.norm(end - q) < 1.0e-9 for q in corner_points):
+                survives &= np.linalg.norm(points - end, axis=1) >= radius
+        pair["Survives"] = bool(survives.any())
+        del pair["EdgeA"]
     return {
         "Layout": lay["Name"],
         "Notes": lay["Notes"],
@@ -558,11 +631,11 @@ def compare_with_oracle(orc, audit_result, manifest):
         "ManifestRounded": dict(manifest_rounded),
         "ManifestClusters": manifest_topologies.get("SpatialEdgeCluster", 0),
         "Pass": manifest_sharp == oracle_sharp and manifest_rounded == oracle_rounded,
-        "Meaning": "standalone corners (nothing else within 2R) must appear as sharp corner records with the gap-side angle; fillet arcs with radius < R as rounded corners; corners within 2R of another feature are absorbed into spatial clusters",
+        "Meaning": "standalone corners (no interaction event core within 3R) must appear as sharp corner records with the wedge angle; fillet arcs with radius < R as rounded corners; corners with a core within 3R are members of spatial clusters",
     }
     # Quantized decisions (kDecisionLengthQuantum): a separation within half a quantum of 2R is
     # AT the threshold and not within it, so pairs at exactly 2R are expected to be isolated.
-    oracle_pairs = Counter((p["Expected"], round(p["Separation"], 6)) for p in orc["ParallelPairs"] if p["Within2R"])
+    oracle_pairs = Counter((p["Expected"], round(p["Separation"], 6)) for p in orc["ParallelPairs"] if p["Within2R"] and p.get("Survives", True))
     mesh_separations = census["Interactions"]["ParallelSeparations"]
     manifest_pairs = Counter()
     for r in manifest["Requirements"]:
@@ -642,8 +715,10 @@ def run_suite(args):
                         manifest = M.load_manifest(manifest_path)
                         cell["DigestFull"] = M.canonical_digest(manifest)
                         cell["DigestGeometryOnly"] = M.canonical_digest(manifest, geometry_only_counts=True)
+                        cell["GeometryDigest"] = manifest.get("Identification", {}).get("GeometryDigest")
                         cell["Log"] = M.parse_palace_log(log_path)
-                        digests.setdefault((label, levels), {})[ranks] = cell["DigestFull"]
+                        # Version 2: the identification's GeometryDigest is the A3 / A4 / A5 identity.
+                        digests.setdefault((label, levels), {})[ranks] = cell["GeometryDigest"] or cell["DigestFull"]
                         if levels == 0:
                             audit_args = argparse.Namespace(mesh=mesh_path, config=config_path, manifest=manifest_path, log=log_path, compare=None, radius=None, corner_tolerance=CORNER_TURN_TOLERANCE_DEGREES, output_prefix=None)
                             result = audit.run_audit(audit_args)
@@ -674,14 +749,24 @@ def run_suite(args):
         record["A3-library-independence"] = {}
         first_ranks = args.ranks[0]
         labels = list(args.libraries)
+        def feature_diff(a, b):
+            ia, ib = a.get("Identification"), b.get("Identification")
+            if not (ia and ib):
+                return None
+            ca = Counter((f["Type"], f["Hash"][:12]) for f in ia["Features"])
+            cb = Counter((f["Type"], f["Hash"][:12]) for f in ib["Features"])
+            return {"GeometryDigestIdentical": ia["GeometryDigest"] == ib["GeometryDigest"], "OnlyA": sorted(f"{t}:{h}x{n}" for (t, h), n in (ca - cb).items()), "OnlyB": sorted(f"{t}:{h}x{n}" for (t, h), n in (cb - ca).items())}
+
         for label in labels:
             if (label, 0) in digests and (label, 1) in digests:
-                diff = M.diff_manifests(manifest_of(label, 0, first_ranks), manifest_of(label, 1, first_ranks), geometry_only_counts=True)
-                record["A5-refinement-invariance"][label] = {"GeometryOnlyIdentical": diff["Identical"], "Added": [e["Topology"] for e in diff["Added"]], "Removed": [e["Topology"] for e in diff["Removed"]], "Changed": [(e["A"]["Topology"], round(e["A"]["TotalEdgeLength"], 6), round(e["B"]["TotalEdgeLength"], 6)) for e in diff["Changed"]]}
+                a, b = manifest_of(label, 0, first_ranks), manifest_of(label, 1, first_ranks)
+                diff = M.diff_manifests(a, b, geometry_only_counts=True)
+                record["A5-refinement-invariance"][label] = {"GeometryOnlyIdentical": diff["Identical"], "Added": [e["Topology"] for e in diff["Added"]], "Removed": [e["Topology"] for e in diff["Removed"]], "Changed": [(e["A"]["Topology"], round(e["A"]["TotalEdgeLength"], 6), round(e["B"]["TotalEdgeLength"], 6)) for e in diff["Changed"]], "Identification": feature_diff(a, b)}
         for label in labels[1:]:
             if (labels[0], 0) in digests and (label, 0) in digests:
-                diff = M.diff_manifests(manifest_of(labels[0], 0, first_ranks), manifest_of(label, 0, first_ranks), geometry_only_counts=True)
-                record["A3-library-independence"][f"{labels[0]} vs {label}"] = {"GeometryOnlyIdentical": diff["Identical"], "Added": [e["Topology"] for e in diff["Added"]], "Removed": [e["Topology"] for e in diff["Removed"]], "Changed": [(e["A"]["Topology"], round(e["A"]["TotalEdgeLength"], 6), round(e["B"]["TotalEdgeLength"], 6)) for e in diff["Changed"]]}
+                a, b = manifest_of(labels[0], 0, first_ranks), manifest_of(label, 0, first_ranks)
+                diff = M.diff_manifests(a, b, geometry_only_counts=True)
+                record["A3-library-independence"][f"{labels[0]} vs {label}"] = {"GeometryOnlyIdentical": diff["Identical"], "Added": [e["Topology"] for e in diff["Added"]], "Removed": [e["Topology"] for e in diff["Removed"]], "Changed": [(e["A"]["Topology"], round(e["A"]["TotalEdgeLength"], 6), round(e["B"]["TotalEdgeLength"], 6)) for e in diff["Changed"]], "Identification": feature_diff(a, b)}
         results.append(record)
         with open(os.path.join(args.output, lay["Name"] + ".result.json"), "w") as target:
             json.dump(record, target, indent=1, default=str)
@@ -701,8 +786,8 @@ def summary_row(record):
         "Nodes": record.get("MeshNodes"),
         "Exit": sorted({str(c.get("ExitCode")) for c in cells}),
         "A4": record.get("A4-rank-determinism"),
-        "A5": {k: v["GeometryOnlyIdentical"] for k, v in (record.get("A5-refinement-invariance") or {}).items()},
-        "A3": {k: v["GeometryOnlyIdentical"] for k, v in (record.get("A3-library-independence") or {}).items()},
+        "A5": {k: (v["Identification"]["GeometryDigestIdentical"] if v.get("Identification") else v["GeometryOnlyIdentical"]) for k, v in (record.get("A5-refinement-invariance") or {}).items()},
+        "A3": {k: (v["Identification"]["GeometryDigestIdentical"] if v.get("Identification") else v["GeometryOnlyIdentical"]) for k, v in (record.get("A3-library-independence") or {}).items()},
         "Oracle": {label: {k.replace("A6-", ""): v["Pass"] for k, v in c["OracleChecks"].items() if v["Pass"] is not None} for label, c in by_library.items()},
         "GatesFailing": {label: [k for k, v in c["Gates"].items() if v != "PASS"] for label, c in by_library.items()},
         "Topologies": {label: {k: v["Count"] for k, v in c["ManifestSummary"].items()} for label, c in by_library.items()},

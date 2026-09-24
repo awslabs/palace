@@ -300,20 +300,42 @@ TEST_CASE("SurfaceResponseIdentification", "[surfaceresponseidentification][Seri
     const auto base = IdentifyMetalPerimeter(MakeInput(Scene(1.0, 0.0), R));
     const auto mirrored = IdentifyMetalPerimeter(MakeInput(Scene(-1.0, 0.0), R));
     const auto rotated = IdentifyMetalPerimeter(MakeInput(Scene(1.0, 0.7), R));
-    auto Cluster = [](const IdentificationResult &r)
+    // hash -> chiralities of every cluster (the scene has a strip-end cluster at the top and
+    // the asymmetric pad-corner cluster at the bottom).
+    auto Clusters = [](const IdentificationResult &r)
     {
-      const auto it = std::find_if(r.features.begin(), r.features.end(), [](const auto &f)
-                                   { return f.type == "SpatialEdgeCluster"; });
-      REQUIRE(it != r.features.end());
-      return *it;
+      std::map<std::string, std::multiset<int>> clusters;
+      for (const auto &feature : r.features)
+      {
+        if (feature.type == "SpatialEdgeCluster")
+        {
+          clusters[feature.hash].insert(feature.chirality);
+        }
+      }
+      return clusters;
     };
-    const auto base_cluster = Cluster(base);
-    const auto mirrored_cluster = Cluster(mirrored);
-    const auto rotated_cluster = Cluster(rotated);
-    CHECK(base_cluster.hash == mirrored_cluster.hash);
-    CHECK(base_cluster.chirality == -mirrored_cluster.chirality);
-    CHECK(base_cluster.hash == rotated_cluster.hash);
-    CHECK(base_cluster.chirality == rotated_cluster.chirality);
+    const auto base_clusters = Clusters(base);
+    const auto mirrored_clusters = Clusters(mirrored);
+    const auto rotated_clusters = Clusters(rotated);
+    REQUIRE(base_clusters.size() >= 2);
+    CHECK(rotated_clusters == base_clusters);
+    REQUIRE(mirrored_clusters.size() == base_clusters.size());
+    bool asymmetric_found = false;
+    for (const auto &[hash, chiralities] : base_clusters)
+    {
+      REQUIRE(mirrored_clusters.count(hash) == 1);
+      std::multiset<int> flipped;
+      for (const int chirality : mirrored_clusters.at(hash))
+      {
+        flipped.insert(-chirality);
+      }
+      CHECK(flipped == chiralities);
+      if (chiralities.count(0) < chiralities.size())
+      {
+        asymmetric_found = true;  // a cluster that is not its own mirror image
+      }
+    }
+    CHECK(asymmetric_found);
     CHECK(base.geometry_digest == mirrored.geometry_digest);
     CHECK(base.geometry_digest == rotated.geometry_digest);
     CheckPartition(MakeInput(Scene(1.0, 0.0), R), base);
@@ -362,9 +384,9 @@ TEST_CASE("SurfaceResponseIdentification", "[surfaceresponseidentification][Seri
     CHECK(BarClusters(separate_input, separate)[0]->vertices.size() == 2);
   }
 
-  // Corner rule at exactly R: a strip of width R keeps its four corners and one strip pair
-  // claiming both long edges (no knife edge between 0.975 R, R and 1.025 R apart from the
-  // separation value).
+  // No knife edge at exactly R: a strip of width 0.975 R, R or 1.025 R reads the same way,
+  // one strip pair claiming both long edges and one cluster per end (its two corners are
+  // closer than 2R, so their windows overlap: invariant A2), both ends with one signature.
   {
     for (const double width : {1.95, 2.0, 2.05})
     {
@@ -372,13 +394,28 @@ TEST_CASE("SurfaceResponseIdentification", "[surfaceresponseidentification][Seri
       const auto result = IdentifyMetalPerimeter(input);
       CheckPartition(input, result);
       std::map<std::string, int> counts;
+      std::set<std::string> cluster_hashes;
       for (const auto &feature : result.features)
       {
         counts[feature.type]++;
+        if (feature.type == "SpatialEdgeCluster")
+        {
+          cluster_hashes.insert(feature.hash);
+          CHECK(feature.vertices.size() == 2);
+        }
       }
-      CHECK(counts["ConvexCorner"] == 4);
+      CHECK(counts["ConvexCorner"] == 0);
       CHECK(counts["SameConductorStrip"] == 1);
-      CHECK(counts["SpatialEdgeCluster"] == 0);
+      CHECK(counts["SpatialEdgeCluster"] == 2);
+      CHECK(cluster_hashes.size() == 1);
     }
+    // Wider than 2R the long edges do not interact and the corners are plain corners.
+    const auto wide_input = MakeInput({{Rectangle(-12.0, 0.0, 12.0, 4.5), 0, 1.0}}, R);
+    const auto wide = IdentifyMetalPerimeter(wide_input);
+    CheckPartition(wide_input, wide);
+    CHECK(std::count_if(wide.features.begin(), wide.features.end(),
+                        [](const auto &f) { return f.type == "ConvexCorner"; }) == 4);
+    CHECK(std::none_of(wide.features.begin(), wide.features.end(),
+                       [](const auto &f) { return f.type == "SpatialEdgeCluster"; }));
   }
 }
