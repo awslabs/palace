@@ -100,9 +100,11 @@ phase 3). Chain tangents are canonical: from the lexicographically smaller endpo
    within 2R (two corners R apart on a strip end each claim half of the end edge). Corner
    signature: `ConvexCorner` / `ConcaveCorner` (from the gap side), interior angle on the gap
    side in degrees, `CornerRadius / R` (0 for a sharp corner; the rounded-run rule of the
-   legacy classifier is retained for fillets: consecutive sub-threshold turns whose tangent
-   distances from the virtual corner are < R and equal within 5 %), interface types and
-   boundary law. Endpoint: interface types, law. Junction: sorted arm angles.
+   legacy classifier is retained for fillets on runs instead of mesh vertices: a maximal
+   sequence of straight runs shorter than R with sub-threshold turns at both ends, bounded by
+   two longer arm runs, whose tangent distances from the virtual corner are < R and equal
+   within 5 % and whose fillet radius is in (0, R); refinement cannot break the sequence
+   because collinear mesh vertices merge into one run), interface types and boundary law. Endpoint: interface types, law. Junction: sorted arm angles.
 5. **Isolated edges.** Every chain portion not claimed by a cluster, a vertex window or a
    translational feature is an `IsolatedEdge` portion; one feature per straight run
    (chain), signature = interface types + boundary law.

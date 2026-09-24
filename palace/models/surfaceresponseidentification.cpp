@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <iomanip>
@@ -871,8 +872,8 @@ CanonicalSignature CanonicalClusterSignature(const std::vector<SignaturePortion>
       }
     }
   }
-  // A mirror-symmetric cluster reaches the minimal serialisation with both handedness values:
-  // chirality 0 (its mirror image is itself).
+  // A mirror-symmetric cluster reaches the minimal serialisation with both handedness
+  // values: chirality 0 (its mirror image is itself).
   if (minimal_handedness.size() == 2)
   {
     best.chirality = 0;
@@ -1212,38 +1213,61 @@ void Identifier::DetectRoundedCorners()
     {
       continue;
     }
-    std::vector<bool> curved(m, false);  // boundary before run i is a sub-threshold turn
-    for (std::size_t i = 1; i < m; i++)
+    // Boundary k (between run k-1 and run k, cyclic for a closed chain) is a sub-threshold
+    // turn; a run shorter than R with turns at both ends is an arc chord, longer runs are
+    // arms.
+    auto Turn = [&](std::size_t k)
     {
-      const std::size_t a = chain.runs[i - 1], b = chain.runs[i];
-      curved[i] =
-          !runs[a].excluded && !runs[b].excluded &&
-          runs[a].end_vertex == runs[b].start_vertex &&
-          DirectionLess(Dot(runs[a].tangent, runs[b].tangent), 1.0 - kDirectionQuantum);
-    }
-    std::size_t i = 1;
-    while (i < m)
-    {
-      if (!curved[i])
+      if (k == 0 || k >= m)
       {
-        i++;
+        if (!chain.closed)
+        {
+          return false;
+        }
+        k = 0;
+      }
+      const std::size_t a = chain.runs[(k + m - 1) % m], b = chain.runs[k];
+      return !runs[a].excluded && !runs[b].excluded &&
+             runs[a].end_vertex == runs[b].start_vertex &&
+             DirectionLess(Dot(runs[a].tangent, runs[b].tangent), 1.0 - kDirectionQuantum);
+    };
+    std::vector<bool> is_arc(m, false);
+    for (std::size_t k = 0; k < m; k++)
+    {
+      is_arc[k] = quantizer.Less(runs[chain.runs[k]].length, R) && Turn(k) && Turn(k + 1);
+    }
+    const auto first_arm = std::find(is_arc.begin(), is_arc.end(), false);
+    if (first_arm == is_arc.end())
+    {
+      continue;  // a closed curve without straight arms (phase 3: curved class)
+    }
+    const std::size_t start = static_cast<std::size_t>(first_arm - is_arc.begin());
+    std::size_t step = 0;
+    while (step < m)
+    {
+      const std::size_t k = (start + step) % m;
+      if (!is_arc[k])
+      {
+        step++;
         continue;
       }
-      std::size_t j = i;
-      while (j + 1 < m && curved[j + 1])
+      std::size_t count = 0;
+      while (step + count < m && is_arc[(start + step + count) % m])
       {
-        j++;
+        count++;
       }
-      // Turns at boundaries i..j; arms = runs i-1 and j; arc runs = i..j-1.
-      if (j > i)
+      const std::size_t before = (k + m - 1) % m, after = (k + count) % m;
+      const bool has_arms = (chain.closed || (k > 0 && k + count < m)) && !is_arc[before] &&
+                            !is_arc[after] && Turn(k) &&
+                            Turn((k + count) % m == 0 ? m : k + count);
+      if (has_arms)
       {
-        const Run &arm_a = runs[chain.runs[i - 1]];
-        const Run &arm_b = runs[chain.runs[j]];
+        const Run &arm_a = runs[chain.runs[before]];
+        const Run &arm_b = runs[chain.runs[after]];
         const Point3D ta = arm_a.tangent, tb = arm_b.tangent;
         const double cos_turn = std::clamp(Dot(ta, tb), -1.0, 1.0);
         const double turn = std::acos(cos_turn);
-        const double sin_turn = std::sin(turn);
-        if (sin_turn > 1.0e-9)
+        if (std::sin(turn) > 1.0e-9)
         {
           // Virtual corner X = arm_a.end + a ta = arm_b.start - b tb, so that
           // w = arm_b.start - arm_a.end = a ta + b tb; solve in the (ta, y) plane.
@@ -1257,11 +1281,9 @@ void Identifier::DetectRoundedCorners()
             const double a = wx - b * tbx;
             if (a > 0.0 && b > 0.0)
             {
-              const double tangent_a = a, tangent_b = b;
-              const double radius = 0.5 * (tangent_a + tangent_b) / std::tan(0.5 * turn);
-              if (quantizer.Less(tangent_a, R) && quantizer.Less(tangent_b, R) &&
-                  std::abs(tangent_a - tangent_b) <=
-                      kRoundedCornerTangentTolerance * std::max(tangent_a, tangent_b) &&
+              const double radius = 0.5 * (a + b) / std::tan(0.5 * turn);
+              if (quantizer.Less(a, R) && quantizer.Less(b, R) &&
+                  std::abs(a - b) <= kRoundedCornerTangentTolerance * std::max(a, b) &&
                   radius > 0.0 && quantizer.Less(radius, R))
               {
                 VertexFeatureSite site;
@@ -1284,26 +1306,26 @@ void Identifier::DetectRoundedCorners()
                 }
                 site.interfaces.assign(interfaces.begin(), interfaces.end());
                 // Claims: the arc runs completely, R along each arm from the tangent point.
-                for (std::size_t k = i; k < j; k++)
+                for (std::size_t c = 0; c < count; c++)
                 {
-                  const std::size_t r = chain.runs[k];
+                  const std::size_t r = chain.runs[(k + c) % m];
                   site.window.emplace_back(r, Interval{0.0, runs[r].length});
                   site.runs_at_site.push_back(r);
                 }
                 site.window.emplace_back(
-                    chain.runs[i - 1],
+                    chain.runs[before],
                     Interval{std::max(0.0, arm_a.length - R), arm_a.length});
-                site.window.emplace_back(chain.runs[j],
+                site.window.emplace_back(chain.runs[after],
                                          Interval{0.0, std::min(R, arm_b.length)});
-                site.runs_at_site.push_back(chain.runs[i - 1]);
-                site.runs_at_site.push_back(chain.runs[j]);
+                site.runs_at_site.push_back(chain.runs[before]);
+                site.runs_at_site.push_back(chain.runs[after]);
                 sites.push_back(std::move(site));
               }
             }
           }
         }
       }
-      i = j + 1;
+      step += count;
     }
   }
 }
@@ -1731,9 +1753,13 @@ void Identifier::BuildClusters()
     {
       if (quantizer.Less(Distance(sites[i].point, sites[j].point), interaction))
       {
-        cores.push_back({std::numeric_limits<std::size_t>::max(), {0.0, 0.0}, sites[i].point,
+        cores.push_back({std::numeric_limits<std::size_t>::max(),
+                         {0.0, 0.0},
+                         sites[i].point,
                          sites[i].point});
-        cores.push_back({std::numeric_limits<std::size_t>::max(), {0.0, 0.0}, sites[j].point,
+        cores.push_back({std::numeric_limits<std::size_t>::max(),
+                         {0.0, 0.0},
+                         sites[j].point,
                          sites[j].point});
       }
     }
@@ -2149,9 +2175,10 @@ void Identifier::Assign(IdentificationResult &result)
     result.vertices.push_back(entry);
   }
 
-  // Digest over the sorted feature signatures (with multiplicity) and the exclusion classes.
-  // Lengths are continuous quantities (their sums differ at roundoff between meshes of the
-  // same layout) and are compared with a tolerance by the audit instead of being hashed.
+  // Digest over the sorted feature signatures (with multiplicity) and the exclusion
+  // classes. Lengths are continuous quantities (their sums differ at roundoff between
+  // meshes of the same layout) and are compared with a tolerance by the audit instead of
+  // being hashed.
   std::vector<std::string> lines;
   for (const auto &feature : features)
   {

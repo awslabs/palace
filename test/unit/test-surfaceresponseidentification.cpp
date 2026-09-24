@@ -146,7 +146,67 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
                                  : MetalEdgeVertexType::CORNER;
     }
   }
+  // Chains as metaledge.cpp: maximal paths through regular vertices (a polyline arc with
+  // sub-threshold turns stays in one chain).
+  std::vector<int> chain_of(input.segments.size(), -1);
+  int next_chain = 0;
+  for (std::size_t seed = 0; seed < input.segments.size(); seed++)
+  {
+    if (chain_of[seed] >= 0)
+    {
+      continue;
+    }
+    std::vector<std::size_t> stack = {seed};
+    chain_of[seed] = next_chain;
+    while (!stack.empty())
+    {
+      const std::size_t current = stack.back();
+      stack.pop_back();
+      for (const std::size_t v : input.segments[current].vertices)
+      {
+        if (input.vertices[v].physical_type != MetalEdgeVertexType::REGULAR)
+        {
+          continue;
+        }
+        for (const std::size_t other : input.vertices[v].segments)
+        {
+          if (chain_of[other] < 0)
+          {
+            chain_of[other] = next_chain;
+            stack.push_back(other);
+          }
+        }
+      }
+    }
+    next_chain++;
+  }
+  for (std::size_t i = 0; i < input.segments.size(); i++)
+  {
+    input.segments[i].chain = chain_of[i];
+  }
   return input;
+}
+
+// Rounded rectangle (half extents, fillet radius) as a polyline: chords per quarter circle.
+std::vector<Point2> RoundedRectangle(double half_x, double half_y, double radius,
+                                     int chords)
+{
+  std::vector<Point2> points;
+  const std::array<Point2, 4> centers = {Point2{half_x - radius, half_y - radius},
+                                         Point2{-half_x + radius, half_y - radius},
+                                         Point2{-half_x + radius, -half_y + radius},
+                                         Point2{half_x - radius, -half_y + radius}};
+  for (int corner = 0; corner < 4; corner++)
+  {
+    for (int k = 0; k <= chords; k++)
+    {
+      const double angle =
+          (corner + static_cast<double>(k) / chords) * 0.5 * std::acos(-1.0);
+      points.push_back({centers[corner][0] + radius * std::cos(angle),
+                        centers[corner][1] + radius * std::sin(angle)});
+    }
+  }
+  return points;
 }
 
 std::vector<Point2> Rectangle(double x0, double y0, double x1, double y1)
@@ -417,6 +477,38 @@ TEST_CASE("SurfaceResponseIdentification", "[surfaceresponseidentification][Seri
                         [](const auto &f) { return f.type == "ConvexCorner"; }) == 4);
     CHECK(std::none_of(wide.features.begin(), wide.features.end(),
                        [](const auto &f) { return f.type == "SpatialEdgeCluster"; }));
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationRoundedCorners",
+          "[surfaceresponseidentification][Serial]")
+{
+  // 8 x 6 island with 0.5 um fillets (radius < R): four rounded convex corners, one
+  // isolated edge chain, no cluster; the same features when every chord is bisected
+  // (refinement).
+  const double R = 2.0;
+  for (const double subdivision : {1.0, 0.5})
+  {
+    const auto input = MakeInput({{RoundedRectangle(4.0, 3.0, 0.5, 4), 0, subdivision}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    std::map<std::string, int> counts;
+    for (const auto &feature : result.features)
+    {
+      counts[feature.type]++;
+      if (feature.type == "ConvexCorner")
+      {
+        CHECK_THAT(feature.signature["CornerRadiusOverR"].get<double>(),
+                   WithinAbs(0.25, 1.0e-3));
+        CHECK_THAT(feature.signature["AngleDegrees"].get<double>(),
+                   WithinAbs(90.0, 1.0e-6));
+      }
+    }
+    CHECK(counts["ConvexCorner"] == 4);
+    CHECK(counts["SpatialEdgeCluster"] == 0);
+    CHECK(counts["IsolatedEdge"] == 1);
+    CHECK(std::count_if(result.vertices.begin(), result.vertices.end(),
+                        [](const auto &v) { return v.type == "RoundedCorner"; }) == 4);
   }
 }
 
