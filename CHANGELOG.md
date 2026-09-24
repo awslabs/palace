@@ -15,6 +15,35 @@ The format of this changelog is based on
 
 See the [developer notes on schema versioning](https://awslabs.github.io/palace/dev/developer/notes/#Schema-versioning) for how versions are bumped.
 
+## [Unreleased]
+
+#### New Features
+
+  - Added total (geometric + kinetic) inductance extraction for thin-film superconductors. A
+    `Boundaries.Superconductor` sheet carries the one-sided London kinetic sheet inductance
+    `L_ksq = mu0 * lambda * coth(d/lambda)` (via `PenetrationDepth`/`Thickness`, or directly
+    via `KineticInductance`); a `FluxLoop` over such a film imposes a prescribed fluxoid and
+    the total inductance is read from the field energy. SchemaVer 2-0-0.
+    [PR 929](https://github.com/awslabs/palace/pull/929).
+  - Added `Solver.Linear.LondonPCShift`, a preconditioner-only gauge shift that keeps the
+    London magnetostatic solve SPD-solvable by AMS.
+    [PR 929](https://github.com/awslabs/palace/pull/929).
+
+#### Interface Changes
+
+  - Renamed the `FluxLoop` keys `FluxLoopPEC` to `FilmAttributes` and `Regularization` to
+    `PecPenetrationDepth`, and limited each `FluxLoop` to a single hole (the schema still
+    accepts arrays for `HoleAttributes`/`FluxAmounts`). Existing `FluxLoop` configurations
+    must be updated. SchemaVer 2-0-0.
+    [PR 929](https://github.com/awslabs/palace/pull/929).
+
+#### Bug Fixes
+
+  - Corrected the `FluxLoop` hole inductance, which was low in 0.18 (e.g. the `circular_hole`
+    PEC limit moves from 2.00 to 2.85 pH): the excitation now constrains the fluxoid rather
+    than the flux. Re-run existing `FluxLoop` cases; the regression references were
+    re-baselined. [PR 929](https://github.com/awslabs/palace/pull/929).
+
 ## [0.18.1] - 2026-09-21
 
 #### New Features
