@@ -8977,12 +8977,17 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       auto reverse = DescribeOrientation(Scale(-1.0, axis_u));
       return forward.dump() <= reverse.dump() ? forward : reverse;
     };
+    // Spans, pair intervals and isolated intervals without a library model lose their own
+    // correction only (decision 74(1): an unmatched feature disables itself, never the
+    // interface group); counted for the summary warning.
+    int omitted_parallel_cluster_spans = 0, omitted_pair_intervals = 0,
+        omitted_isolated_intervals = 0;
     if (!unmatched_parallel_clusters.empty())
     {
       Mpi::Warning(
           "Fabrication-process response library \"{}\" has no matching "
           "ParallelEdgeCluster model for {} three-dimensional longitudinal span(s); "
-          "correction is disabled for this interface group!\n",
+          "correction is disabled for these spans only.\n",
           library.name, unmatched_parallel_clusters.size());
       if (requirements)
       {
@@ -8996,7 +9001,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                             "No compatible parallel-edge cluster model");
         }
       }
-      group_matched = false;
+      omitted_parallel_cluster_spans += static_cast<int>(unmatched_parallel_clusters.size());
     }
     for (const auto &span : parallel_cluster_spans)
     {
@@ -9287,24 +9292,34 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       const auto &second = segments[pair.second];
       std::vector<std::pair<double, double>> pair_intervals = {
           {pair.first_begin, pair.first_end}};
-      for (const auto &span : parallel_cluster_spans)
+      // A longitudinal span claimed by a parallel-edge cluster (matched or unmatched: an
+      // unmatched cluster span is omitted, never re-described by its pairs) is not a pair.
+      auto SubtractSpan = [&](const std::vector<std::size_t> &cluster, const Point3D &tangent,
+                              double begin, double end)
       {
-        const auto &cluster = span.selection.ordered_edges;
         if (std::find(cluster.begin(), cluster.end(), pair.first) == cluster.end() ||
             std::find(cluster.begin(), cluster.end(), pair.second) == cluster.end())
         {
-          continue;
+          return;
         }
-        const double orientation = Dot(first.tangent, span.tangent);
+        const double orientation = Dot(first.tangent, tangent);
         MFEM_ASSERT(std::abs(orientation) > 1.0 - 1.0e-8,
                     "A parallel-edge cluster contains incompatible tangents!");
-        double excluded_begin = (span.begin - Dot(first.p0, span.tangent)) / orientation;
-        double excluded_end = (span.end - Dot(first.p0, span.tangent)) / orientation;
+        double excluded_begin = (begin - Dot(first.p0, tangent)) / orientation;
+        double excluded_end = (end - Dot(first.p0, tangent)) / orientation;
         if (excluded_begin > excluded_end)
         {
           std::swap(excluded_begin, excluded_end);
         }
         SubtractInterval(pair_intervals, excluded_begin, excluded_end);
+      };
+      for (const auto &span : parallel_cluster_spans)
+      {
+        SubtractSpan(span.selection.ordered_edges, span.tangent, span.begin, span.end);
+      }
+      for (const auto &span : unmatched_parallel_clusters)
+      {
+        SubtractSpan(span.edges, span.tangent, span.begin, span.end);
       }
       for (const auto &[pair_begin, pair_end] : pair_intervals)
       {
@@ -9322,18 +9337,18 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
           Mpi::Warning(
               "Nearby three-dimensional edges use distinct metal boundary conditions; "
               "a dedicated spatial coupon is required and correction is disabled for "
-              "this interface group!\n");
-          group_matched = false;
-          break;
+              "this pair interval only.\n");
+          omitted_pair_intervals++;
+          continue;
         }
         if (Dot(first.axis_v, second.axis_v) <= 0.95)
         {
           Mpi::Warning(
               "Nearby three-dimensional edges have incompatible process normals; a "
               "dedicated cross-layer coupon is required and correction is disabled for "
-              "this interface group!\n");
-          group_matched = false;
-          break;
+              "this pair interval only.\n");
+          omitted_pair_intervals++;
+          continue;
         }
         const Point3D process_normal = Normalize(Add(first.axis_v, second.axis_v));
         if (std::abs(Dot(direction, process_normal)) > 1.0e-8)
@@ -9341,9 +9356,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
           Mpi::Warning(
               "Nearby three-dimensional edges are offset along the process normal; a "
               "dedicated cross-layer coupon is required and correction is disabled for "
-              "this interface group!\n");
-          group_matched = false;
-          break;
+              "this pair interval only.\n");
+          omitted_pair_intervals++;
+          continue;
         }
         const bool facing =
             Dot(first.axis_u, direction) > 0.95 && Dot(second.axis_u, direction) < -0.95;
@@ -9366,9 +9381,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         {
           Mpi::Warning(
               "No canonical paired-edge topology for nearby three-dimensional metal "
-              "edges; correction is disabled for this interface group!\n");
-          group_matched = false;
-          break;
+              "edges; correction is disabled for this pair interval only.\n");
+          omitted_pair_intervals++;
+          continue;
         }
         const double separation = Distance(first_mid, second_mid);
         const auto model_selection =
@@ -9377,7 +9392,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         {
           Mpi::Warning(
               "Fabrication-process response library \"{}\" has no {} model at separation "
-              "{:.6e} mesh units; correction is disabled for this interface group!\n",
+              "{:.6e} mesh units; correction is disabled for this pair interval only.\n",
               library.name, TopologyName(topology), separation * coordinate_scale);
           if (requirements)
           {
@@ -9387,8 +9402,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                 library, nullptr, pair_end - pair_begin,
                 "No compatible paired-edge model or interpolation bracket");
           }
-          group_matched = false;
-          break;
+          omitted_pair_intervals++;
+          continue;
         }
         group_maximum_library_distance =
             std::max(group_maximum_library_distance, model_selection->normalized_distance);
@@ -9435,11 +9450,6 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                                                    0.0, segments[i].boundary_condition);
       if (!isolated_model)
       {
-        Mpi::Warning(
-            "Fabrication-process response library \"{}\" has no isolated-edge model for "
-            "an unmatched longitudinal span using the selected metal boundary condition; "
-            "correction is disabled for this interface group!\n",
-            library.name);
         if (requirements)
         {
           for (const auto &[isolated_begin, isolated_end] : isolated_intervals)
@@ -9451,14 +9461,31 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                 "No compatible isolated-edge model for this metal boundary condition");
           }
         }
-        group_matched = false;
-        break;
+        omitted_isolated_intervals += static_cast<int>(isolated_intervals.size());
+        continue;
       }
       for (const auto &[isolated_begin, isolated_end] : isolated_intervals)
       {
         AppendQuadrature(*isolated_model, i, isolated_begin, isolated_end, std::nullopt);
         group_matched_intervals++;
       }
+    }
+    if (omitted_isolated_intervals > 0)
+    {
+      Mpi::Warning(
+          "Fabrication-process response library \"{}\" has no isolated-edge model for {} "
+          "unmatched longitudinal span(s) using the selected metal boundary condition; "
+          "correction is disabled for these spans only.\n",
+          library.name, omitted_isolated_intervals);
+    }
+    if (omitted_parallel_cluster_spans + omitted_pair_intervals + omitted_isolated_intervals >
+        0)
+    {
+      Mpi::Warning("Omitting {} parallel-edge cluster span(s), {} paired-edge interval(s) and "
+                   "{} isolated interval(s) without a library model in this interface group "
+                   "(correction disabled for these features only).\n",
+                   omitted_parallel_cluster_spans, omitted_pair_intervals,
+                   omitted_isolated_intervals);
     }
 
     if (!group_matched)
@@ -9470,6 +9497,20 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         MFEM_ABORT("Automatic fabrication-process response matching failed!");
       }
       continue;
+    }
+    if (!requirements &&
+        request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR &&
+        (omitted_parallel_cluster_spans + omitted_pair_intervals + omitted_isolated_intervals +
+             static_cast<int>(nonparallel_omitted_segments.size()) >
+         0))
+    {
+      MFEM_ABORT("Automatic fabrication-process response matching failed: "
+                 << omitted_parallel_cluster_spans << " parallel-edge cluster span(s), "
+                 << omitted_pair_intervals << " paired-edge interval(s), "
+                 << omitted_isolated_intervals << " isolated interval(s) and "
+                 << nonparallel_omitted_segments.size()
+                 << " non-parallel segment(s) have no library model (UnmatchedPolicy = "
+                    "Error)!");
     }
 
     if (diagnostics)
