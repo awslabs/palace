@@ -120,6 +120,33 @@ class OracleTest(unittest.TestCase):
         self.assertEqual(orc["SubThresholdTurns"], 2 * (17 + 2))
         self.assertEqual(orc["ClassifierCornerCount"], 4)
 
+    def test_arc_bar_sides_pair_along_the_bend_with_the_design_curvature_class(self):
+        # Curved-edge chain rule: the two sides of a constant-width polyline bend are a pair
+        # (separation constant within 5 %: 3 / cos(10 deg) at 20 deg per vertex), their
+        # cross-chord interactions are not events (the two bar ends are the only cores), and
+        # the expected class follows the inner-side design radius vs 20 R: r = 5 (1.75 R)
+        # curved, r = 50 (24.25 R) straight-like.
+        for radius, sweep, step, curved in [(5.0, 90.0, 20.0, True), (50.0, 45.0, 20.0, False), (250.0, 15.0, 5.0, False)]:
+            lay = S.layout("arc", [S.sheet(S.GROUND, S.arc_bar(3.0, radius, sweep, step))], half_x=300.0, half_y=300.0, bend={"Radius": radius, "Width": 3.0})
+            orc = S.oracle(lay)
+            self.assertEqual(len(orc["BentPairs"]), 1, (radius, step))
+            record = orc["BentPairs"][0]
+            self.assertEqual(record["Curved"], curved)
+            self.assertLessEqual(record["MaxSeparation"] - record["MinSeparation"], S.PAIR_SEPARATION_TOLERANCE * record["MinSeparation"])
+            self.assertEqual(record["ExpectedClasses"], ["CurvedSameConductorStrip", "SameConductorStrip"] if curved else ["SameConductorStrip"])
+            # Every chord-wise parallel pair belongs to the bent pair; the end corners are
+            # cluster members (two corners 3 um apart), no other corner exists.
+            self.assertTrue(all(p["InBentPair"] for p in orc["ParallelPairs"]))
+            self.assertEqual(orc["CornerPairsWithin2R"], 2)
+            self.assertEqual(orc["StandaloneCornerCount"], 0)
+
+    def test_acute_corner_arms_are_not_a_pair_along_a_bend(self):
+        # The arms of a 30 deg corner come within 2R of each other with a separation growing
+        # along the arm: no constant separation, hence events (a spatial cluster), not a pair.
+        lay = S.layout("corner", [S.sheet(S.GROUND, S.bent_bar(6.0, 16.0, 30.0))])
+        orc = S.oracle(lay)
+        self.assertEqual(orc["BentPairs"], [])
+
     def test_facing_layer_and_wall_are_excluded_classes(self):
         lay = S.layout("facing", [S.sheet(S.GROUND, S.rectangle(-10.0, -6.0, 10.0, 6.0)), S.sheet(S.GROUND, S.rectangle(-10.0, -6.0, 10.0, 6.0), z=3.0)], walls=[(S.GROUND, 0.0, -6.0, 0.0, 6.0, 4.0)])
         orc = S.oracle(lay)

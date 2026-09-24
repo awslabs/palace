@@ -56,6 +56,11 @@ GROUND = 4
 SECOND_CONDUCTOR = 5
 SUBSTRATE_AIR = 8
 CORNER_TURN_TOLERANCE_DEGREES = P.CORNER_ANGLE_TOLERANCE_DEGREES
+# Curved-edge chain rule (SURFACE-RESPONSE-IDENTIFICATION.md (b) 7, Identification.Conventions):
+# a bend whose radius is below STRAIGHT_BEND_RADIUS_OVER_R x R is a curved class; two chains pair
+# along a bend when their closest-point separation is constant within PAIR_SEPARATION_TOLERANCE.
+STRAIGHT_BEND_RADIUS_OVER_R = 20.0
+PAIR_SEPARATION_TOLERANCE = 0.05
 
 
 # ----------------------------------------------------------------------------- geometry ----
@@ -71,8 +76,10 @@ def sheet(attribute, outer, holes=(), z=0.0):
     return {"Attribute": attribute, "Z": z, "Loops": [outer, *holes]}
 
 
-def layout(name, sheets, walls=(), half_x=30.0, half_y=30.0, depth=15.0, height=15.0, lc_fine=1.0, lc_far=6.0, notes=""):
-    return {"Name": name, "HalfX": half_x, "HalfY": half_y, "Depth": depth, "Height": height, "LcFine": lc_fine, "LcFar": lc_far, "Sheets": list(sheets), "Walls": list(walls), "Notes": notes}
+def layout(name, sheets, walls=(), half_x=30.0, half_y=30.0, depth=15.0, height=15.0, lc_fine=1.0, lc_far=6.0, notes="", bend=None):
+    """bend = {"Radius": centreline radius, "Width": bar width} records the design intent of a
+    polyline arc bar so that the oracle can state the expected curvature class."""
+    return {"Name": name, "HalfX": half_x, "HalfY": half_y, "Depth": depth, "Height": height, "LcFine": lc_fine, "LcFar": lc_far, "Sheets": list(sheets), "Walls": list(walls), "Notes": notes, "Bend": bend}
 
 
 def rectangle(x0, y0, x1, y1):
@@ -200,9 +207,9 @@ def stress_suite():
             half = max(30.0, math.ceil(extent + 4.0))
             lc = 1.0 if radius < 100 else 2.0
             layouts.append(
-                layout(f"arc-r{radius:g}-step{step:g}", [sheet(GROUND, arc_bar(3.0, radius, sweep, step))], half_x=half, half_y=half, lc_fine=lc, lc_far=max(6.0, half / 5.0), notes=f"bar of width 3 on a polyline arc of radius {radius}, sweep {sweep} deg, {step} deg per vertex")
+                layout(f"arc-r{radius:g}-step{step:g}", [sheet(GROUND, arc_bar(3.0, radius, sweep, step))], half_x=half, half_y=half, lc_fine=lc, lc_far=max(6.0, half / 5.0), notes=f"bar of width 3 on a polyline arc of radius {radius}, sweep {sweep} deg, {step} deg per vertex", bend={"Radius": radius, "Width": 3.0})
             )
-    layouts.append(layout("arc-r20-step5-fine", [sheet(GROUND, arc_bar(3.0, 20.0, 90.0, 5.0))], half_x=36.0, half_y=36.0, lc_fine=0.5, lc_far=6.0, notes="arc-r20-step5 at half the mesh size (mesh independence)"))
+    layouts.append(layout("arc-r20-step5-fine", [sheet(GROUND, arc_bar(3.0, 20.0, 90.0, 5.0))], half_x=36.0, half_y=36.0, lc_fine=0.5, lc_far=6.0, notes="arc-r20-step5 at half the mesh size (mesh independence)", bend={"Radius": 20.0, "Width": 3.0}))
     layouts.append(layout("taper-10", [sheet(GROUND, trapezoid(24.0, 24.0 - 2.0 * 20.0 * math.tan(math.radians(10.0)), 20.0))], notes="trapezoid with two 10 deg taper edges: corners 80 and 100 deg"))
     layouts.append(layout("facing-layers", [sheet(GROUND, rectangle(-10.0, -6.0, 10.0, 6.0)), sheet(GROUND, rectangle(-10.0, -6.0, 10.0, 6.0), z=3.0)], notes="two facing metal sheets 3 um apart in one PEC attribute: cross-layer class, excluded by decision 73(3)"))
     layouts.append(layout("vertical-wall", [sheet(GROUND, rectangle(-10.0, -6.0, 10.0, 6.0))], walls=[(GROUND, 0.0, -6.0, 0.0, 6.0, 4.0)], notes="a vertical metal wall standing across the sheet: non-planar and non-manifold classes"))
@@ -259,11 +266,9 @@ def within_interaction(distance, radius):
     return distance < 2.0 * radius - 0.5 * 1.0e-8 * radius
 
 
-def design_event_cores(all_edges, corner_points, radius, samples=200):
-    """Event cores of SURFACE-RESPONSE-IDENTIFICATION.md (b) 3 from the polygon edges: sampled
-    points on an edge that are within 2R of a point on a non-parallel edge of another chain,
-    excluding through-vertex pairs (either point within 2R of a vertex the two chains share).
-    Edges joined by a sub-threshold vertex (not a classifier corner) are one chain."""
+def design_chains(all_edges, corner_points):
+    """Chain root of every polygon edge (edges joined by a sub-threshold vertex, i.e. not a
+    classifier corner, are one chain) and the vertices shared by edge pairs."""
     n = len(all_edges)
     parent = list(range(n))
 
@@ -285,12 +290,98 @@ def design_event_cores(all_edges, corner_points, radius, samples=200):
                         shared_vertices.setdefault((i, j), []).append(p)
                         if not is_corner(p):
                             parent[find(i)] = find(j)
+    return [find(i) for i in range(n)], shared_vertices
+
+
+def _polyline_distance(points, edges):
+    """Closest-point distance from every point (n x 2) to a set of straight edges."""
+    result = np.full(len(points), np.inf)
+    for e in edges:
+        d = e["End"] - e["Start"]
+        t = np.clip(((points - e["Start"]) @ d) / float(d @ d), 0.0, 1.0)
+        feet = e["Start"][None, :] + t[:, None] * d[None, :]
+        result = np.minimum(result, np.linalg.norm(points - feet, axis=1))
+    return result
+
+
+def design_bent_pairs(all_edges, corner_points, radius, samples=200):
+    """Pairs along bends (SURFACE-RESPONSE-IDENTIFICATION.md (b) 7): two chains that are not
+    both single straight edges whose closest-point separation over the mutually paired
+    intervals (within 2R, not beyond either chain's ends, outside the 2R zones of shared
+    vertices) is constant within PAIR_SEPARATION_TOLERANCE. Returns {(rootA, rootB): stats}."""
+    roots, shared_vertices = design_chains(all_edges, corner_points)
+    chains = {}
+    for i, r in enumerate(roots):
+        chains.setdefault(r, []).append(i)
+    interaction = 2.0 * radius - 0.5 * 1.0e-8 * radius
+    ts = np.linspace(0.0, 1.0, samples + 1)
+
+    def chain_ends(members):
+        # Vertices used by exactly one edge of the chain, with the outward tangent.
+        ends = []
+        for i in members:
+            e = all_edges[i]
+            for point, outward in ((e["Start"], -e["Tangent"]), (e["End"], e["Tangent"])):
+                others = [j for j in members if j != i and any(np.allclose(point, q) for q in (all_edges[j]["Start"], all_edges[j]["End"]))]
+                if not others:
+                    ends.append((point, outward))
+        return ends
+
+    def paired_distances(members_a, members_b, ends_b, shared):
+        distances = []
+        edges_b = [all_edges[j] for j in members_b]
+        for i in members_a:
+            a = all_edges[i]
+            pa = a["Start"][None, :] + ts[:, None] * (a["End"] - a["Start"])[None, :]
+            d = _polyline_distance(pa, edges_b)
+            keep = d < interaction
+            for point, outward in ends_b:
+                keep &= ((pa - point) @ outward) <= 0.0
+            for v in shared:
+                keep &= np.linalg.norm(pa - v, axis=1) >= interaction
+            distances.extend(d[keep].tolist())
+        return distances
+
+    result = {}
+    rs = sorted(chains)
+    for ia, ra in enumerate(rs):
+        for rb in rs[ia + 1 :]:
+            ma, mb = chains[ra], chains[rb]
+            if len(ma) == 1 and len(mb) == 1:
+                continue
+            shared = [v for (i, j), vs in shared_vertices.items() if roots[i] != roots[j] and {roots[i], roots[j]} == {ra, rb} for v in vs]
+            da = paired_distances(ma, mb, chain_ends(mb), shared)
+            db = paired_distances(mb, ma, chain_ends(ma), shared)
+            if not da or not db:
+                continue
+            lo, hi = min(da + db), max(da + db)
+            if hi - lo > PAIR_SEPARATION_TOLERANCE * lo:
+                continue
+            result[(ra, rb)] = {"MinSeparation": lo, "MaxSeparation": hi, "MeanSeparation": float(np.mean(da + db)), "EdgesA": len(ma), "EdgesB": len(mb)}
+    return result
+
+
+def design_event_cores(all_edges, corner_points, radius, samples=200, bent_pairs=None):
+    """Event cores of SURFACE-RESPONSE-IDENTIFICATION.md (b) 3 from the polygon edges: sampled
+    points on an edge that are within 2R of a point on a non-parallel edge of another chain,
+    excluding through-vertex pairs (either point within 2R of a vertex the two chains share)
+    and pairs of chains that pair along a bend (described by the pair feature, (b) 7).
+    Edges joined by a sub-threshold vertex (not a classifier corner) are one chain."""
+    n = len(all_edges)
+    roots, shared_vertices = design_chains(all_edges, corner_points)
+
+    def find(i):
+        return roots[i]
+
+    bent = set(bent_pairs or {})
     interaction = 2.0 * radius - 0.5 * 1.0e-8 * radius
     cores = []
     ts = np.linspace(0.0, 1.0, samples + 1)
     for i in range(n):
         for j in range(n):
             if i == j or find(i) == find(j):
+                continue
+            if (min(find(i), find(j)), max(find(i), find(j))) in bent:
                 continue
             a, b = all_edges[i], all_edges[j]
             if abs(float(a["Tangent"] @ b["Tangent"])) >= 1.0 - 1.0e-8:
@@ -493,6 +584,7 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
             if overlap <= 1.0e-9:
                 continue
             metal_between = float((b["Start"] - a["Start"]) @ a["Inward"]) > 0 and float((a["Start"] - b["Start"]) @ b["Inward"]) > 0
+            edge_indices = (i, j)
             if metal_between:
                 expected = "SameConductorStrip"
             elif a["Conductor"] == b["Conductor"]:
@@ -503,6 +595,7 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
             pairs.append(
                 {
                     "EdgeA": a,
+                    "EdgeIndices": edge_indices,
                     "OverlapStart": max(ia[0], ib[0]),
                     "OverlapEnd": min(ia[1], ib[1]),
                     "Separation": round(separation, 9),
@@ -515,9 +608,26 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
             )
     corner_points = [np.array(c["Point"]) for c in corners if c["ClassifierCorner"]]
     corner_pairs_within_2r = sum(1 for i in range(len(corner_points)) for j in range(i + 1, len(corner_points)) if np.linalg.norm(corner_points[i] - corner_points[j]) <= 2.0 * radius * (1 + 1e-9))
+    # Design rule (SURFACE-RESPONSE-IDENTIFICATION.md (b) 7): chains that pair along a bend
+    # are pair features; their cross-chord interactions are not events. The expected
+    # curvature class follows the layout's design bend (inner side radius vs 20 R).
+    bent_pairs = design_bent_pairs(all_edges, corner_points, radius)
+    roots, _ = design_chains(all_edges, corner_points)
+    bend = lay.get("Bend")
+    bent_pair_records = []
+    for (ra, rb), stats in sorted(bent_pairs.items()):
+        record = dict(stats)
+        record["Chains"] = [int(ra), int(rb)]
+        if bend:
+            inner = bend["Radius"] - 0.5 * bend["Width"]
+            record["DesignInnerRadiusOverR"] = inner / radius
+            record["Curved"] = inner / radius < STRAIGHT_BEND_RADIUS_OVER_R
+            record["ExpectedClasses"] = sorted({"SameConductorStrip"} | ({"CurvedSameConductorStrip"} if record["Curved"] else set()))
+            record["ExpectedSeparation"] = bend["Width"]
+        bent_pair_records.append(record)
     # Design rule (SURFACE-RESPONSE-IDENTIFICATION.md (b) 3): a corner joins a cluster when
     # its 2R through-vertex zone reaches a cluster region, i.e. an event core lies within 3R.
-    cores = design_event_cores(all_edges, corner_points, radius)
+    cores = design_event_cores(all_edges, corner_points, radius, bent_pairs=bent_pairs)
     for c in corners:
         if not c["ClassifierCorner"]:
             c["Standalone"] = None
@@ -531,6 +641,8 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
     # A parallel pair is a feature when part of its overlap survives the cluster regions
     # (distance to a core >= R) and the corner windows (R along the edge from a corner).
     for pair in pairs:
+        i, j = pair.pop("EdgeIndices")
+        pair["InBentPair"] = (min(roots[i], roots[j]), max(roots[i], roots[j])) in bent_pairs
         if not pair["Within2R"]:
             pair["Survives"] = False
             continue
@@ -559,6 +671,7 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
         "SubThresholdTurns": sum(1 for c in corners if not c["ClassifierCorner"]),
         "CornerPairsWithin2R": corner_pairs_within_2r,
         "ParallelPairs": pairs,
+        "BentPairs": bent_pair_records,
         "NonparallelInteractions": nonparallel,
         "Arcs": arcs,
         "Excluded": excluded,
@@ -649,7 +762,7 @@ def compare_with_oracle(orc, audit_result, manifest):
     }
     # Quantized decisions (kDecisionLengthQuantum): a separation within half a quantum of 2R is
     # AT the threshold and not within it, so pairs at exactly 2R are expected to be isolated.
-    oracle_pairs = Counter((p["Expected"], round(p["Separation"], 6)) for p in orc["ParallelPairs"] if p["Within2R"] and p.get("Survives", True))
+    oracle_pairs = Counter((p["Expected"], round(p["Separation"], 6)) for p in orc["ParallelPairs"] if p["Within2R"] and p.get("Survives", True) and not p.get("InBentPair"))
     mesh_separations = census["Interactions"]["ParallelSeparations"]
     manifest_pairs = Counter()
     for r in manifest["Requirements"]:
@@ -657,16 +770,41 @@ def compare_with_oracle(orc, audit_result, manifest):
             manifest_pairs[(r["Topology"], round(float(r["Geometry"].get("Separation", r["Geometry"].get("Width", float("nan")))), 6))] += 1
     expected_pairs_set = {(k[0], k[1]) for k in oracle_pairs}
     manifest_pairs_set = set(manifest_pairs)
+    bent_records = orc.get("BentPairs", [])
+    if bent_records:
+        # Pairs along bends: the manifest's pair classes must be exactly the expected classes
+        # (straight-like strip, plus the curved strip when the design inner radius is below
+        # 20 R) with separations within the pair tolerance of the design width; the chord-wise
+        # parallel pairs inside a bent pair are not separate features.
+        expected_classes = set()
+        for record in bent_records:
+            expected_classes |= set(record.get("ExpectedClasses", []))
+        manifest_classes = {k[0] for k in manifest_pairs_set}
+        widths = [record["ExpectedSeparation"] for record in bent_records if "ExpectedSeparation" in record]
+        separations_ok = all(any(abs(k[1] - w) <= PAIR_SEPARATION_TOLERANCE * w for w in widths) for k in manifest_pairs_set) if widths else True
+        pass_pairs = (manifest_classes == (expected_classes | {k[0] for k in expected_pairs_set})) and separations_ok and all(k in manifest_pairs_set for k in expected_pairs_set)
+    else:
+        pass_pairs = expected_pairs_set == manifest_pairs_set
     checks["A6-parallel-pairs"] = {
         "OraclePairs": {f"{k[0]}@{k[1]}": v for k, v in sorted(oracle_pairs.items())},
+        "OracleBentPairs": bent_records,
         "OracleAtExactly2R": sum(1 for p in orc["ParallelPairs"] if p["AtExactly2R"]),
         "OracleAtExactlyR": sum(1 for p in orc["ParallelPairs"] if p["AtExactlyR"]),
         "MeshParallelSeparations": mesh_separations,
         "ManifestPairClasses": {f"{k[0]}@{k[1]}": v for k, v in sorted(manifest_pairs.items())},
         "ManifestTopologies": dict(manifest_topologies),
-        "Pass": expected_pairs_set == manifest_pairs_set,
-        "Meaning": "expected class and separation of every parallel pair within 2R vs the manifest's translational records; pairs at exactly 2R are the knife edge",
+        "Pass": pass_pairs,
+        "Meaning": "expected class and separation of every parallel pair within 2R vs the manifest's translational records (pairs along bends: expected classes with separations within the pair tolerance); pairs at exactly 2R are the knife edge",
     }
+    if bent_records:
+        # A pair along a bend leaves no isolated or curved-edge remainder on its chains and
+        # the bar ends are the only clusters (one per group of corners within 2R).
+        checks["A6-bent-pair-classes"] = {
+            "ManifestTopologies": dict(manifest_topologies),
+            "ExpectedClusters": orc["CornerPairsWithin2R"],
+            "Pass": manifest_topologies.get("IsolatedEdge", 0) == 0 and manifest_topologies.get("CurvedEdge", 0) == 0 and manifest_topologies.get("SpatialEdgeCluster", 0) == orc["CornerPairsWithin2R"],
+            "Meaning": "the two sides of a constant-width bend are fully paired; the strip ends (two corners within 2R) are the only spatial clusters",
+        }
     checks["A6-nonparallel-interactions"] = {"Oracle": len(orc["NonparallelInteractions"]), "Mesh": census["Interactions"]["NonparallelPairs"], "Pass": None, "Meaning": "record only: non-parallel pairs are omitted by the classifier"}
     checks["A6-excluded-classes"] = {
         "Oracle": orc["Excluded"],
