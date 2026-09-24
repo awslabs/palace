@@ -1645,17 +1645,25 @@ void Identifier::BuildClusters()
       {
         continue;
       }
+      // Through-vertex pairs have at least one point inside a shared vertex's 2R zone: a
+      // piece of run a inside a zone has no events at all, and a piece outside pairs only
+      // with the part of run b outside every zone.
       const double mid = 0.5 * (lo + hi);
-      std::vector<Interval> excluded;
-      for (std::size_t v = 0; v < zones_a.size(); v++)
+      const bool inside_zone =
+          std::any_of(zones_a.begin(), zones_a.end(),
+                      [&](const std::vector<Interval> &zone)
+                      {
+                        return std::any_of(zone.begin(), zone.end(), [&](const Interval &i)
+                                           { return i.first <= mid && mid <= i.second; });
+                      });
+      if (inside_zone)
       {
-        const bool active =
-            std::any_of(zones_a[v].begin(), zones_a[v].end(), [&](const Interval &i)
-                        { return i.first <= mid && mid <= i.second; });
-        if (active)
-        {
-          excluded.insert(excluded.end(), zones_b[v].begin(), zones_b[v].end());
-        }
+        continue;
+      }
+      std::vector<Interval> excluded;
+      for (const auto &zone : zones_b)
+      {
+        excluded.insert(excluded.end(), zone.begin(), zone.end());
       }
       const auto complement = SubtractIntervals({Interval{0.0, rb.length}},
                                                 MergeIntervals(excluded, Tol()), Tol());

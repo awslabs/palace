@@ -300,8 +300,8 @@ TEST_CASE("SurfaceResponseIdentification", "[surfaceresponseidentification][Seri
     const auto base = IdentifyMetalPerimeter(MakeInput(Scene(1.0, 0.0), R));
     const auto mirrored = IdentifyMetalPerimeter(MakeInput(Scene(-1.0, 0.0), R));
     const auto rotated = IdentifyMetalPerimeter(MakeInput(Scene(1.0, 0.7), R));
-    // hash -> chiralities of every cluster (the scene has a strip-end cluster at the top and
-    // the asymmetric pad-corner cluster at the bottom).
+    // hash -> chiralities of every cluster (the scene has a strip-end cluster at the top
+    // and the asymmetric pad-corner cluster at the bottom).
     auto Clusters = [](const IdentificationResult &r)
     {
       std::map<std::string, std::multiset<int>> clusters;
@@ -418,4 +418,36 @@ TEST_CASE("SurfaceResponseIdentification", "[surfaceresponseidentification][Seri
     CHECK(std::none_of(wide.features.begin(), wide.features.end(),
                        [](const auto &f) { return f.type == "SpatialEdgeCluster"; }));
   }
+}
+
+TEST_CASE("SurfaceResponseIdentificationObtuseCorners",
+          "[surfaceresponseidentification][Serial]")
+{
+  // A trapezoid with 80 and 100 deg corners (taper-10): no arm pair comes within 2R outside
+  // the corners' 2R zones (2a sin(40 deg) >= 5.1 R for a, b >= 2R), so all four corners are
+  // plain corners and no cluster forms.
+  const double R = 2.0;
+  const double top = 12.0 - 20.0 * std::tan(10.0 * std::acos(-1.0) / 180.0);
+  const std::vector<LoopSpec> taper = {
+      {{{-12.0, 0.0}, {12.0, 0.0}, {top, 20.0}, {-top, 20.0}}, 0, 1.0}};
+  const auto input = MakeInput(taper, R);
+  const auto result = IdentifyMetalPerimeter(input);
+  CheckPartition(input, result);
+  std::map<std::string, int> counts;
+  for (const auto &feature : result.features)
+  {
+    counts[feature.type]++;
+    if (feature.type == "SpatialEdgeCluster")
+    {
+      for (const auto &portion : feature.portions)
+      {
+        const auto &s = input.segments[portion.segment];
+        UNSCOPED_INFO("cluster portion chain "
+                      << s.chain << " (" << s.p0[0] << "," << s.p0[1] << ")-(" << s.p1[0]
+                      << "," << s.p1[1] << ") " << portion.s0 << ".." << portion.s1);
+      }
+    }
+  }
+  CHECK(counts["SpatialEdgeCluster"] == 0);
+  CHECK(counts["ConvexCorner"] == 4);
 }
