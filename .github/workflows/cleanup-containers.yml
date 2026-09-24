@@ -42,7 +42,6 @@ jobs:
     permissions:
       id-token: write     # mint the OIDC JWT for AWS
       contents: read      # list branches via gh
-      pull-requests: read # read each branch's latest PR state via gh
     env:
       AWS_REGION: us-west-2
       ECR_REPOSITORY: palace
@@ -51,9 +50,10 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       OWNER_REPO: ${{ github.repository }}
     steps:
-      # Check out the trusted cleanup code. No `ref:` is set, so the default
-      # branch applies — we must never check out a PR's ref here, or
-      # PR-controlled code would run holding a delete-capable role.
+      # Check out the trusted cleanup code. `schedule`, `delete` and `push`
+      # resolve to `main`; a `workflow_dispatch` on another branch checks out
+      # that branch, and only the environment's deployment-branch policy
+      # (main only) keeps such a run from holding the delete-capable role.
       - name: Check out trusted cleanup code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -63,9 +63,10 @@ jobs:
           role-to-assume: ${{ secrets.PALACE_CONTAINER_PUBLISH_ROLE_ARN }}
           aws-region: us-west-2
 
-      # cleanup.py samples the live branch set before AND after listing ECR/S3
-      # and protects the union, so a channel published while the sweep runs is
-      # never deleted. It prints the full plan on every run, deleting or not.
+      # cleanup.py samples the live branch set before listing ECR/S3 and
+      # protects it, so a channel published while the sweep runs is never
+      # deleted (its branch already existed when the sample was taken). It
+      # prints the full plan on every run, deleting or not.
       #
       # `dry_run` only exists for workflow_dispatch; for the other three triggers
       # inputs.dry_run is empty, which is falsey, so they sweep for real.

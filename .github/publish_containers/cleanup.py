@@ -75,59 +75,49 @@ def orphan_s3_keys(keys, live) -> list[str]:
 
 
 def live_selectors(api) -> set[str]:
-    """Selectors a branch still claims.
+    """Selectors a branch still claims: it exists and matches `DEV_BRANCH_RE`.
 
-    A branch claims its selector while it exists, UNLESS its most recent PR was
-    merged — then the code is in `main` and `main`'s container supersedes the dev
-    channel. "Most recent" is the highest PR number, so reopening a new PR from a
-    previously merged branch makes it live again instead of flapping.
+    A dev channel is only reachable while its branch exists. Merging a PR deletes
+    the branch (`delete_branch_on_merge` is on), so a merged branch is already
+    gone from `branches()` and needs no separate PR-state check — and reasoning
+    from PR state is actively wrong, because branch names are reused: the newest
+    PR for a recreated branch can be an old merged one, which would read a live
+    branch as dead and delete a channel still in use.
 
     Branches that :data:`DEV_BRANCH_RE` rejects are skipped: they can never have
     published, so letting one mark a selector live would only shield an orphan.
     """
-    live = set()
-    for branch in api.branches():
-        if not DEV_BRANCH_RE.match(branch):
-            continue
-        pr = api.latest_pr_for_branch(branch)
-        if pr is not None and pr[1]:  # (number, merged)
-            continue
-        live.add(f"dev-{slugify(branch)}")
-    return live
+    return {
+        f"dev-{slugify(branch)}"
+        for branch in api.branches()
+        if DEV_BRANCH_RE.match(branch)
+    }
 
 
 def sweep(api, discover_fn) -> Plan:
     """Compute what to delete, guarding against publishes racing the listing.
 
     ``discover_fn()`` returns ``(ecr_tags, {bucket: keys})`` for everything that
-    currently exists. Listing ECR and two S3 buckets is not instantaneous, and
-    `Publish Containers` can land a dev channel while it runs, so the live set is
-    sampled BEFORE and AFTER discovery and their UNION is protected.
-
-    Union rather than intersection, deliberately: keeping an artifact one run too
-    long is reclaimed by the next scheduled sweep, while deleting a channel
-    someone just published is not recoverable without a rebuild.
+    currently exists. The live set is sampled BEFORE discovery, and that is
+    enough to keep a racing publish safe: `Publish Containers` only publishes
+    from a build that was dispatched on, and authorized against, a branch that
+    already existed — so any channel that can land while discovery runs comes
+    from a branch already in `live_before`. The one case a later sample would add
+    is a branch created after this sample, but its build cannot have finished
+    publishing yet, so there is nothing of its to delete this run; the next
+    scheduled sweep sees it.
     """
-    live_before = live_selectors(api)
+    live = live_selectors(api)
     tags, s3_keys = discover_fn()
-    live_after = live_selectors(api)
-    protected = live_before | live_after
-
-    only_after = live_after - live_before
-    if only_after:
-        print(f"Protecting selector(s) published during discovery: {', '.join(sorted(only_after))}")
-    only_before = live_before - live_after
-    if only_before:
-        print(f"Deferring selector(s) that went away during discovery: {', '.join(sorted(only_before))}")
 
     return Plan(
-        ecr_tags=orphan_ecr_tags(tags, protected),
-        s3={bucket: orphan_s3_keys(keys, protected) for bucket, keys in s3_keys.items()},
+        ecr_tags=orphan_ecr_tags(tags, live),
+        s3={bucket: orphan_s3_keys(keys, live) for bucket, keys in s3_keys.items()},
     )
 
 
 class CleanupApi(GitHubApi):
-    """GitHubApi plus the branch/PR lookups the sweep needs.
+    """GitHubApi plus the branch listing the sweep needs.
 
     A subclass rather than new methods on GitHubApi so `authorize.py` — the
     module that gates publishing — is not modified by this change.
@@ -138,7 +128,7 @@ class CleanupApi(GitHubApi):
 
         `--jq` is applied per page and the outputs concatenated, so this needs no
         cross-page JSON assembly. Unlike GitHubApi._get there is no 404 branch:
-        every path here is a collection that exists, so any failure is real.
+        the path here is a collection that exists, so any failure is real.
         """
         proc = subprocess.run(
             ["gh", "api", "--paginate", path, "--jq", jq],
@@ -152,30 +142,6 @@ class CleanupApi(GitHubApi):
 
     def branches(self) -> list[str]:
         return self._lines(f"repos/{self.repo}/branches", ".[].name")
-
-    def latest_pr_for_branch(self, branch: str) -> tuple[int, bool] | None:
-        """(number, merged) for the branch's highest-numbered PR, or None.
-
-        Picking the max number rather than trusting a `sort=` query parameter
-        keeps the "latest PR" definition in code where the tests can pin it.
-        """
-        owner = self.repo.split("/", 1)[0]
-        rows = self._lines(
-            f"repos/{self.repo}/pulls?head={owner}:{branch}&state=all&per_page=100",
-            '.[] | "\\(.number)\\t\\(.merged_at != null)"',
-        )
-        best: tuple[int, bool] | None = None
-        for row in rows:
-            number_text, _, merged_text = row.partition("\t")
-            number = int(number_text)
-            if best is None or number > best[0]:
-                best = (number, merged_text == "true")
-        return best
-
-
-def _run(cmd: list[str]) -> None:
-    print("+ " + " ".join(cmd))
-    subprocess.run(cmd, check=True)
 
 
 def _aws_strings(cmd: list[str]) -> list[str]:
@@ -254,26 +220,68 @@ def assert_dev_only(plan: Plan) -> None:
                 raise ValueError(f"refusing to delete non-dev S3 key '{bucket}/{key}'")
 
 
+def _run_json(cmd: list[str]) -> dict:
+    """Run an `aws --output json` mutating call and return its parsed body.
+
+    Unlike :func:`_run`, the body is inspected by the caller: both delete APIs
+    exit 0 while reporting per-item failures in the body, so the exit status
+    alone would let a permission gap look like a successful sweep and leave the
+    same orphans for the next run to "delete" again.
+    """
+    print("+ " + " ".join(cmd))
+    proc = subprocess.run(cmd, check=True, capture_output=True, text=True)
+    text = proc.stdout.strip()
+    if not text:
+        return {}
+    value = json.loads(text)
+    if not isinstance(value, dict):
+        raise RuntimeError(f"expected a JSON object from {' '.join(cmd)}, got {value!r}")
+    return value
+
+
+# `batch-delete-image` reports a deleted-then-gone tag as an ImageNotFound
+# failure; that is exactly the state we want, so it counts as success and keeps
+# reruns idempotent. Any other failure code is real and aborts the sweep.
+_ECR_OK_FAILURES = frozenset({"ImageNotFound"})
+
+
 def execute(plan: Plan, region: str, ecr_repo: str) -> None:
-    """Delete everything in `plan`, after re-asserting the guards."""
+    """Delete everything in `plan`, after re-asserting the guards.
+
+    Both AWS delete calls exit 0 even when they could not delete some items, so
+    the response body is inspected and any genuine per-item failure is raised:
+    a silent partial delete would leave orphans that every later run re-plans.
+    """
     assert_dev_only(plan)
 
     # batch-delete-image accepts at most 100 image ids per call.
     for chunk in _chunks(plan.ecr_tags, 100):
-        _run([
+        result = _run_json([
             "aws", "ecr", "batch-delete-image", "--region", region,
             "--repository-name", ecr_repo,
             "--image-ids", *[f"imageTag={t}" for t in chunk],
+            "--output", "json",
         ])
+        failures = [
+            f for f in result.get("failures", [])
+            if f.get("failureCode") not in _ECR_OK_FAILURES
+        ]
+        if failures:
+            raise RuntimeError(f"ecr batch-delete-image reported failures: {failures}")
 
-    # delete-objects accepts at most 1000 keys per call.
+    # delete-objects accepts at most 1000 keys per call. `Quiet: true` drops the
+    # per-key success list but still returns `Errors`, which is all we check.
     for bucket, keys in sorted(plan.s3.items()):
         for chunk in _chunks(keys, 1000):
             payload = json.dumps({"Objects": [{"Key": k} for k in chunk], "Quiet": True})
-            _run([
+            result = _run_json([
                 "aws", "s3api", "delete-objects", "--region", region,
                 "--bucket", bucket, "--delete", payload,
+                "--output", "json",
             ])
+            errors = result.get("Errors", [])
+            if errors:
+                raise RuntimeError(f"s3api delete-objects reported errors for {bucket}: {errors}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -309,7 +317,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         execute(plan, region, ecr_repo)
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
     print(

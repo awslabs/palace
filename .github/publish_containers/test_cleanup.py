@@ -11,13 +11,17 @@ The sweep's delete decision is pure, so these run offline with a FakeApi.
 
 from __future__ import annotations
 
+import json
+import subprocess
 import unittest
+from unittest import mock
 
 from authorize import DEV_BRANCH_RE, slugify
 from cleanup import (
     Plan,
     assert_dev_only,
     ecr_tag_selector,
+    execute,
     live_selectors,
     orphan_ecr_tags,
     orphan_s3_keys,
@@ -27,28 +31,14 @@ from cleanup import (
 
 
 class FakeApi:
-    """Stand-in for GitHubApi. All lookups come from constructor data."""
+    """Stand-in for CleanupApi. All lookups come from constructor data."""
 
-    def __init__(self, *, branches=None, latest_pr=None):
-        # branches: list of branch names
+    def __init__(self, *, branches=None):
+        # branches: list of branch names the repo currently has
         self._branches = list(branches or [])
-        # latest_pr: {branch: (pr_number, merged_bool)}; absent => no PR
-        self._latest_pr = latest_pr or {}
-        # Set to a list of branch lists to make successive branches() calls
-        # return successive entries, simulating the repo changing mid-sweep. The
-        # last entry repeats once exhausted.
-        self.branches_sequence = None
-        self._branches_calls = 0
 
     def branches(self):
-        if self.branches_sequence is None:
-            return list(self._branches)
-        idx = min(self._branches_calls, len(self.branches_sequence) - 1)
-        self._branches_calls += 1
-        return list(self.branches_sequence[idx])
-
-    def latest_pr_for_branch(self, branch):
-        return self._latest_pr.get(branch)
+        return list(self._branches)
 
 
 class EcrTagParsing(unittest.TestCase):
@@ -138,28 +128,19 @@ class OrphanSelection(unittest.TestCase):
 
 
 class LiveSelectors(unittest.TestCase):
-    def test_branch_with_no_pr_is_live(self):
-        # Dispatch-published branches have no PR at all.
-        api = FakeApi(branches=["team/dispatch"])
-        self.assertEqual(live_selectors(api), {"dev-team-dispatch"})
-
-    def test_branch_with_open_latest_pr_is_live(self):
-        api = FakeApi(branches=["team/feat"], latest_pr={"team/feat": (100, False)})
+    def test_existing_publishable_branch_is_live(self):
+        # A branch is live purely because it exists and matches DEV_BRANCH_RE;
+        # merging deletes the branch, so no PR-state check is needed.
+        api = FakeApi(branches=["team/feat"])
         self.assertEqual(live_selectors(api), {"dev-team-feat"})
 
-    def test_branch_with_merged_latest_pr_is_not_live(self):
-        api = FakeApi(branches=["team/feat"], latest_pr={"team/feat": (100, True)})
-        self.assertEqual(live_selectors(api), set())
+    def test_multiple_branches_map_to_their_selectors(self):
+        api = FakeApi(branches=["team/feat", "user/other"])
+        self.assertEqual(live_selectors(api), {"dev-team-feat", "dev-user-other"})
 
     def test_deleted_branch_contributes_nothing(self):
         api = FakeApi(branches=[])
         self.assertEqual(live_selectors(api), set())
-
-    def test_reopened_pr_after_merge_makes_branch_live_again(self):
-        # PR #100 merged, then #101 opened from the same branch. Keying on the
-        # LATEST PR (highest number) is what stops the sweep from flapping.
-        api = FakeApi(branches=["team/feat"], latest_pr={"team/feat": (101, False)})
-        self.assertEqual(live_selectors(api), {"dev-team-feat"})
 
     def test_unpublishable_branch_shapes_are_ignored(self):
         # Branches that DEV_BRANCH_RE rejects can never have published, so they
@@ -173,32 +154,16 @@ class LiveSelectors(unittest.TestCase):
 
 
 class Sweep(unittest.TestCase):
-    """Listing ECR/S3 takes time, and a publish can land while it runs.
+    """The sweep samples the live set once, before discovery, and protects it.
 
-    The sweep samples the live set before AND after discovery and protects the
-    UNION, so a channel that was live at either instant survives. Union, not
-    intersection: erring toward keeping is recoverable (the next run cleans it),
-    erring toward deleting destroys a channel someone just published.
+    A channel that lands while discovery runs comes from a branch that already
+    existed when it was dispatched, so it is already in that sample. Nothing
+    published from a branch created after the sample can have finished yet, so
+    there is nothing of its to delete this run.
     """
 
     def _discover(self, tags, keys):
         return lambda: (tags, {"buck": keys})
-
-    def test_selector_published_during_discovery_is_protected(self):
-        # branches() returns nothing first, then the branch appears: a developer
-        # pushed and published while the sweep was listing.
-        api = FakeApi(branches=[])
-        api.branches_sequence = [[], ["team/new"]]
-        plan = sweep(api, self._discover(["dev-team-new-x86_64_v3"], ["dev/team-new/x86_64_v3.sif"]))
-        self.assertTrue(plan.is_empty(), f"republished channel must survive, got {plan}")
-
-    def test_selector_deleted_during_discovery_is_protected_this_run(self):
-        # Live at the first sample, gone by the second. Keeping it is safe; the
-        # next scheduled run reclaims it.
-        api = FakeApi(branches=[])
-        api.branches_sequence = [["team/going"], []]
-        plan = sweep(api, self._discover(["dev-team-going-x86_64_v3"], []))
-        self.assertTrue(plan.is_empty())
 
     def test_stable_orphan_is_deleted(self):
         api = FakeApi(branches=["team/live"])
@@ -211,6 +176,14 @@ class Sweep(unittest.TestCase):
         )
         self.assertEqual(plan.ecr_tags, ["dev-team-gone-x86_64_v3"])
         self.assertEqual(plan.s3, {"buck": ["dev/team-gone/schema.json"]})
+
+    def test_live_branch_artifacts_are_protected(self):
+        api = FakeApi(branches=["team/live"])
+        plan = sweep(
+            api,
+            self._discover(["dev-team-live-x86_64_v3"], ["dev/team-live/x86_64_v3.sif"]),
+        )
+        self.assertTrue(plan.is_empty(), f"live channel must survive, got {plan}")
 
     def test_sweep_never_emits_non_dev_artifacts(self):
         api = FakeApi(branches=[])
@@ -240,6 +213,61 @@ class AssertDevOnly(unittest.TestCase):
 
     def test_empty_plan_is_accepted(self):
         assert_dev_only(Plan())
+
+
+class Execute(unittest.TestCase):
+    """Both AWS delete calls exit 0 while reporting per-item failures in the
+    body, so `execute` must inspect the body and raise on a real failure —
+    otherwise a permission gap looks like a clean sweep and orphans persist.
+    """
+
+    def _fake_run(self, responses):
+        """Return a `subprocess.run` stand-in that replies from `responses`.
+
+        `responses` is a list of dicts; each call pops the next and returns it
+        as the JSON stdout of a completed process.
+        """
+        queue = list(responses)
+
+        def run(cmd, check=False, capture_output=False, text=False):
+            body = queue.pop(0)
+            return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(body), stderr="")
+
+        return run
+
+    def test_clean_delete_succeeds(self):
+        plan = Plan(ecr_tags=["dev-a-x86_64_v3"], s3={"buck": ["dev/a/schema.json"]})
+        with mock.patch(
+            "cleanup.subprocess.run",
+            side_effect=self._fake_run([{"failures": []}, {"Errors": []}]),
+        ):
+            execute(plan, "us-west-2", "palace")  # must not raise
+
+    def test_ecr_failure_raises(self):
+        plan = Plan(ecr_tags=["dev-a-x86_64_v3"], s3={})
+        failure = {"failures": [{"imageId": {"imageTag": "dev-a-x86_64_v3"},
+                                 "failureCode": "ServerException",
+                                 "failureReason": "boom"}]}
+        with mock.patch("cleanup.subprocess.run", side_effect=self._fake_run([failure])):
+            with self.assertRaises(RuntimeError):
+                execute(plan, "us-west-2", "palace")
+
+    def test_ecr_image_not_found_is_success(self):
+        # A deleted-then-gone tag reports ImageNotFound; reruns must stay idempotent.
+        plan = Plan(ecr_tags=["dev-a-x86_64_v3"], s3={})
+        failure = {"failures": [{"imageId": {"imageTag": "dev-a-x86_64_v3"},
+                                 "failureCode": "ImageNotFound",
+                                 "failureReason": "does not exist"}]}
+        with mock.patch("cleanup.subprocess.run", side_effect=self._fake_run([failure])):
+            execute(plan, "us-west-2", "palace")  # must not raise
+
+    def test_s3_error_raises(self):
+        plan = Plan(ecr_tags=[], s3={"buck": ["dev/a/schema.json"]})
+        errors = {"Errors": [{"Key": "dev/a/schema.json", "Code": "AccessDenied",
+                              "Message": "no s3:DeleteObject"}]}
+        with mock.patch("cleanup.subprocess.run", side_effect=self._fake_run([errors])):
+            with self.assertRaises(RuntimeError):
+                execute(plan, "us-west-2", "palace")
 
 
 class SlugifyInjectivity(unittest.TestCase):
