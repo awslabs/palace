@@ -19,6 +19,9 @@ NODES_PER_TYPE = {1: 2, 2: 3, 3: 4, 4: 4, 5: 8, 6: 6, 7: 5, 8: 3, 9: 6, 10: 9, 1
 CORNER_NODES = {1: 2, 2: 3, 3: 4, 4: 4, 5: 8, 6: 6, 7: 5, 8: 2, 9: 3, 10: 4, 11: 4, 15: 1}
 ELEMENT_DIMENSION = {1: 1, 2: 2, 3: 2, 4: 3, 5: 3, 6: 3, 7: 3, 8: 1, 9: 2, 10: 2, 11: 3, 15: 0}
 LINE, TRIANGLE, QUAD, TET = 1, 2, 3, 4
+# First- and second-order variants of the simplex types.
+TRIANGLE_TYPES = (2, 9)
+TETRAHEDRON_TYPES = (4, 11)
 
 
 @dataclass

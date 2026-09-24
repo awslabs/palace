@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .msh2 import ELEMENT_DIMENSION, TET, TRIANGLE, QUAD
+from .msh2 import ELEMENT_DIMENSION, QUAD, TETRAHEDRON_TYPES, TRIANGLE_TYPES
 
 CORNER_ANGLE_TOLERANCE_DEGREES = 30.0
 DIRECTION_QUANTUM = 1.0e-12
@@ -169,7 +169,7 @@ def _exterior_faces(mesh):
         if ELEMENT_DIMENSION[element_type] != 3:
             continue
         corners = mesh.corner_indices(element_type)
-        if element_type == TET:
+        if element_type in TETRAHEDRON_TYPES:
             faces = [corners[:, [0, 1, 2]], corners[:, [0, 1, 3]], corners[:, [0, 2, 3]], corners[:, [1, 2, 3]]]
         else:
             raise NotImplementedError("only tetrahedral volume elements are supported by the audit")
@@ -202,11 +202,15 @@ def extract_perimeter(mesh, config, process_normal=None, corner_tolerance_degree
     tolerance = 1.0e-10 * extent
     canonical = _canonical_node_map(mesh, tolerance)
 
-    surface_types = [t for t in (TRIANGLE, QUAD) if mesh.has(t)]
-    if QUAD in surface_types:
+    if mesh.has(QUAD):
         raise NotImplementedError("quadrilateral boundary faces are not supported by the audit")
-    physical = mesh.physical_tags(TRIANGLE)
-    corners_raw = mesh.corner_indices(TRIANGLE)
+    # First- and second-order triangles (Gmsh types 2 and 9); the perimeter is the straight
+    # corner-to-corner edge graph, as in the classifier's mesh-vertex segments.
+    triangle_types = [t for t in TRIANGLE_TYPES if mesh.has(t)]
+    if not triangle_types:
+        raise ValueError("the mesh has no triangular boundary faces")
+    physical = np.concatenate([mesh.physical_tags(t) for t in triangle_types])
+    corners_raw = np.concatenate([mesh.corner_indices(t) for t in triangle_types])
     corners = canonical[corners_raw]
     metal_mask = np.isin(physical, list(metal))
     metal_corners = corners[metal_mask]
