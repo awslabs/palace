@@ -75,8 +75,9 @@ set(EXTERN_LIBCEED_GIT_BRANCH
   "main" CACHE STRING
   "Git branch for external libCEED build"
 )
+# Keep in sync with the libCEED pin in spack_repo/local/packages/palace/package.py
 set(EXTERN_LIBCEED_GIT_TAG
-  "39f259f89332e936122f7e02d6088a1dae3fb628" CACHE STRING
+  "d6367d2d6a0cca608a0b8e21d79b83c50a49a19a" CACHE STRING
   "Git tag for external libCEED build"
 )
 
@@ -89,9 +90,9 @@ set(EXTERN_LIBXSMM_GIT_BRANCH
   "main" CACHE STRING
   "Git branch for external LIBXSMM build"
 )
-# libxsmm does not tag versions very often (last was Dec 2021)
+# 2.1.0; the Spack build uses libxsmm@2:
 set(EXTERN_LIBXSMM_GIT_TAG
-  "ea0b20499a41377bab148257240adbbfe1b4a333" CACHE STRING
+  "7944bf36cf847c846b3fa0eb194789295e00b624" CACHE STRING
   "Git tag for external LIBXSMM build"
 )
 

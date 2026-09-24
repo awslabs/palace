@@ -11,6 +11,9 @@ set(LIBXSMM_DEPENDENCIES)
 set(LIBXSMM_OPTIONS
   # "PREFIX=${CMAKE_INSTALL_PREFIX}"  # Don't use install step, see comment below
   "OUTDIR=${CMAKE_INSTALL_PREFIX}/lib"
+  # LIBXSMM 2.x writes its pkg-config files directly to OUTDIR/pkgconfig with includedir
+  # defaulting to include/libxsmm; keep the flat include/ layout installed below
+  "PINCDIR=include"
   "DIRSTATE=."
   "CC=${CMAKE_C_COMPILER}"
   "CXX=${CMAKE_CXX_COMPILER}"
@@ -44,9 +47,10 @@ endif()
 string(REPLACE ";" "; " LIBXSMM_OPTIONS_PRINT "${LIBXSMM_OPTIONS}")
 message(STATUS "LIBXSMM_OPTIONS: ${LIBXSMM_OPTIONS_PRINT}")
 
-# Don't use LIBXSMM install step, since it just copies shared libraries and doesn't modify
-# the dependency locations directly (doesn't use RPATH). Just build directly into the
-# installation directory instead. See https://github.com/libxsmm/libxsmm/issues/883.
+# Build directly into the installation directory instead of using the LIBXSMM install step,
+# which before 2.x left build-tree paths in the installed shared libraries
+# (https://github.com/libxsmm/libxsmm/issues/883). The 2.x install step fixes that but also
+# moves the headers to include/libxsmm.
 set(LIBXSMM_INSTALL_HEADERS
   libxsmm.h
   libxsmm_config.h
@@ -63,16 +67,6 @@ set(LIBXSMM_INSTALL_HEADERS
   libxsmm_typedefs.h
 )
 list(TRANSFORM LIBXSMM_INSTALL_HEADERS PREPEND <SOURCE_DIR>/include/)
-set(LIBXSMM_INSTALL_PKGCONFIG
-  libxsmm.pc
-  libxsmmext.pc
-  libxsmmnoblas.pc
-  libxsmm-shared.pc
-  libxsmmext-shared.pc
-  libxsmmnoblas-shared.pc
-  libxsmm.env
-)
-list(TRANSFORM LIBXSMM_INSTALL_PKGCONFIG PREPEND ${CMAKE_INSTALL_PREFIX}/lib/)
 
 include(ExternalProject)
 ExternalProject_Add(libxsmm
@@ -90,11 +84,7 @@ ExternalProject_Add(libxsmm
     ${CMAKE_COMMAND} -E echo "LIBXSMM installing interface..." &&
     ${CMAKE_COMMAND} -E make_directory ${CMAKE_INSTALL_PREFIX}/include &&
     ${CMAKE_COMMAND} -E copy ${LIBXSMM_INSTALL_HEADERS} ${CMAKE_INSTALL_PREFIX}/include &&
-    ${CMAKE_COMMAND} -E echo "LIBXSMM installing pkg-config and module files..." &&
-    ${CMAKE_COMMAND} -E make_directory ${CMAKE_INSTALL_PREFIX}/lib/pkgconfig &&
-    ${CMAKE_COMMAND} -E copy ${LIBXSMM_INSTALL_PKGCONFIG} ${CMAKE_INSTALL_PREFIX}/lib/pkgconfig ||
-    ${CMAKE_COMMAND} -E true &&  # No error if files don't exist
-    ${CMAKE_COMMAND} -E rm -f ${LIBXSMM_INSTALL_PKGCONFIG} &&
     ${CMAKE_COMMAND} -E rm -f ${CMAKE_INSTALL_PREFIX}/lib/.make
+      ${CMAKE_INSTALL_PREFIX}/lib/pkgconfig/.make
   TEST_COMMAND      ""
 )
