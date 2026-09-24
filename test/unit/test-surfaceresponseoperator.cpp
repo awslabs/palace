@@ -3282,9 +3282,12 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   REQUIRE(high_order_spatial_requirements_input);
   const auto high_order_spatial_requirements =
       json::parse(high_order_spatial_requirements_input);
+  // The plan-view mask round trip is a legacy-classifier contract: the version-2
+  // Requirements are derived from the identification features (matched by signature), so
+  // the mask lives in the LegacyRequirements comparison table.
   const auto high_order_spatial_requirement =
-      std::find_if(high_order_spatial_requirements["Requirements"].begin(),
-                   high_order_spatial_requirements["Requirements"].end(),
+      std::find_if(high_order_spatial_requirements["LegacyRequirements"].begin(),
+                   high_order_spatial_requirements["LegacyRequirements"].end(),
                    [](const auto &requirement)
                    {
                      return requirement["Topology"] == "SpatialEdgeCluster" &&
@@ -3292,7 +3295,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                             requirement["Geometry"].contains("PlanViewBoundary");
                    });
   REQUIRE(high_order_spatial_requirement !=
-          high_order_spatial_requirements["Requirements"].end());
+          high_order_spatial_requirements["LegacyRequirements"].end());
   const auto &high_order_spatial_facets =
       (*high_order_spatial_requirement)["Geometry"]["PlanViewFacets"];
   CHECK(std::any_of(high_order_spatial_facets.begin(), high_order_spatial_facets.end(),
@@ -3335,9 +3338,11 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   REQUIRE(exact_high_order_spatial_requirements_input);
   const auto exact_high_order_spatial_requirements =
       json::parse(exact_high_order_spatial_requirements_input);
+  // Legacy Edges/PlanViewBoundary model round trip (comparison table only; a version-2
+  // model matches through its Signature, tested below).
   const auto matched_high_order_spatial =
-      std::find_if(exact_high_order_spatial_requirements["Requirements"].begin(),
-                   exact_high_order_spatial_requirements["Requirements"].end(),
+      std::find_if(exact_high_order_spatial_requirements["LegacyRequirements"].begin(),
+                   exact_high_order_spatial_requirements["LegacyRequirements"].end(),
                    [](const auto &requirement)
                    {
                      return requirement["Topology"] == "SpatialEdgeCluster" &&
@@ -3346,7 +3351,61 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                                 "high-order-curved-spatial-exact-mask";
                    });
   CHECK(matched_high_order_spatial !=
-        exact_high_order_spatial_requirements["Requirements"].end());
+        exact_high_order_spatial_requirements["LegacyRequirements"].end());
+
+  // Version-2 round trip: a model carrying a feature's canonical Signature matches that
+  // feature by key (and only that feature), independent of the mesh ordering.
+  {
+    const auto &identification = high_order_spatial_requirements["Identification"];
+    REQUIRE(identification["Version"] == 2);
+    const auto cluster_feature = std::find_if(
+        identification["Features"].begin(), identification["Features"].end(),
+        [](const auto &feature) { return feature["Type"] == "SpatialEdgeCluster"; });
+    REQUIRE(cluster_feature != identification["Features"].end());
+    CHECK((*cluster_feature)["Match"]["Status"] == "Missing");
+    auto signature_library = exact_high_order_spatial_library;
+    auto &signature_model = signature_library["Models"].back();
+    signature_model["Name"] = "v2-signature-cluster";
+    signature_model["Signature"] = (*cluster_feature)["Signature"];
+    const auto signature_library_path =
+        temp.temp_dir / "fabrication-process-v2-signature-3d.json";
+    std::ofstream signature_library_output(signature_library_path);
+    signature_library_output << signature_library.dump(2) << "\n";
+    signature_library_output.close();
+    high_order_spatial_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+        signature_library_path.string();
+    IoData signature_iodata(high_order_spatial_config, false);
+    signature_iodata.boundaries.cracked_attributes.insert(9);
+    signature_iodata.boundaries.cracked_attributes.insert(10);
+    const auto signature_requirements_path =
+        temp.temp_dir / "surface-response-requirements-v2-signature.json";
+    WriteSurfaceResponseRequirements(signature_iodata, *high_order_spatial_mesh,
+                                     signature_requirements_path.string());
+    std::ifstream signature_requirements_input(signature_requirements_path);
+    REQUIRE(signature_requirements_input);
+    const auto signature_requirements = json::parse(signature_requirements_input);
+    const auto &signature_identification = signature_requirements["Identification"];
+    CHECK(signature_identification["GeometryDigest"] == identification["GeometryDigest"]);
+    int matched_clusters = 0;
+    for (const auto &feature : signature_identification["Features"])
+    {
+      if (feature["Match"]["Status"] == "Matched")
+      {
+        CHECK(feature["Type"] == "SpatialEdgeCluster");
+        CHECK(feature["Hash"] == (*cluster_feature)["Hash"]);
+        CHECK(feature["Match"]["Model"] == "v2-signature-cluster");
+        matched_clusters++;
+      }
+    }
+    CHECK(matched_clusters >= 1);
+    CHECK(std::any_of(signature_requirements["Requirements"].begin(),
+                      signature_requirements["Requirements"].end(),
+                      [](const auto &requirement)
+                      {
+                        return requirement["Topology"] == "SpatialEdgeCluster" &&
+                               requirement["Status"] == "Exact";
+                      }));
+  }
 
   auto rounded_concave_island_config = island_config;
   rounded_concave_island_config["Solver"]["Electrostatic"]["ResponseCorrection"]
@@ -3518,11 +3577,15 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   std::ifstream junction_requirements_input(junction_requirements_path);
   REQUIRE(junction_requirements_input);
   const json junction_requirements = json::parse(junction_requirements_input);
-  const auto junction_requirement =
-      std::find_if(junction_requirements["Requirements"].begin(),
-                   junction_requirements["Requirements"].end(), [](const auto &requirement)
-                   { return requirement["Topology"] == "Junction"; });
-  REQUIRE(junction_requirement != junction_requirements["Requirements"].end());
+  // The Arms / PlanViewFacets / PlanViewBoundary record format and the exact-mask model
+  // round trip belong to the legacy classifier; since the version-2 manifest derives its
+  // Requirements from the identification features (matched by signature), these checks
+  // read the LegacyRequirements comparison table.
+  const auto junction_requirement = std::find_if(
+      junction_requirements["LegacyRequirements"].begin(),
+      junction_requirements["LegacyRequirements"].end(),
+      [](const auto &requirement) { return requirement["Topology"] == "Junction"; });
+  REQUIRE(junction_requirement != junction_requirements["LegacyRequirements"].end());
   const auto &junction_geometry = (*junction_requirement)["Geometry"];
   CHECK((*junction_requirement)["Status"] == "Missing");
   CHECK(junction_geometry["SignatureVersion"] == 2);
@@ -3576,14 +3639,14 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   REQUIRE(exact_junction_requirements_input);
   const auto exact_junction_requirements = json::parse(exact_junction_requirements_input);
   const auto matched_exact_junction = std::find_if(
-      exact_junction_requirements["Requirements"].begin(),
-      exact_junction_requirements["Requirements"].end(),
+      exact_junction_requirements["LegacyRequirements"].begin(),
+      exact_junction_requirements["LegacyRequirements"].end(),
       [](const auto &requirement)
       {
         return requirement["Topology"] == "Junction" &&
                requirement["SelectedModels"][0]["Name"] == "junction-4x90-exact-mask";
       });
-  CHECK(matched_exact_junction != exact_junction_requirements["Requirements"].end());
+  CHECK(matched_exact_junction != exact_junction_requirements["LegacyRequirements"].end());
 
   auto impedance_junction_config = junction_maxwell_config;
   impedance_junction_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6};
@@ -3659,15 +3722,15 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   REQUIRE(spatial_requirements_input);
   const json spatial_requirements = json::parse(spatial_requirements_input);
   const auto spatial_requirement =
-      std::find_if(spatial_requirements["Requirements"].begin(),
-                   spatial_requirements["Requirements"].end(),
+      std::find_if(spatial_requirements["LegacyRequirements"].begin(),
+                   spatial_requirements["LegacyRequirements"].end(),
                    [](const auto &requirement)
                    {
                      return requirement["Topology"] == "SpatialEdgeCluster" &&
                             requirement["Status"] == "Missing" &&
                             requirement["Geometry"].contains("Edges");
                    });
-  REQUIRE(spatial_requirement != spatial_requirements["Requirements"].end());
+  REQUIRE(spatial_requirement != spatial_requirements["LegacyRequirements"].end());
   const auto &spatial_edges = (*spatial_requirement)["Geometry"]["Edges"];
   REQUIRE(spatial_edges.size() >= 2);
   std::set<int> spatial_conductors;
@@ -3737,15 +3800,16 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK_FALSE(empty_spatial_requirements["Complete"]);
   CHECK(empty_spatial_requirements["Summary"]["Counts"]["Exact"] == 0);
   const auto empty_spatial_requirement =
-      std::find_if(empty_spatial_requirements["Requirements"].begin(),
-                   empty_spatial_requirements["Requirements"].end(),
+      std::find_if(empty_spatial_requirements["LegacyRequirements"].begin(),
+                   empty_spatial_requirements["LegacyRequirements"].end(),
                    [](const auto &requirement)
                    {
                      return requirement["Topology"] == "SpatialEdgeCluster" &&
                             requirement["Status"] == "Missing" &&
                             requirement["Geometry"].contains("PlanViewBoundary");
                    });
-  REQUIRE(empty_spatial_requirement != empty_spatial_requirements["Requirements"].end());
+  REQUIRE(empty_spatial_requirement !=
+          empty_spatial_requirements["LegacyRequirements"].end());
   CHECK((*empty_spatial_requirement)["Geometry"].contains("PlanViewFacets"));
 
   std::ifstream spatial_cluster_library_input(spatial_cluster_library_3d_path);
@@ -3813,14 +3877,15 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     REQUIRE(input);
     const json manifest = json::parse(input);
     const auto requirement =
-        std::find_if(manifest["Requirements"].begin(), manifest["Requirements"].end(),
+        std::find_if(manifest["LegacyRequirements"].begin(),
+                     manifest["LegacyRequirements"].end(),
                      [&](const auto &entry)
                      {
                        return entry["Topology"] == "SpatialEdgeCluster" &&
                               entry["Geometry"].contains("Edges") &&
                               entry["Geometry"]["Edges"].size() == spatial_edges.size();
                      });
-    REQUIRE(requirement != manifest["Requirements"].end());
+    REQUIRE(requirement != manifest["LegacyRequirements"].end());
     CHECK((*requirement)["Status"] == expected_status);
   };
   CheckPlanViewMaskStatus(exact_mask_library_path, "Exact", "exact");
@@ -3949,8 +4014,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   REQUIRE(cross_layer_requirements_input);
   const json cross_layer_requirements = json::parse(cross_layer_requirements_input);
   const auto cross_layer_requirement =
-      std::find_if(cross_layer_requirements["Requirements"].begin(),
-                   cross_layer_requirements["Requirements"].end(),
+      std::find_if(cross_layer_requirements["LegacyRequirements"].begin(),
+                   cross_layer_requirements["LegacyRequirements"].end(),
                    [](const auto &requirement)
                    {
                      if (requirement["Topology"] != "SpatialEdgeCluster" ||
@@ -3965,7 +4030,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                      }
                      return slots.size() == 2;
                    });
-  REQUIRE(cross_layer_requirement != cross_layer_requirements["Requirements"].end());
+  REQUIRE(cross_layer_requirement != cross_layer_requirements["LegacyRequirements"].end());
   std::set<int> cross_layer_slots;
   for (const auto &edge : (*cross_layer_requirement)["Geometry"]["Edges"])
   {

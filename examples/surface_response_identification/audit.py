@@ -11,10 +11,13 @@
 
 Writes <prefix>.json and <prefix>.md; exit status 1 when any gate fails. The perimeter E is
 recomputed from the mesh (perimeter.py); the manifest supplies the aggregate assignment.
-Gates that the current manifest cannot support (per-segment multiplicity, feature positions)
-are reported as NOT-EVALUABLE and count as failures: decision 73(4) makes the identification
-output a complete feature list, and an audit that cannot check the partition is a defect of
-the contract, not of the audit.
+With a version-2 manifest (top-level "Identification": per-segment assignment table, vertex
+table, feature signatures, exclusions; palace/models/SURFACE-RESPONSE-IDENTIFICATION.md) the
+gates are exact: every segment key is matched against the mesh perimeter, the portions must
+cover every assigned segment exactly once, every corner / endpoint / junction vertex must carry
+exactly one feature, and the excluded classes must be recorded with their length. Version-1
+manifests fall back to the aggregate reading, where gates the manifest cannot support are
+NOT-EVALUABLE and count as failures (decision 73(4)).
 """
 
 import argparse
@@ -164,6 +167,189 @@ def corner_clusters(perimeter, radius):
     return {"Clusters": clusters, "MultiVertexClusters": len(multi), "MinMultiClusterCenterDistance": None if math.isinf(min_center_distance) else min_center_distance}
 
 
+def _segment_key(p0, p1, decimals=7):
+    a = tuple(round(float(x), decimals) for x in p0)
+    b = tuple(round(float(x), decimals) for x in p1)
+    return (a, b) if a <= b else (b, a)
+
+
+EXCLUSION_CLASS_OF_AUDIT_KIND = {"NONPLANAR": "NonPlanar", "CROSS_LAYER": "CrossLayer", "NONMANIFOLD": "NonManifold"}
+VERTEX_FEATURE_TYPES = ("ConvexCorner", "ConcaveCorner", "Endpoint", "Junction")
+
+
+def identification_gates(identification, perimeter, census, radius, targets, compare=None):
+    """Gates A1 / A2 from the version-2 contract; returns (gates, summary)."""
+    gates = []
+    tol = max(1.0e-9 * radius, 1.0e-12)
+    segments = identification["Segments"]
+    features = {f["Id"]: f for f in identification["Features"]}
+
+    # Perimeter agreement by canonical segment key (mesh units on both sides).
+    audit_keys = {}
+    for i, e in enumerate(perimeter.edges):
+        p0, p1 = perimeter.edge_points(e)
+        audit_keys[_segment_key(p0, p1)] = i
+    manifest_keys = {_segment_key(s["Key"][0], s["Key"][1]): j for j, s in enumerate(segments)}
+    missing_in_manifest = [k for k in audit_keys if k not in manifest_keys]
+    missing_in_audit = [k for k in manifest_keys if k not in audit_keys]
+    # Keys that straddle a rounding boundary of the manifest's length grid: match the
+    # leftovers by distance (1e-6 R on both endpoints).
+    if missing_in_manifest and missing_in_audit:
+        key_tolerance = 1.0e-6 * radius
+        still_missing = []
+        for k in missing_in_manifest:
+            hit = next((o for o in missing_in_audit if all(abs(a - b) <= key_tolerance for pa, pb in zip(k, o) for a, b in zip(pa, pb))), None)
+            if hit is None:
+                still_missing.append(k)
+            else:
+                missing_in_audit.remove(hit)
+        missing_in_manifest = still_missing
+    # Segments the classifier never sees (sheets whose faces cancel in the odd-incidence
+    # perimeter) are the audit's NONPLANAR / CROSS_LAYER / NONMANIFOLD edges in most meshes;
+    # report them separately from PHYSICAL disagreements.
+    unseen_by_kind = Counter(perimeter.edges[audit_keys[k]].kind for k in missing_in_manifest)
+    manifest_length = sum(float(s["Length"]) for s in segments)
+    gates.append(
+        gate(
+            "perimeter-agreement",
+            unseen_by_kind.get("PHYSICAL", 0) == 0 and unseen_by_kind.get("TRUNCATION", 0) == 0 and not missing_in_audit,
+            {
+                "AuditSegments": len(perimeter.edges),
+                "ManifestSegments": len(segments),
+                "ManifestPerimeterLength": manifest_length,
+                "AuditPerimeterLength": perimeter.length(),
+                "UnseenByClassifier": dict(unseen_by_kind),
+                "UnseenLength": float(sum(perimeter.edges[audit_keys[k]].length for k in missing_in_manifest)),
+                "NotInMesh": len(missing_in_audit),
+            },
+        )
+    )
+
+    # Partition: every non-excluded segment covered exactly once by its portions.
+    assigned_length = 0.0
+    excluded_length = 0.0
+    defects = []
+    covered_segments = 0
+    for j, s in enumerate(segments):
+        length = float(s["Length"])
+        if "Exclusion" in s:
+            excluded_length += length
+            continue
+        portions = sorted((float(a), float(b), int(f)) for a, b, f in s.get("Portions", []))
+        if not portions:
+            defects.append({"Segment": j, "Defect": "no portion", "Length": length})
+            continue
+        covered = 0.0
+        cursor = 0.0
+        ok = True
+        for a, b, f in portions:
+            if a < cursor - tol or b <= a:
+                ok = False
+            if f not in features:
+                ok = False
+            covered += b - a
+            cursor = max(cursor, b)
+        if not ok or abs(covered - length) > 1.0e-6 * max(length, radius) or abs(cursor - length) > 1.0e-6 * max(length, radius):
+            defects.append({"Segment": j, "Defect": "gap or overlap", "Length": length, "Covered": covered, "Portions": portions[:8]})
+        assigned_length += covered
+        covered_segments += 1
+    targeted_length = census["TargetedPhysicalLength"]
+    gates.append(
+        gate(
+            "A1-length-partition",
+            abs(assigned_length + excluded_length - manifest_length) <= 1.0e-6 * max(manifest_length, radius) and abs(assigned_length - targeted_length) <= 1.0e-6 * max(targeted_length, radius),
+            {"AssignedLength": assigned_length, "ExcludedLength": excluded_length, "ManifestPerimeterLength": manifest_length, "AuditTargetedPhysicalLength": targeted_length, "Deficit": targeted_length - assigned_length},
+        )
+    )
+    unassigned = [j for j, s in enumerate(segments) if "Exclusion" not in s and not s.get("Portions")]
+    gates.append(gate("A1-count-partition", not unassigned and covered_segments + sum(1 for s in segments if "Exclusion" in s) == len(segments), {"Segments": len(segments), "Covered": covered_segments, "Excluded": sum(1 for s in segments if "Exclusion" in s), "Unassigned": len(unassigned)}))
+    gates.append(gate("A1-multiplicity", not defects, {"Defects": len(defects), "Examples": defects[:10], "Basis": "per-segment portions sorted and contiguous, each portion in exactly one feature"}))
+
+    # Feature portions must agree with the segment table (the two views of one assignment).
+    feature_lengths = defaultdict(float)
+    for s in segments:
+        for a, b, f in s.get("Portions", []):
+            feature_lengths[int(f)] += float(b) - float(a)
+    length_mismatch = [f for f in features.values() if abs(feature_lengths.get(f["Id"], 0.0) - float(f["Length"])) > 1.0e-6 * max(float(f["Length"]), radius)]
+    gates.append(gate("A1-weights", not length_mismatch, {"FeatureLengthMismatches": len(length_mismatch), "Basis": "every feature's Length equals the sum of its segment portions; one model per feature (weight 1)"}))
+
+    # Vertex census: every corner / endpoint / junction (not a cut) and every rounded corner is
+    # exactly one feature or cluster member.
+    manifest_vertices = identification["Vertices"]
+    typed = Counter(v["Type"] for v in manifest_vertices)
+    unassigned_vertices = [v for v in manifest_vertices if v["Type"] in VERTEX_FEATURE_TYPES + ("RoundedCorner",) and v.get("Feature", -1) < 0]
+    manifest_feature_vertices = sum(typed.get(t, 0) for t in VERTEX_FEATURE_TYPES)
+    manifest_rounded = typed.get("RoundedCorner", 0)
+    audit_feature_vertices = census["FeatureVertices"]
+    audit_rounded = census["RoundedRuns"]["RoundedCorners"]
+    manifest_angles = Counter()
+    for v in manifest_vertices:
+        if v["Type"] in ("ConvexCorner", "ConcaveCorner"):
+            manifest_angles[round(180.0 - float(v["TurnDegrees"]), 6)] += 1
+    audit_angles = Counter(round(180.0 - c["TurnDegrees"], 6) for c in census["Corners"] if c["Kind"] == "CORNER")
+    gates.append(
+        gate(
+            "A1-vertex-census",
+            not unassigned_vertices and manifest_feature_vertices == audit_feature_vertices and manifest_rounded == audit_rounded and manifest_angles == audit_angles and typed.get("Excluded", 0) == 0,
+            {
+                "AuditCornerEndpointJunction": audit_feature_vertices,
+                "ManifestCornerEndpointJunction": manifest_feature_vertices,
+                "AuditRoundedCorners": audit_rounded,
+                "ManifestRoundedCorners": manifest_rounded,
+                "ManifestByType": dict(typed),
+                "UnassignedVertices": len(unassigned_vertices),
+                "AuditInteriorAngles": {str(k): v for k, v in sorted(audit_angles.items())},
+                "ManifestCornerAngles": {str(k): v for k, v in sorted(manifest_angles.items())},
+            },
+        )
+    )
+
+    # Exclusions: every excluded class the audit finds in the mesh must be recorded with its
+    # length (classes the classifier never sees are reported as the gap they are).
+    recorded = defaultdict(float)
+    for e in identification["Exclusions"]:
+        recorded[e["Class"]] += float(e["Length"])
+    exclusion_detail = {}
+    exclusions_ok = True
+    for kind, cls in EXCLUSION_CLASS_OF_AUDIT_KIND.items():
+        audit_length = census["LengthByClass"].get(kind, 0.0)
+        exclusion_detail[cls] = {"AuditLength": audit_length, "RecordedLength": recorded.get(cls, 0.0)}
+        if audit_length > tol and recorded.get(cls, 0.0) < audit_length - 1.0e-6 * audit_length:
+            exclusions_ok = False
+    exclusion_detail["Recorded"] = dict(recorded)
+    exclusion_detail["UnseenByClassifier"] = dict(unseen_by_kind)
+    gates.append(gate("A1-exclusions-recorded", exclusions_ok, exclusion_detail))
+
+    # A2: cluster regions are disjoint by construction (merged when their cores are within 2R);
+    # check the observable consequence: no two clusters share a segment portion, and report
+    # the minimum distance between the frames' origins.
+    clusters = [f for f in features.values() if f["Type"] == "SpatialEdgeCluster"]
+    shared = 0
+    owner = {}
+    for f in clusters:
+        for seg, a, b in f["Portions"]:
+            for g, (c, d) in owner.get(seg, []):
+                if min(b, d) - max(a, c) > tol and g != f["Id"]:
+                    shared += 1
+            owner.setdefault(seg, []).append((f["Id"], (a, b)))
+    origins = [np.array(f["Frame"]["Origin"]) for f in clusters]
+    min_origin_distance = min((float(np.linalg.norm(a - b)) for i, a in enumerate(origins) for b in origins[i + 1 :]), default=None)
+    gates.append(gate("A2-cluster-balls", shared == 0, {"Clusters": len(clusters), "SharedPortions": shared, "MinOriginDistance": min_origin_distance, "TwoR": 2.0 * radius, "Basis": "cluster regions are the connected union of radius-R balls (merged below 2R); disjointness checked on the claimed portions"}))
+
+    summary = {
+        "Features": Counter(f["Type"] for f in features.values()),
+        "FeatureLengths": {t: sum(float(f["Length"]) for f in features.values() if f["Type"] == t) for t in sorted({f["Type"] for f in features.values()})},
+        "Matched": {f"{t}/{st}": n for (t, st), n in sorted(Counter((f["Type"], f["Match"]["Status"]) for f in features.values()).items())},
+        "DistinctHashes": len({f["Hash"] for f in features.values()}),
+        "Clusters": [{"Length": f["Length"], "EdgeCount": f["Signature"].get("EdgeCount"), "Vertices": len(f["Signature"].get("Vertices", [])), "Hash": f["Hash"][:12], "Chirality": f["Chirality"], "Status": f["Match"]["Status"]} for f in clusters],
+        "Exclusions": identification["Exclusions"],
+        "Totals": identification["Totals"],
+        "GeometryDigest": identification["GeometryDigest"],
+        "Conventions": identification.get("Conventions"),
+    }
+    return gates, summary
+
+
 def run_audit(args):
     with open(args.config) as source:
         config = json.load(source)
@@ -185,8 +371,12 @@ def run_audit(args):
 
     gates = []
     statistics = summary["Statistics"]
+    identification = manifest.get("Identification")
+    v2_summary = None
+    if identification:
+        gates, v2_summary = identification_gates(identification, perimeter, census, radius, targets)
     audit_segments = census["EdgesByClass"].get("PHYSICAL", 0) + census["EdgesByClass"].get("TRUNCATION", 0)
-    if "MetalSegments" in statistics:
+    if "MetalSegments" in statistics and not identification:
         bisected = bool(log and log.get("Bisection"))
         gates.append(
             gate(
@@ -199,98 +389,102 @@ def run_audit(args):
             gates.append(gate("chain-agreement", statistics["PhysicalChains"] == perimeter.chains, {"ClassifierPhysicalChains": statistics["PhysicalChains"], "AuditChains": perimeter.chains}))
 
     length = census["TargetedPhysicalLength"]
-    assigned = summary["TranslationalLength"]
-    deficit = length - assigned
-    tolerance = max(1.0e-10 * radius * max(1, census["TargetedPhysicalEdges"]), 1.0e-9 * length)
-    gates.append(
-        gate(
-            "A1-length-partition",
-            abs(deficit) <= tolerance,
-            {"TargetedPhysicalLength": length, "AssignedTranslationalLength": assigned, "Deficit": deficit, "DeficitFraction": deficit / length if length else None, "Tolerance": tolerance},
-        )
-    )
-    omitted = log["OmittedSegments"] if log else None
-    count_detail = {"TargetedPhysicalEdges": census["TargetedPhysicalEdges"], "AssignedTranslationalCount": summary["TranslationalCount"], "OmittedFromLog": omitted}
-    if omitted is None:
-        count_ok = summary["TranslationalCount"] == census["TargetedPhysicalEdges"]
+    if identification:
+        deficit = length - float(identification["Totals"]["AssignedLength"])
+        excluded_length = sum(census["LengthByClass"].get(k, 0.0) for k in ("NONPLANAR", "CROSS_LAYER", "NONMANIFOLD"))
     else:
-        count_ok = summary["TranslationalCount"] + omitted == census["TargetedPhysicalEdges"] and omitted == 0
-        count_detail["Reconciled"] = summary["TranslationalCount"] + omitted == census["TargetedPhysicalEdges"]
-    gates.append(gate("A1-count-partition", count_ok, count_detail))
-    gates.append(
-        gate(
-            "A1-multiplicity",
-            count_ok and abs(deficit) <= tolerance,
-            {"Basis": "aggregate proxy (count and length balance); the manifest carries no per-segment assignment, so an equal-length double count and gap cannot be separated", "ContractGap": "no per-segment assignment / feature positions in surface-response-requirements.json"},
-            evaluable=False if not (count_ok and abs(deficit) <= tolerance) else True,
+        assigned = summary["TranslationalLength"]
+        deficit = length - assigned
+        tolerance = max(1.0e-10 * radius * max(1, census["TargetedPhysicalEdges"]), 1.0e-9 * length)
+        gates.append(
+            gate(
+                "A1-length-partition",
+                abs(deficit) <= tolerance,
+                {"TargetedPhysicalLength": length, "AssignedTranslationalLength": assigned, "Deficit": deficit, "DeficitFraction": deficit / length if length else None, "Tolerance": tolerance},
+            )
         )
-    )
-    gates.append(gate("A1-weights", not summary["WeightDefects"], {"Defects": summary["WeightDefects"]}))
+        omitted = log["OmittedSegments"] if log else None
+        count_detail = {"TargetedPhysicalEdges": census["TargetedPhysicalEdges"], "AssignedTranslationalCount": summary["TranslationalCount"], "OmittedFromLog": omitted}
+        if omitted is None:
+            count_ok = summary["TranslationalCount"] == census["TargetedPhysicalEdges"]
+        else:
+            count_ok = summary["TranslationalCount"] + omitted == census["TargetedPhysicalEdges"] and omitted == 0
+            count_detail["Reconciled"] = summary["TranslationalCount"] + omitted == census["TargetedPhysicalEdges"]
+        gates.append(gate("A1-count-partition", count_ok, count_detail))
+        gates.append(
+            gate(
+                "A1-multiplicity",
+                count_ok and abs(deficit) <= tolerance,
+                {"Basis": "aggregate proxy (count and length balance); the manifest carries no per-segment assignment, so an equal-length double count and gap cannot be separated", "ContractGap": "no per-segment assignment / feature positions in surface-response-requirements.json"},
+                evaluable=False if not (count_ok and abs(deficit) <= tolerance) else True,
+            )
+        )
+        gates.append(gate("A1-weights", not summary["WeightDefects"], {"Defects": summary["WeightDefects"]}))
 
-    audit_vertices = census["FeatureVertices"] + census["RoundedRuns"]["RoundedCorners"]
-    manifest_vertices = summary["VertexFeatureCount"]
-    # The log's unmatched vertices are the Missing vertex records of the manifest (no model),
-    # not an extra class; the residual is what the manifest does not enumerate at all.
-    unmatched = log.get("UnmatchedVertices", 0) if log else 0
-    residual = audit_vertices - manifest_vertices
-    corner_angles = Counter(round(180.0 - c["TurnDegrees"], 6) for c in census["Corners"] if c["Kind"] == "CORNER")
-    manifest_angles = Counter()
-    for r in manifest["Requirements"]:
-        if r["Topology"] in ("ConvexCorner", "ConcaveCorner"):
-            manifest_angles[round(float(r["Geometry"].get("AngleDegrees", float("nan"))), 6)] += int(r["Count"])
-    # A positive residual with spatial clusters present may be corners absorbed into the
-    # clusters (the manifest does not enumerate them: contract gap) or silently dropped
-    # vertices; without clusters it is a silent drop; a negative residual is a double count.
-    cluster_records = len(summary["Clusters"])
-    gates.append(
-        gate(
-            "A1-vertex-census",
-            residual == 0,
-            {
-                "AuditCornerEndpointJunction": audit_vertices,
-                "AuditByKind": {k: census["VerticesByKind"].get(k, 0) for k in ("CORNER", "ENDPOINT", "JUNCTION")},
-                "AuditTruncationCuts": census["TruncationCuts"],
-                "AuditRoundedCorners": census["RoundedRuns"]["RoundedCorners"],
-                "ManifestVertexFeatures": manifest_vertices,
-                "UnmatchedVerticesFromLog": unmatched,
-                "Residual": residual,
-                "ManifestClusterRecords": cluster_records,
-                "ResidualMeaning": "audit vertices minus manifest vertex records: > 0 with clusters = absorbed into clusters or dropped (not enumerated by the contract), > 0 without clusters = dropped, < 0 = double counted",
-                "AuditInteriorAngles": {str(k): v for k, v in sorted(corner_angles.items())},
-                "ManifestCornerAngles": {str(k): v for k, v in sorted(manifest_angles.items())},
-                "CornerTurnToleranceDegrees": args.corner_tolerance,
-            },
-            evaluable=not (residual > 0 and cluster_records > 0),
+        audit_vertices = census["FeatureVertices"] + census["RoundedRuns"]["RoundedCorners"]
+        manifest_vertices = summary["VertexFeatureCount"]
+        # The log's unmatched vertices are the Missing vertex records of the manifest (no model),
+        # not an extra class; the residual is what the manifest does not enumerate at all.
+        unmatched = log.get("UnmatchedVertices", 0) if log else 0
+        residual = audit_vertices - manifest_vertices
+        corner_angles = Counter(round(180.0 - c["TurnDegrees"], 6) for c in census["Corners"] if c["Kind"] == "CORNER")
+        manifest_angles = Counter()
+        for r in manifest["Requirements"]:
+            if r["Topology"] in ("ConvexCorner", "ConcaveCorner"):
+                manifest_angles[round(float(r["Geometry"].get("AngleDegrees", float("nan"))), 6)] += int(r["Count"])
+        # A positive residual with spatial clusters present may be corners absorbed into the
+        # clusters (the manifest does not enumerate them: contract gap) or silently dropped
+        # vertices; without clusters it is a silent drop; a negative residual is a double count.
+        cluster_records = len(summary["Clusters"])
+        gates.append(
+            gate(
+                "A1-vertex-census",
+                residual == 0,
+                {
+                    "AuditCornerEndpointJunction": audit_vertices,
+                    "AuditByKind": {k: census["VerticesByKind"].get(k, 0) for k in ("CORNER", "ENDPOINT", "JUNCTION")},
+                    "AuditTruncationCuts": census["TruncationCuts"],
+                    "AuditRoundedCorners": census["RoundedRuns"]["RoundedCorners"],
+                    "ManifestVertexFeatures": manifest_vertices,
+                    "UnmatchedVerticesFromLog": unmatched,
+                    "Residual": residual,
+                    "ManifestClusterRecords": cluster_records,
+                    "ResidualMeaning": "audit vertices minus manifest vertex records: > 0 with clusters = absorbed into clusters or dropped (not enumerated by the contract), > 0 without clusters = dropped, < 0 = double counted",
+                    "AuditInteriorAngles": {str(k): v for k, v in sorted(corner_angles.items())},
+                    "ManifestCornerAngles": {str(k): v for k, v in sorted(manifest_angles.items())},
+                    "CornerTurnToleranceDegrees": args.corner_tolerance,
+                },
+                evaluable=not (residual > 0 and cluster_records > 0),
+            )
         )
-    )
-    excluded_length = sum(census["LengthByClass"].get(k, 0.0) for k in ("NONPLANAR", "CROSS_LAYER", "NONMANIFOLD"))
-    gates.append(
-        gate(
-            "A1-exclusions-recorded",
-            excluded_length == 0.0,
-            {
-                "NonplanarLength": census["LengthByClass"].get("NONPLANAR", 0.0),
-                "CrossLayerLength": census["LengthByClass"].get("CROSS_LAYER", 0.0),
-                "NonmanifoldLength": census["LengthByClass"].get("NONMANIFOLD", 0.0),
-                "UntargetedPhysicalLength": census["UntargetedPhysicalLength"],
-                "Meaning": "decision 73(3): excluded classes must be reported by the identification as coverage gaps; the manifest has no such record, so any nonzero excluded length is a silent omission",
-            },
+        excluded_length = sum(census["LengthByClass"].get(k, 0.0) for k in ("NONPLANAR", "CROSS_LAYER", "NONMANIFOLD"))
+        gates.append(
+            gate(
+                "A1-exclusions-recorded",
+                excluded_length == 0.0,
+                {
+                    "NonplanarLength": census["LengthByClass"].get("NONPLANAR", 0.0),
+                    "CrossLayerLength": census["LengthByClass"].get("CROSS_LAYER", 0.0),
+                    "NonmanifoldLength": census["LengthByClass"].get("NONMANIFOLD", 0.0),
+                    "UntargetedPhysicalLength": census["UntargetedPhysicalLength"],
+                    "Meaning": "decision 73(3): excluded classes must be reported by the identification as coverage gaps; the manifest has no such record, so any nonzero excluded length is a silent omission",
+                },
+            )
         )
-    )
-    a2_ok = clusters["MinMultiClusterCenterDistance"] is None or clusters["MinMultiClusterCenterDistance"] >= 2.0 * radius
-    gates.append(
-        gate(
-            "A2-cluster-balls",
-            a2_ok,
-            {
-                "Basis": "audit-side single-linkage vertex clusters (<= 2R); the manifest carries no cluster positions",
-                "MultiVertexClusters": clusters["MultiVertexClusters"],
-                "ManifestClusterRecords": len(summary["Clusters"]),
-                "MinMultiClusterCenterDistance": clusters["MinMultiClusterCenterDistance"],
-                "TwoR": 2.0 * radius,
-            },
+        a2_ok = clusters["MinMultiClusterCenterDistance"] is None or clusters["MinMultiClusterCenterDistance"] >= 2.0 * radius
+        gates.append(
+            gate(
+                "A2-cluster-balls",
+                a2_ok,
+                {
+                    "Basis": "audit-side single-linkage vertex clusters (<= 2R); the manifest carries no cluster positions",
+                    "MultiVertexClusters": clusters["MultiVertexClusters"],
+                    "ManifestClusterRecords": len(summary["Clusters"]),
+                    "MinMultiClusterCenterDistance": clusters["MinMultiClusterCenterDistance"],
+                    "TwoR": 2.0 * radius,
+                },
+            )
         )
-    )
 
     cluster_interval_length = 0.0
     for r in manifest["Requirements"]:
@@ -321,7 +515,8 @@ def run_audit(args):
         "CornerClusters": {k: v for k, v in clusters.items() if k != "Clusters"},
         "Manifest": {k: v for k, v in summary.items() if k != "Statistics"},
         "ClassifierStatistics": statistics,
-        "Digest": {"Full": M.canonical_digest(manifest), "GeometryOnly": M.canonical_digest(manifest, geometry_only_counts=True)},
+        "Digest": {"Full": M.canonical_digest(manifest), "GeometryOnly": M.canonical_digest(manifest, geometry_only_counts=True), "Geometry": identification["GeometryDigest"] if identification else None},
+        "Identification": v2_summary,
         "Gates": gates,
         "GapBound": gap,
     }
@@ -333,7 +528,15 @@ def run_audit(args):
             "Diff": M.diff_manifests(manifest, other),
             "DiffGeometryOnly": M.diff_manifests(manifest, other, geometry_only_counts=True),
         }
-        gates.append(gate("A3/A5-set-identity", result["Compare"]["Diff"]["Identical"], {"Added": len(result["Compare"]["Diff"]["Added"]), "Removed": len(result["Compare"]["Diff"]["Removed"]), "Changed": len(result["Compare"]["Diff"]["Changed"]), "GeometryOnlyIdentical": result["Compare"]["DiffGeometryOnly"]["Identical"]}))
+        if identification and other.get("Identification"):
+            same = identification["GeometryDigest"] == other["Identification"]["GeometryDigest"]
+            mine = Counter((f["Type"], f["Hash"]) for f in identification["Features"])
+            theirs = Counter((f["Type"], f["Hash"]) for f in other["Identification"]["Features"])
+            result["Compare"]["GeometryDigestIdentical"] = same
+            result["Compare"]["FeatureDiff"] = {"OnlyHere": sorted(f"{t}:{h[:12]}x{n}" for (t, h), n in (mine - theirs).items()), "OnlyThere": sorted(f"{t}:{h[:12]}x{n}" for (t, h), n in (theirs - mine).items())}
+            gates.append(gate("A3/A5-set-identity", same, {"GeometryDigestIdentical": same, "FeatureDiff": result["Compare"]["FeatureDiff"], "V1Identical": result["Compare"]["Diff"]["Identical"]}))
+        else:
+            gates.append(gate("A3/A5-set-identity", result["Compare"]["Diff"]["Identical"], {"Added": len(result["Compare"]["Diff"]["Added"]), "Removed": len(result["Compare"]["Diff"]["Removed"]), "Changed": len(result["Compare"]["Diff"]["Changed"]), "GeometryOnlyIdentical": result["Compare"]["DiffGeometryOnly"]["Identical"]}))
     result["Passed"] = all(g["Status"] == "PASS" for g in gates)
     return result
 
@@ -361,6 +564,15 @@ def render_markdown(result):
     lines.append(f"- edge pairs within 2R: {it['PairsWithin2R']} (parallel {it['ParallelPairs']}, nonparallel {it['NonparallelPairs']}); parallel separations {it['ParallelSeparations']}; knife-edge {it['KnifeEdge']}")
     lines.append(f"- conductors on targeted edges {census['Conductors']}; interface signatures {census['InterfaceSignatures']}")
     lines.append("")
+    if result.get("Identification"):
+        ident = result["Identification"]
+        lines.append("## Identification (manifest version 2)")
+        lines.append(f"- features {dict(ident['Features'])}; lengths {{{', '.join(f'{k}: {v:.6f}' for k, v in ident['FeatureLengths'].items())}}}")
+        lines.append(f"- matched {ident['Matched']}; distinct hashes {ident['DistinctHashes']}")
+        lines.append(f"- totals {ident['Totals']}; exclusions {[(e['Class'], e['Count'], e['Length']) for e in ident['Exclusions']]}")
+        lines.append(f"- clusters {ident['Clusters']}")
+        lines.append(f"- geometry digest `{ident['GeometryDigest'][:16]}`")
+        lines.append("")
     lines.append("## Manifest")
     for k, v in result["Manifest"]["ByTopology"].items():
         lines.append(f"- {k}: records {v['Records']}, count {v['Count']}, length {v['TotalEdgeLength']:.6f}, missing {v['Missing']} ({v['MissingLength']:.6f})")

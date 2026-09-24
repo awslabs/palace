@@ -30,6 +30,7 @@
 #include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
+#include "models/surfaceresponseidentification.hpp"
 #include "utils/communication.hpp"
 #include "utils/edgedistance.hpp"
 #include "utils/enum_string.hpp"
@@ -638,6 +639,10 @@ struct LibraryModel
   std::optional<std::string> plan_view_boundary;
   std::optional<std::string> mask_regularization;
   std::vector<LibraryInterface> interfaces;
+
+  // Version-2 identification signature (the feature's canonical Signature object,
+  // dimensionless parameters) which the key-based matching pass looks up directly.
+  std::optional<nlohmann::json> identification_signature;
 };
 
 struct ProcessLibrary
@@ -1422,6 +1427,14 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
     model.corner_radius = entry.value("CornerRadius", 0.0) / coordinate_scale;
     model.corner_radius_tolerance =
         entry.value("CornerRadiusTolerance", 0.0) / coordinate_scale;
+    if (auto signature = entry.find("Signature"); signature != entry.end())
+    {
+      MFEM_VERIFY(
+          signature->is_object() && signature->contains("Type"),
+          "Fabrication-process response model Signature must be the identification's "
+          "canonical Signature object (with Type)!");
+      model.identification_signature = *signature;
+    }
     model.arm_angles = entry.value("ArmAngles", std::vector<double>{});
     model.arm_angle_tolerance =
         entry.value("ArmAngleTolerance", 0.0) * std::acos(-1.0) / 180.0;
@@ -3809,6 +3822,11 @@ private:
   };
 
   std::map<std::string, Aggregate> requirements;
+  // Version-2 contract: the identification's feature records replace the legacy per-pass
+  // records, which are kept for comparison only under LegacyRequirements.
+  std::map<std::string, Aggregate> legacy_requirements;
+  nlohmann::json identification;
+  bool identification_active = false;
   std::string library_path;
   std::string library_name;
   double matching_radius = 0.0;
@@ -3918,6 +3936,7 @@ public:
   }
 
   double UnscaleLength(double value) const { return value / coordinate_scale; }
+  double CoordinateScale() const { return coordinate_scale; }
 
   double SnapDirection(double value) const
   {
@@ -3932,6 +3951,21 @@ public:
   }
 
   void SetStatistics(nlohmann::json value) { statistics = std::move(value); }
+
+  // Switch the legacy Add() calls to the comparison table; the Requirements array is then
+  // derived from the identification features through AddFeatureRecord().
+  void ActivateIdentification() { identification_active = true; }
+  bool IdentificationActive() const { return identification_active; }
+  void SetIdentification(nlohmann::json value) { identification = std::move(value); }
+
+  void AddFeatureRecord(nlohmann::json requirement, int count, double length)
+  {
+    const std::string key = requirement.dump();
+    auto [it, inserted] = requirements.emplace(key, Aggregate{requirement, 0, 0.0});
+    (void)inserted;
+    it->second.count += count;
+    it->second.total_edge_length += ScaleLength(length);
+  }
 
   void Add(int dimension, LibraryTopology topology,
            const std::map<int, std::map<InterfaceDielectric, int>> &targets_by_slot,
@@ -3979,7 +4013,8 @@ public:
     // Lengths use a tolerance-scaled canonical representation, while angles and
     // directions come from the same production classifier used for model selection.
     const std::string key = requirement.dump();
-    auto [it, inserted] = requirements.emplace(key, Aggregate{requirement, 0, 0.0});
+    auto &table = identification_active ? legacy_requirements : requirements;
+    auto [it, inserted] = table.emplace(key, Aggregate{requirement, 0, 0.0});
     (void)inserted;
     it->second.count++;
     it->second.total_edge_length += ScaleLength(length);
@@ -3997,22 +4032,33 @@ public:
 
   nlohmann::json Build() const
   {
-    nlohmann::json entries = nlohmann::json::array();
     std::map<std::string, int> counts = {{"Exact", 0}, {"Interpolated", 0}, {"Missing", 0}};
     std::map<std::string, double> lengths = {
         {"Exact", 0.0}, {"Interpolated", 0.0}, {"Missing", 0.0}};
-    for (const auto &[key, aggregate] : requirements)
+    auto Entries = [](const std::map<std::string, Aggregate> &table,
+                      std::map<std::string, int> *count_table,
+                      std::map<std::string, double> *length_table)
     {
-      (void)key;
-      auto entry = aggregate.requirement;
-      entry["Count"] = aggregate.count;
-      entry["TotalEdgeLength"] = aggregate.total_edge_length;
-      counts[entry["Status"].get<std::string>()] += aggregate.count;
-      lengths[entry["Status"].get<std::string>()] += aggregate.total_edge_length;
-      entries.push_back(std::move(entry));
-    }
+      nlohmann::json entries = nlohmann::json::array();
+      for (const auto &[key, aggregate] : table)
+      {
+        (void)key;
+        auto entry = aggregate.requirement;
+        entry["Count"] = aggregate.count;
+        entry["TotalEdgeLength"] = aggregate.total_edge_length;
+        if (count_table)
+        {
+          (*count_table)[entry["Status"].get<std::string>()] += aggregate.count;
+          (*length_table)[entry["Status"].get<std::string>()] +=
+              aggregate.total_edge_length;
+        }
+        entries.push_back(std::move(entry));
+      }
+      return entries;
+    };
+    nlohmann::json entries = Entries(requirements, &counts, &lengths);
     nlohmann::json result = {
-        {"Version", 1},
+        {"Version", identification_active ? 2 : 1},
         {"Complete", counts["Missing"] == 0},
         {"Library",
          {{"Path", library_path},
@@ -4025,6 +4071,11 @@ public:
         {"LengthUnit", "mesh"},
         {"Summary", {{"Counts", counts}, {"TotalEdgeLengths", lengths}}},
         {"Requirements", std::move(entries)}};
+    if (identification_active)
+    {
+      result["Identification"] = identification;
+      result["LegacyRequirements"] = Entries(legacy_requirements, nullptr, nullptr);
+    }
     if (!statistics.is_null())
     {
       result["Statistics"] = statistics;
@@ -4963,6 +5014,317 @@ std::optional<SpatialClusterSelection3D> FindSpatialClusterLibraryModel(
     }
   }
   return best;
+}
+
+// Library-model signatures computed from the stored model geometry with the
+// identification's canonicalisation, so that the matching pass is a lookup of feature
+// signatures.
+std::map<std::string, std::string>
+LibrarySignatureKeys(const ProcessLibrary &library,
+                     const AutomaticResponseRequirements &requirements)
+{
+  std::map<std::string, std::string> keys;
+  const double R = library.matching_radius;
+  // A model whose law parameters are not verified cannot equal a device law; give it a key
+  // that no feature produces instead of exporting the unverified parameters.
+  auto Law = [&](const MetalBoundaryLaw &law)
+  {
+    return law.parameters_verified
+               ? requirements.DescribeBoundaryCondition(law).dump()
+               : nlohmann::json{{"Type", BoundaryConditionName(law.type)},
+                                {"Unverified", true}}
+                     .dump();
+  };
+  for (const auto &model : library.models)
+  {
+    std::vector<std::string> interfaces;
+    for (const auto &interface : model.interfaces)
+    {
+      interfaces.push_back(ToString(interface.type));
+    }
+    std::sort(interfaces.begin(), interfaces.end());
+    interfaces.erase(std::unique(interfaces.begin(), interfaces.end()), interfaces.end());
+    const std::string law = Law(model.boundary_condition);
+    std::optional<std::pair<std::string, std::string>> key;
+    if (model.identification_signature)
+    {
+      key = SignatureKeyAndHash(
+          *model.identification_signature,
+          model.identification_signature->at("Type").get<std::string>());
+      keys.emplace(key->first, model.name);
+      continue;
+    }
+    switch (model.topology)
+    {
+      case LibraryTopology::ISOLATED_EDGE:
+        key =
+            SignatureKeyAndHash({{"Interfaces", interfaces}, {"Law", law}}, "IsolatedEdge");
+        break;
+      case LibraryTopology::SAME_CONDUCTOR_GAP:
+      case LibraryTopology::DIFFERENT_CONDUCTOR_GAP:
+      case LibraryTopology::SAME_CONDUCTOR_STRIP:
+        {
+          const bool strip = model.topology == LibraryTopology::SAME_CONDUCTOR_STRIP;
+          const bool different = model.topology == LibraryTopology::DIFFERENT_CONDUCTOR_GAP;
+          std::vector<TranslationalEdge> edges = {
+              {0.0, strip ? -1 : 1, 1, interfaces, law},
+              {model.separation, strip ? 1 : -1, different ? 2 : 1, interfaces, law}};
+          key = SignatureKeyAndHash(CanonicalTranslationalSignature(edges, R).signature,
+                                    TopologyIdentifier(model.topology));
+          break;
+        }
+      case LibraryTopology::PARALLEL_EDGE_CLUSTER:
+        {
+          std::vector<TranslationalEdge> edges;
+          for (const auto &edge : model.cluster_edges)
+          {
+            edges.push_back({edge.offset, edge.gap_direction >= 0 ? 1 : -1, edge.conductor,
+                             interfaces, law});
+          }
+          if (edges.size() >= 2)
+          {
+            key = SignatureKeyAndHash(CanonicalTranslationalSignature(edges, R).signature,
+                                      "ParallelEdgeCluster");
+          }
+          break;
+        }
+      case LibraryTopology::CONVEX_CORNER:
+      case LibraryTopology::CONCAVE_CORNER:
+        key = SignatureKeyAndHash(
+            {{"Interfaces", interfaces},
+             {"Law", law},
+             {"AngleDegrees",
+              std::round(model.angle * 180.0 / std::acos(-1.0) * 1.0e6) * 1.0e-6},
+             {"CornerRadiusOverR", std::round(model.corner_radius / R * 1.0e10) * 1.0e-10}},
+            TopologyIdentifier(model.topology));
+        break;
+      case LibraryTopology::ENDPOINT:
+        key = SignatureKeyAndHash({{"Interfaces", interfaces}, {"Law", law}}, "Endpoint");
+        break;
+      case LibraryTopology::JUNCTION:
+        {
+          std::vector<double> angles;
+          for (const double angle : model.arm_angles)
+          {
+            angles.push_back(std::round(angle * 1.0e6) * 1.0e-6);
+          }
+          std::vector<double> best = angles;
+          for (const bool reverse : {false, true})
+          {
+            std::vector<double> sequence = angles;
+            if (reverse)
+            {
+              std::reverse(sequence.begin(), sequence.end());
+            }
+            for (std::size_t shift = 0; shift < sequence.size(); shift++)
+            {
+              std::rotate(sequence.begin(), sequence.begin() + 1, sequence.end());
+              if (sequence < best)
+              {
+                best = sequence;
+              }
+            }
+          }
+          key = SignatureKeyAndHash(
+              {{"Interfaces", interfaces}, {"Law", law}, {"ArmAnglesDegrees", best}},
+              "Junction");
+          break;
+        }
+      case LibraryTopology::SPATIAL_EDGE_CLUSTER:
+        {
+          std::vector<SignaturePortion> portions;
+          std::map<int, InterfaceDielectric> slot_types;
+          for (const auto &interface : model.interfaces)
+          {
+            slot_types[interface.slot] = interface.type;
+          }
+          for (const auto &edge : model.spatial_edges)
+          {
+            const Point3D tangent =
+                Normalize(Cross(edge.process_normal, edge.gap_direction));
+            std::vector<std::string> edge_interfaces;
+            if (auto it = slot_types.find(edge.interface_slot); it != slot_types.end())
+            {
+              edge_interfaces.push_back(ToString(it->second));
+            }
+            portions.push_back({Add(edge.point, Scale(edge.interval[0], tangent)),
+                                Add(edge.point, Scale(edge.interval[1], tangent)),
+                                edge.gap_direction, edge.conductor, edge_interfaces,
+                                Law(edge.boundary_condition)});
+          }
+          if (!portions.empty())
+          {
+            auto canonical = CanonicalClusterSignature(
+                portions, {}, model.spatial_edges.front().process_normal, R);
+            nlohmann::json signature = canonical.signature;
+            signature["EdgeCount"] = portions.size();
+            key = SignatureKeyAndHash(signature, "SpatialEdgeCluster");
+          }
+          break;
+        }
+    }
+    if (key)
+    {
+      keys.emplace(key->first, model.name);
+    }
+  }
+  return keys;
+}
+
+// Geometry identification (design: SURFACE-RESPONSE-IDENTIFICATION.md): pure function of
+// the perimeter, the segment frames and R; then the key-based matching pass and the derived
+// version-1 requirement records.
+void RunGeometryIdentification(const MetalEdgeGeometry &geometry,
+                               const std::vector<EdgeSegment3D> &framed_segments,
+                               const ProcessLibrary &library,
+                               AutomaticResponseRequirements &requirements)
+{
+  IdentificationInput input;
+  input.radius = library.matching_radius;
+  std::map<std::size_t, const EdgeSegment3D *> framed;
+  for (const auto &segment : framed_segments)
+  {
+    framed.emplace(segment.geometry_index, &segment);
+  }
+  input.segments.resize(geometry.segments.size());
+  for (std::size_t i = 0; i < geometry.segments.size(); i++)
+  {
+    const auto &source = geometry.segments[i];
+    auto &segment = input.segments[i];
+    segment.p0 = geometry.vertices[source.vertices[0]].coordinate;
+    segment.p1 = geometry.vertices[source.vertices[1]].coordinate;
+    segment.vertices = source.vertices;
+    segment.chain = source.physical_chain;
+    segment.truncation = source.type == MetalEdgeSegmentType::TRUNCATION;
+    if (auto it = framed.find(i); it != framed.end())
+    {
+      segment.conductor = it->second->conductor;
+      segment.targets = it->second->targets;
+      segment.gap_direction = it->second->axis_u;
+      segment.process_normal = it->second->axis_v;
+      segment.boundary_law =
+          requirements.DescribeBoundaryCondition(it->second->boundary_condition).dump();
+    }
+    else if (!segment.truncation)
+    {
+      segment.exclusion = std::make_pair(
+          "Untargeted", "physical metal edge without a target interface (or excluded by "
+                        "EdgeExcludeAttributes)");
+    }
+  }
+  input.vertices.resize(geometry.vertices.size());
+  for (std::size_t v = 0; v < geometry.vertices.size(); v++)
+  {
+    input.vertices[v].coordinate = geometry.vertices[v].coordinate;
+    input.vertices[v].segments = geometry.vertices[v].segments;
+    input.vertices[v].physical_type = geometry.vertices[v].physical_type;
+    input.vertices[v].on_truncation_boundary = geometry.vertices[v].on_truncation_boundary;
+  }
+  auto result = IdentifyMetalPerimeter(input);
+
+  // Matching pass: signature lookup only.
+  const auto library_keys = LibrarySignatureKeys(library, requirements);
+  for (auto &feature : result.features)
+  {
+    if (auto it = library_keys.find(feature.signature_key); it != library_keys.end())
+    {
+      feature.matched_model = it->second;
+    }
+  }
+
+  // Version-1 records derived from the features.
+  requirements.ActivateIdentification();
+  const double R = library.matching_radius;
+  for (const auto &feature : result.features)
+  {
+    std::set<std::map<InterfaceDielectric, int>> target_maps;
+    for (const auto &portion : feature.portions)
+    {
+      target_maps.insert(input.segments[portion.segment].targets);
+    }
+    nlohmann::json interfaces = nlohmann::json::array();
+    int slot = 0;
+    for (const auto &targets : target_maps)
+    {
+      for (const auto &[type, target] : targets)
+      {
+        interfaces.push_back(
+            {{"Slot", slot}, {"Type", ToString(type)}, {"Target", target}});
+      }
+      slot++;
+    }
+    nlohmann::json law =
+        feature.signature.contains("Law")
+            ? nlohmann::json::parse(feature.signature["Law"].get<std::string>())
+            : nlohmann::json{{"Type", "PEC"}};
+    if (!feature.portions.empty() && !feature.signature.contains("Law"))
+    {
+      law = nlohmann::json::parse(
+          input.segments[feature.portions.front().segment].boundary_law);
+    }
+    nlohmann::json geometry_json;
+    const auto &sig = feature.signature;
+    int count = 1;
+    if (feature.type == "IsolatedEdge")
+    {
+      count = static_cast<int>(feature.portions.size());
+    }
+    else if (feature.type == "SameConductorGap" ||
+             feature.type == "DifferentConductorGap" ||
+             feature.type == "SameConductorStrip" ||
+             feature.type == "UnclassifiedParallelPair")
+    {
+      geometry_json["EdgeCount"] = 2;
+      geometry_json["Separation"] =
+          requirements.ScaleLength(sig["SeparationOverR"].get<double>() * R);
+      count = static_cast<int>(feature.portions.size());
+    }
+    else if (feature.type == "ParallelEdgeCluster")
+    {
+      nlohmann::json edges = nlohmann::json::array();
+      for (const auto &edge : sig["Edges"])
+      {
+        edges.push_back(
+            {{"Offset",
+              {requirements.ScaleLength(edge["OffsetOverR"].get<double>() * R), 0.0}},
+             {"GapDirection", {static_cast<double>(edge["GapSide"].get<int>()), 0.0}},
+             {"Conductor", edge["Conductor"]}});
+      }
+      geometry_json["Edges"] = edges;
+      geometry_json["EdgeCount"] = sig["Edges"].size();
+      count = static_cast<int>(feature.portions.size());
+    }
+    else if (feature.type == "ConvexCorner" || feature.type == "ConcaveCorner")
+    {
+      geometry_json["AngleDegrees"] = sig["AngleDegrees"];
+      geometry_json["CornerRadius"] =
+          requirements.ScaleLength(sig["CornerRadiusOverR"].get<double>() * R);
+    }
+    else if (feature.type == "Junction")
+    {
+      geometry_json["ArmAnglesDegrees"] = sig["ArmAnglesDegrees"];
+    }
+    else if (feature.type == "SpatialEdgeCluster")
+    {
+      geometry_json["EdgeCount"] = sig["EdgeCount"];
+      geometry_json["Signature"] = sig;
+    }
+    nlohmann::json record = {{"Dimension", 3},
+                             {"Topology", feature.type},
+                             {"Status", feature.matched_model ? "Exact" : "Missing"},
+                             {"Geometry", geometry_json},
+                             {"Interfaces", interfaces},
+                             {"BoundaryCondition", law},
+                             {"Hash", feature.hash}};
+    if (feature.matched_model)
+    {
+      record["SelectedModels"] = nlohmann::json::array({{{"Name", *feature.matched_model},
+                                                         {"Topology", feature.type},
+                                                         {"Weight", 1.0}}});
+    }
+    requirements.AddFeatureRecord(record, count, feature.length);
+  }
+  requirements.SetIdentification(result.ToJson(requirements.CoordinateScale()));
 }
 
 ResponseCorrectionData
@@ -5951,6 +6313,11 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                              std::make_move_iterator(segments.begin()),
                              std::make_move_iterator(segments.end()));
     }
+  }
+
+  if (requirements)
+  {
+    RunGeometryIdentification(geometry, global_segments, library, *requirements);
   }
 
   const double global_interaction_distance = 2.0 * library.matching_radius;

@@ -346,5 +346,112 @@ class AuditGateTest(unittest.TestCase):
         self.assertEqual(gates_clustered["A1-vertex-census"], "NOT-EVALUABLE")
 
 
+class IdentificationGateTest(AuditGateTest):
+    """Version-2 manifests: the gates read the per-segment assignment, vertex and exclusion
+    tables (palace/models/SURFACE-RESPONSE-IDENTIFICATION.md)."""
+
+    EXCLUSION_CLASS = {"TRUNCATION": "TruncationCut", "NONPLANAR": "NonPlanar", "CROSS_LAYER": "CrossLayer", "NONMANIFOLD": "NonManifold"}
+
+    def identification(self):
+        """A complete identification of the island mesh built from the audit's own perimeter:
+        one IsolatedEdge feature per chain claiming its segments, six corners, the wall / span
+        and truncation edges recorded as exclusions."""
+        from .msh2 import read_msh2
+
+        perimeter = P.extract_perimeter(read_msh2(self.mesh_path), CONFIG)
+        features, segments, vertices, exclusions = [], [], [], {}
+        chain_feature = {}
+        for edge in perimeter.edges:
+            p0, p1 = perimeter.edge_points(edge)
+            key = [list(map(float, p0)), list(map(float, p1))]
+            if key[1] < key[0]:
+                key.reverse()
+            entry = {"Key": key, "Length": edge.length, "Chain": edge.chain}
+            if edge.kind != "PHYSICAL":
+                cls = self.EXCLUSION_CLASS[edge.kind]
+                entry["Exclusion"] = {"Class": cls, "Reason": "test"}
+                exclusions.setdefault(cls, [0, 0.0])
+                exclusions[cls][0] += 1
+                exclusions[cls][1] += edge.length
+            else:
+                if edge.chain not in chain_feature:
+                    chain_feature[edge.chain] = len(features)
+                    features.append({"Id": len(features), "Type": "IsolatedEdge", "Signature": {"Type": "IsolatedEdge", "Interfaces": ["MS", "SA"], "Law": "{\"Type\":\"PEC\"}"}, "Hash": f"h{edge.chain}", "Chirality": 1, "Length": 0.0, "Portions": [], "Vertices": [], "Frame": {"Origin": [0, 0, 0], "Axes": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}, "Match": {"Status": "Missing"}})
+                f = features[chain_feature[edge.chain]]
+                f["Portions"].append([len(segments), 0.0, edge.length])
+                f["Length"] += edge.length
+                entry["Portions"] = [[0.0, edge.length, f["Id"]]]
+            segments.append(entry)
+        for index, vertex in enumerate(perimeter.vertices):
+            if vertex.physical_kind == "CORNER":
+                vertices.append({"Vertex": index, "Type": "ConvexCorner", "TurnDegrees": 90.0, "Feature": 0})
+            elif vertex.physical_kind == "ENDPOINT":
+                vertices.append({"Vertex": index, "Type": "TruncationCut"})
+        assigned = sum(f["Length"] for f in features)
+        excluded = sum(v[1] for v in exclusions.values())
+        return {
+            "Version": 2,
+            "MatchingRadius": 2.0,
+            "Conventions": {"CornerTurnToleranceDegrees": 30.0},
+            "ReferenceProcessNormal": [0.0, 0.0, 1.0],
+            "Features": features,
+            "Segments": segments,
+            "Vertices": vertices,
+            "Exclusions": [{"Class": k, "Reason": "test", "Count": v[0], "Length": v[1]} for k, v in exclusions.items()],
+            "Totals": {"PerimeterLength": assigned + excluded, "AssignedLength": assigned, "ExcludedLength": excluded},
+            "GeometryDigest": "digest",
+        }
+
+    def v2_manifest(self, identification):
+        manifest = make_manifest([requirement("IsolatedEdge", 9, 18.0, {}), requirement("ConvexCorner", 6, 24.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0})])
+        manifest["Version"] = 2
+        manifest["Identification"] = identification
+        return manifest
+
+    def test_complete_identification_passes(self):
+        code, gates, result = self.run_gates(self.v2_manifest(self.identification()))
+        for name in ("perimeter-agreement", "A1-length-partition", "A1-count-partition", "A1-multiplicity", "A1-weights", "A1-vertex-census", "A1-exclusions-recorded", "A2-cluster-balls"):
+            self.assertEqual(gates[name], "PASS", name)
+        self.assertEqual(code, 0)
+        self.assertEqual(result["Identification"]["Features"]["IsolatedEdge"], 7)
+
+    def test_defects_fail_the_exact_gates(self):
+        ident = self.identification()
+        first = next(s for s in ident["Segments"] if "Portions" in s)
+        first["Portions"][0][1] *= 0.5  # a gap on one segment
+        _, gates, result = self.run_gates(self.v2_manifest(ident))
+        self.assertEqual(gates["A1-multiplicity"], "FAIL")
+        self.assertEqual(result["ByGate"]["A1-multiplicity"]["Defects"], 1)
+        ident = self.identification()
+        ident["Exclusions"] = [e for e in ident["Exclusions"] if e["Class"] != "NonPlanar"]
+        _, gates, _ = self.run_gates(self.v2_manifest(ident))
+        self.assertEqual(gates["A1-exclusions-recorded"], "FAIL")
+        ident = self.identification()
+        next(v for v in ident["Vertices"] if v["Type"] == "ConvexCorner")["Feature"] = -1
+        _, gates, _ = self.run_gates(self.v2_manifest(ident))
+        self.assertEqual(gates["A1-vertex-census"], "FAIL")
+        ident = self.identification()
+        ident["Vertices"].remove(next(v for v in ident["Vertices"] if v["Type"] == "ConvexCorner"))
+        _, gates, _ = self.run_gates(self.v2_manifest(ident))
+        self.assertEqual(gates["A1-vertex-census"], "FAIL")
+
+    def test_compare_uses_the_geometry_digest(self):
+        ident = self.identification()
+        other_path = os.path.join(self.directory.name, "other.json")
+        other = self.v2_manifest(self.identification())
+        other["Identification"]["GeometryDigest"] = "different"
+        with open(other_path, "w") as target:
+            json.dump(other, target)
+        manifest_path = os.path.join(self.directory.name, "req.json")
+        with open(manifest_path, "w") as target:
+            json.dump(self.v2_manifest(ident), target)
+        with contextlib.redirect_stdout(io.StringIO()):
+            audit.main(["--mesh", self.mesh_path, "--config", self.config_path, "--manifest", manifest_path, "--compare", other_path, "--output-prefix", os.path.join(self.directory.name, "out", "cmp")])
+        with open(os.path.join(self.directory.name, "out", "cmp.json")) as source:
+            result = json.load(source)
+        self.assertEqual({g["Gate"]: g["Status"] for g in result["Gates"]}["A3/A5-set-identity"], "FAIL")
+        self.assertFalse(result["Compare"]["GeometryDigestIdentical"])
+
+
 if __name__ == "__main__":
     unittest.main()
