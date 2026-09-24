@@ -38,17 +38,24 @@ REDUCER_BLOCK_SIZE_RULE = ("PALACE_RESPONSE_BLOCK_SIZE = b: the reducer keeps 2b
                            "(decision 63 rule; PBS 46718: p4 78 sources at b = 48 peak 33.3 GB vs 91.2 GB with b28); the "
                            "default stays 48")
 PLAN_VERSION = 3
-# The frozen Palace executable every qualify stage runs (decision 63): the streaming
-# one-pass Gram build 170439c4... (decision 62(4), PBS 46717 build of the b1e7e9e9d
-# source freeze b3103728...) replaced the b28f089a... executable of every earlier
-# campaign (physics-01..-13, gallery, the decision-58 library run, the decision-61
-# acceptances); --frozen-binary-sha256 overrides, the manifest's
+# The frozen Palace executable every qualify stage runs: the partition-independent
+# classification build 9ef5256b... (decision 69, PBS 48697 build of the source freeze
+# 222a3d33... = commit 5876402f7; the metal-edge classification is a function of the global
+# mesh only, sets identical at 1-6 / 192 / 384 / 768 ranks) replaced the streaming one-pass
+# Gram build 170439c4... (decision 62(4) / 63, PBS 46717 build of the b1e7e9e9d source freeze
+# b3103728...), which had replaced b28f089a... (physics-01..-13, gallery, the decision-58
+# library run, the decision-61 acceptances). 170439c4... stays the executable the cost model
+# rates were measured with (COST_MODEL_FROZEN_BINARY_SHA256: the solver stages are unchanged
+# by decision 69). --frozen-binary-sha256 overrides, the manifest's
 # ProductionRecipe.PhysicsRun.FrozenExecutable records the library default.
-DEFAULT_FROZEN_BINARY_SHA256 = "170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b"
-PREVIOUS_FROZEN_BINARY_SHA256 = "b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27"
+DEFAULT_FROZEN_BINARY_SHA256 = "9ef5256bc9ca9abc109954fb97b096879b3b472f18483f867b8de0b73a832058"
+PREVIOUS_FROZEN_BINARY_SHA256 = "170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b"
+COST_MODEL_FROZEN_BINARY_SHA256 = "170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b"
 FROZEN_BINARY_RULE = ("the frozen palace-archive-estimate-<sha256>.bin under the remote root runs every stage; the plan pins "
-                      "the digest and run_stages verifies it in the preflight; 170439c4... (streaming one-pass Gram, decision "
-                      "62(4)) reproduces b28f089a... at p3 bit for bit and at p4 to 8.4e-13 per entry (PBS 46718); "
+                      "the digest and run_stages verifies it in the preflight; 9ef5256b... (partition-independent classification, "
+                      "decision 69) differs from 170439c4... only in the metal-edge classification (geodata / metaledge / "
+                      "surfaceresponseoperator); 170439c4... (streaming one-pass Gram, decision 62(4)) reproduces "
+                      "b28f089a... at p3 bit for bit and at p4 to 8.4e-13 per entry (PBS 46718); "
                       "--frozen-binary-sha256 overrides the default and the origin is recorded per coupon")
 
 

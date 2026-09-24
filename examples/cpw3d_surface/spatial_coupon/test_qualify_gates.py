@@ -482,7 +482,7 @@ class ControlsPlanAndEstimateRuleTest(unittest.TestCase):
         # the previous term (measured peak x H1 ratio + resident fields) stays recorded.
         current = estimate_stages.load_cost_model()
         streaming = current["ReducerPeakStreaming"]
-        self.assertEqual(streaming["Executable"], build_plan.DEFAULT_FROZEN_BINARY_SHA256)
+        self.assertEqual(streaming["Executable"], build_plan.COST_MODEL_FROZEN_BINARY_SHA256)
         self.assertEqual(streaming["Executable"], current["Provenance"]["FrozenExecutable"])
         counts_now, sources_now = current["MeasuredMesh"]["EntityCounts"], current["Stages"]["p4"]["Sources"]
         now6, now48 = (estimate_stages.estimate_stage(current, 4, sources_now, counts_now, b) for b in (6, 48))

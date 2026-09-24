@@ -1,0 +1,44 @@
+#!/bin/bash
+# Decision 69 classification-fix acceptance at 192 ranks (1 m8g.48xlarge node(s)): geometry-only preflight of the
+# island-tagged coarse transmon against the full Version-3 device library (device-verification-01/library, sha256
+# 42b19686...), then the corrected AMR solve at p4 (10 nonconformal cycles, SurfaceMortar 2; the recorded decision-68 operating point),
+# with the NEW executable built by PBS 48697 from source-freeze-classfix69 (5876402f7). The sets must be identical
+# across 192 / 384 / 768 ranks (the 384-rank abort of 170439c4 must be gone).
+#PBS -N classfix69-n192
+#PBS -q normal-g
+#PBS -P DS-EM-FEM
+#PBS -r n
+#PBS -l select=1:ncpus=192:mpiprocs=192
+#PBS -l place=scatter:excl
+#PBS -l instance_type=m8g.48xlarge
+#PBS -l efa_support=True,subnet_id=subnet-0c98d793bbcebb39a
+#PBS -l walltime=03:00:00
+#PBS -j oe
+#PBS -o /data/home/simlap/coupon_accuracy_assessment_20260913/classification-fix-01/pbs-n192.log
+set -euo pipefail
+unset PYTHONOPTIMIZE
+source /etc/profile.d/modules.sh
+module load gcc/14.3.0 openmpi/5.0.8-gcc14 arm/armpl/24.10-gcc
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 BLIS_NUM_THREADS=1 ARMPL_NUM_THREADS=1 PYTHONDONTWRITEBYTECODE=1
+for name in ${!PALACE_RESPONSE_@}; do unset "$name"; done
+R=/data/home/simlap/coupon_accuracy_assessment_20260913
+D=$R/classification-fix-01
+BIN=$(python3 -c 'import json; print(json.load(open("'$R'/linux-build-classfix69/binary.json"))["Path"])')
+EXPECTED=$(python3 -c 'import json; print(json.load(open("'$R'/linux-build-classfix69/binary.json"))["SHA256"])')
+trap 'code=$?; printf "{\"ExitCode\":%d,\"JobID\":\"%s\",\"UTC\":\"%s\"}\n" "$code" "${PBS_JOBID:-}" "$(date -u +%FT%TZ)" > "$D/pbs-status-n192.json"' EXIT
+mkdir -p "$D/tmp-n192"; export TMPDIR="$D/tmp-n192"
+date -u +%FT%TZ; hostname; sort -u "$PBS_NODEFILE"; grep MemTotal /proc/meminfo
+sha256sum "$BIN" | tee "$D/binary-sha256-n192.txt"
+[ "$(cut -d' ' -f1 "$D/binary-sha256-n192.txt")" = "$EXPECTED" ] || { echo "binary digest mismatch"; exit 3; }
+sha256sum "$R/device-verification-01/library/process-library.json" "$R/device-verification-01/mesh/transmon_surface_p1_island9.msh2" | tee "$D/inputs-sha256-n192.txt"
+grep -q 42b19686703ccc94f482907d97ed7b641ce1e9f59d61fb86a0e40c1f5e6618b7 "$D/inputs-sha256-n192.txt"
+grep -q c4fe532f32d0c7e25ecb78f30fc0a2094c5717a72d80cb25df8bb1334b1031cf "$D/inputs-sha256-n192.txt"
+mkdir -p "$D/preflight-n192"
+echo "=== preflight 192 ranks start $(date -u +%FT%TZ)"
+/usr/bin/time -v -o "$D/preflight-n192/time.txt" "$R/mpiexec_bound.sh" --hostfile "$PBS_NODEFILE" -n 192 "$BIN" "$D/config-preflight-n192-remote.json" --surface-response-preflight > "$D/preflight-n192/palace.log" 2>&1 || echo "preflight RC=$?" | tee -a "$D/preflight-n192/palace.log"
+echo "=== preflight end $(date -u +%FT%TZ)"
+mkdir -p "$D/p4-n192"
+echo "=== palace p4 AMR 192 ranks start $(date -u +%FT%TZ)"
+/usr/bin/time -v -o "$D/p4-n192/time.txt" "$R/mpiexec_bound.sh" --hostfile "$PBS_NODEFILE" -n 192 "$BIN" "$D/config-p4-n192-remote.json" > "$D/p4-n192/palace.log" 2>&1 || echo "palace RC=$?" | tee -a "$D/p4-n192/palace.log"
+echo "=== palace end $(date -u +%FT%TZ)"
+echo "=== done $(date -u +%FT%TZ)"
