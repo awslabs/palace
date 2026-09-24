@@ -1387,14 +1387,20 @@ TEST_CASE("adapter_driven_synth", "[Serial][Parallel][Regression]")
   // solver's field-derived port-S (a stronger check than the pointwise field-S diff, and
   // one that also catches the dB-scale shift a regressed W would produce). The physical S
   // is partition-independent: |S| matches to ~6e-8 at np=1 and np=2, so a 1e-6 linear
-  // tolerance is robust.
-  opts.custom_checks["port-S.csv"] = TestWavePortSRoundTrip(1.0e-6);
+  // tolerance is robust. AdaptiveTol is 1e-6 for this case, so also compare the physical
+  // complex S-parameters over all 61 output frequencies, much more tightly than the generic
+  // 2% synthesis/eigenvalue tolerance while retaining a small absolute allowance near
+  // zeros. custom_checks holds one check per file, so run both from a single entry.
+  opts.custom_checks["port-S.csv"] = [round_trip = TestWavePortSRoundTrip(1.0e-6),
+                                      compare_s = ComparePortSParameters(1.0e-4, 1.0e-7)](
+                                         palace::Table &actual, palace::Table &reference,
+                                         const std::filesystem::path &actual_path)
+  {
+    round_trip(actual, reference, actual_path);
+    compare_s(actual, reference, actual_path);
+  };
   // No field output is requested in the config.
   opts.paraview_fields = false;
-  // AdaptiveTol is 1e-6 for this case. Compare the physical complex S-parameters over all
-  // 61 output frequencies much more tightly than the generic 2% synthesis/eigenvalue
-  // tolerance while retaining a small absolute allowance near zeros.
-  opts.custom_checks["port-S.csv"] = ComparePortSParameters(1.0e-4, 1.0e-7);
   palace::test::RunRegressionCase("adapter", "driven_synth.json", "driven_synth", opts);
 }
 
