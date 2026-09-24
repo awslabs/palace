@@ -73,6 +73,9 @@ private:
     std::vector<int> key;
     std::vector<mfem::Array<int>> dbc_tdof_lists;
     std::unique_ptr<Operator> K;
+    // Shifted preconditioner for this screened operator, built lazily and kept alive with
+    // it.
+    std::unique_ptr<Operator> P;
   };
   std::deque<ScreenedStiffnessCacheEntry> screened_stiffness_cache;
 
@@ -118,6 +121,12 @@ private:
   std::map<int, Vector> london_flux_constraint_;
 
   void SetUpLondonFluxConstraints();
+
+  // Assemble the London preconditioner (stiffness + shift·(1/µ)∫|A|²) constraining the
+  // given per-level essential DOFs; preconditioner-only, so the extracted inductance is
+  // unchanged.
+  std::unique_ptr<Operator>
+  AssembleShiftedPreconditioner(const std::vector<mfem::Array<int>> &pc_dbc_tdof_lists);
 
   mfem::Array<int>
   SetUpBoundaryProperties(const config::PecBoundaryData &pec,
@@ -190,6 +199,12 @@ public:
   // with the same set return a stable reference to one assembled operator rather than
   // reassembling it.
   const Operator &GetScreenedStiffnessMatrix(const mfem::Array<int> &extra_dbc_attr);
+
+  // Shifted preconditioner for a screened step, matching the essential set of the screened
+  // operator and owned by the same cache entry (so both survive back-to-back same-key
+  // steps). Must follow GetScreenedStiffnessMatrix with the same set. Null when there is no
+  // shift.
+  const Operator *GetScreenedPreconditionerMatrix(const mfem::Array<int> &extra_dbc_attr);
 
   // Zero v on the merged essential set (base Dirichlet plus extra_dbc_attr), clearing the
   // excitation on shorted inactive ports so DIAG_ONE elimination injects no spurious

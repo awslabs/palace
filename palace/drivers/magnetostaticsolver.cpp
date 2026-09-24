@@ -135,24 +135,16 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // that an all-short configuration does not pay for an unused preconditioner setup.
   KspSolver ksp(iodata, curlcurl_op.GetNDSpaces(), &curlcurl_op.GetH1Spaces());
   const Operator *bound_op = nullptr;
-  auto set_operator = [&](const Operator &op)
+  auto set_operator = [&](const Operator &op, const Operator &pc)
   {
     if (bound_op != &op)
     {
-      // For the base operator on the London path, precondition with the gauge-shifted
-      // matrix P_london (SPD) while the Krylov solver still uses the true operator op. All
-      // other operators (screened current-port steps) precondition with themselves.
-      if (P_london && &op == K.get())
-      {
-        ksp.SetOperators(op, *P_london);
-      }
-      else
-      {
-        ksp.SetOperators(op, op);
-      }
+      ksp.SetOperators(op, pc);
       bound_op = &op;
     }
   };
+  // Base preconditioner: gauge-shifted P_london (SPD) on the London path, else K itself.
+  const Operator &K_pc = P_london ? *P_london : *K;
 
   // Surface current source indices define the boundaries over which to compute the
   // inductance matrix.
@@ -291,13 +283,14 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         // elimination injects no spurious values on edges shared with the active port.
         const Operator &K_step = curlcurl_op.GetScreenedStiffnessMatrix(short_attrs);
         curlcurl_op.ZeroEssentialTrueDofs(short_attrs, RHS);
-        set_operator(K_step);
+        const Operator *step_pc = curlcurl_op.GetScreenedPreconditionerMatrix(short_attrs);
+        set_operator(K_step, step_pc ? *step_pc : K_step);
         ksp.Mult(RHS, A[step]);
       }
       else
       {
         // No inactive ports shorted for this step: all inactive ports are open.
-        set_operator(*K);
+        set_operator(*K, K_pc);
         ksp.Mult(RHS, A[step]);
       }
       if (!ksp.GetConverged())
@@ -327,7 +320,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       Phi_inc[step] = data.GetExcitationFlux();  // Exact via the flux constraint.
 
       // Solve 3D magnetostatic problem (flux loops use the base operator).
-      set_operator(*K);
+      set_operator(*K, K_pc);
 
       // London flux film: range-space (two-solve) solution of the bordered flux-constrained
       // system. RHS holds the shifted-penalty drive b = M_sheet·a_h, boundary_values holds

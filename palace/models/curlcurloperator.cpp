@@ -378,20 +378,12 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   return K;
 }
 
-std::unique_ptr<Operator> CurlCurlOperator::GetPreconditionerMatrix()
+std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
+    const std::vector<mfem::Array<int>> &pc_dbc_tdof_lists)
 {
-  // Preconditioner-only gauge shift for the London magnetostatic path. Without a London
-  // flux film (or with a non-positive shift) there is no residual gradient null to lift, so
-  // we return nullptr and the caller preconditions with the stiffness matrix itself.
-  if (london_flux_loops_.empty() || !(london_pc_shift_ > 0.0))
-  {
-    return nullptr;
-  }
-
   // Assemble K̃_pc = A_curlcurl + (1/L_ksq) M_sheet + london_pc_shift_ · (1/µ) ∫|A|². The
-  // first two terms match GetStiffnessMatrix (the preconditioner tracks the true operator);
-  // the volume mass is a reluctance-weighted regularization that lifts the film-constant
-  // gradient mode so GᵀK̃_pcG is SPD for AMS. It touches the preconditioner only.
+  // first two terms track the true stiffness; the volume mass is a reluctance-weighted
+  // regularization lifting the film-constant gradient mode so GᵀK̃_pcG is SPD for AMS.
   constexpr bool skip_zeros = false;
   MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
                                          mat_op.GetCurlCurlInvPermeability());
@@ -412,10 +404,45 @@ std::unique_ptr<Operator> CurlCurlOperator::GetPreconditionerMatrix()
   {
     const auto &nd_fespace_l = GetNDSpaces().GetFESpaceAtLevel(l);
     auto K_l = std::make_unique<ParOperator>(std::move(k_vec[l]), nd_fespace_l);
-    K_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+    K_l->SetEssentialTrueDofs(pc_dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
     K->AddOperator(std::move(K_l));
   }
   return K;
+}
+
+std::unique_ptr<Operator> CurlCurlOperator::GetPreconditionerMatrix()
+{
+  // Preconditioner-only gauge shift for the London path: any active superconductor sheet —
+  // not just flux-loop films — has the free-interior gradient null the shift lifts, so
+  // current-port sheet problems need it too. Null when there is no sheet or no shift.
+  if ((london_flux_loops_.empty() && sc_sheet_op.empty()) || !(london_pc_shift_ > 0.0))
+  {
+    return nullptr;
+  }
+  return AssembleShiftedPreconditioner(dbc_tdof_lists);
+}
+
+const Operator *
+CurlCurlOperator::GetScreenedPreconditionerMatrix(const mfem::Array<int> &extra_dbc_attr)
+{
+  if ((london_flux_loops_.empty() && sc_sheet_op.empty()) || !(london_pc_shift_ > 0.0))
+  {
+    return nullptr;
+  }
+  // Reuse the merged essential DOFs of the screened operator just built for this same set;
+  // build the shift into that cache entry so operator and preconditioner share a lifetime.
+  std::set<int> unique_attr(extra_dbc_attr.begin(), extra_dbc_attr.end());
+  std::vector<int> key(unique_attr.begin(), unique_attr.end());
+  MFEM_VERIFY(
+      !screened_stiffness_cache.empty() && screened_stiffness_cache.back().key == key,
+      "GetScreenedPreconditionerMatrix must follow GetScreenedStiffnessMatrix with the "
+      "same shorted-attribute set!");
+  auto &entry = screened_stiffness_cache.back();
+  if (!entry.P)
+  {
+    entry.P = AssembleShiftedPreconditioner(entry.dbc_tdof_lists);
+  }
+  return entry.P.get();
 }
 
 const Operator &
