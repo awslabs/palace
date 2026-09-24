@@ -210,14 +210,21 @@ perfect-conductor limit:
 | ``\lambda`` (μm) | ``L_{\mathrm{ksq}} = \lambda\coth(d/\lambda)`` (μm) | ``L`` (pH) |
 |:----------------:|:--------------------------------------------------:|:----------:|
 | ``0`` (PEC)      | ``0``                                              | ``2.853``  |
-| ``0.1``          | ``0.131``                                          | ``3.388``  |
-| ``0.2``          | ``0.433``                                          | ``4.075``  |
-| ``0.4``          | ``1.633``                                          | ``5.173``  |
+| ``0.1``          | ``0.131``                                          | ``4.140``  |
+| ``0.2``          | ``0.433``                                          | ``6.445``  |
+| ``0.4``          | ``1.633``                                          | ``15.164`` |
 
-At ``\lambda = 0.4\,\mu\text{m}`` the self-inductance is ``L = 5.173\,\text{pH}``, of which
-``2.853\,\text{pH}`` is geometric and ``\approx 2.32\,\text{pH}`` kinetic. The geometric value
+At ``\lambda = 0.4\,\mu\text{m}`` the self-inductance is ``L = 15.164\,\text{pH}``, of which
+``2.853\,\text{pH}`` is geometric and ``\approx 12.31\,\text{pH}`` kinetic. The geometric value
 corresponds to a stored magnetic energy of ``E = \Phi_0^2/(2L)`` for one flux quantum
 ``\Phi_0 = 2.0678\times10^{-15}\,\text{Wb}`` trapped in the hole.
+
+The finite-``\lambda`` kinetic extraction is validated against Khapaev 1997 [[3]](#References),
+whose Table 1 gives ``L = 10.03\,\text{pH}`` for a rectangular hole (``2\times5\,\mu\text{m}``,
+``3\,\mu\text{m}`` border, ``\lambda_\perp = \lambda^2/d = 0.4\,\mu\text{m}``; meshed by
+`mesh/rect_hole_mesh.jl`). *Palace* extracts ``9.86\,\text{pH}`` (``-1.7\%``) on a coarse mesh,
+converging upward under refinement as expected for the energy-based (Ritz lower-bound)
+inductance.
 
 The figures below show the magnetic vector potential amplitude ``|\mathbf{A}|``, its in-plane
 components ``A_x`` and ``A_y``, the out-of-plane magnetic field ``B_z``, and the surface current
@@ -298,18 +305,18 @@ inductance. For ``\lambda = 0.4\,\mu\text{m}``, ``d = 0.1\,\mu\text{m}`` the com
 
 ```math
 M = \begin{pmatrix}
-4.523 & -0.135 \\
--0.135 & 4.513
+13.591 & -1.241 \\
+-1.241 & 13.591
 \end{pmatrix} \text{pH}
 ```
 
 The near-equal self-inductances reflect the geometric symmetry of the two holes, each raised
 above its ``\approx 2.85\,\text{pH}`` PEC value by the kinetic contribution of the penetrating
-film. The mutual inductance is small and negative — about 3% of the self-inductance — so the two
+film. The mutual inductance is small and negative — about 9% of the self-inductance — so the two
 holes on the shared film are weakly coupled: flux forced through one hole only modestly
 influences the shielding currents around the other at this separation. The energy of the
 antisymmetric (``+1/-1`` vortex–antivortex) state follows from this matrix as
-``M_{11}+M_{22}-2M_{12} \approx 9.31\,\text{pH}``.
+``M_{11}+M_{22}-2M_{12} \approx 29.66\,\text{pH}``.
 
 The figures below show the same field quantities for the two-hole geometry with unit flux
 through each hole:
@@ -376,17 +383,16 @@ For ``\lambda = 0.4\,\mu\text{m}``, ``d = 0.1\,\mu\text{m}`` the inductance matr
 
 ```math
 M = \begin{pmatrix}
-4.897 & 0.000 \\
-0.000 & 4.881
+20.248 & -0.068 \\
+-0.068 & 20.248
 \end{pmatrix} \text{pH}
 ```
 
 The self-inductances are equal by the mirror symmetry of the two plates. The mutual inductance is
-numerically zero (``|M_{12}| \approx 2\times10^{-4}\,\text{pH}``, i.e. ``\sim10^{-5}`` of the
-self-inductance, at the solver-tolerance floor): with the holes on physically separated films the
-shielding currents around each hole are confined to their own metal and cannot circulate across to
-the other, and the residual far-field coupling is itself screened, so the two loops are
-effectively decoupled — in contrast to the shared-plate case above.
+small (``|M_{12}| \approx 0.068\,\text{pH}``, ``\approx 0.3\%`` of the self-inductance): with the
+holes on physically separated films the shielding currents around each hole are confined to their
+own metal and cannot circulate across to the other, and the residual far-field coupling is itself
+screened, so the two loops are effectively decoupled — in contrast to the shared-plate case above.
 
 ## References
 
@@ -396,3 +402,6 @@ Transactions on Magnetics_ 17 (1981) 400-403.
 [2] S. K. Tolpygo, E. B. Golden, T. J. Weir and V. Bolkhovsky, Inductance of superconductor
 integrated circuit features with sizes down to 120 nm, _Superconductor Science and Technology_
 34 (2021) 085005.
+
+[3] M. M. Khapaev, Extraction of inductances of plane thin-film superconducting circuits,
+_Superconductor Science and Technology_ 10 (1997) 389-394.
