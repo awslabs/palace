@@ -200,6 +200,35 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
   Vector result(ndp_fespace.GetTrueVSize());
   result.UseDevice(true);
   ahp.GetTrueDofs(result);
+
+  // Restrict a_h to this loop's film DOFs. It is consumed only through M_sheet and c (both
+  // on the film), so this is a no-op for a single film but stops the vertical cut line from
+  // driving a spurious vortex in another Superconductor sheet above or below the hole.
+  {
+    const int bmax = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+    mfem::Array<int> marker(bmax);
+    marker = 0;
+    for (int a : flux_data.film_attributes)
+    {
+      if (a >= 1 && a <= bmax)
+      {
+        marker[a - 1] = 1;
+      }
+    }
+    mfem::Array<int> film_tdofs;
+    const_cast<mfem::ParFiniteElementSpace &>(ndp_fespace)
+        .GetEssentialTrueDofs(marker, film_tdofs);
+    Vector keep(result.Size());
+    keep.UseDevice(true);
+    keep = 0.0;
+    auto *k = keep.HostReadWrite();
+    const auto *r = result.HostRead();
+    for (int i = 0; i < film_tdofs.Size(); i++)
+    {
+      k[film_tdofs[i]] = r[film_tdofs[i]];
+    }
+    result = keep;
+  }
   return result;
 }
 
