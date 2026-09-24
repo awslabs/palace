@@ -436,8 +436,10 @@ struct SuperconductorData
 {
 public:
   // London penetration depth λ and film thickness d, in mesh length units. These define the
-  // kinetic sheet inductance of a thin-film superconductor modeled as a 2D sheet:
-  //     L_ksq = mu0 * lambda^2 / d   [H/square].
+  // one-sided finite-thickness kinetic sheet inductance of a superconductor modeled as a 2D
+  // sheet:
+  //     L_ksq = mu0 * lambda * coth(d/lambda)   [H/square]
+  // (reducing to the thin-film limit mu0 * lambda^2 / d for d << lambda).
   double lambda_L = 0.0;
   double thickness = 0.0;
 

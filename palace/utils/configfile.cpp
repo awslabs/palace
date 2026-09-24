@@ -464,8 +464,8 @@ SuperconductorData::SuperconductorData(const json &boundary)
   Ls = boundary.value("KineticInductance", Ls);
 
   // Require exactly one of {(PenetrationDepth, Thickness), KineticInductance}. The (λ, d)
-  // form defines the kinetic sheet inductance as L_ksq = mu0 * lambda^2 / d; the direct
-  // form supplies L_ksq itself.
+  // form defines the kinetic sheet inductance as L_ksq = mu0 * lambda * coth(d/lambda); the
+  // direct form supplies L_ksq itself.
   const bool has_lambda_d = (lambda_L != 0.0 || thickness != 0.0);
   const bool has_Ls = (Ls != 0.0);
   MFEM_VERIFY(has_lambda_d != has_Ls,

@@ -302,7 +302,7 @@
         },
         "Superconductor": {
           "type": "array",
-          "description": "Array of thin-film superconductor sheet boundaries for magnetostatic simulations. Each sheet contributes a London kinetic-inductance term to the extracted total inductance, modeled by the finite-thickness London kinetic sheet inductance L_ksq = mu0 * lambda * coth(d/lambda), specified either via the penetration depth and film thickness or directly (as the thin-film limit lambda^2/d when d << lambda). Only available for magnetostatic simulations.",
+          "description": "Array of thin-film superconductor sheet boundaries for magnetostatic simulations. Each sheet contributes a London kinetic-inductance term to the extracted total inductance, modeled by the one-sided finite-thickness London kinetic sheet inductance L_ksq = mu0 * lambda * coth(d/lambda) (field on one face, e.g. a film over a ground plane), specified either via the penetration depth and film thickness or directly (as the thin-film limit lambda^2/d when d << lambda). Only available for magnetostatic simulations.",
           "additionalItems": false,
           "items": {
             "$ref": "#/$defs/Superconductor"
