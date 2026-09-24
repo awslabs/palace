@@ -15,6 +15,15 @@ The format of this changelog is based on
 
 See the [developer notes on schema versioning](https://awslabs.github.io/palace/dev/developer/notes/#Schema-versioning) for how versions are bumped.
 
+## In progress
+
+#### Build system
+
+  - Bumped the MFEM dependency to v4.10 and dropped the backport patches merged
+    upstream (PRs 4983, 5246, 5415, 5124, and the Gmsh reader rewrite), keeping
+    only the still-unmerged patches (PRs 3847, 5353, 5494, 5502).
+    [PR 918](https://github.com/awslabs/palace/pull/918).
+
 ## [0.18.1] - 2026-09-21
 
 #### New Features
