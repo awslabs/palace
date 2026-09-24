@@ -81,6 +81,10 @@ struct IdentifiedFeature
   std::array<double, 3> origin{};
   std::array<std::array<double, 3>, 3> axes{};
 
+  // Curvature annotation (not hashed): the tightest windowed bend radius over the claimed
+  // portions in units of R; absent when every portion lies on a straight chain.
+  std::optional<double> bend_radius_over_R;
+
   // Filled by the matching pass.
   std::optional<std::string> matched_model;
 };

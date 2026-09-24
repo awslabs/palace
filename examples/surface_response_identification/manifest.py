@@ -16,7 +16,10 @@ import hashlib
 import json
 import re
 
-TRANSLATIONAL = ("IsolatedEdge", "SameConductorGap", "DifferentConductorGap", "SameConductorStrip", "ParallelEdgeCluster")
+# Longitudinal (per-length) feature classes; the Curved* classes are the curved-edge chain
+# rule's counterparts (bend radius below the recorded straight threshold).
+CURVED_PAIRS = ("CurvedSameConductorGap", "CurvedDifferentConductorGap", "CurvedSameConductorStrip")
+TRANSLATIONAL = ("IsolatedEdge", "SameConductorGap", "DifferentConductorGap", "SameConductorStrip", "ParallelEdgeCluster", "CurvedEdge") + CURVED_PAIRS
 VERTEX = ("ConvexCorner", "ConcaveCorner", "Endpoint", "Junction")
 CLUSTER = ("SpatialEdgeCluster",)
 RUN_DEPENDENT_FIELDS = ("Status", "SelectedModels", "NormalizedLibraryDistance", "Reason", "Count", "TotalEdgeLength")

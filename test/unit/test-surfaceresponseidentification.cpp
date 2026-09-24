@@ -214,6 +214,63 @@ std::vector<Point2> Rectangle(double x0, double y0, double x1, double y1)
   return {{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}};
 }
 
+// The synthetic arc bar of synthetic_layouts.py: a bar of the given width following a
+// circular arc (radius, sweep) discretised with the given turn per vertex, with straight
+// leads at both ends, offset exactly along the vertex bisectors (counter-clockwise loop).
+std::vector<Point2> ArcBar(double width, double radius, double sweep_degrees,
+                           double step_degrees, double lead = 6.0)
+{
+  const int steps = std::max(1, static_cast<int>(std::lround(sweep_degrees / step_degrees)));
+  const double step = sweep_degrees * std::acos(-1.0) / 180.0 / steps;
+  const double h = 0.5 * width;
+  std::vector<Point2> centreline;
+  for (int k = 0; k <= steps; k++)
+  {
+    centreline.push_back({radius * std::sin(k * step), radius - radius * std::cos(k * step)});
+  }
+  const Point2 d_end = {std::cos(steps * step), std::sin(steps * step)};
+  centreline.insert(centreline.begin(), {-lead, 0.0});
+  centreline.push_back({centreline.back()[0] + lead * d_end[0],
+                        centreline.back()[1] + lead * d_end[1]});
+  auto Offset = [&](double sign)
+  {
+    std::vector<Point2> result;
+    const std::size_t n = centreline.size();
+    auto Normal = [](const Point2 &d)
+    {
+      const double norm = std::hypot(d[0], d[1]);
+      return Point2{-d[1] / norm, d[0] / norm};
+    };
+    for (std::size_t i = 0; i < n; i++)
+    {
+      const Point2 &p = centreline[i];
+      if (i == 0 || i + 1 == n)
+      {
+        const Point2 d = i == 0 ? Point2{centreline[1][0] - p[0], centreline[1][1] - p[1]}
+                                : Point2{p[0] - centreline[i - 1][0],
+                                         p[1] - centreline[i - 1][1]};
+        const Point2 nrm = Normal(d);
+        result.push_back({p[0] + sign * h * nrm[0], p[1] + sign * h * nrm[1]});
+      }
+      else
+      {
+        const Point2 n0 = Normal({p[0] - centreline[i - 1][0], p[1] - centreline[i - 1][1]});
+        const Point2 n1 = Normal({centreline[i + 1][0] - p[0], centreline[i + 1][1] - p[1]});
+        Point2 b = {n0[0] + n1[0], n0[1] + n1[1]};
+        const double norm = std::hypot(b[0], b[1]);
+        b = {b[0] / norm, b[1] / norm};
+        const double scale = h / (b[0] * n0[0] + b[1] * n0[1]);
+        result.push_back({p[0] + sign * scale * b[0], p[1] + sign * scale * b[1]});
+      }
+    }
+    return result;
+  };
+  std::vector<Point2> points = Offset(-1.0);
+  const std::vector<Point2> left = Offset(1.0);
+  points.insert(points.end(), left.rbegin(), left.rend());
+  return points;
+}
+
 // Every segment is either excluded or covered exactly once; every corner has a feature.
 void CheckPartition(const IdentificationInput &input, const IdentificationResult &result)
 {
@@ -569,4 +626,95 @@ TEST_CASE("SurfaceResponseIdentificationObtuseCorners",
   }
   CHECK(counts["SpatialEdgeCluster"] == 0);
   CHECK(counts["ConvexCorner"] == 4);
+}
+
+TEST_CASE("SurfaceResponseIdentificationCurvedEdges",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Curved-edge chain rule (decision 73(1)): a 3 um bar (1.5 R) along a polyline arc. The
+  // two sides are a pair along the bend (constant separation), never a cluster; the arc is
+  // a curved pair when the inner bend radius is below 20 R and a straight-like strip with a
+  // curvature annotation otherwise; the leads are a plain strip; the two bar ends are one
+  // two-corner cluster each. The classes do not depend on the discretisation (turn per
+  // vertex) and the features do not change under mesh refinement (A5).
+  const double R = 2.0;
+  struct Case
+  {
+    double radius, sweep, step;
+    bool curved;
+  };
+  for (const Case &c : {Case{5.0, 90.0, 20.0, true}, Case{5.0, 90.0, 1.0, true},
+                        Case{20.0, 90.0, 5.0, true}, Case{50.0, 45.0, 20.0, false},
+                        Case{50.0, 45.0, 1.0, false}, Case{250.0, 15.0, 5.0, false}})
+  {
+    const auto bar = ArcBar(3.0, c.radius, c.sweep, c.step);
+    const auto input = MakeInput({{bar, 0, 1.0}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    INFO("radius " << c.radius << " step " << c.step);
+    CheckPartition(input, result);
+    std::map<std::string, int> counts;
+    for (const auto &feature : result.features)
+    {
+      counts[feature.type]++;
+      if (feature.type == "CurvedSameConductorStrip")
+      {
+        // The tightest windowed bend radius is the inner side's (radius - 1.5).
+        CHECK_THAT(feature.signature["RadiusOverR"].get<double>(),
+                   WithinRel((c.radius - 1.5) / R, 0.03));
+        CHECK_THAT(feature.signature["SeparationOverR"].get<double>(),
+                   WithinRel(1.5, 0.02));
+      }
+      if (feature.type == "SameConductorStrip")
+      {
+        CHECK_THAT(feature.signature["SeparationOverR"].get<double>(),
+                   WithinRel(1.5, 0.02));
+        if (!c.curved)
+        {
+          REQUIRE(feature.bend_radius_over_R.has_value());
+          CHECK_THAT(*feature.bend_radius_over_R, WithinRel((c.radius - 1.5) / R, 0.03));
+        }
+      }
+    }
+    CHECK(counts["SpatialEdgeCluster"] == 2);
+    CHECK(counts["SameConductorStrip"] >= 1);
+    CHECK(counts["CurvedSameConductorStrip"] == (c.curved ? 1 : 0));
+    CHECK(counts["IsolatedEdge"] == 0);
+    CHECK(counts["CurvedEdge"] == 0);
+    CHECK(counts["ConvexCorner"] == 0);
+    // Refinement: every chord bisected twice.
+    const auto refined_input = MakeInput({{bar, 0, 0.25}}, R);
+    const auto refined = IdentifyMetalPerimeter(refined_input);
+    CheckPartition(refined_input, refined);
+    CHECK(refined.geometry_digest == result.geometry_digest);
+    CHECK(FeatureHashes(refined) == FeatureHashes(result));
+  }
+
+  // A lone polyline arc edge (no partner within 2R): a 3 um wide bar would pair, so use a
+  // wide bar (6 um = 3 R): the inner and outer sides are isolated; the arc part is a
+  // CurvedEdge with the side's own bend radius, the leads and the outer straight-like parts
+  // are isolated edges.
+  {
+    const auto bar = ArcBar(6.0, 8.0, 90.0, 5.0);
+    const auto input = MakeInput({{bar, 0, 1.0}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    std::map<std::string, int> counts;
+    std::vector<double> radii;
+    for (const auto &feature : result.features)
+    {
+      counts[feature.type]++;
+      if (feature.type == "CurvedEdge")
+      {
+        radii.push_back(feature.signature["RadiusOverR"].get<double>());
+      }
+    }
+    CHECK(counts["SpatialEdgeCluster"] == 0);
+    CHECK(counts["ConvexCorner"] == 4);
+    CHECK(counts["CurvedEdge"] == 2);
+    CHECK(counts["IsolatedEdge"] >= 2);
+    std::sort(radii.begin(), radii.end());
+    REQUIRE(radii.size() == 2);
+    CHECK_THAT(radii[0], WithinRel(5.0 / R, 0.03));   // inner side, radius 8 - 3
+    CHECK_THAT(radii[1], WithinRel(11.0 / R, 0.03));  // outer side, radius 8 + 3
+  }
 }

@@ -5256,14 +5256,30 @@ void RunGeometryIdentification(const MetalEdgeGeometry &geometry,
     {
       count = static_cast<int>(feature.portions.size());
     }
+    else if (feature.type == "CurvedEdge")
+    {
+      geometry_json["EdgeCount"] = 1;
+      geometry_json["BendRadius"] =
+          requirements.ScaleLength(sig["RadiusOverR"].get<double>() * R);
+      count = static_cast<int>(feature.portions.size());
+    }
     else if (feature.type == "SameConductorGap" ||
              feature.type == "DifferentConductorGap" ||
              feature.type == "SameConductorStrip" ||
-             feature.type == "UnclassifiedParallelPair")
+             feature.type == "UnclassifiedParallelPair" ||
+             feature.type == "CurvedSameConductorGap" ||
+             feature.type == "CurvedDifferentConductorGap" ||
+             feature.type == "CurvedSameConductorStrip" ||
+             feature.type == "CurvedUnclassifiedParallelPair")
     {
       geometry_json["EdgeCount"] = 2;
       geometry_json["Separation"] =
           requirements.ScaleLength(sig["SeparationOverR"].get<double>() * R);
+      if (sig.contains("RadiusOverR"))
+      {
+        geometry_json["BendRadius"] =
+            requirements.ScaleLength(sig["RadiusOverR"].get<double>() * R);
+      }
       count = static_cast<int>(feature.portions.size());
     }
     else if (feature.type == "ParallelEdgeCluster")

@@ -653,7 +653,7 @@ def compare_with_oracle(orc, audit_result, manifest):
     mesh_separations = census["Interactions"]["ParallelSeparations"]
     manifest_pairs = Counter()
     for r in manifest["Requirements"]:
-        if r["Topology"] in M.TRANSLATIONAL and r["Topology"] != "IsolatedEdge":
+        if r["Topology"] in M.TRANSLATIONAL and r["Topology"] not in ("IsolatedEdge", "CurvedEdge"):
             manifest_pairs[(r["Topology"], round(float(r["Geometry"].get("Separation", r["Geometry"].get("Width", float("nan")))), 6))] += 1
     expected_pairs_set = {(k[0], k[1]) for k in oracle_pairs}
     manifest_pairs_set = set(manifest_pairs)
