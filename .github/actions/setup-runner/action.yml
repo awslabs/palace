@@ -11,7 +11,7 @@ inputs:
   spack-packages-commit:
     description: 'spack-packages commit used by the builtin Spack repository'
     required: false
-    default: '807d581bbaba3a1936b932c9cc200c013dc23816'
+    default: '0ec478de0ec43571366def16bad549d6e4287abf'
   llvm-version:
     description: 'Version of LLVM to use (only major version supported, e.g. "19")'
     required: false
