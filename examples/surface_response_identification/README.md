@@ -17,10 +17,11 @@ this block: every disagreement below is a recorded defect for the fix block.
 | `preflight_matrix.py` | ranks x libraries x UniformLevels x CrackInternalBoundaryElements cells with the audit and cross-cell digests (A3 / A4 / A5) |
 | `synthetic_layouts.py` + `synthetic_layouts.jl` | 62 synthetic stress layouts with exact oracles (Gmsh / OCC via Julia), runner and oracle comparison (A6) |
 | `tag_metal_components.py` | N-island conductor tagger for production meshes; repairs: drop metal triangles duplicating port faces, drop attributes, add a material-interface (substrate_air) group |
+| `refine_msh2.py` | uniform 1 -> 8 / 1 -> 4 refinement of a first-order MSH 2.2 mesh outside Palace, so the refined mesh exists for the audit (real A5 test) |
 
 Tests (`python3 -m unittest discover -s examples/surface_response_identification -p 'test_*.py' -t examples` from the repository
 root, or per module): `test_audit.py` (12), `test_preflight_config.py` (3),
-`test_synthetic_layouts.py` (12), `test_tag_metal_components.py` (5).
+`test_synthetic_layouts.py` (12), `test_tag_metal_components.py` (5), `test_refine_msh2.py` (1).
 
 Typical use:
 
@@ -48,14 +49,15 @@ classification-fix block (preflight-only: no matrices are read by the preflight)
 | Invariant | Result |
 |---|---|
 | A4 rank determinism (1, 2, 4, 6) | PASS for every library and level: identical canonical digests |
-| A3 library independence (seed vs full) | FAIL: IsolatedEdge 1 record / 6 um (seed) vs 3,007 / 34,853 um (full); SameConductorStrip 170 / 668 um vs 64 / 250 um; 3 cluster records replaced by 2 |
-| A5 refinement (UniformLevels 1) | FAIL: seed 6 cluster records replaced by 7 (+1 strip record); full: ConvexCorner 12 -> 13, 7 clusters replaced by 5, one IsolatedEdge record removed |
+| A3 library independence (seed vs full, set diff) | FAIL, two components. (i) Manifest-format artefact: IsolatedEdge 1 record / 6 um (seed: "No compatible isolated-edge model ... correction is disabled", one representative segment) vs 3,007 / 34,853 um (full, Exact) — the geometry is the same, the record is not. (ii) Genuine library dependence: SameConductorStrip (2 um) 170 segments / 668 um (seed) vs 64 / 250 um (full); nonparallel omissions 12 vs 2; clusters: seed has 3-edge (12 um), 4-edge (16 um), 4-edge (16 um) records, full has 3-edge (8 um) and 4-edge (12 um) — the 2 cluster models matched by the full library absorb 106 strip segments (418 um), 10 nonparallel pairs and one 4-edge cluster that the no-model run reports separately. The 64 strips at exactly R are common to both. |
+| A5 refinement, Palace UniformLevels 1 (digest only) | FAIL: seed 6 cluster records replaced by 7 (+1 strip record at separation 1.0 um); full: ConvexCorner 12 -> 13, 7 clusters replaced by 5, the IsolatedEdge record removed |
+| A5 refinement, external 1 -> 8 split (`refine_msh2.py`, 36.8 MB, audited against the refined mesh; `transmon/matrix-r1`) | FAIL, and the digest-only reading hid the meaning: with the full library the refined mesh logs `Nearby three-dimensional metal edges are not parallel; correction is disabled for this interface group!` — Exact 37 (corners + 2 clusters, 160 um) / Missing 131, Matched physical edge segments 0, i.e. the whole 34.9 mm isolated-edge correction is switched off by one refinement level (coarse: 3,043 Exact). Perimeter agreement is exact (6,292 = 6,292 segments, 48 = 48 chains, no bisection); nonparallel omissions 2 -> 18, cross-interface 14 -> 24; ConvexCorner 12 -> 13 (a corner freed from a vanished 4-edge cluster). External and Palace-internal refinement agree on every non-cluster record; their cluster records differ (mesh-order-dependent representative events). |
 | A1 length partition | FAIL: full library assigns 35,103 of 35,297 um (deficit 193.6 um = 0.55 %); seed 674 um only (correction disabled: no isolated-edge model) |
 | A1 count partition | FAIL: 3,071 assigned + 17 omitted (2 + 12 cross-interface, 2 nonparallel) = 3,088 reconciled; omitted != 0 |
 | A1 vertex census | NOT-EVALUABLE: 48 audit corners, 34 manifest corners; 14 absorbed by 5-6 spatial clusters or dropped (the manifest does not enumerate them) |
 | A1 exclusions recorded | FAIL: 160 um non-planar + 256 um cross-layer (plane z = 10 um, 1,280 um^2) + 80 um non-manifold metal in attribute 5 are silently absent (classifier: 0 incompatible-process-normal / 0 process-normal-offset omissions) |
 | A2 cluster balls | PASS (audit-side vertex clusters; minimum centre distance 6.0 >= 2R) |
-| CrackInternalBoundaryElements false | ABORT (exit 134) in every cell: `metaledge.cpp:1208 Unable to infer the metal-to-gap direction for an automatic edge segment` |
+| CrackInternalBoundaryElements false | ABORT (exit 134) in all 16 transmon cells, all 4 chain2 cells and all 4 DS-SCT-001 cells: `Verification failed: (norm_squared > 1.0e-20) is false: --> Unable to infer the metal-to-gap direction for an automatic edge segment! ... in function: BuildMetalEdgeGapDirections ... palace/utils/metaledge.cpp:1208` — the uncracked mesh has both materials' faces on one boundary element, so the metal-side face sum cancels; the classifier only works on cracked meshes |
 | Knife edges in the layout | 180 parallel pairs at exactly R = 2 um, 4 at exactly 2R (mesh census); the 64 same-conductor-strip segments at exactly R (250 um) have no model in the full library |
 
 ### Synthetic stress layouts (62 layouts, ranks 1 / 2 / 4, UniformLevels 0 / 1, seed and isolated libraries)
@@ -155,5 +157,5 @@ oracle's expected classes on 60 (exceptions below). Observed classifier rules:
 5. Perimeter extraction on sheets with one material on both sides (airbridges, embedded
    metal, TSV walls) cancels silently; excluded classes (non-planar, cross-layer,
    non-manifold) are dropped without a record (decision 73(3) requires a reported gap).
-6. CrackInternalBoundaryElements=false aborts on every real mesh (gap direction inference).
+6. CrackInternalBoundaryElements=false aborts on every real mesh (`metaledge.cpp:1208` gap direction inference); one uniform refinement disables the whole isolated-edge correction on the transmon ("not parallel ... correction is disabled for this interface group").
 7. Duplicate boundary elements / missing SA group are mesh-preparation blockers (tools here).
