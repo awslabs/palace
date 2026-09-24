@@ -20,7 +20,7 @@ this block: every disagreement below is a recorded defect for the fix block.
 | `refine_msh2.py` | uniform 1 -> 8 / 1 -> 4 refinement of a first-order MSH 2.2 mesh outside Palace, so the refined mesh exists for the audit (real A5 test) |
 
 Tests (`python3 -m unittest discover -s examples/surface_response_identification -p 'test_*.py' -t examples` from the repository
-root, or per module): `test_audit.py` (12), `test_preflight_config.py` (3),
+root, or per module): `test_audit.py` (15, incl. 3 version-2 gate tests), `test_preflight_config.py` (3),
 `test_synthetic_layouts.py` (12), `test_tag_metal_components.py` (5), `test_refine_msh2.py` (1).
 
 Typical use:
@@ -34,6 +34,25 @@ python3 -m surface_response_identification.synthetic_layouts --output OUT/synthe
 python3 -m surface_response_identification.audit --mesh M.msh2 --config cfg.json \
     --manifest postpro/surface-response-requirements.json --log palace.log --output-prefix OUT/audit
 ```
+
+## Manifest version 2 (identification fix block, phase 1)
+
+The classifier now runs the pure-geometry identification of
+`palace/models/SURFACE-RESPONSE-IDENTIFICATION.md` (`palace/models/surfaceresponseidentification.cpp`)
+in the preflight: `surface-response-requirements.json` carries `Version: 2`, the version-1
+`Requirements` derived from the features (aggregated by signature, `Hash` per record, `Status`
+from the key-based matching pass), the legacy per-pass records under `LegacyRequirements`
+(comparison only) and the contract under `Identification` (`Features` with canonical
+`Signature` / `Hash` / `Chirality` / `Portions` / `Vertices` / `Frame` / `Match`, `Segments` with
+`Key` and `Portions` or `Exclusion`, `Vertices`, `Exclusions`, `Totals`, `GeometryDigest`,
+`Conventions`). The audit reads the version-2 contract when present (exact partition, vertex
+census, exclusions by class, cluster disjointness, `GeometryDigest` + per-signature lengths
+for A3 / A5) and falls back to the aggregate version-1 reading otherwise; `preflight_matrix`
+and `synthetic_layouts` compare the `GeometryDigest` across cells. A library model may carry
+the feature's `Signature` object (`"Signature": {...}`) and is then matched by key. The
+synthetic oracle follows the design rules (sampled event cores, corners join a cluster when a
+core lies within 3R, parallel pairs survive outside cluster regions and corner windows).
+Phase-1 results: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/phase1/REPORT.md`.
 
 ## Geometry identification: baseline audit (2026-09-24, executable 9ef5256b / v0.17.0-572-g5876402f7)
 

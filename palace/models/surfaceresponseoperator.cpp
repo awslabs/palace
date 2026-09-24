@@ -8838,6 +8838,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
 
     std::vector<EdgePair3D> pairs;
     std::vector<std::vector<std::pair<double, double>>> paired_intervals(segments.size());
+    // Segments in a non-parallel neighborhood that no matched cluster covers lose their own
+    // correction only (decision 74(1): an unmatched feature disables itself, never the
+    // interface group).
+    std::set<std::size_t> nonparallel_omitted_segments;
     std::vector<std::pair<std::size_t, std::size_t>> final_nearby_pairs;
     if (group_matched && !segments.empty())
     {
@@ -8870,10 +8874,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       const double tangent_dot = Dot(segments[i].tangent, segments[j].tangent);
       if (DecisionQuantizer::DirectionLess(std::abs(tangent_dot), 1.0 - 1.0e-8))
       {
-        Mpi::Warning("Nearby three-dimensional metal edges are not parallel; correction is "
-                     "disabled for this interface group!\n");
-        group_matched = false;
-        break;
+        nonparallel_omitted_segments.insert(i);
+        nonparallel_omitted_segments.insert(j);
+        continue;
       }
       const double second_s0 =
           Dot(Subtract(segments[j].p0, segments[i].p0), segments[i].tangent);
@@ -8903,6 +8906,26 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                                        std::min(segments[j].length, second_end));
     }
 
+    if (!nonparallel_omitted_segments.empty())
+    {
+      // An omitted segment takes no part in any pair either: its whole correction is off.
+      pairs.erase(std::remove_if(pairs.begin(), pairs.end(),
+                                 [&](const EdgePair3D &pair)
+                                 {
+                                   return nonparallel_omitted_segments.count(pair.first) ||
+                                          nonparallel_omitted_segments.count(pair.second);
+                                 }),
+                  pairs.end());
+      for (auto &intervals : paired_intervals)
+      {
+        intervals.clear();
+      }
+      for (const auto &pair : pairs)
+      {
+        paired_intervals[pair.first].emplace_back(pair.first_begin, pair.first_end);
+        paired_intervals[pair.second].emplace_back(pair.second_begin, pair.second_end);
+      }
+    }
     for (auto &intervals : paired_intervals)
     {
       std::sort(intervals.begin(), intervals.end());
@@ -9388,8 +9411,20 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       }
     }
 
+    if (!nonparallel_omitted_segments.empty())
+    {
+      Mpi::Warning("Omitting {} of {} three-dimensional target edge segments in non-parallel "
+                   "neighborhoods without a matched cluster model (correction disabled for "
+                   "these segments only).\n",
+                   static_cast<int>(nonparallel_omitted_segments.size()),
+                   static_cast<int>(segments.size()));
+    }
     for (std::size_t i = 0; group_matched && i < segments.size(); i++)
     {
+      if (nonparallel_omitted_segments.find(i) != nonparallel_omitted_segments.end())
+      {
+        continue;
+      }
       std::vector<std::pair<double, double>> isolated_intervals;
       double begin = 0.0;
       for (const auto &[paired_begin, paired_end] : paired_intervals[i])
