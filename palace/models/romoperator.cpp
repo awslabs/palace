@@ -1539,7 +1539,9 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   {
     // Wave-port excitation RHS2(ω) = −2iω Σ_p s_full,p over the ports excited by this
     // excitation index (see WavePortOperator::AddExcitationBdrCoefficients), projected
-    // from the cached port-space pairings Vᵀs_full,p at this frequency.
+    // from the cached port-space pairings Vᵀs_full,p at this frequency. Pairings are cached
+    // for active ports only, so an excitation that also drives an inactive port uses the
+    // assembled excitation vector instead.
     BlockTimer bt_wp(Timer::WAVE_PORT);
     for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
     {
@@ -1548,8 +1550,14 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
         continue;
       }
       const auto it = sV_wp_full.find(port_idx);
-      MFEM_VERIFY(it != sV_wp_full.end(),
-                  "Missing wave port mode pairing for excited port " << port_idx << "!");
+      if (it == sV_wp_full.end())
+      {
+        // Excited but inactive port: no port-space pairing is cached, so use the assembled
+        // excitation vector for this excitation instead (overwrites RHSᵣ).
+        space_op.GetExcitationVector2(excitation_idx, omega, RHS2);
+        ProjectVecInternal(space_op.GetComm(), V, RHS2, RHSr, 0);
+        break;
+      }
       RHSr += std::complex<double>(0.0, -2.0 * omega) * it->second;
     }
   }

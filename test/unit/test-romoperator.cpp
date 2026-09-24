@@ -1136,7 +1136,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 // assembling and projecting HDM-size mode vectors at every frequency. SolvePROM verifies
 // the two paths agree once (and once more with the final basis at the start of the online
 // sweep) and otherwise falls back to the assembled path: require that the check ran and
-// passed, and that the reduced excitation matches the assembled one.
+// passed, and that the reduced solution matches the assembled one. Pairings are cached for
+// active ports only, so the excitation of an inactive but excited port (sharing the
+// excitation of the active port, or on its own) must fall back to the assembled excitation
+// vector rather than abort.
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "RomOperator port-space wave port pairing matches assembled projection",
                  "[romoperator][Serial][Parallel][GPU]")
@@ -1144,13 +1147,16 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   MPI_Comm comm = Mpi::World();
   const auto mesh_path =
       fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+  const unsigned int inactive_excitation = GENERATE(1u, 2u);
+  CAPTURE(inactive_excitation);
 
-  // 3 cm x 2 cm x 1 cm box: attribute 14 is a 1 cm x 1 cm face, used as a wave port with
-  // PEC on every other face (TE10 above cutoff over the 20-30 GHz band).
+  // 3 cm x 2 cm x 1 cm box: attributes 14 and 18 are non-adjacent 1 cm x 1 cm faces on the
+  // y = 2 cm side, used as an active and an inactive (excited) wave port with PEC on every
+  // other face (TE10 above cutoff over the 20-30 GHz band).
   json pec_attributes = json::array();
   for (int attr = 1; attr <= 22; attr++)
   {
-    if (attr != 14)
+    if (attr != 14 && attr != 18)
     {
       pec_attributes.push_back(attr);
     }
@@ -1173,7 +1179,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                                               {"Attributes", json::array({14})},
                                               {"Mode", 1},
                                               {"Offset", 0.0},
-                                              {"Excitation", uint(1)}})})}};
+                                              {"Excitation", uint(1)}}),
+                                json::object({{"Index", 2},
+                                              {"Attributes", json::array({18})},
+                                              {"Mode", 1},
+                                              {"Offset", 0.0},
+                                              {"Active", false},
+                                              {"Excitation", inactive_excitation}})})}};
   setup_json["Solver"] = {
       {"Order", 2UL},
       {"Device", "CPU"},
@@ -1203,11 +1215,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   const auto n = rom_op.GetReducedDimension();
   REQUIRE(n > 0);
 
-  auto solve = [&](double omega)
+  auto solve = [&](int excitation_idx, double omega)
   {
     ComplexVector u(space_op.GetNDSpace().GetTrueVSize());
     u.UseDevice(true);
-    rom_op.SolvePROM(1, omega, u);
+    rom_op.SolvePROM(excitation_idx, omega, u);
     return u;
   };
   auto check_close = [&](const ComplexVector &u, const ComplexVector &u_ref)
@@ -1226,20 +1238,29 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // from the assembled mode vectors at the same frequency (the port mode is cached at that
   // frequency, so the comparison is not affected by the sign ambiguity of a re-solved
   // eigenvector).
-  const ComplexVector u_front = solve(omega_front);
-  REQUIRE(rom_op.WavePortPairingChecked());
-  REQUIRE(rom_op.WavePortPairingOk());
-  rom_op.UseAssembledWavePortPath(true);
-  check_close(solve(omega_front), u_front);
-
-  rom_op.UseAssembledWavePortPath(false);
+  std::vector<int> excitations = {1};
+  if (inactive_excitation != 1)
+  {
+    excitations.push_back(static_cast<int>(inactive_excitation));
+  }
+  auto check_excitations = [&](double omega)
+  {
+    for (int excitation_idx : excitations)
+    {
+      CAPTURE(excitation_idx, omega);
+      rom_op.UseAssembledWavePortPath(false);
+      const ComplexVector u = solve(excitation_idx, omega);
+      REQUIRE(rom_op.WavePortPairingChecked());
+      REQUIRE(rom_op.WavePortPairingOk());
+      rom_op.UseAssembledWavePortPath(true);
+      check_close(solve(excitation_idx, omega), u);
+    }
+    rom_op.UseAssembledWavePortPath(false);
+  };
+  check_excitations(omega_front);
   rom_op.PrepareOnlineExcitations();
   REQUIRE_FALSE(rom_op.WavePortPairingChecked());
-  const ComplexVector u_back = solve(omega_back);
-  REQUIRE(rom_op.WavePortPairingChecked());
-  REQUIRE(rom_op.WavePortPairingOk());
-  rom_op.UseAssembledWavePortPath(true);
-  check_close(solve(omega_back), u_back);
+  check_excitations(omega_back);
 }
 
 TEST_CASE("RomOperator-Synthesis-ExcludedExcitedRejected", "[romoperator][Serial]")
