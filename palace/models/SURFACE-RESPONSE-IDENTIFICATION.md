@@ -53,8 +53,9 @@ classification and are expected to be `Missing` (decisions 70 / 71: regeneration
 
 Notation: R = matching radius (mesh units); all thresholds are multiples of R; all decisions
 are quantized as in (c). A *chain* is a maximal perimeter path through regular vertices
-(`physical_chain`, `metaledge.cpp`): a straight run at this phase (the curved-edge chain rule is
-phase 3). Chain tangents are canonical: from the lexicographically smaller endpoint.
+(`physical_chain`, `metaledge.cpp`): a polyline of straight runs joined at sub-corner vertices
+(item 7, the curved-edge chain rule). Chain tangents are canonical: from the lexicographically
+smaller endpoint.
 
 1. **Through-vertex pairs.** Two points p, q on two chains that meet at a vertex v are
    *through-vertex* when both are within 2R of v. Such pairs are described by the vertex
@@ -63,8 +64,8 @@ phase 3). Chain tangents are canonical: from the lexicographically smaller endpo
    segments so that it is mesh independent; it makes corners with interior angle >= 60 deg
    plain corners and lets the arms of sharper corners interact beyond 2R from the vertex
    (2a sin(theta/2) < 2R for a >= 2R has solutions iff theta < 60 deg).
-2. **Parallel pairs.** Two chains whose tangents are parallel (|t1 . t2| >= 1 - 1e-12 on the
-   direction grid) with in-plane separation d < 2R and overlapping longitudinal extent form a
+2. **Parallel pairs.** Two single-run chains whose tangents are parallel (|t1 . t2| >= 1 - 1e-8
+   on the direction grid; chains with joints pair through item 7) with in-plane separation d < 2R and overlapping longitudinal extent form a
    *parallel interaction* over the overlap interval. Gap directions facing each other -> `Gap`
    (same or different conductor from connectivity); pointing away from each other -> `Strip`
    (the interval between them is one metal strip); the same direction -> impossible in one
@@ -108,7 +109,55 @@ phase 3). Chain tangents are canonical: from the lexicographically smaller endpo
 5. **Isolated edges.** Every chain portion not claimed by a cluster, a vertex window or a
    translational feature is an `IsolatedEdge` portion; one feature per straight run
    (chain), signature = interface types + boundary law.
-6. **Exclusions** (decision 73(3), recorded with length): `TruncationCut` (segments on the
+7. **Curved-edge chain rule** (decision 73(1); phase 2). A chain is defined by its
+   significant vertices only: collinear splits (refinement midpoints, second-order mid-edge
+   nodes) merge into one run, and the sub-corner joints between runs (turn <= 30 deg) are the
+   polyline's bends. The turn at every joint (except the joints of a detected fillet, which
+   the rounded corner accounts for) is spread over the two adjacent half-chords — the
+   discrete curvature density, exact for a polygon inscribed in a circle at any chord length —
+   and the *windowed curvature* at a chain point is the mean density over a window of length
+   `CurvatureWindowOverR` = 1 x R centred on it (the response at a point integrates the geometry
+   within ~R; the window is clipped at the ends of an open chain and periodic on a closed one).
+   The windowed bend radius is its inverse. A chain point is *curved* when the windowed bend
+   radius is below `StraightBendRadiusOverR` = 20 x R (quantized strict less), otherwise
+   *straight-like*; the crossings are solved on the piecewise-linear windowed curvature so
+   that they do not depend on the mesh. Rationale for 20: the first-order curvature
+   correction to an edge response scales as R / radius (the response integrates the field
+   over distances <= R from the edge and an in-plane bend perturbs that geometry at relative
+   order R / radius), so at 20 R it is <= 5 % of the edge response — a few 1e-4 of the total
+   for edge corrections of a few per cent, the same 5 % level as the fillet and pair
+   tolerances. Consequences:
+   * a straight-like chain portion is described by the straight features (isolated edge,
+     pair) with a `BendRadiusOverR` annotation on every feature (the tightest windowed radius
+     over its portions; not hashed; null on straight chains);
+   * an unpaired curved portion is a `CurvedEdge` feature (one per curved chain section)
+     with `RadiusOverR` = the section's tightest windowed radius in the signature;
+   * a fillet at a corner (radius < R; the run-based rounded-corner rule of item 4, computed
+     from the arms' accumulated turn and the tangent distances, hence refinement-invariant)
+     is a rounded corner and takes no part in the curvature;
+   * **pairs along bends**: two chains that are not both single straight runs pair when
+     their closest-point separation over the mutually paired intervals (points within 2R of
+     the other chain, not beyond either end of it — the half-plane past a chain end along its
+     outward tangent — and outside the 2R zones of shared vertices) is constant within
+     `PairSeparationToleranceRelative` = 0.05 of the minimum (a polyline of sub-corner turns
+     at constant width varies by at most 1 / cos(15 deg) - 1 = 3.5 %; the pair response
+     sensitivity d dR/dd is O(1)). The pair claims both chains and is split by curvature
+     class: the straight-like pieces form a `SameConductorStrip` / `SameConductorGap` /
+     `DifferentConductorGap` (separation = length-weighted mean closest-point distance on the
+     signature grid), the curved pieces a `CurvedSameConductorStrip` / `CurvedSameConductorGap`
+     / `CurvedDifferentConductorGap` with `RadiusOverR` = the tightest windowed radius of the
+     two sides (the inner side of concentric arcs). Portions described by a pair along a bend
+     are not events, so the concentric chords of a bend no longer form a spatial cluster and
+     nothing is omitted as "nonparallel". Chains whose separation is not constant (acute
+     corner arms, tapers) keep the event rule of item 3. Two single straight runs keep the
+     translational rule of item 2 (exactly parallel or events).
+   Limitations recorded: a slowly tapering pair (separation drift > 5 % over the paired
+   interval) is a cluster, as before; the joint between a straight lead and a coarse polyline
+   arc is intrinsically ambiguous (its turn is spread over the adjacent half-chords, so up to
+   half a lead may join the curved class at coarse discretisations — classes are
+   discretisation-independent, lengths are not); a chain pair with two bends of different
+   radii yields one curved feature with the tighter radius.
+8. **Exclusions** (decision 73(3), recorded with length): `TruncationCut` (segments on the
    simulation boundary), `Untargeted` (no target interface on the segment),
    `NonPlanar` (segment process normal not parallel to the reference process normal: walls,
    staples), `CrossLayer` (planar segment whose offset along the process normal differs from
@@ -177,9 +226,14 @@ matching pass). The new top-level `Identification` object carries the contract:
   "Conventions": {"CornerTurnToleranceDegrees": 30, "InteractionDistanceOverR": 2,
                   "ThroughVertexZoneOverR": 2, "ClusterBallOverR": 1,
                   "VertexJoinsClusterOverR": 3, "VertexWindowOverR": 1,
-                  "ParallelCosineTolerance": 1e-12, "Comparison": "strict less on the quantized grid"},
+                  "ParallelCosineTolerance": 1e-8, "RoundedCornerTangentTolerance": 0.05,
+                  "SignatureLengthQuantumOverR": 1e-6, "SignatureAngleQuantumDegrees": 1e-6,
+                  "StraightBendRadiusOverR": 20, "CurvatureWindowOverR": 1,
+                  "PairSeparationToleranceRelative": 0.05, "PairSeparationSamplesPerInterval": 16,
+                  "Comparison": "strict less on the quantized grid"},
   "ReferenceProcessNormal": [nx, ny, nz],
   "Features": [ {"Id": k, "Type": "...", "Signature": {...}, "Hash": "sha256", "Chirality": +-1,
+                 "BendRadiusOverR": r | null,
                  "Length": L, "Portions": [[segment, s0, s1], ...], "Vertices": [v, ...],
                  "Frame": {"Origin": [...], "Axes": [[...],[...],[...]]},
                  "Match": {"Status": "Matched" | "Missing", "Model": "name"} } ],
