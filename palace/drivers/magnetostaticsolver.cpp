@@ -157,22 +157,17 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                           "magnetostatic simulation!");
   // Source term and solution vector storage.
   Vector RHS(Curl.Width()), B(Curl.Height());
-  // Scratch vectors for the London range-space (two-solve) flux constraint: particular
-  // solution A_p, fluxoid mode A_h, and its RHS c. Unused for pure-PEC loops and current
-  // steps.
-  Vector A_p_london(Curl.Width()), A_h_london(Curl.Width()), RHS_c_london(Curl.Width());
+  // Scratch vector for the London flux solve A_p = K⁻¹(M_sheet·a_h). Unused for pure-PEC
+  // loops and current steps.
+  Vector A_p_london(Curl.Width());
   A_p_london.UseDevice(true);
-  A_h_london.UseDevice(true);
-  RHS_c_london.UseDevice(true);
   std::vector<Vector> A(n_step);
   std::vector<double> I_inc(n_step);
   std::vector<double> Phi_inc(n_step);
 
-  // Per London flux step, the drive b = M_sheet·a_h (london_rhs) and a_h (london_ah); empty
-  // for pure-PEC loops and current steps. Used to correct AᵀM_mag A to the shifted-penalty
-  // energy in PostprocessTerminals, on both the diagonal and the London-London
-  // off-diagonals.
-  std::vector<Vector> london_rhs(n_step), london_ah(n_step);
+  // Per London flux step: a_h and M_sheet·(A − a_h), used to add the shifted kinetic energy
+  // to the volume-only AᵀM_mag·A in PostprocessTerminals. Empty for other steps.
+  std::vector<Vector> london_ah(n_step), london_ms_shifted(n_step);
 
   // Magnetic flux linked through each current port's element apertures during each flux
   // excitation, used to recover the current-flux mutual inductance in a mixed simulation.
@@ -295,11 +290,15 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
       if (!ksp.GetConverged())
       {
-        // Halt rather than write an unreliable inductance from a non-converged solve.
         Mpi::Warning(curlcurl_op.GetComm(),
                      "Current source solve did not converge for port {:d}!\n", idx);
-        solve_converged_ = false;
-        return {indicator, curlcurl_op.GlobalTrueVSize()};
+        // Halt only on the London path (unreliable stiff-penalty inductance); otherwise
+        // warn and continue like the other drivers.
+        if (!curlcurl_op.GetSuperconductorOp().empty())
+        {
+          solve_converged_ = false;
+          return {indicator, curlcurl_op.GlobalTrueVSize()};
+        }
       }
     }
     else
@@ -317,75 +316,43 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                   "Flux loop " << idx << " is not a London sheet!");
       curlcurl_op.GetFluxExcitationVector(idx, RHS, post_op, &boundary_values);
       I_inc[step] = 0.0;                         // Zero current for flux loops
-      Phi_inc[step] = data.GetExcitationFlux();  // Exact via the flux constraint.
+      Phi_inc[step] = data.GetExcitationFlux();  // The prescribed hole fluxoid.
 
       // Solve 3D magnetostatic problem (flux loops use the base operator).
       set_operator(*K, K_pc);
 
-      // London flux film: range-space (two-solve) solution of the bordered flux-constrained
-      // system. RHS holds the shifted-penalty drive b = M_sheet·a_h, boundary_values holds
-      // a_h. Solve A_p = K⁻¹b and the fluxoid mode A_h = K⁻¹c, then A = A_p + α·A_h with
-      // α = (Φ − cᵀA_p)/(cᵀA_h) enforcing the exact hole flux cᵀA = Φ at all λ. The scalar
-      // constraint pins only the loop integral, so the near-hole current is free to crowd.
+      // a_h is normalized so cᵀa_h = Φ, so the shifted-penalty solve A = A_p is the
+      // fluxoid-Φ state directly (the sheet current K_s = −(A_t − a_h)/L_ksq gives ∮(A +
+      // L_ksq K_s)·dl = ∮a_h·dl = Φ). Pinning the flux cᵀA = Φ instead would drain the
+      // kinetic inductance.
       MFEM_ASSERT(A_p_london.Size() == RHS.Size(), "London scratch vector size mismatch!");
-      // Zero the scratch vectors before each solve. Magnetostatics defaults to a nonzero
-      // initial guess (iodata.cpp), and these vectors are reused across flux steps; a
-      // stale guess carrying a gradient/near-null-space component intermittently stalls
-      // CG on the gauge-singular operator K = K_cc + M_sheet (the fluxoid RHS c = Curlᵀf
-      // is marginally conditioned), producing a garbage A_h whose bad energy is injected
-      // via α·A_h. A clean zero start makes both solves robust and
-      // partition-/roundoff-independent.
+      // Zero start: A_p is reused across steps and a stale near-null-space guess can stall
+      // CG on the gauge-singular K = K_cc + M_sheet.
       A_p_london = 0.0;
       ksp.Mult(RHS, A_p_london);
       if (!ksp.GetConverged())
       {
-        // Return unconverged so SolveEstimateMarkRefine can halt adaptation and keep the
-        // last converged iteration. Bail before postprocessing so no unreliable inductance
-        // is written; the initial-solve check downstream still fails loud with no fallback.
+        // Halt AMR and keep the last converged iteration; no unreliable inductance is
+        // written.
         Mpi::Warning(curlcurl_op.GetComm(),
                      "London solve A_p = K⁻¹b did not converge for flux loop {:d}!\n", idx);
         solve_converged_ = false;
         return {indicator, curlcurl_op.GlobalTrueVSize()};
       }
-      curlcurl_op.GetFluxConstraintVector(idx, RHS_c_london);
-      A_h_london = 0.0;
-      ksp.Mult(RHS_c_london, A_h_london);
-      if (!ksp.GetConverged())
-      {
-        Mpi::Warning(curlcurl_op.GetComm(),
-                     "London solve A_h = K⁻¹c did not converge for flux loop {:d}!\n", idx);
-        solve_converged_ = false;
-        return {indicator, curlcurl_op.GlobalTrueVSize()};
-      }
-      double phi_p = curlcurl_op.MeasureLondonHoleFlux(idx, A_p_london);
-      double phi_h = curlcurl_op.MeasureLondonHoleFlux(idx, A_h_london);
-      if (!(std::abs(phi_h) > 1.0e-30))
-      {
-        // Degenerate fluxoid mode: cannot normalize α. Halt adaptation and keep the last
-        // converged iteration rather than aborting the run.
-        Mpi::Warning(curlcurl_op.GetComm(),
-                     "London fluxoid mode carries ~zero hole flux for flux loop {:d}; "
-                     "halting adaptation!\n",
-                     idx);
-        solve_converged_ = false;
-        return {indicator, curlcurl_op.GlobalTrueVSize()};
-      }
-      double alpha = (data.GetExcitationFlux() - phi_p) / phi_h;
       A[step] = A_p_london;
-      A[step].Add(alpha, A_h_london);
 
-      // Accumulate the kinetic penalty energy S(A_t − a_h) = (A − a_h)ᵀ M_sheet (A − a_h),
-      // formed directly (not via the cancellation-prone S(A,A) − 2S(A,a_h) + S(a_h,a_h)) so
-      // it is trustworthy even when the stiff-penalty solve is under-resolved.
+      // Kinetic penalty energy S(A − a_h) = (A − a_h)ᵀ M_sheet (A − a_h), formed directly
+      // to avoid the cancellation in S(A,A) − 2S(A,a_h) + S(a_h,a_h).
       Vector d(A[step]), msd(A[step].Size());
       msd.UseDevice(true);
       d -= boundary_values;
       curlcurl_op.ApplySheetMass(d, msd);
       london_kinetic += linalg::Dot(curlcurl_op.GetComm(), d, msd);
 
-      // Retain b and a_h for the cross-energy correction in PostprocessTerminals.
-      london_rhs[step] = RHS;
+      // Retain a_h and M_sheet·(A − a_h) for the shifted-kinetic cross-energy added to the
+      // volume-only AᵀM_mag·A in PostprocessTerminals.
       london_ah[step] = boundary_values;
+      london_ms_shifted[step] = msd;
     }
   }
 
@@ -428,10 +395,20 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       // Create flux direction vector from data
       mfem::Vector flux_direction(const_cast<double *>(data.direction.data()),
                                   static_cast<int>(data.direction.size()));
-      // Verify that the flux is correctly computed
-      VerifyFluxThroughHoles(B_gf, data.hole_attributes, data.flux_amounts,
-                             curlcurl_op.GetMesh(), curlcurl_op.GetMaterialOp(),
-                             flux_direction, curlcurl_op.GetComm());
+      // A London loop fixes the fluxoid (cᵀa_h = Φ exactly), not the flux; the hole's
+      // magnetic flux is screened below Φ at finite λ. Report both, not a flux "error".
+      double fluxoid = curlcurl_op.MeasureLondonHoleFlux(idx, london_ah[step]);
+      for (std::size_t h = 0; h < data.hole_attributes.size(); h++)
+      {
+        double mag_flux = ComputeFluxThroughSurface(
+            B_gf, {data.hole_attributes[h]}, curlcurl_op.GetMesh(),
+            curlcurl_op.GetMaterialOp(), flux_direction, curlcurl_op.GetComm());
+        Mpi::Print("Hole {:d}: fluxoid = {:.6e} (target {:.6e}), magnetic flux = {:.6e} "
+                   "(screened to {:.1f}% of Φ at finite λ)\n",
+                   data.hole_attributes[h], fluxoid, data.flux_amounts[h], mag_flux,
+                   data.flux_amounts[h] != 0.0 ? 100.0 * mag_flux / data.flux_amounts[h]
+                                               : 0.0);
+      }
 
       // Measure the flux this excitation links through each current port's aperture. With
       // the current ports open (I_c = 0) the response is Φ_c = M_cf*M_ff^-1*Φ_f, which is
@@ -469,7 +446,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   SaveMetadata(ksp);
   PostprocessTerminals(post_op, curlcurl_op.GetSurfaceCurrentOp(),
                        curlcurl_op.GetSurfaceFluxOp(), A, I_inc, Phi_inc, linked_flux,
-                       london_rhs, london_ah);
+                       london_ah, london_ms_shifted);
   post_op.MeasureFinalize(indicator);
   return {indicator, curlcurl_op.GlobalTrueVSize()};
 }
@@ -479,7 +456,8 @@ void MagnetostaticSolver::PostprocessTerminals(
     const SurfaceCurrentOperator &surf_j_op, const SurfaceFluxOperator &surf_flux_op,
     const std::vector<Vector> &A, const std::vector<double> &I_inc,
     const std::vector<double> &Phi_inc, const mfem::DenseMatrix &linked_flux,
-    const std::vector<Vector> &london_rhs, const std::vector<Vector> &london_ah) const
+    const std::vector<Vector> &london_ah,
+    const std::vector<Vector> &london_ms_shifted) const
 {
   // Postprocess the Maxwell inductance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the magnetic field energy based on a current
@@ -561,21 +539,18 @@ void MagnetostaticSolver::PostprocessTerminals(
   // Compute cross-energy matrix and diagonals. Off-diagonals are only meaningful between
   // reciprocal (Open-Open) port pairs; other pairs are left as NaN.
   //
-  // London shift correction. M_mag gives AᵀM_mag A = 2W + S(A,A), but the physical London
-  // energy is Ẽ_ij = 2W(A_i,A_j) + S(A_i − a_h_i, A_j − a_h_j), so each London-London pair
-  // needs
-  //   Δ_ij = −Dot(A_i,b_j) − Dot(A_j,b_i) + Dot(a_h_i,b_j),   b = M_sheet·a_h.
-  // Zero unless both steps carry a London drive (pure-PEC loops and current steps store
-  // nothing).
+  // M_mag is volume-only (AᵀM_mag·A = 2W), so add the shifted London kinetic energy
+  //   S(A_i − a_h_i, A_j − a_h_j) = Dot(A_i − a_h_i, M_sheet(A_j − a_h_j))
+  // on the diagonal and London-London off-diagonals; zero unless both steps carry a drive.
   auto london_correction = [&](int i, int j) -> double
   {
-    if (london_rhs[i].Size() == 0 || london_rhs[j].Size() == 0)
+    if (london_ms_shifted[i].Size() == 0 || london_ms_shifted[j].Size() == 0)
     {
       return 0.0;
     }
-    return -linalg::Dot<Vector>(post_op.GetComm(), A[i], london_rhs[j]) -
-           linalg::Dot<Vector>(post_op.GetComm(), A[j], london_rhs[i]) +
-           linalg::Dot<Vector>(post_op.GetComm(), london_ah[i], london_rhs[j]);
+    Vector d(A[i]);
+    d -= london_ah[i];
+    return linalg::Dot<Vector>(post_op.GetComm(), d, london_ms_shifted[j]);
   };
 
   mfem::DenseMatrix cross_energy(n);
