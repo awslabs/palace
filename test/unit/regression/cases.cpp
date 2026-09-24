@@ -876,6 +876,19 @@ TEST_CASE("double_hole_london_flux", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("double_hole_london", "double_hole.json", "", opts);
 }
 
+// Narrow London ring vs the analytic thin-ring L = L_geom + L_ksq*2*pi*r/w: the extracted
+// kinetic (~71 pH) matches to ~1%, locking in the fluxoid fix (the flux-pinned solve gave ~0).
+TEST_CASE("narrow_ring_london_flux", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("narrow_ring", "narrow_ring.json", "", opts);
+}
+
 // London flux film under non-conformal AMR. Locks the NC-safe cut generator (a_h = Grad ψ -
 // a_angle): Grad ψ survives the true-DOF round trip exactly, so the fluxoid and
 // curl-free-on-Σ gauge hold on the refined mesh and L converges upward (5.16 -> 5.33 pH
