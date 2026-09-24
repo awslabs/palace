@@ -122,6 +122,44 @@ def drop_attributes(data, attributes):
     return rewrite_elements(data, elements, offset, lambda e: e[0] in TRIANGLE_TYPES and e[3] in attributes)
 
 
+TETRAHEDRON_TYPES = (4, 11)
+TETRAHEDRON_FACES = ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3))
+
+
+def add_material_interface_group(data, attribute, name="substrate_air"):
+    """Add first-order triangles with the given physical attribute on every face shared by
+    two volume elements of different material attributes which carries no boundary element
+    yet (the substrate / vacuum interface outside the metal: a production mesh without a
+    substrate_air group). Second-order tetrahedra contribute their corner faces."""
+    element_count, offset = parse_sections(data)
+    elements = read_elements(data, element_count, offset)
+    existing = {tuple(sorted(e[4][:3])) for e in elements if e[0] in TRIANGLE_TYPES}
+    faces = defaultdict(set)
+    for element_type, _, _, physical, nodes in elements:
+        if element_type in TETRAHEDRON_TYPES:
+            for face in TETRAHEDRON_FACES:
+                faces[tuple(sorted(nodes[i] for i in face))].add(physical)
+    new_faces = sorted(face for face, materials in faces.items() if len(materials) > 1 and face not in existing)
+    if not new_faces:
+        return data, 0
+    names_tag = data.index(b"$PhysicalNames\n")
+    count_end = data.index(b"\n", names_tag + len(b"$PhysicalNames\n"))
+    names_end = data.index(b"$EndPhysicalNames")
+    if f"2 {attribute} ".encode() in data[names_tag:names_end]:
+        raise SystemExit(f"physical surface {attribute} already exists")
+    count = int(data[names_tag + len(b"$PhysicalNames\n"):count_end])
+    names_block = f"{count + 1}\n".encode() + data[count_end + 1:names_end] + f'2 {attribute} "{name}"\n'.encode()
+    elements_tag = data.index(b"$Elements\n")
+    end = data.index(b"\n$EndElements", offset)
+    payload = bytearray(data[offset:end])
+    record = struct.Struct("<6i")
+    payload += struct.pack("<3i", 2, len(new_faces), 2)
+    for k, face in enumerate(new_faces):
+        payload += record.pack(element_count + k + 1, attribute, attribute, *face)
+    result = data[:names_tag + len(b"$PhysicalNames\n")] + names_block + data[names_end:elements_tag] + f"$Elements\n{element_count + len(new_faces)}\n".encode() + bytes(payload) + data[end:]
+    return result, len(new_faces)
+
+
 def rewrite_elements(data, elements, offset, drop):
     dropped = 0
     kept = []
@@ -203,6 +241,7 @@ def main(argv=None):
     parser.add_argument("--first-island", type=int, default=9, help="attribute of the first island; the k-th island gets first + k - 1")
     parser.add_argument("--drop-metal-duplicates", action="store_true", help="remove metal triangles coinciding with a triangle of another attribute")
     parser.add_argument("--drop-attributes", type=int, nargs="*", default=[], help="remove the surface elements of these attributes (e.g. the substrate_air group)")
+    parser.add_argument("--add-interface-group", type=int, help="add triangles with this attribute on every material-interface face without a boundary element (a substrate_air group)")
     args = parser.parse_args(argv)
     data = args.mesh.read_bytes()
     dropped = 0
@@ -211,9 +250,13 @@ def main(argv=None):
     dropped_attributes = 0
     if args.drop_attributes:
         data, dropped_attributes = drop_attributes(data, set(args.drop_attributes))
+    added_interface = 0
+    if args.add_interface_group:
+        data, added_interface = add_material_interface_group(data, args.add_interface_group)
     result, counts = tag_components(data, metal=args.metal, ground_adjacent=set(args.ground_adjacent), first_island=args.first_island)
     counts["DroppedMetalDuplicates"] = dropped
     counts["DroppedAttributeElements"] = dropped_attributes
+    counts["AddedInterfaceElements"] = added_interface
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(result)
     counts["InputSha256"] = hashlib.sha256(args.mesh.read_bytes()).hexdigest()

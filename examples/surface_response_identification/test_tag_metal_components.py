@@ -109,6 +109,30 @@ class TagMetalComponentsTest(unittest.TestCase):
             mesh = read_msh2(output)
             self.assertEqual(sorted(mesh.physical_tags(2)), [6, 6])
 
+    def test_add_interface_group_covers_the_uncovered_material_interface_faces(self):
+        # Two tets (substrate 1 below, vacuum 2 above) sharing the face 1-2-3 at z = 0 which
+        # has no boundary element; the metal triangle 1-2-4 is a different face.
+        nodes = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0), (0, 0, -1), (0, 0, 1)]
+        elements = [(2, 6, (1, 2, 4)), (4, 1, (1, 2, 3, 5)), (4, 2, (1, 2, 3, 6))]
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "m.msh2")
+            write_msh2(path, nodes, elements, [(3, 1, "substrate"), (3, 2, "vacuum"), (2, 6, "metal")], binary=True)
+            with open(path, "rb") as source:
+                data = source.read()
+            result, added = T.add_material_interface_group(data, 8)
+            self.assertEqual(added, 1)
+            output = os.path.join(directory, "out.msh2")
+            with open(output, "wb") as target:
+                target.write(result)
+            mesh = read_msh2(output)
+            self.assertEqual(mesh.physical_names[(2, 8)], "substrate_air")
+            tags = list(mesh.physical_tags(2))
+            self.assertEqual(sorted(tags), [6, 8])
+            corners = mesh.corner_indices(2)
+            self.assertEqual(sorted(int(n) for n in corners[tags.index(8)]), [0, 1, 2])
+            again, added_again = T.add_material_interface_group(result, 9)
+            self.assertEqual(added_again, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
