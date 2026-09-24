@@ -5091,11 +5091,8 @@ LibrarySignatureKeys(const ProcessLibrary &library,
       case LibraryTopology::CONVEX_CORNER:
       case LibraryTopology::CONCAVE_CORNER:
         key = SignatureKeyAndHash(
-            {{"Interfaces", interfaces},
-             {"Law", law},
-             {"AngleDegrees",
-              std::round(model.angle * 180.0 / std::acos(-1.0) * 1.0e6) * 1.0e-6},
-             {"CornerRadiusOverR", std::round(model.corner_radius / R * 1.0e10) * 1.0e-10}},
+            CanonicalCornerSignature(interfaces, law, model.angle * 180.0 / std::acos(-1.0),
+                                     model.corner_radius / R),
             TopologyIdentifier(model.topology));
         break;
       case LibraryTopology::ENDPOINT:
@@ -5103,31 +5100,21 @@ LibrarySignatureKeys(const ProcessLibrary &library,
         break;
       case LibraryTopology::JUNCTION:
         {
-          std::vector<double> angles;
-          for (const double angle : model.arm_angles)
+          // The model stores sorted absolute arm angles (radians); the identification
+          // signature uses the consecutive differences in degrees.
+          std::vector<double> sorted = model.arm_angles, differences;
+          std::sort(sorted.begin(), sorted.end());
+          for (std::size_t i = 0; i < sorted.size(); i++)
           {
-            angles.push_back(std::round(angle * 1.0e6) * 1.0e-6);
+            const double next =
+                i + 1 < sorted.size() ? sorted[i + 1] : sorted[0] + 2.0 * std::acos(-1.0);
+            differences.push_back((next - sorted[i]) * 180.0 / std::acos(-1.0));
           }
-          std::vector<double> best = angles;
-          for (const bool reverse : {false, true})
+          if (!differences.empty())
           {
-            std::vector<double> sequence = angles;
-            if (reverse)
-            {
-              std::reverse(sequence.begin(), sequence.end());
-            }
-            for (std::size_t shift = 0; shift < sequence.size(); shift++)
-            {
-              std::rotate(sequence.begin(), sequence.begin() + 1, sequence.end());
-              if (sequence < best)
-              {
-                best = sequence;
-              }
-            }
+            key = SignatureKeyAndHash(
+                CanonicalJunctionSignature(interfaces, law, differences), "Junction");
           }
-          key = SignatureKeyAndHash(
-              {{"Interfaces", interfaces}, {"Law", law}, {"ArmAnglesDegrees", best}},
-              "Junction");
           break;
         }
       case LibraryTopology::SPATIAL_EDGE_CLUSTER:

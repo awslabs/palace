@@ -399,6 +399,33 @@ TEST_CASE("SurfaceResponseIdentification", "[surfaceresponseidentification][Seri
     CHECK(base.geometry_digest == mirrored.geometry_digest);
     CHECK(base.geometry_digest == rotated.geometry_digest);
     CheckPartition(MakeInput(Scene(1.0, 0.0), R), base);
+
+    // Chip-scale coordinates: the same scene translated to (4999.123, 7321.789) um and
+    // rotated by 37 deg carries coordinate roundoff ~ulp(1e4 um) ~ 1e-12 um into every
+    // bisected portion endpoint; the signature grid (1e-6 R) must absorb it so that every
+    // feature hash (clusters, corners, strips, isolated edges) is unchanged.
+    {
+      auto FarScene = [&](double rotate)
+      {
+        auto Transform = [&](std::vector<Point2> points)
+        {
+          for (auto &p : points)
+          {
+            const double c = std::cos(rotate), s = std::sin(rotate);
+            p = {c * p[0] - s * p[1] + 4999.123, s * p[0] + c * p[1] + 7321.789};
+          }
+          return points;
+        };
+        return std::vector<LoopSpec>{{Transform(Rectangle(0.0, 0.0, 10.0, 10.0)), 0, 1.0},
+                                     {Transform(Rectangle(-3.0, 3.0, -1.0, 20.0)), 0, 1.0}};
+      };
+      const auto far_input = MakeInput(FarScene(37.0 * std::acos(-1.0) / 180.0), R);
+      const auto far = IdentifyMetalPerimeter(far_input);
+      CheckPartition(far_input, far);
+      CHECK(far.geometry_digest == base.geometry_digest);
+      CHECK(FeatureHashes(far) == FeatureHashes(base));
+      CHECK(Clusters(far) == base_clusters);
+    }
   }
 
   // Two interaction regions merge into one cluster when their radius-R balls overlap (cores

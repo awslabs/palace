@@ -681,11 +681,15 @@ nlohmann::json SerializeInFrame(const std::vector<SignaturePortion> &portions,
   auto Local = [&](const Point3D &p)
   {
     const Point3D r = Sub(p, origin);
-    return std::array<double, 2>{RoundTo(Dot(r, x) / radius, 1.0e-10),
-                                 RoundTo(Dot(r, y) / radius, 1.0e-10)};
+    return std::array<double, 2>{
+        RoundTo(Dot(r, x) / radius, kSignatureLengthQuantumOverRadius),
+        RoundTo(Dot(r, y) / radius, kSignatureLengthQuantumOverRadius)};
   };
   auto LocalDirection = [&](const Point3D &v)
-  { return std::array<double, 2>{RoundTo(Dot(v, x), 1.0e-8), RoundTo(Dot(v, y), 1.0e-8)}; };
+  {
+    return std::array<double, 2>{RoundTo(Dot(v, x), kSignatureLengthQuantumOverRadius),
+                                 RoundTo(Dot(v, y), kSignatureLengthQuantumOverRadius)};
+  };
   struct Entry
   {
     nlohmann::json geometry;
@@ -723,9 +727,10 @@ nlohmann::json SerializeInFrame(const std::vector<SignaturePortion> &portions,
   for (const auto &vertex : vertices)
   {
     const auto p = Local(vertex.point);
-    vertex_entries.push_back({{"P", {p[0], p[1]}},
-                              {"Type", vertex.type},
-                              {"TurnDegrees", RoundTo(vertex.turn_degrees, 1.0e-6)}});
+    vertex_entries.push_back(
+        {{"P", {p[0], p[1]}},
+         {"Type", vertex.type},
+         {"TurnDegrees", RoundTo(vertex.turn_degrees, kSignatureAngleQuantumDegrees)}});
   }
   std::sort(vertex_entries.begin(), vertex_entries.end(),
             [](const auto &a, const auto &b) { return a.dump() < b.dump(); });
@@ -749,6 +754,46 @@ std::pair<std::string, std::string> SignatureKeyAndHash(nlohmann::json signature
   signature["Type"] = type;
   const std::string key = signature.dump();
   return {key, Sha256HexImpl(key)};
+}
+
+nlohmann::json CanonicalCornerSignature(const std::vector<std::string> &interfaces,
+                                        const std::string &boundary_law,
+                                        double angle_degrees, double corner_radius_over_R)
+{
+  return {{"Interfaces", interfaces},
+          {"Law", boundary_law},
+          {"AngleDegrees", RoundTo(angle_degrees, kSignatureAngleQuantumDegrees)},
+          {"CornerRadiusOverR",
+           RoundTo(corner_radius_over_R, kSignatureLengthQuantumOverRadius)}};
+}
+
+nlohmann::json CanonicalJunctionSignature(const std::vector<std::string> &interfaces,
+                                          const std::string &boundary_law,
+                                          std::vector<double> arm_angles_degrees)
+{
+  for (double &angle : arm_angles_degrees)
+  {
+    angle = RoundTo(angle, kSignatureAngleQuantumDegrees);
+  }
+  // Canonical cyclic order: minimal rotation, both orientations (mirror).
+  std::vector<double> best = arm_angles_degrees;
+  for (const bool reverse : {false, true})
+  {
+    std::vector<double> sequence = arm_angles_degrees;
+    if (reverse)
+    {
+      std::reverse(sequence.begin(), sequence.end());
+    }
+    for (std::size_t shift = 0; shift < sequence.size(); shift++)
+    {
+      std::rotate(sequence.begin(), sequence.begin() + 1, sequence.end());
+      if (sequence < best)
+      {
+        best = sequence;
+      }
+    }
+  }
+  return {{"Interfaces", interfaces}, {"Law", boundary_law}, {"ArmAnglesDegrees", best}};
 }
 
 TranslationalSignature CanonicalTranslationalSignature(std::vector<TranslationalEdge> edges,
@@ -775,18 +820,19 @@ TranslationalSignature CanonicalTranslationalSignature(std::vector<Translational
       const auto [it, inserted] =
           labels.emplace(edge.conductor, static_cast<int>(labels.size()) + 1);
       (void)inserted;
-      list.push_back(
-          {{"OffsetOverR", RoundTo(orientation * (edge.offset - w0) / radius, 1.0e-10)},
-           {"GapSide", orientation * edge.gap_sign},
-           {"Conductor", it->second},
-           {"Interfaces", edge.interfaces},
-           {"Law", edge.boundary_law}});
+      list.push_back({{"OffsetOverR", RoundTo(orientation * (edge.offset - w0) / radius,
+                                               kSignatureLengthQuantumOverRadius)},
+                      {"GapSide", orientation * edge.gap_sign},
+                      {"Conductor", it->second},
+                      {"Interfaces", edge.interfaces},
+                      {"Law", edge.boundary_law}});
     }
     nlohmann::json candidate = {{"Edges", list}};
     if (edges.size() == 2)
     {
       candidate["SeparationOverR"] =
-          RoundTo(std::abs(edges.back().offset - edges.front().offset) / radius, 1.0e-10);
+          RoundTo(std::abs(edges.back().offset - edges.front().offset) / radius,
+                  kSignatureLengthQuantumOverRadius);
     }
     const std::string key = candidate.dump();
     if (best_key.empty() || key < best_key)
@@ -1174,27 +1220,8 @@ void Identifier::ClassifyVertices()
       for (std::size_t i = 0; i < angles.size(); i++)
       {
         const double next = i + 1 < angles.size() ? angles[i + 1] : angles[0] + 360.0;
-        site.arm_angles.push_back(RoundTo(next - angles[i], 1.0e-6));
+        site.arm_angles.push_back(next - angles[i]);
       }
-      // Canonical cyclic order: minimal rotation, both orientations (mirror).
-      std::vector<double> best = site.arm_angles;
-      for (const bool reverse : {false, true})
-      {
-        std::vector<double> sequence = site.arm_angles;
-        if (reverse)
-        {
-          std::reverse(sequence.begin(), sequence.end());
-        }
-        for (std::size_t shift = 0; shift < sequence.size(); shift++)
-        {
-          std::rotate(sequence.begin(), sequence.begin() + 1, sequence.end());
-          if (sequence < best)
-          {
-            best = sequence;
-          }
-        }
-      }
-      site.arm_angles = best;
     }
     sites.push_back(std::move(site));
   }
@@ -1865,8 +1892,7 @@ void Identifier::BuildClusters()
     }
     for (const std::size_t s : cluster_sites[c])
     {
-      vertices.push_back(
-          {sites[s].point, sites[s].type, RoundTo(sites[s].turn_degrees, 1.0e-6)});
+      vertices.push_back({sites[s].point, sites[s].type, sites[s].turn_degrees});
     }
     MFEM_VERIFY(!portions.empty(), "A spatial cluster claims no perimeter!");
     const auto canonical = CanonicalClusterSignature(portions, vertices, n_ref, R);
@@ -1903,12 +1929,13 @@ void Identifier::Assign(IdentificationResult &result)
                                 {"Law", site.boundary_law}};
     if (site.type == "ConvexCorner" || site.type == "ConcaveCorner")
     {
-      signature["AngleDegrees"] = RoundTo(site.angle_degrees, 1.0e-6);
-      signature["CornerRadiusOverR"] = RoundTo(site.corner_radius / R, 1.0e-10);
+      signature = CanonicalCornerSignature(site.interfaces, site.boundary_law,
+                                           site.angle_degrees, site.corner_radius / R);
     }
     else if (site.type == "Junction")
     {
-      signature["ArmAnglesDegrees"] = site.arm_angles;
+      signature =
+          CanonicalJunctionSignature(site.interfaces, site.boundary_law, site.arm_angles);
     }
     const int feature = NewFeature(site.type, signature);
     features[feature].origin = site.point;
@@ -2335,6 +2362,8 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
             {"RoundedCornerTangentTolerance", kRoundedCornerTangentTolerance},
             {"LengthQuantumOverR", kLengthQuantumOverRadius},
             {"DirectionQuantum", kDirectionQuantum},
+            {"SignatureLengthQuantumOverR", kSignatureLengthQuantumOverRadius},
+            {"SignatureAngleQuantumDegrees", kSignatureAngleQuantumDegrees},
             {"Comparison", "strict less on the quantized grid"}}},
           {"ReferenceProcessNormal", D(reference_process_normal)},
           {"Features", feature_list},

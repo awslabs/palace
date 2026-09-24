@@ -187,6 +187,24 @@ struct TranslationalSignature
 TranslationalSignature CanonicalTranslationalSignature(std::vector<TranslationalEdge> edges,
                                                        double radius);
 
+// Signature grids. Signature coordinates (portion endpoints / R, offsets / R, corner
+// radii / R) come from bisections at analytic region boundaries and from chip-scale mesh
+// coordinates whose roundoff is ~ulp(|p|) (1e-12 um at 10 mm); the grid must be far above
+// that roundoff so that translated / rotated copies of one feature hash identically, and far
+// below any resolution the response can depend on (the response varies on the scale R).
+// 1e-6 R (2 pm at R = 2 um) satisfies both; angles use the same relative grid in degrees.
+constexpr double kSignatureLengthQuantumOverRadius = 1.0e-6;
+constexpr double kSignatureAngleQuantumDegrees = 1.0e-6;
+
+// Corner / junction signatures (without "Type"), shared by device features and library
+// models so that one canonicalisation produces both keys.
+nlohmann::json CanonicalCornerSignature(const std::vector<std::string> &interfaces,
+                                        const std::string &boundary_law,
+                                        double angle_degrees, double corner_radius_over_R);
+nlohmann::json CanonicalJunctionSignature(const std::vector<std::string> &interfaces,
+                                          const std::string &boundary_law,
+                                          std::vector<double> arm_angles_degrees);
+
 // Feature signature key and hash shared by device features and library models.
 std::pair<std::string, std::string> SignatureKeyAndHash(nlohmann::json signature,
                                                         const std::string &type);

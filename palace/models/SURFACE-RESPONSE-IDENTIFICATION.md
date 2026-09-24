@@ -117,11 +117,23 @@ phase 3). Chain tangents are canonical: from the lexicographically smaller endpo
    the same material on both sides cancel in the odd-incidence perimeter, see the baseline
    report) is a phase-4 item and is *not* covered by this table.
 
+**Signature grids.** Every continuous signature quantity (portion endpoints / R, offsets and
+separations / R, corner radii / R, gap-direction cosines) is rounded to the recorded grid
+`SignatureLengthQuantumOverR` = 1e-6 and every angle to `SignatureAngleQuantumDegrees` = 1e-6
+deg. Rationale: the coordinates entering a signature are chip-scale mesh coordinates and
+bisection results whose roundoff is ~ulp(|p|) (1e-12 um at 10 mm), so the grid must be far
+above it for translated / rotated copies of one feature to hash identically (flip probability
+per coordinate ~ roundoff / grid ~ 1e-6 at R = 2 um), and it must be far below any resolution the
+response can depend on (the response varies on the scale R): 1e-6 R = 2 pm at R = 2 um. The
+decision grid 1e-8 R of (c) is for geometric decisions (interaction / membership), not for
+hashed values. Version-1 records derived from a signature (Separation, CornerRadius) inherit
+the signature grid.
+
 **Cluster frame and signature.** Origin = length-weighted centroid of the cluster's claimed
 portions; z = process normal. The in-plane x axis is chosen among the finite candidate set
 {chain tangents of the cluster, both signs, and their in-plane perpendiculars}; for each
 candidate and each handedness (y = z x x or y = -(z x x)) the cluster is serialised (portions
-as `[x0, y0, x1, y1] / R` on the 1e-8 R grid, gap side, interface types, conductor label by
+as `[x0, y0, x1, y1] / R` on the signature grid, gap side, interface types, conductor label by
 first appearance, vertices as `[x, y] / R` + type + turn) and sorted; the lexicographically
 smallest serialisation is the signature, and the handedness that produced it is the
 `Chirality` (+1 / -1; 0 when both handedness values reach the minimal serialisation, i.e. the

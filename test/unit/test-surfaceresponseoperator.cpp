@@ -2442,8 +2442,10 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                    });
   REQUIRE(missing_pair_requirement != missing_pair_requirements["Requirements"].end());
   CHECK((*missing_pair_requirement)["Geometry"]["EdgeCount"] == 2);
+  // The version-1 Separation is derived from the signature's SeparationOverR on the
+  // recorded 1e-6 R signature grid (R = 7), hence the 7e-6 tolerance.
   CHECK_THAT((*missing_pair_requirement)["Geometry"]["Separation"].get<double>(),
-             WithinAbs(12.0, 1.0e-9));
+             WithinAbs(12.0, 7.0e-6));
 
   auto interpolated_coupled_config_3d = coupled_config_3d;
   interpolated_coupled_config_3d["Solver"]["Electrostatic"]["ResponseCorrection"]
