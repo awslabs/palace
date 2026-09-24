@@ -286,13 +286,13 @@ class AuditGateTest(unittest.TestCase):
         return code, {g["Gate"]: g["Status"] for g in result["Gates"]}, result
 
     def test_complete_partition_passes_except_the_silent_exclusions(self):
-        # 18 physical length in 9 segments, 6 convex corners, 2 endpoints of A's open chains.
+        # 18 physical length in 9 segments, 6 convex corners; the 2 endpoints of A's open
+        # chains lie on the truncation edge and are simulation cuts, not features.
         manifest = make_manifest(
             [
                 requirement("IsolatedEdge", 7, 14.0, {"EdgeCount": 1}),
                 requirement("SameConductorStrip", 2, 4.0, {"EdgeCount": 2, "Separation": 2.0}),
                 requirement("ConvexCorner", 6, 24.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0}),
-                requirement("Endpoint", 2, 8.0, {}),
             ],
             metal_segments=10,
             chains=7,
@@ -304,6 +304,7 @@ class AuditGateTest(unittest.TestCase):
         self.assertEqual(gates["A1-count-partition"], "PASS")
         self.assertEqual(gates["A1-multiplicity"], "PASS")
         self.assertEqual(gates["A1-vertex-census"], "PASS")
+        self.assertEqual(result["ByGate"]["A1-vertex-census"]["AuditTruncationCuts"], 2)
         self.assertEqual(gates["A2-cluster-balls"], "PASS")
         # The wall / span metal is never reported by the manifest: the exclusion gate fails.
         self.assertEqual(gates["A1-exclusions-recorded"], "FAIL")
@@ -311,14 +312,14 @@ class AuditGateTest(unittest.TestCase):
         self.assertAlmostEqual(result["GapBound"]["ExcludedLength"], 8.0)
 
     def test_gap_and_double_count_fail(self):
-        manifest = make_manifest([requirement("IsolatedEdge", 8, 16.0, {"EdgeCount": 1}), requirement("ConvexCorner", 6, 24.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0}), requirement("Endpoint", 2, 8.0, {})])
+        manifest = make_manifest([requirement("IsolatedEdge", 8, 16.0, {"EdgeCount": 1}), requirement("ConvexCorner", 6, 24.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0})])
         code, gates, result = self.run_gates(manifest, log="Omitting 1 of 9 three-dimensional target edge segments which are within 2R of a physical metal edge with a different interface mapping.\n")
         self.assertEqual(gates["A1-length-partition"], "FAIL")
         self.assertEqual(gates["A1-count-partition"], "FAIL")
         self.assertEqual(gates["A1-multiplicity"], "NOT-EVALUABLE")
         self.assertAlmostEqual(result["GapBound"]["OmittedLength"], 2.0)
         self.assertTrue(result["ByGate"]["A1-count-partition"]["Reconciled"])
-        manifest = make_manifest([requirement("IsolatedEdge", 10, 20.0, {"EdgeCount": 1}), requirement("ConvexCorner", 6, 24.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0}), requirement("Endpoint", 2, 8.0, {})])
+        manifest = make_manifest([requirement("IsolatedEdge", 10, 20.0, {"EdgeCount": 1}), requirement("ConvexCorner", 6, 24.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0})])
         code, gates, _ = self.run_gates(manifest)
         self.assertEqual(gates["A1-count-partition"], "FAIL")
         self.assertEqual(code, 1)
@@ -326,8 +327,9 @@ class AuditGateTest(unittest.TestCase):
     def test_vertex_census_residual_and_compare(self):
         manifest = make_manifest([requirement("IsolatedEdge", 9, 18.0, {"EdgeCount": 1}), requirement("ConvexCorner", 3, 12.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0})])
         code, gates, result = self.run_gates(manifest)
+        # 6 audit corners, 3 in the manifest, no clusters: a silent drop of 3 -> FAIL.
         self.assertEqual(gates["A1-vertex-census"], "FAIL")
-        self.assertEqual(result["ByGate"]["A1-vertex-census"]["Residual"], 5)
+        self.assertEqual(result["ByGate"]["A1-vertex-census"]["Residual"], 3)
         other = os.path.join(self.directory.name, "other.json")
         with open(other, "w") as target:
             json.dump(make_manifest([requirement("IsolatedEdge", 9, 18.0, {"EdgeCount": 1}), requirement("ConvexCorner", 3, 12.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0}, "Missing", Reason="x")]), target)
@@ -338,6 +340,10 @@ class AuditGateTest(unittest.TestCase):
             result = json.load(source)
         self.assertTrue(result["Compare"]["Diff"]["Identical"])
         self.assertEqual({g["Gate"]: g["Status"] for g in result["Gates"]}["A3/A5-set-identity"], "PASS")
+        # With a cluster record present the residual is not evaluable (absorbed or dropped).
+        clustered = make_manifest([requirement("IsolatedEdge", 9, 18.0, {"EdgeCount": 1}), requirement("ConvexCorner", 3, 12.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0}), requirement("SpatialEdgeCluster", 1, 2.0, {"EdgeCount": 3, "Edges": []})])
+        _, gates_clustered, _ = self.run_gates(clustered)
+        self.assertEqual(gates_clustered["A1-vertex-census"], "NOT-EVALUABLE")
 
 
 if __name__ == "__main__":

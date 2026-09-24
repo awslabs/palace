@@ -51,7 +51,13 @@ def perimeter_census(perimeter, radius, targets):
     turns = np.array([v.turn_degrees for v in perimeter.vertices if v.physical_kind in ("REGULAR", "CORNER") and v.turn_degrees is not None])
     histogram = np.histogram(turns, bins=TURN_BINS)[0].tolist() if turns.size else [0] * (len(TURN_BINS) - 1)
     corners = []
+    cuts = 0
     for index, v in enumerate(perimeter.vertices):
+        if v.physical_kind == "ENDPOINT" and any(perimeter.edges[e].kind == "TRUNCATION" for e in v.edges):
+            # A physical chain ending on the truncation boundary is a simulation cut, not a
+            # layout feature (the classifier makes no Endpoint feature there).
+            cuts += 1
+            continue
         if v.physical_kind in ("CORNER", "ENDPOINT", "JUNCTION"):
             corners.append(
                 {
@@ -72,6 +78,7 @@ def perimeter_census(perimeter, radius, targets):
             bend_radius = h / (2.0 * math.sin(math.radians(v.turn_degrees) / 2.0))
             smooth_turns.append((v.turn_degrees, float(bend_radius)))
     smooth = np.array(smooth_turns) if smooth_turns else np.zeros((0, 2))
+    runs = P.rounded_runs(perimeter, radius)
     interactions = P.edge_interactions(perimeter, radius)
     distances = np.array([i[2] for i in interactions]) if interactions else np.zeros(0)
     quantum = 1.0e-8 * radius
@@ -98,6 +105,9 @@ def perimeter_census(perimeter, radius, targets):
         "UntargetedPhysicalLength": float(sum(e.length for e in untargeted)),
         "PhysicalChains": perimeter.chains,
         "VerticesByKind": dict(vertex_kinds),
+        "TruncationCuts": cuts,
+        "FeatureVertices": len(corners),
+        "RoundedRuns": {"Runs": len(runs), "RoundedCorners": sum(1 for r in runs if r["Rounded"]), "Detail": runs[:50]},
         "TurnHistogram": {"Bins": TURN_BINS, "Counts": histogram},
         "SubThresholdTurns": {
             "Count": int(smooth.shape[0]),
@@ -217,15 +227,21 @@ def run_audit(args):
     )
     gates.append(gate("A1-weights", not summary["WeightDefects"], {"Defects": summary["WeightDefects"]}))
 
-    audit_vertices = sum(census["VerticesByKind"].get(k, 0) for k in ("CORNER", "ENDPOINT", "JUNCTION"))
+    audit_vertices = census["FeatureVertices"] + census["RoundedRuns"]["RoundedCorners"]
     manifest_vertices = summary["VertexFeatureCount"]
+    # The log's unmatched vertices are the Missing vertex records of the manifest (no model),
+    # not an extra class; the residual is what the manifest does not enumerate at all.
     unmatched = log.get("UnmatchedVertices", 0) if log else 0
-    residual = audit_vertices - manifest_vertices - unmatched
+    residual = audit_vertices - manifest_vertices
     corner_angles = Counter(round(180.0 - c["TurnDegrees"], 6) for c in census["Corners"] if c["Kind"] == "CORNER")
     manifest_angles = Counter()
     for r in manifest["Requirements"]:
         if r["Topology"] in ("ConvexCorner", "ConcaveCorner"):
             manifest_angles[round(float(r["Geometry"].get("AngleDegrees", float("nan"))), 6)] += int(r["Count"])
+    # A positive residual with spatial clusters present may be corners absorbed into the
+    # clusters (the manifest does not enumerate them: contract gap) or silently dropped
+    # vertices; without clusters it is a silent drop; a negative residual is a double count.
+    cluster_records = len(summary["Clusters"])
     gates.append(
         gate(
             "A1-vertex-census",
@@ -233,14 +249,18 @@ def run_audit(args):
             {
                 "AuditCornerEndpointJunction": audit_vertices,
                 "AuditByKind": {k: census["VerticesByKind"].get(k, 0) for k in ("CORNER", "ENDPOINT", "JUNCTION")},
+                "AuditTruncationCuts": census["TruncationCuts"],
+                "AuditRoundedCorners": census["RoundedRuns"]["RoundedCorners"],
                 "ManifestVertexFeatures": manifest_vertices,
                 "UnmatchedVerticesFromLog": unmatched,
                 "Residual": residual,
-                "ResidualMeaning": "vertices absorbed into spatial clusters or silently dropped; the manifest does not enumerate them",
+                "ManifestClusterRecords": cluster_records,
+                "ResidualMeaning": "audit vertices minus manifest vertex records: > 0 with clusters = absorbed into clusters or dropped (not enumerated by the contract), > 0 without clusters = dropped, < 0 = double counted",
                 "AuditInteriorAngles": {str(k): v for k, v in sorted(corner_angles.items())},
                 "ManifestCornerAngles": {str(k): v for k, v in sorted(manifest_angles.items())},
                 "CornerTurnToleranceDegrees": args.corner_tolerance,
             },
+            evaluable=not (residual > 0 and cluster_records > 0),
         )
     )
     excluded_length = sum(census["LengthByClass"].get(k, 0.0) for k in ("NONPLANAR", "CROSS_LAYER", "NONMANIFOLD"))
@@ -272,8 +292,17 @@ def run_audit(args):
         )
     )
 
+    cluster_interval_length = 0.0
+    for r in manifest["Requirements"]:
+        if r["Topology"] in M.CLUSTER:
+            for e in r["Geometry"].get("Edges", []):
+                interval = e.get("Interval") if isinstance(e, dict) else None
+                if interval and len(interval) == 2:
+                    cluster_interval_length += (float(interval[1]) - float(interval[0])) * int(r["Count"])
     gap = {
         "Unit": manifest.get("LengthUnit", "mesh"),
+        "ClusterIntervalLength": cluster_interval_length,
+        "ClusterIntervalMeaning": "sum of the cluster records' edge intervals (the coupon description clipped to the matching ball), not an assignment of perimeter segments",
         "TotalTargetedLength": length,
         "OmittedLength": deficit,
         "OmittedFraction": deficit / length if length else None,

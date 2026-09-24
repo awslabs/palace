@@ -498,3 +498,103 @@ def edge_interactions(perimeter, radius, kinds=("PHYSICAL",)):
                     tb = (q1 - q0) / (2.0 * half[local_b])
                     results.append((a, b, distance, abs(float(ta @ tb))))
     return results
+
+
+def chain_vertex_sequences(perimeter):
+    """Ordered vertex sequences of every PHYSICAL chain (a maximal path through REGULAR
+    vertices); a closed chain without any non-regular vertex starts at its lowest vertex."""
+    sequences = []
+    by_chain = defaultdict(list)
+    for index, edge in enumerate(perimeter.edges):
+        if edge.kind == "PHYSICAL" and edge.chain >= 0:
+            by_chain[edge.chain].append(index)
+    for chain, edge_indices in sorted(by_chain.items()):
+        adjacency = defaultdict(list)
+        for e in edge_indices:
+            a, b = perimeter.edges[e].vertices
+            adjacency[a].append(e)
+            adjacency[b].append(e)
+        ends = sorted(v for v, es in adjacency.items() if perimeter.vertices[v].physical_kind != "REGULAR" or len(es) == 1)
+        start = ends[0] if ends else min(adjacency)
+        sequence = [start]
+        used = set()
+        current = start
+        while True:
+            following = [e for e in adjacency[current] if e not in used]
+            if not following:
+                break
+            e = following[0]
+            used.add(e)
+            a, b = perimeter.edges[e].vertices
+            current = b if a == current else a
+            sequence.append(current)
+            if current == start or (perimeter.vertices[current].physical_kind != "REGULAR" and current != start):
+                break
+        sequences.append((chain, sequence, sequence[-1] == start and len(sequence) > 1))
+    return sequences
+
+
+def rounded_runs(perimeter, radius):
+    """Runs of consecutive REGULAR vertices with a nonzero turn (fillet arcs discretised
+    below the corner tolerance), with the classifier's rounded-corner reading: tangent
+    distances from the virtual sharp corner both below R and equal within 5 %, and the
+    fillet radius t * tan(angle / 2) in (0, R) -> a rounded corner of that radius."""
+    runs = []
+    for chain, sequence, cycle in chain_vertex_sequences(perimeter):
+        points = [perimeter.vertices[v].point for v in sequence]
+        n = len(sequence) - (1 if cycle else 0)
+        if n < 3:
+            continue
+        turns = []
+        for i in range(n):
+            v = sequence[i]
+            if perimeter.vertices[v].physical_kind != "REGULAR" or (not cycle and (i == 0 or i == n - 1)):
+                turns.append(None)
+                continue
+            previous = points[(i - 1) % n]
+            following = points[(i + 1) % n]
+            d0 = points[i] - previous
+            d1 = following - points[i]
+            cosine = float(d0 @ d1 / (np.linalg.norm(d0) * np.linalg.norm(d1)))
+            turns.append(math.degrees(math.acos(max(-1.0, min(1.0, cosine)))))
+        i = 0
+        visited = 0
+        while visited < n:
+            if turns[i % n] is not None and turns[i % n] > 1.0e-6 * 180.0 / math.pi:
+                run = [i % n]
+                j = i + 1
+                while j - i < n and turns[j % n] is not None and turns[j % n] > 1.0e-6 * 180.0 / math.pi:
+                    run.append(j % n)
+                    j += 1
+                total = sum(turns[k] for k in run)
+                record = {"Chain": chain, "Vertices": len(run), "TotalTurnDegrees": total, "Rounded": False, "Radius": None, "AngleDegrees": None}
+                if len(run) >= 2 and total > math.degrees(1.0e-3):
+                    start = points[run[0]]
+                    end = points[run[-1]]
+                    incoming = start - points[(run[0] - 1) % n]
+                    outgoing = points[(run[-1] + 1) % n] - end
+                    incoming /= np.linalg.norm(incoming)
+                    outgoing /= np.linalg.norm(outgoing)
+                    angle = math.acos(max(-1.0, min(1.0, float(incoming @ outgoing))))
+                    if abs(total - math.degrees(angle)) <= math.degrees(1.0e-3):
+                        # Virtual corner: intersection of the two arm lines.
+                        first_direction = -incoming
+                        denominator = np.cross(first_direction, outgoing)
+                        if np.linalg.norm(denominator) > 1.0e-8:
+                            normal = denominator / np.linalg.norm(denominator)
+                            offset = float(np.cross(end - start, outgoing) @ normal) / float(np.cross(first_direction, outgoing) @ normal)
+                            origin = start + offset * first_direction
+                            t1 = float(np.linalg.norm(origin - start))
+                            t2 = float(np.linalg.norm(origin - end))
+                            tolerance = 1.0e-6 * radius
+                            if t1 < radius + tolerance and t2 < radius + tolerance and abs(t1 - t2) <= max(tolerance, 0.05 * max(t1, t2)):
+                                fillet = 0.5 * (t1 + t2) * math.tan(0.5 * angle)
+                                if 0.0 < fillet < radius:
+                                    record.update({"Rounded": True, "Radius": fillet, "AngleDegrees": math.degrees(math.pi - angle) if False else 180.0 - math.degrees(angle)})
+                runs.append(record)
+                visited += len(run)
+                i += len(run)
+            else:
+                visited += 1
+                i += 1
+    return runs
