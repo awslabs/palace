@@ -877,7 +877,8 @@ TEST_CASE("double_hole_london_flux", "[Serial][Parallel][GPU][Regression]")
 }
 
 // Narrow London ring vs the analytic thin-ring L = L_geom + L_ksq*2*pi*r/w: the extracted
-// kinetic (~71 pH) matches to ~1%, locking in the fluxoid fix (the flux-pinned solve gave ~0).
+// kinetic (~71 pH) matches to ~1%, locking in the fluxoid fix (the flux-pinned solve gave
+// ~0).
 TEST_CASE("narrow_ring_london_flux", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;

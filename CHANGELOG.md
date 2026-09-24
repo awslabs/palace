@@ -23,7 +23,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `Boundaries.Superconductor` sheet carries the one-sided London kinetic sheet inductance
     `L_ksq = mu0 * lambda * coth(d/lambda)` (via `PenetrationDepth`/`Thickness`, or directly
     via `KineticInductance`); a `FluxLoop` over such a film imposes a prescribed fluxoid and
-    the total inductance is read from the field energy. SchemaVer 2-0-0.
+    the total inductance is read from the field energy.
     [PR 929](https://github.com/awslabs/palace/pull/929).
   - Added `Solver.Linear.LondonPCShift`, a preconditioner-only gauge shift that keeps the
     London magnetostatic solve SPD-solvable by AMS.
