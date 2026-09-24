@@ -72,6 +72,43 @@ class TagMetalComponentsTest(unittest.TestCase):
             self.assertEqual(counts["IslandAttributes"], [])
             self.assertEqual(result, data)
 
+    def test_metal_triangles_duplicating_a_port_face_are_dropped(self):
+        nodes = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (2, 0, 0), (2, 1, 0), (4, 4, -1)]
+        elements = [(2, 6, (1, 2, 3)), (2, 6, (1, 3, 4)), (2, 6, (2, 5, 6)), (2, 7, (2, 5, 6)), (2, 7, (2, 6, 3)), (4, 1, (1, 2, 3, 7))]
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "m.msh2")
+            write_msh2(path, nodes, elements, [(3, 1, "substrate"), (2, 6, "metal"), (2, 7, "port")], binary=True)
+            with open(path, "rb") as source:
+                data = source.read()
+            result, dropped = T.drop_metal_duplicates(data, metal=6)
+            self.assertEqual(dropped, 1)
+            output = os.path.join(directory, "out.msh2")
+            with open(output, "wb") as target:
+                target.write(result)
+            mesh = read_msh2(output)
+            self.assertEqual(sorted(mesh.physical_tags(2)), [6, 6, 7, 7])
+            self.assertEqual(len(mesh.physical_tags(4)), 1)
+            # Re-reading and tagging the repaired file works (consecutive element numbers).
+            again, counts = T.tag_components(result, metal=6, ground_adjacent={7}, first_island=9)
+            self.assertEqual(counts["Components"], 1)
+            self.assertEqual(again, result)
+
+    def test_drop_attributes_removes_the_substrate_air_faces(self):
+        nodes = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (2, 0, 0), (2, 1, 0), (4, 4, -1)]
+        elements = [(2, 6, (1, 2, 3)), (2, 6, (1, 3, 4)), (2, 8, (2, 5, 6)), (2, 8, (2, 6, 3)), (4, 1, (1, 2, 3, 7))]
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "m.msh2")
+            write_msh2(path, nodes, elements, [(3, 1, "substrate"), (2, 6, "metal"), (2, 8, "substrate_air")], binary=True)
+            with open(path, "rb") as source:
+                data = source.read()
+            result, dropped = T.drop_attributes(data, {8})
+            self.assertEqual(dropped, 2)
+            output = os.path.join(directory, "out.msh2")
+            with open(output, "wb") as target:
+                target.write(result)
+            mesh = read_msh2(output)
+            self.assertEqual(sorted(mesh.physical_tags(2)), [6, 6])
+
 
 if __name__ == "__main__":
     unittest.main()

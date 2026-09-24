@@ -16,7 +16,13 @@ island_1, island_2, ...; everything else stays in the metal attribute. Nodes, el
 and elementary tags are copied byte for byte.
 
     python3 -m surface_response_identification.tag_metal_components --mesh M.msh2 \\
-        --output M_islands.msh2 --metal 6 --ground-adjacent 3 7 8 [--first-island 9]
+        --output M_islands.msh2 --metal 6 --ground-adjacent 3 7 8 [--first-island 9] \\
+        [--drop-metal-duplicates]
+
+--drop-metal-duplicates removes every metal triangle whose corner nodes coincide with a
+triangle of another attribute (port sheets drawn on top of the metal: Palace rejects a face
+with two boundary elements, geodata.cpp GetFaceToBdrElementMap); the element section is then
+rewritten with consecutive element numbers.
 """
 
 import argparse
@@ -92,6 +98,62 @@ def edge_connected_components(triangles):
     return components
 
 
+def drop_metal_duplicates(data, *, metal):
+    """Rewrite $Elements without the metal triangles duplicating a face of another attribute."""
+    element_count, offset = parse_sections(data)
+    elements = read_elements(data, element_count, offset)
+    faces = defaultdict(set)
+    for element_type, _, _, physical, nodes in elements:
+        if element_type in TRIANGLE_TYPES:
+            faces[tuple(sorted(nodes[:3]))].add(physical)
+
+    def duplicate(element):
+        element_type, _, _, physical, nodes = element
+        return element_type in TRIANGLE_TYPES and physical == metal and len(faces[tuple(sorted(nodes[:3]))]) > 1
+
+    return rewrite_elements(data, elements, offset, duplicate)
+
+
+def drop_attributes(data, attributes):
+    """Rewrite $Elements without the surface elements of the given physical attributes (to
+    mimic a production mesh without a substrate_air group)."""
+    element_count, offset = parse_sections(data)
+    elements = read_elements(data, element_count, offset)
+    return rewrite_elements(data, elements, offset, lambda e: e[0] in TRIANGLE_TYPES and e[3] in attributes)
+
+
+def rewrite_elements(data, elements, offset, drop):
+    dropped = 0
+    kept = []
+    for element in elements:
+        if drop(element):
+            dropped += 1
+            continue
+        kept.append(element)
+    if dropped == 0:
+        return data, 0
+    blocks = []
+    for element in kept:
+        if blocks and blocks[-1][0] == (element[0], element[2]):
+            blocks[-1][1].append(element)
+        else:
+            blocks.append(((element[0], element[2]), [element]))
+    payload = bytearray()
+    number = 1
+    for (element_type, tag_count), members in blocks:
+        payload += struct.pack("<3i", element_type, len(members), tag_count)
+        record = struct.Struct(f"<{1 + tag_count + NODES_PER_TYPE[element_type]}i")
+        for _, position, _, _, _ in members:
+            values = list(record.unpack_from(data, position))
+            values[0] = number
+            number += 1
+            payload += record.pack(*values)
+    elements_tag = data.index(b"$Elements\n")
+    end = data.index(b"\n$EndElements", offset)
+    result = data[:elements_tag] + f"$Elements\n{len(kept)}\n".encode() + bytes(payload) + data[end:]
+    return result, dropped
+
+
 def tag_components(data, *, metal, ground_adjacent, first_island):
     element_count, offset = parse_sections(data)
     elements = read_elements(data, element_count, offset)
@@ -139,12 +201,22 @@ def main(argv=None):
     parser.add_argument("--metal", type=int, required=True, help="physical surface of the whole metal sheet")
     parser.add_argument("--ground-adjacent", type=int, nargs="+", required=True, help="physical surfaces that touch the grounded components only (ports, exterior boundary)")
     parser.add_argument("--first-island", type=int, default=9, help="attribute of the first island; the k-th island gets first + k - 1")
+    parser.add_argument("--drop-metal-duplicates", action="store_true", help="remove metal triangles coinciding with a triangle of another attribute")
+    parser.add_argument("--drop-attributes", type=int, nargs="*", default=[], help="remove the surface elements of these attributes (e.g. the substrate_air group)")
     args = parser.parse_args(argv)
     data = args.mesh.read_bytes()
+    dropped = 0
+    if args.drop_metal_duplicates:
+        data, dropped = drop_metal_duplicates(data, metal=args.metal)
+    dropped_attributes = 0
+    if args.drop_attributes:
+        data, dropped_attributes = drop_attributes(data, set(args.drop_attributes))
     result, counts = tag_components(data, metal=args.metal, ground_adjacent=set(args.ground_adjacent), first_island=args.first_island)
+    counts["DroppedMetalDuplicates"] = dropped
+    counts["DroppedAttributeElements"] = dropped_attributes
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(result)
-    counts["InputSha256"] = hashlib.sha256(data).hexdigest()
+    counts["InputSha256"] = hashlib.sha256(args.mesh.read_bytes()).hexdigest()
     counts["OutputSha256"] = hashlib.sha256(result).hexdigest()
     counts["Output"] = str(args.output)
     print(json.dumps(counts))
