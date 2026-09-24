@@ -54,6 +54,19 @@ synthetic oracle follows the design rules (sampled event cores, corners join a c
 core lies within 3R, parallel pairs survive outside cluster regions and corner windows).
 Phase-1 results: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/phase1/REPORT.md`.
 
+Phase 2 (curved-edge chain rule, design item (b) 7): signatures are rounded on the recorded
+`SignatureLengthQuantumOverR` = 1e-6 / `SignatureAngleQuantumDegrees` = 1e-6 grids; chains are
+polylines whose sub-corner joints carry a windowed curvature (window R, turns spread over the
+adjacent half-chords); portions with a windowed bend radius below `StraightBendRadiusOverR` = 20
+are the curved classes `CurvedEdge` / `CurvedSameConductorStrip` / `CurvedSameConductorGap` /
+`CurvedDifferentConductorGap` (`RadiusOverR` in the signature), straight-like portions keep the
+straight classes with a `BendRadiusOverR` annotation on every feature; two chains pair along a bend
+when their closest-point separation is constant within `PairSeparationToleranceRelative` = 0.05
+(concentric arcs and CPW gaps along bends are pairs, never clusters). The synthetic oracle applies
+the same rules (`design_bent_pairs`; arc-bar layouts carry their design bend for the expected
+classes; checks `A6-parallel-pairs` with the pair tolerance and `A6-bent-pair-classes`).
+Phase-2 results: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/phase2/REPORT.md`.
+
 ## Geometry identification: baseline audit (2026-09-24, executable 9ef5256b / v0.17.0-572-g5876402f7)
 
 Evidence: `coupon-accuracy-assessment-20260913/geometry-identification-baseline-20260924/`
