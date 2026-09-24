@@ -259,10 +259,10 @@ def within_interaction(distance, radius):
     return distance < 2.0 * radius - 0.5 * 1.0e-8 * radius
 
 
-def design_event_cores(all_edges, corner_points, radius, samples=400):
+def design_event_cores(all_edges, corner_points, radius, samples=200):
     """Event cores of SURFACE-RESPONSE-IDENTIFICATION.md (b) 3 from the polygon edges: sampled
     points on an edge that are within 2R of a point on a non-parallel edge of another chain,
-    excluding through-vertex pairs (both points within 2R of a vertex the two chains share).
+    excluding through-vertex pairs (either point within 2R of a vertex the two chains share).
     Edges joined by a sub-threshold vertex (not a classifier corner) are one chain."""
     n = len(all_edges)
     parent = list(range(n))
@@ -303,7 +303,7 @@ def design_event_cores(all_edges, corner_points, radius, samples=400):
             for v in shared_vertices.get((min(i, j), max(i, j)), []):
                 za = np.linalg.norm(pa - v, axis=1) < interaction
                 zb = np.linalg.norm(pb - v, axis=1) < interaction
-                close &= ~(za[:, None] & zb[None, :])
+                close &= ~(za[:, None] | zb[None, :])  # either point inside the zone
             hits = pa[close.any(axis=1)]
             if len(hits):
                 cores.append(hits)
@@ -312,7 +312,21 @@ def design_event_cores(all_edges, corner_points, radius, samples=400):
         for q in corner_points[i + 1 :]:
             if np.linalg.norm(p - q) < interaction:
                 cores.append(np.array([p, q]))
-    return np.concatenate(cores) if cores else np.zeros((0, 2))
+    if not cores:
+        return np.zeros((0, 2))
+    # Decimate the sampled cores to a grid of R / 200 (polyline arcs produce O(10^5) hits).
+    points = np.concatenate(cores)
+    quantum = radius / 200.0
+    return np.unique(np.round(points / quantum), axis=0) * quantum
+
+
+def distance_to_cores(points, cores, chunk=20000):
+    """Minimum distance from every point to the sampled cores (chunked: O(points x cores))."""
+    result = np.full(len(points), np.inf)
+    for start in range(0, len(cores), chunk):
+        block = cores[start : start + chunk]
+        result = np.minimum(result, np.linalg.norm(points[:, None, :] - block[None, :, :], axis=2).min(axis=1))
+    return result
 
 
 def _on_box(point, lay, tolerance=1.0e-9):
@@ -509,7 +523,7 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
             c["Standalone"] = None
             continue
         point = np.array(c["Point"])
-        core_distance = float(np.linalg.norm(cores - point, axis=1).min()) if len(cores) else math.inf
+        core_distance = float(distance_to_cores(point[None, :], cores)[0]) if len(cores) else math.inf
         c["CoreDistance"] = None if math.isinf(core_distance) else round(core_distance, 6)
         c["Standalone"] = not core_distance < 3.0 * radius
         if not c["Standalone"]:
@@ -525,7 +539,7 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
         points = a["Start"][None, :] + (ts[:, None] - float(a["Start"] @ a["Tangent"])) * a["Tangent"][None, :]
         survives = np.ones(len(ts), dtype=bool)
         if len(cores):
-            survives &= np.linalg.norm(points[:, None, :] - cores[None, :, :], axis=2).min(axis=1) >= radius
+            survives &= distance_to_cores(points, cores) >= radius
         for end in (a["Start"], a["End"]):
             if any(np.linalg.norm(end - q) < 1.0e-9 for q in corner_points):
                 survives &= np.linalg.norm(points - end, axis=1) >= radius

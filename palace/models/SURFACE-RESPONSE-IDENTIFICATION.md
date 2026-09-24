@@ -139,8 +139,8 @@ Consequences (recorded in the manifest under `Library.DecisionQuantization` and
 
 * two parallel edges at exactly 2R do **not** interact (both isolated edges); at 2R - quantum
   they form a pair;
-* an event needs |p - q| < 2R; through-vertex exclusion applies when both points are < 2R from
-  the vertex; a vertex joins a cluster when its distance to an event core is < 3R;
+* an event needs |p - q| < 2R; through-vertex exclusion applies when either point is < 2R from
+  the shared vertex; a vertex joins a cluster when its distance to an event core is < 3R;
 * a chain portion belongs to a cluster when its distance to an event core is < R;
 * the strip at exactly R (`strip-2`, the transmon's 64 segments) is a `SameConductorStrip` at
   `Separation / R = 1` on both sides and its corners are plain corners: no knife edge between
