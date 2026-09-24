@@ -23,6 +23,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     upstream (PRs 4983, 5246, 5415, 5124, and the Gmsh reader rewrite), keeping
     only the still-unmerged patches (PRs 3847, 5353, 5494, 5502).
     [PR 918](https://github.com/awslabs/palace/pull/918).
+  - Fixed the container build stamping `GitTag: "UNKNOWN"` in `palace.json`.
+    The `.git` directory was excluded from the build context, so `git describe`
+    could not derive the version; it is now included for the build (and removed
+    from the final image).
+    [PR 974](https://github.com/awslabs/palace/pull/974).
 
 ## [0.18.1] - 2026-09-21
 

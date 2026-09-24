@@ -157,6 +157,10 @@ RUN set -e; \
     spack env activate .; \
     spack install --only package --no-cache -j$(nproc) --fail-fast; \
     spack gc -y; \
+    # The build stamps the Palace version via `git describe` (-> palace.json
+    # "GitTag"). The .git dir is only needed for that; drop it now, in the same
+    # layer as the build, so it never lands in the published image.
+    rm -rf /opt/palace/.git; \
     find /opt/software -type d \
       \( -iname doc -o -iname docs -o -iname documentation \
       -o -iname example -o -iname examples -o -iname sample \
