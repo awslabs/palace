@@ -36,9 +36,11 @@ Its output is:
    (segment portions, vertices) in mesh coordinates for the audit.
 4. **Exclusions** with class, reason, count and length, so that
    `sum(assigned) + sum(excluded) = total perimeter length` to roundoff.
-5. **GeometryDigest**: SHA-256 over the sorted feature signatures with their claimed lengths
-   and the exclusion table. Identical for any rank count (A4), for any library (A3), and for
-   refinements of the same layout up to the documented segment split (A5).
+5. **GeometryDigest**: SHA-256 over the sorted feature signatures (with multiplicity) and the
+   exclusion classes. Identical for any rank count (A4), for any library (A3), and for
+   refinements of the same layout up to the documented segment split (A5). Feature lengths are
+   continuous quantities whose sums differ at roundoff between meshes of the same layout; they
+   are not hashed but compared per feature with a tolerance by the audit.
 
 **Library matching is a separate pass.** It looks features up by signature (the library models'
 signatures are computed from their stored geometry — separation, angle, corner radius, cluster

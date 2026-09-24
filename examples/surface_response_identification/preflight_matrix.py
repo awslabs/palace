@@ -150,8 +150,18 @@ def main(argv=None):
         b = M.load_manifest(os.path.join(cell["Directory"], "postpro", "surface-response-requirements.json"))
         diff = M.diff_manifests(a, b)
         diff_geometry = M.diff_manifests(a, b, geometry_only_counts=True)
-        # Version 2: the identification's GeometryDigest is the A3 / A4 / A5 identity.
-        digest_identical = reference.get("GeometryDigest") == cell.get("GeometryDigest") if reference.get("GeometryDigest") else None
+        # Version 2: the identification's GeometryDigest is the A3 / A4 / A5 identity, with the
+        # per-signature lengths agreeing to a tolerance (lengths are not hashed: roundoff).
+        digest_identical = None
+        if reference.get("GeometryDigest"):
+            la, lb = {}, {}
+            for f in a["Identification"]["Features"]:
+                la.setdefault(f["Hash"], []).append(float(f["Length"]))
+            for f in b["Identification"]["Features"]:
+                lb.setdefault(f["Hash"], []).append(float(f["Length"]))
+            radius = float(a["Identification"]["MatchingRadius"])
+            mismatch = [h for h in set(la) | set(lb) if len(la.get(h, [])) != len(lb.get(h, [])) or any(abs(x - y) > 1.0e-6 * max(abs(x), radius) for x, y in zip(sorted(la.get(h, [])), sorted(lb.get(h, []))))]
+            digest_identical = reference.get("GeometryDigest") == cell.get("GeometryDigest") and not mismatch
         comparisons.append(
             {
                 "Reference": reference["Name"],

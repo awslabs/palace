@@ -532,9 +532,20 @@ def run_audit(args):
             same = identification["GeometryDigest"] == other["Identification"]["GeometryDigest"]
             mine = Counter((f["Type"], f["Hash"]) for f in identification["Features"])
             theirs = Counter((f["Type"], f["Hash"]) for f in other["Identification"]["Features"])
+            # Lengths per signature agree to a tolerance (they are not hashed: roundoff).
+            lengths_here, lengths_there = defaultdict(list), defaultdict(list)
+            for f in identification["Features"]:
+                lengths_here[f["Hash"]].append(float(f["Length"]))
+            for f in other["Identification"]["Features"]:
+                lengths_there[f["Hash"]].append(float(f["Length"]))
+            length_mismatch = []
+            for h in set(lengths_here) | set(lengths_there):
+                a, b = sorted(lengths_here.get(h, [])), sorted(lengths_there.get(h, []))
+                if len(a) != len(b) or any(abs(x - y) > 1.0e-6 * max(abs(x), radius) for x, y in zip(a, b)):
+                    length_mismatch.append({"Hash": h[:12], "Here": a[:4], "There": b[:4]})
             result["Compare"]["GeometryDigestIdentical"] = same
-            result["Compare"]["FeatureDiff"] = {"OnlyHere": sorted(f"{t}:{h[:12]}x{n}" for (t, h), n in (mine - theirs).items()), "OnlyThere": sorted(f"{t}:{h[:12]}x{n}" for (t, h), n in (theirs - mine).items())}
-            gates.append(gate("A3/A5-set-identity", same, {"GeometryDigestIdentical": same, "FeatureDiff": result["Compare"]["FeatureDiff"], "V1Identical": result["Compare"]["Diff"]["Identical"]}))
+            result["Compare"]["FeatureDiff"] = {"OnlyHere": sorted(f"{t}:{h[:12]}x{n}" for (t, h), n in (mine - theirs).items()), "OnlyThere": sorted(f"{t}:{h[:12]}x{n}" for (t, h), n in (theirs - mine).items()), "LengthMismatch": length_mismatch}
+            gates.append(gate("A3/A5-set-identity", same and not length_mismatch, {"GeometryDigestIdentical": same, "FeatureDiff": result["Compare"]["FeatureDiff"], "V1Identical": result["Compare"]["Diff"]["Identical"]}))
         else:
             gates.append(gate("A3/A5-set-identity", result["Compare"]["Diff"]["Identical"], {"Added": len(result["Compare"]["Diff"]["Added"]), "Removed": len(result["Compare"]["Diff"]["Removed"]), "Changed": len(result["Compare"]["Diff"]["Changed"]), "GeometryOnlyIdentical": result["Compare"]["DiffGeometryOnly"]["Identical"]}))
     result["Passed"] = all(g["Status"] == "PASS" for g in gates)

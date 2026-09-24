@@ -755,7 +755,14 @@ def run_suite(args):
                 return None
             ca = Counter((f["Type"], f["Hash"][:12]) for f in ia["Features"])
             cb = Counter((f["Type"], f["Hash"][:12]) for f in ib["Features"])
-            return {"GeometryDigestIdentical": ia["GeometryDigest"] == ib["GeometryDigest"], "OnlyA": sorted(f"{t}:{h}x{n}" for (t, h), n in (ca - cb).items()), "OnlyB": sorted(f"{t}:{h}x{n}" for (t, h), n in (cb - ca).items())}
+            la, lb = {}, {}
+            for f in ia["Features"]:
+                la.setdefault(f["Hash"], []).append(float(f["Length"]))
+            for f in ib["Features"]:
+                lb.setdefault(f["Hash"], []).append(float(f["Length"]))
+            radius = float(ia["MatchingRadius"])
+            mismatch = [h[:12] for h in set(la) | set(lb) if len(la.get(h, [])) != len(lb.get(h, [])) or any(abs(x - y) > 1.0e-6 * max(abs(x), radius) for x, y in zip(sorted(la.get(h, [])), sorted(lb.get(h, []))))]
+            return {"GeometryDigestIdentical": ia["GeometryDigest"] == ib["GeometryDigest"] and not mismatch, "OnlyA": sorted(f"{t}:{h}x{n}" for (t, h), n in (ca - cb).items()), "OnlyB": sorted(f"{t}:{h}x{n}" for (t, h), n in (cb - ca).items()), "LengthMismatch": mismatch}
 
         for label in labels:
             if (label, 0) in digests and (label, 1) in digests:

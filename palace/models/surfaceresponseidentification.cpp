@@ -2141,18 +2141,18 @@ void Identifier::Assign(IdentificationResult &result)
     result.vertices.push_back(entry);
   }
 
-  // Digest over the sorted signatures with lengths and the exclusion table.
+  // Digest over the sorted feature signatures (with multiplicity) and the exclusion classes.
+  // Lengths are continuous quantities (their sums differ at roundoff between meshes of the
+  // same layout) and are compared with a tolerance by the audit instead of being hashed.
   std::vector<std::string> lines;
   for (const auto &feature : features)
   {
-    lines.push_back(feature.signature_key + "|" +
-                    std::to_string(quantizer.Q(feature.length)));
+    lines.push_back(feature.signature_key);
   }
   std::sort(lines.begin(), lines.end());
   for (const auto &exclusion : result.exclusions)
   {
-    lines.push_back("X|" + exclusion.cls + "|" + exclusion.reason + "|" +
-                    std::to_string(quantizer.Q(exclusion.length)));
+    lines.push_back("X|" + exclusion.cls + "|" + exclusion.reason);
   }
   std::string digest_input;
   for (const auto &line : lines)
