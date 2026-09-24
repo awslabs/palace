@@ -70,10 +70,14 @@ function replace_range_expand(str::AbstractString)
         end
         return "[" * res * "]"
     end
-    # Unfortunate double match below but OK
-    # (https://discourse.julialang.org/t/using-replace-with-a-function-of-the-match/41264)
-    rgx = r"\[(-?[0-9][\-\,0-9]*[0-9])\]"
-    return replace(str, rgx => s -> helper(match(rgx, s).captures[1]))
+    # Strings are matched first and passed through unchanged, so brackets inside them
+    # (e.g. "mesh[1-3].msh") are not treated as ranges. Unfortunate double match below but
+    # OK (https://discourse.julialang.org/t/using-replace-with-a-function-of-the-match/41264)
+    rgx = r"(\"(?:[^\"\\]|\\.)*\")|\[(-?[0-9][\-\,0-9]*[0-9])\]"
+    return replace(
+        str,
+        rgx => s -> startswith(s, "\"") ? s : helper(match(rgx, s).captures[2])
+    )
 end
 
 end
