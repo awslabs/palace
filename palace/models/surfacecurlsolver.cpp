@@ -45,6 +45,13 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
   const int sdim = pmesh.SpaceDimension();
   MFEM_VERIFY(sdim == 3, "London cut cohomology generator requires a 3D mesh!");
 
+  // The cut line is built in the xy-plane, so the hole axis must be ±Z.
+  MFEM_VERIFY(flux_data.direction.size() >= 3 &&
+                  std::abs(flux_data.direction[2]) > 1.0e-8 &&
+                  std::abs(flux_data.direction[0]) < 1.0e-8 &&
+                  std::abs(flux_data.direction[1]) < 1.0e-8,
+              "London flux loop Direction must be ±Z!");
+
   // Total imposed fluxoid Φ.
   double phi = 0.0;
   for (double f : flux_data.flux_amounts)

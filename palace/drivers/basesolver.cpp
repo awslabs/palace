@@ -334,7 +334,29 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       mesh.back()->Update();
     }
 
-    // Record the adapted mesh's true topology into palace.json.
+    // Print statistics (element counts, size h, and shape regularity kappa) for the
+    // newly-refined mesh so the evolution of mesh quality under AMR is visible.
+    mesh::PrintMeshInfo(*mesh.back(), iodata, /*full=*/false);
+
+    // Solve + estimate.
+    Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", it + 1);
+    const auto prev_ntdof = ntdof;
+    std::tie(indicators, ntdof) = Solve(mesh);
+    if (!solve_converged_)
+    {
+      // Keep the previous converged iteration: restore its DOF count and skip the metadata
+      // write below, so the summary and palace.json describe it, not the failed mesh.
+      Mpi::Warning(
+          comm,
+          "Solve did not converge after refinement iteration {:d}; halting AMR and "
+          "keeping the last converged iteration!\n",
+          it);
+      ntdof = prev_ntdof;
+      break;
+    }
+    err = indicators.Norml2(comm);
+
+    // Record the converged adapted mesh's topology into palace.json.
     if (refinement.save_adapt_mesh)
     {
       mesh::CompleteMeshEntityCounts(*mesh.back(), mesh_counts);
@@ -343,27 +365,6 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
         SaveMetadata(mesh_counts);
       }
     }
-
-    // Print statistics (element counts, size h, and shape regularity kappa) for the
-    // newly-refined mesh so the evolution of mesh quality under AMR is visible.
-    mesh::PrintMeshInfo(*mesh.back(), iodata, /*full=*/false);
-
-    // Solve + estimate.
-    Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", it + 1);
-    std::tie(indicators, ntdof) = Solve(mesh);
-    if (!solve_converged_)
-    {
-      // Solver could not converge on the refined mesh (e.g. the fluxoid solve as the mesh
-      // grows). Halt adaptation and retain the previous, converged iteration's output
-      // rather than aborting the run or reporting an unreliable result.
-      Mpi::Warning(
-          comm,
-          "Solve did not converge after refinement iteration {:d}; halting AMR and "
-          "keeping the last converged iteration!\n",
-          it);
-      break;
-    }
-    err = indicators.Norml2(comm);
 
     // Record that this AMR iteration has completed; the Solve above has already written all
     // of its postprocessing output. The 1-based index (it + 1, since the initial solve is
