@@ -44,6 +44,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     differentiation tool, enabled with a new `PALACE_WITH_ENZYME=ON` build option or the
     `+enzyme` Spack variant (used only to build the unit tests).
     [PR 901](https://github.com/awslabs/palace/pull/901).
+  - Added `Boundaries.FluxLoopExcitation`, a single-solve excitation that drives several
+    `FluxLoop` holes together with prescribed fluxoids and writes the superposed field and
+    stored energy to `terminal-fluxexc.csv`, separate from the inductance-matrix sweep
+    (toggle `Solver.Magnetostatic.FluxLoopMatrixSweep`). SchemaVer 3-1-0.
+    [PR 979](https://github.com/awslabs/palace/pull/979).
 
 #### Interface Changes
 
