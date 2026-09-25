@@ -3275,6 +3275,77 @@ void Identifier::Assign(IdentificationResult &result)
   // the chain's isolated / curved edge below (recorded as a claim-resolution rule; the
   // multi-partner bent neighbourhood itself is a PENDING rule item).
   {
+    // A pair's two sides face each other: the part of one side whose facing point lies
+    // beyond the other side's surviving pieces (a cluster ball or a vertex window took the
+    // partner piece but not this one) is not paired there and returns to the run; the
+    // facing test is the pair tolerance on the separation (a slow taper's wider end is
+    // still facing). Recorded as claim resolution: both sides of a pair are then mutual.
+    struct SidePiece
+    {
+      std::size_t run;
+      double lo, hi;
+    };
+    std::map<int, std::array<std::vector<SidePiece>, 2>> pair_pieces;
+    for (std::size_t r = 0; r < runs.size(); r++)
+    {
+      for (const auto &[lo, hi, feature, side] : assigned[r])
+      {
+        if (feature >= 0 && feature_sides[feature] == 2 && (side == 0 || side == 1))
+        {
+          pair_pieces[feature][side].push_back({r, lo, hi});
+        }
+      }
+    }
+    for (const auto &[feature, sides] : pair_pieces)
+    {
+      if (!features[feature].signature.contains("SeparationOverR"))
+      {
+        continue;
+      }
+      const double reach = features[feature].signature["SeparationOverR"].get<double>() * R *
+                           (1.0 + kPairSeparationTolerance);
+      for (int k = 0; k < 2; k++)
+      {
+        for (const auto &piece : sides[k])
+        {
+          std::vector<Interval> facing;
+          for (const auto &other : sides[1 - k])
+          {
+            const auto found = RunIntervalWithin(piece.run, runs[other.run].At(other.lo),
+                                                 runs[other.run].At(other.hi), reach);
+            facing.insert(facing.end(), found.begin(), found.end());
+          }
+          const auto keep =
+              IntersectIntervals({Interval{piece.lo, piece.hi}}, MergeIntervals(facing, Tol()), Tol());
+          auto &pieces = assigned[piece.run];
+          const auto it = std::find_if(pieces.begin(), pieces.end(),
+                                       [&](const auto &entry)
+                                       {
+                                         return std::get<2>(entry) == feature &&
+                                                std::get<3>(entry) == k &&
+                                                std::get<0>(entry) == piece.lo &&
+                                                std::get<1>(entry) == piece.hi;
+                                       });
+          if (it == pieces.end())
+          {
+            continue;
+          }
+          pieces.erase(it);
+          for (const auto &interval : keep)
+          {
+            if (interval.second - interval.first > kSignatureLengthQuantumOverRadius * R)
+            {
+              pieces.emplace_back(interval.first, interval.second, feature, k);
+            }
+          }
+        }
+      }
+    }
+    for (auto &pieces : assigned)
+    {
+      std::sort(pieces.begin(), pieces.end());
+    }
+
     std::map<int, std::map<int, double>> side_lengths;
     for (std::size_t r = 0; r < runs.size(); r++)
     {
