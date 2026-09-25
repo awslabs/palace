@@ -9,8 +9,8 @@
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/generators/catch_generators.hpp>
 #include <nlohmann/json.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include "fem/mesh.hpp"
 #include "fem/substructure.hpp"
 #include "models/substructuringsolver.hpp"
@@ -52,11 +52,10 @@ std::unique_ptr<mfem::ParMesh> MakeSplitCube(int nx)
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
 }
 
-
-// An unstructured tetrahedral cube split by a wavy (non-planar) interface into region (attr 1)
-// and environment (attr 2). Tets + a curved interface exercise the DOF maps and interface
-// identification on a more realistic mesh than the structured hex half-space split, while
-// keeping the x=0 / x=1 terminal-face convention (bdr attr 1 / 2, sides 3).
+// An unstructured tetrahedral cube split by a wavy (non-planar) interface into region (attr
+// 1) and environment (attr 2). Tets + a curved interface exercise the DOF maps and
+// interface identification on a more realistic mesh than the structured hex half-space
+// split, while keeping the x=0 / x=1 terminal-face convention (bdr attr 1 / 2, sides 3).
 std::unique_ptr<mfem::ParMesh> MakeWavyTetSplit(int nx)
 {
   mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(nx, nx, nx, mfem::Element::TETRAHEDRON);
@@ -86,8 +85,9 @@ std::unique_ptr<mfem::ParMesh> MakeWavyTetSplit(int nx)
 
 // A hex cube whose region (x<0.5, attr 1) and environment (x>0.5, attr 2) have independent
 // x-resolutions (a and b cells) but share the same y-z grid (n cells), so the interface at
-// x=0.5 has identical nodes regardless of a. Re-meshing the region (varying a, fixing b and n)
-// keeps Gamma and the environment fixed -- exactly the offline/online region-redesign workflow.
+// x=0.5 has identical nodes regardless of a. Re-meshing the region (varying a, fixing b and
+// n) keeps Gamma and the environment fixed -- exactly the offline/online region-redesign
+// workflow.
 std::unique_ptr<mfem::ParMesh> MakeGradedSplit(int a, int b, int n)
 {
   std::vector<double> xs;
@@ -119,9 +119,14 @@ std::unique_ptr<mfem::ParMesh> MakeGradedSplit(int a, int b, int n)
     {
       for (int k = 0; k < n; k++)
       {
-        int v[8] = {vid(i, j, k),         vid(i + 1, j, k),         vid(i + 1, j + 1, k),
-                    vid(i, j + 1, k),     vid(i, j, k + 1),         vid(i + 1, j, k + 1),
-                    vid(i + 1, j + 1, k + 1), vid(i, j + 1, k + 1)};
+        int v[8] = {vid(i, j, k),
+                    vid(i + 1, j, k),
+                    vid(i + 1, j + 1, k),
+                    vid(i, j + 1, k),
+                    vid(i, j, k + 1),
+                    vid(i + 1, j, k + 1),
+                    vid(i + 1, j + 1, k + 1),
+                    vid(i, j + 1, k + 1)};
         serial.AddHex(v, (0.5 * (xs[i] + xs[i + 1]) < 0.5) ? 1 : 2);
       }
     }
@@ -764,9 +769,10 @@ TEST_CASE("SubstructuringSolver magnetostatic inductance matrix",
     }
   }
   // Known limitation: order >= 2 H(curl) on tetrahedra is exact serially but wrong in
-  // parallel (the higher-order tetrahedral edge/face DOF orientation across a partition cut is
-  // mishandled in the interface identification -- order-1 tets and order-2 hexes are fine).
-  // Skip that combination in parallel until the signed higher-order simplex map is fixed.
+  // parallel (the higher-order tetrahedral edge/face DOF orientation across a partition cut
+  // is mishandled in the interface identification -- order-1 tets and order-2 hexes are
+  // fine). Skip that combination in parallel until the signed higher-order simplex map is
+  // fixed.
   for (int i = 0; i < 2; i++)
   {
     for (int j = 0; j < 2; j++)
@@ -777,22 +783,23 @@ TEST_CASE("SubstructuringSolver magnetostatic inductance matrix",
 }
 
 // Interface-operator (S_E) compressibility study: report the singular-value decay and the
-// numerical rank at a few relative tolerances, for a flat half-space interface (worst case for
-// compressibility) vs a compact "column" interface. Informs whether a low-rank / probed S_E is
-// worthwhile (a Phase 2 gate). Characterization only -- asserts basic sanity, not a target rank.
+// numerical rank at a few relative tolerances, for a flat half-space interface (worst case
+// for compressibility) vs a compact "column" interface. Informs whether a low-rank / probed
+// S_E is worthwhile (a Phase 2 gate). Characterization only -- asserts basic sanity, not a
+// target rank.
 TEST_CASE("SubstructuringSolver cross-run region re-meshing",
           "[substructure][Serial][Parallel]")
 {
   // Offline: condense the environment on one region mesh and save S_E. Online: RE-MESH the
   // region (different x-resolution) while keeping the interface Gamma and the environment
   // fixed, load and geometrically re-order S_E onto the new interface DOFs, and solve. The
-  // re-meshed region-condensed energy must match a monolith on the online mesh (S_E is exact
-  // for the fixed environment).
+  // re-meshed region-condensed energy must match a monolith on the online mesh (S_E is
+  // exact for the fixed environment).
   const std::string model_path = "substruct_remesh_model.bin";
-  // Several (offline, online) region resolutions: re-mesh finer, coarser, and identical (the
-  // identity-reorder sanity case). All must match the monolith on the online mesh.
-  const auto res = GENERATE(std::make_pair(4, 8), std::make_pair(8, 4), std::make_pair(5, 9),
-                            std::make_pair(6, 6));
+  // Several (offline, online) region resolutions: re-mesh finer, coarser, and identical
+  // (the identity-reorder sanity case). All must match the monolith on the online mesh.
+  const auto res = GENERATE(std::make_pair(4, 8), std::make_pair(8, 4),
+                            std::make_pair(5, 9), std::make_pair(6, 6));
   const int a_off = res.first, a_on = res.second;
   const int order = GENERATE(1, 2);
   CAPTURE(a_off, a_on, order);
@@ -906,8 +913,8 @@ TEST_CASE("SubstructuringSolver magnetostatic cross-run re-meshing",
   // H(curl) region re-meshing: the environment (attr 2, b=5) is identical between a coarse-
   // region offline run and a re-meshed (finer) online run, so the loaded+reordered S_E (via
   // signed edge-signature matching) must reproduce a freshly materialized S_E on the online
-  // mesh. Compare the recovered field of an Online (loaded) solve to an Offline (fresh) solve
-  // on the same re-meshed mesh.
+  // mesh. Compare the recovered field of an Online (loaded) solve to an Offline (fresh)
+  // solve on the same re-meshed mesh.
   const auto res = GENERATE(std::make_pair(4, 8), std::make_pair(6, 6));
   const int a_off = res.first, a_on = res.second;
   const int order = GENERATE(1, 2);
@@ -979,8 +986,8 @@ TEST_CASE("SubstructuringSolver HODLR off-diagonal compression accuracy vs toler
           "[substructure][Serial]")
 {
   // Hierarchical (HODLR) off-diagonal low-rank compression of S_E: the DtN's well-separated
-  // interface couplings are low-rank (unlike its full spectrum). Measure region-solve energy
-  // error + reported storage ratio vs the compression tolerance.
+  // interface couplings are low-rank (unlike its full spectrum). Measure region-solve
+  // energy error + reported storage ratio vs the compression tolerance.
   auto energy_at = [](double tol)
   {
     json config = {
@@ -1025,9 +1032,9 @@ TEST_CASE("SubstructuringSolver HODLR off-diagonal compression accuracy vs toler
 TEST_CASE("SubstructuringSolver HODLR compressed apply matches dense (parallel)",
           "[substructure][Parallel]")
 {
-  // Exercises the parallel build (gather -> build on rank 0 -> broadcast) and the replicated
-  // compressed apply: the region energy with a tight-tolerance compressed S_E must match the
-  // dense S_E at any process count.
+  // Exercises the parallel build (gather -> build on rank 0 -> broadcast) and the
+  // replicated compressed apply: the region energy with a tight-tolerance compressed S_E
+  // must match the dense S_E at any process count.
   auto energy_at = [](double tol)
   {
     json config = {
@@ -1062,9 +1069,9 @@ TEST_CASE("SubstructuringSolver HODLR compressed apply matches dense (parallel)"
 TEST_CASE("SubstructuringSolver HODLR magnetostatic compressed apply matches dense",
           "[substructure][Parallel]")
 {
-  // HODLR compression on a Nedelec (H(curl)) interface: the clustering coordinate is the edge
-  // midpoint. The region reluctance (self-energy) with a tight-tolerance compressed S_E must
-  // match the dense operator at any process count.
+  // HODLR compression on a Nedelec (H(curl)) interface: the clustering coordinate is the
+  // edge midpoint. The region reluctance (self-energy) with a tight-tolerance compressed
+  // S_E must match the dense operator at any process count.
   const double mu_r = 1.0, mu_e = 4.0;
   auto energy_at = [&](double tol)
   {
@@ -1097,7 +1104,8 @@ TEST_CASE("SubstructuringSolver HODLR magnetostatic compressed apply matches den
   const double relerr = std::abs(e_comp - e_dense) / std::abs(e_dense);
   if (Mpi::Root(Mpi::World()))
   {
-    std::printf("[HODLR-mag] dense=%.10e comp=%.10e relerr=%.3e\n", e_dense, e_comp, relerr);
+    std::printf("[HODLR-mag] dense=%.10e comp=%.10e relerr=%.3e\n", e_dense, e_comp,
+                relerr);
   }
   CHECK(std::abs(e_dense) > 1.0e-12);
   CHECK(relerr <= 1.0e-5);
