@@ -41,6 +41,7 @@ if __package__ in (None, ""):
 from . import audit, manifest as M, perimeter as P  # noqa: E402
 from .msh2 import read_msh2  # noqa: E402
 from .preflight_config import preflight_config  # noqa: E402
+from .signature_library import build_signature_library  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
@@ -1204,7 +1205,20 @@ def run_suite(args):
         digests = {}
         crack_digests = {}
         cracks = [True] + ([False] if args.crack_false else [])
-        for label, library in args.libraries.items():
+        libraries = dict(args.libraries)
+        if args.signature_library:
+            libraries["signature"] = os.path.join(args.output, lay["Name"], "signature-library.json")
+        for label, library in libraries.items():
+            if label == "signature" and args.signature_library:
+                first_label = next(iter(args.libraries))
+                source_path = os.path.join(args.output, lay["Name"], f"{first_label}-u0-np{args.ranks[0]}", "postpro", "surface-response-requirements.json")
+                if not os.path.exists(source_path):
+                    record["Cells"].append({"Name": "signature", "Library": "signature", "Error": "no manifest to build the signature library from"})
+                    continue
+                with open(source_path) as source:
+                    signature_library = build_signature_library(json.load(source), name="signature-only")
+                with open(library, "w") as target:
+                    json.dump(signature_library, target, indent=1)
             for levels in args.uniform_levels:
               for crack in cracks:
                 for ranks in args.ranks:
@@ -1246,6 +1260,7 @@ def run_suite(args):
                             with open(os.path.join(directory, "audit.md"), "w") as target:
                                 target.write(audit.render_markdown(result))
                             cell["Gates"] = {g["Gate"]: g["Status"] for g in result["Gates"]}
+                            cell["Patches"] = {k: v for k, v in (result.get("Patches") or {}).items() if k != "Models"}
                             cell["OracleChecks"] = compare_with_oracle(orc, result, manifest)
                             cell["ManifestSummary"] = {k: {"Count": v["Count"], "Length": round(v["TotalEdgeLength"], 6), "Missing": v["Missing"]} for k, v in M.summarize(manifest)["ByTopology"].items()}
                             cell["Clusters"] = M.summarize(manifest)["Clusters"]
@@ -1320,6 +1335,7 @@ def summary_row(record):
         "A3": {k: (v["Identification"]["GeometryDigestIdentical"] if v.get("Identification") else v["GeometryOnlyIdentical"]) for k, v in (record.get("A3-library-independence") or {}).items()},
         "Oracle": {label: {k.replace("A6-", ""): v["Pass"] for k, v in c["OracleChecks"].items() if v["Pass"] is not None} for label, c in by_library.items()},
         "GatesFailing": {label: [k for k, v in c["Gates"].items() if v != "PASS"] for label, c in by_library.items()},
+        "PatchCoverage": {label: round(c["Patches"]["CoveredFractionOfAssigned"], 9) for label, c in by_library.items() if c.get("Patches") and c["Patches"].get("CoveredFractionOfAssigned") is not None},
         "Topologies": {label: {k: v["Count"] for k, v in c["ManifestSummary"].items()} for label, c in by_library.items()},
         "Error": record.get("Error"),
     }
@@ -1327,14 +1343,15 @@ def summary_row(record):
 
 def write_summary(results, output):
     lines = ["# Synthetic stress layouts: identification vs oracle", ""]
-    lines.append("| Layout | nodes | exit | A4 ranks | crack | A5 refine | A3 libraries | A6 oracle (per library) | audit gates failing | manifest topologies |")
-    lines.append("|---|---|---|---|---|---|---|---|---|---|")
+    lines.append("| Layout | nodes | exit | A4 ranks | crack | A5 refine | A3 libraries | A6 oracle (per library) | audit gates failing | patch coverage | manifest topologies |")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
     for r in results:
         row = summary_row(r)
         oracle_text = "; ".join(f"{label}: " + ", ".join(f"{k}={'P' if v else 'F'}" for k, v in checks.items()) for label, checks in row["Oracle"].items())
         gates_text = "; ".join(f"{label}: {', '.join(g.replace('A1-', '').replace('A2-', '') for g in gates)}" for label, gates in row["GatesFailing"].items())
         topology_text = "; ".join(f"{label}: " + ", ".join(f"{k}:{v}" for k, v in t.items()) for label, t in row["Topologies"].items())
-        lines.append(f"| {row['Layout']} | {row['Nodes']} | {','.join(row['Exit'])} | {row['A4']} | {row['Crack']} | {row['A5']} | {row['A3']} | {oracle_text} | {gates_text} | {topology_text} |")
+        coverage_text = "; ".join(f"{label}: {v}" for label, v in row["PatchCoverage"].items())
+        lines.append(f"| {row['Layout']} | {row['Nodes']} | {','.join(row['Exit'])} | {row['A4']} | {row['Crack']} | {row['A5']} | {row['A3']} | {oracle_text} | {gates_text} | {coverage_text} | {topology_text} |")
     with open(os.path.join(output, "summary.md"), "w") as target:
         target.write("\n".join(lines) + "\n")
     with open(os.path.join(output, "summary.json"), "w") as target:
@@ -1354,6 +1371,7 @@ def main(argv=None):
     parser.add_argument("--timeout", type=float, default=600.0)
     parser.add_argument("--no-generate", action="store_true")
     parser.add_argument("--crack-false", action="store_true", help="add a CrackInternalBoundaryElements=false cell (level 0, first rank count) per library and compare its digest")
+    parser.add_argument("--signature-library", action="store_true", help="per layout, add a 'signature' library built from the first library's level-0 manifest (signature-only models for every feature: the fully matched patch dry run must cover the whole assigned perimeter)")
     parser.add_argument("--rerun", action="store_true")
     parser.add_argument("--list", action="store_true", help="print the layout names and exit")
     parser.add_argument("--write-spec", help="write the specification file and exit")

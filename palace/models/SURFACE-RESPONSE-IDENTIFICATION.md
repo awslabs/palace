@@ -4,10 +4,11 @@ Scope: the geometry-identification step of the fabrication-process surface-respo
 correction (decisions 69-74 of `coupon-accuracy-assessment-20260913/SUPERVISOR-DECISIONS.md`,
 invariants A1-A6 of `GEOMETRY-IDENTIFICATION-PLAN.md`). This document is the contract that the
 implementation in `surfaceresponseidentification.{hpp,cpp}` follows, that the preflight
-manifest (`surface-response-requirements.json`, version 2) serialises, and that the audit tool
-(`examples/surface_response_identification/audit.py`) gates. Phase 1 implements (a), (b), (c),
-(d) below for the manifest and the library-matching pass; the solve-path patch construction
-consuming the same feature list is the first item of phase 2 unless it fits in phase 1.
+manifest (`surface-response-requirements.json`, version 2) serialises, that the audit tool
+(`examples/surface_response_identification/audit.py`) gates, and that the solve-path patch
+construction (`BuildFeaturePatches`, `surfaceresponseoperator.cpp`) consumes verbatim: (a)-(d)
+the identification and the manifest (phases 1-3), (e) the patches built from the features
+(phase 4; the legacy classification stays behind `PatchConstruction = "Legacy"`).
 
 ## (a) The contract
 
@@ -253,6 +254,63 @@ Consequences (recorded in the manifest under `Library.DecisionQuantization` and
 * the strip at exactly R (`strip-2`, the transmon's 64 segments) is a `SameConductorStrip` at
   `Separation / R = 1` on both sides and its corners are plain corners: no knife edge between
   1.95 / 2 / 2.05 um beyond the separation value itself.
+
+## (e) Patch construction from the features (phase 4; solve path and patch dry run)
+
+The three-dimensional correction patches are built from the feature list (`ResponseCorrection.
+PatchConstruction = "Features"`, the default; `"Legacy"` keeps the former per-interface-group
+classification for comparison only). Matching is the key-based pass of (a); then
+
+* a feature **matched** by signature becomes its patches, built from its own portions,
+  vertices and canonical frame (below); a feature **unmatched** (no model with its signature,
+  or a type the library cannot model such as `UnclassifiedParallelPair`) is **omitted alone**:
+  no interface group, chain, pair or neighbour loses its correction; under `UnmatchedPolicy =
+  Error` the solve aborts with the count of unmatched features (never in the preflight);
+* **excluded segments** carry no feature and are never corrected; analytic exclusion zones
+  are outside every portion by construction of the assignment.
+
+Patch per class (weights in mesh units; `CouponDepth` = the model's longitudinal depth):
+
+| Feature | Patches | Frame (u, v, w) | Weight |
+|---|---|---|---|
+| `IsolatedEdge`, `CurvedEdge` | one per quadrature point of every portion (`2 x order` Gauss points) | u = gap direction, v = process normal of the segment | `(s1 - s0) x w_q / CouponDepth` |
+| pairs (`SameConductorGap`, `DifferentConductorGap`, `SameConductorStrip`, `Curved*`) | quadrature on **both** sides, side factor 1 / 2 (the longitudinal measure is the mean of the two sides: exact for a straight pair, the centreline for concentric arcs); at a sample p its foot q on the partner's portions | origin (e1 + e2) / 2, u from the model's first edge e1 toward e2, v = mean process normal; the first edge is the lower side along the feature's lateral axis `Frame.Axes[1]` (the higher one for `Chirality` -1: the canonical orientation is the mirror) | `(s1 - s0) x w_q x 1/2 / CouponDepth` |
+| `ParallelEdgeCluster` | quadrature on every side, side factor 1 / n; origin on the canonical first edge at the sample's longitudinal coordinate; anchors on the first edge of every conductor label | u = lateral axis toward increasing canonical offsets, v = mean process normal | `(s1 - s0) x w_q / n / CouponDepth` |
+| `ConvexCorner`, `ConcaveCorner` (sharp or rounded), `Endpoint`, `Junction` | one patch at `Frame.Origin` (the vertex or the virtual corner of a fillet) | `Frame.Axes` (below) | model weight (1) |
+| `SpatialEdgeCluster` | one patch | the model's canonical frame composed with the feature's: a model-frame point m maps to `F.origin + F.axes^T M.axes (m - M.origin)`, M from `CanonicalClusterSignature` of the model's stored edges (identity for a model keyed by its `Signature` alone, which is built in the canonical frame) | model weight (1) |
+
+**Vertex-feature frames** (`Frame` of the manifest, shared by the library builder): corner:
+x = the first arm away from the (virtual) corner, the arms ordered so that the second is
+counterclockwise about the process normal (a corner is its own mirror image), y = n x x;
+endpoint: x = the arm, y = +-(n x x) toward the gap; junction: x = the canonical first arm of
+`CanonicalJunctionSignature`, y = +-(n x x) so that the canonical arm order proceeds
+counterclockwise in (x, y). A legacy junction model (absolute `ArmAngles`) is mapped by its own
+canonical order (first arm angle theta, orientation): u = cos(theta) D - sigma sin(theta) (n x D),
+v = sigma (n x u), sigma = +1 when both orientations agree.
+
+**Library contract.** A model keyed by its `Signature` (the feature's canonical object, `Type`
+included; `Signature.Type` must equal `Topology`) needs no version-1 geometry parameters of its
+own; the curved classes (`CurvedEdge`, `CurvedSameConductorGap`, `CurvedDifferentConductorGap`,
+`CurvedSameConductorStrip`) exist only as signature-keyed models and are patched like their
+straight analogues along the curved portions; a cluster model keyed by its signature needs no
+`Edges`. A model's interface types are part of its key (a model mapping MA + MS + SA never
+matches an SA-only feature). Runtime models are one per (library model, target interfaces by
+slot; slot k = the k-th distinct target map of the feature's portions in sorted order).
+
+**Patch dry run.** `palace --surface-response-preflight` builds the same patches without a
+field solve and writes `surface-response-patches.csv` next to the manifest: `Patch, Feature,
+Topology, Model, ModelIndex, Weight, ModelWeight, QuadratureWeight, SideFactor, CouponDepth,
+Segment, S0, S1, Origin, AxisU, AxisV, AxisW` (manifest units; `Segment` = the manifest
+segment index, `[S0, S1)` the portion from the segment's canonical key origin; vertex and
+cluster patches carry `Segment` -1 and `CouponDepth` 0). The audit's gates A7: the patched
+feature set equals the matched set; every portion of a matched longitudinal feature is exactly
+one quadrature interval (sum of quadrature x model weights = 1) and `Weight = ModelWeight x
+QuadratureWeight x (S1 - S0) x SideFactor / CouponDepth` with `SideFactor` = 1 / claimed chains;
+vertex / cluster features carry patches without a portion whose model weights sum to 1; no
+patch on an unmatched feature, an excluded segment or an excluded portion. With the
+signature-only library built from the manifest's own features
+(`examples/surface_response_identification/signature_library.py`) the covered length equals
+`Totals.AssignedLength`: the whole perimeter minus the recorded exclusions.
 
 ## (d) Manifest version 2
 

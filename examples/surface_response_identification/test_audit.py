@@ -543,5 +543,120 @@ class IdentificationGateTest(AuditGateTest):
         self.assertFalse(result["Compare"]["GeometryDigestIdentical"])
 
 
+class PatchGateTest(unittest.TestCase):
+    """Gates A7 on the patch dry run (phase 4): the patched set is the matched set, every
+    portion of a matched longitudinal feature is one quadrature interval with weights summing
+    to one, vertex / cluster features carry one patch, nothing on unmatched / excluded."""
+
+    R = 2.0
+
+    def identification(self):
+        # Segments 0-1: an isolated edge (feature 0, matched); 2-3: a strip pair on two
+        # chains (feature 1, matched); 4: a corner window + the corner (feature 2, matched);
+        # 5: unmatched isolated edge (feature 3); 6: excluded (truncation).
+        features = [
+            {"Id": 0, "Type": "IsolatedEdge", "Length": 5.0, "Portions": [[0, 0.0, 3.0], [1, 0.0, 2.0]], "Vertices": [], "Match": {"Status": "Matched", "Model": "iso"}},
+            {"Id": 1, "Type": "SameConductorStrip", "Length": 4.0, "Portions": [[2, 0.0, 2.0], [3, 0.0, 2.0]], "Vertices": [], "Match": {"Status": "Matched", "Model": "strip"}},
+            {"Id": 2, "Type": "ConvexCorner", "Length": 2.0, "Portions": [[4, 0.0, 2.0]], "Vertices": [7], "Match": {"Status": "Matched", "Model": "corner"}},
+            {"Id": 3, "Type": "IsolatedEdge", "Length": 1.0, "Portions": [[5, 0.0, 1.0]], "Vertices": [], "Match": {"Status": "Missing"}},
+        ]
+        segments = [
+            {"Key": [[0, 0, 0], [3, 0, 0]], "Length": 3.0, "Chain": 0, "Portions": [[0.0, 3.0, 0]]},
+            {"Key": [[3, 0, 0], [5, 0, 0]], "Length": 2.0, "Chain": 0, "Portions": [[0.0, 2.0, 0]]},
+            {"Key": [[0, 1, 0], [2, 1, 0]], "Length": 2.0, "Chain": 1, "Portions": [[0.0, 2.0, 1]]},
+            {"Key": [[0, 2, 0], [2, 2, 0]], "Length": 2.0, "Chain": 2, "Portions": [[0.0, 2.0, 1]]},
+            {"Key": [[0, 3, 0], [2, 3, 0]], "Length": 2.0, "Chain": 3, "Portions": [[0.0, 2.0, 2]]},
+            {"Key": [[0, 4, 0], [1, 4, 0]], "Length": 1.0, "Chain": 4, "Portions": [[0.0, 1.0, 3]]},
+            {"Key": [[0, 5, 0], [1, 5, 0]], "Length": 1.0, "Chain": 5, "Exclusion": {"Class": "TruncationCut", "Reason": "test"}},
+        ]
+        return {"Version": 2, "MatchingRadius": self.R, "Features": features, "Segments": segments, "Vertices": [], "Exclusions": [{"Class": "TruncationCut", "Reason": "test", "Count": 1, "Length": 1.0}], "Totals": {"PerimeterLength": 13.0, "AssignedLength": 12.0, "ExcludedLength": 1.0}, "GeometryDigest": "d"}
+
+    def patches(self):
+        rows = []
+
+        def longitudinal(feature, topology, segment, s0, s1, side, depth):
+            for q, weight in ((0.2113248654051871, 0.5), (0.7886751345948129, 0.5)):
+                rows.append({"Patch": len(rows), "Feature": feature, "Topology": topology, "Model": topology, "ModelIndex": 1, "Weight": weight * (s1 - s0) * side / depth, "ModelWeight": 1.0, "QuadratureWeight": weight, "SideFactor": side, "CouponDepth": depth, "Segment": segment, "S0": s0, "S1": s1})
+
+        longitudinal(0, "isolated edge", 0, 0.0, 3.0, 1.0, 2.0)
+        longitudinal(0, "isolated edge", 1, 0.0, 2.0, 1.0, 2.0)
+        longitudinal(1, "same-conductor strip", 2, 0.0, 2.0, 0.5, 2.0)
+        longitudinal(1, "same-conductor strip", 3, 0.0, 2.0, 0.5, 2.0)
+        rows.append({"Patch": len(rows), "Feature": 2, "Topology": "convex corner", "Model": "corner", "ModelIndex": 2, "Weight": 1.0, "ModelWeight": 1.0, "QuadratureWeight": 1.0, "SideFactor": 1.0, "CouponDepth": 0.0, "Segment": -1, "S0": 0.0, "S1": 0.0})
+        return rows
+
+    def gates(self, ident, rows):
+        gates, summary = audit.patch_gates(ident, rows, self.R)
+        return {g["Gate"]: g["Status"] for g in gates}, {g["Gate"]: g["Detail"] for g in gates}, summary
+
+    def test_complete_dry_run_passes(self):
+        status, detail, summary = self.gates(self.identification(), self.patches())
+        self.assertEqual(status, {"A7-patch-features": "PASS", "A7-patch-exclusions": "PASS", "A7-patch-coverage": "PASS", "A7-patch-weights": "PASS"})
+        self.assertAlmostEqual(summary["CoveredLength"], 11.0)  # the unmatched edge (1.0) is not covered
+        self.assertAlmostEqual(summary["CoveredFractionOfAssigned"], 11.0 / 12.0)
+
+    def test_defects_fail(self):
+        ident = self.identification()
+        rows = self.patches()
+        status, detail, _ = self.gates(ident, rows[:-1])  # the corner without a patch
+        self.assertEqual(status["A7-patch-features"], "FAIL")
+        self.assertEqual(detail["A7-patch-features"]["MatchedNotPatched"], [2])
+        rows = self.patches()
+        rows[0]["Feature"] = 3  # a patch on the unmatched feature
+        status, _, _ = self.gates(ident, rows)
+        self.assertEqual(status["A7-patch-exclusions"], "FAIL")
+        rows = self.patches()
+        for r in rows[:2]:
+            r["Segment"] = 6  # a patch on the excluded segment
+        status, _, _ = self.gates(ident, rows)
+        self.assertEqual(status["A7-patch-exclusions"], "FAIL")
+        rows = self.patches()
+        for r in rows[:2]:
+            r["S1"] = 2.0  # a shorter interval: the portion is not covered exactly
+        status, _, _ = self.gates(ident, rows)
+        self.assertEqual(status["A7-patch-coverage"], "FAIL")
+        rows = self.patches()
+        rows[0]["QuadratureWeight"] = 0.4  # quadrature weights no longer sum to one
+        status, _, _ = self.gates(ident, rows)
+        self.assertEqual(status["A7-patch-weights"], "FAIL")
+        rows = self.patches()
+        for r in rows[4:8]:
+            r["SideFactor"] = 1.0  # a pair integrated once per side would double count
+        status, _, _ = self.gates(ident, rows)
+        self.assertEqual(status["A7-patch-weights"], "FAIL")
+
+
+class SignatureLibraryTest(unittest.TestCase):
+    def test_one_model_per_hash_with_version1_parameters(self):
+        from .signature_library import build_signature_library
+
+        manifest = {
+            "Identification": {
+                "MatchingRadius": 2.0,
+                "Features": [
+                    {"Id": 0, "Type": "IsolatedEdge", "Hash": "a" * 64, "Signature": {"Type": "IsolatedEdge", "Interfaces": ["SA"], "Law": "{\"Type\":\"PEC\"}"}},
+                    {"Id": 1, "Type": "IsolatedEdge", "Hash": "a" * 64, "Signature": {"Type": "IsolatedEdge", "Interfaces": ["SA"], "Law": "{\"Type\":\"PEC\"}"}},
+                    {"Id": 2, "Type": "ConcaveCorner", "Hash": "b" * 64, "Signature": {"Type": "ConcaveCorner", "AngleDegrees": 90.0, "CornerRadiusOverR": 0.25, "Interfaces": ["SA"], "Law": "{\"Type\":\"PEC\"}"}},
+                    {"Id": 3, "Type": "DifferentConductorGap", "Hash": "c" * 64, "Signature": {"Type": "DifferentConductorGap", "SeparationOverR": 0.95, "Edges": [{"Conductor": 1}, {"Conductor": 2}]}},
+                    {"Id": 4, "Type": "SpatialEdgeCluster", "Hash": "d" * 64, "Signature": {"Type": "SpatialEdgeCluster", "EdgeCount": 3, "Portions": [{"Conductor": 1}, {"Conductor": 2}, {"Conductor": 1}]}},
+                    {"Id": 5, "Type": "UnclassifiedParallelPair", "Hash": "e" * 64, "Signature": {"Type": "UnclassifiedParallelPair"}},
+                ],
+            }
+        }
+        library = build_signature_library(manifest)
+        names = {m["Name"]: m for m in library["Models"]}
+        self.assertEqual(len(names), 4)  # one per hash; the unclassified pair has no model
+        self.assertEqual(library["MatchingRadius"], 2.0)
+        self.assertEqual(names["ConcaveCorner-bbbbbbbbbbbb"]["Angle"], 90.0)
+        self.assertEqual(names["ConcaveCorner-bbbbbbbbbbbb"]["CornerRadius"], 0.5)
+        self.assertEqual(names["DifferentConductorGap-cccccccccccc"]["Separation"], 1.9)
+        self.assertEqual(len(names["DifferentConductorGap-cccccccccccc"]["ConductorReferences"]), 2)
+        self.assertEqual(len(names["SpatialEdgeCluster-dddddddddddd"]["ConductorReferences"]), 2)
+        self.assertNotIn("Edges", names["SpatialEdgeCluster-dddddddddddd"])
+        self.assertEqual(names["IsolatedEdge-aaaaaaaaaaaa"]["CouponDepth"], 2.0)
+        for m in library["Models"]:
+            self.assertEqual(m["Signature"]["Type"], m["Topology"])
+
+
 if __name__ == "__main__":
     unittest.main()

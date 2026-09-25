@@ -6,9 +6,12 @@
 #include <array>
 #include <cmath>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <string_view>
+#include <tuple>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -2093,10 +2096,15 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   config_3d["Problem"]["Output"] = temp.temp_dir.string();
   config_3d["Model"]["Mesh"] =
       (fs::path(PALACE_TEST_DATA_DIR) / "mesh/cpw3d-surface-nc.msh").string();
+  // The three-dimensional sections below exercise the legacy per-interface-group
+  // classification (parametric matching with tolerances, interpolation brackets, plan-view
+  // masks), kept behind PatchConstruction = "Legacy"; the Features-driven construction
+  // (the default) is tested in its own section with a signature-keyed library.
   config_3d["Solver"]["Electrostatic"]["ResponseCorrection"] = {
       {"Library", library_3d_path.string()},
       {"TargetInterfaces", {1, 2, 3}},
-      {"UnmatchedPolicy", "Error"}};
+      {"UnmatchedPolicy", "Error"},
+      {"PatchConstruction", "Legacy"}};
   IoData iodata_3d(config_3d, false);
   auto mesh_3d = mesh::ReadMesh(iodata_3d, Mpi::World());
   const auto geometry_3d = ExtractMetalEdgeGeometry(*mesh_3d, iodata_3d.boundaries);
@@ -2183,7 +2191,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                                  {"SurfaceResponseCorrection",
                                   {{"Library", library_3d_path.string()},
                                    {"TargetInterfaces", {1, 2, 3}},
-                                   {"UnmatchedPolicy", "Error"}}}};
+                                   {"UnmatchedPolicy", "Error"},
+                                   {"PatchConstruction", "Legacy"}}}};
   IoData maxwell_iodata_3d(maxwell_config_3d, false);
   auto maxwell_mesh_3d = mesh::ReadMesh(maxwell_iodata_3d, Mpi::World());
   std::vector<std::unique_ptr<Mesh>> maxwell_meshes_3d;
@@ -2875,7 +2884,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
          {{"ResponseCorrection",
            {{"Library", concave_library_3d_path.string()},
             {"TargetInterfaces", {4}},
-            {"UnmatchedPolicy", "Error"}}}}}}}};
+            {"UnmatchedPolicy", "Error"},
+            {"PatchConstruction", "Legacy"}}}}}}}};
   auto MakeIslandMesh = [](bool rounded = false, bool tetrahedral = false,
                            bool aperture = false, bool neighboring_island = false,
                            bool second_layer = false, bool high_order_rounded = false)
@@ -3164,6 +3174,230 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       (island_perimeter - 2.0 * island_corners * 0.2) / 0.2 + island_corners;
   CHECK_THAT(convex_island_response.GetPatchWeight(),
              WithinRel(expected_convex_weight, 1.0e-12));
+
+  // Features-driven patch construction (the default; SURFACE-RESPONSE-IDENTIFICATION.md
+  // (e)): the preflight is the patch dry run. With the legacy convex library every feature
+  // is Missing (its models map three interface types, the island's features carry SA only:
+  // key-based matching, no parametric tolerance), so nothing is patched and the solve path
+  // aborts under UnmatchedPolicy = Error. A signature-keyed library built from the manifest's
+  // own features patches every feature exactly once: the corner windows as one patch each
+  // in the feature frame, the isolated edges as one quadrature per portion.
+  {
+    auto features_island_config = island_config;
+    auto &features_correction =
+        features_island_config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    features_correction.erase("PatchConstruction");
+    features_correction["Library"] = convex_library_3d_path.string();
+    IoData features_island_iodata(features_island_config, false);
+    features_island_iodata.boundaries.cracked_attributes.insert(9);
+    REQUIRE(features_island_iodata.solver.electrostatic.response_correction
+                ->patch_construction ==
+            config::ElectrostaticSolverData::ResponseCorrectionData::PatchConstruction::
+                FEATURES);
+    auto features_mesh = MakeIslandMesh();
+    Mesh features_island_mesh(std::move(features_mesh));
+    const auto features_manifest_path =
+        temp.temp_dir / "surface-response-requirements-features-island.json";
+    const auto features_patches_path = temp.temp_dir / "surface-response-patches.csv";
+    fs::remove(features_patches_path);
+    WriteSurfaceResponseRequirements(features_island_iodata, features_island_mesh,
+                                     features_manifest_path.string());
+    Mpi::Barrier(Mpi::World());
+    std::ifstream features_manifest_input(features_manifest_path);
+    REQUIRE(features_manifest_input);
+    const json features_manifest = json::parse(features_manifest_input);
+    const auto &features = features_manifest["Identification"]["Features"];
+    REQUIRE(features.size() == 8);  // 4 convex corners + 4 isolated edges
+    for (const auto &feature : features)
+    {
+      CHECK(feature["Match"]["Status"] == "Missing");
+      if (feature["Type"] == "ConvexCorner")
+      {
+        // The corner frame: x = the first arm, y = the second (counterclockwise about the
+        // process normal), z = the process normal (design (b) 4).
+        const auto axes = feature["Frame"]["Axes"].get<std::array<std::array<double, 3>, 3>>();
+        CHECK_THAT(std::hypot(axes[0][0], axes[0][1], axes[0][2]), WithinAbs(1.0, 1.0e-12));
+        CHECK_THAT(std::hypot(axes[1][0], axes[1][1], axes[1][2]), WithinAbs(1.0, 1.0e-12));
+        CHECK_THAT(axes[2][1], WithinAbs(1.0, 1.0e-12));
+        CHECK_THAT(axes[0][0] * axes[1][0] + axes[0][1] * axes[1][1] + axes[0][2] * axes[1][2],
+                   WithinAbs(0.0, 1.0e-12));
+        // Right-handed: x cross y = z.
+        CHECK_THAT(axes[0][2] * axes[1][0] - axes[0][0] * axes[1][2], WithinAbs(1.0, 1.0e-12));
+      }
+    }
+    auto ReadPatches = [](const fs::path &path)
+    {
+      std::ifstream input(path);
+      REQUIRE(input);
+      std::string line;
+      std::getline(input, line);  // header
+      std::vector<std::vector<std::string>> rows;
+      while (std::getline(input, line))
+      {
+        std::vector<std::string> fields;
+        std::stringstream stream(line);
+        std::string field;
+        while (std::getline(stream, field, ','))
+        {
+          fields.push_back(field);
+        }
+        rows.push_back(std::move(fields));
+      }
+      return rows;
+    };
+    CHECK(ReadPatches(features_patches_path).empty());
+    {
+      std::vector<std::unique_ptr<Mesh>> meshes;
+      meshes.push_back(std::make_unique<Mesh>(MakeIslandMesh()));
+      LaplaceOperator laplace(features_island_iodata, meshes);
+      CHECK_THROWS_WITH(SurfaceResponseOperator(features_island_iodata, laplace),
+                        ContainsSubstring("have no library model (UnmatchedPolicy = Error)"));
+    }
+
+    // Signature-keyed library from the manifest: the legacy corner matrices (12 knots, 3
+    // contour groups) for the corners, the straight-edge matrices for the isolated edges.
+    const auto signature_library_path = temp.temp_dir / "fabrication-process-signature-3d.json";
+    if (Mpi::Root(Mpi::World()))
+    {
+      json signature_library = {{"Version", 2},
+                                {"Name", "unit-test-signature-3d"},
+                                {"MatchingRadius", 0.2},
+                                {"CouponDepth", 0.2},
+                                {"Models", json::array()}};
+      std::set<std::string> hashes;
+      for (const auto &feature : features)
+      {
+        if (!hashes.insert(feature["Hash"].get<std::string>()).second)
+        {
+          continue;
+        }
+        json model = {{"Name", feature["Type"].get<std::string>() + "-" +
+                                   feature["Hash"].get<std::string>().substr(0, 12)},
+                      {"Topology", feature["Type"]},
+                      {"Signature", feature["Signature"]}};
+        if (feature["Type"] == "ConvexCorner")
+        {
+          model["Angle"] = feature["Signature"]["AngleDegrees"];
+          model["FabricatedMatrix"] = corner_fabricated_path.string();
+          model["ThinMatrix"] = corner_thin_path.string();
+          model["BasisPoints"] = corner_points_path.string();
+          model["ContourGroups"] = {4, 4, 4};
+        }
+        else
+        {
+          model["FabricatedMatrix"] = fabricated_path.string();
+          model["ThinMatrix"] = thin_path.string();
+          model["BasisPoints"] = points_path.string();
+        }
+        signature_library["Models"].push_back(model);
+      }
+      std::ofstream output(signature_library_path);
+      output << signature_library.dump(2) << "\n";
+    }
+    Mpi::Barrier(Mpi::World());
+    features_correction["Library"] = signature_library_path.string();
+    IoData signature_island_iodata(features_island_config, false);
+    signature_island_iodata.boundaries.cracked_attributes.insert(9);
+    const auto signature_manifest_path =
+        temp.temp_dir / "surface-response-requirements-signature-island.json";
+    WriteSurfaceResponseRequirements(signature_island_iodata, features_island_mesh,
+                                     signature_manifest_path.string());
+    Mpi::Barrier(Mpi::World());
+    std::ifstream signature_manifest_input(signature_manifest_path);
+    REQUIRE(signature_manifest_input);
+    const json signature_manifest = json::parse(signature_manifest_input);
+    const auto &signature_identification = signature_manifest["Identification"];
+    std::map<int, json> features_by_id;
+    for (const auto &feature : signature_identification["Features"])
+    {
+      CHECK(feature["Match"]["Status"] == "Matched");
+      features_by_id.emplace(feature["Id"].get<int>(), feature);
+    }
+    const auto rows = ReadPatches(features_patches_path);
+    // Columns: Patch, Feature, Topology, Model, ModelIndex, Weight, ModelWeight,
+    // QuadratureWeight, SideFactor, CouponDepth, Segment, S0, S1, Origin(3), AxisU(3),
+    // AxisV(3), AxisW(3).
+    std::set<int> patched_features;
+    std::map<int, std::set<std::tuple<int, double, double>>> intervals_by_feature;
+    std::map<std::tuple<int, int, double, double>, double> quadrature_sums;
+    int corner_patches = 0;
+    double total_weight = 0.0, isolated_length = 0.0;
+    std::set<std::array<double, 3>> corner_origins;
+    for (const auto &row : rows)
+    {
+      REQUIRE(row.size() == 25);
+      const int feature = std::stoi(row[1]);
+      patched_features.insert(feature);
+      const double weight = std::stod(row[5]);
+      total_weight += weight;
+      const int segment = std::stoi(row[10]);
+      const double s0 = std::stod(row[11]), s1 = std::stod(row[12]);
+      if (features_by_id.at(feature)["Type"] == "ConvexCorner")
+      {
+        CHECK(segment == -1);
+        CHECK_THAT(weight, WithinAbs(1.0, 1.0e-12));
+        corner_patches++;
+        corner_origins.insert({std::stod(row[13]), std::stod(row[14]), std::stod(row[15])});
+        // The patch frame is the feature frame: a right-handed frame with z = the process
+        // normal (0, 1, 0), x and y along the island edges.
+        CHECK_THAT(std::stod(row[23]), WithinAbs(1.0, 1.0e-12));
+        CHECK_THAT(std::abs(std::stod(row[16])) + std::abs(std::stod(row[18])),
+                   WithinAbs(1.0, 1.0e-12));
+        CHECK_THAT(std::stod(row[16]) * std::stod(row[21]) - std::stod(row[18]) * std::stod(row[19]),
+                   WithinAbs(-1.0, 1.0e-12));
+      }
+      else
+      {
+        CHECK(segment >= 0);
+        CHECK(std::stod(row[8]) == 1.0);   // side factor of a single edge
+        CHECK_THAT(std::stod(row[9]), WithinRel(0.2, 1.0e-12));  // coupon depth
+        CHECK_THAT(weight, WithinRel(std::stod(row[7]) * (s1 - s0) / 0.2, 1.0e-12));
+        if (intervals_by_feature[feature].insert({segment, s0, s1}).second)
+        {
+          isolated_length += s1 - s0;
+        }
+        quadrature_sums[{feature, segment, s0, s1}] += std::stod(row[7]);
+      }
+    }
+    CHECK(patched_features.size() == features_by_id.size());
+    CHECK(corner_patches == island_corners);
+    CHECK(corner_origins.size() == static_cast<std::size_t>(island_corners));
+    for (const auto &[key, sum] : quadrature_sums)
+    {
+      CHECK_THAT(sum, WithinAbs(1.0, 1.0e-12));
+    }
+    // Every portion of every isolated-edge feature is exactly one quadrature interval.
+    for (const auto &[id, feature] : features_by_id)
+    {
+      if (feature["Type"] != "IsolatedEdge")
+      {
+        continue;
+      }
+      std::set<std::tuple<int, double, double>> portions;
+      for (const auto &portion : feature["Portions"])
+      {
+        portions.insert({portion[0].get<int>(), portion[1].get<double>(), portion[2].get<double>()});
+      }
+      CHECK(portions == intervals_by_feature.at(id));
+    }
+    // The whole perimeter minus the corner windows (R along each of the 8 arms) is isolated.
+    CHECK_THAT(isolated_length, WithinAbs(island_perimeter - 2.0 * island_corners * 0.2, 1.0e-9));
+    CHECK_THAT(isolated_length,
+               WithinAbs(signature_identification["Totals"]["AssignedLength"].get<double>() -
+                             2.0 * island_corners * 0.2,
+                         1.0e-9));
+    CHECK_THAT(total_weight, WithinRel(isolated_length / 0.2 + island_corners, 1.0e-12));
+    // The solve path builds the same patches (no field solve: the operator only assembles
+    // the local coupon responses).
+    std::vector<std::unique_ptr<Mesh>> signature_meshes;
+    signature_meshes.push_back(std::make_unique<Mesh>(MakeIslandMesh()));
+    LaplaceOperator signature_laplace(signature_island_iodata, signature_meshes);
+    SurfaceResponseOperator signature_response(signature_island_iodata, signature_laplace);
+    CHECK(signature_response.GetPatchCount() == static_cast<int>(rows.size()));
+    CHECK_THAT(signature_response.GetPatchWeight(), WithinRel(total_weight, 1.0e-12));
+    CHECK(signature_response.GetBasisSize() ==
+          4 * (static_cast<int>(rows.size()) - island_corners) + 12 * island_corners);
+  }
 
   auto touching_geometry_mesh = MakeTouchingIslandMesh();
   const auto touching_geometry =
@@ -3499,7 +3733,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                                             {"SurfaceResponseCorrection",
                                              {{"Library", convex_library_3d_path.string()},
                                               {"TargetInterfaces", {4}},
-                                              {"UnmatchedPolicy", "Error"}}}};
+                                              {"UnmatchedPolicy", "Error"},
+                                              {"PatchConstruction", "Legacy"}}}};
   IoData convex_maxwell_island_iodata(convex_maxwell_island_config, false);
   convex_maxwell_island_iodata.boundaries.cracked_attributes.insert(9);
   std::vector<std::unique_ptr<Mesh>> convex_maxwell_island_meshes;
@@ -4122,7 +4357,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       {"SurfaceResponseCorrection",
        {{"Library", rounded_library_3d_path.string()},
         {"TargetInterfaces", {4}},
-        {"UnmatchedPolicy", "Error"}}}};
+        {"UnmatchedPolicy", "Error"},
+        {"PatchConstruction", "Legacy"}}}};
   IoData rounded_maxwell_island_iodata(rounded_maxwell_island_config, false);
   rounded_maxwell_island_iodata.boundaries.cracked_attributes.insert(9);
   std::vector<std::unique_ptr<Mesh>> rounded_maxwell_island_meshes;

@@ -32,6 +32,7 @@ if __package__ in (None, ""):
 
 from . import audit, manifest as M  # noqa: E402
 from .preflight_config import preflight_config  # noqa: E402
+from .signature_library import build_signature_library  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_PALACE = os.path.join(REPO, "build", "bin", "palace")
@@ -73,6 +74,7 @@ def main(argv=None):
     parser.add_argument("--crack", nargs="+", default=["true"], choices=["true", "false"])
     parser.add_argument("--l0", type=float, default=1.0e-6)
     parser.add_argument("--frame-normal", type=float, nargs=3, help="EdgeFrameNormal on every interface (process side of sheets with one material on both sides)")
+    parser.add_argument("--signature-library", action="store_true", help="add a 'signature' library built from the first library's first cell manifest (signature-only models for every feature: the fully matched patch dry run)")
     parser.add_argument("--palace", default=DEFAULT_PALACE)
     parser.add_argument("--timeout", type=float, default=1100.0, help="seconds per cell")
     parser.add_argument("--max-local-ranks", type=int, default=6)
@@ -85,8 +87,21 @@ def main(argv=None):
             raise SystemExit(f"{ranks} ranks exceeds the local limit ({args.max_local_ranks}, cores {cores})")
     libraries = dict(entry.split("=", 1) for entry in args.library)
     os.makedirs(args.output, exist_ok=True)
+    if args.signature_library:
+        libraries["signature"] = os.path.join(args.output, "signature-library.json")
     cells = []
     for label, library in libraries.items():
+        if label == "signature" and args.signature_library:
+            # Built from the first library's first cell (the identification does not depend
+            # on the library: any cell's features give the same signatures).
+            first = cells[0] if cells else None
+            if not first or not first.get("GeometryDigest"):
+                print(json.dumps({"Name": "signature", "Error": "no manifest to build the signature library from"}), flush=True)
+                continue
+            with open(os.path.join(first["Directory"], "postpro", "surface-response-requirements.json")) as source:
+                signature_library = build_signature_library(json.load(source), name="signature-only")
+            with open(library, "w") as target:
+                json.dump(signature_library, target, indent=1)
         for levels in args.uniform_levels:
             for crack in args.crack:
                 for ranks in args.ranks:
@@ -134,6 +149,7 @@ def main(argv=None):
                                 target.write(audit.render_markdown(result))
                             cell["Gates"] = {g["Gate"]: g["Status"] for g in result["Gates"]}
                             cell["GapBound"] = {k: v for k, v in result["GapBound"].items() if k != "OmittedByClassFromLog"}
+                            cell["Patches"] = {k: v for k, v in (result.get("Patches") or {}).items() if k != "Models"}
                         else:
                             cell["Gates"] = "audit skipped on the refined mesh (the audit reads the unrefined MSH); compare digests"
                     else:
@@ -191,14 +207,16 @@ def main(argv=None):
     with open(os.path.join(args.output, "matrix.json"), "w") as target:
         json.dump(summary, target, indent=1, default=str)
     lines = [f"# Preflight matrix: {os.path.basename(args.mesh)}", "", f"mesh sha256 {summary['MeshSha256'][:16]}", ""]
-    lines.append("| Cell | exit | s | manifest sha | digest full | digest geom | Exact/Missing | gates |")
-    lines.append("|---|---|---|---|---|---|---|---|")
+    lines.append("| Cell | exit | s | manifest sha | digest full | digest geom | Exact/Missing | patches (covered/assigned) | gates |")
+    lines.append("|---|---|---|---|---|---|---|---|---|")
     for c in cells:
         s = c.get("Summary") or {}
         counts = s.get("Counts", {})
         gates = c.get("Gates")
         gate_text = ", ".join(f"{k.split('-', 1)[-1]}={v[0]}" for k, v in gates.items()) if isinstance(gates, dict) else str(gates)[:40]
-        lines.append(f"| {c['Name']} | {c.get('ExitCode')} | {c.get('Seconds') if c.get('Seconds') is None else round(c['Seconds'], 1)} | {c.get('ManifestSha256', '')[:12]} | {(c.get('GeometryDigest') or c.get('DigestFull') or '')[:12]} | {c.get('DigestGeometryOnly', '')[:12]} | {counts.get('Exact')}/{counts.get('Missing')} | {gate_text} |")
+        pt = c.get("Patches") or {}
+        patch_text = f"{pt.get('Patches')} ({pt.get('CoveredLength', 0.0):.3f}/{pt.get('AssignedLength', 0.0):.3f})" if pt else ""
+        lines.append(f"| {c['Name']} | {c.get('ExitCode')} | {c.get('Seconds') if c.get('Seconds') is None else round(c['Seconds'], 1)} | {c.get('ManifestSha256', '')[:12]} | {(c.get('GeometryDigest') or c.get('DigestFull') or '')[:12]} | {c.get('DigestGeometryOnly', '')[:12]} | {counts.get('Exact')}/{counts.get('Missing')} | {patch_text} | {gate_text} |")
     lines.append("")
     lines.append("| Reference | Cell | geometry digest identical | full identical | geometry-only identical | added | removed | changed |")
     lines.append("|---|---|---|---|---|---|---|---|")
