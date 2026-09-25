@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <complex>
 #include <functional>
@@ -259,7 +260,7 @@ SolveRectangularModesMultigrid(int mg_max_levels,
 // boundary attributes: bottom = 1, x = W side = 2, top = 3, x = 0 side = 4), with elements
 // below y = H/4 of attribute 1 (ε = 4) and the rest of attribute 2 (vacuum). The elements
 // are distributed over the processes in vertical strips, so that all processes but the
-// last have no elements on the side x = W.
+// last have no elements on the side x = W. Boundaries listed as PEC are essential.
 class RectangleModeModel
 {
 public:
@@ -277,6 +278,7 @@ private:
   std::unique_ptr<SurfaceConductivityOperator> surf_sigma_op;
   std::unique_ptr<SurfaceRationalImpedanceOperator> surf_rz_op;
   std::unique_ptr<mfem::HypreParMatrix> Atnr, Atni, Btnr, Bttr;
+  mfem::Array<int> dbc_tdof_list;
   std::unique_ptr<mode_assembly::ModeOperatorModel> model;
 
 public:
@@ -332,12 +334,29 @@ public:
     Btnr.reset(Atnr->Transpose());
     *Btnr *= -1.0;
     Bttr = std::get<0>(mode_assembly::AssembleBtt(*nd_fespace, *mat_op));
-    mfem::Array<int> dbc_tdof_list;  // No essential boundaries
+
+    // Essential (PEC) true DOFs of the block system: ND, then H1 offset by the ND size.
+    {
+      const auto &pmesh = mesh->Get();
+      auto dbc_marker =
+          mesh::AttrToMarker(pmesh.bdr_attributes.Max(), iodata.boundaries.pec.attributes);
+      mfem::Array<int> nd_dbc, h1_dbc;
+      nd_fespace->Get().GetEssentialTrueDofs(dbc_marker, nd_dbc);
+      h1_fespace->Get().GetEssentialTrueDofs(dbc_marker, h1_dbc);
+      dbc_tdof_list = nd_dbc;
+      for (auto tdof : h1_dbc)
+      {
+        dbc_tdof_list.Append(nd_fespace->GetTrueVSize() + tdof);
+      }
+    }
     model = std::make_unique<mode_assembly::ModeOperatorModel>(
         *nd_fespace, *h1_fespace, *mat_op, nullptr, *surf_z_op, *farfield_op,
         *surf_sigma_op, *surf_rz_op, *Bttr, Atnr.get(), Atni.get(), Btnr.get(),
         dbc_tdof_list);
   }
+
+  const auto &GetModel() const { return *model; }
+  const auto &GetDbcTDofList() const { return dbc_tdof_list; }
 
   const mode_assembly::OperatorComponent &
   GetComponent(mode_assembly::CoefficientType type) const
@@ -622,6 +641,74 @@ TEST_CASE("ModeOperatorModel farfield damping uses the neighboring material",
   CHECK_THAT(pair_t.imag(), WithinRel(expected, 1.0e-12));
   CHECK(pair_n.real() == 0.0);
   CHECK_THAT(pair_n.imag(), WithinRel(-expected, 1.0e-12));
+}
+
+TEST_CASE("ModeOperatorModel decouples essential DOFs in every component",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // Each component, and so the assembled matrix, must decouple the essential DOFs from the
+  // rest of the system, with a unit diagonal from the constant component. This includes
+  // the ND/H1 coupling blocks, which appear in a component without their transposed
+  // counterpart (Atn in the constant and -Btn in the shift component).
+  RectangleModeModel rect([](IoData &iodata)
+                          { iodata.boundaries.pec.attributes = {1, 4}; });
+  MPI_Comm comm = Mpi::World();
+  const auto &dbc_tdof_list = rect.GetDbcTDofList();
+  int num_dbc = dbc_tdof_list.Size();
+  Mpi::GlobalSum(1, &num_dbc, comm);
+  REQUIRE(num_dbc > 0);
+
+  // Apply A to x supported on the essential or on the other DOFs, and return the norms of
+  // y = A x - c x on the essential and on the other DOFs (with c the expected diagonal of
+  // the essential DOFs for x on these).
+  auto Residuals = [&](const ComplexOperator &A, bool essential, double c)
+  {
+    const int n = A.Height();
+    std::vector<bool> is_dbc(n, false);
+    for (auto tdof : dbc_tdof_list)
+    {
+      is_dbc[tdof] = true;
+    }
+    ComplexVector x(n), y(n);
+    x = 0.0;
+    for (int i = 0; i < n; i++)
+    {
+      if (is_dbc[i] == essential)
+      {
+        x.Real()[i] = 1.0 + 0.1 * (i % 7);
+        x.Imag()[i] = 0.5 - 0.1 * (i % 5);
+      }
+    }
+    A.Mult(x, y);
+    if (essential)
+    {
+      y.AXPY(-c, x);
+    }
+    double norms[2] = {0.0, 0.0};  // Essential, other DOFs
+    for (int i = 0; i < n; i++)
+    {
+      norms[is_dbc[i] ? 0 : 1] += std::norm(std::complex<double>(y.Real()[i], y.Imag()[i]));
+    }
+    Mpi::GlobalSum(2, norms, comm);
+    return std::array<double, 2>{std::sqrt(norms[0]), std::sqrt(norms[1])};
+  };
+
+  for (const auto &component : rect.GetModel().GetComponents())
+  {
+    CAPTURE(static_cast<int>(component.type));
+    const double c =
+        (component.type == mode_assembly::CoefficientType::CONSTANT) ? 1.0 : 0.0;
+    const auto from_dbc = Residuals(*component.op, true, c);
+    CHECK(from_dbc[0] == 0.0);
+    CHECK(from_dbc[1] == 0.0);
+    const auto from_other = Residuals(*component.op, false, 0.0);
+    CHECK(from_other[0] == 0.0);
+  }
+  const auto A = rect.GetModel().Assemble(1.0e-2, -2.0e-4);
+  const auto from_dbc = Residuals(*A, true, 1.0);
+  CHECK(from_dbc[0] == 0.0);
+  CHECK(from_dbc[1] == 0.0);
+  CHECK(Residuals(*A, false, 0.0)[0] == 0.0);
 }
 
 TEST_CASE("ModeOperatorModel boundary components on processes without the boundary",
