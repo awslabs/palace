@@ -1225,6 +1225,9 @@ private:
   std::set<std::size_t> cross_layer_vertices;
   std::vector<IdentifiedFeature> features;
   std::vector<double> feature_max_kappa;  // per feature, over its assigned portions
+  // Number of sides a pair / parallel cluster must end up with after claim resolution
+  // (0 for every other feature).
+  std::vector<int> feature_sides;
   std::vector<VertexFeatureSite> sites;
   std::vector<std::vector<EventCore>> cluster_cores;
   std::vector<std::vector<std::size_t>> cluster_sites;
@@ -1244,6 +1247,7 @@ private:
     feature.chirality = chirality;
     features.push_back(std::move(feature));
     feature_max_kappa.push_back(0.0);
+    feature_sides.push_back(0);
     return features.back().id;
   }
 
@@ -2100,7 +2104,11 @@ void Identifier::BuildBentPairs()
       std::vector<Interval> excluded;
       if (!B.closed)
       {
-        // Beyond either end of B: the half-plane past the end along the outward tangent.
+        // Beyond either end of B: past the end along its outward tangent AND within the
+        // reach of that end (the half-plane alone is right for a straight B, but past the
+        // end plane of a bent route it covers points that face B's interior: DS-SCT-001's
+        // ground-side edges lost their whole facing region to the trace's end planes and
+        // the pairs were described on one side only).
         for (const bool at_end : {false, true})
         {
           const Run &terminal = runs[B.runs[at_end ? B.runs.size() - 1 : 0]];
@@ -2108,11 +2116,12 @@ void Identifier::BuildBentPairs()
           const Point3D t_out = at_end ? terminal.tangent : Scale(-1.0, terminal.tangent);
           const double g0 = Dot(Sub(ra.start, e), t_out), slope = Dot(ra.tangent, t_out);
           // g(s) = g0 + slope s > 0.
+          std::vector<Interval> past;
           if (std::abs(slope) <= kDirectionQuantum)
           {
             if (g0 > 0.0)
             {
-              excluded.emplace_back(0.0, ra.length);
+              past.emplace_back(0.0, ra.length);
             }
           }
           else
@@ -2120,13 +2129,15 @@ void Identifier::BuildBentPairs()
             const double root = -g0 / slope;
             if (slope > 0.0)
             {
-              excluded.emplace_back(std::max(root, 0.0), ra.length);
+              past.emplace_back(std::max(root, 0.0), ra.length);
             }
             else
             {
-              excluded.emplace_back(0.0, std::min(root, ra.length));
+              past.emplace_back(0.0, std::min(root, ra.length));
             }
           }
+          const auto near_end = IntersectIntervals(past, RunIntervalWithin(a, e, e, reach), Tol());
+          excluded.insert(excluded.end(), near_end.begin(), near_end.end());
         }
       }
       for (const std::size_t v : shared)
@@ -2391,62 +2402,95 @@ void Identifier::BuildBentPairs()
       {
         continue;
       }
-      // Frame: lateral from A to B at the first interacting piece; gap signs relative to it.
-      const SubPiece *lead = nullptr;
-      for (const auto &piece : sub_a)
+      // The constant, interacting pieces of both sides grouped by separation: a closed chain
+      // (a trace loop) can face the partner at two separations (its near side at the gap,
+      // its far side across the strip), and one pair is one separation (the design's "one
+      // separation per pair" is exact for a constant pair and the mean of a slow taper). The
+      // groups are split where consecutive mean separations differ by more than the pair
+      // tolerance (the same 5 % as the local constancy).
+      struct GroupedPiece
       {
-        if (piece.constant && piece.interacting)
-        {
-          lead = &piece;
-          break;
-        }
-      }
-      if (!lead)
+        const SubPiece *piece;
+        int side;
+        double mean_separation;
+      };
+      std::vector<GroupedPiece> grouped;
+      for (const auto *list : {&sub_a, &sub_b})
       {
-        for (const auto &piece : sub_b)
+        const int side = list == &sub_a ? 0 : 1;  // A at offset 0, B at the separation
+        for (const auto &piece : *list)
         {
-          if (piece.constant && piece.interacting)
+          if (piece.constant && piece.interacting && piece.sample_count > 0)
           {
-            lead = &piece;
-            break;
+            grouped.push_back({&piece, side, piece.weighted_separation / piece.sample_count});
           }
         }
       }
-      const bool lead_on_a = lead >= sub_a.data() && lead < sub_a.data() + sub_a.size();
-      const Chain &lead_other = lead_on_a ? B : A;
-      const Point3D pa = runs[lead->run].At(0.5 * (lead->interval.first + lead->interval.second));
-      const auto qb = ClosestPointOnChain(lead_other, pa);
-      const Point3D lateral = Normalize(Sub(runs[qb.run].At(qb.s), pa));
-      const Run &ra = runs[lead->run];
-      const Run &rb = runs[qb.run];
-      const int gap_a = Dot(ra.gap_direction, lateral) > 0.0 ? 1 : -1;
-      const int gap_b = Dot(rb.gap_direction, lateral) > 0.0 ? 1 : -1;
-      const bool same = ra.conductor == rb.conductor;
-      std::string base;
-      std::optional<std::string> reason;
-      if (gap_a > 0 && gap_b < 0)
+      std::sort(grouped.begin(), grouped.end(),
+                [](const GroupedPiece &u, const GroupedPiece &v)
+                { return u.mean_separation < v.mean_separation; });
+      std::vector<std::pair<std::size_t, std::size_t>> groups;  // [begin, end) in grouped
+      for (std::size_t i = 0; i < grouped.size();)
       {
-        base = same ? "SameConductorGap" : "DifferentConductorGap";
-      }
-      else if (gap_a < 0 && gap_b > 0)
-      {
-        base = "SameConductorStrip";
-      }
-      else
-      {
-        base = "UnclassifiedParallelPair";
-        reason = "parallel metal edges within 2R with the gap on the same side (overlapping "
-                 "metal in one process plane)";
-      }
-      for (const bool curved_class : {false, true})
-      {
-        double length = 0.0, max_kappa = 0.0, weighted = 0.0;
-        int samples = 0;
-        for (const auto *list : {&sub_a, &sub_b})
+        std::size_t j = i + 1;
+        while (j < grouped.size() &&
+               !quantizer.Less(kPairSeparationTolerance * grouped[j - 1].mean_separation,
+                               grouped[j].mean_separation - grouped[j - 1].mean_separation))
         {
-          for (const auto &piece : *list)
+          j++;
+        }
+        groups.emplace_back(i, j);
+        i = j;
+      }
+      for (const auto &[g0, g1] : groups)
+      {
+        // Frame: lateral from A to B at the group's first piece (on A when the group has
+        // one, else on B); gap signs relative to it.
+        const GroupedPiece *lead = nullptr;
+        for (std::size_t i = g0; i < g1; i++)
+        {
+          if (!lead || (lead->side == 1 && grouped[i].side == 0))
           {
-            if (!piece.constant || !piece.interacting || piece.curved != curved_class)
+            lead = &grouped[i];
+          }
+        }
+        const bool lead_on_a = lead->side == 0;
+        const Chain &lead_other = lead_on_a ? B : A;
+        const Point3D pa = runs[lead->piece->run].At(
+            0.5 * (lead->piece->interval.first + lead->piece->interval.second));
+        const auto qb = ClosestPointOnChain(lead_other, pa);
+        const Point3D lateral = Normalize(Sub(runs[qb.run].At(qb.s), pa));
+        // ra = the run on A, rb = the run on B of the lead pair of points.
+        const Run &ra = lead_on_a ? runs[lead->piece->run] : runs[qb.run];
+        const Run &rb = lead_on_a ? runs[qb.run] : runs[lead->piece->run];
+        const Point3D lateral_ab = lead_on_a ? lateral : Scale(-1.0, lateral);
+        const int gap_a = Dot(ra.gap_direction, lateral_ab) > 0.0 ? 1 : -1;
+        const int gap_b = Dot(rb.gap_direction, lateral_ab) > 0.0 ? 1 : -1;
+        const bool same = ra.conductor == rb.conductor;
+        std::string base;
+        std::optional<std::string> reason;
+        if (gap_a > 0 && gap_b < 0)
+        {
+          base = same ? "SameConductorGap" : "DifferentConductorGap";
+        }
+        else if (gap_a < 0 && gap_b > 0)
+        {
+          base = "SameConductorStrip";
+        }
+        else
+        {
+          base = "UnclassifiedParallelPair";
+          reason = "parallel metal edges within 2R with the gap on the same side (overlapping "
+                   "metal in one process plane)";
+        }
+        for (const bool curved_class : {false, true})
+        {
+          double length = 0.0, max_kappa = 0.0, weighted = 0.0;
+          int samples = 0;
+          for (std::size_t i = g0; i < g1; i++)
+          {
+            const SubPiece &piece = *grouped[i].piece;
+            if (piece.curved != curved_class)
             {
               continue;
             }
@@ -2455,44 +2499,42 @@ void Identifier::BuildBentPairs()
             weighted += piece.weighted_separation;
             samples += piece.sample_count;
           }
-        }
-        if (length <= kSignatureLengthQuantumOverRadius * R)
-        {
-          continue;  // slivers between cuts, below the signature grid
-        }
-        // One separation per pair and curvature class: the mean chord reading of its
-        // samples (exact for a constant pair; a slow taper is described by its mean).
-        const double separation = weighted / samples;
-        std::vector<TranslationalEdge> edges = {
-            {0.0, gap_a, ra.conductor, InterfaceNames(ra.targets), ra.boundary_law},
-            {separation, gap_b, rb.conductor, InterfaceNames(rb.targets), rb.boundary_law}};
-        auto translational = CanonicalTranslationalSignature(edges, R);
-        nlohmann::json signature = std::move(translational.signature);
-        std::string type = base;
-        if (reason)
-        {
-          signature["Reason"] = *reason;
-        }
-        if (curved_class)
-        {
-          type = "Curved" + base;
-          MFEM_VERIFY(max_kappa > 0.0, "A curved pair without curvature!");
-          signature["RadiusOverR"] =
-              RoundTo(1.0 / (max_kappa * R), kSignatureLengthQuantumOverRadius);
-        }
-        const int feature = NewFeature(type, signature, translational.chirality);
-        features[feature].origin = pa;
-        features[feature].axes = {ra.tangent, lateral, n_ref};
-        for (const auto *list : {&sub_a, &sub_b})
-        {
-          const int side = list == &sub_a ? 0 : 1;  // A at offset 0, B at the separation
-          for (const auto &piece : *list)
+          if (length <= kSignatureLengthQuantumOverRadius * R)
           {
-            if (!piece.constant || !piece.interacting || piece.curved != curved_class)
+            continue;  // slivers between cuts, below the signature grid
+          }
+          // One separation per pair and curvature class: the mean chord reading of its
+          // samples (exact for a constant pair; a slow taper is described by its mean).
+          const double separation = weighted / samples;
+          std::vector<TranslationalEdge> edges = {
+              {0.0, gap_a, ra.conductor, InterfaceNames(ra.targets), ra.boundary_law},
+              {separation, gap_b, rb.conductor, InterfaceNames(rb.targets), rb.boundary_law}};
+          auto translational = CanonicalTranslationalSignature(edges, R);
+          nlohmann::json signature = std::move(translational.signature);
+          std::string type = base;
+          if (reason)
+          {
+            signature["Reason"] = *reason;
+          }
+          if (curved_class)
+          {
+            type = "Curved" + base;
+            MFEM_VERIFY(max_kappa > 0.0, "A curved pair without curvature!");
+            signature["RadiusOverR"] =
+                RoundTo(1.0 / (max_kappa * R), kSignatureLengthQuantumOverRadius);
+          }
+          const int feature = NewFeature(type, signature, translational.chirality);
+          features[feature].origin = lead_on_a ? pa : runs[qb.run].At(qb.s);
+          features[feature].axes = {ra.tangent, lateral_ab, n_ref};
+          feature_sides[feature] = 2;
+          for (std::size_t i = g0; i < g1; i++)
+          {
+            const SubPiece &piece = *grouped[i].piece;
+            if (piece.curved != curved_class)
             {
               continue;
             }
-            claims[piece.run].push_back({feature, 2, piece.interval, side});
+            claims[piece.run].push_back({feature, 2, piece.interval, grouped[i].side});
           }
         }
       }
@@ -2686,6 +2728,7 @@ void Identifier::BuildTranslationalFeatures()
       const int feature = NewFeature(type, best, chirality);
       features[feature].origin = Scale(0.5 * (span.lo + span.hi), axis);
       features[feature].axes = {axis, lateral, n_ref};
+      feature_sides[feature] = static_cast<int>(span.component.size());
       for (std::size_t k = 0; k < span.component.size(); k++)
       {
         const auto &member = members[span.component[k]];
@@ -3222,15 +3265,71 @@ void Identifier::Assign(IdentificationResult &result)
         }
         pieces.erase(pieces.begin() + i);
       }
-      taken = cross_layer[r];
-      for (const auto &[lo, hi, feature, side] : pieces)
-      {
-        (void)feature;
-        (void)side;
-        taken.push_back({lo, hi});
-      }
-      taken = MergeIntervals(taken, Tol());
     }
+  }
+
+  // A pair / parallel cluster whose claim on one of its sides was lost entirely to an
+  // earlier claim of the same priority (a chain facing two partners within 2R along a bend:
+  // DS-SCT-001's 2 um gaps next to 2 um strips, a case the bent-pair rule describes per
+  // chain pair) is not a pair: its surviving pieces return to their runs and are handed to
+  // the chain's isolated / curved edge below (recorded as a claim-resolution rule; the
+  // multi-partner bent neighbourhood itself is a PENDING rule item).
+  {
+    std::map<int, std::map<int, double>> side_lengths;
+    for (std::size_t r = 0; r < runs.size(); r++)
+    {
+      for (const auto &[lo, hi, feature, side] : assigned[r])
+      {
+        if (feature >= 0 && feature_sides[feature] > 0)
+        {
+          side_lengths[feature][side] += hi - lo;
+        }
+      }
+    }
+    std::set<int> degenerate;
+    for (int feature = 0; feature < static_cast<int>(features.size()); feature++)
+    {
+      if (feature_sides[feature] == 0)
+      {
+        continue;
+      }
+      const auto &lengths = side_lengths[feature];
+      for (int side = 0; side < feature_sides[feature]; side++)
+      {
+        const auto it = lengths.find(side);
+        if (it == lengths.end() || it->second <= kSignatureLengthQuantumOverRadius * R)
+        {
+          degenerate.insert(feature);
+          break;
+        }
+      }
+    }
+    if (!degenerate.empty())
+    {
+      for (auto &pieces : assigned)
+      {
+        pieces.erase(std::remove_if(pieces.begin(), pieces.end(),
+                                    [&](const auto &piece)
+                                    { return degenerate.count(std::get<2>(piece)) > 0; }),
+                     pieces.end());
+      }
+    }
+  }
+
+  for (std::size_t r = 0; r < runs.size(); r++)
+  {
+    if (runs[r].excluded)
+    {
+      continue;
+    }
+    std::vector<Interval> taken = cross_layer[r];
+    for (const auto &[lo, hi, feature, side] : assigned[r])
+    {
+      (void)feature;
+      (void)side;
+      taken.push_back({lo, hi});
+    }
+    taken = MergeIntervals(taken, Tol());
     const auto remainder = SubtractIntervals({Interval{0.0, runs[r].length}}, taken, Tol());
     if (!remainder.empty())
     {

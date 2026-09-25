@@ -5576,7 +5576,17 @@ struct FeaturePatchSummary
   double unmatched_length = 0.0;
   std::map<std::string, std::pair<int, double>> unmatched_by_type;  // count, length
   std::map<std::string, int> patches_by_type;
+  // Matched pairs whose side geometry disagrees with their separation (a sample's foot on
+  // the partner side farther than the tolerance from the signature's separation): omitted
+  // with a warning, never patched silently.
+  std::vector<int> inconsistent_features;
+  double inconsistent_length = 0.0;
 };
+
+// A pair's sample-to-partner distances must agree with its separation within twice the
+// pair tolerance (the mean separation of a 5 % taper is within 5 % of every sample; the
+// chord / inscribed readings add < 1 %).
+constexpr double kPairPatchSeparationTolerance = 0.10;
 
 FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
                                         const IdentificationResult &identification,
@@ -5856,6 +5866,38 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
       MFEM_VERIFY(model.conductor_references.size() <= 2,
                   "A paired-edge response model requires at most two conductor "
                   "references!");
+      // Consistency of the two sides with the signature's separation before any patch.
+      const double separation = feature.signature.at("SeparationOverR").get<double>() * R;
+      bool consistent = true;
+      for (int k = 0; consistent && k < 2; k++)
+      {
+        for (const auto &fp : *ordered[k].second)
+        {
+          for (const double t : {fp.a, 0.5 * (fp.a + fp.b), fp.b})
+          {
+            const Foot foot = ClosestFoot(Interpolate(*fp.segment, t), *ordered[1 - k].second);
+            if (std::abs(Distance(Interpolate(*fp.segment, t), foot.point) - separation) >
+                kPairPatchSeparationTolerance * separation)
+            {
+              consistent = false;
+              break;
+            }
+          }
+          if (!consistent)
+          {
+            break;
+          }
+        }
+      }
+      if (!consistent)
+      {
+        summary.inconsistent_features.push_back(feature.id);
+        summary.inconsistent_length += feature_length;
+        Mpi::Warning("Feature {:d} ({}, {:.6e} length units): the two sides do not face each "
+                     "other at its separation {:.6e}; the pair is omitted (not patched).\n",
+                     feature.id, feature.type, feature_length, separation);
+        continue;
+      }
       for (int k = 0; k < 2; k++)
       {
         const auto &side = *ordered[k].second;
@@ -7138,20 +7180,33 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                summary.unmatched_length * coordinate_scale, unmatched,
                static_cast<int>(result.patches.size()), patches,
                static_cast<int>(result.models.size()));
-    if (summary.unmatched_features > 0)
+    if (!summary.inconsistent_features.empty())
     {
-      Mpi::Warning("Fabrication-process response library \"{}\" has no model for {} "
-                   "identified feature(s) ({:.6e} length units); correction is disabled "
-                   "for these features only.\n",
-                   library.name, summary.unmatched_features,
-                   summary.unmatched_length * coordinate_scale);
+      Mpi::Warning("{} matched pair feature(s) ({:.6e} length units) whose sides do not face "
+                   "each other at their separation are omitted (identification defect, "
+                   "recorded; ids {} ...).\n",
+                   static_cast<int>(summary.inconsistent_features.size()),
+                   summary.inconsistent_length * coordinate_scale,
+                   summary.inconsistent_features.front());
+    }
+    if (summary.unmatched_features > 0 || !summary.inconsistent_features.empty())
+    {
+      if (summary.unmatched_features > 0)
+      {
+        Mpi::Warning("Fabrication-process response library \"{}\" has no model for {} "
+                     "identified feature(s) ({:.6e} length units); correction is disabled "
+                     "for these features only.\n",
+                     library.name, summary.unmatched_features,
+                     summary.unmatched_length * coordinate_scale);
+      }
       if (!requirements &&
           request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR)
       {
         MFEM_ABORT("Automatic fabrication-process response matching failed: "
                    << summary.unmatched_features
-                   << " identified feature(s) have no library model (UnmatchedPolicy = "
-                      "Error)!");
+                   << " identified feature(s) have no library model and "
+                   << summary.inconsistent_features.size()
+                   << " pair feature(s) are inconsistent (UnmatchedPolicy = Error)!");
       }
     }
     MFEM_VERIFY(requirements || (!result.models.empty() && !result.patches.empty()),

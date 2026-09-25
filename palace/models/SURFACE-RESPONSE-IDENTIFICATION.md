@@ -191,6 +191,26 @@ smaller endpoint.
      interactions of a locally constant portion are never events, whether or not it
      interacts, so the concentric chords of a bend never form a spatial cluster and nothing
      is omitted as "nonparallel".
+   Phase 4 refinements found by the patch construction on DS-SCT-001 (2 um trace between
+   2 um gaps: trace + gap = 2R): (i) "not beyond either end of the other chain" is local —
+   past the end plane along the outward tangent AND within the reach of that end (the
+   half-plane alone is right for a straight partner but past the end plane of a bent route
+   it covered points facing the partner's interior, so the bent ground edges lost their
+   whole facing region and the pairs were described on one side only); (ii) the constant,
+   interacting pieces of a chain pair are grouped by separation (split where consecutive
+   mean separations differ by more than the 5 % pair tolerance) and each group is its own
+   pair with its own frame and class — a closed trace loop faces the same ground chain at
+   the gap (near side) and across the strip (far side, 2R); (iii) a pair or parallel cluster
+   whose claim on one of its sides is lost entirely to an earlier claim of the same priority
+   is not a pair: its surviving pieces return to the chain's isolated / curved edge (claim
+   resolution, `Sides` in the manifest = the signature's edge order for chirality +1). Still
+   open (PENDING, supervisor): a bent CPW narrower than 2R is a multi-chain neighbourhood
+   (ground - gap - trace - gap - ground within 2R) that the pairwise bent rule cannot
+   express and the translational component rule only covers for straight runs; on
+   DS-SCT-001 this leaves knife-edge pieces at exactly 2R across the trace whose two sides
+   read differently (unequal chords: 7.5 um ground chords against 4 um trace chords) — the
+   patch construction refuses such a pair (its sides do not face each other at its
+   separation within 10 %, twice the pair tolerance) and reports it.
    Limitations recorded: a taper faster than 5 % per 2R is events (a cluster), a slower one
    is a pair described by its mean separation (a slow taper crossing 2R is split at the
    crossing sample); the joint between a straight lead and a coarse polyline
