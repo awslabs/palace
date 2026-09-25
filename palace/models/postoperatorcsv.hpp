@@ -242,8 +242,9 @@ protected:
   // Copy savepath from PostOperator for simpler dependencies.
   fs::path post_dir;
   bool reload_table = false;  // Driven simulation with non-default restart.
-  // Adaptive driven output is buffered and rewritten at most once per flush interval (and
-  // at finalization), so an interrupted sweep still leaves usable tables.
+  // Driven and transient output is written at most once per flush interval instead of on
+  // every measurement. Tables holding partially filled rows are still written whole, so an
+  // interrupted run leaves tables a restart can read the fill state back from.
   bool defer_table_writes = false;
   std::chrono::steady_clock::time_point last_deferred_flush;
   void FlushDeferredTables();
@@ -425,8 +426,8 @@ protected:
   auto PrintEigPortQ() -> std::enable_if_t<U == ProblemType::EIGENMODE, void>;
 
 public:
-  // Flush tables buffered during an adaptive driven sweep. Other solver modes write eagerly
-  // and this is a no-op for them.
+  // Flush rows still buffered by the flush interval. Other solver modes write on every
+  // measurement, so this is a no-op for them.
   void FinalizeCSVData();
 
   // Print all data from nondim_measurement_cache.
