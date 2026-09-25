@@ -30,10 +30,10 @@ Flux is imposed as an integral (fluxoid) constraint on each hole perimeter,
 where ``\mathbf{A}`` is the magnetic vector potential and ``\Phi`` the prescribed flux through
 hole ``h``. For each hole a curl-free cohomology generator ``\mathbf{a}_h`` with loop
 circulation ``\Phi`` is constructed on the 3D mesh (a discrete gradient with a ``\Phi``-jump
-across a cut surface spanning the hole). The magnetostatic system is then solved with the loop
-integral imposed as a single scalar constraint via a range-space (two-solve) method, so the
+across a cut surface spanning the hole). The magnetostatic system is then solved with
+``\mathbf{a}_h`` as the drive, so the resulting field is the fluxoid-``\Phi`` state and the
 fluxoid ``\oint_h \mathbf{A}\cdot d\boldsymbol{\ell} = \Phi`` holds exactly, gauge-invariantly,
-and independently of the mesh partition. Only the loop integral is pinned, so the shielding
+and independently of the mesh partition. Only the loop fluxoid is pinned, so the shielding
 currents remain free to redistribute near the hole.
 
 Whether a film screens perfectly or penetrates is set by how its attribute is declared:

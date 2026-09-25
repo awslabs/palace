@@ -800,8 +800,7 @@ public:
   std::array<double, 3> direction = {0.0, 0.0, 1.0};
 
   // Effective λ⊥ [mesh units] for a film listed in FilmAttributes but not declared a
-  // Superconductor: models it as the λ→0 London limit (auto-registered SC sheet, solved by
-  // the two-solve).
+  // Superconductor: models it as the λ→0 London limit (auto-registered SC sheet).
   double pec_lperp = 1.0e-4;
 
   FluxLoopData() = default;

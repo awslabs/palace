@@ -171,8 +171,8 @@ mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(
   }
   // Superconductor-sheet attributes (finite-λ films). A film that is also a
   // superconductor sheet is a "London flux film": its whole surface is a free unknown
-  // governed by the sheet term, so it is NOT marked essential here. Its hole fluxoid is an
-  // integral constraint enforced by the range-space two-solve.
+  // governed by the sheet term, so it is NOT marked essential here. Its hole fluxoid is
+  // imposed through the normalized cohomology generator a_h (cᵀa_h = Φ).
   std::set<int> sc_attrs;
   for (const auto &data : superconductor)
   {
@@ -241,7 +241,7 @@ void CurlCurlOperator::SetUpLondonFluxConstraints()
         data.hole_attributes.size() == 1,
         "FluxLoop index "
             << idx << " lists " << data.hole_attributes.size()
-            << " holes, but the cut-cohomology two-solve supports exactly one hole per "
+            << " holes, but the cut-cohomology generator supports exactly one hole per "
                "flux loop. Model each hole as a separate FluxLoop excitation.");
 
     // Fluxoid functional c = Curlᵀ·f, where f is the hole-cap flux functional on the RT

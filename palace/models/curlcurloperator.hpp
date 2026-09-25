@@ -115,9 +115,9 @@ private:
   mutable std::unique_ptr<ParOperator> M_sheet_;
 
   // Fluxoid circulation functional c = Curlᵀ·f_hole per London flux loop (f_hole the RT
-  // hole-cap flux functional), so cᵀA = ∮_∂hole A·dl by Stokes. Imposes the scalar
-  // constraint cᵀA = Φ via the range-space two-solve A = A_p + α·A_h. Zeroed on the PEC
-  // essential set.
+  // hole-cap flux functional), so cᵀA = ∮_∂hole A·dl by Stokes. Used to normalize the
+  // cohomology generator to cᵀa_h = Φ (the imposed fluxoid) and to measure cᵀA. Zeroed on
+  // the PEC essential set.
   std::map<int, Vector> london_flux_constraint_;
 
   void SetUpLondonFluxConstraints();
