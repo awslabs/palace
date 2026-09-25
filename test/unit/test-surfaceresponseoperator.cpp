@@ -3251,7 +3251,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       meshes.push_back(std::make_unique<Mesh>(MakeIslandMesh()));
       LaplaceOperator laplace(features_island_iodata, meshes);
       CHECK_THROWS_WITH(SurfaceResponseOperator(features_island_iodata, laplace),
-                        ContainsSubstring("have no library model (UnmatchedPolicy = Error)"));
+                        ContainsSubstring("8 identified feature(s) have no library model"));
     }
 
     // Signature-keyed library from the manifest: the legacy corner matrices (12 knots, 3

@@ -518,7 +518,10 @@ def patch_gates(identification, patches, radius):
                     weight_defects.append({"Feature": feature_id, "Interval": key, "Defect": "quadrature x model weights do not sum to 1", "Sum": quadrature})
                 for r in group:
                     expected = r["ModelWeight"] * r["QuadratureWeight"] * (r["S1"] - r["S0"]) * r["SideFactor"] / r["CouponDepth"] if r["CouponDepth"] > 0 else float("nan")
-                    if not (r["CouponDepth"] > 0) or abs(r["Weight"] - expected) > 1.0e-9 * max(abs(expected), 1.0e-300):
+                    # S0 / S1 / CouponDepth are written on the manifest's length grid (<= 1e-10 R):
+                    # the formula is checked to that grid on the portion length.
+                    grid = r["ModelWeight"] * r["QuadratureWeight"] * r["SideFactor"] * 1.0e-9 * radius / r["CouponDepth"] if r["CouponDepth"] > 0 else 0.0
+                    if not (r["CouponDepth"] > 0) or abs(r["Weight"] - expected) > 1.0e-9 * abs(expected) + grid:
                         weight_defects.append({"Feature": feature_id, "Patch": r["Patch"], "Defect": "weight formula", "Weight": r["Weight"], "Expected": expected})
                     if abs(r["SideFactor"] - expected_side) > 1.0e-12:
                         weight_defects.append({"Feature": feature_id, "Patch": r["Patch"], "Defect": "side factor", "SideFactor": r["SideFactor"], "Expected": expected_side})
