@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:1-7-0",
+  "$id": "urn:palace:schema:1-7-1",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2490,6 +2490,7 @@
         "FreqStep": {
           "type": "number",
           "description": "Frequency step size for the frequency sweep, GHz. Deprecated: use [`Linear Samples`](@ref config-solver-driven-samples-linear) interface instead.",
+          "exclusiveMinimum": 0.0,
           "x-palace-deprecated": true
         },
         "SaveStep": {
@@ -2570,7 +2571,31 @@
           "default": "Energy",
           "x-palace-advanced": true
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "AdaptiveCircuitSynthesis": {
+                "const": true
+              }
+            },
+            "required": [
+              "AdaptiveCircuitSynthesis"
+            ]
+          },
+          "then": {
+            "properties": {
+              "AdaptiveTol": {
+                "exclusiveMinimum": 0.0
+              }
+            },
+            "required": [
+              "AdaptiveTol"
+            ]
+          }
+        }
+      ]
     },
     "SamplesPoint": {
       "type": "object",

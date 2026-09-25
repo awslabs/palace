@@ -32,6 +32,19 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     reactions) in a single sweep over the port elements.
     [PR 909](https://github.com/awslabs/palace/pull/909).
 
+#### Bug Fixes
+
+  - Fixed driven frequency sampling edge cases: `"NSample": 1` now samples the interval
+    start instead of producing a NaN frequency, the deprecated `"FreqStep"` is validated
+    to be positive (previously `0` crashed and negative values silently swept downward),
+    and degenerate adaptive sweeps (fewer than two distinct samples with circuit
+    synthesis, or `"AdaptiveCircuitSynthesis"` without a positive `"AdaptiveTol"`, which
+    silently disabled synthesis) are rejected at parse time instead of failing later.
+    SchemaVer 1-7-1 [PR 952](https://github.com/awslabs/palace/pull/952).
+  - Documented in the developer notes that schema validation tightenings which only
+    reject configurations that never produced valid solver output are bug fixes
+    (ADDITION), not breaking (MODEL) changes. [PR 952](https://github.com/awslabs/palace/pull/952).
+
 #### Build system
 
   - Bumped the MFEM dependency to v4.10 and dropped the backport patches merged
