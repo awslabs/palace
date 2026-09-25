@@ -123,10 +123,13 @@ def planes_in_view(segments, planes, view):
 
 
 def draw(ax, segments, features, tris, tri_tags, view=None, plane=None, label_clusters=True, lw_scale=1.0,
-         show_excluded=True, metal_palette=None, facing_sites=None, tri_z=None):
+         show_excluded=True, metal_palette=None, facing_sites=None, tri_z=None, max_fill_triangles=None):
+    """Returns the number of metal triangles filled (0 when the fill was skipped: more than
+    max_fill_triangles in the window, e.g. a whole-chip overview)."""
     def in_view(box):
         return not view or not (box[1] < view[0] or box[0] > view[1] or box[3] < view[2] or box[2] > view[3])
 
+    filled = 0
     if len(tris):
         sel = np.ones(len(tris), dtype=bool)
         if view:
@@ -135,8 +138,10 @@ def draw(ax, segments, features, tris, tri_tags, view=None, plane=None, label_cl
             # Triangles of this plane (a triangle without a recorded z is drawn on every plane).
             sel &= np.isnan(tri_z) | (np.abs(tri_z - plane) < 1.0e-3)
         palette = metal_palette or {}
-        face = [palette.get(int(t), "#d9d9d9") for t in tri_tags[sel]]
-        ax.add_collection(PolyCollection(tris[sel], facecolors=face, edgecolors="none", zorder=0))
+        if max_fill_triangles is None or int(sel.sum()) <= max_fill_triangles:
+            face = [palette.get(int(t), "#d9d9d9") for t in tri_tags[sel]]
+            ax.add_collection(PolyCollection(tris[sel], facecolors=face, edgecolors="none", zorder=0))
+            filled = int(sel.sum())
     by_type = defaultdict(list)
     for f in features:
         for seg, s0, s1 in f.get("Portions", []):
@@ -188,6 +193,7 @@ def draw(ax, segments, features, tris, tri_tags, view=None, plane=None, label_cl
     ax.set_aspect("equal")
     ax.set_xlabel("x (um)")
     ax.set_ylabel("y (um)")
+    return filled
 
 
 def window_around(box, size):
@@ -243,6 +249,8 @@ def main(argv=None):
     ap.add_argument("--sites", type=int, default=10)
     ap.add_argument("--dpi", type=int, default=170)
     ap.add_argument("--title", default="")
+    ap.add_argument("--max-fill-triangles", type=int, default=600000,
+                    help="no metal fill in a figure whose window holds more triangles (whole-chip overviews)")
     args = ap.parse_args(argv)
     segments, features, ident = load(args.manifest)
     tris, tags, tri_z = load_metal(args.metal)
@@ -255,7 +263,8 @@ def main(argv=None):
     planes = sorted(z for z, n in plane_counts.items() if n >= args.min_plane_segments)
     for plane in planes:
         fig, ax = plt.subplots(figsize=(18, 11))
-        draw(ax, segments, features, tris, tags, plane=plane, label_clusters=True, facing_sites=facing["Sites"][: args.sites] if facing else None, tri_z=tri_z)
+        filled = draw(ax, segments, features, tris, tags, plane=plane, label_clusters=True, facing_sites=facing["Sites"][: args.sites] if facing else None,
+                      tri_z=tri_z, max_fill_triangles=args.max_fill_triangles)
         handles, labels = ax.get_legend_handles_labels()
         ax.legend(handles, labels, loc="upper right", fontsize=7)
         ax.set_title(f"{args.title} metal plane z = {plane:g} um: features by class (clusters boxed red, facing sites magenta)")
@@ -263,7 +272,8 @@ def main(argv=None):
         path = f"{args.out_prefix}-overview-z{plane:g}.png"
         fig.savefig(path, dpi=args.dpi)
         plt.close(fig)
-        index.append({"File": os.path.basename(path), "Kind": "overview", "Plane": plane, "Label": f"chip overview of the metal plane at z = {plane:g} um"})
+        index.append({"File": os.path.basename(path), "Kind": "overview", "Plane": plane, "MetalTriangles": filled,
+                      "Label": f"chip overview of the metal plane at z = {plane:g} um" + ("" if filled or not len(tris) else " (perimeter only: metal fill skipped above --max-fill-triangles)")})
     windows = [{"Kind": "zoom", "Label": f"zoom x[{v[0]:.0f},{v[1]:.0f}] y[{v[2]:.0f},{v[3]:.0f}]", "Window": v} for v in args.zoom]
     if args.auto:
         windows += auto_windows(segments, features, facing, args.zoom_size, args.clusters, args.sites)
@@ -277,7 +287,8 @@ def main(argv=None):
         view = entry["Window"]
         for plane in planes_in_view(segments, set(planes), view) or [None]:
             fig, ax = plt.subplots(figsize=(11, 9))
-            draw(ax, segments, features, tris, tags, view=view, plane=plane, lw_scale=1.6, facing_sites=facing["Sites"][: args.sites] if facing else None, tri_z=tri_z)
+            filled = draw(ax, segments, features, tris, tags, view=view, plane=plane, lw_scale=1.6, facing_sites=facing["Sites"][: args.sites] if facing else None,
+                          tri_z=tri_z, max_fill_triangles=args.max_fill_triangles)
             handles, labels = ax.get_legend_handles_labels()
             if handles:
                 ax.legend(handles, labels, loc="best", fontsize=7)
@@ -287,7 +298,7 @@ def main(argv=None):
             path = f"{args.out_prefix}-{entry['Kind']}-{k + 1:02d}" + (f"-z{plane:g}" if plane is not None else "") + ".png"
             fig.savefig(path, dpi=args.dpi)
             plt.close(fig)
-            index.append({"File": os.path.basename(path), "Plane": plane, **entry})
+            index.append({"File": os.path.basename(path), "Plane": plane, "MetalTriangles": filled, **entry})
     with open(f"{args.out_prefix}-figures.json", "w") as target:
         json.dump(index, target, indent=1)
     print(json.dumps({"Figures": len(index), "Index": f"{args.out_prefix}-figures.json"}))
