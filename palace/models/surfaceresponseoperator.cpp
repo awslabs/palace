@@ -701,6 +701,26 @@ struct EdgeSegment3D
   bool ambiguous_process_side = false;
 };
 
+// Two legacy segments count as parallel up to a cosine deficit of 1e-8, i.e. an angle of
+// sqrt(2e-8) rad, so the overlap of the first projected back onto the second may overshoot
+// the second by that angle times the projected distances (DS-SCT-001: the two edges of a
+// CPW gap along a 250 um bend at 4 um chords differ by 3e-5 to 1e-4 rad); the callers clamp
+// the interval to the second segment. Anything beyond that bound is a genuine inconsistency.
+void VerifyParallelOverlap(const EdgeSegment3D &first, const EdgeSegment3D &second,
+                           double tangent_dot, double second_begin, double second_end,
+                           double tolerance, double interaction_distance)
+{
+  const double overlap_tolerance =
+      tolerance +
+      std::sqrt(2.0e-8) * (first.length + second.length + interaction_distance);
+  MFEM_VERIFY(second_begin >= -overlap_tolerance &&
+                  second_end <= second.length + overlap_tolerance,
+              "Inconsistent overlap between nearby parallel metal edges (second segment "
+              "interval ["
+                  << second_begin << ", " << second_end << "] of length " << second.length
+                  << ", tangent dot " << tangent_dot << ")!");
+}
+
 // Deterministic broad-phase index for nearby segment queries. Exact distance and topology
 // predicates remain at the call sites; this index only removes pairs whose expanded AABBs
 // cannot interact.
@@ -7624,9 +7644,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       const double half_length = 0.5 * (first_end - first_begin);
       const double second_begin = second_mid - half_length;
       const double second_end = second_mid + half_length;
-      MFEM_VERIFY(second_begin >= -tolerance &&
-                      second_end <= segments[j].length + tolerance,
-                  "Inconsistent overlap between nearby parallel metal edges!");
+      VerifyParallelOverlap(segments[i], segments[j], tangent_dot, second_begin, second_end,
+                            tolerance, interaction_distance);
       EdgePair3D pair{i,
                       j,
                       first_begin,
@@ -9041,9 +9060,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       const double half_length = 0.5 * (first_end - first_begin);
       const double second_begin = second_mid - half_length;
       const double second_end = second_mid + half_length;
-      MFEM_VERIFY(second_begin >= -tolerance &&
-                      second_end <= segments[j].length + tolerance,
-                  "Inconsistent overlap between nearby parallel metal edges!");
+      VerifyParallelOverlap(segments[i], segments[j], tangent_dot, second_begin, second_end,
+                            tolerance, interaction_distance);
       pairs.push_back({i, j, first_begin, first_end, std::max(0.0, second_begin),
                        std::min(segments[j].length, second_end)});
       paired_intervals[i].emplace_back(first_begin, first_end);
