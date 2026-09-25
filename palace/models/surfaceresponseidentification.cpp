@@ -69,17 +69,22 @@ constexpr double kRoundedCornerTangentTolerance = 0.05;
 // the outer side's samples near the joints project onto the inner vertices at up to
 // w / cos(turn / 2). In both constructions the sampled closest-point distance from one
 // chain to the other reaches the curve separation w as its maximum on the side whose
-// maximum is smaller: the sample's separation = min over the two chains of the maximum
+// maximum is smaller: the sample's chord reading C = min over the two chains of the maximum
 // sampled distance within a window of half-width max(R, local chord) where the chain bends
 // and R on straight runs, about the sample on its own chain and about its foot on the other
-// chain (a window that always holds a vertex of an inscribed polyline and a full chord of an
-// offset polyline; a straight taper is read locally). A portion interacts iff
-// that separation < 2R on the quantized grid — the same strict-less decision as a straight
-// parallel pair at that separation (a CPW gap of exactly 2R along a bend is isolated edges,
-// like a straight one; DS-SCT-001's 4 um gaps at R = 2 um dipped to 3.9999 mid-chord and
-// became 3 mm clusters). The pair feature's separation is the mean over its samples; the
-// cross-chord interactions of a locally constant portion are never event cores, whether or
-// not it interacts.
+// chain (a straight taper is read locally). C is exact for an offset polyline; two polylines
+// inscribed in the curves at aligned angles are C = w cos(turn / 2) apart everywhere (chords
+// and vertex-to-polyline alike) for a curve separation w, and the polyline pair alone cannot
+// tell the two constructions apart (they differ at order turn^2): the inscribed reading is
+// C / cos(turn / 2) with turn = the larger local joint turn of the two chains. A portion
+// interacts iff BOTH readings are below 2R on the quantized grid — the same strict-less
+// decision as a straight parallel pair at that separation, taken on the non-interacting
+// side of the recorded ambiguity w (1 / cos(turn / 2) - 1) (below 1e-4 w for joints under
+// 1.6 deg; a CPW gap of exactly 2R along a bend is isolated edges like a straight one;
+// DS-SCT-001's 4 um gaps at R = 2 um read 3.9998 mid-chord and became 3 mm clusters). The
+// pair feature's separation is the mean chord reading over its samples; the cross-chord
+// interactions of a locally constant portion are never event cores, whether or not it
+// interacts.
 constexpr double kStraightBendRadiusOverRadius = 10.0;
 constexpr double kCurvatureWindowOverRadius = 1.0;
 constexpr double kPairSeparationTolerance = 0.05;
@@ -2004,6 +2009,25 @@ void Identifier::BuildBentPairs()
     // (windowed curvature > 0: the chords of an inscribed polyline dip mid-chord), R on a
     // straight run (no dip; a taper must be read locally).
     double half_own, half_other;
+    // The larger joint turn (radians) at the ends of the sample's run and of the foot's run:
+    // the chord reading C and the inscribed-vertex reading C / cos(turn / 2) of the pair
+    // separation differ by this discretisation ambiguity.
+    double turn;
+  };
+  // The larger joint turn at the two ends of run k of a chain (0 at an open chain's ends).
+  auto LocalTurn = [&](const Chain &chain, std::size_t k)
+  {
+    const std::size_t m = chain.runs.size();
+    double turn = chain.joint_turn.empty() ? 0.0 : chain.joint_turn[k];
+    if (k + 1 < m)
+    {
+      turn = std::max(turn, chain.joint_turn[k + 1]);
+    }
+    else if (chain.closed && m > 0)
+    {
+      turn = std::max(turn, chain.joint_turn[0]);
+    }
+    return turn;
   };
   struct Piece
   {
@@ -2151,7 +2175,9 @@ void Identifier::BuildBentPairs()
             const double half_own = WindowedCurvature(A, x) > 0.0 ? std::max(R, ra.length) : R;
             const double half_other =
                 WindowedCurvature(B, q.x) > 0.0 ? std::max(R, runs[q.run].length) : R;
-            result.samples.push_back({a, s, x, q.distance, q.x, half_own, half_other});
+            const double turn =
+                std::max(LocalTurn(A, ka), LocalTurn(B, RunIndexInChain(B, q.run)));
+            result.samples.push_back({a, s, x, q.distance, q.x, half_own, half_other, turn});
           }
           pieces.push_back(std::move(result));
         }
@@ -2166,7 +2192,8 @@ void Identifier::BuildBentPairs()
   // full chord of an offset polyline) and R on straight runs — on its own chain about x and
   // on the other chain about the foot qx.
   auto Classify = [&](std::vector<Piece> &own, const std::vector<Piece> &other,
-                      std::vector<char> &constant, std::vector<double> &separation)
+                      std::vector<char> &constant, std::vector<double> &separation,
+                      std::vector<double> &upper)
   {
     std::vector<const Sample *> own_samples, other_samples;
     for (const auto &piece : own)
@@ -2217,7 +2244,12 @@ void Identifier::BuildBentPairs()
         const double w_other = other_samples.empty()
                                    ? w_own
                                    : WindowMax(other_samples, sample.qx, sample.half_other, nullptr);
-        separation.push_back(w_other > 0.0 ? std::min(w_own, w_other) : w_own);
+        // Chord reading C (exact for an offset polyline) and the inscribed-vertex reading
+        // C / cos(turn / 2) (exact for two polylines inscribed in the curves at aligned
+        // angles): the pair interacts only when both readings are below 2R.
+        const double c = w_other > 0.0 ? std::min(w_own, w_other) : w_own;
+        separation.push_back(c);
+        upper.push_back(c / std::cos(0.5 * sample.turn));
       }
     }
   };
@@ -2235,7 +2267,8 @@ void Identifier::BuildBentPairs()
     int sample_count;
   };
   auto Split = [&](const std::vector<Piece> &pieces, const std::vector<char> &constant,
-                   const std::vector<double> &separation, std::vector<SubPiece> &out)
+                   const std::vector<double> &separation, const std::vector<double> &upper,
+                   std::vector<SubPiece> &out)
   {
     std::size_t k = 0;
     for (const auto &piece : pieces)
@@ -2245,11 +2278,11 @@ void Identifier::BuildBentPairs()
       while (i < n)
       {
         const bool c = constant[k + i];
-        const bool inter = quantizer.Less(separation[k + i], interaction);
+        const bool inter = quantizer.Less(upper[k + i], interaction);
         std::size_t j = i;
         double weighted = 0.0;
         while (j < n && constant[k + j] == c &&
-               quantizer.Less(separation[k + j], interaction) == inter)
+               quantizer.Less(upper[k + j], interaction) == inter)
         {
           weighted += separation[k + j];
           j++;
@@ -2305,12 +2338,12 @@ void Identifier::BuildBentPairs()
         continue;
       }
       std::vector<char> constant_a, constant_b;
-      std::vector<double> separation_a, separation_b;
-      Classify(pieces_a, pieces_b, constant_a, separation_a);
-      Classify(pieces_b, pieces_a, constant_b, separation_b);
+      std::vector<double> separation_a, separation_b, upper_a, upper_b;
+      Classify(pieces_a, pieces_b, constant_a, separation_a, upper_a);
+      Classify(pieces_b, pieces_a, constant_b, separation_b, upper_b);
       std::vector<SubPiece> sub_a, sub_b;
-      Split(pieces_a, constant_a, separation_a, sub_a);
-      Split(pieces_b, constant_b, separation_b, sub_b);
+      Split(pieces_a, constant_a, separation_a, upper_a, sub_a);
+      Split(pieces_b, constant_b, separation_b, upper_b, sub_b);
       // Locally constant portions that do not interact (separation at or beyond 2R): no
       // feature, but their cross-chord interactions are not events. Portions that are not
       // locally constant (divergence at tees and port ends, fast tapers, acute arms) keep
@@ -2398,11 +2431,11 @@ void Identifier::BuildBentPairs()
             samples += piece.sample_count;
           }
         }
-        if (length <= Tol())
+        if (length <= kSignatureLengthQuantumOverRadius * R)
         {
-          continue;
+          continue;  // slivers between cuts, below the signature grid
         }
-        // One separation per pair and curvature class: the mean curve separation of its
+        // One separation per pair and curvature class: the mean chord reading of its
         // samples (exact for a constant pair; a slow taper is described by its mean).
         const double separation = weighted / samples;
         std::vector<TranslationalEdge> edges = {
@@ -3615,10 +3648,10 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
             {"PairSeparationToleranceRelative", kPairSeparationTolerance},
             {"PairSeparationSamplesPerInterval", kPairSeparationSamplesPerInterval},
             {"PairSeparationEstimate",
-             "per sample: min over the two chains of the maximum sampled closest-point "
-             "distance within max(R, local chord) of the sample / its foot where the chain "
-             "bends, R on straight runs (the curve separation at the vertices); interacting "
-             "iff < 2R"},
+             "per sample: chord reading C = min over the two chains of the maximum sampled "
+             "closest-point distance within max(R, local chord) of the sample / its foot where "
+             "the chain bends, R on straight runs; inscribed reading C / cos(turn / 2) with the "
+             "larger local joint turn; interacting iff both < 2R; feature separation = mean C"},
             {"PairConstancyWindowOverR", 1.0},
             {"PairSampleSpacingOverR", 0.5},
             {"PairCandidateReachOverR",

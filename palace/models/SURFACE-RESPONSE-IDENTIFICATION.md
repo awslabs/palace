@@ -137,43 +137,57 @@ smaller endpoint.
    * a fillet at a corner (radius < R; the run-based rounded-corner rule of item 4, computed
      from the arms' accumulated turn and the tangent distances, hence refinement-invariant)
      is a rounded corner and takes no part in the curvature;
-   * **pairs along bends**: two chains that are not both single straight runs are a
-     constant-separation pair when their closest-point separation over the mutually paired
-     intervals (points within the candidate reach `PairCandidateReachOverR` = 2 (1 + 0.05) R
-     of the other chain, not beyond either end of it — the half-plane past a chain end along
-     its outward tangent — and outside the 2R zones of shared vertices) is constant within
-     `PairSeparationToleranceRelative` = 0.05 of the minimum (a polyline of sub-corner turns
-     at constant width varies by at most 1 / cos(15 deg) - 1 = 3.5 %; the pair response
-     sensitivity d dR/dd is O(1)). **Whether the pair interacts is decided at the chain
-     level on the separation of the underlying curves** (`PairSeparationEstimate`), so that
-     the discretisation never changes the classification: the chords of a polyline inscribed
-     in a curve lie inside it (sagitta c^2 / (8 rho); two concentric inscribed polylines are
-     w cos(turn / 2) apart mid-chord and exactly w apart at their vertices), while the exact
-     offset polyline of a bent path keeps corresponding chords at the design separation and
-     the outer side's samples near the joints project onto the inner vertices at up to
-     w / cos(turn / 2). In both constructions the sampled closest-point distance from one
-     chain to the other reaches the curve separation w as its maximum on the side whose
-     maximum is smaller: separation = min over the two directions of the maximum sampled
-     distance (the samples include the run ends, i.e. the vertices; 16 per piece). The pair
-     interacts iff separation < 2R on the quantized grid — the same strict-less decision as
-     a straight parallel pair at that separation (item (c)): a CPW gap of exactly 2R along a
-     bend is isolated edges like a straight one (DS-SCT-001's 4 um gaps at R = 2 um dipped to
-     3.9999 mid-chord along its 250 um bends and had formed three clusters of 874-1,184 edges
-     claiming every strip). An interacting pair claims both chains and is split by curvature
-     class: the straight-like pieces form a `SameConductorStrip` / `SameConductorGap` /
-     `DifferentConductorGap` (separation = the pair separation above on the signature grid,
-     one value per chain pair), the curved pieces a `CurvedSameConductorStrip` /
-     `CurvedSameConductorGap` / `CurvedDifferentConductorGap` with `RadiusOverR` = the
-     tightest windowed radius of the two sides (the inner side of concentric arcs). The
-     cross-chord interactions of a constant-separation pair are never events, whether or not
-     it interacts, so the concentric chords of a bend never form a spatial cluster and
-     nothing is omitted as "nonparallel". Chains whose separation is not constant (acute
-     corner arms, tapers) keep the event rule of item 3. Two single straight runs keep the
-     translational rule of item 2 (exactly parallel or events).
-   Limitations recorded: a slowly tapering pair (separation drift > 5 % over the paired
-   interval) is a cluster, as before, and so is a pair whose separation is constant over most
-   of its length but not all (the constancy test is per chain pair; along its bends such a
-   pair at exactly 2R would again dip into events); the joint between a straight lead and a coarse polyline
+   * **pairs along bends** (phase 3: local constancy): two chains that are not two exactly
+     parallel straight runs (those keep the translational rule of item 2) are sampled over
+     their candidate facing regions — the points within `PairCandidateReachOverR` = 2 (1 + 0.05)
+     R of the other chain, not beyond either end of it (the half-plane past a chain end along
+     its outward tangent), outside the 2R zones of shared vertices, cut at the curved
+     boundaries, at most `PairSampleSpacingOverR` = 0.5 R apart. A sample is **locally
+     constant** when the sampled distances within `PairConstancyWindowOverR` = 1 R of it along
+     its own chain vary by at most `PairSeparationToleranceRelative` = 0.05 of their minimum (a
+     polyline of sub-corner turns at constant width varies by at most 1 / cos(15 deg) - 1 =
+     3.5 %; the pair response sensitivity d dR/dd is O(1)). The constant portions are the pair;
+     the portions that are not (divergence at tees and port ends, fast tapers, acute corner
+     arms) keep the event rule of item 3 — a slow taper is a pair, a tee is a cluster. **Whether
+     a constant portion interacts is decided on the separation of the underlying curves**
+     (`PairSeparationEstimate`), so that the discretisation never changes the classification:
+     the chords of a polyline inscribed in a curve lie inside it (two concentric inscribed
+     polylines are w cos(turn / 2) apart mid-chord and exactly w apart at their vertices),
+     while the exact offset polyline of a bent path keeps corresponding chords at the design
+     separation and the outer side's samples near the joints project onto the inner vertices
+     at up to w / cos(turn / 2). In both constructions the sampled closest-point distance from
+     one chain to the other reaches the curve separation w as its maximum on the side whose
+     maximum is smaller: a sample's separation = min over the two chains of the maximum
+     sampled distance within a window of half-width max(R, local chord) where the chain bends
+     (windowed curvature > 0: the window holds a vertex of an inscribed polyline and a full
+     chord of an offset polyline) and R on straight runs (no dip; a taper is read locally),
+     about the sample on its own chain and about its foot on the other chain. That chord
+     reading C is exact for an offset polyline; two polylines inscribed in the curves at
+     aligned angles are C = w cos(turn / 2) apart everywhere (chords and vertex-to-polyline
+     alike) for a curve separation w, and the polyline pair alone cannot tell the two
+     constructions apart (they differ at order turn^2): the inscribed reading is
+     C / cos(turn / 2) with turn = the larger local joint turn of the two chains. **The portion
+     interacts iff both readings are below 2R** on the quantized grid — the same strict-less
+     decision as a straight parallel pair (item (c)), taken on the non-interacting side of the
+     recorded discretisation ambiguity w (1 / cos(turn / 2) - 1) (4e-5 w at 1 deg per vertex,
+     1e-3 w at 5 deg, 9e-3 w at 15 deg): a CPW gap of exactly 2R along a bend is isolated
+     edges like a straight one, and a gap of 2R - 1e-3 R interacts only where the joint turn
+     is below 2 acos(1 - 5e-4) = 3.6 deg (DS-SCT-001's 4 um gaps at R = 2 um read 3.9998
+     mid-chord along its 250 um bends (1.1 deg joints) and had formed three clusters of
+     874-1,184 edges claiming every strip; its pairs read 3.999-4.200 over the whole facing
+     region because of the tee / port ends, which a global constancy test rejected). An interacting portion set claims both
+     chains and is split by curvature class: the straight-like pieces form a
+     `SameConductorStrip` / `SameConductorGap` / `DifferentConductorGap` (separation = the mean
+     sample separation on the signature grid, one value per chain pair and class; exact for a
+     constant pair, the mean for a slow taper), the curved pieces a `CurvedSameConductorStrip` /
+     `CurvedSameConductorGap` / `CurvedDifferentConductorGap` with `RadiusOverR` = the tightest
+     windowed radius of the two sides (the inner side of concentric arcs). The cross-chord
+     interactions of a locally constant portion are never events, whether or not it
+     interacts, so the concentric chords of a bend never form a spatial cluster and nothing
+     is omitted as "nonparallel".
+   Limitations recorded: a taper faster than 5 % per 2R is events (a cluster), a slower one
+   is a pair described by its mean separation (a slow taper crossing 2R is split at the
+   crossing sample); the joint between a straight lead and a coarse polyline
    arc is intrinsically ambiguous (its turn is spread over the adjacent half-chords, so up to
    half a lead may join the curved class at coarse discretisations — classes are
    discretisation-independent, lengths are not); a chain pair with two bends of different
@@ -256,7 +270,8 @@ matching pass). The new top-level `Identification` object carries the contract:
                   "SignatureLengthQuantumOverR": 1e-6, "SignatureAngleQuantumDegrees": 1e-6,
                   "StraightBendRadiusOverR": 10, "CurvatureWindowOverR": 1,
                   "PairSeparationToleranceRelative": 0.05, "PairSeparationSamplesPerInterval": 16,
-                  "PairSeparationEstimate": "min over the two chains of the maximum sampled closest-point distance to the other chain (the curve separation at the vertices); interacting iff < 2R",
+                  "PairSeparationEstimate": "per sample: chord reading C = min over the two chains of the maximum sampled closest-point distance within max(R, local chord) of the sample / its foot where the chain bends, R on straight runs; inscribed reading C / cos(turn / 2) with the larger local joint turn; interacting iff both < 2R; feature separation = mean C",
+                  "PairConstancyWindowOverR": 1, "PairSampleSpacingOverR": 0.5,
                   "PairCandidateReachOverR": 2.1,
                   "Comparison": "strict less on the quantized grid"},
   "ReferenceProcessNormal": [nx, ny, nz],

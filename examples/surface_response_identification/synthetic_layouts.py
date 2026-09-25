@@ -405,13 +405,18 @@ def _chain_order(all_edges, members):
         if vertex == start_vertex:
             break
     # A joint bends when the consecutive tangents are not collinear (the windowed curvature is
-    # then nonzero on both adjacent edges).
+    # then nonzero on both adjacent edges); every edge records the larger turn at its joints.
+    turns = [0.0] * len(order)
     for k in range(len(order) - (0 if order and vertex == start_vertex and len(order) > 1 else 1)):
         i, j = order[k][0], order[(k + 1) % len(order)][0]
-        if abs(float(all_edges[i]["Tangent"] @ all_edges[j]["Tangent"])) < 1.0 - 1.0e-9:
+        cosine = float(all_edges[i]["Tangent"] @ all_edges[j]["Tangent"])
+        if abs(cosine) < 1.0 - 1.0e-9:
+            turn = math.acos(max(-1.0, min(1.0, abs(cosine))))
             order[k][3] = True
             order[(k + 1) % len(order)][3] = True
-    return [tuple(o) for o in order]
+            turns[k] = max(turns[k], turn)
+            turns[(k + 1) % len(order)] = max(turns[(k + 1) % len(order)], turn)
+    return [(*o, turns[k]) for k, o in enumerate(order)]
 
 
 def _closest_on_chain(points, all_edges, order):
@@ -420,7 +425,8 @@ def _closest_on_chain(points, all_edges, order):
     best = np.full(len(points), np.inf)
     foot_x = np.zeros(len(points))
     foot_chord = np.zeros(len(points))
-    for i, forward, x0, bent in order:
+    foot_turn = np.zeros(len(points))
+    for i, forward, x0, bent, turn in order:
         e = all_edges[i]
         d = e["End"] - e["Start"]
         t = np.clip(((points - e["Start"]) @ d) / float(d @ d), 0.0, 1.0)
@@ -431,7 +437,8 @@ def _closest_on_chain(points, all_edges, order):
         along = t if forward else 1.0 - t
         foot_x[better] = x0 + along[better] * float(e["Length"])
         foot_chord[better] = float(e["Length"]) if bent else 0.0  # window half-width source: chord where the chain bends, else R
-    return best, foot_x, foot_chord
+        foot_turn[better] = turn
+    return best, foot_x, foot_chord, foot_turn
 
 
 def design_bent_pairs(all_edges, corner_points, radius, samples=None):
@@ -443,7 +450,8 @@ def design_bent_pairs(all_edges, corner_points, radius, samples=None):
     when the distances within R of it along its own chain vary by at most the tolerance; its
     curve separation is the smaller of the two directional maxima over windows of half-width
     max(R, local chord) where the chain bends and R on straight edges, about the sample and
-    about its foot; it interacts iff that separation
+    about its foot (the chord reading C; the inscribed reading is C / cos(turn / 2) with the
+    larger local joint turn); it interacts iff both readings are within 2R, i.e. C / cos(turn / 2)
     is within 2R (the straight-pair answer). Constant portions claim their chord-level
     interactions (no event cores); the rest (tees, port ends, fast tapers, acute arms) keep
     the event rule. Returns {(rootA, rootB): stats with the constant sample points}."""
@@ -466,9 +474,10 @@ def design_bent_pairs(all_edges, corner_points, radius, samples=None):
         return ends
 
     def facing_samples(order_a, order_b, ends_b, shared):
-        # Samples of chain A within the reach of chain B: (point, x, own chord, distance, foot x, foot chord).
-        points, xs, chords = [], [], []
-        for i, forward, x0, bent in order_a:
+        # Samples of chain A within the reach of chain B: (point, x, own chord, distance, foot
+        # x, foot chord, larger joint turn of the own and the foot edge).
+        points, xs, chords, turns = [], [], [], []
+        for i, forward, x0, bent, turn in order_a:
             e = all_edges[i]
             n = max(16, int(math.ceil(2.0 * float(e["Length"]) / radius)))
             ts = np.linspace(0.0, 1.0, n + 1)
@@ -477,16 +486,18 @@ def design_bent_pairs(all_edges, corner_points, radius, samples=None):
             points.append(pa)
             xs.append(x0 + along * float(e["Length"]))
             chords.append(np.full(len(ts), float(e["Length"]) if bent else 0.0))
+            turns.append(np.full(len(ts), turn))
         points = np.concatenate(points)
         xs = np.concatenate(xs)
         chords = np.concatenate(chords)
-        d, foot_x, foot_chord = _closest_on_chain(points, all_edges, order_b)
+        turns = np.concatenate(turns)
+        d, foot_x, foot_chord, foot_turn = _closest_on_chain(points, all_edges, order_b)
         keep = d < reach
         for point, outward in ends_b:
             keep &= ((points - point) @ outward) <= 0.0
         for v in shared:
             keep &= np.linalg.norm(points - v, axis=1) >= interaction
-        return points[keep], xs[keep], chords[keep], d[keep], foot_x[keep], foot_chord[keep]
+        return points[keep], xs[keep], chords[keep], d[keep], foot_x[keep], foot_chord[keep], np.maximum(turns, foot_turn)[keep]
 
     def window_max(xs, d, centre, half):
         sel = (xs >= centre - half) & (xs <= centre + half)
@@ -507,7 +518,7 @@ def design_bent_pairs(all_edges, corner_points, radius, samples=None):
                 continue
             constant_points, interacting_points, separations = [], [], []
             for own, other in ((sa, sb), (sb, sa)):
-                points, xs, chords, d, foot_x, foot_chord = own
+                points, xs, chords, d, foot_x, foot_chord, turns = own
                 for k in range(len(points)):
                     hi, lo = window_max(xs, d, xs[k], radius)
                     constant = hi - lo <= PAIR_SEPARATION_TOLERANCE * lo * (1.0 + 1.0e-9)
@@ -515,9 +526,11 @@ def design_bent_pairs(all_edges, corner_points, radius, samples=None):
                         continue
                     w_own, _ = window_max(xs, d, xs[k], max(radius, chords[k]))
                     w_other, _ = window_max(other[1], other[3], foot_x[k], max(radius, foot_chord[k]))
+                    # Chord reading C and inscribed reading C / cos(turn / 2): the pair interacts
+                    # only when both are within 2R (the recorded discretisation ambiguity).
                     w = min(w_own, w_other) if w_other > 0.0 else w_own
                     constant_points.append(points[k])
-                    if within_interaction(w, radius):
+                    if within_interaction(w / math.cos(0.5 * turns[k]), radius):
                         interacting_points.append(points[k])
                         separations.append(w)
             if not constant_points:
@@ -1073,7 +1086,10 @@ def compare_with_oracle(orc, audit_result, manifest):
             manifest_pairs[(r["Topology"], round(float(r["Geometry"].get("Separation", r["Geometry"].get("Width", float("nan")))), 6))] += 1
     expected_pairs_set = {(k[0], k[1]) for k in oracle_pairs}
     manifest_pairs_set = set(manifest_pairs)
-    bent_records = orc.get("BentPairs", [])
+    # Records whose constant portion is significant (more than 2R of chain: > 4 samples at
+    # <= R / 2 spacing) or interacting; a perpendicular edge end against a side gives a couple
+    # of trivially constant samples at its piece end.
+    bent_records = [r for r in orc.get("BentPairs", []) if r["Interacting"] or r["ConstantSamples"] > 4]
     if bent_records:
         # Pairs along bends: the manifest's pair classes must be exactly the expected classes
         # (straight-like strip, plus the curved strip when the design inner radius is below

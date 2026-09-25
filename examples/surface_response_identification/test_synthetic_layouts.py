@@ -163,7 +163,10 @@ class OracleTest(unittest.TestCase):
         # DifferentConductorGap with the two corner pairs across the gap as clusters.
         for radius, sweep in [(50.0, 45.0), (250.0, 15.0)]:
             for step in [1.0, 5.0, 15.0]:
-                for gap, interacting in [(4.0, False), (3.998, True), (4.002, False)]:
+                for gap in (4.0, 3.998, 4.002):
+                    # Interacting where both readings of the separation are below 2R: at the
+                    # straight leads (joint turn = half a step) when gap / cos(step / 4) < 2R.
+                    interacting = gap / math.cos(math.radians(0.25 * step)) < 4.0
                     inner = S.arc_bar(8.0, radius, sweep, step, offset=0.5 * gap + 4.0)
                     outer = S.arc_bar(8.0, radius, sweep, step, offset=-0.5 * gap - 4.0)
                     lay = S.layout("gap", [S.sheet(S.GROUND, inner), S.sheet(S.GROUND, outer)], half_x=400.0, half_y=400.0, bend={"Radius": radius, "Width": 8.0, "Gap": gap})
@@ -180,11 +183,13 @@ class OracleTest(unittest.TestCase):
                         self.assertAlmostEqual(record["Separation"], gap, places=9)
                     self.assertEqual(record["ExpectedClasses"], ["DifferentConductorGap"] if interacting else [])
                     self.assertTrue(all(not r["Interacting"] for r in orc["BentPairs"] if r is not record))
-                    self.assertEqual(orc["CornerPairsWithin2R"], 2 if interacting else 0)
-                    self.assertEqual(orc["ClassifierCornerCount"], 8)
-                    # 8 um bars: the far corners of every bar end stay standalone (4 R from the
+                    # The corner pairs across the gap are events (plain distance) whenever the
+                    # gap is below 2R; 8 um bars: the far corners stay standalone (4 R from the
                     # near corners, beyond the 3R vertex-join reach).
-                    self.assertEqual(orc["StandaloneCornerCount"], 4 if interacting else 8)
+                    corner_events = gap < 4.0
+                    self.assertEqual(orc["CornerPairsWithin2R"], 2 if corner_events else 0)
+                    self.assertEqual(orc["ClassifierCornerCount"], 8)
+                    self.assertEqual(orc["StandaloneCornerCount"], 4 if corner_events else 8)
                     self.assertFalse(any(p["Within2R"] and not p["InBentPair"] for p in orc["ParallelPairs"]))
 
     def test_acute_corner_arms_are_not_a_pair_along_a_bend(self):

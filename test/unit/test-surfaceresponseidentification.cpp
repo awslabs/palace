@@ -730,15 +730,18 @@ TEST_CASE("SurfaceResponseIdentificationCurvedEdges",
 TEST_CASE("SurfaceResponseIdentificationPairsAtTheThreshold",
           "[surfaceresponseidentification][Serial]")
 {
-  // A gap of exactly 2R (and 2R +/- 1e-3 R) between two concentric 8 um bars (4 R: the far
-  // corners of a bar end are beyond the 3R vertex-join reach of the near corners) along
-  // bends of 50 and 250 um at three discretisations: the interaction decision uses the separation of
-  // the underlying curves (rule at kPairSeparationTolerance), so every discretisation gives
-  // the straight-pair answer — exactly 2R and 2R + 1e-3 R: isolated edges, no cluster, no
-  // pair; 2R - 1e-3 R: one DifferentConductorGap along the bend (straight-like: inner radius
-  // >= 10 R) and the two corner pairs across the gap as clusters. The mid-chord dips of the
-  // chords below 2R (DS-SCT-001: 4 um gaps at 3.9999 -> 3 mm clusters) must not create
-  // events.
+  // A gap of exactly 2R (and 2R +/- 1e-3 R) between two 8 um bars (4 R: the far corners of a
+  // bar end are beyond the 3R vertex-join reach of the near corners) that are offsets of one
+  // centreline along bends of 50 and 250 um at three discretisations: the interaction
+  // decision uses the separation of the underlying curves (rule at kPairSeparationTolerance):
+  // exactly 2R and 2R + 1e-3 R are isolated edges at every discretisation (no cluster, no
+  // pair — the mid-chord dips of the chords below 2R, DS-SCT-001's 4 um gaps at 3.9998 that
+  // became 3 mm clusters, create no events); 2R - 1e-3 R interacts where both readings of the
+  // separation are below 2R, i.e. where the local joint turn satisfies
+  // gap / cos(turn / 2) < 2R (the recorded discretisation ambiguity: an inscribed polyline
+  // pair at this chord separation could be 2R apart): the whole pair at 1 deg per vertex,
+  // the straight leads only at 5 deg (their joint turn is half a step), nothing at 15 deg.
+  // The corner pairs across a 2R - 1e-3 R gap are events (two clusters) in every case.
   const double R = 2.0, width = 8.0;
   for (const double radius : {50.0, 250.0})
   {
@@ -765,13 +768,15 @@ TEST_CASE("SurfaceResponseIdentificationPairsAtTheThreshold",
                        WithinAbs(gap / R, 1.0e-6));
           }
         }
-        const bool interacting = gap < 2.0 * R;
-        CHECK(counts["DifferentConductorGap"] == (interacting ? 1 : 0));
-        CHECK(counts["SpatialEdgeCluster"] == (interacting ? 2 : 0));
-        CHECK(counts["ConvexCorner"] == (interacting ? 4 : 8));
+        const bool corner_events = gap < 2.0 * R;
+        const double lead_turn = 0.5 * step * std::acos(-1.0) / 180.0;
+        const bool pair = gap / std::cos(0.5 * lead_turn) < 2.0 * R;
+        CHECK(counts["DifferentConductorGap"] == (pair ? 1 : 0));
+        CHECK(counts["SpatialEdgeCluster"] == (corner_events ? 2 : 0));
+        CHECK(counts["ConvexCorner"] == (corner_events ? 4 : 8));
         CHECK(counts["CurvedEdge"] == 0);
         CHECK(counts["CurvedDifferentConductorGap"] == 0);
-        CHECK(counts["IsolatedEdge"] >= (interacting ? 2 : 4));
+        CHECK(counts["IsolatedEdge"] >= (pair ? 2 : 4));
       }
     }
   }

@@ -118,22 +118,33 @@ embedded sheets, mesh preparation):
   conductor is the sheet (connectivity), `gap-same-*` are slots in one U-shaped sheet, and the
   off-plane exclusions (facing sheets, walls) are computed analytically (`A6-excluded-classes`).
 * `StraightBendRadiusOverR` = 10 (decision 75; phase 2 used 20).
-* **Pairs along bends decided on the curve separation** (`PairSeparationEstimate`): the
-  separation of two constant-separation chains is the smaller of the two directional maxima of
-  the sampled closest-point distance (an inscribed polyline meets its curve at the vertices; an
-  exact offset polyline keeps corresponding chords at the design separation), the pair
-  interacts iff that separation is below 2R on the quantized grid — the straight-pair answer at
-  every discretisation — the candidate facing region is 2R (1 + 0.05) (`PairCandidateReachOverR`),
-  and the cross-chord interactions of a constant-separation pair are never event cores whether
-  or not it interacts. Found on DS-SCT-001: its 4 um CPW gaps (= 2R) dipped to 3.9999 mid-chord
-  along the 250 um bends and formed three clusters of 874-1,184 edges (1.5-3.2 mm) claiming
-  every strip. Synthetic `gap-bend-r{50,250}-{2R,2Rminus,2Rplus}-step{1,5,15}` (18 layouts: two
-  concentric 8 um bars with a gap of 2R and 2R +/- 1e-3 R): oracle = the straight-pair answer
-  (2R and 2R + 1e-3 R: isolated edges, no cluster, no pair; 2R - 1e-3 R: one
-  `DifferentConductorGap` and the two corner pairs across the gap as clusters); the oracle's
-  corner pairs are strictly within 2R (the classifier's quantized decision); the bars are
-  offsets of one centreline (`arc_bar(..., offset=...)`: the facing chords are exactly parallel
-  at the design gap, like an offset path).
+* **Pairs along bends by local constancy, decided on the curve separation**
+  (`PairConstancyWindowOverR` = 1, `PairSampleSpacingOverR` = 0.5, `PairCandidateReachOverR` = 2.1,
+  `PairSeparationEstimate`): a chain's facing region is sampled (<= R / 2 apart); a sample is
+  constant when the distances within R of it vary by <= 5 %; its curve separation is the
+  smaller of the two directional window maxima (half-width max(R, chord) where the chain bends,
+  R on straight runs) — the chord reading C, exact for an offset polyline; two polylines
+  inscribed in the curves at aligned angles read C = w cos(turn / 2) and cannot be told apart
+  from an offset pair of separation C, so the inscribed reading C / cos(turn / 2) (larger local
+  joint turn) is the other bound; it interacts iff both readings are below 2R on the quantized
+  grid — the straight-pair answer up to the recorded discretisation ambiguity
+  w (1 / cos(turn / 2) - 1) (4e-5 w at 1 deg per vertex; a 2R - 1e-3 R gap interacts only where
+  the joint turn is below 3.6 deg). The
+  constant portions are the pair (mean separation), the non-constant portions (tees, port ends,
+  fast tapers, acute arms) keep the event rule; the cross-chord interactions of a constant
+  portion are never event cores whether or not it interacts. Found on DS-SCT-001: its 4 um CPW
+  gaps (= 2R) dipped to 3.9999 mid-chord along the 250 um bends and formed three clusters of
+  874-1,184 edges (1.5-3.2 mm) claiming every strip; a global constancy test then failed on the
+  tee / port ends (3.999-4.200 over the facing region). Synthetic (26 layouts):
+  `gap-bend-r{50,250}-{2R,2Rminus,2Rplus}-step{1,5,15}` (two 8 um bars, offsets of one
+  centreline, gap 2R and 2R +/- 1e-3 R: 2R and 2R + 1e-3 R -> isolated edges, no cluster, no
+  pair; 2R - 1e-3 R -> the two corner pairs as clusters and one `DifferentConductorGap` where
+  the joint turn allows: the whole pair at 1 deg per vertex, the leads at 5 deg, nothing at 15),
+  `cpw-tee-r50-step{5,15}` (gap pairs up to the T, two clusters per side), `cpw-port-r50-step{5,15}`
+  (pairs up to the truncation cut), `taper-slow` (3.0 -> 3.15 um over 20 R: one pair),
+  `taper-fast` (80 deg: one cluster). The oracle mirrors the rule (`design_bent_pairs`: chain
+  order, local windows, constant portions excluded from the event cores; corner pairs strictly
+  within 2R; `arc_bar(..., offset=, lead_end=, tee=)`).
 * **Legacy pair construction** (`surfaceresponseoperator.cpp` `VerifyParallelOverlap`): the
   parallel-overlap verification tolerance follows the parallel class (cosine deficit 1e-8 =
   sqrt(2e-8) rad times the projected lengths) instead of 1e-10 relative; DS-SCT-001 aborted on
