@@ -14,6 +14,9 @@ library and the target interfaces. Nothing here depends on a particular device.
     python3 -m surface_response_identification.preflight_config --mesh M.msh2 \\
         --ground 5 6 7 --terminal 9 --sa 8 --library lib.json --output cfg.json \\
         [--ms 5 6 7 9] [--ma ...] [--uniform-levels 1] [--no-crack] [--l0 1e-6] [--radius 2]
+        [--plane 114@0,0,1 --plane 10,17,25,119,126@0,0,-1]   # per metal plane: MS + MA targets
+                                                             # with their own EdgeFrameNormal
+                                                             # (flip-chip: the top chip faces down)
 """
 
 import argparse
@@ -43,7 +46,11 @@ def preflight_config(
     ma_permittivity=10.0,
     order=1,
     frame_normal=None,
+    planes=None,
 ):
+    """`planes` = [(metal attributes, frame normal or None), ...]: one MS and one MA target per
+    plane, each with its own EdgeFrameNormal (a flip-chip has two metal planes with opposite
+    process sides). Without `planes`, one MS and one MA target cover `ms` / `ma`."""
     metal = sorted(set(ground) | {a for group in terminals for a in group})
     ms = sorted(ms) if ms is not None else metal
     ma = sorted(ma) if ma is not None else metal
@@ -61,7 +68,7 @@ def preflight_config(
     }
     substrate_permittivity = library_data.get("Fabrication", {}).get("SubstratePermittivity", substrate_permittivity)
 
-    def dielectric(index, attributes, kind):
+    def dielectric(index, attributes, kind, frame_normal=frame_normal):
         entry = {
             "Index": index,
             "Attributes": list(attributes),
@@ -85,9 +92,16 @@ def preflight_config(
     if sa:
         dielectrics.append(dielectric(1, sa, "SA"))
         targets.append(1)
-    dielectrics.append(dielectric(2, ms, "MS"))
-    dielectrics.append(dielectric(3, ma, "MA"))
-    targets += [2, 3]
+    if planes:
+        for attributes, normal in planes:
+            for kind in ("MS", "MA"):
+                index = len(dielectrics) + 1
+                dielectrics.append(dielectric(index, sorted(attributes), kind, frame_normal=normal))
+                targets.append(index)
+    else:
+        dielectrics.append(dielectric(2, ms, "MS"))
+        dielectrics.append(dielectric(3, ma, "MA"))
+        targets += [2, 3]
     boundaries = {"Ground": {"Attributes": sorted(ground)}, "Postprocessing": {"Dielectric": dielectrics}}
     if terminals:
         boundaries["Terminal"] = [{"Index": i + 1, "Attributes": sorted(group)} for i, group in enumerate(terminals)]
@@ -115,6 +129,20 @@ def preflight_config(
     }
 
 
+def parse_plane(text):
+    """'114,126@0,0,-1' -> ([114, 126], [0.0, 0.0, -1.0]); '114' -> ([114], None)."""
+    attributes, _, normal = text.partition("@")
+    attributes = [int(a) for a in attributes.split(",") if a]
+    if not attributes:
+        raise argparse.ArgumentTypeError(f"plane {text!r} names no attributes")
+    if normal:
+        components = [float(v) for v in normal.split(",")]
+        if len(components) != 3:
+            raise argparse.ArgumentTypeError(f"plane {text!r}: the frame normal needs three components")
+        return attributes, components
+    return attributes, None
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--mesh", required=True)
@@ -133,13 +161,20 @@ def main(argv=None):
     parser.add_argument("--uniform-levels", type=int, default=0)
     parser.add_argument("--no-crack", action="store_true", help="Model.CrackInternalBoundaryElements false")
     parser.add_argument("--frame-normal", type=float, nargs=3, help="EdgeFrameNormal on every interface: the process side of sheets with one material on both sides")
+    parser.add_argument("--plane", type=parse_plane, action="append", default=[], metavar="ATTRS[@NX,NY,NZ]",
+                        help="metal plane 'a,b,c@nx,ny,nz': its own MS + MA targets with this EdgeFrameNormal (repeatable; replaces --ms/--ma)")
     args = parser.parse_args(argv)
+    if args.plane:
+        plane_attributes = sorted(a for attributes, _ in args.plane for a in attributes)
+        metal = sorted(set(args.ground) | {a for group in args.terminal for a in group})
+        if plane_attributes != metal:
+            raise SystemExit(f"--plane attributes {plane_attributes} must partition the metal {metal}")
     output = os.path.abspath(args.output)
     postpro = args.postpro or os.path.join(os.path.dirname(output), "postpro")
     config = preflight_config(
         args.mesh, args.ground, args.terminal, args.sa, args.library, postpro, ms=args.ms, ma=args.ma, radius=args.radius, l0=args.l0,
         uniform_levels=args.uniform_levels, crack=not args.no_crack, substrate_attributes=args.substrate, vacuum_attributes=args.vacuum,
-        frame_normal=args.frame_normal,
+        frame_normal=args.frame_normal, planes=args.plane or None,
     )
     os.makedirs(os.path.dirname(output), exist_ok=True)
     with open(output, "w") as target:

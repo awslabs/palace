@@ -82,6 +82,32 @@ class PreflightConfigTest(unittest.TestCase):
         self.assertEqual(config["Problem"]["Output"], os.path.join(self.directory.name, "cfg", "postpro"))
         self.assertIs(config["Model"]["CrackInternalBoundaryElements"], False)
 
+    def test_planes_give_each_metal_plane_its_own_targets_and_frame_normal(self):
+        config = preflight_config("m.msh2", ground=[114, 126, 10], terminals=[], sa=[28, 145], library=self.library, output_directory="out",
+                                  substrate_attributes=[1, 2], vacuum_attributes=[3, 4],
+                                  planes=[([114], [0, 0, 1]), ([126, 10], [0, 0, -1])])
+        dielectrics = config["Boundaries"]["Postprocessing"]["Dielectric"]
+        self.assertEqual([(d["Index"], d["Type"], d["Attributes"], d.get("EdgeFrameNormal")) for d in dielectrics], [
+            (1, "SA", [28, 145], None),
+            (2, "MS", [114], [0.0, 0.0, 1.0]), (3, "MA", [114], [0.0, 0.0, 1.0]),
+            (4, "MS", [10, 126], [0.0, 0.0, -1.0]), (5, "MA", [10, 126], [0.0, 0.0, -1.0]),
+        ])
+        self.assertEqual(P.target_interfaces(config), [1, 2, 3, 4, 5])
+        self.assertEqual(config["Domains"]["Materials"][0]["Attributes"], [1, 2])
+        self.assertEqual(config["Domains"]["Materials"][1]["Attributes"], [3, 4])
+
+    def test_plane_option_must_partition_the_metal(self):
+        output = os.path.join(self.directory.name, "cfg.json")
+        with self.assertRaises(SystemExit):
+            main(["--mesh", "m.msh2", "--ground", "114", "126", "--library", self.library, "--output", output,
+                  "--plane", "114@0,0,1"])
+        main(["--mesh", "m.msh2", "--ground", "114", "126", "--library", self.library, "--output", output,
+              "--plane", "114@0,0,1", "--plane", "126@0,0,-1"])
+        with open(output) as source:
+            config = json.load(source)
+        normals = [d.get("EdgeFrameNormal") for d in config["Boundaries"]["Postprocessing"]["Dielectric"]]
+        self.assertEqual(normals, [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0]])
+
 
 if __name__ == "__main__":
     unittest.main()
