@@ -32,6 +32,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     reactions) in a single sweep over the port elements.
     [PR 909](https://github.com/awslabs/palace/pull/909).
 
+#### Bug Fixes
+
+  - Fixed integer range expansion in configuration files rewriting brackets inside strings,
+    so a path such as `"mesh[1-3].msh"` is no longer read as `"mesh[1,2,3].msh"`.
+    [PR 970](https://github.com/awslabs/palace/pull/970).
+
 #### Build system
 
   - Bumped the MFEM dependency to v4.10 and dropped the backport patches merged

@@ -106,7 +106,24 @@ std::stringstream PreprocessFile(const char *filename)
     bool inside = false;
     for (auto it = start; it != file.end(); ++it)
     {
-      if (inside)
+      if (*it == '"')
+      {
+        // Skip string literals: brackets inside strings (e.g. file paths) are not arrays. A
+        // quote also ends any candidate array, which then passes through unexpanded.
+        inside = false;
+        while (++it != file.end() && *it != '"')
+        {
+          if (*it == '\\' && it + 1 != file.end())
+          {
+            ++it;
+          }
+        }
+        if (it == file.end())
+        {
+          break;
+        }
+      }
+      else if (inside)
       {
         if (*it == ']')
         {
