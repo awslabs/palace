@@ -3,7 +3,10 @@
 
 #include "postoperatorcsv.hpp"
 
+#include <algorithm>
+#include <iterator>
 #include <numbers>
+#include <ranges>
 
 #include <mfem.hpp>
 
@@ -1178,21 +1181,15 @@ void PostOperatorCSV<solver_t>::InitializePortS(const SpaceOperator &fem_op)
 
   for (const auto ex_idx : ex_idx_v_all)
   {
-    // TODO(C++20): Combine identical loops with ranges + projection.
-    for (const auto &[o_idx, data] : fem_op.GetLumpedPortOp())
+    auto insert_S = [&](int o_idx)
     {
       t.insert(fmt::format("abs_{}_{}", o_idx, ex_idx),
                fmt::format("|S[{}][{}]| (dB)", o_idx, ex_idx), ex_idx);
       t.insert(fmt::format("arg_{}_{}", o_idx, ex_idx),
                fmt::format("arg(S[{}][{}]) (deg.)", o_idx, ex_idx), ex_idx);
-    }
-    for (const auto &[o_idx, data] : fem_op.GetWavePortOp())
-    {
-      t.insert(fmt::format("abs_{}_{}", o_idx, ex_idx),
-               fmt::format("|S[{}][{}]| (dB)", o_idx, ex_idx), ex_idx);
-      t.insert(fmt::format("arg_{}_{}", o_idx, ex_idx),
-               fmt::format("arg(S[{}][{}]) (deg.)", o_idx, ex_idx), ex_idx);
-    }
+    };
+    std::ranges::for_each(fem_op.GetLumpedPortOp() | std::views::keys, insert_S);
+    std::ranges::for_each(fem_op.GetWavePortOp() | std::views::keys, insert_S);
   }
   MoveTableValidateReload(*port_S, std::move(t));
 }
@@ -1461,14 +1458,9 @@ void PostOperatorCSV<solver_t>::InitializeEigPortEPR(
     const LumpedPortOperator &lumped_port_op)
   requires(solver_t == ProblemType::EIGENMODE)
 {
-  // TODO(C++20): Make this a filtered iterator in LumpedPortOp.
-  for (const auto &[idx, data] : lumped_port_op)
-  {
-    if (std::abs(data.L) > 0.0)
-    {
-      ports_with_L.push_back(idx);
-    }
-  }
+  auto has_L = [](const auto &port) { return std::abs(port.second.L) > 0.0; };
+  std::ranges::copy(lumped_port_op | std::views::filter(has_L) | std::views::keys,
+                    std::back_inserter(ports_with_L));
   if (ports_with_L.empty())
   {
     return;
@@ -1504,14 +1496,9 @@ template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeEigPortQ(const LumpedPortOperator &lumped_port_op)
   requires(solver_t == ProblemType::EIGENMODE)
 {
-  // TODO(C++20): Make this a filtered iterator in LumpedPortOp.
-  for (const auto &[idx, data] : lumped_port_op)
-  {
-    if (std::abs(data.R) > 0.0)
-    {
-      ports_with_R.push_back(idx);
-    }
-  }
+  auto has_R = [](const auto &port) { return std::abs(port.second.R) > 0.0; };
+  std::ranges::copy(lumped_port_op | std::views::filter(has_R) | std::views::keys,
+                    std::back_inserter(ports_with_R));
   if (ports_with_R.empty())
   {
     return;
