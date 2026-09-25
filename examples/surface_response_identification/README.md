@@ -18,9 +18,10 @@ this block: every disagreement below is a recorded defect for the fix block.
 | `synthetic_layouts.py` + `synthetic_layouts.jl` | 62 synthetic stress layouts with exact oracles (Gmsh / OCC via Julia), runner and oracle comparison (A6) |
 | `tag_metal_components.py` | N-island conductor tagger for production meshes; repairs: drop metal triangles duplicating port faces, drop attributes, add a material-interface (substrate_air) group |
 | `refine_msh2.py` | uniform 1 -> 8 / 1 -> 4 refinement of a first-order MSH 2.2 mesh outside Palace, so the refined mesh exists for the audit (real A5 test) |
+| `signature_library.py` | signature-only process library from a version-2 manifest (one model per feature hash, for the fully matched patch dry run; never for a solve) |
 
 Tests (`python3 -m unittest discover -s examples/surface_response_identification -p 'test_*.py' -t examples` from the repository
-root, or per module): `test_audit.py` (18, incl. 3 version-2 gate tests), `test_preflight_config.py` (3),
+root, or per module): `test_audit.py` (22, incl. 3 version-2 gate tests, 2 patch-gate tests and the signature-library test), `test_preflight_config.py` (3),
 `test_synthetic_layouts.py` (15), `test_tag_metal_components.py` (5), `test_refine_msh2.py` (1).
 
 Typical use:
@@ -178,6 +179,40 @@ and `mpirun -n 2 "[Parallel]~[Regression]~[Long]"` (the `[Long]` regression solv
 identification gate).
 Phase-3 results: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/phase3/REPORT.md`;
 block summary: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/SUMMARY.md`.
+
+Phase 4 (decision 74, the Features-driven patch construction; design doc section (e)):
+
+* **The solve path consumes `Identification.Features`** (`ResponseCorrection.PatchConstruction`
+  = `Features`, the default; `Legacy` keeps the former per-interface-group classification for
+  comparison only): every feature matched by signature becomes its patches (isolated / curved
+  edges: one quadrature per portion in the segment frame; pairs: quadrature on both sides with
+  side factor 1 / 2, origin at the midpoint of a sample and its foot on the partner, the model's
+  first edge = the lower side along the feature's lateral axis, mirrored for chirality -1;
+  parallel clusters: side factor 1 / n, origin on the canonical first edge; corners / endpoints /
+  junctions: one patch in the feature frame `Frame`; spatial clusters: the model's canonical
+  frame composed with the feature's), an unmatched feature is omitted alone, excluded segments
+  are never corrected. The manifest's `Frame` of a vertex feature is now its patch frame (corner:
+  x = first arm, second arm counterclockwise; endpoint: y toward the gap; junction: canonical
+  first arm and orientation).
+* **Patch dry run**: the preflight writes `surface-response-patches.csv` next to the manifest
+  (feature id, topology, model, weight, model / quadrature weights, side factor, coupon depth,
+  segment portion `[S0, S1)`, origin, axes) without a field solve; `audit.py` reads it
+  automatically (or `--patches`) and gates **A7**: patched features = matched features, every
+  portion of a matched feature covered exactly once, weights (quadrature x model = 1 per interval,
+  `Weight = ModelWeight x QuadratureWeight x (S1 - S0) x SideFactor / CouponDepth`), no patch on
+  an unmatched feature or an excluded segment / portion.
+* `signature_library.py MANIFEST OUT.json` builds the **signature-only library** (one model per
+  distinct feature hash, `Signature` + version-1 parameters derived from it, placeholder matrix
+  paths; the library keys clusters by signature without `Edges`, curved classes `CurvedEdge` /
+  `CurvedSameConductorGap` / `CurvedDifferentConductorGap` / `CurvedSameConductorStrip` are
+  signature-keyed topologies): its dry run must cover `Totals.AssignedLength` exactly.
+  `preflight_matrix --signature-library` and `synthetic_layouts --signature-library` add a
+  `signature` library per geometry / layout built from the first cell's manifest.
+* A model's interface types are part of its key: the legacy libraries' models mapping MA + MS + SA
+  never match an SA-only feature (island unit test); the transmon's full library matches its
+  isolated edges, corners and the 1 um strip (97.9 % of the assigned perimeter patched, the
+  rest Missing: decisions 70 / 71).
+Phase-4 results: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/phase4/REPORT.md`.
 
 ## Geometry identification: baseline audit (2026-09-24, executable 9ef5256b / v0.17.0-572-g5876402f7)
 
