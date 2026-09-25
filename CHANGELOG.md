@@ -37,6 +37,21 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     must be updated. SchemaVer 2-0-0.
     [PR 929](https://github.com/awslabs/palace/pull/929).
 
+#### Performance Improvements
+
+  - Accelerated adaptive online sweeps by replacing 2D wave-port EVP solves with a per-port
+    PROM trained on the offline modes. Also reusing reduced operators and wave-port state
+    across excitations, evaluating the wave-port modal correction and excitation of the
+    PROM from port-space mode pairings instead of per-frequency assembly of mode vectors on
+    the full mesh, evaluating default domain energies in reduced coordinates, and evaluating
+    port quantities without unnecessary magnetic-field reconstruction when possible.
+    [PR 909](https://github.com/awslabs/palace/pull/909).
+  - Restricted the assembly of wave-port mode vectors (excitation and modal correction) to
+    the port boundary elements instead of looping over all boundary elements of the mesh,
+    and assemble the per-frequency wave-port mode forms (S-parameter projection and modal
+    reactions) in a single sweep over the port elements.
+    [PR 909](https://github.com/awslabs/palace/pull/909).
+
 #### Bug Fixes
 
   - Corrected the `FluxLoop` hole inductance, which was low in 0.18 (e.g. the `circular_hole`
