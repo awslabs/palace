@@ -1,0 +1,39 @@
+{
+  "Problem":
+  {
+    "Type": "Magnetostatic",
+    "Verbose": 2,
+    "Output": "postpro/pec"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/microstrip.msh",
+    "L0": 1.0e-6  // μm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      { "Attributes": [1], "Permeability": 1.0 }
+    ],
+    "Postprocessing":
+    {
+      "Energy": [ { "Index": 1, "Attributes": [1] } ]
+    }
+  },
+  "Boundaries":
+  {
+    "PEC": { "Attributes": [2, 3] },  // Farfield + conductor: geometric inductance (λ → 0 limit)
+    "SurfaceCurrent":
+    [
+      { "Index": 1, "Attributes": [4], "Direction": [1.0, 0.0, 0.0] }  // Terminal patch on strip
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Magnetostatic": { "Save": 0 },
+    "Linear": { "Type": "AMS", "KSPType": "CG", "Tol": 1.0e-10, "MaxIts": 200 }
+  }
+}

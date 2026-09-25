@@ -5,364 +5,303 @@
 #include "surfacefluxoperator.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <unordered_set>
 #include <mfem.hpp>
-#include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
-#include "fem/multigrid.hpp"
-#include "linalg/ksp.hpp"
-#include "linalg/operator.hpp"
-#include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
 #include "utils/communication.hpp"
-#include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
 {
 
-Vector SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iodata,
-                               const Mesh &mesh, const FiniteElementSpace &nd_fespace,
-                               int flux_loop_idx,
-                               PostOperator<ProblemType::MAGNETOSTATIC> &post_op)
+namespace
 {
-  Vector result;
-  SolveSurfaceCurlProblem(flux_data, iodata, mesh, nd_fespace, flux_loop_idx, post_op,
-                          result);
+
+// Build the London drive a_h as a 3D curl-free cohomology generator carrying the hole
+// fluxoid ∮_∂hole a_h·dl = Φ, about the flux line L along the loop Direction n through the
+// hole centroid. L threads the hole opening off the film Σ, so a_h|Σ is curl-free with
+// circulation Φ; its gradient part is absorbable by A → A + ∇χ, so the extracted inductance
+// depends only on the cohomology class (Φ) and is gauge-invariant.
+//
+// The angle θ is measured in the plane ⊥ n via a right-handed in-plane basis (e1, e2, n),
+// so the construction handles any planar hole orientation and reduces to the xy form when
+// n = ±ẑ. a_h is the cut cochain a_h = Grad ψ − a_angle: a lowest-order (Whitney) edge DOF
+// of ±Φ across the cut half-plane bounded by L, projected into the order-p ND space
+// (ND_1 ⊂ ND_p). It is formed as the discrete gradient of a conformed nodal branch
+// potential ψ minus the smooth angle interpolant a_angle so it is non-conformal-safe (see
+// below). The cut shape and overall sign are irrelevant to L: the downstream normalization
+// rescales a_h so cᵀa_h = Φ.
+Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
+                                   const mfem::ParFiniteElementSpace &ndp_fespace,
+                                   const Mesh &mesh)
+{
+  auto &pmesh = const_cast<mfem::ParMesh &>(mesh.Get());
+  MPI_Comm comm = pmesh.GetComm();
+  const int sdim = pmesh.SpaceDimension();
+  MFEM_VERIFY(sdim == 3, "London cut cohomology generator requires a 3D mesh!");
+
+  // Hole axis n = normalized Direction. Build a right-handed in-plane basis (e1, e2, n), e1
+  // seeded from the Cartesian axis least aligned with n (avoids a degenerate cross
+  // product); for n = ±ẑ this gives e1 = x̂, e2 = ±ŷ, reproducing the xy construction.
+  MFEM_VERIFY(flux_data.direction.size() >= 3, "London flux loop needs a 3D Direction!");
+  double n[3] = {flux_data.direction[0], flux_data.direction[1], flux_data.direction[2]};
+  const double nrm = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+  MFEM_VERIFY(nrm > 1.0e-12, "London flux loop Direction must be nonzero!");
+  n[0] /= nrm;
+  n[1] /= nrm;
+  n[2] /= nrm;
+  double e1[3], e2[3];
+  {
+    int imin = 0;
+    if (std::abs(n[1]) < std::abs(n[imin]))
+    {
+      imin = 1;
+    }
+    if (std::abs(n[2]) < std::abs(n[imin]))
+    {
+      imin = 2;
+    }
+    double seed[3] = {0.0, 0.0, 0.0};
+    seed[imin] = 1.0;
+    const double sn = seed[0] * n[0] + seed[1] * n[1] + seed[2] * n[2];
+    for (int i = 0; i < 3; i++)
+    {
+      e1[i] = seed[i] - sn * n[i];
+    }
+    const double e1n = std::sqrt(e1[0] * e1[0] + e1[1] * e1[1] + e1[2] * e1[2]);
+    for (int i = 0; i < 3; i++)
+    {
+      e1[i] /= e1n;
+    }
+    e2[0] = n[1] * e1[2] - n[2] * e1[1];
+    e2[1] = n[2] * e1[0] - n[0] * e1[2];
+    e2[2] = n[0] * e1[1] - n[1] * e1[0];
+  }
+
+  // Total imposed fluxoid Φ.
+  double phi = 0.0;
+  for (double f : flux_data.flux_amounts)
+  {
+    phi += f;
+  }
+
+  // Hole centroid c: average of hole-boundary vertex coordinates. The flux line L = c + s·n
+  // passes through the hole opening (empty region), never the film.
+  std::unordered_set<int> hole_attrs(flux_data.hole_attributes.begin(),
+                                     flux_data.hole_attributes.end());
+  double csum[3] = {0.0, 0.0, 0.0};
+  double cnt = 0.0;
+  mfem::Array<int> bverts;
+  for (int be = 0; be < pmesh.GetNBE(); be++)
+  {
+    if (!hole_attrs.count(pmesh.GetBdrAttribute(be)))
+    {
+      continue;
+    }
+    pmesh.GetBdrElementVertices(be, bverts);
+    for (int v : bverts)
+    {
+      const double *x = pmesh.GetVertex(v);
+      csum[0] += x[0];
+      csum[1] += x[1];
+      csum[2] += x[2];
+      cnt += 1.0;
+    }
+  }
+  Mpi::GlobalSum(3, csum, comm);
+  Mpi::GlobalSum(1, &cnt, comm);
+  MFEM_VERIFY(cnt > 0.0, "No hole boundary elements found for London cut generator!");
+  double c[3] = {csum[0] / cnt, csum[1] / cnt, csum[2] / cnt};
+
+  // In-plane coordinates (s, t) of a point about L: components along (e1, e2).
+  auto inplane = [&](const double *x, double &s, double &t)
+  {
+    const double dx = x[0] - c[0], dy = x[1] - c[1], dz = x[2] - c[2];
+    s = dx * e1[0] + dy * e1[1] + dz * e1[2];
+    t = dx * e2[0] + dy * e2[1] + dz * e2[2];
+  };
+
+  {
+    // θ is undefined on L. Measure the hole's radial extent and the closest approach of a
+    // hole vertex to L, then shift L off any vertex sitting on it — any interior point of
+    // the hole represents the same cohomology class.
+    double r_min = mfem::infinity(), r_max = 0.0;
+    for (int be = 0; be < pmesh.GetNBE(); be++)
+    {
+      if (!hole_attrs.count(pmesh.GetBdrAttribute(be)))
+      {
+        continue;
+      }
+      pmesh.GetBdrElementVertices(be, bverts);
+      for (int v : bverts)
+      {
+        const double *x = pmesh.GetVertex(v);
+        double s, t;
+        inplane(x, s, t);
+        const double r = std::hypot(s, t);
+        r_min = std::min(r_min, r);
+        r_max = std::max(r_max, r);
+      }
+    }
+    Mpi::GlobalMin(1, &r_min, comm);
+    Mpi::GlobalMax(1, &r_max, comm);
+    if (r_min < 1.0e-6 * r_max)
+    {
+      for (int i = 0; i < 3; i++)
+      {
+        c[i] += r_max * (3.7e-3 * e1[i] + 2.3e-3 * e2[i]);
+      }
+      Mpi::Print(" London a_h: flux line met a hole vertex, offset to ({:.6e}, {:.6e}, "
+                 "{:.6e})\n",
+                 c[0], c[1], c[2]);
+    }
+  }
+
+  // Lowest-order (Whitney) cochain on an ND_1 space over the full 3D mesh. Each rank sets
+  // its local edge DOFs from vertex COORDINATES (identical on all ranks for a shared edge)
+  // in the canonical GetEdgeVertices orientation (ev0→ev1), so the owner's true-DOF value
+  // is correct and GetTrueDofs needs no cross-rank sign reconciliation.
+  mfem::ND_FECollection nd1_fec(1, sdim);
+  mfem::ParFiniteElementSpace nd1_fespace(&pmesh, &nd1_fec);
+  mfem::ParGridFunction ah1(&nd1_fespace);
+  ah1.UseDevice(false);
+  ah1 = 0.0;
+
+  // Nodal branch-cut potential ψ = (Φ/2π)·atan2(d, -s), whose branch discontinuity is
+  // exactly the cut half-plane, so cut = Grad ψ - a_angle. Carrying the O(1) step as a
+  // discrete gradient is what makes this non-conformal-safe: Grad of a *conformed* H1
+  // function is exactly conforming and exactly curl-free, whereas a step written on edges
+  // is neither, and cᵀGrad = 0 identically, so ψ cannot perturb the circulation.
+  mfem::H1_FECollection h1_fec(1, sdim);
+  mfem::ParFiniteElementSpace h1_fespace(&pmesh, &h1_fec);
+  mfem::ParGridFunction psi(&h1_fespace);
+  psi.UseDevice(false);
+  psi = 0.0;
+  {
+    mfem::Array<int> vdofs;
+    for (int v = 0; v < pmesh.GetNV(); v++)
+    {
+      const double *x = pmesh.GetVertex(v);
+      h1_fespace.GetVertexDofs(v, vdofs);
+      double s, t;
+      inplane(x, s, t);
+      psi(vdofs[0]) = phi * std::atan2(s, -t) / (2.0 * M_PI);
+    }
+    mfem::Vector t(h1_fespace.GetTrueVSize());
+    t.UseDevice(false);
+    psi.GetTrueDofs(t);
+    psi.SetFromTrueDofs(t);
+  }
+
+  mfem::Array<int> ev, edofs, vd0, vd1;
+  for (int e = 0; e < pmesh.GetNEdges(); e++)
+  {
+    pmesh.GetEdgeVertices(e, ev);
+    const double *x0 = pmesh.GetVertex(ev[0]);
+    const double *x1 = pmesh.GetVertex(ev[1]);
+    // DOF ∫_e ∇θ·t = angle subtended at L by ev0→ev1. atan2 returns the rotation of
+    // magnitude ≤ π, i.e. the branch consistent with the straight edge. Only the in-plane
+    // components enter; edges parallel to n subtend zero angle.
+    double s0, t0, s1, t1;
+    inplane(x0, s0, t0);
+    inplane(x1, s1, t1);
+    const double a_angle =
+        phi * std::atan2(s0 * t1 - t0 * s1, s0 * s1 + t0 * t1) / (2.0 * M_PI);
+    nd1_fespace.GetEdgeDofs(e, edofs);
+    // cut = Grad ψ - a_angle. ψ is continuous except across the cut half-plane, where it
+    // jumps by Φ, so this reproduces the ±Φ step cochain exactly on a conformal mesh.
+    h1_fespace.GetVertexDofs(ev[0], vd0);
+    h1_fespace.GetVertexDofs(ev[1], vd1);
+    ah1(edofs[0]) = psi(vd1[0]) - psi(vd0[0]) - a_angle;
+  }
+
+  // Conform the cochain before projecting. Grad ψ is a discrete gradient of a conformed H1
+  // function, so it survives the round trip exactly (circulation and curl-free-on-Σ
+  // intact); only the smooth a_angle term is re-interpolated onto slaves. On a
+  // non-conformal mesh that leaves a small residual curl on Σ near graded refinement, an
+  // O(h) discretization error that vanishes under refinement while the downstream cᵀa_h = Φ
+  // normalization keeps the fluxoid exact; on a conformal mesh a_h is the exact integer
+  // step, curl-free.
+  {
+    mfem::Vector t(nd1_fespace.GetTrueVSize());
+    t.UseDevice(false);
+    ah1.GetTrueDofs(t);
+    ah1.SetFromTrueDofs(t);
+  }
+
+  // Project the ND_1 cut field exactly into the order-p ND space. The per-element field is
+  // a degree-1 polynomial, integrated exactly by the ND_p DOF functionals, so ND_1 ⊂ ND_p
+  // is reproduced and tangential continuity (hence curl-free-on-Σ, circulation Φ) is
+  // preserved.
+  mfem::VectorGridFunctionCoefficient ah1_coeff(&ah1);
+  mfem::ParGridFunction ahp(const_cast<mfem::ParFiniteElementSpace *>(&ndp_fespace));
+  ahp.UseDevice(false);
+  ahp = 0.0;
+  ahp.ProjectCoefficient(ah1_coeff);
+
+  Vector result(ndp_fespace.GetTrueVSize());
+  result.UseDevice(true);
+  ahp.GetTrueDofs(result);
+
+  // Restrict a_h to this loop's film DOFs. It is consumed only through M_sheet and c (both
+  // on the film), so this is a no-op for a single film but stops the cut line from driving
+  // a spurious vortex in another Superconductor sheet the line threads.
+  {
+    const int bmax = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+    mfem::Array<int> marker(bmax);
+    marker = 0;
+    for (int a : flux_data.film_attributes)
+    {
+      if (a >= 1 && a <= bmax)
+      {
+        marker[a - 1] = 1;
+      }
+    }
+    mfem::Array<int> film_tdofs;
+    const_cast<mfem::ParFiniteElementSpace &>(ndp_fespace)
+        .GetEssentialTrueDofs(marker, film_tdofs);
+    Vector keep(result.Size());
+    keep.UseDevice(true);
+    keep = 0.0;
+    auto *k = keep.HostReadWrite();
+    const auto *r = result.HostRead();
+    for (int i = 0; i < film_tdofs.Size(); i++)
+    {
+      k[film_tdofs[i]] = r[film_tdofs[i]];
+    }
+    result = keep;
+  }
   return result;
 }
 
-void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iodata,
-                             const Mesh &mesh, const FiniteElementSpace &nd_fespace,
-                             int flux_loop_idx,
+}  // namespace
+
+Vector SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const Mesh &mesh,
+                               const FiniteElementSpace &nd_fespace,
+                               PostOperator<ProblemType::MAGNETOSTATIC> &post_op)
+{
+  Vector result;
+  SolveSurfaceCurlProblem(flux_data, mesh, nd_fespace, post_op, result);
+  return result;
+}
+
+void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const Mesh &mesh,
+                             const FiniteElementSpace &nd_fespace,
                              PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
                              Vector &result)
 {
-  const mfem::ParFiniteElementSpace *fespace = &nd_fespace.Get();
-  int order = iodata.solver.order;
-
-  MPI_Comm comm = mesh.GetComm();
-  const auto &pmesh = mesh.Get();
-
-  // Extract metal surface and hole attributes from flux_data
-  mfem::Array<int> metal_surface_attrs;
-  for (int metal_attr : flux_data.fluxloop_pec)
-  {
-    metal_surface_attrs.Append(metal_attr);
-  }
-
-  // Validate that we have at least one metal surface attribute
-  MFEM_VERIFY(metal_surface_attrs.Size() > 0,
-              "At least one metal surface attribute must be specified in FluxLoopPEC!");
-  mfem::Array<int> hole_surface_attrs;
-  for (int hole_attr : flux_data.hole_attributes)
-  {
-    hole_surface_attrs.Append(hole_attr);
-  }
-  int num_holes = hole_surface_attrs.Size();
-
-  // Extract hole boundary DOFs
-  std::vector<mfem::Array<int>> attr_to_elements;
-  std::vector<std::unordered_map<int, int>> hole_dof_to_edge_maps(num_holes);
-
-  const_cast<mfem::ParFiniteElementSpace *>(fespace)->GetBoundaryElementsByAttribute(
-      hole_surface_attrs, attr_to_elements);
-  for (int h = 0; h < num_holes; h++)
-  {
-    // Only the DoF-to-edge map is consumed downstream (by mesh::MatchBoundaryEdges,
-    // which reads its edge-id values). Rebuild it from the two parallel outputs of
-    // GetBoundaryLoopEdgeDofs; the other outputs are unused here.
-    mfem::Array<int> ess_tdof_list, boundary_edge_dofs, dof_edges;
-    const_cast<mfem::ParFiniteElementSpace *>(fespace)->GetBoundaryLoopEdgeDofs(
-        attr_to_elements[h], ess_tdof_list, boundary_edge_dofs, nullptr, &dof_edges,
-        nullptr, nullptr);
-    for (int i = 0; i < boundary_edge_dofs.Size(); i++)
-    {
-      hole_dof_to_edge_maps[h][boundary_edge_dofs[i]] = dof_edges[i];
-    }
-  }
-
-  // Create submesh from all metal surface attributes
-  mfem::ParSubMesh boundary_submesh =
-      mfem::ParSubMesh::CreateFromBoundary(pmesh, metal_surface_attrs);
-
-  // Extract submesh boundary edges
-  mfem::Array<int> submesh_boundary_edge_ids;
-  for (int i = 0; i < boundary_submesh.GetNBE(); i++)
-  {
-    mfem::Array<int> edges, orientations;
-    boundary_submesh.GetBdrElementEdges(i, edges, orientations);
-    for (int j = 0; j < edges.Size(); j++)
-      submesh_boundary_edge_ids.Append(edges[j]);
-  }
-
-  // Map submesh to parent edges
-  const mfem::Array<int> &parent_edge_ids = boundary_submesh.GetParentEdgeIDMap();
-  std::unordered_map<int, int> submesh_to_parent_bdr_edge_map;
-  for (int submesh_edge : submesh_boundary_edge_ids)
-    submesh_to_parent_bdr_edge_map[submesh_edge] = parent_edge_ids[submesh_edge];
-
-  // Match hole boundaries
-  std::vector<mfem::Array<int>> hole_boundary_edges;
-  mesh::MatchBoundaryEdges(pmesh, boundary_submesh, submesh_boundary_edge_ids,
-                           submesh_to_parent_bdr_edge_map, hole_dof_to_edge_maps,
-                           hole_boundary_edges);
-
-  // Assign boundary attributes and create edge sets.
-  // Find the maximum existing boundary attribute across ALL ranks to avoid conflicts.
-  int current_attr = 1;
-  if (boundary_submesh.bdr_attributes.Size() > 0)
-  {
-    current_attr = boundary_submesh.bdr_attributes.Max();
-  }
-  Mpi::GlobalMax(1, &current_attr, boundary_submesh.GetComm());
-  std::vector<int> hole_boundary_attrs(num_holes);
-  std::vector<std::unordered_set<int>> hole_edge_sets(num_holes);
-  for (int h = 0; h < num_holes; h++)
-  {
-    hole_boundary_attrs[h] = current_attr + 1 + h;
-    hole_edge_sets[h] = std::unordered_set<int>(hole_boundary_edges[h].begin(),
-                                                hole_boundary_edges[h].end());
-  }
-
-  for (int i = 0; i < boundary_submesh.GetNBE(); i++)
-  {
-    mfem::Array<int> edges, orientations;
-    boundary_submesh.GetBdrElementEdges(i, edges, orientations);
-    for (int h = 0; h < num_holes; h++)
-    {
-      bool is_hole_boundary = false;
-      for (int j = 0; j < edges.Size() && !is_hole_boundary; j++)
-      {
-        if (hole_edge_sets[h].count(edges[j]))
-        {
-          is_hole_boundary = true;
-          boundary_submesh.GetBdrElement(i)->SetAttribute(hole_boundary_attrs[h]);
-        }
-      }
-      if (is_hole_boundary)
-      {
-        break;  // Exit hole loop once we've assigned an attribute
-      }
-    }
-  }
-  boundary_submesh.SetAttributes();
-
-  // Compute hole properties using input flux values.
-  // Use the maximum hole boundary attribute for marker sizing since local
-  // bdr_attributes.Max() may be smaller on ranks without hole boundary elements.
-  int marker_size = hole_boundary_attrs.back();
-  std::vector<mfem::Array<int>> hole_bdr_markers(num_holes);
-  std::vector<double> hole_perimeters(num_holes);
-  std::vector<double> hole_field_values(num_holes);
-  std::vector<std::unordered_map<int, double>> hole_edge_lengths(num_holes);
-
-  mfem::GridFunction *nodes = boundary_submesh.GetNodes();
-  const mfem::FiniteElementCollection *h1_fec = nodes->FESpace()->FEColl();
-  mfem::ParFiniteElementSpace h1_pfespace(&boundary_submesh, h1_fec);
-  mfem::ConstantCoefficient one(1.0);
-
-  // Create loop normal vector from flux data direction
-  Vector loop_normal(const_cast<double *>(flux_data.direction.data()), 3);
-
-  for (int h = 0; h < num_holes; h++)
-  {
-    hole_bdr_markers[h].SetSize(marker_size);
-    hole_bdr_markers[h] = 0;
-    hole_bdr_markers[h][hole_boundary_attrs[h] - 1] = 1;
-
-    mfem::ParLinearForm perimeter_form(&h1_pfespace);
-    perimeter_form.AddBoundaryIntegrator(new mfem::BoundaryLFIntegrator(one),
-                                         hole_bdr_markers[h]);
-    perimeter_form.Assemble();
-    double local_perimeter = perimeter_form.Sum();
-    hole_perimeters[h] = local_perimeter;
-    Mpi::GlobalSum(1, &hole_perimeters[h], boundary_submesh.GetComm());
-    hole_field_values[h] = flux_data.flux_amounts[h] / hole_perimeters[h];
-
-    mesh::ComputeSubmeshBoundaryEdgeOrientations(boundary_submesh, hole_boundary_edges[h],
-                                                 loop_normal, hole_edge_lengths[h], order);
-  }
-
-  // Create Nedelec space and solve
-  mfem::ND_FECollection nd_fec(order, boundary_submesh.Dimension());
-  mfem::ParFiniteElementSpace nd_fespace_submesh(&boundary_submesh, &nd_fec);
-
-  std::vector<std::unordered_map<int, mfem::Array<int>>> hole_edge_to_dofs_maps(num_holes);
-  std::vector<mfem::Array<int>> hole_boundary_edge_dofs(num_holes);
-
-  mfem::Array<int> edge_dofs;
-  for (int h = 0; h < num_holes; h++)
-  {
-    for (int i = 0; i < hole_boundary_edges[h].Size(); i++)
-    {
-      int edge_idx = hole_boundary_edges[h][i];
-      nd_fespace_submesh.GetEdgeDofs(edge_idx, edge_dofs);
-      hole_edge_to_dofs_maps[h][edge_idx] = edge_dofs;
-      hole_boundary_edge_dofs[h].Append(edge_dofs);
-    }
-  }
-
-  mfem::Array<int> combined_inner_bdr_marker(marker_size);
-  combined_inner_bdr_marker = 0;
-  mfem::Array<int> ldof_marker_submesh(nd_fespace_submesh.GetVSize());
-  ldof_marker_submesh = 0;
-  mfem::ParGridFunction A(&nd_fespace_submesh);
-  A.UseDevice(false);
-  A = 0.0;
-
-  // Directly apply loop BC by computing the integration of 1D Nedelec elements on boundary
-  // edges
-  for (int h = 0; h < num_holes; h++)
-  {
-    combined_inner_bdr_marker[hole_boundary_attrs[h] - 1] = 1;
-    for (const auto &pair : hole_edge_to_dofs_maps[h])
-    {
-      int edge = pair.first;
-      const mfem::Array<int> &edge_dofs = pair.second;
-      double oriented_length = hole_edge_lengths[h][edge];
-      for (int j = 0; j < edge_dofs.Size(); j++)
-        A(edge_dofs[j]) = hole_field_values[h] * oriented_length;
-    }
-
-    // Mark DOFs for synchronization
-    for (int i = 0; i < hole_boundary_edge_dofs[h].Size(); i++)
-    {
-      ldof_marker_submesh[hole_boundary_edge_dofs[h][i]] = 1;
-    }
-  }
-
-  // Notify start of 2D surface curl problem solving
-  Mpi::Print("\nSolving 2D surface curl problem for flux loop boundary conditions...\n");
-
-  // Create Palace finite element space hierarchy for the submesh using P-multigrid
-  // Construct P-multigrid FE collections using solver configuration
-  int mg_max_levels = iodata.solver.linear.mg_max_levels;
-  auto mg_coarsening = iodata.solver.linear.mg_coarsening;
-  std::vector<std::unique_ptr<mfem::ND_FECollection>> submesh_nd_fecs =
-      fem::ConstructFECollections<mfem::ND_FECollection>(
-          order, boundary_submesh.Dimension(), mg_max_levels, mg_coarsening, false);
-  std::vector<std::unique_ptr<mfem::H1_FECollection>> submesh_h1_fecs =
-      fem::ConstructFECollections<mfem::H1_FECollection>(
-          order, boundary_submesh.Dimension(), mg_max_levels, mg_coarsening, false);
-  std::vector<std::unique_ptr<Mesh>> submesh_vec;
-  submesh_vec.push_back(std::make_unique<Mesh>(boundary_submesh, 1));
-
-  FiniteElementSpaceHierarchy submesh_nd_fespaces(
-      fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
-          mg_max_levels, submesh_vec, submesh_nd_fecs, nullptr, nullptr));
-  FiniteElementSpaceHierarchy submesh_h1_fespaces(
-      fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-          mg_max_levels, submesh_vec, submesh_h1_fecs, nullptr, nullptr));
-
-  // Create separate essential DoF lists for each level in the hierarchy
-  std::vector<mfem::Array<int>> mg_submesh_ess_tdof_lists(
-      submesh_nd_fespaces.GetNumLevels());
-  for (std::size_t l = 0; l < submesh_nd_fespaces.GetNumLevels(); l++)
-  {
-    const auto &nd_fespace_l = submesh_nd_fespaces.GetFESpaceAtLevel(l);
-    nd_fespace_l.Get().GetEssentialTrueDofs(combined_inner_bdr_marker,
-                                            mg_submesh_ess_tdof_lists[l]);
-  }
-
-  // Get finest level essential DoF list for boundary conditions
-  auto submesh_ess_tdof_list =
-      mg_submesh_ess_tdof_lists[submesh_nd_fespaces.GetNumLevels() - 1];
-
-  // First synchronize the marker itself to ensure all processors agree on which DoFs to
-  // sync
-  auto gc = std::unique_ptr<mfem::GroupCommunicator>(
-      submesh_nd_fespaces.GetFinestFESpace().Get().ScalarGroupComm());
-  mfem::Array<int> global_marker(ldof_marker_submesh);
-  gc->Reduce<int>(global_marker.GetData(), mfem::GroupCommunicator::BitOR<int>);
-  gc->Bcast(global_marker);
-
-  // Synchronize the edge DoF boundary condition across processors with MaxAbs reduction
-  mfem::Array<double> values(A.GetData(), A.Size());
-  gc->ReduceBegin(values.GetData());
-  gc->ReduceMarked<double>(values.GetData(), global_marker, 0,
-                           mfem::GroupCommunicator::MaxAbs<double>);
-  gc->Bcast(values.GetData());
-  A.HostReadWrite();
-  A.SetTrueVector();
-
-  // Create unit coefficient for curl-curl term and the regularization coefficient
-  MaterialPropertyCoefficient reg_coeff(boundary_submesh.attributes.Max());
-  MaterialPropertyCoefficient unit_coeff(boundary_submesh.attributes.Max());
-  for (int attr = 1; attr <= boundary_submesh.attributes.Max(); attr++)
-  {
-    unit_coeff.AddMaterialProperty(attr, 1.0);
-    reg_coeff.AddMaterialProperty(attr, flux_data.regularization);
-  }
-
-  // Use Palace's BilinearForm with forced full assembly for the submesh solve.
-  // The 2D submesh is small and must stay on host (GroupCommunicator and direct DOF
-  // indexing are incompatible with device memory).
-  BilinearForm a(submesh_nd_fespaces.GetFinestFESpace());
-  a.AddDomainIntegrator<CurlCurlIntegrator>(unit_coeff);
-  a.AddDomainIntegrator<VectorFEMassIntegrator>(reg_coeff);
-
-  std::vector<std::unique_ptr<Operator>> k_vec;
-  k_vec.reserve(submesh_nd_fespaces.GetNumLevels());
-  for (std::size_t l = 0; l < submesh_nd_fespaces.GetNumLevels(); l++)
-  {
-    BilinearForm a_l(submesh_nd_fespaces.GetFESpaceAtLevel(l));
-    a_l.AddDomainIntegrator<CurlCurlIntegrator>(unit_coeff);
-    a_l.AddDomainIntegrator<VectorFEMassIntegrator>(reg_coeff);
-    k_vec.push_back(a_l.FullAssemble(false));
-  }
-  auto K_op = std::make_unique<MultigridOperator>(submesh_nd_fespaces.GetNumLevels());
-
-  // Add operators for each level using pre-computed essential DoF lists
-  for (std::size_t l = 0; l < submesh_nd_fespaces.GetNumLevels(); l++)
-  {
-    const auto &nd_fespace_l = submesh_nd_fespaces.GetFESpaceAtLevel(l);
-    auto K_l = std::make_unique<ParOperator>(std::move(k_vec[l]), nd_fespace_l);
-    K_l->SetEssentialTrueDofs(mg_submesh_ess_tdof_lists[l],
-                              Operator::DiagonalPolicy::DIAG_ONE);
-    K_op->AddOperator(std::move(K_l));
-  }
-
-  // Compute boundary-interior coupling before applying boundary conditions.
-  // Keep all submesh vectors on host — the 2D solve is small and uses host-side
-  // operations (GroupCommunicator, direct DOF indexing) incompatible with device memory.
-  Vector RHS(submesh_nd_fespaces.GetFinestFESpace().GetTrueVSize());
-  Vector X(submesh_nd_fespaces.GetFinestFESpace().GetTrueVSize());
-  Vector boundary_vals(submesh_nd_fespaces.GetFinestFESpace().GetTrueVSize());
-
-  // Get boundary values directly from MFEM GridFunction
-  A.GetTrueDofs(boundary_vals);
-
-  // Compute RHS = -K * boundary_values (coupling term)
-  K_op->Mult(boundary_vals, RHS);
-  RHS *= -1.0;
-
-  // Set boundary values in RHS
-  linalg::SetSubVector(RHS, submesh_ess_tdof_list, boundary_vals);
-
-  // Set up Palace KSP solver
-  KspSolver ksp(iodata, submesh_nd_fespaces, &submesh_h1_fespaces);
-  ksp.SetOperators(*K_op, *K_op);
-
-  // Solve the 2D surface curl problem.
-  X = 0.0;
-  ksp.Mult(RHS, X);
-
-  // Set solution directly in MFEM GridFunction.
-  A.SetFromTrueDofs(X);
-
-  // Transfer to parent mesh
+  // London drive: build a_h directly on the 3D ND space as a curl-free cohomology generator
+  // via a topological cut cochain (gauge-invariant; see BuildCutCohomologyGenerator).
+  result = BuildCutCohomologyGenerator(flux_data, nd_fespace.Get(), mesh);
+  // Populate the post_op A buffer (used only as scratch downstream).
   auto &A_3d = post_op.GetAGridFunction().Real();
-  A_3d = 0.0;  // Clear the buffer
-  mfem::ParSubMesh::Transfer(A, A_3d);
-
-  // Extract true DOFs and populate result vector
-  result.SetSize(fespace->GetTrueVSize());
-  result.UseDevice(true);
-  A_3d.GetTrueDofs(result);
+  A_3d.SetFromTrueDofs(result);
 }
 
 double ComputeFluxThroughSurface(const mfem::ParGridFunction &B_gf,

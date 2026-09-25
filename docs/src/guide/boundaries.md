@@ -259,10 +259,11 @@ flux loop boundary condition works by:
 
  1. **Identifying holes**: Mesh boundary attributes specify holes through which flux is
     prescribed
- 2. **Constraining flux**: The total magnetic flux through each hole is set to the specified
-    nondimensional excitation amplitude
- 3. **Solving surface problem**: A 3D surface curl problem that determines the required boundary
-    conditions on specific 2D boundaries connected to the hole regions
+ 2. **Constraining the fluxoid**: The fluxoid through each hole (the magnetic flux plus the
+    London kinetic term, reducing to the magnetic flux in the perfect-conductor limit) is set
+    to the specified nondimensional excitation amplitude
+ 3. **Building the drive**: A curl-free cohomology generator on the film carries that fluxoid
+    around the hole and drives the shifted London penalty
  4. **Computing inductance**: The resulting 3D field solutions enable inductance matrix
     extraction
 
@@ -286,4 +287,5 @@ unit-current excitations for current-driven magnetostatic solves. Palace reports
 
 The mesh must be topologically compatible with the flux loop geometry, with holes properly
 defined as boundary surfaces within the conducting region. Currently, only planar holes are
-supported, and nonconformal adaption is not supported.
+supported; the hole axis is taken from the flux loop `"Direction"` and may point along any
+Cartesian direction. Both conformal and nonconformal adaptive mesh refinement are supported.
