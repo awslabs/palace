@@ -98,9 +98,18 @@ def load(manifest_path):
     return identification, p0, p1, length, excluded, radius
 
 
+# The classifier's decision grid (Identification.Conventions LengthQuantumOverR): an edge
+# interacts iff its distance is below 2R on the quantized grid, strict less — a CPW gap or
+# trace of exactly 2R (DS-SCT-001 / DS-SCT-002: 4 um at R = 2 um) does not interact and is
+# not a defect; its length is reported separately (AtExactly2R).
+LENGTH_QUANTUM_OVER_R = 1.0e-8
+
+
 def facing_samples(grid, p0, p1, excluded, points, tangents, owners, own_mask, radius):
-    """For every sample point: the closest facing (across) non-excluded segment within 2R that is
-    neither the sample's own segment nor in own_mask (the feature's own sides); -1 when none."""
+    """For every sample point: the closest facing (across) non-excluded segment whose distance is
+    at most 2R (within the decision quantum) and neither the sample's own segment nor in own_mask
+    (the feature's own sides); -1 when none. The caller separates the strictly interacting
+    samples (quantized distance < 2R) from those at exactly 2R."""
     sample_indices, segment_indices = grid.candidates(points)
     a, b = p0[segment_indices], p1[segment_indices]
     ab = b - a
@@ -109,7 +118,7 @@ def facing_samples(grid, p0, p1, excluded, points, tangents, owners, own_mask, r
     d = a + t[:, None] * ab - p
     r = np.sqrt((d * d).sum(1))
     cosine = np.abs((d * tangents[sample_indices]).sum(1)) / np.maximum(r, 1e-30)
-    ok = ((r < 2 * radius) & (r > 1e-9) & (cosine < 0.5) & ~excluded[segment_indices]
+    ok = ((r <= 2 * radius + 0.5 * LENGTH_QUANTUM_OVER_R * radius) & (r > 1e-9) & (cosine < 0.5) & ~excluded[segment_indices]
           & (segment_indices != owners[sample_indices]) & ~own_mask[segment_indices])
     best = np.full(len(points), -1, dtype=np.int64)
     best_r = np.full(len(points), np.inf)
@@ -195,7 +204,9 @@ def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=2000
     own_mask = np.zeros(len(p0), dtype=bool)
     totals = defaultdict(float)
     facing = defaultdict(float)
+    at_2r = defaultdict(float)  # facing length at exactly 2R on the decision grid (not interacting)
     counts = defaultdict(int)
+    quantum = LENGTH_QUANTUM_OVER_R * radius
     flagged_features = defaultdict(set)
     flags = []
     for feature in features:
@@ -213,7 +224,10 @@ def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=2000
         for first in range(0, len(points), batch):
             sl = slice(first, first + batch)
             best, best_r = facing_samples(grid, p0, p1, excluded, points[sl], tangents[sl], owners[sl], own_mask, radius)
-            hit = best >= 0
+            found = best >= 0
+            # Strict less than 2R on the classifier's quantized grid; the rest is exactly 2R.
+            hit = found & (np.round(best_r / quantum) < np.round(2.0 * radius / quantum))
+            at_2r[ftype] += float(weights[sl][found & ~hit].sum())
             if not hit.any():
                 continue
             facing[ftype] += float(weights[sl][hit].sum())
@@ -229,6 +243,7 @@ def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=2000
     by_class = {
         cls: {"Features": counts[cls], "SampledLength": totals[cls], "FacingLength": facing.get(cls, 0.0),
               "FacingFraction": facing.get(cls, 0.0) / totals[cls] if totals[cls] else 0.0,
+              "AtExactly2RLength": at_2r.get(cls, 0.0),
               "FlaggedFeatures": len(flagged_features.get(cls, ()))}
         for cls in sorted(totals)
     }
@@ -240,8 +255,11 @@ def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=2000
         "Manifest": manifest_path, "MatchingRadius": radius, "Spacing": spacing, "SiteRadius": site_radius_over_r * radius,
         "Segments": len(p0), "Features": len(features),
         "ByClass": by_class,
-        "Isolated": {"SampledLength": isolated_total, "FacingLength": isolated_facing, "FacingFraction": isolated_facing / isolated_total if isolated_total else 0.0},
-        "Pairs": {"SampledLength": pair_total, "ThirdEdgeLength": pair_facing, "ThirdEdgeFraction": pair_facing / pair_total if pair_total else 0.0},
+        "Isolated": {"SampledLength": isolated_total, "FacingLength": isolated_facing, "FacingFraction": isolated_facing / isolated_total if isolated_total else 0.0,
+                     "AtExactly2RLength": sum(at_2r.get(c, 0.0) for c in ISOLATED_CLASSES)},
+        "Pairs": {"SampledLength": pair_total, "ThirdEdgeLength": pair_facing, "ThirdEdgeFraction": pair_facing / pair_total if pair_total else 0.0,
+                  "AtExactly2RLength": sum(at_2r.get(c, 0.0) for c in PAIR_CLASSES)},
+        "KnifeEdgeRule": f"strict less than 2R on the grid of {LENGTH_QUANTUM_OVER_R:g} R (the classifier's rule); AtExactly2RLength is the facing length at exactly 2R, not flagged",
         "DistanceHistogram": dict(sorted(histogram.items())),
         "Sites": sites,
         "FlaggedSamples": len(flags),
@@ -267,7 +285,8 @@ def main(argv=None):
         json.dump(result, target, indent=1)
     for cls, row in result["ByClass"].items():
         print(f"{cls}: {row['Features']} features, {row['SampledLength']:.1f} um; {row['FacingLength']:.1f} um ({100 * row['FacingFraction']:.1f}%) "
-              f"{'face another edge' if cls in ISOLATED_CLASSES else 'face a third edge'} within 2R ({row['FlaggedFeatures']} features)")
+              f"{'face another edge' if cls in ISOLATED_CLASSES else 'face a third edge'} within 2R ({row['FlaggedFeatures']} features); "
+              f"{row['AtExactly2RLength']:.1f} um at exactly 2R (not flagged)")
     print(f"isolated: {result['Isolated']['FacingLength']:.1f} / {result['Isolated']['SampledLength']:.1f} um facing; "
           f"pairs: {result['Pairs']['ThirdEdgeLength']:.1f} / {result['Pairs']['SampledLength']:.1f} um with a third edge; "
           f"{len(result['Sites'])} sites; top: {[round(s['Length'], 1) for s in result['Sites'][:10]]}")
