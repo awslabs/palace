@@ -5389,6 +5389,9 @@ IdentificationResult RunGeometryIdentification(
     int count = 1;
     if (feature.type == "IsolatedEdge")
     {
+      // The version-1 isolated-edge record carried {"EdgeCount": 1}; consumers of the derived
+      // Requirements (prepare_surface_response_coupons.plan_from_manifest) read Geometry.
+      geometry_json["EdgeCount"] = 1;
       count = static_cast<int>(feature.portions.size());
     }
     else if (feature.type == "CurvedEdge")

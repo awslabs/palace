@@ -76,7 +76,7 @@ def slug(value):
 
 
 def coupon_signature(requirement):
-    geometry = copy.deepcopy(requirement.get("Geometry", {}))
+    geometry = copy.deepcopy(requirement.get("Geometry") or {})
     if "PlanViewBoundary" in geometry:
         geometry.pop("PlanViewFacets", None)
     return {
@@ -89,7 +89,7 @@ def coupon_signature(requirement):
 
 def coupon_id(requirement):
     topology = requirement["Topology"]
-    geometry = requirement.get("Geometry", {})
+    geometry = requirement.get("Geometry") or {}
     parts = [topology.lower()]
     for key in (
         "Separation",
@@ -212,7 +212,7 @@ def uses_finite_impedance(coupon):
 
 def preparation(requirement, spatial_mesh=SPATIAL_MESH):
     topology = requirement["Topology"]
-    geometry = requirement.get("Geometry", {})
+    geometry = requirement.get("Geometry") or {}
     try:
         require_verified_boundary_conditions(requirement)
     except ValueError as error:
@@ -274,7 +274,9 @@ def plan_from_manifest(
     for requirement in manifest["Requirements"]:
         if not include_matched and requirement.get("Status") != "Missing":
             continue
-        geometry = requirement.get("Geometry", {})
+        # A version-2 record without geometry parameters (an isolated edge) carries null.
+        requirement["Geometry"] = requirement.get("Geometry") or {}
+        geometry = requirement["Geometry"]
         facets = geometry.get("PlanViewFacets")
         boundary = geometry.get("PlanViewBoundary")
         if facets and boundary:
@@ -293,7 +295,7 @@ def plan_from_manifest(
         coupon = {
             "Id": identifier,
             "Topology": requirement["Topology"],
-            "Geometry": requirement.get("Geometry", {}),
+            "Geometry": requirement.get("Geometry") or {},
             "Interfaces": requirement.get("Interfaces", []),
             "BoundaryCondition": requirement.get("BoundaryCondition", {}),
             "DeviceOccurrences": requirement.get("Count", 0),
@@ -2657,10 +2659,12 @@ def main():
     args = parse_args()
     manifest_path = args.manifest.expanduser().resolve()
     manifest = load_json(manifest_path)
-    if manifest.get("Version") != 1 or not isinstance(
+    # Version 2 (geometry identification, SURFACE-RESPONSE-IDENTIFICATION.md (d)) keeps every
+    # version-1 field; its Requirements are derived from the identification features.
+    if manifest.get("Version") not in (1, 2) or not isinstance(
         manifest.get("Requirements"), list
     ):
-        raise ValueError(f"{manifest_path} is not a version-1 requirements manifest")
+        raise ValueError(f"{manifest_path} is not a version-1 or version-2 requirements manifest")
     args.matching_radius = float(manifest["Library"]["MatchingRadius"])
 
     library_path = Path(manifest["Library"]["Path"]).expanduser()
