@@ -2505,9 +2505,18 @@ std::string CanonicalPlanViewBoundary(
       }
     }
 
-    MFEM_VERIFY(std::none_of(counts.begin(), counts.end(),
-                             [](const auto &entry) { return entry.second > 2; }),
-                "Plan-view facets form a nonmanifold surface!");
+    for (const auto &[segment, count] : counts)
+    {
+      MFEM_VERIFY(count <= 2,
+                  "Plan-view facets form a nonmanifold surface (segment ["
+                      << segment.first[0] * tolerance << ", " << segment.first[1] * tolerance
+                      << ", " << segment.first[2] * tolerance << "] - ["
+                      << segment.second[0] * tolerance << ", "
+                      << segment.second[1] * tolerance << ", "
+                      << segment.second[2] * tolerance << "] shared by " << count
+                      << " facets of " << unique_polygons.size() << " in conductor "
+                      << group.first << ")!");
+    }
     std::set<QuantizedSegment3D> boundary;
     for (const auto &[segment, count] : counts)
     {

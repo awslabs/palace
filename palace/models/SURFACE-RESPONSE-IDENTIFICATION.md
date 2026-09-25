@@ -137,24 +137,43 @@ smaller endpoint.
    * a fillet at a corner (radius < R; the run-based rounded-corner rule of item 4, computed
      from the arms' accumulated turn and the tangent distances, hence refinement-invariant)
      is a rounded corner and takes no part in the curvature;
-   * **pairs along bends**: two chains that are not both single straight runs pair when
-     their closest-point separation over the mutually paired intervals (points within 2R of
-     the other chain, not beyond either end of it — the half-plane past a chain end along its
-     outward tangent — and outside the 2R zones of shared vertices) is constant within
+   * **pairs along bends**: two chains that are not both single straight runs are a
+     constant-separation pair when their closest-point separation over the mutually paired
+     intervals (points within the candidate reach `PairCandidateReachOverR` = 2 (1 + 0.05) R
+     of the other chain, not beyond either end of it — the half-plane past a chain end along
+     its outward tangent — and outside the 2R zones of shared vertices) is constant within
      `PairSeparationToleranceRelative` = 0.05 of the minimum (a polyline of sub-corner turns
      at constant width varies by at most 1 / cos(15 deg) - 1 = 3.5 %; the pair response
-     sensitivity d dR/dd is O(1)). The pair claims both chains and is split by curvature
+     sensitivity d dR/dd is O(1)). **Whether the pair interacts is decided at the chain
+     level on the separation of the underlying curves** (`PairSeparationEstimate`), so that
+     the discretisation never changes the classification: the chords of a polyline inscribed
+     in a curve lie inside it (sagitta c^2 / (8 rho); two concentric inscribed polylines are
+     w cos(turn / 2) apart mid-chord and exactly w apart at their vertices), while the exact
+     offset polyline of a bent path keeps corresponding chords at the design separation and
+     the outer side's samples near the joints project onto the inner vertices at up to
+     w / cos(turn / 2). In both constructions the sampled closest-point distance from one
+     chain to the other reaches the curve separation w as its maximum on the side whose
+     maximum is smaller: separation = min over the two directions of the maximum sampled
+     distance (the samples include the run ends, i.e. the vertices; 16 per piece). The pair
+     interacts iff separation < 2R on the quantized grid — the same strict-less decision as
+     a straight parallel pair at that separation (item (c)): a CPW gap of exactly 2R along a
+     bend is isolated edges like a straight one (DS-SCT-001's 4 um gaps at R = 2 um dipped to
+     3.9999 mid-chord along its 250 um bends and had formed three clusters of 874-1,184 edges
+     claiming every strip). An interacting pair claims both chains and is split by curvature
      class: the straight-like pieces form a `SameConductorStrip` / `SameConductorGap` /
-     `DifferentConductorGap` (separation = length-weighted mean closest-point distance on the
-     signature grid), the curved pieces a `CurvedSameConductorStrip` / `CurvedSameConductorGap`
-     / `CurvedDifferentConductorGap` with `RadiusOverR` = the tightest windowed radius of the
-     two sides (the inner side of concentric arcs). Portions described by a pair along a bend
-     are not events, so the concentric chords of a bend no longer form a spatial cluster and
+     `DifferentConductorGap` (separation = the pair separation above on the signature grid,
+     one value per chain pair), the curved pieces a `CurvedSameConductorStrip` /
+     `CurvedSameConductorGap` / `CurvedDifferentConductorGap` with `RadiusOverR` = the
+     tightest windowed radius of the two sides (the inner side of concentric arcs). The
+     cross-chord interactions of a constant-separation pair are never events, whether or not
+     it interacts, so the concentric chords of a bend never form a spatial cluster and
      nothing is omitted as "nonparallel". Chains whose separation is not constant (acute
      corner arms, tapers) keep the event rule of item 3. Two single straight runs keep the
      translational rule of item 2 (exactly parallel or events).
    Limitations recorded: a slowly tapering pair (separation drift > 5 % over the paired
-   interval) is a cluster, as before; the joint between a straight lead and a coarse polyline
+   interval) is a cluster, as before, and so is a pair whose separation is constant over most
+   of its length but not all (the constancy test is per chain pair; along its bends such a
+   pair at exactly 2R would again dip into events); the joint between a straight lead and a coarse polyline
    arc is intrinsically ambiguous (its turn is spread over the adjacent half-chords, so up to
    half a lead may join the curved class at coarse discretisations — classes are
    discretisation-independent, lengths are not); a chain pair with two bends of different
@@ -190,7 +209,12 @@ smallest serialisation is the signature, and the handedness that produced it is 
 `Chirality` (+1 / -1; 0 when both handedness values reach the minimal serialisation, i.e. the
 cluster is its own mirror image). A mirror image yields the same signature with the opposite
 chirality; a rotated or translated copy yields the same signature and chirality. Symmetric
-clusters tie between equivalent frames and produce the same string. This replaces the representative-event site
+clusters tie between equivalent frames and produce the same string. Cost recorded (phase 3,
+PENDING): the frame search serialises the cluster once per distinct portion direction — O(directions x
+portions log portions) JSON serialisations — so a cluster of ~1,000 edges with ~1,000 distinct
+directions (DS-SCT-001 before the pair-along-bend fix) took ~290 s; chip-scale clusters need a bounded
+frame rule (e.g. candidates restricted to the frames minimising the first serialised entry, an exact
+pruning of the same lexicographic rule). This replaces the representative-event site
 (first closest pair in candidate order), the exhaustive spatial closure (4 x 2R merging) and the
 "nonparallel" omission of the legacy classifier.
 
@@ -232,6 +256,8 @@ matching pass). The new top-level `Identification` object carries the contract:
                   "SignatureLengthQuantumOverR": 1e-6, "SignatureAngleQuantumDegrees": 1e-6,
                   "StraightBendRadiusOverR": 10, "CurvatureWindowOverR": 1,
                   "PairSeparationToleranceRelative": 0.05, "PairSeparationSamplesPerInterval": 16,
+                  "PairSeparationEstimate": "min over the two chains of the maximum sampled closest-point distance to the other chain (the curve separation at the vertices); interacting iff < 2R",
+                  "PairCandidateReachOverR": 2.1,
                   "Comparison": "strict less on the quantized grid"},
   "ReferenceProcessNormal": [nx, ny, nz],
   "Features": [ {"Id": k, "Type": "...", "Signature": {...}, "Hash": "sha256", "Chirality": +-1,

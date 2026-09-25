@@ -1047,27 +1047,41 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   }
 
   // (7) Retained faces: the rank-local facets (with their global component) and the
-  // global deduplicated faces.
+  // global deduplicated faces. A rank retains every distinct geometric face it owns once,
+  // with the canonical (global) vertex coordinates, so that the crack copies and duplicate
+  // boundary elements of one face — whose own vertex coordinates differ by roundoff — are
+  // one facet with identical coordinates on every rank (the plan-view canonicalisation
+  // deduplicates facets on a 1e-9 R grid).
   if (surface.retain_faces)
   {
+    std::set<std::size_t> retained;
     for (auto &loop : local_loops)
     {
       MetalSurfaceFace face;
-      std::vector<std::size_t> key(loop.size());
+      std::vector<std::size_t> canonical(loop.size());
       for (std::size_t i = 0; i < loop.size(); i++)
       {
-        key[i] = CanonicalPoint(loop[i]);
+        canonical[i] = CanonicalPoint(loop[i]);
       }
+      std::vector<std::size_t> key = canonical;
       std::sort(key.begin(), key.end());
       key.erase(std::unique(key.begin(), key.end()), key.end());
       const auto entry = face_by_vertices.find(key);
       MFEM_VERIFY(entry != face_by_vertices.end(),
                   "A local metal boundary face is missing from the global metal surface!");
+      if (!retained.insert(entry->second).second)
+      {
+        continue;
+      }
       face.component = face_component[entry->second];
       face.attribute = faces[entry->second].attribute;
       face.normal = faces[entry->second].normal;
       face.on_bounding_box = faces[entry->second].on_bounding_box;
-      face.vertices = std::move(loop);
+      face.vertices.reserve(canonical.size());
+      for (const std::size_t c : canonical)
+      {
+        face.vertices.push_back(canonical_points[c]);
+      }
       result.surface_faces.push_back(std::move(face));
     }
   }

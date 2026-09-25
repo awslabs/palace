@@ -118,6 +118,35 @@ embedded sheets, mesh preparation):
   conductor is the sheet (connectivity), `gap-same-*` are slots in one U-shaped sheet, and the
   off-plane exclusions (facing sheets, walls) are computed analytically (`A6-excluded-classes`).
 * `StraightBendRadiusOverR` = 10 (decision 75; phase 2 used 20).
+* **Pairs along bends decided on the curve separation** (`PairSeparationEstimate`): the
+  separation of two constant-separation chains is the smaller of the two directional maxima of
+  the sampled closest-point distance (an inscribed polyline meets its curve at the vertices; an
+  exact offset polyline keeps corresponding chords at the design separation), the pair
+  interacts iff that separation is below 2R on the quantized grid — the straight-pair answer at
+  every discretisation — the candidate facing region is 2R (1 + 0.05) (`PairCandidateReachOverR`),
+  and the cross-chord interactions of a constant-separation pair are never event cores whether
+  or not it interacts. Found on DS-SCT-001: its 4 um CPW gaps (= 2R) dipped to 3.9999 mid-chord
+  along the 250 um bends and formed three clusters of 874-1,184 edges (1.5-3.2 mm) claiming
+  every strip. Synthetic `gap-bend-r{50,250}-{2R,2Rminus,2Rplus}-step{1,5,15}` (18 layouts: two
+  concentric 8 um bars with a gap of 2R and 2R +/- 1e-3 R): oracle = the straight-pair answer
+  (2R and 2R + 1e-3 R: isolated edges, no cluster, no pair; 2R - 1e-3 R: one
+  `DifferentConductorGap` and the two corner pairs across the gap as clusters); the oracle's
+  corner pairs are strictly within 2R (the classifier's quantized decision); `arc_bar(...,
+  centre_y=...)` builds concentric bars.
+* **Legacy pair construction** (`surfaceresponseoperator.cpp` `VerifyParallelOverlap`): the
+  parallel-overlap verification tolerance follows the parallel class (cosine deficit 1e-8 =
+  sqrt(2e-8) rad times the projected lengths) instead of 1e-10 relative; DS-SCT-001 aborted on
+  190 CPW chord pairs 3e-5 to 1e-4 rad apart.
+* **Mesh preparation, DS-SCT-001**: `tag_metal_components.py --drop-metal-duplicates` (16 port
+  triangles duplicating metal faces; ground attr 4 + island attr 9), then `preflight_matrix
+  --frame-normal 0 0 1` because the L1 metal has the substrate volume (attr 1, z in [-525, 5] um)
+  on both sides (without it every sheet segment is an `UndeterminedProcessSide` record).
+* **Survey findings recorded (PENDING)**: `CanonicalClusterSignature` serialises a cluster once
+  per distinct portion direction (~290 s on the 1,184-edge DS-SCT-001 cluster before the fix;
+  chip-scale clusters need a bounded frame rule); DS-SCT-001 A1 vertex census: the audit reads
+  29 rounded runs on the BSpline chords, the manifest 18 `RoundedCorner` vertices (the audit's
+  rounded-run reading and the classifier's fillet rule disagree on 11 sub-R chord runs with
+  total turns 11-80 deg).
 Phase-3 results: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/phase3/REPORT.md`;
 block summary: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/SUMMARY.md`.
 
