@@ -164,15 +164,20 @@ class OracleTest(unittest.TestCase):
         for radius, sweep in [(50.0, 45.0), (250.0, 15.0)]:
             for step in [1.0, 5.0, 15.0]:
                 for gap, interacting in [(4.0, False), (3.998, True), (4.002, False)]:
-                    inner = S.arc_bar(8.0, radius, sweep, step)
-                    outer = S.arc_bar(8.0, radius + 8.0 + gap, sweep, step, centre_y=radius)
+                    inner = S.arc_bar(8.0, radius, sweep, step, offset=0.5 * gap + 4.0)
+                    outer = S.arc_bar(8.0, radius, sweep, step, offset=-0.5 * gap - 4.0)
                     lay = S.layout("gap", [S.sheet(S.GROUND, inner), S.sheet(S.GROUND, outer)], half_x=400.0, half_y=400.0, bend={"Radius": radius, "Width": 8.0, "Gap": gap})
                     orc = S.oracle(lay)
-                    gap_records = [r for r in orc["BentPairs"] if abs(r["Separation"] - gap) < 1.0e-9]
+                    # The gap pair is the record with the many constant samples (the bar ends
+                    # against the long sides give a few trivially constant samples each).
+                    gap_records = [r for r in orc["BentPairs"] if r["ConstantSamples"] > 16]
                     self.assertEqual(len(gap_records), 1, (radius, step, gap))
                     record = gap_records[0]
                     self.assertEqual(record["Interacting"], interacting, (radius, step, gap))
-                    self.assertLess(record["MinSeparation"], gap) if step > 1.0 else None
+                    if interacting:
+                        # Mean over the interacting samples: the design gap (the offset polylines'
+                        # facing chords are exactly parallel at the gap).
+                        self.assertAlmostEqual(record["Separation"], gap, places=9)
                     self.assertEqual(record["ExpectedClasses"], ["DifferentConductorGap"] if interacting else [])
                     self.assertTrue(all(not r["Interacting"] for r in orc["BentPairs"] if r is not record))
                     self.assertEqual(orc["CornerPairsWithin2R"], 2 if interacting else 0)
@@ -188,6 +193,30 @@ class OracleTest(unittest.TestCase):
         lay = S.layout("corner", [S.sheet(S.GROUND, S.bent_bar(6.0, 16.0, 30.0))])
         orc = S.oracle(lay)
         self.assertEqual(orc["BentPairs"], [])
+
+    def test_divergent_ends_and_tapers_follow_the_local_constancy_rule(self):
+        # Local constancy (window R): the CPW gap pairs of the tee and port layouts are pairs
+        # up to their ends (the T is a cluster on each side), a slow taper (5 % over 20 R) is
+        # one pair read locally (mean separation between its ends), a fast taper (80 deg) is
+        # events only.
+        layouts = {lay["Name"]: lay for lay in S.stress_suite()}
+        for name in ("cpw-tee-r50-step5", "cpw-port-r50-step15"):
+            orc = S.oracle(layouts[name])
+            pairs = [r for r in orc["BentPairs"] if r["Interacting"]]
+            self.assertEqual(len(pairs), 2, name)
+            for r in pairs:
+                self.assertAlmostEqual(r["Separation"], 3.0, places=6)
+                self.assertEqual(r["ExpectedClasses"], ["DifferentConductorGap"])
+        slow = S.oracle(layouts["taper-slow"])
+        pairs = [r for r in slow["BentPairs"] if r["Interacting"]]
+        self.assertEqual(len(pairs), 1)
+        self.assertGreater(pairs[0]["Separation"], 3.0)
+        self.assertLess(pairs[0]["Separation"], 3.15)
+        self.assertEqual(pairs[0]["ExpectedClasses"], ["DifferentConductorGap"])
+        fast = S.oracle(layouts["taper-fast"])
+        self.assertFalse(any(r["Interacting"] for r in fast["BentPairs"]))
+        self.assertEqual(fast["CornerPairsWithin2R"], 0)
+        self.assertEqual(fast["StandaloneCornerCount"], 6)  # the converging corner and its neighbour join the cluster
 
     def test_facing_layer_and_wall_are_excluded_classes(self):
         lay = S.layout("facing", [S.sheet(S.GROUND, S.rectangle(-10.0, -6.0, 10.0, 6.0)), S.sheet(S.GROUND, S.rectangle(-10.0, -6.0, 10.0, 6.0), z=3.0)], walls=[(S.GROUND, 0.0, -6.0, 0.0, 6.0, 4.0)])
@@ -227,7 +256,7 @@ class SpecificationTest(unittest.TestCase):
         layouts = S.stress_suite()
         names = [lay["Name"] for lay in layouts]
         self.assertEqual(len(names), len(set(names)))
-        for prefix, count in (("gap-same-", 9), ("gap-different-", 9), ("strip-", 9), ("corner-", 10), ("hole-", 3), ("arc-", 12), ("gap-bend-", 18)):
+        for prefix, count in (("gap-same-", 9), ("gap-different-", 9), ("strip-", 9), ("corner-", 10), ("hole-", 3), ("arc-", 12), ("gap-bend-", 18), ("cpw-tee-", 2), ("cpw-port-", 2), ("taper-", 3)):
             self.assertEqual(sum(1 for n in names if n.startswith(prefix)), count, prefix)
         for name in ("tee-stem3", "tee-stem6", "cross-arm3", "edge-to-boundary", "island-3x3", "taper-10", "facing-layers", "vertical-wall", "island-rounded-8x6", "aperture-rounded-8x6"):
             self.assertIn(name, names)

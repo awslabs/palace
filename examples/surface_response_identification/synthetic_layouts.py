@@ -121,31 +121,37 @@ def bent_bar(width, arm, interior_angle_degrees):
     return loop([tuple(p) for p in points])
 
 
-def arc_bar(width, radius, sweep_degrees, step_degrees, lead=6.0, centre_y=None):
+def arc_bar(width, radius, sweep_degrees, step_degrees, lead=6.0, offset=0.0, lead_end=None, tee=None):
     """A bar following a circular arc discretised as a polyline with the given turning angle
-    per vertex, with straight leads at both ends; the arc centre is (0, centre_y), by default
-    (0, radius) so that the bar starts at the origin (concentric bars share centre_y)."""
+    per vertex, with straight leads at both ends. offset shifts the bar across the centreline:
+    it occupies the offsets [offset - width / 2, offset + width / 2] of the centreline polyline
+    (positive = left = towards the arc centre); two bars of opposite offsets about one
+    centreline face each other across a gap whose chords are exactly parallel at the design
+    separation, like an offset path. lead_end is the length of the end lead (default lead);
+    tee = (bar_length, bar_width) ends the bar in a perpendicular cross-bar (a T junction)."""
     steps = max(1, int(round(sweep_degrees / step_degrees)))
     step = math.radians(sweep_degrees) / steps
     h = 0.5 * width
-    centre = np.array([0.0, radius if centre_y is None else centre_y])
+    centre = np.array([0.0, radius])
+    lead_end = lead if lead_end is None else lead_end
     centreline = [centre + radius * np.array([math.sin(k * step), -math.cos(k * step)]) for k in range(steps + 1)]
     d_start = np.array([1.0, 0.0])
     d_end = np.array([math.cos(steps * step), math.sin(steps * step)])
-    centreline = [centreline[0] - lead * d_start, *centreline, centreline[-1] + lead * d_end]
+    centreline = [centreline[0] - lead * d_start, *centreline, centreline[-1] + lead_end * d_end]
     # Offset polyline by +-h using the vertex bisector normals (exact offset of the polyline).
-    def offset(sign):
+    def offset_polyline(sign):
+        distance = offset + sign * h
         result = []
         n = len(centreline)
         for i, p in enumerate(centreline):
             if i == 0:
                 d = centreline[1] - p
                 normal = np.array([-d[1], d[0]]) / np.linalg.norm(d)
-                result.append(p + sign * h * normal)
+                result.append(p + distance * normal)
             elif i == n - 1:
                 d = p - centreline[i - 1]
                 normal = np.array([-d[1], d[0]]) / np.linalg.norm(d)
-                result.append(p + sign * h * normal)
+                result.append(p + distance * normal)
             else:
                 d0 = p - centreline[i - 1]
                 d1 = centreline[i + 1] - p
@@ -153,12 +159,20 @@ def arc_bar(width, radius, sweep_degrees, step_degrees, lead=6.0, centre_y=None)
                 n1 = np.array([-d1[1], d1[0]]) / np.linalg.norm(d1)
                 b = n0 + n1
                 b /= np.linalg.norm(b)
-                result.append(p + sign * (h / (b @ n0)) * b)
+                result.append(p + (distance / (b @ n0)) * b)
         return result
 
-    right = offset(-1.0)
-    left = offset(1.0)
-    return loop([tuple(p) for p in right + left[::-1]])
+    right = offset_polyline(-1.0)
+    left = offset_polyline(1.0)
+    if tee is None:
+        return loop([tuple(p) for p in right + left[::-1]])
+    # T junction: a cross-bar of the given length and width across the end of the bar,
+    # perpendicular to the end lead (the bar's right side runs into the cross-bar's right arm).
+    bar_length, bar_width = tee
+    end = centreline[-1] + offset * np.array([-d_end[1], d_end[0]])
+    n_end = np.array([-d_end[1], d_end[0]])  # left normal of the end lead
+    cross = [end - 0.5 * bar_length * n_end, end - 0.5 * bar_length * n_end + bar_width * d_end, end + 0.5 * bar_length * n_end + bar_width * d_end, end + 0.5 * bar_length * n_end]
+    return loop([tuple(p) for p in right + cross + left[::-1]])
 
 
 def trapezoid(bottom_width, top_width, height):
@@ -236,20 +250,39 @@ def stress_suite():
         for step in [1.0, 5.0, 15.0]:
             for gap_tag, gap in [("2R", 2.0 * RADIUS), ("2Rminus", 2.0 * RADIUS - 1.0e-3 * RADIUS), ("2Rplus", 2.0 * RADIUS + 1.0e-3 * RADIUS)]:
                 width = 8.0
-                outer_radius = radius + width + gap
-                extent = outer_radius * math.sin(math.radians(sweep)) + 12.0
+                extent = (radius + 0.5 * gap + width) * math.sin(math.radians(sweep)) + 12.0
                 half = max(30.0, math.ceil(extent + 4.0))
                 lc = 1.0 if radius < 100 else 2.0
+                # Both bars are offsets of the gap's centreline (radius): the facing edges are
+                # exactly parallel chords at the design gap along the bend (an offset path).
                 layouts.append(
                     layout(
                         f"gap-bend-r{radius:g}-{gap_tag}-step{step:g}",
-                        [sheet(GROUND, arc_bar(width, radius, sweep, step)), sheet(GROUND, arc_bar(width, outer_radius, sweep, step, centre_y=radius))],
+                        [sheet(GROUND, arc_bar(width, radius, sweep, step, offset=0.5 * gap + 0.5 * width)), sheet(GROUND, arc_bar(width, radius, sweep, step, offset=-0.5 * gap - 0.5 * width))],
                         half_x=half, half_y=half, lc_fine=lc, lc_far=max(6.0, half / 5.0),
                         notes=f"two concentric 8 um bars with a gap of {gap:g} ({gap_tag}) along a polyline arc of radius {radius}, sweep {sweep} deg, {step} deg per vertex: the straight-pair answer at every discretisation",
                         bend={"Radius": radius, "Width": width, "Gap": gap},
                     )
                 )
     layouts.append(layout("taper-10", [sheet(GROUND, trapezoid(24.0, 24.0 - 2.0 * 20.0 * math.tan(math.radians(10.0)), 20.0))], notes="trapezoid with two 10 deg taper edges: corners 80 and 100 deg"))
+    # Pairs along bends with divergent ends (the local constancy rule): an 8 um centre bar on a
+    # 50 um bend with two 8 um flanks at a 3 um gap, ending in a T junction (the flanks stop
+    # 3 um before the cross-bar: the gap pairs end there, the T is a cluster on each side) and
+    # ending at a port cut (every bar reaches the truncation box). Tapers: a slow one (gap
+    # 3.0 -> 3.15 um, 5 % over 20 R: locally constant, one pair) and a fast one (a bar at 80
+    # deg converging to 1 um: events, a cluster, no pair).
+    for step in [5.0, 15.0]:
+        centre = arc_bar(8.0, 50.0, 90.0, step, lead=6.0, lead_end=9.0, tee=(40.0, 6.0))
+        flanks = [arc_bar(8.0, 50.0, 90.0, step, lead=6.0, lead_end=6.0, offset=sign * (3.0 + 8.0)) for sign in (1.0, -1.0)]
+        layouts.append(layout(f"cpw-tee-r50-step{step:g}", [sheet(GROUND, centre), sheet(GROUND, flanks[0]), sheet(GROUND, flanks[1])], half_x=84.0, half_y=90.0, lc_fine=1.0, lc_far=12.0, notes=f"8 um centre bar on a 50 um bend ({step} deg per vertex) with 8 um flanks at a 3 um gap ending in a T junction: gap pairs along the bend; each flank end has two corners 3 um below the cross-bar (its side edges meet the cross-bar's bottom edge at 90 deg): two clusters per side", bend={"Radius": 50.0, "Width": 8.0, "Gap": 3.0, "Clusters": 4}))
+        half = 60.0
+        port = [arc_bar(8.0, 50.0, 45.0, step, lead=half, lead_end=6.0, offset=o) for o in (0.0, 11.0, -11.0)]
+        layouts.append(layout(f"cpw-port-r50-step{step:g}", [sheet(GROUND, p) for p in port], half_x=half, half_y=half, lc_fine=1.0, lc_far=12.0, notes=f"8 um centre bar on a 50 um bend ({step} deg per vertex) with 8 um flanks at a 3 um gap, every bar cut by the truncation box at x = -{half:g} (a port cut): gap pairs up to the cut", bend={"Radius": 50.0, "Width": 8.0, "Gap": 3.0}))
+    layouts.append(layout("taper-slow", [sheet(GROUND, rectangle(-20.0, -8.0, 20.0, -2.0)), sheet(GROUND, loop([(-20.0, 1.0), (20.0, 1.15), (20.0, 7.15), (-20.0, 7.0)]))], notes="two 6 um bars whose gap tapers from 3.0 to 3.15 um over 40 um (5 % over 20 R): locally constant, one DifferentConductorGap; the bar ends face each other (two corner-pair clusters)", bend={"Gap": 3.075, "Clusters": 2}))
+    d80 = np.array([math.cos(math.radians(80.0)), math.sin(math.radians(80.0))])
+    n80 = np.array([-d80[1], d80[0]])
+    p0 = np.array([10.0, -1.0])
+    layouts.append(layout("taper-fast", [sheet(GROUND, rectangle(-20.0, -6.0, 20.0, -2.0)), sheet(GROUND, loop([tuple(p0), tuple(p0 + 20.0 * d80), tuple(p0 + 20.0 * d80 + 4.0 * n80), tuple(p0 + 4.0 * n80)]))], notes="a 4 um bar at 80 deg converging to 1 um above a straight bar: no constant separation, a cluster at the convergence (the bar's corner within 2R of the straight edge), no pair", bend={"Clusters": 1}))
     layouts.append(layout("facing-layers", [sheet(GROUND, rectangle(-10.0, -6.0, 10.0, 6.0)), sheet(GROUND, rectangle(-10.0, -6.0, 10.0, 6.0), z=3.0)], notes="two facing metal sheets 3 um apart in one PEC attribute: cross-layer class, excluded by decision 73(3)"))
     layouts.append(layout("vertical-wall", [sheet(GROUND, rectangle(-10.0, -6.0, 10.0, 6.0))], walls=[(GROUND, 0.0, -6.0, 0.0, 6.0, 4.0)], notes="a vertical metal wall standing across the sheet: non-planar and non-manifold classes"))
     layouts.append(layout("island-rounded-8x6", [sheet(GROUND, rounded_rectangle(4.0, 3.0, 0.5))], half_x=12.0, half_y=12.0, depth=8.0, height=8.0, lc_fine=0.25, lc_far=2.0, notes="survey geometry 2: 8 x 6 um island with 0.5 um fillets (perimeter 24 + pi)"))
@@ -343,23 +376,83 @@ def _polyline_distance(points, edges):
     return result
 
 
-def design_bent_pairs(all_edges, corner_points, radius, samples=200):
-    """Pairs along bends (SURFACE-RESPONSE-IDENTIFICATION.md (b) 7): two chains that are not
-    both single straight edges whose closest-point separation over the mutually paired
-    intervals (within the candidate reach 2R (1 + tolerance), not beyond either chain's ends,
-    outside the 2R zones of shared vertices) is constant within PAIR_SEPARATION_TOLERANCE.
-    The pair's separation is that of the underlying curves — the smaller of the two
-    directional maxima of the sampled closest-point distance (the samples include the
-    vertices) — and it interacts iff that separation is within 2R, like a straight pair; a
-    non-interacting constant-separation pair still claims its chord-level interactions (no
-    event cores). Returns {(rootA, rootB): stats}."""
+def _chain_order(all_edges, members):
+    """Edges of one chain ordered along the chain with their orientation, start position and
+    whether the chain bends at either of the edge's joints: [(edge index, forward, x_start,
+    bent)], walking from an end (or anywhere on a closed chain)."""
+    key = lambda p: (round(float(p[0]), 9), round(float(p[1]), 9))
+    incident = {}
+    for i in members:
+        for p in (all_edges[i]["Start"], all_edges[i]["End"]):
+            incident.setdefault(key(p), []).append(i)
+    ends = [k for k, v in incident.items() if len(v) == 1]
+    start_vertex = ends[0] if ends else key(all_edges[members[0]]["Start"])
+    order = []
+    used = set()
+    vertex = start_vertex
+    x = 0.0
+    while True:
+        candidates = [i for i in incident.get(vertex, []) if i not in used]
+        if not candidates:
+            break
+        i = candidates[0]
+        used.add(i)
+        e = all_edges[i]
+        forward = key(e["Start"]) == vertex
+        order.append([i, forward, x, False])
+        x += float(e["Length"])
+        vertex = key(e["End"] if forward else e["Start"])
+        if vertex == start_vertex:
+            break
+    # A joint bends when the consecutive tangents are not collinear (the windowed curvature is
+    # then nonzero on both adjacent edges).
+    for k in range(len(order) - (0 if order and vertex == start_vertex and len(order) > 1 else 1)):
+        i, j = order[k][0], order[(k + 1) % len(order)][0]
+        if abs(float(all_edges[i]["Tangent"] @ all_edges[j]["Tangent"])) < 1.0 - 1.0e-9:
+            order[k][3] = True
+            order[(k + 1) % len(order)][3] = True
+    return [tuple(o) for o in order]
+
+
+def _closest_on_chain(points, all_edges, order):
+    """Closest-point distance from every point to an ordered chain, with the chain position of
+    the foot and the length of the edge carrying it."""
+    best = np.full(len(points), np.inf)
+    foot_x = np.zeros(len(points))
+    foot_chord = np.zeros(len(points))
+    for i, forward, x0, bent in order:
+        e = all_edges[i]
+        d = e["End"] - e["Start"]
+        t = np.clip(((points - e["Start"]) @ d) / float(d @ d), 0.0, 1.0)
+        feet = e["Start"][None, :] + t[:, None] * d[None, :]
+        dist = np.linalg.norm(points - feet, axis=1)
+        better = dist < best
+        best[better] = dist[better]
+        along = t if forward else 1.0 - t
+        foot_x[better] = x0 + along[better] * float(e["Length"])
+        foot_chord[better] = float(e["Length"]) if bent else 0.0  # window half-width source: chord where the chain bends, else R
+    return best, foot_x, foot_chord
+
+
+def design_bent_pairs(all_edges, corner_points, radius, samples=None):
+    """Pairs along bends (SURFACE-RESPONSE-IDENTIFICATION.md (b) 7, phase 3): two chains that
+    are not both single straight edges pair where their closest-point separation is LOCALLY
+    constant. Every chain is sampled (at most R / 2 apart, at least 17 per edge) over its
+    candidate facing region (within the reach 2R (1 + tolerance) of the other chain, not
+    beyond either of its ends, outside the 2R zones of shared vertices); a sample is constant
+    when the distances within R of it along its own chain vary by at most the tolerance; its
+    curve separation is the smaller of the two directional maxima over windows of half-width
+    max(R, local chord) where the chain bends and R on straight edges, about the sample and
+    about its foot; it interacts iff that separation
+    is within 2R (the straight-pair answer). Constant portions claim their chord-level
+    interactions (no event cores); the rest (tees, port ends, fast tapers, acute arms) keep
+    the event rule. Returns {(rootA, rootB): stats with the constant sample points}."""
     roots, shared_vertices = design_chains(all_edges, corner_points)
     chains = {}
     for i, r in enumerate(roots):
         chains.setdefault(r, []).append(i)
     interaction = 2.0 * radius - 0.5 * 1.0e-8 * radius
     reach = 2.0 * radius * (1.0 + PAIR_SEPARATION_TOLERANCE) - 0.5 * 1.0e-8 * radius
-    ts = np.linspace(0.0, 1.0, samples + 1)
 
     def chain_ends(members):
         # Vertices used by exactly one edge of the chain, with the outward tangent.
@@ -372,38 +465,75 @@ def design_bent_pairs(all_edges, corner_points, radius, samples=200):
                     ends.append((point, outward))
         return ends
 
-    def paired_distances(members_a, members_b, ends_b, shared):
-        distances = []
-        edges_b = [all_edges[j] for j in members_b]
-        for i in members_a:
-            a = all_edges[i]
-            pa = a["Start"][None, :] + ts[:, None] * (a["End"] - a["Start"])[None, :]
-            d = _polyline_distance(pa, edges_b)
-            keep = d < reach
-            for point, outward in ends_b:
-                keep &= ((pa - point) @ outward) <= 0.0
-            for v in shared:
-                keep &= np.linalg.norm(pa - v, axis=1) >= interaction
-            distances.extend(d[keep].tolist())
-        return distances
+    def facing_samples(order_a, order_b, ends_b, shared):
+        # Samples of chain A within the reach of chain B: (point, x, own chord, distance, foot x, foot chord).
+        points, xs, chords = [], [], []
+        for i, forward, x0, bent in order_a:
+            e = all_edges[i]
+            n = max(16, int(math.ceil(2.0 * float(e["Length"]) / radius)))
+            ts = np.linspace(0.0, 1.0, n + 1)
+            pa = e["Start"][None, :] + ts[:, None] * (e["End"] - e["Start"])[None, :]
+            along = ts if forward else 1.0 - ts
+            points.append(pa)
+            xs.append(x0 + along * float(e["Length"]))
+            chords.append(np.full(len(ts), float(e["Length"]) if bent else 0.0))
+        points = np.concatenate(points)
+        xs = np.concatenate(xs)
+        chords = np.concatenate(chords)
+        d, foot_x, foot_chord = _closest_on_chain(points, all_edges, order_b)
+        keep = d < reach
+        for point, outward in ends_b:
+            keep &= ((points - point) @ outward) <= 0.0
+        for v in shared:
+            keep &= np.linalg.norm(points - v, axis=1) >= interaction
+        return points[keep], xs[keep], chords[keep], d[keep], foot_x[keep], foot_chord[keep]
+
+    def window_max(xs, d, centre, half):
+        sel = (xs >= centre - half) & (xs <= centre + half)
+        return (float(d[sel].max()), float(d[sel].min())) if sel.any() else (0.0, np.inf)
 
     result = {}
     rs = sorted(chains)
     for ia, ra in enumerate(rs):
         for rb in rs[ia + 1 :]:
             ma, mb = chains[ra], chains[rb]
-            if len(ma) == 1 and len(mb) == 1:
-                continue
+            if len(ma) == 1 and len(mb) == 1 and abs(float(all_edges[ma[0]]["Tangent"] @ all_edges[mb[0]]["Tangent"])) >= 1.0 - 1.0e-8:
+                continue  # two exactly parallel straight edges: the translational rule
             shared = [v for (i, j), vs in shared_vertices.items() if roots[i] != roots[j] and {roots[i], roots[j]} == {ra, rb} for v in vs]
-            da = paired_distances(ma, mb, chain_ends(mb), shared)
-            db = paired_distances(mb, ma, chain_ends(ma), shared)
-            if not da or not db:
+            order_a, order_b = _chain_order(all_edges, ma), _chain_order(all_edges, mb)
+            sa = facing_samples(order_a, order_b, chain_ends(mb), shared)
+            sb = facing_samples(order_b, order_a, chain_ends(ma), shared)
+            if len(sa[0]) == 0 or len(sb[0]) == 0:
                 continue
-            lo, hi = min(da + db), max(da + db)
-            if hi - lo > PAIR_SEPARATION_TOLERANCE * lo:
+            constant_points, interacting_points, separations = [], [], []
+            for own, other in ((sa, sb), (sb, sa)):
+                points, xs, chords, d, foot_x, foot_chord = own
+                for k in range(len(points)):
+                    hi, lo = window_max(xs, d, xs[k], radius)
+                    constant = hi - lo <= PAIR_SEPARATION_TOLERANCE * lo * (1.0 + 1.0e-9)
+                    if not constant:
+                        continue
+                    w_own, _ = window_max(xs, d, xs[k], max(radius, chords[k]))
+                    w_other, _ = window_max(other[1], other[3], foot_x[k], max(radius, foot_chord[k]))
+                    w = min(w_own, w_other) if w_other > 0.0 else w_own
+                    constant_points.append(points[k])
+                    if within_interaction(w, radius):
+                        interacting_points.append(points[k])
+                        separations.append(w)
+            if not constant_points:
                 continue
-            separation = min(max(da), max(db))
-            result[(ra, rb)] = {"MinSeparation": lo, "MaxSeparation": hi, "MeanSeparation": float(np.mean(da + db)), "Separation": separation, "Interacting": within_interaction(separation, radius), "EdgesA": len(ma), "EdgesB": len(mb)}
+            result[(ra, rb)] = {
+                "ConstantSamples": len(constant_points),
+                "InteractingSamples": len(interacting_points),
+                "Samples": len(sa[0]) + len(sb[0]),
+                "Interacting": bool(interacting_points),
+                "Separation": float(np.mean(separations)) if separations else None,
+                "MinSeparation": float(min(separations)) if separations else None,
+                "MaxSeparation": float(max(separations)) if separations else None,
+                "EdgesA": len(ma),
+                "EdgesB": len(mb),
+                "ConstantPoints": np.array(constant_points),
+            }
     return result
 
 
@@ -419,15 +549,13 @@ def design_event_cores(all_edges, corner_points, radius, samples=200, bent_pairs
     def find(i):
         return roots[i]
 
-    bent = set(bent_pairs or {})
+    bent = bent_pairs or {}
     interaction = 2.0 * radius - 0.5 * 1.0e-8 * radius
     cores = []
     ts = np.linspace(0.0, 1.0, samples + 1)
     for i in range(n):
         for j in range(n):
             if i == j or find(i) == find(j):
-                continue
-            if (min(find(i), find(j)), max(find(i), find(j))) in bent:
                 continue
             a, b = all_edges[i], all_edges[j]
             if abs(float(a["Tangent"] @ b["Tangent"])) >= 1.0 - 1.0e-8:
@@ -437,6 +565,14 @@ def design_event_cores(all_edges, corner_points, radius, samples=200, bent_pairs
             pa = a["Start"][None, :] + ts[:, None] * (a["End"] - a["Start"])[None, :]
             pb = b["Start"][None, :] + ts[:, None] * (b["End"] - b["Start"])[None, :]
             close = np.linalg.norm(pa[:, None, :] - pb[None, :, :], axis=2) < interaction
+            # Points inside a locally constant portion of the pair along a bend (within the
+            # sample spacing R / 2 of a constant sample of either chain) are not events.
+            record = bent.get((min(find(i), find(j)), max(find(i), find(j))))
+            if record is not None and len(record["ConstantPoints"]):
+                constant = record["ConstantPoints"]
+                paired_a = distance_to_cores(pa, constant) <= 0.5 * radius
+                paired_b = distance_to_cores(pb, constant) <= 0.5 * radius
+                close &= ~(paired_a[:, None] | paired_b[None, :])
             for v in shared_vertices.get((min(i, j), max(i, j)), []):
                 za = np.linalg.norm(pa - v, axis=1) < interaction
                 zb = np.linalg.norm(pb - v, axis=1) < interaction
@@ -717,20 +853,29 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
     bend = lay.get("Bend")
     bent_pair_records = []
     for (ra, rb), stats in sorted(bent_pairs.items()):
-        record = dict(stats)
+        record = {k: v for k, v in stats.items() if k != "ConstantPoints"}
         record["Chains"] = [int(ra), int(rb)]
-        if bend and record["Interacting"]:
-            # A bar: its two sides are a strip of the design width; a gap between two bars
-            # (bend["Gap"]): the facing sides are a different-conductor gap of the design gap,
-            # the bar sides themselves are not within 2R.
-            inner = bend["Radius"] - 0.5 * bend["Width"] if "Gap" not in bend else bend["Radius"] + 0.5 * bend["Width"]
-            record["DesignInnerRadiusOverR"] = inner / radius
-            record["Curved"] = inner / radius < STRAIGHT_BEND_RADIUS_OVER_R
-            base = "DifferentConductorGap" if "Gap" in bend else "SameConductorStrip"
-            record["ExpectedClasses"] = sorted({base} | ({"Curved" + base} if record["Curved"] else set()))
-            record["ExpectedSeparation"] = bend["Gap"] if "Gap" in bend else bend["Width"]
-        elif not record["Interacting"]:
+        if not record["Interacting"]:
             record["ExpectedClasses"] = []
+        else:
+            # The pair class: two sheets -> different-conductor gap; one sheet -> the design's
+            # bar (its two sides are a strip) or a same-conductor gap.
+            a = all_edges[next(i for i in range(len(all_edges)) if roots[i] == ra)]
+            b = all_edges[next(i for i in range(len(all_edges)) if roots[i] == rb)]
+            if a["Conductor"] != b["Conductor"]:
+                base = "DifferentConductorGap"
+            else:
+                base = "SameConductorStrip" if bend and "Gap" not in bend else "SameConductorGap"
+            curved = False
+            if bend and "Radius" in bend:
+                # A bar: its two sides are a strip of the design width (inner side radius =
+                # radius - width / 2); a gap between bars: the facing sides at radius -/+ gap / 2.
+                inner = bend["Radius"] - 0.5 * bend["Width"] if "Gap" not in bend else bend["Radius"] - 0.5 * bend["Gap"]
+                record["DesignInnerRadiusOverR"] = inner / radius
+                curved = inner / radius < STRAIGHT_BEND_RADIUS_OVER_R
+            record["Curved"] = curved
+            record["ExpectedClasses"] = sorted({base} | ({"Curved" + base} if curved else set()))
+            record["ExpectedSeparation"] = (bend or {}).get("Gap", (bend or {}).get("Width", record["Separation"]))
         bent_pair_records.append(record)
     # Design rule (SURFACE-RESPONSE-IDENTIFICATION.md (b) 3): a corner joins a cluster when
     # its 2R through-vertex zone reaches a cluster region, i.e. an event core lies within 3R.
@@ -956,8 +1101,8 @@ def compare_with_oracle(orc, audit_result, manifest):
     }
     if bent_records:
         interacting = [r for r in bent_records if r["Interacting"]]
-        gap_layout = bool(orc.get("Bend")) and "Gap" in orc["Bend"]
-        if interacting and not gap_layout:
+        bar_layout = bool(orc.get("Bend")) and "Width" in orc["Bend"] and "Gap" not in orc["Bend"]
+        if interacting and bar_layout:
             # A pair along a bend leaves no isolated or curved-edge remainder on its chains and
             # the bar ends are the only clusters (one per group of corners within 2R).
             checks["A6-bent-pair-classes"] = {
@@ -972,17 +1117,20 @@ def compare_with_oracle(orc, audit_result, manifest):
             # corner pairs across the gap as the only clusters; at or beyond 2R -> no pair
             # class, no cluster, the sides are isolated edges (no curved edge: inner radius >=
             # 10 R). The chord dips below 2R of the polylines must not change this.
-            separations = {round(k[1], 6) for k in manifest_pairs_set}
-            expected_separation = {round(r["ExpectedSeparation"], 6) for r in interacting if "ExpectedSeparation" in r}
+            separations = sorted({round(k[1], 6) for k in manifest_pairs_set})
+            expected_separation = sorted({round(r["ExpectedSeparation"], 6) for r in interacting if "ExpectedSeparation" in r})
+            expected_clusters = (orc.get("Bend") or {}).get("Clusters", orc["CornerPairsWithin2R"])
+            separations_match = len(separations) == len(expected_separation) and all(abs(m - e) <= PAIR_SEPARATION_TOLERANCE * e for m, e in zip(separations, expected_separation))
             checks["A6-bent-pair-classes"] = {
                 "ManifestTopologies": dict(manifest_topologies),
-                "ManifestPairSeparations": sorted(separations),
-                "ExpectedClusters": orc["CornerPairsWithin2R"],
+                "ManifestPairSeparations": separations,
+                "ExpectedSeparations": expected_separation,
+                "ExpectedClusters": expected_clusters,
                 "Interacting": bool(interacting),
-                "Pass": manifest_topologies.get("SpatialEdgeCluster", 0) == orc["CornerPairsWithin2R"]
+                "Pass": manifest_topologies.get("SpatialEdgeCluster", 0) == expected_clusters
                 and manifest_topologies.get("CurvedEdge", 0) == 0
-                and (separations == expected_separation if interacting else (not separations and manifest_topologies.get("IsolatedEdge", 0) > 0)),
-                "Meaning": "gap along a bend: the straight-pair answer at every discretisation (within 2R: one pair class at the design separation; at or beyond 2R: isolated edges, no pair, no cluster beyond the corner pairs)",
+                and (separations_match if interacting else (not separations and manifest_topologies.get("IsolatedEdge", 0) > 0)),
+                "Meaning": "pairs with divergent ends / tapers / the 2R threshold: the straight-pair answer at every discretisation (within 2R: the pair classes at the design separations within the pair tolerance; at or beyond 2R: isolated edges, no pair); clusters only at the corner pairs / tees",
             }
     checks["A6-nonparallel-interactions"] = {"Oracle": len(orc["NonparallelInteractions"]), "Mesh": census["Interactions"]["NonparallelPairs"], "Pass": None, "Meaning": "record only: non-parallel pairs are omitted by the classifier"}
     # Decision 73(3) exclusions: the manifest's CrossLayer record must carry the analytic

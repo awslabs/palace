@@ -218,21 +218,23 @@ std::vector<Point2> Rectangle(double x0, double y0, double x1, double y1)
 // The synthetic arc bar of synthetic_layouts.py: a bar of the given width following a
 // circular arc (radius, sweep) discretised with the given turn per vertex, with straight
 // leads at both ends, offset exactly along the vertex bisectors (counter-clockwise loop).
+// offset shifts the bar across the centreline: it occupies the offsets [offset - width / 2,
+// offset + width / 2] of the centreline polyline (two bars of opposite offsets about one
+// centreline face each other across a gap whose chords are exactly parallel at the design
+// separation, like an offset path).
 std::vector<Point2> ArcBar(double width, double radius, double sweep_degrees,
-                           double step_degrees, double lead = 6.0,
-                           std::optional<double> centre_y = std::nullopt)
+                           double step_degrees, double lead = 6.0, double offset = 0.0)
 {
   const int steps = std::max(1, static_cast<int>(std::lround(sweep_degrees / step_degrees)));
   const double step = sweep_degrees * std::acos(-1.0) / 180.0 / steps;
   const double h = 0.5 * width;
-  const double cy = centre_y.value_or(radius);  // arc centre (0, cy); default (0, radius)
   std::vector<Point2> centreline;
   for (int k = 0; k <= steps; k++)
   {
-    centreline.push_back({radius * std::sin(k * step), cy - radius * std::cos(k * step)});
+    centreline.push_back({radius * std::sin(k * step), radius - radius * std::cos(k * step)});
   }
   const Point2 d_end = {std::cos(steps * step), std::sin(steps * step)};
-  centreline.insert(centreline.begin(), {-lead, centreline.front()[1]});
+  centreline.insert(centreline.begin(), {-lead, 0.0});
   centreline.push_back({centreline.back()[0] + lead * d_end[0],
                         centreline.back()[1] + lead * d_end[1]});
   auto Offset = [&](double sign)
@@ -253,7 +255,8 @@ std::vector<Point2> ArcBar(double width, double radius, double sweep_degrees,
                                 : Point2{p[0] - centreline[i - 1][0],
                                          p[1] - centreline[i - 1][1]};
         const Point2 nrm = Normal(d);
-        result.push_back({p[0] + sign * h * nrm[0], p[1] + sign * h * nrm[1]});
+        result.push_back(
+            {p[0] + (offset + sign * h) * nrm[0], p[1] + (offset + sign * h) * nrm[1]});
       }
       else
       {
@@ -262,12 +265,14 @@ std::vector<Point2> ArcBar(double width, double radius, double sweep_degrees,
         Point2 b = {n0[0] + n1[0], n0[1] + n1[1]};
         const double norm = std::hypot(b[0], b[1]);
         b = {b[0] / norm, b[1] / norm};
-        const double scale = h / (b[0] * n0[0] + b[1] * n0[1]);
-        result.push_back({p[0] + sign * scale * b[0], p[1] + sign * scale * b[1]});
+        const double scale = (offset + sign * h) / (b[0] * n0[0] + b[1] * n0[1]);
+        result.push_back({p[0] + scale * b[0], p[1] + scale * b[1]});
       }
     }
     return result;
   };
+  // Counter-clockwise: the smaller offset side forward, the larger offset side back (the
+  // centreline turns left, so the right side is the smaller offset).
   std::vector<Point2> points = Offset(-1.0);
   const std::vector<Point2> left = Offset(1.0);
   points.insert(points.end(), left.rbegin(), left.rend());
@@ -742,8 +747,10 @@ TEST_CASE("SurfaceResponseIdentificationPairsAtTheThreshold",
     {
       for (const double gap : {2.0 * R, 2.0 * R - 1.0e-3 * R, 2.0 * R + 1.0e-3 * R})
       {
-        const auto inner = ArcBar(width, radius, sweep, step);
-        const auto outer = ArcBar(width, radius + width + gap, sweep, step, 6.0, radius);
+        // Both bars are offsets of the gap's centreline (radius), so the facing edges are
+        // exactly parallel chords at the design gap along the bend (an offset path).
+        const auto inner = ArcBar(width, radius, sweep, step, 6.0, 0.5 * gap + 0.5 * width);
+        const auto outer = ArcBar(width, radius, sweep, step, 6.0, -0.5 * gap - 0.5 * width);
         const auto input = MakeInput({{inner, 0, 1.0}, {outer, 1, 1.0}}, R);
         const auto result = IdentifyMetalPerimeter(input);
         INFO("radius " << radius << " step " << step << " gap " << gap);

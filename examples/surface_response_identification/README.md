@@ -131,8 +131,9 @@ embedded sheets, mesh preparation):
   concentric 8 um bars with a gap of 2R and 2R +/- 1e-3 R): oracle = the straight-pair answer
   (2R and 2R + 1e-3 R: isolated edges, no cluster, no pair; 2R - 1e-3 R: one
   `DifferentConductorGap` and the two corner pairs across the gap as clusters); the oracle's
-  corner pairs are strictly within 2R (the classifier's quantized decision); `arc_bar(...,
-  centre_y=...)` builds concentric bars.
+  corner pairs are strictly within 2R (the classifier's quantized decision); the bars are
+  offsets of one centreline (`arc_bar(..., offset=...)`: the facing chords are exactly parallel
+  at the design gap, like an offset path).
 * **Legacy pair construction** (`surfaceresponseoperator.cpp` `VerifyParallelOverlap`): the
   parallel-overlap verification tolerance follows the parallel class (cosine deficit 1e-8 =
   sqrt(2e-8) rad times the projected lengths) instead of 1e-10 relative; DS-SCT-001 aborted on

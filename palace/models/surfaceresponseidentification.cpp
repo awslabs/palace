@@ -52,27 +52,34 @@ constexpr double kRoundedCornerTangentTolerance = 0.05;
 // ~1e-3 of the corrected edge participation for edge corrections of a few per cent
 // (decision 75: the transmon's 38.9 um = 19.4 R CPW bends are straight-like; curved coupons
 // for 1 < radius / R < 10 are deferred to the library regeneration). Two chains are a pair
-// along a bend when the closest-point
-// separation over their paired intervals varies by at most kPairSeparationTolerance x the
-// minimum separation (a polyline of sub-corner turns <= 30 deg at constant width varies by
-// 1 / cos(15 deg) - 1 = 3.5 %; the pair response sensitivity d dR/dd is O(1)). Whether such
-// a pair interacts is decided at the chain level, on the separation of the underlying
-// curves, so that a discretisation never changes the classification: the chords of a
-// polyline inscribed in a curve lie inside it (sagitta c^2 / (8 rho); two concentric
-// inscribed polylines are w cos(turn / 2) apart mid-chord and exactly w apart at their
-// vertices), while the exact offset polyline of a bent path keeps corresponding chords at
-// the design separation and the outer side's samples near the joints project onto the inner
-// vertices at up to w / cos(turn / 2). In both constructions the sampled closest-point
-// distance from one chain to the other reaches the curve separation w as its maximum on
-// the side whose maximum is smaller: PairSeparation = min over the two directions of the
-// maximum sampled distance (the samples include the run ends, i.e. the vertices). The pair
-// interacts iff PairSeparation < 2R on the quantized grid — the same strict-less decision
-// as a straight parallel pair at that separation (a CPW gap of exactly 2R along a bend is
-// isolated edges, like a straight one; DS-SCT-001's 4 um gaps at R = 2 um dipped to
-// 3.9999 mid-chord and became 3 mm clusters). The candidate facing region is taken within
-// 2R x (1 + kPairSeparationTolerance) so that it contains the vertices of a pair at the
-// threshold; the cross-chord interactions of a constant-separation pair are never event
-// cores, whether or not it interacts.
+// along a bend where their closest-point
+// separation is LOCALLY constant: a sample of one chain's facing region (within the
+// candidate reach 2R (1 + kPairSeparationTolerance) of the other chain, not beyond its ends,
+// outside the shared-vertex zones; samples at most R / 2 apart) is constant when the sampled
+// distances within R of it along its own chain vary by at most kPairSeparationTolerance x
+// their minimum (a polyline of sub-corner turns <= 30 deg at constant width varies by
+// 1 / cos(15 deg) - 1 = 3.5 %; the pair response sensitivity d dR/dd is O(1)). The constant
+// portions are the pair; the portions that are not (divergence at tees and port ends, fast
+// tapers, acute corner arms) keep the event rule, so a slow taper is a pair and a tee is a
+// cluster. Whether a constant portion interacts is decided on the separation of the
+// underlying curves, so that a discretisation never changes the classification: the chords
+// of a polyline inscribed in a curve lie inside it (two concentric inscribed polylines are
+// w cos(turn / 2) apart mid-chord and exactly w apart at their vertices), while the exact
+// offset polyline of a bent path keeps corresponding chords at the design separation and
+// the outer side's samples near the joints project onto the inner vertices at up to
+// w / cos(turn / 2). In both constructions the sampled closest-point distance from one
+// chain to the other reaches the curve separation w as its maximum on the side whose
+// maximum is smaller: the sample's separation = min over the two chains of the maximum
+// sampled distance within a window of half-width max(R, local chord) where the chain bends
+// and R on straight runs, about the sample on its own chain and about its foot on the other
+// chain (a window that always holds a vertex of an inscribed polyline and a full chord of an
+// offset polyline; a straight taper is read locally). A portion interacts iff
+// that separation < 2R on the quantized grid — the same strict-less decision as a straight
+// parallel pair at that separation (a CPW gap of exactly 2R along a bend is isolated edges,
+// like a straight one; DS-SCT-001's 4 um gaps at R = 2 um dipped to 3.9999 mid-chord and
+// became 3 mm clusters). The pair feature's separation is the mean over its samples; the
+// cross-chord interactions of a locally constant portion are never event cores, whether or
+// not it interacts.
 constexpr double kStraightBendRadiusOverRadius = 10.0;
 constexpr double kCurvatureWindowOverRadius = 1.0;
 constexpr double kPairSeparationTolerance = 0.05;
@@ -1987,18 +1994,30 @@ void Identifier::BuildBentPairs()
       }
     }
   }
+  // A sample of chain A's facing region: run, run parameter, chain position, closest point
+  // on B (chain position and run), distance.
+  struct Sample
+  {
+    std::size_t run;
+    double s, x, d, qx;
+    // Window half-widths for the curve separation: a full chord where the chain bends
+    // (windowed curvature > 0: the chords of an inscribed polyline dip mid-chord), R on a
+    // straight run (no dip; a taper must be read locally).
+    double half_own, half_other;
+  };
   struct Piece
   {
     std::size_t run;
     Interval interval;
     bool curved;
     double max_kappa;
+    std::vector<Sample> samples;  // ordered along the run
   };
-  // Paired intervals of chain A's runs with respect to chain B, and their pieces; min_d /
-  // max_d over every sample (constancy test), max_directional over this direction's samples
-  // (the pair separation estimate).
-  auto Pieces = [&](const Chain &A, const Chain &B, std::vector<Piece> &pieces,
-                    double &min_d, double &max_d, double &max_directional)
+  // Candidate pieces of chain A's runs with respect to chain B (within the reach, not
+  // beyond either end of B, outside the shared-vertex zones, cut at the curved boundaries
+  // of both chains) with their samples: at least kPairSeparationSamplesPerInterval + 1 per
+  // piece and at most R / 2 apart, so that a 2R window always holds several samples.
+  auto Pieces = [&](const Chain &A, const Chain &B, std::vector<Piece> &pieces)
   {
     std::vector<std::size_t> shared;
     std::set_intersection(A.vertices.begin(), A.vertices.end(), B.vertices.begin(),
@@ -2116,23 +2135,138 @@ void Identifier::BuildBentPairs()
           const double x0 = A.run_offset[ka] + piece.first;
           const double x1 = A.run_offset[ka] + piece.second;
           const double mid = 0.5 * (x0 + x1);
-          const auto q = ClosestPointOnChain(B, ra.At(0.5 * (piece.first + piece.second)));
-          bool curved = IsCurvedAt(A, mid) || IsCurvedAt(B, q.x);
-          double max_kappa = std::max(MaxCurvature(A, x0, x1), WindowedCurvature(B, q.x));
-          // Separation statistics on a deterministic sample (the piece ends are run ends,
-          // i.e. vertices, where an inscribed polyline meets its curve).
-          for (int i_s = 0; i_s <= kPairSeparationSamplesPerInterval; i_s++)
+          const auto q_mid = ClosestPointOnChain(B, ra.At(0.5 * (piece.first + piece.second)));
+          const bool curved = IsCurvedAt(A, mid) || IsCurvedAt(B, q_mid.x);
+          const double max_kappa =
+              std::max(MaxCurvature(A, x0, x1), WindowedCurvature(B, q_mid.x));
+          const int n_samples = std::max(
+              kPairSeparationSamplesPerInterval,
+              static_cast<int>(std::ceil(2.0 * (piece.second - piece.first) / R)));
+          Piece result{a, piece, curved, max_kappa, {}};
+          for (int i_s = 0; i_s <= n_samples; i_s++)
           {
-            const double s = piece.first + (piece.second - piece.first) * i_s /
-                                               kPairSeparationSamplesPerInterval;
-            const double d = ClosestPointOnChain(B, ra.At(s)).distance;
-            min_d = std::min(min_d, d);
-            max_d = std::max(max_d, d);
-            max_directional = std::max(max_directional, d);
+            const double s = piece.first + (piece.second - piece.first) * i_s / n_samples;
+            const double x = A.run_offset[ka] + s;
+            const auto q = ClosestPointOnChain(B, ra.At(s));
+            const double half_own = WindowedCurvature(A, x) > 0.0 ? std::max(R, ra.length) : R;
+            const double half_other =
+                WindowedCurvature(B, q.x) > 0.0 ? std::max(R, runs[q.run].length) : R;
+            result.samples.push_back({a, s, x, q.distance, q.x, half_own, half_other});
           }
-          pieces.push_back({a, piece, curved, max_kappa});
+          pieces.push_back(std::move(result));
         }
       }
+    }
+  };
+  // Local constancy and the curve separation of every sample (rule at
+  // kPairSeparationTolerance): a sample is constant when the distances within R of it
+  // along its own chain vary by at most the tolerance; its curve separation is the smaller
+  // of the two directional maxima over the windows of half-width max(R, local chord) where
+  // the chain bends (a window that always contains a vertex of an inscribed polyline and a
+  // full chord of an offset polyline) and R on straight runs — on its own chain about x and
+  // on the other chain about the foot qx.
+  auto Classify = [&](std::vector<Piece> &own, const std::vector<Piece> &other,
+                      std::vector<char> &constant, std::vector<double> &separation)
+  {
+    std::vector<const Sample *> own_samples, other_samples;
+    for (const auto &piece : own)
+    {
+      for (const auto &sample : piece.samples)
+      {
+        own_samples.push_back(&sample);
+      }
+    }
+    for (const auto &piece : other)
+    {
+      for (const auto &sample : piece.samples)
+      {
+        other_samples.push_back(&sample);
+      }
+    }
+    auto ByX = [](const Sample *u, const Sample *v) { return u->x < v->x; };
+    std::sort(own_samples.begin(), own_samples.end(), ByX);
+    std::sort(other_samples.begin(), other_samples.end(), ByX);
+    auto WindowMax = [&](const std::vector<const Sample *> &list, double x, double half,
+                         double *min_out)
+    {
+      Sample probe{};
+      probe.x = x - half;
+      auto lo = std::lower_bound(list.begin(), list.end(), &probe, ByX);
+      probe.x = x + half;
+      auto hi = std::upper_bound(list.begin(), list.end(), &probe, ByX);
+      double max_d = 0.0, min_d = std::numeric_limits<double>::infinity();
+      for (auto it = lo; it != hi; ++it)
+      {
+        max_d = std::max(max_d, (*it)->d);
+        min_d = std::min(min_d, (*it)->d);
+      }
+      if (min_out)
+      {
+        *min_out = min_d;
+      }
+      return max_d;
+    };
+    for (auto &piece : own)
+    {
+      for (const auto &sample : piece.samples)
+      {
+        double min_d = 0.0;
+        const double max_own = WindowMax(own_samples, sample.x, R, &min_d);
+        constant.push_back(!quantizer.Less(kPairSeparationTolerance * min_d, max_own - min_d));
+        const double w_own = WindowMax(own_samples, sample.x, sample.half_own, nullptr);
+        const double w_other = other_samples.empty()
+                                   ? w_own
+                                   : WindowMax(other_samples, sample.qx, sample.half_other, nullptr);
+        separation.push_back(w_other > 0.0 ? std::min(w_own, w_other) : w_own);
+      }
+    }
+  };
+  // Sub-pieces of one status along a piece: consecutive samples with the same (constant,
+  // interacting) flags; the cut between two samples of different status is halfway.
+  struct SubPiece
+  {
+    std::size_t run;
+    Interval interval;
+    bool curved;
+    double max_kappa;
+    bool constant;
+    bool interacting;
+    double weighted_separation;  // sum over samples of the separation, for the mean
+    int sample_count;
+  };
+  auto Split = [&](const std::vector<Piece> &pieces, const std::vector<char> &constant,
+                   const std::vector<double> &separation, std::vector<SubPiece> &out)
+  {
+    std::size_t k = 0;
+    for (const auto &piece : pieces)
+    {
+      const std::size_t n = piece.samples.size();
+      std::size_t i = 0;
+      while (i < n)
+      {
+        const bool c = constant[k + i];
+        const bool inter = quantizer.Less(separation[k + i], interaction);
+        std::size_t j = i;
+        double weighted = 0.0;
+        while (j < n && constant[k + j] == c &&
+               quantizer.Less(separation[k + j], interaction) == inter)
+        {
+          weighted += separation[k + j];
+          j++;
+        }
+        const double s_lo =
+            i == 0 ? piece.interval.first
+                   : 0.5 * (piece.samples[i - 1].s + piece.samples[i].s);
+        const double s_hi = j == n ? piece.interval.second
+                                   : 0.5 * (piece.samples[j - 1].s + piece.samples[j].s);
+        if (s_hi - s_lo > Tol())
+        {
+          out.push_back({piece.run, {s_lo, s_hi}, piece.curved, piece.max_kappa, c, inter,
+                         weighted, static_cast<int>(j - i)});
+        }
+        i = j;
+      }
+      k += n;
     }
   };
 
@@ -2142,9 +2276,16 @@ void Identifier::BuildBentPairs()
     {
       const Chain &A = chains[ca];
       const Chain &B = chains[cb];
-      if (!usable[ca] || !usable[cb] || (A.Rigid() && B.Rigid()))
+      if (!usable[ca] || !usable[cb])
       {
-        continue;  // two straight runs: the translational rule
+        continue;
+      }
+      if (A.Rigid() && B.Rigid() &&
+          !DirectionLess(std::abs(Dot(runs[A.runs.front()].tangent,
+                                      runs[B.runs.front()].tangent)),
+                         1.0 - kParallelCosineTolerance))
+      {
+        continue;  // two exactly parallel straight runs: the translational rule
       }
       bool near = true;
       for (int d = 0; d < 3; d++)
@@ -2157,41 +2298,68 @@ void Identifier::BuildBentPairs()
         continue;
       }
       std::vector<Piece> pieces_a, pieces_b;
-      double min_d = std::numeric_limits<double>::infinity(), max_d = 0.0;
-      double max_a = 0.0, max_b = 0.0;
-      Pieces(A, B, pieces_a, min_d, max_d, max_a);
-      Pieces(B, A, pieces_b, min_d, max_d, max_b);
+      Pieces(A, B, pieces_a);
+      Pieces(B, A, pieces_b);
       if (pieces_a.empty() || pieces_b.empty())
       {
         continue;
       }
-      if (quantizer.Less(kPairSeparationTolerance * min_d, max_d - min_d))
+      std::vector<char> constant_a, constant_b;
+      std::vector<double> separation_a, separation_b;
+      Classify(pieces_a, pieces_b, constant_a, separation_a);
+      Classify(pieces_b, pieces_a, constant_b, separation_b);
+      std::vector<SubPiece> sub_a, sub_b;
+      Split(pieces_a, constant_a, separation_a, sub_a);
+      Split(pieces_b, constant_b, separation_b, sub_b);
+      // Locally constant portions that do not interact (separation at or beyond 2R): no
+      // feature, but their cross-chord interactions are not events. Portions that are not
+      // locally constant (divergence at tees and port ends, fast tapers, acute arms) keep
+      // the event rule.
+      bool any_interacting = false;
+      for (const auto *list : {&sub_a, &sub_b})
       {
-        continue;  // separation not constant: events (a spatial cluster)
-      }
-      // The separation of the underlying curves (rule at kPairSeparationTolerance): the
-      // smaller of the two directional maxima. Not below 2R: the chains do not interact
-      // (isolated edges, as a straight pair at that separation); their cross-chord
-      // interactions are the discretisation of a non-interacting pair, never event cores.
-      const double separation = std::min(max_a, max_b);
-      if (!quantizer.Less(separation, interaction))
-      {
-        for (const auto *list : {&pieces_a, &pieces_b})
+        const int other = list == &sub_a ? B.id : A.id;
+        for (const auto &piece : *list)
         {
-          const int other = list == &pieces_a ? B.id : A.id;
-          for (const auto &piece : *list)
+          if (!piece.constant)
           {
-            bent_claims[piece.run].emplace_back(other, piece.interval);
+            continue;
           }
+          bent_claims[piece.run].emplace_back(other, piece.interval);
+          any_interacting = any_interacting || piece.interacting;
         }
+      }
+      if (!any_interacting)
+      {
         continue;
       }
-      // Frame: lateral from A to B at the first piece; gap signs relative to it.
-      const Piece &lead = pieces_a.front();
-      const Point3D pa = runs[lead.run].At(0.5 * (lead.interval.first + lead.interval.second));
-      const auto qb = ClosestPointOnChain(B, pa);
+      // Frame: lateral from A to B at the first interacting piece; gap signs relative to it.
+      const SubPiece *lead = nullptr;
+      for (const auto &piece : sub_a)
+      {
+        if (piece.constant && piece.interacting)
+        {
+          lead = &piece;
+          break;
+        }
+      }
+      if (!lead)
+      {
+        for (const auto &piece : sub_b)
+        {
+          if (piece.constant && piece.interacting)
+          {
+            lead = &piece;
+            break;
+          }
+        }
+      }
+      const bool lead_on_a = lead >= sub_a.data() && lead < sub_a.data() + sub_a.size();
+      const Chain &lead_other = lead_on_a ? B : A;
+      const Point3D pa = runs[lead->run].At(0.5 * (lead->interval.first + lead->interval.second));
+      const auto qb = ClosestPointOnChain(lead_other, pa);
       const Point3D lateral = Normalize(Sub(runs[qb.run].At(qb.s), pa));
-      const Run &ra = runs[lead.run];
+      const Run &ra = runs[lead->run];
       const Run &rb = runs[qb.run];
       const int gap_a = Dot(ra.gap_direction, lateral) > 0.0 ? 1 : -1;
       const int gap_b = Dot(rb.gap_direction, lateral) > 0.0 ? 1 : -1;
@@ -2214,24 +2382,29 @@ void Identifier::BuildBentPairs()
       }
       for (const bool curved_class : {false, true})
       {
-        double length = 0.0, max_kappa = 0.0;
-        for (const auto *list : {&pieces_a, &pieces_b})
+        double length = 0.0, max_kappa = 0.0, weighted = 0.0;
+        int samples = 0;
+        for (const auto *list : {&sub_a, &sub_b})
         {
           for (const auto &piece : *list)
           {
-            if (piece.curved != curved_class)
+            if (!piece.constant || !piece.interacting || piece.curved != curved_class)
             {
               continue;
             }
             length += piece.interval.second - piece.interval.first;
             max_kappa = std::max(max_kappa, piece.max_kappa);
+            weighted += piece.weighted_separation;
+            samples += piece.sample_count;
           }
         }
         if (length <= Tol())
         {
           continue;
         }
-        // One design separation per chain pair (discretisation invariant, see above).
+        // One separation per pair and curvature class: the mean curve separation of its
+        // samples (exact for a constant pair; a slow taper is described by its mean).
+        const double separation = weighted / samples;
         std::vector<TranslationalEdge> edges = {
             {0.0, gap_a, ra.conductor, InterfaceNames(ra.targets), ra.boundary_law},
             {separation, gap_b, rb.conductor, InterfaceNames(rb.targets), rb.boundary_law}};
@@ -2252,17 +2425,15 @@ void Identifier::BuildBentPairs()
         const int feature = NewFeature(type, signature, translational.chirality);
         features[feature].origin = pa;
         features[feature].axes = {ra.tangent, lateral, n_ref};
-        for (const auto *list : {&pieces_a, &pieces_b})
+        for (const auto *list : {&sub_a, &sub_b})
         {
-          const int other = list == &pieces_a ? B.id : A.id;
           for (const auto &piece : *list)
           {
-            if (piece.curved != curved_class)
+            if (!piece.constant || !piece.interacting || piece.curved != curved_class)
             {
               continue;
             }
             claims[piece.run].push_back({feature, 2, piece.interval});
-            bent_claims[piece.run].emplace_back(other, piece.interval);
           }
         }
       }
@@ -3444,8 +3615,12 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
             {"PairSeparationToleranceRelative", kPairSeparationTolerance},
             {"PairSeparationSamplesPerInterval", kPairSeparationSamplesPerInterval},
             {"PairSeparationEstimate",
-             "min over the two chains of the maximum sampled closest-point distance to the "
-             "other chain (the curve separation at the vertices); interacting iff < 2R"},
+             "per sample: min over the two chains of the maximum sampled closest-point "
+             "distance within max(R, local chord) of the sample / its foot where the chain "
+             "bends, R on straight runs (the curve separation at the vertices); interacting "
+             "iff < 2R"},
+            {"PairConstancyWindowOverR", 1.0},
+            {"PairSampleSpacingOverR", 0.5},
             {"PairCandidateReachOverR",
              kInteractionDistanceOverRadius * (1.0 + kPairSeparationTolerance)},
             {"CrossLayerReachOverR", kInteractionDistanceOverRadius},
