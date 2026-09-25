@@ -1,8 +1,8 @@
 diff --git a/repos/spack_repo/builtin/packages/mfem/package.py b/repos/spack_repo/builtin/packages/mfem/package.py
-index 6e2bced3dd0..f5e22f17232 100644
+index 921274f..77a056e 100644
 --- a/repos/spack_repo/builtin/packages/mfem/package.py
 +++ b/repos/spack_repo/builtin/packages/mfem/package.py
-@@ -583,6 +583,15 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+@@ -595,6 +595,15 @@ class Mfem(Package, CudaPackage, ROCmPackage):
      # PR: https://github.com/mfem/mfem/pull/5224
      patch("mfem-4.9.patch", when="@4.9.0")
  
@@ -18,7 +18,7 @@ index 6e2bced3dd0..f5e22f17232 100644
      phases = ["configure", "build", "install"]
  
      def setup_build_environment(self, env: EnvironmentModifications) -> None:
-@@ -729,6 +738,10 @@ def find_optional_library(name, prefix):
+@@ -742,6 +751,10 @@ class Mfem(Package, CudaPackage, ROCmPackage):
                  cxxstd_flag = self["cxx"].standard_flag(language="cxx", standard=cxxstd)
  
          cuda_arch = None if "~cuda" in spec else spec.variants["cuda_arch"].value
@@ -27,9 +27,9 @@ index 6e2bced3dd0..f5e22f17232 100644
 +        else:
 +            cuda_flags_var = "CUDA_FLAGS"
  
-         cxxflags = spec.compiler_flags["cxxflags"].copy()
+         cxxflags = list(spec.compiler_flags["cxxflags"])
  
-@@ -748,22 +761,11 @@ def find_optional_library(name, prefix):
+@@ -761,22 +774,11 @@ class Mfem(Package, CudaPackage, ROCmPackage):
  
              cxxflags = [(xcompiler + flag) for flag in cxxflags]
              if "+cuda" in spec:
@@ -56,7 +56,7 @@ index 6e2bced3dd0..f5e22f17232 100644
  
              if cxxstd_flag:
                  cxxflags.append(cxxstd_flag)
-@@ -1036,7 +1038,15 @@ def find_optional_library(name, prefix):
+@@ -1049,7 +1051,15 @@ class Mfem(Package, CudaPackage, ROCmPackage):
                  cuda_cxx = join_path(spec["cuda"].prefix, "bin", "nvcc")
              else:
                  cuda_cxx = spec["mpi"].mpicxx if "+mpi" in spec else env["CXX"]
