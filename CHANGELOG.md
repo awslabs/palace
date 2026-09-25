@@ -17,6 +17,22 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### Bug Fixes
+
+  - Fixed BoundaryMode simulations with p-multigrid preconditioning (`"MGMaxLevels"` > 1)
+    aborting in the Chebyshev smoother setup, which required a strictly positive operator
+    diagonal since [PR 837](https://github.com/awslabs/palace/pull/837) while the H1 block
+    of the boundary mode preconditioner is negative definite. The Chebyshev and Jacobi
+    smoother spectral estimates now accept any finite, nonzero diagonal, scaling by its
+    absolute value (unchanged for positive diagonals).
+    [PR XXX](https://github.com/awslabs/palace/pull/XXX).
+  - Fixed the first-order absorbing boundary condition on the out-of-plane field component
+    in BoundaryMode and wave port mode solves, which looked up the boundary material by mesh
+    boundary attribute instead of libCEED boundary attribute: the inverse impedance could
+    come from a material not adjacent to the boundary, depended on the MPI partitioning, and
+    a single value was used for an absorbing boundary adjacent to several materials.
+    [PR XXX](https://github.com/awslabs/palace/pull/XXX).
+
 #### Performance Improvements
 
   - Accelerated adaptive online sweeps by replacing 2D wave-port EVP solves with a per-port
