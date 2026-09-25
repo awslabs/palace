@@ -68,11 +68,11 @@ def perimeter_census(perimeter, radius, targets):
     cuts = 0
     for index, v in enumerate(perimeter.vertices):
         if v.physical_kind in ("CORNER", "ENDPOINT", "JUNCTION"):
-            if len({perimeter.edges[e].component for e in v.edges if perimeter.edges[e].kind != "TRUNCATION"}) > 1:
+            if len({perimeter.edges[e].component for e in v.edges if perimeter.edges[e].kind not in P.CUT_KINDS}) > 1:
                 point_contacts += 1
-        if v.physical_kind == "ENDPOINT" and any(perimeter.edges[e].kind == "TRUNCATION" for e in v.edges):
-            # A physical chain ending on the truncation boundary is a simulation cut, not a
-            # layout feature (the classifier makes no Endpoint feature there).
+        if v.physical_kind == "ENDPOINT" and any(perimeter.edges[e].kind in P.CUT_KINDS for e in v.edges):
+            # A physical chain ending on the truncation boundary or at a port face is a cut
+            # (TruncationCut / PortCut), not a layout feature (decision 82(5)).
             cuts += 1
             continue
         if v.physical_kind in ("CORNER", "ENDPOINT", "JUNCTION"):
@@ -207,7 +207,7 @@ def _segment_key(p0, p1, decimals=7):
 
 
 # Audit edge kind -> manifest exclusion class (FOLD edges are NonPlanar exclusions).
-EXCLUSION_CLASS_OF_AUDIT_KIND = {"NONPLANAR": "NonPlanar", "FOLD": "NonPlanar", "CROSS_LAYER": "CrossLayer", "NONMANIFOLD": "NonManifold", "EMBEDDED": "UndeterminedProcessSide", "BOX": "SimulationBoundary"}
+EXCLUSION_CLASS_OF_AUDIT_KIND = {"NONPLANAR": "NonPlanar", "FOLD": "NonPlanar", "CROSS_LAYER": "CrossLayer", "NONMANIFOLD": "NonManifold", "EMBEDDED": "UndeterminedProcessSide", "BOX": "SimulationBoundary", "PORT": "Port"}
 VERTEX_FEATURE_TYPES = ("ConvexCorner", "ConcaveCorner", "Endpoint", "Junction")
 
 
@@ -655,7 +655,7 @@ def run_audit(args):
     length = census["TargetedPhysicalLength"]
     if identification:
         deficit = length - float(identification["Totals"]["AssignedLength"])
-        excluded_length = sum(census["LengthByClass"].get(k, 0.0) for k in ("NONPLANAR", "FOLD", "CROSS_LAYER", "NONMANIFOLD", "EMBEDDED", "BOX"))
+        excluded_length = sum(census["LengthByClass"].get(k, 0.0) for k in ("NONPLANAR", "FOLD", "CROSS_LAYER", "NONMANIFOLD", "EMBEDDED", "BOX", "PORT"))
     else:
         assigned = summary["TranslationalLength"]
         deficit = length - assigned
@@ -721,7 +721,7 @@ def run_audit(args):
                 evaluable=not (residual > 0 and cluster_records > 0),
             )
         )
-        excluded_length = sum(census["LengthByClass"].get(k, 0.0) for k in ("NONPLANAR", "FOLD", "CROSS_LAYER", "NONMANIFOLD", "EMBEDDED", "BOX"))
+        excluded_length = sum(census["LengthByClass"].get(k, 0.0) for k in ("NONPLANAR", "FOLD", "CROSS_LAYER", "NONMANIFOLD", "EMBEDDED", "BOX", "PORT"))
         gates.append(
             gate(
                 "A1-exclusions-recorded",

@@ -38,7 +38,13 @@ constexpr double kCornerTurnToleranceDegrees = 30.0;
 constexpr double kInteractionDistanceOverRadius = 2.0;
 constexpr double kThroughVertexZoneOverRadius = 2.0;
 constexpr double kClusterBallOverRadius = 1.0;
-constexpr double kVertexJoinsClusterOverRadius = 3.0;
+// One interaction distance (decision 82(1)): every join / candidate / cluster decision is
+// the 3D distance strictly below 2R on the quantized grid — events, through-vertex zones,
+// core merging, site-site cores and the vertex-site join (a site within 2R of a core: its
+// radius-R window overlaps the core's radius-R ball; was 3R, which joined the L2 junction
+// regions of DS-SCT-002 to the L1 loop ends 2.4R below). The cluster ball (R) is the claim
+// radius of the region (union of radius-R balls), not an interaction decision.
+constexpr double kVertexJoinsClusterOverRadius = 2.0;
 constexpr double kVertexWindowOverRadius = 1.0;
 constexpr double kParallelCosineTolerance = 1.0e-8;
 constexpr double kRoundedCornerTangentTolerance = 0.05;
@@ -1196,6 +1202,7 @@ struct EventCore
   std::size_t run = 0;
   Interval interval;
   Point3D p0{}, p1{};
+  int plane = 0;  // cores of two metal planes never merge (decision 82(1))
 };
 
 struct UnionFind
@@ -1474,6 +1481,10 @@ private:
   std::map<int, std::size_t> chain_index;
   Point3D n_ref{};
   std::vector<std::optional<std::pair<std::string, std::string>>> segment_exclusion;
+  // Metal plane of every run (distinct offsets along the reference process normal on the
+  // decision grid): features never span two planes (decision 82(1)); metal of another
+  // plane within 2R is the CrossLayer exclusion.
+  std::vector<int> run_plane;
   std::vector<std::vector<Claim>> claims;  // per run
   // Per run: (other chain, interval) of the pieces of a constant-separation pair along a
   // bend with that chain, interacting (a pair feature) or not; their cross-chord
@@ -1624,9 +1635,9 @@ private:
       return false;
     }
     if (*vertex.physical_type == MetalEdgeVertexType::ENDPOINT &&
-        vertex.on_truncation_boundary)
+        (vertex.on_truncation_boundary || vertex.on_port_boundary))
     {
-      return false;  // simulation cut
+      return false;  // simulation cut / port cut
     }
     return cross_layer_vertices.find(v) == cross_layer_vertices.end();
   }
@@ -1644,6 +1655,12 @@ private:
       }
     }
     return conductors.size() > 1;
+  }
+
+  int SitePlane(const VertexFeatureSite &site) const
+  {
+    MFEM_VERIFY(!site.runs_at_site.empty(), "A vertex site without runs!");
+    return run_plane[site.runs_at_site.front()];
   }
 
   std::vector<std::size_t> RunsAtVertex(std::size_t v) const
@@ -1713,6 +1730,31 @@ void Identifier::ClassifyPlanes()
       ExcludeRun(r, "NonPlanar",
                  "metal edge whose process normal is not parallel to the reference process "
                  "normal (wall, staple, via)");
+    }
+  }
+  // Plane of every run: the distinct offsets of the run midpoints along the reference
+  // normal, merged on the decision grid, numbered in increasing offset.
+  {
+    std::vector<double> offsets;
+    for (const auto &run : runs)
+    {
+      offsets.push_back(Dot(Scale(0.5, Add(run.start, run.end)), n_ref));
+    }
+    std::vector<double> planes;
+    for (const double offset : std::set<double>(offsets.begin(), offsets.end()))
+    {
+      if (planes.empty() || !quantizer.Equal(offset, planes.back()))
+      {
+        planes.push_back(offset);
+      }
+    }
+    run_plane.assign(runs.size(), 0);
+    for (std::size_t r = 0; r < runs.size(); r++)
+    {
+      auto it = std::lower_bound(planes.begin(), planes.end(), offsets[r] - Tol());
+      MFEM_VERIFY(it != planes.end() && quantizer.Equal(*it, offsets[r]),
+                  "Run plane not found!");
+      run_plane[r] = static_cast<int>(it - planes.begin());
     }
   }
   if (input.faces.empty())
@@ -2911,9 +2953,10 @@ void Identifier::BuildBentPairs()
     {
       const Chain &A = chains[ca];
       const Chain &B = chains[cb];
-      if (!usable[ca] || !usable[cb])
+      if (!usable[ca] || !usable[cb] ||
+          run_plane[A.runs.front()] != run_plane[B.runs.front()])
       {
-        continue;
+        continue;  // a pair never spans two metal planes (decision 82(1))
       }
       if (A.Rigid() && B.Rigid() &&
           !DirectionLess(
@@ -3141,14 +3184,18 @@ void Identifier::BuildTranslationalFeatures()
     double u0, u1, w;
     int gap_sign;
   };
-  std::map<std::array<long long int, 3>, std::vector<std::size_t>> classes;
+  // Direction classes per metal plane: parallel runs of two planes never pair (decision
+  // 82(1)); metal of another plane within 2R is the CrossLayer exclusion.
+  std::map<std::pair<int, std::array<long long int, 3>>, std::vector<std::size_t>> classes;
   for (std::size_t r = 0; r < runs.size(); r++)
   {
     if (runs[r].excluded || !chains[chain_index.at(runs[r].chain)].Rigid())
     {
       continue;  // chains with joints pair through the curved-edge chain rule
     }
-    classes[DirectionKey(SignCanonical(runs[r].tangent), 1.0e-9)].push_back(r);
+    classes[std::make_pair(run_plane[r],
+                           DirectionKey(SignCanonical(runs[r].tangent), 1.0e-9))]
+        .push_back(r);
   }
   const double interaction = kInteractionDistanceOverRadius * R;
   std::size_t total_members = 0, total_spans = 0;
@@ -3533,7 +3580,8 @@ void Identifier::BuildClusters()
     }
     for (const auto &interval : MergeIntervals(found, Tol()))
     {
-      cores.push_back({a, interval, ra.At(interval.first), ra.At(interval.second)});
+      cores.push_back(
+          {a, interval, ra.At(interval.first), ra.At(interval.second), run_plane[a]});
     }
   };
 
@@ -3549,9 +3597,10 @@ void Identifier::BuildClusters()
     // order of the loop over every b).
     for (const std::size_t b : RunsNearRun(a, interaction + 2.0 * Tol()))
     {
-      if (b <= a || runs[b].excluded || runs[a].chain == runs[b].chain)
+      if (b <= a || runs[b].excluded || runs[a].chain == runs[b].chain ||
+          run_plane[a] != run_plane[b])
       {
-        continue;
+        continue;  // no events between two metal planes (decision 82(1))
       }
       run_pairs_examined++;
       const Chain &ca = chains[chain_index.at(runs[a].chain)];
@@ -3628,7 +3677,7 @@ void Identifier::BuildClusters()
     for (const std::size_t j :
          site_grid.Query(sites[i].point, sites[i].point, interaction + 2.0 * Tol()))
     {
-      if (j <= i)
+      if (j <= i || SitePlane(sites[i]) != SitePlane(sites[j]))
       {
         continue;
       }
@@ -3637,11 +3686,13 @@ void Identifier::BuildClusters()
         cores.push_back({std::numeric_limits<std::size_t>::max(),
                          {0.0, 0.0},
                          sites[i].point,
-                         sites[i].point});
+                         sites[i].point,
+                         SitePlane(sites[i])});
         cores.push_back({std::numeric_limits<std::size_t>::max(),
                          {0.0, 0.0},
                          sites[j].point,
-                         sites[j].point});
+                         sites[j].point,
+                         SitePlane(sites[j])});
       }
     }
   }
@@ -3673,7 +3724,7 @@ void Identifier::BuildClusters()
     BoundingBox(cores[i].p0, cores[i].p1, lo, hi);
     for (const std::size_t j : core_grid.Query(lo, hi, interaction + 2.0 * Tol()))
     {
-      if (j <= i)
+      if (j <= i || cores[i].plane != cores[j].plane)
       {
         continue;
       }
@@ -3685,8 +3736,9 @@ void Identifier::BuildClusters()
       }
     }
   }
-  // A vertex site whose 2R through-vertex zone reaches into a region joins it (and merges
-  // the regions it reaches).
+  // A vertex site within 2R of an event core of its own plane (its radius-R window
+  // overlaps the core's radius-R ball) joins that region (and merges the regions it
+  // reaches).
   std::vector<std::optional<std::size_t>> site_root(sites.size());
   for (std::size_t s = 0; s < sites.size(); s++)
   {
@@ -3694,7 +3746,8 @@ void Identifier::BuildClusters()
     for (const std::size_t i :
          core_grid.Query(sites[s].point, sites[s].point, join + 2.0 * Tol()))
     {
-      if (quantizer.Less(PointSegmentDistance(sites[s].point, cores[i].p0, cores[i].p1),
+      if (cores[i].plane == SitePlane(sites[s]) &&
+          quantizer.Less(PointSegmentDistance(sites[s].point, cores[i].p0, cores[i].p1),
                          join))
       {
         if (root)
@@ -4455,7 +4508,7 @@ void Identifier::Assign(IdentificationResult &result)
     {
       entry.type = cross_layer_vertices.find(v) != cross_layer_vertices.end()
                        ? "Excluded"
-                       : "TruncationCut";
+                       : (vertex.on_truncation_boundary ? "TruncationCut" : "PortCut");
       result.vertices.push_back(entry);
       continue;
     }
@@ -4973,8 +5026,8 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
     {
       entry["Vertex"] = vertex.vertex;
     }
-    if (vertex.type != "TruncationCut" && vertex.type != "Excluded" &&
-        vertex.type != "ExclusionCut")
+    if (vertex.type != "TruncationCut" && vertex.type != "PortCut" &&
+        vertex.type != "Excluded" && vertex.type != "ExclusionCut")
     {
       entry["TurnDegrees"] = std::round(vertex.turn_degrees * 1.0e6) * 1.0e-6;
       entry["Feature"] = vertex.feature;
@@ -5024,6 +5077,11 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"PairCandidateReachOverR",
          kInteractionDistanceOverRadius * (1.0 + kPairSeparationTolerance)},
         {"CrossLayerReachOverR", kInteractionDistanceOverRadius},
+        {"PlaneRule", "features (pairs, clusters, vertex joins, translational classes) "
+                      "never span two metal planes; metal of another plane within the "
+                      "interaction distance is the CrossLayer exclusion"},
+        {"PortRule", "metal perimeter bordering a LumpedPort / WavePort boundary face is "
+                     "the Port exclusion; its vertices are PortCut, never features"},
         {"Comparison", "strict less on the quantized grid"}}},
       {"ReferenceProcessNormal", D(reference_process_normal)},
       {"Features", feature_list},

@@ -24,6 +24,8 @@
 #     close                         # end of the loop
 #     sheet ATTRIBUTE Z             # a metal polygon (following loop) on the plane z = Z
 #     wall ATTRIBUTE X0 Y0 X1 Y1 H  # a vertical metal rectangle from (X0, Y0, 0) to (X1, Y1, H)
+#     port ATTRIBUTE                # a non-metal polygon on z = 0 with its own physical group
+#                                   # (a lumped port face; the loop follows)
 #     end
 
 import Gmsh: gmsh
@@ -59,8 +61,9 @@ mutable struct Layout
     lc_far::Float64
     sheets::Vector{Sheet}
     walls::Vector{Wall}
+    ports::Vector{Sheet}
 end
-Layout(name) = Layout(name, 30.0, 30.0, 15.0, 15.0, 1.0, 6.0, Sheet[], Wall[])
+Layout(name) = Layout(name, 30.0, 30.0, 15.0, 15.0, 1.0, 6.0, Sheet[], Wall[], Sheet[])
 
 function parse_specification(path)
     layouts = Layout[]
@@ -81,10 +84,10 @@ function parse_specification(path)
             current.half_x, current.half_y, current.depth, current.height = numbers
         elseif keyword == "size"
             current.lc_fine, current.lc_far = numbers
-        elseif keyword == "polygon" || keyword == "sheet"
+        elseif keyword == "polygon" || keyword == "sheet" || keyword == "port"
             z = keyword == "sheet" ? numbers[2] : 0.0
             sheet = Sheet(Int(numbers[1]), z, Loop[])
-            push!(current.sheets, sheet)
+            push!(keyword == "port" ? current.ports : current.sheets, sheet)
             loop = Loop()
             push!(sheet.loops, loop)
             pending_hole = false
@@ -171,6 +174,9 @@ function generate(layout, output_directory)
     for wall in layout.walls
         push!(tools, (2, add_wall(occ, wall)))
     end
+    for port in layout.ports
+        push!(tools, (2, add_sheet(occ, port)))
+    end
     domains, domain_map = occ.fragment([(3, substrate), (3, vacuum)], tools)
     occ.synchronize()
     substrate_tags = [tag for (dim, tag) in domain_map[1] if dim == 3]
@@ -187,6 +193,15 @@ function generate(layout, output_directory)
             dim == 2 || continue
             push!(get!(metal, attribute, Int32[]), tag)
             push!(metal_faces, tag)
+        end
+    end
+    # Port faces: non-metal, their own physical group, not substrate_air.
+    port_groups = Dict{Int, Vector{Int32}}()
+    for (k, port) in enumerate(layout.ports)
+        for (dim, tag) in domain_map[2 + length(tool_attributes) + k]
+            dim == 2 || continue
+            push!(get!(port_groups, port.attribute, Int32[]), tag)
+            push!(metal_faces, tag)  # excluded from substrate_air below
         end
     end
     outer = Int32[]
@@ -206,6 +221,9 @@ function generate(layout, output_directory)
     gmsh.model.addPhysicalGroup(3, vacuum_tags, 2, "vacuum")
     gmsh.model.addPhysicalGroup(2, outer, 3, "outer")
     isempty(substrate_air) || gmsh.model.addPhysicalGroup(2, substrate_air, 8, "substrate_air")
+    for (attribute, tags) in sort!(collect(port_groups); by=first)
+        gmsh.model.addPhysicalGroup(2, tags, attribute, "port_$(attribute)")
+    end
     metal_curves = Int32[]
     for (attribute, tags) in sort!(collect(metal); by=first)
         gmsh.model.addPhysicalGroup(2, tags, attribute, "metal_$(attribute)")

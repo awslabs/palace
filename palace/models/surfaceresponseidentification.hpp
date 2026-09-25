@@ -52,6 +52,8 @@ struct IdentificationVertex
   std::vector<std::size_t> segments;
   std::optional<MetalEdgeVertexType> physical_type;
   bool on_truncation_boundary = false;
+  // The vertex ends a port-bordering segment (a Port exclusion): a cut, never a feature.
+  bool on_port_boundary = false;
 };
 
 // A metal face of the whole model (deduplicated, replicated): the metal off a segment's own
@@ -125,7 +127,8 @@ struct IdentifiedSegment
 struct IdentifiedVertex
 {
   std::size_t vertex = 0;
-  // Corner | Endpoint | Junction | RoundedCorner | TruncationCut | ExclusionCut | Excluded
+  // Corner | Endpoint | Junction | RoundedCorner | TruncationCut | PortCut | ExclusionCut |
+  // Excluded
   std::string type;
   double turn_degrees = 0.0;
   int feature = -1;

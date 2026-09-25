@@ -211,6 +211,7 @@ void PackGeometry(const MetalEdgeGeometry &g, GeometryBuffers &b)
     b.ints.push_back(static_cast<long long int>(v.type));
     b.ints.push_back(v.physical_type ? static_cast<long long int>(*v.physical_type) : -1);
     b.ints.push_back(v.on_truncation_boundary ? 1 : 0);
+    b.ints.push_back(v.on_port_boundary ? 1 : 0);
   }
   b.ints.push_back(static_cast<long long int>(g.segments.size()));
   for (const auto &seg : g.segments)
@@ -233,6 +234,7 @@ void PackGeometry(const MetalEdgeGeometry &g, GeometryBuffers &b)
     PackInts(b, seg.ms_interfaces);
     PackInts(b, seg.ma_interfaces);
     PackInts(b, seg.truncation_attributes);
+    PackInts(b, seg.port_attributes);
     b.ints.push_back(seg.face_count);
     b.ints.push_back(static_cast<long long int>(seg.face_normals.size()));
     for (const auto &n : seg.face_normals)
@@ -269,6 +271,7 @@ void UnpackGeometry(const GeometryBuffers &b, MetalEdgeGeometry &g)
                                    : std::optional<MetalEdgeVertexType>(
                                          static_cast<MetalEdgeVertexType>(physical));
     v.on_truncation_boundary = b.ints[ip++] != 0;
+    v.on_port_boundary = b.ints[ip++] != 0;
   }
   g.segments.resize(static_cast<std::size_t>(b.ints[ip++]));
   for (auto &seg : g.segments)
@@ -291,6 +294,7 @@ void UnpackGeometry(const GeometryBuffers &b, MetalEdgeGeometry &g)
     seg.ms_interfaces = UnpackInts(b, ip);
     seg.ma_interfaces = UnpackInts(b, ip);
     seg.truncation_attributes = UnpackInts(b, ip);
+    seg.port_attributes = UnpackInts(b, ip);
     seg.face_count = static_cast<int>(b.ints[ip++]);
     seg.face_normals.resize(static_cast<std::size_t>(b.ints[ip++]));
     for (auto &n : seg.face_normals)
@@ -638,6 +642,38 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   // a simulation cut surface. Internal lumped ports and sources are deliberately omitted.
   // Where an exterior face edge coincides with the metal perimeter, the metal has been
   // cut by the simulation domain (for example at a wave port or an outer box).
+  // Ports are not metal (decision 82(5)): the metal perimeter bordering a LumpedPort /
+  // WavePort boundary face (the port attributes of the configuration, whatever their names)
+  // is a cut like a truncation, reported as the Port exclusion.
+  std::map<int, std::shared_ptr<const EdgeDistanceTree>> port_support;
+  {
+    std::set<int> port_attributes;
+    for (const auto &[index, port] : boundaries.lumpedport)
+    {
+      (void)index;
+      for (const auto &element : port.elements)
+      {
+        port_attributes.insert(element.attributes.begin(), element.attributes.end());
+      }
+    }
+    for (const auto &[index, port] : boundaries.waveport)
+    {
+      (void)index;
+      port_attributes.insert(port.attributes.begin(), port.attributes.end());
+    }
+    for (const int attribute : port_attributes)
+    {
+      if (attribute_conditions.find(attribute) != attribute_conditions.end())
+      {
+        continue;  // a metal attribute is metal, not a port face
+      }
+      auto tree = BuildSupportTree(mesh, std::vector<int>{attribute}, false, false);
+      if (tree)
+      {
+        port_support.emplace(attribute, std::move(tree));
+      }
+    }
+  }
   std::map<int, std::shared_ptr<const EdgeDistanceTree>> truncation_support;
   const int maximum_boundary_attribute = mesh::GetMaxBdrAttribute(mesh);
   std::vector<int> boundary_attribute_present(maximum_boundary_attribute, 0);
@@ -1308,6 +1344,13 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
     }
     if (type == MetalEdgeSegmentType::PHYSICAL)
     {
+      for (const auto &[attribute, tree] : port_support)
+      {
+        if (IsCoincident(perimeter, *tree, tolerance_squared))
+        {
+          segment.port_attributes.push_back(attribute);
+        }
+      }
       for (const auto &[attribute, tree] : truncation_support)
       {
         if (IsCoincident(perimeter, *tree, tolerance_squared))
@@ -1315,7 +1358,12 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
           segment.truncation_attributes.push_back(attribute);
         }
       }
-      if (!segment.truncation_attributes.empty())
+      // A port face on the simulation boundary (a wave port) is a port cut.
+      if (!segment.port_attributes.empty())
+      {
+        segment.type = MetalEdgeSegmentType::PORT;
+      }
+      else if (!segment.truncation_attributes.empty())
       {
         segment.type = MetalEdgeSegmentType::TRUNCATION;
       }
@@ -1503,6 +1551,9 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
     vertex.on_truncation_boundary = std::any_of(
         vertex.segments.begin(), vertex.segments.end(), [&](std::size_t segment)
         { return result.segments[segment].type == MetalEdgeSegmentType::TRUNCATION; });
+    vertex.on_port_boundary = std::any_of(
+        vertex.segments.begin(), vertex.segments.end(), [&](std::size_t segment)
+        { return result.segments[segment].type == MetalEdgeSegmentType::PORT; });
   }
 
   // A physical chain is a maximal path which can pass through regular (locally straight)

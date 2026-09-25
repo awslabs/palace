@@ -47,6 +47,7 @@ def preflight_config(
     order=1,
     frame_normal=None,
     planes=None,
+    ports=(),
 ):
     """`planes` = [(metal attributes, frame normal or None), ...]: one MS and one MA target per
     plane, each with its own EdgeFrameNormal (a flip-chip has two metal planes with opposite
@@ -105,6 +106,11 @@ def preflight_config(
     boundaries = {"Ground": {"Attributes": sorted(ground)}, "Postprocessing": {"Dielectric": dielectrics}}
     if terminals:
         boundaries["Terminal"] = [{"Index": i + 1, "Attributes": sorted(group)} for i, group in enumerate(terminals)]
+    if ports:
+        # Port boundary attributes of the run (decision 82(5): ports are not metal; the metal
+        # perimeter bordering them is the Port exclusion). Geometry only: the circuit values and
+        # the direction are placeholders never used by the preflight.
+        boundaries["LumpedPort"] = [{"Index": i + 1, "Attributes": [int(a)], "R": 50.0, "Direction": "+X"} for i, a in enumerate(sorted(set(ports)))]
     model = {"Mesh": os.path.abspath(mesh), "L0": l0, "Refinement": {"MaxIts": 0, "UniformLevels": uniform_levels, "SerialUniformLevels": 0}}
     if not crack:
         model["CrackInternalBoundaryElements"] = False
@@ -161,6 +167,7 @@ def main(argv=None):
     parser.add_argument("--uniform-levels", type=int, default=0)
     parser.add_argument("--no-crack", action="store_true", help="Model.CrackInternalBoundaryElements false")
     parser.add_argument("--frame-normal", type=float, nargs=3, help="EdgeFrameNormal on every interface: the process side of sheets with one material on both sides")
+    parser.add_argument("--port", type=int, nargs="*", default=[], help="port boundary attributes (LumpedPort / WavePort faces of the run): the metal perimeter bordering them is the Port exclusion")
     parser.add_argument("--plane", type=parse_plane, action="append", default=[], metavar="ATTRS[@NX,NY,NZ]",
                         help="metal plane 'a,b,c@nx,ny,nz': its own MS + MA targets with this EdgeFrameNormal (repeatable; replaces --ms/--ma)")
     args = parser.parse_args(argv)
@@ -176,7 +183,7 @@ def main(argv=None):
     config = preflight_config(
         args.mesh, args.ground, args.terminal, args.sa, args.library, postpro, ms=args.ms, ma=args.ma, radius=args.radius, l0=args.l0,
         uniform_levels=args.uniform_levels, crack=not args.no_crack, substrate_attributes=args.substrate, vacuum_attributes=args.vacuum,
-        frame_normal=args.frame_normal, planes=args.plane or None,
+        frame_normal=args.frame_normal, planes=args.plane or None, ports=args.port,
     )
     os.makedirs(os.path.dirname(output), exist_ok=True)
     with open(output, "w") as target:

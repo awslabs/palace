@@ -55,7 +55,11 @@ enum class MetalEdgeSegmentType : char
   PHYSICAL,
   TRUNCATION,
   FOLD,
-  NONMANIFOLD
+  NONMANIFOLD,
+  // A one-sided edge bordering a port boundary (LumpedPort / WavePort attribute of the
+  // configuration): the port is not metal, the metal edge along it is a cut like a
+  // truncation (decision 82(5)).
+  PORT
 };
 
 struct MetalEdgeVertex
@@ -69,6 +73,7 @@ struct MetalEdgeVertex
   MetalEdgeVertexType type = MetalEdgeVertexType::REGULAR;
   std::optional<MetalEdgeVertexType> physical_type;
   bool on_truncation_boundary = false;
+  bool on_port_boundary = false;
 };
 
 struct MetalEdgeSegment
@@ -95,6 +100,8 @@ struct MetalEdgeSegment
   // segment. Such a segment is an artificial termination at a simulation cut surface,
   // rather than a fabricated metal edge.
   std::vector<int> truncation_attributes;
+  // Port boundary attributes (LumpedPort / WavePort) whose faces border this segment.
+  std::vector<int> port_attributes;
 
   // Distinct metal faces supporting the segment, their unit normals (sign-canonical), and
   // the domain element attributes adjacent to those faces over every coincident copy. A

@@ -51,7 +51,9 @@ PLANAR_COSINE_TOLERANCE = 1.0e-8
 CROSS_LAYER_REACH_OVER_R = 2.0
 # Edge kinds the classifier extracts as PHYSICAL segments (FOLD / NONMANIFOLD are its own
 # exclusion types).
-CLASSIFIER_PHYSICAL_KINDS = ("PHYSICAL", "TRUNCATION", "EMBEDDED", "NONPLANAR", "BOX")
+CLASSIFIER_PHYSICAL_KINDS = ("PHYSICAL", "TRUNCATION", "PORT", "EMBEDDED", "NONPLANAR", "BOX")
+# Cuts of the classifier's physical-edge graph: a chain stops there and its end is no feature.
+CUT_KINDS = ("TRUNCATION", "PORT")
 
 
 def metal_attributes(config):
@@ -77,6 +79,21 @@ def metal_attributes(config):
     for entry in boundaries.get("RationalImpedance", []):
         add(entry.get("Attributes"), "RationalImpedance")
     return result
+
+
+def port_attributes(config):
+    """Port boundary attributes of the configuration (LumpedPort elements, WavePort), metal
+    attributes excluded: the metal perimeter bordering them is the Port exclusion (decision
+    82(5)); metaledge.cpp ExtractMetalEdgeGeometry."""
+    boundaries = config.get("Boundaries", {})
+    metal = metal_attributes(config)
+    result = set()
+    for port in boundaries.get("LumpedPort", []):
+        for element in port.get("Elements", [port]):
+            result |= {int(a) for a in element.get("Attributes", [])}
+    for port in boundaries.get("WavePort", []):
+        result |= {int(a) for a in port.get("Attributes", [])}
+    return {a for a in result if a not in metal}
 
 
 def conductor_of_attribute(config, attribute):
@@ -529,15 +546,19 @@ def extract_perimeter(mesh, config, process_normal=None, corner_tolerance_degree
     # Truncation: exterior non-metal non-interface boundary faces.
     exterior = _exterior_faces(mesh) if any(ELEMENT_DIMENSION[t] == 3 for t in mesh.elements) else set()
     truncation_edges = set()
+    port_edges = set()
+    ports = port_attributes(config)
     interface_edges = defaultdict(set)
     other_mask = ~metal_mask
     for face_index in np.flatnonzero(other_mask):
         tag = int(physical[face_index])
         face = corners[face_index]
         face_key = tuple(np.sort(corners_raw[face_index]))
-        is_truncation = tag not in interface_attribute_set and face_key in exterior
+        is_truncation = tag not in interface_attribute_set and tag not in ports and face_key in exterior
         for i in range(3):
             key = tuple(sorted((int(face[i]), int(face[(i + 1) % 3]))))
+            if tag in ports:
+                port_edges.add(key)
             if is_truncation:
                 truncation_edges.add(key)
             for interface, attributes in interfaces.items():
@@ -585,7 +606,9 @@ def extract_perimeter(mesh, config, process_normal=None, corner_tolerance_degree
         materials = set()
         for f in faces:
             materials |= face_materials.get(face_key_of[f], set())
-        if all(on_box[f] for f in faces) and key not in truncation_edges:
+        if edge_kinds[key] == "ONE_SIDED" and key in port_edges:
+            kind = "PORT"  # the port is not metal: a cut, the Port exclusion
+        elif all(on_box[f] for f in faces) and key not in truncation_edges:
             kind = "BOX"
         elif edge_kinds[key] == "NONMANIFOLD":
             kind = "NONMANIFOLD"
@@ -717,7 +740,7 @@ def classify_vertices(perimeter, corner_tolerance_degrees=CORNER_ANGLE_TOLERANCE
     # whose incident edges are folds / non-manifold edges (the corner of a PEC box where three
     # box faces meet, the base corners of a bump) is a vertex of no one-sided perimeter and has
     # no record on either side; a BOX edge shared by two box faces is such a fold.
-    physical_kinds = tuple(k for k in CLASSIFIER_PHYSICAL_KINDS if k != "TRUNCATION")
+    physical_kinds = tuple(k for k in CLASSIFIER_PHYSICAL_KINDS if k not in CUT_KINDS)
     for index, vertex in enumerate(perimeter.vertices):
         for physical in (False, True):
             edges = [

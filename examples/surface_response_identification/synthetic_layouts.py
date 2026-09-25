@@ -30,7 +30,7 @@ import os
 import subprocess
 import sys
 import time
-from collections import Counter
+from collections import Counter, defaultdict
 
 import numpy as np
 
@@ -77,10 +77,13 @@ def sheet(attribute, outer, holes=(), z=0.0):
     return {"Attribute": attribute, "Z": z, "Loops": [outer, *holes]}
 
 
-def layout(name, sheets, walls=(), half_x=30.0, half_y=30.0, depth=15.0, height=15.0, lc_fine=1.0, lc_far=6.0, notes="", bend=None):
+def layout(name, sheets, walls=(), half_x=30.0, half_y=30.0, depth=15.0, height=15.0, lc_fine=1.0, lc_far=6.0, notes="", bend=None, ports=(), expected=None, frame_normal=None):
     """bend = {"Radius": centreline radius, "Width": bar width} records the design intent of a
-    polyline arc bar so that the oracle can state the expected curvature class."""
-    return {"Name": name, "HalfX": half_x, "HalfY": half_y, "Depth": depth, "Height": height, "LcFine": lc_fine, "LcFar": lc_far, "Sheets": list(sheets), "Walls": list(walls), "Notes": notes, "Bend": bend}
+    polyline arc bar so that the oracle can state the expected curvature class; ports = non-metal
+    port faces (attribute, loop) on z = 0 written as LumpedPort boundaries of the preflight
+    configuration; expected = the stated expectation of a decision-82 oracle case
+    (check_expected): feature counts by type, exclusion lengths by class, vertex types."""
+    return {"Name": name, "HalfX": half_x, "HalfY": half_y, "Depth": depth, "Height": height, "LcFine": lc_fine, "LcFar": lc_far, "Sheets": list(sheets), "Walls": list(walls), "Ports": [{"Attribute": a, "Loops": [lp]} for a, lp in ports], "Notes": notes, "Bend": bend, "Expected": expected, "FrameNormal": frame_normal}
 
 
 def rectangle(x0, y0, x1, y1):
@@ -286,9 +289,113 @@ def stress_suite():
     layouts.append(layout("taper-fast", [sheet(GROUND, rectangle(-20.0, -6.0, 20.0, -2.0)), sheet(GROUND, loop([tuple(p0), tuple(p0 + 20.0 * d80), tuple(p0 + 20.0 * d80 + 4.0 * n80), tuple(p0 + 4.0 * n80)]))], notes="a 4 um bar at 80 deg converging to 1 um above a straight bar: no constant separation, a cluster at the convergence (the bar's corner within 2R of the straight edge), no pair", bend={"Clusters": 1}))
     layouts.append(layout("facing-layers", [sheet(GROUND, rectangle(-10.0, -6.0, 10.0, 6.0)), sheet(GROUND, rectangle(-10.0, -6.0, 10.0, 6.0), z=3.0)], notes="two facing metal sheets 3 um apart in one PEC attribute: cross-layer class, excluded by decision 73(3)"))
     layouts.append(layout("vertical-wall", [sheet(GROUND, rectangle(-10.0, -6.0, 10.0, 6.0))], walls=[(GROUND, 0.0, -6.0, 0.0, 6.0, 4.0)], notes="a vertical metal wall standing across the sheet: non-planar and non-manifold classes"))
+    layouts += decision_82_suite()
     layouts.append(layout("island-rounded-8x6", [sheet(GROUND, rounded_rectangle(4.0, 3.0, 0.5))], half_x=12.0, half_y=12.0, depth=8.0, height=8.0, lc_fine=0.25, lc_far=2.0, notes="survey geometry 2: 8 x 6 um island with 0.5 um fillets (perimeter 24 + pi)"))
     layouts.append(layout("aperture-rounded-8x6", [sheet(GROUND, rectangle(-12.0, -12.0, 12.0, 12.0), holes=[rounded_rectangle(4.0, 3.0, 0.5)])], half_x=12.0, half_y=12.0, depth=8.0, height=8.0, lc_fine=0.25, lc_far=2.0, notes="survey geometry 2, aperture variant: the same shape as a hole in a ground plane"))
     return layouts
+
+
+PORT = 9
+
+
+def decision_82_suite():
+    """Oracle cases of the decision-82 rules with their expectation stated before running
+    (`Expected`, checked by check_expected): (1) one interaction distance and no cross-plane
+    features — two 20 x 12 um sheets (perimeter 64 um each) on planes 1.5R / 2.0R / 2.4R apart,
+    overlapping and offset by 8 um in x, plus two slot patterns (corner clusters) 2.4R apart
+    whose sites are within the former 3R vertex join but beyond 2R; (5) a lumped port bridging
+    the 4 um gap between two 6 um leads."""
+    layouts = []
+    R = RADIUS
+    box = rectangle(-10.0, -6.0, 10.0, 6.0)
+    one_sheet = {"ConvexCorner": 4, "IsolatedEdge": 4}
+    # EdgeFrameNormal +z on every interface so that the sheet in the vacuum (one material on
+    # both sides) is identified like the flip chip's top metal instead of being
+    # UndeterminedProcessSide.
+    up = [0.0, 0.0, 1.0]
+    for tag, z in [("1p5R", 1.5 * R), ("2R", 2.0 * R), ("2p4R", 2.4 * R)]:
+        within = z < 2.0 * R
+        # Overlapping: every edge point of either sheet is at distance z from the other sheet's
+        # face -> CrossLayer over the whole perimeter of both sheets below 2R (strict), nothing
+        # at 2R and beyond: two independent rectangles, no cross-plane pair or cluster.
+        layouts.append(layout(f"planes-{tag}-overlap", [sheet(GROUND, box), sheet(GROUND, box, z=z)], frame_normal=up, notes=f"two identical 20 x 12 sheets on planes {z:g} um = {z / R:g} R apart: {'whole perimeter CrossLayer' if within else 'two independent rectangles (no cross-plane feature)'}", expected={
+            "Features": {} if within else {k: 2 * v for k, v in one_sheet.items()},
+            "Exclusions": {"CrossLayer": 128.0} if within else {},
+            "ExcludedVertices": 8 if within else 0,
+            "CrossPlaneFeatures": 0,
+            "PlanesRule": "no feature may hold portions on both planes",
+        }))
+        # Offset by 8 um in x: the top sheet covers x in [-2, 18]. Below 2R every bottom-edge
+        # point within sqrt((2R)^2 - z^2) in plan view of the top sheet's face is CrossLayer
+        # (analytic zone boundary), the far ends stay planar features; at and beyond 2R nothing.
+        reach = math.sqrt(max(0.0, (2.0 * R) ** 2 - z * z))
+        zone = 2.0 * (10.0 + 2.0 + reach) + 12.0  # two long edges from x = -2 - reach to 10, the end edge
+        layouts.append(layout(f"planes-{tag}-offset", [sheet(GROUND, box), sheet(GROUND, rectangle(-2.0, -6.0, 18.0, 6.0), z=z)], half_x=36.0, frame_normal=up, notes=f"two 20 x 12 sheets offset by 8 um on planes {z / R:g} R apart: {'CrossLayer zones where the sheets overlap in plan view (+ the in-plane reach), planar features on the far ends' if within else 'two independent rectangles'}", expected={
+            # below 2R: the far-end corners of both sheets and, per sheet, the end edge + the
+            # planar remainders of the two long chains (one IsolatedEdge feature per chain)
+            "Features": {"ConvexCorner": 4, "IsolatedEdge": 6} if within else {k: 2 * v for k, v in one_sheet.items()},
+            "Exclusions": {"CrossLayer": 2.0 * zone} if within else {},
+            "ExcludedVertices": 4 if within else 0,
+            "CrossPlaneFeatures": 0,
+            "PlanesRule": "no feature may hold portions on both planes",
+            "Tolerance": 0.05,
+        }))
+    # Two slot patterns (a 3 um slot in a U: its two 90 deg concave corners are 3 um < 2R apart
+    # -> one corner cluster per slot end, as gap-same-3) on planes 2.4R apart, the top one shifted
+    # by 2 um in y: the top cluster's sites are 5.2 um = 2.6R (< the former 3R join) from the
+    # bottom cores in 3D, beyond 2R. Expected: the clusters of the two planes stay separate.
+    z = 2.4 * R
+    shifted = slot_shape(14.0, 6.0, 3.0, 12.0)
+    shifted = loop([(x, y + 2.0) for x, y in shifted["Points"]])
+    layouts.append(layout("planes-2p4R-clusters", [sheet(GROUND, slot_shape(14.0, 6.0, 3.0, 12.0)), sheet(GROUND, shifted, z=z)], frame_normal=up, notes="two 3 um slots (each: one SameConductorGap, two corner clusters at the slot end and mouth, 4 convex corners, 5 isolated edges, as gap-same-*) on planes 2.4R apart, the top one shifted by 2 um in y: its sites are 2.6R from the bottom cores (inside the former 3R join, beyond 2R) and its slot edges lie above the bottom slot's (a cross-plane translational pair before the plane rule)", expected={
+        "Features": {"SpatialEdgeCluster": 4, "SameConductorGap": 2, "ConvexCorner": 8, "IsolatedEdge": 10},
+        "CrossPlaneFeatures": 0,
+        "Exclusions": {},
+        "ExcludedVertices": 0,
+    }))
+    # A lumped port bridging the 4 um gap between two 6 um wide leads (x in [-20, -2] and
+    # [2, 20]): the lead ends bordering the port (2 x 6 um) are the Port exclusion, their
+    # corners are PortCut, the leads' long edges run to the cut; the far ends keep their corners.
+    layouts.append(layout("port-bridge", [sheet(GROUND, rectangle(-20.0, -3.0, -2.0, 3.0)), sheet(GROUND, rectangle(2.0, -3.0, 20.0, 3.0))], ports=[(PORT, rectangle(-2.0, -3.0, 2.0, 3.0))], notes="a lumped port face bridging the 4 um gap between two 6 um leads: the lead ends along the port are the Port exclusion (12 um), their four vertices PortCut, no corner / endpoint / pair there", expected={
+        "Features": {"ConvexCorner": 4, "IsolatedEdge": 6},
+        "Exclusions": {"Port": 12.0},
+        "Vertices": {"PortCut": 4, "ConvexCorner": 4},
+    }))
+    return layouts
+
+
+def check_expected(manifest, expected, radius=RADIUS):
+    """Compare a manifest with a stated expectation: feature counts by type, exclusion lengths by
+    class (relative tolerance `Tolerance`, default 1e-6 of the perimeter), vertex types, and the
+    plane rule (no feature with portions on two planes)."""
+    ident = manifest["Identification"]
+    checks = {}
+    features = Counter(f["Type"] for f in ident["Features"])
+    if "Features" in expected:
+        checks["Features"] = {"Expected": dict(expected["Features"]), "Manifest": dict(features), "Pass": features == Counter(expected["Features"])}
+    if "Exclusions" in expected:
+        recorded = defaultdict(float)
+        for e in ident["Exclusions"]:
+            if e["Class"] != "TruncationCut":
+                recorded[e["Class"]] += float(e["Length"])
+        tolerance = expected.get("Tolerance", 1.0e-6) * max(float(ident["Totals"]["PerimeterLength"]), radius)
+        ok = set(recorded) == set(expected["Exclusions"]) and all(abs(recorded[k] - v) <= tolerance for k, v in expected["Exclusions"].items())
+        checks["Exclusions"] = {"Expected": dict(expected["Exclusions"]), "Manifest": dict(recorded), "Pass": ok}
+    if "Vertices" in expected:
+        types = Counter(v["Type"] for v in ident["Vertices"])
+        checks["Vertices"] = {"Expected": dict(expected["Vertices"]), "Manifest": dict(types), "Pass": all(types.get(k, 0) == v for k, v in expected["Vertices"].items())}
+    if "ExcludedVertices" in expected:
+        n = sum(1 for v in ident["Vertices"] if v["Type"] == "Excluded")
+        checks["ExcludedVertices"] = {"Expected": expected["ExcludedVertices"], "Manifest": n, "Pass": n == expected["ExcludedVertices"]}
+    if "CrossPlaneFeatures" in expected:
+        normal = np.array(ident["ReferenceProcessNormal"], dtype=float)
+        offsets = [round(float(np.array(s["Key"][0]) @ normal), 6) for s in ident["Segments"]]
+        spanning = 0
+        for f in ident["Features"]:
+            planes = {offsets[int(p[0])] for p in f.get("Portions", [])}
+            spanning += len(planes) > 1
+        checks["CrossPlaneFeatures"] = {"Expected": 0, "Manifest": spanning, "Pass": spanning == 0}
+    return checks
 
 
 # ----------------------------------------------------------------------- specification ----
@@ -314,6 +421,11 @@ def write_specification(layouts, path):
                 lines.append("close")
         for attribute, x0, y0, x1, y1, h in lay["Walls"]:
             lines.append(f"wall {attribute} {x0!r} {y0!r} {x1!r} {y1!r} {h!r}")
+        for port in lay.get("Ports", []):
+            lines.append(f"port {port['Attribute']}")
+            for x, y in port["Loops"][0]["Points"]:
+                lines.append(f"v {x!r} {y!r}")
+            lines.append("close")
         lines.append("end")
     with open(path, "w") as target:
         target.write("\n".join(lines) + "\n")
@@ -1227,7 +1339,7 @@ def run_suite(args):
                     name = f"{label}-u{levels}-np{ranks}" if crack else f"{label}-u{levels}-crackfalse-np{ranks}"
                     directory = os.path.join(args.output, lay["Name"], name)
                     os.makedirs(directory, exist_ok=True)
-                    config = preflight_config(mesh_path, ground, terminals, sa, library, os.path.join(directory, "postpro"), uniform_levels=levels, crack=crack)
+                    config = preflight_config(mesh_path, ground, terminals, sa, library, os.path.join(directory, "postpro"), uniform_levels=levels, crack=crack, ports=[port["Attribute"] for port in lay.get("Ports", [])], frame_normal=lay.get("FrameNormal"))
                     config_path = os.path.join(directory, "config.json")
                     with open(config_path, "w") as target:
                         json.dump(config, target, indent=2)

@@ -5339,7 +5339,14 @@ IdentificationResult RunGeometryIdentification(
     segment.chain = source.physical_chain;
     segment.truncation = source.type == MetalEdgeSegmentType::TRUNCATION;
     segment.conductor = source.metal_component;
-    if (source.on_bounding_box && !segment.truncation)
+    if (source.type == MetalEdgeSegmentType::PORT)
+    {
+      segment.exclusion = std::make_pair(
+          "Port", "metal perimeter bordering a port boundary face (LumpedPort / WavePort "
+                  "attribute of the configuration): the port is not metal, the metal edge "
+                  "along it is a cut (decision 82(5))");
+    }
+    else if (source.on_bounding_box && !segment.truncation)
     {
       segment.exclusion = std::make_pair(
           "SimulationBoundary",
@@ -5401,6 +5408,7 @@ IdentificationResult RunGeometryIdentification(
     input.vertices[v].segments = geometry.vertices[v].segments;
     input.vertices[v].physical_type = geometry.vertices[v].physical_type;
     input.vertices[v].on_truncation_boundary = geometry.vertices[v].on_truncation_boundary;
+    input.vertices[v].on_port_boundary = geometry.vertices[v].on_port_boundary;
   }
   // The identification runs on the root only (the global metal faces exist there alone;
   // decision 82 infrastructure) and the result is broadcast: every rank builds the same

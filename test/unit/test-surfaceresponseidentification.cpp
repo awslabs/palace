@@ -31,6 +31,7 @@ struct LoopSpec
   std::vector<Point2> points;
   int conductor = 0;
   double subdivision = 1.0;
+  double z = 0.0;  // metal plane of the loop
 };
 
 IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
@@ -38,17 +39,17 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
 {
   IdentificationInput input;
   input.radius = radius;
-  std::map<std::array<long long, 2>, std::size_t> vertex_index;
-  auto Vertex = [&](const Point2 &p)
+  std::map<std::array<long long, 3>, std::size_t> vertex_index;
+  auto Vertex = [&](const Point2 &p, double z)
   {
-    const std::array<long long, 2> key = {std::llround(p[0] * 1.0e9),
-                                          std::llround(p[1] * 1.0e9)};
+    const std::array<long long, 3> key = {
+        std::llround(p[0] * 1.0e9), std::llround(p[1] * 1.0e9), std::llround(z * 1.0e9)};
     auto it = vertex_index.find(key);
     if (it == vertex_index.end())
     {
       it = vertex_index.emplace(key, input.vertices.size()).first;
       IdentificationVertex vertex;
-      vertex.coordinate = {p[0], p[1], 0.0};
+      vertex.coordinate = {p[0], p[1], z};
       input.vertices.push_back(vertex);
     }
     return it->second;
@@ -58,6 +59,7 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
     Point2 a, b, outward;
     int conductor;
     int chain;
+    double z;
   };
   std::vector<Raw> raw;
   int chain = 0;
@@ -80,7 +82,8 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
                        {a[0] + t[0] * s1, a[1] + t[1] * s1},
                        outward,
                        loop.conductor,
-                       chain});
+                       chain,
+                       loop.z});
       }
       chain++;
     }
@@ -92,9 +95,9 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
   for (const auto &r : raw)
   {
     IdentificationSegment segment;
-    segment.p0 = {r.a[0], r.a[1], 0.0};
-    segment.p1 = {r.b[0], r.b[1], 0.0};
-    segment.vertices = {Vertex(r.a), Vertex(r.b)};
+    segment.p0 = {r.a[0], r.a[1], r.z};
+    segment.p1 = {r.b[0], r.b[1], r.z};
+    segment.vertices = {Vertex(r.a, r.z), Vertex(r.b, r.z)};
     segment.chain = r.chain;
     segment.conductor = r.conductor;
     segment.targets = {{InterfaceDielectric::MS, 1}};
@@ -318,7 +321,7 @@ void CheckPartition(const IdentificationInput &input, const IdentificationResult
   CHECK_THAT(feature_length, WithinAbs(assigned, 1.0e-9));
   for (const auto &vertex : result.vertices)
   {
-    if (vertex.type != "TruncationCut")
+    if (vertex.type != "TruncationCut" && vertex.type != "PortCut")
     {
       CHECK(vertex.type != "Excluded");
       CHECK(vertex.feature >= 0);
@@ -780,4 +783,153 @@ TEST_CASE("SurfaceResponseIdentificationPairsAtTheThreshold",
       }
     }
   }
+}
+
+TEST_CASE("SurfaceResponseIdentificationOneInteractionDistance",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Decision 82(1): one interaction distance (3D, strictly below 2R) and no feature across
+  // two metal planes.
+  const double R = 2.0;
+  const std::vector<Point2> pad = Rectangle(-10.0, -6.0, 10.0, 6.0);
+  const auto single = IdentifyMetalPerimeter(MakeInput({{pad, 0, 1.0}}, R));
+  std::map<std::string, int> single_counts;
+  for (const auto &feature : single.features)
+  {
+    single_counts[feature.type]++;
+  }
+  CHECK(single_counts["ConvexCorner"] == 4);
+  CHECK(single_counts["IsolatedEdge"] == 4);
+
+  // Identical pads on planes 2R and 2.4R apart (and a laterally offset one at R): no pair,
+  // no cluster, no vertex join between the planes — every feature lies on one plane and
+  // the feature multiset is twice the single pad's.
+  for (const double z : {2.0 * R, 2.4 * R})
+  {
+    for (const double shift : {0.0, R})
+    {
+      std::vector<Point2> upper = pad;
+      for (auto &p : upper)
+      {
+        p[0] += shift;
+      }
+      const auto input = MakeInput({{pad, 0, 1.0}, {upper, 1, 1.0, z}}, R);
+      const auto result = IdentifyMetalPerimeter(input);
+      INFO("z " << z << " shift " << shift);
+      CheckPartition(input, result);
+      std::map<std::string, int> counts;
+      for (const auto &feature : result.features)
+      {
+        counts[feature.type]++;
+        std::set<long long> planes;
+        for (const auto &portion : feature.portions)
+        {
+          planes.insert(std::llround(input.segments[portion.segment].p0[2] * 1.0e6));
+        }
+        CHECK(planes.size() <= 1);
+      }
+      CHECK(counts["ConvexCorner"] == 8);
+      CHECK(counts["IsolatedEdge"] == 8);
+      CHECK(counts.size() == 2);
+    }
+  }
+
+  // Two 3 um slots (corner clusters at both slot ends) on planes 2.4R apart, the upper one
+  // shifted by 2 um: its sites are 2.6R from the lower cores (inside the former 3R vertex
+  // join) — the clusters of the two planes stay separate, its slot edges above the lower
+  // slot's do not pair.
+  {
+    auto Slot = [](double dy)
+    {
+      const double hw = 1.5, x_out = 15.5, y_top = 6.0 + dy, y_slot = -6.0 + dy,
+                   y_bottom = -12.0 + dy;
+      return std::vector<Point2>{{-x_out, y_bottom}, {x_out, y_bottom}, {x_out, y_top},
+                                 {hw, y_top},        {hw, y_slot},      {-hw, y_slot},
+                                 {-hw, y_top},       {-x_out, y_top}};
+    };
+    const auto lower_input = MakeInput({{Slot(0.0), 0, 1.0}}, R);
+    const auto lower = IdentifyMetalPerimeter(lower_input);
+    const auto input = MakeInput({{Slot(0.0), 0, 1.0}, {Slot(2.0), 1, 1.0, 2.4 * R}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    std::map<std::string, int> counts, lower_counts;
+    for (const auto &feature : lower.features)
+    {
+      lower_counts[feature.type]++;
+    }
+    for (const auto &feature : result.features)
+    {
+      counts[feature.type]++;
+    }
+    CHECK(lower_counts["SpatialEdgeCluster"] == 2);
+    CHECK(lower_counts["SameConductorGap"] == 1);
+    for (const auto &[type, count] : lower_counts)
+    {
+      CHECK(counts[type] == 2 * count);
+    }
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationPortCutAndBroadcast",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Decision 82(5): the metal perimeter bordering a port face is a Port exclusion and its
+  // vertices are PortCut (no corner / endpoint feature); the serialised result round-trips.
+  const double R = 2.0;
+  auto input = MakeInput({{Rectangle(-20.0, -3.0, -2.0, 3.0), 0, 1.0},
+                          {Rectangle(2.0, -3.0, 20.0, 3.0), 1, 1.0}},
+                         R);
+  // The lead ends at x = +-2 border the port face: excluded, their vertices port cuts.
+  for (std::size_t s = 0; s < input.segments.size(); s++)
+  {
+    auto &segment = input.segments[s];
+    if (std::abs(std::abs(segment.p0[0]) - 2.0) < 1.0e-9 &&
+        std::abs(std::abs(segment.p1[0]) - 2.0) < 1.0e-9)
+    {
+      segment.exclusion = std::make_pair("Port", "metal perimeter bordering a port face");
+      for (const std::size_t v : segment.vertices)
+      {
+        input.vertices[v].on_port_boundary = true;
+        if (std::abs(std::abs(input.vertices[v].coordinate[1]) - 3.0) < 1.0e-9)
+        {
+          input.vertices[v].physical_type = MetalEdgeVertexType::ENDPOINT;
+        }
+      }
+    }
+  }
+  const auto result = IdentifyMetalPerimeter(input);
+  CheckPartition(input, result);
+  std::map<std::string, int> counts, vertex_types;
+  for (const auto &feature : result.features)
+  {
+    counts[feature.type]++;
+  }
+  for (const auto &vertex : result.vertices)
+  {
+    vertex_types[vertex.type]++;
+  }
+  for (const auto &[type, count] : counts)
+  {
+    INFO(type << " " << count);
+    CHECK((type == "ConvexCorner" || type == "IsolatedEdge"));
+  }
+  CHECK(counts["ConvexCorner"] == 4);
+  CHECK(counts["IsolatedEdge"] == 6);
+  CHECK(counts["Endpoint"] == 0);
+  CHECK(vertex_types["PortCut"] == 4);
+  CHECK(vertex_types["ConvexCorner"] == 4);
+  double port_length = 0.0;
+  for (const auto &exclusion : result.exclusions)
+  {
+    if (exclusion.cls == "Port")
+    {
+      port_length += exclusion.length;
+    }
+  }
+  CHECK_THAT(port_length, WithinAbs(12.0, 1.0e-9));
+
+  // Broadcast form: the deserialised result produces the same manifest object.
+  const auto copy = DeserializeIdentificationResult(SerializeIdentificationResult(result));
+  CHECK(copy.ToJson(1.0) == result.ToJson(1.0));
+  CHECK(copy.geometry_digest == result.geometry_digest);
 }

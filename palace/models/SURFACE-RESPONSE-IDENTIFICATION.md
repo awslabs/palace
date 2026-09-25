@@ -107,10 +107,13 @@ smaller endpoint.
    belong to the same cluster when their distance is < 2R (union-find in canonical order;
    the result does not depend on the order). Every chain portion inside the region (distance
    to an event core < R: an interval on each chain, solved analytically) and every vertex
-   inside the region belongs to that cluster. A vertex feature whose through-vertex zone (2R)
-   reaches into a cluster region (distance from the vertex to an event core < 3R) joins the
-   cluster together with its own window, so an acute corner and the cluster its arms form are
-   **one description** (no corner record next to the cluster). Portions are split at the
+   inside the region belongs to that cluster. A vertex feature within the interaction
+   distance of an event core (distance from the vertex to a core < 2R: its radius-R window
+   overlaps the core's radius-R ball) joins the cluster together with its own window
+   (`VertexJoinsClusterOverR` = 2; decision 82(1), 2026-09-25: the former 3R join was the one
+   distance differing from 2R and joined the L2 junction regions of DS-SCT-002 to the L1
+   flux-loop ends 2.4R below; an acute corner whose arms interact from 2R along the arms is
+   now a corner feature next to a separate arm cluster, abutting at R along each arm). Portions are split at the
    region boundary canonically (the analytic interval endpoints on the chain, on the decision
    grid). Two vertex features closer than 2R have overlapping radius-R windows (invariant A2)
    and are an event of their own (both vertices are degenerate event cores), so the corners of
@@ -239,8 +242,32 @@ smaller endpoint.
    half a lead may join the curved class at coarse discretisations — classes are
    discretisation-independent, lengths are not); a chain pair with two bends of different
    radii yields one curved feature with the tighter radius.
-8. **Exclusions** (decision 73(3), recorded with length): `TruncationCut` (segments on the
-   simulation boundary), `Untargeted` (no target interface on the segment),
+8. **Plane rule (decision 82(1)).** Every run belongs to one metal plane (the distinct
+   offsets of the run midpoints along the reference process normal on the decision grid).
+   Events, core merging, site-site cores, the vertex-site join, bent pairs and the
+   translational direction classes are taken between runs of ONE plane only: no pair,
+   cluster or vertex join ever spans two planes. Metal of another plane within the
+   interaction distance (2R, 3D, strict) is the `CrossLayer` exclusion of item 9 (the
+   face-based zones cover every cross-plane edge pair within 2R, since the other plane's edge
+   is the edge of a metal face). Distances recorded: interaction 2R (events, through-vertex
+   zone, core merge, site-site, vertex join, CrossLayer reach); the cluster ball R is the
+   claim radius of the region, not an interaction decision; the bent-pair candidate reach
+   2R (1 + 0.05) is the SAMPLING margin of the constancy test (its interaction decision is
+   the same strict < 2R on the curve separation) and the mutual-sides facing test uses the
+   pair's own separation x 1.05 — both recorded here as the two non-2R constants that
+   remain, neither decides an interaction.
+   **Port rule (decision 82(5)).** Ports are not metal: a one-sided perimeter segment
+   coincident with an edge of a LumpedPort / WavePort boundary face of the configuration
+   (attributes from `Boundaries.LumpedPort[].Attributes` / `Elements[].Attributes` and
+   `Boundaries.WavePort[].Attributes`, metal attributes excluded; never from names) is the
+   `Port` exclusion (segment type PORT in `metaledge.cpp`, checked before the truncation
+   test); the physical-edge graph stops there like at a truncation, so a vertex ending a
+   port-bordering segment is a `PortCut` (never a corner / endpoint feature) and the metal
+   edges running into the port are chains ending at the cut. A lumped port bridging the gap
+   between two leads therefore leaves the lead ends excluded (2 x the lead width) with four
+   PortCut vertices and the leads' long edges as isolated edges to the cut.
+9. **Exclusions** (decision 73(3), recorded with length): `TruncationCut` (segments on the
+   simulation boundary), `Port` (item 8), `Untargeted` (no target interface on the segment),
    `NonPlanar` (segment process normal not parallel to the reference process normal: walls,
    staples), `CrossLayer` (planar segment whose offset along the process normal differs from
    the primary metal plane — the plane carrying the largest perimeter length), and
@@ -290,7 +317,7 @@ Consequences (recorded in the manifest under `Library.DecisionQuantization` and
 * two parallel edges at exactly 2R do **not** interact (both isolated edges); at 2R - quantum
   they form a pair;
 * an event needs |p - q| < 2R; through-vertex exclusion applies when either point is < 2R from
-  the shared vertex; a vertex joins a cluster when its distance to an event core is < 3R;
+  the shared vertex; a vertex joins a cluster when its distance to an event core is < 2R;
 * a chain portion belongs to a cluster when its distance to an event core is < R;
 * the strip at exactly R (`strip-2`, the transmon's 64 segments) is a `SameConductorStrip` at
   `Separation / R = 1` on both sides and its corners are plain corners: no knife edge between
@@ -369,14 +396,15 @@ matching pass). The new top-level `Identification` object carries the contract:
   "MatchingRadius": R,
   "Conventions": {"CornerTurnToleranceDegrees": 30, "InteractionDistanceOverR": 2,
                   "ThroughVertexZoneOverR": 2, "ClusterBallOverR": 1,
-                  "VertexJoinsClusterOverR": 3, "VertexWindowOverR": 1,
+                  "VertexJoinsClusterOverR": 2, "VertexWindowOverR": 1,
                   "ParallelCosineTolerance": 1e-8, "RoundedCornerTangentTolerance": 0.05,
                   "SignatureLengthQuantumOverR": 1e-6, "SignatureAngleQuantumDegrees": 1e-6,
                   "StraightBendRadiusOverR": 10, "CurvatureWindowOverR": 1,
                   "PairSeparationToleranceRelative": 0.05, "PairSeparationSamplesPerInterval": 16,
                   "PairSeparationEstimate": "per sample: chord reading C = min over the two chains of the maximum sampled closest-point distance within max(R, local chord) of the sample / its foot where the chain bends, R on straight runs; inscribed reading C / cos(turn / 2) with the larger local joint turn; interacting iff both < 2R; feature separation = mean C",
                   "PairConstancyWindowOverR": 1, "PairSampleSpacingOverR": 0.5,
-                  "PairCandidateReachOverR": 2.1,
+                  "PairCandidateReachOverR": 2.1, "CrossLayerReachOverR": 2,
+                  "PlaneRule": "...", "PortRule": "...",
                   "Comparison": "strict less on the quantized grid"},
   "ReferenceProcessNormal": [nx, ny, nz],
   "Features": [ {"Id": k, "Type": "...", "Signature": {...}, "Hash": "sha256", "Chirality": +-1,
