@@ -21,11 +21,7 @@ singularity
 .DS_Store
 .vscode/
 
-# Git
-# NOTE: .git is intentionally NOT ignored. The Palace build runs `git describe`
-# to stamp the version (written to palace.json as "GitTag"); without .git it
-# degrades to "UNKNOWN". The Dockerfile removes /opt/palace/.git in the same
-# layer after the build so it never bloats the image.
+# CI
 .github
 
 # Python caches
