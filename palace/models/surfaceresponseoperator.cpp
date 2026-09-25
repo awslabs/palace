@@ -5407,6 +5407,8 @@ IdentificationResult RunGeometryIdentification(
       input.faces.push_back({face.vertices, face.normal});
     }
   }
+  // Stage counts, wall times and progress of the (replicated) identification on the root.
+  input.log = [](const std::string &line) { Mpi::Print("{}", line); };
   auto result = IdentifyMetalPerimeter(input);
 
   {

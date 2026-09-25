@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstddef>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -68,6 +69,10 @@ struct IdentificationInput
   std::vector<IdentificationSegment> segments;
   std::vector<IdentificationVertex> vertices;
   std::vector<IdentificationFace> faces;
+  // Progress and per-stage timing lines (counts, wall time, fraction done of a long loop
+  // every ~10 s) so that a chip-scale identification can be monitored; unset = silent. Pure
+  // diagnostics: nothing in the result depends on it.
+  std::function<void(const std::string &)> log;
 };
 
 struct IdentifiedPortion

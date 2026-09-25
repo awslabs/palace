@@ -4,6 +4,7 @@
 #include "surfaceresponseidentification.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -15,6 +16,7 @@
 #include <set>
 #include <sstream>
 #include <tuple>
+#include <unordered_map>
 #include <mfem.hpp>
 #include "utils/enum_string.hpp"
 
@@ -1172,6 +1174,208 @@ struct UnionFind
   }
 };
 
+// Uniform grid over axis-aligned boxes: every candidate search of the identification (runs
+// against runs, faces, sites, cores) asks the grid for the items whose boxes may lie within a
+// margin of a query box (an exact superset: an item is stored in every cell its box overlaps,
+// the query visits every cell the enlarged box overlaps) and then applies the original
+// geometric test to the candidates IN THE ORIGINAL ORDER (sorted indices), so that the results
+// are identical to the former all-pairs loops. Pure acceleration; no rule lives here.
+class UniformGrid
+{
+public:
+  UniformGrid(double cell_size, const Point3D &lower) : cell(cell_size), origin(lower) {}
+
+  void Insert(std::size_t id, const Point3D &lo, const Point3D &hi)
+  {
+    const auto c0 = Cell(lo), c1 = Cell(hi);
+    for (int d = 0; d < 3; d++)
+    {
+      min_cell[d] = std::min(min_cell[d], c0[d]);
+      max_cell[d] = std::max(max_cell[d], c1[d]);
+    }
+    for (long long int ix = c0[0]; ix <= c1[0]; ix++)
+    {
+      for (long long int iy = c0[1]; iy <= c1[1]; iy++)
+      {
+        for (long long int iz = c0[2]; iz <= c1[2]; iz++)
+        {
+          cells[Key(ix, iy, iz)].push_back(id);
+        }
+      }
+    }
+  }
+
+  // Sorted, unique ids of the items stored in the cells overlapping [lo - margin, hi + margin].
+  std::vector<std::size_t> Query(const Point3D &lo, const Point3D &hi, double margin) const
+  {
+    std::vector<std::size_t> out;
+    Point3D qlo = lo, qhi = hi;
+    for (int d = 0; d < 3; d++)
+    {
+      qlo[d] -= margin;
+      qhi[d] += margin;
+    }
+    const auto c0 = Cell(qlo), c1 = Cell(qhi);
+    for (long long int ix = std::max(c0[0], min_cell[0]); ix <= std::min(c1[0], max_cell[0]);
+         ix++)
+    {
+      for (long long int iy = std::max(c0[1], min_cell[1]);
+           iy <= std::min(c1[1], max_cell[1]); iy++)
+      {
+        for (long long int iz = std::max(c0[2], min_cell[2]);
+             iz <= std::min(c1[2], max_cell[2]); iz++)
+        {
+          if (auto it = cells.find(Key(ix, iy, iz)); it != cells.end())
+          {
+            out.insert(out.end(), it->second.begin(), it->second.end());
+          }
+        }
+      }
+    }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+  }
+
+  // Items in the cells at Chebyshev cell distance exactly k from the cell of p (ring 0 = the
+  // cell itself); every point of such a cell is at least (k - 1) cells away from p.
+  void Ring(const Point3D &p, long long int k, std::vector<std::size_t> &out) const
+  {
+    const auto c = Cell(p);
+    for (long long int ix = c[0] - k; ix <= c[0] + k; ix++)
+    {
+      if (ix < min_cell[0] || ix > max_cell[0])
+      {
+        continue;
+      }
+      for (long long int iy = c[1] - k; iy <= c[1] + k; iy++)
+      {
+        if (iy < min_cell[1] || iy > max_cell[1])
+        {
+          continue;
+        }
+        const bool face_xy = std::abs(ix - c[0]) == k || std::abs(iy - c[1]) == k;
+        for (long long int iz = c[2] - k; iz <= c[2] + k; iz++)
+        {
+          if (iz < min_cell[2] || iz > max_cell[2] ||
+              (!face_xy && std::abs(iz - c[2]) != k))
+          {
+            continue;
+          }
+          if (auto it = cells.find(Key(ix, iy, iz)); it != cells.end())
+          {
+            out.insert(out.end(), it->second.begin(), it->second.end());
+          }
+        }
+      }
+    }
+  }
+
+  // Rings beyond this index hold no cell.
+  long long int MaxRing(const Point3D &p) const
+  {
+    const auto c = Cell(p);
+    long long int k = 0;
+    for (int d = 0; d < 3; d++)
+    {
+      k = std::max({k, std::abs(c[d] - min_cell[d]), std::abs(max_cell[d] - c[d])});
+    }
+    return k;
+  }
+
+  double CellSize() const { return cell; }
+  std::size_t Cells() const { return cells.size(); }
+
+private:
+  double cell;
+  Point3D origin;
+  std::array<long long int, 3> min_cell{std::numeric_limits<long long int>::max(),
+                                        std::numeric_limits<long long int>::max(),
+                                        std::numeric_limits<long long int>::max()};
+  std::array<long long int, 3> max_cell{std::numeric_limits<long long int>::min(),
+                                        std::numeric_limits<long long int>::min(),
+                                        std::numeric_limits<long long int>::min()};
+  std::unordered_map<std::uint64_t, std::vector<std::size_t>> cells;
+
+  std::array<long long int, 3> Cell(const Point3D &p) const
+  {
+    std::array<long long int, 3> c{};
+    for (int d = 0; d < 3; d++)
+    {
+      c[d] = static_cast<long long int>(std::floor((p[d] - origin[d]) / cell));
+    }
+    return c;
+  }
+  static std::uint64_t Key(long long int ix, long long int iy, long long int iz)
+  {
+    constexpr std::uint64_t offset = std::uint64_t{1} << 20;
+    return ((static_cast<std::uint64_t>(ix) + offset) << 42) |
+           ((static_cast<std::uint64_t>(iy) + offset) << 21) |
+           (static_cast<std::uint64_t>(iz) + offset);
+  }
+};
+
+void BoundingBox(const Point3D &a, const Point3D &b, Point3D &lo, Point3D &hi)
+{
+  for (int d = 0; d < 3; d++)
+  {
+    lo[d] = std::min(a[d], b[d]);
+    hi[d] = std::max(a[d], b[d]);
+  }
+}
+
+// Wall-clock stage timer and throttled progress lines through IdentificationInput::log.
+class StageLog
+{
+public:
+  explicit StageLog(const std::function<void(const std::string &)> &log_) : log(log_) {}
+
+  void Begin(const std::string &stage)
+  {
+    name = stage;
+    started = last = std::chrono::steady_clock::now();
+  }
+  void Progress(std::size_t done, std::size_t total)
+  {
+    if (!log)
+    {
+      return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration<double>(now - last).count() < 10.0)
+    {
+      return;
+    }
+    last = now;
+    std::ostringstream text;
+    text << "  Identification " << name << ": " << done << " / " << total << " ("
+         << std::fixed << std::setprecision(1)
+         << (total ? 100.0 * static_cast<double>(done) / static_cast<double>(total) : 100.0)
+         << " %), " << std::setprecision(1) << Elapsed() << " s\n";
+    log(text.str());
+  }
+  void End(const std::string &counts)
+  {
+    if (!log)
+    {
+      return;
+    }
+    std::ostringstream text;
+    text << "  Identification " << name << ": " << counts << " (" << std::fixed
+         << std::setprecision(2) << Elapsed() << " s)\n";
+    log(text.str());
+  }
+  double Elapsed() const
+  {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+  }
+
+private:
+  const std::function<void(const std::string &)> &log;
+  std::string name;
+  std::chrono::steady_clock::time_point started, last;
+};
+
 struct VertexFeatureSite
 {
   // A mesh vertex (corner / endpoint / junction) or the virtual corner of a fillet.
@@ -1232,8 +1436,61 @@ private:
   std::vector<std::vector<EventCore>> cluster_cores;
   std::vector<std::vector<std::size_t>> cluster_sites;
   std::map<std::size_t, int> vertex_feature;  // mesh vertex -> feature id
+  // Acceleration only (every result is the former all-pairs answer): the runs by their
+  // boxes and the runs incident to every vertex.
+  std::optional<UniformGrid> run_grid;
+  std::vector<std::vector<std::size_t>> runs_at_vertex;
+  StageLog stage{input.log};
 
   double Tol() const { return quantizer.Quantum(); }
+
+  // Candidate runs (sorted) whose boxes lie within margin of [lo, hi].
+  std::vector<std::size_t> RunsNear(const Point3D &lo, const Point3D &hi, double margin) const
+  {
+    return run_grid->Query(lo, hi, margin);
+  }
+  std::vector<std::size_t> RunsNearRun(std::size_t r, double margin) const
+  {
+    Point3D lo, hi;
+    BoundingBox(runs[r].start, runs[r].end, lo, hi);
+    return RunsNear(lo, hi, margin);
+  }
+  void BuildRunIndex()
+  {
+    Point3D lo{}, hi{};
+    bool first = true;
+    for (const auto &run : runs)
+    {
+      Point3D rlo, rhi;
+      BoundingBox(run.start, run.end, rlo, rhi);
+      for (int d = 0; d < 3; d++)
+      {
+        lo[d] = first ? rlo[d] : std::min(lo[d], rlo[d]);
+        hi[d] = first ? rhi[d] : std::max(hi[d], rhi[d]);
+      }
+      first = false;
+    }
+    run_grid.emplace(4.0 * R, lo);
+    for (std::size_t r = 0; r < runs.size(); r++)
+    {
+      Point3D rlo, rhi;
+      BoundingBox(runs[r].start, runs[r].end, rlo, rhi);
+      run_grid->Insert(r, rlo, rhi);
+    }
+    runs_at_vertex.assign(input.vertices.size(), {});
+    for (std::size_t r = 0; r < runs.size(); r++)
+    {
+      runs_at_vertex[runs[r].start_vertex].push_back(r);
+      if (runs[r].end_vertex != runs[r].start_vertex)
+      {
+        runs_at_vertex[runs[r].end_vertex].push_back(r);
+      }
+    }
+    for (auto &incident : runs_at_vertex)
+    {
+      std::sort(incident.begin(), incident.end());
+    }
+  }
 
   int NewFeature(const std::string &type, nlohmann::json signature, int chirality = 1)
   {
@@ -1293,9 +1550,9 @@ private:
   std::vector<std::size_t> RunsAtVertex(std::size_t v) const
   {
     std::vector<std::size_t> result;
-    for (std::size_t r = 0; r < runs.size(); r++)
+    for (const std::size_t r : runs_at_vertex[v])
     {
-      if (!runs[r].excluded && (runs[r].start_vertex == v || runs[r].end_vertex == v))
+      if (!runs[r].excluded)
       {
         result.push_back(r);
       }
@@ -1395,6 +1652,23 @@ void Identifier::ClassifyPlanes()
     faces.push_back(entry);
   }
   const double reach = 2.0 * R;
+  // Faces by their boxes: the candidates of a run / vertex are the faces whose boxes lie
+  // within the reach of it, visited in face order (the former loop over every face).
+  Point3D faces_lo{}, faces_hi{};
+  for (std::size_t k = 0; k < faces.size(); k++)
+  {
+    for (int d = 0; d < 3; d++)
+    {
+      faces_lo[d] = k == 0 ? faces[k].lower[d] : std::min(faces_lo[d], faces[k].lower[d]);
+      faces_hi[d] = k == 0 ? faces[k].upper[d] : std::max(faces_hi[d], faces[k].upper[d]);
+    }
+  }
+  UniformGrid face_grid(8.0 * R, faces_lo);
+  for (std::size_t k = 0; k < faces.size(); k++)
+  {
+    face_grid.Insert(k, faces[k].lower, faces[k].upper);
+  }
+  const double margin = reach + 2.0 * Tol();
   auto OffPlane = [&](const Face &face, double offset)
   {
     // Metal in the run's own plane is the identified perimeter itself; a parallel layer
@@ -1431,9 +1705,11 @@ void Identifier::ClassifyPlanes()
       lower[d] = std::min(run.start[d], run.end[d]);
       upper[d] = std::max(run.start[d], run.end[d]);
     }
+    stage.Progress(r, runs.size());
     std::vector<Interval> zones;
-    for (const auto &face : faces)
+    for (const std::size_t k : face_grid.Query(lower, upper, margin))
     {
+      const Face &face = faces[k];
       if (!OffPlane(face, offset) || !NearBox(face, lower, upper))
       {
         continue;
@@ -1471,8 +1747,9 @@ void Identifier::ClassifyPlanes()
     {
       continue;
     }
-    for (const auto &face : faces)
+    for (const std::size_t k : face_grid.Query(vertex.coordinate, vertex.coordinate, margin))
     {
+      const Face &face = faces[k];
       if (!OffPlane(face, *offset) || !NearBox(face, vertex.coordinate, vertex.coordinate))
       {
         continue;
@@ -1716,9 +1993,10 @@ void Identifier::DetectRoundedCorners()
 
 std::size_t Identifier::RunIndexInChain(const Chain &chain, std::size_t run) const
 {
-  const auto position = std::find(chain.runs.begin(), chain.runs.end(), run);
-  MFEM_VERIFY(position != chain.runs.end(), "Run missing from its chain!");
-  return static_cast<std::size_t>(position - chain.runs.begin());
+  MFEM_VERIFY(runs[run].chain == chain.id && runs[run].index_in_chain < chain.runs.size() &&
+                  chain.runs[runs[run].index_in_chain] == run,
+              "Run missing from its chain!");
+  return runs[run].index_in_chain;
 }
 
 // Windowed curvature at chain position x from the piecewise-linear nodes.
@@ -1790,19 +2068,46 @@ Identifier::ChainPoint Identifier::ClosestPointOnChain(const Chain &chain,
 {
   ChainPoint best;
   best.distance = std::numeric_limits<double>::infinity();
-  for (std::size_t k = 0; k < chain.runs.size(); k++)
+  auto Evaluate = [&](std::size_t k)
   {
     const Run &r = runs[chain.runs[k]];
-    if (r.excluded)
-    {
-      continue;
-    }
     const double s = std::clamp(Dot(Sub(p, r.start), r.tangent), 0.0, r.length);
     const double distance = Distance(p, r.At(s));
     if (distance < best.distance)
     {
       best = {chain.runs[k], s, chain.run_offset[k] + s, distance};
     }
+  };
+  // Grid rings around p until no farther cell can hold a run as close as the best so far
+  // (a cell at ring k lies at least (k - 1) cells away): the candidates then contain every
+  // run of the chain at the minimal distance, and the minimum is taken in chain order (the
+  // former loop over the whole chain, with its first-in-chain tie rule).
+  std::vector<std::size_t> candidates, ring;
+  const long long int max_ring = run_grid->MaxRing(p);
+  for (long long int k = 0; k <= max_ring; k++)
+  {
+    if (k > 0 && static_cast<double>(k - 1) * run_grid->CellSize() > best.distance)
+    {
+      break;
+    }
+    ring.clear();
+    run_grid->Ring(p, k, ring);
+    for (const std::size_t r : ring)
+    {
+      if (runs[r].chain == chain.id && !runs[r].excluded)
+      {
+        candidates.push_back(runs[r].index_in_chain);
+        Evaluate(runs[r].index_in_chain);
+      }
+    }
+  }
+  best = ChainPoint{};
+  best.distance = std::numeric_limits<double>::infinity();
+  std::sort(candidates.begin(), candidates.end());
+  candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+  for (const std::size_t k : candidates)
+  {
+    Evaluate(k);
   }
   return best;
 }
@@ -2070,12 +2375,28 @@ void Identifier::BuildBentPairs()
   // beyond either end of B, outside the shared-vertex zones, cut at the curved boundaries
   // of both chains) with their samples: at least kPairSeparationSamplesPerInterval + 1 per
   // piece and at most R / 2 apart, so that a 2R window always holds several samples.
+  const double margin = reach + 2.0 * Tol();
+  // Runs of chain A (in chain order) whose boxes lie within the reach of chain B's box: the
+  // only runs of A whose facing region can be non-empty.
+  auto RunsOfChainNear = [&](const Chain &A, const Bounds &box)
+  {
+    std::vector<std::size_t> indices;
+    for (const std::size_t r : RunsNear(box.lo, box.hi, margin))
+    {
+      if (runs[r].chain == A.id && !runs[r].excluded)
+      {
+        indices.push_back(runs[r].index_in_chain);
+      }
+    }
+    std::sort(indices.begin(), indices.end());
+    return indices;
+  };
   auto Pieces = [&](const Chain &A, const Chain &B, std::vector<Piece> &pieces)
   {
     std::vector<std::size_t> shared;
     std::set_intersection(A.vertices.begin(), A.vertices.end(), B.vertices.begin(),
                           B.vertices.end(), std::back_inserter(shared));
-    for (std::size_t ka = 0; ka < A.runs.size(); ka++)
+    for (const std::size_t ka : RunsOfChainNear(A, bounds[chain_index.at(B.id)]))
     {
       const std::size_t a = A.runs[ka];
       const Run &ra = runs[a];
@@ -2084,8 +2405,11 @@ void Identifier::BuildBentPairs()
         continue;
       }
       std::vector<Interval> within;
-      for (const std::size_t b : B.runs)
+      Point3D a_lo, a_hi;
+      BoundingBox(ra.start, ra.end, a_lo, a_hi);
+      for (const std::size_t kb : RunsOfChainNear(B, Bounds{a_lo, a_hi}))
       {
+        const std::size_t b = B.runs[kb];
         const Run &rb = runs[b];
         if (rb.excluded ||
             !quantizer.Less(SegmentSegmentDistance(ra.start, ra.end, rb.start, rb.end),
@@ -2339,8 +2663,10 @@ void Identifier::BuildBentPairs()
     }
   };
 
+  std::size_t chain_pairs_examined = 0, chain_pairs_paired = 0;
   for (std::size_t ca = 0; ca < chains.size(); ca++)
   {
+    stage.Progress(ca, chains.size());
     for (std::size_t cb = ca + 1; cb < chains.size(); cb++)
     {
       const Chain &A = chains[ca];
@@ -2366,6 +2692,7 @@ void Identifier::BuildBentPairs()
       {
         continue;
       }
+      chain_pairs_examined++;
       std::vector<Piece> pieces_a, pieces_b;
       Pieces(A, B, pieces_a);
       Pieces(B, A, pieces_b);
@@ -2373,6 +2700,7 @@ void Identifier::BuildBentPairs()
       {
         continue;
       }
+      chain_pairs_paired++;
       std::vector<char> constant_a, constant_b;
       std::vector<double> separation_a, separation_b, upper_a, upper_b;
       Classify(pieces_a, pieces_b, constant_a, separation_a, upper_a);
@@ -2540,6 +2868,9 @@ void Identifier::BuildBentPairs()
       }
     }
   }
+  stage.End(std::to_string(chains.size()) + " chains, " + std::to_string(chain_pairs_examined) +
+            " chain pairs within reach, " + std::to_string(chain_pairs_paired) +
+            " with facing pieces, " + std::to_string(features.size()) + " features so far");
 }
 
 // Interval of run parameter s where the distance from run(s) to the segment [a, b] is below
@@ -2576,9 +2907,11 @@ void Identifier::BuildTranslationalFeatures()
     classes[DirectionKey(SignCanonical(runs[r].tangent), 1.0e-9)].push_back(r);
   }
   const double interaction = kInteractionDistanceOverRadius * R;
+  std::size_t total_members = 0, total_spans = 0;
   for (const auto &[key, members_in_class] : classes)
   {
     (void)key;
+    total_members += members_in_class.size();
     if (members_in_class.size() < 2)
     {
       continue;
@@ -2619,22 +2952,44 @@ void Identifier::BuildTranslationalFeatures()
         unique_splits.push_back(u);
       }
     }
-    // Components per elementary interval, then merge consecutive equal components.
+    // Components per elementary interval, then merge consecutive equal components. The
+    // members active on an interval (u0 <= lo + Tol and u1 >= hi - Tol) are maintained by a
+    // sweep (both bounds grow with k: a member enters once and leaves once), in member order;
+    // the interacting pairs are found through the members sorted by lateral offset and
+    // united in the former (i, j) order.
     struct Span
     {
       std::vector<std::size_t> component;  // member indices sorted by w
       double lo, hi;
     };
     std::vector<Span> spans;
+    std::vector<std::size_t> by_u0(members.size());
+    std::iota(by_u0.begin(), by_u0.end(), 0);
+    std::sort(by_u0.begin(), by_u0.end(), [&](std::size_t a, std::size_t b)
+              { return std::make_pair(members[a].u0, a) < std::make_pair(members[b].u0, b); });
+    std::set<std::size_t> active_set;
+    std::size_t next_entering = 0;
+    std::vector<std::pair<std::size_t, std::size_t>> pairs;
     for (std::size_t k = 0; k + 1 < unique_splits.size(); k++)
     {
+      stage.Progress(k, unique_splits.size());
       const double lo = unique_splits[k], hi = unique_splits[k + 1];
-      std::vector<std::size_t> active;
-      for (std::size_t m = 0; m < members.size(); m++)
+      while (next_entering < by_u0.size() && members[by_u0[next_entering]].u0 <= lo + Tol())
       {
-        if (members[m].u0 <= lo + Tol() && members[m].u1 >= hi - Tol())
+        active_set.insert(by_u0[next_entering]);
+        next_entering++;
+      }
+      std::vector<std::size_t> active;
+      for (auto it = active_set.begin(); it != active_set.end();)
+      {
+        if (members[*it].u1 < hi - Tol())
         {
-          active.push_back(m);
+          it = active_set.erase(it);  // never active again: hi only grows
+        }
+        else
+        {
+          active.push_back(*it);
+          ++it;
         }
       }
       if (active.size() < 2)
@@ -2642,17 +2997,31 @@ void Identifier::BuildTranslationalFeatures()
         continue;
       }
       UnionFind uf(active.size());
-      for (std::size_t i = 0; i < active.size(); i++)
+      std::vector<std::size_t> by_w(active.size());
+      std::iota(by_w.begin(), by_w.end(), 0);
+      std::sort(by_w.begin(), by_w.end(), [&](std::size_t a, std::size_t b)
+                { return members[active[a]].w < members[active[b]].w; });
+      pairs.clear();
+      for (std::size_t p = 0; p < by_w.size(); p++)
       {
-        for (std::size_t j = i + 1; j < active.size(); j++)
+        for (std::size_t q = p + 1; q < by_w.size() &&
+                                    members[active[by_w[q]]].w - members[active[by_w[p]]].w <
+                                        interaction + 2.0 * Tol();
+             q++)
         {
+          const std::size_t i = std::min(by_w[p], by_w[q]), j = std::max(by_w[p], by_w[q]);
           const auto &mi = members[active[i]], &mj = members[active[j]];
           if (runs[mi.run].chain != runs[mj.run].chain &&
               quantizer.Less(std::abs(mi.w - mj.w), interaction))
           {
-            uf.Union(i, j);
+            pairs.emplace_back(i, j);
           }
         }
+      }
+      std::sort(pairs.begin(), pairs.end());
+      for (const auto &[i, j] : pairs)
+      {
+        uf.Union(i, j);
       }
       std::map<std::size_t, std::vector<std::size_t>> components;
       for (std::size_t i = 0; i < active.size(); i++)
@@ -2748,7 +3117,11 @@ void Identifier::BuildTranslationalFeatures()
         claims[member.run].push_back({feature, 2, {s0, s1}, static_cast<int>(k)});
       }
     }
+    total_spans += spans.size();
   }
+  stage.End(std::to_string(classes.size()) + " direction classes, " +
+            std::to_string(total_members) + " rigid runs, " + std::to_string(total_spans) +
+            " translational spans, " + std::to_string(features.size()) + " features so far");
 }
 
 // Window of a vertex site along one incident run and, for curved chains, the following
@@ -2920,18 +3293,23 @@ void Identifier::BuildClusters()
     }
   };
 
+  std::size_t run_pairs_examined = 0;
   for (std::size_t a = 0; a < runs.size(); a++)
   {
     if (runs[a].excluded)
     {
       continue;
     }
-    for (std::size_t b = a + 1; b < runs.size(); b++)
+    stage.Progress(a, runs.size());
+    // Candidates b > a whose boxes lie within the interaction distance (sorted: the former
+    // order of the loop over every b).
+    for (const std::size_t b : RunsNearRun(a, interaction + 2.0 * Tol()))
     {
-      if (runs[b].excluded || runs[a].chain == runs[b].chain)
+      if (b <= a || runs[b].excluded || runs[a].chain == runs[b].chain)
       {
         continue;
       }
+      run_pairs_examined++;
       const Chain &ca = chains[chain_index.at(runs[a].chain)];
       const Chain &cb = chains[chain_index.at(runs[b].chain)];
       if (ca.Rigid() && cb.Rigid() &&
@@ -2986,12 +3364,32 @@ void Identifier::BuildClusters()
     }
   }
 
+  const std::size_t run_cores = cores.size();
   // Two vertex sites within 2R have overlapping radius-R windows (invariant A2): they are
   // an interaction event of their own, with the two points as degenerate cores.
+  Point3D sites_lo{}, sites_hi{};
   for (std::size_t i = 0; i < sites.size(); i++)
   {
-    for (std::size_t j = i + 1; j < sites.size(); j++)
+    for (int d = 0; d < 3; d++)
     {
+      sites_lo[d] = i == 0 ? sites[i].point[d] : std::min(sites_lo[d], sites[i].point[d]);
+      sites_hi[d] = i == 0 ? sites[i].point[d] : std::max(sites_hi[d], sites[i].point[d]);
+    }
+  }
+  UniformGrid site_grid(4.0 * R, sites_lo);
+  for (std::size_t i = 0; i < sites.size(); i++)
+  {
+    site_grid.Insert(i, sites[i].point, sites[i].point);
+  }
+  for (std::size_t i = 0; i < sites.size(); i++)
+  {
+    for (const std::size_t j : site_grid.Query(sites[i].point, sites[i].point,
+                                               interaction + 2.0 * Tol()))
+    {
+      if (j <= i)
+      {
+        continue;
+      }
       if (quantizer.Less(Distance(sites[i].point, sites[j].point), interaction))
       {
         cores.push_back({std::numeric_limits<std::size_t>::max(),
@@ -3006,12 +3404,37 @@ void Identifier::BuildClusters()
     }
   }
 
-  // Connected union of the radius-R balls: cores whose distance is below 2R.
+  // Connected union of the radius-R balls: cores whose distance is below 2R (candidates
+  // from the cores' boxes, united in the former (i, j) order).
+  Point3D cores_lo{}, cores_hi{};
+  for (std::size_t i = 0; i < cores.size(); i++)
+  {
+    Point3D lo, hi;
+    BoundingBox(cores[i].p0, cores[i].p1, lo, hi);
+    for (int d = 0; d < 3; d++)
+    {
+      cores_lo[d] = i == 0 ? lo[d] : std::min(cores_lo[d], lo[d]);
+      cores_hi[d] = i == 0 ? hi[d] : std::max(cores_hi[d], hi[d]);
+    }
+  }
+  UniformGrid core_grid(4.0 * R, cores_lo);
+  for (std::size_t i = 0; i < cores.size(); i++)
+  {
+    Point3D lo, hi;
+    BoundingBox(cores[i].p0, cores[i].p1, lo, hi);
+    core_grid.Insert(i, lo, hi);
+  }
   UnionFind uf(cores.size());
   for (std::size_t i = 0; i < cores.size(); i++)
   {
-    for (std::size_t j = i + 1; j < cores.size(); j++)
+    Point3D lo, hi;
+    BoundingBox(cores[i].p0, cores[i].p1, lo, hi);
+    for (const std::size_t j : core_grid.Query(lo, hi, interaction + 2.0 * Tol()))
     {
+      if (j <= i)
+      {
+        continue;
+      }
       if (quantizer.Less(
               SegmentSegmentDistance(cores[i].p0, cores[i].p1, cores[j].p0, cores[j].p1),
               interaction))
@@ -3026,7 +3449,8 @@ void Identifier::BuildClusters()
   for (std::size_t s = 0; s < sites.size(); s++)
   {
     std::optional<std::size_t> root;
-    for (std::size_t i = 0; i < cores.size(); i++)
+    for (const std::size_t i :
+         core_grid.Query(sites[s].point, sites[s].point, join + 2.0 * Tol()))
     {
       if (quantizer.Less(PointSegmentDistance(sites[s].point, cores[i].p0, cores[i].p1),
                          join))
@@ -3063,13 +3487,37 @@ void Identifier::BuildClusters()
     }
   }
 
-  // Claimed portions: run intervals within R of a core, plus the member sites' windows.
+  // Claimed portions: run intervals within R of a core, plus the member sites' windows. The
+  // candidate runs of a cluster are the runs whose boxes lie within the ball of one of its
+  // cores and the runs of its sites' windows, in run order (the former loop over every run).
+  std::size_t largest_cluster_edges = 0;
+  double signature_seconds = 0.0;
   for (std::size_t c = 0; c < cluster_cores.size(); c++)
   {
+    stage.Progress(c, cluster_cores.size());
     std::vector<SignaturePortion> portions;
     std::vector<SignatureVertex> vertices;
     std::vector<std::pair<std::size_t, Interval>> claimed;
-    for (std::size_t r = 0; r < runs.size(); r++)
+    std::vector<std::size_t> candidate_runs;
+    for (const auto &core : cluster_cores[c])
+    {
+      Point3D lo, hi;
+      BoundingBox(core.p0, core.p1, lo, hi);
+      const auto near = RunsNear(lo, hi, ball + 2.0 * Tol());
+      candidate_runs.insert(candidate_runs.end(), near.begin(), near.end());
+    }
+    for (const std::size_t s : cluster_sites[c])
+    {
+      for (const auto &[wr, interval] : sites[s].window)
+      {
+        (void)interval;
+        candidate_runs.push_back(wr);
+      }
+    }
+    std::sort(candidate_runs.begin(), candidate_runs.end());
+    candidate_runs.erase(std::unique(candidate_runs.begin(), candidate_runs.end()),
+                         candidate_runs.end());
+    for (const std::size_t r : candidate_runs)
     {
       if (runs[r].excluded)
       {
@@ -3109,7 +3557,12 @@ void Identifier::BuildClusters()
       vertices.push_back({sites[s].point, sites[s].type, sites[s].turn_degrees});
     }
     MFEM_VERIFY(!portions.empty(), "A spatial cluster claims no perimeter!");
+    largest_cluster_edges = std::max(largest_cluster_edges, portions.size());
+    const auto signature_started = std::chrono::steady_clock::now();
     const auto canonical = CanonicalClusterSignature(portions, vertices, n_ref, R);
+    signature_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                                       signature_started)
+                             .count();
     nlohmann::json signature = canonical.signature;
     signature["EdgeCount"] = portions.size();
     const int feature = NewFeature("SpatialEdgeCluster", signature, canonical.chirality);
@@ -3127,6 +3580,16 @@ void Identifier::BuildClusters()
         features[feature].vertices.push_back(*sites[s].vertex);
       }
     }
+  }
+  {
+    std::ostringstream counts;
+    counts << run_pairs_examined << " run pairs within reach, " << run_cores
+           << " event cores on runs + " << (cores.size() - run_cores)
+           << " site cores, " << cluster_cores.size() << " clusters (largest "
+           << largest_cluster_edges << " edges), canonical signatures " << std::fixed
+           << std::setprecision(2) << signature_seconds << " s, " << features.size()
+           << " features so far";
+    stage.End(counts.str());
   }
 }
 
@@ -3769,22 +4232,71 @@ void Identifier::Assign(IdentificationResult &result)
 IdentificationResult Identifier::Identify()
 {
   IdentificationResult result;
+  const auto started = std::chrono::steady_clock::now();
   segment_exclusion.assign(input.segments.size(), std::nullopt);
+  stage.Begin("runs / chains");
   BuildRuns(input, runs, chains, chain_index);
+  BuildRunIndex();
   claims.assign(runs.size(), {});
   bent_claims.assign(runs.size(), {});
+  stage.End(std::to_string(input.segments.size()) + " segments, " +
+            std::to_string(input.vertices.size()) + " vertices, " +
+            std::to_string(input.faces.size()) + " faces, " + std::to_string(runs.size()) +
+            " runs, " + std::to_string(chains.size()) + " chains, run grid " +
+            std::to_string(run_grid->Cells()) + " cells");
   if (!runs.empty())
   {
+    stage.Begin("planes / exclusions");
     ClassifyPlanes();
+    {
+      std::size_t excluded_runs = 0, cross_layer_runs = 0;
+      for (std::size_t r = 0; r < runs.size(); r++)
+      {
+        excluded_runs += runs[r].excluded ? 1 : 0;
+        cross_layer_runs += cross_layer[r].empty() ? 0 : 1;
+      }
+      stage.End(std::to_string(excluded_runs) + " non-planar runs, " +
+                std::to_string(cross_layer_runs) + " runs with cross-layer zones, " +
+                std::to_string(cross_layer_vertices.size()) + " cross-layer vertices");
+    }
+    stage.Begin("vertex sites");
     ClassifyVertices();
+    stage.End(std::to_string(sites.size()) + " corner / endpoint / junction sites");
+    stage.Begin("fillets");
     DetectRoundedCorners();
+    stage.End(std::to_string(sites.size()) + " sites incl. rounded corners");
+    stage.Begin("curvature");
     ComputeCurvature();
+    {
+      std::size_t curved = 0;
+      for (const auto &chain : chains)
+      {
+        curved += chain.curved.size();
+      }
+      stage.End(std::to_string(curved) + " curved chain intervals");
+    }
+    stage.Begin("vertex windows");
     BuildVertexWindows();
+    stage.End(std::to_string(sites.size()) + " sites");
+    stage.Begin("bent pairs");
     BuildBentPairs();
+    stage.Begin("events / cores / clusters");
     BuildClusters();
+    stage.Begin("translational features");
     BuildTranslationalFeatures();
   }
+  stage.Begin("claim resolution / assignment / tables");
   Assign(result);
+  stage.End(std::to_string(result.features.size()) + " features, " +
+            std::to_string(result.exclusions.size()) + " exclusion classes");
+  if (input.log)
+  {
+    std::ostringstream text;
+    text << "  Identification total: " << std::fixed << std::setprecision(2)
+         << std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count()
+         << " s\n";
+    input.log(text.str());
+  }
   return result;
 }
 
