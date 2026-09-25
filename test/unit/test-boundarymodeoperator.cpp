@@ -4,6 +4,7 @@
 #include <cmath>
 #include <complex>
 #include <functional>
+#include <memory>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -11,8 +12,10 @@
 
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
+#include "models/boundarymodeoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/modeeigensolver.hpp"
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfaceimpedanceoperator.hpp"
 #include "models/surfacerationalimpedanceoperator.hpp"
@@ -179,6 +182,73 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   out.reduced_basis_size = mode_solver.GetReducedBasisSize();
   out.reduced_tol = mode_solver.GetReducedTolerance();
   return out;
+}
+
+// Solve for the fundamental mode of the rectangular waveguide cross-section (at 100 GHz,
+// where it is the only propagating mode) through the 2D BoundaryModeOperator path used by
+// the BoundaryMode driver, which uses p-multigrid preconditioning when mg_max_levels > 1.
+std::vector<std::complex<double>>
+SolveRectangularModesMultigrid(int mg_max_levels,
+                               const std::function<void(IoData &)> &configure_bcs)
+{
+  constexpr double width = 1000.0, height = 500.0, freq_ghz = 100.0, eig_tol = 1.0e-8;
+  constexpr int order = 2, num_modes = 1;
+  MPI_Comm comm = Mpi::World();
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.problem.type = ProblemType::BOUNDARYMODE;
+  iodata.model.Lc = 1.0;
+
+  auto &material = iodata.domains.materials.emplace_back();
+  material.attributes = {1};
+  material.epsilon_r.s = {4.0, 4.0, 4.0};
+  iodata.boundaries.pec.attributes = {1, 2, 3, 4};
+  configure_bcs(iodata);
+
+  iodata.solver.order = order;
+  iodata.solver.boundary_mode.freq = freq_ghz;
+  iodata.solver.boundary_mode.n = num_modes;
+  iodata.solver.boundary_mode.tol = eig_tol;
+  iodata.solver.linear.tol = 1.0e-10;
+  iodata.solver.linear.max_it = 200;
+  iodata.solver.linear.mg_max_levels = mg_max_levels;
+
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian2D(10, 5, mfem::Element::TRIANGLE, false, width, height));
+  iodata.NondimensionalizeInputs(serial_mesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(
+      std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *serial_mesh)));
+  iodata.CheckConfiguration();
+
+  MaterialOperator mat_op(iodata, *mesh.back());
+  BoundaryModeOperator mode_op(iodata, mesh, mat_op);
+  REQUIRE(mode_op.GetNDSpaceHierarchy().GetNumLevels() ==
+          static_cast<std::size_t>(mg_max_levels));
+
+  const int nd_size = mode_op.GetNDTrueVSize();
+  mfem::Array<int> dbc_tdof_list;
+  dbc_tdof_list.Append(mode_op.GetNDDbcTDofLists().back());
+  for (auto tdof : mode_op.GetH1DbcTDofLists().back())
+  {
+    dbc_tdof_list.Append(nd_size + tdof);
+  }
+
+  const int num_vec = std::max(2 * num_modes, num_modes + 15);
+  ModeEigenSolver mode_solver(mode_op, dbc_tdof_list, num_modes, num_vec, eig_tol,
+                              EigenvalueSolver::WhichType::LARGEST_REAL,
+                              iodata.solver.linear, iodata.solver.boundary_mode.type, 0);
+  const double omega =
+      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
+  const double kn_target = omega * std::sqrt(1.1 * mat_op.GetMaxMuEpsilon());
+  auto result = mode_solver.Solve(omega, -kn_target * kn_target);
+
+  std::vector<std::complex<double>> kn;
+  for (int i = 0; i < result.num_converged; i++)
+  {
+    kn.push_back(mode_solver.GetPropagationConstant(i));
+  }
+  return kn;
 }
 
 }  // namespace
@@ -364,6 +434,44 @@ TEST_CASE("ModeEigenSolver Conductivity adds loss", "[boundarymodeoperator][Seri
   CHECK(cond_reduced.reduced_stats.worst_residual <= cond_reduced.reduced_tol);
   CHECK_THAT(cond_reduced.kn[0].real(), WithinRel(cond_result.kn[0].real(), 1.0e-6));
   CHECK_THAT(cond_reduced.kn[0].imag(), WithinAbs(cond_result.kn[0].imag(), 1.0e-8));
+}
+
+TEST_CASE("ModeEigenSolver p-multigrid preconditioning",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // The H1 block of the multigrid preconditioner is negative definite (the diffusion term
+  // keeps its sign from the integration by parts), and essential DOFs are eliminated with a
+  // unit diagonal, so its Chebyshev smoothers see a diagonal of mixed sign (with essential
+  // boundaries) or a negative diagonal (without). The multigrid preconditioned solve must
+  // reproduce the mode of the sparse direct one.
+  auto check = [](const std::function<void(IoData &)> &configure_bcs)
+  {
+    const auto direct = SolveRectangularModesMultigrid(1, configure_bcs);
+    const auto multigrid = SolveRectangularModesMultigrid(2, configure_bcs);
+    REQUIRE(direct.size() >= 1);
+    REQUIRE(multigrid.size() >= 1);
+    CAPTURE(direct[0], multigrid[0]);
+    CHECK_THAT(multigrid[0].real(), WithinRel(direct[0].real(), 1.0e-6));
+    CHECK_THAT(multigrid[0].imag(),
+               WithinAbs(direct[0].imag(), 1.0e-6 * std::abs(direct[0])));
+  };
+
+  SECTION("PEC walls")
+  {
+    check([](IoData &) {});
+  }
+
+  SECTION("Impedance walls")
+  {
+    check(
+        [](IoData &iodata)
+        {
+          iodata.boundaries.pec.attributes.clear();
+          auto &imp = iodata.boundaries.impedance.emplace_back();
+          imp.attributes = {1, 2, 3, 4};
+          imp.Ls = 1.0e-8;
+        });
+  }
 }
 
 }  // namespace palace
