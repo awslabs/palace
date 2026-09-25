@@ -55,6 +55,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-strattonchu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfacefunctional.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator-boundary-viz.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-superconductorsheetoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfacerationalimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
