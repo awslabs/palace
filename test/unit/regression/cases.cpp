@@ -922,6 +922,7 @@ TEST_CASE("substructuring_electrostatic", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
   opts.atol = 1.0e-16;
+  opts.paraview_fields = false;  // Solver.Electrostatic.Save defaults to 0
   palace::test::RunRegressionCase("substructuring_electrostatic", "electrostatic.json", "",
                                   opts);
 }
@@ -937,6 +938,7 @@ TEST_CASE("substructuring_magnetostatic", "[Serial][Parallel][GPU][Regression]")
   opts.rtol = 1.0e-5;
   opts.atol = 1.0e-16;
   opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   palace::test::RunRegressionCase("substructuring_magnetostatic", "magnetostatic.json", "",
                                   opts);
 }
