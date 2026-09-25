@@ -55,8 +55,8 @@ struct IdentificationVertex
 };
 
 // A metal face of the whole model (deduplicated, replicated): the metal off a segment's own
-// plane within 2R of it (a facing layer, a wall, a staple) excludes that part of the segment
-// from the planar identification (decision 73(3), class CrossLayer).
+// plane within 2R of it (a facing layer, a wall, a staple) excludes that part of the
+// segment from the planar identification (decision 73(3), class CrossLayer).
 struct IdentificationFace
 {
   std::vector<std::array<double, 3>> vertices;
@@ -81,7 +81,8 @@ struct IdentifiedPortion
   double s0 = 0.0;
   double s1 = 0.0;
   // Side of a pair / parallel cluster (0 = the lowest offset along the feature's lateral
-  // axis, i.e. the signature's first edge for chirality +1 and its last for -1); 0 otherwise.
+  // axis, i.e. the signature's first edge for chirality +1 and its last for -1); 0
+  // otherwise.
   int side = 0;
 };
 
@@ -194,11 +195,11 @@ struct CanonicalSignature
 // The lexicographically smallest serialisation over the candidate frames (every portion
 // direction and perpendicular, both signs and handedness); `progress(done, total)` reports
 // the candidate frames visited (diagnostics only).
-CanonicalSignature
-CanonicalClusterSignature(const std::vector<SignaturePortion> &portions,
-                          const std::vector<SignatureVertex> &vertices,
-                          const std::array<double, 3> &process_normal, double radius,
-                          const std::function<void(std::size_t, std::size_t)> &progress = {});
+CanonicalSignature CanonicalClusterSignature(
+    const std::vector<SignaturePortion> &portions,
+    const std::vector<SignatureVertex> &vertices,
+    const std::array<double, 3> &process_normal, double radius,
+    const std::function<void(std::size_t, std::size_t)> &progress = {});
 
 // Canonical signature of parallel edges over a common longitudinal interval: offsets / R
 // from the lowest edge, gap side (+1 toward increasing offset), conductor labels by first
@@ -224,8 +225,8 @@ TranslationalSignature CanonicalTranslationalSignature(std::vector<Translational
 // Signature grids. Signature coordinates (portion endpoints / R, offsets / R, corner
 // radii / R) come from bisections at analytic region boundaries and from chip-scale mesh
 // coordinates whose roundoff is ~ulp(|p|) (1e-12 um at 10 mm); the grid must be far above
-// that roundoff so that translated / rotated copies of one feature hash identically, and far
-// below any resolution the response can depend on (the response varies on the scale R).
+// that roundoff so that translated / rotated copies of one feature hash identically, and
+// far below any resolution the response can depend on (the response varies on the scale R).
 // 1e-6 R (2 pm at R = 2 um) satisfies both; angles use the same relative grid in degrees.
 constexpr double kSignatureLengthQuantumOverRadius = 1.0e-6;
 constexpr double kSignatureAngleQuantumDegrees = 1.0e-6;

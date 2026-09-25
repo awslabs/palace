@@ -56,37 +56,37 @@ constexpr double kRoundedCornerTangentTolerance = 0.05;
 // for 1 < radius / R < 10 are deferred to the library regeneration). Two chains are a pair
 // along a bend where their closest-point
 // separation is LOCALLY constant: a sample of one chain's facing region (within the
-// candidate reach 2R (1 + kPairSeparationTolerance) of the other chain, not beyond its ends,
-// outside the shared-vertex zones; samples at most R / 2 apart) is constant when the sampled
-// distances within R of it along its own chain vary by at most kPairSeparationTolerance x
-// their minimum (a polyline of sub-corner turns <= 30 deg at constant width varies by
-// 1 / cos(15 deg) - 1 = 3.5 %; the pair response sensitivity d dR/dd is O(1)). The constant
-// portions are the pair; the portions that are not (divergence at tees and port ends, fast
-// tapers, acute corner arms) keep the event rule, so a slow taper is a pair and a tee is a
-// cluster. Whether a constant portion interacts is decided on the separation of the
-// underlying curves, so that a discretisation never changes the classification: the chords
-// of a polyline inscribed in a curve lie inside it (two concentric inscribed polylines are
-// w cos(turn / 2) apart mid-chord and exactly w apart at their vertices), while the exact
-// offset polyline of a bent path keeps corresponding chords at the design separation and
-// the outer side's samples near the joints project onto the inner vertices at up to
-// w / cos(turn / 2). In both constructions the sampled closest-point distance from one
-// chain to the other reaches the curve separation w as its maximum on the side whose
-// maximum is smaller: the sample's chord reading C = min over the two chains of the maximum
-// sampled distance within a window of half-width max(R, local chord) where the chain bends
-// and R on straight runs, about the sample on its own chain and about its foot on the other
-// chain (a straight taper is read locally). C is exact for an offset polyline; two polylines
-// inscribed in the curves at aligned angles are C = w cos(turn / 2) apart everywhere (chords
-// and vertex-to-polyline alike) for a curve separation w, and the polyline pair alone cannot
-// tell the two constructions apart (they differ at order turn^2): the inscribed reading is
-// C / cos(turn / 2) with turn = the larger local joint turn of the two chains. A portion
-// interacts iff BOTH readings are below 2R on the quantized grid — the same strict-less
-// decision as a straight parallel pair at that separation, taken on the non-interacting
-// side of the recorded ambiguity w (1 / cos(turn / 2) - 1) (below 1e-4 w for joints under
-// 1.6 deg; a CPW gap of exactly 2R along a bend is isolated edges like a straight one;
-// DS-SCT-001's 4 um gaps at R = 2 um read 3.9998 mid-chord and became 3 mm clusters). The
-// pair feature's separation is the mean chord reading over its samples; the cross-chord
-// interactions of a locally constant portion are never event cores, whether or not it
-// interacts.
+// candidate reach 2R (1 + kPairSeparationTolerance) of the other chain, not beyond its
+// ends, outside the shared-vertex zones; samples at most R / 2 apart) is constant when the
+// sampled distances within R of it along its own chain vary by at most
+// kPairSeparationTolerance x their minimum (a polyline of sub-corner turns <= 30 deg at
+// constant width varies by 1 / cos(15 deg) - 1 = 3.5 %; the pair response sensitivity d
+// dR/dd is O(1)). The constant portions are the pair; the portions that are not (divergence
+// at tees and port ends, fast tapers, acute corner arms) keep the event rule, so a slow
+// taper is a pair and a tee is a cluster. Whether a constant portion interacts is decided
+// on the separation of the underlying curves, so that a discretisation never changes the
+// classification: the chords of a polyline inscribed in a curve lie inside it (two
+// concentric inscribed polylines are w cos(turn / 2) apart mid-chord and exactly w apart at
+// their vertices), while the exact offset polyline of a bent path keeps corresponding
+// chords at the design separation and the outer side's samples near the joints project onto
+// the inner vertices at up to w / cos(turn / 2). In both constructions the sampled
+// closest-point distance from one chain to the other reaches the curve separation w as its
+// maximum on the side whose maximum is smaller: the sample's chord reading C = min over the
+// two chains of the maximum sampled distance within a window of half-width max(R, local
+// chord) where the chain bends and R on straight runs, about the sample on its own chain
+// and about its foot on the other chain (a straight taper is read locally). C is exact for
+// an offset polyline; two polylines inscribed in the curves at aligned angles are C = w
+// cos(turn / 2) apart everywhere (chords and vertex-to-polyline alike) for a curve
+// separation w, and the polyline pair alone cannot tell the two constructions apart (they
+// differ at order turn^2): the inscribed reading is C / cos(turn / 2) with turn = the
+// larger local joint turn of the two chains. A portion interacts iff BOTH readings are
+// below 2R on the quantized grid — the same strict-less decision as a straight parallel
+// pair at that separation, taken on the non-interacting side of the recorded ambiguity w (1
+// / cos(turn / 2) - 1) (below 1e-4 w for joints under 1.6 deg; a CPW gap of exactly 2R
+// along a bend is isolated edges like a straight one; DS-SCT-001's 4 um gaps at R = 2 um
+// read 3.9998 mid-chord and became 3 mm clusters). The pair feature's separation is the
+// mean chord reading over its samples; the cross-chord interactions of a locally constant
+// portion are never event cores, whether or not it interacts.
 constexpr double kStraightBendRadiusOverRadius = 10.0;
 constexpr double kCurvatureWindowOverRadius = 1.0;
 constexpr double kPairSeparationTolerance = 0.05;
@@ -566,8 +566,7 @@ void BuildRuns(const IdentificationInput &input, std::vector<Run> &runs,
   // A chain interrupted by excluded segments (untargeted, undetermined process side, ...)
   // continues as separate chains on either side of the exclusion; the cut vertices are
   // ExclusionCut entries of the vertex table, not endpoints.
-  int next_chain_id =
-      segments_by_chain.empty() ? 0 : segments_by_chain.rbegin()->first + 1;
+  int next_chain_id = segments_by_chain.empty() ? 0 : segments_by_chain.rbegin()->first + 1;
   std::map<int, std::vector<std::size_t>> split_chains;
   for (const auto &[chain_id, members] : segments_by_chain)
   {
@@ -607,8 +606,8 @@ void BuildRuns(const IdentificationInput &input, std::vector<Run> &runs,
     for (std::size_t k = 0; k < members.size(); k++)
     {
       const std::size_t root = Find(k);
-      auto [entry, inserted] = id_by_root.try_emplace(
-          root, id_by_root.empty() ? chain_id : next_chain_id);
+      auto [entry, inserted] =
+          id_by_root.try_emplace(root, id_by_root.empty() ? chain_id : next_chain_id);
       if (inserted && entry->second == next_chain_id)
       {
         next_chain_id++;
@@ -835,8 +834,9 @@ std::array<double, 2> LocalCoordinates(const Point3D &p, const Point3D &origin,
 
 // The geometry entry of one portion in the frame (its sort key in the serialisation is the
 // dump of this object; the conductor label is added after sorting).
-nlohmann::json PortionGeometryInFrame(const SignaturePortion &portion, const Point3D &origin,
-                                      const Point3D &x, const Point3D &y, double radius)
+nlohmann::json PortionGeometryInFrame(const SignaturePortion &portion,
+                                      const Point3D &origin, const Point3D &x,
+                                      const Point3D &y, double radius)
 {
   auto a = LocalCoordinates(portion.p0, origin, x, y, radius),
        b = LocalCoordinates(portion.p1, origin, x, y, radius);
@@ -846,10 +846,10 @@ nlohmann::json PortionGeometryInFrame(const SignaturePortion &portion, const Poi
   }
   return nlohmann::json{
       {"P", {a[0], a[1], b[0], b[1]}},
-      {"Gap", std::array<double, 2>{RoundTo(Dot(portion.gap_direction, x),
-                                            kSignatureLengthQuantumOverRadius),
-                                    RoundTo(Dot(portion.gap_direction, y),
-                                            kSignatureLengthQuantumOverRadius)}},
+      {"Gap",
+       std::array<double, 2>{
+           RoundTo(Dot(portion.gap_direction, x), kSignatureLengthQuantumOverRadius),
+           RoundTo(Dot(portion.gap_direction, y), kSignatureLengthQuantumOverRadius)}},
       {"Interfaces", portion.interfaces},
       {"Law", portion.boundary_law}};
 }
@@ -1049,7 +1049,7 @@ TranslationalSignature CanonicalTranslationalSignature(std::vector<Translational
           labels.emplace(edge.conductor, static_cast<int>(labels.size()) + 1);
       (void)inserted;
       list.push_back({{"OffsetOverR", RoundTo(orientation * (edge.offset - w0) / radius,
-                                               kSignatureLengthQuantumOverRadius)},
+                                              kSignatureLengthQuantumOverRadius)},
                       {"GapSide", orientation * edge.gap_sign},
                       {"Conductor", it->second},
                       {"Interfaces", edge.interfaces},
@@ -1225,11 +1225,12 @@ struct UnionFind
 };
 
 // Uniform grid over axis-aligned boxes: every candidate search of the identification (runs
-// against runs, faces, sites, cores) asks the grid for the items whose boxes may lie within a
-// margin of a query box (an exact superset: an item is stored in every cell its box overlaps,
-// the query visits every cell the enlarged box overlaps) and then applies the original
-// geometric test to the candidates IN THE ORIGINAL ORDER (sorted indices), so that the results
-// are identical to the former all-pairs loops. Pure acceleration; no rule lives here.
+// against runs, faces, sites, cores) asks the grid for the items whose boxes may lie within
+// a margin of a query box (an exact superset: an item is stored in every cell its box
+// overlaps, the query visits every cell the enlarged box overlaps) and then applies the
+// original geometric test to the candidates IN THE ORIGINAL ORDER (sorted indices), so that
+// the results are identical to the former all-pairs loops. Pure acceleration; no rule lives
+// here.
 class UniformGrid
 {
 public:
@@ -1255,7 +1256,8 @@ public:
     }
   }
 
-  // Sorted, unique ids of the items stored in the cells overlapping [lo - margin, hi + margin].
+  // Sorted, unique ids of the items stored in the cells overlapping [lo - margin, hi +
+  // margin].
   std::vector<std::size_t> Query(const Point3D &lo, const Point3D &hi, double margin) const
   {
     std::vector<std::size_t> out;
@@ -1266,8 +1268,8 @@ public:
       qhi[d] += margin;
     }
     const auto c0 = Cell(qlo), c1 = Cell(qhi);
-    for (long long int ix = std::max(c0[0], min_cell[0]); ix <= std::min(c1[0], max_cell[0]);
-         ix++)
+    for (long long int ix = std::max(c0[0], min_cell[0]);
+         ix <= std::min(c1[0], max_cell[0]); ix++)
     {
       for (long long int iy = std::max(c0[1], min_cell[1]);
            iy <= std::min(c1[1], max_cell[1]); iy++)
@@ -1287,8 +1289,8 @@ public:
     return out;
   }
 
-  // Items in the cells at Chebyshev cell distance exactly k from the cell of p (ring 0 = the
-  // cell itself); every point of such a cell is at least (k - 1) cells away from p.
+  // Items in the cells at Chebyshev cell distance exactly k from the cell of p (ring 0 =
+  // the cell itself); every point of such a cell is at least (k - 1) cells away from p.
   void Ring(const Point3D &p, long long int k, std::vector<std::size_t> &out) const
   {
     const auto c = Cell(p);
@@ -1419,7 +1421,8 @@ public:
   }
   double Elapsed() const
   {
-    return std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - started)
+        .count();
   }
 
 private:
@@ -1471,9 +1474,9 @@ private:
   Point3D n_ref{};
   std::vector<std::optional<std::pair<std::string, std::string>>> segment_exclusion;
   std::vector<std::vector<Claim>> claims;  // per run
-  // Per run: (other chain, interval) of the pieces of a constant-separation pair along a bend
-  // with that chain, interacting (a pair feature) or not; their cross-chord interactions are
-  // not event cores.
+  // Per run: (other chain, interval) of the pieces of a constant-separation pair along a
+  // bend with that chain, interacting (a pair feature) or not; their cross-chord
+  // interactions are not event cores.
   std::vector<std::vector<std::pair<int, Interval>>> bent_claims;
   // Decision 73(3) CrossLayer zones: per run, the intervals within 2R of metal off the
   // run's plane (facing layers, walls, staples); vertices within 2R of such metal.
@@ -1531,7 +1534,8 @@ private:
   }
 
   // Candidate runs (sorted) whose boxes lie within margin of [lo, hi].
-  std::vector<std::size_t> RunsNear(const Point3D &lo, const Point3D &hi, double margin) const
+  std::vector<std::size_t> RunsNear(const Point3D &lo, const Point3D &hi,
+                                    double margin) const
   {
     return run_grid->Query(lo, hi, margin);
   }
@@ -1731,9 +1735,10 @@ void Identifier::ClassifyPlanes()
     {
       continue;
     }
-    Face entry{f, !DirectionLess(std::abs(Dot(face.normal, n_ref)),
-                                 1.0 - kParallelCosineTolerance),
-               0.0, face.vertices.front(), face.vertices.front()};
+    Face entry{
+        f,
+        !DirectionLess(std::abs(Dot(face.normal, n_ref)), 1.0 - kParallelCosineTolerance),
+        0.0, face.vertices.front(), face.vertices.front()};
     for (const auto &p : face.vertices)
     {
       entry.offset += Dot(p, n_ref) / static_cast<double>(face.vertices.size());
@@ -1841,7 +1846,8 @@ void Identifier::ClassifyPlanes()
     {
       continue;
     }
-    for (const std::size_t k : face_grid.Query(vertex.coordinate, vertex.coordinate, margin))
+    for (const std::size_t k :
+         face_grid.Query(vertex.coordinate, vertex.coordinate, margin))
     {
       const Face &face = faces[k];
       if (!OffPlane(face, *offset) || !NearBox(face, vertex.coordinate, vertex.coordinate))
@@ -2038,7 +2044,8 @@ void Identifier::DetectRoundedCorners()
                 const Point3D bisector = Add(Scale(-1.0, ta), tb);
                 const Point3D gap = Add(arm_a.gap_direction, arm_b.gap_direction);
                 site.type = Dot(bisector, gap) > 0.0 ? "ConcaveCorner" : "ConvexCorner";
-                site.arm_directions = {Scale(-1.0, ta), tb};  // away from the virtual corner
+                site.arm_directions = {Scale(-1.0, ta),
+                                       tb};  // away from the virtual corner
                 site.boundary_law = arm_a.boundary_law;
                 std::set<std::string> interfaces;
                 for (const auto &name : InterfaceNames(arm_a.targets))
@@ -2109,9 +2116,9 @@ double Identifier::WindowedCurvature(const Chain &chain, double x) const
   {
     return nodes.back().second;
   }
-  const auto upper = std::upper_bound(nodes.begin(), nodes.end(), std::make_pair(x, 0.0),
-                                      [](const auto &a, const auto &b)
-                                      { return a.first < b.first; });
+  const auto upper =
+      std::upper_bound(nodes.begin(), nodes.end(), std::make_pair(x, 0.0),
+                       [](const auto &a, const auto &b) { return a.first < b.first; });
   const auto lower = std::prev(upper);
   const double span = upper->first - lower->first;
   if (span <= 0.0)
@@ -2133,9 +2140,9 @@ double Identifier::MaxCurvature(const Chain &chain, double x0, double x1) const
   double best = std::max(WindowedCurvature(chain, x0), WindowedCurvature(chain, x1));
   // The nodes are sorted by position: only those strictly inside (x0, x1).
   const auto &nodes = chain.kappa_nodes;
-  auto first = std::upper_bound(nodes.begin(), nodes.end(), std::make_pair(x0, 0.0),
-                                [](const auto &a, const auto &b)
-                                { return a.first < b.first; });
+  auto first =
+      std::upper_bound(nodes.begin(), nodes.end(), std::make_pair(x0, 0.0),
+                       [](const auto &a, const auto &b) { return a.first < b.first; });
   for (auto it = first; it != nodes.end() && it->first < x1; ++it)
   {
     best = std::max(best, it->second);
@@ -2147,11 +2154,11 @@ bool Identifier::IsCurvedAt(const Chain &chain, double x, std::size_t *section) 
 {
   // The curved intervals are disjoint and ascending: the first whose end reaches x is the
   // only candidate (an earlier one ends before x, a later one starts after that end).
-  const auto j = static_cast<std::size_t>(
-      std::lower_bound(chain.curved.begin(), chain.curved.end(), x,
-                       [&](const Interval &c, double value)
-                       { return c.second + Tol() < value; }) -
-      chain.curved.begin());
+  const auto j =
+      static_cast<std::size_t>(std::lower_bound(chain.curved.begin(), chain.curved.end(), x,
+                                                [&](const Interval &c, double value)
+                                                { return c.second + Tol() < value; }) -
+                               chain.curved.begin());
   if (j < chain.curved.size() && x >= chain.curved[j].first - Tol())
   {
     if (section)
@@ -2288,8 +2295,7 @@ void Identifier::ComputeCurvature()
     std::vector<double> cumulative(pieces.size() + 1, 0.0);
     for (std::size_t i = 0; i < pieces.size(); i++)
     {
-      cumulative[i + 1] =
-          cumulative[i] + pieces[i].density * (pieces[i].x1 - pieces[i].x0);
+      cumulative[i + 1] = cumulative[i] + pieces[i].density * (pieces[i].x1 - pieces[i].x0);
     }
     const double total_turn = cumulative.back();
     auto F = [&](double x)
@@ -2314,8 +2320,8 @@ void Identifier::ComputeCurvature()
         return shift;
       }
       const auto i = static_cast<std::size_t>(after - pieces.begin()) - 1;
-      return cumulative[i] + pieces[i].density * (std::min(x, pieces[i].x1) - pieces[i].x0) +
-             shift;
+      return cumulative[i] +
+             pieces[i].density * (std::min(x, pieces[i].x1) - pieces[i].x0) + shift;
     };
     auto Kappa = [&](double x) { return (F(x + 0.5 * W) - F(x - 0.5 * W)) / W; };
     // Nodes: the ends, every density breakpoint shifted by +-W/2 (periodic images for a
@@ -2340,8 +2346,8 @@ void Identifier::ComputeCurvature()
       }
     }
     std::sort(xs.begin(), xs.end());
-    xs.erase(std::unique(xs.begin(), xs.end(),
-                         [&](double a, double b) { return std::abs(a - b) <= 1.0e-12 * R; }),
+    xs.erase(std::unique(xs.begin(), xs.end(), [&](double a, double b)
+                         { return std::abs(a - b) <= 1.0e-12 * R; }),
              xs.end());
     for (const double x : xs)
     {
@@ -2446,9 +2452,9 @@ void Identifier::BuildBentPairs()
     // (windowed curvature > 0: the chords of an inscribed polyline dip mid-chord), R on a
     // straight run (no dip; a taper must be read locally).
     double half_own, half_other;
-    // The larger joint turn (radians) at the ends of the sample's run and of the foot's run:
-    // the chord reading C and the inscribed-vertex reading C / cos(turn / 2) of the pair
-    // separation differ by this discretisation ambiguity.
+    // The larger joint turn (radians) at the ends of the sample's run and of the foot's
+    // run: the chord reading C and the inscribed-vertex reading C / cos(turn / 2) of the
+    // pair separation differ by this discretisation ambiguity.
     double turn;
   };
   // The larger joint turn at the two ends of run k of a chain (0 at an open chain's ends).
@@ -2498,12 +2504,12 @@ void Identifier::BuildBentPairs()
       {
         for (const double x : {ci.first, ci.second})
         {
-          const std::size_t kb = std::min(
-              static_cast<std::size_t>(
-                  std::upper_bound(B.run_offset.begin(), B.run_offset.end(), x) -
-                  B.run_offset.begin()) -
-                  1,
-              B.runs.size() - 1);
+          const std::size_t kb =
+              std::min(static_cast<std::size_t>(
+                           std::upper_bound(B.run_offset.begin(), B.run_offset.end(), x) -
+                           B.run_offset.begin()) -
+                           1,
+                       B.runs.size() - 1);
           const std::size_t rb = B.runs[kb];
           const Point3D q =
               runs[rb].At(std::clamp(x - B.run_offset[kb], 0.0, runs[rb].length));
@@ -2650,7 +2656,8 @@ void Identifier::BuildBentPairs()
               past.emplace_back(0.0, std::min(root, ra.length));
             }
           }
-          const auto near_end = IntersectIntervals(past, RunIntervalWithin(a, e, e, reach), Tol());
+          const auto near_end =
+              IntersectIntervals(past, RunIntervalWithin(a, e, e, reach), Tol());
           excluded.insert(excluded.end(), near_end.begin(), near_end.end());
         }
       }
@@ -2664,8 +2671,8 @@ void Identifier::BuildBentPairs()
       for (const auto &interval : paired)
       {
         // Cuts at A's curved boundaries and at B's curved boundaries mapped onto the run.
-        // (The cuts are sorted below and zero-length pieces skipped: the candidate order and
-        // duplicates do not matter, only the set of cut positions.)
+        // (The cuts are sorted below and zero-length pieces skipped: the candidate order
+        // and duplicates do not matter, only the set of cut positions.)
         std::vector<double> cuts = {interval.first, interval.second};
         {
           // A's curved boundaries (disjoint, ascending) near the interval (a superset by
@@ -2719,25 +2726,28 @@ void Identifier::BuildBentPairs()
           const double x0 = A.run_offset[ka] + piece.first;
           const double x1 = A.run_offset[ka] + piece.second;
           const double mid = 0.5 * (x0 + x1);
-          const auto q_mid = ClosestPointOnChain(B, ra.At(0.5 * (piece.first + piece.second)));
+          const auto q_mid =
+              ClosestPointOnChain(B, ra.At(0.5 * (piece.first + piece.second)));
           const bool curved = IsCurvedAt(A, mid) || IsCurvedAt(B, q_mid.x);
           const double max_kappa =
               std::max(MaxCurvature(A, x0, x1), WindowedCurvature(B, q_mid.x));
-          const int n_samples = std::max(
-              kPairSeparationSamplesPerInterval,
-              static_cast<int>(std::ceil(2.0 * (piece.second - piece.first) / R)));
+          const int n_samples =
+              std::max(kPairSeparationSamplesPerInterval,
+                       static_cast<int>(std::ceil(2.0 * (piece.second - piece.first) / R)));
           Piece result{a, piece, curved, max_kappa, {}};
           for (int i_s = 0; i_s <= n_samples; i_s++)
           {
             const double s = piece.first + (piece.second - piece.first) * i_s / n_samples;
             const double x = A.run_offset[ka] + s;
             const auto q = ClosestPointOnChain(B, ra.At(s));
-            const double half_own = WindowedCurvature(A, x) > 0.0 ? std::max(R, ra.length) : R;
+            const double half_own =
+                WindowedCurvature(A, x) > 0.0 ? std::max(R, ra.length) : R;
             const double half_other =
                 WindowedCurvature(B, q.x) > 0.0 ? std::max(R, runs[q.run].length) : R;
             const double turn =
                 std::max(LocalTurn(A, ka), LocalTurn(B, RunIndexInChain(B, q.run)));
-            result.samples.push_back({a, s, x, q.distance, q.x, half_own, half_other, turn});
+            result.samples.push_back(
+                {a, s, x, q.distance, q.x, half_own, half_other, turn});
           }
           pieces.push_back(std::move(result));
         }
@@ -2773,8 +2783,8 @@ void Identifier::BuildBentPairs()
     auto ByX = [](const Sample *u, const Sample *v) { return u->x < v->x; };
     std::sort(own_samples.begin(), own_samples.end(), ByX);
     std::sort(other_samples.begin(), other_samples.end(), ByX);
-    auto WindowMax = [&](const std::vector<const Sample *> &list, double x, double half,
-                         double *min_out)
+    auto WindowMax =
+        [&](const std::vector<const Sample *> &list, double x, double half, double *min_out)
     {
       Sample probe{};
       probe.x = x - half;
@@ -2799,11 +2809,13 @@ void Identifier::BuildBentPairs()
       {
         double min_d = 0.0;
         const double max_own = WindowMax(own_samples, sample.x, R, &min_d);
-        constant.push_back(!quantizer.Less(kPairSeparationTolerance * min_d, max_own - min_d));
+        constant.push_back(
+            !quantizer.Less(kPairSeparationTolerance * min_d, max_own - min_d));
         const double w_own = WindowMax(own_samples, sample.x, sample.half_own, nullptr);
-        const double w_other = other_samples.empty()
-                                   ? w_own
-                                   : WindowMax(other_samples, sample.qx, sample.half_other, nullptr);
+        const double w_other =
+            other_samples.empty()
+                ? w_own
+                : WindowMax(other_samples, sample.qx, sample.half_other, nullptr);
         // Chord reading C (exact for an offset polyline) and the inscribed-vertex reading
         // C / cos(turn / 2) (exact for two polylines inscribed in the curves at aligned
         // angles): the pair interacts only when both readings are below 2R.
@@ -2847,15 +2859,20 @@ void Identifier::BuildBentPairs()
           weighted += separation[k + j];
           j++;
         }
-        const double s_lo =
-            i == 0 ? piece.interval.first
-                   : 0.5 * (piece.samples[i - 1].s + piece.samples[i].s);
+        const double s_lo = i == 0 ? piece.interval.first
+                                   : 0.5 * (piece.samples[i - 1].s + piece.samples[i].s);
         const double s_hi = j == n ? piece.interval.second
                                    : 0.5 * (piece.samples[j - 1].s + piece.samples[j].s);
         if (s_hi - s_lo > Tol())
         {
-          out.push_back({piece.run, {s_lo, s_hi}, piece.curved, piece.max_kappa, c, inter,
-                         weighted, static_cast<int>(j - i)});
+          out.push_back({piece.run,
+                         {s_lo, s_hi},
+                         piece.curved,
+                         piece.max_kappa,
+                         c,
+                         inter,
+                         weighted,
+                         static_cast<int>(j - i)});
         }
         i = j;
       }
@@ -2898,9 +2915,9 @@ void Identifier::BuildBentPairs()
         continue;
       }
       if (A.Rigid() && B.Rigid() &&
-          !DirectionLess(std::abs(Dot(runs[A.runs.front()].tangent,
-                                      runs[B.runs.front()].tangent)),
-                         1.0 - kParallelCosineTolerance))
+          !DirectionLess(
+              std::abs(Dot(runs[A.runs.front()].tangent, runs[B.runs.front()].tangent)),
+              1.0 - kParallelCosineTolerance))
       {
         continue;  // two exactly parallel straight runs: the translational rule
       }
@@ -2952,12 +2969,12 @@ void Identifier::BuildBentPairs()
       {
         continue;
       }
-      // The constant, interacting pieces of both sides grouped by separation: a closed chain
-      // (a trace loop) can face the partner at two separations (its near side at the gap,
-      // its far side across the strip), and one pair is one separation (the design's "one
-      // separation per pair" is exact for a constant pair and the mean of a slow taper). The
-      // groups are split where consecutive mean separations differ by more than the pair
-      // tolerance (the same 5 % as the local constancy).
+      // The constant, interacting pieces of both sides grouped by separation: a closed
+      // chain (a trace loop) can face the partner at two separations (its near side at the
+      // gap, its far side across the strip), and one pair is one separation (the design's
+      // "one separation per pair" is exact for a constant pair and the mean of a slow
+      // taper). The groups are split where consecutive mean separations differ by more than
+      // the pair tolerance (the same 5 % as the local constancy).
       struct GroupedPiece
       {
         const SubPiece *piece;
@@ -2972,7 +2989,8 @@ void Identifier::BuildBentPairs()
         {
           if (piece.constant && piece.interacting && piece.sample_count > 0)
           {
-            grouped.push_back({&piece, side, piece.weighted_separation / piece.sample_count});
+            grouped.push_back(
+                {&piece, side, piece.weighted_separation / piece.sample_count});
           }
         }
       }
@@ -3030,8 +3048,9 @@ void Identifier::BuildBentPairs()
         else
         {
           base = "UnclassifiedParallelPair";
-          reason = "parallel metal edges within 2R with the gap on the same side (overlapping "
-                   "metal in one process plane)";
+          reason =
+              "parallel metal edges within 2R with the gap on the same side (overlapping "
+              "metal in one process plane)";
         }
         for (const bool curved_class : {false, true})
         {
@@ -3058,7 +3077,8 @@ void Identifier::BuildBentPairs()
           const double separation = weighted / samples;
           std::vector<TranslationalEdge> edges = {
               {0.0, gap_a, ra.conductor, InterfaceNames(ra.targets), ra.boundary_law},
-              {separation, gap_b, rb.conductor, InterfaceNames(rb.targets), rb.boundary_law}};
+              {separation, gap_b, rb.conductor, InterfaceNames(rb.targets),
+               rb.boundary_law}};
           auto translational = CanonicalTranslationalSignature(edges, R);
           nlohmann::json signature = std::move(translational.signature);
           std::string type = base;
@@ -3090,9 +3110,10 @@ void Identifier::BuildBentPairs()
       }
     }
   }
-  stage.End(std::to_string(chains.size()) + " chains, " + std::to_string(chain_pairs_examined) +
-            " chain pairs within reach, " + std::to_string(chain_pairs_paired) +
-            " with facing pieces, " + std::to_string(features.size()) + " features so far");
+  stage.End(std::to_string(chains.size()) + " chains, " +
+            std::to_string(chain_pairs_examined) + " chain pairs within reach, " +
+            std::to_string(chain_pairs_paired) + " with facing pieces, " +
+            std::to_string(features.size()) + " features so far");
 }
 
 // Interval of run parameter s where the distance from run(s) to the segment [a, b] is below
@@ -3176,9 +3197,9 @@ void Identifier::BuildTranslationalFeatures()
     }
     // Components per elementary interval, then merge consecutive equal components. The
     // members active on an interval (u0 <= lo + Tol and u1 >= hi - Tol) are maintained by a
-    // sweep (both bounds grow with k: a member enters once and leaves once), in member order;
-    // the interacting pairs are found through the members sorted by lateral offset and
-    // united in the former (i, j) order.
+    // sweep (both bounds grow with k: a member enters once and leaves once), in member
+    // order; the interacting pairs are found through the members sorted by lateral offset
+    // and united in the former (i, j) order.
     struct Span
     {
       std::vector<std::size_t> component;  // member indices sorted by w
@@ -3187,8 +3208,9 @@ void Identifier::BuildTranslationalFeatures()
     std::vector<Span> spans;
     std::vector<std::size_t> by_u0(members.size());
     std::iota(by_u0.begin(), by_u0.end(), 0);
-    std::sort(by_u0.begin(), by_u0.end(), [&](std::size_t a, std::size_t b)
-              { return std::make_pair(members[a].u0, a) < std::make_pair(members[b].u0, b); });
+    std::sort(
+        by_u0.begin(), by_u0.end(), [&](std::size_t a, std::size_t b)
+        { return std::make_pair(members[a].u0, a) < std::make_pair(members[b].u0, b); });
     std::set<std::size_t> active_set;
     std::size_t next_entering = 0;
     std::vector<std::pair<std::size_t, std::size_t>> pairs;
@@ -3226,9 +3248,9 @@ void Identifier::BuildTranslationalFeatures()
       pairs.clear();
       for (std::size_t p = 0; p < by_w.size(); p++)
       {
-        for (std::size_t q = p + 1; q < by_w.size() &&
-                                    members[active[by_w[q]]].w - members[active[by_w[p]]].w <
-                                        interaction + 2.0 * Tol();
+        for (std::size_t q = p + 1;
+             q < by_w.size() && members[active[by_w[q]]].w - members[active[by_w[p]]].w <
+                                    interaction + 2.0 * Tol();
              q++)
         {
           const std::size_t i = std::min(by_w[p], by_w[q]), j = std::max(by_w[p], by_w[q]);
@@ -3343,7 +3365,8 @@ void Identifier::BuildTranslationalFeatures()
   }
   stage.End(std::to_string(classes.size()) + " direction classes, " +
             std::to_string(total_members) + " rigid runs, " + std::to_string(total_spans) +
-            " translational spans, " + std::to_string(features.size()) + " features so far");
+            " translational spans, " + std::to_string(features.size()) +
+            " features so far");
 }
 
 // Window of a vertex site along one incident run and, for curved chains, the following
@@ -3601,8 +3624,8 @@ void Identifier::BuildClusters()
   }
   for (std::size_t i = 0; i < sites.size(); i++)
   {
-    for (const std::size_t j : site_grid.Query(sites[i].point, sites[i].point,
-                                               interaction + 2.0 * Tol()))
+    for (const std::size_t j :
+         site_grid.Query(sites[i].point, sites[i].point, interaction + 2.0 * Tol()))
     {
       if (j <= i)
       {
@@ -3707,7 +3730,8 @@ void Identifier::BuildClusters()
 
   // Claimed portions: run intervals within R of a core, plus the member sites' windows. The
   // candidate runs of a cluster are the runs whose boxes lie within the ball of one of its
-  // cores and the runs of its sites' windows, in run order (the former loop over every run).
+  // cores and the runs of its sites' windows, in run order (the former loop over every
+  // run).
   std::size_t largest_cluster_edges = 0;
   double signature_seconds = 0.0;
   for (std::size_t c = 0; c < cluster_cores.size(); c++)
@@ -3786,9 +3810,9 @@ void Identifier::BuildClusters()
                              std::to_string(cluster_cores.size()) + ", " +
                              std::to_string(portions.size()) + " edges");
         });
-    signature_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() -
-                                                       signature_started)
-                             .count();
+    signature_seconds +=
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - signature_started)
+            .count();
     nlohmann::json signature = canonical.signature;
     signature["EdgeCount"] = portions.size();
     const int feature = NewFeature("SpatialEdgeCluster", signature, canonical.chirality);
@@ -3810,11 +3834,10 @@ void Identifier::BuildClusters()
   {
     std::ostringstream counts;
     counts << run_pairs_examined << " run pairs within reach, " << run_cores
-           << " event cores on runs + " << (cores.size() - run_cores)
-           << " site cores, " << cluster_cores.size() << " clusters (largest "
-           << largest_cluster_edges << " edges), canonical signatures " << std::fixed
-           << std::setprecision(2) << signature_seconds << " s, " << features.size()
-           << " features so far";
+           << " event cores on runs + " << (cores.size() - run_cores) << " site cores, "
+           << cluster_cores.size() << " clusters (largest " << largest_cluster_edges
+           << " edges), canonical signatures " << std::fixed << std::setprecision(2)
+           << signature_seconds << " s, " << features.size() << " features so far";
     stage.End(counts.str());
   }
 }
@@ -3938,7 +3961,8 @@ void Identifier::Assign(IdentificationResult &result)
         {
           const auto &[jlo, jhi, jfeature, jside] = pieces[j];
           (void)jside;
-          return jfeature >= 0 && (std::abs(jhi - lo) <= Tol() || std::abs(hi - jlo) <= Tol());
+          return jfeature >= 0 &&
+                 (std::abs(jhi - lo) <= Tol() || std::abs(hi - jlo) <= Tol());
         };
         if (i > 0 && joins(i - 1))
         {
@@ -3994,8 +4018,8 @@ void Identifier::Assign(IdentificationResult &result)
       {
         continue;
       }
-      const double reach = features[feature].signature["SeparationOverR"].get<double>() * R *
-                           (1.0 + kPairSeparationTolerance);
+      const double reach = features[feature].signature["SeparationOverR"].get<double>() *
+                           R * (1.0 + kPairSeparationTolerance);
       // The other side's pieces by run: a piece faces only the pieces on runs whose boxes
       // lie within the reach of its own run (the facing intervals of every other piece are
       // empty; the union is sorted, so the candidate order does not matter).
@@ -4027,8 +4051,8 @@ void Identifier::Assign(IdentificationResult &result)
               facing.insert(facing.end(), found.begin(), found.end());
             }
           }
-          const auto keep =
-              IntersectIntervals({Interval{piece.lo, piece.hi}}, MergeIntervals(facing, Tol()), Tol());
+          const auto keep = IntersectIntervals({Interval{piece.lo, piece.hi}},
+                                               MergeIntervals(facing, Tol()), Tol());
           auto &pieces = assigned[piece.run];
           const auto it = std::find_if(pieces.begin(), pieces.end(),
                                        [&](const auto &entry)
@@ -4091,8 +4115,7 @@ void Identifier::Assign(IdentificationResult &result)
     {
       for (auto &pieces : assigned)
       {
-        pieces.erase(std::remove_if(pieces.begin(), pieces.end(),
-                                    [&](const auto &piece)
+        pieces.erase(std::remove_if(pieces.begin(), pieces.end(), [&](const auto &piece)
                                     { return degenerate.count(std::get<2>(piece)) > 0; }),
                      pieces.end());
       }
@@ -4133,7 +4156,8 @@ void Identifier::Assign(IdentificationResult &result)
            ci != chain.curved.end() && ci->first < offset + runs[r].length + R; ++ci)
       {
         const auto j = static_cast<std::size_t>(ci - chain.curved.begin());
-        const Interval local{chain.curved[j].first - offset, chain.curved[j].second - offset};
+        const Interval local{chain.curved[j].first - offset,
+                             chain.curved[j].second - offset};
         const auto overlap = IntersectIntervals({local}, remainder, Tol());
         for (const auto &piece : overlap)
         {
@@ -4193,8 +4217,8 @@ void Identifier::Assign(IdentificationResult &result)
       for (const auto &[lo, hi, feature, side] : assigned[r])
       {
         (void)side;
-        feature_max_kappa[feature] =
-            std::max(feature_max_kappa[feature], MaxCurvature(chain, offset + lo, offset + hi));
+        feature_max_kappa[feature] = std::max(
+            feature_max_kappa[feature], MaxCurvature(chain, offset + lo, offset + hi));
       }
     }
   }
@@ -4251,10 +4275,10 @@ void Identifier::Assign(IdentificationResult &result)
   }
   // The CrossLayer record collects the analytic zones (count = zones, length = their sum).
   const int cross_layer_record = static_cast<int>(result.exclusions.size());
-  result.exclusions.push_back(
-      {"CrossLayer",
-       "planar metal edge within 2R of metal off its own plane (facing layer, wall, staple)",
-       0, 0.0});
+  result.exclusions.push_back({"CrossLayer",
+                               "planar metal edge within 2R of metal off its own plane "
+                               "(facing layer, wall, staple)",
+                               0, 0.0});
   for (std::size_t r = 0; r < runs.size(); r++)
   {
     if (runs[r].excluded)
@@ -4269,7 +4293,8 @@ void Identifier::Assign(IdentificationResult &result)
       const double segment_length =
           Distance(input.segments[rs.segment].p0, input.segments[rs.segment].p1);
       const double scale = segment_length / (rs.t1 - rs.t0);
-      auto SegmentPortion = [&](double lo, double hi) -> std::optional<std::array<double, 2>>
+      auto SegmentPortion = [&](double lo,
+                                double hi) -> std::optional<std::array<double, 2>>
       {
         const double a = std::max(lo, rs.t0), b = std::min(hi, rs.t1);
         if (b - a <= Tol())
@@ -4574,9 +4599,10 @@ IdentificationResult Identifier::Identify()
   if (input.log)
   {
     std::ostringstream text;
-    text << "  Identification total: " << std::fixed << std::setprecision(2)
-         << std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count()
-         << " s\n";
+    text
+        << "  Identification total: " << std::fixed << std::setprecision(2)
+        << std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count()
+        << " s\n";
     input.log(text.str());
   }
   return result;
@@ -4636,11 +4662,12 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"Frame",
          {{"Origin", P(feature.origin)},
           {"Axes", {D(feature.axes[0]), D(feature.axes[1]), D(feature.axes[2])}}}},
-        {"BendRadiusOverR", feature.bend_radius_over_R
-                                ? nlohmann::json(std::round(*feature.bend_radius_over_R /
-                                                            kSignatureLengthQuantumOverRadius) *
-                                                 kSignatureLengthQuantumOverRadius)
-                                : nlohmann::json(nullptr)},
+        {"BendRadiusOverR",
+         feature.bend_radius_over_R
+             ? nlohmann::json(std::round(*feature.bend_radius_over_R /
+                                         kSignatureLengthQuantumOverRadius) *
+                              kSignatureLengthQuantumOverRadius)
+             : nlohmann::json(nullptr)},
         {"Match", {{"Status", feature.matched_model ? "Matched" : "Missing"}}}};
     if (feature.matched_model)
     {
@@ -4713,46 +4740,48 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
                               {"Count", exclusion.count},
                               {"Length", L(exclusion.length)}});
   }
-  return {{"Version", 2},
-          {"MatchingRadius", scaled_radius},
-          {"Conventions",
-           {{"CornerTurnToleranceDegrees", kCornerTurnToleranceDegrees},
-            {"InteractionDistanceOverR", kInteractionDistanceOverRadius},
-            {"ThroughVertexZoneOverR", kThroughVertexZoneOverRadius},
-            {"ClusterBallOverR", kClusterBallOverRadius},
-            {"VertexJoinsClusterOverR", kVertexJoinsClusterOverRadius},
-            {"VertexWindowOverR", kVertexWindowOverRadius},
-            {"ParallelCosineTolerance", kParallelCosineTolerance},
-            {"RoundedCornerTangentTolerance", kRoundedCornerTangentTolerance},
-            {"LengthQuantumOverR", kLengthQuantumOverRadius},
-            {"DirectionQuantum", kDirectionQuantum},
-            {"SignatureLengthQuantumOverR", kSignatureLengthQuantumOverRadius},
-            {"SignatureAngleQuantumDegrees", kSignatureAngleQuantumDegrees},
-            {"StraightBendRadiusOverR", kStraightBendRadiusOverRadius},
-            {"CurvatureWindowOverR", kCurvatureWindowOverRadius},
-            {"PairSeparationToleranceRelative", kPairSeparationTolerance},
-            {"PairSeparationSamplesPerInterval", kPairSeparationSamplesPerInterval},
-            {"PairSeparationEstimate",
-             "per sample: chord reading C = min over the two chains of the maximum sampled "
-             "closest-point distance within max(R, local chord) of the sample / its foot where "
-             "the chain bends, R on straight runs; inscribed reading C / cos(turn / 2) with the "
-             "larger local joint turn; interacting iff both < 2R; feature separation = mean C"},
-            {"PairConstancyWindowOverR", 1.0},
-            {"PairSampleSpacingOverR", 0.5},
-            {"PairCandidateReachOverR",
-             kInteractionDistanceOverRadius * (1.0 + kPairSeparationTolerance)},
-            {"CrossLayerReachOverR", kInteractionDistanceOverRadius},
-            {"Comparison", "strict less on the quantized grid"}}},
-          {"ReferenceProcessNormal", D(reference_process_normal)},
-          {"Features", feature_list},
-          {"Segments", segment_list},
-          {"Vertices", vertex_list},
-          {"Exclusions", exclusion_list},
-          {"Totals",
-           {{"PerimeterLength", L(perimeter_length)},
-            {"AssignedLength", L(assigned_length)},
-            {"ExcludedLength", L(excluded_length)}}},
-          {"GeometryDigest", geometry_digest}};
+  return {
+      {"Version", 2},
+      {"MatchingRadius", scaled_radius},
+      {"Conventions",
+       {{"CornerTurnToleranceDegrees", kCornerTurnToleranceDegrees},
+        {"InteractionDistanceOverR", kInteractionDistanceOverRadius},
+        {"ThroughVertexZoneOverR", kThroughVertexZoneOverRadius},
+        {"ClusterBallOverR", kClusterBallOverRadius},
+        {"VertexJoinsClusterOverR", kVertexJoinsClusterOverRadius},
+        {"VertexWindowOverR", kVertexWindowOverRadius},
+        {"ParallelCosineTolerance", kParallelCosineTolerance},
+        {"RoundedCornerTangentTolerance", kRoundedCornerTangentTolerance},
+        {"LengthQuantumOverR", kLengthQuantumOverRadius},
+        {"DirectionQuantum", kDirectionQuantum},
+        {"SignatureLengthQuantumOverR", kSignatureLengthQuantumOverRadius},
+        {"SignatureAngleQuantumDegrees", kSignatureAngleQuantumDegrees},
+        {"StraightBendRadiusOverR", kStraightBendRadiusOverRadius},
+        {"CurvatureWindowOverR", kCurvatureWindowOverRadius},
+        {"PairSeparationToleranceRelative", kPairSeparationTolerance},
+        {"PairSeparationSamplesPerInterval", kPairSeparationSamplesPerInterval},
+        {"PairSeparationEstimate",
+         "per sample: chord reading C = min over the two chains of the maximum sampled "
+         "closest-point distance within max(R, local chord) of the sample / its foot where "
+         "the chain bends, R on straight runs; inscribed reading C / cos(turn / 2) with "
+         "the "
+         "larger local joint turn; interacting iff both < 2R; feature separation = mean C"},
+        {"PairConstancyWindowOverR", 1.0},
+        {"PairSampleSpacingOverR", 0.5},
+        {"PairCandidateReachOverR",
+         kInteractionDistanceOverRadius * (1.0 + kPairSeparationTolerance)},
+        {"CrossLayerReachOverR", kInteractionDistanceOverRadius},
+        {"Comparison", "strict less on the quantized grid"}}},
+      {"ReferenceProcessNormal", D(reference_process_normal)},
+      {"Features", feature_list},
+      {"Segments", segment_list},
+      {"Vertices", vertex_list},
+      {"Exclusions", exclusion_list},
+      {"Totals",
+       {{"PerimeterLength", L(perimeter_length)},
+        {"AssignedLength", L(assigned_length)},
+        {"ExcludedLength", L(excluded_length)}}},
+      {"GeometryDigest", geometry_digest}};
 }
 
 }  // namespace palace
