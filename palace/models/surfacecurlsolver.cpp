@@ -137,7 +137,7 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
       bool is_hole_boundary = false;
       for (int j = 0; j < edges.Size() && !is_hole_boundary; j++)
       {
-        if (hole_edge_sets[h].count(edges[j]))
+        if (hole_edge_sets[h].contains(edges[j]))
         {
           is_hole_boundary = true;
           boundary_submesh.GetBdrElement(i)->SetAttribute(hole_boundary_attrs[h]);

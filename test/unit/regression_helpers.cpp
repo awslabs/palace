@@ -65,7 +65,7 @@ FileListing ListRegressionFiles(const std::filesystem::path &root,
     if (it->is_directory())
     {
       out.dirs.insert(std::filesystem::relative(it->path(), root).generic_string());
-      if (skip_dirs.count(it->path().filename().string()))
+      if (skip_dirs.contains(it->path().filename().string()))
       {
         it.disable_recursion_pending();
       }

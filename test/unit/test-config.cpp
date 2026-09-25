@@ -129,7 +129,7 @@ std::vector<std::string> SchemaCoverageGaps(const std::string &pointer,
   std::vector<std::string> gaps;
   for (const auto &name : property_names)
   {
-    if (required_set.count(name) || skip.count(name))
+    if (required_set.contains(name) || skip.contains(name))
     {
       continue;
     }

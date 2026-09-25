@@ -114,7 +114,7 @@ void ParseElementData(const json &elem, bool required, internal::ElementData &da
   else
   {
     // String direction - CoordinateSystem is implicit in the string value.
-    MFEM_VERIFY(elem.find("CoordinateSystem") == elem.end(),
+    MFEM_VERIFY(!elem.contains("CoordinateSystem"),
                 "Cannot specify \"CoordinateSystem\" with string \"Direction\"!");
     std::tie(data.direction, data.coordinate_system) =
         ParseStringAsDirection(elem.value("Direction", ""), required);
@@ -474,7 +474,7 @@ LumpedPortData::LumpedPortData(const json &port)
                           "{:d} because it is excited; the excitation vector is always "
                           "added to the synthesis basis.",
                           index));
-  if (port.find("Attributes") != port.end())
+  if (port.contains("Attributes"))
   {
     auto &elem = elements.emplace_back();
     ParseElementData(port, true, elem);
@@ -633,7 +633,7 @@ SurfaceCurrentApertureData::SurfaceCurrentApertureData(const json &aperture)
 
 SurfaceCurrentData::SurfaceCurrentData(const json &source)
 {
-  if (source.find("Attributes") != source.end())
+  if (source.contains("Attributes"))
   {
     auto &elem = elements.emplace_back();
     ParseSurfaceCurrentElementData(source, elem);
@@ -646,7 +646,7 @@ SurfaceCurrentData::SurfaceCurrentData(const json &source)
       ParseSurfaceCurrentElementData(e, elem);
     }
   }
-  if (source.find("InactiveMode") != source.end())
+  if (source.contains("InactiveMode"))
   {
     inactive_port_mode = source.at("InactiveMode").get<InactivePortMode>();
   }
@@ -883,16 +883,16 @@ FarFieldPostData::FarFieldPostData(const json &farfield)
 }
 FluxLoopData::FluxLoopData(const json &fluxloop)
 {
-  MFEM_VERIFY(fluxloop.find("FluxLoopPEC") != fluxloop.end(),
+  MFEM_VERIFY(fluxloop.contains("FluxLoopPEC"),
               "Missing \"FluxLoopPEC\" for \"FluxLoop\" boundary!");
   fluxloop_pec = fluxloop.at("FluxLoopPEC").get<std::vector<int>>();
   std::sort(fluxloop_pec.begin(), fluxloop_pec.end());
 
-  MFEM_VERIFY(fluxloop.find("HoleAttributes") != fluxloop.end(),
+  MFEM_VERIFY(fluxloop.contains("HoleAttributes"),
               "Missing \"HoleAttributes\" for \"FluxLoop\" boundary!");
   hole_attributes = fluxloop.at("HoleAttributes").get<std::vector<int>>();
 
-  MFEM_VERIFY(fluxloop.find("FluxAmounts") != fluxloop.end(),
+  MFEM_VERIFY(fluxloop.contains("FluxAmounts"),
               "Missing \"FluxAmounts\" for \"FluxLoop\" boundary!");
   flux_amounts = fluxloop.at("FluxAmounts").get<std::vector<double>>();
 
@@ -1173,8 +1173,8 @@ DrivenSolverData::DrivenSolverData(const json &driven)
 
   std::vector<double> save_f, prom_f;  // samples to be saved to paraview and added to prom
   // Backwards compatible top level interface.
-  if (driven.find("MinFreq") != driven.end() && driven.find("MaxFreq") != driven.end() &&
-      driven.find("FreqStep") != driven.end())
+  if (driven.contains("MinFreq") && driven.contains("MaxFreq") &&
+      driven.contains("FreqStep"))
   {
     double min_f = driven.at("MinFreq");     // Required
     double max_f = driven.at("MaxFreq");     // Required
@@ -1192,8 +1192,8 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   {
     for (auto &r : *freq_samples)
     {
-      auto type = r.value("Type", r.find("Freq") != r.end() ? FrequencySampling::POINT
-                                                            : FrequencySampling::DEFAULT);
+      auto type = r.value("Type", r.contains("Freq") ? FrequencySampling::POINT
+                                                     : FrequencySampling::DEFAULT);
       auto f = [&]()
       {
         switch (type)

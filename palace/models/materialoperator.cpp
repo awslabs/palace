@@ -158,7 +158,7 @@ void MaterialOperator::SetUpMaterialProperties(
     const auto &data = materials[i];
     for (auto attr : data.attributes)
     {
-      if (loc_attr.find(attr) != loc_attr.end())
+      if (loc_attr.contains(attr))
       {
         mat_marker[i] = 1;
         nmats++;
@@ -392,7 +392,7 @@ void MaterialOperator::SetUpMaterialProperties(
   for (int i = 0; i < mesh.GetNE() && !unmatched_attrs.empty(); i++)
   {
     const int attr = mesh.GetAttribute(i);
-    if (unmatched_attrs.find(attr) != unmatched_attrs.end())
+    if (unmatched_attrs.contains(attr))
     {
       missing_attr = std::min(missing_attr, attr);
     }

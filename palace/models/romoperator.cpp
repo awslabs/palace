@@ -1210,7 +1210,7 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   // Initialize map entries for new ports that haven't been projected yet (first call).
   for (const auto &[port_idx, Mp_hdm] : M_floquet_p_)
   {
-    if (M_floquet_p_r.find(port_idx) == M_floquet_p_r.end())
+    if (!M_floquet_p_r.contains(port_idx))
     {
       auto &Mp_r = M_floquet_p_r[port_idx];
       Mp_r.resize(dim_V_new, dim_V_new);

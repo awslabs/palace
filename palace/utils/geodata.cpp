@@ -2510,7 +2510,7 @@ int LocalEdgeSplit(std::unique_ptr<mfem::Mesh> &orig_mesh,
     bool conflict = false;
     for (int el : ring)
     {
-      if (claimed_elem.find(el) != claimed_elem.end())
+      if (claimed_elem.contains(el))
       {
         conflict = true;
         break;
@@ -2811,7 +2811,7 @@ std::unordered_map<int, int> GetFaceToBdrElementMap(const mfem::Mesh &mesh,
         }
       }
     }
-    MFEM_VERIFY((e1 >= 0 && e2 >= 0) || face_to_be.find(f) == face_to_be.end(),
+    MFEM_VERIFY((e1 >= 0 && e2 >= 0) || !face_to_be.contains(f),
                 "A non-periodic face ("
                     << f << ") cannot have multiple boundary elements! Attributes: " << attr
                     << ' ' << mesh.GetBdrAttribute(face_to_be[f]));
@@ -2896,7 +2896,7 @@ private:
       for (mfem::DSTable::RowIterator it(v_to_v, i); !it; ++it)
       {
         int j = it.Column();
-        if (refinement_edges.find({i, j}) == refinement_edges.end())
+        if (!refinement_edges.contains({i, j}))
         {
           // "Zero" the edge lengths which do not connect vertices on the interface. Avoid
           // zero-length edges just in case.
@@ -3055,7 +3055,7 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
       {
         // Skip vertices we have already processed.
         const auto v = verts[i];
-        if (crack_vert_duplicates.find(v) != crack_vert_duplicates.end())
+        if (crack_vert_duplicates.contains(v))
         {
           continue;
         }
@@ -3087,8 +3087,7 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
               const auto f = faces[j];
               {
                 auto it = face_to_be.find(f);
-                if (it != face_to_be.end() &&
-                    crack_bdr_elem.find(it->second) != crack_bdr_elem.end())
+                if (it != face_to_be.end() && crack_bdr_elem.contains(it->second))
                 {
                   // Skip element-element connectivities which cross the crack.
                   continue;
@@ -3159,8 +3158,8 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
         {
           auto v0 = verts[bdr_el->GetEdgeVertices(i)[0]],
                v1 = verts[bdr_el->GetEdgeVertices(i)[1]];
-          MFEM_ASSERT(crack_vert_duplicates.find(v0) != crack_vert_duplicates.end() &&
-                          crack_vert_duplicates.find(v1) != crack_vert_duplicates.end(),
+          MFEM_ASSERT(crack_vert_duplicates.contains(v0) &&
+                          crack_vert_duplicates.contains(v1),
                       "Unable to locate crack vertices for an interior boundary element!");
           if (crack_vert_duplicates[v0].empty() && crack_vert_duplicates[v1].empty())
           {
@@ -3297,7 +3296,7 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
     {
       // Skip all faces which already have an associated boundary element (this includes
       // any boundary elements which were duplicated during cracking in the previous step).
-      if (face_to_be.find(f) != face_to_be.end())
+      if (face_to_be.contains(f))
       {
         continue;
       }
@@ -3418,7 +3417,7 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
         // vertex and its connectivity is unmodified.
         for (const auto &[dup_v, component] : vert_components)
         {
-          if (component.find(e) != component.end())
+          if (component.contains(e))
           {
             verts[j] = dup_v;
             break;
@@ -3466,7 +3465,7 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
       }
 
       // Add the duplicate boundary element for boundary elements on the crack.
-      if (crack_bdr_elem.find(be) != crack_bdr_elem.end())
+      if (crack_bdr_elem.contains(be))
       {
         faces = elem_to_face.GetRow(e2);
         for (i = 0; i < elem_to_face.RowSize(e2); i++)
@@ -4061,7 +4060,7 @@ void MatchBoundaryEdges(
     int parent_edge = it->second;
     for (int hole_idx = 0; hole_idx < num_holes; hole_idx++)
     {
-      if (hole_edge_sets[hole_idx].count(parent_edge))
+      if (hole_edge_sets[hole_idx].contains(parent_edge))
       {
         hole_boundary_edges[hole_idx].Append(submesh_edge);
         matched_hole_edges[hole_idx].insert(parent_edge);
@@ -4077,7 +4076,7 @@ void MatchBoundaryEdges(
   {
     for (int edge : hole_edge_sets[hole_idx])
     {
-      if (!matched_hole_edges[hole_idx].count(edge))
+      if (!matched_hole_edges[hole_idx].contains(edge))
       {
         unmatched_hole_edges[hole_idx].push_back(edge);
       }
@@ -4132,7 +4131,7 @@ void MatchBoundaryEdges(
         MFEM_VERIFY(it != submesh_to_parent_bdr_edge_map.end(),
                     "Submesh edge " << submesh_edge << " not found in parent mapping!");
         int parent_edge = it->second;
-        if (unmatched_set.count(global_edge_indices[parent_edge]))
+        if (unmatched_set.contains(global_edge_indices[parent_edge]))
         {
           hole_boundary_edges[hole_idx].Append(submesh_edge);
         }

@@ -100,7 +100,7 @@ void Table::reserve(std::size_t n_rows, std::size_t n_cols)
 // Insert columns: map like interface.
 bool Table::insert(Column &&column)
 {
-  if (name_to_index.find(column.name) != name_to_index.end())
+  if (name_to_index.contains(column.name))
   {
     return false;
   }

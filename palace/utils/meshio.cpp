@@ -769,7 +769,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
                         "Unexpected empty element type found in COMSOL mesh file!");
             elem_type = ElemTypeComsol(elem_str);
             skip_type = (elem_type == 0);
-            MFEM_VERIFY(skip_type || elem_nodes.find(elem_type) == elem_nodes.end(),
+            MFEM_VERIFY(skip_type || !elem_nodes.contains(elem_type),
                         "Duplicate element types found in COMSOL mesh file!");
           }
           else if (num_elem_nodes < 0)
@@ -822,7 +822,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
             std::vector<int> *data = nullptr;
             if (!skip_type)
             {
-              MFEM_VERIFY(elem_nodes.find(elem_type) != elem_nodes.end(),
+              MFEM_VERIFY(elem_nodes.contains(elem_type),
                           "Can't find expected element type!");
               data = &elem_nodes[elem_type];
               MFEM_VERIFY(data->size() == (std::size_t)num_elem * (num_elem_nodes + 1),
@@ -869,7 +869,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
                     "Unexpected empty element type found in COMSOL mesh file!");
         elem_type = ElemTypeComsol(elem_str);
         skip_type = (elem_type == 0);
-        MFEM_VERIFY(skip_type || elem_nodes.find(elem_type) == elem_nodes.end(),
+        MFEM_VERIFY(skip_type || !elem_nodes.contains(elem_type),
                     "Duplicate element types found in COMSOL mesh file!");
         input.read(reinterpret_cast<char *>(&num_elem_nodes), sizeof(int));
         MFEM_VERIFY(num_elem_nodes > 0,

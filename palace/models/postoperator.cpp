@@ -2764,7 +2764,7 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
   // Compute voltage for each configured voltage-only entry.
   for (const auto &[idx, cfg] : voltage_postpro)
   {
-    if (filled_voltage_postpro.count(idx))
+    if (filled_voltage_postpro.contains(idx))
     {
       continue;
     }
