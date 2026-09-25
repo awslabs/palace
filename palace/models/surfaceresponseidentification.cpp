@@ -1577,9 +1577,9 @@ private:
   std::vector<Arc> arcs;
   std::vector<int> vertex_arc;   // per mesh vertex: the arc holding it as a joint, or -1
   std::vector<int> segment_arc;  // per segment: the BEND arc it lies on, or -1
-  // Chains joined through absorbed corner vertices form one chain group: the isolated /
-  // curved edge features are one per group (per section / arc), so that a chord count
-  // that puts a corner vertex inside an arc does not split them.
+  // Chains joined through the corner vertices absorbed by a bend are one chain (union-find
+  // over the input chain ids, applied to the segments before the runs are built), so that a
+  // chord count that puts a corner vertex inside a bend does not split the chain.
   std::map<int, int> chain_group;
   int ChainGroup(int chain) const
   {
@@ -2423,14 +2423,25 @@ void Identifier::DetectArcs()
       arc.turn = best.turn;
       arc.corner = quantizer.Less(arc.radius, R) &&
                    arc.turn * 180.0 / std::acos(-1.0) > kCornerTurnToleranceDegrees;
-      // The arc is a chain of its own between its tangent points: the arms on either side
-      // are distinct chains that meet through the arc (ThroughZones), so that the pair and
-      // event rules read a filleted or bent path like a sharp one whatever the chords.
-      arc.chain = next_chain_id++;
-      for (const std::size_t s : arc.segments)
+      if (arc.corner)
       {
-        input.segments[s].chain = arc.chain;
-        if (!arc.corner)
+        // A rounded corner is a corner: the arc is a chain of its own between its tangent
+        // points and the arms on either side are distinct chains that meet through it
+        // (ThroughZones), so that the pair and event rules read a filleted corner like a
+        // sharp one whatever the chords (a U-turned narrow strip keeps its strip pair).
+        arc.chain = next_chain_id++;
+        for (const std::size_t s : arc.segments)
+        {
+          input.segments[s].chain = arc.chain;
+        }
+      }
+      else
+      {
+        // A bend continues its edge: it stays inside the chain (the pairs along a route are
+        // read on whole chains), and the chains a corner vertex inside it separated are
+        // merged below, so that a coarse bend with a super-threshold joint is the same
+        // chain as a fine one.
+        for (const std::size_t s : arc.segments)
         {
           segment_arc[s] = static_cast<int>(arcs.size());
         }
@@ -2446,10 +2457,31 @@ void Identifier::DetectArcs()
           // pair distinct chains); the arc's curved features are merged across it below.
           vertex.physical_type = MetalEdgeVertexType::REGULAR;
           arc.absorbed_corners.push_back(v);
+          if (!arc.corner)
+          {
+            const int ca = ChainGroup(input.segments[incident[v][0]].chain);
+            const int cb = ChainGroup(input.segments[incident[v][1]].chain);
+            chain_group.try_emplace(ca, ca);
+            chain_group.try_emplace(cb, cb);
+            if (ca != cb)
+            {
+              chain_group[std::max(ca, cb)] = std::min(ca, cb);
+            }
+          }
         }
       }
 
       arcs.push_back(std::move(arc));
+    }
+  }
+  if (!chain_group.empty())
+  {
+    for (auto &segment : input.segments)
+    {
+      if (segment.chain >= 0 && chain_group.count(segment.chain))
+      {
+        segment.chain = ChainGroup(segment.chain);
+      }
     }
   }
 }
@@ -2470,6 +2502,10 @@ void Identifier::BuildArcSites()
     {
       continue;  // an arm excluded after the fact (non-planar): no site
     }
+    if (!arc.corner)
+    {
+      continue;
+    }
     {
       const int ca = runs[static_cast<std::size_t>(before)].chain;
       const int cb = runs[static_cast<std::size_t>(after)].chain;
@@ -2478,28 +2514,6 @@ void Identifier::BuildArcSites()
         through_arc[std::make_pair(std::min(ca, cb), std::max(ca, cb))].push_back(
             static_cast<int>(a));
       }
-      if (!arc.corner)
-      {
-        // A bend continues the edge: the arms and the arc are one chain group (one isolated
-        // edge feature across the bend, as for a polyline bend of sub-threshold joints); a
-        // rounded corner separates its arms like a sharp corner does.
-        for (const int c : {ca, cb, arc.chain})
-        {
-          chain_group.try_emplace(c, c);
-        }
-        for (const int c : {ca, cb})
-        {
-          const int ra = ChainGroup(c), rb = ChainGroup(arc.chain);
-          if (ra != rb)
-          {
-            chain_group[std::max(ra, rb)] = std::min(ra, rb);
-          }
-        }
-      }
-    }
-    if (!arc.corner)
-    {
-      continue;
     }
     const Run &arm_a = runs[static_cast<std::size_t>(before)];
     const Run &arm_b = runs[static_cast<std::size_t>(after)];
@@ -5631,6 +5645,11 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"VertexWindowOverR", kVertexWindowOverRadius},
         {"ParallelCosineTolerance", kParallelCosineTolerance},
         {"RoundedCornerTangentTolerance", kRoundedCornerTangentTolerance},
+        {"ArcFitToleranceRelative", kArcFitToleranceRelative},
+        {"ArcRule", "joints (>= 3) joined by pieces < 2R, same turn sign, <= 180 deg, one "
+                    "circle with the arm tangents within the fit tolerance: radius < R and "
+                    "turn > corner threshold = one rounded corner (own chain, arms meet "
+                    "through it); radius >= R = a bend of exact radius inside its chain"},
         {"LengthQuantumOverR", kLengthQuantumOverRadius},
         {"DirectionQuantum", kDirectionQuantum},
         {"SignatureLengthQuantumOverR", kSignatureLengthQuantumOverRadius},

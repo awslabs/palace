@@ -1384,7 +1384,7 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
   int physical_segments = 0;
   int truncation_segments = 0;
   int fold_segments = 0;
-  int nonmanifold_segments = 0;
+  int nonmanifold_segments = 0, port_segments = 0;
   int embedded_segments = 0;
   int corners = 0;
   int sa_segments = 0;
@@ -1400,6 +1400,7 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
     truncation_segments += segment.type == MetalEdgeSegmentType::TRUNCATION;
     fold_segments += segment.type == MetalEdgeSegmentType::FOLD;
     nonmanifold_segments += segment.type == MetalEdgeSegmentType::NONMANIFOLD;
+    port_segments += segment.type == MetalEdgeSegmentType::PORT;
     embedded_segments += segment.side_attributes.size() == 1;
     sa_segments += !segment.sa_interfaces.empty();
     truncation_attributes.insert(segment.truncation_attributes.begin(),
@@ -1422,18 +1423,24 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
   // side attribute), 16 deck-leg folds and 8 nonmanifold foot segments join the 3,088
   // planar physical and 58 truncation segments; 4 more perimeter components, 24 more
   // chains and 16 more corners (the deck's and legs' rectangles).
+  // Decision 82(5): ports are not metal — the 6 feedline edges bordering the two lumped
+  // port faces are PORT segments (cuts): the feedline centre conductor's perimeter splits
+  // into 2 more physical components (the cut pieces), 6 fewer chains, and the 12 port-end
+  // vertices are no longer corners.
   CHECK(geometry.components == 10);
-  CHECK(geometry.physical_components == 13);
-  CHECK(physical_segments + truncation_segments + fold_segments + nonmanifold_segments ==
+  CHECK(geometry.physical_components == 15);
+  CHECK(physical_segments + truncation_segments + fold_segments + nonmanifold_segments +
+            port_segments ==
         static_cast<int>(geometry.segments.size()));
-  CHECK(physical_segments == 3128);
+  CHECK(physical_segments == 3122);
+  CHECK(port_segments == 6);
   CHECK(fold_segments == 16);
   CHECK(nonmanifold_segments == 8);
   CHECK(embedded_segments == 40 + 16);  // the feet also touch the ground sheet faces
-  CHECK(geometry.physical_chains == 80);
+  CHECK(geometry.physical_chains == 74);
   CHECK(truncation_segments == 58);
   CHECK(truncation_attributes == std::set<int>{3});
-  CHECK(corners == 72);
+  CHECK(corners == 60);
   CHECK(sa_segments == 3082);
   // Conductors by metal connectivity: ground plane with the airbridge, feedline centre
   // conductor (between the lumped ports), island.

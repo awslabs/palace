@@ -390,9 +390,21 @@ def fillet_suite(ratios=FILLET_RATIOS, turns=FILLET_TURNS, chords=FILLET_CHORDS,
                     xs = [p[0] for p in poly["Points"]]; ys = [p[1] for p in poly["Points"]]
                     half_x = math.ceil(max(abs(v) for v in xs) + 6.0); half_y = math.ceil(max(abs(v) for v in ys) + 6.0)
                     corner_rounded = q < 1.0
+                    # Acute bend (interior 45 deg): the arms interact beyond the through-arc zone
+                    # (points at a < R / sin(22.5 deg) = 2.61 R from the virtual corner are within 2R of
+                    # each other; the zone covers a <= rho tan(67.5 deg) + 2R), i.e. for
+                    # rho / R < (2.61 - 2) / 2.414 = 0.254: then the multiset is the sharp corner-45
+                    # layout's (2 clusters absorb two bar-end corners), the two rounded corners intact.
+                    acute_clusters = turn == 135 and 2.414 * q + 2.0 < 1.0 / math.sin(math.radians(22.5))
+                    if corner_rounded:
+                        features = {"ConvexCorner": 3, "ConcaveCorner": 1, "IsolatedEdge": 4, "SpatialEdgeCluster": 2} if acute_clusters else {"ConvexCorner": 5, "ConcaveCorner": 1, "IsolatedEdge": 6}
+                    elif q < 10.0:
+                        features = {"ConvexCorner": 4, "CurvedEdge": 2, "IsolatedEdge": 4}
+                    else:
+                        features = {"ConvexCorner": 4, "IsolatedEdge": 4}
                     expected = {
                         # a rounded corner separates its arms like a sharp one (two isolated edges per side); a bend continues the edge (one)
-                        "Features": ({"ConvexCorner": 5, "ConcaveCorner": 1, "IsolatedEdge": 6} if corner_rounded else ({"ConvexCorner": 4, "CurvedEdge": 2, "IsolatedEdge": 4} if q < 10.0 else {"ConvexCorner": 4, "IsolatedEdge": 4})),
+                        "Features": features,
                         "Exclusions": {},
                         "CornerSignatures": {f"ConvexCorner@{theta:g}@{q:g}": 1, f"ConcaveCorner@{theta:g}@{q:g}": 1} if corner_rounded else {},
                         "CurvedRadii": {f"{q:g}": 2} if (1.0 <= q < 10.0) else {},
@@ -427,7 +439,10 @@ def fillet_suite(ratios=FILLET_RATIOS, turns=FILLET_TURNS, chords=FILLET_CHORDS,
     for n in (2, 4):
         poly = filleted_polygon(cross, 1.0, n)
         layouts.append(layout(f"fillet-cross-sct002-c{n}", [sheet(GROUND, poly)], lc_fine=0.5, notes=f"DS-SCT-002 pattern: cross of 6 um arms, every corner a 1 um fillet (0.5 R) as {n} chords", expected={
-            "Features": {"ConvexCorner": 8, "ConcaveCorner": 4, "IsolatedEdge": 1},
+            # every rounded corner separates its arms: 12 rounded corners (0.5 R) and 12 straight edges
+            # between them, of which the 4 arm-end edges (6 - 2 x 1 um) lie inside the two adjacent
+            # corner windows (2 x R): 8 isolated-edge features of 9 - 2 - 4 = 3 um
+            "Features": {"ConvexCorner": 8, "ConcaveCorner": 4, "IsolatedEdge": 8},
             "CornerSignatures": {"ConvexCorner@90@0.5": 8, "ConcaveCorner@90@0.5": 4},
             "CurvedRadii": {},
             "Exclusions": {},

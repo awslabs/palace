@@ -113,7 +113,43 @@ smaller endpoint.
    (`VertexJoinsClusterOverR` = 2; decision 82(1), 2026-09-25: the former 3R join was the one
    distance differing from 2R and joined the L2 junction regions of DS-SCT-002 to the L1
    flux-loop ends 2.4R below; an acute corner whose arms interact from 2R along the arms is
-   now a corner feature next to a separate arm cluster, abutting at R along each arm). Portions are split at the
+   now a corner feature next to a separate arm cluster, abutting at R along each arm).
+   **Arc rule (decision 82(3), 2026-09-25; replaces the run-based rounded-corner rule of
+   item 4 and the half-chord curvature of fitted arcs in item 7).** Along every perimeter
+   path through vertices with exactly two path segments (regular or corner; a path stops at
+   endpoints, junctions and cuts) the joints are the non-collinear vertices. From every
+   unconsumed joint, the largest range of at least three following joints that are
+   connected by pieces shorter than the interaction distance 2R, turn the same way, total
+   at most 180 deg and fit ONE circle with the two arm tangents (`ArcFitToleranceRelative`
+   = 0.05: tangent lengths from the virtual corner equal within 5 %, every joint within 5 %
+   of the radius from the centre; antiparallel arms: the radius is half their separation
+   and the tangent points face each other) is an arc; a closed loop starts its scan after
+   its longest piece. Two-joint polylines are never arcs (a chamfer, and a square strip end
+   — the diameter chord of a semicircle — cannot be told from a one-chord arc: they stay
+   corners). An arc of radius < R whose total turn exceeds the corner threshold is ONE
+   rounded corner: `ConvexCorner` / `ConcaveCorner` by the side of the centre (convex when
+   the centre lies on the metal side of the first arm; well defined for a U-turn),
+   `AngleDegrees` = 180 - total turn, `CornerRadiusOverR` = radius / R from the tangent
+   lengths (exact for an inscribed polygon at any chord count), claiming the arc runs and
+   R along each arm; it is a chain of its own between its tangent points and its two arms
+   meet THROUGH it (the through-vertex zone of item 1 is taken within 2R of the arc's runs),
+   so the event and pair rules read a filleted corner like a sharp one and a U-turned
+   narrow strip keeps its strip pair; like a sharp corner it separates its arms into
+   distinct chains (one isolated edge per arm). An arc of radius >= R is a bend of exactly
+   that radius: it stays inside its chain, its joints (corner vertices included) contribute
+   no half-chord density, the density over the arc is 1 / radius, a curved section on it
+   reads `RadiusOverR` = radius / R exactly, and the chains a corner vertex inside it
+   separated are merged (a coarse bend with a super-threshold joint is the same chain as a
+   fine one). Corner vertices absorbed by an arc are `RoundedCornerVertex` (feature = the
+   rounded corner) / `BendVertex` records of the vertex table, never corner features. The
+   description therefore does not depend on the number of chords as long as every chord is
+   shorter than 2R (a coarser polyline is a different geometry at the scale of R: its kinks
+   are real corners); gate: synthetic fillets at rho / R in {0.1 ... 20} x turns {45, 90,
+   135, 180} x {2, 4, 8, 16} chords + a seeded chord perturbation. Recorded limitations: a
+   chain never pairs with itself (a bend of radius >= R folding an edge back onto itself
+   within 2R is not paired — a wide U-turn is beyond 2R anyway); the polyline's inscribed
+   circle differs from a design radius by the discretisation (an offset polyline at 20 deg
+   per vertex reads 3 % off; within the fit tolerance). Portions are split at the
    region boundary canonically (the analytic interval endpoints on the chain, on the decision
    grid). Two vertex features closer than 2R have overlapping radius-R windows (invariant A2)
    and are an event of their own (both vertices are degenerate event cores), so the corners of
@@ -397,7 +433,7 @@ matching pass). The new top-level `Identification` object carries the contract:
   "Conventions": {"CornerTurnToleranceDegrees": 30, "InteractionDistanceOverR": 2,
                   "ThroughVertexZoneOverR": 2, "ClusterBallOverR": 1,
                   "VertexJoinsClusterOverR": 2, "VertexWindowOverR": 1,
-                  "ParallelCosineTolerance": 1e-8, "RoundedCornerTangentTolerance": 0.05,
+                  "ParallelCosineTolerance": 1e-8, "RoundedCornerTangentTolerance": 0.05, "ArcFitToleranceRelative": 0.05,
                   "SignatureLengthQuantumOverR": 1e-6, "SignatureAngleQuantumDegrees": 1e-6,
                   "StraightBendRadiusOverR": 10, "CurvatureWindowOverR": 1,
                   "PairSeparationToleranceRelative": 0.05, "PairSeparationSamplesPerInterval": 16,

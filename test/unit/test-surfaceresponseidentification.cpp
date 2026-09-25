@@ -578,9 +578,10 @@ TEST_CASE("SurfaceResponseIdentification", "[surfaceresponseidentification][Seri
 TEST_CASE("SurfaceResponseIdentificationRoundedCorners",
           "[surfaceresponseidentification][Serial]")
 {
-  // 8 x 6 island with 0.5 um fillets (radius < R): four rounded convex corners, one
-  // isolated edge chain, no cluster; the same features when every chord is bisected
-  // (refinement).
+  // 8 x 6 island with 0.5 um fillets (radius < R): four rounded convex corners separating
+  // the four sides (a rounded corner is a corner: one isolated edge per side, as for the
+  // sharp rectangle; decision 82(3)), no cluster; the same features when every chord is
+  // bisected (refinement).
   const double R = 2.0;
   for (const double subdivision : {1.0, 0.5})
   {
@@ -601,7 +602,7 @@ TEST_CASE("SurfaceResponseIdentificationRoundedCorners",
     }
     CHECK(counts["ConvexCorner"] == 4);
     CHECK(counts["SpatialEdgeCluster"] == 0);
-    CHECK(counts["IsolatedEdge"] == 1);
+    CHECK(counts["IsolatedEdge"] == 4);
     CHECK(std::count_if(result.vertices.begin(), result.vertices.end(),
                         [](const auto &v) { return v.type == "RoundedCorner"; }) == 4);
   }
@@ -669,9 +670,11 @@ TEST_CASE("SurfaceResponseIdentificationCurvedEdges",
       counts[feature.type]++;
       if (feature.type == "CurvedSameConductorStrip")
       {
-        // The tightest windowed bend radius is the inner side's (radius - 1.5).
+        // The inner side's radius (radius - 1.5): the arc rule reads the polyline's own
+        // inscribed circle, which for an offset polyline at 20 deg per vertex differs from
+        // the design radius within the arc-fit tolerance (5 %).
         CHECK_THAT(feature.signature["RadiusOverR"].get<double>(),
-                   WithinRel((c.radius - 1.5) / R, 0.03));
+                   WithinRel((c.radius - 1.5) / R, 0.05));
         CHECK_THAT(feature.signature["SeparationOverR"].get<double>(),
                    WithinRel(1.5, 0.02));
       }
