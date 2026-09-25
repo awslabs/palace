@@ -104,12 +104,12 @@ palace::test::CustomCheck CompareComplexMagnitudes(double rtol, double atol)
       // Im{...} columns are checked alongside their Re partner; skip
       // them here so we don't double-count or compare the imaginary
       // half on its own.
-      if (hdr.rfind("Im{", 0) == 0)
+      if (hdr.starts_with("Im{"))
       {
         continue;
       }
 
-      if (hdr.rfind("Re{", 0) == 0)
+      if (hdr.starts_with("Re{"))
       {
         std::string im_hdr = hdr;
         im_hdr.replace(0, 3, "Im{");  // "Re{X} (unit)" -> "Im{X} (unit)"
@@ -515,7 +515,7 @@ palace::test::CustomCheck TestWavePortCoupledRoundTrip(double atol)
       for (std::size_t c = 0; c < t.n_cols(); ++c)
       {
         const std::string &h = t[c].header_text;
-        const bool re = h.rfind("Re{", 0) == 0, im = h.rfind("Im{", 0) == 0;
+        const bool re = h.starts_with("Re{"), im = h.starts_with("Im{");
         if ((!re && !im) || h[3] != (is_g ? 'G' : 'H'))
         {
           continue;
@@ -745,11 +745,11 @@ palace::test::CustomCheck TestWavePortSRoundTrip(double atol_lin)
     for (std::size_t c = 0; c < ref_t.n_cols(); ++c)
     {
       const std::string &h = ref_t[c].header_text;
-      if (h.rfind("f (GHz)", 0) == 0)
+      if (h.starts_with("f (GHz)"))
       {
         f_col = static_cast<int>(c);
       }
-      else if (h.rfind("Re{Y_ref[", 0) == 0)
+      else if (h.starts_with("Re{Y_ref["))
       {
         const auto lb = h.find('[');
         const auto rb = h.find(']', lb);

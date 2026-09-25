@@ -452,10 +452,8 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
                        bool remove_curvature)
 {
   // Read a COMSOL format mesh.
-  const int comsol_bin = !filename.compare(filename.length() - 7, 7, ".mphbin") ||
-                         !filename.compare(filename.length() - 7, 7, ".MPHBIN");
-  MFEM_VERIFY(!filename.compare(filename.length() - 7, 7, ".mphtxt") ||
-                  !filename.compare(filename.length() - 7, 7, ".MPHTXT") || comsol_bin,
+  const int comsol_bin = filename.ends_with(".mphbin") || filename.ends_with(".MPHBIN");
+  MFEM_VERIFY(filename.ends_with(".mphtxt") || filename.ends_with(".MPHTXT") || comsol_bin,
               "Invalid file extension for COMSOL mesh format conversion!");
   std::ifstream input(filename);
   if (!input.is_open())
@@ -951,10 +949,8 @@ void ConvertMeshNastran(const std::string &filename, std::ostream &buffer,
                         bool remove_curvature)
 {
   // Read a Nastran/BDF format mesh.
-  MFEM_VERIFY(!filename.compare(filename.length() - 4, 4, ".nas") ||
-                  !filename.compare(filename.length() - 4, 4, ".NAS") ||
-                  !filename.compare(filename.length() - 4, 4, ".bdf") ||
-                  !filename.compare(filename.length() - 4, 4, ".BDF"),
+  MFEM_VERIFY(filename.ends_with(".nas") || filename.ends_with(".NAS") ||
+                  filename.ends_with(".bdf") || filename.ends_with(".BDF"),
               "Invalid file extension for Nastran mesh format conversion!");
   std::ifstream input(filename);
   if (!input.is_open())

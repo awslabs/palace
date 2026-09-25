@@ -61,7 +61,7 @@ std::vector<std::string> SchemaCoverageGaps(const std::string &pointer,
     }
     const std::string ref = rit->get<std::string>();
     const std::string defs_prefix = "#/$defs/";
-    REQUIRE(ref.rfind(defs_prefix, 0) == 0);
+    REQUIRE(ref.starts_with(defs_prefix));
     const std::string def_name = ref.substr(defs_prefix.size());
     REQUIRE(schema.contains("$defs"));
     REQUIRE(schema.at("$defs").contains(def_name));

@@ -131,7 +131,7 @@ json ResolveRef(const json &node, const json &defs)
     return node;
   }
   std::string ref = node["$ref"].get<std::string>();
-  if (ref.substr(0, 8) == "#/$defs/")
+  if (ref.starts_with("#/$defs/"))
   {
     std::string def_name = ref.substr(8);
     if (defs.contains(def_name))
