@@ -8,10 +8,10 @@ index 6e2bced3dd0..f5e22f17232 100644
  
 +    # Teach the makefile build to accept a comma-separated CUDA_ARCH list and
 +    # expand it into a per-architecture -gencode/--cuda-gpu-arch sequence.
-+    # PR: https://github.com/mfem/mfem/pull/5440
++    # PR https://github.com/mfem/mfem/pull/5440 (merged upstream in 4.10).
 +    patch(
 +        "https://github.com/mfem/mfem/compare/1c19aba72a2b91ee918a332e668cf00922848321...66dbe60cb1272407deebaf3347db4a8be399fb1b.diff",
-+        when="@4.9.0:+cuda",
++        when="@4.9.0+cuda",
 +        sha256="e59e80fd678dc5b57b5bb76873c046036b8677733f6409e1391f01e8e76373cd",
 +    )
 +

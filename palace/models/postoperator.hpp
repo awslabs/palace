@@ -11,6 +11,7 @@
 #include <optional>
 #include <type_traits>
 #include <vector>
+#include <Eigen/Dense>
 #include <mfem.hpp>
 #include "fem/boundary_derived_field_bundle.hpp"
 #include "fem/boundary_physical_trace.hpp"
@@ -32,6 +33,7 @@ namespace palace
 {
 
 class CurlCurlOperator;
+class RomOperator;
 class ErrorIndicator;
 class FaceSamplingPlan;
 class IoData;
@@ -254,8 +256,11 @@ public:
       -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
 
   // Whether this solve requests any field output. Drivers use this to release solver
-  // memory before constructing the field-output evaluators only when necessary.
+  // memory before constructing the field-output evaluators only when necessary, and the
+  // adaptive online sweep uses it to choose an ordering that keeps frequency-dependent port
+  // state hot across excitations.
   bool WillWriteFields() const { return ShouldWriteFields(); }
+  bool WillWriteFields(int step) const { return ShouldWriteFields(step); }
 
 protected:
   // Write to disk the E- and B-fields extracted from the solution vectors. Note that
@@ -285,6 +290,12 @@ protected:
   mutable InterpolationOperator interp_op;  // E & B fields: mutates during measure
 
   mutable Measurement measurement_cache;
+
+  // Exact reduced-coordinate domain-energy forms for adaptive online postprocessing.
+  bool reduced_postprocessing_ready = false;
+  bool reduced_postprocessing_checked = false;
+  Eigen::MatrixXd reduced_energy_E, reduced_energy_H;
+  std::map<int, std::pair<Eigen::MatrixXd, Eigen::MatrixXd>> reduced_domain_energy;
 
   // Per-entry impedance postprocessing configuration (keyed by config index).
   struct ImpedancePostproConfig
@@ -456,6 +467,18 @@ public:
   auto MeasureAndPrintAll(int ex_idx, int step, const ComplexVector &e,
                           const ComplexVector &b, std::complex<double> omega)
       -> std::enable_if_t<U == ProblemType::DRIVEN, double>;
+
+  // Configure and evaluate the exact reduced-coordinate default output path (domain
+  // energies plus port S-parameters). Unsupported configured measurements leave the path
+  // disabled and use full postprocessing.
+  template <ProblemType U = solver_t>
+  auto ConfigureReducedPostprocessing(const RomOperator &rom_op)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+  template <ProblemType U = solver_t>
+  auto MeasureAndPrintReduced(int ex_idx, int step, const ComplexVector &e,
+                              std::complex<double> omega, const Eigen::VectorXcd &y)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+  bool HasReducedPostprocessing() const { return reduced_postprocessing_ready; }
 
   template <ProblemType U = solver_t>
   auto MeasureAndPrintAll(int step, const ComplexVector &e, const ComplexVector &b,

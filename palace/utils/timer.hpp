@@ -32,6 +32,9 @@ public:
     MESH_PREPROCESS,       // Preprocessing mesh
     CONSTRUCT,             // Space and operator construction
     WAVE_PORT,             // Wave port solver
+    WAVE_PORT_SOLVE,       // Reduced/exact port eigenproblem
+    WAVE_PORT_FIELD,       // Port eigenvector reconstruction and distribution
+    WAVE_PORT_POSTPRO,     // Port mode normalization and projection forms
     KSP,                   // Linear solver
     KSP_SETUP,             // Linear solver setup
     KSP_PRECONDITIONER,    // Linear solver preconditioner
@@ -61,6 +64,9 @@ public:
       "  Mesh Preprocessing",
       "Operator Construction",
       "  Wave Ports",
+      "    Eigenproblem",
+      "    Field reconstruction",
+      "    Mode postprocessing",
       "Linear Solve",
       "  Setup",
       "  Preconditioner",

@@ -120,6 +120,9 @@ TEST_CASE("SurfaceRationalImpedanceOperator",
     SurfaceRationalImpedanceOperator op({make_data(num, den)}, cracked, ProblemType::DRIVEN,
                                         units, mat_op, palace_mesh);
 
+    CHECK_THAT(op.EvalRobinCoefficient(0, 0.0).real(), WithinRel(1.0 / Ls, 1e-12));
+    CHECK_THAT(op.EvalRobinCoefficient(0, 0.0).imag(), WithinAbs(0.0, 1e-15));
+
     MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
     MaterialPropertyCoefficient fbi(mat_op.MaxCeedBdrAttribute());
     op.AddExtraSystemBdrCoefficients(0.0, fbr, fbi);
@@ -144,6 +147,9 @@ TEST_CASE("SurfaceRationalImpedanceOperator",
     std::unordered_set<int> cracked = {};
     SurfaceRationalImpedanceOperator op({make_data({Rs}, {1.0})}, cracked,
                                         ProblemType::DRIVEN, units, mat_op, palace_mesh);
+
+    CHECK_THAT(op.EvalRobinCoefficient(0, 0.0).real(), WithinAbs(0.0, 1e-15));
+    CHECK_THAT(op.EvalRobinCoefficient(0, 0.0).imag(), WithinAbs(0.0, 1e-15));
 
     MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
     MaterialPropertyCoefficient fbi(mat_op.MaxCeedBdrAttribute());

@@ -17,6 +17,30 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### Performance Improvements
+
+  - Accelerated adaptive online sweeps by replacing 2D wave-port EVP solves with a per-port
+    PROM trained on the offline modes. Also reusing reduced operators and wave-port state
+    across excitations, evaluating the wave-port modal correction and excitation of the
+    PROM from port-space mode pairings instead of per-frequency assembly of mode vectors on
+    the full mesh, evaluating default domain energies in reduced coordinates, and evaluating
+    port quantities without unnecessary magnetic-field reconstruction when possible.
+    [PR 909](https://github.com/awslabs/palace/pull/909).
+  - Restricted the assembly of wave-port mode vectors (excitation and modal correction) to
+    the port boundary elements instead of looping over all boundary elements of the mesh,
+    and assemble the per-frequency wave-port mode forms (S-parameter projection and modal
+    reactions) in a single sweep over the port elements.
+    [PR 909](https://github.com/awslabs/palace/pull/909).
+
+#### Build system
+
+  - Bumped the MFEM dependency to v4.10 and dropped the backport patches merged
+    upstream (PRs 4983, 5246, 5415, 5124, and the Gmsh reader rewrite), keeping
+    only the still-unmerged patches (PRs 3847, 5353, 5494, 5502).
+    [PR 918](https://github.com/awslabs/palace/pull/918).
+
+## [0.18.1] - 2026-09-21
+
 #### New Features
 
   - Added machine-readable schema compatibility data to the installed schema files and
@@ -29,21 +53,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     3D system preconditioner. SchemaVer 1-7-0
     [PR 921](https://github.com/awslabs/palace/pull/921).
 
-#### Bug Fixes
+#### Interface Changes
 
-  - Fixed issues with nonconformal AMR corrupting the wave port mesh and VoltagePath line
-    integral in 3D simulations. [PR 919](https://github.com/awslabs/palace/pull/919).
-  - Fixed issues with reading from MFEM meshes (`.mesh`) deadlocking simulations
-    or leading to incorrect results. [PR 927](https://github.com/awslabs/palace/pull/927).
-  - Fixed numeric wave ports ignoring their configured `"MaxIts"` and `"KSPTol"`, so the
-    port-mode linear solve inherited the tolerance of the full 3D linear solver instead.
-    [PR 921](https://github.com/awslabs/palace/pull/921).
-  - Fixed a reference-counter overflow in nonconformal meshes with high-valence vertices,
-    which could assert or crash during adaptive mesh refinement.
-    [PR 934](https://github.com/awslabs/palace/pull/934).
-  - Fixed the units of the far-field output `farfield-rE.csv`, which was off by a factor
-    `Lc / Z₀` and so depended on the characteristic length `Lc`.
-    [PR 936](https://github.com/awslabs/palace/pull/936).
+  - The adapted mesh saved by `config["Model"]["Refinement"]["SaveAdaptMesh"]` is now
+    gzip-compressed and written with a `.meshgz` extension when *Palace* is built with `zlib`
+    support (otherwise it is written uncompressed as `.mesh`, as before). This mesh can be
+    used directly in Palace. [PR 923](https://github.com/awslabs/palace/pull/923).
 
 #### Performance Improvements
 
@@ -56,19 +71,49 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     rewriting the growing tables at every output frequency.
     [PR 938](https://github.com/awslabs/palace/pull/938).
 
+#### Bug Fixes
+
+  - Fixed issues with nonconformal AMR corrupting the wave port mesh and VoltagePath line
+    integral in 3D simulations. [PR 919](https://github.com/awslabs/palace/pull/919).
+  - Fixed issues with reading from MFEM meshes (`.mesh`) deadlocking simulations
+    or leading to incorrect results. [PR 927](https://github.com/awslabs/palace/pull/927).
+  - Fixed numeric wave ports ignoring their configured `"MaxIts"` and `"KSPTol"`, so the
+    port-mode linear solve inherited the tolerance of the full 3D linear solver instead.
+    [PR 921](https://github.com/awslabs/palace/pull/921).
+  - Fixed cuDSS builds with MPI implementations other than Open MPI. The cuDSS MPI
+    communication layer is now built against the selected MPI, by the superbuild from the
+    source in the cuDSS archive and by Spack via `cudss+mpi`, instead of loading NVIDIA's
+    Open MPI binary. [PR 826](https://github.com/awslabs/palace/pull/826).
+  - Fixed a reference-counter overflow in nonconformal meshes with high-valence vertices,
+    which could assert or crash during adaptive mesh refinement.
+    [PR 934](https://github.com/awslabs/palace/pull/934).
+  - Fixed the units of the far-field output `farfield-rE.csv`, which was off by a factor
+    `Lc / Z₀` and so depended on the characteristic length `Lc`.
+    [PR 936](https://github.com/awslabs/palace/pull/936).
+  - Fixed the quadrature data offset in the H(div) mass build QFunction, which left the cached
+    curl-curl block of 2D-in-3D H(div) operators unwritten and partially overwrote the mass
+    block. [PR 931](https://github.com/awslabs/palace/pull/931).
+  - Fixed non-unitary wave-port S-parameters for modes with a longitudinal electric field
+    (TM/hybrid modes), where a lossless shorted guide could report `|S11| > 1`. A modal
+    correction to the port Robin operator restores unitarity and reciprocity across driven,
+    adaptive, eigenmode, and circuit-synthesis solves; TEM/TE modes are unchanged.
+    [PR 886](https://github.com/awslabs/palace/pull/886).
+  - Fixed the SLP nonlinear eigensolver to fall back to the Hybrid method when SLEPc is
+    unavailable or an ARPACK backend is selected (SLP is realized only through SLEPc), resolved
+    before the Hybrid interpolation is built, and to handle a null damping matrix and a missing
+    nonlinear term, preventing crashes on otherwise valid problems.
+    [PR 886](https://github.com/awslabs/palace/pull/886).
+  - Reported synthesized eigenvalue estimates with the same `Q = |ω|/(2|Im ω|)` convention as
+    the eigenmode postprocessor, and report HDM absolute and backward residuals for every root
+    instead of filtering by fixed quality-factor or coordinate-norm cutoffs.
+    [PR 886](https://github.com/awslabs/palace/pull/886).
+
 #### Build system
 
   - Improved PETSc and SLEPc CMake configuration diagnostics to include output from failed
     compile and runtime probes [PR 880](https://github.com/awslabs/palace/pull/880).
   - Pinned the libCEED commit in the Spack recipe per Palace release instead of building an
-    unpinned libCEED `develop`.
-
-#### Interface Changes
-
-  - The adapted mesh saved by `config["Model"]["Refinement"]["SaveAdaptMesh"]` is now
-    gzip-compressed and written with a `.meshgz` extension when *Palace* is built with `zlib`
-    support (otherwise it is written uncompressed as `.mesh`, as before). This mesh can be
-    used directly in Palace. [PR 923](https://github.com/awslabs/palace/pull/923).
+    unpinned libCEED `develop`. [PR 940](https://github.com/awslabs/palace/pull/940).
 
 ## [0.18.0] - 2026-09-09
 
@@ -193,25 +238,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     wave-port simulations under nonconformal AMR on multiple MPI ranks. The check now
     validates only domains owned by a local volume element, ignoring ghost/neighbor
     bookkeeping attributes. [PR 888](https://github.com/awslabs/palace/pull/888).
-  - Fixed non-unitary wave-port S-parameters for modes with a longitudinal electric field
-    (`E_n` ≠ 0, e.g. TM/hybrid modes). The assembled Robin operator enforced only the scalar
-    surface admittance `i·k_n·M`, while the excitation, normalization, and S-parameter projection
-    used the full modal `n×H` (including the `∇ₜE_n` term), so a lossless shorted guide could
-    report `|S11|` > 1. A complex-symmetric modal correction `W` supplies the missing term,
-    restoring S-matrix unitarity and reciprocity while leaving TEM/TE modes (`E_n` ≈ 0) unchanged.
-    `W` is applied consistently across the driven solve, its reduced-order (PROM) fast-frequency
-    sweep, the complex-frequency eigenmode solve, and the circuit synthesis (where it enters the
-    synthesized pencil and the exported frequency-dependent coupling maps).
-    [PR 886](https://github.com/awslabs/palace/pull/886).
-  - Fixed the SLP nonlinear eigensolver to fall back to the Hybrid method when SLEPc is
-    unavailable or an ARPACK backend is selected (SLP is realized only through SLEPc), resolved
-    before the Hybrid interpolation is built, and to handle a null damping matrix and a missing
-    nonlinear term, preventing crashes on otherwise valid problems.
-    [PR 886](https://github.com/awslabs/palace/pull/886).
-  - Reported synthesized eigenvalue estimates with the same `Q = |ω|/(2|Im ω|)` convention as
-    the eigenmode postprocessor, and report HDM absolute and backward residuals for every root
-    instead of filtering by fixed quality-factor or coordinate-norm cutoffs.
-    [PR 886](https://github.com/awslabs/palace/pull/886).
   - Reject all-zero numerator or denominator polynomial coefficients in
     `config["Boundaries"]["RationalImpedance"]` during schema validation, matching the
     existing checks in the configuration parser and providing users with earlier feedback.

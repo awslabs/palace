@@ -92,8 +92,10 @@ private:
   std::unique_ptr<GridFunction> port_Et_omega, port_En_omega;
   std::complex<double> kn_recompute = 0.0, omega_recompute = 0.0;
 
-  // List of all boundary attributes making up this port boundary.
-  mfem::Array<int> attr_list;
+  // List of all boundary attributes making up this port boundary, and the corresponding
+  // marker array on the parent mesh boundary attributes (used to restrict linear form
+  // assembly of port mode vectors to the port boundary elements only).
+  mfem::Array<int> attr_list, attr_marker;
 
   // SubMesh data structures to define finite element spaces and grid functions on the
   // SubMesh corresponding to this port boundary.
@@ -143,6 +145,7 @@ private:
   // postprocessing.
   std::unique_ptr<GridFunction> port_E0t, port_E0n, port_S0t, port_E;
   std::unique_ptr<mfem::LinearForm> port_sr, port_si;
+  std::unique_ptr<mfem::LinearForm> port_sr_scalar, port_si_scalar;
 
   // libCEED surface functional for port power computation, replacing per-call boundary
   // LinearForm assembly in the legacy path when supported.
@@ -192,14 +195,42 @@ public:
   [[nodiscard]] bool HasVoltageCoords() const { return has_voltage_coords; }
 
   const auto &GetAttrList() const { return attr_list; }
+  const auto &GetAttrMarker() const { return attr_marker; }
 
   void Initialize(double omega);
+
+  // Restrict a real-valued field on the parent ND space (given as a grid function on the
+  // local dofs) to the port submesh dofs. The result is stored on the host.
+  void RestrictToPort(const mfem::ParGridFunction &E, mfem::Vector &e_port) const;
+
+  // Unconjugated pairings sᵀe = ∫_Γ (n×H_mode)·e of the current normalized modal n×H (the
+  // full n×H including ∇ₜEₙ, and the scalar-admittance n×H without it) with a real field
+  // restricted to the port by RestrictToPort. Only the local contribution of this process
+  // is returned (no communication), so a sum over the mesh communicator is required. With
+  // e the restriction of a parent-space field E, this equals the pairing of E with the
+  // parent-space assembled mode vectors of AssembleNxHVector (same integrals and
+  // quadrature), so the PROM can project the modal shape vectors and excitation without
+  // any per-frequency assembly on the parent mesh.
+  struct ModePairing
+  {
+    std::complex<double> full, scalar;
+  };
+  ModePairing LocalModePairing(const mfem::Vector &e_port) const;
 
   // Tighten the cross-section EVP tolerances for wave-port circuit synthesis, so kₙ(ω) and
   // M(ω) are not sampled below the port-mode accuracy floor (which would make the synthesis
   // fit—and the eigenvalues derived from it—depend on the MPI partition). Invalidates the
   // cached real-ω solve so the next Initialize re-solves at the new tolerance.
   void SetSynthesisEigTol(double eig_tol, double ksp_tol);
+
+  // Configure exact offline snapshot collection before any adaptive HDM or synthesis
+  // reference solve, then enable guarded reduced evaluation after offline training.
+  void ConfigureReducedModelTraining(std::size_t max_samples, std::size_t num_excitations,
+                                     bool synthesis_seed);
+  void EnableReducedModel(double adaptive_tol);
+  ModeEigenSolver::ReducedModelStats GetReducedModelStats() const;
+  std::size_t GetReducedBasisSize() const;
+  double GetReducedTolerance() const;
 
   // Compute the sign of the modal E-field projected on the (high → low) direction
   // implied by the given pair of parent-mesh boundary attributes (signal terminal
@@ -338,6 +369,20 @@ public:
   // k_n(ω) around it. Idempotent per ω; a no-op when there are no wave ports.
   void InitializeModalReference(double omega) { Initialize(omega); }
 
+  // Prepare all frequency-dependent modal state once before evaluating multiple
+  // excitations at the same frequency.
+  void PrepareFrequency(double omega) { Initialize(omega); }
+
+  // Configure training before any adaptive HDM or synthesis-reference solve. The capacity
+  // is a checked upper bound on possible exact mode snapshots and storage remains lazy.
+  void ConfigureReducedModelTraining(std::size_t max_samples, std::size_t num_excitations,
+                                     bool synthesis_seed);
+
+  // Switch all trained port models to guarded reduced evaluation. Called only after the
+  // adaptive 3D offline phase so HDM snapshots always use exact port modes.
+  void EnableReducedModel(double adaptive_tol);
+  void PrintReducedModelStats() const;
+
   // Returns array of wave port attributes.
   mfem::Array<int> GetAttrList() const;
 
@@ -387,6 +432,11 @@ public:
   // excited port boundaries.
   void AddExcitationBdrCoefficients(int excitation_idx, double omega,
                                     SumVectorCoefficient &fbr, SumVectorCoefficient &fbi);
+
+  // Marker array over the parent mesh boundary attributes for all wave ports excited by
+  // the given excitation index (empty if none), to restrict the right-hand side boundary
+  // assembly to the excited port boundary elements.
+  mfem::Array<int> GetExcitationBdrMarker(int excitation_idx) const;
 
   // A single rank-1 term g·s·sᵀ of the modal correction W = Σ_k g_k s_k s_kᵀ. Exposed so
   // the PROM / adaptive sweep can build the Galerkin projection Wᵣ = Σ_k g_k

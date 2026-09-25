@@ -1626,9 +1626,14 @@ bool SpaceOperator::AddExcitationVector2Internal(int excitation_idx, double omeg
   {
     return nnz_floquet;
   }
+  // Restrict the boundary assembly to the excited wave port boundary elements (the
+  // coefficients vanish elsewhere).
+  mfem::Array<int> marker = wave_port_op.GetExcitationBdrMarker(excitation_idx);
+  MFEM_VERIFY(marker.Size() > 0,
+              "No excited wave port found for excitation index " << excitation_idx << "!");
   {
     mfem::LinearForm rhs2(&GetNDSpace().Get());
-    rhs2.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbr));
+    rhs2.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbr), marker);
     rhs2.UseFastAssembly(false);
     rhs2.UseDevice(false);
     rhs2.Assemble();
@@ -1637,7 +1642,7 @@ bool SpaceOperator::AddExcitationVector2Internal(int excitation_idx, double omeg
   }
   {
     mfem::LinearForm rhs2(&GetNDSpace().Get());
-    rhs2.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbi));
+    rhs2.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbi), marker);
     rhs2.UseFastAssembly(false);
     rhs2.UseDevice(false);
     rhs2.Assemble();
