@@ -4,8 +4,8 @@
 #include "output_functionals.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
-#include <cstring>
 #include <limits>
 #include <map>
 #include <memory>
@@ -55,28 +55,20 @@ using FaceConfigKey = std::vector<long long>;
 constexpr CeedSize FarFieldMaxBatchStorage = 64LL * 1024LL * 1024LL;
 constexpr int FarFieldMaxDirectionsPerBatch = 256;
 
-long long EncodePointRuleDouble(double x)
-{
-  // Point rules are immutable fixed tabulations. Preserve every IEEE-754 bit, including
-  // signed zero, so the registry can never reuse a rule whose supplied point data differ.
-  static_assert(sizeof(long long) == sizeof(double));
-  long long bits;
-  std::memcpy(&bits, &x, sizeof(bits));
-  return bits;
-}
-
 void AppendPointRuleSignature(FaceConfigKey &key,
                               const std::vector<mfem::IntegrationPoint> &pts)
 {
   // Coordinate and weight bits are ordered by quadrature point and component. This is
   // part of the process-lifetime registry identity, not merely a collision guard.
+  // Every IEEE-754 bit, including signed zero, is kept so the registry never reuses a
+  // rule whose supplied point data differ.
   key.push_back(static_cast<long long>(pts.size()));
   for (const auto &ip : pts)
   {
-    key.push_back(EncodePointRuleDouble(ip.x));
-    key.push_back(EncodePointRuleDouble(ip.y));
-    key.push_back(EncodePointRuleDouble(ip.z));
-    key.push_back(EncodePointRuleDouble(ip.weight));
+    key.push_back(std::bit_cast<long long>(ip.x));
+    key.push_back(std::bit_cast<long long>(ip.y));
+    key.push_back(std::bit_cast<long long>(ip.z));
+    key.push_back(std::bit_cast<long long>(ip.weight));
   }
 }
 

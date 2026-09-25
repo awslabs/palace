@@ -4,8 +4,8 @@
 #include "fem/face_sampling_plan.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
-#include <cstring>
 #include <map>
 #include <numeric>
 #include <tuple>
@@ -19,14 +19,6 @@ namespace palace
 namespace
 {
 
-long long EncodePointRuleDouble(double x)
-{
-  static_assert(sizeof(long long) == sizeof(double));
-  long long bits;
-  std::memcpy(&bits, &x, sizeof(bits));
-  return bits;
-}
-
 using CoordinateKey = std::array<long long, 3>;
 
 void NormalizeReferencePoint(mfem::IntegrationPoint &ip);
@@ -37,8 +29,8 @@ CoordinateKey MakeCoordinateKey(mfem::IntegrationPoint ip)
   // every other IEEE-754 coordinate bit exactly and intentionally do not inspect the
   // quadrature weight: it is irrelevant to a physical point-value evaluation.
   NormalizeReferencePoint(ip);
-  return {EncodePointRuleDouble(ip.x), EncodePointRuleDouble(ip.y),
-          EncodePointRuleDouble(ip.z)};
+  return {std::bit_cast<long long>(ip.x), std::bit_cast<long long>(ip.y),
+          std::bit_cast<long long>(ip.z)};
 }
 
 void AppendPointRuleSignature(std::vector<long long> &key,
@@ -47,10 +39,10 @@ void AppendPointRuleSignature(std::vector<long long> &key,
   key.push_back(static_cast<long long>(pts.size()));
   for (const auto &ip : pts)
   {
-    key.push_back(EncodePointRuleDouble(ip.x));
-    key.push_back(EncodePointRuleDouble(ip.y));
-    key.push_back(EncodePointRuleDouble(ip.z));
-    key.push_back(EncodePointRuleDouble(ip.weight));
+    key.push_back(std::bit_cast<long long>(ip.x));
+    key.push_back(std::bit_cast<long long>(ip.y));
+    key.push_back(std::bit_cast<long long>(ip.z));
+    key.push_back(std::bit_cast<long long>(ip.weight));
   }
 }
 
