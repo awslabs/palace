@@ -911,12 +911,13 @@ TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
 // reduced over surfaces the partitioner may split, so this case catches a
 // double-counted contribution.
 //
-// rtol is 3e-4: the tiny mutual (~8e-12 H) is a difference of large self-scale
-// terms, so ~1e-6 partition FP jitter amplifies to ~1.2e-4 via cancellation.
+// rtol is 5e-4: the tiny mutual (~8e-12 H) is a difference of large self-scale
+// terms, so partition FP jitter and toolchain differences amplify via
+// cancellation to a ~3e-4 cross-environment spread.
 TEST_CASE("ring_disk_mixed_current_flux", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
-  opts.rtol = 3.0e-4;
+  opts.rtol = 5.0e-4;
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
   opts.linear_solver_policy = force_default_solver;
