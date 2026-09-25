@@ -456,8 +456,8 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
     {
       auto key = Timer::descriptions[i];
       key.erase(std::remove_if(key.begin(), key.end(), isspace), key.end());
-      meta["ElapsedTime"]["Durations"][key] = timer.Data((Timer::Index)i);
-      meta["ElapsedTime"]["Counts"][key] = timer.Counts((Timer::Index)i);
+      meta["ElapsedTime"]["Durations"][key] = timer.Data(static_cast<Timer::Index>(i));
+      meta["ElapsedTime"]["Counts"][key] = timer.Counts(static_cast<Timer::Index>(i));
       meta["PeakMemoryGrowthMegabytes"]["Min"][key] = red.rank_mem.min[i] * to_mb;
       meta["PeakMemoryGrowthMegabytes"]["Max"][key] = red.rank_mem.max[i] * to_mb;
       meta["PeakMemoryGrowthMegabytes"]["Sum"][key] = red.rank_mem.sum[i] * to_mb;

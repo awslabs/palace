@@ -307,11 +307,10 @@ class BaseProductOperator
 {
   friend class ProductOperatorHelper<BaseProductOperator<OperType>, OperType>;
 
-  using VecType = typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                            ComplexVector, Vector>::type;
-  using ScalarType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                std::complex<double>, double>::type;
+  using VecType =
+      std::conditional_t<std::is_same_v<OperType, ComplexOperator>, ComplexVector, Vector>;
+  using ScalarType = std::conditional_t<std::is_same_v<OperType, ComplexOperator>,
+                                        std::complex<double>, double>;
 
 private:
   const OperType &A, &B;
@@ -385,11 +384,10 @@ class BaseDiagonalOperator
 {
   friend class DiagonalOperatorHelper<BaseDiagonalOperator<OperType>, OperType>;
 
-  using VecType = typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                            ComplexVector, Vector>::type;
-  using ScalarType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                std::complex<double>, double>::type;
+  using VecType =
+      std::conditional_t<std::is_same_v<OperType, ComplexOperator>, ComplexVector, Vector>;
+  using ScalarType = std::conditional_t<std::is_same_v<OperType, ComplexOperator>,
+                                        std::complex<double>, double>;
 
 private:
   const VecType &d;
@@ -423,11 +421,10 @@ using ComplexDiagonalOperator = BaseDiagonalOperator<ComplexOperator>;
 template <typename OperType>
 class BaseMultigridOperator : public OperType
 {
-  using VecType = typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                            ComplexVector, Vector>::type;
-  using ScalarType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                std::complex<double>, double>::type;
+  using VecType =
+      std::conditional_t<std::is_same_v<OperType, ComplexOperator>, ComplexVector, Vector>;
+  using ScalarType = std::conditional_t<std::is_same_v<OperType, ComplexOperator>,
+                                        std::complex<double>, double>;
 
 private:
   std::vector<std::unique_ptr<OperType>> ops, aux_ops;

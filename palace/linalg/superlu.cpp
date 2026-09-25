@@ -23,7 +23,7 @@ int GetNpDep(int np, bool use_3d)
   }
   else
   {
-    int npdep = (int)std::pow(2, std::floor(std::log2(std::cbrt(np))));
+    int npdep = static_cast<int>(std::pow(2, std::floor(std::log2(std::cbrt(np)))));
     while (npdep > 1 && np % npdep > 0)
     {
       npdep /= 2;
