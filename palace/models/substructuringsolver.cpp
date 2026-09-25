@@ -32,12 +32,204 @@
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
+#if defined(MFEM_USE_MUMPS)
+#include <dmumps_c.h>
+#endif
 
 namespace palace
 {
 
 namespace
 {
+
+#if defined(MFEM_USE_MUMPS)
+// MUMPS partial factorization with a Schur complement: factors the symmetric parent-space
+// operator A (rows/cols outside the eliminated subsystem set to identity) with the given
+// Schur variables left unfactored, returning the dense Schur complement on rank 0 -- for
+// the environment, S_E = A_GG - A_GE A_EE^-1 A_EG from ONE partial factorization instead of
+// |Gamma| back-solves. The same factorization then solves the internal problem (A_EE, the
+// Schur variables fixed at 0), which serves every other environment solve.
+class MumpsSchurSolver
+{
+public:
+  // schur_vars: global (0-based) true-DOF indices of the Schur variables, in the order the
+  // Schur rows/columns should appear (replicated on all ranks).
+  MumpsSchurSolver(const mfem::HypreParMatrix &A,
+                   const std::vector<HYPRE_BigInt> &schur_vars)
+    : comm(A.GetComm()), n_glob(A.GetGlobalNumRows()), n_loc(A.Height()),
+      n_schur(static_cast<int>(schur_vars.size()))
+  {
+    MPI_Comm_rank(comm, &rank);
+    int nranks;
+    MPI_Comm_size(comm, &nranks);
+    row_cnt.assign(nranks, 0);
+    row_disp.assign(nranks, 0);
+    MPI_Allgather(&n_loc, 1, MPI_INT, row_cnt.data(), 1, MPI_INT, comm);
+    for (int r = 1; r < nranks; r++)
+    {
+      row_disp[r] = row_disp[r - 1] + row_cnt[r - 1];
+    }
+
+    // Local rows as 1-based COO, lower triangle only (symmetric storage: MUMPS sums
+    // duplicates).
+    auto *parcsr = (hypre_ParCSRMatrix *)const_cast<mfem::HypreParMatrix &>(A);
+    A.HostRead();
+    hypre_CSRMatrix *csr = hypre_MergeDiagAndOffd(parcsr);
+    const HYPRE_Int *Ip = csr->i;
+#if MFEM_HYPRE_VERSION >= 21600
+    const HYPRE_BigInt *Jp = csr->big_j;
+#else
+    const HYPRE_Int *Jp = csr->j;
+#endif
+    const HYPRE_BigInt row0 = parcsr->first_row_index;
+    for (int i = 0; i < n_loc; i++)
+    {
+      for (HYPRE_Int k = Ip[i]; k < Ip[i + 1]; k++)
+      {
+        const HYPRE_BigInt ii = row0 + i + 1, jj = static_cast<HYPRE_BigInt>(Jp[k]) + 1;
+        if (ii >= jj)
+        {
+          irn.push_back(static_cast<MUMPS_INT>(ii));
+          jcn.push_back(static_cast<MUMPS_INT>(jj));
+          val.push_back(csr->data[k]);
+        }
+      }
+    }
+    hypre_CSRMatrixDestroy(csr);
+    for (HYPRE_BigInt v : schur_vars)
+    {
+      listvar.push_back(static_cast<MUMPS_INT>(v + 1));
+    }
+
+    id.sym = 2;  // symmetric (general)
+    id.par = 1;  // the host takes part in the factorization
+    id.comm_fortran = static_cast<MUMPS_INT>(MPI_Comm_c2f(comm));
+    id.job = -1;
+    dmumps_c(&id);
+    auto icntl = [&](int i) -> MUMPS_INT & { return id.icntl[i - 1]; };
+    icntl(1) = -1;  // silence errors / diagnostics / global info / printing
+    icntl(2) = -1;
+    icntl(3) = -1;
+    icntl(4) = 0;
+    icntl(5) = 0;   // assembled input
+    icntl(18) = 3;  // distributed matrix entries
+    icntl(19) =
+        3;  // complete Schur, 2D block cyclic (here a 1 x 1 grid: centralized on rank 0)
+    icntl(28) = 1;   // sequential analysis (the Schur option excludes parallel analysis)
+    icntl(7) = 5;    // METIS ordering
+    icntl(20) = 0;   // dense, centralized right-hand sides
+    icntl(21) = 0;   // centralized solution
+    icntl(26) = 0;   // solve the internal problem (Schur variables held at 0)
+    icntl(14) = 50;  // workspace relaxation (%); raised on a workspace failure below
+    id.n = static_cast<MUMPS_INT>(n_glob);
+    id.nnz_loc = static_cast<MUMPS_INT8>(irn.size());
+    id.irn_loc = irn.data();
+    id.jcn_loc = jcn.data();
+    id.a_loc = val.data();
+    id.size_schur = n_schur;
+    id.listvar_schur = listvar.data();
+    id.nprow = 1;
+    id.npcol = 1;
+    id.mblock = 64;
+    id.nblock = 64;
+    id.job = 1;  // analysis
+    dmumps_c(&id);
+    Check("analysis");
+    if (rank == 0)
+    {
+      id.schur_lld = std::max<MUMPS_INT>(1, id.schur_mloc);
+      schur.assign(static_cast<std::size_t>(id.schur_lld) *
+                       std::max<MUMPS_INT>(1, id.schur_nloc),
+                   0.0);
+      id.schur = schur.data();
+    }
+    // Factorization (+ Schur). The workspace estimate from the analysis can be too small
+    // (the dense Schur root sits on one rank): on a workspace failure (INFOG(1) = -8, -9,
+    // -20) double the relaxation and retry, as the MUMPS user guide recommends.
+    for (int attempt = 0;; attempt++)
+    {
+      id.job = 2;
+      dmumps_c(&id);
+      const MUMPS_INT err = id.infog[0];
+      if ((err == -8 || err == -9 || err == -20) && attempt < 5)
+      {
+        icntl(14) *= 2;
+        continue;
+      }
+      break;
+    }
+    Check("factorization");
+  }
+
+  ~MumpsSchurSolver()
+  {
+    id.job = -2;
+    dmumps_c(&id);
+  }
+
+  // Dense Schur complement on rank 0 (n_schur x n_schur, column-major, symmetric).
+  const std::vector<double> &Schur() const { return schur; }
+
+  // Internal solves for a batch of parent true-DOF vectors (collective): y_k solves A_11 on
+  // the internal (non-Schur) variables, with 0 on the Schur variables. y_k may alias x_k.
+  void SolveInternal(const std::vector<const mfem::Vector *> &X,
+                     const std::vector<mfem::Vector *> &Y)
+  {
+    const int n = static_cast<int>(X.size());
+    constexpr int B = 32;
+    for (int c0 = 0; c0 < n; c0 += B)
+    {
+      const int nb = std::min(B, n - c0);
+      if (rank == 0)
+      {
+        rhs.assign(static_cast<std::size_t>(n_glob) * nb, 0.0);
+      }
+      for (int k = 0; k < nb; k++)
+      {
+        const mfem::Vector &x = *X[c0 + k];
+        x.HostRead();
+        MPI_Gatherv(x.GetData(), n_loc, MPI_DOUBLE,
+                    rank == 0 ? rhs.data() + static_cast<std::size_t>(k) * n_glob : nullptr,
+                    row_cnt.data(), row_disp.data(), MPI_DOUBLE, 0, comm);
+      }
+      if (rank == 0)
+      {
+        id.rhs = rhs.data();
+        id.nrhs = nb;
+        id.lrhs = static_cast<MUMPS_INT>(n_glob);
+      }
+      id.job = 3;
+      dmumps_c(&id);
+      Check("solve");
+      for (int k = 0; k < nb; k++)
+      {
+        mfem::Vector &y = *Y[c0 + k];
+        y.SetSize(n_loc);
+        MPI_Scatterv(rank == 0 ? rhs.data() + static_cast<std::size_t>(k) * n_glob
+                               : nullptr,
+                     row_cnt.data(), row_disp.data(), MPI_DOUBLE, y.HostWrite(), n_loc,
+                     MPI_DOUBLE, 0, comm);
+      }
+    }
+  }
+
+private:
+  void Check(const char *phase) const
+  {
+    MFEM_VERIFY(id.infog[0] >= 0, "MUMPS " << phase << " failed: INFOG(1) = " << id.infog[0]
+                                           << ", INFOG(2) = " << id.infog[1]);
+  }
+
+  MPI_Comm comm;
+  int rank = 0;
+  HYPRE_BigInt n_glob;
+  int n_loc, n_schur;
+  std::vector<int> row_cnt, row_disp;
+  std::vector<MUMPS_INT> irn, jcn, listvar;
+  std::vector<double> val, schur, rhs;
+  DMUMPS_STRUC_C id{};
+};
+#endif
 
 // Piecewise-constant (per element attribute) matrix coefficient for anisotropic materials.
 // Attributes absent from the map contribute a zero tensor (e.g. environment attributes when
@@ -654,6 +846,11 @@ struct SubstructuringSolver::Impl
   std::unique_ptr<SuperLUSolver>
       env_lu_parent;  // parent-space direct env solve (no transfer)
 #endif
+#if defined(MFEM_USE_MUMPS)
+  // MUMPS partial factorization of the environment with Gamma as the Schur variables: gives
+  // S_E directly and serves every environment interior solve (set up by MaterializeMumps).
+  std::unique_ptr<MumpsSchurSolver> env_mumps;
+#endif
   // Block size for the batched multi-RHS S_E materialization (SuperLU triangular solves are
   // per-call-overhead bound for a single RHS; ~4x cheaper per column at 32).
   static constexpr int kMaterializeBlock = 32;
@@ -956,6 +1153,63 @@ struct SubstructuringSolver::Impl
   // Environment interior solver: A_EE^-1 (env-interior with Gamma + env Dirichlet held
   // fixed), built on the environment submesh so every rank owns real DOFs (no all-identity
   // ranks).
+  // Global number of environment closure DOFs that a direct factorization would carry.
+  long long EnvDirectSize() const
+  {
+    long long env_loc = 0;
+    for (int i = 0; i < nt; i++)
+    {
+      if (is_env_int[i] || is_gamma[i])
+      {
+        env_loc++;
+      }
+    }
+    long long env_glob = 0;
+    MPI_Allreduce(&env_loc, &env_glob, 1, MPI_LONG_LONG, MPI_SUM, parent_fes.GetComm());
+    return env_glob;
+  }
+
+#if defined(MFEM_USE_MUMPS)
+  // Materialize S_E by ONE MUMPS partial factorization (Schur complement on Gamma) of A_env
+  // with every DOF outside the environment closure-minus-Dirichlet (E + Gamma) eliminated
+  // to identity; the factor is kept as the environment solver. Fills S_rows (owned
+  // interface rows). Collective.
+  void MaterializeMumps()
+  {
+    MPI_Comm comm = parent_fes.GetComm();
+    mfem::Array<int> other;
+    for (int i = 0; i < nt; i++)
+    {
+      if (!is_env_int[i] && !is_gamma[i])
+      {
+        other.Append(i);
+      }
+    }
+    mfem::HypreParMatrix A_sch(*A_env);
+    {
+      std::unique_ptr<mfem::HypreParMatrix> e(A_sch.EliminateRowsCols(other));
+    }
+    // Schur variables: interface true DOFs in global interface order (replicated).
+    const HYPRE_BigInt tstart = parent_fes.GetMyTDofOffset();
+    std::vector<HYPRE_BigInt> mine(gamma_nloc), g2t(nG_global);
+    for (int i = 0; i < nt; i++)
+    {
+      if (is_gamma[i])
+      {
+        mine[gamma_global[i] - gamma_off] = tstart + i;
+      }
+    }
+    std::vector<int> cnt, disp;
+    RowLayout(1, cnt, disp);
+    MPI_Allgatherv(mine.data(), gamma_nloc, HYPRE_MPI_BIG_INT, g2t.data(), cnt.data(),
+                   disp.data(), HYPRE_MPI_BIG_INT, comm);
+    env_mumps = std::make_unique<MumpsSchurSolver>(A_sch, g2t);
+    // The Schur is symmetric (column-major == row-major): scatter its rows to their owners.
+    ScatterRows(env_mumps->Schur(), nG_global, S_rows);
+    env_built = true;
+  }
+#endif
+
   // Build (factor) the environment interior solver on first use: an online run that loads
   // S_E and the terminal modes never needs it unless environment fields are requested.
   void EnsureEnv()
@@ -1395,20 +1649,7 @@ struct SubstructuringSolver::Impl
     // transfer is needed per solve (measured ~40% of the S_E materialization). Order >= 2
     // H(curl) always takes this path: the transfer mishandles higher-order tetrahedral
     // edge/face orientation across a cut.
-    bool direct_fits = false;
-    {
-      long long env_loc = 0;
-      for (int i = 0; i < nt; i++)
-      {
-        if (is_env_int[i] || is_gamma[i])
-        {
-          env_loc++;
-        }
-      }
-      long long env_glob = 0;
-      MPI_Allreduce(&env_loc, &env_glob, 1, MPI_LONG_LONG, MPI_SUM, parent_fes.GetComm());
-      direct_fits = (env_glob <= kDirectMaxDofs);
-    }
+    const bool direct_fits = (EnvDirectSize() <= kDirectMaxDofs);
     if (direct_fits || (magnetostatic && iodata.solver.order > 1))
     {
       non_env_int.SetSize(0);
@@ -1812,6 +2053,25 @@ struct SubstructuringSolver::Impl
   {
     MFEM_ASSERT(X.size() == Y.size(), "ApplyAeeInvMulti size mismatch!");
     MFEM_VERIFY(env_built, "Environment solver used before EnsureEnv()!");
+#if defined(MFEM_USE_MUMPS)
+    if (env_mumps)
+    {
+      // Internal solve of the Schur factorization: A_EE on the interior (Gamma held at 0,
+      // eliminated DOFs are identity), then masked to the interior like the SuperLU path.
+      env_mumps->SolveInternal(X, Y);
+      for (auto *y : Y)
+      {
+        for (int i = 0; i < nt; i++)
+        {
+          if (!is_env_int[i])
+          {
+            (*y)(i) = 0.0;
+          }
+        }
+      }
+      return;
+    }
+#endif
 #if defined(MFEM_USE_SUPERLU)
     if (env_parent_direct)
     {
@@ -1869,6 +2129,13 @@ struct SubstructuringSolver::Impl
 
   void ApplyAeeInv(const mfem::Vector &x_parent, mfem::Vector &y_parent) const
   {
+#if defined(MFEM_USE_MUMPS)
+    if (env_mumps)
+    {
+      ApplyAeeInvMulti({&x_parent}, {&y_parent});
+      return;
+    }
+#endif
 #if defined(MFEM_USE_SUPERLU)
     if (env_parent_direct)
     {
@@ -2361,9 +2628,22 @@ void SubstructuringSolver::CondenseEnvironment()
         static_cast<std::streamoff>(sizeof(double)) * nG * nG;
     impl->LoadSections(model_path, sections_pos, perm, sgn);
   }
+  // MUMPS Schur materialization (one partial factorization, no |Gamma| back-solves) when
+  // available and the environment fits a direct factorization. Not used when the
+  // magnetostatic energy operator S^K is also materialized (its correction needs the lifted
+  // columns, which the batched back-solve path produces anyway).
+  bool mumps_done = false;
+#if defined(MFEM_USE_MUMPS)
+  if (!loaded && nG > 0 && !(impl->EnergyDiffers() && !model_path.empty()) &&
+      impl->EnvDirectSize() <= Impl::kDirectMaxDofs)
+  {
+    impl->MaterializeMumps();
+    mumps_done = true;
+  }
+#endif
   if (!loaded)
   {
-    impl->EnsureEnv();
+    impl->EnsureEnv();  // no-op after the MUMPS materialization (it is the env solver)
     // Map each owned interface column (global index in [off, off+nloc)) to its local true
     // DOF, so each unit-vector RHS is set in O(1) instead of scanning all true DOFs per
     // column.
@@ -2393,8 +2673,12 @@ void SubstructuringSolver::CondenseEnvironment()
         e(col_to_dof[c - off]) = 1.0;
       }
     };
+    if (mumps_done)
+    {
+      // S_E already materialized by the MUMPS Schur factorization.
+    }
 #if defined(MFEM_USE_SUPERLU)
-    if (impl->env_parent_direct)
+    else if (impl->env_parent_direct)
     {
       // Batched direct materialization: kMaterializeBlock columns per multi-RHS back-solve
       // through the (single) environment factor. This is its first solve, which fixes the
