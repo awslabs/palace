@@ -137,8 +137,9 @@ void GetInitialSpace(const mfem::ParFiniteElementSpace &nd_fespace,
   linalg::SetSubVector(v, dbc_tdof_list, 0.0);
 }
 
-void Normalize(const GridFunction &S0t, GridFunction &E0t, GridFunction &E0n,
-               mfem::LinearForm &sr, mfem::LinearForm &si)
+std::complex<double> Normalize(const GridFunction &S0t, GridFunction &E0t,
+                               GridFunction &E0n, mfem::LinearForm &sr,
+                               mfem::LinearForm &si)
 {
   // Normalize grid functions to a chosen polarization direction and unit power, |E x H⋆| ⋅
   // n, integrated over the port surface (+n is the outward mesh normal). The n x H
@@ -163,6 +164,7 @@ void Normalize(const GridFunction &S0t, GridFunction &E0t, GridFunction &E0n,
   // E0t.Imag().ExchangeFaceNbrData();  // coefficients evaluation
   // E0n.Real().ExchangeFaceNbrData();
   // E0n.Imag().ExchangeFaceNbrData();
+  return scale;
 }
 
 // Helper for BdrSubmeshEVectorCoefficient and BdrSubmeshHVectorCoefficient.
@@ -403,6 +405,145 @@ public:
   }
 };
 
+// Assemble the port-space mode forms s = ∫_Γ φ·(n×H_mode) for the full modal n×H (with the
+// ∇ₜEₙ longitudinal-gradient term) and the scalar-admittance n×H (−kₙEₜ only), real and
+// imaginary parts, in a single sweep over the port submesh elements. Equivalent to
+// assembling four LinearForms with VectorFEDomainLFIntegrator and
+// BdrSubmeshHVectorCoefficient<REAL/IMAG, true/false> at real kₙ and ω, but evaluates the
+// mode field, transformation, and shape functions once per quadrature point instead of
+// once per form (the per-call overhead of the generic grid function evaluation dominates
+// the per-frequency wave port refresh on GPU builds).
+void AssembleModeForms(const GridFunction &Et, const GridFunction &En,
+                       const MaterialOperator &mat_op, const mfem::ParSubMesh &submesh,
+                       double kn, double omega, mfem::LinearForm &sr, mfem::LinearForm &si,
+                       mfem::LinearForm &sr_scalar, mfem::LinearForm &si_scalar)
+{
+  const mfem::ParFiniteElementSpace &nd_fes = *Et.Real().ParFESpace();
+  const mfem::ParFiniteElementSpace &h1_fes = *En.Real().ParFESpace();
+  MFEM_VERIFY(sr.FESpace() == &nd_fes && si.FESpace() == &nd_fes &&
+                  sr_scalar.FESpace() == &nd_fes && si_scalar.FESpace() == &nd_fes,
+              "Mismatch in finite element spaces for wave port mode form assembly!");
+  const mfem::Mesh &parent = *submesh.GetParent();
+  const auto &parent_elem_ids = submesh.GetParentElementIDMap();
+  const int sdim = parent.SpaceDimension();
+  const double inv_omega = 1.0 / omega;
+
+  mfem::LinearForm *forms[4] = {&sr, &si, &sr_scalar, &si_scalar};
+  for (auto *lf : forms)
+  {
+    lf->UseDevice(false);
+    *lf = 0.0;
+  }
+  const auto *Etr_data = Et.Real().HostRead();
+  const auto *Eti_data = Et.Imag().HostRead();
+  const auto *Enr_data = En.Real().HostRead();
+  const auto *Eni_data = En.Imag().HostRead();
+
+  mfem::Array<int> vdofs, h1_dofs;
+  mfem::DofTransformation doftrans, h1_doftrans;
+  mfem::DenseMatrix vshape, vshape_phys, dshape;
+  mfem::Vector elvect[4], loc_tr, loc_ti, loc_nr, loc_ni, gh, f_hat;
+  double Etr_data_loc[3], Eti_data_loc[3], dUr_data[3], dUi_data[3], U_data[4][3],
+      MU_data[4][3];
+  mfem::Vector Etr(Etr_data_loc, sdim), Eti(Eti_data_loc, sdim), dUr(dUr_data, sdim),
+      dUi(dUi_data, sdim);
+  mfem::Vector U[4] = {
+      {U_data[0], sdim}, {U_data[1], sdim}, {U_data[2], sdim}, {U_data[3], sdim}};
+  mfem::Vector MU[4] = {
+      {MU_data[0], sdim}, {MU_data[1], sdim}, {MU_data[2], sdim}, {MU_data[3], sdim}};
+  auto gather = [](const double *data, const mfem::Array<int> &dofs, mfem::Vector &loc)
+  {
+    loc.SetSize(dofs.Size());
+    for (int i = 0; i < dofs.Size(); i++)
+    {
+      const int dof = dofs[i];
+      loc[i] = (dof >= 0) ? data[dof] : -data[-dof - 1];
+    }
+  };
+
+  for (int e = 0; e < nd_fes.GetNE(); e++)
+  {
+    const mfem::FiniteElement &fe = *nd_fes.GetFE(e);
+    const mfem::FiniteElement &h1_fe = *h1_fes.GetFE(e);
+    mfem::ElementTransformation &T = *nd_fes.GetElementTransformation(e);
+    nd_fes.GetElementVDofs(e, vdofs, doftrans);
+    h1_fes.GetElementVDofs(e, h1_dofs, h1_doftrans);
+    const int dof = fe.GetDof(), dim = fe.GetDim(), h1_dof = h1_fe.GetDof();
+    const int q_order = fem::DefaultIntegrationOrder::Get(T);
+    const mfem::IntegrationRule &ir = mfem::IntRules.Get(fe.GetGeomType(), q_order);
+
+    // Mode field element dofs (same primal transformation as GridFunction::GetVectorValue
+    // and GridFunction::GetGradient), and the permeability of the neighboring parent domain
+    // element (as in BdrSubmeshHVectorCoefficient).
+    gather(Etr_data, vdofs, loc_tr);
+    gather(Eti_data, vdofs, loc_ti);
+    doftrans.InvTransformPrimal(loc_tr);
+    doftrans.InvTransformPrimal(loc_ti);
+    gather(Enr_data, h1_dofs, loc_nr);
+    gather(Eni_data, h1_dofs, loc_ni);
+    h1_doftrans.InvTransformPrimal(loc_nr);
+    h1_doftrans.InvTransformPrimal(loc_ni);
+    int face, o, iel1, iel2;
+    parent.GetBdrElementFace(parent_elem_ids[e], &face, &o);
+    parent.GetFaceElements(face, &iel1, &iel2);
+    const auto &mu_inv = mat_op.GetInvPermeability(parent.GetAttribute(iel1));
+
+    vshape.SetSize(dof, dim);
+    vshape_phys.SetSize(dof, sdim);
+    dshape.SetSize(h1_dof, dim);
+    gh.SetSize(dim);
+    f_hat.SetSize(dim);
+    for (auto &v : elvect)
+    {
+      v.SetSize(dof);
+      v = 0.0;
+    }
+    for (int i = 0; i < ir.GetNPoints(); i++)
+    {
+      const mfem::IntegrationPoint &ip = ir.IntPoint(i);
+      T.SetIntPoint(&ip);
+
+      // Eₜ = Etr + i·Eti and ∇ₜEₙ in physical coordinates.
+      fe.CalcVShape(T, vshape_phys);
+      vshape_phys.MultTranspose(loc_tr, Etr);
+      vshape_phys.MultTranspose(loc_ti, Eti);
+      h1_fe.CalcDShape(ip, dshape);
+      dshape.MultTranspose(loc_nr, gh);
+      T.InverseJacobian().MultTranspose(gh, dUr);
+      dshape.MultTranspose(loc_ni, gh);
+      T.InverseJacobian().MultTranspose(gh, dUi);
+
+      // U = -kₙEₜ + i∇ₜEₙ (full) and U = -kₙEₜ (scalar-admittance), then n×H = μ⁻¹U/ω.
+      for (int d = 0; d < sdim; d++)
+      {
+        U[2][d] = -kn * Etr[d];
+        U[3][d] = -kn * Eti[d];
+        U[0][d] = U[2][d] - dUi[d];
+        U[1][d] = U[3][d] + dUr[d];
+      }
+      fe.CalcVShape(ip, vshape);
+      const double w = ip.weight * T.Weight();
+      for (int k = 0; k < 4; k++)
+      {
+        mu_inv.Mult(U[k], MU[k]);
+        MU[k] *= inv_omega;
+        T.InverseJacobian().Mult(MU[k], f_hat);
+        f_hat *= w;
+        vshape.AddMult(f_hat, elvect[k]);
+      }
+    }
+    for (int k = 0; k < 4; k++)
+    {
+      doftrans.TransformDual(elvect[k]);
+      forms[k]->AddElementVector(vdofs, elvect[k]);
+    }
+  }
+  for (auto *lf : forms)
+  {
+    lf->UseDevice(true);
+  }
+}
+
 // Distribute a back-transformed mode true-dof vector e = [Eₜ (nd); Eₙ (h1)] into the
 // submesh grid functions Et, En (parallel scatter). Mirrors the field distribution in
 // WavePortData::Initialize.
@@ -486,6 +627,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
   MFEM_VERIFY(!data.attributes.empty(), "Wave port boundary found with no attributes!");
   const auto &mesh = *nd_fespace.GetParMesh();
   attr_list.Append(data.attributes.data(), data.attributes.size());
+  attr_marker = mesh::AttrToMarker(
+      mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0, attr_list);
   auto port_submesh_ptr = std::make_unique<mfem::ParSubMesh>(
       mfem::ParSubMesh::CreateFromBoundary(mesh, attr_list));
 
@@ -879,6 +1022,7 @@ void WavePortData::Initialize(double omega)
   const double sigma = -omega * omega * mu_eps_max;
   std::complex<double> lambda;
   {
+    BlockTimer bt(Timer::WAVE_PORT_SOLVE);
     const bool has_solver = (port_comm != MPI_COMM_NULL);
     auto result = mode_solver->Solve(omega, sigma, has_solver ? &v0 : nullptr);
     if (has_solver)
@@ -887,8 +1031,8 @@ void WavePortData::Initialize(double omega)
                   "Wave port eigensolver did not converge!");
       lambda = mode_solver->GetEigenvalue(mode_idx - 1);
     }
+    Mpi::Broadcast(1, &lambda, port_root, port_mesh->GetComm());
   }
-  Mpi::Broadcast(1, &lambda, port_root, port_mesh->GetComm());
 
   // Extract the eigenmode solution and postprocess. The extracted eigenvalue is λ =
   // 1 / (-k_n² - σ).
@@ -899,6 +1043,7 @@ void WavePortData::Initialize(double omega)
   // electric field variables Eₜ = eₜ and Eₙ = eₙ / (i·k_n). Order: load raw eigenvector,
   // phase-normalize, then apply the shared VD back-transform.
   {
+    BlockTimer bt(Timer::WAVE_PORT_FIELD);
     if (port_comm != MPI_COMM_NULL)
     {
       mode_solver->GetEigenvector(mode_idx - 1, e0);
@@ -935,30 +1080,24 @@ void WavePortData::Initialize(double omega)
   // port mode). Normalize the mode for a chosen polarization direction and unit power,
   // |E x H⋆| ⋅ n, integrated over the port surface (+n is the outward mesh normal).
   {
+    BlockTimer bt(Timer::WAVE_PORT_POSTPRO);
     const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
-    BdrSubmeshHVectorCoefficient<ValueType::REAL> port_nxH0r_func(
-        *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0.real(),
-        omega0);
-    BdrSubmeshHVectorCoefficient<ValueType::IMAG> port_nxH0i_func(
-        *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0.real(),
-        omega0);
+    for (auto *lf : {&port_sr, &port_si, &port_sr_scalar, &port_si_scalar})
     {
-      port_sr = std::make_unique<mfem::LinearForm>(&port_nd_fespace->Get());
-      port_sr->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0r_func));
-      port_sr->UseFastAssembly(false);
-      port_sr->UseDevice(false);
-      port_sr->Assemble();
-      port_sr->UseDevice(true);
+      if (!*lf)
+      {
+        *lf = std::make_unique<mfem::LinearForm>(&port_nd_fespace->Get());
+      }
     }
-    {
-      port_si = std::make_unique<mfem::LinearForm>(&port_nd_fespace->Get());
-      port_si->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0i_func));
-      port_si->UseFastAssembly(false);
-      port_si->UseDevice(false);
-      port_si->Assemble();
-      port_si->UseDevice(true);
-    }
-    Normalize(*port_S0t, *port_E0t, *port_E0n, *port_sr, *port_si);
+    // Full modal n×H forms (s = sr + i·si) for the excitation, S-parameter projection, and
+    // modal reaction, and scalar-admittance forms (∇ₜEₙ dropped) for the scalar reaction,
+    // all from the unnormalized mode. The forms are linear in the mode field, so the
+    // normalization and polarity fix below apply to them as well.
+    AssembleModeForms(*port_E0t, *port_E0n, mat_op, port_submesh, kn0.real(), omega0,
+                      *port_sr, *port_si, *port_sr_scalar, *port_si_scalar);
+    const auto scale = Normalize(*port_S0t, *port_E0t, *port_E0n, *port_sr, *port_si);
+    ComplexVector::AXPBY(scale, *port_sr_scalar, *port_si_scalar, 0.0, *port_sr_scalar,
+                         *port_si_scalar);
 
     // If the user provided a VoltagePath, use it to fix the mode polarity such that
     // V_exc = ∫ E_mode · dl is real-positive along the path. This ties the wave port
@@ -984,6 +1123,8 @@ void WavePortData::Initialize(double omega)
                            port_E0n->Imag(), 0.0, port_E0n->Real(), port_E0n->Imag());
       ComplexVector::AXPBY(std::complex<double>(-1.0, 0.0), *port_sr, *port_si, 0.0,
                            *port_sr, *port_si);
+      ComplexVector::AXPBY(std::complex<double>(-1.0, 0.0), *port_sr_scalar,
+                           *port_si_scalar, 0.0, *port_sr_scalar, *port_si_scalar);
     }
 
     // Unconjugated modal reaction R = sᵀe = ∫_Γ (n×H_mode)·E_mode, which scales the rank-1
@@ -997,29 +1138,73 @@ void WavePortData::Initialize(double omega)
 
     // Scalar-admittance reaction R_scalar = s_scalarᵀe from the scalar-only n×H (∇ₜEₙ
     // dropped), scaling the W_scalar term that cancels the local boundary mass's modal
-    // action so the correction W_full − W_scalar adds only the ∇ₜEₙ contribution. Assembled
-    // from the final (normalized, sign-fixed) mode field so it is consistent with
-    // modal_reaction.
-    BdrSubmeshHVectorCoefficient<ValueType::REAL, false> port_nxH0r_scalar(
-        *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0.real(),
-        omega0);
-    BdrSubmeshHVectorCoefficient<ValueType::IMAG, false> port_nxH0i_scalar(
-        *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0.real(),
-        omega0);
-    mfem::LinearForm sr_scalar(&port_nd_fespace->Get()), si_scalar(&port_nd_fespace->Get());
-    sr_scalar.AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0r_scalar));
-    si_scalar.AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0i_scalar));
-    for (auto *lf : {&sr_scalar, &si_scalar})
-    {
-      lf->UseFastAssembly(false);
-      lf->UseDevice(false);
-      lf->Assemble();
-      lf->UseDevice(true);
-    }
-    modal_reaction_scalar = {sr_scalar * port_E0t->Real() - si_scalar * port_E0t->Imag(),
-                             sr_scalar * port_E0t->Imag() + si_scalar * port_E0t->Real()};
+    // action so the correction W_full − W_scalar adds only the ∇ₜEₙ contribution. Uses the
+    // normalized, sign-fixed forms and mode field so it is consistent with modal_reaction.
+    modal_reaction_scalar = {
+        (*port_sr_scalar) * port_E0t->Real() - (*port_si_scalar) * port_E0t->Imag(),
+        (*port_sr_scalar) * port_E0t->Imag() + (*port_si_scalar) * port_E0t->Real()};
     Mpi::GlobalSum(1, &modal_reaction_scalar, port_nd_fespace->GetComm());
   }
+}
+
+void WavePortData::ConfigureReducedModelTraining(std::size_t max_samples,
+                                                 std::size_t num_excitations,
+                                                 bool synthesis_seed)
+{
+  // With circuit synthesis, the seeded reference mode plus the exact band samples used to
+  // fit kₙ(ω) and the modal correction (a few dozen cross-section solves per port) also
+  // train the basis before the online sweep; reserve room so they are not dropped.
+  constexpr std::size_t synthesis_snapshots = 128;
+  const std::size_t seed = synthesis_seed ? synthesis_snapshots : 0;
+  MFEM_VERIFY(num_excitations > 0, "Wave-port PROM training requires an excitation!");
+  MFEM_VERIFY(max_samples <=
+                  (std::numeric_limits<std::size_t>::max() - seed) / num_excitations,
+              "Wave-port PROM training snapshot capacity overflow!");
+  const std::size_t snapshots = max_samples * num_excitations + seed;
+  MFEM_VERIFY(static_cast<std::size_t>(mode_idx) <=
+                  std::numeric_limits<std::size_t>::max() /
+                      std::max(snapshots, std::size_t{1}),
+              "Wave-port PROM basis capacity overflow!");
+  const std::size_t capacity = static_cast<std::size_t>(mode_idx) * snapshots;
+  mode_solver->ConfigureReducedModelTraining(
+      std::max(capacity, static_cast<std::size_t>(mode_idx)));
+}
+
+void WavePortData::EnableReducedModel(double adaptive_tol)
+{
+  mode_solver->EnableReducedModel(adaptive_tol);
+}
+
+ModeEigenSolver::ReducedModelStats WavePortData::GetReducedModelStats() const
+{
+  auto stats = mode_solver->GetReducedModelStats();
+  unsigned long long counts[] = {
+      stats.exact_solves,       stats.reduced_solves,   stats.fallbacks,
+      stats.offline_basis_rank, stats.online_basis_cap,
+  };
+  Mpi::Broadcast(static_cast<int>(std::size(counts)), counts, port_root,
+                 port_mesh->GetComm());
+  Mpi::Broadcast(1, &stats.worst_residual, port_root, port_mesh->GetComm());
+  stats.exact_solves = counts[0];
+  stats.reduced_solves = counts[1];
+  stats.fallbacks = counts[2];
+  stats.offline_basis_rank = counts[3];
+  stats.online_basis_cap = counts[4];
+  return stats;
+}
+
+std::size_t WavePortData::GetReducedBasisSize() const
+{
+  unsigned long long size = mode_solver->GetReducedBasisSize();
+  Mpi::Broadcast(1, &size, port_root, port_mesh->GetComm());
+  return static_cast<std::size_t>(size);
+}
+
+double WavePortData::GetReducedTolerance() const
+{
+  double tol = mode_solver->GetReducedTolerance();
+  Mpi::Broadcast(1, &tol, port_root, port_mesh->GetComm());
+  return tol;
 }
 
 const WavePortData::ModeSolveCache &WavePortData::EvalModeSolve(std::complex<double> omega)
@@ -1258,8 +1443,6 @@ std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) co
   // fixed outward normal directly (no x0-based reorientation).
   if (!power_func)
   {
-    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-    mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
     mfem::Vector x0(mesh.SpaceDimension());
     x0 = 0.0;
     power_func = std::make_unique<SurfaceFunctional>(
@@ -1282,12 +1465,11 @@ std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) co
 
   BdrSurfaceCurrentVectorCoefficient nxHr_func(B.Real(), mat_op);
   BdrSurfaceCurrentVectorCoefficient nxHi_func(B.Imag(), mat_op);
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
+  mfem::Array<int> marker(attr_marker);
   std::complex<double> dot;
   {
     mfem::LinearForm pr(&nd_fespace);
-    pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHr_func), attr_marker);
+    pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHr_func), marker);
     pr.UseFastAssembly(false);
     pr.UseDevice(false);
     pr.Assemble();
@@ -1296,7 +1478,7 @@ std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) co
   }
   {
     mfem::LinearForm pi(&nd_fespace);
-    pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHi_func), attr_marker);
+    pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHi_func), marker);
     pi.UseFastAssembly(false);
     pi.UseDevice(false);
     pi.Assemble();
@@ -1305,6 +1487,37 @@ std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) co
   }
   Mpi::GlobalSum(1, &dot, nd_fespace.GetComm());
   return dot;
+}
+
+void WavePortData::RestrictToPort(const mfem::ParGridFunction &E,
+                                  mfem::Vector &e_port) const
+{
+  port_nd_transfer->Transfer(E, port_E->Real());
+  e_port.SetSize(port_E->Real().Size());
+  e_port.UseDevice(false);
+  const auto *src = port_E->Real().HostRead();
+  auto *dst = e_port.HostWrite();
+  std::copy(src, src + e_port.Size(), dst);
+}
+
+WavePortData::ModePairing WavePortData::LocalModePairing(const mfem::Vector &e_port) const
+{
+  MFEM_VERIFY(port_sr && port_si && port_sr_scalar && port_si_scalar,
+              "Wave port mode pairing requires an initialized port mode!");
+  MFEM_ASSERT(e_port.Size() == port_sr->Size(),
+              "Invalid size for port-restricted field in wave port mode pairing!");
+  const auto *e = e_port.HostRead();
+  auto dot = [&](const mfem::LinearForm &s)
+  {
+    const auto *sd = s.HostRead();
+    double d = 0.0;
+    for (int i = 0; i < e_port.Size(); i++)
+    {
+      d += sd[i] * e[i];
+    }
+    return d;
+  };
+  return {{dot(*port_sr), dot(*port_si)}, {dot(*port_sr_scalar), dot(*port_si_scalar)}};
 }
 
 std::complex<double> WavePortData::GetSParameter(GridFunction &E) const
@@ -1668,6 +1881,52 @@ const WavePortData &WavePortOperator::GetPort(int idx) const
   return it->second;
 }
 
+void WavePortOperator::ConfigureReducedModelTraining(std::size_t max_samples,
+                                                     std::size_t num_excitations,
+                                                     bool synthesis_seed)
+{
+  for (auto &[idx, data] : ports)
+  {
+    data.ConfigureReducedModelTraining(max_samples, num_excitations, synthesis_seed);
+  }
+}
+
+void WavePortOperator::EnableReducedModel(double adaptive_tol)
+{
+  if (ports.empty())
+  {
+    return;
+  }
+  Mpi::Print("\nEnabling guarded reduced wave-port models after adaptive offline "
+             "training:\n");
+  for (auto &[idx, data] : ports)
+  {
+    data.EnableReducedModel(adaptive_tol);
+    const auto stats = data.GetReducedModelStats();
+    Mpi::Print(" Port {:d}: basis/cap = {:d}/{:d}, backward tolerance = {:.3e}\n", idx,
+               stats.offline_basis_rank, stats.online_basis_cap,
+               data.GetReducedTolerance());
+  }
+}
+
+void WavePortOperator::PrintReducedModelStats() const
+{
+  if (ports.empty())
+  {
+    return;
+  }
+  Mpi::Print("\nWave-port reduced model statistics:\n");
+  for (const auto &[idx, data] : ports)
+  {
+    const auto stats = data.GetReducedModelStats();
+    Mpi::Print(" Port {:d}: basis/cap = {:d}/{:d}, reduced/exact = {:d}/{:d}, "
+               "fallbacks = {:d}, worst residual = {:.3e}\n",
+               idx, data.GetReducedBasisSize(), stats.online_basis_cap,
+               stats.reduced_solves, stats.exact_solves, stats.fallbacks,
+               stats.worst_residual);
+  }
+}
+
 mfem::Array<int> WavePortOperator::GetAttrList() const
 {
   mfem::Array<int> attr_list;
@@ -1841,25 +2100,52 @@ void WavePortOperator::AddExcitationBdrCoefficients(int excitation_idx, double o
   }
 }
 
+mfem::Array<int> WavePortOperator::GetExcitationBdrMarker(int excitation_idx) const
+{
+  mfem::Array<int> marker;
+  for (const auto &[idx, data] : ports)
+  {
+    if (data.excitation != excitation_idx)
+    {
+      continue;
+    }
+    const auto &port_marker = data.GetAttrMarker();
+    if (marker.Size() == 0)
+    {
+      marker = port_marker;
+      continue;
+    }
+    MFEM_ASSERT(marker.Size() == port_marker.Size(), "Inconsistent wave port markers!");
+    for (int i = 0; i < marker.Size(); i++)
+    {
+      marker[i] |= port_marker[i];
+    }
+  }
+  return marker;
+}
+
 namespace
 {
 
 // Assemble s = ∫_Γ φ·(n×H_mode) on the parent ND true-dof space from an n×H coefficient
 // pair, the same n×H the excitation injects (GetModeExcitationCoefficient), so the enforced
 // BC, excitation, normalization, and S-projection share one modal calibration. Essential
-// (PEC) dofs are eliminated to match the system operator.
+// (PEC) dofs are eliminated to match the system operator. The boundary integration is
+// restricted to the port boundary attributes, where the coefficient is nonzero.
 std::unique_ptr<ComplexVector> AssembleNxHVector(FiniteElementSpace &nd_fespace,
                                                  const mfem::Array<int> &nd_dbc_tdof_list,
+                                                 const mfem::Array<int> &attr_marker,
                                                  mfem::VectorCoefficient &cr,
                                                  mfem::VectorCoefficient &ci)
 {
   auto s = std::make_unique<ComplexVector>(nd_fespace.GetTrueVSize());
   s->UseDevice(true);
   *s = 0.0;
+  mfem::Array<int> marker(attr_marker);
   for (auto [c, tv] : {std::pair{&cr, &s->Real()}, std::pair{&ci, &s->Imag()}})
   {
     mfem::LinearForm lf(&nd_fespace.Get());
-    lf.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(*c));
+    lf.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(*c), marker);
     lf.UseFastAssembly(false);
     lf.UseDevice(false);
     lf.Assemble();
@@ -1907,11 +2193,13 @@ WavePortOperator::GetModalCorrectionTerms(double omega, FiniteElementSpace &nd_f
     // preserved).
     auto cr = data.GetModeExcitationCoefficientReal(/*include_gradient=*/true);
     auto ci = data.GetModeExcitationCoefficientImag(/*include_gradient=*/true);
-    terms.push_back({AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, *cr, *ci),
-                     std::complex<double>(0.0, -omega) / data.modal_reaction});
+    terms.push_back(
+        {AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, data.GetAttrMarker(), *cr, *ci),
+         std::complex<double>(0.0, -omega) / data.modal_reaction});
     auto cr_s = data.GetModeExcitationCoefficientReal(/*include_gradient=*/false);
     auto ci_s = data.GetModeExcitationCoefficientImag(/*include_gradient=*/false);
-    terms.push_back({AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, *cr_s, *ci_s),
+    terms.push_back({AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, data.GetAttrMarker(),
+                                       *cr_s, *ci_s),
                      std::complex<double>(0.0, omega) / data.modal_reaction_scalar});
   }
   return terms;
@@ -1928,7 +2216,8 @@ WavePortOperator::GetModeExcitationVector(int port_idx, double omega,
   MFEM_VERIFY(it->second.active, "Cannot assemble mode vector for an inactive wave port!");
   auto cr = it->second.GetModeExcitationCoefficientReal(/*include_gradient=*/true);
   auto ci = it->second.GetModeExcitationCoefficientImag(/*include_gradient=*/true);
-  return AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, *cr, *ci);
+  return AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, it->second.GetAttrMarker(), *cr,
+                           *ci);
 }
 
 std::vector<WavePortOperator::ModalCorrectionTerm>
@@ -1985,10 +2274,12 @@ WavePortOperator::SamplePortModalCorrection(WavePortData &data, std::complex<dou
   }
   auto cr = data.GetOmegaModeExcitationCoefficientReal(/*include_gradient=*/true);
   auto ci = data.GetOmegaModeExcitationCoefficientImag(/*include_gradient=*/true);
-  smp.s_full = AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, *cr, *ci);
+  smp.s_full =
+      AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, data.GetAttrMarker(), *cr, *ci);
   auto cr_s = data.GetOmegaModeExcitationCoefficientReal(/*include_gradient=*/false);
   auto ci_s = data.GetOmegaModeExcitationCoefficientImag(/*include_gradient=*/false);
-  smp.s_scalar = AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, *cr_s, *ci_s);
+  smp.s_scalar =
+      AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, data.GetAttrMarker(), *cr_s, *ci_s);
   smp.g_full = std::complex<double>(0.0, -1.0) * omega / react.R_full_raw;
   smp.g_scalar = std::complex<double>(0.0, 1.0) * omega / react.R_scalar_raw;
   smp.active = true;
@@ -2060,10 +2351,12 @@ WavePortOperator::GetModalCorrectionSynthesisPorts(double omega_ref,
     }
     auto cr = data.GetModeExcitationCoefficientReal(/*include_gradient=*/true);
     auto ci = data.GetModeExcitationCoefficientImag(/*include_gradient=*/true);
-    auto s_full = AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, *cr, *ci);
+    auto s_full =
+        AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, data.GetAttrMarker(), *cr, *ci);
     auto cr_s = data.GetModeExcitationCoefficientReal(/*include_gradient=*/false);
     auto ci_s = data.GetModeExcitationCoefficientImag(/*include_gradient=*/false);
-    auto s_scalar = AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, *cr_s, *ci_s);
+    auto s_scalar =
+        AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, data.GetAttrMarker(), *cr_s, *ci_s);
     const double norm_full = linalg::Norml2(nd_fespace.GetComm(), *s_full);
     s_full->Add(std::complex<double>(-1.0, 0.0), *s_scalar);
     if (norm_full == 0.0 ||

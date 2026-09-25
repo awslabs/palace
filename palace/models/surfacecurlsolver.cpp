@@ -65,20 +65,24 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
   int num_holes = hole_surface_attrs.Size();
 
   // Extract hole boundary DOFs
-  std::unordered_map<int, mfem::Array<int>> attr_to_elements;
+  std::vector<mfem::Array<int>> attr_to_elements;
   std::vector<std::unordered_map<int, int>> hole_dof_to_edge_maps(num_holes);
-  std::vector<mfem::Array<int>> hole_ess_tdof_lists(num_holes);
-  std::vector<mfem::Array<int>> hole_ldof_markers(num_holes);
-  std::vector<std::unordered_set<int>> hole_boundary_edge_ldofs(num_holes);
 
   const_cast<mfem::ParFiniteElementSpace *>(fespace)->GetBoundaryElementsByAttribute(
       hole_surface_attrs, attr_to_elements);
   for (int h = 0; h < num_holes; h++)
   {
-    const_cast<mfem::ParFiniteElementSpace *>(fespace)->GetBoundaryEdgeDoFs(
-        attr_to_elements[hole_surface_attrs[h]], hole_ess_tdof_lists[h],
-        hole_ldof_markers[h], hole_boundary_edge_ldofs[h], &hole_dof_to_edge_maps[h],
-        nullptr, nullptr, nullptr);
+    // Only the DoF-to-edge map is consumed downstream (by mesh::MatchBoundaryEdges,
+    // which reads its edge-id values). Rebuild it from the two parallel outputs of
+    // GetBoundaryLoopEdgeDofs; the other outputs are unused here.
+    mfem::Array<int> ess_tdof_list, boundary_edge_dofs, dof_edges;
+    const_cast<mfem::ParFiniteElementSpace *>(fespace)->GetBoundaryLoopEdgeDofs(
+        attr_to_elements[h], ess_tdof_list, boundary_edge_dofs, nullptr, &dof_edges,
+        nullptr, nullptr);
+    for (int i = 0; i < boundary_edge_dofs.Size(); i++)
+    {
+      hole_dof_to_edge_maps[h][boundary_edge_dofs[i]] = dof_edges[i];
+    }
   }
 
   // Create submesh from all metal surface attributes
@@ -398,7 +402,7 @@ double ComputeFluxThroughSurface(const mfem::ParGridFunction &B_gf,
     const mfem::FiniteElement *fe = fes->GetBE(be);
     mfem::ElementTransformation *Tr = pmesh->GetBdrElementTransformation(be);
     const int int_order = fem::DefaultIntegrationOrder::Get(*Tr);
-    auto geom_order = std::make_pair(fe->GetGeomType(), int_order);
+    std::pair geom_order{fe->GetGeomType(), int_order};
     const mfem::IntegrationRule *ir;
     auto it = ir_map.find(geom_order);
     if (it == ir_map.end())
