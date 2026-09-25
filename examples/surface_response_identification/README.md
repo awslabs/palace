@@ -227,6 +227,14 @@ Phase 4 (decision 74, the Features-driven patch construction; design doc section
   never match an SA-only feature (island unit test); the transmon's full library matches its
   isolated edges and corners (97.9 % of the assigned perimeter patched; the 2 um strips and the
   clusters Missing: decisions 70 / 71).
+Phase-4 final gate matrix (executable 088f94573): 11,914 / 11,914 PASS — transmon 144 + 23 cross (digest
+26760e1a72eb; signature dry run 6,175 patches = 100 % of 35,296.81 um, full library 5,828 patches = 97.909 %),
+externally refined r1 144 + 11, two-transmon chain 144 + 11 (b838d5e02c10; 23,958 patches = 100 %),
+DS-SCT-001 144 + 11 (058b18dae5e5; 13,390 patches = 100 %, two-sided gaps 562 / 560, 314 / 311, 801 / 799 um,
+23 s per cell), 86 synthetic layouts 9,288 gates + 344 cross-cell comparisons + 1,395 oracle checks + 255
+signature cells at 100 % coverage (seed 0 patches; the `isolated` library 0 - 90.6 %). Unit tests: serial suite
+173 passed / 1 skipped, MPI-2 59 passed; Python identification 48 OK; `spatial_coupon` 370 / 371 (the
+pre-existing device-closure error).
 Phase-4 results: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/phase4/REPORT.md`.
 
 ## Geometry identification: baseline audit (2026-09-24, executable 9ef5256b / v0.17.0-572-g5876402f7)
