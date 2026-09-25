@@ -24,18 +24,19 @@ namespace
 {
 
 // Build the London drive a_h as a 3D curl-free cohomology generator carrying the hole
-// fluxoid ∮_∂hole a_h·dl = Φ, about the vertical flux line L = {x=cx, y=cy, all z} through
-// the hole centroid. L threads the hole opening off the film Σ, so a_h|Σ is curl-free with
+// fluxoid ∮_∂hole a_h·dl = Φ, about the flux line L along the loop Direction n through the
+// hole centroid. L threads the hole opening off the film Σ, so a_h|Σ is curl-free with
 // circulation Φ; its gradient part is absorbable by A → A + ∇χ, so the extracted inductance
 // depends only on the cohomology class (Φ) and is gauge-invariant.
 //
-// a_h is the cut cochain a_h = Grad ψ − a_angle: a lowest-order (Whitney) edge DOF of ±Φ
-// across the cut half-plane S = {x=cx, y≥cy} bounded by L (0 otherwise), projected into the
-// order-p ND space (ND_1 ⊂ ND_p). It is formed as the discrete gradient of a conformed
-// nodal branch potential ψ minus the smooth angle interpolant a_angle so it is
-// non-conformal-safe (see below). The cut shape is irrelevant to L (orienting S along x vs
-// y agrees to ~11 figures), as is the overall sign: the downstream normalization rescales
-// a_h so cᵀa_h = Φ.
+// The angle θ is measured in the plane ⊥ n via a right-handed in-plane basis (e1, e2, n),
+// so the construction handles any planar hole orientation and reduces to the xy form when
+// n = ±ẑ. a_h is the cut cochain a_h = Grad ψ − a_angle: a lowest-order (Whitney) edge DOF
+// of ±Φ across the cut half-plane bounded by L, projected into the order-p ND space
+// (ND_1 ⊂ ND_p). It is formed as the discrete gradient of a conformed nodal branch
+// potential ψ minus the smooth angle interpolant a_angle so it is non-conformal-safe (see
+// below). The cut shape and overall sign are irrelevant to L: the downstream normalization
+// rescales a_h so cᵀa_h = Φ.
 Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
                                    const mfem::ParFiniteElementSpace &ndp_fespace,
                                    const Mesh &mesh)
@@ -45,12 +46,43 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
   const int sdim = pmesh.SpaceDimension();
   MFEM_VERIFY(sdim == 3, "London cut cohomology generator requires a 3D mesh!");
 
-  // The cut line is built in the xy-plane, so the hole axis must be ±Z.
-  MFEM_VERIFY(flux_data.direction.size() >= 3 &&
-                  std::abs(flux_data.direction[2]) > 1.0e-8 &&
-                  std::abs(flux_data.direction[0]) < 1.0e-8 &&
-                  std::abs(flux_data.direction[1]) < 1.0e-8,
-              "London flux loop Direction must be ±Z!");
+  // Hole axis n = normalized Direction. Build a right-handed in-plane basis (e1, e2, n), e1
+  // seeded from the Cartesian axis least aligned with n (avoids a degenerate cross
+  // product); for n = ±ẑ this gives e1 = x̂, e2 = ±ŷ, reproducing the xy construction.
+  MFEM_VERIFY(flux_data.direction.size() >= 3, "London flux loop needs a 3D Direction!");
+  double n[3] = {flux_data.direction[0], flux_data.direction[1], flux_data.direction[2]};
+  const double nrm = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+  MFEM_VERIFY(nrm > 1.0e-12, "London flux loop Direction must be nonzero!");
+  n[0] /= nrm;
+  n[1] /= nrm;
+  n[2] /= nrm;
+  double e1[3], e2[3];
+  {
+    int imin = 0;
+    if (std::abs(n[1]) < std::abs(n[imin]))
+    {
+      imin = 1;
+    }
+    if (std::abs(n[2]) < std::abs(n[imin]))
+    {
+      imin = 2;
+    }
+    double seed[3] = {0.0, 0.0, 0.0};
+    seed[imin] = 1.0;
+    const double sn = seed[0] * n[0] + seed[1] * n[1] + seed[2] * n[2];
+    for (int i = 0; i < 3; i++)
+    {
+      e1[i] = seed[i] - sn * n[i];
+    }
+    const double e1n = std::sqrt(e1[0] * e1[0] + e1[1] * e1[1] + e1[2] * e1[2]);
+    for (int i = 0; i < 3; i++)
+    {
+      e1[i] /= e1n;
+    }
+    e2[0] = n[1] * e1[2] - n[2] * e1[1];
+    e2[1] = n[2] * e1[0] - n[0] * e1[2];
+    e2[2] = n[0] * e1[1] - n[1] * e1[0];
+  }
 
   // Total imposed fluxoid Φ.
   double phi = 0.0;
@@ -59,9 +91,8 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
     phi += f;
   }
 
-  // Hole centroid (cx, cy): average of hole-boundary vertex coordinates. The vertical flux
-  // line L = {x=cx, y=cy, all z} passes through the hole opening (empty region), never the
-  // film.
+  // Hole centroid c: average of hole-boundary vertex coordinates. The flux line L = c + s·n
+  // passes through the hole opening (empty region), never the film.
   std::unordered_set<int> hole_attrs(flux_data.hole_attributes.begin(),
                                      flux_data.hole_attributes.end());
   double csum[3] = {0.0, 0.0, 0.0};
@@ -86,7 +117,15 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
   Mpi::GlobalSum(3, csum, comm);
   Mpi::GlobalSum(1, &cnt, comm);
   MFEM_VERIFY(cnt > 0.0, "No hole boundary elements found for London cut generator!");
-  double cx = csum[0] / cnt, cy = csum[1] / cnt;
+  double c[3] = {csum[0] / cnt, csum[1] / cnt, csum[2] / cnt};
+
+  // In-plane coordinates (s, t) of a point about L: components along (e1, e2).
+  auto inplane = [&](const double *x, double &s, double &t)
+  {
+    const double dx = x[0] - c[0], dy = x[1] - c[1], dz = x[2] - c[2];
+    s = dx * e1[0] + dy * e1[1] + dz * e1[2];
+    t = dx * e2[0] + dy * e2[1] + dz * e2[2];
+  };
 
   {
     // θ is undefined on L. Measure the hole's radial extent and the closest approach of a
@@ -103,7 +142,9 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
       for (int v : bverts)
       {
         const double *x = pmesh.GetVertex(v);
-        const double r = std::hypot(x[0] - cx, x[1] - cy);
+        double s, t;
+        inplane(x, s, t);
+        const double r = std::hypot(s, t);
         r_min = std::min(r_min, r);
         r_max = std::max(r_max, r);
       }
@@ -112,10 +153,13 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
     Mpi::GlobalMax(1, &r_max, comm);
     if (r_min < 1.0e-6 * r_max)
     {
-      cx += 3.7e-3 * r_max;
-      cy += 2.3e-3 * r_max;
-      Mpi::Print(" London a_h: flux line met a hole vertex, offset to ({:.6e}, {:.6e})\n",
-                 cx, cy);
+      for (int i = 0; i < 3; i++)
+      {
+        c[i] += r_max * (3.7e-3 * e1[i] + 2.3e-3 * e2[i]);
+      }
+      Mpi::Print(" London a_h: flux line met a hole vertex, offset to ({:.6e}, {:.6e}, "
+                 "{:.6e})\n",
+                 c[0], c[1], c[2]);
     }
   }
 
@@ -145,7 +189,9 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
     {
       const double *x = pmesh.GetVertex(v);
       h1_fespace.GetVertexDofs(v, vdofs);
-      psi(vdofs[0]) = phi * std::atan2(x[0] - cx, -(x[1] - cy)) / (2.0 * M_PI);
+      double s, t;
+      inplane(x, s, t);
+      psi(vdofs[0]) = phi * std::atan2(s, -t) / (2.0 * M_PI);
     }
     mfem::Vector t(h1_fespace.GetTrueVSize());
     t.UseDevice(false);
@@ -160,12 +206,13 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
     const double *x0 = pmesh.GetVertex(ev[0]);
     const double *x1 = pmesh.GetVertex(ev[1]);
     // DOF ∫_e ∇θ·t = angle subtended at L by ev0→ev1. atan2 returns the rotation of
-    // magnitude ≤ π, i.e. the branch consistent with the straight edge. Only x,y enter: L
-    // is vertical, so ∇θ has no z-component and vertical edges get 0.
-    const double ax = x0[0] - cx, ay = x0[1] - cy;
-    const double bx = x1[0] - cx, by = x1[1] - cy;
+    // magnitude ≤ π, i.e. the branch consistent with the straight edge. Only the in-plane
+    // components enter; edges parallel to n subtend zero angle.
+    double s0, t0, s1, t1;
+    inplane(x0, s0, t0);
+    inplane(x1, s1, t1);
     const double a_angle =
-        phi * std::atan2(ax * by - ay * bx, ax * bx + ay * by) / (2.0 * M_PI);
+        phi * std::atan2(s0 * t1 - t0 * s1, s0 * s1 + t0 * t1) / (2.0 * M_PI);
     nd1_fespace.GetEdgeDofs(e, edofs);
     // cut = Grad ψ - a_angle. ψ is continuous except across the cut half-plane, where it
     // jumps by Φ, so this reproduces the ±Φ step cochain exactly on a conformal mesh.
@@ -177,9 +224,10 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
   // Conform the cochain before projecting. Grad ψ is a discrete gradient of a conformed H1
   // function, so it survives the round trip exactly (circulation and curl-free-on-Σ
   // intact); only the smooth a_angle term is re-interpolated onto slaves. On a
-  // non-conformal mesh that leaves a small residual curl on Σ near graded refinement, which
-  // the range-space two-solve absorbs (does not affect L); on a conformal mesh a_h is the
-  // exact integer step, curl-free.
+  // non-conformal mesh that leaves a small residual curl on Σ near graded refinement, an
+  // O(h) discretization error that vanishes under refinement while the downstream cᵀa_h = Φ
+  // normalization keeps the fluxoid exact; on a conformal mesh a_h is the exact integer
+  // step, curl-free.
   {
     mfem::Vector t(nd1_fespace.GetTrueVSize());
     t.UseDevice(false);
@@ -202,8 +250,8 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
   ahp.GetTrueDofs(result);
 
   // Restrict a_h to this loop's film DOFs. It is consumed only through M_sheet and c (both
-  // on the film), so this is a no-op for a single film but stops the vertical cut line from
-  // driving a spurious vortex in another Superconductor sheet above or below the hole.
+  // on the film), so this is a no-op for a single film but stops the cut line from driving
+  // a spurious vortex in another Superconductor sheet the line threads.
   {
     const int bmax = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
     mfem::Array<int> marker(bmax);

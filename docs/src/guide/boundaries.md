@@ -286,6 +286,6 @@ unit-current excitations for current-driven magnetostatic solves. Palace reports
       - Loop normal vector defining the flux orientation
 
 The mesh must be topologically compatible with the flux loop geometry, with holes properly
-defined as boundary surfaces within the conducting region. Currently, only planar holes with
-a ``\pm z`` axis are supported. Both conformal and nonconformal adaptive mesh refinement are
-supported.
+defined as boundary surfaces within the conducting region. Currently, only planar holes are
+supported; the hole axis is taken from the flux loop `"Direction"` and may point along any
+Cartesian direction. Both conformal and nonconformal adaptive mesh refinement are supported.
