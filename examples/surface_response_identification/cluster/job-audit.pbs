@@ -1,0 +1,38 @@
+#!/bin/bash
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Identification audit (audit.py: A1 / A2 / A7 gates against the mesh) + facing check (facing_check.py) of a
+# chip-scale preflight on one m8g node (the audit re-reads the whole mesh in Python: tens of GB for 10^7 tets).
+#
+#   qsub -v TOOLS=/path/tools,PY=/path/python3,MESH=/path/mesh.msh2,CONFIG=/path/config.json,\
+#       MANIFEST=/path/postpro/surface-response-requirements.json,LOG=/path/palace.log,OUT=/path/out job-audit.pbs
+#
+# TOOLS holds the surface_response_identification package (rsync of examples/surface_response_identification).
+#PBS -N palace-audit
+#PBS -q normal-g
+#PBS -P DS-EM-FEM
+#PBS -r n
+#PBS -l select=1:ncpus=192:mpiprocs=192
+#PBS -l place=scatter:excl
+#PBS -l instance_type=m8g.48xlarge
+#PBS -l efa_support=True,subnet_id=subnet-0c98d793bbcebb39a
+#PBS -l walltime=05:30:00
+#PBS -j oe
+set -euo pipefail
+: "${TOOLS:?}" "${PY:?}" "${MESH:?}" "${CONFIG:?}" "${MANIFEST:?}" "${OUT:?}"
+mkdir -p "$OUT"
+exec > "$OUT/pbs.log" 2>&1
+trap 'code=$?; printf "{\"ExitCode\":%d,\"CompletedUTC\":\"%s\",\"JobID\":\"%s\"}\n" "$code" "$(date -u +%FT%TZ)" "${PBS_JOBID:-}" > "$OUT/pbs-status.json"' EXIT
+export PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=8
+date -u +%FT%TZ; hostname; grep MemTotal /proc/meminfo
+sha256sum "$MESH" "$CONFIG" "$MANIFEST" | tee "$OUT/inputs-sha256.txt"
+cd "$TOOLS"
+echo "=== facing check start $(date -u +%FT%TZ)"
+/usr/bin/time -v -o "$OUT/facing-time.txt" "$PY" -m surface_response_identification.facing_check "$MANIFEST" \
+    --output "$OUT/facing.json" --flags "$OUT/facing-flags.jsonl" ${FACING_ARGS:-} > "$OUT/facing.log" 2>&1 || echo "facing RC=$?"
+grep -E "Elapsed|Maximum resident" "$OUT/facing-time.txt" || true
+echo "=== audit start $(date -u +%FT%TZ)"
+/usr/bin/time -v -o "$OUT/audit-time.txt" "$PY" -m surface_response_identification.audit --mesh "$MESH" --config "$CONFIG" \
+    --manifest "$MANIFEST" ${LOG:+--log "$LOG"} --output-prefix "$OUT/audit" > "$OUT/audit.log" 2>&1 || echo "audit RC=$?"
+grep -E "Elapsed|Maximum resident" "$OUT/audit-time.txt" || true
+echo "=== done $(date -u +%FT%TZ)"
