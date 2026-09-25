@@ -208,10 +208,25 @@ Phase 4 (decision 74, the Features-driven patch construction; design doc section
   signature-keyed topologies): its dry run must cover `Totals.AssignedLength` exactly.
   `preflight_matrix --signature-library` and `synthetic_layouts --signature-library` add a
   `signature` library per geometry / layout built from the first cell's manifest.
+* **Identification refinements found by the patch construction** (the A1 partition cannot see a
+  pair described on one side only): the bent-pair "beyond either end" exclusion is local (past the
+  partner's end plane AND within the reach of that end — the global half-plane of a bent route had
+  removed the whole facing region of DS-SCT-001's ground edges); the constant interacting pieces of
+  a chain pair are grouped by separation (5 % pair tolerance; a closed trace loop faces one ground
+  chain at the gap and across the strip), one feature per group with its own frame and class; a
+  pair that lost a whole side in claim resolution is demoted to the isolated / curved edge; the two
+  sides of a pair are mutual (the part of one side facing beyond the other side's surviving pieces
+  returns to the run). `Features[].Sides` (parallel to `Portions`) labels the side of every pair /
+  parallel-cluster portion in the signature's edge order (reversed for chirality -1). The patch
+  construction refuses a pair whose sides do not face each other at its separation (10 %) with a
+  warning; DS-SCT-001 now has none (digest 058b18dae5e5, 23 s per cell). PENDING: a bent CPW
+  narrower than 2R (ground - gap - trace - gap - ground within 2R) is a multi-chain neighbourhood the
+  pairwise bent rule cannot express (knife-edge pieces at exactly 2R across the trace with unequal
+  chords on the two sides).
 * A model's interface types are part of its key: the legacy libraries' models mapping MA + MS + SA
   never match an SA-only feature (island unit test); the transmon's full library matches its
-  isolated edges, corners and the 1 um strip (97.9 % of the assigned perimeter patched, the
-  rest Missing: decisions 70 / 71).
+  isolated edges and corners (97.9 % of the assigned perimeter patched; the 2 um strips and the
+  clusters Missing: decisions 70 / 71).
 Phase-4 results: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/phase4/REPORT.md`.
 
 ## Geometry identification: baseline audit (2026-09-24, executable 9ef5256b / v0.17.0-572-g5876402f7)
