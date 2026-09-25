@@ -121,13 +121,14 @@ def bent_bar(width, arm, interior_angle_degrees):
     return loop([tuple(p) for p in points])
 
 
-def arc_bar(width, radius, sweep_degrees, step_degrees, lead=6.0):
+def arc_bar(width, radius, sweep_degrees, step_degrees, lead=6.0, centre_y=None):
     """A bar following a circular arc discretised as a polyline with the given turning angle
-    per vertex, with straight leads at both ends."""
+    per vertex, with straight leads at both ends; the arc centre is (0, centre_y), by default
+    (0, radius) so that the bar starts at the origin (concentric bars share centre_y)."""
     steps = max(1, int(round(sweep_degrees / step_degrees)))
     step = math.radians(sweep_degrees) / steps
     h = 0.5 * width
-    centre = np.array([0.0, radius])
+    centre = np.array([0.0, radius if centre_y is None else centre_y])
     centreline = [centre + radius * np.array([math.sin(k * step), -math.cos(k * step)]) for k in range(steps + 1)]
     d_start = np.array([1.0, 0.0])
     d_end = np.array([math.cos(steps * step), math.sin(steps * step)])
@@ -225,6 +226,29 @@ def stress_suite():
                 layout(f"arc-r{radius:g}-step{step:g}", [sheet(GROUND, arc_bar(3.0, radius, sweep, step))], half_x=half, half_y=half, lc_fine=lc, lc_far=max(6.0, half / 5.0), notes=f"bar of width 3 on a polyline arc of radius {radius}, sweep {sweep} deg, {step} deg per vertex", bend={"Radius": radius, "Width": 3.0})
             )
     layouts.append(layout("arc-r20-step5-fine", [sheet(GROUND, arc_bar(3.0, 20.0, 90.0, 5.0))], half_x=36.0, half_y=36.0, lc_fine=0.5, lc_far=6.0, notes="arc-r20-step5 at half the mesh size (mesh independence)", bend={"Radius": 20.0, "Width": 3.0}))
+    # A gap of exactly 2R (and 2R +/- 1e-3 R) between two concentric 8 um bars (4 R: the far
+    # corners of a bar end are beyond the 3R vertex-join reach of the near corners) along
+    # bends of 50 and 250 um at three discretisations: the interaction decision uses the curve
+    # separation, so every discretisation gives the straight-pair answer (exactly 2R and
+    # 2R + 1e-3 R: isolated edges; 2R - 1e-3 R: a DifferentConductorGap). Mid-chord dips of
+    # the polylines below 2R must not create events (DS-SCT-001: 4 um CPW gaps at R = 2 um).
+    for radius, sweep in [(50.0, 45.0), (250.0, 15.0)]:
+        for step in [1.0, 5.0, 15.0]:
+            for gap_tag, gap in [("2R", 2.0 * RADIUS), ("2Rminus", 2.0 * RADIUS - 1.0e-3 * RADIUS), ("2Rplus", 2.0 * RADIUS + 1.0e-3 * RADIUS)]:
+                width = 8.0
+                outer_radius = radius + width + gap
+                extent = outer_radius * math.sin(math.radians(sweep)) + 12.0
+                half = max(30.0, math.ceil(extent + 4.0))
+                lc = 1.0 if radius < 100 else 2.0
+                layouts.append(
+                    layout(
+                        f"gap-bend-r{radius:g}-{gap_tag}-step{step:g}",
+                        [sheet(GROUND, arc_bar(width, radius, sweep, step)), sheet(GROUND, arc_bar(width, outer_radius, sweep, step, centre_y=radius))],
+                        half_x=half, half_y=half, lc_fine=lc, lc_far=max(6.0, half / 5.0),
+                        notes=f"two concentric 8 um bars with a gap of {gap:g} ({gap_tag}) along a polyline arc of radius {radius}, sweep {sweep} deg, {step} deg per vertex: the straight-pair answer at every discretisation",
+                        bend={"Radius": radius, "Width": width, "Gap": gap},
+                    )
+                )
     layouts.append(layout("taper-10", [sheet(GROUND, trapezoid(24.0, 24.0 - 2.0 * 20.0 * math.tan(math.radians(10.0)), 20.0))], notes="trapezoid with two 10 deg taper edges: corners 80 and 100 deg"))
     layouts.append(layout("facing-layers", [sheet(GROUND, rectangle(-10.0, -6.0, 10.0, 6.0)), sheet(GROUND, rectangle(-10.0, -6.0, 10.0, 6.0), z=3.0)], notes="two facing metal sheets 3 um apart in one PEC attribute: cross-layer class, excluded by decision 73(3)"))
     layouts.append(layout("vertical-wall", [sheet(GROUND, rectangle(-10.0, -6.0, 10.0, 6.0))], walls=[(GROUND, 0.0, -6.0, 0.0, 6.0, 4.0)], notes="a vertical metal wall standing across the sheet: non-planar and non-manifold classes"))
@@ -322,13 +346,19 @@ def _polyline_distance(points, edges):
 def design_bent_pairs(all_edges, corner_points, radius, samples=200):
     """Pairs along bends (SURFACE-RESPONSE-IDENTIFICATION.md (b) 7): two chains that are not
     both single straight edges whose closest-point separation over the mutually paired
-    intervals (within 2R, not beyond either chain's ends, outside the 2R zones of shared
-    vertices) is constant within PAIR_SEPARATION_TOLERANCE. Returns {(rootA, rootB): stats}."""
+    intervals (within the candidate reach 2R (1 + tolerance), not beyond either chain's ends,
+    outside the 2R zones of shared vertices) is constant within PAIR_SEPARATION_TOLERANCE.
+    The pair's separation is that of the underlying curves — the smaller of the two
+    directional maxima of the sampled closest-point distance (the samples include the
+    vertices) — and it interacts iff that separation is within 2R, like a straight pair; a
+    non-interacting constant-separation pair still claims its chord-level interactions (no
+    event cores). Returns {(rootA, rootB): stats}."""
     roots, shared_vertices = design_chains(all_edges, corner_points)
     chains = {}
     for i, r in enumerate(roots):
         chains.setdefault(r, []).append(i)
     interaction = 2.0 * radius - 0.5 * 1.0e-8 * radius
+    reach = 2.0 * radius * (1.0 + PAIR_SEPARATION_TOLERANCE) - 0.5 * 1.0e-8 * radius
     ts = np.linspace(0.0, 1.0, samples + 1)
 
     def chain_ends(members):
@@ -349,7 +379,7 @@ def design_bent_pairs(all_edges, corner_points, radius, samples=200):
             a = all_edges[i]
             pa = a["Start"][None, :] + ts[:, None] * (a["End"] - a["Start"])[None, :]
             d = _polyline_distance(pa, edges_b)
-            keep = d < interaction
+            keep = d < reach
             for point, outward in ends_b:
                 keep &= ((pa - point) @ outward) <= 0.0
             for v in shared:
@@ -372,7 +402,8 @@ def design_bent_pairs(all_edges, corner_points, radius, samples=200):
             lo, hi = min(da + db), max(da + db)
             if hi - lo > PAIR_SEPARATION_TOLERANCE * lo:
                 continue
-            result[(ra, rb)] = {"MinSeparation": lo, "MaxSeparation": hi, "MeanSeparation": float(np.mean(da + db)), "EdgesA": len(ma), "EdgesB": len(mb)}
+            separation = min(max(da), max(db))
+            result[(ra, rb)] = {"MinSeparation": lo, "MaxSeparation": hi, "MeanSeparation": float(np.mean(da + db)), "Separation": separation, "Interacting": within_interaction(separation, radius), "EdgesA": len(ma), "EdgesB": len(mb)}
     return result
 
 
@@ -675,7 +706,9 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
                 }
             )
     corner_points = [np.array(c["Point"]) for c in corners if c["ClassifierCorner"]]
-    corner_pairs_within_2r = sum(1 for i in range(len(corner_points)) for j in range(i + 1, len(corner_points)) if np.linalg.norm(corner_points[i] - corner_points[j]) <= 2.0 * radius * (1 + 1e-9))
+    # Two corners are an event of their own when within 2R (the classifier's quantized strict
+    # decision: exactly 2R is not within).
+    corner_pairs_within_2r = sum(1 for i in range(len(corner_points)) for j in range(i + 1, len(corner_points)) if within_interaction(float(np.linalg.norm(corner_points[i] - corner_points[j])), radius))
     # Design rule (SURFACE-RESPONSE-IDENTIFICATION.md (b) 7): chains that pair along a bend
     # are pair features; their cross-chord interactions are not events. The expected
     # curvature class follows the layout's design bend (inner side radius vs 10 R, decision 75).
@@ -686,12 +719,18 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
     for (ra, rb), stats in sorted(bent_pairs.items()):
         record = dict(stats)
         record["Chains"] = [int(ra), int(rb)]
-        if bend:
-            inner = bend["Radius"] - 0.5 * bend["Width"]
+        if bend and record["Interacting"]:
+            # A bar: its two sides are a strip of the design width; a gap between two bars
+            # (bend["Gap"]): the facing sides are a different-conductor gap of the design gap,
+            # the bar sides themselves are not within 2R.
+            inner = bend["Radius"] - 0.5 * bend["Width"] if "Gap" not in bend else bend["Radius"] + 0.5 * bend["Width"]
             record["DesignInnerRadiusOverR"] = inner / radius
             record["Curved"] = inner / radius < STRAIGHT_BEND_RADIUS_OVER_R
-            record["ExpectedClasses"] = sorted({"SameConductorStrip"} | ({"CurvedSameConductorStrip"} if record["Curved"] else set()))
-            record["ExpectedSeparation"] = bend["Width"]
+            base = "DifferentConductorGap" if "Gap" in bend else "SameConductorStrip"
+            record["ExpectedClasses"] = sorted({base} | ({"Curved" + base} if record["Curved"] else set()))
+            record["ExpectedSeparation"] = bend["Gap"] if "Gap" in bend else bend["Width"]
+        elif not record["Interacting"]:
+            record["ExpectedClasses"] = []
         bent_pair_records.append(record)
     # Design rule (SURFACE-RESPONSE-IDENTIFICATION.md (b) 3): a corner joins a cluster when
     # its 2R through-vertex zone reaches a cluster region, i.e. an event core lies within 3R.
@@ -789,6 +828,7 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
         "NonparallelInteractions": nonparallel,
         "Arcs": arcs,
         "Excluded": excluded,
+        "Bend": bend,
     }
 
 
@@ -915,14 +955,35 @@ def compare_with_oracle(orc, audit_result, manifest):
         "Meaning": "expected class and separation of every parallel pair within 2R vs the manifest's translational records (pairs along bends: expected classes with separations within the pair tolerance); pairs at exactly 2R are the knife edge",
     }
     if bent_records:
-        # A pair along a bend leaves no isolated or curved-edge remainder on its chains and
-        # the bar ends are the only clusters (one per group of corners within 2R).
-        checks["A6-bent-pair-classes"] = {
-            "ManifestTopologies": dict(manifest_topologies),
-            "ExpectedClusters": orc["CornerPairsWithin2R"],
-            "Pass": manifest_topologies.get("IsolatedEdge", 0) == 0 and manifest_topologies.get("CurvedEdge", 0) == 0 and manifest_topologies.get("SpatialEdgeCluster", 0) == orc["CornerPairsWithin2R"],
-            "Meaning": "the two sides of a constant-width bend are fully paired; the strip ends (two corners within 2R) are the only spatial clusters",
-        }
+        interacting = [r for r in bent_records if r["Interacting"]]
+        gap_layout = bool(orc.get("Bend")) and "Gap" in orc["Bend"]
+        if interacting and not gap_layout:
+            # A pair along a bend leaves no isolated or curved-edge remainder on its chains and
+            # the bar ends are the only clusters (one per group of corners within 2R).
+            checks["A6-bent-pair-classes"] = {
+                "ManifestTopologies": dict(manifest_topologies),
+                "ExpectedClusters": orc["CornerPairsWithin2R"],
+                "Pass": manifest_topologies.get("IsolatedEdge", 0) == 0 and manifest_topologies.get("CurvedEdge", 0) == 0 and manifest_topologies.get("SpatialEdgeCluster", 0) == orc["CornerPairsWithin2R"],
+                "Meaning": "the two sides of a constant-width bend are fully paired; the strip ends (two corners within 2R) are the only spatial clusters",
+            }
+        else:
+            # A gap between two bars along a bend, decided on the curve separation like a
+            # straight pair: within 2R -> one gap class with the design separation and the
+            # corner pairs across the gap as the only clusters; at or beyond 2R -> no pair
+            # class, no cluster, the sides are isolated edges (no curved edge: inner radius >=
+            # 10 R). The chord dips below 2R of the polylines must not change this.
+            separations = {round(k[1], 6) for k in manifest_pairs_set}
+            expected_separation = {round(r["ExpectedSeparation"], 6) for r in interacting if "ExpectedSeparation" in r}
+            checks["A6-bent-pair-classes"] = {
+                "ManifestTopologies": dict(manifest_topologies),
+                "ManifestPairSeparations": sorted(separations),
+                "ExpectedClusters": orc["CornerPairsWithin2R"],
+                "Interacting": bool(interacting),
+                "Pass": manifest_topologies.get("SpatialEdgeCluster", 0) == orc["CornerPairsWithin2R"]
+                and manifest_topologies.get("CurvedEdge", 0) == 0
+                and (separations == expected_separation if interacting else (not separations and manifest_topologies.get("IsolatedEdge", 0) > 0)),
+                "Meaning": "gap along a bend: the straight-pair answer at every discretisation (within 2R: one pair class at the design separation; at or beyond 2R: isolated edges, no pair, no cluster beyond the corner pairs)",
+            }
     checks["A6-nonparallel-interactions"] = {"Oracle": len(orc["NonparallelInteractions"]), "Mesh": census["Interactions"]["NonparallelPairs"], "Pass": None, "Meaning": "record only: non-parallel pairs are omitted by the classifier"}
     # Decision 73(3) exclusions: the manifest's CrossLayer record must carry the analytic
     # length of the perimeter within 2R of the off-plane metal, and its excluded vertices the

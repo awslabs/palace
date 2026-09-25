@@ -154,6 +154,34 @@ class OracleTest(unittest.TestCase):
             self.assertEqual(orc["CornerPairsWithin2R"], 2)
             self.assertEqual(orc["StandaloneCornerCount"], 0)
 
+    def test_gap_along_a_bend_is_decided_on_the_curve_separation(self):
+        # A gap of exactly 2R between two concentric bars: the polyline chords dip below 2R
+        # mid-chord (4 cos(7.5 deg) = 3.966 at 15 deg per vertex, 3.9996 at 1 deg) but the
+        # pair separation (the smaller directional maximum, reached at the vertices) is the
+        # design gap, so exactly 2R and 2R + 1e-3 R do not interact at any discretisation
+        # (no events either: the corners stay standalone) and 2R - 1e-3 R is a
+        # DifferentConductorGap with the two corner pairs across the gap as clusters.
+        for radius, sweep in [(50.0, 45.0), (250.0, 15.0)]:
+            for step in [1.0, 5.0, 15.0]:
+                for gap, interacting in [(4.0, False), (3.998, True), (4.002, False)]:
+                    inner = S.arc_bar(8.0, radius, sweep, step)
+                    outer = S.arc_bar(8.0, radius + 8.0 + gap, sweep, step, centre_y=radius)
+                    lay = S.layout("gap", [S.sheet(S.GROUND, inner), S.sheet(S.GROUND, outer)], half_x=400.0, half_y=400.0, bend={"Radius": radius, "Width": 8.0, "Gap": gap})
+                    orc = S.oracle(lay)
+                    gap_records = [r for r in orc["BentPairs"] if abs(r["Separation"] - gap) < 1.0e-9]
+                    self.assertEqual(len(gap_records), 1, (radius, step, gap))
+                    record = gap_records[0]
+                    self.assertEqual(record["Interacting"], interacting, (radius, step, gap))
+                    self.assertLess(record["MinSeparation"], gap) if step > 1.0 else None
+                    self.assertEqual(record["ExpectedClasses"], ["DifferentConductorGap"] if interacting else [])
+                    self.assertTrue(all(not r["Interacting"] for r in orc["BentPairs"] if r is not record))
+                    self.assertEqual(orc["CornerPairsWithin2R"], 2 if interacting else 0)
+                    self.assertEqual(orc["ClassifierCornerCount"], 8)
+                    # 8 um bars: the far corners of every bar end stay standalone (4 R from the
+                    # near corners, beyond the 3R vertex-join reach).
+                    self.assertEqual(orc["StandaloneCornerCount"], 4 if interacting else 8)
+                    self.assertFalse(any(p["Within2R"] and not p["InBentPair"] for p in orc["ParallelPairs"]))
+
     def test_acute_corner_arms_are_not_a_pair_along_a_bend(self):
         # The arms of a 30 deg corner come within 2R of each other with a separation growing
         # along the arm: no constant separation, hence events (a spatial cluster), not a pair.
@@ -199,7 +227,7 @@ class SpecificationTest(unittest.TestCase):
         layouts = S.stress_suite()
         names = [lay["Name"] for lay in layouts]
         self.assertEqual(len(names), len(set(names)))
-        for prefix, count in (("gap-same-", 9), ("gap-different-", 9), ("strip-", 9), ("corner-", 10), ("hole-", 3), ("arc-", 12)):
+        for prefix, count in (("gap-same-", 9), ("gap-different-", 9), ("strip-", 9), ("corner-", 10), ("hole-", 3), ("arc-", 12), ("gap-bend-", 18)):
             self.assertEqual(sum(1 for n in names if n.startswith(prefix)), count, prefix)
         for name in ("tee-stem3", "tee-stem6", "cross-arm3", "edge-to-boundary", "island-3x3", "taper-10", "facing-layers", "vertical-wall", "island-rounded-8x6", "aperture-rounded-8x6"):
             self.assertIn(name, names)

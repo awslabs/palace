@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <map>
+#include <optional>
 #include <set>
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
@@ -218,18 +219,20 @@ std::vector<Point2> Rectangle(double x0, double y0, double x1, double y1)
 // circular arc (radius, sweep) discretised with the given turn per vertex, with straight
 // leads at both ends, offset exactly along the vertex bisectors (counter-clockwise loop).
 std::vector<Point2> ArcBar(double width, double radius, double sweep_degrees,
-                           double step_degrees, double lead = 6.0)
+                           double step_degrees, double lead = 6.0,
+                           std::optional<double> centre_y = std::nullopt)
 {
   const int steps = std::max(1, static_cast<int>(std::lround(sweep_degrees / step_degrees)));
   const double step = sweep_degrees * std::acos(-1.0) / 180.0 / steps;
   const double h = 0.5 * width;
+  const double cy = centre_y.value_or(radius);  // arc centre (0, cy); default (0, radius)
   std::vector<Point2> centreline;
   for (int k = 0; k <= steps; k++)
   {
-    centreline.push_back({radius * std::sin(k * step), radius - radius * std::cos(k * step)});
+    centreline.push_back({radius * std::sin(k * step), cy - radius * std::cos(k * step)});
   }
   const Point2 d_end = {std::cos(steps * step), std::sin(steps * step)};
-  centreline.insert(centreline.begin(), {-lead, 0.0});
+  centreline.insert(centreline.begin(), {-lead, centreline.front()[1]});
   centreline.push_back({centreline.back()[0] + lead * d_end[0],
                         centreline.back()[1] + lead * d_end[1]});
   auto Offset = [&](double sign)
@@ -716,5 +719,53 @@ TEST_CASE("SurfaceResponseIdentificationCurvedEdges",
     REQUIRE(radii.size() == 2);
     CHECK_THAT(radii[0], WithinRel(5.0 / R, 0.03));   // inner side, radius 8 - 3
     CHECK_THAT(radii[1], WithinRel(11.0 / R, 0.03));  // outer side, radius 8 + 3
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationPairsAtTheThreshold",
+          "[surfaceresponseidentification][Serial]")
+{
+  // A gap of exactly 2R (and 2R +/- 1e-3 R) between two concentric 8 um bars (4 R: the far
+  // corners of a bar end are beyond the 3R vertex-join reach of the near corners) along
+  // bends of 50 and 250 um at three discretisations: the interaction decision uses the separation of
+  // the underlying curves (rule at kPairSeparationTolerance), so every discretisation gives
+  // the straight-pair answer — exactly 2R and 2R + 1e-3 R: isolated edges, no cluster, no
+  // pair; 2R - 1e-3 R: one DifferentConductorGap along the bend (straight-like: inner radius
+  // >= 10 R) and the two corner pairs across the gap as clusters. The mid-chord dips of the
+  // chords below 2R (DS-SCT-001: 4 um gaps at 3.9999 -> 3 mm clusters) must not create
+  // events.
+  const double R = 2.0, width = 8.0;
+  for (const double radius : {50.0, 250.0})
+  {
+    const double sweep = radius < 100.0 ? 45.0 : 15.0;
+    for (const double step : {1.0, 5.0, 15.0})
+    {
+      for (const double gap : {2.0 * R, 2.0 * R - 1.0e-3 * R, 2.0 * R + 1.0e-3 * R})
+      {
+        const auto inner = ArcBar(width, radius, sweep, step);
+        const auto outer = ArcBar(width, radius + width + gap, sweep, step, 6.0, radius);
+        const auto input = MakeInput({{inner, 0, 1.0}, {outer, 1, 1.0}}, R);
+        const auto result = IdentifyMetalPerimeter(input);
+        INFO("radius " << radius << " step " << step << " gap " << gap);
+        CheckPartition(input, result);
+        std::map<std::string, int> counts;
+        for (const auto &feature : result.features)
+        {
+          counts[feature.type]++;
+          if (feature.type == "DifferentConductorGap")
+          {
+            CHECK_THAT(feature.signature["SeparationOverR"].get<double>(),
+                       WithinAbs(gap / R, 1.0e-6));
+          }
+        }
+        const bool interacting = gap < 2.0 * R;
+        CHECK(counts["DifferentConductorGap"] == (interacting ? 1 : 0));
+        CHECK(counts["SpatialEdgeCluster"] == (interacting ? 2 : 0));
+        CHECK(counts["ConvexCorner"] == (interacting ? 4 : 8));
+        CHECK(counts["CurvedEdge"] == 0);
+        CHECK(counts["CurvedDifferentConductorGap"] == 0);
+        CHECK(counts["IsolatedEdge"] >= (interacting ? 2 : 4));
+      }
+    }
   }
 }
