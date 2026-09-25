@@ -223,18 +223,17 @@ ModeOperatorModel::ModeOperatorModel(
     surf_z_op.AddDampingBdrCoefficients(-1.0, damp_n);
     if (farfield_op.GetAttrList().Size() > 0)
     {
+      // Scalar inverse impedance of the domain material adjacent to each farfield boundary
+      // element, like for the in-plane term (assumes an isotropic farfield material). The
+      // boundary attribute to material map is indexed by libCEED boundary attribute: a mesh
+      // boundary attribute maps to one of these per neighboring domain attribute.
       const auto &inv_z = mat_op.GetInvImpedance();
-      const auto &bdr_attr_to_mat = mat_op.GetBdrAttributeToMaterial();
-      for (auto attr : farfield_op.GetAttrList())
+      const auto bdr_attr_to_mat = mat_op.GetBdrAttributeToMaterial();
+      for (auto ceed_attr : mat_op.GetCeedBdrAttributes(farfield_op.GetAttrList()))
       {
-        const int mat_idx =
-            (attr > 0 && attr <= bdr_attr_to_mat.Size()) ? bdr_attr_to_mat[attr - 1] : -1;
-        const double inv_z0 = (mat_idx >= 0) ? inv_z(0, 0, mat_idx) : 1.0;
-        auto ceed_attrs = mat_op.GetCeedBdrAttributes(attr);
-        if (ceed_attrs.Size() > 0)
-        {
-          damp_n.AddMaterialProperty(ceed_attrs, inv_z0, -1.0);
-        }
+        const int mat_idx = bdr_attr_to_mat[ceed_attr - 1];
+        MFEM_ASSERT(mat_idx >= 0, "Missing material for farfield boundary attribute!");
+        damp_n.AddMaterialProperty(ceed_attr, inv_z(0, 0, mat_idx), -1.0);
       }
     }
     if (!damp_n.empty())

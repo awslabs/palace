@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <functional>
@@ -12,10 +13,12 @@
 
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
+#include "linalg/vector.hpp"
 #include "models/boundarymodeoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/modeeigensolver.hpp"
+#include "models/modeoperatorassembly.hpp"
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfaceimpedanceoperator.hpp"
 #include "models/surfacerationalimpedanceoperator.hpp"
@@ -472,6 +475,107 @@ TEST_CASE("ModeEigenSolver p-multigrid preconditioning",
           imp.Ls = 1.0e-8;
         });
   }
+}
+
+TEST_CASE("ModeOperatorModel farfield damping uses the neighboring material",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // The first-order absorbing boundary condition adds iω/Z₀ times the boundary mass of the
+  // in-plane (ND, tangential trace) and out-of-plane (H1, with the negative sign of the
+  // H1 block) field components, where 1/Z₀ = √(ε/μ) is taken from the domain material
+  // adjacent to each boundary element. The absorbing side x = W spans two materials, with
+  // ε = 4 (1/Z₀ = 2) along y < H/4 and vacuum (1/Z₀ = 1) above, so a field tangential to
+  // it with unit magnitude gives ±(2 H/4 + 3 H/4).
+  constexpr double W = 2.0, H = 1.0;
+  MPI_Comm comm = Mpi::World();
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.problem.type = ProblemType::BOUNDARYMODE;
+  iodata.model.Lc = 1.0;
+  {
+    auto &substrate = iodata.domains.materials.emplace_back();
+    substrate.attributes = {1};
+    substrate.epsilon_r.s = {4.0, 4.0, 4.0};
+    auto &vacuum = iodata.domains.materials.emplace_back();
+    vacuum.attributes = {2};
+  }
+  iodata.boundaries.farfield.attributes = {2};  // MakeCartesian2D: x = W
+  iodata.solver.order = 2;
+  iodata.solver.boundary_mode.freq = 1.0;
+  iodata.solver.boundary_mode.n = 1;
+
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian2D(8, 4, mfem::Element::TRIANGLE, false, W, H));
+  for (int i = 0; i < serial_mesh->GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh->GetElementCenter(i, center);
+    serial_mesh->SetAttribute(i, (center(1) < 0.25 * H) ? 1 : 2);
+  }
+  serial_mesh->SetAttributes();
+  iodata.NondimensionalizeInputs(serial_mesh);
+  Mesh palace_mesh(std::make_unique<mfem::ParMesh>(comm, *serial_mesh));
+  iodata.CheckConfiguration();
+
+  mfem::ND_FECollection nd_fec(iodata.solver.order, palace_mesh.Dimension());
+  mfem::H1_FECollection h1_fec(iodata.solver.order, palace_mesh.Dimension());
+  FiniteElementSpace nd_fespace(palace_mesh, &nd_fec);
+  FiniteElementSpace h1_fespace(palace_mesh, &h1_fec);
+  MaterialOperator mat_op(iodata, palace_mesh);
+  SurfaceImpedanceOperator surf_z_op(iodata, mat_op, palace_mesh.Get());
+  FarfieldBoundaryOperator farfield_op(iodata, mat_op, palace_mesh.Get());
+  SurfaceConductivityOperator surf_sigma_op(iodata, mat_op, palace_mesh.Get());
+  SurfaceRationalImpedanceOperator surf_rz_op(iodata, mat_op, palace_mesh.Get());
+
+  auto [Atnr, Atni] = mode_assembly::AssembleAtn(nd_fespace, h1_fespace, mat_op);
+  std::unique_ptr<mfem::HypreParMatrix> Btnr(Atnr->Transpose());
+  *Btnr *= -1.0;
+  auto [Bttr, Btti] = mode_assembly::AssembleBtt(nd_fespace, mat_op);
+  mfem::Array<int> dbc_tdof_list;  // No essential boundaries
+  mode_assembly::ModeOperatorModel model(nd_fespace, h1_fespace, mat_op, nullptr, surf_z_op,
+                                         farfield_op, surf_sigma_op, surf_rz_op, *Bttr,
+                                         Atnr.get(), Atni.get(), Btnr.get(), dbc_tdof_list);
+  const auto &components = model.GetComponents();
+  auto omega_component =
+      std::find_if(components.begin(), components.end(), [](const auto &component)
+                   { return component.type == mode_assembly::CoefficientType::OMEGA; });
+  REQUIRE(omega_component != components.end());
+
+  // Apply the component to [Eₜ; Eₙ] and return the pairing with the input. The damping
+  // only has an imaginary part (the frequency scalar iω is applied separately).
+  const int nd_size = nd_fespace.GetTrueVSize(), h1_size = h1_fespace.GetTrueVSize();
+  auto Pairing = [&](const Vector &et, double en)
+  {
+    ComplexVector x(nd_size + h1_size), y(nd_size + h1_size);
+    x = 0.0;
+    x.Real().SetVector(et, 0);
+    for (int i = nd_size; i < nd_size + h1_size; i++)
+    {
+      x.Real()[i] = en;
+    }
+    omega_component->op->Mult(x, y);
+    CHECK(linalg::Norml2(comm, y.Real()) == 0.0);
+    return linalg::Dot(comm, x.Real(), y.Imag());
+  };
+  const double expected = 2.0 * 0.25 * H + 1.0 * 0.75 * H;
+
+  // In-plane field ŷ, tangential to the absorbing boundary.
+  Vector et(nd_size);
+  {
+    mfem::ParGridFunction E(&nd_fespace.Get());
+    mfem::Vector yhat(2);
+    yhat(0) = 0.0;
+    yhat(1) = 1.0;
+    mfem::VectorConstantCoefficient coeff(yhat);
+    E.ProjectCoefficient(coeff);
+    E.GetTrueDofs(et);
+  }
+  CHECK_THAT(Pairing(et, 0.0), WithinRel(expected, 1.0e-12));
+
+  // Unit out-of-plane field.
+  Vector zero(nd_size);
+  zero = 0.0;
+  CHECK_THAT(Pairing(zero, 1.0), WithinRel(-expected, 1.0e-12));
 }
 
 }  // namespace palace
