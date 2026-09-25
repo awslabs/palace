@@ -138,6 +138,10 @@ class PerimeterEdge:
     chain: int = -1
     component: int = -1  # edge-connected metal component (the classifier's conductor)
     cross_layer: list = field(default_factory=list)  # (s0, s1) portions within 2R of off-plane metal
+    # Direction classes of the owning faces (ONE_SIDED | FOLD | NONMANIFOLD): a BOX edge where
+    # two PEC box faces meet is a FOLD of the classifier (type FOLD, no PHYSICAL segment), so
+    # it takes no part in the vertex census (classify_vertices).
+    face_classes: str = "ONE_SIDED"
 
     @property
     def cross_layer_length(self):
@@ -623,6 +627,7 @@ def extract_perimeter(mesh, config, process_normal=None, corner_tolerance_degree
                 plane=plane,
                 owners=len(faces),
                 component=int(face_component[faces[0]]),
+                face_classes=edge_kinds[key],
             )
             vertices[v0].edges.append(len(edges))
             vertices[v1].edges.append(len(edges))
@@ -707,12 +712,19 @@ def classify_vertices(perimeter, corner_tolerance_degrees=CORNER_ANGLE_TOLERANCE
     straight_dot = -math.cos(math.radians(corner_tolerance_degrees))
     quantized_straight = _quantize(straight_dot)
     # physical_kind counts the segments the classifier types PHYSICAL (one-sided, not on the
-    # truncation boundary), i.e. the audit's PHYSICAL, EMBEDDED and NONPLANAR kinds.
+    # truncation boundary), i.e. the audit's PHYSICAL, EMBEDDED, NONPLANAR and one-sided BOX
+    # kinds. Vertex-census rule (SURFACE-RESPONSE-IDENTIFICATION.md (a) 2): a vertex all of
+    # whose incident edges are folds / non-manifold edges (the corner of a PEC box where three
+    # box faces meet, the base corners of a bump) is a vertex of no one-sided perimeter and has
+    # no record on either side; a BOX edge shared by two box faces is such a fold.
     physical_kinds = tuple(k for k in CLASSIFIER_PHYSICAL_KINDS if k != "TRUNCATION")
     for index, vertex in enumerate(perimeter.vertices):
         for physical in (False, True):
             edges = [
-                e for e in vertex.edges if not physical or perimeter.edges[e].kind in physical_kinds
+                e
+                for e in vertex.edges
+                if not physical
+                or (perimeter.edges[e].kind in physical_kinds and perimeter.edges[e].face_classes == "ONE_SIDED")
             ]
             if not edges:
                 kind = None

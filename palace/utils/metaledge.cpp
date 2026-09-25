@@ -392,15 +392,11 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   }
   StageLine(std::to_string(local_loops.size()) + " local metal faces, " +
             std::to_string(gathered.size()) + " gathered");
-  // Canonical processing order: a function of the global mesh only, not of the partition.
-  std::sort(gathered.begin(), gathered.end(),
-            [](const GatheredFace &a, const GatheredFace &b)
-            { return std::tie(a.loop, a.attribute, a.sides) < std::tie(b.loop, b.attribute, b.sides); });
 
   // (3) Canonical points: coordinates within coordinate_tolerance of an already registered
   // point (the 27 neighbouring grid cells are searched so a crack copy straddling a cell
-  // boundary still merges) map to that point. The representative is the first copy in the
-  // canonical order.
+  // boundary still merges) map to that point. The representative is the lexicographically
+  // smallest copy; the numbering is fixed afterwards by sorting the distinct points.
   std::vector<Point> canonical_points;
   std::map<PointKey, std::vector<std::size_t>> point_cells;
   auto GetPointKey = [&](const Point &point)
@@ -436,6 +432,13 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
             }
             if (distance_squared <= coordinate_tolerance * coordinate_tolerance)
             {
+              // Representative = the lexicographically smallest copy merged into the
+              // point (a function of the set of copies, not of their gathered order; the
+              // cell of the representative moves by at most one, within the search).
+              if (point < canonical_points[candidate])
+              {
+                canonical_points[candidate] = point;
+              }
               return candidate;
             }
           }
@@ -461,44 +464,111 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   };
   std::vector<GlobalFace> faces;
   std::map<std::vector<std::size_t>, std::size_t> face_by_vertices;
-  for (const auto &source : gathered)
   {
-    std::vector<std::size_t> loop(source.loop.size());
-    for (std::size_t i = 0; i < loop.size(); i++)
+    // Register every point (first pass, in the gathered order), then renumber the
+    // canonical points by their sorted quantized coordinates: the point, segment and vertex
+    // numbering of the perimeter (and hence of the manifest) is a function of the set of
+    // distinct points only, not of the partition or of the order in which the crack copies
+    // of a face were gathered (the first-encounter numbering permuted 2,647 segment-table
+    // entries between np8 and np192 on DS-SCT-002). Ties on the quantized key (distinct
+    // points closer than sqrt(3) tolerance in one cell) are broken by the raw coordinates.
+    std::vector<std::vector<std::size_t>> gathered_loops(gathered.size());
+    for (std::size_t g = 0; g < gathered.size(); g++)
     {
-      loop[i] = CanonicalPoint(source.loop[i]);
-    }
-    std::vector<std::size_t> key = loop;
-    std::sort(key.begin(), key.end());
-    key.erase(std::unique(key.begin(), key.end()), key.end());
-    MFEM_VERIFY(key.size() >= 3,
-                "A metal boundary face degenerates to fewer than three distinct vertices!");
-    auto [entry, inserted] = face_by_vertices.try_emplace(key, faces.size());
-    if (inserted)
-    {
-      GlobalFace face;
-      face.attribute = source.attribute;
-      face.loop = std::move(loop);
-      faces.push_back(std::move(face));
-    }
-    else
-    {
-      auto &face = faces[entry->second];
-      if (face.attribute != source.attribute)
+      auto &loop = gathered_loops[g];
+      loop.resize(gathered[g].loop.size());
+      for (std::size_t i = 0; i < loop.size(); i++)
       {
-        const auto &p = source.loop.front();
-        MFEM_ABORT("Coincident metal boundary elements carry different metal attributes "
-                   << face.attribute << " and " << source.attribute << " (face at ("
-                   << p[0] << ", " << p[1] << ", " << p[2]
-                   << ")); drop or merge the duplicate boundary elements!");
+        loop[i] = CanonicalPoint(gathered[g].loop[i]);
       }
     }
-    auto &face = faces[entry->second];
-    for (const int side : source.sides)
+    std::vector<std::size_t> order(canonical_points.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::vector<PointKey> keys(canonical_points.size());
+    for (std::size_t p = 0; p < canonical_points.size(); p++)
     {
-      if (side > 0)
+      keys[p] = GetPointKey(canonical_points[p]);
+    }
+    std::sort(order.begin(), order.end(),
+              [&](std::size_t a, std::size_t b)
+              {
+                return std::tie(keys[a], canonical_points[a]) <
+                       std::tie(keys[b], canonical_points[b]);
+              });
+    std::vector<std::size_t> new_index(canonical_points.size());
+    std::vector<Point> sorted_points(canonical_points.size());
+    for (std::size_t rank_of_point = 0; rank_of_point < order.size(); rank_of_point++)
+    {
+      new_index[order[rank_of_point]] = rank_of_point;
+      sorted_points[rank_of_point] = canonical_points[order[rank_of_point]];
+    }
+    canonical_points = std::move(sorted_points);
+    for (auto &[cell, members] : point_cells)
+    {
+      (void)cell;
+      for (auto &member : members)
       {
-        face.sides.insert(side);
+        member = new_index[member];
+      }
+      std::sort(members.begin(), members.end());
+    }
+    // Faces in the order of their sorted canonical vertex sets (then loop, attribute,
+    // sides): the face numbering, the metal components and the face incidence order of
+    // every segment follow the point numbering.
+    std::vector<std::vector<std::size_t>> face_keys(gathered.size());
+    for (std::size_t g = 0; g < gathered.size(); g++)
+    {
+      for (auto &p : gathered_loops[g])
+      {
+        p = new_index[p];
+      }
+      face_keys[g] = gathered_loops[g];
+      std::sort(face_keys[g].begin(), face_keys[g].end());
+      face_keys[g].erase(std::unique(face_keys[g].begin(), face_keys[g].end()),
+                         face_keys[g].end());
+      MFEM_VERIFY(face_keys[g].size() >= 3, "A metal boundary face degenerates to fewer "
+                                            "than three distinct vertices!");
+    }
+    std::vector<std::size_t> face_order(gathered.size());
+    std::iota(face_order.begin(), face_order.end(), 0);
+    std::sort(face_order.begin(), face_order.end(),
+              [&](std::size_t a, std::size_t b)
+              {
+                return std::tie(face_keys[a], gathered_loops[a], gathered[a].attribute,
+                                gathered[a].sides) <
+                       std::tie(face_keys[b], gathered_loops[b], gathered[b].attribute,
+                                gathered[b].sides);
+              });
+    for (const std::size_t g : face_order)
+    {
+      const auto &source = gathered[g];
+      auto [entry, inserted] = face_by_vertices.try_emplace(face_keys[g], faces.size());
+      if (inserted)
+      {
+        GlobalFace face;
+        face.attribute = source.attribute;
+        face.loop = std::move(gathered_loops[g]);
+        faces.push_back(std::move(face));
+      }
+      else
+      {
+        auto &face = faces[entry->second];
+        if (face.attribute != source.attribute)
+        {
+          const auto &p = source.loop.front();
+          MFEM_ABORT("Coincident metal boundary elements carry different metal attributes "
+                     << face.attribute << " and " << source.attribute << " (face at ("
+                     << p[0] << ", " << p[1] << ", " << p[2]
+                     << ")); drop or merge the duplicate boundary elements!");
+        }
+      }
+      auto &face = faces[entry->second];
+      for (const int side : source.sides)
+      {
+        if (side > 0)
+        {
+          face.sides.insert(side);
+        }
       }
     }
   }
