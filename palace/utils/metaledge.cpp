@@ -134,6 +134,177 @@ SumSegmentVectorsInCanonicalOrder(MPI_Comm comm, std::size_t segment_count,
   return sum;
 }
 
+// Flat buffers for the broadcast of the perimeter built on the root and the scatter of
+// every rank's retained facets: integers and reals, read back in the order written.
+struct GeometryBuffers
+{
+  std::vector<long long int> ints;
+  std::vector<double> reals;
+};
+
+void PackInts(GeometryBuffers &b, const std::vector<int> &values)
+{
+  b.ints.push_back(static_cast<long long int>(values.size()));
+  b.ints.insert(b.ints.end(), values.begin(), values.end());
+}
+
+std::vector<int> UnpackInts(const GeometryBuffers &b, std::size_t &pos)
+{
+  const auto n = static_cast<std::size_t>(b.ints[pos++]);
+  std::vector<int> values(n);
+  for (std::size_t i = 0; i < n; i++)
+  {
+    values[i] = static_cast<int>(b.ints[pos++]);
+  }
+  return values;
+}
+
+void PackFace(const MetalSurfaceFace &face, GeometryBuffers &b)
+{
+  b.ints.push_back(face.component);
+  b.ints.push_back(face.attribute);
+  b.ints.push_back(face.on_bounding_box ? 1 : 0);
+  b.ints.push_back(static_cast<long long int>(face.vertices.size()));
+  b.reals.insert(b.reals.end(), face.normal.begin(), face.normal.end());
+  for (const auto &p : face.vertices)
+  {
+    b.reals.insert(b.reals.end(), p.begin(), p.end());
+  }
+}
+
+MetalSurfaceFace UnpackFace(const GeometryBuffers &b, std::size_t &int_pos,
+                            std::size_t &real_pos)
+{
+  MetalSurfaceFace face;
+  face.component = static_cast<int>(b.ints[int_pos++]);
+  face.attribute = static_cast<int>(b.ints[int_pos++]);
+  face.on_bounding_box = b.ints[int_pos++] != 0;
+  const auto n = static_cast<std::size_t>(b.ints[int_pos++]);
+  std::copy_n(b.reals.data() + real_pos, 3, face.normal.begin());
+  real_pos += 3;
+  face.vertices.resize(n);
+  for (std::size_t i = 0; i < n; i++)
+  {
+    std::copy_n(b.reals.data() + real_pos, 3, face.vertices[i].begin());
+    real_pos += 3;
+  }
+  return face;
+}
+
+// The perimeter without faces: scalars, vertices, segments.
+void PackGeometry(const MetalEdgeGeometry &g, GeometryBuffers &b)
+{
+  b.reals.insert(b.reals.end(), g.layer_normal.begin(), g.layer_normal.end());
+  b.ints.push_back(g.components);
+  b.ints.push_back(g.physical_components);
+  b.ints.push_back(g.physical_chains);
+  b.ints.push_back(g.metal_components);
+  b.ints.push_back(static_cast<long long int>(g.vertices.size()));
+  for (const auto &v : g.vertices)
+  {
+    b.reals.insert(b.reals.end(), v.coordinate.begin(), v.coordinate.end());
+    b.ints.push_back(static_cast<long long int>(v.segments.size()));
+    for (const std::size_t s : v.segments)
+    {
+      b.ints.push_back(static_cast<long long int>(s));
+    }
+    b.ints.push_back(static_cast<long long int>(v.type));
+    b.ints.push_back(v.physical_type ? static_cast<long long int>(*v.physical_type) : -1);
+    b.ints.push_back(v.on_truncation_boundary ? 1 : 0);
+  }
+  b.ints.push_back(static_cast<long long int>(g.segments.size()));
+  for (const auto &seg : g.segments)
+  {
+    b.ints.push_back(static_cast<long long int>(seg.vertices[0]));
+    b.ints.push_back(static_cast<long long int>(seg.vertices[1]));
+    b.ints.push_back(seg.component);
+    b.ints.push_back(seg.physical_component);
+    b.ints.push_back(seg.physical_chain);
+    b.ints.push_back(seg.metal_component);
+    b.ints.push_back(static_cast<long long int>(seg.type));
+    PackInts(b, seg.metal_attributes);
+    b.ints.push_back(static_cast<long long int>(seg.conditions.size()));
+    for (const auto &c : seg.conditions)
+    {
+      b.ints.push_back(static_cast<long long int>(c.type));
+      b.ints.push_back(c.index);
+    }
+    PackInts(b, seg.sa_interfaces);
+    PackInts(b, seg.ms_interfaces);
+    PackInts(b, seg.ma_interfaces);
+    PackInts(b, seg.truncation_attributes);
+    b.ints.push_back(seg.face_count);
+    b.ints.push_back(static_cast<long long int>(seg.face_normals.size()));
+    for (const auto &n : seg.face_normals)
+    {
+      b.reals.insert(b.reals.end(), n.begin(), n.end());
+    }
+    PackInts(b, seg.side_attributes);
+    b.ints.push_back(seg.on_bounding_box ? 1 : 0);
+  }
+}
+
+void UnpackGeometry(const GeometryBuffers &b, MetalEdgeGeometry &g)
+{
+  std::size_t ip = 0, rp = 0;
+  std::copy_n(b.reals.data() + rp, 3, g.layer_normal.begin());
+  rp += 3;
+  g.components = static_cast<int>(b.ints[ip++]);
+  g.physical_components = static_cast<int>(b.ints[ip++]);
+  g.physical_chains = static_cast<int>(b.ints[ip++]);
+  g.metal_components = static_cast<int>(b.ints[ip++]);
+  g.vertices.resize(static_cast<std::size_t>(b.ints[ip++]));
+  for (auto &v : g.vertices)
+  {
+    std::copy_n(b.reals.data() + rp, 3, v.coordinate.begin());
+    rp += 3;
+    v.segments.resize(static_cast<std::size_t>(b.ints[ip++]));
+    for (auto &s : v.segments)
+    {
+      s = static_cast<std::size_t>(b.ints[ip++]);
+    }
+    v.type = static_cast<MetalEdgeVertexType>(b.ints[ip++]);
+    const long long int physical = b.ints[ip++];
+    v.physical_type = physical < 0 ? std::nullopt
+                                   : std::optional<MetalEdgeVertexType>(
+                                         static_cast<MetalEdgeVertexType>(physical));
+    v.on_truncation_boundary = b.ints[ip++] != 0;
+  }
+  g.segments.resize(static_cast<std::size_t>(b.ints[ip++]));
+  for (auto &seg : g.segments)
+  {
+    seg.vertices[0] = static_cast<std::size_t>(b.ints[ip++]);
+    seg.vertices[1] = static_cast<std::size_t>(b.ints[ip++]);
+    seg.component = static_cast<int>(b.ints[ip++]);
+    seg.physical_component = static_cast<int>(b.ints[ip++]);
+    seg.physical_chain = static_cast<int>(b.ints[ip++]);
+    seg.metal_component = static_cast<int>(b.ints[ip++]);
+    seg.type = static_cast<MetalEdgeSegmentType>(b.ints[ip++]);
+    seg.metal_attributes = UnpackInts(b, ip);
+    seg.conditions.resize(static_cast<std::size_t>(b.ints[ip++]));
+    for (auto &c : seg.conditions)
+    {
+      c.type = static_cast<MetalBoundaryConditionType>(b.ints[ip++]);
+      c.index = static_cast<int>(b.ints[ip++]);
+    }
+    seg.sa_interfaces = UnpackInts(b, ip);
+    seg.ms_interfaces = UnpackInts(b, ip);
+    seg.ma_interfaces = UnpackInts(b, ip);
+    seg.truncation_attributes = UnpackInts(b, ip);
+    seg.face_count = static_cast<int>(b.ints[ip++]);
+    seg.face_normals.resize(static_cast<std::size_t>(b.ints[ip++]));
+    for (auto &n : seg.face_normals)
+    {
+      std::copy_n(b.reals.data() + rp, 3, n.begin());
+      rp += 3;
+    }
+    seg.side_attributes = UnpackInts(b, ip);
+    seg.on_bounding_box = b.ints[ip++] != 0;
+  }
+  MFEM_VERIFY(ip == b.ints.size() && rp == b.reals.size(),
+              "Broadcast metal perimeter buffers were not consumed exactly!");
+}
+
 }  // namespace
 
 MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
@@ -233,7 +404,7 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   // element attributes (-1 when the face is exterior or the neighbour is absent), and the
   // ordered polygon of the face with high-order edges sampled as in the perimeter.
   std::vector<double> local_face_data;
-  std::vector<std::vector<Point>> local_loops;
+  std::size_t local_face_count = 0;
   {
     auto &mutable_mesh = const_cast<mfem::ParMesh &>(mesh);
     mutable_mesh.ExchangeFaceNbrData();
@@ -335,17 +506,23 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
       {
         local_face_data.insert(local_face_data.end(), point.begin(), point.end());
       }
-      local_loops.push_back(std::move(loop));
+      local_face_count++;
     }
   }
 
-  // (2) Replicate the metal faces on every rank.
+  // (2) Gather the metal faces on the root only (decision 82 infrastructure): the global
+  // perimeter is built once, on the root, and the compact result (segments, vertices,
+  // each rank's own retained facets) is broadcast / scattered below. The gathered faces,
+  // canonical points, face incidence and global faces exist on the root alone (a
+  // chip-scale mesh replicated ~3 GB of them on every rank: 560 GiB at np192).
+  MPI_Comm comm = mesh.GetComm();
+  const bool root = Mpi::Root(comm);
   MFEM_VERIFY(local_face_data.size() <=
                   static_cast<std::size_t>(std::numeric_limits<int>::max()),
               "Local metal face data exceeds the MPI count limit!");
   const int local_count = static_cast<int>(local_face_data.size());
-  std::vector<int> counts(Mpi::Size(mesh.GetComm()));
-  Mpi::Allgather(1, &local_count, counts.data(), mesh.GetComm());
+  std::vector<int> counts(Mpi::Size(comm));
+  Mpi::Allgather(1, &local_count, counts.data(), comm);
   std::vector<int> offsets(counts.size());
   int total = 0;
   for (std::size_t rank = 0; rank < counts.size(); rank++)
@@ -355,11 +532,15 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
                 "Global metal face data exceeds the MPI count limit!");
     total += counts[rank];
   }
-  std::vector<double> face_data(total);
-  Mpi::Allgatherv(local_count, local_face_data.data(), face_data.data(), counts.data(),
-                  offsets.data(), mesh.GetComm());
+  std::vector<double> face_data(root ? total : 0);
+  MPI_Gatherv(local_face_data.data(), local_count, mpi::DataType<double>(), face_data.data(),
+              counts.data(), offsets.data(), mpi::DataType<double>(), 0, comm);
   local_face_data.clear();
   local_face_data.shrink_to_fit();
+  if (total == 0)
+  {
+    return result;
+  }
 
   struct GatheredFace
   {
@@ -368,31 +549,127 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
     std::vector<Point> loop;
   };
   std::vector<GatheredFace> gathered;
-  for (std::size_t offset = 0; offset < face_data.size();)
+  std::vector<int> gathered_rank;  // source rank of every gathered face (root only)
   {
-    GatheredFace face;
-    face.attribute = static_cast<int>(std::llround(face_data[offset]));
-    face.sides = {static_cast<int>(std::llround(face_data[offset + 1])),
-                  static_cast<int>(std::llround(face_data[offset + 2]))};
-    const auto n = static_cast<std::size_t>(std::llround(face_data[offset + 3]));
-    offset += 4;
-    face.loop.resize(n);
-    for (std::size_t i = 0; i < n; i++)
+    std::size_t rank = 0;
+    for (std::size_t offset = 0; offset < face_data.size();)
     {
-      std::copy_n(face_data.data() + offset + 3 * i, 3, face.loop[i].begin());
+      while (rank + 1 < counts.size() &&
+             offset >= static_cast<std::size_t>(offsets[rank] + counts[rank]))
+      {
+        rank++;
+      }
+      GatheredFace face;
+      face.attribute = static_cast<int>(std::llround(face_data[offset]));
+      face.sides = {static_cast<int>(std::llround(face_data[offset + 1])),
+                    static_cast<int>(std::llround(face_data[offset + 2]))};
+      const auto n = static_cast<std::size_t>(std::llround(face_data[offset + 3]));
+      offset += 4;
+      face.loop.resize(n);
+      for (std::size_t i = 0; i < n; i++)
+      {
+        std::copy_n(face_data.data() + offset + 3 * i, 3, face.loop[i].begin());
+      }
+      offset += 3 * n;
+      gathered.push_back(std::move(face));
+      gathered_rank.push_back(static_cast<int>(rank));
     }
-    offset += 3 * n;
-    gathered.push_back(std::move(face));
   }
   face_data.clear();
   face_data.shrink_to_fit();
-  if (gathered.empty())
-  {
-    return result;
-  }
-  StageLine(std::to_string(local_loops.size()) + " local metal faces, " +
-            std::to_string(gathered.size()) + " gathered");
+  StageLine(std::to_string(local_face_count) + " local metal faces, " +
+            std::to_string(gathered.size()) + " gathered on the root");
 
+  // Collective preliminaries of the perimeter classification (every rank takes part in
+  // the gathers inside; the trees are used on the root only): the dielectric-interface
+  // support trees and the simulation-cut (truncation) surfaces.
+  // An interface defined on metal attributes (MS / MA on the metal itself) supports every
+  // perimeter segment of those attributes; an interface on nonmetal attributes (the SA
+  // sheet) supports the segments coincident with its own perimeter.
+  struct InterfaceSupport
+  {
+    int index;
+    InterfaceDielectric type;
+    std::set<int> metal_attributes;
+    std::shared_ptr<const EdgeDistanceTree> tree;
+  };
+  std::vector<InterfaceSupport> interface_support;
+  std::set<int> interface_attributes;
+  std::map<std::vector<int>, std::shared_ptr<const EdgeDistanceTree>>
+      interface_support_trees;
+  for (const auto &[index, dielectric] : boundaries.postpro.dielectric)
+  {
+    interface_attributes.insert(dielectric.attributes.begin(), dielectric.attributes.end());
+    if (dielectric.type == InterfaceDielectric::DEFAULT)
+    {
+      continue;
+    }
+    InterfaceSupport support{index, dielectric.type, {}, nullptr};
+    std::vector<int> nonmetal;
+    for (const int attribute : dielectric.attributes)
+    {
+      if (attribute_conditions.find(attribute) != attribute_conditions.end())
+      {
+        support.metal_attributes.insert(attribute);
+      }
+      else
+      {
+        nonmetal.push_back(attribute);
+      }
+    }
+    std::sort(nonmetal.begin(), nonmetal.end());
+    nonmetal.erase(std::unique(nonmetal.begin(), nonmetal.end()), nonmetal.end());
+    if (!nonmetal.empty())
+    {
+      auto [tree_it, inserted] = interface_support_trees.try_emplace(nonmetal);
+      if (inserted)
+      {
+        tree_it->second = BuildSupportTree(mesh, nonmetal, true);
+      }
+      support.tree = tree_it->second;
+    }
+    if (support.tree || !support.metal_attributes.empty())
+    {
+      interface_support.push_back(std::move(support));
+    }
+  }
+
+  // An exterior, nonmetal boundary surface which is not itself a dielectric interface is
+  // a simulation cut surface. Internal lumped ports and sources are deliberately omitted.
+  // Where an exterior face edge coincides with the metal perimeter, the metal has been
+  // cut by the simulation domain (for example at a wave port or an outer box).
+  std::map<int, std::shared_ptr<const EdgeDistanceTree>> truncation_support;
+  const int maximum_boundary_attribute = mesh::GetMaxBdrAttribute(mesh);
+  std::vector<int> boundary_attribute_present(maximum_boundary_attribute, 0);
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    boundary_attribute_present[mesh.GetBdrAttribute(be) - 1] = 1;
+  }
+  Mpi::GlobalMax(static_cast<int>(boundary_attribute_present.size()),
+                 boundary_attribute_present.data(), mesh.GetComm());
+  for (int attribute = 1; attribute <= maximum_boundary_attribute; attribute++)
+  {
+    if (!boundary_attribute_present[attribute - 1] ||
+        attribute_conditions.find(attribute) != attribute_conditions.end() ||
+        interface_attributes.find(attribute) != interface_attributes.end())
+    {
+      continue;
+    }
+    auto tree = BuildSupportTree(mesh, std::vector<int>{attribute}, false, true);
+    if (tree)
+    {
+      truncation_support.emplace(attribute, std::move(tree));
+    }
+  }
+
+
+  // Global face of every gathered face (root only): the per-rank retained facets below.
+  std::vector<std::size_t> gathered_face;
+  // Per-rank retained facets (root only), packed for the scatter; this rank's share.
+  std::vector<GeometryBuffers> rank_faces(counts.size());
+  GeometryBuffers local_faces;
+  if (root)
+  {
   // (3) Canonical points: coordinates within coordinate_tolerance of an already registered
   // point (the 27 neighbouring grid cells are searched so a crack copy straddling a cell
   // boundary still merges) map to that point. The representative is the lexicographically
@@ -539,10 +816,12 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
                        std::tie(face_keys[b], gathered_loops[b], gathered[b].attribute,
                                 gathered[b].sides);
               });
+    gathered_face.resize(gathered.size());
     for (const std::size_t g : face_order)
     {
       const auto &source = gathered[g];
       auto [entry, inserted] = face_by_vertices.try_emplace(face_keys[g], faces.size());
+      gathered_face[g] = entry->second;
       if (inserted)
       {
         GlobalFace face;
@@ -572,8 +851,6 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
       }
     }
   }
-  gathered.clear();
-  gathered.shrink_to_fit();
   StageLine(std::to_string(faces.size()) + " distinct faces, " +
             std::to_string(canonical_points.size()) + " canonical points");
 
@@ -894,85 +1171,6 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   auto QuantizeCosine = [](double cosine) { return std::round(cosine / direction_quantum); };
   const double same_cosine = QuantizeCosine(1.0 - 1.0e-8);
   const double opposite_cosine = QuantizeCosine(-1.0 + 1.0e-8);
-  // An interface defined on metal attributes (MS / MA on the metal itself) supports every
-  // perimeter segment of those attributes; an interface on nonmetal attributes (the SA
-  // sheet) supports the segments coincident with its own perimeter.
-  struct InterfaceSupport
-  {
-    int index;
-    InterfaceDielectric type;
-    std::set<int> metal_attributes;
-    std::shared_ptr<const EdgeDistanceTree> tree;
-  };
-  std::vector<InterfaceSupport> interface_support;
-  std::set<int> interface_attributes;
-  std::map<std::vector<int>, std::shared_ptr<const EdgeDistanceTree>>
-      interface_support_trees;
-  for (const auto &[index, dielectric] : boundaries.postpro.dielectric)
-  {
-    interface_attributes.insert(dielectric.attributes.begin(), dielectric.attributes.end());
-    if (dielectric.type == InterfaceDielectric::DEFAULT)
-    {
-      continue;
-    }
-    InterfaceSupport support{index, dielectric.type, {}, nullptr};
-    std::vector<int> nonmetal;
-    for (const int attribute : dielectric.attributes)
-    {
-      if (attribute_conditions.find(attribute) != attribute_conditions.end())
-      {
-        support.metal_attributes.insert(attribute);
-      }
-      else
-      {
-        nonmetal.push_back(attribute);
-      }
-    }
-    std::sort(nonmetal.begin(), nonmetal.end());
-    nonmetal.erase(std::unique(nonmetal.begin(), nonmetal.end()), nonmetal.end());
-    if (!nonmetal.empty())
-    {
-      auto [tree_it, inserted] = interface_support_trees.try_emplace(nonmetal);
-      if (inserted)
-      {
-        tree_it->second = BuildSupportTree(mesh, nonmetal, true);
-      }
-      support.tree = tree_it->second;
-    }
-    if (support.tree || !support.metal_attributes.empty())
-    {
-      interface_support.push_back(std::move(support));
-    }
-  }
-
-  // An exterior, nonmetal boundary surface which is not itself a dielectric interface is
-  // a simulation cut surface. Internal lumped ports and sources are deliberately omitted.
-  // Where an exterior face edge coincides with the metal perimeter, the metal has been
-  // cut by the simulation domain (for example at a wave port or an outer box).
-  std::map<int, std::shared_ptr<const EdgeDistanceTree>> truncation_support;
-  const int maximum_boundary_attribute = mesh::GetMaxBdrAttribute(mesh);
-  std::vector<int> boundary_attribute_present(maximum_boundary_attribute, 0);
-  for (int be = 0; be < mesh.GetNBE(); be++)
-  {
-    boundary_attribute_present[mesh.GetBdrAttribute(be) - 1] = 1;
-  }
-  Mpi::GlobalMax(static_cast<int>(boundary_attribute_present.size()),
-                 boundary_attribute_present.data(), mesh.GetComm());
-  for (int attribute = 1; attribute <= maximum_boundary_attribute; attribute++)
-  {
-    if (!boundary_attribute_present[attribute - 1] ||
-        attribute_conditions.find(attribute) != attribute_conditions.end() ||
-        interface_attributes.find(attribute) != interface_attributes.end())
-    {
-      continue;
-    }
-    auto tree = BuildSupportTree(mesh, std::vector<int>{attribute}, false, true);
-    if (tree)
-    {
-      truncation_support.emplace(attribute, std::move(tree));
-    }
-  }
-
   std::map<std::size_t, std::size_t> vertex_by_point;
   auto GetVertex = [&](std::size_t point)
   {
@@ -1128,11 +1326,6 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
     result.vertices[segment.vertices[1]].segments.push_back(index);
     result.segments.push_back(std::move(segment));
   }
-  if (result.segments.empty())
-  {
-    return result;
-  }
-
   StageLine(std::to_string(result.segments.size()) + " perimeter segments, " +
             std::to_string(result.vertices.size()) + " vertices, " +
             std::to_string(result.metal_components) + " metal components");
@@ -1143,41 +1336,35 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   // boundary elements of one face — whose own vertex coordinates differ by roundoff — are
   // one facet with identical coordinates on every rank (the plan-view canonicalisation
   // deduplicates facets on a 1e-9 R grid).
-  if (surface.retain_faces)
+  if (surface.retain_faces && !result.segments.empty())
   {
-    std::set<std::size_t> retained;
-    for (auto &loop : local_loops)
+    // The gathered faces of every rank in their local order (the rank's boundary element
+    // order), each distinct global face once per rank, with the loop's canonical points.
+    std::vector<std::set<std::size_t>> retained(counts.size());
+    for (std::size_t g = 0; g < gathered.size(); g++)
     {
-      MetalSurfaceFace face;
-      std::vector<std::size_t> canonical(loop.size());
-      for (std::size_t i = 0; i < loop.size(); i++)
-      {
-        canonical[i] = CanonicalPoint(loop[i]);
-      }
-      std::vector<std::size_t> key = canonical;
-      std::sort(key.begin(), key.end());
-      key.erase(std::unique(key.begin(), key.end()), key.end());
-      const auto entry = face_by_vertices.find(key);
-      MFEM_VERIFY(entry != face_by_vertices.end(),
-                  "A local metal boundary face is missing from the global metal surface!");
-      if (!retained.insert(entry->second).second)
+      const std::size_t f = gathered_face[g];
+      const auto rank = static_cast<std::size_t>(gathered_rank[g]);
+      if (!retained[rank].insert(f).second)
       {
         continue;
       }
-      face.component = face_component[entry->second];
-      face.attribute = faces[entry->second].attribute;
-      face.normal = faces[entry->second].normal;
-      face.on_bounding_box = faces[entry->second].on_bounding_box;
-      face.vertices.reserve(canonical.size());
-      for (const std::size_t c : canonical)
+      MetalSurfaceFace face;
+      face.component = face_component[f];
+      face.attribute = faces[f].attribute;
+      face.normal = faces[f].normal;
+      face.on_bounding_box = faces[f].on_bounding_box;
+      face.vertices.reserve(gathered[g].loop.size());
+      for (const auto &p : gathered[g].loop)
       {
-        face.vertices.push_back(canonical_points[c]);
+        face.vertices.push_back(canonical_points[CanonicalPoint(p)]);
       }
-      result.surface_faces.push_back(std::move(face));
+      PackFace(face, rank_faces[rank]);
     }
   }
-  local_loops.clear();
-  if (surface.retain_global_faces)
+  gathered.clear();
+  gathered.shrink_to_fit();
+  if (surface.retain_global_faces && !result.segments.empty())
   {
     result.global_faces.reserve(faces.size());
     for (std::size_t f = 0; f < faces.size(); f++)
@@ -1358,6 +1545,89 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   }
   StageLine(std::to_string(result.physical_chains) + " physical chains, " +
             std::to_string(result.global_faces.size()) + " global faces retained");
+  }  // root
+
+  // Broadcast the compact perimeter (segments, vertices, scalars; no faces) and scatter
+  // every rank's own retained facets. An empty perimeter is empty everywhere.
+  {
+    GeometryBuffers buffers;
+    if (root)
+    {
+      PackGeometry(result, buffers);
+    }
+    std::array<long long int, 2> sizes = {static_cast<long long int>(buffers.ints.size()),
+                                          static_cast<long long int>(buffers.reals.size())};
+    Mpi::Broadcast(2, sizes.data(), 0, comm);
+    if (!root)
+    {
+      buffers.ints.resize(static_cast<std::size_t>(sizes[0]));
+      buffers.reals.resize(static_cast<std::size_t>(sizes[1]));
+    }
+    Mpi::BroadcastLarge(sizes[0], buffers.ints.data(), 0, comm);
+    Mpi::BroadcastLarge(sizes[1], buffers.reals.data(), 0, comm);
+    if (!root)
+    {
+      UnpackGeometry(buffers, result);
+    }
+  }
+  if (surface.retain_faces)
+  {
+    for (const bool reals : {false, true})
+    {
+      std::vector<int> face_counts(counts.size(), 0), face_offsets(counts.size(), 0);
+      std::vector<long long int> send_ints;
+      std::vector<double> send_reals;
+      if (root)
+      {
+        long long int offset = 0;
+        for (std::size_t rank = 0; rank < counts.size(); rank++)
+        {
+          const std::size_t n =
+              reals ? rank_faces[rank].reals.size() : rank_faces[rank].ints.size();
+          MFEM_VERIFY(offset + static_cast<long long int>(n) <=
+                          std::numeric_limits<int>::max(),
+                      "Retained metal facet data exceeds the MPI count limit!");
+          face_offsets[rank] = static_cast<int>(offset);
+          face_counts[rank] = static_cast<int>(n);
+          offset += static_cast<long long int>(n);
+          if (reals)
+          {
+            send_reals.insert(send_reals.end(), rank_faces[rank].reals.begin(),
+                              rank_faces[rank].reals.end());
+            rank_faces[rank].reals.clear();
+          }
+          else
+          {
+            send_ints.insert(send_ints.end(), rank_faces[rank].ints.begin(),
+                             rank_faces[rank].ints.end());
+            rank_faces[rank].ints.clear();
+          }
+        }
+      }
+      int my_count = 0;
+      MPI_Scatter(face_counts.data(), 1, mpi::DataType<int>(), &my_count, 1,
+                  mpi::DataType<int>(), 0, comm);
+      if (reals)
+      {
+        local_faces.reals.resize(static_cast<std::size_t>(my_count));
+        MPI_Scatterv(send_reals.data(), face_counts.data(), face_offsets.data(),
+                     mpi::DataType<double>(), local_faces.reals.data(), my_count,
+                     mpi::DataType<double>(), 0, comm);
+      }
+      else
+      {
+        local_faces.ints.resize(static_cast<std::size_t>(my_count));
+        MPI_Scatterv(send_ints.data(), face_counts.data(), face_offsets.data(),
+                     mpi::DataType<long long int>(), local_faces.ints.data(), my_count,
+                     mpi::DataType<long long int>(), 0, comm);
+      }
+    }
+    std::size_t int_pos = 0, real_pos = 0;
+    while (int_pos < local_faces.ints.size())
+    {
+      result.surface_faces.push_back(UnpackFace(local_faces, int_pos, real_pos));
+    }
+  }
   return result;
 }
 
