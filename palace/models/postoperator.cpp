@@ -4,6 +4,7 @@
 #include "postoperator.hpp"
 
 #include <algorithm>
+#include <compare>
 #include <complex>
 #include <map>
 #include <memory>
@@ -2555,12 +2556,7 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
     std::vector<double> path_data;
     std::vector<int> marker_data;
 
-    bool operator<(const LineIntegralKey &other) const
-    {
-      return std::tie(has_coords, quad_order, path_data, marker_data) <
-             std::tie(other.has_coords, other.quad_order, other.path_data,
-                      other.marker_data);
-    }
+    auto operator<=>(const LineIntegralKey &) const = default;
   };
   auto MakeLineIntegralKey = [](const std::vector<mfem::Vector> &path, bool has_coords,
                                 const mfem::Array<int> &marker, int quad_order)
