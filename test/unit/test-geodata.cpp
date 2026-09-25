@@ -1454,8 +1454,8 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
   const auto ma_indices =
       GetInterfaceMetalEdgeSegmentIndices(geometry, 3, InterfaceDielectric::MA);
   CHECK(sa_indices.size() == 3082);
-  CHECK(ms_indices.size() == 3128);
-  CHECK(ma_indices.size() == 3128);
+  CHECK(ms_indices.size() == 3122);
+  CHECK(ma_indices.size() == 3122);
 
   // The 40 airbridge edges have vacuum on both sides: their process side is ambiguous and
   // (without a fallback) taken from the dominant normal component; every planar edge on the
@@ -1589,7 +1589,7 @@ TEST_CASE("Automatic metal edge classification is partition independent",
     reference = Classify(mesh);
   }
   REQUIRE(reference.geometry.segments.size() > 3000);
-  REQUIRE(reference.process_normals.size() == 3128);  // 3,088 planar + 40 airbridge edges
+  REQUIRE(reference.process_normals.size() == 3122);  // 3,082 planar + 40 airbridge edges (6 port cuts)
 
   // Round-robin element distribution: every rank owns crack copies from everywhere.
   std::vector<int> round_robin(ne);
