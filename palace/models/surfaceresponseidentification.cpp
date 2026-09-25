@@ -16,6 +16,7 @@
 #include <set>
 #include <sstream>
 #include <tuple>
+#include <type_traits>
 #include <unordered_map>
 #include <mfem.hpp>
 #include "utils/enum_string.hpp"
@@ -4614,6 +4615,258 @@ IdentificationResult IdentifyMetalPerimeter(const IdentificationInput &input)
 {
   Identifier identifier(input);
   return identifier.Identify();
+}
+
+namespace
+{
+
+// Byte writer / reader of the result: PODs raw, strings and arrays length-prefixed, read
+// back in the order written.
+class ByteWriter
+{
+public:
+  template <typename T>
+  void Pod(const T &value)
+  {
+    static_assert(std::is_trivially_copyable_v<T>);
+    const auto *bytes = reinterpret_cast<const char *>(&value);
+    buffer.append(bytes, sizeof(T));
+  }
+  void Size(std::size_t n) { Pod(static_cast<std::uint64_t>(n)); }
+  void String(const std::string &text)
+  {
+    Size(text.size());
+    buffer.append(text);
+  }
+  void Point(const std::array<double, 3> &p)
+  {
+    for (const double v : p)
+    {
+      Pod(v);
+    }
+  }
+  std::string buffer;
+};
+
+class ByteReader
+{
+public:
+  explicit ByteReader(const std::string &buffer_) : buffer(buffer_) {}
+  template <typename T>
+  T Pod()
+  {
+    static_assert(std::is_trivially_copyable_v<T>);
+    MFEM_VERIFY(pos + sizeof(T) <= buffer.size(),
+                "Identification result buffer ends early!");
+    T value;
+    std::memcpy(&value, buffer.data() + pos, sizeof(T));
+    pos += sizeof(T);
+    return value;
+  }
+  std::size_t Size() { return static_cast<std::size_t>(Pod<std::uint64_t>()); }
+  std::string String()
+  {
+    const std::size_t n = Size();
+    MFEM_VERIFY(pos + n <= buffer.size(), "Identification result buffer ends early!");
+    std::string text(buffer.data() + pos, n);
+    pos += n;
+    return text;
+  }
+  std::array<double, 3> Point()
+  {
+    std::array<double, 3> p;
+    for (double &v : p)
+    {
+      v = Pod<double>();
+    }
+    return p;
+  }
+  bool Done() const { return pos == buffer.size(); }
+
+private:
+  const std::string &buffer;
+  std::size_t pos = 0;
+};
+
+}  // namespace
+
+std::string SerializeIdentificationResult(const IdentificationResult &result)
+{
+  ByteWriter w;
+  w.Pod(result.radius);
+  w.Point(result.reference_process_normal);
+  w.Pod(result.perimeter_length);
+  w.Pod(result.assigned_length);
+  w.Pod(result.excluded_length);
+  w.String(result.geometry_digest);
+  w.Size(result.features.size());
+  for (const auto &f : result.features)
+  {
+    w.Pod(f.id);
+    w.String(f.type);
+    w.String(f.signature.dump());
+    w.String(f.signature_key);
+    w.String(f.hash);
+    w.Pod(f.chirality);
+    w.Pod(f.length);
+    w.Size(f.portions.size());
+    for (const auto &p : f.portions)
+    {
+      w.Size(p.segment);
+      w.Pod(p.s0);
+      w.Pod(p.s1);
+      w.Pod(p.side);
+    }
+    w.Size(f.vertices.size());
+    for (const std::size_t v : f.vertices)
+    {
+      w.Size(v);
+    }
+    w.Point(f.origin);
+    for (const auto &axis : f.axes)
+    {
+      w.Point(axis);
+    }
+    w.Pod(f.bend_radius_over_R.has_value());
+    w.Pod(f.bend_radius_over_R.value_or(0.0));
+    w.Pod(f.matched_model.has_value());
+    w.String(f.matched_model.value_or(""));
+  }
+  w.Size(result.segments.size());
+  for (const auto &s : result.segments)
+  {
+    w.Point(s.key[0]);
+    w.Point(s.key[1]);
+    w.Pod(s.length);
+    w.Pod(s.chain);
+    w.Size(s.portions.size());
+    for (const auto &p : s.portions)
+    {
+      w.Point(p);
+    }
+    w.Size(s.excluded_portions.size());
+    for (const auto &p : s.excluded_portions)
+    {
+      w.Point(p);
+    }
+    w.Pod(s.exclusion.has_value());
+    w.String(s.exclusion ? s.exclusion->first : "");
+    w.String(s.exclusion ? s.exclusion->second : "");
+  }
+  w.Size(result.vertices.size());
+  for (const auto &v : result.vertices)
+  {
+    w.Size(v.vertex);
+    w.String(v.type);
+    w.Pod(v.turn_degrees);
+    w.Pod(v.feature);
+    w.Pod(v.point_contact);
+  }
+  w.Size(result.exclusions.size());
+  for (const auto &x : result.exclusions)
+  {
+    w.String(x.cls);
+    w.String(x.reason);
+    w.Pod(x.count);
+    w.Pod(x.length);
+  }
+  return std::move(w.buffer);
+}
+
+IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
+{
+  ByteReader r(buffer);
+  IdentificationResult result;
+  result.radius = r.Pod<double>();
+  result.reference_process_normal = r.Point();
+  result.perimeter_length = r.Pod<double>();
+  result.assigned_length = r.Pod<double>();
+  result.excluded_length = r.Pod<double>();
+  result.geometry_digest = r.String();
+  result.features.resize(r.Size());
+  for (auto &f : result.features)
+  {
+    f.id = r.Pod<int>();
+    f.type = r.String();
+    f.signature = nlohmann::json::parse(r.String());
+    f.signature_key = r.String();
+    f.hash = r.String();
+    f.chirality = r.Pod<int>();
+    f.length = r.Pod<double>();
+    f.portions.resize(r.Size());
+    for (auto &p : f.portions)
+    {
+      p.segment = r.Size();
+      p.s0 = r.Pod<double>();
+      p.s1 = r.Pod<double>();
+      p.side = r.Pod<int>();
+    }
+    f.vertices.resize(r.Size());
+    for (auto &v : f.vertices)
+    {
+      v = r.Size();
+    }
+    f.origin = r.Point();
+    for (auto &axis : f.axes)
+    {
+      axis = r.Point();
+    }
+    const bool has_bend = r.Pod<bool>();
+    const double bend = r.Pod<double>();
+    if (has_bend)
+    {
+      f.bend_radius_over_R = bend;
+    }
+    const bool has_model = r.Pod<bool>();
+    const std::string model = r.String();
+    if (has_model)
+    {
+      f.matched_model = model;
+    }
+  }
+  result.segments.resize(r.Size());
+  for (auto &s : result.segments)
+  {
+    s.key[0] = r.Point();
+    s.key[1] = r.Point();
+    s.length = r.Pod<double>();
+    s.chain = r.Pod<int>();
+    s.portions.resize(r.Size());
+    for (auto &p : s.portions)
+    {
+      p = r.Point();
+    }
+    s.excluded_portions.resize(r.Size());
+    for (auto &p : s.excluded_portions)
+    {
+      p = r.Point();
+    }
+    const bool has_exclusion = r.Pod<bool>();
+    const std::string cls = r.String(), reason = r.String();
+    if (has_exclusion)
+    {
+      s.exclusion = std::make_pair(cls, reason);
+    }
+  }
+  result.vertices.resize(r.Size());
+  for (auto &v : result.vertices)
+  {
+    v.vertex = r.Size();
+    v.type = r.String();
+    v.turn_degrees = r.Pod<double>();
+    v.feature = r.Pod<int>();
+    v.point_contact = r.Pod<bool>();
+  }
+  result.exclusions.resize(r.Size());
+  for (auto &x : result.exclusions)
+  {
+    x.cls = r.String();
+    x.reason = r.String();
+    x.count = r.Pod<int>();
+    x.length = r.Pod<double>();
+  }
+  MFEM_VERIFY(r.Done(), "Identification result buffer was not consumed exactly!");
+  return result;
 }
 
 nlohmann::json IdentificationResult::ToJson(double length_scale) const

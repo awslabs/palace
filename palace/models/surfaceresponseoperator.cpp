@@ -5296,10 +5296,12 @@ LibrarySignatureKeys(const ProcessLibrary &library,
 // those segments from the legacy classification. The manifest records are written only
 // when a requirements sink is given (preflight).
 IdentificationResult RunGeometryIdentification(
-    const MetalEdgeGeometry &geometry, const std::vector<EdgeSegment3D> &framed_segments,
-    const ProcessLibrary &library, const AutomaticResponseRequirements &describer,
+    MPI_Comm comm, const MetalEdgeGeometry &geometry,
+    const std::vector<EdgeSegment3D> &framed_segments, const ProcessLibrary &library,
+    const AutomaticResponseRequirements &describer,
     AutomaticResponseRequirements *requirements, bool frame_normal_configured)
 {
+  const bool root = Mpi::Root(comm);
   // A one-sided edge whose face is not parallel to the process plane (the area-weighted
   // principal direction of the metal normals) is non-planar metal: a wall, a staple leg, a
   // via; the classification's kParallelCosineTolerance.
@@ -5400,17 +5402,41 @@ IdentificationResult RunGeometryIdentification(
     input.vertices[v].physical_type = geometry.vertices[v].physical_type;
     input.vertices[v].on_truncation_boundary = geometry.vertices[v].on_truncation_boundary;
   }
-  input.faces.reserve(geometry.global_faces.size());
-  for (const auto &face : geometry.global_faces)
+  // The identification runs on the root only (the global metal faces exist there alone;
+  // decision 82 infrastructure) and the result is broadcast: every rank builds the same
+  // patches from the same feature list, no rank replicates the identification state.
+  IdentificationResult result;
   {
-    if (!face.on_bounding_box)  // a PEC simulation box is not fabricated metal
+    std::string buffer;
+    if (root)
     {
-      input.faces.push_back({face.vertices, face.normal});
+      input.faces.reserve(geometry.global_faces.size());
+      for (const auto &face : geometry.global_faces)
+      {
+        if (!face.on_bounding_box)  // a PEC simulation box is not fabricated metal
+        {
+          input.faces.push_back({face.vertices, face.normal});
+        }
+      }
+      // Stage counts, wall times and progress of the identification.
+      input.log = [](const std::string &line) { Mpi::Print("{}", line); };
+      result = IdentifyMetalPerimeter(input);
+      input.faces.clear();
+      input.faces.shrink_to_fit();
+      buffer = SerializeIdentificationResult(result);
+    }
+    std::int64_t size = static_cast<std::int64_t>(buffer.size());
+    Mpi::Broadcast(1, &size, 0, comm);
+    if (!root)
+    {
+      buffer.resize(static_cast<std::size_t>(size));
+    }
+    Mpi::BroadcastLarge(size, buffer.data(), 0, comm);
+    if (!root)
+    {
+      result = DeserializeIdentificationResult(buffer);
     }
   }
-  // Stage counts, wall times and progress of the (replicated) identification on the root.
-  input.log = [](const std::string &line) { Mpi::Print("{}", line); };
-  auto result = IdentifyMetalPerimeter(input);
 
   {
     std::string exclusions;
@@ -5445,9 +5471,9 @@ IdentificationResult RunGeometryIdentification(
       feature.matched_model = it->second;
     }
   }
-  if (!requirements)
+  if (!requirements || !root)
   {
-    return result;
+    return result;  // the manifest is built and written on the root
   }
 
   // Version-1 records derived from the features.
@@ -7154,8 +7180,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                   iodata.boundaries.postpro.dielectric.end(),
                   [](const auto &entry) { return entry.second.edge_frame_normal.has_value(); });
   const auto identification = RunGeometryIdentification(
-      geometry, global_segments, library, requirements ? *requirements : law_describer,
-      requirements, frame_normal_configured);
+      mesh.GetComm(), geometry, global_segments, library,
+      requirements ? *requirements : law_describer, requirements, frame_normal_configured);
   GeometryStageLine("identified and matched: " +
                     std::to_string(identification.features.size()) + " features");
   if (request.patch_construction == ResponseCorrectionData::PatchConstruction::FEATURES)

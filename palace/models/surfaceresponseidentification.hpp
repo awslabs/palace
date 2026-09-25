@@ -161,6 +161,11 @@ struct IdentificationResult
 
 IdentificationResult IdentifyMetalPerimeter(const IdentificationInput &input);
 
+// Compact binary form of a result for the broadcast from the root (the identification runs
+// on the root only; every other rank receives the result it needs for the patches).
+std::string SerializeIdentificationResult(const IdentificationResult &result);
+IdentificationResult DeserializeIdentificationResult(const std::string &buffer);
+
 // Canonical signature of a set of straight edge portions and vertices in a common frame,
 // shared by the device features and the library models so that both sides are hashed by
 // the same function. Every portion is {p0, p1, gap direction, process normal, conductor,
