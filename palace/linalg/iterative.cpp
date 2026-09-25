@@ -588,7 +588,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 
     V[0] = 0.0;
     V[0].Add(1.0 / beta, r);
-    std::fill(s.begin(), s.end(), 0.0);
+    std::ranges::fill(s, 0.0);
     s[0] = beta;
 
     int j = 0;
@@ -767,7 +767,7 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 
     V[0] = 0.0;
     V[0].Add(1.0 / beta, Z[0]);
-    std::fill(s.begin(), s.end(), 0.0);
+    std::ranges::fill(s, 0.0);
     s[0] = beta;
 
     int j = 0;

@@ -232,8 +232,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   std::vector<int> solve_order(n_step);
   std::iota(solve_order.begin(), solve_order.end(), 0);
-  std::stable_sort(
-      solve_order.begin(), solve_order.end(), [&](int a, int b)
+  std::ranges::stable_sort(
+      solve_order, [&](int a, int b)
       { return key_first_seen.at(step_keys[a]) < key_first_seen.at(step_keys[b]); });
 
   // Pass 1: solve each excitation in operator-grouped order.

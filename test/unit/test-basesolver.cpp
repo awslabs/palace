@@ -414,7 +414,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     CHECK(counts.true_faces.at(mfem::Geometry::TRIANGLE) == 4);
     // A tet has no quadrilateral faces, so the SQUARE key must be absent (not
     // present-zero).
-    CHECK(counts.true_faces.count(mfem::Geometry::SQUARE) == 0);
+    CHECK_FALSE(counts.true_faces.contains(mfem::Geometry::SQUARE));
     CHECK(counts.cells.at(mfem::Geometry::TETRAHEDRON) == 1);
     CHECK(counts.cells.size() == 1);
     // The (single) cell count must agree with the mesh's own global element count.
@@ -484,7 +484,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     CHECK(counts.true_vertices > 0);
     CHECK(counts.true_edges > 0);
     CHECK(counts.true_faces.at(mfem::Geometry::TRIANGLE) > 0);
-    CHECK(counts.true_faces.count(mfem::Geometry::SQUARE) == 0);
+    CHECK_FALSE(counts.true_faces.contains(mfem::Geometry::SQUARE));
     CHECK(counts.true_vertices < leaf_vertices);
     CHECK(counts.true_edges < leaf_edges);
     // Cheap sanity check that the face discount happened.
@@ -569,7 +569,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     CHECK(counts.dim == 3);
     // A hex mesh has only quadrilateral faces: SQUARE present-positive, TRIANGLE absent.
     CHECK(counts.true_faces.at(mfem::Geometry::SQUARE) > 0);
-    CHECK(counts.true_faces.count(mfem::Geometry::TRIANGLE) == 0);
+    CHECK_FALSE(counts.true_faces.contains(mfem::Geometry::TRIANGLE));
     CHECK(counts.cells.count(mfem::Geometry::CUBE) == 1);
     CheckReconstructionOracle(counts, serial_mesh);
   }
@@ -820,7 +820,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     REQUIRE(counts.valid);
     CHECK(counts.dim == 3);
     CHECK(counts.true_faces.at(mfem::Geometry::TRIANGLE) > 0);
-    CHECK(counts.true_faces.count(mfem::Geometry::SQUARE) == 0);
+    CHECK_FALSE(counts.true_faces.contains(mfem::Geometry::SQUARE));
     // Partition-invariant: the gathered root counts reproduce the serial true DOF sizes.
     CheckReconstructionOracle(counts, serial_mesh);
   }

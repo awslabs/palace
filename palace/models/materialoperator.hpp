@@ -58,7 +58,7 @@ private:
   auto AttrToMat(int attr) const
   {
     const auto &loc_attr = mesh.GetCeedAttributes();
-    MFEM_ASSERT(loc_attr.find(attr) != loc_attr.end(),
+    MFEM_ASSERT(loc_attr.contains(attr),
                 "Missing libCEED domain attribute for attribute " << attr << "!");
     return attr_mat[loc_attr.at(attr) - 1];
   }

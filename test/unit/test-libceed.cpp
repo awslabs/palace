@@ -1754,7 +1754,7 @@ bool PackedTestBackend()
   Ceed ceed = ceed::internal::GetCeedObjects()[0];
   REQUIRE(CeedGetResource(ceed, &resource) == 0);
   REQUIRE(CeedGetPreferredMemType(ceed, &mem) == 0);
-  return mem == CEED_MEM_HOST && std::string(resource).find("/cpu/") == 0;
+  return mem == CEED_MEM_HOST && std::string(resource).starts_with("/cpu/");
 }
 
 bool IsOriginalComplexWrapper(const ComplexOperator &op)
@@ -2252,8 +2252,8 @@ TEST_CASE("CPU complex preconditioner benchmark",
 {
   const auto *config = Catch::getCurrentContext().getConfig();
   const auto &selectors = config->getTestsOrTags();
-  const bool requested = std::any_of(
-      selectors.begin(), selectors.end(),
+  const bool requested = std::ranges::any_of(
+      selectors,
       [](const std::string &selector)
       {
         return selector.find("[ComplexPreconditionerBenchmark]") != std::string::npos ||

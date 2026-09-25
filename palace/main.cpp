@@ -103,7 +103,7 @@ static void ConfigureCeedBackend(const std::string &ceed_backend)
 
   // Check that the provided resource matches the requested one.
   std::string ceed_resource = ceed::Print();
-  if (backend.compare(0, backend.length(), ceed_resource, 0, backend.length()))
+  if (!ceed_resource.starts_with(backend))
   {
     Mpi::Warning(
         "libCEED is not using the requested backend!\nRequested \"{}\", got \"{}\"!\n",

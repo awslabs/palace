@@ -16,12 +16,12 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
   message(FATAL_ERROR "In-source builds are prohibited")
 endif()
 
-# C++17 required for std::filesystem, among others. Override via -DCMAKE_CXX_STANDARD=<VALUE>
+# C++ standard. Override via -DCMAKE_CXX_STANDARD=<VALUE>
 if(NOT DEFINED CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 17)
+  set(CMAKE_CXX_STANDARD 20)
 endif()
-if(CMAKE_CXX_STANDARD LESS 17)
-  message(FATAL_ERROR "Palace requires C++17 or later (got ${CMAKE_CXX_STANDARD})")
+if(CMAKE_CXX_STANDARD LESS 20)
+  message(FATAL_ERROR "Palace requires C++20 or later (got ${CMAKE_CXX_STANDARD})")
 endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -112,6 +112,15 @@ if(PALACE_WITH_CUDA)
 elseif(PALACE_WITH_HIP)
   enable_language(HIP)
 endif()
+
+# Device translation units share headers with host code, so compile them with the same C++
+# standard (otherwise nvcc/hipcc use their own default)
+set(CMAKE_CUDA_STANDARD ${CMAKE_CXX_STANDARD})
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+set(CMAKE_CUDA_EXTENSIONS OFF)
+set(CMAKE_HIP_STANDARD ${CMAKE_CXX_STANDARD})
+set(CMAKE_HIP_STANDARD_REQUIRED ON)
+set(CMAKE_HIP_EXTENSIONS OFF)
 
 # Set a default build type if none was provided
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)

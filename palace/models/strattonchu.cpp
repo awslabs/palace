@@ -3,6 +3,8 @@
 
 #include "strattonchu.hpp"
 
+#include <numbers>
+
 #include "fem/coefficient.hpp"
 #include "utils/omp.hpp"
 
@@ -103,8 +105,8 @@ void AddStrattonChuIntegrandAtElement(const GridFunction &E, const GridFunction 
     double quadrature_weight = ip.weight * T.Weight();
 
     // Complex prefactor: (ik/4π) = (i(k_re + ik_im)/4π) = (ik_re - k_im)/4π.
-    double prefactor_re = -quadrature_weight * k_im / (4 * M_PI);
-    double prefactor_im = quadrature_weight * k_re / (4 * M_PI);
+    double prefactor_re = -quadrature_weight * k_im / (4 * std::numbers::pi);
+    double prefactor_im = quadrature_weight * k_re / (4 * std::numbers::pi);
 
     // Z * H = c0 * B.
     mat_op.GetLightSpeed(FET.Elem1->Attribute).Mult(B_real, ZH_real);

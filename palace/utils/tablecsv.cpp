@@ -82,8 +82,8 @@ Column::Column(std::string name_, std::string header_text_, long column_group_id
   {
     return 0;
   }
-  auto max_col = std::max_element(cols.begin(), cols.end(), [](const auto &a, const auto &b)
-                                  { return a.n_rows() < b.n_rows(); });
+  auto max_col = std::ranges::max_element(cols, [](const auto &a, const auto &b)
+                                          { return a.n_rows() < b.n_rows(); });
   return max_col->n_rows();
 }
 
@@ -100,7 +100,7 @@ void Table::reserve(std::size_t n_rows, std::size_t n_cols)
 // Insert columns: map like interface.
 bool Table::insert(Column &&column)
 {
-  if (name_to_index.find(column.name) != name_to_index.end())
+  if (name_to_index.contains(column.name))
   {
     return false;
   }
@@ -251,7 +251,7 @@ Table::Table(std::string_view table_str,
       while (!entries.at_end())
       {
         auto entry_trim = trim_space(entries.next());
-        if ((entry_trim == col_options.empty_cell_val) || (entry_trim.size() == 0))
+        if ((entry_trim == col_options.empty_cell_val) || (entry_trim.empty()))
         {
         }
         else

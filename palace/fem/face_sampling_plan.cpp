@@ -4,8 +4,8 @@
 #include "fem/face_sampling_plan.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
-#include <cstring>
 #include <map>
 #include <numeric>
 #include <tuple>
@@ -19,14 +19,6 @@ namespace palace
 namespace
 {
 
-long long EncodePointRuleDouble(double x)
-{
-  static_assert(sizeof(long long) == sizeof(double));
-  long long bits;
-  std::memcpy(&bits, &x, sizeof(bits));
-  return bits;
-}
-
 using CoordinateKey = std::array<long long, 3>;
 
 void NormalizeReferencePoint(mfem::IntegrationPoint &ip);
@@ -37,8 +29,8 @@ CoordinateKey MakeCoordinateKey(mfem::IntegrationPoint ip)
   // every other IEEE-754 coordinate bit exactly and intentionally do not inspect the
   // quadrature weight: it is irrelevant to a physical point-value evaluation.
   NormalizeReferencePoint(ip);
-  return {EncodePointRuleDouble(ip.x), EncodePointRuleDouble(ip.y),
-          EncodePointRuleDouble(ip.z)};
+  return {std::bit_cast<long long>(ip.x), std::bit_cast<long long>(ip.y),
+          std::bit_cast<long long>(ip.z)};
 }
 
 void AppendPointRuleSignature(std::vector<long long> &key,
@@ -47,10 +39,10 @@ void AppendPointRuleSignature(std::vector<long long> &key,
   key.push_back(static_cast<long long>(pts.size()));
   for (const auto &ip : pts)
   {
-    key.push_back(EncodePointRuleDouble(ip.x));
-    key.push_back(EncodePointRuleDouble(ip.y));
-    key.push_back(EncodePointRuleDouble(ip.z));
-    key.push_back(EncodePointRuleDouble(ip.weight));
+    key.push_back(std::bit_cast<long long>(ip.x));
+    key.push_back(std::bit_cast<long long>(ip.y));
+    key.push_back(std::bit_cast<long long>(ip.z));
+    key.push_back(std::bit_cast<long long>(ip.weight));
   }
 }
 
@@ -97,9 +89,9 @@ int ReferenceFacet(mfem::Geometry::Type geometry,
   constexpr double tol = 1.0e-12;
   auto OnFacet = [&](auto predicate)
   {
-    return !points.empty() && std::all_of(points.begin(), points.end(),
-                                          [&](const mfem::IntegrationPoint &point)
-                                          { return predicate(point); });
+    return !points.empty() &&
+           std::ranges::all_of(points, [&](const mfem::IntegrationPoint &point)
+                               { return predicate(point); });
   };
   switch (geometry)
   {
@@ -206,15 +198,17 @@ void Canonicalize(const std::vector<mfem::IntegrationPoint> &original,
                     std::isfinite(ip.weight),
                 "Non-finite mapped reference point cannot be canonically routed!");
   }
-  std::stable_sort(canonical_to_original.begin(), canonical_to_original.end(),
-                   [&](int i, int j)
-                   {
-                     mfem::IntegrationPoint a = original[static_cast<std::size_t>(i)];
-                     mfem::IntegrationPoint b = original[static_cast<std::size_t>(j)];
-                     NormalizeReferencePoint(a);
-                     NormalizeReferencePoint(b);
-                     return CanonicalPointLess(a, b);
-                   });
+  std::ranges::stable_sort(canonical_to_original,
+                           [&](int i, int j)
+                           {
+                             mfem::IntegrationPoint a =
+                                 original[static_cast<std::size_t>(i)];
+                             mfem::IntegrationPoint b =
+                                 original[static_cast<std::size_t>(j)];
+                             NormalizeReferencePoint(a);
+                             NormalizeReferencePoint(b);
+                             return CanonicalPointLess(a, b);
+                           });
   canonical.resize(original.size());
   for (std::size_t q = 0; q < canonical.size(); q++)
   {
@@ -451,8 +445,8 @@ FaceSamplingPlan::FaceSamplingPlan(const Mesh &mesh_,
   // the communicator-wide fact once while all ranks build the shared sampling plan so
   // each source-space trace entry can construct an empty peer exchange where needed
   // without another setup collective or a rank-local early return.
-  has_ghost_union = std::any_of(union_groups.begin(), union_groups.end(),
-                                [](const auto &group) { return group.ghost; });
+  has_ghost_union =
+      std::ranges::any_of(union_groups, [](const auto &group) { return group.ghost; });
   Mpi::GlobalOr(1, &has_ghost_union, mesh->GetComm());
 
   for (const auto &entry : entries)

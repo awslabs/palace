@@ -293,22 +293,22 @@ void QuasiNewtonSolver::SetInitialGuess()
       min_error = std::min(min_error, res.get()[i]);
     }
     const double threshold = 100.0 * min_error;
-    std::sort(indices.begin(), indices.end(),
-              [&](const auto i, const auto j)
-              {
-                if (res.get()[i] < threshold && res.get()[j] > threshold)
-                {
-                  return true;
-                }
-                else if (res.get()[i] > threshold && res.get()[j] < threshold)
-                {
-                  return false;
-                }
-                else
-                {
-                  return eigenvalues[i].imag() < eigenvalues[j].imag();
-                }
-              });
+    std::ranges::sort(indices,
+                      [&](const auto i, const auto j)
+                      {
+                        if (res.get()[i] < threshold && res.get()[j] > threshold)
+                        {
+                          return true;
+                        }
+                        else if (res.get()[i] > threshold && res.get()[j] < threshold)
+                        {
+                          return false;
+                        }
+                        else
+                        {
+                          return eigenvalues[i].imag() < eigenvalues[j].imag();
+                        }
+                      });
   }
   for (int i = 0; i < nev_linear; i++)
   {
@@ -771,13 +771,10 @@ int QuasiNewtonSolver::Solve()
   std::iota(order.begin(), order.end(), 0);
   std::iota(order_eigen.begin(), order_eigen.end(), 0);
   std::iota(order2.begin(), order2.end(), 0);
-  std::sort(order.begin(), order.end(),
-            [&](auto l, auto r) { return eigs[l].imag() < eigs[r].imag(); });
-  std::sort(order_eigen.begin(), order_eigen.end(),
-            [&epseig = eps.eigenvalues()](auto l, auto r)
-            { return epseig(l).imag() < epseig(r).imag(); });
-  std::sort(order2.begin(), order2.end(),
-            [&](auto l, auto r) { return order[l] < order[r]; });
+  std::ranges::sort(order, [&](auto l, auto r) { return eigs[l].imag() < eigs[r].imag(); });
+  std::ranges::sort(order_eigen, [&epseig = eps.eigenvalues()](auto l, auto r)
+                    { return epseig(l).imag() < epseig(r).imag(); });
+  std::ranges::sort(order2, [&](auto l, auto r) { return order[l] < order[r]; });
 
   // Sort Eigen eigenvectors.
   std::vector<Eigen::VectorXcd> Xeig;

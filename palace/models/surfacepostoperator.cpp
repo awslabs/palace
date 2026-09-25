@@ -120,7 +120,7 @@ SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(
     }
     else
     {
-      std::copy(data.center.begin(), data.center.end(), center.begin());
+      std::ranges::copy(data.center, center.begin());
     }
   }
 }

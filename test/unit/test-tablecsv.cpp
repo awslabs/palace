@@ -93,8 +93,8 @@ TEST_CASE("TableCSV", "[tablecsv][Serial]")
   }
 
   std::vector<std::size_t> cols_n_row;
-  std::transform(table.cbegin(), table.cend(), std::back_inserter(cols_n_row),
-                 [](auto &c) { return c.n_rows(); });
+  std::ranges::transform(table, std::back_inserter(cols_n_row),
+                         [](auto &c) { return c.n_rows(); });
 
   CHECK(cols_n_row == std::vector<std::size_t>{0, 1, 2});
 

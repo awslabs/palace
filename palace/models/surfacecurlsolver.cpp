@@ -137,7 +137,7 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
       bool is_hole_boundary = false;
       for (int j = 0; j < edges.Size() && !is_hole_boundary; j++)
       {
-        if (hole_edge_sets[h].count(edges[j]))
+        if (hole_edge_sets[h].contains(edges[j]))
         {
           is_hole_boundary = true;
           boundary_submesh.GetBdrElement(i)->SetAttribute(hole_boundary_attrs[h]);
@@ -395,7 +395,7 @@ double ComputeFluxThroughSurface(const mfem::ParGridFunction &B_gf,
   for (int be = 0; be < nbdr; ++be)
   {
     int attr = pmesh->GetBdrAttribute(be);
-    if (std::find(attributes.begin(), attributes.end(), attr) == attributes.end())
+    if (std::ranges::find(attributes, attr) == attributes.end())
     {
       continue;
     }

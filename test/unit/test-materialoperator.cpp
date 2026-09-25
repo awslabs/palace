@@ -177,7 +177,7 @@ TEST_CASE("MaterialOperator requires materials for retained mesh domains",
   Mesh palace_mesh(std::move(par_mesh));
 
   const auto &local_attributes = palace_mesh.GetCeedAttributes();
-  const bool has_attr2 = local_attributes.find(2) != local_attributes.end();
+  const bool has_attr2 = local_attributes.contains(2);
   CHECK(has_attr2 == (Mpi::Rank(comm) == 0));
   CHECK(palace_mesh.GetNE() > 0);
 
@@ -396,8 +396,8 @@ TEST_CASE("MaterialOperator ignores ghost-only submesh attributes",
   const auto &local_attributes = palace_mesh.GetCeedAttributes();
   if (owns_elements)
   {
-    CHECK(local_attributes.find(1) != local_attributes.end());
-    CHECK(local_attributes.find(7) != local_attributes.end());
+    CHECK(local_attributes.contains(1));
+    CHECK(local_attributes.contains(7));
     // The remap must refresh the cached distinct-attribute array.
     CHECK(palace_mesh.Get().attributes.Max() == 7);
   }

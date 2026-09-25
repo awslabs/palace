@@ -136,9 +136,8 @@ public:
 
   // Return a copy of value scaled by given unit.
   template <ValueType unit, typename T>
-  auto Dimensionalize(T value) const
-      -> std::enable_if_t<!std::is_same_v<T, Vector> && !std::is_same_v<T, ComplexVector>,
-                          T>
+  T Dimensionalize(T value) const
+    requires(!std::is_same_v<T, Vector> && !std::is_same_v<T, ComplexVector>)
   {
     return value * GetScaleFactor<unit>();
   }
@@ -163,8 +162,8 @@ public:
 
   // Return a copy Vector or ComplexVector scaled by given unit.
   template <ValueType unit, typename T>
-  auto Dimensionalize(T value) const
-      -> std::enable_if_t<std::is_same_v<T, Vector> || std::is_same_v<T, ComplexVector>, T>
+  T Dimensionalize(T value) const
+    requires(std::is_same_v<T, Vector> || std::is_same_v<T, ComplexVector>)
   {
     value *= GetScaleFactor<unit>();
     return value;
@@ -248,8 +247,8 @@ public:
 
   // Return a copy of Vector of ComplexVector scaled by inverse of given unit.
   template <ValueType unit, typename T>
-  auto Nondimensionalize(T value) const
-      -> std::enable_if_t<std::is_same_v<T, Vector> || std::is_same_v<T, ComplexVector>, T>
+  T Nondimensionalize(T value) const
+    requires(std::is_same_v<T, Vector> || std::is_same_v<T, ComplexVector>)
   {
     value *= (1.0 / GetScaleFactor<unit>());
     return value;

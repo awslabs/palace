@@ -63,7 +63,7 @@ connection is required.
 System requirements:
 
   - CMake version 3.24 or later
-  - C++17 compatible C++ compiler
+  - C++20 compatible C++ compiler
   - C and Fortran (optional) compilers for dependency builds
   - MPI distribution
   - BLAS, LAPACK libraries

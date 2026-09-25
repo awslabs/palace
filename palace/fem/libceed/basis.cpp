@@ -3,8 +3,8 @@
 
 #include "basis.hpp"
 
+#include <bit>
 #include <cstdint>
-#include <cstring>
 #include <map>
 #include <mutex>
 #include <vector>
@@ -123,12 +123,7 @@ void InitNonTensorBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRu
   key.reserve(16 + maps.Bt.Size() + maps.Gt.Size() + qX.Height() * qX.Width() + qW.Size());
   auto AppendInt = [&](std::uint64_t value) { key.push_back(value); };
   auto AppendDouble = [&](double value)
-  {
-    std::uint64_t bits;
-    static_assert(sizeof(bits) == sizeof(value));
-    std::memcpy(&bits, &value, sizeof(bits));
-    key.push_back(bits);
-  };
+  { key.push_back(std::bit_cast<std::uint64_t>(value)); };
   auto AppendArray = [&](const auto &array)
   {
     AppendInt(static_cast<std::uint64_t>(array.Size()));

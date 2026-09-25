@@ -4,9 +4,9 @@
 #include "facenbrexchange.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
-#include <cstring>
 #include <limits>
 #include <map>
 #include <memory>
@@ -77,29 +77,20 @@ void VerifyRegisteredIr(const mfem::IntegrationRule &ir,
   }
 }
 
-long long EncodePointRuleDouble(double x)
-{
-  // Preserve every supplied IEEE-754 bit, including signed zero, in the immutable
-  // fixed-rule identity.
-  static_assert(sizeof(long long) == sizeof(double));
-  long long bits;
-  std::memcpy(&bits, &x, sizeof(bits));
-  return bits;
-}
-
 void AppendPointRuleSignature(PointConfigKey &key,
                               const std::vector<mfem::IntegrationPoint> &pts)
 {
   // Coordinate and weight bits are ordered by quadrature point and component. This
   // keeps canonical rules reusable across exchange rebuilds while distinguishing any
-  // caller-supplied rule with changed point data.
+  // caller-supplied rule with changed point data. Every IEEE-754 bit is kept, including
+  // signed zero.
   key.push_back(static_cast<long long>(pts.size()));
   for (const auto &ip : pts)
   {
-    key.push_back(EncodePointRuleDouble(ip.x));
-    key.push_back(EncodePointRuleDouble(ip.y));
-    key.push_back(EncodePointRuleDouble(ip.z));
-    key.push_back(EncodePointRuleDouble(ip.weight));
+    key.push_back(std::bit_cast<long long>(ip.x));
+    key.push_back(std::bit_cast<long long>(ip.y));
+    key.push_back(std::bit_cast<long long>(ip.z));
+    key.push_back(std::bit_cast<long long>(ip.weight));
   }
 }
 
@@ -120,32 +111,22 @@ int DecodeSetupInt(SetupWord value)
 
 SetupWord EncodeSetupDouble(double value)
 {
-  static_assert(sizeof(SetupWord) == sizeof(double));
-  SetupWord bits;
-  std::memcpy(&bits, &value, sizeof(bits));
-  return bits;
+  return std::bit_cast<SetupWord>(value);
 }
 
 double DecodeSetupDouble(SetupWord bits)
 {
-  double value;
-  std::memcpy(&value, &bits, sizeof(value));
-  return value;
+  return std::bit_cast<double>(bits);
 }
 
 SetupWord EncodeSetupKey(long long value)
 {
-  static_assert(sizeof(SetupWord) == sizeof(long long));
-  SetupWord bits;
-  std::memcpy(&bits, &value, sizeof(bits));
-  return bits;
+  return std::bit_cast<SetupWord>(value);
 }
 
 long long DecodeSetupKey(SetupWord bits)
 {
-  long long value;
-  std::memcpy(&value, &bits, sizeof(value));
-  return value;
+  return std::bit_cast<long long>(bits);
 }
 
 // Registry of evaluation point integration rules with application lifetime (as in
@@ -236,8 +217,7 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
                     req.face_nbr_elem < pmesh.GetNFaceNeighborElements() &&
                     req.source_mask != 0 && !req.pts.empty(),
                 "Invalid face neighbor field exchange request!");
-    const int *it =
-        std::upper_bound(elem_offsets.begin(), elem_offsets.end(), req.face_nbr_elem);
+    const int *it = std::ranges::upper_bound(elem_offsets, req.face_nbr_elem);
     nbr_reqs[static_cast<int>(it - elem_offsets.begin()) - 1].push_back(
         static_cast<int>(r));
   }

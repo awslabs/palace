@@ -56,7 +56,7 @@ void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int widt
         for (const auto &path : entries)
         {
           const auto &fname = path.filename().string();
-          if (fname.rfind("iteration") == 0)
+          if (fname.starts_with("iteration"))
           {
             continue;
           }
@@ -89,8 +89,7 @@ void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int widt
               fs::copy(path, dest, fs::copy_options::overwrite_existing);
             }
           }
-          else if (fname.size() >= 14 &&
-                   fname.compare(fname.size() - 14, 14, "_resolved.json") == 0)
+          else if (fname.ends_with("_resolved.json"))
           {
             // The resolved configuration is a global record of the run, not per-iteration
             // output. Leave it in the top-level output folder rather than moving it into an
@@ -455,7 +454,7 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
     for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
     {
       auto key = Timer::descriptions[i];
-      key.erase(std::remove_if(key.begin(), key.end(), isspace), key.end());
+      std::erase_if(key, isspace);
       meta["ElapsedTime"]["Durations"][key] = timer.Data((Timer::Index)i);
       meta["ElapsedTime"]["Counts"][key] = timer.Counts((Timer::Index)i);
       meta["PeakMemoryGrowthMegabytes"]["Min"][key] = red.rank_mem.min[i] * to_mb;
