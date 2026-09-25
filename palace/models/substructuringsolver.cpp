@@ -647,14 +647,23 @@ struct SubstructuringSolver::Impl
   std::unique_ptr<mfem::HypreParMatrix> env_A_ee;  // single-level submesh operator
   std::unique_ptr<KspSolver> env_ksp;
 #if defined(MFEM_USE_SUPERLU)
-  std::unique_ptr<SuperLUSolver>
-      env_lu;  // direct A_EE factorization (many-RHS materialization)
   std::unique_ptr<SuperLUSolver> reg_lu;  // direct A_region_free factorization (region pc)
   std::unique_ptr<mfem::HypreParMatrix>
       env_A_ee_parent;  // parent-space env A_EE (eliminated)
   std::unique_ptr<SuperLUSolver>
       env_lu_parent;  // parent-space direct env solve (no transfer)
 #endif
+  // Block size for the batched multi-RHS S_E materialization (SuperLU triangular solves are
+  // per-call-overhead bound for a single RHS; ~4x cheaper per column at 32).
+  static constexpr int kMaterializeBlock = 32;
+  // Largest interface for which the region preconditioner factors the dense Gamma block of
+  // the exact condensed operator (dense block + its fill ~ 3 |Gamma|^2 doubles in total).
+  static constexpr int kDirectCondensedMaxInterface = 10000;
+  // RHS count of the direct env factor, fixed by its first solve (MFEM's SuperLU wrapper
+  // does not allow changing it): kMaterializeBlock when S_E is materialized, else the size
+  // of the first excitation batch. Smaller batches are zero-padded to it.
+  mutable int env_block = 0;
+  mutable std::vector<mfem::Vector> env_bin, env_bout;  // padded multi-RHS buffers
   mfem::Array<int> non_env_int;  // parent true DOFs that are not environment-interior
   bool env_parent_direct = false;
   mfem::Array<int> env_ess;  // solve-space essential true DOFs (Gamma + env Dirichlet)
@@ -681,7 +690,6 @@ struct SubstructuringSolver::Impl
   mfem::HypreParMatrix *K_region_e = nullptr, *K_env_e = nullptr;
   std::vector<char> is_gamma, is_env_int, is_region_free;
   mfem::Array<int> dbc_tdofs;
-  mfem::Vector dbc_values;  // full parent true-DOF vector, prescribed values on Dirichlet
   std::map<int, std::vector<int>> terminal_tdofs;  // terminal index -> its true DOFs
 
   std::unique_ptr<RegionCondensedOperator> region_op;
@@ -733,8 +741,6 @@ struct SubstructuringSolver::Impl
     const auto &terminals = iodata.boundaries.terminal;
     mfem::Array<int> dir_mark(nt);
     dir_mark = 0;
-    dbc_values.SetSize(nt);
-    dbc_values = 0.0;
     {
       const int maxb = parent.bdr_attributes.Size() ? parent.bdr_attributes.Max() : 0;
       for (const auto &[idx, term] : terminals)
@@ -913,12 +919,27 @@ struct SubstructuringSolver::Impl
   {
     const int mg_levels = iodata.solver.linear.mg_max_levels;
 #if defined(MFEM_USE_SUPERLU)
-    // Order >= 2 H(curl): solve A_EE in PARENT space (A_env with non-env-interior
-    // eliminated) via SuperLU, not the ParSubMesh transfer -- the transfer mishandles
-    // higher-order tetrahedral edge/face DOF orientation across a partition cut. SuperLU
-    // tolerates the all-identity ranks that ruled out the parent-space *iterative*
-    // approach.
-    if (magnetostatic && iodata.solver.order > 1)
+    // Direct A_EE (default when the environment fits): factor A_env with the
+    // non-env-interior true DOFs eliminated, in PARENT space. SuperLU tolerates the
+    // all-identity ranks that rule out a parent-space *iterative* solve, and no ParSubMesh
+    // transfer is needed per solve (measured ~40% of the S_E materialization). Order >= 2
+    // H(curl) always takes this path: the transfer mishandles higher-order tetrahedral
+    // edge/face orientation across a cut.
+    bool direct_fits = false;
+    {
+      long long env_loc = 0;
+      for (int i = 0; i < nt; i++)
+      {
+        if (is_env_int[i] || is_gamma[i])
+        {
+          env_loc++;
+        }
+      }
+      long long env_glob = 0;
+      MPI_Allreduce(&env_loc, &env_glob, 1, MPI_LONG_LONG, MPI_SUM, parent_fes.GetComm());
+      direct_fits = (env_glob <= kDirectMaxDofs);
+    }
+    if (direct_fits || (magnetostatic && iodata.solver.order > 1))
     {
       non_env_int.SetSize(0);
       for (int i = 0; i < nt; i++)
@@ -939,27 +960,9 @@ struct SubstructuringSolver::Impl
       return;
     }
 #endif
-    // Default to a direct A_EE factorization (factor once + cheap back-solves for the
-    // |Gamma| S_E columns) when the environment fits; fall back to iterative / geometric
-    // multigrid for very large environments or if SuperLU is unavailable.
-    bool use_direct = false;
-#if defined(MFEM_USE_SUPERLU)
-    {
-      long long env_loc = 0;
-      for (int i = 0; i < nt; i++)
-      {
-        if (is_env_int[i] || is_gamma[i])
-        {
-          env_loc++;
-        }
-      }
-      long long env_glob = 0;
-      MPI_Allreduce(&env_loc, &env_glob, 1, MPI_LONG_LONG, MPI_SUM, parent_fes.GetComm());
-      use_direct = (env_glob <= kDirectMaxDofs);
-    }
-#endif
-    const bool use_gmg =
-        !use_direct && !magnetostatic && iodata.solver.order > 1 && mg_levels > 1;
+    // Iterative fallback (very large environment, or no SuperLU): environment submesh
+    // solve.
+    const bool use_gmg = !magnetostatic && iodata.solver.order > 1 && mg_levels > 1;
 
     // Create the environment submesh. For the GMG path it must be owned by a Palace Mesh
     // (for the CEED attribute maps + the FE-space hierarchy); otherwise a standalone
@@ -993,15 +996,6 @@ struct SubstructuringSolver::Impl
         std::unique_ptr<mfem::HypreParMatrix> e(env_A_ee->EliminateRowsCols(env_ess));
       }
       MPI_Comm comm = env_solve_fes->GetComm();
-#if defined(MFEM_USE_SUPERLU)
-      if (use_direct)
-      {
-        // Factor A_EE once; ApplyAeeInv then does cheap direct back-solves.
-        env_lu = std::make_unique<SuperLUSolver>(iodata, comm, 0);
-        env_lu->SetOperator(*env_A_ee);
-      }
-      else
-#endif
       {
         std::unique_ptr<Solver<Operator>> pc;
         if (magnetostatic)
@@ -1218,25 +1212,169 @@ struct SubstructuringSolver::Impl
   // Apply A_EE^-1 to a parent true-DOF vector (nonzero on the environment interior):
   // transfer to the submesh, solve the Dirichlet problem, transfer back, and restrict to
   // the environment interior.
+  // Interface selection E_Gamma (parent true DOFs x global interface index): E(i, g_i) = 1
+  // for each interface true DOF. Each rank's interface indices are its own contiguous
+  // block, so the matrix is local (diag block only).
+  std::unique_ptr<mfem::HypreParMatrix> AssembleInterfaceSelection() const
+  {
+    MPI_Comm comm = parent_fes.GetComm();
+    std::vector<int> I(nt + 1, 0);
+    std::vector<HYPRE_BigInt> J;
+    std::vector<double> V;
+    for (int i = 0; i < nt; i++)
+    {
+      if (is_gamma[i])
+      {
+        J.push_back(gamma_global[i]);
+        V.push_back(1.0);
+      }
+      I[i + 1] = static_cast<int>(J.size());
+    }
+    // Column (interface) partitioning in the layout HYPRE expects for this build.
+    std::vector<HYPRE_BigInt> cols;
+    if (HYPRE_AssumedPartitionCheck())
+    {
+      cols = {gamma_off, gamma_off + gamma_nloc, nG_global};
+    }
+    else
+    {
+      const int nranks = Mpi::Size(comm);
+      std::vector<int> cnt(nranks);
+      MPI_Allgather(&gamma_nloc, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+      cols.assign(nranks + 1, 0);
+      for (int r = 0; r < nranks; r++)
+      {
+        cols[r + 1] = cols[r] + cnt[r];
+      }
+    }
+    return std::make_unique<mfem::HypreParMatrix>(
+        comm, nt, parent_fes.GlobalTrueVSize(), static_cast<HYPRE_BigInt>(nG_global),
+        I.data(), J.data(), V.data(), parent_fes.GetTrueDofOffsets(), cols.data());
+  }
+
+  // S_E as a parent-space HypreParMatrix (dense Gamma x Gamma block, zero elsewhere), for
+  // factoring the exact condensed region operator. Each rank's S_E rows are its own
+  // interface true DOFs; columns map interface index -> global true DOF via a replicated
+  // table.
+  std::unique_ptr<mfem::HypreParMatrix> AssembleDenseInterface() const
+  {
+    MPI_Comm comm = parent_fes.GetComm();
+    const int nG = nG_global, nloc = gamma_nloc;
+    const HYPRE_BigInt tstart = parent_fes.GetMyTDofOffset();
+    std::vector<HYPRE_BigInt> mine(nloc), g2t(nG);
+    for (int i = 0; i < nt; i++)
+    {
+      if (is_gamma[i])
+      {
+        mine[gamma_global[i] - gamma_off] = tstart + i;
+      }
+    }
+    const int nranks = Mpi::Size(comm);
+    std::vector<int> cnt(nranks), disp(nranks);
+    MPI_Allgather(&nloc, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+    for (int r = 0, acc = 0; r < nranks; r++)
+    {
+      disp[r] = acc;
+      acc += cnt[r];
+    }
+    MPI_Allgatherv(mine.data(), nloc, HYPRE_MPI_BIG_INT, g2t.data(), cnt.data(),
+                   disp.data(), HYPRE_MPI_BIG_INT, comm);
+    std::vector<int> I(nt + 1, 0);
+    std::vector<HYPRE_BigInt> J;
+    std::vector<double> V;
+    J.reserve(static_cast<std::size_t>(nloc) * nG);
+    V.reserve(static_cast<std::size_t>(nloc) * nG);
+    for (int i = 0; i < nt; i++)
+    {
+      if (is_gamma[i])
+      {
+        const double *row =
+            &S_rows[static_cast<std::size_t>(gamma_global[i] - gamma_off) * nG];
+        for (int j = 0; j < nG; j++)
+        {
+          J.push_back(g2t[j]);
+          V.push_back(row[j]);
+        }
+      }
+      I[i + 1] = static_cast<int>(J.size());
+    }
+    const HYPRE_BigInt glob = parent_fes.GlobalTrueVSize();
+    return std::make_unique<mfem::HypreParMatrix>(comm, nt, glob, glob, I.data(), J.data(),
+                                                  V.data(), parent_fes.GetTrueDofOffsets(),
+                                                  parent_fes.GetTrueDofOffsets());
+  }
+
+  // Batched environment interior solves y_k = A_EE^-1 x_k (inputs/outputs are parent
+  // true-DOF vectors; only the environment interior is read/written, the rest of y_k is
+  // zeroed). The direct path runs multi-RHS blocks through the single factor; the iterative
+  // path loops.
+  void ApplyAeeInvMulti(const std::vector<const mfem::Vector *> &X,
+                        const std::vector<mfem::Vector *> &Y) const
+  {
+    MFEM_ASSERT(X.size() == Y.size(), "ApplyAeeInvMulti size mismatch!");
+#if defined(MFEM_USE_SUPERLU)
+    if (env_parent_direct)
+    {
+      if (env_block == 0)
+      {
+        env_block = std::max(1, std::min(kMaterializeBlock, static_cast<int>(X.size())));
+        env_bin.assign(env_block, mfem::Vector(nt));
+        env_bout.assign(env_block, mfem::Vector(nt));
+      }
+      mfem::Array<const mfem::Vector *> Xp(env_block);
+      mfem::Array<mfem::Vector *> Yp(env_block);
+      for (int k = 0; k < env_block; k++)
+      {
+        Xp[k] = &env_bin[k];
+        Yp[k] = &env_bout[k];
+      }
+      const int n = static_cast<int>(X.size());
+      for (int c0 = 0; c0 < n; c0 += env_block)
+      {
+        const int nb = std::min(env_block, n - c0);
+        for (int k = 0; k < env_block; k++)
+        {
+          // Zero the rhs outside the environment interior (the eliminated rows are
+          // identity); pad the tail of the block with zero RHS.
+          for (int i = 0; i < nt; i++)
+          {
+            env_bin[k](i) = (k < nb && is_env_int[i]) ? (*X[c0 + k])(i) : 0.0;
+          }
+        }
+        if (env_block == 1)
+        {
+          env_lu_parent->Mult(env_bin[0], env_bout[0]);
+        }
+        else
+        {
+          env_lu_parent->ArrayMult(Xp, Yp);
+        }
+        for (int k = 0; k < nb; k++)
+        {
+          Y[c0 + k]->SetSize(nt);
+          for (int i = 0; i < nt; i++)
+          {
+            (*Y[c0 + k])(i) = is_env_int[i] ? env_bout[k](i) : 0.0;
+          }
+        }
+      }
+      return;
+    }
+#endif
+    for (std::size_t k = 0; k < X.size(); k++)
+    {
+      ApplyAeeInv(*X[k], *Y[k]);
+    }
+  }
+
   void ApplyAeeInv(const mfem::Vector &x_parent, mfem::Vector &y_parent) const
   {
 #if defined(MFEM_USE_SUPERLU)
     if (env_parent_direct)
     {
-      // Parent-space direct env interior solve (no submesh transfer): zero the rhs outside
-      // the environment interior, solve the eliminated A_env, and keep the interior.
-      mfem::Vector rhs(nt), sol(nt);
-      for (int i = 0; i < nt; i++)
-      {
-        rhs(i) = is_env_int[i] ? x_parent(i) : 0.0;
-      }
-      sol = 0.0;
-      env_lu_parent->Mult(rhs, sol);
-      y_parent.SetSize(nt);
-      for (int i = 0; i < nt; i++)
-      {
-        y_parent(i) = is_env_int[i] ? sol(i) : 0.0;
-      }
+      // Parent-space direct env interior solve (no submesh transfer), via the batched path
+      // so the factor's fixed RHS count is respected.
+      ApplyAeeInvMulti({&x_parent}, {&y_parent});
       return;
     }
 #endif
@@ -1249,16 +1387,7 @@ struct SubstructuringSolver::Impl
       env_srhs(env_ess[i]) = 0.0;
     }
     env_ssol = 0.0;
-#if defined(MFEM_USE_SUPERLU)
-    if (env_lu)
-    {
-      env_lu->Mult(env_srhs, env_ssol);
-    }
-    else
-#endif
-    {
-      env_ksp->Mult(env_srhs, env_ssol);
-    }
+    env_ksp->Mult(env_srhs, env_ssol);
     env_sgf.SetFromTrueDofs(env_ssol);
     env_pgf = 0.0;
     env_submesh->Transfer(env_sgf, env_pgf);
@@ -1740,27 +1869,83 @@ void SubstructuringSolver::CondenseEnvironment()
         col_to_dof[impl->gamma_global[i] - off] = i;
       }
     }
-    Vector e(impl->nt), y(impl->nt);
-    e = 0.0;
-    int prev = -1;
-    for (int c = 0; c < nG; c++)
+    // S_E e_c = (A_env e_c)|_Gamma - (A_env A_EE^-1 (A_env e_c)|_E)|_Gamma. The results are
+    // complete (assembled) true-DOF vectors, so each rank stores its own S_E rows directly
+    // -- no interface Allreduce (O(nG^2) communication) is needed.
+    auto store_col = [&](int c, const Vector &y)
     {
-      if (prev >= 0)
-      {
-        e(prev) = 0.0;  // clear the previous column's unit entry
-        prev = -1;
-      }
-      if (c >= off && c < off + nloc)
-      {
-        prev = col_to_dof[c - off];
-        e(prev) = 1.0;
-      }
-      impl->dtn->Mult(e, y);
-      // y is a complete true-DOF vector (assembled), so each rank stores its own S_E rows
-      // directly from y -- no interface Allreduce needed (removes O(nG^2) communication).
       for (int r = 0; r < nloc; r++)
       {
         impl->S_rows[static_cast<std::size_t>(r) * nG + c] = y(col_to_dof[r]);
+      }
+    };
+    auto set_unit = [&](Vector &e, int c)
+    {
+      e = 0.0;
+      if (c >= off && c < off + nloc)
+      {
+        e(col_to_dof[c - off]) = 1.0;
+      }
+    };
+#if defined(MFEM_USE_SUPERLU)
+    if (impl->env_parent_direct)
+    {
+      // Batched direct materialization: kMaterializeBlock columns per multi-RHS back-solve
+      // through the (single) environment factor. This is its first solve, which fixes the
+      // factor's block size at kMaterializeBlock for the online excitation batches too.
+      // Thin couplings built once: G = A_env E_Gamma (column c = A_env e_c, supported next
+      // to Gamma) and R = E_Gamma^T A_env (the interface rows), so each column costs O(nnz
+      // near Gamma) instead of two full A_env matvecs.
+      std::unique_ptr<mfem::HypreParMatrix> E = impl->AssembleInterfaceSelection();
+      std::unique_ptr<mfem::HypreParMatrix> G(mfem::ParMult(impl->A_env.get(), E.get()));
+      std::unique_ptr<mfem::HypreParMatrix> Et(E->Transpose());
+      std::unique_ptr<mfem::HypreParMatrix> R(mfem::ParMult(Et.get(), impl->A_env.get()));
+      E.reset();
+      Et.reset();
+      const int B = Impl::kMaterializeBlock;
+      std::vector<Vector> t(B, Vector(impl->nt)), ye(B, Vector(impl->nt));
+      std::vector<const mfem::Vector *> X(B);
+      std::vector<mfem::Vector *> Y(B);
+      Vector ec(nloc), z(nloc);
+      for (int c0 = 0; c0 < nG; c0 += B)
+      {
+        const int nb = std::min(B, nG - c0);
+        X.resize(nb);
+        Y.resize(nb);
+        for (int k = 0; k < nb; k++)
+        {
+          const int c = c0 + k;
+          ec = 0.0;
+          if (c >= off && c < off + nloc)
+          {
+            ec(c - off) = 1.0;
+          }
+          G->Mult(ec,
+                  t[k]);  // A_env e_c: env-interior part = solve RHS, Gamma part = A_GG e_c
+          X[k] = &t[k];
+          Y[k] = &ye[k];
+        }
+        impl->ApplyAeeInvMulti(X, Y);
+        for (int k = 0; k < nb; k++)
+        {
+          R->Mult(ye[k], z);  // (A_env y)|_Gamma = A_GE A_EE^-1 A_EG e_c, this rank's rows
+          const int c = c0 + k;
+          for (int r = 0; r < nloc; r++)
+          {
+            impl->S_rows[static_cast<std::size_t>(r) * nG + c] = t[k](col_to_dof[r]) - z(r);
+          }
+        }
+      }
+    }
+    else
+#endif
+    {
+      Vector e(impl->nt), y(impl->nt);
+      for (int c = 0; c < nG; c++)
+      {
+        set_unit(e, c);
+        impl->dtn->Mult(e, y);
+        store_col(c, y);
       }
     }
     if (!model_path.empty())
@@ -1911,10 +2096,25 @@ void SubstructuringSolver::CondenseEnvironment()
 #if defined(MFEM_USE_SUPERLU)
     if (use_direct)
     {
-      // Direct factorization of A_region_free: an (near-)exact region preconditioner, so
-      // the outer CG on the condensed operator converges in a few iterations.
+      // Direct factorization of the region preconditioner. When the interface is small
+      // enough for a dense Gamma block (and S_E is dense, not HODLR), factor the EXACT
+      // condensed operator A_region_free + S_E, so the outer CG converges in one iteration:
+      // the non-local DtN cannot be sparsified (truncating it to the interface stencil
+      // makes the preconditioner far worse than omitting it), and A_region_free alone needs
+      // O(50) iterations. Otherwise fall back to A_region_free (S_E omitted).
       impl->reg_lu = std::make_unique<SuperLUSolver>(impl->iodata, comm, 0);
-      impl->reg_lu->SetOperator(*impl->A_region_free);
+      if (!impl->hodlr && nG > 0 && nG <= Impl::kDirectCondensedMaxInterface)
+      {
+        std::unique_ptr<mfem::HypreParMatrix> S_mat = impl->AssembleDenseInterface();
+        std::unique_ptr<mfem::HypreParMatrix> P(
+            mfem::ParAdd(impl->A_region_free.get(), S_mat.get()));
+        S_mat.reset();
+        impl->reg_lu->SetOperator(*P);  // copies P into SuperLU's distributed format
+      }
+      else
+      {
+        impl->reg_lu->SetOperator(*impl->A_region_free);
+      }
       pc = std::make_unique<CallableSolver>(impl->A_region_free->Height(),
                                             [pi](const mfem::Vector &r, mfem::Vector &z)
                                             { pi->reg_lu->Mult(r, z); });
@@ -1955,111 +2155,187 @@ void SubstructuringSolver::CondenseEnvironment()
   }
 }
 
-Vector SubstructuringSolver::SolveExcitation(int drive_idx)
+namespace
 {
-  MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
-  // Prescribed terminal values for this excitation: driven terminal at 1 V, others
-  // grounded.
-  impl->dbc_values = 0.0;
-  for (const auto &[idx, dofs] : impl->terminal_tdofs)
+
+// Terminal excitation Dirichlet field: the driven terminal at 1 V, all others grounded.
+Vector TerminalDbc(const std::map<int, std::vector<int>> &terminal_tdofs, int drive_idx,
+                   int nt)
+{
+  Vector dbc(nt);
+  dbc = 0.0;
+  for (const auto &[idx, dofs] : terminal_tdofs)
   {
     const double value = (idx == drive_idx) ? 1.0 : 0.0;
     for (int d : dofs)
     {
-      impl->dbc_values(d) = value;
+      dbc(d) = value;
     }
   }
-  return SolveWithCurrentDbc();
+  return dbc;
+}
+
+}  // namespace
+
+Vector SubstructuringSolver::SolveExcitation(int drive_idx)
+{
+  return SolveExcitations({drive_idx})[0];
+}
+
+std::vector<Vector>
+SubstructuringSolver::SolveExcitations(const std::vector<int> &drive_terminal_indices)
+{
+  MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
+  std::vector<Vector> dbcs;
+  dbcs.reserve(drive_terminal_indices.size());
+  for (int idx : drive_terminal_indices)
+  {
+    dbcs.push_back(TerminalDbc(impl->terminal_tdofs, idx, impl->nt));
+  }
+  return SolveDirichletBatch(dbcs);
 }
 
 Vector SubstructuringSolver::SolveDirichlet(const Vector &dbc_values)
 {
-  MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
-  // Prescribe an arbitrary boundary field on the Dirichlet DOF set (e.g. a flux-loop lift).
-  impl->dbc_values = 0.0;
-  for (int i = 0; i < impl->dbc_tdofs.Size(); i++)
-  {
-    const int d = impl->dbc_tdofs[i];
-    impl->dbc_values(d) = dbc_values(d);
-  }
-  return SolveWithCurrentDbc();
+  return SolveDirichlets({dbc_values})[0];
 }
 
-Vector SubstructuringSolver::SolveWithCurrentDbc()
+std::vector<Vector>
+SubstructuringSolver::SolveDirichlets(const std::vector<Vector> &dbc_values)
+{
+  MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
+  // Prescribe an arbitrary boundary field on the Dirichlet DOF set (e.g. a flux-loop lift).
+  std::vector<Vector> dbcs(dbc_values.size(), Vector(impl->nt));
+  for (std::size_t k = 0; k < dbc_values.size(); k++)
+  {
+    dbcs[k] = 0.0;
+    for (int i = 0; i < impl->dbc_tdofs.Size(); i++)
+    {
+      const int d = impl->dbc_tdofs[i];
+      dbcs[k](d) = dbc_values[k](d);
+    }
+  }
+  return SolveDirichletBatch(dbcs);
+}
+
+std::vector<Vector>
+SubstructuringSolver::SolveDirichletBatch(const std::vector<Vector> &dbcs)
 {
   const int nt = impl->nt;
+  const int n = static_cast<int>(dbcs.size());
   MPI_Comm comm = impl->parent_fes.GetComm();
 
-  // g_E for this excitation: interface response to the (excitation-specific) Dirichlet
-  // data, via one environment solve through the implicit DtN, gathered to the global
-  // interface.
-  std::vector<double> g_glob(impl->nG_global, 0.0);
+  // g_E per excitation: the interface response to the Dirichlet data,
+  //   g_E = (A_env x)|_Gamma - (A_env A_EE^-1 (A_env x)|_E)|_Gamma.
+  // The environment solve is skipped (exactly) when (A_env x)|_E vanishes, i.e. the
+  // Dirichlet data does not touch the environment (e.g. a region terminal); the others run
+  // as one batched multi-RHS solve.
+  std::vector<Vector> t(n, Vector(nt)), gE(n, Vector(nt));
+  std::vector<int> touches(n, 0);
+  for (int k = 0; k < n; k++)
   {
-    Vector gy(nt);
-    impl->dtn->Mult(impl->dbc_values, gy);
-    std::vector<double> loc(impl->nG_global, 0.0);
-    for (int i = 0; i < nt; i++)
+    impl->A_env->Mult(dbcs[k], t[k]);
+    for (int i = 0; i < nt && !touches[k]; i++)
     {
-      if (impl->is_gamma[i])
+      if (impl->is_env_int[i] && t[k](i) != 0.0)
       {
-        loc[impl->gamma_global[i]] = gy(i);
-      }
-    }
-    MPI_Allreduce(loc.data(), g_glob.data(), impl->nG_global, MPI_DOUBLE, MPI_SUM, comm);
-  }
-
-  // RHS: region Dirichlet elimination + environment DtN load g_E.
-  Vector b(nt);
-  b = 0.0;
-  {
-    Vector t(nt);
-    impl->A_region->Mult(impl->dbc_values, t);
-    for (int i = 0; i < nt; i++)
-    {
-      if (impl->is_region_free[i])
-      {
-        b(i) -= t(i);
+        touches[k] = 1;
       }
     }
   }
-  for (int i = 0; i < nt; i++)
+  if (n > 0)
   {
-    if (impl->is_gamma[i])
-    {
-      b(i) -= g_glob[impl->gamma_global[i]];
-    }
+    MPI_Allreduce(MPI_IN_PLACE, touches.data(), n, MPI_INT, MPI_MAX, comm);
   }
-
-  // Region-condensed solve using the materialized S_E (no environment solves in the loop).
-  Vector u(nt);
-  u = 0.0;
-  impl->region_ksp->Mult(b, u);
-  for (int i = 0; i < impl->dbc_tdofs.Size(); i++)
   {
-    u(impl->dbc_tdofs[i]) = impl->dbc_values(impl->dbc_tdofs[i]);
-  }
-
-  // Recover the environment interior: u_E = -A_EE^-1 (A_env u)|_E.
-  {
-    Vector t(nt);
-    impl->A_env->Mult(u, t);
-    Vector rhs(nt);
-    rhs = 0.0;
-    for (int i = 0; i < nt; i++)
+    std::vector<const mfem::Vector *> X;
+    std::vector<mfem::Vector *> Y;
+    std::vector<int> ks;
+    for (int k = 0; k < n; k++)
     {
-      if (impl->is_env_int[i])
+      if (touches[k])
       {
-        rhs(i) = -t(i);
+        X.push_back(&t[k]);
+        Y.push_back(&gE[k]);
+        ks.push_back(k);
       }
     }
-    Vector uE(nt);
-    uE = 0.0;
-    impl->ApplyAeeInv(rhs, uE);
-    for (int i = 0; i < nt; i++)
+    if (!X.empty())
     {
-      if (impl->is_env_int[i])
+      impl->ApplyAeeInvMulti(X, Y);
+    }
+    Vector t2(nt);
+    for (int k = 0; k < n; k++)
+    {
+      if (touches[k])
       {
-        u(i) = uE(i);
+        impl->A_env->Mult(gE[k], t2);
+        for (int i = 0; i < nt; i++)
+        {
+          gE[k](i) = t[k](i) - t2(i);
+        }
+      }
+      else
+      {
+        gE[k] = t[k];
+      }
+    }
+  }
+
+  // Region-condensed solve per excitation using the materialized S_E (no environment solves
+  // in the loop). RHS: region Dirichlet elimination + environment load g_E on the
+  // interface. Both are complete (assembled) true-DOF vectors, so each rank reads its own
+  // entries.
+  std::vector<Vector> u(n, Vector(nt)), rhs(n, Vector(nt)), uE(n, Vector(nt));
+  {
+    Vector b(nt), tr(nt);
+    for (int k = 0; k < n; k++)
+    {
+      impl->A_region->Mult(dbcs[k], tr);
+      b = 0.0;
+      for (int i = 0; i < nt; i++)
+      {
+        if (impl->is_region_free[i])
+        {
+          b(i) -= tr(i);
+        }
+        if (impl->is_gamma[i])
+        {
+          b(i) -= gE[k](i);
+        }
+      }
+      u[k] = 0.0;
+      impl->region_ksp->Mult(b, u[k]);
+      for (int i = 0; i < impl->dbc_tdofs.Size(); i++)
+      {
+        u[k](impl->dbc_tdofs[i]) = dbcs[k](impl->dbc_tdofs[i]);
+      }
+    }
+  }
+
+  // Recover the environment interior, batched: u_E = -A_EE^-1 (A_env u)|_E.
+  {
+    std::vector<const mfem::Vector *> X(n);
+    std::vector<mfem::Vector *> Y(n);
+    for (int k = 0; k < n; k++)
+    {
+      impl->A_env->Mult(u[k], rhs[k]);
+      rhs[k].Neg();
+      X[k] = &rhs[k];
+      Y[k] = &uE[k];
+    }
+    if (n > 0)
+    {
+      impl->ApplyAeeInvMulti(X, Y);
+    }
+    for (int k = 0; k < n; k++)
+    {
+      for (int i = 0; i < nt; i++)
+      {
+        if (impl->is_env_int[i])
+        {
+          u[k](i) = uE[k](i);
+        }
       }
     }
   }
@@ -2077,7 +2353,6 @@ Vector SubstructuringSolver::SolveSource(const Vector &f)
 {
   MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
   const int nt = impl->nt;
-  MPI_Comm comm = impl->parent_fes.GetComm();
 
   // Environment interior source response: solve A_EE w = f_E, correction (A_env w)|_Gamma.
   Vector fE(nt), w(nt), Aw(nt);
@@ -2091,16 +2366,7 @@ Vector SubstructuringSolver::SolveSource(const Vector &f)
   }
   w = 0.0;
   impl->ApplyAeeInv(fE, w);
-  impl->A_env->Mult(w, Aw);
-  std::vector<double> src_glob(impl->nG_global, 0.0), loc(impl->nG_global, 0.0);
-  for (int i = 0; i < nt; i++)
-  {
-    if (impl->is_gamma[i])
-    {
-      loc[impl->gamma_global[i]] = Aw(i);
-    }
-  }
-  MPI_Allreduce(loc.data(), src_glob.data(), impl->nG_global, MPI_DOUBLE, MPI_SUM, comm);
+  impl->A_env->Mult(w, Aw);  // assembled: each rank reads its own interface entries
 
   // RHS: region/interface source minus the environment source correction on the interface.
   Vector b(nt);
@@ -2116,7 +2382,7 @@ Vector SubstructuringSolver::SolveSource(const Vector &f)
   {
     if (impl->is_gamma[i])
     {
-      b(i) -= src_glob[impl->gamma_global[i]];
+      b(i) -= Aw(i);
     }
   }
 

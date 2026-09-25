@@ -35,15 +35,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     const int n = static_cast<int>(terminals.size());
     MFEM_VERIFY(n > 0, "Substructuring electrostatic solve requires terminals!");
 
-    // Capacitance sweep: solve each terminal excitation (reusing the condensed
-    // environment), then form the Maxwell capacitance matrix C_ij = phi_i^T K phi_j.
-    std::vector<Vector> fields(n);
-    for (int j = 0; j < n; j++)
-    {
-      Mpi::Print("\nSubstructuring excitation {:d}/{:d}: terminal {:d}\n", j + 1, n,
-                 terminals[j]);
-      fields[j] = sub.SolveExcitation(terminals[j]);
-    }
+    // Capacitance sweep: solve all terminal excitations as one batch (reusing the condensed
+    // environment; the environment solves run multi-RHS), then form the Maxwell capacitance
+    // matrix C_ij = phi_i^T K phi_j.
+    Mpi::Print("\nSubstructuring capacitance sweep: {:d} terminal excitation{}\n", n,
+               (n > 1) ? "s" : "");
+    std::vector<Vector> fields = sub.SolveExcitations(terminals);
     mfem::DenseMatrix C(n);
     for (int i = 0; i < n; i++)
     {

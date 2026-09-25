@@ -121,21 +121,22 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     const int n = static_cast<int>(curlcurl_op.GetSurfaceFluxOp().Size());
     MFEM_VERIFY(n > 0, "Magnetostatic substructuring requires flux-loop excitations!");
 
-    std::vector<Vector> A(n);
-    std::vector<double> Phi(n);
+    // Build every flux-loop lift, then solve them as one batch (the environment solves run
+    // multi-RHS).
+    std::vector<Vector> lifts;
+    std::vector<double> Phi;
     std::vector<int> idxs;
     Vector RHS, boundary_values;
-    int j = 0;
     for (const auto &[idx, data] : curlcurl_op.GetSurfaceFluxOp())
     {
-      Mpi::Print("\nSubstructuring flux-loop excitation {:d}/{:d}: index {:d}\n", j + 1, n,
-                 idx);
       curlcurl_op.GetFluxExcitationVector(idx, RHS, post_op, &boundary_values);
-      A[j] = sub.SolveDirichlet(boundary_values);
-      Phi[j] = data.GetExcitationFlux();
+      lifts.push_back(boundary_values);
+      Phi.push_back(data.GetExcitationFlux());
       idxs.push_back(idx);
-      j++;
     }
+    Mpi::Print("\nSubstructuring flux-loop sweep: {:d} excitation{}\n", n,
+               (n > 1) ? "s" : "");
+    std::vector<Vector> A = sub.SolveDirichlets(lifts);
     mfem::DenseMatrix Minv(n);
     for (int i = 0; i < n; i++)
     {
