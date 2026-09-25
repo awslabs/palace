@@ -172,8 +172,7 @@ TEST_CASE("AAA: rational function recovered exactly", "[aaa][Serial]")
   // Match poles to known set {2, 5} (order-independent).
   std::vector<std::complex<double>> sorted_poles(pr.poles.data(),
                                                  pr.poles.data() + pr.poles.size());
-  std::sort(sorted_poles.begin(), sorted_poles.end(),
-            [](auto a, auto b) { return a.real() < b.real(); });
+  std::ranges::sort(sorted_poles, [](auto a, auto b) { return a.real() < b.real(); });
   REQUIRE(sorted_poles.size() >= 2);
   REQUIRE_THAT(std::abs(sorted_poles[0] - 2.0) / 2.0, WithinAbs(0.0, 1e-9));
   REQUIRE_THAT(std::abs(sorted_poles[1] - 5.0) / 5.0, WithinAbs(0.0, 1e-9));

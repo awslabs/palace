@@ -144,8 +144,8 @@ json ResolveRef(const json &node, const json &defs)
 
 void AppendUnique(json &values, const json &candidate)
 {
-  if (std::none_of(values.begin(), values.end(),
-                   [&candidate](const json &value) { return value == candidate; }))
+  if (std::ranges::none_of(values,
+                           [&candidate](const json &value) { return value == candidate; }))
   {
     values.push_back(candidate);
   }
@@ -199,9 +199,8 @@ void CollectEnumValues(const json &schema, const json &defs,
   else
   {
     const std::string &token = tokens[token_index];
-    bool is_index =
-        !token.empty() && std::all_of(token.begin(), token.end(),
-                                      [](unsigned char c) { return std::isdigit(c); });
+    bool is_index = !token.empty() && std::ranges::all_of(token, [](unsigned char c)
+                                                          { return std::isdigit(c); });
     if (is_index)
     {
       if (auto items_it = schema.find("items"); items_it != schema.end())
@@ -320,7 +319,7 @@ class SchemaErrorHandler : public error_handler
       std::size_t next = ptr.find('/', pos);
       std::string token = ptr.substr(pos, next - pos);
       // Check if token is a number (array index).
-      bool is_index = !token.empty() && std::all_of(token.begin(), token.end(), ::isdigit);
+      bool is_index = !token.empty() && std::ranges::all_of(token, ::isdigit);
       if (is_index)
       {
         fmt::format_to(out, "[{}]", token);

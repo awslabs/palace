@@ -135,7 +135,7 @@ void BoundaryModeSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> 
     {
       for (auto a : data.attributes)
       {
-        if (std::find(bm.attributes.begin(), bm.attributes.end(), a) != bm.attributes.end())
+        if (std::ranges::find(bm.attributes, a) != bm.attributes.end())
         {
           continue;
         }
@@ -154,8 +154,7 @@ void BoundaryModeSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> 
                   "BoundaryMode submesh extraction found other-waveport edges on the "
                   "cross-section. Define at least one PEC boundary attribute to "
                   "relabel them to.");
-      const int pec_attr =
-          *std::min_element(bdr.pec.attributes.begin(), bdr.pec.attributes.end());
+      const int pec_attr = *std::ranges::min_element(bdr.pec.attributes);
       int relabelled = 0;
       for (int sbe = 0; sbe < extracted->GetNBE(); sbe++)
       {

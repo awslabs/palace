@@ -1807,7 +1807,7 @@ void WavePortOperator::SetUpBoundaryProperties(const config::BoundaryData &bound
       }
       for (auto attr : other_data.attributes)
       {
-        if (std::binary_search(data.attributes.begin(), data.attributes.end(), attr))
+        if (std::ranges::binary_search(data.attributes, attr))
         {
           continue;
         }

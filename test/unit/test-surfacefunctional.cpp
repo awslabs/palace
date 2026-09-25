@@ -592,12 +592,13 @@ void CheckBoundaryTraceNCUnion(
             return false;
           }
           return expected_coarse_face_geometry == mfem::Geometry::INVALID ||
-                 std::all_of(group.routes.begin(), group.routes.end(),
-                             [&](const auto &route)
-                             {
-                               return sampling_plan->Entries()[route.entry].bdr_geom ==
-                                      expected_coarse_face_geometry;
-                             });
+                 std::ranges::all_of(
+                     group.routes,
+                     [&](const auto &route)
+                     {
+                       return sampling_plan->Entries()[route.entry].bdr_geom ==
+                              expected_coarse_face_geometry;
+                     });
         });
     Mpi::GlobalOr(1, &has_expected_coarse_union, comm);
     REQUIRE(has_expected_coarse_union);
@@ -612,12 +613,13 @@ void CheckBoundaryTraceNCUnion(
               return false;
             }
             return expected_coarse_face_geometry == mfem::Geometry::INVALID ||
-                   std::all_of(group.routes.begin(), group.routes.end(),
-                               [&](const auto &route)
-                               {
-                                 return sampling_plan->Entries()[route.entry].bdr_geom ==
-                                        expected_coarse_face_geometry;
-                               });
+                   std::ranges::all_of(
+                       group.routes,
+                       [&](const auto &route)
+                       {
+                         return sampling_plan->Entries()[route.entry].bdr_geom ==
+                                expected_coarse_face_geometry;
+                       });
           });
       Mpi::GlobalOr(1, &has_expected_ghost_union, comm);
       REQUIRE(has_expected_ghost_union);

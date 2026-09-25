@@ -144,10 +144,10 @@ TEST_CASE("SpaceOperator retains coarse support while omitting fine exact zeros"
 
   CHECK(zero_data.coarse_row_offsets == tiny_data.coarse_row_offsets);
   CHECK(zero_data.coarse_columns == tiny_data.coarse_columns);
-  CHECK(std::all_of(zero_data.coarse_values.begin(), zero_data.coarse_values.end(),
-                    [](double value) { return value == 0.0; }));
-  CHECK(std::any_of(tiny_data.coarse_values.begin(), tiny_data.coarse_values.end(),
-                    [](double value) { return value != 0.0; }));
+  CHECK(std::ranges::all_of(zero_data.coarse_values,
+                            [](double value) { return value == 0.0; }));
+  CHECK(std::ranges::any_of(tiny_data.coarse_values,
+                            [](double value) { return value != 0.0; }));
   CHECK(zero_data.fine_suboperators == 0);
   CHECK(tiny_data.fine_suboperators > 0);
 }

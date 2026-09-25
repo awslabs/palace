@@ -30,7 +30,7 @@ FarfieldBoundaryOperator::FarfieldBoundaryOperator(
   if (farfield_attr.Size())
   {
     Mpi::Print("\nConfiguring Robin absorbing BC (order {:d}) at attributes:\n", order);
-    std::sort(farfield_attr.begin(), farfield_attr.end());
+    std::ranges::sort(farfield_attr);
     utils::PrettyPrint(farfield_attr);
   }
 }

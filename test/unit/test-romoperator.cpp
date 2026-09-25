@@ -149,7 +149,7 @@ TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
 
   // Test that elements of max_error are unique.
   // TODO: get better test for multiple N.
-  std::sort(max_err_1.begin(), max_err_1.end());
+  std::ranges::sort(max_err_1);
   CHECK(std::adjacent_find(max_err_1.begin(), max_err_1.end()) == max_err_1.end());
 
   // TODO: Add more stringent tests of MRI, including estimating poles.

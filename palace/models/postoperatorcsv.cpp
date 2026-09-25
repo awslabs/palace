@@ -1829,9 +1829,8 @@ PostOperatorCSV<solver_t>::PostOperatorCSV(const config::ProblemData &problem,
     auto excitation_helper = fem_op.GetPortExcitations();
     ex_idx_v_all.clear();
     ex_idx_v_all.reserve(excitation_helper.Size());
-    std::transform(excitation_helper.begin(), excitation_helper.end(),
-                   std::back_inserter(ex_idx_v_all),
-                   [](const auto &pair) { return pair.first; });
+    std::ranges::transform(excitation_helper, std::back_inserter(ex_idx_v_all),
+                           [](const auto &pair) { return pair.first; });
     // Default to the first excitation.
     ex_idx_i = 0;
     m_ex_idx = ex_idx_v_all.front();

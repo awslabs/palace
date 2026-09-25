@@ -35,7 +35,7 @@ bool IsOrthonormal(const config::SymmetricMatrixData<N> &data)
     }
     return std::abs(s) < tol;
   };
-  bool valid = std::all_of(data.v.begin(), data.v.end(), UnitNorm);
+  bool valid = std::ranges::all_of(data.v, UnitNorm);
 
   // All the vectors are orthogonal.
   for (std::size_t i1 = 0; i1 < N; i1++)
@@ -58,22 +58,22 @@ bool IsOrthonormal(const config::SymmetricMatrixData<N> &data)
 template <std::size_t N>
 bool IsValid(const config::SymmetricMatrixData<N> &data)
 {
-  return IsOrthonormal(data) && std::all_of(data.s.begin(), data.s.end(),
-                                            [](auto d) { return std::abs(d) > 0.0; });
+  return IsOrthonormal(data) &&
+         std::ranges::all_of(data.s, [](auto d) { return std::abs(d) > 0.0; });
 }
 
 template <std::size_t N>
 bool IsIsotropic(const config::SymmetricMatrixData<N> &data)
 {
   return IsOrthonormal(data) &&
-         std::all_of(data.s.begin(), data.s.end(), [&](auto d) { return d == data.s[0]; });
+         std::ranges::all_of(data.s, [&](auto d) { return d == data.s[0]; });
 }
 
 template <std::size_t N>
 bool IsIdentity(const config::SymmetricMatrixData<N> &data)
 {
   return IsOrthonormal(data) &&
-         std::all_of(data.s.begin(), data.s.end(), [](auto d) { return d == 1.0; });
+         std::ranges::all_of(data.s, [](auto d) { return d == 1.0; });
 }
 
 template <std::size_t N>

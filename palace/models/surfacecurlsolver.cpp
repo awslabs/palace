@@ -395,7 +395,7 @@ double ComputeFluxThroughSurface(const mfem::ParGridFunction &B_gf,
   for (int be = 0; be < nbdr; ++be)
   {
     int attr = pmesh->GetBdrAttribute(be);
-    if (std::find(attributes.begin(), attributes.end(), attr) == attributes.end())
+    if (std::ranges::find(attributes, attr) == attributes.end())
     {
       continue;
     }

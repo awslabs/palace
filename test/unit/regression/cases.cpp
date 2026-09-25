@@ -765,14 +765,14 @@ palace::test::CustomCheck TestWavePortSRoundTrip(double atol_lin)
     std::vector<long> pidx;
     for (const auto &pl : port_labels)
     {
-      const auto it = std::find(labels.begin(), labels.end(), pl);
+      const auto it = std::ranges::find(labels, pl);
       REQUIRE(it != labels.end());
       pidx.push_back(static_cast<long>(it - labels.begin()));
     }
     std::vector<long> iidx;
     for (long i = 0; i < n_total; ++i)
     {
-      if (std::find(pidx.begin(), pidx.end(), i) == pidx.end())
+      if (std::ranges::find(pidx, i) == pidx.end())
       {
         iidx.push_back(i);
       }

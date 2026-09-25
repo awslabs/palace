@@ -504,7 +504,7 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
     // dofs if PEC is at the end of the port.
     if (boundary_pec_type == PEC::SIDE || (!mesh_is_hex && boundary_pec_type == PEC::ENDS))
     {
-      const auto *find_pec = std::find(nd_dbc_tdof.begin(), nd_dbc_tdof.end(), i);
+      const auto *find_pec = std::ranges::find(nd_dbc_tdof, i);
       if (find_pec != nd_dbc_tdof.end())
       {
         CHECK(RHS.Real()[i] == 0.0);
@@ -856,7 +856,7 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
     // dofs if PEC is at the end of the port.
     if (boundary_pec_type == PEC::SIDE || (!mesh_is_hex && boundary_pec_type == PEC::ENDS))
     {
-      const auto *find_pec = std::find(nd_dbc_tdof.begin(), nd_dbc_tdof.end(), i);
+      const auto *find_pec = std::ranges::find(nd_dbc_tdof, i);
       if (find_pec != nd_dbc_tdof.end())
       {
         CHECK(RHS.Real()[i] == 0.0);

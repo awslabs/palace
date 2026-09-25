@@ -81,7 +81,7 @@ constexpr double WAVEPORT_SYNTHESIS_MODAL_PART_FLOOR = 1.0e-10;
 // synthesized matrices by their node label.
 inline long LabelIndex(const std::vector<std::string> &labels, const std::string &target)
 {
-  auto it = std::find(labels.begin(), labels.end(), target);
+  auto it = std::ranges::find(labels, target);
   return (it == labels.end()) ? -1 : static_cast<long>(std::distance(labels.begin(), it));
 }
 
@@ -374,8 +374,8 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) co
   const auto S = dim_Q;
   MFEM_VERIFY(S >= 2, "Maximum error can only be found once two sample points have been "
                       "added to the PROM to define the parameter domain!");
-  double start = *std::min_element(z.begin(), z.end());
-  double end = *std::max_element(z.begin(), z.end());
+  double start = *std::ranges::min_element(z);
+  double end = *std::ranges::max_element(z);
   Eigen::Map<const Eigen::VectorXd> z_map(z.data(), S);
 
   // Sample Q on discrete points. The case of N>1 samples is not very useful below. It will
@@ -405,8 +405,7 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) co
     bool partial_full = (queue.size() < N);
     if (partial_full || Q_sample < queue.back().second)
     {
-      auto it_loc = std::upper_bound(queue.begin(), queue.end(), Q_sample,
-                                     [](double q, const q_t &p2) { return q < p2.second; });
+      auto it_loc = std::ranges::upper_bound(queue, Q_sample, {}, &q_t::second);
       queue.insert(it_loc, std::make_pair(z_sample, Q_sample));
       if (!partial_full)
       {
@@ -419,8 +418,7 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) co
                           N, queue.size()));
 
   std::vector<double> vals(N);
-  std::transform(queue.begin(), queue.end(), vals.begin(),
-                 [](const q_t &p) { return p.first.real(); });
+  std::ranges::transform(queue, vals.begin(), [](const q_t &p) { return p.first.real(); });
   return vals;
 }
 
@@ -630,8 +628,8 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   if (!sample_f.empty())
   {
     sweep_omega_samples = sample_f;
-    sweep_omega_min = *std::min_element(sample_f.begin(), sample_f.end());
-    sweep_omega_max = *std::max_element(sample_f.begin(), sample_f.end());
+    sweep_omega_min = *std::ranges::min_element(sample_f);
+    sweep_omega_max = *std::ranges::max_element(sample_f);
   }
   // Floor the fit/rank tolerances at the synthesis EVP accuracy floor: resolving finer than
   // the port modes are solved just chases eigensolver noise (see
@@ -1800,8 +1798,8 @@ bool RomOperator::AddAuxBlockDirections(WavePortAuxBlock &blk, const Eigen::Matr
   // weight only for deterministic labels; the factorization itself is order independent.
   std::vector<long> order(static_cast<std::size_t>(eig.eigenvalues().size()));
   std::iota(order.begin(), order.end(), 0);
-  std::stable_sort(
-      order.begin(), order.end(), [&](long a, long b)
+  std::ranges::stable_sort(
+      order, [&](long a, long b)
       { return std::abs(eig.eigenvalues()(a)) > std::abs(eig.eigenvalues()(b)); });
   for (long j : order)
   {
@@ -2427,8 +2425,8 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       Mr_total_corr -= P2_full;
 
       const auto load_label = fmt::format("waveport_{:d}_re", port_idx);
-      auto pl = std::find_if(pending_port_loads.begin(), pending_port_loads.end(),
-                             [&](const auto &p) { return p.label == load_label; });
+      auto pl = std::ranges::find_if(pending_port_loads,
+                                     [&](const auto &p) { return p.label == load_label; });
       if (pl != pending_port_loads.end())
       {
         pl->Kr_corr += P0_full;
@@ -2793,8 +2791,8 @@ void RomOperator::PrintPortReferenceData(const Units &units, const fs::path &pos
     }
     const int wp_idx = port_idx;
     const auto fit_it =
-        std::find_if(matrices.wave_port_fits.begin(), matrices.wave_port_fits.end(),
-                     [wp_idx](const auto &fit) { return fit.port_idx == wp_idx; });
+        std::ranges::find_if(matrices.wave_port_fits,
+                             [wp_idx](const auto &fit) { return fit.port_idx == wp_idx; });
     const auto label = fmt::format("waveport_{:d}_re", port_idx);
     if (fit_it != matrices.wave_port_fits.end() && LabelIndex(v_node_label, label) >= 0)
     {
@@ -2828,9 +2826,8 @@ void RomOperator::PrintPortReferenceData(const Units &units, const fs::path &pos
     {
       return {0.0, 0.0};
     }
-    const auto load_it =
-        std::find_if(matrices.port_loads.begin(), matrices.port_loads.end(),
-                     [&ref](const auto &pl) { return pl.label == ref.label; });
+    const auto load_it = std::ranges::find_if(matrices.port_loads, [&ref](const auto &pl)
+                                              { return pl.label == ref.label; });
     MFEM_VERIFY(load_it != matrices.port_loads.end(),
                 "Missing wave-port load pencil for port reference output!");
     const long phys = LabelIndex(total_labels, ref.label);
@@ -3441,8 +3438,8 @@ std::vector<RomOperator::EigenvalueEstimate> RomOperator::ComputeEigenvalueEstim
     }
     modes.push_back(std::move(est));
   }
-  std::sort(modes.begin(), modes.end(),
-            [](const auto &a, const auto &b) { return a.freq_re_GHz < b.freq_re_GHz; });
+  std::ranges::sort(modes, [](const auto &a, const auto &b)
+                    { return a.freq_re_GHz < b.freq_re_GHz; });
 
   // No frequency-based deduplication: the complex eigenfrequency is not a unique mode
   // identifier (a genuinely degenerate eigenspace yields one QZ eigenvalue per

@@ -89,9 +89,9 @@ int ReferenceFacet(mfem::Geometry::Type geometry,
   constexpr double tol = 1.0e-12;
   auto OnFacet = [&](auto predicate)
   {
-    return !points.empty() && std::all_of(points.begin(), points.end(),
-                                          [&](const mfem::IntegrationPoint &point)
-                                          { return predicate(point); });
+    return !points.empty() &&
+           std::ranges::all_of(points, [&](const mfem::IntegrationPoint &point)
+                               { return predicate(point); });
   };
   switch (geometry)
   {
@@ -198,15 +198,17 @@ void Canonicalize(const std::vector<mfem::IntegrationPoint> &original,
                     std::isfinite(ip.weight),
                 "Non-finite mapped reference point cannot be canonically routed!");
   }
-  std::stable_sort(canonical_to_original.begin(), canonical_to_original.end(),
-                   [&](int i, int j)
-                   {
-                     mfem::IntegrationPoint a = original[static_cast<std::size_t>(i)];
-                     mfem::IntegrationPoint b = original[static_cast<std::size_t>(j)];
-                     NormalizeReferencePoint(a);
-                     NormalizeReferencePoint(b);
-                     return CanonicalPointLess(a, b);
-                   });
+  std::ranges::stable_sort(canonical_to_original,
+                           [&](int i, int j)
+                           {
+                             mfem::IntegrationPoint a =
+                                 original[static_cast<std::size_t>(i)];
+                             mfem::IntegrationPoint b =
+                                 original[static_cast<std::size_t>(j)];
+                             NormalizeReferencePoint(a);
+                             NormalizeReferencePoint(b);
+                             return CanonicalPointLess(a, b);
+                           });
   canonical.resize(original.size());
   for (std::size_t q = 0; q < canonical.size(); q++)
   {
@@ -443,8 +445,8 @@ FaceSamplingPlan::FaceSamplingPlan(const Mesh &mesh_,
   // the communicator-wide fact once while all ranks build the shared sampling plan so
   // each source-space trace entry can construct an empty peer exchange where needed
   // without another setup collective or a rank-local early return.
-  has_ghost_union = std::any_of(union_groups.begin(), union_groups.end(),
-                                [](const auto &group) { return group.ghost; });
+  has_ghost_union =
+      std::ranges::any_of(union_groups, [](const auto &group) { return group.ghost; });
   Mpi::GlobalOr(1, &has_ghost_union, mesh->GetComm());
 
   for (const auto &entry : entries)

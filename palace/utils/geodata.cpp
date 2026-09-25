@@ -196,7 +196,7 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
     std::merge(iodata.domains.attributes.begin(), iodata.domains.attributes.end(),
                iodata.domains.postpro.attributes.begin(),
                iodata.domains.postpro.attributes.end(), std::back_inserter(attr_list));
-    attr_list.erase(std::unique(attr_list.begin(), attr_list.end()), attr_list.end());
+    attr_list.erase(std::ranges::unique(attr_list).begin(), attr_list.end());
     CleanMesh(smesh, attr_list);
   }
 
@@ -419,7 +419,7 @@ double ComputeReferenceLength(const std::unique_ptr<mfem::Mesh> &mesh, MPI_Comm 
     mfem::Vector bbmin, bbmax;
     mesh->GetBoundingBox(bbmin, bbmax);
     bbmax -= bbmin;
-    Lc_local = *std::max_element(bbmax.begin(), bbmax.end());
+    Lc_local = *std::ranges::max_element(bbmax);
   }
   Mpi::GlobalMax(1, &Lc_local, comm);
   return Lc_local;
@@ -1242,8 +1242,8 @@ double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &mar
     }
     auto Dot = [&](const auto &x, const auto &y)
     { return direction.dot(x) < direction.dot(y); };
-    auto p_min = std::min_element(vertices.begin(), vertices.end(), Dot);
-    auto p_max = std::max_element(vertices.begin(), vertices.end(), Dot);
+    auto p_min = std::ranges::min_element(vertices, Dot);
+    auto p_max = std::ranges::max_element(vertices, Dot);
     length = (*p_max - *p_min).dot(direction.normalized());
   }
   Mpi::Broadcast(1, &length, dominant_rank, mesh.GetComm());
@@ -1263,13 +1263,12 @@ double GetDistanceFromPoint(const mfem::ParMesh &mesh, const mfem::Array<int> &m
     {
       x0(i) = origin(i);
     }
-    auto p =
-        max ? std::max_element(vertices.begin(), vertices.end(),
-                               [&x0](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-                               { return (x - x0).norm() < (y - x0).norm(); })
-            : std::min_element(vertices.begin(), vertices.end(),
-                               [&x0](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-                               { return (x - x0).norm() < (y - x0).norm(); });
+    auto p = max ? std::ranges::max_element(
+                       vertices, [&x0](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+                       { return (x - x0).norm() < (y - x0).norm(); })
+                 : std::ranges::min_element(
+                       vertices, [&x0](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+                       { return (x - x0).norm() < (y - x0).norm(); });
     dist = (*p - x0).norm();
   }
   Mpi::Broadcast(1, &dist, dominant_rank, mesh.GetComm());
@@ -2801,8 +2800,8 @@ std::unordered_map<int, int> GetFaceToBdrElementMap(const mfem::Mesh &mesh,
       for (const auto &data : boundaries.periodic.boundary_pairs)
       {
         const auto &da = data.donor_attributes, &ra = data.receiver_attributes;
-        auto donor = std::find(da.begin(), da.end(), attr) != da.end();
-        auto receiver = std::find(ra.begin(), ra.end(), attr) != ra.end();
+        auto donor = std::ranges::find(da, attr) != da.end();
+        auto receiver = std::ranges::find(ra, attr) != ra.end();
         if (donor || receiver)
         {
           mesh.GetFaceElements(f, &e1, &e2);
@@ -2972,10 +2971,7 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
       for (const auto &e : data.elements)
       {
         auto attr_in_elem = [&](auto x)
-        {
-          return std::find(e.attributes.begin(), e.attributes.end(), x) !=
-                 e.attributes.end();
-        };
+        { return std::ranges::find(e.attributes, x) != e.attributes.end(); };
         std::erase_if(cba, attr_in_elem);
       }
     }

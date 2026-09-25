@@ -82,8 +82,8 @@ Column::Column(std::string name_, std::string header_text_, long column_group_id
   {
     return 0;
   }
-  auto max_col = std::max_element(cols.begin(), cols.end(), [](const auto &a, const auto &b)
-                                  { return a.n_rows() < b.n_rows(); });
+  auto max_col = std::ranges::max_element(cols, [](const auto &a, const auto &b)
+                                          { return a.n_rows() < b.n_rows(); });
   return max_col->n_rows();
 }
 

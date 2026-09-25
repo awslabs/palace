@@ -17,7 +17,7 @@ std::array<double, 2> ComputeDorflerThreshold(MPI_Comm comm, const Vector &e,
   // Precompute the sort and partial sum to make evaluating a candidate partition fast.
   e.HostRead();
   std::vector<double> estimates(e.begin(), e.end());
-  std::sort(estimates.begin(), estimates.end());
+  std::ranges::sort(estimates);
 
   // Accumulate the squares of the estimates.
   std::vector<double> sum(estimates.size());
@@ -33,7 +33,7 @@ std::array<double, 2> ComputeDorflerThreshold(MPI_Comm comm, const Vector &e,
 
   // The pivot is the first point which leaves (1-θ) of the total sum after it.
   const double local_total = !sum.empty() ? sum.back() : 0.0;
-  auto pivot = std::lower_bound(sum.begin(), sum.end(), (1 - fraction) * local_total);
+  auto pivot = std::ranges::lower_bound(sum, (1 - fraction) * local_total);
   auto index = std::distance(sum.begin(), pivot);
   double error_threshold = !estimates.empty() ? estimates[index] : 0.0;
 
@@ -42,7 +42,7 @@ std::array<double, 2> ComputeDorflerThreshold(MPI_Comm comm, const Vector &e,
   {
     if (local_total > 0)
     {
-      const auto lb = std::lower_bound(estimates.begin(), estimates.end(), e);
+      const auto lb = std::ranges::lower_bound(estimates, e);
       const auto elems_marked = std::distance(lb, estimates.end());
       const double error_unmarked =
           lb != estimates.begin() ? sum[sum.size() - elems_marked - 1] : 0;

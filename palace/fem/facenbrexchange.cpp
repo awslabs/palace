@@ -217,8 +217,7 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
                     req.face_nbr_elem < pmesh.GetNFaceNeighborElements() &&
                     req.source_mask != 0 && !req.pts.empty(),
                 "Invalid face neighbor field exchange request!");
-    const int *it =
-        std::upper_bound(elem_offsets.begin(), elem_offsets.end(), req.face_nbr_elem);
+    const int *it = std::ranges::upper_bound(elem_offsets, req.face_nbr_elem);
     nbr_reqs[static_cast<int>(it - elem_offsets.begin()) - 1].push_back(
         static_cast<int>(r));
   }

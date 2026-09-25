@@ -2061,8 +2061,7 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
   {
     Mpi::Print("\n");
     auto ind = 1 + std::distance(output_save_indices.begin(),
-                                 std::lower_bound(output_save_indices.begin(),
-                                                  output_save_indices.end(), step));
+                                 std::ranges::lower_bound(output_save_indices, step));
     WriteParaviewFields(omega.real(), ind);
     Mpi::Print(" Wrote fields to disk (Paraview) at step {:d}\n", step + 1);
   }
@@ -2070,8 +2069,7 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
   {
     Mpi::Print("\n");
     auto ind = 1 + std::distance(output_save_indices.begin(),
-                                 std::lower_bound(output_save_indices.begin(),
-                                                  output_save_indices.end(), step));
+                                 std::ranges::lower_bound(output_save_indices, step));
     WriteMFEMGridFunctions(freq.real(), ind);
     Mpi::Print(" Wrote fields to disk (grid function) at step {:d}\n", step + 1);
   }
