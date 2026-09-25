@@ -43,6 +43,27 @@ Its output is:
    continuous quantities whose sums differ at roundoff between meshes of the same layout; they
    are not hashed but compared per feature with a tolerance by the audit.
 
+**Numbering (decision 82 infrastructure, 2026-09-25).** The point, face, segment and vertex
+numbering of the perimeter is a function of the set of distinct points only: the canonical
+points are renumbered by their sorted quantized coordinates (the 1e-10 x extent grid, ties by
+the raw coordinates; the representative of a merged point is its lexicographically smallest
+copy), the distinct faces by their sorted canonical vertex sets, the segments by their point
+pairs and the vertices by first appearance in segment order. The whole manifest apart from
+`Statistics` is therefore byte-identical at any rank count and for any gathered order of the
+crack copies (the first-encounter numbering had permuted 2,647 segment-table entries between
+np8 and np192 on DS-SCT-002). The metal faces are gathered on the root only, the perimeter and
+the identification are computed on the root and the compact results (segments, vertices; the
+feature list, segment and vertex tables, exclusions) are broadcast; every rank receives only
+its own retained facets. No rank other than the root holds the gathered faces, the global
+faces or the identification state.
+
+**Vertex census rule.** The vertex table (item 2) is the census of the vertices of the
+classifier's one-sided (PHYSICAL-type) segments — non-planar faces and one-sided box edges
+included, folds and non-manifold edges not. A vertex all of whose incident edges are folds /
+non-manifold edges (the corner of a PEC box where three box faces meet, the base corners of a
+bump) is a vertex of no one-sided perimeter and has no record on either side; the audit's
+`physical_kind` counts the same set (a `BOX` edge shared by two box faces is a fold).
+
 **Library matching is a separate pass.** It looks features up by signature (the library models'
 signatures are computed from their stored geometry — separation, angle, corner radius, cluster
 `Edges` / sites — by the same canonicalisation) and can only mark a feature `Matched` /
