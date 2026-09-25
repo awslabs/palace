@@ -958,6 +958,8 @@ FluxLoopExcitationData::FluxLoopExcitationData(const json &excitation)
               "\"FluxLoops\" for \"FluxLoopExcitation\" boundary must be non-empty!");
   MFEM_VERIFY(flux_loops.size() == flux_amounts.size(),
               "\"FluxLoops\" and \"FluxAmounts\" arrays must have the same size!");
+
+  save_field = excitation.value("SaveField", true);
 }
 
 BoundaryPostData::BoundaryPostData(const json &postpro)

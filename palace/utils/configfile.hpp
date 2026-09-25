@@ -819,6 +819,9 @@ public:
   // Absolute fluxoid to impose on flux_loops[k] (same length as flux_loops).
   std::vector<double> flux_amounts = {};
 
+  // Whether to save this excitation's ParaView field (independent of the Save count).
+  bool save_field = true;
+
   FluxLoopExcitationData() = default;
   FluxLoopExcitationData(const json &excitation);
 };

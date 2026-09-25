@@ -531,11 +531,21 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         continue;
       }
 
-      // Volume magnetic energy (domain energy is volume-only for flux states). The field is
-      // written by MeasureAndPrintAll when this step is within the Save count.
+      // Volume magnetic energy (domain energy is volume-only for flux states). Opt-in field
+      // save, independent of the Save sweep count, into the shared magnetostatic
+      // collection.
       Curl.Mult(A_exc, B_exc);
       int step = n_step + exc_counter++;
+      if (exc.save_field)
+      {
+        post_op.RequestFieldSave(static_cast<std::size_t>(step));
+      }
       double e_mag_volume = post_op.MeasureAndPrintAll(step, A_exc, B_exc, exc_idx);
+      if (exc.save_field)
+      {
+        Mpi::Print("Wrote FluxLoopExcitation {:d} field to {}\n", exc_idx,
+                   (post_dir / "paraview").string());
+      }
 
       // London kinetic energy ½(A − a_h)ᵀ M_sheet (A − a_h).
       Vector d(A_exc);

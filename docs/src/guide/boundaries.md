@@ -280,8 +280,10 @@ The [`"FluxLoopExcitation"`](../config/reference.md#config-boundaries-fluxloopex
 boundary keyword adds a separate excitation: each entry drives several existing `"FluxLoop"`
 holes together with prescribed absolute fluxoids (`"FluxAmounts"`, one per listed
 `"FluxLoops"` index) in a single linear solve, superposing their per-loop fields exactly, and
-writes the superposed field and total stored energy (volume magnetic plus London kinetic) to
-`terminal-fluxexc.csv`. It does not perturb the per-loop inductance-matrix sweep. The two are
+writes the total stored energy (volume magnetic plus London kinetic) and per-loop fluxoids to
+`terminal-fluxexc.csv`. Each entry's ParaView field is saved when its `"SaveField"` is `true`
+(default), independent of the `"Save"` count. It does not perturb the per-loop
+inductance-matrix sweep. The two are
 selectable via [`/Solver/Magnetostatic/FluxLoopMatrixSweep`](@ref config-solver-magnetostatic)
 (default `true`): keep both, or set it to `false` to skip the N-loop sweep and solve only the
 requested excitation states.
