@@ -53,11 +53,21 @@ struct IdentificationVertex
   bool on_truncation_boundary = false;
 };
 
+// A metal face of the whole model (deduplicated, replicated): the metal off a segment's own
+// plane within 2R of it (a facing layer, a wall, a staple) excludes that part of the segment
+// from the planar identification (decision 73(3), class CrossLayer).
+struct IdentificationFace
+{
+  std::vector<std::array<double, 3>> vertices;
+  std::array<double, 3> normal{};
+};
+
 struct IdentificationInput
 {
   double radius = 0.0;
   std::vector<IdentificationSegment> segments;
   std::vector<IdentificationVertex> vertices;
+  std::vector<IdentificationFace> faces;
 };
 
 struct IdentifiedPortion
@@ -96,15 +106,23 @@ struct IdentifiedSegment
   double length = 0.0;
   int chain = -1;
   std::vector<std::array<double, 3>> portions;  // {s0, s1, feature id}
+  // Parts of a segment excluded analytically (CrossLayer zones within 2R of off-plane
+  // metal): {s0, s1, index into IdentificationResult::exclusions}.
+  std::vector<std::array<double, 3>> excluded_portions;
+  // A whole-segment exclusion (truncation, non-planar, non-manifold, untargeted, ...).
   std::optional<std::pair<std::string, std::string>> exclusion;
 };
 
 struct IdentifiedVertex
 {
   std::size_t vertex = 0;
-  std::string type;  // Corner | Endpoint | Junction | TruncationCut
+  // Corner | Endpoint | Junction | RoundedCorner | TruncationCut | ExclusionCut | Excluded
+  std::string type;
   double turn_degrees = 0.0;
   int feature = -1;
+  // Metal of different edge-connected components meets at this vertex (a point contact,
+  // degenerate geometry): reported, never silent.
+  bool point_contact = false;
 };
 
 struct IdentificationExclusion
@@ -205,9 +223,13 @@ constexpr double kSignatureAngleQuantumDegrees = 1.0e-6;
 nlohmann::json CanonicalCornerSignature(const std::vector<std::string> &interfaces,
                                         const std::string &boundary_law,
                                         double angle_degrees, double corner_radius_over_R);
+// Junction arms in angular order: consecutive angle differences and the conductor of every
+// arm (labelled by first appearance in the canonical order; all arms one conductor when
+// arm_conductors is empty, the library-model convention).
 nlohmann::json CanonicalJunctionSignature(const std::vector<std::string> &interfaces,
                                           const std::string &boundary_law,
-                                          std::vector<double> arm_angles_degrees);
+                                          std::vector<double> arm_angles_degrees,
+                                          std::vector<int> arm_conductors = {});
 
 // Feature signature key and hash shared by device features and library models.
 std::pair<std::string, std::string> SignatureKeyAndHash(nlohmann::json signature,

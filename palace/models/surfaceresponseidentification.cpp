@@ -150,6 +150,37 @@ double SegmentSegmentDistance(const Point3D &p0, const Point3D &p1, const Point3
   return Distance(Add(p0, Scale(s, d1)), Add(q0, Scale(t, d2)));
 }
 
+// Distance from a point to a planar polygon (convex, or the sampled loop of a curved face
+// treated as convex): the normal distance when the projection falls inside, else the
+// distance to the nearest polygon edge.
+double PointPolygonDistance(const Point3D &p, const std::vector<Point3D> &polygon,
+                            const Point3D &normal)
+{
+  const std::size_t n = polygon.size();
+  bool inside = n >= 3;
+  for (std::size_t i = 0; i < n && inside; i++)
+  {
+    const Point3D &a = polygon[i];
+    const Point3D &b = polygon[(i + 1) % n];
+    const Point3D &c = polygon[(i + 2) % n];
+    const Point3D edge = Sub(b, a);
+    const Point3D interior = Cross(normal, edge);  // towards the polygon interior (or away)
+    const double orientation = Dot(Sub(c, b), interior);
+    const double side = Dot(Sub(p, a), interior);
+    inside = orientation * side >= 0.0;
+  }
+  if (inside)
+  {
+    return std::abs(Dot(Sub(p, polygon[0]), normal));
+  }
+  double best = std::numeric_limits<double>::infinity();
+  for (std::size_t i = 0; i < n; i++)
+  {
+    best = std::min(best, PointSegmentDistance(p, polygon[i], polygon[(i + 1) % n]));
+  }
+  return best;
+}
+
 double QuantizeDirection(double cosine)
 {
   return std::round(cosine / kDirectionQuantum);
@@ -499,8 +530,61 @@ void BuildRuns(const IdentificationInput &input, std::vector<Run> &runs,
     }
     segments_by_chain[segment.chain].push_back(i);
   }
-  auto Less = [](const Point3D &a, const Point3D &b) { return a < b; };
+  // A chain interrupted by excluded segments (untargeted, undetermined process side, ...)
+  // continues as separate chains on either side of the exclusion; the cut vertices are
+  // ExclusionCut entries of the vertex table, not endpoints.
+  int next_chain_id =
+      segments_by_chain.empty() ? 0 : segments_by_chain.rbegin()->first + 1;
+  std::map<int, std::vector<std::size_t>> split_chains;
   for (const auto &[chain_id, members] : segments_by_chain)
+  {
+    std::map<std::size_t, std::size_t> member_index;
+    for (std::size_t k = 0; k < members.size(); k++)
+    {
+      member_index.emplace(members[k], k);
+    }
+    std::vector<std::size_t> parent(members.size());
+    std::iota(parent.begin(), parent.end(), 0);
+    auto Find = [&](std::size_t i)
+    {
+      while (parent[i] != i)
+      {
+        parent[i] = parent[parent[i]];
+        i = parent[i];
+      }
+      return i;
+    };
+    std::map<std::size_t, std::size_t> first_member_at_vertex;
+    for (std::size_t k = 0; k < members.size(); k++)
+    {
+      for (const std::size_t v : input.segments[members[k]].vertices)
+      {
+        auto [entry, inserted] = first_member_at_vertex.try_emplace(v, k);
+        if (!inserted)
+        {
+          const std::size_t a = Find(entry->second), b = Find(k);
+          if (a != b)
+          {
+            parent[std::max(a, b)] = std::min(a, b);
+          }
+        }
+      }
+    }
+    std::map<std::size_t, int> id_by_root;
+    for (std::size_t k = 0; k < members.size(); k++)
+    {
+      const std::size_t root = Find(k);
+      auto [entry, inserted] = id_by_root.try_emplace(
+          root, id_by_root.empty() ? chain_id : next_chain_id);
+      if (inserted && entry->second == next_chain_id)
+      {
+        next_chain_id++;
+      }
+      split_chains[entry->second].push_back(members[k]);
+    }
+  }
+  auto Less = [](const Point3D &a, const Point3D &b) { return a < b; };
+  for (const auto &[chain_id, members] : split_chains)
   {
     std::map<std::size_t, std::vector<std::size_t>> incident;
     for (const std::size_t s : members)
@@ -804,31 +888,62 @@ nlohmann::json CanonicalCornerSignature(const std::vector<std::string> &interfac
 
 nlohmann::json CanonicalJunctionSignature(const std::vector<std::string> &interfaces,
                                           const std::string &boundary_law,
-                                          std::vector<double> arm_angles_degrees)
+                                          std::vector<double> arm_angles_degrees,
+                                          std::vector<int> arm_conductors)
 {
   for (double &angle : arm_angles_degrees)
   {
     angle = RoundTo(angle, kSignatureAngleQuantumDegrees);
   }
-  // Canonical cyclic order: minimal rotation, both orientations (mirror).
-  std::vector<double> best = arm_angles_degrees;
+  if (arm_conductors.empty())
+  {
+    arm_conductors.assign(arm_angles_degrees.size(), 0);
+  }
+  MFEM_VERIFY(arm_conductors.size() == arm_angles_degrees.size(),
+              "Junction arm conductors must correspond to the arm angles!");
+  // Difference k is the gap after arm k (from arm k to arm k + 1). In the reversed
+  // (mirror) orientation the gap after arm k is difference k - 1, so the reversed
+  // difference sequence pairs with the reversed conductors rotated right by one.
+  auto Relabel = [](const std::vector<int> &conductors)
+  {
+    std::vector<int> labels;
+    std::map<int, int> first_appearance;
+    for (const int conductor : conductors)
+    {
+      labels.push_back(first_appearance.try_emplace(conductor, first_appearance.size() + 1)
+                           .first->second);
+    }
+    return labels;
+  };
+  // Canonical cyclic order: minimal (angles, conductor labels), both orientations (mirror).
+  std::pair<std::vector<double>, std::vector<int>> best{arm_angles_degrees,
+                                                        Relabel(arm_conductors)};
   for (const bool reverse : {false, true})
   {
     std::vector<double> sequence = arm_angles_degrees;
+    std::vector<int> conductors = arm_conductors;
     if (reverse)
     {
       std::reverse(sequence.begin(), sequence.end());
+      std::reverse(conductors.begin(), conductors.end());
+      std::rotate(conductors.begin(), conductors.end() - 1, conductors.end());
     }
     for (std::size_t shift = 0; shift < sequence.size(); shift++)
     {
       std::rotate(sequence.begin(), sequence.begin() + 1, sequence.end());
-      if (sequence < best)
+      std::rotate(conductors.begin(), conductors.begin() + 1, conductors.end());
+      const std::pair<std::vector<double>, std::vector<int>> candidate{sequence,
+                                                                       Relabel(conductors)};
+      if (candidate < best)
       {
-        best = sequence;
+        best = candidate;
       }
     }
   }
-  return {{"Interfaces", interfaces}, {"Law", boundary_law}, {"ArmAnglesDegrees", best}};
+  return {{"Interfaces", interfaces},
+          {"Law", boundary_law},
+          {"ArmAnglesDegrees", best.first},
+          {"ArmConductors", best.second}};
 }
 
 TranslationalSignature CanonicalTranslationalSignature(std::vector<TranslationalEdge> edges,
@@ -1022,6 +1137,7 @@ struct VertexFeatureSite
   double angle_degrees = 0.0;
   double corner_radius = 0.0;
   std::vector<double> arm_angles;
+  std::vector<int> arm_conductors;
   std::vector<std::pair<std::size_t, Interval>> window;  // run, interval claimed
   std::vector<std::size_t> runs_at_site;                 // runs incident to the site
   std::string boundary_law;
@@ -1050,6 +1166,10 @@ private:
   std::vector<std::optional<std::pair<std::string, std::string>>> segment_exclusion;
   std::vector<std::vector<Claim>> claims;  // per run
   std::vector<std::vector<std::pair<int, Interval>>> bent_claims;  // per run: chain, s
+  // Decision 73(3) CrossLayer zones: per run, the intervals within 2R of metal off the
+  // run's plane (facing layers, walls, staples); vertices within 2R of such metal.
+  std::vector<std::vector<Interval>> cross_layer;
+  std::set<std::size_t> cross_layer_vertices;
   std::vector<IdentifiedFeature> features;
   std::vector<double> feature_max_kappa;  // per feature, over its assigned portions
   std::vector<VertexFeatureSite> sites;
@@ -1095,7 +1215,22 @@ private:
     {
       return false;  // simulation cut
     }
-    return true;
+    return cross_layer_vertices.find(v) == cross_layer_vertices.end();
+  }
+
+  // Metal of different edge-connected components meets at this vertex (a point contact).
+  bool IsPointContact(std::size_t v) const
+  {
+    std::set<int> conductors;
+    for (const std::size_t s : input.vertices[v].segments)
+    {
+      const auto &segment = input.segments[s];
+      if (!segment.truncation && !segment.exclusion)
+      {
+        conductors.insert(segment.conductor);
+      }
+    }
+    return conductors.size() > 1;
   }
 
   std::vector<std::size_t> RunsAtVertex(std::size_t v) const
@@ -1148,11 +1283,15 @@ private:
 };
 
 // Runs whose process normal is not parallel to the reference normal are walls / staples
-// (NonPlanar); planar runs off the primary plane (largest perimeter length) are CrossLayer.
+// (NonPlanar). Metal off a run's own plane within 2R of it (a facing layer across a gap, a
+// wall or staple standing nearby) invalidates the planar coupon there: those parts of the
+// run, solved analytically on the distance to every such face, are the CrossLayer zones
+// (decision 73(3)); feature vertices within 2R of such metal are excluded the same way.
+// Every other plane carrying metal is identified in its own right.
 void Identifier::ClassifyPlanes()
 {
   n_ref = ReferenceProcessNormal(runs);
-  std::vector<std::pair<double, std::size_t>> offsets;
+  cross_layer.assign(runs.size(), {});
   for (std::size_t r = 0; r < runs.size(); r++)
   {
     if (DirectionLess(std::abs(Dot(runs[r].process_normal, n_ref)),
@@ -1161,45 +1300,134 @@ void Identifier::ClassifyPlanes()
       ExcludeRun(r, "NonPlanar",
                  "metal edge whose process normal is not parallel to the reference process "
                  "normal (wall, staple, via)");
-      continue;
-    }
-    offsets.emplace_back(Dot(Scale(0.5, Add(runs[r].start, runs[r].end)), n_ref), r);
-  }
-  std::sort(offsets.begin(), offsets.end());
-  std::vector<std::pair<double, std::vector<std::size_t>>> planes;  // offset, runs
-  for (const auto &[offset, r] : offsets)
-  {
-    if (planes.empty() || !quantizer.Equal(offset, planes.back().first))
-    {
-      planes.emplace_back(offset, std::vector<std::size_t>{});
-    }
-    planes.back().second.push_back(r);
-  }
-  std::size_t primary = 0;
-  double primary_length = -1.0;
-  for (std::size_t p = 0; p < planes.size(); p++)
-  {
-    double length = 0.0;
-    for (const std::size_t r : planes[p].second)
-    {
-      length += runs[r].length;
-    }
-    if (length > primary_length)
-    {
-      primary_length = length;
-      primary = p;
     }
   }
-  for (std::size_t p = 0; p < planes.size(); p++)
+  if (input.faces.empty())
   {
-    if (p == primary)
+    return;
+  }
+
+  struct Face
+  {
+    std::size_t index;
+    bool planar;
+    double offset;  // along n_ref (planar faces)
+    Point3D lower, upper;
+  };
+  std::vector<Face> faces;
+  faces.reserve(input.faces.size());
+  for (std::size_t f = 0; f < input.faces.size(); f++)
+  {
+    const auto &face = input.faces[f];
+    if (face.vertices.size() < 3)
     {
       continue;
     }
-    for (const std::size_t r : planes[p].second)
+    Face entry{f, !DirectionLess(std::abs(Dot(face.normal, n_ref)),
+                                 1.0 - kParallelCosineTolerance),
+               0.0, face.vertices.front(), face.vertices.front()};
+    for (const auto &p : face.vertices)
     {
-      ExcludeRun(r, "CrossLayer",
-                 "planar metal edge off the primary process plane (facing layer)");
+      entry.offset += Dot(p, n_ref) / static_cast<double>(face.vertices.size());
+      for (int d = 0; d < 3; d++)
+      {
+        entry.lower[d] = std::min(entry.lower[d], p[d]);
+        entry.upper[d] = std::max(entry.upper[d], p[d]);
+      }
+    }
+    faces.push_back(entry);
+  }
+  const double reach = 2.0 * R;
+  auto OffPlane = [&](const Face &face, double offset)
+  {
+    // Metal in the run's own plane is the identified perimeter itself; a parallel layer
+    // is a candidate only when it lies within reach along the normal.
+    if (!face.planar)
+    {
+      return true;
+    }
+    return !quantizer.Equal(face.offset, offset) &&
+           quantizer.Less(std::abs(face.offset - offset), reach);
+  };
+  auto NearBox = [&](const Face &face, const Point3D &lower, const Point3D &upper)
+  {
+    for (int d = 0; d < 3; d++)
+    {
+      if (face.lower[d] > upper[d] + reach || face.upper[d] < lower[d] - reach)
+      {
+        return false;
+      }
+    }
+    return true;
+  };
+  for (std::size_t r = 0; r < runs.size(); r++)
+  {
+    if (runs[r].excluded)
+    {
+      continue;
+    }
+    const Run &run = runs[r];
+    const double offset = Dot(Scale(0.5, Add(run.start, run.end)), n_ref);
+    Point3D lower = run.start, upper = run.start;
+    for (int d = 0; d < 3; d++)
+    {
+      lower[d] = std::min(run.start[d], run.end[d]);
+      upper[d] = std::max(run.start[d], run.end[d]);
+    }
+    std::vector<Interval> zones;
+    for (const auto &face : faces)
+    {
+      if (!OffPlane(face, offset) || !NearBox(face, lower, upper))
+      {
+        continue;
+      }
+      const auto &polygon = input.faces[face.index];
+      const auto zone = ConvexSublevelInterval(
+          [&](double t)
+          { return PointPolygonDistance(run.At(t), polygon.vertices, polygon.normal); },
+          0.0, run.length, reach, quantizer);
+      if (zone)
+      {
+        zones.push_back(*zone);
+      }
+    }
+    cross_layer[r] = MergeIntervals(std::move(zones), Tol());
+  }
+  for (std::size_t v = 0; v < input.vertices.size(); v++)
+  {
+    const auto &vertex = input.vertices[v];
+    if (!vertex.physical_type || *vertex.physical_type == MetalEdgeVertexType::REGULAR)
+    {
+      continue;
+    }
+    std::optional<double> offset;
+    for (const std::size_t s : vertex.segments)
+    {
+      const auto &segment = input.segments[s];
+      if (!segment.truncation && !segment.exclusion && segment.chain >= 0)
+      {
+        offset = Dot(vertex.coordinate, n_ref);
+        break;
+      }
+    }
+    if (!offset)
+    {
+      continue;
+    }
+    for (const auto &face : faces)
+    {
+      if (!OffPlane(face, *offset) || !NearBox(face, vertex.coordinate, vertex.coordinate))
+      {
+        continue;
+      }
+      const auto &polygon = input.faces[face.index];
+      if (quantizer.Less(
+              PointPolygonDistance(vertex.coordinate, polygon.vertices, polygon.normal),
+              reach))
+      {
+        cross_layer_vertices.insert(v);
+        break;
+      }
     }
   }
 }
@@ -1259,7 +1487,7 @@ void Identifier::ClassifyVertices()
           Normalize(Sub(ArmDirection(incident[0], v),
                         Scale(Dot(ArmDirection(incident[0], v), n_ref), n_ref)));
       const Point3D y = Cross(n_ref, x);
-      std::vector<double> angles;
+      std::vector<std::pair<double, int>> arms;  // angle, conductor
       for (const std::size_t r : incident)
       {
         const Point3D d = ArmDirection(r, v);
@@ -1268,13 +1496,14 @@ void Identifier::ClassifyVertices()
         {
           angle += 360.0;
         }
-        angles.push_back(angle);
+        arms.emplace_back(angle, runs[r].conductor);
       }
-      std::sort(angles.begin(), angles.end());
-      for (std::size_t i = 0; i < angles.size(); i++)
+      std::sort(arms.begin(), arms.end());
+      for (std::size_t i = 0; i < arms.size(); i++)
       {
-        const double next = i + 1 < angles.size() ? angles[i + 1] : angles[0] + 360.0;
-        site.arm_angles.push_back(next - angles[i]);
+        const double next = i + 1 < arms.size() ? arms[i + 1].first : arms[0].first + 360.0;
+        site.arm_angles.push_back(next - arms[i].first);
+        site.arm_conductors.push_back(arms[i].second);
       }
     }
     sites.push_back(std::move(site));
@@ -2602,8 +2831,8 @@ void Identifier::Assign(IdentificationResult &result)
     }
     else if (site.type == "Junction")
     {
-      signature =
-          CanonicalJunctionSignature(site.interfaces, site.boundary_law, site.arm_angles);
+      signature = CanonicalJunctionSignature(site.interfaces, site.boundary_law,
+                                             site.arm_angles, site.arm_conductors);
     }
     const int feature = NewFeature(site.type, signature);
     features[feature].origin = site.point;
@@ -2635,7 +2864,8 @@ void Identifier::Assign(IdentificationResult &result)
                 return std::tie(a.priority, a.feature, a.interval) <
                        std::tie(b.priority, b.feature, b.interval);
               });
-    std::vector<Interval> taken;
+    // CrossLayer zones are excluded before any feature claims the run.
+    std::vector<Interval> taken = cross_layer[r];
     for (const auto &claim : run_claims)
     {
       for (const auto &piece : SubtractIntervals({claim.interval}, taken, Tol()))
@@ -2771,6 +3001,12 @@ void Identifier::Assign(IdentificationResult &result)
   {
     result.exclusions.push_back({key.first, key.second, value.first, value.second});
   }
+  // The CrossLayer record collects the analytic zones (count = zones, length = their sum).
+  const int cross_layer_record = static_cast<int>(result.exclusions.size());
+  result.exclusions.push_back(
+      {"CrossLayer",
+       "planar metal edge within 2R of metal off its own plane (facing layer, wall, staple)",
+       0, 0.0});
   for (std::size_t r = 0; r < runs.size(); r++)
   {
     if (runs[r].excluded)
@@ -2784,12 +3020,12 @@ void Identifier::Assign(IdentificationResult &result)
       const double segment_length =
           Distance(input.segments[rs.segment].p0, input.segments[rs.segment].p1);
       const double scale = segment_length / (rs.t1 - rs.t0);
-      for (const auto &[lo, hi, feature] : assigned[r])
+      auto SegmentPortion = [&](double lo, double hi) -> std::optional<std::array<double, 2>>
       {
         const double a = std::max(lo, rs.t0), b = std::min(hi, rs.t1);
         if (b - a <= Tol())
         {
-          continue;
+          return std::nullopt;
         }
         double s0 = (a - rs.t0) * scale, s1 = (b - rs.t0) * scale;
         if (!rs.forward)
@@ -2806,13 +3042,42 @@ void Identifier::Assign(IdentificationResult &result)
           s0 = segment_length - s1;
           s1 = segment_length - t;
         }
+        return std::array<double, 2>{s0, s1};
+      };
+      for (const auto &[lo, hi, feature] : assigned[r])
+      {
+        const auto portion = SegmentPortion(lo, hi);
+        if (!portion)
+        {
+          continue;
+        }
+        const auto [s0, s1] = *portion;
         table.portions.push_back({s0, s1, static_cast<double>(feature)});
         features[feature].portions.push_back({rs.segment, s0, s1});
         features[feature].length += s1 - s0;
         result.assigned_length += s1 - s0;
       }
       std::sort(table.portions.begin(), table.portions.end());
+      for (const auto &zone : cross_layer[r])
+      {
+        const auto portion = SegmentPortion(zone.first, zone.second);
+        if (!portion)
+        {
+          continue;
+        }
+        const auto [s0, s1] = *portion;
+        table.excluded_portions.push_back(
+            {s0, s1, static_cast<double>(cross_layer_record)});
+        result.exclusions[cross_layer_record].count++;
+        result.exclusions[cross_layer_record].length += s1 - s0;
+        result.excluded_length += s1 - s0;
+      }
+      std::sort(table.excluded_portions.begin(), table.excluded_portions.end());
     }
+  }
+  if (result.exclusions[cross_layer_record].count == 0)
+  {
+    result.exclusions.erase(result.exclusions.begin() + cross_layer_record);
   }
 
   // Drop features that ended up claiming nothing (translational spans fully inside clusters
@@ -2849,19 +3114,41 @@ void Identifier::Assign(IdentificationResult &result)
     }
   }
 
-  // Vertex table.
+  // Vertex table. A regular vertex where a chain was cut by an excluded segment is an
+  // ExclusionCut (the metal edge continues into the exclusion; no endpoint feature).
+  std::map<std::size_t, int> runs_at_vertex;
+  for (const auto &run : runs)
+  {
+    if (!run.excluded)
+    {
+      runs_at_vertex[run.start_vertex]++;
+      runs_at_vertex[run.end_vertex]++;
+    }
+  }
   for (std::size_t v = 0; v < input.vertices.size(); v++)
   {
     const auto &vertex = input.vertices[v];
     if (!vertex.physical_type || *vertex.physical_type == MetalEdgeVertexType::REGULAR)
     {
+      const auto ends = runs_at_vertex.find(v);
+      if (vertex.physical_type && ends != runs_at_vertex.end() && ends->second == 1)
+      {
+        IdentifiedVertex entry;
+        entry.vertex = v;
+        entry.type = "ExclusionCut";
+        entry.point_contact = IsPointContact(v);
+        result.vertices.push_back(entry);
+      }
       continue;
     }
     IdentifiedVertex entry;
     entry.vertex = v;
+    entry.point_contact = IsPointContact(v);
     if (!IsFeatureVertex(v))
     {
-      entry.type = "TruncationCut";
+      entry.type = cross_layer_vertices.find(v) != cross_layer_vertices.end()
+                       ? "Excluded"
+                       : "TruncationCut";
       result.vertices.push_back(entry);
       continue;
     }
@@ -3055,6 +3342,15 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         portions.push_back({L(portion[0]), L(portion[1]), static_cast<int>(portion[2])});
       }
       entry["Portions"] = portions;
+      if (!segment.excluded_portions.empty())
+      {
+        nlohmann::json excluded = nlohmann::json::array();
+        for (const auto &portion : segment.excluded_portions)
+        {
+          excluded.push_back({L(portion[0]), L(portion[1]), static_cast<int>(portion[2])});
+        }
+        entry["ExcludedPortions"] = excluded;
+      }
     }
     segment_list.push_back(std::move(entry));
   }
@@ -3066,10 +3362,15 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
     {
       entry["Vertex"] = vertex.vertex;
     }
-    if (vertex.type != "TruncationCut" && vertex.type != "Excluded")
+    if (vertex.type != "TruncationCut" && vertex.type != "Excluded" &&
+        vertex.type != "ExclusionCut")
     {
       entry["TurnDegrees"] = std::round(vertex.turn_degrees * 1.0e6) * 1.0e-6;
       entry["Feature"] = vertex.feature;
+    }
+    if (vertex.point_contact)
+    {
+      entry["PointContact"] = true;
     }
     vertex_list.push_back(std::move(entry));
   }
@@ -3100,6 +3401,7 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
             {"CurvatureWindowOverR", kCurvatureWindowOverRadius},
             {"PairSeparationToleranceRelative", kPairSeparationTolerance},
             {"PairSeparationSamplesPerInterval", kPairSeparationSamplesPerInterval},
+            {"CrossLayerReachOverR", kInteractionDistanceOverRadius},
             {"Comparison", "strict less on the quantized grid"}}},
           {"ReferenceProcessNormal", D(reference_process_normal)},
           {"Features", feature_list},

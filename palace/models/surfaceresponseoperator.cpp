@@ -695,6 +695,10 @@ struct EdgeSegment3D
   int metal_component = -1;
   std::map<InterfaceDielectric, int> targets;
   MetalBoundaryLaw boundary_condition;
+
+  // The supporting faces have the same material on both sides and the target configures
+  // no EdgeFrameNormal: the process side of axis_v is a guess the identification excludes.
+  bool ambiguous_process_side = false;
 };
 
 // Deterministic broad-phase index for nearby segment queries. Exact distance and topology
@@ -4861,10 +4865,12 @@ std::optional<SpatialClusterSelection3D> FindSpatialClusterLibraryModel(
             continue;
           }
           const double position_error = Distance(point, site.point);
-          const double gap_error =
-              std::acos(std::clamp(Dot(gap, site.gap_direction), -1.0, 1.0));
-          const double normal_error =
-              std::acos(std::clamp(Dot(normal, site.process_normal), -1.0, 1.0));
+          // atan2 of the cross and dot products: acos(1 - eps) of a snapped, nearly-unit
+          // model direction would report sqrt(2 eps) (1e-6 rad for 12-digit components).
+          auto AngleBetween = [](const Point3D &a, const Point3D &b)
+          { return std::atan2(Norm(Cross(a, b)), Dot(a, b)); };
+          const double gap_error = AngleBetween(gap, site.gap_direction);
+          const double normal_error = AngleBetween(normal, site.process_normal);
           // A unified owner can deliberately extend farther along a physical edge than
           // the interaction site which selects it. Require complete containment rather
           // than identical clipped intervals so that one enlarged coupon can own every
@@ -5161,11 +5167,34 @@ LibrarySignatureKeys(const ProcessLibrary &library,
 // Geometry identification (design: SURFACE-RESPONSE-IDENTIFICATION.md): pure function of
 // the perimeter, the segment frames and R; then the key-based matching pass and the derived
 // version-1 requirement records.
-void RunGeometryIdentification(const MetalEdgeGeometry &geometry,
-                               const std::vector<EdgeSegment3D> &framed_segments,
-                               const ProcessLibrary &library,
-                               AutomaticResponseRequirements &requirements)
+// The identification runs in every path (preflight and solve): its per-segment exclusions
+// (non-planar, non-manifold, undetermined process side, cross-layer zones) also remove
+// those segments from the legacy classification. The manifest records are written only
+// when a requirements sink is given (preflight).
+IdentificationResult RunGeometryIdentification(
+    const MetalEdgeGeometry &geometry, const std::vector<EdgeSegment3D> &framed_segments,
+    const ProcessLibrary &library, const AutomaticResponseRequirements &describer,
+    AutomaticResponseRequirements *requirements, bool frame_normal_configured)
 {
+  // A one-sided edge whose face is not parallel to the process plane (the area-weighted
+  // principal direction of the metal normals) is non-planar metal: a wall, a staple leg, a
+  // via; the classification's kParallelCosineTolerance.
+  auto NonPlanarFace = [&](const MetalEdgeSegment &source)
+  {
+    for (const auto &normal : source.face_normals)
+    {
+      double dot = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        dot += normal[d] * geometry.layer_normal[d];
+      }
+      if (std::abs(dot) < 1.0 - 1.0e-8)
+      {
+        return true;
+      }
+    }
+    return false;
+  };
   IdentificationInput input;
   input.radius = library.matching_radius;
   std::map<std::size_t, const EdgeSegment3D *> framed;
@@ -5183,14 +5212,54 @@ void RunGeometryIdentification(const MetalEdgeGeometry &geometry,
     segment.vertices = source.vertices;
     segment.chain = source.physical_chain;
     segment.truncation = source.type == MetalEdgeSegmentType::TRUNCATION;
-    if (auto it = framed.find(i); it != framed.end())
+    segment.conductor = source.metal_component;
+    if (source.on_bounding_box && !segment.truncation)
+    {
+      segment.exclusion = std::make_pair(
+          "SimulationBoundary",
+          "edge of a metal face on the bounding box of the mesh (PEC simulation box)");
+    }
+    else if (source.type == MetalEdgeSegmentType::FOLD)
+    {
+      segment.exclusion = std::make_pair(
+          "NonPlanar", "edge where two non-coplanar metal faces meet (the metal folds: "
+                       "staple, box edge)");
+    }
+    else if (source.type == MetalEdgeSegmentType::NONMANIFOLD)
+    {
+      segment.exclusion = std::make_pair(
+          "NonManifold", "edge shared by three or more metal face directions (a wall "
+                         "standing on a sheet)");
+    }
+    else if (!segment.truncation && NonPlanarFace(source))
+    {
+      segment.exclusion = std::make_pair(
+          "NonPlanar", "edge of a metal face not parallel to the process plane (wall, "
+                       "staple, via)");
+    }
+    else if (auto it = framed.find(i); it != framed.end())
     {
       segment.conductor = it->second->conductor;
       segment.targets = it->second->targets;
       segment.gap_direction = it->second->axis_u;
       segment.process_normal = it->second->axis_v;
       segment.boundary_law =
-          requirements.DescribeBoundaryCondition(it->second->boundary_condition).dump();
+          describer.DescribeBoundaryCondition(it->second->boundary_condition).dump();
+      if (it->second->ambiguous_process_side)
+      {
+        segment.exclusion = std::make_pair(
+            "UndeterminedProcessSide",
+            "metal sheet with the same material on both sides and no EdgeFrameNormal on "
+            "the target interface: the process side cannot be determined");
+      }
+    }
+    else if (!segment.truncation && source.side_attributes.size() <= 1 &&
+             !frame_normal_configured)
+    {
+      segment.exclusion = std::make_pair(
+          "UndeterminedProcessSide",
+          "metal sheet with the same material on both sides and no EdgeFrameNormal on "
+          "the target interface: the process side cannot be determined");
     }
     else if (!segment.truncation)
     {
@@ -5207,10 +5276,47 @@ void RunGeometryIdentification(const MetalEdgeGeometry &geometry,
     input.vertices[v].physical_type = geometry.vertices[v].physical_type;
     input.vertices[v].on_truncation_boundary = geometry.vertices[v].on_truncation_boundary;
   }
+  input.faces.reserve(geometry.global_faces.size());
+  for (const auto &face : geometry.global_faces)
+  {
+    if (!face.on_bounding_box)  // a PEC simulation box is not fabricated metal
+    {
+      input.faces.push_back({face.vertices, face.normal});
+    }
+  }
   auto result = IdentifyMetalPerimeter(input);
 
+  {
+    std::string exclusions;
+    for (const auto &exclusion : result.exclusions)
+    {
+      exclusions += fmt::format("{}{}: {:d} ({:.6e})", exclusions.empty() ? "" : ", ",
+                                exclusion.cls, exclusion.count, exclusion.length);
+    }
+    Mpi::Print("Geometry identification: {:d} features on {:d} segments; exclusions {{{}}}\n",
+               static_cast<int>(result.features.size()),
+               static_cast<int>(result.segments.size()), exclusions);
+  }
+  int point_contacts = 0;
+  for (const auto &vertex : result.vertices)
+  {
+    if (vertex.point_contact)
+    {
+      point_contacts++;
+      const auto &p = geometry.vertices[vertex.vertex].coordinate;
+      Mpi::Warning("Metal of different edge-connected components meets at the point ({:.6e}"
+                   ", {:.6e}, {:.6e}) (a point contact, degenerate geometry; vertex type "
+                   "{})!\n",
+                   p[0], p[1], p[2], vertex.type);
+    }
+  }
+  if (!requirements)
+  {
+    return result;
+  }
+
   // Matching pass: signature lookup only.
-  const auto library_keys = LibrarySignatureKeys(library, requirements);
+  const auto library_keys = LibrarySignatureKeys(library, *requirements);
   for (auto &feature : result.features)
   {
     if (auto it = library_keys.find(feature.signature_key); it != library_keys.end())
@@ -5220,7 +5326,7 @@ void RunGeometryIdentification(const MetalEdgeGeometry &geometry,
   }
 
   // Version-1 records derived from the features.
-  requirements.ActivateIdentification();
+  requirements->ActivateIdentification();
   const double R = library.matching_radius;
   for (const auto &feature : result.features)
   {
@@ -5260,7 +5366,7 @@ void RunGeometryIdentification(const MetalEdgeGeometry &geometry,
     {
       geometry_json["EdgeCount"] = 1;
       geometry_json["BendRadius"] =
-          requirements.ScaleLength(sig["RadiusOverR"].get<double>() * R);
+          requirements->ScaleLength(sig["RadiusOverR"].get<double>() * R);
       count = static_cast<int>(feature.portions.size());
     }
     else if (feature.type == "SameConductorGap" ||
@@ -5274,11 +5380,11 @@ void RunGeometryIdentification(const MetalEdgeGeometry &geometry,
     {
       geometry_json["EdgeCount"] = 2;
       geometry_json["Separation"] =
-          requirements.ScaleLength(sig["SeparationOverR"].get<double>() * R);
+          requirements->ScaleLength(sig["SeparationOverR"].get<double>() * R);
       if (sig.contains("RadiusOverR"))
       {
         geometry_json["BendRadius"] =
-            requirements.ScaleLength(sig["RadiusOverR"].get<double>() * R);
+            requirements->ScaleLength(sig["RadiusOverR"].get<double>() * R);
       }
       count = static_cast<int>(feature.portions.size());
     }
@@ -5289,7 +5395,7 @@ void RunGeometryIdentification(const MetalEdgeGeometry &geometry,
       {
         edges.push_back(
             {{"Offset",
-              {requirements.ScaleLength(edge["OffsetOverR"].get<double>() * R), 0.0}},
+              {requirements->ScaleLength(edge["OffsetOverR"].get<double>() * R), 0.0}},
              {"GapDirection", {static_cast<double>(edge["GapSide"].get<int>()), 0.0}},
              {"Conductor", edge["Conductor"]}});
       }
@@ -5301,7 +5407,7 @@ void RunGeometryIdentification(const MetalEdgeGeometry &geometry,
     {
       geometry_json["AngleDegrees"] = sig["AngleDegrees"];
       geometry_json["CornerRadius"] =
-          requirements.ScaleLength(sig["CornerRadiusOverR"].get<double>() * R);
+          requirements->ScaleLength(sig["CornerRadiusOverR"].get<double>() * R);
     }
     else if (feature.type == "Junction")
     {
@@ -5325,9 +5431,10 @@ void RunGeometryIdentification(const MetalEdgeGeometry &geometry,
                                                          {"Topology", feature.type},
                                                          {"Weight", 1.0}}});
     }
-    requirements.AddFeatureRecord(record, count, feature.length);
+    requirements->AddFeatureRecord(record, count, feature.length);
   }
-  requirements.SetIdentification(result.ToJson(requirements.CoordinateScale()));
+  requirements->SetIdentification(result.ToJson(requirements->CoordinateScale()));
+  return result;
 }
 
 ResponseCorrectionData
@@ -5369,14 +5476,13 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                 "confidence diagnostics!");
   }
   MetalSurfaceExtraction surface;
-  surface.classify_components =
-      requirements ||
-      std::any_of(library.models.begin(), library.models.end(), [](const auto &model)
-                  { return model.topology == LibraryTopology::SPATIAL_EDGE_CLUSTER; });
+  surface.classify_components = true;
   surface.retain_faces =
       requirements ||
       std::any_of(library.models.begin(), library.models.end(),
                   [](const auto &model) { return model.plan_view_boundary.has_value(); });
+  // The identification needs every metal face for the decision-73(3) cross-layer zones.
+  surface.retain_global_faces = true;
   const auto geometry = ExtractMetalEdgeGeometry(mesh, iodata.boundaries, surface);
   MFEM_VERIFY(!geometry.Empty(),
               "Fabrication-process response matching found no metal perimeter!");
@@ -5531,9 +5637,11 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     }
     if (!missing.empty())
     {
+      std::vector<bool> ambiguous_side;
       const auto process_normals = BuildMetalEdgeProcessNormals(
           mesh, geometry, missing, [&](int attribute)
-          { return mat_op.GetLightSpeedMax(attribute); }, group.process_normal);
+          { return mat_op.GetLightSpeedMax(attribute); }, group.process_normal,
+          &ambiguous_side);
       const auto gap_directions =
           BuildMetalEdgeGapDirections(mesh, geometry, missing, process_normals);
       for (std::size_t i = 0; i < missing.size(); i++)
@@ -5550,6 +5658,15 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         segment.axis_v = process_normals[i];
         segment.targets = group.targets;
         segment.metal_component = source.metal_component;
+        // The process side of a sheet with one material on both sides comes from the
+        // configured EdgeFrameNormal or is undetermined (decision 74 step 4).
+        segment.ambiguous_process_side = ambiguous_side[i] && !group.process_normal;
+        // Conductor identity is the edge-connected metal component (geometric, independent
+        // of the attribute numbering and of the problem type).
+        MFEM_VERIFY(source.metal_component >= 0,
+                    "Unable to determine the connected metal component of an "
+                    "automatically detected edge!");
+        segment.conductor = source.metal_component;
         if (maxwell)
         {
           MFEM_VERIFY(!source.conditions.empty(),
@@ -5566,27 +5683,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                                 boundary_condition);
                           }),
               "A Maxwell target edge cannot mix distinct metal boundary conditions!");
-          MFEM_VERIFY(source.component >= 0,
-                      "Unable to determine connected metal ownership for a Maxwell edge!");
-          segment.conductor =
-              source.metal_component >= 0 ? source.metal_component : source.component;
           segment.boundary_condition = boundary_condition;
         }
         else
         {
-          std::set<int> conductors;
-          for (const int attribute : source.metal_attributes)
-          {
-            if (auto conductor = GetConductor(iodata.boundaries, attribute))
-            {
-              conductors.insert(*conductor);
-            }
-          }
-          MFEM_VERIFY(
-              conductors.size() == 1,
-              "Unable to assign an automatically detected three-dimensional metal edge "
-              "to exactly one electrostatic conductor!");
-          segment.conductor = *conductors.begin();
           segment.boundary_condition = MetalBoundaryLaw{};
         }
         segment_cache.emplace(geometry_index, std::move(segment));
@@ -6291,36 +6391,63 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   };
 
   std::vector<EdgeSegment3D> global_segments;
-  const bool has_cross_interface_spatial_model =
-      std::any_of(library.models.begin(), library.models.end(),
-                  [](const auto &model)
-                  {
-                    if (model.topology != LibraryTopology::SPATIAL_EDGE_CLUSTER)
-                    {
-                      return false;
-                    }
-                    std::set<int> slots;
-                    for (const auto &edge : model.spatial_edges)
-                    {
-                      slots.insert(edge.interface_slot);
-                    }
-                    return slots.size() > 1;
-                  });
-  if (has_cross_interface_spatial_model || requirements)
+  for (const auto &[signature, group] : groups_by_targets)
   {
-    for (const auto &[signature, group] : groups_by_targets)
+    (void)signature;
+    auto segments = BuildSegments(group, group.segments);
+    global_segments.insert(global_segments.end(),
+                           std::make_move_iterator(segments.begin()),
+                           std::make_move_iterator(segments.end()));
+  }
+
+  // Boundary-condition labels are diagnostics only: geometrically connected metal carrying
+  // different Terminal / PrescribedPotential indices is reported, never split.
+  {
+    std::map<int, std::set<int>> labels_by_component;
+    for (const auto &segment : global_segments)
     {
-      (void)signature;
-      auto segments = BuildSegments(group, group.segments);
-      global_segments.insert(global_segments.end(),
-                             std::make_move_iterator(segments.begin()),
-                             std::make_move_iterator(segments.end()));
+      for (const int attribute : geometry.segments[segment.geometry_index].metal_attributes)
+      {
+        if (auto label = GetConductor(iodata.boundaries, attribute))
+        {
+          labels_by_component[segment.metal_component].insert(*label);
+        }
+      }
+    }
+    for (const auto &[component, labels] : labels_by_component)
+    {
+      if (labels.size() > 1)
+      {
+        std::string text;
+        for (const int label : labels)
+        {
+          text += (text.empty() ? "" : ", ") + std::to_string(label);
+        }
+        Mpi::Warning("Edge-connected metal component {:d} carries the distinct conductor "
+                     "labels {{{}}} (Ground = 0, Terminal / PrescribedPotential index); "
+                     "the identification treats it as one conductor.\n",
+                     component, text);
+      }
     }
   }
 
-  if (requirements)
+  const AutomaticResponseRequirements law_describer(iodata.units,
+                                                    iodata.InputsNondimensionalized());
+  const bool frame_normal_configured =
+      std::any_of(iodata.boundaries.postpro.dielectric.begin(),
+                  iodata.boundaries.postpro.dielectric.end(),
+                  [](const auto &entry) { return entry.second.edge_frame_normal.has_value(); });
+  const auto identification = RunGeometryIdentification(
+      geometry, global_segments, library, requirements ? *requirements : law_describer,
+      requirements, frame_normal_configured);
+  std::set<std::size_t> identification_excluded_segments;
+  for (std::size_t i = 0; i < identification.segments.size(); i++)
   {
-    RunGeometryIdentification(geometry, global_segments, library, *requirements);
+    if (identification.segments[i].exclusion ||
+        !identification.segments[i].excluded_portions.empty())
+    {
+      identification_excluded_segments.insert(i);
+    }
   }
 
   const double global_interaction_distance = 2.0 * library.matching_radius;
@@ -6782,12 +6909,21 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     usable_segment_indices.reserve(group.segments.size());
     double total_selected_length = 0.0;
     int externally_conflicted_segments = 0;
+    int identification_excluded = 0;
     for (const std::size_t geometry_index : group.segments)
     {
       const auto &source = geometry.segments[geometry_index];
       const auto &p0 = geometry.vertices[source.vertices[0]].coordinate;
       const auto &p1 = geometry.vertices[source.vertices[1]].coordinate;
       total_selected_length += Distance(p0, p1);
+      if (identification_excluded_segments.find(geometry_index) !=
+          identification_excluded_segments.end())
+      {
+        // Excluded by the identification (non-planar, undetermined process side, within a
+        // cross-layer zone): recorded in the manifest, never corrected by the legacy path.
+        identification_excluded++;
+        continue;
+      }
       std::map<int, std::pair<std::size_t, double>> conflicts;
       const auto nearby_geometry =
           geometry_segment_index.Query(p0, p1, interaction_distance);
@@ -6896,6 +7032,12 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         (void)type;
         diagnostics->selected_length_by_interface[target] += total_selected_length;
       }
+    }
+    if (identification_excluded > 0)
+    {
+      Mpi::Print("Omitting {:d} of {:d} three-dimensional target edge segments excluded by "
+                 "the geometry identification (see the Exclusions of the manifest).\n",
+                 identification_excluded, static_cast<int>(group.segments.size()));
     }
     if (externally_conflicted_segments > 0)
     {

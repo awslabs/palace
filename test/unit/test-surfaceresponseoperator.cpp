@@ -2644,8 +2644,11 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                                                        parallel_cluster_laplace_3d);
   CHECK(parallel_cluster_response_3d.GetPatchCount() ==
         static_cast<int>(segment_indices.size() / 4) * line_rule.GetNPoints());
+  // Conductor identity is the edge-connected metal component (phase 3): the two ground
+  // planes cut by the simulation box are distinct conductors, so the CPW cross-section is
+  // the three-conductor four-edge cluster (6 basis functions per patch, not 5).
   CHECK(parallel_cluster_response_3d.GetBasisSize() ==
-        5 * parallel_cluster_response_3d.GetPatchCount());
+        6 * parallel_cluster_response_3d.GetPatchCount());
   CHECK_THAT(parallel_cluster_response_3d.GetPatchWeight(),
              WithinRel(0.125 * physical_edge_length, 1.0e-12));
 
@@ -2677,7 +2680,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     CHECK(conductor > 0);
     parallel_cluster_conductors.insert(conductor);
   }
-  CHECK(parallel_cluster_conductors == std::set<int>{1, 2});
+  // Three geometric conductors (left ground, centre strip, right ground), see above.
+  CHECK(parallel_cluster_conductors == std::set<int>{1, 2, 3});
   CHECK((*parallel_cluster_requirement)["TotalEdgeLength"].get<double>() > 0.0);
 
   // An exact multi-edge coupon is self-contained. It must not require redundant
@@ -3196,15 +3200,14 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   LaplaceOperator junction_island_laplace(junction_island_iodata, junction_island_meshes);
   SurfaceResponseOperator junction_island_response(junction_island_iodata,
                                                    junction_island_laplace);
-  const int removed_junction_straight_patches = 4 * island_line_rule.GetNPoints();
-  CHECK(junction_island_response.GetPatchCount() ==
-        touching_island_response.GetPatchCount() - removed_junction_straight_patches +
-            touching_junctions);
-  CHECK(junction_island_response.GetBasisSize() ==
-        touching_island_response.GetBasisSize() - 4 * removed_junction_straight_patches +
-            12 * touching_junctions);
+  // Phase 3 of the identification fix: conductor identity is the edge-connected metal
+  // component, so the two squares touching at one vertex are two conductors (a point
+  // contact carries no galvanic connection); the legacy junction patch requires one
+  // conductor on every arm and is not built. The vertex is reported as a PointContact.
+  CHECK(junction_island_response.GetPatchCount() == touching_island_response.GetPatchCount());
+  CHECK(junction_island_response.GetBasisSize() == touching_island_response.GetBasisSize());
   CHECK_THAT(junction_island_response.GetPatchWeight(),
-             WithinRel(touching_island_response.GetPatchWeight() - 3.0, 1.0e-12));
+             WithinRel(touching_island_response.GetPatchWeight(), 1.0e-12));
 
   auto rounded_island_config = island_config;
   rounded_island_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
@@ -3579,76 +3582,29 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   std::ifstream junction_requirements_input(junction_requirements_path);
   REQUIRE(junction_requirements_input);
   const json junction_requirements = json::parse(junction_requirements_input);
-  // The Arms / PlanViewFacets / PlanViewBoundary record format and the exact-mask model
-  // round trip belong to the legacy classifier; since the version-2 manifest derives its
-  // Requirements from the identification features (matched by signature), these checks
-  // read the LegacyRequirements comparison table.
-  const auto junction_requirement = std::find_if(
-      junction_requirements["LegacyRequirements"].begin(),
-      junction_requirements["LegacyRequirements"].end(),
-      [](const auto &requirement) { return requirement["Topology"] == "Junction"; });
-  REQUIRE(junction_requirement != junction_requirements["LegacyRequirements"].end());
-  const auto &junction_geometry = (*junction_requirement)["Geometry"];
-  CHECK((*junction_requirement)["Status"] == "Missing");
-  CHECK(junction_geometry["SignatureVersion"] == 2);
-  CHECK(junction_geometry["ArmCount"].get<int>() >= 3);
-  CHECK(junction_geometry["Arms"].size() ==
-        junction_geometry["ArmCount"].get<std::size_t>());
-  for (const auto &arm : junction_geometry["Arms"])
-  {
-    CHECK(arm["Conductor"] == 1);
-    CHECK(arm["InterfaceSlot"] == 0);
-    CHECK(arm["BoundaryCondition"]["Type"] == "PEC");
-    CHECK(arm["Direction"].size() == 3);
-    CHECK(arm["GapDirection"].size() == 3);
-    CHECK(arm["ProcessNormal"].size() == 3);
-  }
-  REQUIRE(junction_geometry.contains("PlanViewFacets"));
-  REQUIRE(!junction_geometry["PlanViewFacets"].empty());
-  REQUIRE(junction_geometry.contains("PlanViewBoundary"));
-  for (const auto &component : junction_geometry["PlanViewBoundary"])
-  {
-    REQUIRE(component.contains("ContinuationSegments"));
-  }
-  std::ifstream exact_junction_library_input(junction_library_3d_path);
-  REQUIRE(exact_junction_library_input);
-  auto exact_junction_library = json::parse(exact_junction_library_input);
-  auto exact_junction_model = *std::find_if(
-      exact_junction_library["Models"].begin(), exact_junction_library["Models"].end(),
-      [](const auto &model)
-      {
-        return model["Topology"] == "Junction" &&
-               model.value("BoundaryCondition", json("PEC")) == "PEC";
-      });
-  exact_junction_model["Name"] = "junction-4x90-exact-mask";
-  exact_junction_model["PlanViewBoundary"] = junction_geometry["PlanViewBoundary"];
-  exact_junction_library["Models"].push_back(std::move(exact_junction_model));
-  const auto exact_junction_library_path =
-      temp.temp_dir / "surface-process-junction-exact-mask-3d.json";
-  std::ofstream exact_junction_library_output(exact_junction_library_path);
-  exact_junction_library_output << exact_junction_library.dump(2) << "\n";
-  exact_junction_library_output.close();
-  auto exact_junction_config = junction_maxwell_config;
-  exact_junction_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
-      exact_junction_library_path.string();
-  IoData exact_junction_iodata(exact_junction_config, false);
-  exact_junction_iodata.boundaries.cracked_attributes.insert(9);
-  const auto exact_junction_requirements_path =
-      temp.temp_dir / "surface-response-requirements-junction-exact-mask.json";
-  WriteSurfaceResponseRequirements(exact_junction_iodata, *junction_maxwell_meshes.back(),
-                                   exact_junction_requirements_path.string());
-  std::ifstream exact_junction_requirements_input(exact_junction_requirements_path);
-  REQUIRE(exact_junction_requirements_input);
-  const auto exact_junction_requirements = json::parse(exact_junction_requirements_input);
-  const auto matched_exact_junction = std::find_if(
-      exact_junction_requirements["LegacyRequirements"].begin(),
-      exact_junction_requirements["LegacyRequirements"].end(),
-      [](const auto &requirement)
-      {
-        return requirement["Topology"] == "Junction" &&
-               requirement["SelectedModels"][0]["Name"] == "junction-4x90-exact-mask";
-      });
-  CHECK(matched_exact_junction != exact_junction_requirements["LegacyRequirements"].end());
+  // Phase 3 of the identification fix: the two squares touch at one vertex, a point
+  // contact between two edge-connected metal components. The legacy classifier builds no
+  // junction there (its arms must share one conductor); the version-2 identification
+  // reports a Junction feature whose signature carries the arm conductors (two labels) and
+  // flags the vertex as a PointContact, so the degenerate geometry is never silent.
+  CHECK(std::none_of(junction_requirements["LegacyRequirements"].begin(),
+                     junction_requirements["LegacyRequirements"].end(),
+                     [](const auto &requirement)
+                     { return requirement["Topology"] == "Junction"; }));
+  const auto &junction_identification = junction_requirements["Identification"];
+  const auto junction_feature = std::find_if(
+      junction_identification["Features"].begin(), junction_identification["Features"].end(),
+      [](const auto &feature) { return feature["Type"] == "Junction"; });
+  REQUIRE(junction_feature != junction_identification["Features"].end());
+  CHECK((*junction_feature)["Match"]["Status"] == "Missing");
+  const auto &arm_conductors = (*junction_feature)["Signature"]["ArmConductors"];
+  REQUIRE(arm_conductors.size() == 4);
+  CHECK(std::set<int>(arm_conductors.begin(), arm_conductors.end()) == std::set<int>{1, 2});
+  CHECK((*junction_feature)["Signature"]["ArmAnglesDegrees"].size() == 4);
+  CHECK(std::count_if(junction_identification["Vertices"].begin(),
+                      junction_identification["Vertices"].end(),
+                      [](const auto &vertex)
+                      { return vertex.value("PointContact", false); }) == 1);
 
   auto impedance_junction_config = junction_maxwell_config;
   impedance_junction_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6};
@@ -3662,13 +3618,11 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                                          impedance_junction_meshes);
   SurfaceResponseOperator impedance_junction_response(impedance_junction_iodata,
                                                       impedance_junction_space);
+  // No legacy junction patch at the two-conductor point contact (see above).
   CHECK(impedance_junction_response.GetPatchCount() ==
-        static_cast<int>(touching_segments.size()) * island_line_rule.GetNPoints() -
-            removed_junction_straight_patches + touching_junctions);
+        static_cast<int>(touching_segments.size()) * island_line_rule.GetNPoints());
   CHECK(impedance_junction_response.GetBasisSize() ==
-        4 * (static_cast<int>(touching_segments.size()) * island_line_rule.GetNPoints() -
-             removed_junction_straight_patches) +
-            12 * touching_junctions);
+        4 * static_cast<int>(touching_segments.size()) * island_line_rule.GetNPoints());
   GridFunction impedance_junction_field(impedance_junction_space.GetNDSpace(), true);
   impedance_junction_field.Real().ProjectCoefficient(field_coefficient);
   impedance_junction_field.Imag() = 0.0;

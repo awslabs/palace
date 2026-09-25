@@ -12,6 +12,7 @@
 #include <numeric>
 #include <queue>
 #include <set>
+#include <string>
 #include <tuple>
 #include <utility>
 #include "fem/coefficient.hpp"
@@ -203,12 +204,6 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
     metal_attributes.push_back(attribute);
   }
   auto metal_marker = mesh::BdrAttrToMarker(mesh, metal_attributes, true);
-  const auto perimeter_segments = mesh::GetBoundaryEdgeSegments(mesh, metal_marker);
-  if (perimeter_segments.empty())
-  {
-    return result;
-  }
-
   mfem::Vector bbmin, bbmax;
   mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
   double extent = 0.0;
@@ -218,19 +213,608 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   }
   MFEM_VERIFY(extent > 0.0, "Degenerate mesh geometry for metal edge extraction!");
   const double tolerance_squared = 1.0e-18 * extent * extent;
+  const double coordinate_tolerance = 1.0e-10 * extent;
 
-  std::map<int, std::shared_ptr<const EdgeDistanceTree>> attribute_support;
-  for (const auto &[attribute, conditions] : attribute_conditions)
+  using Point = std::array<double, 3>;
+  using PointKey = std::array<long long int, 3>;
+
+  // (1) Every rank collects its metal boundary faces: attribute, the two adjacent domain
+  // element attributes (-1 when the face is exterior or the neighbour is absent), and the
+  // ordered polygon of the face with high-order edges sampled as in the perimeter.
+  std::vector<double> local_face_data;
+  std::vector<std::vector<Point>> local_loops;
   {
-    (void)conditions;
-    attribute_support.emplace(attribute,
-                              BuildSupportTree(mesh, std::vector<int>{attribute}, false));
+    auto &mutable_mesh = const_cast<mfem::ParMesh &>(mesh);
+    mutable_mesh.ExchangeFaceNbrData();
+    mfem::L2_FECollection material_fec(0, mesh.Dimension());
+    mfem::ParFiniteElementSpace material_fespace(&mutable_mesh, &material_fec);
+    mfem::ParGridFunction material_attribute(&material_fespace);
+    mfem::Array<int> dofs;
+    for (int element = 0; element < mesh.GetNE(); element++)
+    {
+      material_fespace.GetElementDofs(element, dofs);
+      material_attribute[dofs[0]] = mesh.GetAttribute(element);
+    }
+    material_attribute.ExchangeFaceNbrData();
+
+    mesh::MeshEdgeSegmentCache edge_segment_cache(mesh);
+    mfem::Array<int> vertices, edges, orientations;
+    for (int be = 0; be < mesh.GetNBE(); be++)
+    {
+      const int attribute = mesh.GetBdrAttribute(be);
+      if (attribute <= 0 || attribute > metal_marker.Size() || !metal_marker[attribute - 1])
+      {
+        continue;
+      }
+      mesh.GetBdrElementVertices(be, vertices);
+      MFEM_VERIFY(vertices.Size() >= 3 && vertices.Size() <= 4,
+                  "Automatic metal-surface extraction supports triangular and "
+                  "quadrilateral boundary elements!");
+      const int face = mesh.GetBdrElementFaceIndex(be);
+      const auto face_info = mesh.GetFaceInformation(face);
+      int side_1 = mesh.GetAttribute(face_info.element[0].index);
+      int side_2 = -1;
+      if (face_info.element[1].location == mfem::Mesh::ElementLocation::Local)
+      {
+        side_2 = mesh.GetAttribute(face_info.element[1].index);
+      }
+      else if (face_info.element[1].location == mfem::Mesh::ElementLocation::FaceNbr)
+      {
+        material_fespace.GetFaceNbrElementVDofs(face_info.element[1].index, dofs);
+        side_2 = static_cast<int>(std::llround(material_attribute.FaceNbrData()[dofs[0]]));
+      }
+
+      std::vector<Point> loop;
+      mesh.GetBdrElementEdges(be, edges, orientations);
+      MFEM_VERIFY(edges.Size() == vertices.Size() && orientations.Size() == edges.Size(),
+                  "Unexpected metal boundary face topology!");
+      for (int i = 0; i < edges.Size(); i++)
+      {
+        auto edge_segments = edge_segment_cache.Get(edges[i]);
+        if (orientations[i] < 0)
+        {
+          std::reverse(edge_segments.begin(), edge_segments.end());
+          for (auto &segment : edge_segments)
+          {
+            std::swap(segment.p0, segment.p1);
+          }
+        }
+        for (const auto &segment : edge_segments)
+        {
+          if (loop.empty())
+          {
+            loop.push_back(segment.p0);
+          }
+          else
+          {
+            double distance_squared = 0.0;
+            for (int d = 0; d < 3; d++)
+            {
+              const double delta = loop.back()[d] - segment.p0[d];
+              distance_squared += delta * delta;
+            }
+            MFEM_VERIFY(distance_squared <= tolerance_squared,
+                        "Metal boundary face edges do not form an ordered loop!");
+          }
+          loop.push_back(segment.p1);
+        }
+      }
+      double closure_distance_squared = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        const double delta = loop.front()[d] - loop.back()[d];
+        closure_distance_squared += delta * delta;
+      }
+      MFEM_VERIFY(closure_distance_squared <= tolerance_squared,
+                  "Metal boundary face edges do not form a closed loop!");
+      loop.pop_back();
+      if (loop.size() == static_cast<std::size_t>(vertices.Size()))
+      {
+        // Geometrically linear face: keep the exact vertex representation.
+        for (int i = 0; i < vertices.Size(); i++)
+        {
+          loop[i] = mesh::GetVertexCoordinates(mesh, vertices[i]);
+        }
+      }
+      local_face_data.push_back(static_cast<double>(attribute));
+      local_face_data.push_back(static_cast<double>(side_1));
+      local_face_data.push_back(static_cast<double>(side_2));
+      local_face_data.push_back(static_cast<double>(loop.size()));
+      for (const auto &point : loop)
+      {
+        local_face_data.insert(local_face_data.end(), point.begin(), point.end());
+      }
+      local_loops.push_back(std::move(loop));
+    }
   }
 
+  // (2) Replicate the metal faces on every rank.
+  MFEM_VERIFY(local_face_data.size() <=
+                  static_cast<std::size_t>(std::numeric_limits<int>::max()),
+              "Local metal face data exceeds the MPI count limit!");
+  const int local_count = static_cast<int>(local_face_data.size());
+  std::vector<int> counts(Mpi::Size(mesh.GetComm()));
+  Mpi::Allgather(1, &local_count, counts.data(), mesh.GetComm());
+  std::vector<int> offsets(counts.size());
+  int total = 0;
+  for (std::size_t rank = 0; rank < counts.size(); rank++)
+  {
+    offsets[rank] = total;
+    MFEM_VERIFY(counts[rank] <= std::numeric_limits<int>::max() - total,
+                "Global metal face data exceeds the MPI count limit!");
+    total += counts[rank];
+  }
+  std::vector<double> face_data(total);
+  Mpi::Allgatherv(local_count, local_face_data.data(), face_data.data(), counts.data(),
+                  offsets.data(), mesh.GetComm());
+  local_face_data.clear();
+  local_face_data.shrink_to_fit();
+
+  struct GatheredFace
+  {
+    int attribute;
+    std::array<int, 2> sides;
+    std::vector<Point> loop;
+  };
+  std::vector<GatheredFace> gathered;
+  for (std::size_t offset = 0; offset < face_data.size();)
+  {
+    GatheredFace face;
+    face.attribute = static_cast<int>(std::llround(face_data[offset]));
+    face.sides = {static_cast<int>(std::llround(face_data[offset + 1])),
+                  static_cast<int>(std::llround(face_data[offset + 2]))};
+    const auto n = static_cast<std::size_t>(std::llround(face_data[offset + 3]));
+    offset += 4;
+    face.loop.resize(n);
+    for (std::size_t i = 0; i < n; i++)
+    {
+      std::copy_n(face_data.data() + offset + 3 * i, 3, face.loop[i].begin());
+    }
+    offset += 3 * n;
+    gathered.push_back(std::move(face));
+  }
+  face_data.clear();
+  face_data.shrink_to_fit();
+  if (gathered.empty())
+  {
+    return result;
+  }
+  // Canonical processing order: a function of the global mesh only, not of the partition.
+  std::sort(gathered.begin(), gathered.end(),
+            [](const GatheredFace &a, const GatheredFace &b)
+            { return std::tie(a.loop, a.attribute, a.sides) < std::tie(b.loop, b.attribute, b.sides); });
+
+  // (3) Canonical points: coordinates within coordinate_tolerance of an already registered
+  // point (the 27 neighbouring grid cells are searched so a crack copy straddling a cell
+  // boundary still merges) map to that point. The representative is the first copy in the
+  // canonical order.
+  std::vector<Point> canonical_points;
+  std::map<PointKey, std::vector<std::size_t>> point_cells;
+  auto GetPointKey = [&](const Point &point)
+  {
+    PointKey key;
+    for (int d = 0; d < 3; d++)
+    {
+      key[d] = std::llround((point[d] - bbmin[d]) / coordinate_tolerance);
+    }
+    return key;
+  };
+  auto CanonicalPoint = [&](const Point &point) -> std::size_t
+  {
+    const PointKey key = GetPointKey(point);
+    for (long long int dx = -1; dx <= 1; dx++)
+    {
+      for (long long int dy = -1; dy <= 1; dy++)
+      {
+        for (long long int dz = -1; dz <= 1; dz++)
+        {
+          const auto cell = point_cells.find({key[0] + dx, key[1] + dy, key[2] + dz});
+          if (cell == point_cells.end())
+          {
+            continue;
+          }
+          for (const std::size_t candidate : cell->second)
+          {
+            double distance_squared = 0.0;
+            for (int d = 0; d < 3; d++)
+            {
+              const double delta = canonical_points[candidate][d] - point[d];
+              distance_squared += delta * delta;
+            }
+            if (distance_squared <= coordinate_tolerance * coordinate_tolerance)
+            {
+              return candidate;
+            }
+          }
+        }
+      }
+    }
+    canonical_points.push_back(point);
+    point_cells[key].push_back(canonical_points.size() - 1);
+    return canonical_points.size() - 1;
+  };
+
+  // Deduplicate coincident faces (crack copies, duplicate boundary elements of one
+  // attribute): a face is identified by the set of its canonical vertices.
+  struct GlobalFace
+  {
+    int attribute = -1;
+    std::set<int> sides;
+    std::vector<std::size_t> loop;  // canonical point indices, ordered
+    Point normal{};
+    Point centroid{};
+    double area = 0.0;
+    bool on_bounding_box = false;
+  };
+  std::vector<GlobalFace> faces;
+  std::map<std::vector<std::size_t>, std::size_t> face_by_vertices;
+  for (const auto &source : gathered)
+  {
+    std::vector<std::size_t> loop(source.loop.size());
+    for (std::size_t i = 0; i < loop.size(); i++)
+    {
+      loop[i] = CanonicalPoint(source.loop[i]);
+    }
+    std::vector<std::size_t> key = loop;
+    std::sort(key.begin(), key.end());
+    key.erase(std::unique(key.begin(), key.end()), key.end());
+    MFEM_VERIFY(key.size() >= 3,
+                "A metal boundary face degenerates to fewer than three distinct vertices!");
+    auto [entry, inserted] = face_by_vertices.try_emplace(key, faces.size());
+    if (inserted)
+    {
+      GlobalFace face;
+      face.attribute = source.attribute;
+      face.loop = std::move(loop);
+      faces.push_back(std::move(face));
+    }
+    else
+    {
+      auto &face = faces[entry->second];
+      if (face.attribute != source.attribute)
+      {
+        const auto &p = source.loop.front();
+        MFEM_ABORT("Coincident metal boundary elements carry different metal attributes "
+                   << face.attribute << " and " << source.attribute << " (face at ("
+                   << p[0] << ", " << p[1] << ", " << p[2]
+                   << ")); drop or merge the duplicate boundary elements!");
+      }
+    }
+    auto &face = faces[entry->second];
+    for (const int side : source.sides)
+    {
+      if (side > 0)
+      {
+        face.sides.insert(side);
+      }
+    }
+  }
+  gathered.clear();
+  gathered.shrink_to_fit();
+
+  // Face normals (Newell), centroids and areas on the canonical loops; the layer normal is
+  // the area-weighted principal direction of the face normals. Metal faces lying on the
+  // bounding box of the mesh (a PEC simulation box) are not process metal and do not vote.
+  auto OnBoundingBox = [&](const GlobalFace &face)
+  {
+    for (int d = 0; d < 3; d++)
+    {
+      for (const double bound : {bbmin[d], bbmax[d]})
+      {
+        if (std::all_of(face.loop.begin(), face.loop.end(), [&](std::size_t p)
+                        { return std::abs(canonical_points[p][d] - bound) <= coordinate_tolerance; }))
+        {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  std::array<double, 6> normal_tensor{};  // xx, yy, zz, xy, xz, yz
+  std::array<double, 6> box_normal_tensor{};
+  for (auto &face : faces)
+  {
+    Point normal{};
+    Point centroid{};
+    for (std::size_t i = 0; i < face.loop.size(); i++)
+    {
+      const auto &a = canonical_points[face.loop[i]];
+      const auto &b = canonical_points[face.loop[(i + 1) % face.loop.size()]];
+      normal[0] += (a[1] - b[1]) * (a[2] + b[2]);
+      normal[1] += (a[2] - b[2]) * (a[0] + b[0]);
+      normal[2] += (a[0] - b[0]) * (a[1] + b[1]);
+      for (int d = 0; d < 3; d++)
+      {
+        centroid[d] += a[d] / static_cast<double>(face.loop.size());
+      }
+    }
+    double norm_squared = 0.0;
+    for (const double value : normal)
+    {
+      norm_squared += value * value;
+    }
+    MFEM_VERIFY(norm_squared > 0.0, "Degenerate metal boundary face!");
+    const double norm = std::sqrt(norm_squared);
+    face.area = 0.5 * norm;
+    for (double &value : normal)
+    {
+      value /= norm;
+    }
+    // Sign-canonical: the largest-magnitude component positive.
+    int dominant = 0;
+    for (int d = 1; d < 3; d++)
+    {
+      if (std::abs(normal[d]) > std::abs(normal[dominant]) + 1.0e-12)
+      {
+        dominant = d;
+      }
+    }
+    if (normal[dominant] < 0.0)
+    {
+      for (double &value : normal)
+      {
+        value = -value;
+      }
+    }
+    face.normal = normal;
+    face.centroid = centroid;
+    face.on_bounding_box = OnBoundingBox(face);
+    auto &tensor = face.on_bounding_box ? box_normal_tensor : normal_tensor;
+    tensor[0] += face.area * normal[0] * normal[0];
+    tensor[1] += face.area * normal[1] * normal[1];
+    tensor[2] += face.area * normal[2] * normal[2];
+    tensor[3] += face.area * normal[0] * normal[1];
+    tensor[4] += face.area * normal[0] * normal[2];
+    tensor[5] += face.area * normal[1] * normal[2];
+  }
+  if (normal_tensor[0] + normal_tensor[1] + normal_tensor[2] <= 0.0)
+  {
+    normal_tensor = box_normal_tensor;  // only box metal: nothing better to vote
+  }
+  {
+    // Power iteration for the dominant eigenvector of the symmetric 3 x 3 tensor.
+    const double trace = normal_tensor[0] + normal_tensor[1] + normal_tensor[2];
+    Point v{};
+    int start = 0;
+    for (int d = 1; d < 3; d++)
+    {
+      if (normal_tensor[d] > normal_tensor[start])
+      {
+        start = d;
+      }
+    }
+    v[start] = 1.0;
+    for (int iteration = 0; iteration < 200; iteration++)
+    {
+      Point w = {normal_tensor[0] * v[0] + normal_tensor[3] * v[1] + normal_tensor[4] * v[2],
+                 normal_tensor[3] * v[0] + normal_tensor[1] * v[1] + normal_tensor[5] * v[2],
+                 normal_tensor[4] * v[0] + normal_tensor[5] * v[1] + normal_tensor[2] * v[2]};
+      // Shift keeps the iteration well conditioned for a rank-one tensor.
+      for (int d = 0; d < 3; d++)
+      {
+        w[d] += 1.0e-3 * trace * v[d];
+      }
+      double norm = 0.0;
+      for (const double value : w)
+      {
+        norm += value * value;
+      }
+      norm = std::sqrt(norm);
+      MFEM_VERIFY(norm > 0.0, "Degenerate metal face normal tensor!");
+      for (int d = 0; d < 3; d++)
+      {
+        v[d] = w[d] / norm;
+      }
+    }
+    int dominant = 0;
+    for (int d = 1; d < 3; d++)
+    {
+      if (std::abs(v[d]) > std::abs(v[dominant]) + 1.0e-12)
+      {
+        dominant = d;
+      }
+    }
+    if (v[dominant] < 0.0)
+    {
+      for (double &value : v)
+      {
+        value = -value;
+      }
+    }
+    result.layer_normal = v;
+  }
+
+  // (4) Atomic edge segments of the faces, split at canonical points lying on them when
+  // the mesh is nonconforming (crack sides with different hanging-node subdivisions), and
+  // the metal faces supporting each of them with their in-plane inward directions.
+  using SegmentKey = std::pair<std::size_t, std::size_t>;
+  struct FaceIncidence
+  {
+    std::size_t face;
+    Point inward;
+  };
+  std::map<SegmentKey, std::vector<FaceIncidence>> incidence;
+  {
+    std::map<PointKey, std::vector<std::size_t>> cells;  // for the nonconforming split
+    if (mesh.Nonconforming())
+    {
+      for (std::size_t p = 0; p < canonical_points.size(); p++)
+      {
+        cells[GetPointKey(canonical_points[p])].push_back(p);
+      }
+    }
+    auto PointsOnSegment = [&](std::size_t a, std::size_t b)
+    {
+      std::vector<std::pair<double, std::size_t>> found;
+      const auto &p0 = canonical_points[a];
+      const auto &p1 = canonical_points[b];
+      Point direction{};
+      double length_squared = 0.0;
+      PointKey lo, hi;
+      for (int d = 0; d < 3; d++)
+      {
+        direction[d] = p1[d] - p0[d];
+        length_squared += direction[d] * direction[d];
+        lo[d] = std::llround((std::min(p0[d], p1[d]) - bbmin[d]) / coordinate_tolerance) - 1;
+        hi[d] = std::llround((std::max(p0[d], p1[d]) - bbmin[d]) / coordinate_tolerance) + 1;
+      }
+      MFEM_VERIFY(length_squared > 0.0, "Degenerate metal face edge!");
+      for (auto it = cells.lower_bound({lo[0], lo[1], lo[2]});
+           it != cells.end() && it->first[0] <= hi[0]; ++it)
+      {
+        if (it->first[1] < lo[1] || it->first[1] > hi[1] || it->first[2] < lo[2] ||
+            it->first[2] > hi[2])
+        {
+          continue;
+        }
+        for (const std::size_t candidate : it->second)
+        {
+          if (candidate == a || candidate == b)
+          {
+            continue;
+          }
+          const auto &point = canonical_points[candidate];
+          double projection = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            projection += (point[d] - p0[d]) * direction[d];
+          }
+          const double t = projection / length_squared;
+          if (t <= 0.0 || t >= 1.0)
+          {
+            continue;
+          }
+          double distance_squared = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            const double delta = point[d] - p0[d] - t * direction[d];
+            distance_squared += delta * delta;
+          }
+          if (distance_squared <= coordinate_tolerance * coordinate_tolerance)
+          {
+            found.emplace_back(t, candidate);
+          }
+        }
+      }
+      std::sort(found.begin(), found.end());
+      return found;
+    };
+    for (std::size_t f = 0; f < faces.size(); f++)
+    {
+      const auto &face = faces[f];
+      for (std::size_t i = 0; i < face.loop.size(); i++)
+      {
+        const std::size_t a = face.loop[i];
+        const std::size_t b = face.loop[(i + 1) % face.loop.size()];
+        if (a == b)
+        {
+          continue;
+        }
+        std::vector<std::size_t> chain = {a};
+        if (mesh.Nonconforming())
+        {
+          for (const auto &[t, p] : PointsOnSegment(a, b))
+          {
+            (void)t;
+            chain.push_back(p);
+          }
+        }
+        chain.push_back(b);
+        for (std::size_t k = 0; k + 1 < chain.size(); k++)
+        {
+          const std::size_t u = chain[k];
+          const std::size_t v = chain[k + 1];
+          const auto &p0 = canonical_points[u];
+          const auto &p1 = canonical_points[v];
+          Point tangent{}, inward{};
+          double tangent_norm_squared = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            tangent[d] = p1[d] - p0[d];
+            tangent_norm_squared += tangent[d] * tangent[d];
+            inward[d] = face.centroid[d] - 0.5 * (p0[d] + p1[d]);
+          }
+          double inward_tangent = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            inward_tangent += inward[d] * tangent[d];
+          }
+          double inward_norm_squared = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            inward[d] -= inward_tangent * tangent[d] / tangent_norm_squared;
+            inward_norm_squared += inward[d] * inward[d];
+          }
+          MFEM_VERIFY(inward_norm_squared > 0.0,
+                      "Degenerate metal boundary face (centroid on an edge)!");
+          const double inverse_norm = 1.0 / std::sqrt(inward_norm_squared);
+          for (double &value : inward)
+          {
+            value *= inverse_norm;
+          }
+          incidence[{std::min(u, v), std::max(u, v)}].push_back({f, inward});
+        }
+      }
+    }
+  }
+
+  // (5) Metal components through shared face edges.
+  std::vector<std::size_t> face_parent(faces.size());
+  std::iota(face_parent.begin(), face_parent.end(), 0);
+  auto FindFace = [&](std::size_t item)
+  {
+    std::size_t root = item;
+    while (face_parent[root] != root)
+    {
+      root = face_parent[root];
+    }
+    while (face_parent[item] != item)
+    {
+      const std::size_t next = face_parent[item];
+      face_parent[item] = root;
+      item = next;
+    }
+    return root;
+  };
+  for (const auto &[key, supports] : incidence)
+  {
+    (void)key;
+    for (std::size_t i = 1; i < supports.size(); i++)
+    {
+      const std::size_t first = FindFace(supports[0].face);
+      const std::size_t second = FindFace(supports[i].face);
+      if (first != second)
+      {
+        face_parent[std::max(first, second)] = std::min(first, second);
+      }
+    }
+  }
+  std::map<std::size_t, int> component_by_root;
+  std::vector<int> face_component(faces.size());
+  for (std::size_t f = 0; f < faces.size(); f++)
+  {
+    auto [entry, inserted] = component_by_root.try_emplace(FindFace(f), component_by_root.size());
+    (void)inserted;
+    face_component[f] = entry->second;
+  }
+  result.metal_components = static_cast<int>(component_by_root.size());
+
+  // (6) Perimeter classification. Faces whose inward directions coincide (crack copies with
+  // different subdivisions, coarse and fine sides) form one direction class; a segment with
+  // an opposite pair of classes and nothing else is interior to the metal.
+  // The direction grid is the classification's 1e-12 direction quantum.
+  constexpr double direction_quantum = 1.0e-12;
+  auto QuantizeCosine = [](double cosine) { return std::round(cosine / direction_quantum); };
+  const double same_cosine = QuantizeCosine(1.0 - 1.0e-8);
+  const double opposite_cosine = QuantizeCosine(-1.0 + 1.0e-8);
+  // An interface defined on metal attributes (MS / MA on the metal itself) supports every
+  // perimeter segment of those attributes; an interface on nonmetal attributes (the SA
+  // sheet) supports the segments coincident with its own perimeter.
   struct InterfaceSupport
   {
     int index;
     InterfaceDielectric type;
+    std::set<int> metal_attributes;
     std::shared_ptr<const EdgeDistanceTree> tree;
   };
   std::vector<InterfaceSupport> interface_support;
@@ -244,18 +828,33 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
     {
       continue;
     }
-    auto attributes = dielectric.attributes;
-    std::sort(attributes.begin(), attributes.end());
-    attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
-    auto [tree_it, inserted] = interface_support_trees.try_emplace(attributes);
-    if (inserted)
+    InterfaceSupport support{index, dielectric.type, {}, nullptr};
+    std::vector<int> nonmetal;
+    for (const int attribute : dielectric.attributes)
     {
-      tree_it->second = BuildSupportTree(mesh, attributes, true);
+      if (attribute_conditions.find(attribute) != attribute_conditions.end())
+      {
+        support.metal_attributes.insert(attribute);
+      }
+      else
+      {
+        nonmetal.push_back(attribute);
+      }
     }
-    auto tree = tree_it->second;
-    if (tree)
+    std::sort(nonmetal.begin(), nonmetal.end());
+    nonmetal.erase(std::unique(nonmetal.begin(), nonmetal.end()), nonmetal.end());
+    if (!nonmetal.empty())
     {
-      interface_support.push_back({index, dielectric.type, std::move(tree)});
+      auto [tree_it, inserted] = interface_support_trees.try_emplace(nonmetal);
+      if (inserted)
+      {
+        tree_it->second = BuildSupportTree(mesh, nonmetal, true);
+      }
+      support.tree = tree_it->second;
+    }
+    if (support.tree || !support.metal_attributes.empty())
+    {
+      interface_support.push_back(std::move(support));
     }
   }
 
@@ -287,53 +886,123 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
     }
   }
 
-  using Point = std::array<double, 3>;
-  using PointKey = std::array<long long int, 3>;
-  const double coordinate_tolerance = std::sqrt(tolerance_squared);
-  auto GetPointKey = [&](const Point &point)
+  std::map<std::size_t, std::size_t> vertex_by_point;
+  auto GetVertex = [&](std::size_t point)
   {
-    PointKey key;
-    for (int d = 0; d < 3; d++)
-    {
-      key[d] = std::llround((point[d] - bbmin[d]) / coordinate_tolerance);
-    }
-    return key;
-  };
-  std::map<Point, std::size_t> vertex_indices;
-  auto GetVertex = [&](const Point &point)
-  {
-    auto [it, inserted] =
-        vertex_indices.try_emplace(point, static_cast<std::size_t>(result.vertices.size()));
+    auto [it, inserted] = vertex_by_point.try_emplace(point, result.vertices.size());
     if (inserted)
     {
-      result.vertices.push_back({point, {}, MetalEdgeVertexType::REGULAR});
+      result.vertices.push_back(
+          {canonical_points[point], {}, MetalEdgeVertexType::REGULAR});
     }
     return it->second;
   };
-
-  result.segments.reserve(perimeter_segments.size());
-  for (const auto &perimeter : perimeter_segments)
+  for (const auto &[key, supports] : incidence)
   {
-    MetalEdgeSegment segment;
-    segment.vertices = {GetVertex(perimeter.p0), GetVertex(perimeter.p1)};
-
-    for (const auto &[attribute, tree] : attribute_support)
+    // Direction classes.
+    std::vector<Point> classes;
+    std::vector<std::size_t> class_faces;
+    for (const auto &support : supports)
     {
-      if (tree && IsCoincident(perimeter, *tree, tolerance_squared))
+      bool known = false;
+      for (const auto &direction : classes)
       {
-        segment.metal_attributes.push_back(attribute);
-        const auto &conditions = attribute_conditions.at(attribute);
-        segment.conditions.insert(segment.conditions.end(), conditions.begin(),
-                                  conditions.end());
+        double dot = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+          dot += direction[d] * support.inward[d];
+        }
+        if (QuantizeCosine(dot) >= same_cosine)
+        {
+          known = true;
+          break;
+        }
+      }
+      if (!known)
+      {
+        classes.push_back(support.inward);
       }
     }
-    SortAndUnique(segment.conditions);
-    MFEM_VERIFY(!segment.conditions.empty(),
-                "Unable to classify an automatically extracted metal edge segment!");
+    bool opposite_pair = false;
+    for (std::size_t i = 0; i < classes.size() && !opposite_pair; i++)
+    {
+      for (std::size_t j = i + 1; j < classes.size(); j++)
+      {
+        double dot = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+          dot += classes[i][d] * classes[j][d];
+        }
+        if (QuantizeCosine(dot) <= opposite_cosine)
+        {
+          opposite_pair = true;
+          break;
+        }
+      }
+    }
+    MetalEdgeSegmentType type;
+    if (classes.size() == 1)
+    {
+      type = MetalEdgeSegmentType::PHYSICAL;
+    }
+    else if (classes.size() == 2)
+    {
+      if (opposite_pair)
+      {
+        continue;  // metal continues on both sides: interior edge
+      }
+      type = MetalEdgeSegmentType::FOLD;
+    }
+    else
+    {
+      type = MetalEdgeSegmentType::NONMANIFOLD;
+    }
 
+    MetalEdgeSegment segment;
+    segment.type = type;
+    segment.vertices = {GetVertex(key.first), GetVertex(key.second)};
+    std::set<std::size_t> distinct_faces;
+    std::set<int> side_attributes;
+    for (const auto &support : supports)
+    {
+      distinct_faces.insert(support.face);
+    }
+    segment.face_count = static_cast<int>(distinct_faces.size());
+    segment.on_bounding_box =
+        std::all_of(distinct_faces.begin(), distinct_faces.end(),
+                    [&](std::size_t f) { return faces[f].on_bounding_box; });
+    std::set<int> attributes;
+    for (const std::size_t f : distinct_faces)
+    {
+      attributes.insert(faces[f].attribute);
+      side_attributes.insert(faces[f].sides.begin(), faces[f].sides.end());
+      segment.face_normals.push_back(faces[f].normal);
+    }
+    std::sort(segment.face_normals.begin(), segment.face_normals.end());
+    segment.face_normals.erase(
+        std::unique(segment.face_normals.begin(), segment.face_normals.end()),
+        segment.face_normals.end());
+    segment.metal_attributes.assign(attributes.begin(), attributes.end());
+    segment.side_attributes.assign(side_attributes.begin(), side_attributes.end());
+    for (const int attribute : segment.metal_attributes)
+    {
+      const auto &conditions = attribute_conditions.at(attribute);
+      segment.conditions.insert(segment.conditions.end(), conditions.begin(),
+                                conditions.end());
+    }
+    SortAndUnique(segment.conditions);
+    segment.metal_component = face_component[*distinct_faces.begin()];
+
+    const mesh::BoundaryEdgeSegment perimeter{canonical_points[key.first],
+                                              canonical_points[key.second]};
     for (const auto &support : interface_support)
     {
-      if (!IsCoincident(perimeter, *support.tree, tolerance_squared))
+      const bool by_attribute = std::any_of(
+          segment.metal_attributes.begin(), segment.metal_attributes.end(),
+          [&](int attribute)
+          { return support.metal_attributes.find(attribute) != support.metal_attributes.end(); });
+      if (!by_attribute &&
+          !(support.tree && IsCoincident(perimeter, *support.tree, tolerance_squared)))
       {
         continue;
       }
@@ -352,17 +1021,19 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
           break;
       }
     }
-
-    for (const auto &[attribute, tree] : truncation_support)
+    if (type == MetalEdgeSegmentType::PHYSICAL)
     {
-      if (IsCoincident(perimeter, *tree, tolerance_squared))
+      for (const auto &[attribute, tree] : truncation_support)
       {
-        segment.truncation_attributes.push_back(attribute);
+        if (IsCoincident(perimeter, *tree, tolerance_squared))
+        {
+          segment.truncation_attributes.push_back(attribute);
+        }
       }
-    }
-    if (!segment.truncation_attributes.empty())
-    {
-      segment.type = MetalEdgeSegmentType::TRUNCATION;
+      if (!segment.truncation_attributes.empty())
+      {
+        segment.type = MetalEdgeSegmentType::TRUNCATION;
+      }
     }
 
     const std::size_t index = result.segments.size();
@@ -370,273 +1041,53 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
     result.vertices[segment.vertices[1]].segments.push_back(index);
     result.segments.push_back(std::move(segment));
   }
-
-  if (surface.classify_components || surface.retain_faces)
+  if (result.segments.empty())
   {
-    std::vector<MetalSurfaceFace> local_faces;
-    mesh::MeshEdgeSegmentCache edge_segment_cache(mesh);
-    mfem::Array<int> vertices, edges, orientations;
-    for (int be = 0; be < mesh.GetNBE(); be++)
+    return result;
+  }
+
+  // (7) Retained faces: the rank-local facets (with their global component) and the
+  // global deduplicated faces.
+  if (surface.retain_faces)
+  {
+    for (auto &loop : local_loops)
     {
-      const int attribute = mesh.GetBdrAttribute(be);
-      if (attribute <= 0 || attribute > metal_marker.Size() || !metal_marker[attribute - 1])
-      {
-        continue;
-      }
-      mesh.GetBdrElementVertices(be, vertices);
-      MFEM_VERIFY(vertices.Size() >= 3 && vertices.Size() <= 4,
-                  "Automatic metal-surface extraction supports triangular and "
-                  "quadrilateral boundary elements!");
       MetalSurfaceFace face;
-      std::vector<Point> corner_vertices(vertices.Size());
-      for (int i = 0; i < vertices.Size(); i++)
+      std::vector<std::size_t> key(loop.size());
+      for (std::size_t i = 0; i < loop.size(); i++)
       {
-        corner_vertices[i] = mesh::GetVertexCoordinates(mesh, vertices[i]);
+        key[i] = CanonicalPoint(loop[i]);
       }
-
-      if (surface.retain_faces)
-      {
-        mesh.GetBdrElementEdges(be, edges, orientations);
-        MFEM_VERIFY(edges.Size() == vertices.Size() && orientations.Size() == edges.Size(),
-                    "Unexpected metal boundary face topology!");
-        for (int i = 0; i < edges.Size(); i++)
-        {
-          auto edge_segments = edge_segment_cache.Get(edges[i]);
-          if (orientations[i] < 0)
-          {
-            std::reverse(edge_segments.begin(), edge_segments.end());
-            for (auto &segment : edge_segments)
-            {
-              std::swap(segment.p0, segment.p1);
-            }
-          }
-          for (const auto &segment : edge_segments)
-          {
-            if (face.vertices.empty())
-            {
-              face.vertices.push_back(segment.p0);
-            }
-            else
-            {
-              double distance_squared = 0.0;
-              for (int d = 0; d < 3; d++)
-              {
-                const double delta = face.vertices.back()[d] - segment.p0[d];
-                distance_squared += delta * delta;
-              }
-              MFEM_VERIFY(distance_squared <= tolerance_squared,
-                          "Metal boundary face edges do not form an ordered loop!");
-            }
-            face.vertices.push_back(segment.p1);
-          }
-        }
-        double closure_distance_squared = 0.0;
-        for (int d = 0; d < 3; d++)
-        {
-          const double delta = face.vertices.front()[d] - face.vertices.back()[d];
-          closure_distance_squared += delta * delta;
-        }
-        MFEM_VERIFY(closure_distance_squared <= tolerance_squared,
-                    "Metal boundary face edges do not form a closed loop!");
-        face.vertices.pop_back();
-
-        // Preserve the original representation for a geometrically linear face.
-        if (face.vertices.size() == corner_vertices.size())
-        {
-          face.vertices = std::move(corner_vertices);
-        }
-      }
-      else
-      {
-        face.vertices = std::move(corner_vertices);
-      }
-      local_faces.push_back(std::move(face));
+      std::sort(key.begin(), key.end());
+      key.erase(std::unique(key.begin(), key.end()), key.end());
+      const auto entry = face_by_vertices.find(key);
+      MFEM_VERIFY(entry != face_by_vertices.end(),
+                  "A local metal boundary face is missing from the global metal surface!");
+      face.component = face_component[entry->second];
+      face.attribute = faces[entry->second].attribute;
+      face.normal = faces[entry->second].normal;
+      face.on_bounding_box = faces[entry->second].on_bounding_box;
+      face.vertices = std::move(loop);
+      result.surface_faces.push_back(std::move(face));
     }
-
-    std::vector<std::size_t> local_parent(local_faces.size());
-    std::iota(local_parent.begin(), local_parent.end(), 0);
-    auto FindLocal = [&](std::size_t item)
+  }
+  local_loops.clear();
+  if (surface.retain_global_faces)
+  {
+    result.global_faces.reserve(faces.size());
+    for (std::size_t f = 0; f < faces.size(); f++)
     {
-      std::size_t root = item;
-      while (local_parent[root] != root)
+      MetalSurfaceFace face;
+      face.component = face_component[f];
+      face.attribute = faces[f].attribute;
+      face.normal = faces[f].normal;
+      face.on_bounding_box = faces[f].on_bounding_box;
+      face.vertices.reserve(faces[f].loop.size());
+      for (const std::size_t p : faces[f].loop)
       {
-        root = local_parent[root];
+        face.vertices.push_back(canonical_points[p]);
       }
-      while (local_parent[item] != item)
-      {
-        const std::size_t next = local_parent[item];
-        local_parent[item] = root;
-        item = next;
-      }
-      return root;
-    };
-    auto UnionLocal = [&](std::size_t first, std::size_t second)
-    {
-      first = FindLocal(first);
-      second = FindLocal(second);
-      if (first != second)
-      {
-        local_parent[std::max(first, second)] = std::min(first, second);
-      }
-    };
-    std::map<PointKey, std::size_t> face_by_vertex;
-    for (std::size_t face = 0; face < local_faces.size(); face++)
-    {
-      for (const auto &point : local_faces[face].vertices)
-      {
-        auto [vertex, inserted] = face_by_vertex.emplace(GetPointKey(point), face);
-        if (!inserted)
-        {
-          UnionLocal(face, vertex->second);
-        }
-      }
-    }
-
-    std::map<std::size_t, int> local_component_by_root;
-    std::vector<int> local_face_components(local_faces.size());
-    for (std::size_t face = 0; face < local_faces.size(); face++)
-    {
-      auto [component, inserted] =
-          local_component_by_root.emplace(FindLocal(face), local_component_by_root.size());
-      (void)inserted;
-      local_face_components[face] = component->second;
-    }
-
-    const int local_component_count = static_cast<int>(local_component_by_root.size());
-    std::vector<int> component_counts(Mpi::Size(mesh.GetComm()));
-    Mpi::Allgather(1, &local_component_count, component_counts.data(), mesh.GetComm());
-    std::vector<long long int> component_offsets(component_counts.size() + 1);
-    for (std::size_t rank = 0; rank < component_counts.size(); rank++)
-    {
-      component_offsets[rank + 1] = component_offsets[rank] + component_counts[rank];
-    }
-    const long long int component_offset = component_offsets[Mpi::Rank(mesh.GetComm())];
-
-    std::map<PointKey, long long int> local_component_by_vertex;
-    for (std::size_t face = 0; face < local_faces.size(); face++)
-    {
-      const long long int component = component_offset + local_face_components[face];
-      for (const auto &point : local_faces[face].vertices)
-      {
-        auto [vertex, inserted] =
-            local_component_by_vertex.emplace(GetPointKey(point), component);
-        MFEM_VERIFY(inserted || vertex->second == component,
-                    "A metal-surface vertex belongs to multiple local components!");
-      }
-    }
-
-    const int local_vertex_count = static_cast<int>(local_component_by_vertex.size());
-    std::vector<int> vertex_counts(component_counts.size());
-    Mpi::Allgather(1, &local_vertex_count, vertex_counts.data(), mesh.GetComm());
-    std::vector<int> vertex_offsets(vertex_counts.size()), key_counts(vertex_counts.size()),
-        key_offsets(vertex_counts.size());
-    int total_vertices = 0;
-    for (std::size_t rank = 0; rank < vertex_counts.size(); rank++)
-    {
-      vertex_offsets[rank] = total_vertices;
-      key_counts[rank] = 3 * vertex_counts[rank];
-      key_offsets[rank] = 3 * total_vertices;
-      total_vertices += vertex_counts[rank];
-    }
-    std::vector<long long int> local_keys;
-    std::vector<long long int> local_components;
-    local_keys.reserve(3 * local_vertex_count);
-    local_components.reserve(local_vertex_count);
-    for (const auto &[key, component] : local_component_by_vertex)
-    {
-      local_keys.insert(local_keys.end(), key.begin(), key.end());
-      local_components.push_back(component);
-    }
-    std::vector<long long int> global_keys(3 * total_vertices);
-    std::vector<long long int> global_components(total_vertices);
-    Mpi::Allgatherv(static_cast<int>(local_keys.size()), local_keys.data(),
-                    global_keys.data(), key_counts.data(), key_offsets.data(),
-                    mesh.GetComm());
-    Mpi::Allgatherv(local_vertex_count, local_components.data(), global_components.data(),
-                    vertex_counts.data(), vertex_offsets.data(), mesh.GetComm());
-
-    const long long int total_components = component_offsets.back();
-    std::vector<long long int> parent(total_components);
-    std::iota(parent.begin(), parent.end(), 0);
-    auto Find = [&](long long int item)
-    {
-      long long int root = item;
-      while (parent[root] != root)
-      {
-        root = parent[root];
-      }
-      while (parent[item] != item)
-      {
-        const long long int next = parent[item];
-        parent[item] = root;
-        item = next;
-      }
-      return root;
-    };
-    auto Union = [&](long long int first, long long int second)
-    {
-      first = Find(first);
-      second = Find(second);
-      if (first != second)
-      {
-        parent[std::max(first, second)] = std::min(first, second);
-      }
-    };
-
-    std::map<PointKey, long long int> provisional_component_by_vertex;
-    for (int vertex = 0; vertex < total_vertices; vertex++)
-    {
-      PointKey key;
-      std::copy_n(global_keys.data() + 3 * vertex, 3, key.begin());
-      auto [entry, inserted] =
-          provisional_component_by_vertex.emplace(key, global_components[vertex]);
-      if (!inserted)
-      {
-        Union(entry->second, global_components[vertex]);
-      }
-    }
-    std::map<long long int, int> component_by_root;
-    for (long long int component = 0; component < total_components; component++)
-    {
-      component_by_root.try_emplace(Find(component), component_by_root.size());
-    }
-    result.metal_components = static_cast<int>(component_by_root.size());
-
-    std::map<PointKey, int> component_by_vertex;
-    for (const auto &[key, provisional] : provisional_component_by_vertex)
-    {
-      component_by_vertex.emplace(key, component_by_root.at(Find(provisional)));
-    }
-    auto FindPointComponent = [&](const Point &point)
-    {
-      const auto component = component_by_vertex.find(GetPointKey(point));
-      return component == component_by_vertex.end() ? -1 : component->second;
-    };
-
-    for (auto &segment : result.segments)
-    {
-      const int first = FindPointComponent(result.vertices[segment.vertices[0]].coordinate);
-      const int second =
-          FindPointComponent(result.vertices[segment.vertices[1]].coordinate);
-      MFEM_VERIFY(first >= 0 && second >= 0 && first == second,
-                  "Unable to associate a metal perimeter edge with one supporting "
-                  "metal surface!");
-      segment.metal_component = first;
-    }
-
-    if (surface.retain_faces)
-    {
-      for (auto &face : local_faces)
-      {
-        face.component = FindPointComponent(face.vertices.front());
-        MFEM_VERIFY(
-            face.component >= 0 &&
-                std::all_of(face.vertices.begin(), face.vertices.end(),
-                            [&](const auto &point)
-                            { return FindPointComponent(point) == face.component; }),
-            "A metal boundary face belongs to multiple connected metal surfaces!");
-      }
-      result.surface_faces = std::move(local_faces);
+      result.global_faces.push_back(std::move(face));
     }
   }
 
@@ -696,9 +1147,7 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   // The turn test compares direction cosines on a fixed 1e-12 grid so that a roundoff-level
   // perturbation of the vertex coordinates cannot flip a vertex between REGULAR and CORNER
   // (the same direction quantum as the classification's parallelism tests).
-  constexpr double direction_quantum = 1.0e-12;
-  auto QuantizeDirection = [](double cosine)
-  { return std::round(cosine / direction_quantum); };
+  auto QuantizeDirection = QuantizeCosine;
   const double quantized_straight_dot_tolerance = QuantizeDirection(straight_dot_tolerance);
   auto ClassifyVertex = [&](std::size_t vertex_index,
                             bool physical) -> std::optional<MetalEdgeVertexType>
@@ -809,7 +1258,8 @@ std::vector<std::array<double, 3>>
 BuildMetalEdgeProcessNormals(const mfem::ParMesh &mesh, const MetalEdgeGeometry &geometry,
                              const std::vector<std::size_t> &segment_indices,
                              const std::function<double(int)> &material_score,
-                             const std::optional<std::array<double, 3>> &fallback)
+                             const std::optional<std::array<double, 3>> &fallback,
+                             std::vector<bool> *ambiguous_side)
 {
   MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3,
               "Automatic metal edge frames require a three-dimensional mesh!");
@@ -947,6 +1397,18 @@ BuildMetalEdgeProcessNormals(const mfem::ParMesh &mesh, const MetalEdgeGeometry 
   Mpi::GlobalMax(static_cast<int>(maximum_score.size()), maximum_score.data(),
                  mesh.GetComm());
 
+  // The material scores are global (GlobalMin / GlobalMax), so the ambiguity of a segment's
+  // process side is the same on every rank.
+  if (ambiguous_side)
+  {
+    ambiguous_side->assign(segment_indices.size(), false);
+    for (std::size_t i = 0; i < segment_indices.size(); i++)
+    {
+      const double tolerance =
+          1.0e-10 * std::max({1.0, std::abs(minimum_score[i]), std::abs(maximum_score[i])});
+      (*ambiguous_side)[i] = !(maximum_score[i] - minimum_score[i] > tolerance);
+    }
+  }
   std::vector<SegmentVectorContribution> normal_contributions;
   normal_contributions.reserve(candidates.size());
   for (const auto &candidate : candidates)
@@ -1203,9 +1665,24 @@ BuildMetalEdgeGapDirections(const mfem::ParMesh &mesh, const MetalEdgeGeometry &
       gap[d] = -inward_sum[3 * i + d];
       norm_squared += gap[d] * gap[d];
     }
-    MFEM_VERIFY(norm_squared > 1.0e-20,
-                "Unable to infer the metal-to-gap direction for an automatic edge "
-                "segment!");
+    if (norm_squared <= 1.0e-20)
+    {
+      const auto &segment = geometry.segments[segment_indices[i]];
+      const auto &p0 = geometry.vertices[segment.vertices[0]].coordinate;
+      const auto &p1 = geometry.vertices[segment.vertices[1]].coordinate;
+      std::string attributes;
+      for (const int attribute : segment.metal_attributes)
+      {
+        attributes += (attributes.empty() ? "" : ", ") + std::to_string(attribute);
+      }
+      MFEM_ABORT("Unable to infer the metal-to-gap direction for the automatic edge "
+                 "segment ("
+                 << p0[0] << ", " << p0[1] << ", " << p0[2] << ") - (" << p1[0] << ", "
+                 << p1[1] << ", " << p1[2] << ") with process normal ("
+                 << process_normals[i][0] << ", " << process_normals[i][1] << ", "
+                 << process_normals[i][2] << ") on metal attributes {" << attributes
+                 << "} (" << inward_contributions.size() << " face contributions)!");
+    }
     const double inverse_norm = 1.0 / std::sqrt(norm_squared);
     for (double &value : gap)
     {

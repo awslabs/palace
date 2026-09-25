@@ -4,29 +4,33 @@
 """Metal perimeter partition E of a Palace mesh, computed independently of the classifier.
 
 The perimeter follows the definitions of palace/utils/metaledge.cpp ExtractMetalEdgeGeometry
-and palace/utils/geodata.cpp GetBoundaryEdgeSegments:
+(phase 3 of the identification fix: crack-independent, derived from the distinct geometric
+metal faces):
 
 * metal = the union of every boundary attribute with a metal boundary condition (PEC/Ground,
   AuxPEC, Terminal, PrescribedPotential (+TerminalAttributes), Conductivity, Impedance,
   RationalImpedance); lumped ports are not metal;
-* a perimeter edge is a mesh edge of a metal boundary face with odd incidence among the
-  metal faces (an edge shared by two metal faces of different attributes is an interior seam
-  and is not perimeter), one segment per mesh edge;
-* a perimeter edge which also lies on an exterior, non-metal, non-interface boundary
-  attribute is a TRUNCATION edge (cut by the simulation domain), otherwise PHYSICAL;
-* the perimeter is computed on the mesh as meshed (before Palace cracks the interior
-  boundary elements), so metal sheets with the same material on both sides (airbridge
-  spans and walls) keep their boundary edges here while the cracked-mesh odd-incidence
-  rule of the classifier cancels them (both crack copies fall in the same side component);
+* a mesh edge of the metal faces is classified by the in-plane inward directions of the
+  distinct faces owning it: one direction class -> a one-sided perimeter edge; two opposite
+  classes -> the metal continues (interior, not perimeter); two non-opposite classes -> a
+  FOLD (the metal turns around the edge: staple, box edge; excluded class NonPlanar); three
+  or more -> NONMANIFOLD (a wall standing on a sheet). Coincident nodes are merged, so a
+  pre-cracked or an as-meshed mesh give the same perimeter;
+* a one-sided edge on an exterior, non-metal, non-interface boundary attribute is a
+  TRUNCATION edge (cut by the simulation domain); one whose face is not parallel to the
+  process normal is NONPLANAR (excluded); one whose faces have the same material on both
+  sides (an airbridge span, metal embedded in one dielectric) is EMBEDDED (excluded class
+  UndeterminedProcessSide unless the target interfaces configure an EdgeFrameNormal);
+  otherwise PHYSICAL;
+* the parts of a PHYSICAL edge within 2R of metal off its own plane (a facing layer, a
+  wall, a staple) are its CROSS_LAYER portions (excluded, decision 73(3)); a feature vertex
+  within 2R of such metal is an excluded vertex;
 * a degree-2 perimeter vertex is a CORNER when the turn exceeds the classifier's
   30 degree tolerance (metaledge.cpp corner_angle_tolerance_degrees), REGULAR otherwise;
-  degree 1 is an ENDPOINT, degree >= 3 a JUNCTION; a physical chain is a maximal path
-  through REGULAR vertices.
-
-In addition (decision 73(3)) perimeter edges owned only by metal faces whose normal is not
-parallel to the process normal are the excluded NONPLANAR class, planar edges off the primary
-metal plane (the plane of largest metal area) are the excluded CROSS_LAYER class, and edges
-owned by three or more metal faces (a wall standing on a sheet) are the NONMANIFOLD class.
+  degree 1 is an ENDPOINT, degree >= 3 a JUNCTION; a physical chain is a maximal PHYSICAL
+  path through REGULAR vertices;
+* the conductor of an edge is its edge-connected metal component (the geometric identity the
+  classifier uses); the Terminal / Ground labels are reported for comparison only.
 """
 
 import math
@@ -40,8 +44,14 @@ from .msh2 import ELEMENT_DIMENSION, QUAD, TETRAHEDRON_TYPES, TRIANGLE_TYPES
 CORNER_ANGLE_TOLERANCE_DEGREES = 30.0
 DIRECTION_QUANTUM = 1.0e-12
 # Faces whose unit normal deviates from the process normal by more than this are non-planar
-# metal (sidewalls, staples, TSV walls).
-PLANAR_COSINE_TOLERANCE = 1.0e-6
+# metal (sidewalls, staples, TSV walls); the classifier's kParallelCosineTolerance.
+PLANAR_COSINE_TOLERANCE = 1.0e-8
+# Metal off an edge's plane within this multiple of R excludes that part of the edge
+# (Identification.Conventions CrossLayerReachOverR).
+CROSS_LAYER_REACH_OVER_R = 2.0
+# Edge kinds the classifier extracts as PHYSICAL segments (FOLD / NONMANIFOLD are its own
+# exclusion types).
+CLASSIFIER_PHYSICAL_KINDS = ("PHYSICAL", "TRUNCATION", "EMBEDDED", "NONPLANAR", "BOX")
 
 
 def metal_attributes(config):
@@ -119,13 +129,19 @@ class PerimeterEdge:
     vertices: tuple
     length: float
     attributes: tuple  # metal attributes of the faces owning this edge
-    kind: str  # PHYSICAL | TRUNCATION | NONPLANAR | CROSS_LAYER | NONMANIFOLD
-    conductors: tuple
+    kind: str  # PHYSICAL | TRUNCATION | EMBEDDED | NONPLANAR | FOLD | NONMANIFOLD
+    conductors: tuple  # boundary-condition labels (comparison only)
     interfaces: tuple  # (index, type) of the typed dielectric interfaces coincident with it
     inward: np.ndarray  # in-plane unit vector from the edge into the metal
     plane: int = 0
-    owners: int = 1  # number of metal faces owning the edge
+    owners: int = 1  # number of distinct metal faces owning the edge
     chain: int = -1
+    component: int = -1  # edge-connected metal component (the classifier's conductor)
+    cross_layer: list = field(default_factory=list)  # (s0, s1) portions within 2R of off-plane metal
+
+    @property
+    def cross_layer_length(self):
+        return float(sum(b - a for a, b in self.cross_layer))
 
 
 @dataclass
@@ -140,11 +156,15 @@ class Perimeter:
     nonplanar_face_area: float = 0.0
     planar_face_area: float = 0.0
     scale: float = 1.0
+    components: int = 0
+    excluded_vertices: set = field(default_factory=set)  # feature vertices within 2R of off-plane metal
 
     def edge_points(self, edge):
         return self.vertices[edge.vertices[0]].point, self.vertices[edge.vertices[1]].point
 
     def length(self, kind=None):
+        if kind == "CROSS_LAYER":
+            return float(sum(e.cross_layer_length for e in self.edges if e.kind == "PHYSICAL"))
         return float(sum(e.length for e in self.edges if kind is None or e.kind == kind))
 
 
@@ -190,12 +210,80 @@ def _canonical_node_map(mesh, tolerance):
     return result
 
 
-def extract_perimeter(mesh, config, process_normal=None, corner_tolerance_degrees=CORNER_ANGLE_TOLERANCE_DEGREES):
+def _point_polygon_distance(p, polygon, normal):
+    """Distance from a point to a planar (convex) polygon: the normal distance when the
+    projection falls inside, else the distance to the nearest edge."""
+    n = len(polygon)
+    inside = True
+    for i in range(n):
+        a, b, c = polygon[i], polygon[(i + 1) % n], polygon[(i + 2) % n]
+        interior = np.cross(normal, b - a)
+        if float((c - b) @ interior) * float((p - a) @ interior) < 0.0:
+            inside = False
+            break
+    if inside:
+        return abs(float((p - polygon[0]) @ normal))
+    best = math.inf
+    for i in range(n):
+        a, b = polygon[i], polygon[(i + 1) % n]
+        d = b - a
+        t = min(1.0, max(0.0, float((p - a) @ d) / float(d @ d)))
+        best = min(best, float(np.linalg.norm(p - (a + t * d))))
+    return best
+
+
+def _sublevel_interval(f, lo, hi, level):
+    """[s0, s1] on which the convex function f < level (golden section + bisection, the
+    classifier's ConvexSublevelInterval), or None."""
+    golden = 0.6180339887498949
+    a, b = lo, hi
+    c, d = b - golden * (b - a), a + golden * (b - a)
+    fc, fd = f(c), f(d)
+    for _ in range(90):
+        if b - a <= 1.0e-14 * (hi - lo):
+            break
+        if fc < fd:
+            b, d, fd = d, c, fc
+            c = b - golden * (b - a)
+            fc = f(c)
+        else:
+            a, c, fc = c, d, fd
+            d = a + golden * (b - a)
+            fd = f(d)
+    s_min = 0.5 * (a + b)
+    f_min = f(s_min)
+    for candidate in (lo, hi):
+        value = f(candidate)
+        if value < f_min:
+            f_min, s_min = value, candidate
+    if not f_min < level:
+        return None
+
+    def bisect(inside, outside):
+        if f(outside) < level:
+            return outside
+        for _ in range(100):
+            if abs(outside - inside) <= 1.0e-15 * (hi - lo):
+                break
+            mid = 0.5 * (inside + outside)
+            if f(mid) < level:
+                inside = mid
+            else:
+                outside = mid
+        return inside
+
+    return (bisect(s_min, lo), bisect(s_min, hi))
+
+
+def extract_perimeter(mesh, config, process_normal=None, corner_tolerance_degrees=CORNER_ANGLE_TOLERANCE_DEGREES, radius=None):
     metal = metal_attributes(config)
     if not metal:
         raise ValueError("the configuration names no metal boundary attributes")
     interfaces = interface_attributes(config)
     interface_attribute_set = {a for attributes in interfaces.values() for a in attributes}
+    frame_normal_configured = any(
+        entry.get("EdgeFrameNormal") for entry in config.get("Boundaries", {}).get("Postprocessing", {}).get("Dielectric", [])
+    )
 
     bbox = mesh.coordinates.max(axis=0) - mesh.coordinates.min(axis=0)
     extent = float(bbox.max())
@@ -218,17 +306,52 @@ def extract_perimeter(mesh, config, process_normal=None, corner_tolerance_degree
     if metal_corners.shape[0] == 0:
         raise ValueError(f"no boundary faces carry the metal attributes {sorted(metal)}")
 
+    # Distinct geometric faces (coincident copies count once).
+    face_keys = [tuple(sorted(map(int, f))) for f in metal_corners]
+    distinct = {}
+    for index, key in enumerate(face_keys):
+        distinct.setdefault(key, index)
+    face_ids = np.array([distinct[key] for key in face_keys])
+    unique_faces = sorted(set(face_ids.tolist()))
+    metal_corners = metal_corners[unique_faces]
+    metal_tags = metal_tags[unique_faces]
+
     normals, areas = _face_normals(mesh.coordinates, metal_corners)
+    centroids = mesh.coordinates[metal_corners].mean(axis=1)
+    # Metal faces on the bounding box of the mesh are a PEC simulation box, not process
+    # metal: they neither vote for the process normal nor count as off-plane metal.
+    lower_box, upper_box = mesh.coordinates.min(axis=0), mesh.coordinates.max(axis=0)
+    face_points = mesh.coordinates[metal_corners]  # (n, 3, 3)
+    on_box = np.zeros(metal_corners.shape[0], dtype=bool)
+    for d in range(3):
+        for bound in (lower_box[d], upper_box[d]):
+            on_box |= np.all(np.abs(face_points[:, :, d] - bound) <= tolerance, axis=1)
     if process_normal is None:
         # Dominant orientation by area: the process normal is the area-weighted principal
-        # direction of the metal face normals (sign-invariant).
-        m = (normals * areas[:, None]).T @ normals
+        # direction of the metal face normals (sign-invariant); metaledge.cpp layer_normal.
+        vote = ~on_box if not np.all(on_box) else np.ones_like(on_box)
+        m = (normals[vote] * areas[vote, None]).T @ normals[vote]
         eigenvalues, eigenvectors = np.linalg.eigh(m)
         process_normal = eigenvectors[:, int(np.argmax(eigenvalues))]
     process_normal = np.asarray(process_normal, dtype=float)
     process_normal /= np.linalg.norm(process_normal)
     cosines = np.abs(normals @ process_normal)
     planar = cosines >= 1.0 - PLANAR_COSINE_TOLERANCE
+
+    # Materials adjacent to every metal face (embedded sheets have one material).
+    face_materials = defaultdict(set)
+    for element_type in mesh.elements:
+        if ELEMENT_DIMENSION[element_type] != 3:
+            continue
+        tet_corners = canonical[mesh.corner_indices(element_type)]
+        tet_tags = mesh.physical_tags(element_type)
+        if element_type not in TETRAHEDRON_TYPES:
+            raise NotImplementedError("only tetrahedral volume elements are supported by the audit")
+        for f in ([0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]):
+            for key, tag in zip(map(tuple, np.sort(tet_corners[:, f], axis=1)), tet_tags):
+                if key in distinct:
+                    face_materials[key].add(int(tag))
+    face_key_of = [tuple(sorted(map(int, f))) for f in metal_corners]
 
     # Plane offsets of the planar metal along the process normal (one per metal layer).
     offsets = mesh.coordinates[metal_corners[planar]] @ process_normal
@@ -250,14 +373,58 @@ def extract_perimeter(mesh, config, process_normal=None, corner_tolerance_degree
     plane_areas = [float(areas[plane_of_face == i].sum()) for i in range(len(plane_values))]
     primary_plane = int(np.argmax(plane_areas)) if plane_areas else -1
 
-    # Perimeter edges: odd incidence among the metal faces.
-    incidence = defaultdict(int)
+    # Edge incidence: the distinct faces owning every mesh edge, with their in-plane inward
+    # directions; direction classes decide the kind (metaledge.cpp phase 3).
     owners = defaultdict(list)
     for edge_key_array in _face_edges(metal_corners):
         for face_index, key in enumerate(map(tuple, edge_key_array)):
-            incidence[key] += 1
             owners[key].append(face_index)
-    perimeter_keys = sorted(key for key, count in incidence.items() if count % 2 == 1)
+
+    def inward_of(face_index, key):
+        p0, p1 = mesh.coordinates[key[0]], mesh.coordinates[key[1]]
+        t = p1 - p0
+        d = centroids[face_index] - 0.5 * (p0 + p1)
+        d = d - (d @ t) / float(t @ t) * t
+        return d / np.linalg.norm(d)
+
+    same = _quantize(1.0 - 1.0e-8)
+    opposite = _quantize(-1.0 + 1.0e-8)
+    edge_kinds = {}
+    edge_inwards = {}
+    for key, faces in owners.items():
+        classes = []
+        inwards = [inward_of(f, key) for f in faces]
+        for d in inwards:
+            if not any(_quantize(float(d @ c)) >= same for c in classes):
+                classes.append(d)
+        if len(classes) == 1:
+            kind = "ONE_SIDED"
+        elif len(classes) == 2:
+            if _quantize(float(classes[0] @ classes[1])) <= opposite:
+                continue
+            kind = "FOLD"
+        else:
+            kind = "NONMANIFOLD"
+        edge_kinds[key] = kind
+        edge_inwards[key] = inwards
+    perimeter_keys = sorted(edge_kinds)
+
+    # Edge-connected metal components (the classifier's conductor identity).
+    parent = list(range(metal_corners.shape[0]))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for key, faces in owners.items():
+        for f in faces[1:]:
+            a, b = find(faces[0]), find(f)
+            if a != b:
+                parent[max(a, b)] = min(a, b)
+    component_of_root = {}
+    face_component = np.array([component_of_root.setdefault(find(f), len(component_of_root)) for f in range(metal_corners.shape[0])])
 
     # Truncation: exterior non-metal non-interface boundary faces.
     exterior = _exterior_faces(mesh) if any(ELEMENT_DIMENSION[t] == 3 for t in mesh.elements) else set()
@@ -300,31 +467,29 @@ def extract_perimeter(mesh, config, process_normal=None, corner_tolerance_degree
         length = float(np.linalg.norm(p1 - p0))
         if length <= 0.0:
             continue
-        face_planar = [bool(planar[f]) for f in faces]
         plane = int(max((plane_of_face[f] for f in faces if plane_of_face[f] >= 0), default=-1))
-        if len(faces) >= 3:
+        materials = set()
+        for f in faces:
+            materials |= face_materials.get(face_key_of[f], set())
+        if all(on_box[f] for f in faces) and key not in truncation_edges:
+            kind = "BOX"
+        elif edge_kinds[key] == "NONMANIFOLD":
             kind = "NONMANIFOLD"
-        elif not any(face_planar):
+        elif edge_kinds[key] == "FOLD":
+            kind = "FOLD"
+        elif not all(planar[f] for f in faces):
             kind = "NONPLANAR"
-        elif plane != primary_plane:
-            kind = "CROSS_LAYER"
         elif key in truncation_edges:
             kind = "TRUNCATION"
+        elif len(materials) == 1 and not frame_normal_configured:
+            # One material on both sides (no adjacent volume elements at all leaves the
+            # process side to the classifier's material scores: PHYSICAL).
+            kind = "EMBEDDED"
         else:
             kind = "PHYSICAL"
-        # Inward direction: from the edge midpoint towards the owning face centroid,
-        # projected onto the metal plane (planar faces only).
         inward = np.zeros(3)
-        for f in faces:
-            if planar[f]:
-                centroid = mesh.coordinates[metal_corners[f]].mean(axis=0)
-                d = centroid - 0.5 * (p0 + p1)
-                d -= (d @ process_normal) * process_normal
-                t = (p1 - p0) / length
-                d -= (d @ t) * t
-                norm = np.linalg.norm(d)
-                if norm > 0:
-                    inward += d / norm
+        for d in edge_inwards[key]:
+            inward += d
         norm = np.linalg.norm(inward)
         inward = inward / norm if norm > 0 else inward
         edge_interfaces = set(interface_edges.get(key, set()))
@@ -342,6 +507,7 @@ def extract_perimeter(mesh, config, process_normal=None, corner_tolerance_degree
             inward=inward,
             plane=plane,
             owners=len(faces),
+            component=int(face_component[faces[0]]),
         )
         vertices[v0].edges.append(len(edges))
         vertices[v1].edges.append(len(edges))
@@ -356,10 +522,59 @@ def extract_perimeter(mesh, config, process_normal=None, corner_tolerance_degree
         primary_plane=primary_plane,
         nonplanar_face_area=float(areas[~planar].sum()),
         planar_face_area=float(areas[planar].sum()),
+        components=len(component_of_root),
     )
     classify_vertices(perimeter, corner_tolerance_degrees)
     label_chains(perimeter)
+    if radius is not None:
+        _cross_layer_zones(perimeter, mesh, metal_corners[~on_box], normals[~on_box], planar[~on_box], plane_of_face[~on_box], plane_values, radius)
     return perimeter
+
+
+def _cross_layer_zones(perimeter, mesh, metal_corners, normals, planar, plane_of_face, plane_values, radius):
+    """Portions of the PHYSICAL edges within 2R of metal off their plane, and the feature
+    vertices within 2R of such metal (decision 73(3); Identifier::ClassifyPlanes)."""
+    reach = CROSS_LAYER_REACH_OVER_R * radius
+    polygons = mesh.coordinates[metal_corners]  # (n, 3, 3)
+    lower = polygons.min(axis=1) - reach
+    upper = polygons.max(axis=1) + reach
+    face_offsets = np.where(plane_of_face >= 0, np.array([plane_values[i] if i >= 0 else 0.0 for i in plane_of_face]), 0.0)
+    quantum = 1.0e-9 * radius
+
+    def candidates(box_lower, box_upper, offset):
+        near = np.all((lower <= box_upper) & (upper >= box_lower), axis=1)
+        off_plane = ~planar | ((np.abs(face_offsets - offset) > quantum) & (np.abs(face_offsets - offset) < reach - quantum))
+        return np.flatnonzero(near & off_plane)
+
+    for edge in perimeter.edges:
+        if edge.kind != "PHYSICAL":
+            continue
+        p0, p1 = perimeter.edge_points(edge)
+        offset = float(0.5 * (p0 + p1) @ perimeter.process_normal)
+        zones = []
+        for f in candidates(np.minimum(p0, p1), np.maximum(p0, p1), offset):
+            polygon = polygons[f]
+            normal = normals[f]
+            interval = _sublevel_interval(lambda s: _point_polygon_distance(p0 + s * (p1 - p0), polygon, normal), 0.0, 1.0, reach)
+            if interval is not None:
+                zones.append((interval[0] * edge.length, interval[1] * edge.length))
+        merged = []
+        for a, b in sorted(zones):
+            if merged and a <= merged[-1][1] + quantum:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+            else:
+                merged.append((a, b))
+        edge.cross_layer = merged
+    for index, v in enumerate(perimeter.vertices):
+        if v.physical_kind in (None, "REGULAR"):
+            continue
+        if not any(perimeter.edges[e].kind == "PHYSICAL" for e in v.edges):
+            continue
+        offset = float(v.point @ perimeter.process_normal)
+        for f in candidates(v.point, v.point, offset):
+            if _point_polygon_distance(v.point, polygons[f], normals[f]) < reach - quantum:
+                perimeter.excluded_vertices.add(index)
+                break
 
 
 def _quantize(cosine):
@@ -370,10 +585,13 @@ def classify_vertices(perimeter, corner_tolerance_degrees=CORNER_ANGLE_TOLERANCE
     """metaledge.cpp ClassifyVertex: quantized direction cosines, 30 degree turn tolerance."""
     straight_dot = -math.cos(math.radians(corner_tolerance_degrees))
     quantized_straight = _quantize(straight_dot)
+    # physical_kind counts the segments the classifier types PHYSICAL (one-sided, not on the
+    # truncation boundary), i.e. the audit's PHYSICAL, EMBEDDED and NONPLANAR kinds.
+    physical_kinds = tuple(k for k in CLASSIFIER_PHYSICAL_KINDS if k != "TRUNCATION")
     for index, vertex in enumerate(perimeter.vertices):
         for physical in (False, True):
             edges = [
-                e for e in vertex.edges if not physical or perimeter.edges[e].kind == "PHYSICAL"
+                e for e in vertex.edges if not physical or perimeter.edges[e].kind in physical_kinds
             ]
             if not edges:
                 kind = None

@@ -48,18 +48,31 @@ def gate(name, passed, detail, evaluable=True):
 def perimeter_census(perimeter, radius, targets):
     by_kind = Counter(e.kind for e in perimeter.edges)
     length_by_kind = {k: perimeter.length(k) for k in by_kind}
+    length_by_kind["CROSS_LAYER"] = perimeter.length("CROSS_LAYER")
     targeted = [e for e in perimeter.edges if e.kind == "PHYSICAL" and any(i[0] in targets for i in e.interfaces)]
     untargeted = [e for e in perimeter.edges if e.kind == "PHYSICAL" and not any(i[0] in targets for i in e.interfaces)]
     vertex_kinds = Counter(v.physical_kind for v in perimeter.vertices if v.physical_kind)
     turns = np.array([v.turn_degrees for v in perimeter.vertices if v.physical_kind in ("REGULAR", "CORNER") and v.turn_degrees is not None])
     histogram = np.histogram(turns, bins=TURN_BINS)[0].tolist() if turns.size else [0] * (len(TURN_BINS) - 1)
     corners = []
+    excluded_vertices = []
+    point_contacts = 0
     cuts = 0
     for index, v in enumerate(perimeter.vertices):
+        if v.physical_kind in ("CORNER", "ENDPOINT", "JUNCTION"):
+            if len({perimeter.edges[e].component for e in v.edges if perimeter.edges[e].kind != "TRUNCATION"}) > 1:
+                point_contacts += 1
         if v.physical_kind == "ENDPOINT" and any(perimeter.edges[e].kind == "TRUNCATION" for e in v.edges):
             # A physical chain ending on the truncation boundary is a simulation cut, not a
             # layout feature (the classifier makes no Endpoint feature there).
             cuts += 1
+            continue
+        if v.physical_kind in ("CORNER", "ENDPOINT", "JUNCTION") and (
+            index in perimeter.excluded_vertices or not any(perimeter.edges[e].kind == "PHYSICAL" for e in v.edges)
+        ):
+            # Every incident edge is an excluded class (embedded / non-planar metal) or the
+            # vertex lies within 2R of off-plane metal: an excluded vertex of the manifest.
+            excluded_vertices.append([round(float(x), 9) for x in v.point])
             continue
         if v.physical_kind in ("CORNER", "ENDPOINT", "JUNCTION"):
             corners.append(
@@ -103,7 +116,12 @@ def perimeter_census(perimeter, radius, targets):
         "EdgesByClass": dict(by_kind),
         "LengthByClass": length_by_kind,
         "TargetedPhysicalEdges": len(targeted),
-        "TargetedPhysicalLength": float(sum(e.length for e in targeted)),
+        "TargetedPhysicalLength": float(sum(e.length - e.cross_layer_length for e in targeted)),
+        "TargetedCrossLayerLength": float(sum(e.cross_layer_length for e in targeted)),
+        "MetalComponents": perimeter.components,
+        "ExcludedVertices": len(excluded_vertices),
+        "ExcludedVertexPoints": excluded_vertices[:50],
+        "PointContacts": point_contacts,
         "UntargetedPhysicalEdges": len(untargeted),
         "UntargetedPhysicalLength": float(sum(e.length for e in untargeted)),
         "PhysicalChains": perimeter.chains,
@@ -173,7 +191,8 @@ def _segment_key(p0, p1, decimals=7):
     return (a, b) if a <= b else (b, a)
 
 
-EXCLUSION_CLASS_OF_AUDIT_KIND = {"NONPLANAR": "NonPlanar", "CROSS_LAYER": "CrossLayer", "NONMANIFOLD": "NonManifold"}
+# Audit edge kind -> manifest exclusion class (FOLD edges are NonPlanar exclusions).
+EXCLUSION_CLASS_OF_AUDIT_KIND = {"NONPLANAR": "NonPlanar", "FOLD": "NonPlanar", "CROSS_LAYER": "CrossLayer", "NONMANIFOLD": "NonManifold", "EMBEDDED": "UndeterminedProcessSide", "BOX": "SimulationBoundary"}
 VERTEX_FEATURE_TYPES = ("ConvexCorner", "ConcaveCorner", "Endpoint", "Junction")
 
 
@@ -204,20 +223,51 @@ def identification_gates(identification, perimeter, census, radius, targets, com
             else:
                 missing_in_audit.remove(hit)
         missing_in_manifest = still_missing
-    # Segments the classifier never sees (sheets whose faces cancel in the odd-incidence
-    # perimeter) are the audit's NONPLANAR / CROSS_LAYER / NONMANIFOLD edges in most meshes;
-    # report them separately from PHYSICAL disagreements.
+    # The classifier works on Palace's mesh (cracking bisects the elements next to
+    # under-resolved internal sheets; second-order edges are sampled at their mid-nodes), so
+    # a manifest segment may be a piece of an audit edge: accept a leftover manifest segment
+    # whose endpoints both lie on one audit edge, and a leftover audit edge covered by such
+    # pieces; the perimeter lengths must then agree.
+    key_tolerance = 1.0e-6 * radius
+    covered_audit = set()
+    split_pieces = 0
+    still_missing_in_audit = []
+    for k in missing_in_audit:
+        a, b = np.array(k[0]), np.array(k[1])
+        hit = None
+        for o in missing_in_manifest:
+            p0, p1 = np.array(o[0]), np.array(o[1])
+            d = p1 - p0
+            ok = True
+            for q in (a, b):
+                t = float((q - p0) @ d) / float(d @ d)
+                if t < -1.0e-9 or t > 1.0 + 1.0e-9 or np.linalg.norm(q - (p0 + t * d)) > key_tolerance:
+                    ok = False
+                    break
+            if ok:
+                hit = o
+                break
+        if hit is None:
+            still_missing_in_audit.append(k)
+        else:
+            covered_audit.add(hit)
+            split_pieces += 1
+    missing_in_audit = still_missing_in_audit
+    missing_in_manifest = [k for k in missing_in_manifest if k not in covered_audit]
+    # Segments the classifier never sees are reported by kind, separately from PHYSICAL
+    # disagreements.
     unseen_by_kind = Counter(perimeter.edges[audit_keys[k]].kind for k in missing_in_manifest)
     manifest_length = sum(float(s["Length"]) for s in segments)
     gates.append(
         gate(
             "perimeter-agreement",
-            unseen_by_kind.get("PHYSICAL", 0) == 0 and unseen_by_kind.get("TRUNCATION", 0) == 0 and not missing_in_audit,
+            not missing_in_manifest and not missing_in_audit and abs(manifest_length - perimeter.length()) <= 1.0e-6 * max(perimeter.length(), radius),
             {
                 "AuditSegments": len(perimeter.edges),
                 "ManifestSegments": len(segments),
                 "ManifestPerimeterLength": manifest_length,
                 "AuditPerimeterLength": perimeter.length(),
+                "SplitPieces": split_pieces,
                 "UnseenByClassifier": dict(unseen_by_kind),
                 "UnseenLength": float(sum(perimeter.edges[audit_keys[k]].length for k in missing_in_manifest)),
                 "NotInMesh": len(missing_in_audit),
@@ -230,28 +280,35 @@ def identification_gates(identification, perimeter, census, radius, targets, com
     excluded_length = 0.0
     defects = []
     covered_segments = 0
+    exclusion_records = identification["Exclusions"]
     for j, s in enumerate(segments):
         length = float(s["Length"])
         if "Exclusion" in s:
             excluded_length += length
             continue
+        # Feature portions and analytically excluded portions (CrossLayer zones) tile the
+        # segment together.
         portions = sorted((float(a), float(b), int(f)) for a, b, f in s.get("Portions", []))
-        if not portions:
+        excluded_portions = sorted((float(a), float(b), -1 - int(x)) for a, b, x in s.get("ExcludedPortions", []))
+        if not portions and not excluded_portions:
             defects.append({"Segment": j, "Defect": "no portion", "Length": length})
             continue
         covered = 0.0
         cursor = 0.0
         ok = True
-        for a, b, f in portions:
+        for a, b, f in sorted(portions + excluded_portions):
             if a < cursor - tol or b <= a:
                 ok = False
-            if f not in features:
+            if f >= 0 and f not in features:
+                ok = False
+            if f < 0 and not (0 <= -1 - f < len(exclusion_records)):
                 ok = False
             covered += b - a
             cursor = max(cursor, b)
         if not ok or abs(covered - length) > 1.0e-6 * max(length, radius) or abs(cursor - length) > 1.0e-6 * max(length, radius):
-            defects.append({"Segment": j, "Defect": "gap or overlap", "Length": length, "Covered": covered, "Portions": portions[:8]})
-        assigned_length += covered
+            defects.append({"Segment": j, "Defect": "gap or overlap", "Length": length, "Covered": covered, "Portions": (portions + excluded_portions)[:8]})
+        assigned_length += sum(b - a for a, b, f in portions)
+        excluded_length += sum(b - a for a, b, f in excluded_portions)
         covered_segments += 1
     targeted_length = census["TargetedPhysicalLength"]
     gates.append(
@@ -261,7 +318,7 @@ def identification_gates(identification, perimeter, census, radius, targets, com
             {"AssignedLength": assigned_length, "ExcludedLength": excluded_length, "ManifestPerimeterLength": manifest_length, "AuditTargetedPhysicalLength": targeted_length, "Deficit": targeted_length - assigned_length},
         )
     )
-    unassigned = [j for j, s in enumerate(segments) if "Exclusion" not in s and not s.get("Portions")]
+    unassigned = [j for j, s in enumerate(segments) if "Exclusion" not in s and not s.get("Portions") and not s.get("ExcludedPortions")]
     gates.append(gate("A1-count-partition", not unassigned and covered_segments + sum(1 for s in segments if "Exclusion" in s) == len(segments), {"Segments": len(segments), "Covered": covered_segments, "Excluded": sum(1 for s in segments if "Exclusion" in s), "Unassigned": len(unassigned)}))
     gates.append(gate("A1-multiplicity", not defects, {"Defects": len(defects), "Examples": defects[:10], "Basis": "per-segment portions sorted and contiguous, each portion in exactly one feature"}))
 
@@ -287,15 +344,27 @@ def identification_gates(identification, perimeter, census, radius, targets, com
         if v["Type"] in ("ConvexCorner", "ConcaveCorner"):
             manifest_angles[round(180.0 - float(v["TurnDegrees"]), 6)] += 1
     audit_angles = Counter(round(180.0 - c["TurnDegrees"], 6) for c in census["Corners"] if c["Kind"] == "CORNER")
+    # Excluded vertices (every incident run excluded, or within 2R of off-plane metal) are
+    # accounted on both sides; point contacts are reported, never silent.
+    manifest_point_contacts = sum(1 for v in manifest_vertices if v.get("PointContact"))
     gates.append(
         gate(
             "A1-vertex-census",
-            not unassigned_vertices and manifest_feature_vertices == audit_feature_vertices and manifest_rounded == audit_rounded and manifest_angles == audit_angles and typed.get("Excluded", 0) == 0,
+            not unassigned_vertices
+            and manifest_feature_vertices == audit_feature_vertices
+            and manifest_rounded == audit_rounded
+            and manifest_angles == audit_angles
+            and typed.get("Excluded", 0) == census["ExcludedVertices"]
+            and manifest_point_contacts == census["PointContacts"],
             {
                 "AuditCornerEndpointJunction": audit_feature_vertices,
                 "ManifestCornerEndpointJunction": manifest_feature_vertices,
                 "AuditRoundedCorners": audit_rounded,
                 "ManifestRoundedCorners": manifest_rounded,
+                "AuditExcludedVertices": census["ExcludedVertices"],
+                "ManifestExcludedVertices": typed.get("Excluded", 0),
+                "AuditPointContacts": census["PointContacts"],
+                "ManifestPointContacts": manifest_point_contacts,
                 "ManifestByType": dict(typed),
                 "UnassignedVertices": len(unassigned_vertices),
                 "AuditInteriorAngles": {str(k): v for k, v in sorted(audit_angles.items())},
@@ -311,10 +380,12 @@ def identification_gates(identification, perimeter, census, radius, targets, com
         recorded[e["Class"]] += float(e["Length"])
     exclusion_detail = {}
     exclusions_ok = True
+    audit_by_class = defaultdict(float)
     for kind, cls in EXCLUSION_CLASS_OF_AUDIT_KIND.items():
-        audit_length = census["LengthByClass"].get(kind, 0.0)
+        audit_by_class[cls] += census["LengthByClass"].get(kind, 0.0)
+    for cls, audit_length in sorted(audit_by_class.items()):
         exclusion_detail[cls] = {"AuditLength": audit_length, "RecordedLength": recorded.get(cls, 0.0)}
-        if audit_length > tol and recorded.get(cls, 0.0) < audit_length - 1.0e-6 * audit_length:
+        if abs(recorded.get(cls, 0.0) - audit_length) > 1.0e-6 * max(audit_length, radius):
             exclusions_ok = False
     exclusion_detail["Recorded"] = dict(recorded)
     exclusion_detail["UnseenByClassifier"] = dict(unseen_by_kind)
@@ -363,7 +434,7 @@ def run_audit(args):
     for entry in config.get("Boundaries", {}).get("Postprocessing", {}).get("Dielectric", []):
         if "EdgeFrameNormal" in entry:
             process_normal = entry["EdgeFrameNormal"]
-    perimeter = P.extract_perimeter(mesh, config, process_normal=process_normal, corner_tolerance_degrees=args.corner_tolerance)
+    perimeter = P.extract_perimeter(mesh, config, process_normal=process_normal, corner_tolerance_degrees=args.corner_tolerance, radius=radius)
     targets = set(P.target_interfaces(config)) or {i for i, _ in P.interface_attributes(config)}
     census = perimeter_census(perimeter, radius, targets)
     clusters = corner_clusters(perimeter, radius)
@@ -391,7 +462,7 @@ def run_audit(args):
     length = census["TargetedPhysicalLength"]
     if identification:
         deficit = length - float(identification["Totals"]["AssignedLength"])
-        excluded_length = sum(census["LengthByClass"].get(k, 0.0) for k in ("NONPLANAR", "CROSS_LAYER", "NONMANIFOLD"))
+        excluded_length = sum(census["LengthByClass"].get(k, 0.0) for k in ("NONPLANAR", "FOLD", "CROSS_LAYER", "NONMANIFOLD", "EMBEDDED", "BOX"))
     else:
         assigned = summary["TranslationalLength"]
         deficit = length - assigned
@@ -457,7 +528,7 @@ def run_audit(args):
                 evaluable=not (residual > 0 and cluster_records > 0),
             )
         )
-        excluded_length = sum(census["LengthByClass"].get(k, 0.0) for k in ("NONPLANAR", "CROSS_LAYER", "NONMANIFOLD"))
+        excluded_length = sum(census["LengthByClass"].get(k, 0.0) for k in ("NONPLANAR", "FOLD", "CROSS_LAYER", "NONMANIFOLD", "EMBEDDED", "BOX"))
         gates.append(
             gate(
                 "A1-exclusions-recorded",

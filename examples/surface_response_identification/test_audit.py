@@ -60,12 +60,14 @@ def write_msh2(path, nodes, elements, names, binary):
 
 def island_mesh():
     """A 4 x 2 metal rectangle (attribute 5) made of 4 triangles on the z = 0 plane, a
-    second metal rectangle 2 units away at x = 6..8 (a strip pair at separation exactly R = 2),
+    second metal rectangle 2 units away at x = 6..8 (a strip pair at separation exactly 2),
     SA faces (8) around them, and a vertical metal wall (attribute 5) standing on the first
-    rectangle's interior line x = 2 with a span at z = 1 (non-planar + cross-layer +
-    nonmanifold).
+    rectangle's interior line x = 2 with a span at z = 1 (non-planar wall edges, a fold at the
+    wall top, a nonmanifold foot line, and with R = 0.5 cross-layer zones on the parts of the
+    first rectangle's long edges within 2R = 1 of the wall and on the span's short edges).
     One tetrahedron references the SA face so it counts as exterior; the 'outer' face 3 is
-    exterior and coincides with the first rectangle's left edge (truncation)."""
+    exterior and coincides with the first rectangle's left edge (truncation). A far node
+    keeps the span off the bounding box of the mesh (a PEC simulation box is not metal)."""
     nodes = [
         (0, 0, 0), (2, 0, 0), (4, 0, 0),  # 1 2 3
         (0, 2, 0), (2, 2, 0), (4, 2, 0),  # 4 5 6
@@ -74,6 +76,7 @@ def island_mesh():
         (0, 0, -3), (0, 2, -3),  # 15 16 outer box below the left edge
         (4, -2, 0), (6, -2, 0),  # 17 18 SA below the gap
         (5, 1, -1),  # 19 apex of the tetrahedra
+        (4, 0, 3),  # 20 unused: keeps the span off the bounding box
     ]
     elements = [
         (2, 5, (1, 2, 5)), (2, 5, (1, 5, 4)), (2, 5, (2, 3, 6)), (2, 5, (2, 6, 5)),  # island A
@@ -96,8 +99,8 @@ CONFIG = {
         "PEC": {"Attributes": [5]},
         "Postprocessing": {
             "Dielectric": [
-                {"Index": 1, "Attributes": [8], "Type": "SA", "EdgeDistances": [2.0], "AutomaticEdges": True},
-                {"Index": 2, "Attributes": [5], "Type": "MS", "EdgeDistances": [2.0], "AutomaticEdges": True},
+                {"Index": 1, "Attributes": [8], "Type": "SA", "EdgeDistances": [0.5], "AutomaticEdges": True},
+                {"Index": 2, "Attributes": [5], "Type": "MS", "EdgeDistances": [0.5], "AutomaticEdges": True},
             ]
         },
     },
@@ -110,7 +113,7 @@ def make_manifest(requirements, metal_segments=None, chains=None):
         "Version": 1,
         "Complete": all(r.get("Status") != "Missing" for r in requirements),
         "LengthUnit": "mesh",
-        "Library": {"Path": "/x/lib.json", "Name": "x", "MatchingRadius": 2.0, "DecisionQuantization": {"LengthRelativeToMatchingRadius": 1e-8, "Direction": 1e-12}},
+        "Library": {"Path": "/x/lib.json", "Name": "x", "MatchingRadius": 0.5, "DecisionQuantization": {"LengthRelativeToMatchingRadius": 1e-8, "Direction": 1e-12}},
         "MeshDimension": 3,
         "Maxwell": True,
         "Summary": {},
@@ -148,41 +151,53 @@ class PerimeterTest(unittest.TestCase):
         self.assertEqual(a.physical_names[(2, 5)], "metal")
 
     def test_perimeter_classes_and_lengths(self):
-        perimeter = P.extract_perimeter(self.mesh(True), CONFIG)
+        perimeter = P.extract_perimeter(self.mesh(True), CONFIG, radius=0.5)
         np.testing.assert_allclose(np.abs(perimeter.process_normal), [0, 0, 1])
         self.assertEqual(perimeter.primary_plane, 0)
         self.assertEqual(sorted(perimeter.planes), [0.0, 1.0])
         by_kind = {}
         for e in perimeter.edges:
             by_kind.setdefault(e.kind, []).append(e)
-        # Island A: bottom 4 + top 4 + right 2 physical (5 edges), left edge 2 (truncation),
-        # interior line x = 2 (nonmanifold: two island faces + the wall). Island B: 8 physical.
-        self.assertAlmostEqual(sum(e.length for e in by_kind["PHYSICAL"]), 10.0 + 8.0)
-        self.assertEqual(len(by_kind["PHYSICAL"]), 9)
+        # Island A: bottom 4 + top 4 + right 2 one-sided planar (5 edges), left edge 2
+        # (truncation), interior line x = 2 (nonmanifold: two island faces + the wall). The
+        # span at z = 1 is planar metal on its own plane: far edge 2 + two short edges 1
+        # (3 PHYSICAL edges). Island B: 4 edges, 8.
+        self.assertAlmostEqual(sum(e.length for e in by_kind["PHYSICAL"]), 10.0 + 4.0 + 8.0)
+        self.assertEqual(len(by_kind["PHYSICAL"]), 12)
         self.assertAlmostEqual(sum(e.length for e in by_kind["TRUNCATION"]), 2.0)
         self.assertAlmostEqual(sum(e.length for e in by_kind["NONMANIFOLD"]), 2.0)
-        # Wall vertical edges 2 x 1; span: far edge (2) + two short edges (1 each) at z = 1.
+        # Wall vertical edges 2 x 1 (one-sided faces off the process plane); the wall top is
+        # a fold with the span.
         self.assertAlmostEqual(sum(e.length for e in by_kind["NONPLANAR"]), 2.0)
-        self.assertAlmostEqual(sum(e.length for e in by_kind["CROSS_LAYER"]), 4.0)
+        self.assertAlmostEqual(sum(e.length for e in by_kind["FOLD"]), 2.0)
+        # Cross-layer zones (R = 0.5, reach 1): the parts of A's long edges within 1 of the
+        # wall (x in (1, 3): 2 + 2) and the span's short edges (within 1 of the wall: 1 + 1);
+        # A's right edge (2 away) and the span's far edge (exactly 1 away) are not zones.
+        self.assertAlmostEqual(perimeter.length("CROSS_LAYER"), 6.0)
+        self.assertEqual(sum(1 for e in by_kind["PHYSICAL"] if e.cross_layer), 6)
+        # Conductors by edge connectivity: A with its wall and span, B.
+        self.assertEqual(perimeter.components, 2)
+        self.assertEqual({e.component for e in by_kind["PHYSICAL"]}, {0, 1})
         # Interfaces: the gap-facing edges of A and B carry SA + MS, the others MS only.
         signatures = sorted({e.interfaces for e in by_kind["PHYSICAL"]})
         self.assertIn(((1, "SA"), (2, "MS")), signatures)
         # Vertices: A's left joints (0,0),(0,2) have one physical edge (ENDPOINT); the wall
-        # foot vertices (2,0),(2,2) are straight-through REGULAR (the nonmanifold edge is not
-        # physical); A's right corners and B's four corners are 90 degree convex CORNERs.
+        # foot vertices (2,0),(2,2) join two island segments and the wall's vertical edge
+        # (JUNCTION); A's right corners, the wall-top / span corners and B's four corners
+        # are 90 degree CORNERs.
         kinds = {}
         for v in perimeter.vertices:
             kinds[v.physical_kind] = kinds.get(v.physical_kind, 0) + 1
-        self.assertEqual(kinds["CORNER"], 6)
+        self.assertEqual(kinds["CORNER"], 10)
         self.assertEqual(kinds["ENDPOINT"], 2)
-        self.assertEqual(kinds["REGULAR"], 2)
-        corners = [v for v in perimeter.vertices if v.physical_kind == "CORNER"]
-        for v in corners:
-            self.assertAlmostEqual(v.turn_degrees, 90.0)
-            self.assertTrue(v.convex)
-        # Physical chains: A bottom (through the regular vertex), A right, A top, B's loop
-        # broken at 4 corners -> 4 chains.
-        self.assertEqual(perimeter.chains, 7)
+        self.assertEqual(kinds["JUNCTION"], 2)
+        self.assertNotIn("REGULAR", kinds)
+        # Excluded vertices: the two junctions and the two wall-top corners sit on the wall
+        # (off-plane metal within reach); the span's far corners are exactly 1 away.
+        self.assertEqual(len(perimeter.excluded_vertices), 4)
+        # Physical chains: A bottom / top split at the junctions (2 + 2), A right, the span's
+        # three edges, B's loop broken at 4 corners -> 12 chains.
+        self.assertEqual(perimeter.chains, 12)
 
     def test_interactions_report_the_strip_at_exactly_R(self):
         perimeter = P.extract_perimeter(self.mesh(True), CONFIG)
@@ -286,16 +301,17 @@ class AuditGateTest(unittest.TestCase):
         return code, {g["Gate"]: g["Status"] for g in result["Gates"]}, result
 
     def test_complete_partition_passes_except_the_silent_exclusions(self):
-        # 18 physical length in 9 segments, 6 convex corners; the 2 endpoints of A's open
+        # Version-1 (aggregate) manifest: 22 of physical length in 12 segments of which 6 lie
+        # in cross-layer zones (16 targeted), 8 feature corners; the 2 endpoints of A's open
         # chains lie on the truncation edge and are simulation cuts, not features.
         manifest = make_manifest(
             [
-                requirement("IsolatedEdge", 7, 14.0, {"EdgeCount": 1}),
+                requirement("IsolatedEdge", 10, 12.0, {"EdgeCount": 1}),
                 requirement("SameConductorStrip", 2, 4.0, {"EdgeCount": 2, "Separation": 2.0}),
-                requirement("ConvexCorner", 6, 24.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0}),
+                requirement("ConvexCorner", 8, 32.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0}),
             ],
-            metal_segments=10,
-            chains=7,
+            metal_segments=13,
+            chains=12,
         )
         code, gates, result = self.run_gates(manifest)
         self.assertEqual(gates["perimeter-agreement"], "PASS")
@@ -306,33 +322,34 @@ class AuditGateTest(unittest.TestCase):
         self.assertEqual(gates["A1-vertex-census"], "PASS")
         self.assertEqual(result["ByGate"]["A1-vertex-census"]["AuditTruncationCuts"], 2)
         self.assertEqual(gates["A2-cluster-balls"], "PASS")
-        # The wall / span metal is never reported by the manifest: the exclusion gate fails.
+        # The wall / span / zones are never reported by a version-1 manifest: the exclusion
+        # gate fails (excluded length: nonplanar 2 + fold 2 + nonmanifold 2 + zones 6).
         self.assertEqual(gates["A1-exclusions-recorded"], "FAIL")
         self.assertEqual(code, 1)
-        self.assertAlmostEqual(result["GapBound"]["ExcludedLength"], 8.0)
+        self.assertAlmostEqual(result["GapBound"]["ExcludedLength"], 12.0)
 
     def test_gap_and_double_count_fail(self):
-        manifest = make_manifest([requirement("IsolatedEdge", 8, 16.0, {"EdgeCount": 1}), requirement("ConvexCorner", 6, 24.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0})])
-        code, gates, result = self.run_gates(manifest, log="Omitting 1 of 9 three-dimensional target edge segments which are within 2R of a physical metal edge with a different interface mapping.\n")
+        manifest = make_manifest([requirement("IsolatedEdge", 11, 14.0, {"EdgeCount": 1}), requirement("ConvexCorner", 8, 32.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0})])
+        code, gates, result = self.run_gates(manifest, log="Omitting 1 of 12 three-dimensional target edge segments which are within 2R of a physical metal edge with a different interface mapping.\n")
         self.assertEqual(gates["A1-length-partition"], "FAIL")
         self.assertEqual(gates["A1-count-partition"], "FAIL")
         self.assertEqual(gates["A1-multiplicity"], "NOT-EVALUABLE")
         self.assertAlmostEqual(result["GapBound"]["OmittedLength"], 2.0)
         self.assertTrue(result["ByGate"]["A1-count-partition"]["Reconciled"])
-        manifest = make_manifest([requirement("IsolatedEdge", 10, 20.0, {"EdgeCount": 1}), requirement("ConvexCorner", 6, 24.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0})])
+        manifest = make_manifest([requirement("IsolatedEdge", 10, 20.0, {"EdgeCount": 1}), requirement("ConvexCorner", 8, 32.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0})])
         code, gates, _ = self.run_gates(manifest)
         self.assertEqual(gates["A1-count-partition"], "FAIL")
         self.assertEqual(code, 1)
 
     def test_vertex_census_residual_and_compare(self):
-        manifest = make_manifest([requirement("IsolatedEdge", 9, 18.0, {"EdgeCount": 1}), requirement("ConvexCorner", 3, 12.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0})])
+        manifest = make_manifest([requirement("IsolatedEdge", 12, 16.0, {"EdgeCount": 1}), requirement("ConvexCorner", 3, 12.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0})])
         code, gates, result = self.run_gates(manifest)
-        # 6 audit corners, 3 in the manifest, no clusters: a silent drop of 3 -> FAIL.
+        # 8 audit feature corners, 3 in the manifest, no clusters: a silent drop of 5 -> FAIL.
         self.assertEqual(gates["A1-vertex-census"], "FAIL")
-        self.assertEqual(result["ByGate"]["A1-vertex-census"]["Residual"], 3)
+        self.assertEqual(result["ByGate"]["A1-vertex-census"]["Residual"], 5)
         other = os.path.join(self.directory.name, "other.json")
         with open(other, "w") as target:
-            json.dump(make_manifest([requirement("IsolatedEdge", 9, 18.0, {"EdgeCount": 1}), requirement("ConvexCorner", 3, 12.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0}, "Missing", Reason="x")]), target)
+            json.dump(make_manifest([requirement("IsolatedEdge", 12, 16.0, {"EdgeCount": 1}), requirement("ConvexCorner", 3, 12.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0}, "Missing", Reason="x")]), target)
         manifest_path = os.path.join(self.directory.name, "req.json")
         with contextlib.redirect_stdout(io.StringIO()):
             code = audit.main(["--mesh", self.mesh_path, "--config", self.config_path, "--manifest", manifest_path, "--compare", other, "--output-prefix", os.path.join(self.directory.name, "out", "cmp")])
@@ -341,7 +358,7 @@ class AuditGateTest(unittest.TestCase):
         self.assertTrue(result["Compare"]["Diff"]["Identical"])
         self.assertEqual({g["Gate"]: g["Status"] for g in result["Gates"]}["A3/A5-set-identity"], "PASS")
         # With a cluster record present the residual is not evaluable (absorbed or dropped).
-        clustered = make_manifest([requirement("IsolatedEdge", 9, 18.0, {"EdgeCount": 1}), requirement("ConvexCorner", 3, 12.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0}), requirement("SpatialEdgeCluster", 1, 2.0, {"EdgeCount": 3, "Edges": []})])
+        clustered = make_manifest([requirement("IsolatedEdge", 12, 16.0, {"EdgeCount": 1}), requirement("ConvexCorner", 3, 12.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0}), requirement("SpatialEdgeCluster", 1, 2.0, {"EdgeCount": 3, "Edges": []})])
         _, gates_clustered, _ = self.run_gates(clustered)
         self.assertEqual(gates_clustered["A1-vertex-census"], "NOT-EVALUABLE")
 
@@ -350,17 +367,27 @@ class IdentificationGateTest(AuditGateTest):
     """Version-2 manifests: the gates read the per-segment assignment, vertex and exclusion
     tables (palace/models/SURFACE-RESPONSE-IDENTIFICATION.md)."""
 
-    EXCLUSION_CLASS = {"TRUNCATION": "TruncationCut", "NONPLANAR": "NonPlanar", "CROSS_LAYER": "CrossLayer", "NONMANIFOLD": "NonManifold"}
+    EXCLUSION_CLASS = {"TRUNCATION": "TruncationCut", "NONPLANAR": "NonPlanar", "FOLD": "NonPlanar", "NONMANIFOLD": "NonManifold", "EMBEDDED": "UndeterminedProcessSide", "BOX": "SimulationBoundary"}
 
     def identification(self):
         """A complete identification of the island mesh built from the audit's own perimeter:
-        one IsolatedEdge feature per chain claiming its segments, six corners, the wall / span
-        and truncation edges recorded as exclusions."""
+        one IsolatedEdge feature per chain claiming its segments outside the cross-layer zones
+        (recorded as ExcludedPortions of the CrossLayer record), eight corners, four excluded
+        vertices, the wall / span and truncation edges recorded as exclusions."""
         from .msh2 import read_msh2
 
-        perimeter = P.extract_perimeter(read_msh2(self.mesh_path), CONFIG)
+        perimeter = P.extract_perimeter(read_msh2(self.mesh_path), CONFIG, radius=0.5)
         features, segments, vertices, exclusions = [], [], [], {}
+        order = []
         chain_feature = {}
+
+        def record(cls, count, length):
+            if cls not in exclusions:
+                exclusions[cls] = [0, 0.0]
+                order.append(cls)
+            exclusions[cls][0] += count
+            exclusions[cls][1] += length
+
         for edge in perimeter.edges:
             p0, p1 = perimeter.edge_points(edge)
             key = [list(map(float, p0)), list(map(float, p1))]
@@ -370,40 +397,57 @@ class IdentificationGateTest(AuditGateTest):
             if edge.kind != "PHYSICAL":
                 cls = self.EXCLUSION_CLASS[edge.kind]
                 entry["Exclusion"] = {"Class": cls, "Reason": "test"}
-                exclusions.setdefault(cls, [0, 0.0])
-                exclusions[cls][0] += 1
-                exclusions[cls][1] += edge.length
+                record(cls, 1, edge.length)
             else:
                 if edge.chain not in chain_feature:
                     chain_feature[edge.chain] = len(features)
                     features.append({"Id": len(features), "Type": "IsolatedEdge", "Signature": {"Type": "IsolatedEdge", "Interfaces": ["MS", "SA"], "Law": "{\"Type\":\"PEC\"}"}, "Hash": f"h{edge.chain}", "Chirality": 1, "Length": 0.0, "Portions": [], "Vertices": [], "Frame": {"Origin": [0, 0, 0], "Axes": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}, "Match": {"Status": "Missing"}})
                 f = features[chain_feature[edge.chain]]
-                f["Portions"].append([len(segments), 0.0, edge.length])
-                f["Length"] += edge.length
-                entry["Portions"] = [[0.0, edge.length, f["Id"]]]
+                # Portions along the canonical key direction; zones are in edge order.
+                forward = list(map(float, p0)) == key[0]
+                zones = sorted(z if forward else (edge.length - z[1], edge.length - z[0]) for z in edge.cross_layer)
+                cursor = 0.0
+                portions = []
+                for a, b in zones:
+                    if a > cursor + 1e-12:
+                        portions.append([cursor, a, f["Id"]])
+                    cursor = b
+                if cursor < edge.length - 1e-12:
+                    portions.append([cursor, edge.length, f["Id"]])
+                for a, b, _ in portions:
+                    f["Portions"].append([len(segments), a, b])
+                    f["Length"] += b - a
+                entry["Portions"] = portions
+                if zones:
+                    record("CrossLayer", len(zones), sum(b - a for a, b in zones))
+                    entry["ExcludedPortions"] = [[a, b, order.index("CrossLayer")] for a, b in zones]
             segments.append(entry)
         for index, vertex in enumerate(perimeter.vertices):
-            if vertex.physical_kind == "CORNER":
-                vertices.append({"Vertex": index, "Type": "ConvexCorner", "TurnDegrees": 90.0, "Feature": 0})
-            elif vertex.physical_kind == "ENDPOINT":
+            if vertex.physical_kind in (None, "REGULAR"):
+                continue
+            if vertex.physical_kind == "ENDPOINT":
                 vertices.append({"Vertex": index, "Type": "TruncationCut"})
+            elif index in perimeter.excluded_vertices:
+                vertices.append({"Vertex": index, "Type": "Excluded"})
+            else:
+                vertices.append({"Vertex": index, "Type": "ConvexCorner", "TurnDegrees": 90.0, "Feature": 0})
         assigned = sum(f["Length"] for f in features)
         excluded = sum(v[1] for v in exclusions.values())
         return {
             "Version": 2,
-            "MatchingRadius": 2.0,
+            "MatchingRadius": 0.5,
             "Conventions": {"CornerTurnToleranceDegrees": 30.0},
             "ReferenceProcessNormal": [0.0, 0.0, 1.0],
             "Features": features,
             "Segments": segments,
             "Vertices": vertices,
-            "Exclusions": [{"Class": k, "Reason": "test", "Count": v[0], "Length": v[1]} for k, v in exclusions.items()],
+            "Exclusions": [{"Class": k, "Reason": "test", "Count": exclusions[k][0], "Length": exclusions[k][1]} for k in order],
             "Totals": {"PerimeterLength": assigned + excluded, "AssignedLength": assigned, "ExcludedLength": excluded},
             "GeometryDigest": "digest",
         }
 
     def v2_manifest(self, identification):
-        manifest = make_manifest([requirement("IsolatedEdge", 9, 18.0, {}), requirement("ConvexCorner", 6, 24.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0})])
+        manifest = make_manifest([requirement("IsolatedEdge", 12, 16.0, {}), requirement("ConvexCorner", 8, 32.0, {"AngleDegrees": 90.0, "CornerRadius": 0.0})])
         manifest["Version"] = 2
         manifest["Identification"] = identification
         return manifest
@@ -413,7 +457,9 @@ class IdentificationGateTest(AuditGateTest):
         for name in ("perimeter-agreement", "A1-length-partition", "A1-count-partition", "A1-multiplicity", "A1-weights", "A1-vertex-census", "A1-exclusions-recorded", "A2-cluster-balls"):
             self.assertEqual(gates[name], "PASS", name)
         self.assertEqual(code, 0)
-        self.assertEqual(result["Identification"]["Features"]["IsolatedEdge"], 7)
+        self.assertEqual(result["Identification"]["Features"]["IsolatedEdge"], 12)
+        self.assertAlmostEqual(result["Identification"]["Totals"]["AssignedLength"], 16.0)
+        self.assertEqual(result["ByGate"]["A1-vertex-census"]["ManifestExcludedVertices"], 4)
 
     def test_defects_fail_the_exact_gates(self):
         ident = self.identification()

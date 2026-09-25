@@ -1383,6 +1383,9 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
   REQUIRE_FALSE(geometry.Empty());
   int physical_segments = 0;
   int truncation_segments = 0;
+  int fold_segments = 0;
+  int nonmanifold_segments = 0;
+  int embedded_segments = 0;
   int corners = 0;
   int sa_segments = 0;
   std::set<int> truncation_attributes;
@@ -1395,6 +1398,9 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
     CHECK(segment.ma_interfaces == std::vector<int>{3});
     physical_segments += segment.type == MetalEdgeSegmentType::PHYSICAL;
     truncation_segments += segment.type == MetalEdgeSegmentType::TRUNCATION;
+    fold_segments += segment.type == MetalEdgeSegmentType::FOLD;
+    nonmanifold_segments += segment.type == MetalEdgeSegmentType::NONMANIFOLD;
+    embedded_segments += segment.side_attributes.size() == 1;
     sa_segments += !segment.sa_interfaces.empty();
     truncation_attributes.insert(segment.truncation_attributes.begin(),
                                  segment.truncation_attributes.end());
@@ -1408,18 +1414,31 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
     corners += vertex.physical_type == std::optional{MetalEdgeVertexType::CORNER};
   }
   CAPTURE(geometry.components, geometry.physical_components, geometry.segments.size(),
-          physical_segments, truncation_segments, corners, sa_segments,
-          truncation_attributes);
-  CHECK(geometry.components == 6);
-  CHECK(geometry.physical_components == 5);
-  CHECK(physical_segments + truncation_segments ==
+          physical_segments, truncation_segments, fold_segments, nonmanifold_segments,
+          embedded_segments, corners, sa_segments, truncation_attributes);
+  // Phase 3 of the identification fix: the airbridge (attribute 5, vacuum on both sides)
+  // is part of the perimeter (the crack-independent extraction no longer cancels a sheet
+  // with one material on both sides): 40 one-sided edges (24 deck + 16 leg edges, single
+  // side attribute), 16 deck-leg folds and 8 nonmanifold foot segments join the 3,088
+  // planar physical and 58 truncation segments; 4 more perimeter components, 24 more
+  // chains and 16 more corners (the deck's and legs' rectangles).
+  CHECK(geometry.components == 10);
+  CHECK(geometry.physical_components == 13);
+  CHECK(physical_segments + truncation_segments + fold_segments + nonmanifold_segments ==
         static_cast<int>(geometry.segments.size()));
-  CHECK(physical_segments > 0);
-  CHECK(geometry.physical_chains == 56);
-  CHECK(truncation_segments > 0);
+  CHECK(physical_segments == 3128);
+  CHECK(fold_segments == 16);
+  CHECK(nonmanifold_segments == 8);
+  CHECK(embedded_segments == 40 + 16);  // the feet also touch the ground sheet faces
+  CHECK(geometry.physical_chains == 80);
+  CHECK(truncation_segments == 58);
   CHECK(truncation_attributes == std::set<int>{3});
-  CHECK(corners == 56);
-  CHECK(sa_segments > 0);
+  CHECK(corners == 72);
+  CHECK(sa_segments == 3082);
+  // Conductors by metal connectivity: ground plane with the airbridge, feedline centre
+  // conductor (between the lumped ports), island.
+  CHECK(geometry.metal_components == 3);
+  CHECK_THAT(geometry.layer_normal[2], WithinAbs(1.0, 1.0e-9));
 
   const auto sa_indices =
       GetInterfaceMetalEdgeSegmentIndices(geometry, 1, InterfaceDielectric::SA);
@@ -1428,19 +1447,33 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
   const auto ma_indices =
       GetInterfaceMetalEdgeSegmentIndices(geometry, 3, InterfaceDielectric::MA);
   CHECK(sa_indices.size() == 3082);
-  CHECK(ms_indices.size() == 3088);
-  CHECK(ma_indices.size() == 3088);
+  CHECK(ms_indices.size() == 3128);
+  CHECK(ma_indices.size() == 3128);
 
-  const auto process_normals =
-      BuildMetalEdgeProcessNormals(*mesh, geometry, ms_indices, [](int material_attribute)
-                                   { return material_attribute == 2 ? 1.0 : 0.0; });
+  // The 40 airbridge edges have vacuum on both sides: their process side is ambiguous and
+  // (without a fallback) taken from the dominant normal component; every planar edge on the
+  // substrate keeps its material-derived +z normal.
+  std::vector<bool> ambiguous;
+  const auto process_normals = BuildMetalEdgeProcessNormals(
+      *mesh, geometry, ms_indices,
+      [](int material_attribute) { return material_attribute == 2 ? 1.0 : 0.0; },
+      std::nullopt, &ambiguous);
   REQUIRE(process_normals.size() == ms_indices.size());
-  for (const auto &normal : process_normals)
+  REQUIRE(ambiguous.size() == ms_indices.size());
+  int ambiguous_count = 0;
+  for (std::size_t i = 0; i < ms_indices.size(); i++)
   {
+    ambiguous_count += ambiguous[i];
+    if (ambiguous[i])
+    {
+      continue;
+    }
+    const auto &normal = process_normals[i];
     CHECK_THAT(normal[0], WithinAbs(0.0, 1.0e-12));
     CHECK_THAT(normal[1], WithinAbs(0.0, 1.0e-12));
     CHECK_THAT(normal[2], WithinAbs(1.0, 1.0e-12));
   }
+  CHECK(ambiguous_count == 40);
 }
 
 TEST_CASE("Automatic metal edge classification is partition independent",
@@ -1549,7 +1582,7 @@ TEST_CASE("Automatic metal edge classification is partition independent",
     reference = Classify(mesh);
   }
   REQUIRE(reference.geometry.segments.size() > 3000);
-  REQUIRE(reference.process_normals.size() == 3088);
+  REQUIRE(reference.process_normals.size() == 3128);  // 3,088 planar + 40 airbridge edges
 
   // Round-robin element distribution: every rank owns crack copies from everywhere.
   std::vector<int> round_robin(ne);
