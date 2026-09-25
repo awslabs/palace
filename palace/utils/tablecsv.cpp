@@ -113,11 +113,31 @@ bool Table::insert(Column &&column)
   return true;
 }
 
+void Table::RebuildNameIndex()
+{
+  name_to_index.clear();
+  name_to_index.reserve(cols.size());
+  for (std::size_t i = 0; i < cols.size(); i++)
+  {
+    name_to_index[cols[i].name] = i;
+  }
+}
+
 Column &Table::operator[](std::string_view name)
 {
   auto it = name_to_index.find(std::string(name));
   if (it == name_to_index.end())
   {
+    // Column names can be reassigned after a file is loaded, without insert, which leaves
+    // the map stale, so fall back to the columns themselves and repair the entry.
+    for (std::size_t i = 0; i < cols.size(); i++)
+    {
+      if (cols[i].name == name)
+      {
+        name_to_index[std::string(name)] = i;
+        return cols[i];
+      }
+    }
     throw std::out_of_range(fmt::format("Column {} not found in table", name).c_str());
   }
   return cols[it->second];

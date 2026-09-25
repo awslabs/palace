@@ -4,6 +4,7 @@
 #ifndef PALACE_UTILS_TABLECSV_HPP
 #define PALACE_UTILS_TABLECSV_HPP
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -83,6 +84,8 @@ class Table
 
   // Map of column name to column index to avoid duplicate column names and allow
   // fast retrieval by name.
+  // TODO(C++20): a transparent hash and equal, so a key can be probed without building a
+  // std::string, and contains() instead of count().
   std::unordered_map<std::string, std::size_t> name_to_index;
 
   // Cache value to reserve vector space by default.
@@ -120,8 +123,19 @@ public:
   // Check if a column with the given name exists.
   [[nodiscard]] bool has(std::string_view name) const
   {
-    return name_to_index.count(std::string(name)) > 0;
+    if (name_to_index.count(std::string(name)) > 0)
+    {
+      return true;
+    }
+    // Column names can be reassigned after a file is loaded, without insert, which leaves
+    // the map stale, so fall back to the columns themselves.
+    return std::any_of(cols.cbegin(), cols.cend(),
+                       [name](const Column &col) { return col.name == name; });
   }
+
+  // Rebuild the name index from the columns, for callers that reassign Column::name
+  // directly rather than going through insert.
+  void RebuildNameIndex();
 
   // Access columns via vector position or column name.
   inline Column &operator[](std::size_t idx) { return cols.at(idx); }
