@@ -403,8 +403,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("libceed+magma", when="@0.14:")
 
     # Umpire 2026.07 requires C++20, while Palace's GPU dependencies use C++17.
-    depends_on("umpire@:2025.12", when="@0.16: +cuda")
-    depends_on("umpire@:2025.12", when="@0.16: +rocm")
+    depends_on("umpire@:2025.12 cxxstd=17", when="@0.16: +cuda")
+    depends_on("umpire@:2025.12 cxxstd=17", when="@0.16: +rocm")
 
     with when("+cuda"):
         # GPU-aware MPI
