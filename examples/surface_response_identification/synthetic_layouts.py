@@ -298,6 +298,143 @@ def stress_suite():
 PORT = 9
 
 
+def fillet_points(corner, d_in, d_out, radius, chords, perturb=None):
+    """Inscribed polyline of the fillet replacing the sharp corner at `corner` between the
+    incoming direction d_in and the outgoing direction d_out (unit vectors): the tangent
+    points and `chords` chords on the circle of the given radius tangent to both arms.
+    `perturb` = (rng, relative) moves the interior chord vertices radially by up to the
+    relative fraction of the radius (a seeded mesh perturbation; the tangent points stay)."""
+    d_in = np.asarray(d_in, dtype=float)
+    d_out = np.asarray(d_out, dtype=float)
+    corner = np.asarray(corner, dtype=float)
+    turn = math.atan2(d_in[0] * d_out[1] - d_in[1] * d_out[0], d_in @ d_out)  # signed
+    t = radius * math.tan(abs(turn) / 2.0)  # tangent length
+    ta = corner - t * d_in
+    tb = corner + t * d_out
+    n_in = np.array([-d_in[1], d_in[0]]) * (1.0 if turn > 0 else -1.0)  # toward the centre
+    centre = ta + radius * n_in
+    points = []
+    for k in range(chords + 1):
+        phi = abs(turn) * k / chords
+        # rotate (ta - centre) about the centre by phi in the turn direction
+        v = ta - centre
+        c, s_ = math.cos(phi), math.sin(phi)
+        sign = 1.0 if turn > 0 else -1.0
+        r = np.array([c * v[0] - sign * s_ * v[1], sign * s_ * v[0] + c * v[1]])
+        if perturb is not None and 0 < k < chords:
+            rng, relative = perturb
+            r = r * (1.0 + relative * (2.0 * rng.random() - 1.0))
+        points.append(tuple(centre + r))
+    assert np.allclose(points[-1], tb, atol=1.0e-9 * max(1.0, radius))
+    return points
+
+
+def filleted_polygon(vertices, radius, chords, perturb=None, fillet=None):
+    """Replace every corner of the counter-clockwise polygon (or those where fillet(i) is
+    true) by an inscribed fillet polyline of `chords` chords."""
+    n = len(vertices)
+    out = []
+    for i in range(n):
+        p = np.asarray(vertices[i], dtype=float)
+        if fillet is not None and not fillet(i):
+            out.append(tuple(p))
+            continue
+        a = np.asarray(vertices[(i - 1) % n], dtype=float)
+        b = np.asarray(vertices[(i + 1) % n], dtype=float)
+        d_in = (p - a) / np.linalg.norm(p - a)
+        d_out = (b - p) / np.linalg.norm(b - p)
+        out.extend(fillet_points(p, d_in, d_out, radius, chords, perturb))
+    return loop(out)
+
+
+FILLET_RATIOS = [0.1, 0.25, 0.5, 0.9, 1.1, 2.0, 5.0, 9.0, 11.0, 20.0]
+FILLET_TURNS = [45, 90, 135, 180]
+FILLET_CHORDS = [2, 4, 8, 16]
+
+
+def fillet_chord_length(radius, turn_degrees, chords):
+    return 2.0 * radius * math.sin(math.radians(turn_degrees) / (2.0 * chords))
+
+
+def fillet_suite(ratios=FILLET_RATIOS, turns=FILLET_TURNS, chords=FILLET_CHORDS, perturbed_chords=8):
+    """Decision 82(3) mesh-independence gate: a bar (width 4R) bent by the turn with both bend
+    corners filleted at rho = ratio x R (45 / 90 / 135 deg), or a strip of width 2 rho ending in
+    a semicircle (180 deg), each meshed with 2 / 4 / 8 / 16 chords per fillet plus a seeded
+    radial perturbation (1 % of the chord) of the chord vertices at 8 chords; and the DS-SCT-002
+    cross-shaped pattern (1 um fillets = 0.5 R with two 45 deg chords). Expectation per case:
+    rho < R -> one rounded corner per fillet (total turn, rho / R), no CurvedEdge; R <= rho <
+    10 R -> one CurvedEdge per fillet with RadiusOverR = rho / R exactly; rho >= 10 R ->
+    straight-like isolated edges; the isolated / curved features are one per chain group so
+    the counts do not depend on the chords. The gate holds for the chord counts whose chord is
+    shorter than 2R (a coarser polyline is a different geometry at the scale of R: its kinks
+    are real corners)."""
+    R = RADIUS
+    layouts = []
+    for q in ratios:
+        rho = q * R
+        for turn in turns:
+            # Perturbation: 1 % of the chord length, radially (a mesh-noise scale: the joint
+            # turns keep their sign; a perturbation on the scale of rho is a different arc).
+            variants = [(n, None) for n in chords] + [(perturbed_chords, 0.01 * fillet_chord_length(rho, turn, perturbed_chords) / rho)]
+            for n, perturbation in variants:
+                tag = f"fillet-q{q:g}-t{turn}-c{n}" + ("-perturbed" if perturbation else "")
+                perturb = (np.random.default_rng(20260925), perturbation) if perturbation else None
+                if turn < 180:
+                    width = 4.0 * R
+                    tangent = rho * math.tan(math.radians(turn) / 2.0)
+                    arm = max(16.0, tangent + 4.0 * R + 6.0)
+                    theta = 180.0 - turn
+                    base = bent_bar(width, arm, theta)["Points"]
+                    # corners 1 (outer, convex) and 4 (inner, concave) are the bend corners
+                    poly = filleted_polygon(base, rho, n, perturb, fillet=lambda i: i in (1, 4))
+                    xs = [p[0] for p in poly["Points"]]; ys = [p[1] for p in poly["Points"]]
+                    half_x = math.ceil(max(abs(v) for v in xs) + 6.0); half_y = math.ceil(max(abs(v) for v in ys) + 6.0)
+                    corner_rounded = q < 1.0
+                    expected = {
+                        # a rounded corner separates its arms like a sharp one (two isolated edges per side); a bend continues the edge (one)
+                        "Features": ({"ConvexCorner": 5, "ConcaveCorner": 1, "IsolatedEdge": 6} if corner_rounded else ({"ConvexCorner": 4, "CurvedEdge": 2, "IsolatedEdge": 4} if q < 10.0 else {"ConvexCorner": 4, "IsolatedEdge": 4})),
+                        "Exclusions": {},
+                        "CornerSignatures": {f"ConvexCorner@{theta:g}@{q:g}": 1, f"ConcaveCorner@{theta:g}@{q:g}": 1} if corner_rounded else {},
+                        "CurvedRadii": {f"{q:g}": 2} if (1.0 <= q < 10.0) else {},
+                        "BendAnnotation": q if q >= 10.0 else None,
+                    }
+                    lay = layout(tag, [sheet(GROUND, poly)], half_x=half_x, half_y=half_y, lc_fine=min(1.0, max(0.05, rho)), lc_far=max(6.0, half_x / 5.0), notes=f"bar of width 4R bent by {turn} deg, both bend corners filleted with rho = {q:g} R as {n} chords" + (" (chord vertices perturbed radially by 1 % of the chord)" if perturbation else ""), expected=expected)
+                else:
+                    # U-turn: strip of width 2 rho from the box edge x = -half_x to x = 0, semicircular end.
+                    half_x = math.ceil(max(30.0, 6.0 * R + 2.0 * rho)); half_y = math.ceil(max(30.0, rho + 8.0 * R))
+                    # Semicircle about (0, 0) from (0, -rho) through (rho, 0) to (0, rho), n chords.
+                    arc = []
+                    for k in range(n + 1):
+                        phi = -math.pi / 2.0 + math.pi * k / n
+                        r = rho
+                        if perturb is not None and 0 < k < n:
+                            r *= 1.0 + perturb[1] * (2.0 * perturb[0].random() - 1.0)
+                        arc.append((r * math.cos(phi), r * math.sin(phi)))
+                    poly = loop([(-half_x, -rho)] + arc + [(-half_x, rho)])
+                    corner_rounded = q < 1.0
+                    expected = {
+                        "Features": ({"ConvexCorner": 1, "SameConductorStrip": 1} if corner_rounded else ({"CurvedEdge": 1, "IsolatedEdge": 1} if q < 10.0 else {"IsolatedEdge": 1})),
+                        "CornerSignatures": {f"ConvexCorner@0@{q:g}": 1} if corner_rounded else {},
+                        "CurvedRadii": {f"{q:g}": 1} if (1.0 <= q < 10.0) else {},
+                        "BendAnnotation": q if q >= 10.0 else None,
+                        "Vertices": {"TruncationCut": 2},
+                    }
+                    lay = layout(tag, [sheet(GROUND, poly)], half_x=half_x, half_y=half_y, lc_fine=min(1.0, max(0.05, rho)), lc_far=max(6.0, half_x / 5.0), notes=f"strip of width 2 rho = {2 * q:g} R ending in a semicircle of {n} chords (a U-turn)" + (" (chord vertices perturbed radially by 1 % of the chord)" if perturbation else ""), expected=expected)
+                lay["Fillet"] = {"RatioOverR": q, "TurnDegrees": turn, "Chords": n, "Perturbed": bool(perturbation), "ChordOverR": fillet_chord_length(rho, turn, n) / R}
+                layouts.append(lay)
+    # DS-SCT-002: a cross of 6 um arms with 1 um fillets meshed as two 45 deg chords.
+    cross = cross_shape(12.0, 6.0)["Points"]
+    for n in (2, 4):
+        poly = filleted_polygon(cross, 1.0, n)
+        layouts.append(layout(f"fillet-cross-sct002-c{n}", [sheet(GROUND, poly)], lc_fine=0.5, notes=f"DS-SCT-002 pattern: cross of 6 um arms, every corner a 1 um fillet (0.5 R) as {n} chords", expected={
+            "Features": {"ConvexCorner": 8, "ConcaveCorner": 4, "IsolatedEdge": 1},
+            "CornerSignatures": {"ConvexCorner@90@0.5": 8, "ConcaveCorner@90@0.5": 4},
+            "CurvedRadii": {},
+            "Exclusions": {},
+        }))
+    return layouts
+
+
 def decision_82_suite():
     """Oracle cases of the decision-82 rules with their expectation stated before running
     (`Expected`, checked by check_expected): (1) one interaction distance and no cross-plane
@@ -387,6 +524,16 @@ def check_expected(manifest, expected, radius=RADIUS):
     if "ExcludedVertices" in expected:
         n = sum(1 for v in ident["Vertices"] if v["Type"] == "Excluded")
         checks["ExcludedVertices"] = {"Expected": expected["ExcludedVertices"], "Manifest": n, "Pass": n == expected["ExcludedVertices"]}
+    if "CornerSignatures" in expected:
+        found = Counter(f"{f['Type']}@{f['Signature']['AngleDegrees']:g}@{f['Signature']['CornerRadiusOverR']:g}" for f in ident["Features"] if f["Type"] in ("ConvexCorner", "ConcaveCorner") and f["Signature"].get("CornerRadiusOverR", 0.0) > 0.0)
+        checks["CornerSignatures"] = {"Expected": dict(expected["CornerSignatures"]), "Manifest": dict(found), "Pass": found == Counter(expected["CornerSignatures"])}
+    if "CurvedRadii" in expected:
+        found = Counter(f"{f['Signature']['RadiusOverR']:g}" for f in ident["Features"] if f["Type"] == "CurvedEdge")
+        checks["CurvedRadii"] = {"Expected": dict(expected["CurvedRadii"]), "Manifest": dict(found), "Pass": found == Counter(expected["CurvedRadii"])}
+    if expected.get("BendAnnotation") is not None:
+        annotations = [f["BendRadiusOverR"] for f in ident["Features"] if f["Type"] == "IsolatedEdge" and f.get("BendRadiusOverR") is not None]
+        target = expected["BendAnnotation"]
+        checks["BendAnnotation"] = {"Expected": target, "Manifest": annotations, "Pass": bool(annotations) and all(abs(a - target) <= 0.02 * target for a in annotations)}
     if "CrossPlaneFeatures" in expected:
         normal = np.array(ident["ReferenceProcessNormal"], dtype=float)
         offsets = [round(float(np.array(s["Key"][0]) @ normal), 6) for s in ident["Segments"]]

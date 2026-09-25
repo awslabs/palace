@@ -66,7 +66,13 @@ def perimeter_census(perimeter, radius, targets):
     excluded_vertices = []
     point_contacts = 0
     cuts = 0
+    # The arc rule (decision 82(3)): corner vertices inside a fitted arc are absorbed (a
+    # rounded corner or a bend describes them), not corners of their own.
+    arcs = P.arc_groups(perimeter, radius)
+    absorbed = {v for arc in arcs for v in arc["AbsorbedCorners"]}
     for index, v in enumerate(perimeter.vertices):
+        if index in absorbed:
+            continue
         if v.physical_kind in ("CORNER", "ENDPOINT", "JUNCTION"):
             if len({perimeter.edges[e].component for e in v.edges if perimeter.edges[e].kind not in P.CUT_KINDS}) > 1:
                 point_contacts += 1
@@ -102,7 +108,7 @@ def perimeter_census(perimeter, radius, targets):
             bend_radius = h / (2.0 * math.sin(math.radians(v.turn_degrees) / 2.0))
             smooth_turns.append((v.turn_degrees, float(bend_radius)))
     smooth = np.array(smooth_turns) if smooth_turns else np.zeros((0, 2))
-    runs = P.rounded_runs(perimeter, radius)
+    runs = arcs
     interactions = P.edge_interactions(perimeter, radius)
     distances = np.array([i[2] for i in interactions]) if interactions else np.zeros(0)
     quantum = 1.0e-8 * radius
@@ -136,7 +142,7 @@ def perimeter_census(perimeter, radius, targets):
         "VerticesByKind": dict(vertex_kinds),
         "TruncationCuts": cuts,
         "FeatureVertices": sum(1 for c in corners if not c["Excluded"]),
-        "RoundedRuns": {"Runs": len(runs), "RoundedCorners": sum(1 for r in runs if r["Rounded"]), "Detail": runs[:50]},
+        "RoundedRuns": {"Runs": len(runs), "RoundedCorners": sum(1 for r in runs if r["Rounded"]), "Bends": sum(1 for r in runs if not r["Rounded"]), "AbsorbedCorners": len(absorbed), "Detail": runs[:50]},
         "TurnHistogram": {"Bins": TURN_BINS, "Counts": histogram},
         "SubThresholdTurns": {
             "Count": int(smooth.shape[0]),
