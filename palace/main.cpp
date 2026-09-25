@@ -10,6 +10,7 @@
 #include <mpi.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
+#include "BuildInfo.hpp"
 #include "driver.hpp"
 #include "fem/libceed/ceed.hpp"
 #include "linalg/hypre.hpp"
@@ -28,14 +29,25 @@
 
 using namespace palace;
 
-static const char *GetPalaceGitTag()
+static void PrintPalaceVersionInfo(MPI_Comm comm)
 {
-#if defined(PALACE_GIT_COMMIT)
-  static const char *commit = PALACE_GIT_COMMIT_ID;
-#else
-  static const char *commit = "UNKNOWN";
-#endif
-  return commit;
+  std::string build_system = buildinfo::build_system;
+  if (buildinfo::build_id[0] != '\0')
+  {
+    build_system += " /";
+    build_system += buildinfo::build_id;
+  }
+  Mpi::Print(comm,
+             "Palace version: {}\n"
+             "Git commit: {}\n"
+             "Schema version: {}\n"
+             "Build system: {}\n"
+             "\nBuild dependencies:\n",
+             buildinfo::version, buildinfo::git_sha, GetSchemaVersion(), build_system);
+  for (const auto &dependency : buildinfo::dependencies)
+  {
+    Mpi::Print(comm, "  {}: {}\n", dependency.name, dependency.version);
+  }
 }
 
 static const char *GetPalaceCeedJitSourceDir()
@@ -122,9 +134,9 @@ static void PrintPalaceBanner(MPI_Comm comm)
 
 static void PrintPalaceInfo(MPI_Comm comm, int np, int nt, int ngpu, mfem::Device &device)
 {
-  if (std::strcmp(GetPalaceGitTag(), "UNKNOWN"))
+  if (std::string_view(buildinfo::git_sha) != "unavailable")
   {
-    Mpi::Print(comm, "Git changeset ID: {}\n", GetPalaceGitTag());
+    Mpi::Print(comm, "Git changeset ID: {}\n", buildinfo::git_sha);
   }
   Mpi::Print(comm, "Running with {:d} MPI process{}", np, (np > 1) ? "es" : "");
   if (nt > 0)
@@ -171,7 +183,7 @@ int main(int argc, char *argv[])
                "Usage: {} [OPTIONS] CONFIG_FILE\n\n"
                "Options:\n"
                "  -h, --help           Show this help message and exit\n"
-               "  --version            Show version information and exit\n"
+               "  -V, --version        Show version information and exit\n"
                "  -dry-run, --dry-run  Parse configuration file for errors and exit\n\n",
                executable_path.substr(executable_path.find_last_of('/') + 1));
   };
@@ -183,10 +195,9 @@ int main(int argc, char *argv[])
       Help();
       return 0;
     }
-    if (argv_i == "--version")
+    if ((argv_i == "-V") || (argv_i == "--version"))
     {
-      Mpi::Print(world_comm, "Palace version: {}\nSchema version: {}\n", GetPalaceGitTag(),
-                 GetSchemaVersion());
+      PrintPalaceVersionInfo(world_comm);
       return 0;
     }
     if ((argv_i == "-dry-run") || (argv_i == "--dry-run"))
@@ -268,7 +279,7 @@ int main(int argc, char *argv[])
   // reuse the exact same code path on an in-process IoData. See palace/driver.hpp
   // for the preconditions it expects.
   PrintPalaceInfo(world_comm, world_size, omp_threads, ngpu, *device);
-  palace::Run(iodata, world_comm, omp_threads, GetPalaceGitTag());
+  palace::Run(iodata, world_comm, omp_threads, buildinfo::git_sha);
 
   // Finalize libCEED.
   ceed::Finalize();
