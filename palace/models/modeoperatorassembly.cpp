@@ -22,6 +22,20 @@ namespace
 {
 constexpr bool skip_zeros = false;
 
+void EliminateEssentialDofs(mfem::HypreParMatrix &A, const mfem::Array<int> &dbc_tdof_list,
+                            Operator::DiagonalPolicy diag_policy)
+{
+  // HypreParMatrix::EliminateBC only finds the eliminated column entries of a row through
+  // the transposed entry, so it assumes a structurally symmetric matrix. A component with
+  // only one of the off-diagonal blocks (Atn without -Btn, or the reverse) is not, so
+  // eliminate the rows and columns for a general sparsity pattern first and then set the
+  // diagonal.
+  MFEM_ASSERT(diag_policy != Operator::DIAG_KEEP,
+              "Unsupported diagonal policy for block system matrix elimination!");
+  std::unique_ptr<mfem::HypreParMatrix> Ae(A.EliminateRowsCols(dbc_tdof_list));
+  A.EliminateBC(dbc_tdof_list, diag_policy);
+}
+
 void AddScaled(std::unique_ptr<mfem::HypreParMatrix> &sum, const mfem::HypreParMatrix *term,
                double coefficient)
 {
@@ -415,11 +429,11 @@ ComplexHypreParMatrix BuildSystemMatrixA(
   }
   if (Ar)
   {
-    Ar->EliminateBC(dbc_tdof_list, diag_policy);
+    EliminateEssentialDofs(*Ar, dbc_tdof_list, diag_policy);
   }
   if (Ai)
   {
-    Ai->EliminateBC(dbc_tdof_list, Operator::DIAG_ZERO);
+    EliminateEssentialDofs(*Ai, dbc_tdof_list, Operator::DIAG_ZERO);
   }
   return {std::move(Ar), std::move(Ai)};
 }
