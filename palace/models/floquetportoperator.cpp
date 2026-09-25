@@ -81,7 +81,7 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
     port_normal(3), comm(nd_fespace.GetComm())
 {
   // Set incident polarization coefficients: E_inc = α_TE ê_TE + α_TM ê_TM.
-  const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
+  const double inv_sqrt2 = 1.0 / std::numbers::sqrt2;
   if (data.inc_polarization == "TE")
   {
     inc_alpha_te = 1.0;

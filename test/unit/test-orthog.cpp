@@ -364,8 +364,8 @@ TEST_CASE("OrthogonalizeColumn Weighted - Real 1", "[orthog][Serial]")
     v.SetSize(3);
     v = 0.0;
   }
-  V[0][0] = 1.0 / std::sqrt(2);  // Normalized w.r.t W
-  V[1][2] = 1.0 / std::sqrt(2);
+  V[0][0] = 1.0 / std::numbers::sqrt2;  // Normalized w.r.t W
+  V[1][2] = 1.0 / std::numbers::sqrt2;
 
   Vector w(3);
   w.UseDevice(true);
@@ -410,8 +410,8 @@ TEST_CASE("OrthogonalizeColumn Weighted - Complex 1", "[orthog][Serial]")
     v.SetSize(3);
     v = 0.0;
   }
-  V[0].Real()[0] = 1.0 / std::sqrt(2);
-  V[1].Imag()[2] = 1.0 / std::sqrt(2);
+  V[0].Real()[0] = 1.0 / std::numbers::sqrt2;
+  V[1].Imag()[2] = 1.0 / std::numbers::sqrt2;
 
   ComplexVector w(3);
   w.UseDevice(true);

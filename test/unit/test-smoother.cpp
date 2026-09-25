@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <cmath>
+#include <numbers>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -103,7 +104,7 @@ TEST_CASE("Smoother estimates use the Hermitian Jacobi similarity",
   // D⁻¹A is not symmetric, while D⁻¹ᐟ²AD⁻¹ᐟ² has eigenvalues 1 ± 1/√2.
   TestOperator A;
   ComplexWrapperOperator Ac(&A, nullptr);
-  const double lambda_max = 1.0 + 1.0 / std::sqrt(2.0);
+  const double lambda_max = 1.0 + 1.0 / std::numbers::sqrt2;
 
   ChebyshevSmoother<Operator> chebyshev(Mpi::World(), 1, 1, 1.0);
   Check(chebyshev, A, 4.0 / (3.0 * lambda_max));

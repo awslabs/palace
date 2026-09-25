@@ -1785,7 +1785,7 @@ void PostOperator<solver_t>::MeasureFloquetPorts() const
       // Unitary: |S_RHC|² + |S_LHC|² = |S_TE|² + |S_TM|² (energy conserved).
       if (circular_output)
       {
-        const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
+        const double inv_sqrt2 = 1.0 / std::numbers::sqrt2;
         std::map<std::tuple<int, int, bool>, std::complex<double>> circ;
         std::set<std::pair<int, int>> orders;
         for (const auto &[key, S] : S_all)
@@ -1869,7 +1869,7 @@ void PostOperator<solver_t>::MeasureSParameter() const
     // Cross-type observations require a √2 correction:
     //   - Floquet drives, lumped/wave observes: lumped |b|² = 2×P_avg, divide by √2
     //   - Lumped/wave drives, Floquet observes: Floquet |S|² = P_avg, multiply by √2
-    const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
+    const double inv_sqrt2 = 1.0 / std::numbers::sqrt2;
     const bool floquet_drives = (drive_port_type == PortType::FloquetPort);
     const bool lumped_or_wave_drives =
         (drive_port_type == PortType::LumpedPort || drive_port_type == PortType::WavePort);
@@ -1923,7 +1923,7 @@ void PostOperator<solver_t>::MeasureSParameter() const
       {
         if (lumped_or_wave_drives)
         {
-          S *= std::sqrt(2.0);
+          S *= std::numbers::sqrt2;
         }
         auto [m, n, is_te] = key;
         auto pol = measurement_cache.floquet_circular_output ? (is_te ? "RHC" : "LHC")
