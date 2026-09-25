@@ -57,8 +57,8 @@ Phase-1 results: `coupon-accuracy-assessment-20260913/geometry-identification-fi
 Phase 2 (curved-edge chain rule, design item (b) 7): signatures are rounded on the recorded
 `SignatureLengthQuantumOverR` = 1e-6 / `SignatureAngleQuantumDegrees` = 1e-6 grids; chains are
 polylines whose sub-corner joints carry a windowed curvature (window R, turns spread over the
-adjacent half-chords); portions with a windowed bend radius below `StraightBendRadiusOverR` = 20
-are the curved classes `CurvedEdge` / `CurvedSameConductorStrip` / `CurvedSameConductorGap` /
+adjacent half-chords); portions with a windowed bend radius below `StraightBendRadiusOverR` = 10
+(decision 75; phase 2 used 20) are the curved classes `CurvedEdge` / `CurvedSameConductorStrip` / `CurvedSameConductorGap` /
 `CurvedDifferentConductorGap` (`RadiusOverR` in the signature), straight-like portions keep the
 straight classes with a `BendRadiusOverR` annotation on every feature; two chains pair along a bend
 when their closest-point separation is constant within `PairSeparationToleranceRelative` = 0.05

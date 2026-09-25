@@ -119,14 +119,16 @@ smaller endpoint.
    `CurvatureWindowOverR` = 1 x R centred on it (the response at a point integrates the geometry
    within ~R; the window is clipped at the ends of an open chain and periodic on a closed one).
    The windowed bend radius is its inverse. A chain point is *curved* when the windowed bend
-   radius is below `StraightBendRadiusOverR` = 20 x R (quantized strict less), otherwise
+   radius is below `StraightBendRadiusOverR` = 10 x R (quantized strict less), otherwise
    *straight-like*; the crossings are solved on the piecewise-linear windowed curvature so
-   that they do not depend on the mesh. Rationale for 20: the first-order curvature
-   correction to an edge response scales as R / radius (the response integrates the field
-   over distances <= R from the edge and an in-plane bend perturbs that geometry at relative
-   order R / radius), so at 20 R it is <= 5 % of the edge response — a few 1e-4 of the total
-   for edge corrections of a few per cent, the same 5 % level as the fillet and pair
-   tolerances. Consequences:
+   that they do not depend on the mesh. Rationale for 10 (decision 75, 2026-09-24): the
+   first-order curvature correction to an edge response scales as R / radius (the response
+   integrates the field over distances <= R from the edge and an in-plane bend perturbs that
+   geometry at relative order R / radius), so at 10 R it is <= 10 % of the local edge
+   correction — ~1e-3 of the corrected edge participation for edge corrections of a few per
+   cent; the transmon's 38.9 um = 19.4 R CPW bends are straight-like, and curved coupons for
+   1 < radius / R < 10 are deferred to the library regeneration (phase 2 used 20, i.e. 5 %; no
+   synthetic class changes between the two). Consequences:
    * a straight-like chain portion is described by the straight features (isolated edge,
      pair) with a `BendRadiusOverR` annotation on every feature (the tightest windowed radius
      over its portions; not hashed; null on straight chains);
@@ -228,7 +230,7 @@ matching pass). The new top-level `Identification` object carries the contract:
                   "VertexJoinsClusterOverR": 3, "VertexWindowOverR": 1,
                   "ParallelCosineTolerance": 1e-8, "RoundedCornerTangentTolerance": 0.05,
                   "SignatureLengthQuantumOverR": 1e-6, "SignatureAngleQuantumDegrees": 1e-6,
-                  "StraightBendRadiusOverR": 20, "CurvatureWindowOverR": 1,
+                  "StraightBendRadiusOverR": 10, "CurvatureWindowOverR": 1,
                   "PairSeparationToleranceRelative": 0.05, "PairSeparationSamplesPerInterval": 16,
                   "Comparison": "strict less on the quantized grid"},
   "ReferenceProcessNormal": [nx, ny, nz],

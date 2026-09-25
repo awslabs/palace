@@ -59,7 +59,7 @@ CORNER_TURN_TOLERANCE_DEGREES = P.CORNER_ANGLE_TOLERANCE_DEGREES
 # Curved-edge chain rule (SURFACE-RESPONSE-IDENTIFICATION.md (b) 7, Identification.Conventions):
 # a bend whose radius is below STRAIGHT_BEND_RADIUS_OVER_R x R is a curved class; two chains pair
 # along a bend when their closest-point separation is constant within PAIR_SEPARATION_TOLERANCE.
-STRAIGHT_BEND_RADIUS_OVER_R = 20.0
+STRAIGHT_BEND_RADIUS_OVER_R = 10.0
 PAIR_SEPARATION_TOLERANCE = 0.05
 
 
@@ -610,7 +610,7 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
     corner_pairs_within_2r = sum(1 for i in range(len(corner_points)) for j in range(i + 1, len(corner_points)) if np.linalg.norm(corner_points[i] - corner_points[j]) <= 2.0 * radius * (1 + 1e-9))
     # Design rule (SURFACE-RESPONSE-IDENTIFICATION.md (b) 7): chains that pair along a bend
     # are pair features; their cross-chord interactions are not events. The expected
-    # curvature class follows the layout's design bend (inner side radius vs 20 R).
+    # curvature class follows the layout's design bend (inner side radius vs 10 R, decision 75).
     bent_pairs = design_bent_pairs(all_edges, corner_points, radius)
     roots, _ = design_chains(all_edges, corner_points)
     bend = lay.get("Bend")
@@ -774,7 +774,7 @@ def compare_with_oracle(orc, audit_result, manifest):
     if bent_records:
         # Pairs along bends: the manifest's pair classes must be exactly the expected classes
         # (straight-like strip, plus the curved strip when the design inner radius is below
-        # 20 R) with separations within the pair tolerance of the design width; the chord-wise
+        # STRAIGHT_BEND_RADIUS_OVER_R x R) with separations within the pair tolerance of the design width; the chord-wise
         # parallel pairs inside a bent pair are not separate features.
         expected_classes = set()
         for record in bent_records:

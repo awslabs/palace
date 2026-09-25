@@ -48,13 +48,15 @@ constexpr double kRoundedCornerTangentTolerance = 0.05;
 // radius is below kStraightBendRadiusOverRadius x R is curved: the first-order curvature
 // correction to an edge response scales as R / radius (the response integrates the field
 // over distances <= R from the edge, and an in-plane bend perturbs that geometry at
-// relative order R / radius), so at 20 R it is <= 5 % of the edge response, i.e. a few 1e-4
-// of the total for edge corrections of a few per cent — the same 5 % level as the other
-// identification tolerances. Two chains are a pair along a bend when the closest-point
+// relative order R / radius), so at 10 R it is <= 10 % of the local edge correction, i.e.
+// ~1e-3 of the corrected edge participation for edge corrections of a few per cent
+// (decision 75: the transmon's 38.9 um = 19.4 R CPW bends are straight-like; curved coupons
+// for 1 < radius / R < 10 are deferred to the library regeneration). Two chains are a pair
+// along a bend when the closest-point
 // separation over their paired intervals varies by at most kPairSeparationTolerance x the
 // minimum separation (a polyline of sub-corner turns <= 30 deg at constant width varies by
 // 1 / cos(15 deg) - 1 = 3.5 %; the pair response sensitivity d dR/dd is O(1)).
-constexpr double kStraightBendRadiusOverRadius = 20.0;
+constexpr double kStraightBendRadiusOverRadius = 10.0;
 constexpr double kCurvatureWindowOverRadius = 1.0;
 constexpr double kPairSeparationTolerance = 0.05;
 constexpr int kPairSeparationSamplesPerInterval = 16;

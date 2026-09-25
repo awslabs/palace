@@ -633,7 +633,7 @@ TEST_CASE("SurfaceResponseIdentificationCurvedEdges",
 {
   // Curved-edge chain rule (decision 73(1)): a 3 um bar (1.5 R) along a polyline arc. The
   // two sides are a pair along the bend (constant separation), never a cluster; the arc is
-  // a curved pair when the inner bend radius is below 20 R and a straight-like strip with a
+  // a curved pair when the inner bend radius is below 10 R (decision 75) and a straight-like strip with a
   // curvature annotation otherwise; the leads are a plain strip; the two bar ends are one
   // two-corner cluster each. The classes do not depend on the discretisation (turn per
   // vertex) and the features do not change under mesh refinement (A5).
