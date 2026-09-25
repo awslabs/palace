@@ -590,8 +590,7 @@ TEST_CASE("ModeEigenSolver p-multigrid preconditioning", "[boundarymodeoperator]
   // keeps its sign from the integration by parts), and essential DOFs are eliminated with a
   // unit diagonal, so its Chebyshev smoothers see a diagonal of mixed sign (with essential
   // boundaries) or a negative diagonal (without). The multigrid preconditioned solve must
-  // reproduce the mode of the sparse direct one. (Serial only: the solve is comparatively
-  // expensive, and the smoother tests cover the collective diagonal validation.)
+  // reproduce the mode of the sparse direct one.
   auto check = [](const std::function<void(IoData &)> &configure_bcs)
   {
     const auto direct = SolveRectangularModesMultigrid(1, configure_bcs);
