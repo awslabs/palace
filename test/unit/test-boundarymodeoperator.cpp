@@ -6,6 +6,7 @@
 #include <complex>
 #include <functional>
 #include <memory>
+#include <tuple>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -254,6 +255,131 @@ SolveRectangularModesMultigrid(int mg_max_levels,
   return kn;
 }
 
+// Components of the 2D mode eigenproblem matrix for a W × H rectangle (MakeCartesian2D
+// boundary attributes: bottom = 1, x = W side = 2, top = 3, x = 0 side = 4), with elements
+// below y = H/4 of attribute 1 (ε = 4) and the rest of attribute 2 (vacuum). The elements
+// are distributed over the processes in vertical strips, so that all processes but the
+// last have no elements on the side x = W.
+class RectangleModeModel
+{
+public:
+  static constexpr double W = 2.0, H = 1.0;
+
+private:
+  IoData iodata;
+  std::unique_ptr<Mesh> mesh;
+  std::unique_ptr<mfem::ND_FECollection> nd_fec;
+  std::unique_ptr<mfem::H1_FECollection> h1_fec;
+  std::unique_ptr<FiniteElementSpace> nd_fespace, h1_fespace;
+  std::unique_ptr<MaterialOperator> mat_op;
+  std::unique_ptr<SurfaceImpedanceOperator> surf_z_op;
+  std::unique_ptr<FarfieldBoundaryOperator> farfield_op;
+  std::unique_ptr<SurfaceConductivityOperator> surf_sigma_op;
+  std::unique_ptr<SurfaceRationalImpedanceOperator> surf_rz_op;
+  std::unique_ptr<mfem::HypreParMatrix> Atnr, Atni, Btnr, Bttr;
+  std::unique_ptr<mode_assembly::ModeOperatorModel> model;
+
+public:
+  RectangleModeModel(const std::function<void(IoData &)> &configure_bcs)
+    : iodata(Units(1.0, 1.0))
+  {
+    MPI_Comm comm = Mpi::World();
+    iodata.problem.type = ProblemType::BOUNDARYMODE;
+    iodata.model.Lc = 1.0;
+    auto &substrate = iodata.domains.materials.emplace_back();
+    substrate.attributes = {1};
+    substrate.epsilon_r.s = {4.0, 4.0, 4.0};
+    auto &vacuum = iodata.domains.materials.emplace_back();
+    vacuum.attributes = {2};
+    configure_bcs(iodata);
+    iodata.solver.order = 2;
+    iodata.solver.boundary_mode.freq = 1.0;
+    iodata.solver.boundary_mode.n = 1;
+
+    constexpr int nx = 8, ny = 4;
+    auto serial_mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian2D(nx, ny, mfem::Element::TRIANGLE, false, W, H));
+    const int num_procs = Mpi::Size(comm);
+    REQUIRE(num_procs <= nx);
+    std::vector<int> partitioning(serial_mesh->GetNE());
+    for (int i = 0; i < serial_mesh->GetNE(); i++)
+    {
+      mfem::Vector center;
+      serial_mesh->GetElementCenter(i, center);
+      serial_mesh->SetAttribute(i, (center(1) < 0.25 * H) ? 1 : 2);
+      partitioning[i] =
+          std::min(static_cast<int>(center(0) / W * num_procs), num_procs - 1);
+    }
+    serial_mesh->SetAttributes();
+    iodata.NondimensionalizeInputs(serial_mesh);
+    mesh = std::make_unique<Mesh>(
+        std::make_unique<mfem::ParMesh>(comm, *serial_mesh, partitioning.data()));
+    iodata.CheckConfiguration();
+
+    nd_fec = std::make_unique<mfem::ND_FECollection>(iodata.solver.order, 2);
+    h1_fec = std::make_unique<mfem::H1_FECollection>(iodata.solver.order, 2);
+    nd_fespace = std::make_unique<FiniteElementSpace>(*mesh, nd_fec.get());
+    h1_fespace = std::make_unique<FiniteElementSpace>(*mesh, h1_fec.get());
+    mat_op = std::make_unique<MaterialOperator>(iodata, *mesh);
+    surf_z_op = std::make_unique<SurfaceImpedanceOperator>(iodata, *mat_op, mesh->Get());
+    farfield_op = std::make_unique<FarfieldBoundaryOperator>(iodata, *mat_op, mesh->Get());
+    surf_sigma_op =
+        std::make_unique<SurfaceConductivityOperator>(iodata, *mat_op, mesh->Get());
+    surf_rz_op =
+        std::make_unique<SurfaceRationalImpedanceOperator>(iodata, *mat_op, mesh->Get());
+
+    std::tie(Atnr, Atni) = mode_assembly::AssembleAtn(*nd_fespace, *h1_fespace, *mat_op);
+    Btnr.reset(Atnr->Transpose());
+    *Btnr *= -1.0;
+    Bttr = std::get<0>(mode_assembly::AssembleBtt(*nd_fespace, *mat_op));
+    mfem::Array<int> dbc_tdof_list;  // No essential boundaries
+    model = std::make_unique<mode_assembly::ModeOperatorModel>(
+        *nd_fespace, *h1_fespace, *mat_op, nullptr, *surf_z_op, *farfield_op,
+        *surf_sigma_op, *surf_rz_op, *Bttr, Atnr.get(), Atni.get(), Btnr.get(),
+        dbc_tdof_list);
+  }
+
+  const mode_assembly::OperatorComponent &
+  GetComponent(mode_assembly::CoefficientType type) const
+  {
+    const auto &components = model->GetComponents();
+    auto it =
+        std::find_if(components.begin(), components.end(),
+                     [type](const auto &component) { return component.type == type; });
+    REQUIRE(it != components.end());
+    return *it;
+  }
+
+  // Pairing xᴴ A x of a component A with x = [Eₜ; Eₙ] for the in-plane field Eₜ = eₜ ŷ,
+  // tangential to the sides x = 0 and x = W, and a constant out-of-plane field Eₙ = eₙ.
+  // Returns the pairing with the real and the imaginary part of the component.
+  std::complex<double> Pairing(const mode_assembly::OperatorComponent &component, double et,
+                               double en) const
+  {
+    MPI_Comm comm = Mpi::World();
+    const int nd_size = nd_fespace->GetTrueVSize(), h1_size = h1_fespace->GetTrueVSize();
+    ComplexVector x(nd_size + h1_size), y(nd_size + h1_size);
+    x = 0.0;
+    {
+      mfem::ParGridFunction E(&nd_fespace->Get());
+      mfem::Vector field(2);
+      field(0) = 0.0;
+      field(1) = et;
+      mfem::VectorConstantCoefficient coeff(field);
+      E.ProjectCoefficient(coeff);
+      Vector t(nd_size);
+      E.GetTrueDofs(t);
+      x.Real().SetVector(t, 0);
+    }
+    for (int i = nd_size; i < nd_size + h1_size; i++)
+    {
+      x.Real()[i] = en;
+    }
+    component.op->Mult(x, y);
+    return {linalg::Dot(comm, x.Real(), y.Real()), linalg::Dot(comm, x.Real(), y.Imag())};
+  }
+};
+
 }  // namespace
 
 TEST_CASE("ModeEigenSolver PEC", "[boundarymodeoperator][Serial]")
@@ -483,99 +609,51 @@ TEST_CASE("ModeOperatorModel farfield damping uses the neighboring material",
   // The first-order absorbing boundary condition adds iω/Z₀ times the boundary mass of the
   // in-plane (ND, tangential trace) and out-of-plane (H1, with the negative sign of the
   // H1 block) field components, where 1/Z₀ = √(ε/μ) is taken from the domain material
-  // adjacent to each boundary element. The absorbing side x = W spans two materials, with
-  // ε = 4 (1/Z₀ = 2) along y < H/4 and vacuum (1/Z₀ = 1) above, so a field tangential to
-  // it with unit magnitude gives ±(2 H/4 + 3 H/4).
-  constexpr double W = 2.0, H = 1.0;
-  MPI_Comm comm = Mpi::World();
-  Units units(1.0, 1.0);
-  IoData iodata(units);
-  iodata.problem.type = ProblemType::BOUNDARYMODE;
-  iodata.model.Lc = 1.0;
+  // adjacent to each boundary element. The absorbing side x = W spans both materials, with
+  // 1/Z₀ = 2 along y < H/4 and 1/Z₀ = 1 above, so a unit field tangential to it gives
+  // ±(2 H/4 + 3 H/4) (the frequency scalar iω is applied separately).
+  using RMM = RectangleModeModel;
+  RMM rect([](IoData &iodata) { iodata.boundaries.farfield.attributes = {2}; });
+  const auto &component = rect.GetComponent(mode_assembly::CoefficientType::OMEGA);
+  const double expected = 2.0 * 0.25 * RMM::H + 1.0 * 0.75 * RMM::H;
+  const auto pair_t = rect.Pairing(component, 1.0, 0.0);
+  const auto pair_n = rect.Pairing(component, 0.0, 1.0);
+  CHECK(pair_t.real() == 0.0);
+  CHECK_THAT(pair_t.imag(), WithinRel(expected, 1.0e-12));
+  CHECK(pair_n.real() == 0.0);
+  CHECK_THAT(pair_n.imag(), WithinRel(-expected, 1.0e-12));
+}
+
+TEST_CASE("ModeOperatorModel boundary components on processes without the boundary",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // Surface conductivity and rational impedance boundaries contribute a unit boundary mass
+  // component each (the frequency dependence is applied separately), which is assembled
+  // collectively also by processes without elements on the boundary (all but the last
+  // here).
+  using RMM = RectangleModeModel;
+  RMM rect(
+      [](IoData &iodata)
+      {
+        auto &cond = iodata.boundaries.conductivity.emplace_back();
+        cond.attributes = {2};
+        cond.sigma = 5.0e7;
+        auto &rz = iodata.boundaries.rational_impedance.emplace_back();
+        rz.attributes = {2};
+        rz.num = {1.0e-12, 50.0};
+        rz.den = {1.0};
+      });
+  for (auto type : {mode_assembly::CoefficientType::SURFACE_CONDUCTIVITY,
+                    mode_assembly::CoefficientType::RATIONAL_IMPEDANCE})
   {
-    auto &substrate = iodata.domains.materials.emplace_back();
-    substrate.attributes = {1};
-    substrate.epsilon_r.s = {4.0, 4.0, 4.0};
-    auto &vacuum = iodata.domains.materials.emplace_back();
-    vacuum.attributes = {2};
+    const auto &component = rect.GetComponent(type);
+    const auto pair_t = rect.Pairing(component, 1.0, 0.0);
+    const auto pair_n = rect.Pairing(component, 0.0, 1.0);
+    CHECK_THAT(pair_t.real(), WithinRel(RMM::H, 1.0e-12));
+    CHECK(pair_t.imag() == 0.0);
+    CHECK_THAT(pair_n.real(), WithinRel(-RMM::H, 1.0e-12));
+    CHECK(pair_n.imag() == 0.0);
   }
-  iodata.boundaries.farfield.attributes = {2};  // MakeCartesian2D: x = W
-  iodata.solver.order = 2;
-  iodata.solver.boundary_mode.freq = 1.0;
-  iodata.solver.boundary_mode.n = 1;
-
-  auto serial_mesh = std::make_unique<mfem::Mesh>(
-      mfem::Mesh::MakeCartesian2D(8, 4, mfem::Element::TRIANGLE, false, W, H));
-  for (int i = 0; i < serial_mesh->GetNE(); i++)
-  {
-    mfem::Vector center;
-    serial_mesh->GetElementCenter(i, center);
-    serial_mesh->SetAttribute(i, (center(1) < 0.25 * H) ? 1 : 2);
-  }
-  serial_mesh->SetAttributes();
-  iodata.NondimensionalizeInputs(serial_mesh);
-  Mesh palace_mesh(std::make_unique<mfem::ParMesh>(comm, *serial_mesh));
-  iodata.CheckConfiguration();
-
-  mfem::ND_FECollection nd_fec(iodata.solver.order, palace_mesh.Dimension());
-  mfem::H1_FECollection h1_fec(iodata.solver.order, palace_mesh.Dimension());
-  FiniteElementSpace nd_fespace(palace_mesh, &nd_fec);
-  FiniteElementSpace h1_fespace(palace_mesh, &h1_fec);
-  MaterialOperator mat_op(iodata, palace_mesh);
-  SurfaceImpedanceOperator surf_z_op(iodata, mat_op, palace_mesh.Get());
-  FarfieldBoundaryOperator farfield_op(iodata, mat_op, palace_mesh.Get());
-  SurfaceConductivityOperator surf_sigma_op(iodata, mat_op, palace_mesh.Get());
-  SurfaceRationalImpedanceOperator surf_rz_op(iodata, mat_op, palace_mesh.Get());
-
-  auto [Atnr, Atni] = mode_assembly::AssembleAtn(nd_fespace, h1_fespace, mat_op);
-  std::unique_ptr<mfem::HypreParMatrix> Btnr(Atnr->Transpose());
-  *Btnr *= -1.0;
-  auto [Bttr, Btti] = mode_assembly::AssembleBtt(nd_fespace, mat_op);
-  mfem::Array<int> dbc_tdof_list;  // No essential boundaries
-  mode_assembly::ModeOperatorModel model(nd_fespace, h1_fespace, mat_op, nullptr, surf_z_op,
-                                         farfield_op, surf_sigma_op, surf_rz_op, *Bttr,
-                                         Atnr.get(), Atni.get(), Btnr.get(), dbc_tdof_list);
-  const auto &components = model.GetComponents();
-  auto omega_component =
-      std::find_if(components.begin(), components.end(), [](const auto &component)
-                   { return component.type == mode_assembly::CoefficientType::OMEGA; });
-  REQUIRE(omega_component != components.end());
-
-  // Apply the component to [Eₜ; Eₙ] and return the pairing with the input. The damping
-  // only has an imaginary part (the frequency scalar iω is applied separately).
-  const int nd_size = nd_fespace.GetTrueVSize(), h1_size = h1_fespace.GetTrueVSize();
-  auto Pairing = [&](const Vector &et, double en)
-  {
-    ComplexVector x(nd_size + h1_size), y(nd_size + h1_size);
-    x = 0.0;
-    x.Real().SetVector(et, 0);
-    for (int i = nd_size; i < nd_size + h1_size; i++)
-    {
-      x.Real()[i] = en;
-    }
-    omega_component->op->Mult(x, y);
-    CHECK(linalg::Norml2(comm, y.Real()) == 0.0);
-    return linalg::Dot(comm, x.Real(), y.Imag());
-  };
-  const double expected = 2.0 * 0.25 * H + 1.0 * 0.75 * H;
-
-  // In-plane field ŷ, tangential to the absorbing boundary.
-  Vector et(nd_size);
-  {
-    mfem::ParGridFunction E(&nd_fespace.Get());
-    mfem::Vector yhat(2);
-    yhat(0) = 0.0;
-    yhat(1) = 1.0;
-    mfem::VectorConstantCoefficient coeff(yhat);
-    E.ProjectCoefficient(coeff);
-    E.GetTrueDofs(et);
-  }
-  CHECK_THAT(Pairing(et, 0.0), WithinRel(expected, 1.0e-12));
-
-  // Unit out-of-plane field.
-  Vector zero(nd_size);
-  zero = 0.0;
-  CHECK_THAT(Pairing(zero, 1.0), WithinRel(-expected, 1.0e-12));
 }
 
 }  // namespace palace

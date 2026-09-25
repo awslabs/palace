@@ -302,11 +302,19 @@ ModeOperatorModel::ModeOperatorModel(
   auto add_boundary_component =
       [&](CoefficientType type, int index, MaterialPropertyCoefficient &unit)
   {
+    // Processes without elements on the boundary have an empty coefficient and assemble
+    // their (zero) part of the component without the integrators.
     BilinearForm att(nd_fespace), ann(h1_fespace);
-    att.AddBoundaryIntegrator<VectorFEMassIntegrator>(unit);
+    if (!unit.empty())
+    {
+      att.AddBoundaryIntegrator<VectorFEMassIntegrator>(unit);
+    }
     auto Attr = assemble_nd(att);
     unit *= -1.0;
-    ann.AddBoundaryIntegrator<MassIntegrator>(unit);
+    if (!unit.empty())
+    {
+      ann.AddBoundaryIntegrator<MassIntegrator>(unit);
+    }
     add_component(type, index, std::move(Attr), nullptr, assemble_h1(ann), nullptr);
   };
   for (std::size_t g = 0; g < surf_sigma_op.Size(); g++)
