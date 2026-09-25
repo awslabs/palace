@@ -1,0 +1,42 @@
+#!/bin/bash
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Linux build of the palace executable from a frozen CMake source tree (build_from_cmake_tree.py)
+# on one m8g.48xlarge node, with the recorded compilers / modules of the dependency prefix
+# (gcc 14.3.0, OpenMPI 5.0.8, ARM Performance Libraries 24.10). The login node cannot build.
+#
+#   scp source-freeze-<label>.tar.gz soca-green-job:$ROOT/
+#   ssh soca-green-job "cd $ROOT && qsub -v FREEZE=source-freeze-<label>,BUILD=linux-build-<label> \
+#       source-freeze-<label>/examples/surface_response_identification/cluster/job-linux-build.pbs"
+#
+# Outputs under $ROOT: $BUILD/ (configure.log, build.log, provenance-before/after.json, binary.json),
+# palace-<HEAD7>-<sha12>.bin, $BUILD.pbs.log, $BUILD-status.json.
+#PBS -N palace-cmake-build
+#PBS -q normal-g
+#PBS -P DS-EM-FEM
+#PBS -r n
+#PBS -l select=1:ncpus=192:mpiprocs=192
+#PBS -l place=scatter:excl
+#PBS -l instance_type=m8g.48xlarge
+#PBS -l efa_support=True,subnet_id=subnet-0c98d793bbcebb39a
+#PBS -l walltime=01:30:00
+#PBS -j oe
+set -euo pipefail
+ROOT=${ROOT:-/data/home/simlap/coupon_accuracy_assessment_20260913}
+: "${FREEZE:?FREEZE=<source-freeze name under ROOT>}" "${BUILD:?BUILD=<new build directory name under ROOT>}"
+cd "$ROOT"
+exec > "$ROOT/$BUILD.pbs.log" 2>&1
+trap 'code=$?; printf "{\"ExitCode\":%d,\"CompletedUTC\":\"%s\",\"JobID\":\"%s\"}\n" "$code" "$(date -u +%FT%TZ)" "${PBS_JOBID:-}" > "$ROOT/$BUILD-status.json"' EXIT
+[ -e "$BUILD" ] && { echo "$BUILD exists: refusing to rebuild"; exit 2; }
+source /etc/profile.d/modules.sh
+module load gcc/14.3.0 openmpi/5.0.8-gcc14 arm/armpl/24.10-gcc
+export OMP_NUM_THREADS=1 PYTHONDONTWRITEBYTECODE=1
+module list
+date -u; hostname; nproc; grep MemTotal /proc/meminfo
+sha256sum "$FREEZE.tar.gz"
+if [ ! -d "$FREEZE" ]; then tar xzf "$FREEZE.tar.gz"; fi
+python3 "$FREEZE/examples/surface_response_identification/cluster/build_from_cmake_tree.py" \
+    --source "$ROOT/$FREEZE" --build "$ROOT/$BUILD" --jobs "${JOBS:-96}"
+BIN=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["Path"])' "$ROOT/$BUILD/binary.json")
+"$BIN" --help | head -5 || true
+echo "=== done $(date -u +%FT%TZ)"
