@@ -262,6 +262,18 @@ public:
   bool WillWriteFields() const { return ShouldWriteFields(); }
   bool WillWriteFields(int step) const { return ShouldWriteFields(step); }
 
+  // Force fields at this step to be written regardless of the Save count (e.g. for
+  // FluxLoopExcitation states). Keeps output_save_indices sorted for ShouldWriteFields.
+  void RequestFieldSave(std::size_t step)
+  {
+    auto it =
+        std::lower_bound(output_save_indices.begin(), output_save_indices.end(), step);
+    if (it == output_save_indices.end() || *it != step)
+    {
+      output_save_indices.insert(it, step);
+    }
+  }
+
 protected:
   // Write to disk the E- and B-fields extracted from the solution vectors. Note that
   // fields are not redimensionalized, to do so one needs to compute: B <= B * (μ₀ H₀), E
