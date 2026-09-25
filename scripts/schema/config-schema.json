@@ -1676,6 +1676,11 @@
           "items": {
             "type": "number"
           }
+        },
+        "SaveField": {
+          "type": "boolean",
+          "description": "Whether to save this excitation's ParaView field. Independent of the `/Solver/Magnetostatic/Save` sweep count.",
+          "default": true
         }
       }
     },
