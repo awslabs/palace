@@ -1,0 +1,146 @@
+/* Table of contents */
+dl.config-toc {
+  margin: 1em 0 2em 0;
+}
+
+dl.config-toc > dt {
+  font-weight: bold;
+  margin-top: 0.3em;
+}
+
+dl.config-toc > dd {
+  margin: 0 0 0 1em;
+  font-size: 0.9em;
+}
+
+/* JSON Pointer key path breadcrumb */
+p.config-keypath {
+  font-family: var(--code-font);
+  font-size: 0.9em;
+  margin: 0.2em 0 0.6em 0;
+}
+
+p.config-keypath a {
+  text-decoration: none;
+}
+
+p.config-keypath a:hover {
+  text-decoration: underline;
+}
+
+/* Badge row repeated under section headings */
+span.config-section-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  font-weight: bold;
+  gap: 0.4em;
+  margin-bottom: 0.6em;
+}
+
+/* Configuration reference: field entry list */
+dl.palace-config {
+  margin: 0.4em 0 1em 0;
+}
+
+dl.palace-config > dt {
+  font-family: var(--code-font);
+  font-size: 0.95em;
+  font-weight: bold;
+  padding: 0.35em 0;
+  margin-top: 0.6em;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4em;
+}
+
+dl.palace-config > dt > a {
+  color: inherit;
+  text-decoration: none;
+}
+
+dl.palace-config > dt > a > code {
+  padding: 0.15em 0.5em;
+}
+
+dl.palace-config > dt > a:hover {
+  text-decoration: underline;
+}
+
+dl.palace-config > dd {
+  margin: 0 0 0 1.2em;
+  padding: 0.3em 0 0.2em 0.5em;
+  border-left: 1px solid var(--color-sidebar-border, #ddd);
+}
+
+dl.palace-config > dd > p {
+  margin: 0.2em 0;
+}
+
+/* Inline metadata badges — mini admonition style: colored border, colored text, neutral fill.
+   Colors mirror Documenter's admonition palette for visual consistency. */
+span.config-type,
+span.config-required,
+span.config-default,
+span.config-advanced,
+span.config-deprecated,
+span.config-constraint {
+  font-family: var(--code-font);
+  border: 1.5px solid color-mix(in srgb, currentColor 50%, transparent);
+  height: auto;
+  white-space: normal;
+  padding: 0.15em 0.5em;
+}
+
+span.config-type     { color: #4a4a4a; }
+span.config-required   { color: #cb3c33; }
+span.config-default    { color: #259a12; }
+span.config-constraint { color: #1a6d8e; }
+span.config-advanced   { color: #a98800; }
+span.config-deprecated { color: #3c5dcd; }
+
+/* Dark mode overrides — match Documenter's admonition header colors in dark theme */
+html.theme--documenter-dark span.config-type     { color: #dbdee0; }
+html.theme--documenter-dark span.config-required  { color: #cb3c33; }
+html.theme--documenter-dark span.config-default   { color: #259a12; }
+html.theme--documenter-dark span.config-constraint { color: #4d7eb2; }
+html.theme--documenter-dark span.config-advanced  { color: #f4c72f; }
+html.theme--documenter-dark span.config-deprecated { color: #3c5dcd; }
+
+/* Badges with mixed text+code: baseline-align flex children, normalize code size */
+span.config-type,
+span.config-default,
+span.config-constraint {
+  align-items: baseline;
+}
+
+span.config-type code,
+span.config-default code,
+span.config-constraint code {
+  margin-left: 0.2em;
+  font-size: 1em;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+/* Enum values: bullet-style nested dl */
+dl.config-enum {
+  margin: 0.5em 0 0.2em 0;
+  padding: 0;
+  list-style: none;
+}
+
+dl.config-enum > dt {
+  display: list-item;
+  list-style-type: disc;
+  list-style-position: inside;
+  font-family: var(--code-font);
+  font-size: 0.9em;
+  font-weight: normal;
+  margin: 0.15em 0 0 1em;
+}
+
+dl.config-enum > dd {
+  margin: 0 0 0.3em 2.5em;
+  font-size: 0.9em;
+}
