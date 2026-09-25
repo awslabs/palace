@@ -171,7 +171,15 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
       output.WriteFullTableTrunc();
     }
-    sub.WriteParaView(post_dir.string(), idxs, A);
+    // Honor Solver.Magnetostatic.Save: write the first n_post excitation fields.
+    if (const int n_save =
+            std::min(iodata.solver.magnetostatic.n_post, static_cast<int>(A.size()));
+        n_save > 0)
+    {
+      sub.WriteParaView(post_dir.string(),
+                        std::vector<int>(idxs.begin(), idxs.begin() + n_save),
+                        std::vector<Vector>(A.begin(), A.begin() + n_save));
+    }
     Mpi::Print("\nSubstructuring inductance sweep complete ({:d} flux loop{})\n", n,
                (n > 1) ? "s" : "");
     return {ErrorIndicator(), sub.RegionGlobalTrueVSize()};

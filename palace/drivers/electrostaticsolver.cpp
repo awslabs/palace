@@ -73,7 +73,15 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
       output.WriteFullTableTrunc();
     }
-    sub.WriteParaView(post_dir.string(), terminals, fields);
+    // Honor Solver.Electrostatic.Save: write the first n_post excitation fields.
+    if (const int n_save =
+            std::min(iodata.solver.electrostatic.n_post, static_cast<int>(fields.size()));
+        n_save > 0)
+    {
+      sub.WriteParaView(post_dir.string(),
+                        std::vector<int>(terminals.begin(), terminals.begin() + n_save),
+                        std::vector<Vector>(fields.begin(), fields.begin() + n_save));
+    }
     Mpi::Print("\nSubstructuring capacitance sweep complete ({:d} terminal{})\n", n,
                (n > 1) ? "s" : "");
     return {ErrorIndicator(), sub.RegionGlobalTrueVSize()};
