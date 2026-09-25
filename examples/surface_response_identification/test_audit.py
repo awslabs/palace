@@ -556,7 +556,8 @@ class PatchGateTest(unittest.TestCase):
         # 5: unmatched isolated edge (feature 3); 6: excluded (truncation).
         features = [
             {"Id": 0, "Type": "IsolatedEdge", "Length": 5.0, "Portions": [[0, 0.0, 3.0], [1, 0.0, 2.0]], "Vertices": [], "Match": {"Status": "Matched", "Model": "iso"}},
-            {"Id": 1, "Type": "SameConductorStrip", "Length": 4.0, "Portions": [[2, 0.0, 2.0], [3, 0.0, 2.0]], "Vertices": [], "Match": {"Status": "Matched", "Model": "strip"}},
+            # Both sides of the strip lie on one chain (a slot): the sides come from Sides.
+            {"Id": 1, "Type": "SameConductorStrip", "Length": 4.0, "Portions": [[2, 0.0, 2.0], [3, 0.0, 2.0]], "Sides": [0, 1], "Vertices": [], "Match": {"Status": "Matched", "Model": "strip"}},
             {"Id": 2, "Type": "ConvexCorner", "Length": 2.0, "Portions": [[4, 0.0, 2.0]], "Vertices": [7], "Match": {"Status": "Matched", "Model": "corner"}},
             {"Id": 3, "Type": "IsolatedEdge", "Length": 1.0, "Portions": [[5, 0.0, 1.0]], "Vertices": [], "Match": {"Status": "Missing"}},
         ]
@@ -564,7 +565,7 @@ class PatchGateTest(unittest.TestCase):
             {"Key": [[0, 0, 0], [3, 0, 0]], "Length": 3.0, "Chain": 0, "Portions": [[0.0, 3.0, 0]]},
             {"Key": [[3, 0, 0], [5, 0, 0]], "Length": 2.0, "Chain": 0, "Portions": [[0.0, 2.0, 0]]},
             {"Key": [[0, 1, 0], [2, 1, 0]], "Length": 2.0, "Chain": 1, "Portions": [[0.0, 2.0, 1]]},
-            {"Key": [[0, 2, 0], [2, 2, 0]], "Length": 2.0, "Chain": 2, "Portions": [[0.0, 2.0, 1]]},
+            {"Key": [[0, 2, 0], [2, 2, 0]], "Length": 2.0, "Chain": 1, "Portions": [[0.0, 2.0, 1]]},
             {"Key": [[0, 3, 0], [2, 3, 0]], "Length": 2.0, "Chain": 3, "Portions": [[0.0, 2.0, 2]]},
             {"Key": [[0, 4, 0], [1, 4, 0]], "Length": 1.0, "Chain": 4, "Portions": [[0.0, 1.0, 3]]},
             {"Key": [[0, 5, 0], [1, 5, 0]], "Length": 1.0, "Chain": 5, "Exclusion": {"Class": "TruncationCut", "Reason": "test"}},

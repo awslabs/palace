@@ -508,9 +508,10 @@ def patch_gates(identification, patches, radius):
                 coverage_defects.append({"Feature": feature_id, "Type": feature["Type"], "Portions": len(portions), "PatchIntervals": len(intervals), "Examples": [(i, p) for i, p in zip(intervals, portions) if i[0] != p[0] or abs(i[1] - p[1]) > tol or abs(i[2] - p[2]) > tol][:4]})
             else:
                 covered_length += sum(b - a for _, a, b in intervals)
-            # Side factor: 1 / number of chains the feature claims (pairs 1/2, clusters 1/n).
-            chains = {segments[seg]["Chain"] for seg, _, _ in portions}
-            expected_side = 1.0 / len(chains) if feature["Type"] not in ("IsolatedEdge", "CurvedEdge") else 1.0
+            # Side factor: 1 / number of sides of the feature (pairs 1/2, clusters 1/n;
+            # the manifest's Sides labels, both sides of a pair may share one chain).
+            sides = set(feature.get("Sides", [])) or {segments[seg]["Chain"] for seg, _, _ in portions}
+            expected_side = 1.0 / len(sides) if feature["Type"] not in ("IsolatedEdge", "CurvedEdge") else 1.0
             for key, group in groups.items():
                 quadrature = sum(r["QuadratureWeight"] * r["ModelWeight"] for r in group)
                 if abs(quadrature - 1.0) > 1.0e-9:

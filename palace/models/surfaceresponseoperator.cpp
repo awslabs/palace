@@ -5607,6 +5607,7 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
     double a = 0.0, b = 0.0;
     std::size_t geometry_index = 0;
     double s0 = 0.0, s1 = 0.0;
+    int side = 0;
   };
   auto Frame = [&](const IdentifiedPortion &portion)
   {
@@ -5624,6 +5625,7 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
     fp.geometry_index = portion.segment;
     fp.s0 = portion.s0;
     fp.s1 = portion.s1;
+    fp.side = portion.side;
     return fp;
   };
   auto IsPec = [](const EdgeSegment3D &segment)
@@ -5831,32 +5833,20 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
              feature.type == "CurvedDifferentConductorGap" ||
              feature.type == "CurvedSameConductorStrip")
     {
-      // Two sides (chains); the model's first edge is the lower one along the feature's
-      // lateral axis (the higher one for chirality -1: the canonical orientation is the
+      // Two sides (the identification's side labels in increasing lateral offset; both
+      // sides may lie on one perimeter chain, e.g. the slot of a shorted CPW); the model's
+      // first edge is side 0 (side 1 for chirality -1: the canonical orientation is the
       // mirror). Each side carries half of the longitudinal measure (the mean of the two
       // sides: exact for a straight pair, the centreline for a concentric one).
       std::map<int, std::vector<FramedPortion>> sides;
       for (const auto &fp : portions)
       {
-        sides[identification.segments[fp.geometry_index].chain].push_back(fp);
+        sides[fp.side].push_back(fp);
       }
-      MFEM_VERIFY(sides.size() == 2, "A paired feature must claim exactly two chains!");
-      std::vector<std::pair<double, const std::vector<FramedPortion> *>> ordered;
-      for (const auto &[chain, side] : sides)
-      {
-        (void)chain;
-        double lateral = 0.0, length = 0.0;
-        for (const auto &fp : side)
-        {
-          const Point3D mid = Interpolate(*fp.segment, 0.5 * (fp.a + fp.b));
-          lateral += (fp.b - fp.a) * Dot(Subtract(mid, feature.origin), feature.axes[1]);
-          length += fp.b - fp.a;
-        }
-        ordered.emplace_back(lateral / length, &side);
-      }
-      std::sort(ordered.begin(), ordered.end(),
-                [](const auto &first, const auto &second)
-                { return first.first < second.first; });
+      MFEM_VERIFY(sides.size() == 2 && sides.count(0) && sides.count(1),
+                  "A paired feature must claim exactly two sides!");
+      std::vector<std::pair<double, const std::vector<FramedPortion> *>> ordered = {
+          {0.0, &sides.at(0)}, {1.0, &sides.at(1)}};
       if (feature.chirality < 0)
       {
         std::swap(ordered[0], ordered[1]);
@@ -5910,31 +5900,22 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
     }
     else if (feature.type == "ParallelEdgeCluster")
     {
-      // Sides ordered by the lateral coordinate (reversed for chirality -1) = the model's
-      // edges by offset; conductor labels by first appearance in that order.
+      // Sides in increasing lateral offset (the identification's labels; reversed for
+      // chirality -1) = the model's edges by offset; conductor labels by first appearance in
+      // that order.
       std::map<int, std::vector<FramedPortion>> sides;
       for (const auto &fp : portions)
       {
-        sides[identification.segments[fp.geometry_index].chain].push_back(fp);
+        sides[fp.side].push_back(fp);
       }
-      MFEM_VERIFY(sides.size() >= 3,
-                  "A parallel-edge cluster feature must claim at least three chains!");
+      MFEM_VERIFY(sides.size() >= 3 && sides.begin()->first == 0 &&
+                      sides.rbegin()->first + 1 == static_cast<int>(sides.size()),
+                  "A parallel-edge cluster feature must claim at least three sides!");
       std::vector<std::pair<double, const std::vector<FramedPortion> *>> ordered;
-      for (const auto &[chain, side] : sides)
+      for (const auto &[side, side_portions] : sides)
       {
-        (void)chain;
-        double lateral = 0.0, length = 0.0;
-        for (const auto &fp : side)
-        {
-          const Point3D mid = Interpolate(*fp.segment, 0.5 * (fp.a + fp.b));
-          lateral += (fp.b - fp.a) * Dot(Subtract(mid, feature.origin), feature.axes[1]);
-          length += fp.b - fp.a;
-        }
-        ordered.emplace_back(lateral / length, &side);
+        ordered.emplace_back(static_cast<double>(side), &side_portions);
       }
-      std::sort(ordered.begin(), ordered.end(),
-                [](const auto &first, const auto &second)
-                { return first.first < second.first; });
       if (feature.chirality < 0)
       {
         std::reverse(ordered.begin(), ordered.end());

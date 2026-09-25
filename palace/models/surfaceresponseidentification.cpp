@@ -1133,6 +1133,9 @@ struct Claim
   int feature = -1;
   int priority = 0;  // 0 cluster, 1 vertex window, 2 translational, 3 isolated
   Interval interval;
+  // Side of a pair / parallel cluster in its canonical lateral order (0 = the lowest offset
+  // along the feature's lateral axis); 0 for every other feature.
+  int side = 0;
 };
 
 struct EventCore
@@ -2482,13 +2485,14 @@ void Identifier::BuildBentPairs()
         features[feature].axes = {ra.tangent, lateral, n_ref};
         for (const auto *list : {&sub_a, &sub_b})
         {
+          const int side = list == &sub_a ? 0 : 1;  // A at offset 0, B at the separation
           for (const auto &piece : *list)
           {
             if (!piece.constant || !piece.interacting || piece.curved != curved_class)
             {
               continue;
             }
-            claims[piece.run].push_back({feature, 2, piece.interval});
+            claims[piece.run].push_back({feature, 2, piece.interval, side});
           }
         }
       }
@@ -2682,9 +2686,9 @@ void Identifier::BuildTranslationalFeatures()
       const int feature = NewFeature(type, best, chirality);
       features[feature].origin = Scale(0.5 * (span.lo + span.hi), axis);
       features[feature].axes = {axis, lateral, n_ref};
-      for (const std::size_t m : span.component)
+      for (std::size_t k = 0; k < span.component.size(); k++)
       {
-        const auto &member = members[m];
+        const auto &member = members[span.component[k]];
         const Run &run = runs[member.run];
         const bool forward = Dot(run.tangent, axis) > 0.0;
         const double us = Dot(run.start, axis);
@@ -2696,7 +2700,9 @@ void Identifier::BuildTranslationalFeatures()
         {
           continue;
         }
-        claims[member.run].push_back({feature, 2, {s0, s1}});
+        // Side k = the k-th edge in increasing lateral offset (the signature's order for
+        // chirality +1, reversed for -1).
+        claims[member.run].push_back({feature, 2, {s0, s1}, static_cast<int>(k)});
       }
     }
   }
@@ -3145,7 +3151,7 @@ void Identifier::Assign(IdentificationResult &result)
 
   // Resolve the claims by priority and hand the remainder to the chain's isolated edge.
   std::map<std::pair<int, std::string>, int> isolated_features;
-  std::vector<std::vector<std::tuple<double, double, int>>> assigned(runs.size());
+  std::vector<std::vector<std::tuple<double, double, int, int>>> assigned(runs.size());
   for (std::size_t r = 0; r < runs.size(); r++)
   {
     if (runs[r].excluded)
@@ -3165,7 +3171,7 @@ void Identifier::Assign(IdentificationResult &result)
     {
       for (const auto &piece : SubtractIntervals({claim.interval}, taken, Tol()))
       {
-        assigned[r].emplace_back(piece.first, piece.second, claim.feature);
+        assigned[r].emplace_back(piece.first, piece.second, claim.feature, claim.side);
         taken.push_back(piece);
       }
       taken = MergeIntervals(taken, Tol());
@@ -3181,14 +3187,15 @@ void Identifier::Assign(IdentificationResult &result)
       {
         if (piece.second - piece.first <= sliver)
         {
-          assigned[r].emplace_back(piece.first, piece.second, -1);  // unclaimed sliver
+          assigned[r].emplace_back(piece.first, piece.second, -1, 0);  // unclaimed sliver
         }
       }
       std::sort(assigned[r].begin(), assigned[r].end());
       auto &pieces = assigned[r];
       for (std::size_t i = 0; i < pieces.size();)
       {
-        auto &[lo, hi, feature] = pieces[i];
+        auto &[lo, hi, feature, side] = pieces[i];
+        (void)side;
         if (hi - lo > sliver && feature >= 0)
         {
           i++;
@@ -3196,7 +3203,8 @@ void Identifier::Assign(IdentificationResult &result)
         }
         auto joins = [&](std::size_t j)
         {
-          const auto &[jlo, jhi, jfeature] = pieces[j];
+          const auto &[jlo, jhi, jfeature, jside] = pieces[j];
+          (void)jside;
           return jfeature >= 0 && (std::abs(jhi - lo) <= Tol() || std::abs(hi - jlo) <= Tol());
         };
         if (i > 0 && joins(i - 1))
@@ -3215,8 +3223,10 @@ void Identifier::Assign(IdentificationResult &result)
         pieces.erase(pieces.begin() + i);
       }
       taken = cross_layer[r];
-      for (const auto &[lo, hi, feature] : pieces)
+      for (const auto &[lo, hi, feature, side] : pieces)
       {
+        (void)feature;
+        (void)side;
         taken.push_back({lo, hi});
       }
       taken = MergeIntervals(taken, Tol());
@@ -3260,7 +3270,7 @@ void Identifier::Assign(IdentificationResult &result)
           it = isolated_features.emplace(key, feature).first;
         }
         assigned[r].emplace_back(curved_on_run[i].first, curved_on_run[i].second,
-                                 it->second);
+                                 it->second, 0);
       }
       const auto straight = SubtractIntervals(remainder, curved_on_run, Tol());
       if (!straight.empty())
@@ -3280,7 +3290,7 @@ void Identifier::Assign(IdentificationResult &result)
         }
         for (const auto &piece : straight)
         {
-          assigned[r].emplace_back(piece.first, piece.second, it->second);
+          assigned[r].emplace_back(piece.first, piece.second, it->second, 0);
         }
       }
     }
@@ -3289,8 +3299,9 @@ void Identifier::Assign(IdentificationResult &result)
     {
       const Chain &chain = chains[chain_index.at(runs[r].chain)];
       const double offset = chain.run_offset[RunIndexInChain(chain, r)];
-      for (const auto &[lo, hi, feature] : assigned[r])
+      for (const auto &[lo, hi, feature, side] : assigned[r])
       {
+        (void)side;
         feature_max_kappa[feature] =
             std::max(feature_max_kappa[feature], MaxCurvature(chain, offset + lo, offset + hi));
       }
@@ -3390,7 +3401,7 @@ void Identifier::Assign(IdentificationResult &result)
         }
         return std::array<double, 2>{s0, s1};
       };
-      for (const auto &[lo, hi, feature] : assigned[r])
+      for (const auto &[lo, hi, feature, side] : assigned[r])
       {
         const auto portion = SegmentPortion(lo, hi);
         if (!portion)
@@ -3399,7 +3410,7 @@ void Identifier::Assign(IdentificationResult &result)
         }
         const auto [s0, s1] = *portion;
         table.portions.push_back({s0, s1, static_cast<double>(feature)});
-        features[feature].portions.push_back({rs.segment, s0, s1});
+        features[feature].portions.push_back({rs.segment, s0, s1, side});
         features[feature].length += s1 - s0;
         result.assigned_length += s1 - s0;
       }
@@ -3641,9 +3652,13 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
   for (const auto &feature : features)
   {
     nlohmann::json portions = nlohmann::json::array();
+    nlohmann::json sides = nlohmann::json::array();
+    bool multi_sided = false;
     for (const auto &portion : feature.portions)
     {
       portions.push_back({portion.segment, L(portion.s0), L(portion.s1)});
+      sides.push_back(portion.side);
+      multi_sided = multi_sided || portion.side != 0;
     }
     nlohmann::json entry = {
         {"Id", feature.id},
@@ -3666,6 +3681,12 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
     if (feature.matched_model)
     {
       entry["Match"]["Model"] = *feature.matched_model;
+    }
+    if (multi_sided)
+    {
+      // Side of every portion of a pair / parallel cluster (parallel to Portions): the
+      // signature's edge order for chirality +1, reversed for -1.
+      entry["Sides"] = sides;
     }
     feature_list.push_back(std::move(entry));
   }

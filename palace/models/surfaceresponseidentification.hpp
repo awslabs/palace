@@ -75,6 +75,9 @@ struct IdentifiedPortion
   std::size_t segment = 0;
   double s0 = 0.0;
   double s1 = 0.0;
+  // Side of a pair / parallel cluster (0 = the lowest offset along the feature's lateral
+  // axis, i.e. the signature's first edge for chirality +1 and its last for -1); 0 otherwise.
+  int side = 0;
 };
 
 struct IdentifiedFeature
