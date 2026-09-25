@@ -11,7 +11,7 @@ each chip's metal with its own EdgeFrameNormal.
 
     python3 -m surface_response_identification.mesh_census MESH --output census.json
     python3 -m surface_response_identification.mesh_census MESH --output tris.npz \\
-        --extract 10 17 25 --window X0 X1 Y0 Y1 [--window ...]     # xy corners (float32) of the
+        --extract 10 17 25 --window X0 X1 Y0 Y1 [--window ...]     # xy corners (float32), mean z and attribute of the
                                                                     # triangles of these attributes
                                                                     # inside any window (plot fill)
 """
@@ -159,21 +159,23 @@ def census(path):
 
 def extract_triangles(path, attributes, windows):
     data, coordinates, names, elements = open_mesh(path)
-    kept, tags = [], []
+    kept, tags, heights = [], [], []
     for element_type, physical, corners in iter_elements(data, elements, dimensions=(2,)):
         if element_type not in TRIANGLE_TYPES:
             continue
         select = np.isin(physical, attributes)
         if not select.any():
             continue
-        xy = coordinates[corners[select]][:, :, :2]
+        xyz = coordinates[corners[select]]
+        xy = xyz[:, :, :2]
         inside = np.zeros(len(xy), dtype=bool)
         for x0, x1, y0, y1 in windows:
             inside |= (xy[:, :, 0].max(1) >= x0) & (xy[:, :, 0].min(1) <= x1) & (xy[:, :, 1].max(1) >= y0) & (xy[:, :, 1].min(1) <= y1)
         kept.append(xy[inside].astype(np.float32))
         tags.append(physical[select][inside].astype(np.int32))
+        heights.append(xyz[inside][:, :, 2].mean(1))  # mean z: the metal plane of the triangle (plots per plane)
     triangles = np.concatenate(kept) if kept else np.zeros((0, 3, 2), np.float32)
-    return triangles, (np.concatenate(tags) if tags else np.zeros(0, np.int32))
+    return triangles, (np.concatenate(tags) if tags else np.zeros(0, np.int32)), (np.concatenate(heights) if heights else np.zeros(0))
 
 
 def main(argv=None):
@@ -186,8 +188,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.extract:
         windows = args.window or [[-np.inf, np.inf, -np.inf, np.inf]]
-        triangles, tags = extract_triangles(args.mesh, args.extract, windows)
-        np.savez_compressed(args.output, xy=triangles, attribute=tags, windows=np.asarray(windows, dtype=np.float64))
+        triangles, tags, heights = extract_triangles(args.mesh, args.extract, windows)
+        np.savez_compressed(args.output, xy=triangles, attribute=tags, z=heights, windows=np.asarray(windows, dtype=np.float64))
         print(json.dumps({"Triangles": int(len(triangles)), "Output": args.output}))
     else:
         result = census(args.mesh)

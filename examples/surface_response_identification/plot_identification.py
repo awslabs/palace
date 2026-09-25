@@ -12,7 +12,9 @@ by the z coordinate of the segments (one overview per plane).
 Windows: `--zoom X0 X1 Y0 Y1 [--zoom ...]` explicit; `--auto` adds (a) the largest clusters,
 (b) one example of every class, (c) the top facing-check sites (`--facing facing.json`, from
 `facing_check.py`); `--regions regions.json` adds named windows ({"name": [x0, x1, y0, y1], ...}).
-Every figure is listed in `<prefix>-figures.json` (file, kind, window, what it shows).
+Every zoom is drawn once per metal plane present in the window (a flip chip's planes overlap in the
+plan view); planes with fewer than `--min-plane-segments` segments (PEC box edges) get no figures.
+Every figure is listed in `<prefix>-figures.json` (file, kind, plane, window, what it shows).
 
     python3 -m surface_response_identification.plot_identification MANIFEST OUT_PREFIX \\
         [--metal tris.npz] [--facing facing.json] [--auto] [--regions regions.json] [--zoom ...]
@@ -86,19 +88,42 @@ def feature_plane(segments, feature):
     return None
 
 
+def feature_planes(segments, feature):
+    return {round(segments[seg]["Key"][0][2], 6) for seg, _, _ in feature.get("Portions", [])}
+
+
 def segment_planes(segments):
     return sorted({round(s["Key"][0][2], 6) for s in segments})
 
 
-def load_metal(path):
-    if not path:
-        return np.zeros((0, 3, 2)), np.zeros(0, dtype=int)
-    data = np.load(path)
-    return data["xy"], data["attribute"]
+def load_metal(paths):
+    """Concatenated `mesh_census.py --extract` files: xy corners, attribute and (when present) the
+    mean z of every triangle, so that a flip chip's metal can be drawn per plane."""
+    xy, tags, heights = [], [], []
+    for path in paths or []:
+        data = np.load(path)
+        xy.append(data["xy"])
+        tags.append(data["attribute"])
+        heights.append(data["z"] if "z" in data else np.full(len(data["xy"]), np.nan))
+    if not xy:
+        return np.zeros((0, 3, 2)), np.zeros(0, dtype=int), np.zeros(0)
+    return np.concatenate(xy), np.concatenate(tags), np.concatenate(heights)
+
+
+def planes_in_view(segments, planes, view):
+    """The metal planes (of the given list) with a segment inside the window."""
+    found = set()
+    for s in segments:
+        (x0, y0, z), (x1, y1, _) = s["Key"]
+        if min(x0, x1) <= view[1] and max(x0, x1) >= view[0] and min(y0, y1) <= view[3] and max(y0, y1) >= view[2]:
+            z = round(z, 6)
+            if z in planes:
+                found.add(z)
+    return sorted(found)
 
 
 def draw(ax, segments, features, tris, tri_tags, view=None, plane=None, label_clusters=True, lw_scale=1.0,
-         show_excluded=True, metal_palette=None, facing_sites=None):
+         show_excluded=True, metal_palette=None, facing_sites=None, tri_z=None):
     def in_view(box):
         return not view or not (box[1] < view[0] or box[0] > view[1] or box[3] < view[2] or box[2] > view[3])
 
@@ -106,14 +131,18 @@ def draw(ax, segments, features, tris, tri_tags, view=None, plane=None, label_cl
         sel = np.ones(len(tris), dtype=bool)
         if view:
             sel = (tris[:, :, 0].max(1) >= view[0]) & (tris[:, :, 0].min(1) <= view[1]) & (tris[:, :, 1].max(1) >= view[2]) & (tris[:, :, 1].min(1) <= view[3])
+        if plane is not None and tri_z is not None and len(tri_z) == len(tris):
+            # Triangles of this plane (a triangle without a recorded z is drawn on every plane).
+            sel &= np.isnan(tri_z) | (np.abs(tri_z - plane) < 1.0e-3)
         palette = metal_palette or {}
         face = [palette.get(int(t), "#d9d9d9") for t in tri_tags[sel]]
         ax.add_collection(PolyCollection(tris[sel], facecolors=face, edgecolors="none", zorder=0))
     by_type = defaultdict(list)
     for f in features:
-        if plane is not None and feature_plane(segments, f) != plane:
-            continue
         for seg, s0, s1 in f.get("Portions", []):
+            # Per portion: a cluster whose region spans both planes of a flip chip has portions on each.
+            if plane is not None and round(segments[seg]["Key"][0][2], 6) != plane:
+                continue
             line = portion_xy(segments, seg, s0, s1)
             if in_view([min(line[0][0], line[1][0]), max(line[0][0], line[1][0]), min(line[0][1], line[1][1]), max(line[0][1], line[1][1])]):
                 by_type[f["Type"]].append(line)
@@ -137,7 +166,7 @@ def draw(ax, segments, features, tris, tri_tags, view=None, plane=None, label_cl
                 ax.plot(x, y, marker="o", ms=4 * lw_scale, color=COLORS.get(f["Type"], "k"), zorder=3)
     if label_clusters:
         for f in features:
-            if f["Type"] not in CLUSTER_CLASSES or (plane is not None and feature_plane(segments, f) != plane):
+            if f["Type"] not in CLUSTER_CLASSES or (plane is not None and plane not in feature_planes(segments, f)):
                 continue
             box = feature_box(segments, f)
             if not box or not in_view(box):
@@ -202,7 +231,9 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("manifest")
     ap.add_argument("out_prefix")
-    ap.add_argument("--metal", help="npz of metal triangles (mesh_census.py --extract)")
+    ap.add_argument("--metal", action="append", default=[], help="npz of metal triangles (mesh_census.py --extract); repeatable")
+    ap.add_argument("--min-plane-segments", type=int, default=100,
+                    help="planes with fewer perimeter segments (the box edges of a PEC simulation boundary) get no figures")
     ap.add_argument("--facing", help="facing_check.py JSON: sites are boxed and zoomed")
     ap.add_argument("--regions", help="JSON {name: [x0, x1, y0, y1]} of named windows")
     ap.add_argument("--zoom", type=float, nargs=4, action="append", default=[], metavar=("X0", "X1", "Y0", "Y1"))
@@ -214,15 +245,17 @@ def main(argv=None):
     ap.add_argument("--title", default="")
     args = ap.parse_args(argv)
     segments, features, ident = load(args.manifest)
-    tris, tags = load_metal(args.metal)
+    tris, tags, tri_z = load_metal(args.metal)
     facing = json.load(open(args.facing)) if args.facing else None
     os.makedirs(os.path.dirname(os.path.abspath(args.out_prefix)), exist_ok=True)
     index = []
-    planes = segment_planes(segments)
+    plane_counts = defaultdict(int)
+    for s in segments:
+        plane_counts[round(s["Key"][0][2], 6)] += 1
+    planes = sorted(z for z, n in plane_counts.items() if n >= args.min_plane_segments)
     for plane in planes:
         fig, ax = plt.subplots(figsize=(18, 11))
-        plane_tris = tris
-        draw(ax, segments, features, plane_tris, tags, plane=plane, label_clusters=True, facing_sites=facing["Sites"][: args.sites] if facing else None)
+        draw(ax, segments, features, tris, tags, plane=plane, label_clusters=True, facing_sites=facing["Sites"][: args.sites] if facing else None, tri_z=tri_z)
         handles, labels = ax.get_legend_handles_labels()
         ax.legend(handles, labels, loc="upper right", fontsize=7)
         ax.set_title(f"{args.title} metal plane z = {plane:g} um: features by class (clusters boxed red, facing sites magenta)")
@@ -238,19 +271,23 @@ def main(argv=None):
         with open(args.regions) as source:
             for name, window in json.load(source).items():
                 windows.append({"Kind": "region", "Label": name, "Window": window})
+    # One zoom figure per metal plane present in the window (a flip chip's two planes overlap in
+    # the plan view; a feature spanning both planes appears on both figures).
     for k, entry in enumerate(windows):
         view = entry["Window"]
-        fig, ax = plt.subplots(figsize=(11, 9))
-        draw(ax, segments, features, tris, tags, view=view, lw_scale=1.6, facing_sites=facing["Sites"][: args.sites] if facing else None)
-        handles, labels = ax.get_legend_handles_labels()
-        if handles:
-            ax.legend(handles, labels, loc="best", fontsize=7)
-        ax.set_title("\n".join(textwrap.wrap(f"{entry['Kind']} {k + 1}: {entry['Label']}", 120)) + f"\nx[{view[0]:.1f},{view[1]:.1f}] y[{view[2]:.1f},{view[3]:.1f}] um", fontsize=8)
-        fig.tight_layout()
-        path = f"{args.out_prefix}-{entry['Kind']}-{k + 1:02d}.png"
-        fig.savefig(path, dpi=args.dpi)
-        plt.close(fig)
-        index.append({"File": os.path.basename(path), **entry})
+        for plane in planes_in_view(segments, set(planes), view) or [None]:
+            fig, ax = plt.subplots(figsize=(11, 9))
+            draw(ax, segments, features, tris, tags, view=view, plane=plane, lw_scale=1.6, facing_sites=facing["Sites"][: args.sites] if facing else None, tri_z=tri_z)
+            handles, labels = ax.get_legend_handles_labels()
+            if handles:
+                ax.legend(handles, labels, loc="best", fontsize=7)
+            plane_text = f" | metal plane z = {plane:g} um" if plane is not None else ""
+            ax.set_title("\n".join(textwrap.wrap(f"{entry['Kind']} {k + 1}: {entry['Label']}", 120)) + f"\nx[{view[0]:.1f},{view[1]:.1f}] y[{view[2]:.1f},{view[3]:.1f}] um{plane_text}", fontsize=8)
+            fig.tight_layout()
+            path = f"{args.out_prefix}-{entry['Kind']}-{k + 1:02d}" + (f"-z{plane:g}" if plane is not None else "") + ".png"
+            fig.savefig(path, dpi=args.dpi)
+            plt.close(fig)
+            index.append({"File": os.path.basename(path), "Plane": plane, **entry})
     with open(f"{args.out_prefix}-figures.json", "w") as target:
         json.dump(index, target, indent=1)
     print(json.dumps({"Figures": len(index), "Index": f"{args.out_prefix}-figures.json"}))
