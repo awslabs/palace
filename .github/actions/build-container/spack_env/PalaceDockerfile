@@ -1,5 +1,18 @@
 {% extends "container/Dockerfile" %}
 {% block build_stage %}
+# FIXME(awslabs/palace#731): swap in Spack v1.2 with the installer fix so that
+# `--only dependencies` does not skip the `compilers` group root.
+ARG SPACK_FIX_COMMIT=00644dd22f9c7f973cdb1feafdd14ddb6440f494
+RUN git clone -q --filter=blob:none --no-checkout \
+      https://github.com/Sbozzolo/spack.git /tmp/spack-fix && \
+    git -C /tmp/spack-fix checkout -q "$SPACK_FIX_COMMIT" && \
+    spack_root="$(spack location -r)" && \
+    rm -rf "$spack_root/lib/spack" && \
+    cp -a /tmp/spack-fix/lib/spack "$spack_root/lib/spack" && \
+    rm -rf /tmp/spack-fix && \
+    grep -q skipped_roots "$spack_root/lib/spack/spack/new_installer.py" && \
+    spack --version
+
 ARG SPACK_PACKAGES_COMMIT
 RUN spack repo update --commit "$SPACK_PACKAGES_COMMIT" builtin && \
     test "$(git -C "$(spack location --repo builtin)" rev-parse HEAD)" = \
