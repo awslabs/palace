@@ -169,6 +169,13 @@ embedded sheets, mesh preparation):
   per distinct portion direction (~290 s on the 1,184-edge DS-SCT-001 cluster before the local
   constancy rule; 49 s per DS-SCT-001 cell with 606 / 564 / 564-edge clusters; chip-scale
   clusters need a bounded frame rule).
+Phase-3 final gate matrix (executable of the final phase-3 commit): 5,742 / 5,742 PASS — transmon 96 + 23
+cross (digest 625b52700400), externally refined r1 64 + 7, two-transmon chain 64 + 7 (50034198aff5; both
+cells identical hashes), 86 synthetic layouts 4,128 gates + 344 cross-cell comparisons (A3 / A4 / A5 /
+crack) + 930 oracle checks, DS-SCT-001 64 + 7 (+ 8 without a frame normal: 27,081 um
+`UndeterminedProcessSide`, nothing silent). Unit tests: the serial suite `[Serial]~[Regression]~[Long]`
+and `mpirun -n 2 "[Parallel]~[Regression]~[Long]"` (the `[Long]` regression solves are not part of the
+identification gate).
 Phase-3 results: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/phase3/REPORT.md`;
 block summary: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/SUMMARY.md`.
 
