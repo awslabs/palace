@@ -35,20 +35,15 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     const int n = static_cast<int>(terminals.size());
     MFEM_VERIFY(n > 0, "Substructuring electrostatic solve requires terminals!");
 
-    // Capacitance sweep: solve all terminal excitations as one batch (reusing the condensed
-    // environment; the environment solves run multi-RHS), then form the Maxwell capacitance
-    // matrix C_ij = phi_i^T K phi_j.
+    // Capacitance sweep: the Maxwell capacitance matrix C_ij = phi_i^T K phi_j from region
+    // solves against the condensed environment (S_E + terminal-mode couplings), with no
+    // environment solve. Only the fields to be saved (Solver.Electrostatic.Save) need the
+    // environment interior, which is then recovered on demand.
     Mpi::Print("\nSubstructuring capacitance sweep: {:d} terminal excitation{}\n", n,
                (n > 1) ? "s" : "");
-    std::vector<Vector> fields = sub.SolveExcitations(terminals);
-    mfem::DenseMatrix C(n);
-    for (int i = 0; i < n; i++)
-    {
-      for (int j = 0; j < n; j++)
-      {
-        C(i, j) = sub.MutualEnergy(fields[i], fields[j]);
-      }
-    }
+    const int n_save = std::min(iodata.solver.electrostatic.n_post, n);
+    std::vector<Vector> fields;
+    const mfem::DenseMatrix C = sub.CapacitanceMatrix(terminals, &fields, n_save);
     if (root)
     {
       const double F = iodata.units.Dimensionalize<Units::ValueType::CAPACITANCE>(1.0);
@@ -73,14 +68,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
       output.WriteFullTableTrunc();
     }
-    // Honor Solver.Electrostatic.Save: write the first n_post excitation fields.
-    if (const int n_save =
-            std::min(iodata.solver.electrostatic.n_post, static_cast<int>(fields.size()));
-        n_save > 0)
+    if (n_save > 0)
     {
       sub.WriteParaView(post_dir.string(),
                         std::vector<int>(terminals.begin(), terminals.begin() + n_save),
-                        std::vector<Vector>(fields.begin(), fields.begin() + n_save));
+                        fields);
     }
     Mpi::Print("\nSubstructuring capacitance sweep complete ({:d} terminal{})\n", n,
                (n > 1) ? "s" : "");

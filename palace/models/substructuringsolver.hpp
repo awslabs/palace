@@ -51,6 +51,19 @@ public:
   std::vector<Vector> SolveExcitations(const std::vector<int> &drive_terminal_indices);
   std::vector<Vector> SolveDirichlets(const std::vector<Vector> &dbc_values);
 
+  // Electrostatic Maxwell capacitance matrix C_ij = u_i^T K u_j over the given terminals,
+  // computed WITHOUT any environment solve: the environment enters only through the
+  // condensed interface operator S_E and the precomputed terminal-mode couplings (saved
+  // with the model), so an online run never factors the environment. If fields is non-null,
+  // the full fields of the first n_fields excitations are also recovered (this needs the
+  // environment interior, so the environment factor is built on demand).
+  mfem::DenseMatrix CapacitanceMatrix(const std::vector<int> &terminal_indices,
+                                      std::vector<Vector> *fields = nullptr,
+                                      int n_fields = 0);
+
+  // Whether the environment interior operator has been factored (diagnostics / tests).
+  bool EnvironmentFactored() const;
+
   // Solve K u = f for a full parent-space source f (magnetostatic current excitation),
   // reusing the condensed environment. Returns the full parent field.
   Vector SolveSource(const Vector &f);

@@ -3,6 +3,8 @@
 
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <utility>
@@ -618,6 +620,176 @@ TEST_CASE("SubstructuringSolver offline/online model reuse",
   Vector d(u_on);
   d -= u_off;
   CHECK(d.Norml2() <= 1.0e-12 * (u_off.Norml2() + 1.0e-30));
+}
+
+TEST_CASE("SubstructuringSolver environment-free capacitance matrix",
+          "[substructure][Serial][Parallel]")
+{
+  // The electrostatic capacitance matrix from the condensed environment (S_E +
+  // terminal-mode couplings g_k, Cmode), with no environment solve, must equal the
+  // full-field energy C_ij = u_i^T K u_j. Terminal 1 lies in the region and terminal 2 in
+  // the environment, so both mode kinds are exercised. The online run (model loaded,
+  // including a re-meshed region) must reproduce it WITHOUT factoring the environment;
+  // saved fields are recovered on demand.
+  const int order = GENERATE(1, 2);
+  const bool remesh = GENERATE(false, true);
+  CAPTURE(order, remesh);
+  const std::string model_path = "substruct_capacitance_model.bin";
+  auto make_config = [order](const std::string &mode, const std::string &path)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+            {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", order},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"Mode", mode},
+            {"SaveModel", path}}}}}};
+    return IoData(config, false);
+  };
+  const std::vector<int> terms = {1, 2};
+  auto full_field_C = [&terms](SubstructuringSolver &ss)
+  {
+    std::vector<Vector> u = ss.SolveExcitations(terms);
+    mfem::DenseMatrix C(2);
+    for (int i = 0; i < 2; i++)
+    {
+      for (int j = 0; j < 2; j++)
+      {
+        C(i, j) = ss.MutualEnergy(u[i], u[j]);
+      }
+    }
+    return C;
+  };
+  auto rel_diff = [](const mfem::DenseMatrix &A, const mfem::DenseMatrix &B)
+  {
+    double d = 0.0, m = 0.0;
+    for (int i = 0; i < A.Height(); i++)
+    {
+      for (int j = 0; j < A.Width(); j++)
+      {
+        d = std::max(d, std::abs(A(i, j) - B(i, j)));
+        m = std::max(m, std::abs(B(i, j)));
+      }
+    }
+    return d / m;
+  };
+
+  // Offline: condensed capacitance vs. the full-field energy in the same run.
+  IoData iodata_off = make_config("Offline", model_path);
+  std::vector<std::unique_ptr<Mesh>> mesh_off;
+  mesh_off.push_back(std::make_unique<Mesh>(MakeGradedSplit(4, 5, 6)));
+  SubstructuringSolver off(iodata_off, mesh_off);
+  off.CondenseEnvironment();
+  const mfem::DenseMatrix C_off = off.CapacitanceMatrix(terms);
+  const mfem::DenseMatrix C_ref_off = full_field_C(off);
+  CHECK(rel_diff(C_off, C_ref_off) <= 1.0e-9);
+  CHECK(std::abs(C_off(0, 1) - C_off(1, 0)) <= 1.0e-9 * std::abs(C_off(0, 0)));
+  CHECK(C_off(0, 1) < 0.0);  // Maxwell capacitance: negative mutual term
+
+  // Online (same or re-meshed region): no environment factorization for the matrix.
+  IoData iodata_on = make_config("Online", model_path);
+  std::vector<std::unique_ptr<Mesh>> mesh_on;
+  mesh_on.push_back(std::make_unique<Mesh>(MakeGradedSplit(remesh ? 7 : 4, 5, 6)));
+  SubstructuringSolver on(iodata_on, mesh_on);
+  on.CondenseEnvironment();
+  const mfem::DenseMatrix C_on = on.CapacitanceMatrix(terms);
+  CHECK_FALSE(on.EnvironmentFactored());
+  if (!remesh)
+  {
+    CHECK(rel_diff(C_on, C_off) <= 1.0e-9);
+  }
+
+  // Recover one saved field: builds the environment once and matches the full solve.
+  std::vector<Vector> fields;
+  const mfem::DenseMatrix C_on2 = on.CapacitanceMatrix(terms, &fields, 1);
+  CHECK(on.EnvironmentFactored());
+  REQUIRE(fields.size() == 1);
+  CHECK(rel_diff(C_on2, C_on) <= 1.0e-12);
+  const Vector u_full = on.SolveExcitation(1);
+  Vector d(fields[0]);
+  d -= u_full;
+  const double un = std::sqrt(mfem::InnerProduct(Mpi::World(), u_full, u_full));
+  CHECK(std::sqrt(mfem::InnerProduct(Mpi::World(), d, d)) <= 1.0e-8 * un);
+  // The online condensed matrix equals the online full-field energy (re-meshed or not).
+  CHECK(rel_diff(C_on, full_field_C(on)) <= 1.0e-9);
+}
+
+TEST_CASE("SubstructuringSolver capacitance from a model without terminal modes",
+          "[substructure][Serial][Parallel]")
+{
+  // A model saved before terminal modes existed (S_E only) must still work: the modes are
+  // recomputed on demand (this needs the environment once) and give the same matrix.
+  const std::string model_path = "substruct_legacy_model.bin";
+  auto make_config = [](const std::string &mode)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+            {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", 1},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"Mode", mode},
+            {"SaveModel", "substruct_legacy_model.bin"}}}}}};
+    return IoData(config, false);
+  };
+  const std::vector<int> terms = {1, 2};
+  IoData iodata_off = make_config("Offline");
+  std::vector<std::unique_ptr<Mesh>> mesh_off;
+  mesh_off.push_back(std::make_unique<Mesh>(MakeSplitCube(6)));
+  SubstructuringSolver off(iodata_off, mesh_off);
+  off.CondenseEnvironment();
+  const mfem::DenseMatrix C_off = off.CapacitanceMatrix(terms);
+
+  // Strip the terminal-mode section: header (2 ints) + signature (nG x 3) + S_E (nG x nG).
+  if (Mpi::Root(Mpi::World()))
+  {
+    int nG = 0;
+    {
+      std::ifstream f(model_path, std::ios::binary);
+      f.read(reinterpret_cast<char *>(&nG), sizeof(int));
+    }
+    const auto legacy = static_cast<std::uintmax_t>(2 * sizeof(int)) +
+                        static_cast<std::uintmax_t>(sizeof(double)) * nG * 3 +
+                        static_cast<std::uintmax_t>(sizeof(double)) * nG * nG;
+    REQUIRE(std::filesystem::file_size(model_path) > legacy);
+    std::filesystem::resize_file(model_path, legacy);
+  }
+  Mpi::Barrier(Mpi::World());
+
+  IoData iodata_on = make_config("Online");
+  std::vector<std::unique_ptr<Mesh>> mesh_on;
+  mesh_on.push_back(std::make_unique<Mesh>(MakeSplitCube(6)));
+  SubstructuringSolver on(iodata_on, mesh_on);
+  on.CondenseEnvironment();
+  CHECK_FALSE(on.EnvironmentFactored());
+  const mfem::DenseMatrix C_on = on.CapacitanceMatrix(terms);
+  CHECK(on.EnvironmentFactored());  // modes recomputed on demand
+  for (int i = 0; i < 2; i++)
+  {
+    for (int j = 0; j < 2; j++)
+    {
+      CHECK(std::abs(C_on(i, j) - C_off(i, j)) <= 1.0e-9 * std::abs(C_off(0, 0)));
+    }
+  }
 }
 
 TEST_CASE("SubstructuringSolver magnetostatic inductance matrix",
