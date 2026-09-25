@@ -32,6 +32,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     reactions) in a single sweep over the port elements.
     [PR 909](https://github.com/awslabs/palace/pull/909).
 
+#### Bug Fixes
+
+  - Fixed silent misparsing of Nastran coordinates with implicit or Fortran `D` exponents
+    (e.g. `-7.-1` was read as `-7.0` instead of `-0.7`), and read blank or
+    trailing-trimmed fixed-width fields as zero instead of aborting.
+    [PR 951](https://github.com/awslabs/palace/pull/951).
+
 #### Build system
 
   - Bumped the MFEM dependency to v4.10 and dropped the backport patches merged
