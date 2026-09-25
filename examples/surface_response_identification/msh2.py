@@ -33,12 +33,21 @@ class Msh2:
     # type -> (physical tags (M,), corner node tags (M, k))
     elements: dict = field(default_factory=dict)
     physical_names: dict = field(default_factory=dict)  # (dim, tag) -> name
+    # type -> all node tags (M, n) incl. the high-order nodes (Gmsh order)
+    all_nodes: dict = field(default_factory=dict)
 
     def corner_indices(self, element_type):
         """(M, k) array of 0-based node indices for the given element type."""
         _, tags = self.elements[element_type]
         lookup = np.vectorize(self.node_index.__getitem__, otypes=[np.int64])
         return lookup(tags) if tags.size else tags.reshape(0, CORNER_NODES[element_type])
+
+    def node_indices(self, element_type):
+        """(M, n) array of 0-based node indices incl. the high-order nodes (Gmsh order: the
+        corners, then the mid-edge nodes 0-1, 1-2, 2-0 of a type-9 triangle)."""
+        tags = self.all_nodes[element_type]
+        lookup = np.vectorize(self.node_index.__getitem__, otypes=[np.int64])
+        return lookup(tags) if tags.size else tags.reshape(0, NODES_PER_TYPE[element_type])
 
     def physical_tags(self, element_type):
         return self.elements[element_type][0]
@@ -104,20 +113,24 @@ def read_msh2(path):
             seen += following
             physical = block[:, 1] if tag_count else np.zeros(following, dtype=np.int32)
             corners = block[:, 1 + tag_count : 1 + tag_count + CORNER_NODES[element_type]]
-            per_type.setdefault(element_type, []).append((physical.astype(np.int64), corners.astype(np.int64)))
+            all_nodes = block[:, 1 + tag_count : 1 + tag_count + nodes_per_element]
+            per_type.setdefault(element_type, []).append((physical.astype(np.int64), corners.astype(np.int64), all_nodes.astype(np.int64)))
     else:
         for line in data[count_end + 1 : end].decode().splitlines()[:element_count]:
             values = [int(v) for v in line.split()]
             element_type, tag_count = values[1], values[2]
             physical = values[3] if tag_count else 0
             corners = values[3 + tag_count : 3 + tag_count + CORNER_NODES[element_type]]
+            all_nodes = values[3 + tag_count : 3 + tag_count + NODES_PER_TYPE[element_type]]
             per_type.setdefault(element_type, []).append(
-                (np.array([physical], dtype=np.int64), np.array([corners], dtype=np.int64))
+                (np.array([physical], dtype=np.int64), np.array([corners], dtype=np.int64), np.array([all_nodes], dtype=np.int64))
             )
     elements = {}
+    all_nodes = {}
     for element_type, blocks in per_type.items():
         elements[element_type] = (
             np.concatenate([b[0] for b in blocks]),
             np.concatenate([b[1] for b in blocks]),
         )
-    return Msh2(coordinates=coordinates, node_index=node_index, elements=elements, physical_names=physical_names)
+        all_nodes[element_type] = np.concatenate([b[2] for b in blocks])
+    return Msh2(coordinates=coordinates, node_index=node_index, elements=elements, physical_names=physical_names, all_nodes=all_nodes)

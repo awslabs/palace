@@ -275,6 +275,53 @@ def _sublevel_interval(f, lo, hi, level):
     return (bisect(s_min, lo), bisect(s_min, hi))
 
 
+def sample_quadratic_edge(p0, pm, p1):
+    """Palace's sampling of a high-order edge (geodata.cpp SampleEdgeTransformation): the
+    quadratic Lagrange edge through p0 (t = 0), pm (t = 1/2), p1 (t = 1) is bisected while the
+    tangent turns by more than 7.5 degrees or the middle point deviates from the chord by more
+    than 1e-3 of the endpoint distance (depth <= 12). Returns the sampled points p0 .. p1."""
+    p0, pm, p1 = (np.asarray(x, dtype=float) for x in (p0, pm, p1))
+
+    def evaluate(t):
+        point = (1.0 - t) * (1.0 - 2.0 * t) * p0 + 4.0 * t * (1.0 - t) * pm + t * (2.0 * t - 1.0) * p1
+        tangent = (4.0 * t - 3.0) * p0 + (4.0 - 8.0 * t) * pm + (4.0 * t - 1.0) * p1
+        norm = np.linalg.norm(tangent)
+        return t, point, (tangent / norm if norm > 1.0e-14 else None)
+
+    def angle(a, b):
+        if a[2] is None or b[2] is None:
+            return 0.0
+        return math.acos(max(-1.0, min(1.0, float(a[2] @ b[2]))))
+
+    def chord_distance_squared(point, a, b):
+        d = b - a
+        length_squared = float(d @ d)
+        if length_squared <= 1.0e-28:
+            return float((point - a) @ (point - a))
+        t = min(1.0, max(0.0, float((point - a) @ d) / length_squared))
+        delta = point - (a + t * d)
+        return float(delta @ delta)
+
+    maximum_turn = math.radians(7.5)
+    edge_scale = max(float(np.linalg.norm(p1 - p0)), 1.0e-14)
+    chord_tolerance_squared = (1.0e-3 * edge_scale) ** 2
+    first, last = evaluate(0.0), evaluate(1.0)
+    points = [first[1]]
+
+    def refine(left, right, depth):
+        middle = evaluate(0.5 * (left[0] + right[0]))
+        excessive_turn = angle(left, middle) > maximum_turn or angle(middle, right) > maximum_turn
+        excessive_deviation = chord_distance_squared(middle[1], left[1], right[1]) > chord_tolerance_squared
+        if depth < 12 and (excessive_turn or excessive_deviation):
+            refine(left, middle, depth + 1)
+            refine(middle, right, depth + 1)
+        else:
+            points.append(right[1])
+
+    refine(first, last, 0)
+    return points
+
+
 def extract_perimeter(mesh, config, process_normal=None, corner_tolerance_degrees=CORNER_ANGLE_TOLERANCE_DEGREES, radius=None):
     metal = metal_attributes(config)
     if not metal:
@@ -300,6 +347,15 @@ def extract_perimeter(mesh, config, process_normal=None, corner_tolerance_degree
     physical = np.concatenate([mesh.physical_tags(t) for t in triangle_types])
     corners_raw = np.concatenate([mesh.corner_indices(t) for t in triangle_types])
     corners = canonical[corners_raw]
+    # Mid-edge nodes of the second-order triangles (Gmsh order: corners, then the mid-edge
+    # nodes of edges 0-1, 1-2, 2-0), keyed by the canonical corner pair.
+    mid_node = {}
+    if mesh.has(9):
+        nodes9 = mesh.node_indices(9)
+        canonical9 = canonical[nodes9[:, :3]]
+        for local, (i, j) in enumerate(((0, 1), (1, 2), (2, 0))):
+            for a, b, m in zip(canonical9[:, i], canonical9[:, j], nodes9[:, 3 + local]):
+                mid_node[(min(int(a), int(b)), max(int(a), int(b)))] = int(m)
     metal_mask = np.isin(physical, list(metal))
     metal_corners = corners[metal_mask]
     metal_tags = physical[metal_mask]
@@ -452,21 +508,35 @@ def extract_perimeter(mesh, config, process_normal=None, corner_tolerance_degree
 
     vertex_index = {}
     vertices = []
+    extra_points = []  # sampled points of curved (second-order) edges
 
     def vertex(node):
         if node not in vertex_index:
             vertex_index[node] = len(vertices)
-            vertices.append(PerimeterVertex(point=mesh.coordinates[node].copy()))
+            point = mesh.coordinates[node] if node < len(mesh.coordinates) else extra_points[node - len(mesh.coordinates)]
+            vertices.append(PerimeterVertex(point=np.array(point, dtype=float)))
         return vertex_index[node]
+
+    def sampled_nodes(key):
+        """Node indices along the (possibly curved) edge, as the classifier samples it."""
+        m = mid_node.get(key)
+        if m is None:
+            return [key[0], key[1]]
+        p0, pm, p1 = mesh.coordinates[key[0]], mesh.coordinates[m], mesh.coordinates[key[1]]
+        sampled = sample_quadratic_edge(p0, pm, p1)
+        if len(sampled) <= 2:
+            return [key[0], key[1]]
+        nodes = [key[0]]
+        for point in sampled[1:-1]:
+            extra_points.append(point)
+            nodes.append(len(mesh.coordinates) + len(extra_points) - 1)
+        nodes.append(key[1])
+        return nodes
 
     edges = []
     for key in perimeter_keys:
         faces = owners[key]
         attributes = tuple(sorted({int(metal_tags[f]) for f in faces}))
-        p0, p1 = mesh.coordinates[key[0]], mesh.coordinates[key[1]]
-        length = float(np.linalg.norm(p1 - p0))
-        if length <= 0.0:
-            continue
         plane = int(max((plane_of_face[f] for f in faces if plane_of_face[f] >= 0), default=-1))
         materials = set()
         for f in faces:
@@ -496,22 +566,27 @@ def extract_perimeter(mesh, config, process_normal=None, corner_tolerance_degree
         for attribute in attributes:
             edge_interfaces |= metal_interface.get(attribute, set())
         conductors = tuple(sorted({conductor_of_attribute(config, a) for a in attributes if conductor_of_attribute(config, a) is not None}))
-        v0, v1 = vertex(key[0]), vertex(key[1])
-        edge = PerimeterEdge(
-            vertices=(v0, v1),
-            length=length,
-            attributes=attributes,
-            kind=kind,
-            conductors=conductors,
-            interfaces=tuple(sorted(edge_interfaces)),
-            inward=inward,
-            plane=plane,
-            owners=len(faces),
-            component=int(face_component[faces[0]]),
-        )
-        vertices[v0].edges.append(len(edges))
-        vertices[v1].edges.append(len(edges))
-        edges.append(edge)
+        nodes = sampled_nodes(key)
+        for a, b in zip(nodes[:-1], nodes[1:]):
+            v0, v1 = vertex(a), vertex(b)
+            length = float(np.linalg.norm(vertices[v1].point - vertices[v0].point))
+            if length <= 0.0:
+                continue
+            edge = PerimeterEdge(
+                vertices=(v0, v1),
+                length=length,
+                attributes=attributes,
+                kind=kind,
+                conductors=conductors,
+                interfaces=tuple(sorted(edge_interfaces)),
+                inward=inward,
+                plane=plane,
+                owners=len(faces),
+                component=int(face_component[faces[0]]),
+            )
+            vertices[v0].edges.append(len(edges))
+            vertices[v1].edges.append(len(edges))
+            edges.append(edge)
 
     perimeter = Perimeter(
         vertices=vertices,
