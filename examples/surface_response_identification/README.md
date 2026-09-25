@@ -153,12 +153,22 @@ embedded sheets, mesh preparation):
   triangles duplicating metal faces; ground attr 4 + island attr 9), then `preflight_matrix
   --frame-normal 0 0 1` because the L1 metal has the substrate volume (attr 1, z in [-525, 5] um)
   on both sides (without it every sheet segment is an `UndeterminedProcessSide` record).
+* **Slivers between claim boundaries**: a claimed or unclaimed piece of a run shorter than
+  `SignatureLengthQuantumOverR` x R joins the adjacent portion on its run (a cluster ball cutting
+  a pair piece next to a run end leaves roundoff pieces of ~1e-8 um); DS-SCT-001 carried three
+  `CurvedSameConductorStrip` features of 1.6e-7 um in total (six portions of 2.66e-8 um).
+* **Audit `rounded_runs` follows the classifier's fillet rule**: runs are maximal collinear chord
+  sequences (a collinear spline / refinement vertex does not split an arc), a run shorter than R
+  with turns at both ends is an arc chord, longer runs are arms, and the tangent test applies to a
+  maximal arc sequence between two arms. The former reading split arcs at collinear vertices and
+  accepted one-chord arms: DS-SCT-001 read 29 rounded runs against the classifier's 18 fillets
+  (six 90 deg, 1 um = R / 2 fillets on 32 chords per CPW termination, one split 79.84 + 10.16 deg
+  by a collinear spline vertex; the other 11 were sub-arcs of 5 um = 2.5 R bends with 0.05-0.2 um
+  "arms"); it now reads 18 / 18 (`A1-vertex-census` PASS on every DS-SCT-001 cell).
 * **Survey findings recorded (PENDING)**: `CanonicalClusterSignature` serialises a cluster once
-  per distinct portion direction (~290 s on the 1,184-edge DS-SCT-001 cluster before the fix;
-  chip-scale clusters need a bounded frame rule); DS-SCT-001 A1 vertex census: the audit reads
-  29 rounded runs on the BSpline chords, the manifest 18 `RoundedCorner` vertices (the audit's
-  rounded-run reading and the classifier's fillet rule disagree on 11 sub-R chord runs with
-  total turns 11-80 deg).
+  per distinct portion direction (~290 s on the 1,184-edge DS-SCT-001 cluster before the local
+  constancy rule; 49 s per DS-SCT-001 cell with 606 / 564 / 564-edge clusters; chip-scale
+  clusters need a bounded frame rule).
 Phase-3 results: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/phase3/REPORT.md`;
 block summary: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/SUMMARY.md`.
 

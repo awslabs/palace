@@ -3121,6 +3121,57 @@ void Identifier::Assign(IdentificationResult &result)
       }
       taken = MergeIntervals(taken, Tol());
     }
+    // Pieces below the signature grid are roundoff between the boundaries of two claims (a
+    // cluster ball cutting a pair piece, a claim ending next to a run end): each joins the
+    // adjacent portion on the run instead of standing as a feature the signature cannot
+    // resolve (DS-SCT-001: three CurvedSameConductorStrip features of 1.6e-7 um in total).
+    {
+      const double sliver = kSignatureLengthQuantumOverRadius * R;
+      for (const auto &piece :
+           SubtractIntervals({Interval{0.0, runs[r].length}}, taken, Tol()))
+      {
+        if (piece.second - piece.first <= sliver)
+        {
+          assigned[r].emplace_back(piece.first, piece.second, -1);  // unclaimed sliver
+        }
+      }
+      std::sort(assigned[r].begin(), assigned[r].end());
+      auto &pieces = assigned[r];
+      for (std::size_t i = 0; i < pieces.size();)
+      {
+        auto &[lo, hi, feature] = pieces[i];
+        if (hi - lo > sliver && feature >= 0)
+        {
+          i++;
+          continue;
+        }
+        auto joins = [&](std::size_t j)
+        {
+          const auto &[jlo, jhi, jfeature] = pieces[j];
+          return jfeature >= 0 && (std::abs(jhi - lo) <= Tol() || std::abs(hi - jlo) <= Tol());
+        };
+        if (i > 0 && joins(i - 1))
+        {
+          std::get<1>(pieces[i - 1]) = hi;
+        }
+        else if (i + 1 < pieces.size() && joins(i + 1))
+        {
+          std::get<0>(pieces[i + 1]) = lo;
+        }
+        else if (feature >= 0)
+        {
+          i++;  // a pair piece alone in the remainder keeps its feature
+          continue;
+        }
+        pieces.erase(pieces.begin() + i);
+      }
+      taken = cross_layer[r];
+      for (const auto &[lo, hi, feature] : pieces)
+      {
+        taken.push_back({lo, hi});
+      }
+      taken = MergeIntervals(taken, Tol());
+    }
     const auto remainder = SubtractIntervals({Interval{0.0, runs[r].length}}, taken, Tol());
     if (!remainder.empty())
     {

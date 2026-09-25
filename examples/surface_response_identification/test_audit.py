@@ -7,6 +7,7 @@
 
 import contextlib
 import io
+import math
 import json
 import os
 import struct
@@ -220,6 +221,49 @@ class PerimeterTest(unittest.TestCase):
             perimeter = P.extract_perimeter(read_msh2(path), CONFIG)
             vertex = perimeter.vertices[[i for i, v in enumerate(perimeter.vertices) if np.allclose(v.point, (1, 0, 0))][0]]
             self.assertEqual(vertex.physical_kind, expected, msg=f"turn {turn}")
+
+    def test_rounded_runs_follow_the_classifier(self):
+        # One open chain: arm along -x -> 90 deg fillet (radius 1 = R / 2, 8 chords) -> arm
+        # along +y; the mesh puts a collinear vertex in the middle of one fillet chord and
+        # another one on each arm (refinement midpoints), and a second bend with one-chord
+        # "arms" (a polyline arc of radius 5 = 2.5 R, no fillet) sits on the +y arm.
+        R = 2.0
+        radius = 1.0
+        arc = [np.array([-radius + radius * math.cos(t), radius + radius * math.sin(t), 0.0]) for t in np.linspace(-math.pi / 2, 0.0, 9)]
+        points = [np.array([-6.0, 0.0, 0.0]), np.array([-3.5, 0.0, 0.0])]
+        for i, p in enumerate(arc):
+            if i == 4:
+                points.append(0.5 * (arc[3] + arc[4]))  # collinear midpoint inside the fillet
+            points.append(p)
+        points += [np.array([0.0, 3.0, 0.0]), np.array([0.0, 6.0, 0.0])]
+        # Bend of radius 5 (> R): 45 deg in 20 chords of 0.196 with a collinear split after
+        # every 5 chords (the audit must not read the sub-arcs as fillets with one-chord arms).
+        big = 5.0
+        for j in range(1, 21):
+            t = math.radians(45.0 * j / 20)
+            q = np.array([big - big * math.cos(t), 6.0 + big * math.sin(t), 0.0])
+            if j % 5 == 0 and j < 20:
+                points.append(0.5 * (points[-1] + q))
+            points.append(q)
+        points.append(points[-1] + 4.0 * np.array([math.sin(math.radians(45.0)), math.cos(math.radians(45.0)), 0.0]))  # tangent arm
+        vertices = [P.PerimeterVertex(point=p, physical_kind="REGULAR") for p in points]
+        vertices[0].physical_kind = vertices[-1].physical_kind = "ENDPOINT"
+        edges = []
+        for i in range(len(points) - 1):
+            d = points[i + 1] - points[i]
+            edges.append(P.PerimeterEdge(vertices=(i, i + 1), length=float(np.linalg.norm(d)), attributes=(5,), kind="PHYSICAL", conductors=("PEC",), interfaces=((0, "MA"),), inward=np.array([-d[1], d[0], 0.0]) / np.linalg.norm(d), chain=0))
+            vertices[i].edges.append(i)
+            vertices[i + 1].edges.append(i)
+        perimeter = P.Perimeter(vertices=vertices, edges=edges, process_normal=np.array([0.0, 0.0, 1.0]), planes=[0.0], chains=1)
+        runs = P.rounded_runs(perimeter, R)
+        rounded = [r for r in runs if r["Rounded"]]
+        self.assertEqual(len(rounded), 1, msg=str(runs))
+        self.assertAlmostEqual(rounded[0]["Radius"], radius, places=9)
+        self.assertAlmostEqual(rounded[0]["AngleDegrees"], 90.0, places=9)
+        self.assertAlmostEqual(rounded[0]["TotalTurnDegrees"], 90.0, places=9)
+        # The radius-5 bend is one arc sequence (its collinear splits merge), not a fillet.
+        self.assertEqual(len(runs), 2, msg=str(runs))
+        self.assertAlmostEqual([r for r in runs if not r["Rounded"]][0]["TotalTurnDegrees"], 45.0, places=9)
 
 
 class ManifestTest(unittest.TestCase):

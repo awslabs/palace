@@ -108,7 +108,12 @@ smaller endpoint.
    because collinear mesh vertices merge into one run), interface types and boundary law. Endpoint: interface types, law. Junction: sorted arm angles.
 5. **Isolated edges.** Every chain portion not claimed by a cluster, a vertex window or a
    translational feature is an `IsolatedEdge` portion; one feature per straight run
-   (chain), signature = interface types + boundary law.
+   (chain), signature = interface types + boundary law. Claims are resolved per run in the
+   order cluster > vertex window > translational; a claimed or unclaimed piece shorter than
+   `SignatureLengthQuantumOverR` x R is roundoff between two claim boundaries (a cluster ball
+   cutting a pair piece next to a run end) and joins the adjacent portion on its run — a
+   feature whose whole length is below the signature grid is not a feature (DS-SCT-001 had
+   three `CurvedSameConductorStrip` records of 1.6e-7 um in total).
 7. **Curved-edge chain rule** (decision 73(1); phase 2). A chain is defined by its
    significant vertices only: collinear splits (refinement midpoints, second-order mid-edge
    nodes) merge into one run, and the sub-corner joints between runs (turn <= 30 deg) are the

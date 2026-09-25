@@ -828,16 +828,25 @@ def chain_vertex_sequences(perimeter):
 
 
 def rounded_runs(perimeter, radius):
-    """Runs of consecutive REGULAR vertices with a nonzero turn (fillet arcs discretised
-    below the corner tolerance), with the classifier's rounded-corner reading: tangent
-    distances from the virtual sharp corner both below R and equal within 5 %, and the
-    fillet radius t * tan(angle / 2) in (0, R) -> a rounded corner of that radius."""
+    """Fillet arcs with the classifier's rounded-corner reading (DetectRoundedCorners): a
+    chain's runs are its maximal collinear chord sequences (a collinear mesh vertex inserted
+    by refinement or a spline discretisation does not break an arc); a run shorter than R with
+    sub-threshold turns at both ends is an arc chord, a longer run is an arm; a maximal arc
+    sequence bounded by two arms is a rounded corner when the tangent distances from the
+    virtual corner are both below R and equal within 5 % and the fillet radius
+    (a + b) / 2 tan(turn / 2) lies in (0, R). DS-SCT-001: the previous reading split the
+    arcs at collinear vertices and accepted one-chord arms (29 rounded runs against the
+    classifier's 18 fillets)."""
     runs = []
+    turn_threshold = 1.0e-6 * 180.0 / math.pi
+    quantum = 1.0e-8 * radius
     for chain, sequence, cycle in chain_vertex_sequences(perimeter):
         points = [perimeter.vertices[v].point for v in sequence]
         n = len(sequence) - (1 if cycle else 0)
         if n < 3:
             continue
+        # Turn at every chain vertex (None at the ends of an open chain and at non-regular
+        # vertices); chord i joins vertex i to vertex i + 1 (cyclic for a closed chain).
         turns = []
         for i in range(n):
             v = sequence[i]
@@ -850,44 +859,84 @@ def rounded_runs(perimeter, radius):
             d1 = following - points[i]
             cosine = float(d0 @ d1 / (np.linalg.norm(d0) * np.linalg.norm(d1)))
             turns.append(math.degrees(math.acos(max(-1.0, min(1.0, cosine)))))
-        i = 0
-        visited = 0
-        while visited < n:
-            if turns[i % n] is not None and turns[i % n] > 1.0e-6 * 180.0 / math.pi:
-                run = [i % n]
-                j = i + 1
-                while j - i < n and turns[j % n] is not None and turns[j % n] > 1.0e-6 * 180.0 / math.pi:
-                    run.append(j % n)
-                    j += 1
-                total = sum(turns[k] for k in run)
-                record = {"Chain": chain, "Vertices": len(run), "TotalTurnDegrees": total, "Rounded": False, "Radius": None, "AngleDegrees": None}
-                if len(run) >= 2 and total > math.degrees(1.0e-3):
-                    start = points[run[0]]
-                    end = points[run[-1]]
-                    incoming = start - points[(run[0] - 1) % n]
-                    outgoing = points[(run[-1] + 1) % n] - end
-                    incoming /= np.linalg.norm(incoming)
-                    outgoing /= np.linalg.norm(outgoing)
-                    angle = math.acos(max(-1.0, min(1.0, float(incoming @ outgoing))))
-                    if abs(total - math.degrees(angle)) <= math.degrees(1.0e-3):
-                        # Virtual corner: intersection of the two arm lines.
-                        first_direction = -incoming
-                        denominator = np.cross(first_direction, outgoing)
-                        if np.linalg.norm(denominator) > 1.0e-8:
-                            normal = denominator / np.linalg.norm(denominator)
-                            offset = float(np.cross(end - start, outgoing) @ normal) / float(np.cross(first_direction, outgoing) @ normal)
-                            origin = start + offset * first_direction
-                            t1 = float(np.linalg.norm(origin - start))
-                            t2 = float(np.linalg.norm(origin - end))
-                            tolerance = 1.0e-6 * radius
-                            if t1 < radius + tolerance and t2 < radius + tolerance and abs(t1 - t2) <= max(tolerance, 0.05 * max(t1, t2)):
-                                fillet = 0.5 * (t1 + t2) * math.tan(0.5 * angle)
-                                if 0.0 < fillet < radius:
-                                    record.update({"Rounded": True, "Radius": fillet, "AngleDegrees": math.degrees(math.pi - angle) if False else 180.0 - math.degrees(angle)})
-                runs.append(record)
-                visited += len(run)
-                i += len(run)
-            else:
-                visited += 1
-                i += 1
+        chords = n if cycle else n - 1
+        # Runs: maximal chord sequences whose interior vertices are collinear. A run is
+        # (first chord, chord count); boundary k of the run list is the vertex before run k.
+        boundaries = [i for i in range(n) if turns[i] is None or turns[i] > turn_threshold]
+        if cycle and not boundaries:
+            continue  # a closed polyline without any turn: a curve without arms
+        if not cycle:
+            boundaries = [0] + [b for b in boundaries if 0 < b < n - 1] + [n - 1]
+        run_list = []
+        for k in range(len(boundaries) - (0 if cycle else 1)):
+            first = boundaries[k]
+            last = boundaries[(k + 1) % len(boundaries)]
+            count = (last - first) % n if cycle else last - first
+            if count == 0:
+                count = n
+            run_list.append((first, count))
+        m = len(run_list)
+        if m < 3:
+            continue
+
+        def run_points(k):
+            first, count = run_list[k]
+            return points[first % n], points[(first + count) % n] if cycle else points[first + count]
+
+        def run_length(k):
+            a, b = run_points(k)
+            return float(np.linalg.norm(b - a))
+
+        def run_tangent(k):
+            a, b = run_points(k)
+            return (b - a) / np.linalg.norm(b - a)
+
+        def turn_at_boundary(k):
+            # Boundary k: the vertex starting run k (a sub-threshold turn between two runs).
+            if not cycle and (k == 0 or k >= m):
+                return False
+            vertex = run_list[k % m][0]
+            return turns[vertex] is not None and turns[vertex] > turn_threshold
+
+        is_arc = [run_length(k) < radius - quantum and turn_at_boundary(k) and turn_at_boundary(k + 1) for k in range(m)]
+        if all(is_arc):
+            continue
+        start = is_arc.index(False)
+        step = 0
+        while step < m:
+            k = (start + step) % m
+            if not is_arc[k]:
+                step += 1
+                continue
+            count = 0
+            while step + count < m and is_arc[(start + step + count) % m]:
+                count += 1
+            before = (k + m - 1) % m
+            after = (k + count) % m
+            has_arms = (cycle or (k > 0 and k + count < m)) and not is_arc[before] and not is_arc[after] and turn_at_boundary(k) and turn_at_boundary(k + count)
+            arc_vertices = [run_list[(k + c) % m][0] for c in range(1, count)] + [run_list[k][0], run_list[after][0]]
+            total = sum(turns[v] for v in arc_vertices if turns[v] is not None)
+            record = {"Chain": chain, "Vertices": count + 1, "TotalTurnDegrees": total, "Rounded": False, "Radius": None, "AngleDegrees": None}
+            if has_arms:
+                ta = run_tangent(before)
+                tb = run_tangent(after)
+                arm_a_end = run_points(before)[1]
+                arm_b_start = run_points(after)[0]
+                turn = math.acos(max(-1.0, min(1.0, float(ta @ tb))))
+                if math.sin(turn) > 1.0e-9:
+                    # Virtual corner X = arm_a_end + a ta = arm_b_start - b tb, solved in the
+                    # (ta, y) plane with y = n x ta.
+                    w = arm_b_start - arm_a_end
+                    y = np.cross(perimeter.process_normal, ta)
+                    wx, wy = float(w @ ta), float(w @ y)
+                    tbx, tby = float(tb @ ta), float(tb @ y)
+                    if abs(tby) > 1.0e-12:
+                        b = wy / tby
+                        a = wx - b * tbx
+                        if a > 0.0 and b > 0.0:
+                            fillet = 0.5 * (a + b) / math.tan(0.5 * turn)
+                            if a < radius - quantum and b < radius - quantum and abs(a - b) <= 0.05 * max(a, b) and 0.0 < fillet < radius - quantum:
+                                record.update({"Rounded": True, "Radius": fillet, "AngleDegrees": 180.0 - math.degrees(turn)})
+            runs.append(record)
+            step += count
     return runs
