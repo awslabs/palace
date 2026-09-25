@@ -21,9 +21,6 @@ singularity
 .DS_Store
 .vscode/
 
-# Git
-.git
-
 # CI
 .github
 

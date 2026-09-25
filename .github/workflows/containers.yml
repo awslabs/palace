@@ -103,6 +103,10 @@ jobs:
       # filter.)
       - uses: actions/checkout@v6
         if: needs.filter.outputs.test == 'true' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+        with:
+          # Fetch tags so the build's `git describe` stamps a real version
+          # (palace.json "GitTag") instead of degrading to "UNKNOWN".
+          fetch-depth: 0
       - uses: ./.github/actions/build-container
         if: needs.filter.outputs.test == 'true' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
         with:
