@@ -164,6 +164,18 @@ def trapezoid(bottom_width, top_width, height):
     return loop([(-0.5 * bottom_width, 0.0), (0.5 * bottom_width, 0.0), (0.5 * top_width, height), (-0.5 * top_width, height)])
 
 
+def slot_shape(arm_length, half_height, width, depth):
+    """U-shaped sheet: two arms of the given length either side of a slot of the given width
+    and depth (open at the top, y = +half_height), joined by a bar below the slot; counter-
+    clockwise."""
+    hw = 0.5 * width
+    x_out = arm_length + hw
+    y_top = half_height
+    y_slot = y_top - depth
+    y_bottom = y_slot - half_height
+    return loop([(-x_out, y_bottom), (x_out, y_bottom), (x_out, y_top), (hw, y_top), (hw, y_slot), (-hw, y_slot), (-hw, y_top), (-x_out, y_top)])
+
+
 def t_shape(bar_length, bar_width, stem_length, stem_width):
     """Bar along x at the top, stem down from its middle; counter-clockwise."""
     hb, hs = 0.5 * bar_length, 0.5 * stem_width
@@ -183,9 +195,12 @@ def stress_suite():
     separations = [1.8, 1.9, 1.95, 2.0, 2.05, 2.1, 3.9, 4.0, 4.1]
     for s in separations:
         tag = f"{s:g}".replace(".", "p")
-        # Gap between two ground rectangles (same conductor).
-        layouts.append(layout(f"gap-same-{tag}", [sheet(GROUND, rectangle(-14.0 - s / 2, -6.0, -s / 2, 6.0)), sheet(GROUND, rectangle(s / 2, -6.0, 14.0 + s / 2, 6.0))], notes=f"SameConductorGap at separation {s}"))
-        # Gap between ground and a second conductor.
+        # Gap between the two arms of one connected sheet (a slot of width s and depth 12 in a
+        # U-shaped ground): conductor identity is metal connectivity (phase 3), so two disjoint
+        # rectangles would be different conductors even under one attribute.
+        layouts.append(layout(f"gap-same-{tag}", [sheet(GROUND, slot_shape(14.0, 6.0, s, 12.0))], notes=f"SameConductorGap at separation {s}: slot in one connected sheet (the slot ends are corner clusters below 2R)"))
+        # Gap between two disjoint sheets (different conductors by connectivity; the second
+        # carries its own attribute so the label-based tagging agrees).
         layouts.append(layout(f"gap-different-{tag}", [sheet(GROUND, rectangle(-14.0 - s / 2, -6.0, -s / 2, 6.0)), sheet(SECOND_CONDUCTOR, rectangle(s / 2, -6.0, 14.0 + s / 2, 6.0))], notes=f"DifferentConductorGap at separation {s}"))
         # Strip of width s.
         layouts.append(layout(f"strip-{tag}", [sheet(GROUND, rectangle(-12.0, -s / 2, 12.0, s / 2))], lc_fine=min(1.0, s / 2), notes=f"SameConductorStrip at separation {s}"))
@@ -420,6 +435,57 @@ def distance_to_cores(points, cores, chunk=20000):
     return result
 
 
+def off_plane_obstacles(lay):
+    """Metal off the process plane: facing sheets (polygon at height Z) and walls (their foot
+    segment on the plane; the wall stands on the plane so the nearest wall point to a plane
+    point lies on the foot)."""
+    obstacles = []
+    for sh in lay["Sheets"]:
+        if sh["Z"] != 0.0:
+            for lp in sh["Loops"][:1]:
+                obstacles.append(("sheet", float(sh["Z"]), [np.array(p, dtype=float) for p in lp["Points"]]))
+    for wall in lay["Walls"]:
+        _, x0, y0, x1, y1, _ = wall
+        obstacles.append(("wall", 0.0, [np.array([x0, y0], dtype=float), np.array([x1, y1], dtype=float)]))
+    return obstacles
+
+
+def _point_polygon_distance_2d(point, polygon):
+    inside = True
+    n = len(polygon)
+    for i in range(n):
+        a, b, c = polygon[i], polygon[(i + 1) % n], polygon[(i + 2) % n]
+        d = b - a
+        normal = np.array([-d[1], d[0]])
+        if float((c - b) @ normal) * float((point - a) @ normal) < 0.0:
+            inside = False
+            break
+    if inside:
+        return 0.0
+    best = math.inf
+    for i in range(n):
+        a, b = polygon[i], polygon[(i + 1) % n]
+        d = b - a
+        t = min(1.0, max(0.0, float((point - a) @ d) / float(d @ d)))
+        best = min(best, float(np.linalg.norm(point - (a + t * d))))
+    return best
+
+
+def obstacle_distance(point, obstacles):
+    """Distance from a plane point to the nearest off-plane metal (facing sheets, walls)."""
+    best = math.inf
+    for kind, z, geometry in obstacles:
+        if kind == "sheet":
+            planar = _point_polygon_distance_2d(point, geometry)
+            best = min(best, math.hypot(planar, z))
+        else:
+            a, b = geometry
+            d = b - a
+            t = min(1.0, max(0.0, float((point - a) @ d) / float(d @ d)))
+            best = min(best, float(np.linalg.norm(point - (a + t * d))))
+    return best
+
+
 def _on_box(point, lay, tolerance=1.0e-9):
     x, y = point
     return abs(abs(x) - lay["HalfX"]) < tolerance or abs(abs(y) - lay["HalfY"]) < tolerance
@@ -497,7 +563,7 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
     physical_length = 0.0
     truncation_length = 0.0
     excluded = {"CrossLayerSheets": 0, "Walls": len(lay["Walls"])}
-    for sh in lay["Sheets"]:
+    for sheet_index, sh in enumerate(lay["Sheets"]):
         if sh["Z"] != 0.0:
             excluded["CrossLayerSheets"] += 1
             continue
@@ -508,7 +574,9 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
                 on_box = _on_box(e["Start"], lay) and _on_box(e["End"], lay) and (abs(abs(e["Start"][0]) - lay["HalfX"]) < 1e-9 and abs(abs(e["End"][0]) - lay["HalfX"]) < 1e-9 or abs(abs(e["Start"][1]) - lay["HalfY"]) < 1e-9 and abs(abs(e["End"][1]) - lay["HalfY"]) < 1e-9)
                 e["Truncation"] = on_box
                 e["Attribute"] = sh["Attribute"]
-                e["Conductor"] = 0 if sh["Attribute"] == GROUND else 1
+                # Conductor identity is metal connectivity (phase 3): every sheet is its own
+                # conductor (the layouts' sheets are disjoint polygons).
+                e["Conductor"] = sheet_index
                 if on_box:
                     truncation_length += e["Length"]
                 else:
@@ -638,6 +706,29 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
         c["Standalone"] = not core_distance < 3.0 * radius
         if not c["Standalone"]:
             c["Expected"] += " (an interaction event core within 3R: member of a spatial cluster)"
+    # Decision 73(3): metal off the process plane (a facing sheet, a wall) within 2R excludes
+    # the corners and the edge portions it reaches (Identifier::ClassifyPlanes CrossLayer).
+    obstacles = off_plane_obstacles(lay)
+    excluded_corners = 0
+    for c in corners:
+        if not c["ClassifierCorner"]:
+            continue
+        distance = obstacle_distance(np.array(c["Point"]), obstacles)
+        c["OffPlaneDistance"] = None if math.isinf(distance) else round(distance, 9)
+        c["ExcludedCrossLayer"] = distance < 2.0 * radius * (1.0 - 1.0e-9)
+        if c["ExcludedCrossLayer"]:
+            c["Standalone"] = False
+            c["Expected"] += " (metal off the plane within 2R: excluded vertex)"
+            excluded_corners += 1
+    cross_layer_length = 0.0
+    if obstacles:
+        for e in all_edges:
+            length = float(e["Length"])
+            interval = P._sublevel_interval(lambda t: obstacle_distance(e["Start"] + t * (e["End"] - e["Start"]), obstacles), 0.0, 1.0, 2.0 * radius)
+            if interval is not None:
+                cross_layer_length += (interval[1] - interval[0]) * length
+    excluded["CrossLayerLength"] = cross_layer_length
+    excluded["ExcludedCorners"] = excluded_corners
     # A parallel pair is a feature when part of its overlap survives the cluster regions
     # (distance to a core >= R) and the corner windows (R along the edge from a corner).
     for pair in pairs:
@@ -806,10 +897,26 @@ def compare_with_oracle(orc, audit_result, manifest):
             "Meaning": "the two sides of a constant-width bend are fully paired; the strip ends (two corners within 2R) are the only spatial clusters",
         }
     checks["A6-nonparallel-interactions"] = {"Oracle": len(orc["NonparallelInteractions"]), "Mesh": census["Interactions"]["NonparallelPairs"], "Pass": None, "Meaning": "record only: non-parallel pairs are omitted by the classifier"}
+    # Decision 73(3) exclusions: the manifest's CrossLayer record must carry the analytic
+    # length of the perimeter within 2R of the off-plane metal, and its excluded vertices the
+    # corners within 2R; walls give NonPlanar / NonManifold records.
+    recorded = Counter()
+    identification = manifest.get("Identification") or {}
+    for e in identification.get("Exclusions", []):
+        recorded[e["Class"]] += float(e["Length"])
+    manifest_excluded_vertices = sum(1 for v in identification.get("Vertices", []) if v["Type"] == "Excluded")
+    expected_cross_layer = orc["Excluded"]["CrossLayerLength"]
     checks["A6-excluded-classes"] = {
         "Oracle": orc["Excluded"],
-        "MeshLengthByClass": {k: census["LengthByClass"].get(k, 0.0) for k in ("NONPLANAR", "CROSS_LAYER", "NONMANIFOLD")},
-        "Pass": (orc["Excluded"]["CrossLayerSheets"] > 0) == (census["LengthByClass"].get("CROSS_LAYER", 0.0) > 0) and (orc["Excluded"]["Walls"] > 0) == (census["LengthByClass"].get("NONPLANAR", 0.0) > 0),
+        "MeshLengthByClass": {k: census["LengthByClass"].get(k, 0.0) for k in ("NONPLANAR", "FOLD", "CROSS_LAYER", "NONMANIFOLD", "EMBEDDED")},
+        "ManifestRecorded": dict(recorded),
+        "ManifestExcludedVertices": manifest_excluded_vertices,
+        "Pass": abs(recorded.get("CrossLayer", 0.0) - expected_cross_layer) <= 1.0e-6 * max(1.0, expected_cross_layer)
+        and (orc["Excluded"]["Walls"] > 0) == (recorded.get("NonPlanar", 0.0) > 0)
+        and (orc["Excluded"]["Walls"] > 0) == (recorded.get("NonManifold", 0.0) > 0)
+        and (orc["Excluded"]["CrossLayerSheets"] > 0) == (recorded.get("UndeterminedProcessSide", 0.0) > 0 or recorded.get("CrossLayer", 0.0) > 0)
+        and manifest_excluded_vertices >= orc["Excluded"]["ExcludedCorners"],
+        "Meaning": "CrossLayer length = analytic perimeter within 2R of facing sheets / walls; walls -> NonPlanar + NonManifold; a facing sheet's own edges -> CrossLayer or UndeterminedProcessSide",
     }
     return checks
 
@@ -843,13 +950,18 @@ def run_suite(args):
         terminals = [[SECOND_CONDUCTOR]] if SECOND_CONDUCTOR in attributes else []
         sa = [SUBSTRATE_AIR] if SUBSTRATE_AIR in attributes else []
         digests = {}
+        crack_digests = {}
+        cracks = [True] + ([False] if args.crack_false else [])
         for label, library in args.libraries.items():
             for levels in args.uniform_levels:
+              for crack in cracks:
                 for ranks in args.ranks:
-                    name = f"{label}-u{levels}-np{ranks}"
+                    if not crack and (levels != 0 or ranks != args.ranks[0]):
+                        continue
+                    name = f"{label}-u{levels}-np{ranks}" if crack else f"{label}-u{levels}-crackfalse-np{ranks}"
                     directory = os.path.join(args.output, lay["Name"], name)
                     os.makedirs(directory, exist_ok=True)
-                    config = preflight_config(mesh_path, ground, terminals, sa, library, os.path.join(directory, "postpro"), uniform_levels=levels)
+                    config = preflight_config(mesh_path, ground, terminals, sa, library, os.path.join(directory, "postpro"), uniform_levels=levels, crack=crack)
                     config_path = os.path.join(directory, "config.json")
                     with open(config_path, "w") as target:
                         json.dump(config, target, indent=2)
@@ -870,7 +982,10 @@ def run_suite(args):
                         cell["GeometryDigest"] = manifest.get("Identification", {}).get("GeometryDigest")
                         cell["Log"] = M.parse_palace_log(log_path)
                         # Version 2: the identification's GeometryDigest is the A3 / A4 / A5 identity.
-                        digests.setdefault((label, levels), {})[ranks] = cell["GeometryDigest"] or cell["DigestFull"]
+                        if crack:
+                            digests.setdefault((label, levels), {})[ranks] = cell["GeometryDigest"] or cell["DigestFull"]
+                        else:
+                            crack_digests[label] = cell["GeometryDigest"] or cell["DigestFull"]
                         if levels == 0:
                             audit_args = argparse.Namespace(mesh=mesh_path, config=config_path, manifest=manifest_path, log=log_path, compare=None, radius=None, corner_tolerance=CORNER_TURN_TOLERANCE_DEGREES, output_prefix=None)
                             result = audit.run_audit(audit_args)
@@ -897,6 +1012,9 @@ def run_suite(args):
         # Invariants across cells: A4 ranks (per library and level), A5 refinement (per
         # library, geometry-only digest), A3 libraries (geometry-only, at level 0).
         record["A4-rank-determinism"] = all(len(set(v.values())) == 1 for v in digests.values()) if digests else None
+        # Crack independence: CrackInternalBoundaryElements false reproduces the digest (and
+        # the per-signature lengths through the audit gates of its own cell).
+        record["CrackIndependence"] = {label: crack_digests[label] == digests.get((label, 0), {}).get(args.ranks[0]) for label in crack_digests} if crack_digests else None
         record["A5-refinement-invariance"] = {}
         record["A3-library-independence"] = {}
         first_ranks = args.ranks[0]
@@ -945,6 +1063,7 @@ def summary_row(record):
         "Nodes": record.get("MeshNodes"),
         "Exit": sorted({str(c.get("ExitCode")) for c in cells}),
         "A4": record.get("A4-rank-determinism"),
+        "Crack": record.get("CrackIndependence"),
         "A5": {k: (v["Identification"]["GeometryDigestIdentical"] if v.get("Identification") else v["GeometryOnlyIdentical"]) for k, v in (record.get("A5-refinement-invariance") or {}).items()},
         "A3": {k: (v["Identification"]["GeometryDigestIdentical"] if v.get("Identification") else v["GeometryOnlyIdentical"]) for k, v in (record.get("A3-library-independence") or {}).items()},
         "Oracle": {label: {k.replace("A6-", ""): v["Pass"] for k, v in c["OracleChecks"].items() if v["Pass"] is not None} for label, c in by_library.items()},
@@ -956,14 +1075,14 @@ def summary_row(record):
 
 def write_summary(results, output):
     lines = ["# Synthetic stress layouts: identification vs oracle", ""]
-    lines.append("| Layout | nodes | exit | A4 ranks | A5 refine | A3 libraries | A6 oracle (per library) | audit gates failing | manifest topologies |")
-    lines.append("|---|---|---|---|---|---|---|---|---|")
+    lines.append("| Layout | nodes | exit | A4 ranks | crack | A5 refine | A3 libraries | A6 oracle (per library) | audit gates failing | manifest topologies |")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|")
     for r in results:
         row = summary_row(r)
         oracle_text = "; ".join(f"{label}: " + ", ".join(f"{k}={'P' if v else 'F'}" for k, v in checks.items()) for label, checks in row["Oracle"].items())
         gates_text = "; ".join(f"{label}: {', '.join(g.replace('A1-', '').replace('A2-', '') for g in gates)}" for label, gates in row["GatesFailing"].items())
         topology_text = "; ".join(f"{label}: " + ", ".join(f"{k}:{v}" for k, v in t.items()) for label, t in row["Topologies"].items())
-        lines.append(f"| {row['Layout']} | {row['Nodes']} | {','.join(row['Exit'])} | {row['A4']} | {row['A5']} | {row['A3']} | {oracle_text} | {gates_text} | {topology_text} |")
+        lines.append(f"| {row['Layout']} | {row['Nodes']} | {','.join(row['Exit'])} | {row['A4']} | {row['Crack']} | {row['A5']} | {row['A3']} | {oracle_text} | {gates_text} | {topology_text} |")
     with open(os.path.join(output, "summary.md"), "w") as target:
         target.write("\n".join(lines) + "\n")
     with open(os.path.join(output, "summary.json"), "w") as target:
@@ -982,6 +1101,7 @@ def main(argv=None):
     parser.add_argument("--julia", default="julia")
     parser.add_argument("--timeout", type=float, default=600.0)
     parser.add_argument("--no-generate", action="store_true")
+    parser.add_argument("--crack-false", action="store_true", help="add a CrackInternalBoundaryElements=false cell (level 0, first rank count) per library and compare its digest")
     parser.add_argument("--rerun", action="store_true")
     parser.add_argument("--list", action="store_true", help="print the layout names and exit")
     parser.add_argument("--write-spec", help="write the specification file and exit")

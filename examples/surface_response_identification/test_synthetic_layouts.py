@@ -20,7 +20,9 @@ from surface_response_identification import synthetic_layouts as S  # noqa: E402
 
 
 class OracleTest(unittest.TestCase):
-    def test_rectangle_pair_at_separation_2_is_a_same_conductor_gap_with_absorbed_corners(self):
+    def test_rectangle_pair_at_separation_2_is_a_different_conductor_gap_with_absorbed_corners(self):
+        # Phase 3: conductor identity is metal connectivity, so two disjoint rectangles under
+        # one attribute are different conductors.
         lay = S.layout("gap", [S.sheet(S.GROUND, S.rectangle(-15.0, -6.0, -1.0, 6.0)), S.sheet(S.GROUND, S.rectangle(1.0, -6.0, 15.0, 6.0))])
         orc = S.oracle(lay)
         self.assertAlmostEqual(orc["PhysicalPerimeterLength"], 2 * (2 * 14.0 + 2 * 12.0))
@@ -29,8 +31,20 @@ class OracleTest(unittest.TestCase):
         self.assertEqual(orc["StandaloneCornerCount"], 4)
         self.assertTrue(all(c["Convex"] and c["InteriorAngleDegrees"] == 90.0 for c in orc["Corners"]))
         pairs = orc["ParallelPairs"]
-        self.assertEqual([(p["Expected"], p["Separation"], p["Within2R"], p["AtExactlyR"]) for p in pairs], [("SameConductorGap", 2.0, True, True)])
+        self.assertEqual([(p["Expected"], p["Separation"], p["Within2R"], p["AtExactlyR"]) for p in pairs], [("DifferentConductorGap", 2.0, True, True)])
         self.assertEqual(pairs[0]["OverlapLength"], 12.0)
+
+    def test_slot_in_one_sheet_is_a_same_conductor_gap(self):
+        lay = S.layout("slot", [S.sheet(S.GROUND, S.slot_shape(14.0, 6.0, 2.0, 12.0))])
+        orc = S.oracle(lay)
+        # Outer 30 x 18 rectangle minus the slot opening plus the slot's two sides and bottom.
+        self.assertAlmostEqual(orc["PhysicalPerimeterLength"], 2 * 30.0 + 2 * 18.0 - 2.0 + 2 * 12.0 + 2.0)
+        pairs = [p for p in orc["ParallelPairs"] if p["Within2R"]]
+        self.assertEqual([(p["Expected"], p["Separation"]) for p in pairs], [("SameConductorGap", 2.0)])
+        # The two convex corners at the slot mouth and the two concave corners at its bottom
+        # are 2 um apart: two corner clusters.
+        self.assertEqual(orc["CornerPairsWithin2R"], 2)
+        self.assertEqual(orc["StandaloneCornerCount"], 4)
 
     def test_pair_at_exactly_2r_is_at_the_threshold_and_not_within(self):
         lay = S.layout("gap4", [S.sheet(S.GROUND, S.rectangle(-16.0, -6.0, -2.0, 6.0)), S.sheet(S.SECOND_CONDUCTOR, S.rectangle(2.0, -6.0, 16.0, 6.0))])
@@ -150,8 +164,15 @@ class OracleTest(unittest.TestCase):
     def test_facing_layer_and_wall_are_excluded_classes(self):
         lay = S.layout("facing", [S.sheet(S.GROUND, S.rectangle(-10.0, -6.0, 10.0, 6.0)), S.sheet(S.GROUND, S.rectangle(-10.0, -6.0, 10.0, 6.0), z=3.0)], walls=[(S.GROUND, 0.0, -6.0, 0.0, 6.0, 4.0)])
         orc = S.oracle(lay)
-        self.assertEqual(orc["Excluded"], {"CrossLayerSheets": 1, "Walls": 1})
+        # Every edge and corner of the 20 x 12 sheet lies within 2R of the facing sheet 3 um
+        # above (and the wall): the whole perimeter is a CrossLayer zone.
+        self.assertEqual(orc["Excluded"], {"CrossLayerSheets": 1, "Walls": 1, "CrossLayerLength": 64.0, "ExcludedCorners": 4})
         self.assertAlmostEqual(orc["PhysicalPerimeterLength"], 64.0)
+        wall_only = S.layout("wall", [S.sheet(S.GROUND, S.rectangle(-10.0, -6.0, 10.0, 6.0))], walls=[(S.GROUND, 0.0, -6.0, 0.0, 6.0, 4.0)])
+        orc = S.oracle(wall_only)
+        # The wall's foot spans the sheet: the long edges within 2R = 4 of x = 0 (8 + 8).
+        self.assertAlmostEqual(orc["Excluded"]["CrossLayerLength"], 16.0, places=6)
+        self.assertEqual(orc["Excluded"]["ExcludedCorners"], 0)
 
 
 class SpecificationTest(unittest.TestCase):
