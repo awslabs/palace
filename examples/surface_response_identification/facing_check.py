@@ -15,6 +15,8 @@ asks the geometry directly, with a uniform grid over the perimeter segments (chi
   pairs): the length whose sample points face a THIRD edge within 2R — a segment that belongs to
   neither side of the pair. A pair with a third edge in reach is a multi-edge cross-section
   (ground - gap - trace - gap - ground narrower than 2R).
+Distances are three-dimensional (the two metal planes of a flip chip do not face each other
+when they are more than 2R apart); sites and boxes are in the plan view (x, y).
 
 Output: per class the sampled length, the facing length and its fraction; the flagged samples
 grouped into sites (samples within `--site-radius` of each other, default 25 R) ranked by
@@ -40,6 +42,7 @@ class SegmentGrid:
     cells around it, so a query radius up to the cell size is exact."""
 
     def __init__(self, p0, p1, cell):
+        p0, p1 = p0[:, :2], p1[:, :2]  # plan view
         self.p0, self.p1, self.cell = p0, p1, cell
         self.origin = np.minimum(p0, p1).min(0)
         lower = np.floor((np.minimum(p0, p1) - self.origin) / cell).astype(np.int64)
@@ -59,7 +62,7 @@ class SegmentGrid:
 
     def candidates(self, points):
         """(sample index, segment index) pairs for the 3 x 3 cells around every point."""
-        base = np.floor((points - self.origin) / self.cell).astype(np.int64)
+        base = np.floor((points[:, :2] - self.origin) / self.cell).astype(np.int64)
         sample_indices, segment_indices = [], []
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
@@ -84,8 +87,11 @@ def load(manifest_path):
         manifest = json.load(source)
     identification = manifest["Identification"]
     segments = identification["Segments"]
-    p0 = np.array([s["Key"][0][:2] for s in segments], dtype=float)
-    p1 = np.array([s["Key"][1][:2] for s in segments], dtype=float)
+    # Full 3D coordinates: the distances are measured in space, so the metal planes of a
+    # flip chip (L1 at z = 0, L2 at z = 4.8 um: 2.4 R apart) never face each other; the grid
+    # and the site boxes use the plan-view (x, y) projection.
+    p0 = np.array([s["Key"][0][:3] for s in segments], dtype=float)
+    p1 = np.array([s["Key"][1][:3] for s in segments], dtype=float)
     length = np.array([s["Length"] for s in segments], dtype=float)
     excluded = np.array(["Exclusion" in s for s in segments])
     radius = float(identification.get("MatchingRadius") or manifest.get("MatchingRadius") or 2.0)
@@ -140,7 +146,7 @@ def group_sites(flags, site_radius):
     """Union-find of flagged samples within site_radius (grid hashing); sites sorted by length."""
     if not flags:
         return []
-    xy = np.array([f["Point"] for f in flags])
+    xy = np.array([f["Point"][:2] for f in flags])
     cell = site_radius
     cells = defaultdict(list)
     for i, (cx, cy) in enumerate(np.floor(xy / cell).astype(np.int64)):
@@ -168,7 +174,7 @@ def group_sites(flags, site_radius):
         pts = xy[members]
         closest = min(rows, key=lambda r: r["Distance"])
         sites.append({
-            "MinDistancePoint": closest["Point"],
+            "MinDistancePoint": closest["Point"][:2],
             "Length": float(sum(r["Weight"] for r in rows)),
             "Samples": len(rows),
             "Classes": sorted({r["Class"] for r in rows}),
