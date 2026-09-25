@@ -406,9 +406,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("magma~shared", when="~shared")
         depends_on("libceed+magma", when="@0.14:")
 
-    # Umpire 2026.07 requires C++20, while Palace's GPU dependencies use C++17.
-    depends_on("umpire@:2025.12", when="@0.16: +cuda")
-    depends_on("umpire@:2025.12", when="@0.16: +rocm")
+    # Palace 0.16 to 0.18 build their GPU stack as C++17, and Umpire 2026.07 requires C++20.
+    depends_on("umpire@:2025.12 cxxstd=17", when="@0.16:0.18 +cuda")
+    depends_on("umpire@:2025.12 cxxstd=17", when="@0.16:0.18 +rocm")
+    # From 0.19 Umpire can be C++20. MFEM compiles Umpire's C++ headers, so it has to match;
+    # hypre only uses Umpire's C interface.
+    depends_on("mfem cxxstd=20", when="@0.19: +cuda")
+    depends_on("mfem cxxstd=20", when="@0.19: +rocm")
 
     with when("+cuda"):
         # GPU-aware MPI
