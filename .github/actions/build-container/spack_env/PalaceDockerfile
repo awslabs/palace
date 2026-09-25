@@ -83,15 +83,6 @@ RUN --mount=type=secret,id=github_user \
     install_status=0; \
     spack install --include-build-deps --only dependencies \
       -j$(nproc) --fail-fast || install_status=$?; \
-    # FIXME(debug): dump PETSc's BLAS integer-size detection.
-    for log in $(find /opt/software -path "*petsc-*/.spack/archived-files/*" \
-                   -name configure.log 2>/dev/null); do \
-      echo "=== PETSC-DEBUG $log"; \
-      grep -n "64-bit BLAS\|known-64-bit-blas-indices\|runTimeTest\|Checking if sdot" "$log" | head -40; \
-      start=$(grep -n "Determines if BLAS/LAPACK routines use 32 or 64-bit integers" "$log" | head -1 | cut -d: -f1); \
-      if [ -n "$start" ]; then sed -n "${start},$((start + 250))p" "$log"; fi; \
-      echo "=== PETSC-DEBUG END"; \
-    done; \
     spack buildcache push --allow-missing --with-build-dependencies \
       --only dependencies --unsigned local-buildcache || true; \
     spack clean --stage --downloads --misc-cache --failures || true; \
