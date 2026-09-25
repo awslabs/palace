@@ -62,6 +62,27 @@ def _section(data, name):
     return start, end
 
 
+ASCII_CHUNK_BYTES = 64 << 20
+
+
+def ascii_element_lines(data, start, end):
+    """Yield (token width, int64 array (m, width)) groups of equal-width lines of an ASCII
+    element section, in chunks of ASCII_CHUNK_BYTES (bytes or mmap input)."""
+    position = start
+    while position < end:
+        stop = min(end, position + ASCII_CHUNK_BYTES)
+        if stop < end:
+            stop = data.find(b"\n", stop) + 1
+        chunk = data[position:stop]
+        position = stop
+        lines = np.array(chunk.split(b"\n"))
+        lines = lines[np.char.str_len(lines) > 0]
+        widths = np.char.count(lines, b" ") + 1
+        for width in np.unique(widths):
+            subset = lines[widths == width]
+            yield int(width), np.fromstring(b" ".join(subset), dtype=np.int64, sep=" ").reshape(len(subset), width)
+
+
 def read_msh2(path):
     with open(path, "rb") as source:
         data = source.read()
@@ -116,15 +137,19 @@ def read_msh2(path):
             all_nodes = block[:, 1 + tag_count : 1 + tag_count + nodes_per_element]
             per_type.setdefault(element_type, []).append((physical.astype(np.int64), corners.astype(np.int64), all_nodes.astype(np.int64)))
     else:
-        for line in data[count_end + 1 : end].decode().splitlines()[:element_count]:
-            values = [int(v) for v in line.split()]
-            element_type, tag_count = values[1], values[2]
-            physical = values[3] if tag_count else 0
-            corners = values[3 + tag_count : 3 + tag_count + CORNER_NODES[element_type]]
-            all_nodes = values[3 + tag_count : 3 + tag_count + NODES_PER_TYPE[element_type]]
-            per_type.setdefault(element_type, []).append(
-                (np.array([physical], dtype=np.int64), np.array([corners], dtype=np.int64), np.array([all_nodes], dtype=np.int64))
-            )
+        # Vectorized: consecutive lines of equal token width are parsed together (a
+        # chip-scale ASCII mesh has 10^7 element lines).
+        for width, rows in ascii_element_lines(data, count_end + 1, end):
+            for element_type in np.unique(rows[:, 1]):
+                element_type = int(element_type)
+                block = rows[rows[:, 1] == element_type]
+                tag_count = int(block[0, 2])
+                if not (block[:, 2] == tag_count).all() or width != 3 + tag_count + NODES_PER_TYPE[element_type]:
+                    raise ValueError(f"{path}: inconsistent ASCII element lines of type {element_type} and width {width}")
+                physical = block[:, 3] if tag_count else np.zeros(len(block), dtype=np.int64)
+                corners = block[:, 3 + tag_count : 3 + tag_count + CORNER_NODES[element_type]]
+                all_nodes = block[:, 3 + tag_count : 3 + tag_count + NODES_PER_TYPE[element_type]]
+                per_type.setdefault(element_type, []).append((physical.copy(), corners.copy(), all_nodes.copy()))
     elements = {}
     all_nodes = {}
     for element_type, blocks in per_type.items():

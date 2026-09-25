@@ -23,7 +23,7 @@ import struct
 
 import numpy as np
 
-from .msh2 import CORNER_NODES, ELEMENT_DIMENSION, NODES_PER_TYPE, TRIANGLE_TYPES
+from .msh2 import CORNER_NODES, ELEMENT_DIMENSION, NODES_PER_TYPE, TRIANGLE_TYPES, ascii_element_lines
 
 CHUNK = 1 << 20
 
@@ -91,31 +91,11 @@ def open_mesh(path):
     return data, coordinates, names, ("binary", blocks)
 
 
-ASCII_CHUNK_BYTES = 64 << 20
-
-
-def _ascii_element_lines(data, start, end):
-    """Yield (token width, int array (m, width)) groups of consecutive equal-width lines."""
-    position = start
-    while position < end:
-        stop = min(end, position + ASCII_CHUNK_BYTES)
-        if stop < end:
-            stop = data.find(b"\n", stop) + 1
-        chunk = data[position:stop]
-        position = stop
-        lines = np.array(chunk.split(b"\n"))
-        lines = lines[np.char.str_len(lines) > 0]
-        widths = np.char.count(lines, b" ") + 1
-        for width in np.unique(widths):
-            subset = lines[widths == width]
-            yield int(width), np.fromstring(b" ".join(subset), dtype=np.int64, sep=" ").reshape(len(subset), width)
-
-
 def iter_elements(data, elements, dimensions=(0, 1, 2, 3)):
     """Yield (element_type, physical tags (m,), corner node tags (m, k)) in chunks."""
     if elements[0] == "ascii":
         _, start, end, _ = elements
-        for width, rows in _ascii_element_lines(data, start, end):
+        for width, rows in ascii_element_lines(data, start, end):
             for element_type in np.unique(rows[:, 1]):
                 element_type = int(element_type)
                 if ELEMENT_DIMENSION[element_type] not in dimensions:
