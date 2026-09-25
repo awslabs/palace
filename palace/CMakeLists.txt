@@ -113,6 +113,15 @@ elseif(PALACE_WITH_HIP)
   enable_language(HIP)
 endif()
 
+# Device translation units share headers with host code, so compile them with the same C++
+# standard (otherwise nvcc/hipcc use their own default)
+set(CMAKE_CUDA_STANDARD ${CMAKE_CXX_STANDARD})
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+set(CMAKE_CUDA_EXTENSIONS OFF)
+set(CMAKE_HIP_STANDARD ${CMAKE_CXX_STANDARD})
+set(CMAKE_HIP_STANDARD_REQUIRED ON)
+set(CMAKE_HIP_EXTENSIONS OFF)
+
 # Set a default build type if none was provided
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   message(STATUS "Setting CMAKE_BUILD_TYPE to 'Release' as none was specified")

@@ -34,6 +34,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Build system
 
+  - *Palace* now requires a C++20 compiler, including for CUDA and HIP device code. The
+    Spack recipe keeps `cxxstd=17` available for 0.16 to 0.18.
+    [PR 654](https://github.com/awslabs/palace/pull/654).
   - Bumped the MFEM dependency to v4.10 and dropped the backport patches merged
     upstream (PRs 4983, 5246, 5415, 5124, and the Gmsh reader rewrite), keeping
     only the still-unmerged patches (PRs 3847, 5353, 5494, 5502).
