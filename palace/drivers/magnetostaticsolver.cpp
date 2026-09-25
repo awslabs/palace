@@ -136,13 +136,18 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     Mpi::Print("\nSubstructuring flux-loop sweep: {:d} excitation{}\n", n,
                (n > 1) ? "s" : "");
-    std::vector<Vector> A = sub.SolveDirichlets(lifts);
+    // Energies A_i^T K A_j from the condensed environment (no environment solve once the
+    // flux-loop modes are known, e.g. from a saved model); only the fields to be saved
+    // (Solver.Magnetostatic.Save) need the environment interior.
+    const int n_save = std::min(iodata.solver.magnetostatic.n_post, n);
+    std::vector<Vector> A;
+    const mfem::DenseMatrix E = sub.EnergyMatrix(idxs, lifts, &A, n_save);
     mfem::DenseMatrix Minv(n);
     for (int i = 0; i < n; i++)
     {
       for (int k = 0; k < n; k++)
       {
-        Minv(i, k) = sub.MutualEnergy(A[i], A[k]) / (Phi[i] * Phi[k]);
+        Minv(i, k) = E(i, k) / (Phi[i] * Phi[k]);
       }
     }
     mfem::DenseMatrix M(Minv);
@@ -171,14 +176,10 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
       output.WriteFullTableTrunc();
     }
-    // Honor Solver.Magnetostatic.Save: write the first n_post excitation fields.
-    if (const int n_save =
-            std::min(iodata.solver.magnetostatic.n_post, static_cast<int>(A.size()));
-        n_save > 0)
+    if (n_save > 0)
     {
       sub.WriteParaView(post_dir.string(),
-                        std::vector<int>(idxs.begin(), idxs.begin() + n_save),
-                        std::vector<Vector>(A.begin(), A.begin() + n_save));
+                        std::vector<int>(idxs.begin(), idxs.begin() + n_save), A);
     }
     Mpi::Print("\nSubstructuring inductance sweep complete ({:d} flux loop{})\n", n,
                (n > 1) ? "s" : "");

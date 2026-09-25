@@ -4,6 +4,7 @@
 #include "substructuringsolver.hpp"
 
 #include <algorithm>
+#include <array>
 #include <fstream>
 #include <functional>
 #include <limits>
@@ -659,6 +660,13 @@ struct SubstructuringSolver::Impl
   // Largest interface for which the region preconditioner factors the dense Gamma block of
   // the exact condensed operator (dense block + its fill ~ 3 |Gamma|^2 doubles in total).
   static constexpr int kDirectCondensedMaxInterface = 10000;
+  // The exact dense-Gamma region factor costs ~|Gamma|^3 once, CG on A_region_free ~50
+  // iterations of ~|Gamma|^2 per excitation: the factor pays off from about |Gamma| /
+  // kDenseInterfacePerExcitation excitations in a batch (measured break-even ~4 at |Gamma|
+  // = 3750, ~1 at |Gamma| ~ 1000).
+  static constexpr int kDenseInterfacePerExcitation = 1000;
+  bool region_direct = false;          // region pc is a SuperLU factor (created lazily)
+  bool region_dense_eligible = false;  // ... and a dense S_E is available for the exact one
   // RHS count of the direct env factor, fixed by its first solve (MFEM's SuperLU wrapper
   // does not allow changing it): kMaterializeBlock when S_E is materialized, else the size
   // of the first excitation batch. Smaller batches are zero-padded to it.
@@ -713,15 +721,32 @@ struct SubstructuringSolver::Impl
   std::unique_ptr<Hodlr> hodlr;
   std::unique_ptr<MaterializedDtN> mat_dtn;
 
-  // Electrostatic terminal modes (environment condensed onto Gamma + terminal potentials):
-  // for each terminal k with unit mode x_k (1 on its Dirichlet DOFs), g_k = (A_env x_k -
-  // A_env A_EE^-1 (A_env x_k)|_E)|_Gamma (the interface load, stored like S_E by owned
-  // interface rows: G_rows[r * K + k]) and the replicated K x K environment energy block
-  // Cmode[k][l] = x_k^T A_env x_l - (A_env x_k)|_E^T A_EE^-1 (A_env x_l)|_E. Together with
-  // S_E they give the environment's exact energy contribution without an environment solve.
-  std::vector<int> mode_ids;  // terminal index per mode column (terminal_tdofs key order)
-  std::vector<double> G_rows, Cmode;
+  // Dirichlet-lift modes: the environment condensed onto Gamma + a set of Dirichlet lifts
+  // x_k (terminal unit potentials, magnetostatic flux-loop lifts). With t_k = A_env x_k and
+  // w_k = A_EE^-1 t_k|_E: the region-solve interface load g_k = (t_k - A_env w_k)|_Gamma
+  // (G_rows, owned interface rows: G_rows[r * K + k]). For the energy (operator K_env;
+  // equal to A_env for electrostatics, the pure curl-curl for magnetostatics) the
+  // environment's exact condensed energy is [u_G; V]^T [S^K, G^K; G^K^T, Cmode] [u_G; V]
+  // with S^K = P^T K P = S_E - P^T D P (D = A_env - K_env, P the A-harmonic lifting), G^K
+  // (GK_rows; empty when K_env = A_env) and the replicated Cmode. Each mode carries a
+  // partition-invariant fingerprint (x^T A_env x, |(A_env x)|_Gamma|) so a saved mode is
+  // reused only for the same environment-side lift.
+  std::vector<int> mode_ids;
+  std::vector<double> mode_fp;  // 2 per mode
+  std::vector<double> G_rows, GK_rows, Cmode;
   bool modes_ready = false;
+  bool modes_saved = false;  // appended to the model file in this run
+  // Magnetostatic energy interface operator S^K (distributed like S_rows); empty for
+  // electrostatics (S^K = S_E) or when not materialized (then the environment path is
+  // used).
+  std::vector<double> SK_rows;
+  // Rank-independent presence flags (the distributed arrays are empty on ranks that own no
+  // interface DOFs, so their emptiness must not gate collectives).
+  bool have_sk = false, have_gk = false;
+  std::unique_ptr<Hodlr> hodlr_K;
+  std::unique_ptr<MaterializedDtN> mat_dtn_K;
+  std::unique_ptr<mfem::HypreParMatrix>
+      D_env;               // A_env - K_env = eps M_env (magnetostatics)
   bool env_built = false;  // environment interior operator factored / set up
 
   Impl(const IoData &iodata, mfem::ParMesh &parent)
@@ -890,13 +915,17 @@ struct SubstructuringSolver::Impl
   static constexpr long long kDirectMaxDofs = 2000000;
 
   std::unique_ptr<mfem::HypreParMatrix>
-  AssembleParent(const std::map<int, mfem::DenseMatrix> &coef_by_attr, bool with_mass)
+  AssembleParent(const std::map<int, mfem::DenseMatrix> &coef_by_attr, bool with_mass,
+                 bool with_curl = true)
   {
     PWMatrixCoefficient coef(parent.Dimension(), coef_by_attr);
     mfem::ParBilinearForm a(&parent_fes);
     if (magnetostatic)
     {
-      a.AddDomainIntegrator(new mfem::CurlCurlIntegrator(coef));
+      if (with_curl)
+      {
+        a.AddDomainIntegrator(new mfem::CurlCurlIntegrator(coef));
+      }
       const int max_attr = parent.attributes.Size() ? parent.attributes.Max() : 1;
       mfem::Vector mass(max_attr);
       mass = 0.0;
@@ -938,89 +967,6 @@ struct SubstructuringSolver::Impl
     }
   }
 
-  // Unit Dirichlet mode of terminal idx: 1 on its true DOFs.
-  mfem::Vector TerminalMode(int idx) const
-  {
-    mfem::Vector x(nt);
-    x = 0.0;
-    for (int d : terminal_tdofs.at(idx))
-    {
-      x(d) = 1.0;
-    }
-    return x;
-  }
-
-  // Terminal-mode couplings g_k and Cmode (see the members) from K batched environment
-  // solves; terminals whose mode does not reach the environment interior skip the solve.
-  void ComputeTerminalModes()
-  {
-    EnsureEnv();
-    MPI_Comm comm = parent_fes.GetComm();
-    mode_ids.clear();
-    for (const auto &[idx, dofs] : terminal_tdofs)
-    {
-      mode_ids.push_back(idx);
-    }
-    const int K = static_cast<int>(mode_ids.size());
-    std::vector<mfem::Vector> x(K), t(K, mfem::Vector(nt)), w(K, mfem::Vector(nt));
-    std::vector<int> touches(K, 0);
-    for (int k = 0; k < K; k++)
-    {
-      x[k] = TerminalMode(mode_ids[k]);
-      A_env->Mult(x[k], t[k]);
-      for (int i = 0; i < nt && !touches[k]; i++)
-      {
-        touches[k] = (is_env_int[i] && t[k](i) != 0.0);
-      }
-    }
-    if (K > 0)
-    {
-      MPI_Allreduce(MPI_IN_PLACE, touches.data(), K, MPI_INT, MPI_MAX, comm);
-    }
-    std::vector<const mfem::Vector *> X;
-    std::vector<mfem::Vector *> Y;
-    for (int k = 0; k < K; k++)
-    {
-      w[k] = 0.0;
-      if (touches[k])
-      {
-        X.push_back(&t[k]);
-        Y.push_back(&w[k]);
-      }
-    }
-    if (!X.empty())
-    {
-      ApplyAeeInvMulti(X, Y);
-    }
-    G_rows.assign(static_cast<std::size_t>(gamma_nloc) * K, 0.0);
-    mfem::Vector t2(nt);
-    for (int k = 0; k < K; k++)
-    {
-      A_env->Mult(w[k], t2);
-      for (int i = 0; i < nt; i++)
-      {
-        if (is_gamma[i])
-        {
-          G_rows[static_cast<std::size_t>(gamma_global[i] - gamma_off) * K + k] =
-              t[k](i) - t2(i);
-        }
-      }
-    }
-    Cmode.assign(static_cast<std::size_t>(K) * K, 0.0);
-    for (int k = 0; k < K; k++)
-    {
-      for (int l = 0; l < K; l++)
-      {
-        Cmode[static_cast<std::size_t>(k) * K + l] = (x[k] * t[l]) - (t[k] * w[l]);
-      }
-    }
-    if (K > 0)
-    {
-      MPI_Allreduce(MPI_IN_PLACE, Cmode.data(), K * K, MPI_DOUBLE, MPI_SUM, comm);
-    }
-    modes_ready = true;
-  }
-
   // Recover the environment interior of full fields (region + Dirichlet parts set),
   // batched: u_E = -A_EE^-1 (A_env u)|_E.
   void RecoverEnvInterior(std::vector<mfem::Vector> &u)
@@ -1053,14 +999,205 @@ struct SubstructuringSolver::Impl
     }
   }
 
-  // Per-rank counts/displacements of the interface-row-distributed G (gamma_nloc * K each).
-  void ModeRowLayout(int K, std::vector<int> &cnt, std::vector<int> &disp) const
+  // Unit Dirichlet lift of terminal idx: 1 on its true DOFs.
+  mfem::Vector TerminalMode(int idx) const
+  {
+    mfem::Vector x(nt);
+    x = 0.0;
+    for (int d : terminal_tdofs.at(idx))
+    {
+      x(d) = 1.0;
+    }
+    return x;
+  }
+
+  // Whether the energy operator differs from the solve operator (magnetostatic curl-curl
+  // vs. curl-curl + mass), i.e. the energy needs the D-corrected condensed forms.
+  bool EnergyDiffers() const { return magnetostatic; }
+
+  const mfem::HypreParMatrix &Denv()
+  {
+    if (!D_env)
+    {
+      D_env = AssembleParent(env_eps, true, false);  // eps M_env, exactly A_env - K_env
+    }
+    return *D_env;
+  }
+
+  // Partition-invariant fingerprint of a lift's environment side: (x^T A_env x,
+  // |(A_env x)|_Gamma|_2). Collective.
+  std::array<double, 2> LiftFingerprint(const mfem::Vector &x, const mfem::Vector &t) const
+  {
+    double loc[2] = {x * t, 0.0};
+    for (int i = 0; i < nt; i++)
+    {
+      if (is_gamma[i])
+      {
+        loc[1] += t(i) * t(i);
+      }
+    }
+    double glob[2];
+    MPI_Allreduce(loc, glob, 2, MPI_DOUBLE, MPI_SUM, parent_fes.GetComm());
+    return {glob[0], std::sqrt(glob[1])};
+  }
+
+  // Modes (see the members) of the lifts x_k from batched environment solves: K solves,
+  // plus K more for the energy correction when it differs. Lifts that do not reach the
+  // environment interior skip the solve.
+  void ComputeModes(const std::vector<int> &ids, const std::vector<mfem::Vector> &x)
+  {
+    EnsureEnv();
+    MPI_Comm comm = parent_fes.GetComm();
+    const int K = static_cast<int>(ids.size());
+    mode_ids = ids;
+    std::vector<mfem::Vector> t(K, mfem::Vector(nt)), w(K, mfem::Vector(nt));
+    std::vector<int> touches(K, 0);
+    mode_fp.assign(2 * K, 0.0);
+    for (int k = 0; k < K; k++)
+    {
+      A_env->Mult(x[k], t[k]);
+      const auto fp = LiftFingerprint(x[k], t[k]);
+      mode_fp[2 * k] = fp[0];
+      mode_fp[2 * k + 1] = fp[1];
+      for (int i = 0; i < nt && !touches[k]; i++)
+      {
+        touches[k] = (is_env_int[i] && t[k](i) != 0.0);
+      }
+    }
+    if (K > 0)
+    {
+      MPI_Allreduce(MPI_IN_PLACE, touches.data(), K, MPI_INT, MPI_MAX, comm);
+    }
+    auto solve_touching = [&](std::vector<mfem::Vector> &in, std::vector<mfem::Vector> &out)
+    {
+      std::vector<const mfem::Vector *> X;
+      std::vector<mfem::Vector *> Y;
+      for (int k = 0; k < K; k++)
+      {
+        out[k] = 0.0;
+        if (touches[k])
+        {
+          X.push_back(&in[k]);
+          Y.push_back(&out[k]);
+        }
+      }
+      if (!X.empty())
+      {
+        ApplyAeeInvMulti(X, Y);
+      }
+    };
+    solve_touching(t, w);
+    // g = (a - A_env b)|_Gamma, C_kl = x_k . a_l - t_k . b_l  for (a, b) = (t, w) [solve]
+    // or (v, z) [energy correction].
+    mfem::Vector tmp(nt);
+    auto couplings = [&](const std::vector<mfem::Vector> &a,
+                         const std::vector<mfem::Vector> &b, std::vector<double> &Grows,
+                         std::vector<double> &C)
+    {
+      Grows.assign(static_cast<std::size_t>(gamma_nloc) * K, 0.0);
+      for (int k = 0; k < K; k++)
+      {
+        A_env->Mult(b[k], tmp);
+        for (int i = 0; i < nt; i++)
+        {
+          if (is_gamma[i])
+          {
+            Grows[static_cast<std::size_t>(gamma_global[i] - gamma_off) * K + k] =
+                a[k](i) - tmp(i);
+          }
+        }
+      }
+      C.assign(static_cast<std::size_t>(K) * K, 0.0);
+      for (int k = 0; k < K; k++)
+      {
+        for (int l = 0; l < K; l++)
+        {
+          C[static_cast<std::size_t>(k) * K + l] = (x[k] * a[l]) - (t[k] * b[l]);
+        }
+      }
+      if (K > 0)
+      {
+        MPI_Allreduce(MPI_IN_PLACE, C.data(), K * K, MPI_DOUBLE, MPI_SUM, comm);
+      }
+    };
+    couplings(t, w, G_rows, Cmode);
+    GK_rows.clear();
+    have_gk = EnergyDiffers();
+    if (have_gk)
+    {
+      // P^T D P blocks: p_k = x_k - w_k (the A-harmonic lift), v_k = D p_k,
+      // z_k = A_EE^-1 v_k|_E; subtract them from the A-blocks.
+      std::vector<mfem::Vector> v(K, mfem::Vector(nt)), z(K, mfem::Vector(nt));
+      for (int k = 0; k < K; k++)
+      {
+        tmp = x[k];
+        tmp -= w[k];
+        Denv().Mult(tmp, v[k]);
+        touches[k] = 1;  // v_k is generally nonzero in E
+      }
+      solve_touching(v, z);
+      std::vector<double> GD, CD;
+      couplings(v, z, GD, CD);
+      GK_rows = G_rows;
+      for (std::size_t q = 0; q < GK_rows.size(); q++)
+      {
+        GK_rows[q] -= GD[q];
+      }
+      for (std::size_t q = 0; q < Cmode.size(); q++)
+      {
+        Cmode[q] -= CD[q];
+      }
+    }
+    modes_ready = true;
+    modes_saved = false;
+  }
+
+  // Whether the current modes cover the given lifts (same ids + environment fingerprints);
+  // col[j] receives the mode column of request j. Collective.
+  bool ModesMatch(const std::vector<int> &ids, const std::vector<mfem::Vector> &x,
+                  std::vector<int> &col) const
+  {
+    col.assign(ids.size(), -1);
+    bool ok = modes_ready;
+    mfem::Vector t(nt);
+    for (std::size_t j = 0; j < ids.size(); j++)
+    {
+      for (std::size_t k = 0; k < mode_ids.size(); k++)
+      {
+        if (mode_ids[k] == ids[j])
+        {
+          col[j] = static_cast<int>(k);
+        }
+      }
+      A_env->Mult(x[j], t);
+      const auto fp = LiftFingerprint(x[j], t);  // collective: always evaluated
+      if (col[j] < 0)
+      {
+        ok = false;
+        continue;
+      }
+      for (int q = 0; q < 2; q++)
+      {
+        const double ref = mode_fp[2 * col[j] + q];
+        if (std::abs(fp[q] - ref) >
+            1.0e-9 * std::max(std::abs(ref), std::abs(fp[q])) + 1e-300)
+        {
+          ok = false;
+        }
+      }
+    }
+    return ok;
+  }
+
+  // Per-rank counts/displacements of an interface-row-distributed array (gamma_nloc * w
+  // each).
+  void RowLayout(int w, std::vector<int> &cnt, std::vector<int> &disp) const
   {
     MPI_Comm comm = parent_fes.GetComm();
     const int nranks = Mpi::Size(comm);
     cnt.assign(nranks, 0);
     disp.assign(nranks, 0);
-    const int mine = gamma_nloc * K;
+    const int mine = gamma_nloc * w;
     MPI_Allgather(&mine, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
     for (int r = 1; r < nranks; r++)
     {
@@ -1068,97 +1205,184 @@ struct SubstructuringSolver::Impl
     }
   }
 
-  // Append the terminal modes to a saved model (collective; rank 0 writes).
-  static constexpr int kModesMagic = 0x53444f4d;  // "MODS"
-  void AppendModes(const std::string &path) const
+  // Gather an interface-row-distributed array (width w) to rank 0 (full, global row order).
+  std::vector<double> GatherRows(const std::vector<double> &rows, int w) const
   {
-    MPI_Comm comm = parent_fes.GetComm();
-    const int K = static_cast<int>(mode_ids.size());
     std::vector<int> cnt, disp;
-    ModeRowLayout(K, cnt, disp);
+    RowLayout(w, cnt, disp);
+    MPI_Comm comm = parent_fes.GetComm();
     const bool root = (Mpi::Rank(comm) == 0);
-    std::vector<double> G_full;
+    std::vector<double> full;
     if (root)
     {
-      G_full.assign(static_cast<std::size_t>(nG_global) * K, 0.0);
+      full.assign(static_cast<std::size_t>(nG_global) * w, 0.0);
     }
-    MPI_Gatherv(G_rows.data(), gamma_nloc * K, MPI_DOUBLE, root ? G_full.data() : nullptr,
+    MPI_Gatherv(rows.data(), gamma_nloc * w, MPI_DOUBLE, root ? full.data() : nullptr,
                 cnt.data(), disp.data(), MPI_DOUBLE, 0, comm);
-    if (root)
+    return full;
+  }
+
+  // Scatter a full (rank 0) interface-row array of width w onto the owned rows.
+  void ScatterRows(const std::vector<double> &full, int w, std::vector<double> &rows) const
+  {
+    std::vector<int> cnt, disp;
+    RowLayout(w, cnt, disp);
+    MPI_Comm comm = parent_fes.GetComm();
+    rows.assign(static_cast<std::size_t>(gamma_nloc) * w, 0.0);
+    MPI_Scatterv(Mpi::Rank(comm) == 0 ? full.data() : nullptr, cnt.data(), disp.data(),
+                 MPI_DOUBLE, rows.data(), gamma_nloc * w, MPI_DOUBLE, 0, comm);
+  }
+
+  // Model-file sections following S_E: [kSKenMagic][S^K nG x nG] (magnetostatics) and
+  // [kModesMagic][K][ids][fingerprints 2K][has_GK][G nG x K][G^K nG x K if has_GK][Cmode
+  // KxK].
+  static constexpr int kSKenMagic = 0x4e454b53;   // "SKEN"
+  static constexpr int kModesMagic = 0x32444f4d;  // "MOD2"
+  void AppendSK(const std::string &path) const
+  {
+    const std::vector<double> full = GatherRows(SK_rows, nG_global);
+    if (Mpi::Root(parent_fes.GetComm()))
+    {
+      std::ofstream f(path, std::ios::binary | std::ios::app);
+      f.write(reinterpret_cast<const char *>(&kSKenMagic), sizeof(int));
+      f.write(reinterpret_cast<const char *>(full.data()), sizeof(double) * full.size());
+    }
+  }
+  void AppendModes(const std::string &path)
+  {
+    const int K = static_cast<int>(mode_ids.size());
+    const int has_gk = have_gk ? 1 : 0;
+    const std::vector<double> G_full = GatherRows(G_rows, K);
+    const std::vector<double> GK_full =
+        has_gk ? GatherRows(GK_rows, K) : std::vector<double>();
+    if (Mpi::Root(parent_fes.GetComm()))
     {
       std::ofstream f(path, std::ios::binary | std::ios::app);
       f.write(reinterpret_cast<const char *>(&kModesMagic), sizeof(int));
       f.write(reinterpret_cast<const char *>(&K), sizeof(int));
       f.write(reinterpret_cast<const char *>(mode_ids.data()), sizeof(int) * K);
+      f.write(reinterpret_cast<const char *>(mode_fp.data()), sizeof(double) * 2 * K);
+      f.write(reinterpret_cast<const char *>(&has_gk), sizeof(int));
       f.write(reinterpret_cast<const char *>(G_full.data()),
               sizeof(double) * G_full.size());
+      f.write(reinterpret_cast<const char *>(GK_full.data()),
+              sizeof(double) * GK_full.size());
       f.write(reinterpret_cast<const char *>(Cmode.data()), sizeof(double) * Cmode.size());
     }
+    modes_saved = true;
   }
 
-  // Load the terminal modes following S_E at byte offset `pos` (collective). Interface rows
-  // are re-ordered onto the online numbering like S_E: row g <- saved row perm[g], times
-  // sgn[g]. Leaves modes_ready false (so they are recomputed on demand) if the file
-  // predates modes or the terminal set differs.
-  void LoadModes(const std::string &path, std::streamoff pos, const std::vector<int> &perm,
-                 const std::vector<double> &sgn)
+  // Load the optional sections at byte offset `pos` (collective). Interface rows are
+  // re-ordered onto the online numbering like S_E: row g <- saved row perm[g] times sgn[g]
+  // (and S^K columns likewise). Reading stops at the first unknown / missing section; a
+  // later mode section supersedes an earlier one. Modes absent here are recomputed on
+  // demand.
+  void LoadSections(const std::string &path, std::streamoff pos,
+                    const std::vector<int> &perm, const std::vector<double> &sgn)
   {
     MPI_Comm comm = parent_fes.GetComm();
     const bool root = (Mpi::Rank(comm) == 0);
-    int hdr[2] = {0, 0};
+    const int nG = nG_global;
     std::ifstream f;
     if (root)
     {
       f.open(path, std::ios::binary);
       f.seekg(pos);
-      if (!f.read(reinterpret_cast<char *>(hdr), 2 * sizeof(int)))
+    }
+    while (true)
+    {
+      int magic = 0;
+      if (root && !f.read(reinterpret_cast<char *>(&magic), sizeof(int)))
       {
-        hdr[0] = hdr[1] = 0;
+        magic = 0;
       }
-    }
-    MPI_Bcast(hdr, 2, MPI_INT, 0, comm);
-    const int K = hdr[1];
-    if (hdr[0] != kModesMagic || K < 0)
-    {
-      return;
-    }
-    std::vector<int> ids(K);
-    std::vector<double> G_full, C(static_cast<std::size_t>(K) * K);
-    if (root)
-    {
-      std::vector<double> G_off(static_cast<std::size_t>(nG_global) * K);
-      f.read(reinterpret_cast<char *>(ids.data()), sizeof(int) * K);
-      f.read(reinterpret_cast<char *>(G_off.data()), sizeof(double) * G_off.size());
-      f.read(reinterpret_cast<char *>(C.data()), sizeof(double) * C.size());
-      G_full.assign(G_off.size(), 0.0);
-      for (int g = 0; g < nG_global; g++)
+      MPI_Bcast(&magic, 1, MPI_INT, 0, comm);
+      if (magic == kSKenMagic)
       {
-        for (int k = 0; k < K; k++)
+        std::vector<double> full;
+        if (root)
         {
-          G_full[static_cast<std::size_t>(g) * K + k] =
-              sgn[g] * G_off[static_cast<std::size_t>(perm[g]) * K + k];
+          std::vector<double> off(static_cast<std::size_t>(nG) * nG);
+          f.read(reinterpret_cast<char *>(off.data()), sizeof(double) * off.size());
+          full.assign(off.size(), 0.0);
+          for (int a = 0; a < nG; a++)
+          {
+            for (int b = 0; b < nG; b++)
+            {
+              full[static_cast<std::size_t>(a) * nG + b] =
+                  sgn[a] * sgn[b] * off[static_cast<std::size_t>(perm[a]) * nG + perm[b]];
+            }
+          }
         }
+        ScatterRows(full, nG, SK_rows);
+        have_sk = true;
+      }
+      else if (magic == kModesMagic)
+      {
+        int hdr[2] = {0, 0};  // K, has_gk
+        std::vector<int> ids;
+        std::vector<double> fp, C, G_full, GK_full;
+        if (root)
+        {
+          f.read(reinterpret_cast<char *>(&hdr[0]), sizeof(int));
+          ids.resize(hdr[0]);
+          fp.resize(2 * hdr[0]);
+          f.read(reinterpret_cast<char *>(ids.data()), sizeof(int) * hdr[0]);
+          f.read(reinterpret_cast<char *>(fp.data()), sizeof(double) * 2 * hdr[0]);
+          f.read(reinterpret_cast<char *>(&hdr[1]), sizeof(int));
+        }
+        MPI_Bcast(hdr, 2, MPI_INT, 0, comm);
+        const int K = hdr[0];
+        ids.resize(K);
+        fp.resize(2 * K);
+        C.resize(static_cast<std::size_t>(K) * K);
+        auto read_rows = [&](std::vector<double> &full)
+        {
+          if (root)
+          {
+            std::vector<double> off(static_cast<std::size_t>(nG) * K);
+            f.read(reinterpret_cast<char *>(off.data()), sizeof(double) * off.size());
+            full.assign(off.size(), 0.0);
+            for (int g = 0; g < nG; g++)
+            {
+              for (int k = 0; k < K; k++)
+              {
+                full[static_cast<std::size_t>(g) * K + k] =
+                    sgn[g] * off[static_cast<std::size_t>(perm[g]) * K + k];
+              }
+            }
+          }
+        };
+        read_rows(G_full);
+        if (hdr[1])
+        {
+          read_rows(GK_full);
+        }
+        if (root)
+        {
+          f.read(reinterpret_cast<char *>(C.data()), sizeof(double) * C.size());
+        }
+        MPI_Bcast(ids.data(), K, MPI_INT, 0, comm);
+        MPI_Bcast(fp.data(), 2 * K, MPI_DOUBLE, 0, comm);
+        MPI_Bcast(C.data(), K * K, MPI_DOUBLE, 0, comm);
+        ScatterRows(G_full, K, G_rows);
+        GK_rows.clear();
+        have_gk = (hdr[1] != 0);
+        if (have_gk)
+        {
+          ScatterRows(GK_full, K, GK_rows);
+        }
+        mode_ids = ids;
+        mode_fp = fp;
+        Cmode = C;
+        modes_ready = true;
+        modes_saved = true;  // already in the file
+      }
+      else
+      {
+        break;
       }
     }
-    MPI_Bcast(ids.data(), K, MPI_INT, 0, comm);
-    MPI_Bcast(C.data(), K * K, MPI_DOUBLE, 0, comm);
-    std::vector<int> cur;
-    for (const auto &[idx, dofs] : terminal_tdofs)
-    {
-      cur.push_back(idx);
-    }
-    if (ids != cur)
-    {
-      return;  // different terminal set: recompute on demand
-    }
-    std::vector<int> cnt, disp;
-    ModeRowLayout(K, cnt, disp);
-    G_rows.assign(static_cast<std::size_t>(gamma_nloc) * K, 0.0);
-    MPI_Scatterv(root ? G_full.data() : nullptr, cnt.data(), disp.data(), MPI_DOUBLE,
-                 G_rows.data(), gamma_nloc * K, MPI_DOUBLE, 0, comm);
-    mode_ids = ids;
-    Cmode = C;
-    modes_ready = true;
   }
 
   void BuildEnvSubmeshSolver()
@@ -1496,6 +1720,35 @@ struct SubstructuringSolver::Impl
     return std::make_unique<mfem::HypreParMatrix>(
         comm, nt, parent_fes.GlobalTrueVSize(), static_cast<HYPRE_BigInt>(nG_global),
         I.data(), J.data(), V.data(), parent_fes.GetTrueDofOffsets(), cols.data());
+  }
+
+  // Create the direct region preconditioner on the first solve batch (n excitations): the
+  // exact dense-Gamma factor A_region_free + S_E when the batch is large enough to amortize
+  // it, else A_region_free (CG then needs ~50 iterations). Decided once: a SuperLU object
+  // that was never factored must not be destroyed (SuperLU_DIST teardown bug). Collective;
+  // n is the same on all ranks.
+  void EnsureRegionFactor(int n)
+  {
+#if defined(MFEM_USE_SUPERLU)
+    if (!region_direct || reg_lu)
+    {
+      return;
+    }
+    reg_lu = std::make_unique<SuperLUSolver>(iodata, parent_fes.GetComm(), 0);
+    if (region_dense_eligible &&
+        static_cast<long long>(std::max(n, 1)) * kDenseInterfacePerExcitation >= nG_global)
+    {
+      std::unique_ptr<mfem::HypreParMatrix> S_mat = AssembleDenseInterface();
+      std::unique_ptr<mfem::HypreParMatrix> P(
+          mfem::ParAdd(A_region_free.get(), S_mat.get()));
+      S_mat.reset();
+      reg_lu->SetOperator(*P);  // copies P into SuperLU's distributed format
+    }
+    else
+    {
+      reg_lu->SetOperator(*A_region_free);
+    }
+#endif
   }
 
   // S_E as a parent-space HypreParMatrix (dense Gamma x Gamma block, zero elsewhere), for
@@ -2100,14 +2353,13 @@ void SubstructuringSolver::CondenseEnvironment()
     MPI_Scatterv(rank == 0 ? S_full.data() : nullptr, row_cnt.data(), row_disp.data(),
                  MPI_DOUBLE, impl->S_rows.data(), nloc * nG, MPI_DOUBLE, 0, comm);
     loaded = true;
-    if (!impl->magnetostatic)
-    {
-      const std::streamoff modes_pos =
-          static_cast<std::streamoff>(2 * sizeof(int)) +
-          static_cast<std::streamoff>(sizeof(double)) * nG * file_w +
-          static_cast<std::streamoff>(sizeof(double)) * nG * nG;
-      impl->LoadModes(model_path, modes_pos, perm, sgn);
-    }
+    // Optional sections after S_E: the magnetostatic energy operator S^K and the lift
+    // modes.
+    const std::streamoff sections_pos =
+        static_cast<std::streamoff>(2 * sizeof(int)) +
+        static_cast<std::streamoff>(sizeof(double)) * nG * file_w +
+        static_cast<std::streamoff>(sizeof(double)) * nG * nG;
+    impl->LoadSections(model_path, sections_pos, perm, sgn);
   }
   if (!loaded)
   {
@@ -2161,6 +2413,17 @@ void SubstructuringSolver::CondenseEnvironment()
       std::vector<const mfem::Vector *> X(B);
       std::vector<mfem::Vector *> Y(B);
       Vector ec(nloc), z(nloc);
+      // Magnetostatic model for reuse: also materialize the energy interface operator
+      // S^K = S_E - P^T D P (one more batched solve per column), so an online run needs no
+      // environment solve for the inductance energies.
+      const bool with_sk = impl->EnergyDiffers() && !model_path.empty();
+      std::vector<Vector> v(with_sk ? B : 0, Vector(impl->nt));
+      if (with_sk)
+      {
+        impl->SK_rows.assign(static_cast<std::size_t>(nloc) * nG, 0.0);
+        impl->have_sk = true;
+      }
+      const mfem::HypreParMatrix &Dm = with_sk ? impl->Denv() : *impl->A_env;
       std::vector<double> agg(static_cast<std::size_t>(B) * nloc);  // A_GG e_c, own rows
       for (int c0 = 0; c0 < nG; c0 += B)
       {
@@ -2195,6 +2458,39 @@ void SubstructuringSolver::CondenseEnvironment()
                 agg[static_cast<std::size_t>(k) * nloc + r] - z(r);
           }
         }
+        if (with_sk)
+        {
+          // Energy correction P^T D P e_c: p = e_c - y (the A-harmonic lift of e_c; t[k]
+          // holds y), v = D p, then S^K col = S col - (v|_Gamma - R A_EE^-1 v|_E).
+          for (int k = 0; k < nb; k++)
+          {
+            const int c = c0 + k;
+            t[k].Neg();
+            if (c >= off && c < off + nloc)
+            {
+              t[k](col_to_dof[c - off]) += 1.0;
+            }
+            Dm.Mult(t[k], v[k]);
+            for (int r = 0; r < nloc; r++)
+            {
+              agg[static_cast<std::size_t>(k) * nloc + r] = v[k](col_to_dof[r]);
+            }
+            X[k] = &v[k];
+            Y[k] = &v[k];
+          }
+          impl->ApplyAeeInvMulti(X, Y);
+          for (int k = 0; k < nb; k++)
+          {
+            R->Mult(v[k], z);
+            const int c = c0 + k;
+            for (int r = 0; r < nloc; r++)
+            {
+              const std::size_t q = static_cast<std::size_t>(r) * nG + c;
+              impl->SK_rows[q] =
+                  impl->S_rows[q] - (agg[static_cast<std::size_t>(k) * nloc + r] - z(r));
+            }
+          }
+        }
       }
     }
     else
@@ -2210,7 +2506,17 @@ void SubstructuringSolver::CondenseEnvironment()
     }
     if (!impl->magnetostatic)
     {
-      impl->ComputeTerminalModes();  // K batched env solves (cheap vs. the |Gamma| columns)
+      // Terminal modes: K batched env solves (cheap vs. the |Gamma| columns). Magnetostatic
+      // lifts (flux loops) are only known to the driver; their modes are computed (and
+      // appended to the model) at the first EnergyMatrix call.
+      std::vector<int> ids;
+      std::vector<Vector> lifts;
+      for (const auto &[idx, dofs] : impl->terminal_tdofs)
+      {
+        ids.push_back(idx);
+        lifts.push_back(impl->TerminalMode(idx));
+      }
+      impl->ComputeModes(ids, lifts);
     }
     if (!model_path.empty())
     {
@@ -2232,6 +2538,10 @@ void SubstructuringSolver::CondenseEnvironment()
         f.write(reinterpret_cast<const char *>(&sig_type), sizeof(int));
         f.write(reinterpret_cast<const char *>(sig.data()), sizeof(double) * nG * sig_w);
         f.write(reinterpret_cast<const char *>(S_full.data()), sizeof(double) * nG * nG);
+      }
+      if (impl->have_sk)
+      {
+        impl->AppendSK(model_path);  // collective
       }
       if (impl->modes_ready)
       {
@@ -2293,40 +2603,47 @@ void SubstructuringSolver::CondenseEnvironment()
         }
       }
       MPI_Allreduce(coords_loc.data(), coords.data(), nG * 3, MPI_DOUBLE, MPI_SUM, comm);
-      // Gather the dense S_E to rank 0 and build the Hodlr there.
-      std::vector<double> S_full;
-      if (rank == 0)
+      // Gather a dense interface operator to rank 0, build the Hodlr there, broadcast it,
+      // and free the dense row blocks (the compressed operator supplants them).
+      auto compress = [&](std::vector<double> &rows, const char *name)
       {
-        S_full.assign(static_cast<std::size_t>(nG) * nG, 0.0);
-      }
-      MPI_Gatherv(impl->S_rows.data(), nloc * nG, MPI_DOUBLE,
-                  rank == 0 ? S_full.data() : nullptr, row_cnt.data(), row_disp.data(),
-                  MPI_DOUBLE, 0, comm);
-      std::vector<double> buf;
-      int buflen = 0;
-      if (rank == 0)
+        std::vector<double> S_full;
+        if (rank == 0)
+        {
+          S_full.assign(static_cast<std::size_t>(nG) * nG, 0.0);
+        }
+        MPI_Gatherv(rows.data(), nloc * nG, MPI_DOUBLE, rank == 0 ? S_full.data() : nullptr,
+                    row_cnt.data(), row_disp.data(), MPI_DOUBLE, 0, comm);
+        std::vector<double> buf;
+        int buflen = 0;
+        if (rank == 0)
+        {
+          Hodlr h;
+          h.n = nG;
+          h.perm.assign(nG, 0);
+          std::vector<int> idx(nG);
+          std::iota(idx.begin(), idx.end(), 0);
+          BuildHodlr(S_full, nG, idx, 0, coords, hodlr_tol, 32, h);
+          buf = h.Serialize();
+          buflen = static_cast<int>(buf.size());
+        }
+        MPI_Bcast(&buflen, 1, MPI_INT, 0, comm);
+        buf.resize(buflen);
+        MPI_Bcast(buf.data(), buflen, MPI_DOUBLE, 0, comm);
+        auto h = std::make_unique<Hodlr>(Hodlr::Deserialize(buf));
+        const long long ret = h->Storage();
+        rows.clear();
+        rows.shrink_to_fit();
+        Mpi::Print("[HODLR] tol={:.1e}: {} storage {:d}/{:d} = {:.3f} of dense\n",
+                   hodlr_tol, name, ret, static_cast<long long>(nG) * nG,
+                   static_cast<double>(ret) / (static_cast<double>(nG) * nG));
+        return h;
+      };
+      impl->hodlr = compress(impl->S_rows, "S_E");
+      if (impl->have_sk)
       {
-        Hodlr h;
-        h.n = nG;
-        h.perm.assign(nG, 0);
-        std::vector<int> idx(nG);
-        std::iota(idx.begin(), idx.end(), 0);
-        BuildHodlr(S_full, nG, idx, 0, coords, hodlr_tol, 32, h);
-        buf = h.Serialize();
-        buflen = static_cast<int>(buf.size());
+        impl->hodlr_K = compress(impl->SK_rows, "S^K");
       }
-      MPI_Bcast(&buflen, 1, MPI_INT, 0, comm);
-      buf.resize(buflen);
-      MPI_Bcast(buf.data(), buflen, MPI_DOUBLE, 0, comm);
-      impl->hodlr = std::make_unique<Hodlr>(Hodlr::Deserialize(buf));
-      // The compressed operator supplants the dense row blocks; free them to realize the
-      // memory saving.
-      const long long ret = impl->hodlr->Storage();
-      impl->S_rows.clear();
-      impl->S_rows.shrink_to_fit();
-      Mpi::Print("[HODLR] tol={:.1e}: S_E storage {:d}/{:d} = {:.3f} of dense\n", hodlr_tol,
-                 ret, static_cast<long long>(nG) * nG,
-                 static_cast<double>(ret) / (static_cast<double>(nG) * nG));
     }
   }
 
@@ -2334,6 +2651,12 @@ void SubstructuringSolver::CondenseEnvironment()
   impl->mat_dtn =
       std::make_unique<MaterializedDtN>(impl->S_rows, impl->gamma_off, impl->gamma_global,
                                         impl->nG_global, comm, impl->hodlr.get());
+  if (impl->have_sk)
+  {
+    impl->mat_dtn_K = std::make_unique<MaterializedDtN>(impl->SK_rows, impl->gamma_off,
+                                                        impl->gamma_global, impl->nG_global,
+                                                        comm, impl->hodlr_K.get());
+  }
 
   // Region-condensed solver: Palace CG preconditioned by a wrapped AMS (H(curl)) or
   // BoomerAMG (H1) on the region-free block. Built once and reused across excitations (the
@@ -2370,19 +2693,11 @@ void SubstructuringSolver::CondenseEnvironment()
       // the non-local DtN cannot be sparsified (truncating it to the interface stencil
       // makes the preconditioner far worse than omitting it), and A_region_free alone needs
       // O(50) iterations. Otherwise fall back to A_region_free (S_E omitted).
-      impl->reg_lu = std::make_unique<SuperLUSolver>(impl->iodata, comm, 0);
-      if (!impl->hodlr && nG > 0 && nG <= Impl::kDirectCondensedMaxInterface)
-      {
-        std::unique_ptr<mfem::HypreParMatrix> S_mat = impl->AssembleDenseInterface();
-        std::unique_ptr<mfem::HypreParMatrix> P(
-            mfem::ParAdd(impl->A_region_free.get(), S_mat.get()));
-        S_mat.reset();
-        impl->reg_lu->SetOperator(*P);  // copies P into SuperLU's distributed format
-      }
-      else
-      {
-        impl->reg_lu->SetOperator(*impl->A_region_free);
-      }
+      // The factor is created at the first solve batch, once the number of excitations is
+      // known (EnsureRegionFactor chooses the exact dense-Gamma factor or A_region_free).
+      impl->region_direct = true;
+      impl->region_dense_eligible =
+          !impl->hodlr && nG > 0 && nG <= Impl::kDirectCondensedMaxInterface;
       pc = std::make_unique<CallableSolver>(impl->A_region_free->Height(),
                                             [pi](const mfem::Vector &r, mfem::Vector &z)
                                             { pi->reg_lu->Mult(r, z); });
@@ -2492,6 +2807,7 @@ SubstructuringSolver::SolveDirichletBatch(const std::vector<Vector> &dbcs)
   impl->EnsureEnv();  // general Dirichlet data needs environment solves
   const int nt = impl->nt;
   const int n = static_cast<int>(dbcs.size());
+  impl->EnsureRegionFactor(n);
   MPI_Comm comm = impl->parent_fes.GetComm();
 
   // g_E per excitation: the interface response to the Dirichlet data,
@@ -2597,6 +2913,7 @@ Vector SubstructuringSolver::SolveSource(const Vector &f)
 {
   MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
   impl->EnsureEnv();
+  impl->EnsureRegionFactor(1);
   const int nt = impl->nt;
 
   // Environment interior source response: solve A_EE w = f_E, correction (A_env w)|_Gamma.
@@ -2658,48 +2975,79 @@ Vector SubstructuringSolver::SolveSource(const Vector &f)
   return u;
 }
 
-mfem::DenseMatrix
-SubstructuringSolver::CapacitanceMatrix(const std::vector<int> &terminal_indices,
-                                        std::vector<Vector> *fields, int n_fields)
+mfem::DenseMatrix SubstructuringSolver::EnergyMatrix(const std::vector<int> &ids,
+                                                     const std::vector<Vector> &lifts,
+                                                     std::vector<Vector> *fields,
+                                                     int n_fields)
 {
   MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
-  MFEM_VERIFY(!impl->magnetostatic,
-              "CapacitanceMatrix is for electrostatic substructuring problems!");
-  if (!impl->modes_ready)
-  {
-    impl->ComputeTerminalModes();  // model saved without modes: needs the environment once
-  }
+  MFEM_VERIFY(ids.size() == lifts.size(), "EnergyMatrix: one id per lift!");
   const int nt = impl->nt;
-  const int n = static_cast<int>(terminal_indices.size());
-  const int K = static_cast<int>(impl->mode_ids.size());
+  const int n = static_cast<int>(lifts.size());
+  const int nf = fields ? std::max(0, std::min(n_fields, n)) : 0;
   MPI_Comm comm = impl->parent_fes.GetComm();
-  std::vector<int> col(n, -1);  // mode column of each requested terminal
-  for (int j = 0; j < n; j++)
+  // Dirichlet data restricted to the Dirichlet DOF set (as SolveDirichlets does).
+  std::vector<Vector> x(n, Vector(nt));
+  for (int k = 0; k < n; k++)
   {
-    for (int k = 0; k < K; k++)
+    x[k] = 0.0;
+    for (int d = 0; d < impl->dbc_tdofs.Size(); d++)
     {
-      if (impl->mode_ids[k] == terminal_indices[j])
+      const int i = impl->dbc_tdofs[d];
+      x[k](i) = lifts[k](i);
+    }
+  }
+
+  // Magnetostatics without the energy interface operator S^K: environment path (full
+  // fields, then the energy u_i^T K u_j).
+  if (impl->EnergyDiffers() && !impl->mat_dtn_K)
+  {
+    std::vector<Vector> u = SolveDirichletBatch(x);
+    mfem::DenseMatrix E(n);
+    for (int i = 0; i < n; i++)
+    {
+      for (int j = 0; j < n; j++)
       {
-        col[j] = k;
+        E(i, j) = MutualEnergy(u[i], u[j]);
       }
     }
-    MFEM_VERIFY(col[j] >= 0, "Unknown terminal index " << terminal_indices[j] << "!");
+    if (fields)
+    {
+      fields->assign(u.begin(), u.begin() + nf);
+    }
+    return E;
   }
-  auto g = [&](int i, int k)  // g_k at owned interface true DOF i
-  {
-    return impl
-        ->G_rows[static_cast<std::size_t>(impl->gamma_global[i] - impl->gamma_off) * K + k];
-  };
 
-  // Region-condensed solve per terminal (environment interior left at zero): the interface
-  // load is the precomputed g_k, so no environment solve is needed.
+  // Modes of these lifts: reuse the saved / current ones if they match (id + environment
+  // fingerprint), else compute them (needs the environment once; appended to the model in
+  // an offline run that saves one).
+  std::vector<int> col;
+  if (!impl->ModesMatch(ids, x, col))
+  {
+    impl->ComputeModes(ids, x);
+    col.resize(n);
+    std::iota(col.begin(), col.end(), 0);
+    const auto &subcfg = *impl->iodata.solver.substructuring;
+    if (subcfg.mode != SubstructuringMode::ONLINE && !subcfg.save_model.empty())
+    {
+      impl->AppendModes(subcfg.save_model);
+    }
+  }
+  const int K = static_cast<int>(impl->mode_ids.size());
+  const std::vector<double> &GE = impl->have_gk ? impl->GK_rows : impl->G_rows;
+  const MaterializedDtN &SK = impl->mat_dtn_K ? *impl->mat_dtn_K : *impl->mat_dtn;
+  auto row = [&](int i)
+  { return static_cast<std::size_t>(impl->gamma_global[i] - impl->gamma_off) * K; };
+
+  // Region-condensed solve per lift (environment interior left at zero): the interface load
+  // is the precomputed g_k, so no environment solve is needed.
+  impl->EnsureRegionFactor(n);
   std::vector<Vector> u(n, Vector(nt)), Ku(n, Vector(nt)), Su(n, Vector(nt));
   {
     Vector b(nt), tr(nt);
     for (int j = 0; j < n; j++)
     {
-      const Vector x = impl->TerminalMode(terminal_indices[j]);
-      impl->A_region->Mult(x, tr);
+      impl->A_region->Mult(x[j], tr);
       b = 0.0;
       for (int i = 0; i < nt; i++)
       {
@@ -2709,7 +3057,7 @@ SubstructuringSolver::CapacitanceMatrix(const std::vector<int> &terminal_indices
         }
         if (impl->is_gamma[i])
         {
-          b(i) -= g(i, col[j]);
+          b(i) -= impl->G_rows[row(i) + col[j]];
         }
       }
       u[j] = 0.0;
@@ -2717,18 +3065,16 @@ SubstructuringSolver::CapacitanceMatrix(const std::vector<int> &terminal_indices
       for (int d = 0; d < impl->dbc_tdofs.Size(); d++)
       {
         const int i = impl->dbc_tdofs[d];
-        u[j](i) = x(i);  // driven terminal at 1, the others grounded
+        u[j](i) = x[j](i);
       }
       impl->K_region_e->Mult(u[j], Ku[j]);
-      impl->mat_dtn->Mult(u[j], Su[j]);
+      SK.Mult(u[j], Su[j]);
     }
   }
 
-  // C_ij = u_i^T K_R u_j + [u_G,i; e_i]^T [S_E, G; G^T, Cmode] [u_G,j; e_j]: the region
-  // energy plus the environment's exact condensed energy (S_E couples the interface values,
-  // G the interface to the terminal potentials, Cmode the terminals through the
-  // environment interior).
-  mfem::DenseMatrix C(n);
+  // E_ij = u_i^T K_R u_j + [u_G,i; e_i]^T [S^K, G^K; G^K^T, Cmode] [u_G,j; e_j]: the region
+  // energy plus the environment's exact condensed energy.
+  mfem::DenseMatrix E(n);
   for (int i = 0; i < n; i++)
   {
     for (int j = 0; j < n; j++)
@@ -2738,35 +3084,56 @@ SubstructuringSolver::CapacitanceMatrix(const std::vector<int> &terminal_indices
       {
         if (impl->is_gamma[r])
         {
-          a += u[i](r) * Su[j](r) + u[i](r) * g(r, col[j]) + g(r, col[i]) * u[j](r);
+          a += u[i](r) * Su[j](r) + u[i](r) * GE[row(r) + col[j]] +
+               GE[row(r) + col[i]] * u[j](r);
         }
       }
-      C(i, j) = a;
+      E(i, j) = a;
     }
   }
   if (n > 0)
   {
-    MPI_Allreduce(MPI_IN_PLACE, C.GetData(), n * n, MPI_DOUBLE, MPI_SUM, comm);
+    MPI_Allreduce(MPI_IN_PLACE, E.GetData(), n * n, MPI_DOUBLE, MPI_SUM, comm);
   }
   for (int i = 0; i < n; i++)
   {
     for (int j = 0; j < n; j++)
     {
-      C(i, j) += impl->Cmode[static_cast<std::size_t>(col[i]) * K + col[j]];
+      E(i, j) += impl->Cmode[static_cast<std::size_t>(col[i]) * K + col[j]];
     }
   }
 
   // Optional full fields (environment interior recovered on demand).
   if (fields)
   {
-    const int nf = std::max(0, std::min(n_fields, n));
     fields->assign(u.begin(), u.begin() + nf);
     if (nf > 0)
     {
       impl->RecoverEnvInterior(*fields);
     }
   }
-  return C;
+  return E;
+}
+
+mfem::DenseMatrix
+SubstructuringSolver::CapacitanceMatrix(const std::vector<int> &terminal_indices,
+                                        std::vector<Vector> *fields, int n_fields)
+{
+  MFEM_VERIFY(!impl->magnetostatic,
+              "CapacitanceMatrix is for electrostatic substructuring problems!");
+  std::vector<Vector> lifts;
+  for (int idx : terminal_indices)
+  {
+    lifts.push_back(TerminalLift(idx));
+  }
+  return EnergyMatrix(terminal_indices, lifts, fields, n_fields);
+}
+
+Vector SubstructuringSolver::TerminalLift(int terminal_index) const
+{
+  MFEM_VERIFY(impl->terminal_tdofs.count(terminal_index),
+              "Unknown terminal index " << terminal_index << "!");
+  return impl->TerminalMode(terminal_index);
 }
 
 bool SubstructuringSolver::EnvironmentFactored() const

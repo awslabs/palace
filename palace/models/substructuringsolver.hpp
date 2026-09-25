@@ -51,15 +51,29 @@ public:
   std::vector<Vector> SolveExcitations(const std::vector<int> &drive_terminal_indices);
   std::vector<Vector> SolveDirichlets(const std::vector<Vector> &dbc_values);
 
-  // Electrostatic Maxwell capacitance matrix C_ij = u_i^T K u_j over the given terminals,
-  // computed WITHOUT any environment solve: the environment enters only through the
-  // condensed interface operator S_E and the precomputed terminal-mode couplings (saved
-  // with the model), so an online run never factors the environment. If fields is non-null,
-  // the full fields of the first n_fields excitations are also recovered (this needs the
-  // environment interior, so the environment factor is built on demand).
+  // Energy matrix E_ij = u_i^T K u_j (K the pure energy operator) of Dirichlet-lift
+  // excitations: lifts[k] is a full parent true-DOF vector prescribing the Dirichlet data
+  // (e.g. a terminal unit potential or a magnetostatic flux-loop lift) and ids[k] labels it
+  // for model reuse. Computed from region solves against the condensed environment (S_E,
+  // the energy operator S^K, and per-lift interface couplings): once the lifts' modes are
+  // known (saved with the model and matched by id + an environment-side fingerprint), NO
+  // environment solve is needed. Modes are otherwise computed with the environment factor
+  // (and appended to the model in an offline run that saves one). Magnetostatic runs
+  // without a materialized S^K (a model is not being saved/loaded) use the environment
+  // path. If fields is non-null, the full fields of the first n_fields lifts are also
+  // recovered (this needs the environment interior).
+  mfem::DenseMatrix EnergyMatrix(const std::vector<int> &ids,
+                                 const std::vector<Vector> &lifts,
+                                 std::vector<Vector> *fields = nullptr, int n_fields = 0);
+
+  // Electrostatic Maxwell capacitance matrix over the given terminals: EnergyMatrix of the
+  // terminal unit potentials.
   mfem::DenseMatrix CapacitanceMatrix(const std::vector<int> &terminal_indices,
                                       std::vector<Vector> *fields = nullptr,
                                       int n_fields = 0);
+
+  // Unit Dirichlet lift of a terminal (1 on its true DOFs, 0 elsewhere).
+  Vector TerminalLift(int terminal_index) const;
 
   // Whether the environment interior operator has been factored (diagnostics / tests).
   bool EnvironmentFactored() const;

@@ -724,6 +724,162 @@ TEST_CASE("SubstructuringSolver environment-free capacitance matrix",
   CHECK(rel_diff(C_on, full_field_C(on)) <= 1.0e-9);
 }
 
+TEST_CASE("SubstructuringSolver environment-free magnetostatic energies",
+          "[substructure][Serial][Parallel]")
+{
+  // Magnetostatics: the energy operator (pure curl-curl K) differs from the solve operator
+  // (curl-curl + eps mass, A). The condensed energy uses S^K = S_E - P^T D P (D = A - K)
+  // and the D-corrected lift couplings. An offline run that saves a model must reproduce
+  // the full-field energies u_i^T K u_j, and the online run must reproduce them without
+  // factoring the environment (lifts matched by id + fingerprint). Tolerance: the synthetic
+  // unit lifts are mostly curl-free, so the order-1 energies are tiny (~1e-6) and the full-
+  // field reference itself is only good to ~5e-9 (its own asymmetry); omitting the
+  // eps-correction errs by orders of magnitude more.
+  const int order = GENERATE(1, 2);
+  const bool tet = GENERATE(false, true);
+  CAPTURE(order, tet);
+  const std::string model_path = "substruct_mag_energy_model.bin";
+  auto make_config = [order](const std::string &mode)
+  {
+    json config = {
+        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permeability", 1.0}, {"Permittivity", 1.0}},
+            {{"Attributes", {2}}, {"Permeability", 4.0}, {"Permittivity", 1.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", order},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"Mode", mode},
+            {"SaveModel", "substruct_mag_energy_model.bin"}}}}}};
+    return IoData(config, false);
+  };
+  auto make_mesh = [tet]() { return tet ? MakeWavyTetSplit(4) : MakeSplitCube(4); };
+  const std::vector<int> ids = {1, 2};
+  auto rel_diff = [](const mfem::DenseMatrix &A, const mfem::DenseMatrix &B)
+  {
+    double d = 0.0, m = 0.0;
+    for (int i = 0; i < A.Height(); i++)
+    {
+      for (int j = 0; j < A.Width(); j++)
+      {
+        d = std::max(d, std::abs(A(i, j) - B(i, j)));
+        m = std::max(m, std::abs(B(i, j)));
+      }
+    }
+    return d / m;
+  };
+  auto full_field_E = [&ids](SubstructuringSolver &ss)
+  {
+    std::vector<Vector> lifts = {ss.TerminalLift(1), ss.TerminalLift(2)};
+    std::vector<Vector> u = ss.SolveDirichlets(lifts);
+    mfem::DenseMatrix E(2);
+    for (int i = 0; i < 2; i++)
+    {
+      for (int j = 0; j < 2; j++)
+      {
+        E(i, j) = ss.MutualEnergy(u[i], u[j]);
+      }
+    }
+    return E;
+  };
+
+  IoData iodata_off = make_config("Offline");
+  std::vector<std::unique_ptr<Mesh>> mesh_off;
+  mesh_off.push_back(std::make_unique<Mesh>(make_mesh()));
+  SubstructuringSolver off(iodata_off, mesh_off);
+  off.CondenseEnvironment();
+  const std::vector<Vector> lifts_off = {off.TerminalLift(1), off.TerminalLift(2)};
+  const mfem::DenseMatrix E_off = off.EnergyMatrix(ids, lifts_off);
+  const mfem::DenseMatrix E_ref = full_field_E(off);
+  CHECK(rel_diff(E_off, E_ref) <= 1.0e-7);
+
+  IoData iodata_on = make_config("Online");
+  std::vector<std::unique_ptr<Mesh>> mesh_on;
+  mesh_on.push_back(std::make_unique<Mesh>(make_mesh()));
+  SubstructuringSolver on(iodata_on, mesh_on);
+  on.CondenseEnvironment();
+  const std::vector<Vector> lifts_on = {on.TerminalLift(1), on.TerminalLift(2)};
+  std::vector<Vector> fields;
+  const mfem::DenseMatrix E_on = on.EnergyMatrix(ids, lifts_on);
+  CHECK_FALSE(on.EnvironmentFactored());
+  CHECK(rel_diff(E_on, E_off) <= 1.0e-9);
+  // Recover a field on demand; it matches the full solve.
+  (void)on.EnergyMatrix(ids, lifts_on, &fields, 1);
+  CHECK(on.EnvironmentFactored());
+  const Vector u_full = on.SolveDirichlet(lifts_on[0]);
+  Vector d(fields[0]);
+  d -= u_full;
+  const double un = std::sqrt(mfem::InnerProduct(Mpi::World(), u_full, u_full));
+  CHECK(std::sqrt(mfem::InnerProduct(Mpi::World(), d, d)) <= 1.0e-8 * un);
+}
+
+TEST_CASE("SubstructuringSolver magnetostatic energies on a re-meshed region",
+          "[substructure][Serial][Parallel]")
+{
+  // Offline on one region mesh, online on a re-meshed region (fixed Gamma + environment,
+  // signed H(curl) re-ordering of S_E, S^K and the lift couplings): the online condensed
+  // energies, computed without an environment solve, must equal the online full-field
+  // energies.
+  const int order = GENERATE(1, 2);
+  CAPTURE(order);
+  auto make_config = [order](const std::string &mode)
+  {
+    json config = {
+        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permeability", 1.0}, {"Permittivity", 1.0}},
+            {{"Attributes", {2}}, {"Permeability", 4.0}, {"Permittivity", 1.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", order},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"Mode", mode},
+            {"SaveModel", "substruct_mag_remesh_energy.bin"}}}}}};
+    return IoData(config, false);
+  };
+  const std::vector<int> ids = {1, 2};
+  IoData iodata_off = make_config("Offline");
+  std::vector<std::unique_ptr<Mesh>> mesh_off;
+  mesh_off.push_back(std::make_unique<Mesh>(MakeGradedSplit(3, 4, 4)));
+  SubstructuringSolver off(iodata_off, mesh_off);
+  off.CondenseEnvironment();
+  (void)off.EnergyMatrix(ids, {off.TerminalLift(1), off.TerminalLift(2)});
+
+  IoData iodata_on = make_config("Online");
+  std::vector<std::unique_ptr<Mesh>> mesh_on;
+  mesh_on.push_back(std::make_unique<Mesh>(MakeGradedSplit(5, 4, 4)));
+  SubstructuringSolver on(iodata_on, mesh_on);
+  on.CondenseEnvironment();
+  const std::vector<Vector> lifts = {on.TerminalLift(1), on.TerminalLift(2)};
+  const mfem::DenseMatrix E_on = on.EnergyMatrix(ids, lifts);
+  CHECK_FALSE(on.EnvironmentFactored());
+  std::vector<Vector> u = on.SolveDirichlets(lifts);
+  double d = 0.0, m = 0.0;
+  for (int i = 0; i < 2; i++)
+  {
+    for (int j = 0; j < 2; j++)
+    {
+      const double e = on.MutualEnergy(u[i], u[j]);
+      d = std::max(d, std::abs(E_on(i, j) - e));
+      m = std::max(m, std::abs(e));
+    }
+  }
+  CHECK(d <= 1.0e-7 * m);  // see the tolerance note above
+}
+
 TEST_CASE("SubstructuringSolver capacitance from a model without terminal modes",
           "[substructure][Serial][Parallel]")
 {
