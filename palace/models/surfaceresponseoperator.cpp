@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -6182,9 +6183,22 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                   [](const auto &model) { return model.plan_view_boundary.has_value(); });
   // The identification needs every metal face for the decision-73(3) cross-layer zones.
   surface.retain_global_faces = true;
+  // Wall time of the geometry steps before the identification (a chip-scale mesh spends
+  // minutes here; the identification prints its own stage lines).
+  const auto geometry_started = std::chrono::steady_clock::now();
+  auto GeometryStageLine = [&](const std::string &text)
+  {
+    Mpi::Print(
+        "  Metal perimeter {} ({:.2f} s)\n", text,
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - geometry_started)
+            .count());
+  };
   const auto geometry = ExtractMetalEdgeGeometry(mesh, iodata.boundaries, surface);
   MFEM_VERIFY(!geometry.Empty(),
               "Fabrication-process response matching found no metal perimeter!");
+  GeometryStageLine("extracted: " + std::to_string(geometry.segments.size()) +
+                    " segments, " + std::to_string(geometry.global_faces.size()) +
+                    " global faces");
   if (statistics)
   {
     statistics->metal_vertices = geometry.vertices.size();
@@ -7098,6 +7112,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                            std::make_move_iterator(segments.begin()),
                            std::make_move_iterator(segments.end()));
   }
+  GeometryStageLine("framed: " + std::to_string(global_segments.size()) +
+                    " targeted segments in " + std::to_string(groups_by_targets.size()) +
+                    " interface groups");
 
   // Boundary-condition labels are diagnostics only: geometrically connected metal carrying
   // different Terminal / PrescribedPotential indices is reported, never split.
@@ -7139,6 +7156,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   const auto identification = RunGeometryIdentification(
       geometry, global_segments, library, requirements ? *requirements : law_describer,
       requirements, frame_normal_configured);
+  GeometryStageLine("identified and matched: " +
+                    std::to_string(identification.features.size()) + " features");
   if (request.patch_construction == ResponseCorrectionData::PatchConstruction::FEATURES)
   {
     // Features-driven construction (default): the identification's feature list is the
@@ -7160,6 +7179,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     const auto summary = BuildFeaturePatches(
         library, identification, global_segments, quadrature,
         requirements ? *requirements : law_describer, diagnostics, result);
+    GeometryStageLine("patches built: " + std::to_string(result.patches.size()));
     std::string unmatched;
     for (const auto &[type, entry] : summary.unmatched_by_type)
     {

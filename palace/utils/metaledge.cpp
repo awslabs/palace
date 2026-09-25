@@ -4,6 +4,7 @@
 #include "metaledge.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -187,6 +188,16 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   {
     return result;
   }
+  // Stage lines (counts and wall time on the root): the extraction is replicated on every
+  // rank and a chip-scale mesh takes minutes here before the identification starts.
+  const auto extraction_started = std::chrono::steady_clock::now();
+  auto StageLine = [&](const std::string &text)
+  {
+    Mpi::Print(
+        "  Metal perimeter {}: ({:.2f} s)\n", text,
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - extraction_started)
+            .count());
+  };
   for (auto &[attribute, conditions] : attribute_conditions)
   {
     (void)attribute;
@@ -379,6 +390,8 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   {
     return result;
   }
+  StageLine(std::to_string(local_loops.size()) + " local metal faces, " +
+            std::to_string(gathered.size()) + " gathered");
   // Canonical processing order: a function of the global mesh only, not of the partition.
   std::sort(gathered.begin(), gathered.end(),
             [](const GatheredFace &a, const GatheredFace &b)
@@ -491,6 +504,8 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   }
   gathered.clear();
   gathered.shrink_to_fit();
+  StageLine(std::to_string(faces.size()) + " distinct faces, " +
+            std::to_string(canonical_points.size()) + " canonical points");
 
   // Face normals (Newell), centroids and areas on the canonical loops; the layer normal is
   // the area-weighted principal direction of the face normals. Metal faces lying on the
@@ -757,6 +772,8 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
       }
     }
   }
+
+  StageLine(std::to_string(incidence.size()) + " face edges");
 
   // (5) Metal components through shared face edges.
   std::vector<std::size_t> face_parent(faces.size());
@@ -1046,6 +1063,10 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
     return result;
   }
 
+  StageLine(std::to_string(result.segments.size()) + " perimeter segments, " +
+            std::to_string(result.vertices.size()) + " vertices, " +
+            std::to_string(result.metal_components) + " metal components");
+
   // (7) Retained faces: the rank-local facets (with their global component) and the
   // global deduplicated faces. A rank retains every distinct geometric face it owns once,
   // with the canonical (global) vertex coordinates, so that the crack copies and duplicate
@@ -1265,6 +1286,8 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
     }
     result.physical_chains++;
   }
+  StageLine(std::to_string(result.physical_chains) + " physical chains, " +
+            std::to_string(result.global_faces.size()) + " global faces retained");
   return result;
 }
 
