@@ -12,8 +12,8 @@ namespace palace
 namespace
 {
 
-bool HasPositiveFiniteDiagonal(MPI_Comm comm, const Vector &real,
-                               const Vector *imag = nullptr)
+bool HasFiniteNonzeroDiagonal(MPI_Comm comm, const Vector &real,
+                              const Vector *imag = nullptr)
 {
   int valid = 1;
   if (real.Size() > 0)
@@ -22,7 +22,7 @@ bool HasPositiveFiniteDiagonal(MPI_Comm comm, const Vector &real,
     const auto *I = imag ? imag->HostRead() : nullptr;
     for (int i = 0; i < real.Size(); i++)
     {
-      if (!(std::isfinite(R[i]) && R[i] > 0.0) ||
+      if (!(std::isfinite(R[i]) && R[i] != 0.0) ||
           (I && !(std::isfinite(I[i]) && I[i] == 0.0)))
       {
         valid = 0;
@@ -36,12 +36,15 @@ bool HasPositiveFiniteDiagonal(MPI_Comm comm, const Vector &real,
 
 double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
 {
-  // D⁻¹A is generally not Hermitian, but is similar to the Hermitian operator
-  // D⁻¹ᐟ²AD⁻¹ᐟ² when A has a finite, strictly positive diagonal.
-  MFEM_VERIFY(HasPositiveFiniteDiagonal(comm, dinv),
-              "Jacobi smoother spectral estimation requires a finite, strictly positive "
-              "operator diagonal!");
+  // D⁻¹A is generally not Hermitian. With Σ = sgn(D), it is similar to ΣS for the
+  // Hermitian S = |D|⁻¹ᐟ²A|D|⁻¹ᐟ², so ρ(D⁻¹A) ≤ ‖S‖₂, with equality when Σ commutes with S:
+  // for a diagonal of uniform sign (A definite of either sign), and for a negative definite
+  // A with essential DOFs eliminated using a unit diagonal.
+  MFEM_VERIFY(HasFiniteNonzeroDiagonal(comm, dinv),
+              "Jacobi smoother spectral estimation requires a finite, nonzero operator "
+              "diagonal!");
   Vector dinv_sqrt(dinv);
+  dinv_sqrt.Abs();
   linalg::Sqrt(dinv_sqrt);
   DiagonalOperator DinvSqrt(dinv_sqrt);
   ProductOperator ADinvSqrt(A, DinvSqrt);
@@ -53,10 +56,11 @@ double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector
 {
   if (A.IsReal())
   {
-    MFEM_VERIFY(HasPositiveFiniteDiagonal(comm, dinv.Real(), &dinv.Imag()),
-                "Jacobi smoother spectral estimation requires a finite, strictly positive "
-                "real operator diagonal!");
+    MFEM_VERIFY(HasFiniteNonzeroDiagonal(comm, dinv.Real(), &dinv.Imag()),
+                "Jacobi smoother spectral estimation requires a finite, nonzero real "
+                "operator diagonal!");
     ComplexVector dinv_sqrt(dinv);
+    dinv_sqrt.Real().Abs();
     linalg::Sqrt(dinv_sqrt.Real());
     ComplexDiagonalOperator DinvSqrt(dinv_sqrt);
     ComplexProductOperator ADinvSqrt(A, DinvSqrt);

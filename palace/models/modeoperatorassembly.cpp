@@ -22,6 +22,20 @@ namespace
 {
 constexpr bool skip_zeros = false;
 
+void EliminateEssentialDofs(mfem::HypreParMatrix &A, const mfem::Array<int> &dbc_tdof_list,
+                            Operator::DiagonalPolicy diag_policy)
+{
+  // HypreParMatrix::EliminateBC only finds the eliminated column entries of a row through
+  // the transposed entry, so it assumes a structurally symmetric matrix. A component with
+  // only one of the off-diagonal blocks (Atn without -Btn, or the reverse) is not, so
+  // eliminate the rows and columns for a general sparsity pattern first and then set the
+  // diagonal.
+  MFEM_ASSERT(diag_policy != Operator::DIAG_KEEP,
+              "Unsupported diagonal policy for block system matrix elimination!");
+  std::unique_ptr<mfem::HypreParMatrix> Ae(A.EliminateRowsCols(dbc_tdof_list));
+  A.EliminateBC(dbc_tdof_list, diag_policy);
+}
+
 void AddScaled(std::unique_ptr<mfem::HypreParMatrix> &sum, const mfem::HypreParMatrix *term,
                double coefficient)
 {
@@ -223,18 +237,17 @@ ModeOperatorModel::ModeOperatorModel(
     surf_z_op.AddDampingBdrCoefficients(-1.0, damp_n);
     if (farfield_op.GetAttrList().Size() > 0)
     {
+      // Scalar inverse impedance of the domain material adjacent to each farfield boundary
+      // element, like for the in-plane term (assumes an isotropic farfield material). The
+      // boundary attribute to material map is indexed by libCEED boundary attribute: a mesh
+      // boundary attribute maps to one of these per neighboring domain attribute.
       const auto &inv_z = mat_op.GetInvImpedance();
-      const auto &bdr_attr_to_mat = mat_op.GetBdrAttributeToMaterial();
-      for (auto attr : farfield_op.GetAttrList())
+      const auto bdr_attr_to_mat = mat_op.GetBdrAttributeToMaterial();
+      for (auto ceed_attr : mat_op.GetCeedBdrAttributes(farfield_op.GetAttrList()))
       {
-        const int mat_idx =
-            (attr > 0 && attr <= bdr_attr_to_mat.Size()) ? bdr_attr_to_mat[attr - 1] : -1;
-        const double inv_z0 = (mat_idx >= 0) ? inv_z(0, 0, mat_idx) : 1.0;
-        auto ceed_attrs = mat_op.GetCeedBdrAttributes(attr);
-        if (ceed_attrs.Size() > 0)
-        {
-          damp_n.AddMaterialProperty(ceed_attrs, inv_z0, -1.0);
-        }
+        const int mat_idx = bdr_attr_to_mat[ceed_attr - 1];
+        MFEM_ASSERT(mat_idx >= 0, "Missing material for farfield boundary attribute!");
+        damp_n.AddMaterialProperty(ceed_attr, inv_z(0, 0, mat_idx), -1.0);
       }
     }
     if (!damp_n.empty())
@@ -303,11 +316,19 @@ ModeOperatorModel::ModeOperatorModel(
   auto add_boundary_component =
       [&](CoefficientType type, int index, MaterialPropertyCoefficient &unit)
   {
+    // Processes without elements on the boundary have an empty coefficient and assemble
+    // their (zero) part of the component without the integrators.
     BilinearForm att(nd_fespace), ann(h1_fespace);
-    att.AddBoundaryIntegrator<VectorFEMassIntegrator>(unit);
+    if (!unit.empty())
+    {
+      att.AddBoundaryIntegrator<VectorFEMassIntegrator>(unit);
+    }
     auto Attr = assemble_nd(att);
     unit *= -1.0;
-    ann.AddBoundaryIntegrator<MassIntegrator>(unit);
+    if (!unit.empty())
+    {
+      ann.AddBoundaryIntegrator<MassIntegrator>(unit);
+    }
     add_component(type, index, std::move(Attr), nullptr, assemble_h1(ann), nullptr);
   };
   for (std::size_t g = 0; g < surf_sigma_op.Size(); g++)
@@ -408,11 +429,11 @@ ComplexHypreParMatrix BuildSystemMatrixA(
   }
   if (Ar)
   {
-    Ar->EliminateBC(dbc_tdof_list, diag_policy);
+    EliminateEssentialDofs(*Ar, dbc_tdof_list, diag_policy);
   }
   if (Ai)
   {
-    Ai->EliminateBC(dbc_tdof_list, Operator::DIAG_ZERO);
+    EliminateEssentialDofs(*Ai, dbc_tdof_list, Operator::DIAG_ZERO);
   }
   return {std::move(Ar), std::move(Ai)};
 }
