@@ -165,10 +165,12 @@ def main(argv=None):
                         help="metal plane 'a,b,c@nx,ny,nz': its own MS + MA targets with this EdgeFrameNormal (repeatable; replaces --ms/--ma)")
     args = parser.parse_args(argv)
     if args.plane:
-        plane_attributes = sorted(a for attributes, _ in args.plane for a in attributes)
-        metal = sorted(set(args.ground) | {a for group in args.terminal for a in group})
-        if plane_attributes != metal:
-            raise SystemExit(f"--plane attributes {plane_attributes} must partition the metal {metal}")
+        # Planes are disjoint subsets of the metal; metal outside every plane (bumps, the
+        # simulation box) is untargeted, as in a production run that types only the sheets.
+        plane_attributes = [a for attributes, _ in args.plane for a in attributes]
+        metal = set(args.ground) | {a for group in args.terminal for a in group}
+        if len(set(plane_attributes)) != len(plane_attributes) or not set(plane_attributes) <= metal:
+            raise SystemExit(f"--plane attributes {sorted(plane_attributes)} must be disjoint subsets of the metal {sorted(metal)}")
     output = os.path.abspath(args.output)
     postpro = args.postpro or os.path.join(os.path.dirname(output), "postpro")
     config = preflight_config(

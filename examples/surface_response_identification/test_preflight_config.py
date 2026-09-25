@@ -96,12 +96,16 @@ class PreflightConfigTest(unittest.TestCase):
         self.assertEqual(config["Domains"]["Materials"][0]["Attributes"], [1, 2])
         self.assertEqual(config["Domains"]["Materials"][1]["Attributes"], [3, 4])
 
-    def test_plane_option_must_partition_the_metal(self):
+    def test_plane_option_takes_disjoint_metal_subsets(self):
         output = os.path.join(self.directory.name, "cfg.json")
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(SystemExit):  # 153 is not metal
             main(["--mesh", "m.msh2", "--ground", "114", "126", "--library", self.library, "--output", output,
-                  "--plane", "114@0,0,1"])
-        main(["--mesh", "m.msh2", "--ground", "114", "126", "--library", self.library, "--output", output,
+                  "--plane", "114,153@0,0,1"])
+        with self.assertRaises(SystemExit):  # 114 twice
+            main(["--mesh", "m.msh2", "--ground", "114", "126", "--library", self.library, "--output", output,
+                  "--plane", "114@0,0,1", "--plane", "114,126@0,0,-1"])
+        # Metal outside every plane (153: bumps) stays untargeted.
+        main(["--mesh", "m.msh2", "--ground", "114", "126", "153", "--library", self.library, "--output", output,
               "--plane", "114@0,0,1", "--plane", "126@0,0,-1"])
         with open(output) as source:
             config = json.load(source)

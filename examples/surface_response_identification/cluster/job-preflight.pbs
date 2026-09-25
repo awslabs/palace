@@ -1,0 +1,58 @@
+#!/bin/bash
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Geometry-only surface-response preflight (palace --surface-response-preflight; no field solve) of a
+# chip-scale mesh on one m8g.48xlarge node, with wall time and memory recorded: /usr/bin/time -v on
+# mpirun (largest process RSS) plus a 10 s sampler of the summed RSS of every palace rank
+# ($OUT/rss-samples.txt: epoch seconds, total RSS kB, rank count).
+#
+#   qsub -v BIN=/path/palace-<sha>.bin,CONFIG=/path/config.json,NP=8,OUT=/path/preflight-np8 \
+#       job-preflight.pbs
+#
+# The binary digest is checked against the sibling binary.json when BINARY_JSON is given.
+#PBS -N palace-preflight
+#PBS -q normal-g
+#PBS -P DS-EM-FEM
+#PBS -r n
+#PBS -l select=1:ncpus=192:mpiprocs=192
+#PBS -l place=scatter:excl
+#PBS -l instance_type=m8g.48xlarge
+#PBS -l efa_support=True,subnet_id=subnet-0c98d793bbcebb39a
+#PBS -l walltime=04:00:00
+#PBS -j oe
+set -euo pipefail
+: "${BIN:?BIN=<palace executable>}" "${CONFIG:?CONFIG=<preflight configuration>}" "${NP:?NP=<ranks>}" "${OUT:?OUT=<output directory>}"
+mkdir -p "$OUT"
+exec > "$OUT/pbs.log" 2>&1
+trap 'code=$?; printf "{\"ExitCode\":%d,\"CompletedUTC\":\"%s\",\"JobID\":\"%s\"}\n" "$code" "$(date -u +%FT%TZ)" "${PBS_JOBID:-}" > "$OUT/pbs-status.json"' EXIT
+source /etc/profile.d/modules.sh
+module load gcc/14.3.0 openmpi/5.0.8-gcc14 arm/armpl/24.10-gcc
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 ARMPL_NUM_THREADS=1 PYTHONDONTWRITEBYTECODE=1
+for name in ${!PALACE_RESPONSE_@}; do unset "$name"; done
+export TMPDIR="$OUT/tmp"; mkdir -p "$TMPDIR"
+date -u +%FT%TZ; hostname; sort -u "$PBS_NODEFILE" | head -3; grep MemTotal /proc/meminfo
+sha256sum "$BIN" | tee "$OUT/binary-sha256.txt"
+if [ -n "${BINARY_JSON:-}" ]; then
+    EXPECTED=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["SHA256"])' "$BINARY_JSON")
+    [ "$(cut -d' ' -f1 "$OUT/binary-sha256.txt")" = "$EXPECTED" ] || { echo "binary digest mismatch"; exit 3; }
+fi
+MESH=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["Model"]["Mesh"])' "$CONFIG")
+sha256sum "$MESH" "$CONFIG" | tee "$OUT/inputs-sha256.txt"
+cp "$CONFIG" "$OUT/config.used.json"
+( while true; do
+      ps -eo rss=,comm= | awk -v t="$(date +%s)" '$2 ~ /palace/ {s += $1; n++} END {print t, s + 0, n + 0}' >> "$OUT/rss-samples.txt"
+      sleep 10
+  done ) &
+SAMPLER=$!
+echo "=== preflight $NP ranks start $(date -u +%FT%TZ)"
+set +e
+/usr/bin/time -v -o "$OUT/time.txt" /opt/openmpi/bin/mpirun --bind-to core --report-bindings --hostfile "$PBS_NODEFILE" -n "$NP" \
+    "$BIN" "$CONFIG" --surface-response-preflight > "$OUT/palace.log" 2>&1
+RC=$?
+set -e
+kill "$SAMPLER" 2>/dev/null || true
+echo "=== preflight end $(date -u +%FT%TZ) RC=$RC"
+grep -E "Elapsed|Maximum resident" "$OUT/time.txt" || true
+awk 'BEGIN{m=0} {if ($2 > m) m = $2} END {printf "peak summed RSS of palace ranks: %.2f GiB\n", m / 1048576}' "$OUT/rss-samples.txt"
+ls -la "$OUT/postpro" 2>/dev/null || true
+exit $RC
