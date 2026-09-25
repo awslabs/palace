@@ -920,7 +920,8 @@ nlohmann::json CanonicalCornerSignature(const std::vector<std::string> &interfac
 nlohmann::json CanonicalJunctionSignature(const std::vector<std::string> &interfaces,
                                           const std::string &boundary_law,
                                           std::vector<double> arm_angles_degrees,
-                                          std::vector<int> arm_conductors)
+                                          std::vector<int> arm_conductors,
+                                          JunctionCanonicalOrder *order)
 {
   for (double &angle : arm_angles_degrees)
   {
@@ -947,8 +948,12 @@ nlohmann::json CanonicalJunctionSignature(const std::vector<std::string> &interf
     return labels;
   };
   // Canonical cyclic order: minimal (angles, conductor labels), both orientations (mirror).
+  // Difference k is the gap after arm k in the angular order; in the reversed sequence the
+  // element at position k is arm (n - k) mod n with the gap after it clockwise.
+  const std::size_t n = arm_angles_degrees.size();
   std::pair<std::vector<double>, std::vector<int>> best{arm_angles_degrees,
                                                         Relabel(arm_conductors)};
+  JunctionCanonicalOrder best_order;
   for (const bool reverse : {false, true})
   {
     std::vector<double> sequence = arm_angles_degrees;
@@ -968,8 +973,14 @@ nlohmann::json CanonicalJunctionSignature(const std::vector<std::string> &interf
       if (candidate < best)
       {
         best = candidate;
+        const std::size_t position = (shift + 1) % n;
+        best_order = {reverse ? (n - position) % n : position, reverse};
       }
     }
+  }
+  if (order)
+  {
+    *order = best_order;
   }
   return {{"Interfaces", interfaces},
           {"Law", boundary_law},
@@ -1169,6 +1180,11 @@ struct VertexFeatureSite
   double corner_radius = 0.0;
   std::vector<double> arm_angles;
   std::vector<int> arm_conductors;
+  // Unit directions away from the site along its arms (corner: two, endpoint: one,
+  // junction: in the angular order of arm_angles) and the endpoint's gap direction: the
+  // feature frame of the patch construction is built from them.
+  std::vector<Point3D> arm_directions;
+  Point3D gap_direction{};
   std::vector<std::pair<std::size_t, Interval>> window;  // run, interval claimed
   std::vector<std::size_t> runs_at_site;                 // runs incident to the site
   std::string boundary_law;
@@ -1498,11 +1514,14 @@ void Identifier::ClassifyVertices()
     if (incident.size() == 1 || type == MetalEdgeVertexType::ENDPOINT)
     {
       site.type = "Endpoint";
+      site.arm_directions = {ArmDirection(incident.front(), v)};
+      site.gap_direction = runs[incident.front()].gap_direction;
     }
     else if (incident.size() == 2)
     {
       const Point3D da = ArmDirection(incident[0], v);
       const Point3D db = ArmDirection(incident[1], v);
+      site.arm_directions = {da, db};
       const double wedge =
           std::acos(std::clamp(Dot(da, db), -1.0, 1.0)) * 180.0 / std::acos(-1.0);
       site.turn_degrees = 180.0 - wedge;
@@ -1521,7 +1540,7 @@ void Identifier::ClassifyVertices()
           Normalize(Sub(ArmDirection(incident[0], v),
                         Scale(Dot(ArmDirection(incident[0], v), n_ref), n_ref)));
       const Point3D y = Cross(n_ref, x);
-      std::vector<std::pair<double, int>> arms;  // angle, conductor
+      std::vector<std::tuple<double, int, std::size_t>> arms;  // angle, conductor, run
       for (const std::size_t r : incident)
       {
         const Point3D d = ArmDirection(r, v);
@@ -1530,14 +1549,16 @@ void Identifier::ClassifyVertices()
         {
           angle += 360.0;
         }
-        arms.emplace_back(angle, runs[r].conductor);
+        arms.emplace_back(angle, runs[r].conductor, r);
       }
       std::sort(arms.begin(), arms.end());
       for (std::size_t i = 0; i < arms.size(); i++)
       {
-        const double next = i + 1 < arms.size() ? arms[i + 1].first : arms[0].first + 360.0;
-        site.arm_angles.push_back(next - arms[i].first);
-        site.arm_conductors.push_back(arms[i].second);
+        const double next =
+            i + 1 < arms.size() ? std::get<0>(arms[i + 1]) : std::get<0>(arms[0]) + 360.0;
+        site.arm_angles.push_back(next - std::get<0>(arms[i]));
+        site.arm_conductors.push_back(std::get<1>(arms[i]));
+        site.arm_directions.push_back(ArmDirection(std::get<2>(arms[i]), v));
       }
     }
     sites.push_back(std::move(site));
@@ -1639,6 +1660,7 @@ void Identifier::DetectRoundedCorners()
                 const Point3D bisector = Add(Scale(-1.0, ta), tb);
                 const Point3D gap = Add(arm_a.gap_direction, arm_b.gap_direction);
                 site.type = Dot(bisector, gap) > 0.0 ? "ConcaveCorner" : "ConvexCorner";
+                site.arm_directions = {Scale(-1.0, ta), tb};  // away from the virtual corner
                 site.boundary_law = arm_a.boundary_law;
                 std::set<std::string> interfaces;
                 for (const auto &name : InterfaceNames(arm_a.targets))
@@ -3070,19 +3092,46 @@ void Identifier::Assign(IdentificationResult &result)
     }
     nlohmann::json signature = {{"Interfaces", site.interfaces},
                                 {"Law", site.boundary_law}};
+    // Frame of the vertex feature (the patch frame of the library model, design (b) 4):
+    // x = the first arm away from the site, y in the process plane, z = n_ref. Corner: the
+    // arms ordered so that the second is counterclockwise from the first (a corner is its
+    // own mirror image); endpoint: y toward the gap; junction: x = the canonical first arm,
+    // y = +-(n x x) so that the canonical arm order proceeds counterclockwise in (x, y).
+    std::array<Point3D, 3> axes = {Point3D{}, Point3D{}, n_ref};
     if (site.type == "ConvexCorner" || site.type == "ConcaveCorner")
     {
       signature = CanonicalCornerSignature(site.interfaces, site.boundary_law,
                                            site.angle_degrees, site.corner_radius / R);
+      Point3D first = site.arm_directions[0], second = site.arm_directions[1];
+      if (Dot(Cross(n_ref, first), second) < 0.0)
+      {
+        std::swap(first, second);
+      }
+      axes[0] = Normalize(Sub(first, Scale(Dot(first, n_ref), n_ref)));
+      axes[1] = Normalize(Cross(n_ref, axes[0]));
     }
     else if (site.type == "Junction")
     {
+      JunctionCanonicalOrder order;
       signature = CanonicalJunctionSignature(site.interfaces, site.boundary_law,
-                                             site.arm_angles, site.arm_conductors);
+                                             site.arm_angles, site.arm_conductors, &order);
+      const Point3D first = site.arm_directions[order.first_arm];
+      axes[0] = Normalize(Sub(first, Scale(Dot(first, n_ref), n_ref)));
+      axes[1] = Scale(order.reversed ? -1.0 : 1.0, Normalize(Cross(n_ref, axes[0])));
+    }
+    else if (!site.arm_directions.empty())
+    {
+      const Point3D first = site.arm_directions.front();
+      axes[0] = Normalize(Sub(first, Scale(Dot(first, n_ref), n_ref)));
+      axes[1] = Normalize(Cross(n_ref, axes[0]));
+      if (Dot(axes[1], site.gap_direction) < 0.0)
+      {
+        axes[1] = Scale(-1.0, axes[1]);
+      }
     }
     const int feature = NewFeature(site.type, signature);
     features[feature].origin = site.point;
-    features[feature].axes = {Point3D{}, Point3D{}, n_ref};
+    features[feature].axes = axes;
     for (const auto &[r, interval] : site.window)
     {
       claims[r].push_back({feature, 1, interval});

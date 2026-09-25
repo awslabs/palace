@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <limits>
 #include <map>
 #include <numeric>
@@ -570,8 +571,23 @@ enum class LibraryTopology : char
   CONVEX_CORNER,
   CONCAVE_CORNER,
   ENDPOINT,
-  JUNCTION
+  JUNCTION,
+  // Curved classes of the identification (decision 73(1)(c)): models keyed by their
+  // version-2 Signature (RadiusOverR), patched like their straight analogues along the
+  // curved portions.
+  CURVED_EDGE,
+  CURVED_SAME_CONDUCTOR_GAP,
+  CURVED_DIFFERENT_CONDUCTOR_GAP,
+  CURVED_SAME_CONDUCTOR_STRIP
 };
+
+bool IsCurvedTopology(LibraryTopology topology)
+{
+  return topology == LibraryTopology::CURVED_EDGE ||
+         topology == LibraryTopology::CURVED_SAME_CONDUCTOR_GAP ||
+         topology == LibraryTopology::CURVED_DIFFERENT_CONDUCTOR_GAP ||
+         topology == LibraryTopology::CURVED_SAME_CONDUCTOR_STRIP;
+}
 
 struct LibraryInterface
 {
@@ -1170,6 +1186,22 @@ LibraryTopology ParseLibraryTopology(const std::string &topology)
   {
     return LibraryTopology::JUNCTION;
   }
+  if (topology == "CurvedEdge")
+  {
+    return LibraryTopology::CURVED_EDGE;
+  }
+  if (topology == "CurvedSameConductorGap")
+  {
+    return LibraryTopology::CURVED_SAME_CONDUCTOR_GAP;
+  }
+  if (topology == "CurvedDifferentConductorGap")
+  {
+    return LibraryTopology::CURVED_DIFFERENT_CONDUCTOR_GAP;
+  }
+  if (topology == "CurvedSameConductorStrip")
+  {
+    return LibraryTopology::CURVED_SAME_CONDUCTOR_STRIP;
+  }
   MFEM_ABORT("Unknown fabrication-process response topology \"" << topology << "\"!");
 }
 
@@ -1356,6 +1388,8 @@ bool IsBoundaryLawVerified(const LibraryModel &model)
   return model.boundary_condition.parameters_verified;
 }
 
+std::string TopologyIdentifier(LibraryTopology topology);
+
 ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                                   bool nondimensionalize, bool allow_empty_models = false,
                                   bool geometry_only = false)
@@ -1457,6 +1491,10 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
           signature->is_object() && signature->contains("Type"),
           "Fabrication-process response model Signature must be the identification's "
           "canonical Signature object (with Type)!");
+      MFEM_VERIFY(signature->at("Type").get<std::string>() ==
+                      TopologyIdentifier(model.topology),
+                  "Fabrication-process response model \""
+                      << model.name << "\" Signature.Type does not match its Topology!");
       model.identification_signature = *signature;
     }
     model.arm_angles = entry.value("ArmAngles", std::vector<double>{});
@@ -1704,12 +1742,20 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
           "Qualified or Unqualified!");
       model.boundary_law_physics_qualified = qualification->at("Status") == "Qualified";
     }
+    // A curved model has no version-1 geometry parameters: it is keyed by its Signature.
+    MFEM_VERIFY(!IsCurvedTopology(model.topology) || model.identification_signature,
+                "Curved fabrication-process response model \""
+                    << model.name << "\" requires its identification Signature!");
     if (model.topology == LibraryTopology::ISOLATED_EDGE || spatial_response ||
-        parallel_cluster)
+        parallel_cluster || model.topology == LibraryTopology::CURVED_EDGE)
     {
       MFEM_VERIFY(model.separation == 0.0,
-                  "An isolated-edge, parallel-cluster, or spatial response model cannot "
-                  "specify a separation!");
+                  "An isolated-edge, curved-edge, parallel-cluster, or spatial response "
+                  "model cannot specify a separation!");
+    }
+    else if (model.identification_signature && model.separation == 0.0)
+    {
+      // A paired-edge model keyed by its Signature needs no separation of its own.
     }
     else
     {
@@ -1767,12 +1813,16 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                   "Straight-edge response models cannot specify Angle, CornerRadius, or "
                   "ArmAngles!");
     }
-    MFEM_VERIFY(parallel_cluster == !model.cluster_edges.empty(),
-                "ParallelEdgeCluster response models require Edges, and other "
-                "topologies cannot specify them!");
-    MFEM_VERIFY(spatial_cluster == !model.spatial_edges.empty(),
-                "SpatialEdgeCluster response models require spatial Edges, and other "
-                "topologies cannot specify them!");
+    // A cluster model keyed by its identification Signature is built in the feature's
+    // canonical frame and needs no Edges of its own.
+    MFEM_VERIFY(parallel_cluster == !model.cluster_edges.empty() ||
+                    (parallel_cluster && model.identification_signature),
+                "ParallelEdgeCluster response models require Edges (or a Signature), and "
+                "other topologies cannot specify them!");
+    MFEM_VERIFY(spatial_cluster == !model.spatial_edges.empty() ||
+                    (spatial_cluster && model.identification_signature),
+                "SpatialEdgeCluster response models require spatial Edges (or a Signature), "
+                "and other topologies cannot specify them!");
     MFEM_VERIFY(spatial_cluster || endpoint || junction || !model.plan_view_boundary,
                 "PlanViewBoundary is supported only by SpatialEdgeCluster, Endpoint, or "
                 "Junction models!");
@@ -1827,6 +1877,7 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
       MFEM_VERIFY(!entry.contains("Reference") && references->is_array() &&
                       references->size() >= 2 &&
                       (model.topology == LibraryTopology::DIFFERENT_CONDUCTOR_GAP ||
+                       model.topology == LibraryTopology::CURVED_DIFFERENT_CONDUCTOR_GAP ||
                        parallel_cluster || spatial_cluster),
                   "ConductorReferences must contain at least two points and is supported "
                   "only by a DifferentConductorGap, ParallelEdgeCluster, or "
@@ -1876,7 +1927,8 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
       }
       model.conductor_references.push_back(reference);
     }
-    if (parallel_cluster || spatial_cluster)
+    if ((parallel_cluster && !model.cluster_edges.empty()) ||
+        (spatial_cluster && !model.spatial_edges.empty()))
     {
       const int conductor_count =
           parallel_cluster
@@ -1896,6 +1948,7 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
     {
       MFEM_VERIFY(model.conductor_references.size() >= 2 &&
                       (model.topology == LibraryTopology::DIFFERENT_CONDUCTOR_GAP ||
+                       model.topology == LibraryTopology::CURVED_DIFFERENT_CONDUCTOR_GAP ||
                        parallel_cluster || spatial_cluster) &&
                       model.response.contour_groups.empty() && paths->is_array() &&
                       !paths->empty(),
@@ -3789,15 +3842,28 @@ std::string TopologyName(LibraryTopology topology)
       return "endpoint";
     case LibraryTopology::JUNCTION:
       return "junction";
+    case LibraryTopology::CURVED_EDGE:
+      return "curved edge";
+    case LibraryTopology::CURVED_SAME_CONDUCTOR_GAP:
+      return "curved same-conductor gap";
+    case LibraryTopology::CURVED_DIFFERENT_CONDUCTOR_GAP:
+      return "curved different-conductor gap";
+    case LibraryTopology::CURVED_SAME_CONDUCTOR_STRIP:
+      return "curved same-conductor strip";
   }
   return "unknown";
 }
 
+// Longitudinal families integrated along the edge (per unit coupon depth); the curved
+// classes are integrated along their curved portions in the same way.
 bool IsTranslationalTopology(std::string_view topology)
 {
   return topology == "isolated edge" || topology == "same-conductor gap" ||
          topology == "different-conductor gap" || topology == "same-conductor strip" ||
-         topology == "parallel-edge cluster";
+         topology == "parallel-edge cluster" || topology == "curved edge" ||
+         topology == "curved same-conductor gap" ||
+         topology == "curved different-conductor gap" ||
+         topology == "curved same-conductor strip";
 }
 
 std::string TopologyIdentifier(LibraryTopology topology)
@@ -3824,6 +3890,14 @@ std::string TopologyIdentifier(LibraryTopology topology)
       return "Endpoint";
     case LibraryTopology::JUNCTION:
       return "Junction";
+    case LibraryTopology::CURVED_EDGE:
+      return "CurvedEdge";
+    case LibraryTopology::CURVED_SAME_CONDUCTOR_GAP:
+      return "CurvedSameConductorGap";
+    case LibraryTopology::CURVED_DIFFERENT_CONDUCTOR_GAP:
+      return "CurvedDifferentConductorGap";
+    case LibraryTopology::CURVED_SAME_CONDUCTOR_STRIP:
+      return "CurvedSameConductorStrip";
   }
   return "Unknown";
 }
@@ -5054,22 +5128,59 @@ std::optional<SpatialClusterSelection3D> FindSpatialClusterLibraryModel(
 // Library-model signatures computed from the stored model geometry with the
 // identification's canonicalisation, so that the matching pass is a lookup of feature
 // signatures.
+// A model whose law parameters are not verified cannot equal a device law; give it a key
+// that no feature produces instead of exporting the unverified parameters.
+std::string LibraryLawKey(const MetalBoundaryLaw &law,
+                          const AutomaticResponseRequirements &describer)
+{
+  return law.parameters_verified
+             ? describer.DescribeBoundaryCondition(law).dump()
+             : nlohmann::json{{"Type", BoundaryConditionName(law.type)},
+                              {"Unverified", true}}
+                   .dump();
+}
+
+// Canonical cluster signature of a SpatialEdgeCluster model's stored edges; its frame
+// (origin, axes in the model's own coordinates) maps the model onto a device feature with
+// the same signature (the feature's frame is canonical in mesh coordinates).
+std::optional<CanonicalSignature>
+ModelClusterSignature(const LibraryModel &model, double radius,
+                      const AutomaticResponseRequirements &describer)
+{
+  std::vector<SignaturePortion> portions;
+  std::map<int, InterfaceDielectric> slot_types;
+  for (const auto &interface : model.interfaces)
+  {
+    slot_types[interface.slot] = interface.type;
+  }
+  for (const auto &edge : model.spatial_edges)
+  {
+    const Point3D tangent = Normalize(Cross(edge.process_normal, edge.gap_direction));
+    std::vector<std::string> edge_interfaces;
+    if (auto it = slot_types.find(edge.interface_slot); it != slot_types.end())
+    {
+      edge_interfaces.push_back(ToString(it->second));
+    }
+    portions.push_back({Add(edge.point, Scale(edge.interval[0], tangent)),
+                        Add(edge.point, Scale(edge.interval[1], tangent)),
+                        edge.gap_direction, edge.conductor, edge_interfaces,
+                        LibraryLawKey(edge.boundary_condition, describer)});
+  }
+  if (portions.empty())
+  {
+    return std::nullopt;
+  }
+  return CanonicalClusterSignature(portions, {}, model.spatial_edges.front().process_normal,
+                                   radius);
+}
+
 std::map<std::string, std::string>
 LibrarySignatureKeys(const ProcessLibrary &library,
                      const AutomaticResponseRequirements &requirements)
 {
   std::map<std::string, std::string> keys;
   const double R = library.matching_radius;
-  // A model whose law parameters are not verified cannot equal a device law; give it a key
-  // that no feature produces instead of exporting the unverified parameters.
-  auto Law = [&](const MetalBoundaryLaw &law)
-  {
-    return law.parameters_verified
-               ? requirements.DescribeBoundaryCondition(law).dump()
-               : nlohmann::json{{"Type", BoundaryConditionName(law.type)},
-                                {"Unverified", true}}
-                     .dump();
-  };
+  auto Law = [&](const MetalBoundaryLaw &law) { return LibraryLawKey(law, requirements); };
   for (const auto &model : library.models)
   {
     std::vector<std::string> interfaces;
@@ -5154,36 +5265,19 @@ LibrarySignatureKeys(const ProcessLibrary &library,
         }
       case LibraryTopology::SPATIAL_EDGE_CLUSTER:
         {
-          std::vector<SignaturePortion> portions;
-          std::map<int, InterfaceDielectric> slot_types;
-          for (const auto &interface : model.interfaces)
+          if (const auto canonical = ModelClusterSignature(model, R, requirements))
           {
-            slot_types[interface.slot] = interface.type;
-          }
-          for (const auto &edge : model.spatial_edges)
-          {
-            const Point3D tangent =
-                Normalize(Cross(edge.process_normal, edge.gap_direction));
-            std::vector<std::string> edge_interfaces;
-            if (auto it = slot_types.find(edge.interface_slot); it != slot_types.end())
-            {
-              edge_interfaces.push_back(ToString(it->second));
-            }
-            portions.push_back({Add(edge.point, Scale(edge.interval[0], tangent)),
-                                Add(edge.point, Scale(edge.interval[1], tangent)),
-                                edge.gap_direction, edge.conductor, edge_interfaces,
-                                Law(edge.boundary_condition)});
-          }
-          if (!portions.empty())
-          {
-            auto canonical = CanonicalClusterSignature(
-                portions, {}, model.spatial_edges.front().process_normal, R);
-            nlohmann::json signature = canonical.signature;
-            signature["EdgeCount"] = portions.size();
+            nlohmann::json signature = canonical->signature;
+            signature["EdgeCount"] = model.spatial_edges.size();
             key = SignatureKeyAndHash(signature, "SpatialEdgeCluster");
           }
           break;
         }
+      case LibraryTopology::CURVED_EDGE:
+      case LibraryTopology::CURVED_SAME_CONDUCTOR_GAP:
+      case LibraryTopology::CURVED_DIFFERENT_CONDUCTOR_GAP:
+      case LibraryTopology::CURVED_SAME_CONDUCTOR_STRIP:
+        break;  // keyed by the Signature only (verified at load)
     }
     if (key)
     {
@@ -5339,19 +5433,18 @@ IdentificationResult RunGeometryIdentification(
                    p[0], p[1], p[2], vertex.type);
     }
   }
-  if (!requirements)
-  {
-    return result;
-  }
-
-  // Matching pass: signature lookup only.
-  const auto library_keys = LibrarySignatureKeys(library, *requirements);
+  // Matching pass: signature lookup only (the solve path consumes it as well).
+  const auto library_keys = LibrarySignatureKeys(library, describer);
   for (auto &feature : result.features)
   {
     if (auto it = library_keys.find(feature.signature_key); it != library_keys.end())
     {
       feature.matched_model = it->second;
     }
+  }
+  if (!requirements)
+  {
+    return result;
   }
 
   // Version-1 records derived from the features.
@@ -5467,6 +5560,555 @@ IdentificationResult RunGeometryIdentification(
   }
   requirements->SetIdentification(result.ToJson(requirements->CoordinateScale()));
   return result;
+}
+
+// Features-driven patch construction (SURFACE-RESPONSE-IDENTIFICATION.md (e)): every
+// feature of the identification matched by signature becomes its patches, built from the
+// feature's own portions, vertices and canonical frame; an unmatched feature is omitted
+// alone (never an interface group, chain or neighbour); excluded segments carry no feature
+// and are never corrected. Every patch records its feature and the segment portion it
+// integrates so that the patch dry run can be audited against the manifest.
+struct FeaturePatchSummary
+{
+  int matched_features = 0;
+  int unmatched_features = 0;
+  double matched_length = 0.0;
+  double unmatched_length = 0.0;
+  std::map<std::string, std::pair<int, double>> unmatched_by_type;  // count, length
+  std::map<std::string, int> patches_by_type;
+};
+
+FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
+                                        const IdentificationResult &identification,
+                                        const std::vector<EdgeSegment3D> &framed_segments,
+                                        const mfem::IntegrationRule &quadrature,
+                                        const AutomaticResponseRequirements &describer,
+                                        AutomaticResponseDiagnostics *diagnostics,
+                                        ResponseCorrectionData &result)
+{
+  FeaturePatchSummary summary;
+  const double R = library.matching_radius;
+  std::map<std::size_t, const EdgeSegment3D *> framed;
+  for (const auto &segment : framed_segments)
+  {
+    framed.emplace(segment.geometry_index, &segment);
+  }
+  std::map<std::string, std::size_t> model_by_name;
+  for (std::size_t i = 0; i < library.models.size(); i++)
+  {
+    model_by_name.emplace(library.models[i].name, i);
+  }
+
+  // A feature portion in the parametrisation of its framed segment (from p0); the manifest
+  // portion [s0, s1) runs from the segment's canonical key origin.
+  struct FramedPortion
+  {
+    const EdgeSegment3D *segment = nullptr;
+    double a = 0.0, b = 0.0;
+    std::size_t geometry_index = 0;
+    double s0 = 0.0, s1 = 0.0;
+  };
+  auto Frame = [&](const IdentifiedPortion &portion)
+  {
+    const auto it = framed.find(portion.segment);
+    MFEM_VERIFY(it != framed.end(),
+                "A feature portion lies on a segment without an edge frame!");
+    const EdgeSegment3D &segment = *it->second;
+    const bool forward = identification.segments[portion.segment].key[0] == segment.p0;
+    FramedPortion fp;
+    fp.segment = &segment;
+    fp.a = std::clamp(forward ? portion.s0 : segment.length - portion.s1, 0.0,
+                      segment.length);
+    fp.b = std::clamp(forward ? portion.s1 : segment.length - portion.s0, 0.0,
+                      segment.length);
+    fp.geometry_index = portion.segment;
+    fp.s0 = portion.s0;
+    fp.s1 = portion.s1;
+    return fp;
+  };
+  auto IsPec = [](const EdgeSegment3D &segment)
+  { return segment.boundary_condition.type == MetalBoundaryConditionType::PEC; };
+
+  // One runtime model per (library model, target interfaces by slot).
+  std::map<std::pair<std::size_t, std::string>, int> runtime_models;
+  int next_model_index = 1;
+  auto RuntimeModel =
+      [&](std::size_t model_index,
+          const std::map<int, std::map<InterfaceDielectric, int>> &targets_by_slot)
+  {
+    std::string key;
+    for (const auto &[slot, targets] : targets_by_slot)
+    {
+      key += fmt::format("{}:", slot);
+      for (const auto &[type, target] : targets)
+      {
+        key += fmt::format("{}={},", ToString(type), target);
+      }
+      key += ";";
+    }
+    auto [it, inserted] = runtime_models.emplace(std::make_pair(model_index, key), 0);
+    if (inserted)
+    {
+      const auto &source = library.models[model_index];
+      auto model = source.response;
+      model.idx = next_model_index++;
+      model.name = source.name;
+      model.topology = TopologyName(source.topology);
+      MapLibraryInterfaces(source, targets_by_slot, model);
+      result.models.push_back(std::move(model));
+      it->second = result.models.back().idx;
+    }
+    return it->second;
+  };
+
+  auto Emit = [&](ResponsePatchData patch, std::size_t model_index, int runtime,
+                  const IdentifiedFeature &feature)
+  {
+    patch.model = runtime;
+    patch.provenance.feature = feature.id;
+    patch.provenance.model_weight = 1.0;
+    if (diagnostics)
+    {
+      diagnostics->boundary_law_verified &= IsBoundaryLawVerified(library.models[model_index]);
+    }
+    result.patches.push_back(std::move(patch));
+    summary.patches_by_type[feature.type]++;
+  };
+
+  // Longitudinal quadrature over one framed portion: one patch per quadrature point,
+  // weight = portion length x quadrature weight x side factor / coupon depth.
+  auto Quadrature = [&](const FramedPortion &fp, double side_factor,
+                        std::size_t model_index, int runtime,
+                        const IdentifiedFeature &feature, const auto &Place)
+  {
+    const auto &model = library.models[model_index];
+    MFEM_VERIFY(model.coupon_depth > 0.0,
+                "Three-dimensional response correction requires CouponDepth for every "
+                "selected fabrication-process response model (\""
+                    << model.name << "\")!");
+    for (int q = 0; q < quadrature.GetNPoints(); q++)
+    {
+      const auto &ip = quadrature.IntPoint(q);
+      const double t = fp.a + (fp.b - fp.a) * ip.x;
+      const Point3D point = Interpolate(*fp.segment, t);
+      ResponsePatchData patch;
+      Place(point, patch);
+      patch.conductor_references = model.conductor_references;
+      patch.weight = side_factor * (fp.b - fp.a) * ip.weight / model.coupon_depth;
+      patch.provenance.segment = static_cast<int>(fp.geometry_index);
+      patch.provenance.s0 = fp.s0;
+      patch.provenance.s1 = fp.s1;
+      patch.provenance.quadrature_weight = ip.weight;
+      patch.provenance.side_factor = side_factor;
+      patch.provenance.coupon_depth = model.coupon_depth;
+      Emit(std::move(patch), model_index, runtime, feature);
+    }
+  };
+
+  // Closest point of p on the sub-segments of the other side of a pair.
+  struct Foot
+  {
+    Point3D point{};
+    const EdgeSegment3D *segment = nullptr;
+  };
+  auto ClosestFoot = [&](const Point3D &p, const std::vector<FramedPortion> &side)
+  {
+    Foot best;
+    double best_distance = mfem::infinity();
+    for (const auto &fp : side)
+    {
+      const double t =
+          std::clamp(Dot(Subtract(p, fp.segment->p0), fp.segment->tangent), fp.a, fp.b);
+      const Point3D q = Interpolate(*fp.segment, t);
+      const double distance = Distance(p, q);
+      if (distance < best_distance)
+      {
+        best_distance = distance;
+        best = {q, fp.segment};
+      }
+    }
+    MFEM_VERIFY(best.segment, "A paired feature has no partner side!");
+    return best;
+  };
+
+  for (const auto &feature : identification.features)
+  {
+    double feature_length = 0.0;
+    for (const auto &portion : feature.portions)
+    {
+      feature_length += portion.s1 - portion.s0;
+    }
+    const bool vertex_feature = feature.type == "ConvexCorner" ||
+                                feature.type == "ConcaveCorner" ||
+                                feature.type == "Endpoint" || feature.type == "Junction";
+    if (diagnostics && feature.bend_radius_over_R && *feature.bend_radius_over_R > 0.0)
+    {
+      diagnostics->maximum_curvature_ratio =
+          std::max(diagnostics->maximum_curvature_ratio, 1.0 / *feature.bend_radius_over_R);
+    }
+    if (!feature.matched_model)
+    {
+      summary.unmatched_features++;
+      summary.unmatched_length += feature_length;
+      auto &entry = summary.unmatched_by_type[feature.type];
+      entry.first++;
+      entry.second += feature_length;
+      if (diagnostics && vertex_feature)
+      {
+        for (const auto &portion : feature.portions)
+        {
+          const double length = portion.s1 - portion.s0;
+          diagnostics->matched_corner_neighborhood_length += length;
+          for (const auto &[type, target] : framed.at(portion.segment)->targets)
+          {
+            (void)type;
+            diagnostics->matched_corner_neighborhood_length_by_interface[target] += length;
+          }
+        }
+      }
+      continue;
+    }
+    const auto model_it = model_by_name.find(*feature.matched_model);
+    MFEM_VERIFY(model_it != model_by_name.end(),
+                "Matched library model \"" << *feature.matched_model << "\" not found!");
+    const std::size_t model_index = model_it->second;
+    const auto &model = library.models[model_index];
+    summary.matched_features++;
+    summary.matched_length += feature_length;
+
+    std::vector<FramedPortion> portions;
+    std::set<std::map<InterfaceDielectric, int>> target_maps;
+    bool all_pec = true;
+    for (const auto &portion : feature.portions)
+    {
+      portions.push_back(Frame(portion));
+      target_maps.insert(portions.back().segment->targets);
+      all_pec = all_pec && IsPec(*portions.back().segment);
+      if (diagnostics)
+      {
+        const double length = portion.s1 - portion.s0;
+        diagnostics->matched_length += length;
+        for (const auto &[type, target] : portions.back().segment->targets)
+        {
+          (void)type;
+          diagnostics->matched_length_by_interface[target] += length;
+        }
+      }
+    }
+    MFEM_VERIFY(!portions.empty(), "A matched feature claims no perimeter portion!");
+    // Interface slots in the sorted order of the distinct target maps (slot 0 = the first).
+    std::map<int, std::map<InterfaceDielectric, int>> targets_by_slot;
+    for (const auto &targets : target_maps)
+    {
+      targets_by_slot.emplace(static_cast<int>(targets_by_slot.size()), targets);
+    }
+    const int runtime = RuntimeModel(model_index, targets_by_slot);
+    const Point3D n = feature.axes[2];
+
+    if (feature.type == "IsolatedEdge" || feature.type == "CurvedEdge")
+    {
+      for (const auto &fp : portions)
+      {
+        const EdgeSegment3D &segment = *fp.segment;
+        Quadrature(fp, 1.0, model_index, runtime, feature,
+                   [&](const Point3D &point, ResponsePatchData &patch)
+                   {
+                     patch.origin = point;
+                     patch.axis_u = segment.axis_u;
+                     patch.axis_v = segment.axis_v;
+                     patch.axis_w = Normalize(Cross(segment.axis_u, segment.axis_v));
+                     patch.maxwell_reference_is_pec = IsPec(segment);
+                     patch.maxwell_conductor_anchors = {
+                         patch.maxwell_reference_is_pec
+                             ? Add(point, Scale(-R, segment.axis_u))
+                             : point};
+                   });
+      }
+    }
+    else if (feature.type == "SameConductorGap" || feature.type == "DifferentConductorGap" ||
+             feature.type == "SameConductorStrip" ||
+             feature.type == "CurvedSameConductorGap" ||
+             feature.type == "CurvedDifferentConductorGap" ||
+             feature.type == "CurvedSameConductorStrip")
+    {
+      // Two sides (chains); the model's first edge is the lower one along the feature's
+      // lateral axis (the higher one for chirality -1: the canonical orientation is the
+      // mirror). Each side carries half of the longitudinal measure (the mean of the two
+      // sides: exact for a straight pair, the centreline for a concentric one).
+      std::map<int, std::vector<FramedPortion>> sides;
+      for (const auto &fp : portions)
+      {
+        sides[identification.segments[fp.geometry_index].chain].push_back(fp);
+      }
+      MFEM_VERIFY(sides.size() == 2, "A paired feature must claim exactly two chains!");
+      std::vector<std::pair<double, const std::vector<FramedPortion> *>> ordered;
+      for (const auto &[chain, side] : sides)
+      {
+        (void)chain;
+        double lateral = 0.0, length = 0.0;
+        for (const auto &fp : side)
+        {
+          const Point3D mid = Interpolate(*fp.segment, 0.5 * (fp.a + fp.b));
+          lateral += (fp.b - fp.a) * Dot(Subtract(mid, feature.origin), feature.axes[1]);
+          length += fp.b - fp.a;
+        }
+        ordered.emplace_back(lateral / length, &side);
+      }
+      std::sort(ordered.begin(), ordered.end(),
+                [](const auto &first, const auto &second)
+                { return first.first < second.first; });
+      if (feature.chirality < 0)
+      {
+        std::swap(ordered[0], ordered[1]);
+      }
+      const bool strip = model.topology == LibraryTopology::SAME_CONDUCTOR_STRIP ||
+                         model.topology == LibraryTopology::CURVED_SAME_CONDUCTOR_STRIP;
+      MFEM_VERIFY(model.conductor_references.size() <= 2,
+                  "A paired-edge response model requires at most two conductor "
+                  "references!");
+      for (int k = 0; k < 2; k++)
+      {
+        const auto &side = *ordered[k].second;
+        const auto &other = *ordered[1 - k].second;
+        for (const auto &fp : side)
+        {
+          Quadrature(fp, 0.5, model_index, runtime, feature,
+                     [&](const Point3D &point, ResponsePatchData &patch)
+                     {
+                       const Foot foot = ClosestFoot(point, other);
+                       const Point3D e1 = k == 0 ? point : foot.point;
+                       const Point3D e2 = k == 0 ? foot.point : point;
+                       const EdgeSegment3D &first = k == 0 ? *fp.segment : *foot.segment;
+                       const EdgeSegment3D &second = k == 0 ? *foot.segment : *fp.segment;
+                       patch.origin = Scale(0.5, Add(e1, e2));
+                       patch.axis_u = Normalize(Subtract(e2, e1));
+                       patch.axis_v = Normalize(Add(first.axis_v, second.axis_v));
+                       patch.axis_w = Normalize(Cross(patch.axis_u, patch.axis_v));
+                       patch.maxwell_reference_is_pec = IsPec(first) && IsPec(second);
+                       if (!patch.maxwell_reference_is_pec)
+                       {
+                         patch.maxwell_conductor_anchors = {e1};
+                       }
+                       else if (model.conductor_references.size() > 1)
+                       {
+                         // The physical edge points as local conductor anchors so that the
+                         // Maxwell quadrature spans only the dielectric gap.
+                         patch.maxwell_conductor_anchors = {e1, e2};
+                       }
+                       else if (strip)
+                       {
+                         patch.maxwell_conductor_anchors = {patch.origin};
+                       }
+                       else
+                       {
+                         patch.maxwell_conductor_anchors = {
+                             Add(e1, Scale(-R, first.axis_u))};
+                       }
+                     });
+        }
+      }
+    }
+    else if (feature.type == "ParallelEdgeCluster")
+    {
+      // Sides ordered by the lateral coordinate (reversed for chirality -1) = the model's
+      // edges by offset; conductor labels by first appearance in that order.
+      std::map<int, std::vector<FramedPortion>> sides;
+      for (const auto &fp : portions)
+      {
+        sides[identification.segments[fp.geometry_index].chain].push_back(fp);
+      }
+      MFEM_VERIFY(sides.size() >= 3,
+                  "A parallel-edge cluster feature must claim at least three chains!");
+      std::vector<std::pair<double, const std::vector<FramedPortion> *>> ordered;
+      for (const auto &[chain, side] : sides)
+      {
+        (void)chain;
+        double lateral = 0.0, length = 0.0;
+        for (const auto &fp : side)
+        {
+          const Point3D mid = Interpolate(*fp.segment, 0.5 * (fp.a + fp.b));
+          lateral += (fp.b - fp.a) * Dot(Subtract(mid, feature.origin), feature.axes[1]);
+          length += fp.b - fp.a;
+        }
+        ordered.emplace_back(lateral / length, &side);
+      }
+      std::sort(ordered.begin(), ordered.end(),
+                [](const auto &first, const auto &second)
+                { return first.first < second.first; });
+      if (feature.chirality < 0)
+      {
+        std::reverse(ordered.begin(), ordered.end());
+      }
+      MFEM_VERIFY(model.cluster_edges.empty() || model.cluster_edges.size() == ordered.size(),
+                  "A parallel-edge cluster model's edge count differs from the feature!");
+      std::vector<std::size_t> reference_sides;  // first side of every conductor label
+      {
+        std::set<int> conductors;
+        for (std::size_t k = 0; k < ordered.size(); k++)
+        {
+          if (conductors.insert(ordered[k].second->front().segment->conductor).second)
+          {
+            reference_sides.push_back(k);
+          }
+        }
+      }
+      MFEM_VERIFY(model.conductor_references.size() == reference_sides.size(),
+                  "Parallel-edge cluster model \""
+                      << model.name
+                      << "\" requires one conductor reference per canonical conductor!");
+      const Point3D axis = feature.axes[0];
+      const Point3D axis_u = Scale(feature.chirality < 0 ? -1.0 : 1.0, feature.axes[1]);
+      Point3D axis_v{};
+      for (const auto &fp : portions)
+      {
+        axis_v = Add(axis_v, Scale(fp.b - fp.a, fp.segment->axis_v));
+      }
+      axis_v = Normalize(axis_v);
+      // Point of a side at the longitudinal coordinate c along the feature axis.
+      auto PointOnSide = [&](const std::vector<FramedPortion> &side, double c)
+      {
+        const FramedPortion *best = nullptr;
+        double best_overshoot = mfem::infinity();
+        double best_t = 0.0;
+        for (const auto &fp : side)
+        {
+          const double orientation = Dot(fp.segment->tangent, axis);
+          const double t = (c - Dot(fp.segment->p0, axis)) / orientation;
+          const double overshoot = std::max({0.0, fp.a - t, t - fp.b});
+          if (overshoot < best_overshoot)
+          {
+            best_overshoot = overshoot;
+            best = &fp;
+            best_t = std::clamp(t, fp.a, fp.b);
+          }
+        }
+        MFEM_VERIFY(best, "A parallel-edge cluster side claims no portion!");
+        return Interpolate(*best->segment, best_t);
+      };
+      const double side_factor = 1.0 / static_cast<double>(ordered.size());
+      for (const auto &[lateral, side] : ordered)
+      {
+        (void)lateral;
+        for (const auto &fp : *side)
+        {
+          Quadrature(fp, side_factor, model_index, runtime, feature,
+                     [&](const Point3D &point, ResponsePatchData &patch)
+                     {
+                       const double c = Dot(point, axis);
+                       patch.origin = PointOnSide(*ordered.front().second, c);
+                       patch.axis_u = axis_u;
+                       patch.axis_v = axis_v;
+                       patch.axis_w = Normalize(Cross(axis_u, axis_v));
+                       patch.maxwell_reference_is_pec = all_pec;
+                       for (const std::size_t reference : reference_sides)
+                       {
+                         patch.maxwell_conductor_anchors.push_back(
+                             PointOnSide(*ordered[reference].second, c));
+                       }
+                     });
+        }
+      }
+    }
+    else if (vertex_feature)
+    {
+      // One patch in the feature's canonical frame (x = the first arm, design (b) 4). A
+      // legacy junction model stores its arms as absolute angles (arm 0 along its x axis,
+      // counterclockwise): map its canonical first arm onto the feature's and its canonical
+      // orientation onto the feature's (sigma = -1 mirrors the frame).
+      ResponsePatchData patch;
+      patch.origin = feature.origin;
+      patch.axis_u = feature.axes[0];
+      patch.axis_v = feature.axes[1];
+      patch.axis_w = n;
+      MFEM_VERIFY(Norm(patch.axis_u) > 0.0 && Norm(patch.axis_v) > 0.0,
+                  "A vertex feature without a frame cannot be patched!");
+      if (feature.type == "Junction" && !model.arm_angles.empty())
+      {
+        std::vector<double> sorted = model.arm_angles, differences;
+        std::sort(sorted.begin(), sorted.end());
+        for (std::size_t i = 0; i < sorted.size(); i++)
+        {
+          const double next =
+              i + 1 < sorted.size() ? sorted[i + 1] : sorted[0] + 2.0 * std::acos(-1.0);
+          differences.push_back((next - sorted[i]) * 180.0 / std::acos(-1.0));
+        }
+        JunctionCanonicalOrder model_order;
+        CanonicalJunctionSignature({}, "", differences, {}, &model_order);
+        const double theta = sorted[model_order.first_arm];
+        const Point3D D = feature.axes[0];
+        const Point3D W = Normalize(Cross(n, D));
+        const bool device_ccw = Dot(feature.axes[1], W) > 0.0;
+        const bool model_ccw = !model_order.reversed;
+        const double sigma = device_ccw == model_ccw ? 1.0 : -1.0;
+        patch.axis_u = Normalize(
+            Subtract(Scale(std::cos(theta), D), Scale(sigma * std::sin(theta), W)));
+        patch.axis_v = Scale(sigma, Normalize(Cross(n, patch.axis_u)));
+      }
+      patch.conductor_references = model.conductor_references;
+      patch.weight = 1.0;
+      patch.maxwell_reference_is_pec = all_pec;
+      const std::array<Point3D, 3> axes = {patch.axis_u, patch.axis_v, patch.axis_w};
+      for (const auto &reference : patch.conductor_references)
+      {
+        patch.maxwell_conductor_anchors.push_back(
+            patch.maxwell_reference_is_pec || feature.type == "ConvexCorner" ||
+                    feature.type == "ConcaveCorner"
+                ? TransformLocalPoint(patch.origin, axes, reference)
+                : patch.origin);
+      }
+      Emit(std::move(patch), model_index, runtime, feature);
+    }
+    else if (feature.type == "SpatialEdgeCluster")
+    {
+      // The model's edges (when stored) are expressed in its own frame; their canonical
+      // frame M and the feature's canonical frame F have the same serialisation, so a
+      // model-frame point m maps to F.origin + F.axes^T M.axes (m - M.origin). A model
+      // keyed by its Signature alone is built in the canonical frame (M = identity).
+      Point3D model_origin{};
+      std::array<Point3D, 3> model_axes = {Point3D{1.0, 0.0, 0.0}, Point3D{0.0, 1.0, 0.0},
+                                           Point3D{0.0, 0.0, 1.0}};
+      if (!model.spatial_edges.empty())
+      {
+        const auto canonical = ModelClusterSignature(model, R, describer);
+        MFEM_VERIFY(canonical, "Unable to canonicalise a spatial edge-cluster model!");
+        model_origin = canonical->origin;
+        model_axes = canonical->axes;
+      }
+      ResponsePatchData patch;
+      std::array<Point3D, 3> axes{};
+      for (int j = 0; j < 3; j++)
+      {
+        for (int k = 0; k < 3; k++)
+        {
+          axes[j] = Add(axes[j], Scale(model_axes[k][j], feature.axes[k]));
+        }
+      }
+      patch.origin = feature.origin;
+      for (int k = 0; k < 3; k++)
+      {
+        patch.origin = Subtract(patch.origin,
+                                Scale(Dot(model_axes[k], model_origin), feature.axes[k]));
+      }
+      patch.axis_u = axes[0];
+      patch.axis_v = axes[1];
+      patch.axis_w = axes[2];
+      patch.conductor_references = model.conductor_references;
+      patch.weight = 1.0;
+      patch.maxwell_reference_is_pec = all_pec;
+      for (const auto &reference : patch.conductor_references)
+      {
+        patch.maxwell_conductor_anchors.push_back(
+            TransformLocalPoint(patch.origin, axes, reference));
+      }
+      Emit(std::move(patch), model_index, runtime, feature);
+    }
+    else
+    {
+      MFEM_ABORT("No patch construction for the matched feature type \"" << feature.type
+                                                                        << "\"!");
+    }
+  }
+  return summary;
 }
 
 ResponseCorrectionData
@@ -6472,6 +7114,70 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   const auto identification = RunGeometryIdentification(
       geometry, global_segments, library, requirements ? *requirements : law_describer,
       requirements, frame_normal_configured);
+  if (request.patch_construction == ResponseCorrectionData::PatchConstruction::FEATURES)
+  {
+    // Features-driven construction (default): the identification's feature list is the
+    // contract; the legacy per-group classification below is kept behind
+    // PatchConstruction = "Legacy" for comparison only. The preflight builds the same
+    // patches (the patch dry run, written as surface-response-patches.csv).
+    if (diagnostics)
+    {
+      for (const auto &segment : global_segments)
+      {
+        diagnostics->selected_length += segment.length;
+        for (const auto &[type, target] : segment.targets)
+        {
+          (void)type;
+          diagnostics->selected_length_by_interface[target] += segment.length;
+        }
+      }
+    }
+    const auto summary = BuildFeaturePatches(
+        library, identification, global_segments, quadrature,
+        requirements ? *requirements : law_describer, diagnostics, result);
+    std::string unmatched;
+    for (const auto &[type, entry] : summary.unmatched_by_type)
+    {
+      unmatched += fmt::format("{}{}: {:d} ({:.6e})", unmatched.empty() ? "" : ", ", type,
+                               entry.first, entry.second * coordinate_scale);
+    }
+    std::string patches;
+    for (const auto &[type, count] : summary.patches_by_type)
+    {
+      patches += fmt::format("{}{}: {:d}", patches.empty() ? "" : ", ", type, count);
+    }
+    Mpi::Print("\nAutomatic fabrication-process response matching (Features):\n"
+               " Library: {}\n"
+               " Matched features: {:d} ({:.6e})\n"
+               " Unmatched features (omitted alone): {:d} ({:.6e}) {{{}}}\n"
+               " Patches: {:d} {{{}}}\n"
+               " Runtime models: {:d}\n",
+               library.name, summary.matched_features,
+               summary.matched_length * coordinate_scale, summary.unmatched_features,
+               summary.unmatched_length * coordinate_scale, unmatched,
+               static_cast<int>(result.patches.size()), patches,
+               static_cast<int>(result.models.size()));
+    if (summary.unmatched_features > 0)
+    {
+      Mpi::Warning("Fabrication-process response library \"{}\" has no model for {} "
+                   "identified feature(s) ({:.6e} length units); correction is disabled "
+                   "for these features only.\n",
+                   library.name, summary.unmatched_features,
+                   summary.unmatched_length * coordinate_scale);
+      if (!requirements &&
+          request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR)
+      {
+        MFEM_ABORT("Automatic fabrication-process response matching failed: "
+                   << summary.unmatched_features
+                   << " identified feature(s) have no library model (UnmatchedPolicy = "
+                      "Error)!");
+      }
+    }
+    MFEM_VERIFY(requirements || (!result.models.empty() && !result.patches.empty()),
+                "Fabrication-process response matching produced no usable correction "
+                "patches!");
+    return result;
+  }
   std::set<std::size_t> identification_excluded_segments;
   for (std::size_t i = 0; i < identification.segments.size(); i++)
   {
@@ -10568,6 +11274,56 @@ double QuadraticForm(const mfem::DenseMatrix &matrix, const Vector &x, Vector &w
 
 }  // namespace
 
+// The patch dry run: every automatically constructed 3D patch with its feature, model,
+// weights and the segment portion it integrates (lengths and coordinates in the manifest's
+// units), so that the audit can gate the construction against the manifest without a
+// field solve.
+void WriteSurfaceResponsePatches(const ResponseCorrectionData &data,
+                                 const AutomaticResponseRequirements &requirements,
+                                 const std::string &path)
+{
+  std::ofstream output(path);
+  MFEM_VERIFY(output, "Unable to open surface-response patch dry run \"" << path << "\"!");
+  std::map<int, const ResponseModelData *> models;
+  for (const auto &model : data.models)
+  {
+    models.emplace(model.idx, &model);
+  }
+  output << "Patch,Feature,Topology,Model,ModelIndex,Weight,ModelWeight,QuadratureWeight,"
+            "SideFactor,CouponDepth,Segment,S0,S1,OriginX,OriginY,OriginZ,AxisUX,AxisUY,"
+            "AxisUZ,AxisVX,AxisVY,AxisVZ,AxisWX,AxisWY,AxisWZ\n";
+  output << std::setprecision(17);
+  for (std::size_t i = 0; i < data.patches.size(); i++)
+  {
+    const auto &patch = data.patches[i];
+    const auto model = models.find(patch.model);
+    MFEM_VERIFY(model != models.end(), "A dry-run patch refers to an unknown model!");
+    const auto &provenance = patch.provenance;
+    // The weight of a longitudinal patch carries 1 / CouponDepth (mesh units); the exported
+    // weight is dimensionless in either unit system when the depth is scaled with it.
+    output << i << ',' << provenance.feature << ',' << model->second->topology << ','
+           << model->second->name << ',' << patch.model << ',' << patch.weight << ','
+           << provenance.model_weight << ',' << provenance.quadrature_weight << ','
+           << provenance.side_factor << ','
+           << requirements.ScaleLength(provenance.coupon_depth) << ','
+           << provenance.segment << ',' << requirements.ScaleLength(provenance.s0) << ','
+           << requirements.ScaleLength(provenance.s1);
+    for (const double value : patch.origin)
+    {
+      output << ',' << requirements.ScaleLength(value);
+    }
+    for (const auto *axis : {&patch.axis_u, &patch.axis_v, &patch.axis_w})
+    {
+      for (const double value : *axis)
+      {
+        output << ',' << value;
+      }
+    }
+    output << '\n';
+  }
+  MFEM_VERIFY(output.good(), "Failed writing the surface-response patch dry run!");
+}
+
 void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
                                       const std::string &path)
 {
@@ -10585,6 +11341,7 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
   AutomaticResponseStatistics statistics;
   const auto &parallel_mesh = mesh.Get();
   const bool maxwell = iodata.problem.type != ProblemType::ELECTROSTATIC;
+  ResponseCorrectionData patches;
   if (parallel_mesh.Dimension() == 2 && parallel_mesh.SpaceDimension() == 2)
   {
     BuildAutomaticResponseData2D(iodata, parallel_mesh, mat_op, request, maxwell, nullptr,
@@ -10592,8 +11349,8 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
   }
   else if (parallel_mesh.Dimension() == 3 && parallel_mesh.SpaceDimension() == 3)
   {
-    BuildAutomaticResponseData3D(iodata, parallel_mesh, mat_op, request, maxwell, nullptr,
-                                 &requirements, &statistics);
+    patches = BuildAutomaticResponseData3D(iodata, parallel_mesh, mat_op, request, maxwell,
+                                           nullptr, &requirements, &statistics);
   }
   else
   {
@@ -10601,6 +11358,8 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
   }
 
   requirements.SetStatistics(BuildAutomaticStatistics(parallel_mesh.GetComm(), statistics));
+  const auto patches_path =
+      (std::filesystem::path(path).parent_path() / "surface-response-patches.csv").string();
   if (Mpi::Root(parallel_mesh.GetComm()))
   {
     auto manifest = requirements.Build();
@@ -10610,11 +11369,20 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
     MFEM_VERIFY(output, "Unable to open surface-response requirements manifest \""
                             << path << "\"!");
     output << manifest.dump(2) << '\n';
+    if (parallel_mesh.Dimension() == 3)
+    {
+      WriteSurfaceResponsePatches(patches, requirements, patches_path);
+    }
   }
   Mpi::Barrier(parallel_mesh.GetComm());
   Mpi::Print(parallel_mesh.GetComm(),
              "\nSurface-response process-library preflight complete:\n Manifest: {}\n",
              path);
+  if (parallel_mesh.Dimension() == 3)
+  {
+    Mpi::Print(parallel_mesh.GetComm(), " Patch dry run: {} ({:d} patches)\n", patches_path,
+               static_cast<int>(patches.patches.size()));
+  }
 }
 
 struct SurfaceResponseGeometry::Impl

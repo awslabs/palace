@@ -1561,6 +1561,21 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
         MFEM_ABORT("Electrostatic response-correction \"UnmatchedPolicy\" must be "
                    "\"Warn\" or \"Error\"!");
       }
+      const std::string patch_construction =
+          correction.value("PatchConstruction", "Features");
+      if (patch_construction == "Features")
+      {
+        data.patch_construction = ResponseCorrectionData::PatchConstruction::FEATURES;
+      }
+      else if (patch_construction == "Legacy")
+      {
+        data.patch_construction = ResponseCorrectionData::PatchConstruction::LEGACY;
+      }
+      else
+      {
+        MFEM_ABORT("Electrostatic response-correction \"PatchConstruction\" must be "
+                   "\"Features\" or \"Legacy\"!");
+      }
       response_correction = std::move(data);
       return;
     }

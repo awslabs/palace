@@ -866,6 +866,7 @@ and `Patches` lists:
   "Library": "process-library.json",
   "TargetInterfaces": [1, 2, 3],
   "UnmatchedPolicy": "Warn",
+  "PatchConstruction": "Features",
   "CorrectionMode": "Both",
   "TranslationalDomainCorrection": "FixedTrace",
   "TraceCoupling": "Collocated",
@@ -882,6 +883,16 @@ radius. Palace intersects the perimeter of each group with the perimeter of the 
 of all configured metal boundary conditions. This removes points introduced only by a
 change in boundary attribute, such as a ground plane continuing into a bump bond. It
 also removes endpoints on exterior simulation-domain truncations.
+
+`PatchConstruction` selects how the three-dimensional patches are built from the automatic
+classification: `Features` (the default) consumes the geometry identification's feature list
+(`Identification.Features` of the preflight manifest): every feature matched by signature
+becomes its patches, an unmatched feature is omitted alone (never an interface group), and
+excluded segments are never corrected. `Legacy` keeps the former per-interface-group
+classification for comparison only. The geometry-only preflight
+(`--surface-response-preflight`) is also the patch dry run: it writes
+`surface-response-patches.csv` next to the manifest with the feature id, model, segment
+portion and weights of every patch without any field solve.
 
 `CorrectionMode` selects `PostprocessOnly`, `SelfConsistent`, or `Both` (the default).
 Postprocessing-only mode evaluates fixed-trace and fixed-flux responses on the raw field

@@ -242,6 +242,11 @@ void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostati
                                            ResponseCorrectionData::UnmatchedPolicy::ERROR
               ? "Error"
               : "Warn";
+      j_response["PatchConstruction"] =
+          response.patch_construction == config::ElectrostaticSolverData::
+                                             ResponseCorrectionData::PatchConstruction::LEGACY
+              ? "Legacy"
+              : "Features";
       return;
     }
 
@@ -666,6 +671,11 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
                                            ResponseCorrectionData::UnmatchedPolicy::ERROR
               ? "Error"
               : "Warn";
+      j_response["PatchConstruction"] =
+          response.patch_construction == config::ElectrostaticSolverData::
+                                             ResponseCorrectionData::PatchConstruction::LEGACY
+              ? "Legacy"
+              : "Features";
     }
   }
 

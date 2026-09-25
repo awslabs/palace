@@ -1015,6 +1015,29 @@ public:
     // to vanish.
     std::vector<std::array<double, 3>> maxwell_conductor_anchors;
     bool maxwell_reference_is_pec = true;
+
+    // Internal provenance of an automatically generated 3D patch built from the geometry
+    // identification: the feature it corrects, the segment portion [s0, s1) (mesh units,
+    // from the segment's canonical key origin) its longitudinal quadrature point
+    // integrates (vertex and cluster patches carry no portion: segment < 0), the
+    // quadrature fraction of that portion and the library-model interpolation weight, so
+    // that the patch dry run can be audited against the manifest.
+    struct Provenance
+    {
+      int feature = -1;
+      int segment = -1;
+      double s0 = 0.0;
+      double s1 = 0.0;
+      double quadrature_weight = 1.0;
+      double model_weight = 1.0;
+      // Longitudinal patches: weight = model_weight x quadrature_weight x (s1 - s0) x
+      // side_factor / coupon_depth (side_factor = 1 / sides of a pair or parallel cluster,
+      // whose longitudinal measure is the mean of its sides); vertex and cluster patches
+      // carry coupon_depth = 0 and weight = model_weight.
+      double side_factor = 1.0;
+      double coupon_depth = 0.0;
+    };
+    Provenance provenance;
   };
 
   struct ResponseCorrectionInterfaceData
@@ -1106,6 +1129,15 @@ public:
       SURFACE_MORTAR
     };
 
+    // Three-dimensional patch construction: from the geometry identification's feature
+    // list (every matched feature becomes its patches, an unmatched feature is omitted
+    // alone) or the legacy per-interface-group classification, kept for comparison only.
+    enum class PatchConstruction : char
+    {
+      FEATURES,
+      LEGACY
+    };
+
     // Optional fabrication-process response library. When specified, Palace extracts and
     // classifies the target edges and constructs models and patches automatically.
     std::string library;
@@ -1117,6 +1149,9 @@ public:
     // Behavior when the process library does not contain a model for a detected local
     // edge topology.
     UnmatchedPolicy unmatched_policy = UnmatchedPolicy::WARN;
+
+    // Automatic three-dimensional patch construction (Features by default).
+    PatchConstruction patch_construction = PatchConstruction::FEATURES;
 
     // Select postprocessing-only fixed-trace/fixed-flux evaluation, a self-consistent
     // corrected solve, or both. Both preserves the historical behavior.

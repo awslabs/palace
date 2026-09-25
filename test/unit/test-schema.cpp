@@ -1004,6 +1004,19 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
     automatic_option_without_library["ResponseCorrection"]["UnmatchedPolicy"] = "Warn";
     CHECK(!ValidateConfig(automatic_option_without_library, "Electrostatic").empty());
 
+    for (const auto *construction : {"Features", "Legacy"})
+    {
+      auto construction_config = automatic;
+      construction_config["ResponseCorrection"]["PatchConstruction"] = construction;
+      CHECK(ValidateConfig(construction_config, "Electrostatic").empty());
+    }
+    auto invalid_construction = automatic;
+    invalid_construction["ResponseCorrection"]["PatchConstruction"] = "Groups";
+    CHECK(!ValidateConfig(invalid_construction, "Electrostatic").empty());
+    auto construction_without_library = modern;
+    construction_without_library["ResponseCorrection"]["PatchConstruction"] = "Legacy";
+    CHECK(!ValidateConfig(construction_without_library, "Electrostatic").empty());
+
     json maxwell_config = {
         {"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
         {"Model", {{"Mesh", "test.msh"}}},

@@ -3199,6 +3199,15 @@
               "description": "Behavior when a detected edge cluster has no compatible coupon model. `Warn` disables correction for the affected interface group; `Error` terminates the simulation.",
               "default": "Warn"
             },
+            "PatchConstruction": {
+              "type": "string",
+              "enum": [
+                "Features",
+                "Legacy"
+              ],
+              "description": "Three-dimensional automatic patch construction. `Features` builds the patches from the geometry identification's feature list (every matched feature becomes its patches, an unmatched feature is omitted alone, excluded segments are never corrected); `Legacy` keeps the former per-interface-group classification for comparison.",
+              "default": "Features"
+            },
             "CorrectionMode": {
               "type": "string",
               "enum": [
@@ -3441,6 +3450,9 @@
               "Library"
             ],
             "UnmatchedPolicy": [
+              "Library"
+            ],
+            "PatchConstruction": [
               "Library"
             ]
           }

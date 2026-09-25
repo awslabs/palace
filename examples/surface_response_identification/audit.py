@@ -18,9 +18,16 @@ cover every assigned segment exactly once, every corner / endpoint / junction ve
 exactly one feature, and the excluded classes must be recorded with their length. Version-1
 manifests fall back to the aggregate reading, where gates the manifest cannot support are
 NOT-EVALUABLE and count as failures (decision 73(4)).
+
+Patch dry run (phase 4): when ``surface-response-patches.csv`` lies next to the manifest (or is
+given with --patches) the gates A7 check the Features-driven patch construction: every portion
+of every matched feature is integrated by exactly one longitudinal quadrature (weights summing
+to one), every vertex / cluster feature carries one patch, the patched feature set equals the
+matched manifest features, and no patch touches an unmatched feature or an excluded segment.
 """
 
 import argparse
+import csv
 import json
 import math
 import os
@@ -421,6 +428,136 @@ def identification_gates(identification, perimeter, census, radius, targets, com
     return gates, summary
 
 
+PATCH_LONGITUDINAL_TYPES = ("IsolatedEdge", "CurvedEdge", "SameConductorGap", "DifferentConductorGap", "SameConductorStrip", "CurvedSameConductorGap", "CurvedDifferentConductorGap", "CurvedSameConductorStrip", "ParallelEdgeCluster")
+PATCH_SINGLE_TYPES = VERTEX_FEATURE_TYPES + ("SpatialEdgeCluster",)
+
+
+def load_patches(path):
+    """Rows of surface-response-patches.csv with numeric fields converted."""
+    rows = []
+    with open(path, newline="") as source:
+        for row in csv.DictReader(source):
+            entry = dict(row)
+            for key in ("Patch", "Feature", "ModelIndex", "Segment"):
+                entry[key] = int(row[key])
+            for key in ("Weight", "ModelWeight", "QuadratureWeight", "SideFactor", "CouponDepth", "S0", "S1"):
+                entry[key] = float(row[key])
+            rows.append(entry)
+    return rows
+
+
+def patch_gates(identification, patches, radius):
+    """Gates A7 on the patch dry run; returns (gates, summary)."""
+    gates = []
+    tol = 1.0e-6 * radius
+    features = {f["Id"]: f for f in identification["Features"]}
+    segments = identification["Segments"]
+    matched = {f["Id"] for f in features.values() if f["Match"]["Status"] == "Matched"}
+    rows_by_feature = defaultdict(list)
+    for row in patches:
+        rows_by_feature[row["Feature"]].append(row)
+    patched = set(rows_by_feature)
+
+    # A7-patch-features: the patched set is exactly the matched set.
+    unknown = sorted(f for f in patched if f not in features)
+    gates.append(
+        gate(
+            "A7-patch-features",
+            patched == matched and not unknown,
+            {"MatchedFeatures": len(matched), "PatchedFeatures": len(patched), "MatchedNotPatched": sorted(matched - patched)[:20], "PatchedNotMatched": sorted(patched - matched)[:20], "UnknownFeatureIds": unknown[:20], "Patches": len(patches)},
+        )
+    )
+
+    # A7-patch-exclusions: no patch on an unmatched feature, an excluded segment or an
+    # analytically excluded portion.
+    violations = []
+    for row in patches:
+        if row["Feature"] not in matched:
+            violations.append({"Patch": row["Patch"], "Defect": "unmatched feature", "Feature": row["Feature"]})
+            continue
+        if row["Segment"] >= 0:
+            if row["Segment"] >= len(segments):
+                violations.append({"Patch": row["Patch"], "Defect": "unknown segment", "Segment": row["Segment"]})
+                continue
+            segment = segments[row["Segment"]]
+            if "Exclusion" in segment:
+                violations.append({"Patch": row["Patch"], "Defect": "excluded segment", "Segment": row["Segment"], "Class": segment["Exclusion"]["Class"]})
+            for a, b, _ in segment.get("ExcludedPortions", []):
+                if min(row["S1"], float(b)) - max(row["S0"], float(a)) > tol:
+                    violations.append({"Patch": row["Patch"], "Defect": "excluded portion", "Segment": row["Segment"]})
+    gates.append(gate("A7-patch-exclusions", not violations, {"Violations": len(violations), "Examples": violations[:10]}))
+
+    # A7-patch-coverage: the distinct intervals of a longitudinal feature are exactly its
+    # manifest portions (each portion once); a vertex / cluster feature carries patches
+    # without a portion.
+    coverage_defects = []
+    covered_length = 0.0
+    weight_defects = []
+    for feature_id in sorted(matched):
+        feature = features[feature_id]
+        rows = rows_by_feature.get(feature_id, [])
+        if not rows:
+            continue  # reported by A7-patch-features
+        portions = sorted((int(seg), float(a), float(b)) for seg, a, b in feature["Portions"])
+        groups = defaultdict(list)
+        for row in rows:
+            groups[(row["Segment"], round(row["S0"], 9), round(row["S1"], 9))].append(row)
+        if feature["Type"] in PATCH_LONGITUDINAL_TYPES:
+            intervals = sorted((seg, a, b) for (seg, a, b) in groups)
+            if len(intervals) != len(portions) or any(i[0] != p[0] or abs(i[1] - p[1]) > tol or abs(i[2] - p[2]) > tol for i, p in zip(intervals, portions)):
+                coverage_defects.append({"Feature": feature_id, "Type": feature["Type"], "Portions": len(portions), "PatchIntervals": len(intervals), "Examples": [(i, p) for i, p in zip(intervals, portions) if i[0] != p[0] or abs(i[1] - p[1]) > tol or abs(i[2] - p[2]) > tol][:4]})
+            else:
+                covered_length += sum(b - a for _, a, b in intervals)
+            # Side factor: 1 / number of chains the feature claims (pairs 1/2, clusters 1/n).
+            chains = {segments[seg]["Chain"] for seg, _, _ in portions}
+            expected_side = 1.0 / len(chains) if feature["Type"] not in ("IsolatedEdge", "CurvedEdge") else 1.0
+            for key, group in groups.items():
+                quadrature = sum(r["QuadratureWeight"] * r["ModelWeight"] for r in group)
+                if abs(quadrature - 1.0) > 1.0e-9:
+                    weight_defects.append({"Feature": feature_id, "Interval": key, "Defect": "quadrature x model weights do not sum to 1", "Sum": quadrature})
+                for r in group:
+                    expected = r["ModelWeight"] * r["QuadratureWeight"] * (r["S1"] - r["S0"]) * r["SideFactor"] / r["CouponDepth"] if r["CouponDepth"] > 0 else float("nan")
+                    if not (r["CouponDepth"] > 0) or abs(r["Weight"] - expected) > 1.0e-9 * max(abs(expected), 1.0e-300):
+                        weight_defects.append({"Feature": feature_id, "Patch": r["Patch"], "Defect": "weight formula", "Weight": r["Weight"], "Expected": expected})
+                    if abs(r["SideFactor"] - expected_side) > 1.0e-12:
+                        weight_defects.append({"Feature": feature_id, "Patch": r["Patch"], "Defect": "side factor", "SideFactor": r["SideFactor"], "Expected": expected_side})
+        elif feature["Type"] in PATCH_SINGLE_TYPES:
+            if any(r["Segment"] >= 0 for r in rows):
+                coverage_defects.append({"Feature": feature_id, "Type": feature["Type"], "Defect": "vertex / cluster patch with a portion"})
+            else:
+                covered_length += sum(b - a for _, a, b in portions)
+            model_weight = sum(r["ModelWeight"] for r in rows)
+            if abs(model_weight - 1.0) > 1.0e-9:
+                weight_defects.append({"Feature": feature_id, "Defect": "model weights do not sum to 1", "Sum": model_weight})
+            for r in rows:
+                if abs(r["Weight"] - r["ModelWeight"]) > 1.0e-12 or r["CouponDepth"] != 0.0:
+                    weight_defects.append({"Feature": feature_id, "Patch": r["Patch"], "Defect": "vertex weight is not the model weight", "Weight": r["Weight"], "ModelWeight": r["ModelWeight"]})
+        else:
+            coverage_defects.append({"Feature": feature_id, "Type": feature["Type"], "Defect": "type without a patch construction"})
+    matched_length = sum(float(features[f]["Length"]) for f in matched)
+    assigned_length = float(identification["Totals"]["AssignedLength"])
+    gates.append(
+        gate(
+            "A7-patch-coverage",
+            not coverage_defects and abs(covered_length - matched_length) <= 1.0e-6 * max(matched_length, radius),
+            {"Defects": len(coverage_defects), "Examples": coverage_defects[:10], "CoveredLength": covered_length, "MatchedLength": matched_length, "AssignedLength": assigned_length, "CoveredFractionOfAssigned": covered_length / assigned_length if assigned_length else None, "Basis": "every portion of a matched longitudinal feature is one quadrature interval; a vertex / cluster feature is one patch"},
+        )
+    )
+    gates.append(gate("A7-patch-weights", not weight_defects, {"Defects": len(weight_defects), "Examples": weight_defects[:10], "Basis": "per interval sum(quadrature x model weight) = 1; weight = model x quadrature x length x side factor / coupon depth; side factor = 1 / chains of a pair or parallel cluster"}))
+    summary = {
+        "Patches": len(patches),
+        "PatchesByTopology": dict(Counter(r["Topology"] for r in patches)),
+        "PatchedFeatures": len(patched),
+        "MatchedFeatures": len(matched),
+        "CoveredLength": covered_length,
+        "MatchedLength": matched_length,
+        "AssignedLength": assigned_length,
+        "CoveredFractionOfAssigned": covered_length / assigned_length if assigned_length else None,
+        "Models": sorted({r["Model"] for r in patches}),
+    }
+    return gates, summary
+
+
 def run_audit(args):
     with open(args.config) as source:
         config = json.load(source)
@@ -444,8 +581,14 @@ def run_audit(args):
     statistics = summary["Statistics"]
     identification = manifest.get("Identification")
     v2_summary = None
+    patch_summary = None
     if identification:
         gates, v2_summary = identification_gates(identification, perimeter, census, radius, targets)
+        patches_path = getattr(args, "patches", None) or os.path.join(os.path.dirname(os.path.abspath(args.manifest)), "surface-response-patches.csv")
+        if os.path.exists(patches_path):
+            patch_gate_list, patch_summary = patch_gates(identification, load_patches(patches_path), radius)
+            gates.extend(patch_gate_list)
+            patch_summary["Path"] = os.path.abspath(patches_path)
     audit_segments = census["EdgesByClass"].get("PHYSICAL", 0) + census["EdgesByClass"].get("TRUNCATION", 0)
     if "MetalSegments" in statistics and not identification:
         bisected = bool(log and log.get("Bisection"))
@@ -588,6 +731,7 @@ def run_audit(args):
         "ClassifierStatistics": statistics,
         "Digest": {"Full": M.canonical_digest(manifest), "GeometryOnly": M.canonical_digest(manifest, geometry_only_counts=True), "Geometry": identification["GeometryDigest"] if identification else None},
         "Identification": v2_summary,
+        "Patches": patch_summary,
         "Gates": gates,
         "GapBound": gap,
     }
@@ -655,6 +799,12 @@ def render_markdown(result):
         lines.append(f"- clusters {ident['Clusters']}")
         lines.append(f"- geometry digest `{ident['GeometryDigest'][:16]}`")
         lines.append("")
+    if result.get("Patches"):
+        pt = result["Patches"]
+        lines.append("## Patch dry run (surface-response-patches.csv)")
+        lines.append(f"- patches {pt['Patches']} by topology {pt['PatchesByTopology']}; patched features {pt['PatchedFeatures']} of {pt['MatchedFeatures']} matched")
+        lines.append(f"- covered length {pt['CoveredLength']:.6f} of assigned {pt['AssignedLength']:.6f} ({100.0 * (pt['CoveredFractionOfAssigned'] or 0):.4f} %); models {pt['Models'][:12]}")
+        lines.append("")
     lines.append("## Manifest")
     for k, v in result["Manifest"]["ByTopology"].items():
         lines.append(f"- {k}: records {v['Records']}, count {v['Count']}, length {v['TotalEdgeLength']:.6f}, missing {v['Missing']} ({v['MissingLength']:.6f})")
@@ -692,6 +842,7 @@ def main(argv=None):
     parser.add_argument("--manifest", required=True, help="surface-response-requirements.json")
     parser.add_argument("--log", help="palace stdout of the preflight (omission counts)")
     parser.add_argument("--compare", help="a second manifest to diff against (A3 / A5)")
+    parser.add_argument("--patches", help="surface-response-patches.csv of the patch dry run (default: next to the manifest)")
     parser.add_argument("--radius", type=float, help="matching radius in mesh units (default: manifest)")
     parser.add_argument("--corner-tolerance", type=float, default=P.CORNER_ANGLE_TOLERANCE_DEGREES, help="turn (deg) above which a vertex is a corner (classifier: 30)")
     parser.add_argument("--output-prefix", help="write <prefix>.json and <prefix>.md")

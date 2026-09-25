@@ -225,11 +225,22 @@ nlohmann::json CanonicalCornerSignature(const std::vector<std::string> &interfac
                                         double angle_degrees, double corner_radius_over_R);
 // Junction arms in angular order: consecutive angle differences and the conductor of every
 // arm (labelled by first appearance in the canonical order; all arms one conductor when
-// arm_conductors is empty, the library-model convention).
+// arm_conductors is empty, the library-model convention). The canonical cyclic order starts
+// at arm first_arm (index into the angular order given) and proceeds counterclockwise about
+// the process normal unless reversed (the mirror orientation); it defines the junction's
+// frame (x = the first arm, y = +-(n x x)) shared by the device feature and the library
+// model.
+struct JunctionCanonicalOrder
+{
+  std::size_t first_arm = 0;
+  bool reversed = false;
+};
+
 nlohmann::json CanonicalJunctionSignature(const std::vector<std::string> &interfaces,
                                           const std::string &boundary_law,
                                           std::vector<double> arm_angles_degrees,
-                                          std::vector<int> arm_conductors = {});
+                                          std::vector<int> arm_conductors = {},
+                                          JunctionCanonicalOrder *order = nullptr);
 
 // Feature signature key and hash shared by device features and library models.
 std::pair<std::string, std::string> SignatureKeyAndHash(nlohmann::json signature,
