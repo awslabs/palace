@@ -35,6 +35,7 @@ import sys
 from collections import Counter, defaultdict
 
 import numpy as np
+from scipy.spatial import cKDTree
 
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -173,8 +174,11 @@ def corner_clusters(perimeter, radius):
             i = parent[i]
         return i
 
-    for i in range(n):
-        for j in range(i + 1, n):
+    # Candidate pairs from a k-d tree (a slightly larger radius), then the former exact test:
+    # the single-linkage groups do not depend on the pair order.
+    if n:
+        tree = cKDTree(np.array(points))
+        for i, j in sorted(tree.query_pairs(2.0 * radius * (1.0 + 1.0e-6))):
             if np.linalg.norm(points[i] - points[j]) <= 2.0 * radius * (1.0 + 1.0e-9):
                 parent[find(i)] = find(j)
     groups = defaultdict(list)
@@ -186,9 +190,13 @@ def corner_clusters(perimeter, radius):
         clusters.append({"Vertices": len(members), "Centroid": [round(float(x), 9) for x in pts.mean(axis=0)], "Diameter": float(max((np.linalg.norm(a - b) for a in pts for b in pts), default=0.0))})
     multi = [c for c in clusters if c["Vertices"] > 1]
     min_center_distance = math.inf
-    for i in range(len(multi)):
-        for j in range(i + 1, len(multi)):
-            min_center_distance = min(min_center_distance, float(np.linalg.norm(np.array(multi[i]["Centroid"]) - np.array(multi[j]["Centroid"]))))
+    if len(multi) > 1:
+        # The closest pair of centroids: every centroid's nearest neighbour from a k-d tree
+        # (the closest pair is among them), the value from the former norm.
+        centroids = np.array([c["Centroid"] for c in multi])
+        _, nearest = cKDTree(centroids).query(centroids, k=2)
+        for i, j in enumerate(nearest[:, 1]):
+            min_center_distance = min(min_center_distance, float(np.linalg.norm(np.array(multi[i]["Centroid"]) - np.array(multi[int(j)]["Centroid"]))))
     return {"Clusters": clusters, "MultiVertexClusters": len(multi), "MinMultiClusterCenterDistance": None if math.isinf(min_center_distance) else min_center_distance}
 
 
@@ -223,12 +231,26 @@ def identification_gates(identification, perimeter, census, radius, targets, com
     if missing_in_manifest and missing_in_audit:
         key_tolerance = 1.0e-6 * radius
         still_missing = []
+        # Candidates by the first endpoint's grid cell (the former scan of every leftover
+        # manifest key; the first match in list order wins, matched keys are consumed).
+        audit_first = np.array([o[0] for o in missing_in_audit], dtype=float)
+        leftover_grid = P.BoxGrid(audit_first, audit_first, 8.0 * radius)
+        consumed = set()
         for k in missing_in_manifest:
-            hit = next((o for o in missing_in_audit if all(abs(a - b) <= key_tolerance for pa, pb in zip(k, o) for a, b in zip(pa, pb))), None)
+            hit = None
+            for index in leftover_grid.query(np.asarray(k[0], dtype=float), np.asarray(k[0], dtype=float), key_tolerance):
+                index = int(index)
+                if index in consumed:
+                    continue
+                o = missing_in_audit[index]
+                if all(abs(a - b) <= key_tolerance for pa, pb in zip(k, o) for a, b in zip(pa, pb)):
+                    hit = index
+                    break
             if hit is None:
                 still_missing.append(k)
             else:
-                missing_in_audit.remove(hit)
+                consumed.add(hit)
+        missing_in_audit = [o for index, o in enumerate(missing_in_audit) if index not in consumed]
         missing_in_manifest = still_missing
     # The classifier works on Palace's mesh (cracking bisects the elements next to
     # under-resolved internal sheets; second-order edges are sampled at their mid-nodes), so
@@ -239,10 +261,17 @@ def identification_gates(identification, perimeter, census, radius, targets, com
     covered_audit = set()
     split_pieces = 0
     still_missing_in_audit = []
+    # Candidates: the leftover audit edges whose (tolerance-enlarged) boxes hold the first
+    # endpoint, in list order (the former scan of every leftover audit edge; first match wins).
+    if missing_in_manifest:
+        edge_lower = np.array([np.minimum(o[0], o[1]) for o in missing_in_manifest], dtype=float)
+        edge_upper = np.array([np.maximum(o[0], o[1]) for o in missing_in_manifest], dtype=float)
+        edge_grid = P.BoxGrid(edge_lower, edge_upper, 8.0 * radius)
     for k in missing_in_audit:
         a, b = np.array(k[0]), np.array(k[1])
         hit = None
-        for o in missing_in_manifest:
+        for index in (edge_grid.query(a, a, 10.0 * key_tolerance) if missing_in_manifest else ()):
+            o = missing_in_manifest[int(index)]
             p0, p1 = np.array(o[0]), np.array(o[1])
             d = p1 - p0
             ok = True
@@ -562,10 +591,22 @@ def patch_gates(identification, patches, radius):
     return gates, summary
 
 
+def progress(message, started=[None]):
+    """Section line with the wall time since the first call (stderr, flushed): a chip-scale
+    audit runs for tens of minutes."""
+    import time
+    now = time.time()
+    if started[0] is None:
+        started[0] = now
+    print(f"[audit {now - started[0]:8.1f} s] {message}", file=sys.stderr, flush=True)
+
+
 def run_audit(args):
     with open(args.config) as source:
         config = json.load(source)
+    progress(f"reading mesh {args.mesh}")
     mesh = read_msh2(args.mesh)
+    progress(f"mesh read: {len(mesh.coordinates)} nodes; loading manifest")
     manifest = M.load_manifest(args.manifest)
     summary = M.summarize(manifest)
     radius = args.radius or summary["MatchingRadius"]
@@ -575,10 +616,14 @@ def run_audit(args):
     for entry in config.get("Boundaries", {}).get("Postprocessing", {}).get("Dielectric", []):
         if "EdgeFrameNormal" in entry:
             process_normal = entry["EdgeFrameNormal"]
+    progress("extracting the perimeter from the mesh")
     perimeter = P.extract_perimeter(mesh, config, process_normal=process_normal, corner_tolerance_degrees=args.corner_tolerance, radius=radius)
+    progress(f"perimeter: {len(perimeter.edges)} edges, {len(perimeter.vertices)} vertices, {perimeter.chains} chains; census (edge interactions, rounded runs)")
     targets = set(P.target_interfaces(config)) or {i for i, _ in P.interface_attributes(config)}
     census = perimeter_census(perimeter, radius, targets)
+    progress("corner clusters")
     clusters = corner_clusters(perimeter, radius)
+    progress(f"{len(clusters['Clusters'])} corner clusters; gates")
     log = M.parse_palace_log(args.log) if args.log else None
 
     gates = []
@@ -593,6 +638,7 @@ def run_audit(args):
             patch_gate_list, patch_summary = patch_gates(identification, load_patches(patches_path), radius)
             gates.extend(patch_gate_list)
             patch_summary["Path"] = os.path.abspath(patches_path)
+    progress(f"{len(gates)} gates evaluated; summary")
     audit_segments = census["EdgesByClass"].get("PHYSICAL", 0) + census["EdgesByClass"].get("TRUNCATION", 0)
     if "MetalSegments" in statistics and not identification:
         bisected = bool(log and log.get("Bisection"))

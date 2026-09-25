@@ -168,6 +168,46 @@ class Perimeter:
         return float(sum(e.length for e in self.edges if kind is None or e.kind == kind))
 
 
+class BoxGrid:
+    """Uniform grid over axis-aligned boxes (numpy): `query(lower, upper, margin)` returns the
+    sorted indices of the items whose cells overlap the enlarged box — a superset of the items
+    within `margin` of it; the caller applies its exact test. Acceleration only (the former
+    all-items scans gave the same results); chip-scale meshes have 10^6 faces and 10^5 edges."""
+
+    def __init__(self, lower, upper, cell):
+        self.lower = np.asarray(lower, dtype=float)
+        self.upper = np.asarray(upper, dtype=float)
+        self.cell = float(cell)
+        self.origin = self.lower.min(axis=0) if len(self.lower) else np.zeros(self.lower.shape[1] if self.lower.ndim == 2 else 3)
+        self.cells = defaultdict(list)
+        lo = np.floor((self.lower - self.origin) / self.cell).astype(np.int64)
+        hi = np.floor((self.upper - self.origin) / self.cell).astype(np.int64)
+        for index in range(len(self.lower)):
+            ranges = [range(int(lo[index, d]), int(hi[index, d]) + 1) for d in range(self.lower.shape[1])]
+            for key in _product(ranges):
+                self.cells[key].append(index)
+
+    def query(self, lower, upper, margin=0.0):
+        lower = np.asarray(lower, dtype=float) - margin
+        upper = np.asarray(upper, dtype=float) + margin
+        lo = np.floor((lower - self.origin) / self.cell).astype(np.int64)
+        hi = np.floor((upper - self.origin) / self.cell).astype(np.int64)
+        found = []
+        for key in _product([range(int(lo[d]), int(hi[d]) + 1) for d in range(len(lo))]):
+            found.extend(self.cells.get(key, ()))
+        return np.unique(np.asarray(found, dtype=np.int64))
+
+
+def _product(ranges):
+    if len(ranges) == 1:
+        for a in ranges[0]:
+            yield (a,)
+        return
+    for a in ranges[0]:
+        for rest in _product(ranges[1:]):
+            yield (a, *rest)
+
+
 def _face_edges(corners):
     k = corners.shape[1]
     return [np.sort(np.stack([corners[:, i], corners[:, (i + 1) % k]], axis=1), axis=1) for i in range(k)]
@@ -615,11 +655,17 @@ def _cross_layer_zones(perimeter, mesh, metal_corners, normals, planar, plane_of
     upper = polygons.max(axis=1) + reach
     face_offsets = np.where(plane_of_face >= 0, np.array([plane_values[i] if i >= 0 else 0.0 for i in plane_of_face]), 0.0)
     quantum = 1.0e-9 * radius
+    # Faces by their (reach-enlarged) boxes: the candidates of an edge / vertex box are the
+    # faces of the overlapping grid cells, then the former exact box and plane tests.
+    grid = BoxGrid(lower, upper, 8.0 * radius) if len(lower) else None
 
     def candidates(box_lower, box_upper, offset):
-        near = np.all((lower <= box_upper) & (upper >= box_lower), axis=1)
-        off_plane = ~planar | ((np.abs(face_offsets - offset) > quantum) & (np.abs(face_offsets - offset) < reach - quantum))
-        return np.flatnonzero(near & off_plane)
+        if grid is None:
+            return np.zeros(0, dtype=np.int64)
+        found = grid.query(box_lower, box_upper)
+        near = np.all((lower[found] <= box_upper) & (upper[found] >= box_lower), axis=1)
+        off_plane = ~planar[found] | ((np.abs(face_offsets[found] - offset) > quantum) & (np.abs(face_offsets[found] - offset) < reach - quantum))
+        return found[near & off_plane]
 
     for edge in perimeter.edges:
         if edge.kind != "PHYSICAL":
@@ -752,8 +798,7 @@ def segment_distance(p0, p1, q0, q1):
 
 def edge_interactions(perimeter, radius, kinds=("PHYSICAL",)):
     """Pairs of non-adjacent perimeter edges of different chains within 2R of each other:
-    (edge a, edge b, distance, parallel cosine). A brute-force grid search; meshes of
-    O(10^4) perimeter edges take seconds."""
+    (edge a, edge b, distance, parallel cosine), in (a, b) order (the consumers aggregate)."""
     indices = [i for i, e in enumerate(perimeter.edges) if e.kind in kinds]
     if not indices:
         return []
@@ -761,35 +806,33 @@ def edge_interactions(perimeter, radius, kinds=("PHYSICAL",)):
     points = np.array([[*perimeter.edge_points(perimeter.edges[i])] for i in indices])  # (n, 2, 3)
     midpoints = points.mean(axis=1)
     half = 0.5 * np.linalg.norm(points[:, 1] - points[:, 0], axis=1)
-    cell = interaction + 2.0 * float(half.max())
-    grid = defaultdict(list)
-    keys = np.floor(midpoints / cell).astype(np.int64)
-    for local, key in enumerate(map(tuple, keys)):
-        grid[key].append(local)
+    # Edges by their boxes (a cell of 2R; a long straight edge occupies many cells): the
+    # candidates of an edge are the edges of the cells within the interaction distance of
+    # its box, then the former exact tests; the pairs are listed by (a, b).
+    grid = BoxGrid(points.min(axis=1), points.max(axis=1), interaction)
     results = []
-    offsets = [(i, j, k) for i in (-1, 0, 1) for j in (-1, 0, 1) for k in (-1, 0, 1)]
-    for local_a, key in enumerate(map(tuple, keys)):
+    for local_a in range(len(indices)):
         a = indices[local_a]
         edge_a = perimeter.edges[a]
-        for offset in offsets:
-            for local_b in grid.get((key[0] + offset[0], key[1] + offset[1], key[2] + offset[2]), []):
-                if local_b <= local_a:
-                    continue
-                b = indices[local_b]
-                edge_b = perimeter.edges[b]
-                if set(edge_a.vertices) & set(edge_b.vertices):
-                    continue
-                if edge_a.chain == edge_b.chain and edge_a.chain >= 0:
-                    continue
-                if np.linalg.norm(midpoints[local_a] - midpoints[local_b]) > interaction + half[local_a] + half[local_b]:
-                    continue
-                p0, p1 = points[local_a]
-                q0, q1 = points[local_b]
-                distance = segment_distance(p0, p1, q0, q1)
-                if distance <= interaction * (1.0 + 1.0e-9):
-                    ta = (p1 - p0) / (2.0 * half[local_a])
-                    tb = (q1 - q0) / (2.0 * half[local_b])
-                    results.append((a, b, distance, abs(float(ta @ tb))))
+        for local_b in grid.query(points[local_a].min(axis=0), points[local_a].max(axis=0), interaction * (1.0 + 1.0e-6)):
+            local_b = int(local_b)
+            if local_b <= local_a:
+                continue
+            b = indices[local_b]
+            edge_b = perimeter.edges[b]
+            if set(edge_a.vertices) & set(edge_b.vertices):
+                continue
+            if edge_a.chain == edge_b.chain and edge_a.chain >= 0:
+                continue
+            if np.linalg.norm(midpoints[local_a] - midpoints[local_b]) > interaction + half[local_a] + half[local_b]:
+                continue
+            p0, p1 = points[local_a]
+            q0, q1 = points[local_b]
+            distance = segment_distance(p0, p1, q0, q1)
+            if distance <= interaction * (1.0 + 1.0e-9):
+                ta = (p1 - p0) / (2.0 * half[local_a])
+                tb = (q1 - q0) / (2.0 * half[local_b])
+                results.append((a, b, distance, abs(float(ta @ tb))))
     return results
 
 
