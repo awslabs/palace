@@ -729,6 +729,28 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
                 cross_layer_length += (interval[1] - interval[0]) * length
     excluded["CrossLayerLength"] = cross_layer_length
     excluded["ExcludedCorners"] = excluded_corners
+    # Corners of the metal off the process plane (facing sheets, wall tops): geometric corners
+    # of the perimeter census (excluded from the identification, never manifest records).
+    off_plane_corners = []
+    for sh in lay["Sheets"]:
+        if sh["Z"] == 0.0:
+            continue
+        for hole_index, lp in enumerate(sh["Loops"]):
+            hole = hole_index > 0
+            points = lp["Points"]
+            for index, point in enumerate(points):
+                if _on_box(point, lay):
+                    continue
+                t_in = _tangent_at_vertex(lp, index, True)
+                t_out = _tangent_at_vertex(lp, index, False)
+                turn = math.degrees(math.acos(float(np.clip(t_in @ t_out, -1.0, 1.0))))
+                if turn <= corner_turn_tolerance + 1.0e-9:
+                    continue
+                convex = (cross2(t_in, t_out) > 0) != hole
+                off_plane_corners.append({"Point": [round(float(point[0]), 9), round(float(point[1]), 9), float(sh["Z"])], "TurnDegrees": round(turn, 9), "InteriorAngleDegrees": round(180.0 - turn if convex else 180.0 + turn, 9), "Convex": bool(convex), "Expected": "Excluded (facing sheet)"})
+    for _, x0, y0, x1, y1, height in lay["Walls"]:
+        for x, y in ((x0, y0), (x1, y1)):
+            off_plane_corners.append({"Point": [float(x), float(y), float(height)], "TurnDegrees": 90.0, "InteriorAngleDegrees": 90.0, "Convex": True, "Expected": "Excluded (wall top)"})
     # A parallel pair is a feature when part of its overlap survives the cluster regions
     # (distance to a core >= R) and the corner windows (R along the edge from a corner).
     for pair in pairs:
@@ -756,6 +778,7 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
         "TruncationLength": truncation_length,
         "StraightEdges": len(all_edges),
         "Corners": corners,
+        "OffPlaneCorners": off_plane_corners,
         "ClassifierCornerCount": sum(1 for c in corners if c["ClassifierCorner"]),
         "StandaloneCornerCount": sum(1 for c in corners if c.get("Standalone")),
         "ExpectedRoundedCorners": sum(1 for a in arcs if a["ExpectedRoundedCorner"]),
@@ -801,14 +824,16 @@ def compare_with_oracle(orc, audit_result, manifest):
     length_tolerance = 1.0e-6 * max(1.0, orc["PhysicalPerimeterLength"]) if not has_arcs else 0.02 * sum(a["Length"] for a in orc["Arcs"])
     checks["A6-perimeter-length"] = {"Oracle": orc["PhysicalPerimeterLength"], "Mesh": mesh_length, "Tolerance": length_tolerance, "Pass": abs(mesh_length - orc["PhysicalPerimeterLength"]) <= length_tolerance, "Meaning": "polyline perimeter exact; arcs shorter by the chord defect"}
     oracle_corners = [c for c in orc["Corners"] if c["ClassifierCorner"]]
-    # Mesh corners are geometric (turn > 30 deg) whether or not the vertex is excluded.
+    # Mesh corners are geometric (turn > 30 deg) whether or not the vertex is excluded: the
+    # in-plane corners (z = 0) and the corners of the metal off the plane, matched in 3D.
+    census_corners = [dict(c, Point=[c["Point"][0], c["Point"][1], 0.0]) for c in oracle_corners] + list(orc.get("OffPlaneCorners", []))
     mesh_corners = [c for c in census["Corners"] if c["Kind"] == "CORNER"]
     matched = 0
     angle_mismatch = []
     unmatched_mesh = []
     for mc in mesh_corners:
-        point = np.array(mc["Point"][:2])
-        hit = next((oc for oc in oracle_corners if np.linalg.norm(np.array(oc["Point"]) - point) < 1.0e-6), None)
+        point = np.array(mc["Point"][:3], dtype=float)
+        hit = next((oc for oc in census_corners if np.linalg.norm(np.array(oc["Point"], dtype=float) - point) < 1.0e-6), None)
         if hit is None:
             unmatched_mesh.append(mc)
         elif abs(hit["InteriorAngleDegrees"] - mc["InteriorAngleDegrees"]) > 1.0e-6 and abs(hit["TurnDegrees"] - mc["TurnDegrees"]) > 1.0e-6:
@@ -817,12 +842,13 @@ def compare_with_oracle(orc, audit_result, manifest):
             matched += 1
     checks["A6-corner-list-mesh"] = {
         "OracleCorners": len(oracle_corners),
+        "OracleOffPlaneCorners": len(census_corners) - len(oracle_corners),
         "MeshCorners": len(mesh_corners),
         "Matched": matched,
         "AngleMismatch": angle_mismatch,
         "UnmatchedMesh": unmatched_mesh[:20],
-        "Pass": matched == len(oracle_corners) == len(mesh_corners) and not angle_mismatch,
-        "Meaning": "mesh corners beyond the oracle's are arc discretisation vertices above the 30 deg tolerance",
+        "Pass": matched == len(census_corners) == len(mesh_corners) and not angle_mismatch,
+        "Meaning": "mesh corners beyond the oracle's (in-plane + off-plane metal) are arc discretisation vertices above the 30 deg tolerance",
     }
     summary = M.summarize(manifest)
     manifest_sharp = Counter()

@@ -173,6 +173,12 @@ class OracleTest(unittest.TestCase):
         # The wall's foot spans the sheet: the long edges within 2R = 4 of x = 0 (8 + 8).
         self.assertAlmostEqual(orc["Excluded"]["CrossLayerLength"], 16.0, places=6)
         self.assertEqual(orc["Excluded"]["ExcludedCorners"], 0)
+        # The off-plane metal's corners are geometric corners of the mesh census (never manifest
+        # records): the two wall-top corners here, the four facing-sheet corners at z = 3 above.
+        self.assertEqual([c["Point"] for c in orc["OffPlaneCorners"]], [[0.0, -6.0, 4.0], [0.0, 6.0, 4.0]])
+        facing = S.oracle(S.layout("facing", [S.sheet(S.GROUND, S.rectangle(-10.0, -6.0, 10.0, 6.0)), S.sheet(S.GROUND, S.rectangle(-10.0, -6.0, 10.0, 6.0), z=3.0)]))
+        self.assertEqual(sorted(c["Point"] for c in facing["OffPlaneCorners"]), [[-10.0, -6.0, 3.0], [-10.0, 6.0, 3.0], [10.0, -6.0, 3.0], [10.0, 6.0, 3.0]])
+        self.assertTrue(all(c["InteriorAngleDegrees"] == 90.0 for c in facing["OffPlaneCorners"]))
 
 
 class SpecificationTest(unittest.TestCase):
