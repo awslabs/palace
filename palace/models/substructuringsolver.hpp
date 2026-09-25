@@ -45,6 +45,12 @@ public:
   // Dirichlet DOF set (e.g. a magnetostatic flux-loop lift). Returns the full parent field.
   Vector SolveDirichlet(const Vector &dbc_values);
 
+  // Batched sweeps: solve several excitations at once. Equivalent to calling the single
+  // versions in turn, but the environment solves (interface load g_E and interior recovery
+  // u_E) run as multi-RHS blocks through one direct factorization.
+  std::vector<Vector> SolveExcitations(const std::vector<int> &drive_terminal_indices);
+  std::vector<Vector> SolveDirichlets(const std::vector<Vector> &dbc_values);
+
   // Solve K u = f for a full parent-space source f (magnetostatic current excitation),
   // reusing the condensed environment. Returns the full parent field.
   Vector SolveSource(const Vector &f);
@@ -64,15 +70,15 @@ public:
   // Global parent H1 true-DOF size, for reporting.
   long long int RegionGlobalTrueVSize() const;
 
-
   // Write the recovered full parent-space potentials to a ParaView collection under dir,
   // one time step per excitation (time = terminal index).
   void WriteParaView(const std::string &dir, const std::vector<int> &terminals,
                      const std::vector<Vector> &fields) const;
 
 private:
-  // Region-condensed Dirichlet-lift solve using the currently set impl->dbc_values.
-  Vector SolveWithCurrentDbc();
+  // Region-condensed Dirichlet-lift solves for a batch of prescribed Dirichlet fields (each
+  // a full parent true-DOF vector, nonzero only on the Dirichlet DOFs).
+  std::vector<Vector> SolveDirichletBatch(const std::vector<Vector> &dbcs);
 
   // Hides the heavy internals (LaplaceOperator on each submesh, Substructure,
   // DtNBoundaryOperator, KspSolver) so the header stays decoupled from the plumbing.
