@@ -2,8 +2,8 @@
 {% block build_stage %}
 # FIXME(awslabs/palace#731): swap in Spack v1.2.3 (haampie-llms backports/v1.2.3)
 # with the spack/spack#53111 backport, so that `--only dependencies` does not skip
-# the `compilers` group root.
-ARG SPACK_FIX_COMMIT=d63a4168b40cacaa92c77ba9f3a432b5bba4079b
+# the `compilers` group root when installing or pushing to the buildcache.
+ARG SPACK_FIX_COMMIT=0341360a2b7baa99e777bde1651c8fcf2fce370d
 RUN git clone -q --filter=blob:none --no-checkout \
       https://github.com/Sbozzolo/spack.git /tmp/spack-fix && \
     git -C /tmp/spack-fix checkout -q "$SPACK_FIX_COMMIT" && \
