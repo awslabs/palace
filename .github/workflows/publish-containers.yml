@@ -3,19 +3,32 @@
 
 # Container publish workflow.
 #
-# The `Containers` build workflow produces artifacts. This workflow is triggered
-# after `Containers` completes, runs in a trusted environment, and has
-# permissions to push to AWS through a least-privilege OIDC role.
+# A container build workflow produces artifacts. This workflow is triggered
+# after one completes, runs in a trusted environment, and has permissions to
+# push to AWS through a least-privilege OIDC role.
+#
+# Non-tag builds are split per host (Containers (x64) / (arm64) / (gpu)), so each
+# fires this publisher on its own and its container publishes as soon as it is
+# built. Release tags build the full matrix in one `Containers` run, so a whole
+# version publishes atomically from a single publish job.
 #
 # Two jobs: `authorize` decides whether this build may publish and derives the
 # selector while holding no credentials; `publish` runs only if authorized, keys
-# its concurrency on the authorized selector, and holds the OIDC role.
+# its concurrency on the authorized selector plus the source build workflow, and
+# holds the OIDC role.
 
 name: Publish Containers
 
 on:
   workflow_run:
-    workflows: [Containers]
+    # All container build workflows. The per-host non-tag builds and the
+    # release-matrix build each complete independently and trigger their own
+    # publish run (scoped to that run's own artifacts).
+    workflows:
+      - Containers
+      - Containers (x64)
+      - Containers (arm64)
+      - Containers (gpu)
     types: [completed]
 
 permissions: {}
@@ -63,10 +76,19 @@ jobs:
     needs: authorize
     if: needs.authorize.outputs.authorized == 'true'
     runs-on: ubuntu-latest
-    # Concurrency is keyed on the authorized selector (only known now), so
-    # publishes to one channel serialize while different channels (including
-    # each release) run independently, and an unauthorized run — which never
-    # reaches this job — can never enter the group.
+    # Concurrency is keyed on the authorized selector plus the source build
+    # workflow (only known now), so:
+    # - publishes for the same channel from the same build workflow serialize
+    #   (e.g. two commits racing on `main`'s x64 leg);
+    # - the per-host non-tag builds of one channel (different source workflows)
+    #   publish in PARALLEL, so a slow host never delays another's channel;
+    # - each release runs alone (its own selector);
+    # - an unauthorized run — which never reaches this job — can never enter the
+    #   group.
+    # Per-arch ECR tags and SIF objects are independently named, so parallel
+    # per-host publishes to one channel don't contend on the images. They do all
+    # overwrite the one shared `<selector>/schema.json`, which is safe because it
+    # is byte-identical for a given commit.
     #
     # NOT cancel-in-progress: cancelling a publisher partway through the
     # per-leg copy loop would leave a channel holding ECR tags and S3 objects
@@ -81,7 +103,7 @@ jobs:
     # atomically needs content-addressed writes plus a single pointer update —
     # tracked as the content-addressing follow-up, not solved here.
     concurrency:
-      group: publish-containers-${{ needs.authorize.outputs.selector }}
+      group: publish-containers-${{ needs.authorize.outputs.selector }}-${{ github.event.workflow_run.workflow_id }}
       cancel-in-progress: false
     # Bounds how long a stuck publisher can hold its channel's queue. Without
     # cancel-in-progress there is nothing else to evict it, and the default job
