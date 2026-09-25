@@ -300,6 +300,15 @@
             "$ref": "#/$defs/FluxLoop"
           }
         },
+        "FluxLoopExcitation": {
+          "type": "array",
+          "title": "Flux Loop Excitation",
+          "description": "Array of simultaneous flux-loop excitations for magnetostatic simulations. Each entry drives several existing FluxLoop holes at once with prescribed absolute fluxoids in a single linear solve, superposing their fields and reporting the stored energy. Independent of the per-loop inductance-matrix sweep, which it does not perturb; the sweep is separately controlled by Solver/Magnetostatic/FluxLoopMatrixSweep.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/FluxLoopExcitation"
+          }
+        },
         "Superconductor": {
           "type": "array",
           "description": "Array of thin-film superconductor sheet boundaries for magnetostatic simulations. Each sheet contributes a London kinetic-inductance term to the extracted total inductance, modeled by the one-sided finite-thickness London kinetic sheet inductance L_ksq = mu0 * lambda * coth(d/lambda) (field on one face, e.g. a film over a ground plane), specified either via the penetration depth and film thickness or directly (as the thin-film limit lambda^2/d when d << lambda). Only available for magnetostatic simulations.",
@@ -1638,6 +1647,38 @@
         }
       }
     },
+    "FluxLoopExcitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "FluxLoops",
+        "FluxAmounts"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "description": "Unique index of this flux-loop excitation, used in postprocessing output naming. Must not collide with other boundary indices.",
+          "exclusiveMinimum": 0
+        },
+        "FluxLoops": {
+          "type": "array",
+          "description": "Indices of existing FluxLoop entries to drive together in this single-solve excitation.",
+          "additionalItems": false,
+          "items": {
+            "type": "integer"
+          }
+        },
+        "FluxAmounts": {
+          "type": "array",
+          "description": "Absolute nondimensional fluxoid to impose on each corresponding entry of FluxLoops. Must have the same length as FluxLoops.",
+          "additionalItems": false,
+          "items": {
+            "type": "number"
+          }
+        }
+      }
+    },
     "Terminal": {
       "type": "object",
       "additionalProperties": false,
@@ -2884,6 +2925,11 @@
           "$ref": "#/$defs/InactivePortMode",
           "description": "Global default boundary condition applied to inactive surface current ports during the inductance matrix sweep. During the sweep each surface current port is excited one at a time; this option controls how the remaining (inactive) ports are treated. Individual ports can override this via [`/Boundaries/SurfaceCurrent`](@ref config-boundaries-surfacecurrent) `\"InactiveMode\"`.",
           "default": "Open"
+        },
+        "FluxLoopMatrixSweep": {
+          "type": "boolean",
+          "description": "Whether to run the per-loop flux-loop inductance-matrix sweep. When `false`, the flux loops declared in [`/Boundaries/FluxLoop`](@ref config-boundaries-fluxloop) are not swept individually (no flux-loop inductance matrix is written), and only any configured [`/Boundaries/FluxLoopExcitation`](@ref config-boundaries-fluxloopexcitation) states are solved. Surface-current sweeps are unaffected.",
+          "default": true
         }
       }
     },

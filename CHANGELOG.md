@@ -28,6 +28,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added `Solver.Linear.LondonPCShift`, a preconditioner-only gauge shift that keeps the
     London magnetostatic solve SPD-solvable by AMS.
     [PR 929](https://github.com/awslabs/palace/pull/929).
+  - Added `Boundaries.FluxLoopExcitation`, a single-solve excitation that drives several
+    `FluxLoop` holes together with prescribed fluxoids and writes the superposed field and
+    stored energy to `terminal-fluxexc.csv`, separate from the inductance-matrix sweep
+    (toggle `Solver.Magnetostatic.FluxLoopMatrixSweep`).
+    [PR 929](https://github.com/awslabs/palace/pull/929).
 
 #### Interface Changes
 

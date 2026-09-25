@@ -276,6 +276,16 @@ inactive; see [Magnetostatic problems](problem.md#Magnetostatic-problems) for de
 unit-current excitations for current-driven magnetostatic solves. Palace reports
 `terminal-Phi.csv` in physical webers.
 
+The [`"FluxLoopExcitation"`](../config/reference.md#config-boundaries-fluxloopexcitation)
+boundary keyword adds a separate excitation: each entry drives several existing `"FluxLoop"`
+holes together with prescribed absolute fluxoids (`"FluxAmounts"`, one per listed
+`"FluxLoops"` index) in a single linear solve, superposing their per-loop fields exactly, and
+writes the superposed field and total stored energy (volume magnetic plus London kinetic) to
+`terminal-fluxexc.csv`. It does not perturb the per-loop inductance-matrix sweep. The two are
+selectable via [`/Solver/Magnetostatic/FluxLoopMatrixSweep`](@ref config-solver-magnetostatic)
+(default `true`): keep both, or set it to `false` to skip the N-loop sweep and solve only the
+requested excitation states.
+
 !!! note "Flux loop requirements"
 
     Flux loop boundaries require:
