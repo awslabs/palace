@@ -395,7 +395,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     initial_res = res;
   }
   eps = std::max(rel_tol * initial_res, abs_tol);
-  converged = (res < eps);
+  converged = (res <= eps);
 
   // Begin iterations.
   int it = 0;
@@ -423,6 +423,8 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     A->Mult(p, z);
     denom = linalg::Dot(comm, z, p);
     CheckDot(denom, "PCG operator is not positive definite: (Ap, p) = ");
+    MFEM_VERIFY(denom != 0.0,
+                "PCG operator is not positive definite: (Ap, p) = " << denom << "!");
     alpha = beta / denom;
 
     x.Add(alpha, p);
@@ -440,7 +442,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     beta = linalg::Dot(comm, z, r);
     CheckDot(beta, "PCG preconditioner is not positive definite: (Br, r) = ");
     res = std::sqrt(std::abs(beta));
-    converged = (res < eps);
+    converged = (res <= eps);
   }
   if (print_opts.iterations)
   {
@@ -580,7 +582,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
           std::string(tab_width, ' '), true_beta, beta, initial_res);
     }
     beta = true_beta;
-    if (beta < eps)
+    if (beta <= eps)
     {
       converged = true;
       break;
@@ -621,7 +623,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 
       beta = std::abs(s[j + 1]);
       CheckDot(beta, "GMRES residual norm is not valid: beta = ");
-      converged = (beta < eps);
+      converged = (beta <= eps);
       if (converged || j + 1 == max_dim || it + 1 == max_it)
       {
         it++;
@@ -759,7 +761,7 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
           std::string(tab_width, ' '), true_beta, beta, initial_res);
     }
     beta = true_beta;
-    if (beta < eps)
+    if (beta <= eps)
     {
       converged = true;
       break;
@@ -800,7 +802,7 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 
       beta = std::abs(s[j + 1]);
       CheckDot(beta, "FGMRES residual norm is not valid: beta = ");
-      converged = (beta < eps);
+      converged = (beta <= eps);
       if (converged || j + 1 == max_dim || it + 1 == max_it)
       {
         it++;
