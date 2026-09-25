@@ -10,7 +10,7 @@ this block: every disagreement below is a recorded defect for the fix block.
 | Module | Purpose |
 |---|---|
 | `msh2.py` | binary / ASCII MSH 2.2 reader (first- and second-order simplices) |
-| `perimeter.py` | metal perimeter E recomputed from the mesh with the classifier's definitions (metal attribute union, odd incidence, truncation, 30 deg corner rule on the 1e-12 direction grid, physical chains) plus the excluded classes of decision 73(3): NONPLANAR, CROSS_LAYER, NONMANIFOLD; `rounded_runs` reads fillet arcs with the classifier's rounded-corner rule |
+| `perimeter.py` | metal perimeter E recomputed from the mesh with the classifier's definitions (metal attribute union, face-direction classes on the distinct geometric faces, truncation, 30 deg corner rule on the 1e-12 direction grid, physical chains, edge-connected components) plus the excluded classes of decision 73(3): NONPLANAR / FOLD, CROSS_LAYER zones within 2R of off-plane metal, NONMANIFOLD, EMBEDDED, BOX; `rounded_runs` reads fillet arcs with the classifier's rounded-corner rule |
 | `manifest.py` | canonical digest / set diff / aggregate summary of `surface-response-requirements.json` (drops Status, SelectedModels, NormalizedLibraryDistance, Reason, Library.Path, Statistics); preflight log parser |
 | `audit.py` | gates A1 (perimeter agreement, length and count partition, multiplicity proxy, weights, vertex census, recorded exclusions) and A2 (cluster balls), B1 gap bound; JSON + Markdown; exit 1 on any failure; `--compare` for A3 / A5 set identity |
 | `preflight_config.py` | generic geometry-only preflight configuration (Electrostatic; Ground + Terminal metal for conductor identity; typed SA / MS / MA interfaces with the library radius) |
@@ -20,8 +20,8 @@ this block: every disagreement below is a recorded defect for the fix block.
 | `refine_msh2.py` | uniform 1 -> 8 / 1 -> 4 refinement of a first-order MSH 2.2 mesh outside Palace, so the refined mesh exists for the audit (real A5 test) |
 
 Tests (`python3 -m unittest discover -s examples/surface_response_identification -p 'test_*.py' -t examples` from the repository
-root, or per module): `test_audit.py` (15, incl. 3 version-2 gate tests), `test_preflight_config.py` (3),
-`test_synthetic_layouts.py` (12), `test_tag_metal_components.py` (5), `test_refine_msh2.py` (1).
+root, or per module): `test_audit.py` (18, incl. 3 version-2 gate tests), `test_preflight_config.py` (3),
+`test_synthetic_layouts.py` (15), `test_tag_metal_components.py` (5), `test_refine_msh2.py` (1).
 
 Typical use:
 
@@ -66,6 +66,60 @@ when their closest-point separation is constant within `PairSeparationToleranceR
 the same rules (`design_bent_pairs`; arc-bar layouts carry their design bend for the expected
 classes; checks `A6-parallel-pairs` with the pair tolerance and `A6-bent-pair-classes`).
 Phase-2 results: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/phase2/REPORT.md`.
+
+Phase 3 (decision 74 step 4: conductor identity, crack-independence, decision-73(3) exclusions,
+embedded sheets, mesh preparation):
+
+* **Perimeter from the distinct geometric metal faces** (`palace/utils/metaledge.cpp`): a face
+  edge is classified by the in-plane inward directions of the distinct faces owning it — one
+  direction = one-sided perimeter (PHYSICAL / TRUNCATION), two opposite = interior, two
+  non-coplanar = FOLD, three or more = NONMANIFOLD. Coincident crack copies count once, so
+  `CrackInternalBoundaryElements` true and false give the same perimeter and identification
+  (same `GeometryDigest` and lengths), and sheets with one material on both sides (airbridge
+  spans, embedded metal) are no longer cancelled. `perimeter.py` applies the same rule
+  (kinds PHYSICAL, TRUNCATION, EMBEDDED, NONPLANAR, FOLD, NONMANIFOLD, BOX).
+* **Conductor identity = edge-connected metal component**, independent of the attribute
+  numbering and of the problem type (electrostatic Terminal / Ground labels and Maxwell PEC
+  attributes alike); the labels only produce a warning when one component carries distinct
+  labels. Consequences: two ground planes cut by the simulation box are two conductors (a CPW
+  cross-section is a three-conductor four-edge cluster); two sheets touching at a single vertex
+  are two conductors (no galvanic connection) and the vertex is a `PointContact` record + warning;
+  the `Junction` signature carries `ArmConductors`. The audit's `perimeter.py` reports the
+  edge-connected component of every edge; `tag_metal_components.py` is no longer needed for
+  conductor identity (it remains a mesh-repair tool).
+* **Exclusions reported, never silent** (`Identification.Exclusions`, each with count and
+  length; the segment table carries `Exclusion` for whole segments and `ExcludedPortions`
+  `[s0, s1, exclusion index]` for analytic zones): `SimulationBoundary` (metal faces on the
+  mesh bounding box, a PEC box), `NonPlanar` (folds; one-sided faces not parallel to the layer
+  normal: walls, staple legs, vias), `NonManifold` (a wall standing on a sheet),
+  `UndeterminedProcessSide` (same material on both sides and no `EdgeFrameNormal` on the target
+  interface — the configured process layers decide the side, else the record), `CrossLayer`
+  (the parts of a planar run within 2R of metal off its own plane — a facing layer across a
+  gap, a wall, a staple — solved analytically on the distance to every such face, so the zones
+  are refinement invariant; `Conventions.CrossLayerReachOverR` = 2), `Untargeted`,
+  `TruncationCut`. Vertices: `Excluded` (every incident run excluded or within 2R of off-plane
+  metal), `ExclusionCut` (a chain cut by an excluded segment; no endpoint feature), `PointContact`
+  flag. Every other metal plane is identified in its own right (a second chip is not excluded
+  unless it faces metal within 2R). The legacy classification omits exactly the segments the
+  identification excludes.
+* **Layer normal** = area-weighted principal direction of the metal face normals (faces on the
+  mesh bounding box do not vote); planarity tolerance = the parallelism tolerance 1e-8.
+* **Mesh preparation**: coincident metal boundary elements of one attribute are tolerated
+  (deduplicated); coincident boundary elements of different metal attributes abort naming both
+  attributes and the face location; Palace already refuses a face with two boundary elements at
+  load (`geodata.cpp GetFaceToBdrElementMap`, attributes named) — `tag_metal_components.py
+  --drop-metal-duplicates` is the deterministic repair. A missing `substrate_air` group is not a
+  blocker (MS / MA targets only).
+* **Audit**: split-tolerant perimeter agreement (cracking bisects elements next to under-resolved
+  sheets, second-order edges are sampled), partition with `ExcludedPortions`, vertex census with
+  excluded vertices and point contacts, exclusion lengths per class compared with the mesh
+  (incl. the analytic CrossLayer zones); `synthetic_layouts.py --crack-false` adds a
+  `CrackInternalBoundaryElements=false` cell per library and compares its digest; the oracle's
+  conductor is the sheet (connectivity), `gap-same-*` are slots in one U-shaped sheet, and the
+  off-plane exclusions (facing sheets, walls) are computed analytically (`A6-excluded-classes`).
+* `StraightBendRadiusOverR` = 10 (decision 75; phase 2 used 20).
+Phase-3 results: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/phase3/REPORT.md`;
+block summary: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/SUMMARY.md`.
 
 ## Geometry identification: baseline audit (2026-09-24, executable 9ef5256b / v0.17.0-572-g5876402f7)
 

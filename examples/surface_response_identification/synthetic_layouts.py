@@ -801,6 +801,7 @@ def compare_with_oracle(orc, audit_result, manifest):
     length_tolerance = 1.0e-6 * max(1.0, orc["PhysicalPerimeterLength"]) if not has_arcs else 0.02 * sum(a["Length"] for a in orc["Arcs"])
     checks["A6-perimeter-length"] = {"Oracle": orc["PhysicalPerimeterLength"], "Mesh": mesh_length, "Tolerance": length_tolerance, "Pass": abs(mesh_length - orc["PhysicalPerimeterLength"]) <= length_tolerance, "Meaning": "polyline perimeter exact; arcs shorter by the chord defect"}
     oracle_corners = [c for c in orc["Corners"] if c["ClassifierCorner"]]
+    # Mesh corners are geometric (turn > 30 deg) whether or not the vertex is excluded.
     mesh_corners = [c for c in census["Corners"] if c["Kind"] == "CORNER"]
     matched = 0
     angle_mismatch = []
@@ -914,7 +915,7 @@ def compare_with_oracle(orc, audit_result, manifest):
         "Pass": abs(recorded.get("CrossLayer", 0.0) - expected_cross_layer) <= 1.0e-6 * max(1.0, expected_cross_layer)
         and (orc["Excluded"]["Walls"] > 0) == (recorded.get("NonPlanar", 0.0) > 0)
         and (orc["Excluded"]["Walls"] > 0) == (recorded.get("NonManifold", 0.0) > 0)
-        and (orc["Excluded"]["CrossLayerSheets"] > 0) == (recorded.get("UndeterminedProcessSide", 0.0) > 0 or recorded.get("CrossLayer", 0.0) > 0)
+        and (orc["Excluded"]["CrossLayerSheets"] > 0) == (recorded.get("UndeterminedProcessSide", 0.0) > 0)
         and manifest_excluded_vertices >= orc["Excluded"]["ExcludedCorners"],
         "Meaning": "CrossLayer length = analytic perimeter within 2R of facing sheets / walls; walls -> NonPlanar + NonManifold; a facing sheet's own edges -> CrossLayer or UndeterminedProcessSide",
     }

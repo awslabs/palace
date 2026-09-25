@@ -67,14 +67,13 @@ def perimeter_census(perimeter, radius, targets):
             # layout feature (the classifier makes no Endpoint feature there).
             cuts += 1
             continue
-        if v.physical_kind in ("CORNER", "ENDPOINT", "JUNCTION") and (
-            index in perimeter.excluded_vertices or not any(perimeter.edges[e].kind == "PHYSICAL" for e in v.edges)
-        ):
-            # Every incident edge is an excluded class (embedded / non-planar metal) or the
-            # vertex lies within 2R of off-plane metal: an excluded vertex of the manifest.
-            excluded_vertices.append([round(float(x), 9) for x in v.point])
-            continue
         if v.physical_kind in ("CORNER", "ENDPOINT", "JUNCTION"):
+            # Every incident edge is an excluded class (embedded / non-planar metal) or the
+            # vertex lies within 2R of off-plane metal: an excluded vertex of the manifest
+            # (listed with the corners for the geometric comparison, not a feature vertex).
+            excluded = index in perimeter.excluded_vertices or not any(perimeter.edges[e].kind == "PHYSICAL" for e in v.edges)
+            if excluded:
+                excluded_vertices.append([round(float(x), 9) for x in v.point])
             corners.append(
                 {
                     "Point": [round(float(x), 9) for x in v.point],
@@ -83,6 +82,7 @@ def perimeter_census(perimeter, radius, targets):
                     "InteriorAngleDegrees": None if v.turn_degrees is None else round(180.0 - v.turn_degrees, 6),
                     "Convex": v.convex,
                     "Degree": len([e for e in v.edges if perimeter.edges[e].kind == "PHYSICAL"]),
+                    "Excluded": excluded,
                 }
             )
     # Sub-threshold turns: vertices the classifier treats as straight although the layout
@@ -127,7 +127,7 @@ def perimeter_census(perimeter, radius, targets):
         "PhysicalChains": perimeter.chains,
         "VerticesByKind": dict(vertex_kinds),
         "TruncationCuts": cuts,
-        "FeatureVertices": len(corners),
+        "FeatureVertices": sum(1 for c in corners if not c["Excluded"]),
         "RoundedRuns": {"Runs": len(runs), "RoundedCorners": sum(1 for r in runs if r["Rounded"]), "Detail": runs[:50]},
         "TurnHistogram": {"Bins": TURN_BINS, "Counts": histogram},
         "SubThresholdTurns": {
@@ -343,7 +343,7 @@ def identification_gates(identification, perimeter, census, radius, targets, com
     for v in manifest_vertices:
         if v["Type"] in ("ConvexCorner", "ConcaveCorner"):
             manifest_angles[round(180.0 - float(v["TurnDegrees"]), 6)] += 1
-    audit_angles = Counter(round(180.0 - c["TurnDegrees"], 6) for c in census["Corners"] if c["Kind"] == "CORNER")
+    audit_angles = Counter(round(180.0 - c["TurnDegrees"], 6) for c in census["Corners"] if c["Kind"] == "CORNER" and not c["Excluded"])
     # Excluded vertices (every incident run excluded, or within 2R of off-plane metal) are
     # accounted on both sides; point contacts are reported, never silent.
     manifest_point_contacts = sum(1 for v in manifest_vertices if v.get("PointContact"))
@@ -498,7 +498,7 @@ def run_audit(args):
         # not an extra class; the residual is what the manifest does not enumerate at all.
         unmatched = log.get("UnmatchedVertices", 0) if log else 0
         residual = audit_vertices - manifest_vertices
-        corner_angles = Counter(round(180.0 - c["TurnDegrees"], 6) for c in census["Corners"] if c["Kind"] == "CORNER")
+        corner_angles = Counter(round(180.0 - c["TurnDegrees"], 6) for c in census["Corners"] if c["Kind"] == "CORNER" and not c["Excluded"])
         manifest_angles = Counter()
         for r in manifest["Requirements"]:
             if r["Topology"] in ("ConvexCorner", "ConcaveCorner"):
