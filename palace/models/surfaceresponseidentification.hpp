@@ -191,10 +191,14 @@ struct CanonicalSignature
   std::array<std::array<double, 3>, 3> axes{};
 };
 
-CanonicalSignature CanonicalClusterSignature(const std::vector<SignaturePortion> &portions,
-                                             const std::vector<SignatureVertex> &vertices,
-                                             const std::array<double, 3> &process_normal,
-                                             double radius);
+// The lexicographically smallest serialisation over the candidate frames (every portion
+// direction and perpendicular, both signs and handedness); `progress(done, total)` reports
+// the candidate frames visited (diagnostics only).
+CanonicalSignature
+CanonicalClusterSignature(const std::vector<SignaturePortion> &portions,
+                          const std::vector<SignatureVertex> &vertices,
+                          const std::array<double, 3> &process_normal, double radius,
+                          const std::function<void(std::size_t, std::size_t)> &progress = {});
 
 // Canonical signature of parallel edges over a common longitudinal interval: offsets / R
 // from the lowest edge, gap side (+1 toward increasing offset), conductor labels by first

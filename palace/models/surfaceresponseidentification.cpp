@@ -825,44 +825,78 @@ double RoundTo(double value, double quantum)
   return r == 0.0 ? 0.0 : r;
 }
 
+std::array<double, 2> LocalCoordinates(const Point3D &p, const Point3D &origin,
+                                       const Point3D &x, const Point3D &y, double radius)
+{
+  const Point3D r = Sub(p, origin);
+  return {RoundTo(Dot(r, x) / radius, kSignatureLengthQuantumOverRadius),
+          RoundTo(Dot(r, y) / radius, kSignatureLengthQuantumOverRadius)};
+}
+
+// The geometry entry of one portion in the frame (its sort key in the serialisation is the
+// dump of this object; the conductor label is added after sorting).
+nlohmann::json PortionGeometryInFrame(const SignaturePortion &portion, const Point3D &origin,
+                                      const Point3D &x, const Point3D &y, double radius)
+{
+  auto a = LocalCoordinates(portion.p0, origin, x, y, radius),
+       b = LocalCoordinates(portion.p1, origin, x, y, radius);
+  if (b < a)
+  {
+    std::swap(a, b);
+  }
+  return nlohmann::json{
+      {"P", {a[0], a[1], b[0], b[1]}},
+      {"Gap", std::array<double, 2>{RoundTo(Dot(portion.gap_direction, x),
+                                            kSignatureLengthQuantumOverRadius),
+                                    RoundTo(Dot(portion.gap_direction, y),
+                                            kSignatureLengthQuantumOverRadius)}},
+      {"Interfaces", portion.interfaces},
+      {"Law", portion.boundary_law}};
+}
+
+// The smallest portion entry key of a frame: the serialisation in that frame begins with
+// this entry (labelled conductor 1), so two frames whose smallest keys differ compare as
+// their smallest keys do (two dumps of complete JSON objects differ at a position inside
+// both) — an exact filter on the candidate frames of CanonicalClusterSignature.
+std::string SmallestPortionKeyInFrame(const std::vector<SignaturePortion> &portions,
+                                      const Point3D &origin, const Point3D &x,
+                                      const Point3D &y, double radius)
+{
+  std::string smallest;
+  bool have = false;
+  for (const auto &portion : portions)
+  {
+    std::string key = PortionGeometryInFrame(portion, origin, x, y, radius).dump();
+    if (!have || key < smallest)
+    {
+      smallest = std::move(key);
+      have = true;
+    }
+  }
+  return smallest;
+}
+
 nlohmann::json SerializeInFrame(const std::vector<SignaturePortion> &portions,
                                 const std::vector<SignatureVertex> &vertices,
                                 const Point3D &origin, const Point3D &x, const Point3D &y,
                                 double radius)
 {
-  auto Local = [&](const Point3D &p)
-  {
-    const Point3D r = Sub(p, origin);
-    return std::array<double, 2>{
-        RoundTo(Dot(r, x) / radius, kSignatureLengthQuantumOverRadius),
-        RoundTo(Dot(r, y) / radius, kSignatureLengthQuantumOverRadius)};
-  };
-  auto LocalDirection = [&](const Point3D &v)
-  {
-    return std::array<double, 2>{RoundTo(Dot(v, x), kSignatureLengthQuantumOverRadius),
-                                 RoundTo(Dot(v, y), kSignatureLengthQuantumOverRadius)};
-  };
+  auto Local = [&](const Point3D &p) { return LocalCoordinates(p, origin, x, y, radius); };
   struct Entry
   {
     nlohmann::json geometry;
+    std::string key;  // geometry.dump(), the sort key (computed once per entry)
     int conductor;
   };
   std::vector<Entry> entries;
   for (const auto &portion : portions)
   {
-    auto a = Local(portion.p0), b = Local(portion.p1);
-    if (b < a)
-    {
-      std::swap(a, b);
-    }
-    entries.push_back({nlohmann::json{{"P", {a[0], a[1], b[0], b[1]}},
-                                      {"Gap", LocalDirection(portion.gap_direction)},
-                                      {"Interfaces", portion.interfaces},
-                                      {"Law", portion.boundary_law}},
-                       portion.conductor});
+    nlohmann::json geometry = PortionGeometryInFrame(portion, origin, x, y, radius);
+    std::string key = geometry.dump();
+    entries.push_back({std::move(geometry), std::move(key), portion.conductor});
   }
-  std::sort(entries.begin(), entries.end(), [](const Entry &a, const Entry &b)
-            { return a.geometry.dump() < b.geometry.dump(); });
+  std::sort(entries.begin(), entries.end(),
+            [](const Entry &a, const Entry &b) { return a.key < b.key; });
   std::map<int, int> labels;
   nlohmann::json portion_list = nlohmann::json::array();
   for (auto &entry : entries)
@@ -1043,9 +1077,11 @@ TranslationalSignature CanonicalTranslationalSignature(std::vector<Translational
   return best;
 }
 
-CanonicalSignature CanonicalClusterSignature(const std::vector<SignaturePortion> &portions,
-                                             const std::vector<SignatureVertex> &vertices,
-                                             const Point3D &process_normal, double radius)
+CanonicalSignature
+CanonicalClusterSignature(const std::vector<SignaturePortion> &portions,
+                          const std::vector<SignatureVertex> &vertices,
+                          const Point3D &process_normal, double radius,
+                          const std::function<void(std::size_t, std::size_t)> &progress)
 {
   MFEM_VERIFY(!portions.empty(), "A cluster signature needs at least one edge portion!");
   const Point3D n = Normalize(process_normal);
@@ -1086,20 +1122,34 @@ CanonicalSignature CanonicalClusterSignature(const std::vector<SignaturePortion>
     }
   }
   CanonicalSignature best;
-  std::string best_key;
+  std::string best_key, best_smallest_portion;
   bool have = false;
   std::set<int> minimal_handedness;
-  for (const auto &x : candidates)
+  for (std::size_t c = 0; c < candidates.size(); c++)
   {
+    const Point3D &x = candidates[c];
+    if (progress)
+    {
+      progress(c, candidates.size());
+    }
     for (const int handedness : {1, -1})
     {
       const Point3D y = Scale(static_cast<double>(handedness), Cross(n, x));
+      // Exact filter: a frame whose smallest portion entry exceeds the best frame's cannot
+      // serialise below (or equal to) the best key.
+      std::string smallest_portion =
+          SmallestPortionKeyInFrame(portions, origin, x, y, radius);
+      if (have && smallest_portion > best_smallest_portion)
+      {
+        continue;
+      }
       auto serialized = SerializeInFrame(portions, vertices, origin, x, y, radius);
       const std::string key = serialized.dump();
       if (!have || key < best_key)
       {
         have = true;
         best_key = key;
+        best_smallest_portion = std::move(smallest_portion);
         best.signature = std::move(serialized);
         best.chirality = handedness;
         best.origin = origin;
@@ -1335,7 +1385,9 @@ public:
     name = stage;
     started = last = std::chrono::steady_clock::now();
   }
-  void Progress(std::size_t done, std::size_t total)
+  // A progress line at most every 10 s: fraction of the stage's loop done (optionally of a
+  // named inner loop, e.g. the candidate frames of one cluster signature).
+  void Progress(std::size_t done, std::size_t total, const std::string &inner = "")
   {
     if (!log)
     {
@@ -1348,8 +1400,8 @@ public:
     }
     last = now;
     std::ostringstream text;
-    text << "  Identification " << name << ": " << done << " / " << total << " ("
-         << std::fixed << std::setprecision(1)
+    text << "  Identification " << name << (inner.empty() ? "" : " (" + inner + ")") << ": "
+         << done << " / " << total << " (" << std::fixed << std::setprecision(1)
          << (total ? 100.0 * static_cast<double>(done) / static_cast<double>(total) : 100.0)
          << " %), " << std::setprecision(1) << Elapsed() << " s\n";
     log(text.str());
@@ -1440,9 +1492,43 @@ private:
   // boxes and the runs incident to every vertex.
   std::optional<UniformGrid> run_grid;
   std::vector<std::vector<std::size_t>> runs_at_vertex;
+  std::vector<long long int> run_of_segment;  // -1 for segments outside every run
+  // Shared vertices of two chains (sorted), computed once per chain pair from the smaller
+  // chain's vertices and the runs incident to them (the former set intersection of the two
+  // vertex sets, which cost the size of both chains for every run pair).
+  mutable std::map<std::pair<int, int>, std::vector<std::size_t>> shared_vertices_cache;
   StageLog stage{input.log};
 
   double Tol() const { return quantizer.Quantum(); }
+
+  const std::vector<std::size_t> &SharedVertices(const Chain &A, const Chain &B) const
+  {
+    const auto key = std::make_pair(std::min(A.id, B.id), std::max(A.id, B.id));
+    auto it = shared_vertices_cache.find(key);
+    if (it != shared_vertices_cache.end())
+    {
+      return it->second;
+    }
+    const Chain &small = A.vertices.size() <= B.vertices.size() ? A : B;
+    const Chain &large = &small == &A ? B : A;
+    std::vector<std::size_t> shared;
+    for (const std::size_t v : small.vertices)  // std::set: ascending
+    {
+      // A chain's vertex set is the set of endpoints of its segments.
+      const auto &segments = input.vertices[v].segments;
+      if (std::any_of(segments.begin(), segments.end(),
+                      [&](std::size_t s)
+                      {
+                        return run_of_segment[s] >= 0 &&
+                               runs[static_cast<std::size_t>(run_of_segment[s])].chain ==
+                                   large.id;
+                      }))
+      {
+        shared.push_back(v);
+      }
+    }
+    return shared_vertices_cache.emplace(key, std::move(shared)).first->second;
+  }
 
   // Candidate runs (sorted) whose boxes lie within margin of [lo, hi].
   std::vector<std::size_t> RunsNear(const Point3D &lo, const Point3D &hi, double margin) const
@@ -1476,6 +1562,14 @@ private:
       Point3D rlo, rhi;
       BoundingBox(runs[r].start, runs[r].end, rlo, rhi);
       run_grid->Insert(r, rlo, rhi);
+    }
+    run_of_segment.assign(input.segments.size(), -1);
+    for (std::size_t r = 0; r < runs.size(); r++)
+    {
+      for (const auto &rs : runs[r].segments)
+      {
+        run_of_segment[rs.segment] = static_cast<long long int>(r);
+      }
     }
     runs_at_vertex.assign(input.vertices.size(), {});
     for (std::size_t r = 0; r < runs.size(); r++)
@@ -2037,28 +2131,34 @@ double Identifier::MaxCurvature(const Chain &chain, double x0, double x1) const
     std::swap(x0, x1);
   }
   double best = std::max(WindowedCurvature(chain, x0), WindowedCurvature(chain, x1));
-  for (const auto &[x, kappa] : chain.kappa_nodes)
+  // The nodes are sorted by position: only those strictly inside (x0, x1).
+  const auto &nodes = chain.kappa_nodes;
+  auto first = std::upper_bound(nodes.begin(), nodes.end(), std::make_pair(x0, 0.0),
+                                [](const auto &a, const auto &b)
+                                { return a.first < b.first; });
+  for (auto it = first; it != nodes.end() && it->first < x1; ++it)
   {
-    if (x > x0 && x < x1)
-    {
-      best = std::max(best, kappa);
-    }
+    best = std::max(best, it->second);
   }
   return best;
 }
 
 bool Identifier::IsCurvedAt(const Chain &chain, double x, std::size_t *section) const
 {
-  for (std::size_t j = 0; j < chain.curved.size(); j++)
+  // The curved intervals are disjoint and ascending: the first whose end reaches x is the
+  // only candidate (an earlier one ends before x, a later one starts after that end).
+  const auto j = static_cast<std::size_t>(
+      std::lower_bound(chain.curved.begin(), chain.curved.end(), x,
+                       [&](const Interval &c, double value)
+                       { return c.second + Tol() < value; }) -
+      chain.curved.begin());
+  if (j < chain.curved.size() && x >= chain.curved[j].first - Tol())
   {
-    if (x >= chain.curved[j].first - Tol() && x <= chain.curved[j].second + Tol())
+    if (section)
     {
-      if (section)
-      {
-        *section = j;
-      }
-      return true;
+      *section = j;
     }
+    return true;
   }
   return false;
 }
@@ -2122,8 +2222,10 @@ void Identifier::ComputeCurvature()
 {
   const double W = kCurvatureWindowOverRadius * R;
   const double straight_radius = kStraightBendRadiusOverRadius * R;
-  for (auto &chain : chains)
+  for (std::size_t c = 0; c < chains.size(); c++)
   {
+    stage.Progress(c, chains.size());
+    auto &chain = chains[c];
     const std::size_t m = chain.runs.size();
     chain.run_offset.assign(m, 0.0);
     chain.length = 0.0;
@@ -2203,16 +2305,17 @@ void Identifier::ComputeCurvature()
       {
         x = std::clamp(x, 0.0, chain.length);
       }
-      double value = 0.0;
-      for (std::size_t i = 0; i < pieces.size(); i++)
+      // The last piece starting before x (the pieces are consecutive, x0 non-decreasing).
+      const auto after = std::lower_bound(pieces.begin(), pieces.end(), x,
+                                          [](const Piece &piece, double value)
+                                          { return piece.x0 < value; });
+      if (after == pieces.begin())
       {
-        if (x <= pieces[i].x0)
-        {
-          break;
-        }
-        value = cumulative[i] + pieces[i].density * (std::min(x, pieces[i].x1) - pieces[i].x0);
+        return shift;
       }
-      return value + shift;
+      const auto i = static_cast<std::size_t>(after - pieces.begin()) - 1;
+      return cumulative[i] + pieces[i].density * (std::min(x, pieces[i].x1) - pieces[i].x0) +
+             shift;
     };
     auto Kappa = [&](double x) { return (F(x + 0.5 * W) - F(x - 0.5 * W)) / W; };
     // Nodes: the ends, every density breakpoint shifted by +-W/2 (periodic images for a
@@ -2376,14 +2479,60 @@ void Identifier::BuildBentPairs()
   // of both chains) with their samples: at least kPairSeparationSamplesPerInterval + 1 per
   // piece and at most R / 2 apart, so that a 2R window always holds several samples.
   const double margin = reach + 2.0 * Tol();
-  // Runs of chain A (in chain order) whose boxes lie within the reach of chain B's box: the
-  // only runs of A whose facing region can be non-empty.
-  auto RunsOfChainNear = [&](const Chain &A, const Bounds &box)
+  // The points of every chain's curved boundaries (chain position x mapped onto the run
+  // containing it), indexed by their positions: a run's cuts at the partner's curved
+  // boundaries come from the points within its reach instead of every boundary of the
+  // partner.
+  struct CurvedBoundary
+  {
+    int chain;
+    Point3D point;
+  };
+  std::vector<CurvedBoundary> curved_boundaries;
+  std::optional<UniformGrid> curved_boundary_grid;
+  {
+    Point3D lo{}, hi{};
+    for (const auto &B : chains)
+    {
+      for (const auto &ci : B.curved)
+      {
+        for (const double x : {ci.first, ci.second})
+        {
+          const std::size_t kb = std::min(
+              static_cast<std::size_t>(
+                  std::upper_bound(B.run_offset.begin(), B.run_offset.end(), x) -
+                  B.run_offset.begin()) -
+                  1,
+              B.runs.size() - 1);
+          const std::size_t rb = B.runs[kb];
+          const Point3D q =
+              runs[rb].At(std::clamp(x - B.run_offset[kb], 0.0, runs[rb].length));
+          for (int d = 0; d < 3; d++)
+          {
+            lo[d] = curved_boundaries.empty() ? q[d] : std::min(lo[d], q[d]);
+            hi[d] = curved_boundaries.empty() ? q[d] : std::max(hi[d], q[d]);
+          }
+          curved_boundaries.push_back({B.id, q});
+        }
+      }
+    }
+    if (!curved_boundaries.empty())
+    {
+      curved_boundary_grid.emplace(4.0 * R, lo);
+      for (std::size_t id = 0; id < curved_boundaries.size(); id++)
+      {
+        curved_boundary_grid->Insert(id, curved_boundaries[id].point,
+                                     curved_boundaries[id].point);
+      }
+    }
+  }
+  // Runs of chain B (in chain order) whose boxes lie within the reach of the given box.
+  auto RunsOfChainNear = [&](const Chain &B, const Bounds &box)
   {
     std::vector<std::size_t> indices;
     for (const std::size_t r : RunsNear(box.lo, box.hi, margin))
     {
-      if (runs[r].chain == A.id && !runs[r].excluded)
+      if (runs[r].chain == B.id && !runs[r].excluded)
       {
         indices.push_back(runs[r].index_in_chain);
       }
@@ -2391,12 +2540,53 @@ void Identifier::BuildBentPairs()
     std::sort(indices.begin(), indices.end());
     return indices;
   };
+  // Runs of chain A (in chain order) whose boxes lie within the reach of a run of chain B:
+  // the only runs of A whose facing region can be non-empty. Found from the smaller chain
+  // (a chain's box is not its extent: the ground chain around a route spans the chip).
+  auto RunsOfChainFacing = [&](const Chain &A, const Chain &B)
+  {
+    std::vector<std::size_t> indices;
+    if (A.runs.size() <= B.runs.size())
+    {
+      for (const std::size_t a : A.runs)
+      {
+        if (runs[a].excluded)
+        {
+          continue;
+        }
+        const auto near = RunsNearRun(a, margin);
+        if (std::any_of(near.begin(), near.end(), [&](std::size_t r)
+                        { return runs[r].chain == B.id && !runs[r].excluded; }))
+        {
+          indices.push_back(runs[a].index_in_chain);
+        }
+      }
+    }
+    else
+    {
+      for (const std::size_t b : B.runs)
+      {
+        if (runs[b].excluded)
+        {
+          continue;
+        }
+        for (const std::size_t r : RunsNearRun(b, margin))
+        {
+          if (runs[r].chain == A.id && !runs[r].excluded)
+          {
+            indices.push_back(runs[r].index_in_chain);
+          }
+        }
+      }
+      std::sort(indices.begin(), indices.end());
+      indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+    }
+    return indices;
+  };
   auto Pieces = [&](const Chain &A, const Chain &B, std::vector<Piece> &pieces)
   {
-    std::vector<std::size_t> shared;
-    std::set_intersection(A.vertices.begin(), A.vertices.end(), B.vertices.begin(),
-                          B.vertices.end(), std::back_inserter(shared));
-    for (const std::size_t ka : RunsOfChainNear(A, bounds[chain_index.at(B.id)]))
+    const std::vector<std::size_t> &shared = SharedVertices(A, B);
+    for (const std::size_t ka : RunsOfChainFacing(A, B))
     {
       const std::size_t a = A.runs[ka];
       const Run &ra = runs[a];
@@ -2474,32 +2664,42 @@ void Identifier::BuildBentPairs()
       for (const auto &interval : paired)
       {
         // Cuts at A's curved boundaries and at B's curved boundaries mapped onto the run.
+        // (The cuts are sorted below and zero-length pieces skipped: the candidate order and
+        // duplicates do not matter, only the set of cut positions.)
         std::vector<double> cuts = {interval.first, interval.second};
-        for (const auto &ci : A.curved)
         {
-          for (const double x : {ci.first, ci.second})
+          // A's curved boundaries (disjoint, ascending) near the interval (a superset by
+          // R on either side; the exact test below is the former one).
+          const double x_lo = A.run_offset[ka] + interval.first - R;
+          const double x_hi = A.run_offset[ka] + interval.second + R;
+          auto ci = std::lower_bound(A.curved.begin(), A.curved.end(), x_lo,
+                                     [](const Interval &c, double value)
+                                     { return c.second <= value; });
+          for (; ci != A.curved.end() && ci->first < x_hi; ++ci)
           {
-            const double s = x - A.run_offset[ka];
-            if (s > interval.first + Tol() && s < interval.second - Tol())
+            for (const double x : {ci->first, ci->second})
             {
-              cuts.push_back(s);
+              const double s = x - A.run_offset[ka];
+              if (s > interval.first + Tol() && s < interval.second - Tol())
+              {
+                cuts.push_back(s);
+              }
             }
           }
         }
-        for (const auto &ci : B.curved)
+        if (curved_boundary_grid)
         {
-          for (const double x : {ci.first, ci.second})
+          // B's curved boundaries within the reach of run a (the closest point on the run
+          // is the projection): candidates from the grid of every chain's boundary points.
+          Point3D a_lo, a_hi;
+          BoundingBox(ra.start, ra.end, a_lo, a_hi);
+          for (const std::size_t id : curved_boundary_grid->Query(a_lo, a_hi, margin))
           {
-            // Run of B containing chain position x.
-            const std::size_t kb = std::min(
-                static_cast<std::size_t>(
-                    std::upper_bound(B.run_offset.begin(), B.run_offset.end(), x) -
-                    B.run_offset.begin()) -
-                    1,
-                B.runs.size() - 1);
-            const std::size_t rb = B.runs[kb];
-            const Point3D q =
-                runs[rb].At(std::clamp(x - B.run_offset[kb], 0.0, runs[rb].length));
+            if (curved_boundaries[id].chain != B.id)
+            {
+              continue;
+            }
+            const Point3D &q = curved_boundaries[id].point;
             const double s = std::clamp(Dot(Sub(q, ra.start), ra.tangent), 0.0, ra.length);
             if (quantizer.Less(Distance(ra.At(s), q), reach) &&
                 s > interval.first + Tol() && s < interval.second - Tol())
@@ -2664,10 +2864,32 @@ void Identifier::BuildBentPairs()
   };
 
   std::size_t chain_pairs_examined = 0, chain_pairs_paired = 0;
+  std::vector<std::size_t> partners;
   for (std::size_t ca = 0; ca < chains.size(); ca++)
   {
     stage.Progress(ca, chains.size());
-    for (std::size_t cb = ca + 1; cb < chains.size(); cb++)
+    // Candidate partners cb > ca (ascending: the former loop over every later chain): the
+    // chains with a run within the reach of a run of this chain. A pair without such runs
+    // has no facing pieces and contributed nothing.
+    partners.clear();
+    for (const std::size_t a : chains[ca].runs)
+    {
+      if (runs[a].excluded)
+      {
+        continue;
+      }
+      for (const std::size_t r : RunsNearRun(a, margin))
+      {
+        const std::size_t cb = chain_index.at(runs[r].chain);
+        if (cb > ca && !runs[r].excluded)
+        {
+          partners.push_back(cb);
+        }
+      }
+    }
+    std::sort(partners.begin(), partners.end());
+    partners.erase(std::unique(partners.begin(), partners.end()), partners.end());
+    for (const std::size_t cb : partners)
     {
       const Chain &A = chains[ca];
       const Chain &B = chains[cb];
@@ -3132,9 +3354,7 @@ Identifier::ChainWindow(std::size_t run, std::size_t from_vertex, double length,
                         std::vector<std::pair<std::size_t, Interval>> &out) const
 {
   const Chain &chain = chains.at(chain_index.at(runs[run].chain));
-  const auto position = std::find(chain.runs.begin(), chain.runs.end(), run);
-  MFEM_VERIFY(position != chain.runs.end(), "Run missing from its chain!");
-  const std::size_t start_index = static_cast<std::size_t>(position - chain.runs.begin());
+  const std::size_t start_index = RunIndexInChain(chain, run);
   const bool forward = runs[run].start_vertex == from_vertex;
   const std::size_t m = chain.runs.size();
   // Distance along the chain to the next feature vertex (or chain end).
@@ -3324,9 +3544,7 @@ void Identifier::BuildClusters()
       {
         continue;
       }
-      std::vector<std::size_t> shared;
-      std::set_intersection(ca.vertices.begin(), ca.vertices.end(), cb.vertices.begin(),
-                            cb.vertices.end(), std::back_inserter(shared));
+      const std::vector<std::size_t> &shared = SharedVertices(ca, cb);
       std::vector<std::vector<Interval>> zones_a, zones_b;
       for (const std::size_t v : shared)
       {
@@ -3559,7 +3777,15 @@ void Identifier::BuildClusters()
     MFEM_VERIFY(!portions.empty(), "A spatial cluster claims no perimeter!");
     largest_cluster_edges = std::max(largest_cluster_edges, portions.size());
     const auto signature_started = std::chrono::steady_clock::now();
-    const auto canonical = CanonicalClusterSignature(portions, vertices, n_ref, R);
+    const auto canonical = CanonicalClusterSignature(
+        portions, vertices, n_ref, R,
+        [&](std::size_t done, std::size_t total)
+        {
+          stage.Progress(done, total,
+                         "candidate frames of cluster " + std::to_string(c) + " / " +
+                             std::to_string(cluster_cores.size()) + ", " +
+                             std::to_string(portions.size()) + " edges");
+        });
     signature_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                                        signature_started)
                              .count();
@@ -3664,6 +3890,7 @@ void Identifier::Assign(IdentificationResult &result)
     {
       continue;
     }
+    stage.Progress(r, runs.size(), "claims");
     auto &run_claims = claims[r];
     std::sort(run_claims.begin(), run_claims.end(),
               [](const Claim &a, const Claim &b)
@@ -3759,24 +3986,46 @@ void Identifier::Assign(IdentificationResult &result)
         }
       }
     }
+    std::size_t pair_index = 0;
     for (const auto &[feature, sides] : pair_pieces)
     {
+      stage.Progress(pair_index++, pair_pieces.size(), "mutual pair sides");
       if (!features[feature].signature.contains("SeparationOverR"))
       {
         continue;
       }
       const double reach = features[feature].signature["SeparationOverR"].get<double>() * R *
                            (1.0 + kPairSeparationTolerance);
+      // The other side's pieces by run: a piece faces only the pieces on runs whose boxes
+      // lie within the reach of its own run (the facing intervals of every other piece are
+      // empty; the union is sorted, so the candidate order does not matter).
+      std::array<std::map<std::size_t, std::vector<const SidePiece *>>, 2> pieces_by_run;
+      for (int k = 0; k < 2; k++)
+      {
+        for (const auto &piece : sides[k])
+        {
+          pieces_by_run[k][piece.run].push_back(&piece);
+        }
+      }
       for (int k = 0; k < 2; k++)
       {
         for (const auto &piece : sides[k])
         {
           std::vector<Interval> facing;
-          for (const auto &other : sides[1 - k])
+          for (const std::size_t other_run : RunsNearRun(piece.run, reach + 2.0 * Tol()))
           {
-            const auto found = RunIntervalWithin(piece.run, runs[other.run].At(other.lo),
-                                                 runs[other.run].At(other.hi), reach);
-            facing.insert(facing.end(), found.begin(), found.end());
+            const auto it = pieces_by_run[1 - k].find(other_run);
+            if (it == pieces_by_run[1 - k].end())
+            {
+              continue;
+            }
+            for (const SidePiece *other : it->second)
+            {
+              const auto found =
+                  RunIntervalWithin(piece.run, runs[other->run].At(other->lo),
+                                    runs[other->run].At(other->hi), reach);
+              facing.insert(facing.end(), found.begin(), found.end());
+            }
           }
           const auto keep =
               IntersectIntervals({Interval{piece.lo, piece.hi}}, MergeIntervals(facing, Tol()), Tol());
@@ -3856,6 +4105,7 @@ void Identifier::Assign(IdentificationResult &result)
     {
       continue;
     }
+    stage.Progress(r, runs.size(), "isolated / curved edges");
     std::vector<Interval> taken = cross_layer[r];
     for (const auto &[lo, hi, feature, side] : assigned[r])
     {
@@ -3873,8 +4123,16 @@ void Identifier::Assign(IdentificationResult &result)
       const double offset = chain.run_offset[RunIndexInChain(chain, r)];
       std::vector<Interval> curved_on_run;
       std::vector<std::size_t> curved_section;
-      for (std::size_t j = 0; j < chain.curved.size(); j++)
+      // The chain's curved intervals (disjoint, ascending) that can overlap the run: from
+      // the first ending after the run's start (less R) to the last starting before its end
+      // (plus R); the exact intersection below is the former one.
+      const auto first_curved = std::lower_bound(
+          chain.curved.begin(), chain.curved.end(), offset - R,
+          [](const Interval &c, double value) { return c.second <= value; });
+      for (auto ci = first_curved;
+           ci != chain.curved.end() && ci->first < offset + runs[r].length + R; ++ci)
       {
+        const auto j = static_cast<std::size_t>(ci - chain.curved.begin());
         const Interval local{chain.curved[j].first - offset, chain.curved[j].second - offset};
         const auto overlap = IntersectIntervals({local}, remainder, Tol());
         for (const auto &piece : overlap)
@@ -4003,6 +4261,7 @@ void Identifier::Assign(IdentificationResult &result)
     {
       continue;
     }
+    stage.Progress(r, runs.size(), "segment table");
     for (const auto &rs : runs[r].segments)
     {
       auto &table = result.segments[rs.segment];
@@ -4115,6 +4374,38 @@ void Identifier::Assign(IdentificationResult &result)
       runs_at_vertex[run.end_vertex]++;
     }
   }
+  // The first site at every mesh vertex (the former linear search over the sites).
+  std::map<std::size_t, std::size_t> site_of_vertex;
+  for (std::size_t i = 0; i < sites.size(); i++)
+  {
+    if (sites[i].vertex)
+    {
+      site_of_vertex.try_emplace(*sites[i].vertex, i);
+    }
+  }
+  // Corner features outside clusters by their origin (the last feature at a point wins, as
+  // in the former loop over every feature) and, per segment, the spatial cluster features
+  // with a portion on it (ascending: the former first match over the features).
+  std::map<Point3D, int> corner_feature_at;
+  std::map<std::size_t, std::vector<int>> cluster_features_on_segment;
+  for (const auto &feature : features)
+  {
+    if (feature.type == "ConvexCorner" || feature.type == "ConcaveCorner")
+    {
+      corner_feature_at[feature.origin] = feature.id;
+    }
+    else if (feature.type == "SpatialEdgeCluster")
+    {
+      for (const auto &portion : feature.portions)
+      {
+        auto &list = cluster_features_on_segment[portion.segment];
+        if (list.empty() || list.back() != feature.id)
+        {
+          list.push_back(feature.id);
+        }
+      }
+    }
+  }
   for (std::size_t v = 0; v < input.vertices.size(); v++)
   {
     const auto &vertex = input.vertices[v];
@@ -4142,15 +4433,14 @@ void Identifier::Assign(IdentificationResult &result)
       result.vertices.push_back(entry);
       continue;
     }
-    const auto site =
-        std::find_if(sites.begin(), sites.end(), [&](const VertexFeatureSite &s)
-                     { return s.vertex && *s.vertex == v; });
-    if (site == sites.end())
+    const auto site_at = site_of_vertex.find(v);
+    if (site_at == site_of_vertex.end())
     {
       entry.type = "Excluded";
       result.vertices.push_back(entry);
       continue;
     }
+    const VertexFeatureSite *site = &sites[site_at->second];
     entry.type = site->type;
     entry.turn_degrees = site->turn_degrees;
     const auto feature = vertex_feature.find(v);
@@ -4168,35 +4458,27 @@ void Identifier::Assign(IdentificationResult &result)
     entry.type = "RoundedCorner";
     entry.turn_degrees = site.turn_degrees;
     entry.feature = -1;
-    for (const auto &feature : features)
+    if (site.cluster < 0)
     {
-      if (site.cluster < 0 && feature.origin == site.point &&
-          (feature.type == "ConvexCorner" || feature.type == "ConcaveCorner"))
+      if (const auto at = corner_feature_at.find(site.point); at != corner_feature_at.end())
       {
-        entry.feature = feature.id;
+        entry.feature = at->second;
       }
     }
-    if (site.cluster >= 0)
+    else
     {
-      for (const auto &feature : features)
+      // The first spatial cluster feature (by id) with a portion on a segment of the
+      // site's window runs.
+      for (const auto &w : site.window)
       {
-        if (feature.type == "SpatialEdgeCluster" &&
-            std::any_of(feature.portions.begin(), feature.portions.end(),
-                        [&](const IdentifiedPortion &p)
-                        {
-                          return std::any_of(site.window.begin(), site.window.end(),
-                                             [&](const auto &w)
-                                             {
-                                               return std::any_of(
-                                                   runs[w.first].segments.begin(),
-                                                   runs[w.first].segments.end(),
-                                                   [&](const RunSegment &rs)
-                                                   { return rs.segment == p.segment; });
-                                             });
-                        }))
+        for (const RunSegment &rs : runs[w.first].segments)
         {
-          entry.feature = feature.id;
-          break;
+          const auto on = cluster_features_on_segment.find(rs.segment);
+          if (on != cluster_features_on_segment.end() &&
+              (entry.feature < 0 || on->second.front() < entry.feature))
+          {
+            entry.feature = on->second.front();
+          }
         }
       }
     }
