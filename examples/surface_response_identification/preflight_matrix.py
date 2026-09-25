@@ -72,6 +72,7 @@ def main(argv=None):
     parser.add_argument("--uniform-levels", type=int, nargs="+", default=[0])
     parser.add_argument("--crack", nargs="+", default=["true"], choices=["true", "false"])
     parser.add_argument("--l0", type=float, default=1.0e-6)
+    parser.add_argument("--frame-normal", type=float, nargs=3, help="EdgeFrameNormal on every interface (process side of sheets with one material on both sides)")
     parser.add_argument("--palace", default=DEFAULT_PALACE)
     parser.add_argument("--timeout", type=float, default=1100.0, help="seconds per cell")
     parser.add_argument("--max-local-ranks", type=int, default=6)
@@ -95,6 +96,7 @@ def main(argv=None):
                     config = preflight_config(
                         args.mesh, args.ground, args.terminal, args.sa, library, os.path.join(directory, "postpro"), ms=args.ms, ma=args.ma, l0=args.l0,
                         uniform_levels=levels, crack=crack == "true", substrate_attributes=args.substrate, vacuum_attributes=args.vacuum,
+                        frame_normal=args.frame_normal,
                     )
                     config_path = os.path.join(directory, "config.json")
                     with open(config_path, "w") as target:

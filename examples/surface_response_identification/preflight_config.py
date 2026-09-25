@@ -42,6 +42,7 @@ def preflight_config(
     ms_permittivity=11.47,
     ma_permittivity=10.0,
     order=1,
+    frame_normal=None,
 ):
     metal = sorted(set(ground) | {a for group in terminals for a in group})
     ms = sorted(ms) if ms is not None else metal
@@ -61,7 +62,7 @@ def preflight_config(
     substrate_permittivity = library_data.get("Fabrication", {}).get("SubstratePermittivity", substrate_permittivity)
 
     def dielectric(index, attributes, kind):
-        return {
+        entry = {
             "Index": index,
             "Attributes": list(attributes),
             "Type": kind,
@@ -73,6 +74,11 @@ def preflight_config(
             "SaveLocalEdgeEnergy": False,
             "EdgeDistances": [radius],
         }
+        if frame_normal is not None:
+            # The configured process side for sheets with the same material on both sides
+            # (the identification's UndeterminedProcessSide exclusion otherwise).
+            entry["EdgeFrameNormal"] = [float(x) for x in frame_normal]
+        return entry
 
     dielectrics = []
     targets = []
@@ -126,12 +132,14 @@ def main(argv=None):
     parser.add_argument("--l0", type=float, default=1.0e-6)
     parser.add_argument("--uniform-levels", type=int, default=0)
     parser.add_argument("--no-crack", action="store_true", help="Model.CrackInternalBoundaryElements false")
+    parser.add_argument("--frame-normal", type=float, nargs=3, help="EdgeFrameNormal on every interface: the process side of sheets with one material on both sides")
     args = parser.parse_args(argv)
     output = os.path.abspath(args.output)
     postpro = args.postpro or os.path.join(os.path.dirname(output), "postpro")
     config = preflight_config(
         args.mesh, args.ground, args.terminal, args.sa, args.library, postpro, ms=args.ms, ma=args.ma, radius=args.radius, l0=args.l0,
         uniform_levels=args.uniform_levels, crack=not args.no_crack, substrate_attributes=args.substrate, vacuum_attributes=args.vacuum,
+        frame_normal=args.frame_normal,
     )
     os.makedirs(os.path.dirname(output), exist_ok=True)
     with open(output, "w") as target:
