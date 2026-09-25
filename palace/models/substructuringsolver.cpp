@@ -663,7 +663,8 @@ struct SubstructuringSolver::Impl
   // does not allow changing it): kMaterializeBlock when S_E is materialized, else the size
   // of the first excitation batch. Smaller batches are zero-padded to it.
   mutable int env_block = 0;
-  mutable std::vector<mfem::Vector> env_bin, env_bout;  // padded multi-RHS buffers
+  mutable mfem::Vector env_pad_in,
+      env_pad_out;               // shared zero input / scratch output (padding)
   mfem::Array<int> non_env_int;  // parent true DOFs that are not environment-interior
   bool env_parent_direct = false;
   mfem::Array<int> env_ess;  // solve-space essential true DOFs (Gamma + env Dirichlet)
@@ -1305,9 +1306,9 @@ struct SubstructuringSolver::Impl
   }
 
   // Batched environment interior solves y_k = A_EE^-1 x_k (inputs/outputs are parent
-  // true-DOF vectors; only the environment interior is read/written, the rest of y_k is
-  // zeroed). The direct path runs multi-RHS blocks through the single factor; the iterative
-  // path loops.
+  // true-DOF vectors; only the environment interior of y_k is kept, the rest is zeroed).
+  // The direct path runs multi-RHS blocks through the single factor; the iterative path
+  // loops. y_k may alias x_k.
   void ApplyAeeInvMulti(const std::vector<const mfem::Vector *> &X,
                         const std::vector<mfem::Vector *> &Y) const
   {
@@ -1318,32 +1319,29 @@ struct SubstructuringSolver::Impl
       if (env_block == 0)
       {
         env_block = std::max(1, std::min(kMaterializeBlock, static_cast<int>(X.size())));
-        env_bin.assign(env_block, mfem::Vector(nt));
-        env_bout.assign(env_block, mfem::Vector(nt));
+        env_pad_in.SetSize(nt);
+        env_pad_in = 0.0;
+        env_pad_out.SetSize(nt);
       }
+      // The factored operator is block diagonal [A_EE, 0; 0, I] (non-interior rows/cols
+      // eliminated), so the interior solution depends only on the interior rhs: the inputs
+      // are passed as-is and only the output is masked. The tail block is padded with a
+      // shared zero rhs (SuperLU fixes the RHS count at the first solve).
       mfem::Array<const mfem::Vector *> Xp(env_block);
       mfem::Array<mfem::Vector *> Yp(env_block);
-      for (int k = 0; k < env_block; k++)
-      {
-        Xp[k] = &env_bin[k];
-        Yp[k] = &env_bout[k];
-      }
       const int n = static_cast<int>(X.size());
       for (int c0 = 0; c0 < n; c0 += env_block)
       {
         const int nb = std::min(env_block, n - c0);
         for (int k = 0; k < env_block; k++)
         {
-          // Zero the rhs outside the environment interior (the eliminated rows are
-          // identity); pad the tail of the block with zero RHS.
-          for (int i = 0; i < nt; i++)
-          {
-            env_bin[k](i) = (k < nb && is_env_int[i]) ? (*X[c0 + k])(i) : 0.0;
-          }
+          Xp[k] = (k < nb) ? X[c0 + k] : &env_pad_in;
+          Yp[k] = (k < nb) ? Y[c0 + k] : &env_pad_out;
+          Yp[k]->SetSize(nt);
         }
         if (env_block == 1)
         {
-          env_lu_parent->Mult(env_bin[0], env_bout[0]);
+          env_lu_parent->Mult(*Xp[0], *Yp[0]);
         }
         else
         {
@@ -1351,10 +1349,13 @@ struct SubstructuringSolver::Impl
         }
         for (int k = 0; k < nb; k++)
         {
-          Y[c0 + k]->SetSize(nt);
+          mfem::Vector &y = *Y[c0 + k];
           for (int i = 0; i < nt; i++)
           {
-            (*Y[c0 + k])(i) = is_env_int[i] ? env_bout[k](i) : 0.0;
+            if (!is_env_int[i])
+            {
+              y(i) = 0.0;
+            }
           }
         }
       }
@@ -1903,10 +1904,11 @@ void SubstructuringSolver::CondenseEnvironment()
       E.reset();
       Et.reset();
       const int B = Impl::kMaterializeBlock;
-      std::vector<Vector> t(B, Vector(impl->nt)), ye(B, Vector(impl->nt));
+      std::vector<Vector> t(B, Vector(impl->nt));
       std::vector<const mfem::Vector *> X(B);
       std::vector<mfem::Vector *> Y(B);
       Vector ec(nloc), z(nloc);
+      std::vector<double> agg(static_cast<std::size_t>(B) * nloc);  // A_GG e_c, own rows
       for (int c0 = 0; c0 < nG; c0 += B)
       {
         const int nb = std::min(B, nG - c0);
@@ -1920,19 +1922,24 @@ void SubstructuringSolver::CondenseEnvironment()
           {
             ec(c - off) = 1.0;
           }
-          G->Mult(ec,
-                  t[k]);  // A_env e_c: env-interior part = solve RHS, Gamma part = A_GG e_c
+          // A_env e_c: its env-interior part is the solve RHS, its Gamma part is A_GG e_c.
+          G->Mult(ec, t[k]);
+          for (int r = 0; r < nloc; r++)
+          {
+            agg[static_cast<std::size_t>(k) * nloc + r] = t[k](col_to_dof[r]);
+          }
           X[k] = &t[k];
-          Y[k] = &ye[k];
+          Y[k] = &t[k];  // solve in place
         }
         impl->ApplyAeeInvMulti(X, Y);
         for (int k = 0; k < nb; k++)
         {
-          R->Mult(ye[k], z);  // (A_env y)|_Gamma = A_GE A_EE^-1 A_EG e_c, this rank's rows
+          R->Mult(t[k], z);  // (A_env y)|_Gamma = A_GE A_EE^-1 A_EG e_c, this rank's rows
           const int c = c0 + k;
           for (int r = 0; r < nloc; r++)
           {
-            impl->S_rows[static_cast<std::size_t>(r) * nG + c] = t[k](col_to_dof[r]) - z(r);
+            impl->S_rows[static_cast<std::size_t>(r) * nG + c] =
+                agg[static_cast<std::size_t>(k) * nloc + r] - z(r);
           }
         }
       }
