@@ -41,12 +41,20 @@ exclusions, each reported with its length:
   over the manifest at most 1 R per pair / stack feature involved
   (`STACK_END_RECOMPOSITION_TOTAL_CAP_OVER_R_PER_FEATURE`); a site or a total beyond its cap is
   NOT exempt (two overlapping two-edge pairs across a sub-2R trace — the decision-78 defect —
-  would run along the whole route and fail the gate); both totals are reported in R;
-* `SubToleranceFeature` (isolated / curved only): the sample's PORTION is shorter than the signature
-  parameter tolerance 1e-3 R — an unclaimed remainder between two claim boundaries that the across
-  rule does not cover (DS-SCT-001: a 0.18-0.24 nm `IsolatedEdge` portion between a cluster claim
-  end and a stack cut image), no resolvable parameter; bounded to 1e-3 R per such portion, count
-  reported;
+  would run along the whole route and fail the gate); both totals are reported in R. The
+  per-site cap is the OPERATIVE bound (review fix-4 m-D): every site is at most 1 R and the
+  per-feature total can only bind when one feature carries more than one site per involved
+  feature, so the total is reported with its cap but a manifest that passes the site cap has
+  never failed the total cap;
+* `SubToleranceFeature` (isolated / curved only; the narrowed rule ratified by decision 89): the
+  sample's PORTION is shorter than the signature parameter tolerance 1e-3 R AND is an unclaimed
+  remainder — bounded on both sides along its run by OTHER features' claims (DS-SCT-001 at
+  R 1.9: a 0.18 nm `IsolatedEdge` portion between a `SameConductorGap` claim and a
+  `SpatialEdgeCluster` claim on one segment) — or the WHOLE isolated / curved feature is
+  shorter than 1e-3 R. A sub-tolerance MESH SEGMENT inside a long isolated edge (DS-SCT-001 at
+  R 2.0: 896 segments of 1-2 nm on one 2,898 um `IsolatedEdge`, their run neighbours claimed by
+  the same feature) is an ordinary portion of that feature and is NOT exempt. No resolvable
+  parameter; bounded to 1e-3 R per such portion, count reported;
 * segments with a recorded manifest exclusion (Port, CrossLayer, NonManifold, ...) are never
   facing candidates.
 Reported metric (decision 88(2), not a gate): `ClusterProximityNotAcross` — the isolated /
@@ -67,6 +75,7 @@ plot windows for a visual review.
     python3 -m surface_response_identification.facing_check MANIFEST --output facing.json [--spacing 0.5]
 """
 import argparse
+import bisect
 import json
 import math
 from collections import defaultdict
@@ -80,14 +89,17 @@ PAIR_CLASSES = ("SameConductorGap", "DifferentConductorGap", "SameConductorStrip
 VERTEX_CLASSES = ("ConvexCorner", "ConcaveCorner", "Endpoint", "Junction")
 EXCLUSION_CLASSES = ("AtExactly2R", "ThroughVertex", "SelfNeighbourhood", "StackEndThirdBody", "StackEndRecomposition", "SubToleranceFeature")
 # An isolated / curved PORTION shorter than the signature parameter tolerance (Identification.
-# Conventions SignatureParameterToleranceOverR = 1e-3 R) is roundoff between two claim
-# boundaries (a cluster claim end and a stack cut image on one run, 0.2 nm on DS-SCT-001): it has
-# no resolvable parameter and its facing length is exempt as `SubToleranceFeature`, bounded by
-# definition to 1e-3 R per such portion (count and length reported).
+# Conventions SignatureParameterToleranceOverR = 1e-3 R) that is an unclaimed remainder between
+# two OTHER features' claims along its run (a cluster claim end and a stack cut image, 0.2 nm on
+# DS-SCT-001), or a whole isolated / curved feature shorter than the tolerance, is roundoff: it
+# has no resolvable parameter and its facing length is exempt as `SubToleranceFeature`, bounded
+# by definition to 1e-3 R per such portion (count and length reported; decision 89).
 SIGNATURE_PARAMETER_TOLERANCE_OVER_R = 1.0e-3
 # Bound of the StackEndRecomposition exemption (review fix-3 m4): a recomposition at a stack end
 # or class boundary is a sub-chord event, so one site (one ordered pair of features) may exempt
-# at most one R and the whole manifest at most one R per pair / stack feature involved.
+# at most one R and the whole manifest at most one R per pair / stack feature involved. The site
+# cap is the operative bound (review fix-4 m-D): with every site <= 1 R the total can exceed its
+# cap only when a feature carries more than one site per involved feature.
 STACK_END_RECOMPOSITION_SITE_CAP_OVER_R = 1.0
 STACK_END_RECOMPOSITION_TOTAL_CAP_OVER_R_PER_FEATURE = 1.0
 PAIR_SEPARATION_TOLERANCE = 0.05  # Identification.Conventions PairSeparationToleranceRelative
@@ -297,6 +309,9 @@ class ClaimLookup:
         self.p0, self.p1, self.length = p0, p1, length
         self.chain_of = {i: s.get("Chain") for i, s in enumerate(identification["Segments"])}
         self.chain_position, self.chain_length, self.chain_closed = self._chain_positions(identification["Segments"])
+        # Claim boundaries in chain coordinates: per chain the sorted (end, feature) of every
+        # claimed portion and the sorted (start, feature), for the run neighbours of a portion.
+        self.claim_ends, self.claim_starts = self._claim_boundaries()
         # Vertex-feature points: the feature frame origins (the vertex, or the virtual corner
         # of a rounded corner; the vertex table carries mesh vertex indices, not coordinates).
         points = [f["Frame"]["Origin"][:3] for f in identification["Features"] if f["Type"] in VERTEX_CLASSES and f.get("Frame")]
@@ -349,6 +364,47 @@ class ClaimLookup:
                     x += float(segments[i]["Length"])
             lengths[chain] = x
         return position, lengths, closed
+
+    def _claim_boundaries(self):
+        ends, starts = defaultdict(list), defaultdict(list)
+        for seg, portions in self.portions.items():
+            chain = self.chain_of.get(seg)
+            if chain is None or seg not in self.chain_position:
+                continue
+            for a, b, f in portions:
+                lo, hi = self.chain_interval(seg, a, b)
+                ends[chain].append((hi, f))
+                starts[chain].append((lo, f))
+        return {c: sorted(v) for c, v in ends.items()}, {c: sorted(v) for c, v in starts.items()}
+
+    def chain_interval(self, segment, s0, s1):
+        """Chain coordinates (lo, hi) of the run parameter interval [s0, s1] of a segment."""
+        x, forward = self.chain_position[segment]
+        if forward:
+            return x + s0, x + s1
+        return x + self.length[segment] - s1, x + self.length[segment] - s0
+
+    def run_neighbours(self, segment, s0, s1):
+        """Features claiming the run immediately before s0 and immediately after s1 of the
+        segment along its chain (wrapping on a closed chain), None where nothing is claimed
+        there (a chain end, an excluded segment or an unclaimed gap)."""
+        chain = self.chain_of.get(int(segment))
+        if chain is None or int(segment) not in self.chain_position:
+            return None, None
+        lo, hi = self.chain_interval(int(segment), s0, s1)
+        total = self.chain_length.get(chain, 0.0)
+        closed = self.chain_closed.get(chain, False)
+        tolerance = 1.0e-9
+
+        def at(table, x):
+            candidates = [x] + ([x + total, x - total] if closed and total > 0 else [])
+            for value in candidates:
+                i = bisect.bisect_left(table, (value - tolerance, -1))
+                if i < len(table) and abs(table[i][0] - value) <= tolerance:
+                    return table[i][1]
+            return None
+
+        return at(self.claim_ends.get(chain, []), lo), at(self.claim_starts.get(chain, []), hi)
 
     def arc_distance(self, segment_a, point_a, segment_b, point_b):
         """Arc length along the common chain between two points, or None on different chains."""
@@ -419,7 +475,11 @@ def classify_flag(lookup, flag, radius):
     return None
 
 
-def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=200000):
+def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=200000, record_excluded=False):
+    """With record_excluded every EXCLUDED facing sample is returned too (`ExcludedSamples`, its
+    nearest hit with the exclusion class), for the interval-wise comparison of the gate's
+    sampled StackEndThirdBody / ThroughVertex readings with the identification's analytic
+    Diagnostics.StackEndThirdBodyLength (review fix-4)."""
     identification, p0, p1, length, excluded, radius = load(manifest_path)
     features = identification["Features"]
     grid = SegmentGrid(p0, p1, cell=2.0 * radius)
@@ -492,6 +552,7 @@ def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=2000
     quantum = LENGTH_QUANTUM_OVER_R * radius
     flagged_features = defaultdict(set)
     flags = []
+    excluded_samples = []
     # StackEndRecomposition exemptions per site (feature, facing feature): bounded afterwards.
     recomposition_sites = defaultdict(lambda: {"Length": 0.0, "Class": None, "Flags": []})
     # Cluster / vertex-feature metal within 2R of isolated / curved samples in ANY direction:
@@ -521,11 +582,27 @@ def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=2000
         # chain is).
         own_segments = own_side_segments(feature) if ftype in PAIR_CLASSES else []
         own_mask[own_segments] = True
-        # Portions below the signature parameter tolerance (an isolated / curved remainder
-        # between two claim boundaries): their facing is roundoff, exempt as SubToleranceFeature.
-        sub_tolerance_portion = (portion_lengths < SIGNATURE_PARAMETER_TOLERANCE_OVER_R * radius) if ftype in ISOLATED_CLASSES else np.zeros(len(points), dtype=bool)
-        if np.any(sub_tolerance_portion):
-            sub_tolerance_features[ftype] += len({(int(o), float(l)) for o, l in zip(owners[sub_tolerance_portion], portion_lengths[sub_tolerance_portion])})
+        # Sub-tolerance portions (shorter than the signature parameter tolerance) that are an
+        # unclaimed remainder — bounded on both sides along the run by OTHER features' claims —
+        # or belong to a whole feature shorter than the tolerance: their facing is roundoff,
+        # exempt as SubToleranceFeature (decision 89). A sub-tolerance mesh segment inside a
+        # long isolated edge (its run neighbours are the same feature) is not.
+        sub_tolerance_portion = np.zeros(len(points), dtype=bool)
+        if ftype in ISOLATED_CLASSES:
+            tolerance = SIGNATURE_PARAMETER_TOLERANCE_OVER_R * radius
+            whole_feature = sum(s1 - s0 for _, s0, s1 in feature.get("Portions", [])) < tolerance
+            exempt_portions = set()
+            for seg, s0, s1 in feature.get("Portions", []):
+                if not (0.0 < s1 - s0 < tolerance):
+                    continue
+                before, after = lookup.run_neighbours(seg, s0, s1)
+                bounded = (before is not None and before != feature["Id"]
+                           and after is not None and after != feature["Id"])
+                if whole_feature or bounded:
+                    exempt_portions.add((int(seg), float(s1 - s0)))
+            if exempt_portions:
+                sub_tolerance_portion = np.array([(int(o), float(l)) in exempt_portions for o, l in zip(owners, portion_lengths)])
+                sub_tolerance_features[ftype] += len(exempt_portions)
         for first in range(0, len(points), batch):
             sl = slice(first, first + batch)
             si, sj, ri, fi = facing_samples(grid, p0, p1, excluded, points[sl], tangents[sl], owners[sl], own_mask, radius)
@@ -564,6 +641,7 @@ def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=2000
                         nearest_flag = flag
                 if flagged is not None and sub_tolerance_portion[sl][k]:
                     nearest_exclusion = "SubToleranceFeature"
+                    nearest_flag = dict(flagged, Exclusion=nearest_exclusion)
                     flagged = None
                 if flagged is not None:
                     unexcluded[ftype] += weight
@@ -571,6 +649,8 @@ def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=2000
                     flags.append(flagged)
                 else:
                     excluded_length[ftype][nearest_exclusion] += weight
+                    if record_excluded and nearest_flag is not None:
+                        excluded_samples.append(nearest_flag)
                     if nearest_exclusion == "StackEndRecomposition":
                         site = recomposition_sites[(feature["Id"], nearest_flag["FacingFeature"])]
                         site["Length"] += weight
@@ -662,6 +742,7 @@ def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=2000
         "Gates": {"IsolatedFacing": isolated_unexcluded == 0.0, "PairThirdEdge": pair_unexcluded == 0.0},
         "StackEndRecomposition": recomposition_report,
         "SubToleranceFeatures": {"Count": dict(sub_tolerance_features), "ToleranceOverR": SIGNATURE_PARAMETER_TOLERANCE_OVER_R,
+                                 "Rule": "isolated / curved portion shorter than the tolerance bounded on both sides along its run by other features' claims, or a whole feature shorter than the tolerance (decision 89)",
                                  "ExemptLength": sum(excluded_length[c].get("SubToleranceFeature", 0.0) for c in ISOLATED_CLASSES)},
         "ClusterProximityNotAcross": {
             "Rule": "isolated / curved edge length with cluster or vertex-feature metal within 2R (3D, strict) in any direction and no across hit (|cos| < 0.5): the length the extension's across rule leaves single-edge (decision 88(2) metric, reported, not gated)",
@@ -674,14 +755,15 @@ def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=2000
         "KnifeEdgeRule": f"strict less than 2R on the grid of {LENGTH_QUANTUM_OVER_R:g} R (the classifier's rule); AtExactly2RLength is the facing length at exactly 2R, not flagged",
         "Exclusions": {"AtExactly2R": "facing at exactly 2R on the decision grid (no interaction under the strict rule)",
                        "StackEndThirdBody": "pair / stack side facing a SpatialEdgeCluster or a vertex feature within 2R (a joint description next to a cluster is not absorbed, decision 85(2); reported as Diagnostics.StackEndThirdBodyLength)",
-                       "StackEndRecomposition": f"pair / stack side facing another pair / stack feature that shares a member chain (the route's cross-section recomposed at a stack end or class boundary; the partner's foot across the cut); bounded: at most {STACK_END_RECOMPOSITION_SITE_CAP_OVER_R:g} R per site and {STACK_END_RECOMPOSITION_TOTAL_CAP_OVER_R_PER_FEATURE:g} R per pair / stack feature involved in total, beyond which the length is not exempt",
+                       "StackEndRecomposition": f"pair / stack side facing another pair / stack feature that shares a member chain (the route's cross-section recomposed at a stack end or class boundary; the partner's foot across the cut); bounded: at most {STACK_END_RECOMPOSITION_SITE_CAP_OVER_R:g} R per site (the operative bound) and {STACK_END_RECOMPOSITION_TOTAL_CAP_OVER_R_PER_FEATURE:g} R per pair / stack feature involved in total, beyond which the length is not exempt",
                        "ThroughVertex": f"sample and facing point within {THROUGH_VERTEX_ZONE_OVER_R:g} R of one vertex feature (arms meeting through it, design (b) 1)",
                        "SelfNeighbourhood": f"facing point on the sample's own chain less than {SELF_PAIR_NEIGHBOURHOOD_OVER_R:.6g} R of arc length away (the local neighbourhood of a bend, SelfPairNeighbourhoodOverR)",
-                       "SubToleranceFeature": f"isolated / curved portion shorter than the signature parameter tolerance {SIGNATURE_PARAMETER_TOLERANCE_OVER_R:g} R (an unclaimed remainder between two claim boundaries; no resolvable parameter; at most 1e-3 R per portion)"},
+                       "SubToleranceFeature": f"isolated / curved portion shorter than the signature parameter tolerance {SIGNATURE_PARAMETER_TOLERANCE_OVER_R:g} R that is an unclaimed remainder bounded on both sides along its run by other features' claims, or a whole feature shorter than the tolerance (decision 89; no resolvable parameter; at most 1e-3 R per portion)"},
         "DistanceHistogram": dict(sorted(histogram.items())),
         "Sites": sites,
         "FlaggedSamples": len(flags),
         "Flags": flags,
+        "ExcludedSamples": excluded_samples,
     }
 
 
@@ -691,6 +773,7 @@ def facing_gates(manifest, spacing=0.5):
     apart from the recorded exclusions (reported with their lengths)."""
     result = facing_check(manifest, spacing=spacing)
     result.pop("Flags", None)
+    result.pop("ExcludedSamples", None)
     gates = []
     for name, key, block in (("A8-isolated-facing", "IsolatedFacing", result["Isolated"]), ("A8-pair-third-edge", "PairThirdEdge", result["Pairs"])):
         gates.append({"Gate": name, "Status": "PASS" if result["Gates"][key] else "FAIL",
@@ -711,12 +794,18 @@ def main(argv=None):
     parser.add_argument("--spacing", type=float, default=0.5, help="sample spacing along the portions (manifest units)")
     parser.add_argument("--site-radius", type=float, default=25.0, help="flagged samples closer than this (in R) form one site")
     parser.add_argument("--flags", help="also write every flagged sample (JSON lines) here")
+    parser.add_argument("--excluded-samples", help="also write every EXCLUDED facing sample with its exclusion class (JSON lines) here")
     args = parser.parse_args(argv)
-    result = facing_check(args.manifest, spacing=args.spacing, site_radius_over_r=args.site_radius)
+    result = facing_check(args.manifest, spacing=args.spacing, site_radius_over_r=args.site_radius, record_excluded=bool(args.excluded_samples))
     flags = result.pop("Flags")
+    excluded_samples = result.pop("ExcludedSamples")
     if args.flags:
         with open(args.flags, "w") as target:
             for flag in flags:
+                target.write(json.dumps(flag) + "\n")
+    if args.excluded_samples:
+        with open(args.excluded_samples, "w") as target:
+            for flag in excluded_samples:
                 target.write(json.dumps(flag) + "\n")
     with open(args.output, "w") as target:
         json.dump(result, target, indent=1)

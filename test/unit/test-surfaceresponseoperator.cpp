@@ -2840,6 +2840,16 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   // Three geometric conductors (left ground, centre strip, right ground), see above.
   CHECK(parallel_cluster_conductors == std::set<int>{1, 2, 3});
   CHECK((*parallel_cluster_requirement)["TotalEdgeLength"].get<double>() > 0.0);
+  // Version-1 record semantics (review fix-4 m-F): Count is the number of mesh segments
+  // carrying the coupon (per_segment classes), Instances the number of FEATURE instances
+  // grouped into the coupon and DistinctSignatures the number of distinct signatures among
+  // them (the library builder's coupon Instances). One 4-edge stack along the CPW: one
+  // instance with one signature over several segments.
+  CHECK((*parallel_cluster_requirement)["Instances"] == 1);
+  CHECK((*parallel_cluster_requirement)["DistinctSignatures"] == 1);
+  CHECK((*parallel_cluster_requirement)["Count"].get<int>() >
+        (*parallel_cluster_requirement)["Instances"].get<int>());
+  CHECK((*parallel_cluster_requirement)["ParameterSpread"] == 0.0);
 
   // An exact multi-edge coupon is self-contained. It must not require redundant
   // two-edge models for every pair in the active cluster.

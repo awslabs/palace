@@ -147,7 +147,12 @@ smaller endpoint.
    joints is applied (ties: FEWER arcs, then the smaller serialisation of the set, per arc
    (radius / R, turn, joint count, centre distance from the path's vertex centroid / R,
    first joint's arc-length distance from the nearer path end / R) on the signature grid
-   — every entry invariant under translation, rotation, mirroring and path reversal; the
+   — radius, turn, joint count and centre distance are invariant under translation,
+   rotation, mirroring and path reversal; the first joint's position is read in the scan
+   direction, so the per-arc key is not a set function of the geometric arc, but the PAIR of
+   serialisations {forward, backward} is orientation invariant (a mirrored or reversed path
+   scanned the other way gives key(forward') = key(backward)) and the comparison picks the
+   congruent set whatever the input orientation (restated, review fix-4 m-C); the
    former serialisation of absolute centre coordinates was not, and on DS-SCT-001 mirrored
    it chose the other chopping of a spline route bend into exact-fit arcs, which moved a
    curved-class boundary by 0.036 um, a cluster core by 0.12 um and a cluster boundary by
@@ -159,7 +164,19 @@ smaller endpoint.
    positions depend on the scan direction; the tie-break makes the choice orientation-free
    but the chopping itself is a property of the polyline, not of the design curve. Only a
    path whose two direction scans give congruent arc sets with different joints (a path
-   that is its own mirror image along its length) remains ambiguous. Further recorded
+   that is its own mirror image along its length) remains ambiguous. **Closed-loop start
+   rule (recorded, review fix-4 m-C):** a closed path has no ends; both direction scans start
+   at the joint following the path's LONGEST piece (in the scan direction), so that no arc is
+   split by the loop start (a fillet, rounded corner or bend never contains the longest piece
+   of a loop with straight sides; a loop that is one circle is the single 360 deg arc of
+   (iii)); when several pieces tie for the longest, the first from the path's seed vertex is
+   taken — the seed is the canonical (coordinate-sorted) numbering's first segment of the
+   loop and therefore coordinate-dependent — and the tie-break's first-joint position is 0 for
+   every arc of a loop. A different start point of a loop is not covered by the two-direction
+   scan; the exposure is a loop whose tied longest pieces lie inside arcs (all-equal chords of
+   a polygon are corners or one circle). Gate: the mirror gate's rotation variant identifies
+   closed filleted loops rotated by 37 deg (and re-numbered) and requires identical content.
+   Further recorded
    constants of the arc rule (`Conventions.ArcFitAbsoluteToleranceOverR` = 0.05,
    `ArcInscribedAngleToleranceRelative` = 0.05, `ArcTangentLengthPreferenceOverTolerance`
    = 10): a joint of an arc lies within min(5 % of the radius, 0.05 R) of the circle (the
@@ -536,13 +553,23 @@ smaller endpoint.
    the manifest at most 1 R per pair / stack feature involved in total; beyond either cap
    the length is not exempt (two overlapping two-edge pairs across a sub-2R trace — the
    decision-78 defect — would run along the whole route and fail the gate); the site count,
-   total and largest site are reported in R. One further recorded exemption of the isolated gate
-   (2026-09-26): `SubToleranceFeature` — an isolated / curved PORTION shorter than the signature
-   parameter tolerance 1e-3 R, i.e. an unclaimed remainder between two claim boundaries that the
-   across rule does not cover (DS-SCT-001: a 0.18-0.24 nm piece between a cluster claim end and
-   a stack cut image, facing the neighbouring route at 2.0 um); it has no resolvable parameter,
-   the exemption is bounded to 1e-3 R per such portion and their count is reported (DS-SCT-001
-   at R 1.9: 17 portions, 0.18 nm facing). Diagnostics also record the stack assembly's
+   total and largest site are reported in R. The per-site cap is the OPERATIVE bound (review
+   fix-4 m-D): with every site at most 1 R the per-feature total can only bind when one
+   feature carries more than one site per involved feature, so the total is reported against
+   its cap but the site cap is what refuses a route-long recomposition (DS-SCT-001: 4 / 5
+   sites, largest 0.38 / 0.43 R, total 1.05 / 1.30 R at R 2.0 / 1.9). One further recorded
+   exemption of the isolated gate (2026-09-26; NARROWED and ratified by decision 89):
+   `SubToleranceFeature` — an isolated / curved PORTION shorter than the signature parameter
+   tolerance 1e-3 R that is an unclaimed remainder, i.e. bounded on both sides along its run by
+   OTHER features' claims (DS-SCT-001 at R 1.9: one 0.18 nm `IsolatedEdge` piece between a
+   `SameConductorGap` claim and a `SpatialEdgeCluster` claim on one segment, facing the
+   neighbouring route at 2.0 um), or a WHOLE isolated / curved feature shorter than 1e-3 R; it
+   has no resolvable parameter, the exemption is bounded to 1e-3 R per such portion and their
+   count is reported. A sub-tolerance MESH SEGMENT inside a long isolated edge — its run
+   neighbours claimed by the same feature — is an ordinary portion of that feature and is NOT
+   exempt (the former per-segment predicate exempted 896 whole 1-2 nm segments of one 2,898 um
+   `IsolatedEdge` on DS-SCT-001 at R 2.0, none of them facing; under the narrowed rule 0 exempt
+   portions at R 2.0 and 1 at R 1.9, both gates PASS). Diagnostics also record the stack assembly's
    `StackCompositionCap` (64 members: far above any physical stack — the chip's widest has
    12 edges — bounding a runaway traversal through inconsistent links; hits counted,
    review m2) and `StackGeometricOffsetIntervals` (elementary intervals whose consecutive

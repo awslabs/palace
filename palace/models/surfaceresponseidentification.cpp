@@ -64,6 +64,11 @@ constexpr double kRoundedCornerTangentTolerance = kArcFitToleranceRelative;
 // um) is 50x the signature parameter tolerance and 50x the 1 % chord noise of the fillet
 // gate's perturbed variant, and far below any distance the response resolves.
 constexpr double kArcFitAbsoluteToleranceOverRadius = 0.05;
+// A bend keeps the tangent-length circle (the better conditioned estimator for a short arc)
+// when every joint lies on it within this multiple of the signature parameter tolerance;
+// otherwise the least-squares circle of its joints takes over (non-tangent arms after a
+// spline piece). Recorded as Conventions.ArcTangentLengthPreferenceOverTolerance.
+constexpr double kArcTangentLengthPreferenceOverTolerance = 10.0;
 
 // Curved-edge chain rule (decision 73(1), design (b) 7). The turn at every sub-corner joint
 // of a chain is spread over the two adjacent half-chords (the polyline's discrete curvature
@@ -3108,9 +3113,10 @@ void Identifier::DetectArcs()
                 input.segments[path_segments[(first.index + n - 1) % n]].process_normal));
         // The tangent-length circle is the better conditioned estimator for a short arc (a
         // least-squares radius amplifies vertex noise by ~1 / (1 - cos(turn / 2)): 13x for a
-        // 45 deg fillet): it is kept when every joint lies on it within 10x the signature
-        // parameter tolerance (tangent arms), else the least-squares circle takes over
-        // (non-tangent arms: a route bend between spline pieces).
+        // 45 deg fillet): it is kept when every joint lies on it within
+        // kArcTangentLengthPreferenceOverTolerance x the signature parameter tolerance
+        // (tangent arms), else the least-squares circle takes over (non-tangent arms: a route
+        // bend between spline pieces).
         double tangent_deviation = 0.0;
         for (const std::size_t jv : arc.joints)
         {
@@ -3128,7 +3134,8 @@ void Identifier::DetectArcs()
                << " R)\n";
           input.log(line.str());
         }
-        if (tangent_deviation > 10.0 * kSignatureParameterToleranceOverRadius * R &&
+        if (tangent_deviation > kArcTangentLengthPreferenceOverTolerance *
+                                    kSignatureParameterToleranceOverRadius * R &&
             LeastSquaresCircle(arc.joints, normal, first.in, center, radius))
         {
           arc.center = center;
@@ -3141,12 +3148,22 @@ void Identifier::DetectArcs()
   };
     // Tie-break serialisation of an arc set: per arc the radius, the total turn, the joint
     // count, the distance of its centre from the path's joint centroid and the arc-length
-    // position of its first joint measured from the nearer path end — every entry invariant
-    // under translation, rotation, mirroring and path reversal, on the signature grid (the
-    // former absolute centre coordinates made the choice between two equally absorbing
-    // arc sets depend on the input orientation: DS-SCT-001 mirrored read another chopping
-    // of a spline bend into exact-fit arcs, moved a curved boundary 0.036 um and a cluster
-    // boundary 0.03 um; review fix-3 m2).
+    // position of its FIRST joint in the scan direction measured from the nearer path end,
+    // on the signature grid. Radius, turn, joint count and centre distance are invariant
+    // under translation, rotation, mirroring and path reversal; the first-joint position is
+    // not a set function of the geometric arc (the reversed scan reads the arc from its
+    // other end), but the PAIR of serialisations {forward, backward} is invariant: a
+    // mirrored or reversed path scanned the other way gives key(forward') = key(backward),
+    // so the comparison below picks the congruent arc set whatever the input orientation
+    // (verified by the mirror gate and mesh-level mirror / rotation checks; review fix-4
+    // m-C). The former serialisation of absolute centre coordinates made the choice between
+    // two equally absorbing arc sets depend on the input orientation: DS-SCT-001 mirrored
+    // read another chopping of a spline bend into exact-fit arcs, moved a curved boundary
+    // 0.036 um and a cluster boundary 0.03 um (review fix-3 m2). On a CLOSED path both
+    // scans start at the joint after the longest piece (ties: the first such joint from the
+    // seed vertex, which the canonical numbering makes coordinate-dependent) and from_end
+    // is 0 for every arc; a different start point of a loop is not covered by the
+    // two-direction scan (recorded rule; rotation variant of the mirror gate).
     Point3D path_centroid{};
     std::vector<double> path_position(path_vertices.size(), 0.0);
     {
@@ -6873,6 +6890,30 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
   }
   if (measure_joint_claims)
   {
+    if (std::getenv("PALACE_IDENTIFICATION_DEBUG_EXTENSION") && input.log)
+    {
+      // The measured pair / stack claim intervals (the analytic reading of
+      // Diagnostics.StackEndThirdBodyLength), for the comparison with the facing gate's
+      // sampled StackEndThirdBody / ThroughVertex classes (review fix-4).
+      std::ostringstream dbg;
+      dbg << std::setprecision(10);
+      for (const auto &absorption : absorptions)
+      {
+        const Run &run = runs[absorption.run];
+        dbg << "    third body run " << absorption.run << " chain " << run.chain << " s ["
+            << absorption.interval.first << ", " << absorption.interval.second << "] of "
+            << run.length << " from (" << run.At(absorption.interval.first)[0] << ", "
+            << run.At(absorption.interval.first)[1] << ") to ("
+            << run.At(absorption.interval.second)[0] << ", "
+            << run.At(absorption.interval.second)[1] << ") owners";
+        for (const std::size_t owner : absorption.owners)
+        {
+          dbg << " " << owner;
+        }
+        dbg << "\n";
+      }
+      input.log(dbg.str());
+    }
     return candidate_length;  // measurement only: nothing absorbed
   }
   // Owners of one absorption are one cluster (union-find over clusters and free sites).
@@ -8633,7 +8674,7 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"ArcFitToleranceRelative", kArcFitToleranceRelative},
         {"ArcFitAbsoluteToleranceOverR", kArcFitAbsoluteToleranceOverRadius},
         {"ArcInscribedAngleToleranceRelative", kArcFitToleranceRelative},
-        {"ArcTangentLengthPreferenceOverTolerance", 10.0},
+        {"ArcTangentLengthPreferenceOverTolerance", kArcTangentLengthPreferenceOverTolerance},
         {"ArcRule", "joints (>= 3) joined by pieces < 2R (a piece >= 2R is allowed between "
                     "two sub-corner joints: a chord of a smooth polyline bend; in that "
                     "long-chord regime every joint lies on the least-squares circle within "
@@ -8654,8 +8695,11 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
                     "traversal directions of a path are scanned and the set absorbing more "
                     "joints wins, then fewer arcs, then the smaller serialisation of "
                     "(radius, turn, joints, centre distance from the path centroid, first "
-                    "joint's distance from the nearer path end) on the signature grid: a "
-                    "translated, rotated or mirrored mesh gives the congruent arcs"},
+                    "joint's distance from the nearer path end) on the signature grid (the "
+                    "pair of serialisations of the two scans is orientation invariant): a "
+                    "translated, rotated or mirrored mesh gives the congruent arcs; a "
+                    "closed path is scanned from the joint after its longest piece (ties: "
+                    "the first from the seed vertex), so no arc is split by the loop start"},
         {"LengthQuantumOverR", kLengthQuantumOverRadius},
         {"DirectionQuantum", kDirectionQuantum},
         {"SignatureLengthQuantumOverR", kSignatureLengthQuantumOverRadius},
@@ -8739,9 +8783,12 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
                                  "SelfNeighbourhood and, for pair / stack sides only, "
                                  "StackEndThirdBody (facing cluster / vertex metal) and "
                                  "StackEndRecomposition (facing a pair / stack sharing a "
-                                 "member chain; bounded to 1 R per site and 1 R per feature in "
-                                 "total) and, for isolated / curved portions shorter than the "
-                                 "signature parameter tolerance, SubToleranceFeature, each "
+                                 "member chain; bounded to 1 R per site, the operative bound, "
+                                 "and 1 R per feature in total) and, for isolated / curved "
+                                 "portions shorter than the signature parameter tolerance that "
+                                 "are an unclaimed remainder bounded on both sides along their "
+                                 "run by other features' claims, or a whole feature shorter "
+                                 "than the tolerance, SubToleranceFeature (decision 89), each "
                                  "recorded with its length (decision 85(2): ClusterNeighbour / "
                                  "VertexNeighbour are gone)"},
         {"CrossLayerReachOverR", kInteractionDistanceOverRadius},

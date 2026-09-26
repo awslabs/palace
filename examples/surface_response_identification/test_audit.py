@@ -715,5 +715,93 @@ class SignatureLibraryTest(unittest.TestCase):
         self.assertIsNone(signature_deviation(a["Signature"], self.stack(9, [0.0, 1.0, 2.0, 3.0], conductors=(1, 2, 3, 1))["Signature"]))
 
 
+class FacingCheckTest(unittest.TestCase):
+    """facing_check.py on hand-built version-2 identifications: an isolated chain at y = 0 facing
+    cluster metal at y = 1 (R = 2, 2R = 4) so that every isolated sample faces; the
+    `SubToleranceFeature` exemption follows the narrowed rule of decision 89."""
+
+    R = 2.0
+    TINY = 1.0e-3 * R * 0.5  # 1 nm at R = 2 um (the tolerance is 2 nm)
+    LAW = json.dumps({"Type": "PEC"})
+
+    def segment(self, x0, x1, y, chain, portions):
+        return {"Key": [[x0, y, 0.0], [x1, y, 0.0]], "Length": x1 - x0, "Chain": chain, "Portions": [[a, b, f] for a, b, f in portions]}
+
+    def feature(self, feature_id, ftype, portions):
+        frame = {"Origin": [0.0, 0.0, 0.0], "Axes": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}
+        return {"Id": feature_id, "Type": ftype, "Signature": {"Type": ftype, "Interfaces": ["SA"], "Law": self.LAW}, "Hash": f"{feature_id:064x}",
+                "Chirality": 1, "Length": sum(b - a for _, a, b in portions), "Portions": [[s, a, b] for s, a, b in portions], "Vertices": [], "Frame": frame,
+                "Match": {"Status": "Missing"}}
+
+    def cluster_side(self):
+        """The facing metal: one SpatialEdgeCluster segment (feature 1) at y = 1 over x in [-2, 12];
+        clusters are not sampled by the facing check, so only the isolated side is gated."""
+        return self.segment(-2.0, 12.0, 1.0, 9, [(0.0, 14.0, 1)])
+
+    def run_check(self, segments, features):
+        from .facing_check import facing_check
+
+        identification = {"Version": 2, "MatchingRadius": self.R, "Features": features, "Segments": segments, "Vertices": [], "Exclusions": [],
+                          "Diagnostics": {"SamePriorityClaimOverlaps": 0}, "GeometryDigest": "digest"}
+        return facing_check({"Version": 2, "MatchingRadius": self.R, "Identification": identification}, spacing=0.5)
+
+    def test_sub_tolerance_mesh_segment_of_a_long_isolated_edge_is_not_exempt(self):
+        """A 1 nm mesh segment inside a long isolated edge (both run neighbours claimed by the same
+        feature) is an ordinary portion: it faces the cluster metal and is NOT exempt (DS-SCT-001
+        at R 2.0 had 896 such segments; review fix-4 m-A)."""
+        tiny = self.TINY
+        segments = [self.segment(0.0, 4.0, 0.0, 0, [(0.0, 4.0, 0)]),
+                    self.segment(4.0, 4.0 + tiny, 0.0, 0, [(0.0, tiny, 0)]),
+                    self.segment(4.0 + tiny, 10.0, 0.0, 0, [(0.0, 6.0 - tiny, 0)]), self.cluster_side()]
+        features = [self.feature(0, "IsolatedEdge", [(0, 0.0, 4.0), (1, 0.0, tiny), (2, 0.0, 6.0 - tiny)]),
+                    self.feature(1, "SpatialEdgeCluster", [(3, 0.0, 14.0)])]
+        result = self.run_check(segments, features)
+        self.assertFalse(result["Gates"]["IsolatedFacing"])
+        self.assertEqual(result["SubToleranceFeatures"]["Count"], {})
+        self.assertEqual(result["SubToleranceFeatures"]["ExemptLength"], 0.0)
+        self.assertNotIn("SubToleranceFeature", result["Isolated"]["ExcludedLength"])
+        self.assertAlmostEqual(result["Isolated"]["UnexcludedFacingLength"], 10.0, places=9)
+
+    def test_sub_tolerance_remainder_between_other_claims_is_exempt(self):
+        """A sub-tolerance isolated portion bounded on both sides along its run by other features'
+        claims (within one segment, and as a whole segment between two claimed neighbours) is the
+        unclaimed remainder of the assignment: exempt as SubToleranceFeature, bounded by the
+        tolerance per portion, counted."""
+        tiny = self.TINY
+        segments = [self.segment(0.0, 4.0, 0.0, 0, [(0.0, 2.0, 1), (2.0, 2.0 + tiny, 0), (2.0 + tiny, 4.0, 1)]),
+                    self.segment(4.0, 6.0, 0.0, 0, [(0.0, 2.0, 1)]),
+                    self.segment(6.0, 6.0 + tiny, 0.0, 0, [(0.0, tiny, 0)]),
+                    self.segment(6.0 + tiny, 10.0, 0.0, 0, [(0.0, 4.0 - tiny, 1)]),
+                    # The rest of the isolated feature far away (nothing to face), so that the
+                    # feature as a whole is not sub-tolerance.
+                    self.segment(100.0, 110.0, 0.0, 5, [(0.0, 10.0, 0)]), self.cluster_side()]
+        features = [self.feature(0, "IsolatedEdge", [(0, 2.0, 2.0 + tiny), (2, 0.0, tiny), (4, 0.0, 10.0)]),
+                    self.feature(1, "SpatialEdgeCluster", [(0, 0.0, 2.0), (0, 2.0 + tiny, 4.0), (1, 0.0, 2.0), (3, 0.0, 4.0 - tiny), (5, 0.0, 14.0)])]
+        result = self.run_check(segments, features)
+        self.assertTrue(result["Gates"]["IsolatedFacing"])
+        self.assertEqual(result["SubToleranceFeatures"]["Count"], {"IsolatedEdge": 2})
+        self.assertAlmostEqual(result["SubToleranceFeatures"]["ExemptLength"], 2 * tiny, places=12)
+        self.assertAlmostEqual(result["Isolated"]["ExcludedLength"]["SubToleranceFeature"], 2 * tiny, places=12)
+        self.assertEqual(result["Isolated"]["UnexcludedFacingLength"], 0.0)
+
+    def test_whole_sub_tolerance_feature_is_exempt(self):
+        """An isolated feature that is as a whole shorter than the tolerance (a 1 nm chain with no
+        claimed neighbour along its run) is exempt; the same sliver with a longer sibling portion
+        elsewhere is not (its run neighbours are not other features' claims)."""
+        tiny = self.TINY
+        segments = [self.segment(5.0, 5.0 + tiny, 0.0, 0, [(0.0, tiny, 0)]), self.cluster_side()]
+        features = [self.feature(0, "IsolatedEdge", [(0, 0.0, tiny)]), self.feature(1, "SpatialEdgeCluster", [(1, 0.0, 14.0)])]
+        result = self.run_check(segments, features)
+        self.assertTrue(result["Gates"]["IsolatedFacing"])
+        self.assertEqual(result["SubToleranceFeatures"]["Count"], {"IsolatedEdge": 1})
+        self.assertAlmostEqual(result["SubToleranceFeatures"]["ExemptLength"], tiny, places=12)
+        segments = [self.segment(5.0, 5.0 + tiny, 0.0, 0, [(0.0, tiny, 0)]), self.segment(100.0, 110.0, 0.0, 5, [(0.0, 10.0, 0)]), self.cluster_side()]
+        features = [self.feature(0, "IsolatedEdge", [(0, 0.0, tiny), (1, 0.0, 10.0)]), self.feature(1, "SpatialEdgeCluster", [(2, 0.0, 14.0)])]
+        result = self.run_check(segments, features)
+        self.assertFalse(result["Gates"]["IsolatedFacing"])
+        self.assertEqual(result["SubToleranceFeatures"]["Count"], {})
+        self.assertAlmostEqual(result["Isolated"]["UnexcludedFacingLength"], tiny, places=12)
+
+
 if __name__ == "__main__":
     unittest.main()
