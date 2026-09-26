@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
+#include <iostream>
 #include <map>
 #include <optional>
 #include <set>
@@ -39,6 +41,10 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
 {
   IdentificationInput input;
   input.radius = radius;
+  if (std::getenv("PALACE_IDENTIFICATION_TEST_LOG"))
+  {
+    input.log = [](const std::string &line) { std::cout << line; };
+  }
   std::map<std::array<long long, 3>, std::size_t> vertex_index;
   auto Vertex = [&](const Point2 &p, double z)
   {
@@ -770,8 +776,13 @@ TEST_CASE("SurfaceResponseIdentificationPairsAtTheThreshold",
           counts[feature.type]++;
           if (feature.type == "DifferentConductorGap")
           {
+            // Decision 85(1): the separation along the bends is the radius difference of the
+            // two fitted arcs (exact for polylines inscribed in the design circles); an
+            // OFFSET polyline pair (parallel chords at the design gap, this construction)
+            // reads gap / cos(turn / 2) at its vertices — the recorded discretisation
+            // ambiguity, within the signature parameter tolerance (1e-3 R) at these steps.
             CHECK_THAT(feature.signature["SeparationOverR"].get<double>(),
-                       WithinAbs(gap / R, 1.0e-6));
+                       WithinAbs(gap / R, kSignatureParameterToleranceOverRadius));
           }
         }
         const bool corner_events = gap < 2.0 * R;

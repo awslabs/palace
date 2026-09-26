@@ -2721,6 +2721,82 @@ void Identifier::DetectArcs()
       return d;
     };
     const std::size_t m = joints.size();
+    // Algebraic least-squares circle (Kasa fit) through the joint vertices in the process
+    // plane: exact for vertices on one circle, a set function of the joints.
+    auto LeastSquaresCircle = [&](const std::vector<std::size_t> &joint_vertices,
+                                  const Point3D &normal, const Point3D &tangent,
+                                  Point3D &center, double &radius)
+    {
+      const Point3D o = input.vertices[joint_vertices.front()].coordinate;
+      const Point3D u = Normalize(Sub(tangent, Scale(Dot(tangent, normal), normal)));
+      const Point3D v = Normalize(Cross(normal, u));
+      double sxx = 0.0, sxy = 0.0, syy = 0.0, sx = 0.0, sy = 0.0, s1 = 0.0;
+      double sxz = 0.0, syz = 0.0, sz = 0.0;
+      for (const std::size_t jv : joint_vertices)
+      {
+        const Point3D d = Sub(input.vertices[jv].coordinate, o);
+        const double x = Dot(d, u), y = Dot(d, v), z = x * x + y * y;
+        sxx += x * x, sxy += x * y, syy += y * y, sx += x, sy += y, s1 += 1.0;
+        sxz += x * z, syz += y * z, sz += z;
+      }
+      // Normal equations for (D, E, F) of x^2 + y^2 + D x + E y + F = 0 (Cramer's rule).
+      const double a11 = sxx, a12 = sxy, a13 = sx, a22 = syy, a23 = sy, a33 = s1;
+      const double b1 = -sxz, b2 = -syz, b3 = -sz;
+      const double det = a11 * (a22 * a33 - a23 * a23) - a12 * (a12 * a33 - a23 * a13) +
+                         a13 * (a12 * a23 - a22 * a13);
+      if (std::abs(det) <= 1.0e-30)
+      {
+        return false;
+      }
+      const double D = (b1 * (a22 * a33 - a23 * a23) - a12 * (b2 * a33 - a23 * b3) +
+                        a13 * (b2 * a23 - a22 * b3)) /
+                       det;
+      const double E = (a11 * (b2 * a33 - a23 * b3) - b1 * (a12 * a33 - a23 * a13) +
+                        a13 * (a12 * b3 - b2 * a13)) /
+                       det;
+      const double F = (a11 * (a22 * b3 - b2 * a23) - a12 * (a12 * b3 - b2 * a13) +
+                        b1 * (a12 * a23 - a22 * a13)) /
+                       det;
+      const double cx = -0.5 * D, cy = -0.5 * E;
+      const double radius2 = cx * cx + cy * cy - F;
+      if (!(radius2 > 0.0))
+      {
+        return false;
+      }
+      radius = std::sqrt(radius2);
+      center = Add(o, Add(Scale(cx, u), Scale(cy, v)));
+      return true;
+    };
+    // Inscribed-angle consistency of a candidate arc (the long-chord regime and the full
+    // circle): at every INTERIOR joint of the range the turn equals half the sum of the
+    // central angles of its two chords on the fitted circle (exact for a polyline inscribed
+    // in the circle; a rounded rectangle whose sixteen vertices are nearly concyclic fails
+    // at the fillet ends, where 22.5 deg joints bound a 96 deg chord). The end joints touch
+    // the arms, whose geometry is not the arc's, and are not tested.
+    auto TurnsConsistent = [&](const std::vector<std::size_t> &joint_indices,
+                               const Point3D &center, double radius, bool cyclic)
+    {
+      const std::size_t count = joint_indices.size();
+      auto CentralAngle = [&](std::size_t ja, std::size_t jb)
+      {
+        const double chord = Distance(input.vertices[joints[ja].vertex].coordinate,
+                                      input.vertices[joints[jb].vertex].coordinate);
+        return 2.0 * std::asin(std::clamp(0.5 * chord / radius, 0.0, 1.0));
+      };
+      (void)center;
+      for (std::size_t q = cyclic ? 0 : 1; q + (cyclic ? 0 : 1) < count; q++)
+      {
+        const std::size_t prev = joint_indices[(q + count - 1) % count];
+        const std::size_t here = joint_indices[q];
+        const std::size_t next = joint_indices[(q + 1) % count];
+        const double expected = 0.5 * (CentralAngle(prev, here) + CentralAngle(here, next));
+        if (std::abs(joints[here].turn - expected) > kArcFitToleranceRelative * expected)
+        {
+          return false;
+        }
+      }
+      return true;
+    };
     // Fit the arc over joints [i, k] (cyclic indices on a loop); returns the circle.
     struct Fit
     {
@@ -2812,6 +2888,93 @@ void Identifier::DetectArcs()
       return fit;
     };
     std::vector<bool> consumed(m, false);
+    // A closed path whose joints all turn one way through 360 deg and lie on one circle (a
+    // round pad, hole or via) is ONE arc of total turn 2 pi: a bend of exact radius whatever
+    // its radius (the rounded-corner semantics of arms meeting through a fillet do not
+    // apply to a closed circle; a circle of radius < R is one CurvedEdge with RadiusOverR <
+    // 1 instead of two 180 deg "rounded corners" split at a numbering-dependent joint).
+    if (closed && m >= 3)
+    {
+      // The same piece rule as the open scan: every piece < 2R, or a piece >= 2R only
+      // between two sub-corner joints (a rectangle's four 90 deg corners are concyclic but
+      // are corners).
+      double total = 0.0;
+      bool same_sign = true, pieces_ok = true;
+      for (std::size_t j = 0; j < m; j++)
+      {
+        const Joint &joint = joints[j];
+        total += joint.turn;
+        same_sign = same_sign && joint.sign == joints.front().sign;
+        const Joint &next = joints[(j + 1) % m];
+        if (!quantizer.Less(Gap(j, (j + 1) % m), interaction) &&
+            (joint.turn > corner_turn || next.turn > corner_turn))
+        {
+          pieces_ok = false;
+        }
+      }
+      if (same_sign && pieces_ok && std::abs(total - 2.0 * std::acos(-1.0)) < 1.0e-6)
+      {
+        std::vector<std::size_t> all_joints;
+        for (const auto &joint : joints)
+        {
+          all_joints.push_back(joint.vertex);
+        }
+        const Point3D normal = Normalize(
+            Add(input.segments[path_segments[joints.front().index % n]].process_normal,
+                input.segments[path_segments[(joints.front().index + n - 1) % n]]
+                    .process_normal));
+        Point3D center{};
+        double radius = 0.0;
+        std::vector<std::size_t> all_indices(m);
+        std::iota(all_indices.begin(), all_indices.end(), 0);
+        if (LeastSquaresCircle(all_joints, normal, joints.front().in, center, radius) &&
+            std::all_of(all_joints.begin(), all_joints.end(),
+                        [&](std::size_t jv)
+                        {
+                          return std::abs(Distance(input.vertices[jv].coordinate, center) -
+                                          radius) <= kArcFitToleranceRelative * radius;
+                        }) &&
+            TurnsConsistent(all_indices, center, radius, true))
+        {
+          Arc arc;
+          arc.joints = all_joints;
+          arc.segments = path_segments;
+          arc.segment_before = path_segments.front();
+          arc.segment_after = path_segments.front();
+          arc.tangent_a = joints.front().in;
+          arc.tangent_b = joints.front().in;
+          arc.center = center;
+          arc.origin = center;
+          arc.radius = radius;
+          arc.turn = 2.0 * std::acos(-1.0);
+          arc.corner = false;
+          for (const std::size_t seg : arc.segments)
+          {
+            segment_arc[seg] = static_cast<int>(arcs.size());
+          }
+          for (const std::size_t v : arc.joints)
+          {
+            vertex_arc[v] = static_cast<int>(arcs.size());
+            auto &vertex = input.vertices[v];
+            if (vertex.physical_type && *vertex.physical_type == MetalEdgeVertexType::CORNER)
+            {
+              vertex.physical_type = MetalEdgeVertexType::REGULAR;
+              arc.absorbed_corners.push_back(v);
+              const int ca = ChainGroup(input.segments[incident[v][0]].chain);
+              const int cb = ChainGroup(input.segments[incident[v][1]].chain);
+              chain_group.try_emplace(ca, ca);
+              chain_group.try_emplace(cb, cb);
+              if (ca != cb)
+              {
+                chain_group[std::max(ca, cb)] = std::min(ca, cb);
+              }
+            }
+          }
+          arcs.push_back(std::move(arc));
+          std::fill(consumed.begin(), consumed.end(), true);
+        }
+      }
+    }
     const std::size_t first_start = 0;
     for (std::size_t i = first_start; i < m; i++)
     {
@@ -2860,7 +3023,30 @@ void Identifier::DetectArcs()
         {
           continue;
         }
-        const Fit fit = TryFit(i, count);
+        Fit fit = TryFit(i, count);
+        if (fit.ok && long_pieces)
+        {
+          // The long-chord regime also demands the inscribed-angle consistency on the
+          // least-squares circle of the joints.
+          std::vector<std::size_t> range;
+          for (std::size_t j = 0; j < count; j++)
+          {
+            range.push_back((i + j) % m);
+          }
+          std::vector<std::size_t> range_vertices;
+          for (const std::size_t j : range)
+          {
+            range_vertices.push_back(joints[j].vertex);
+          }
+          const Point3D normal = Normalize(
+              Add(input.segments[path_segments[joints[i].index % n]].process_normal,
+                  input.segments[path_segments[(joints[i].index + n - 1) % n]]
+                      .process_normal));
+          Point3D center{};
+          double radius = 0.0;
+          fit.ok = LeastSquaresCircle(range_vertices, normal, joints[i].in, center, radius) &&
+                   TurnsConsistent(range, center, radius, false);
+        }
         if (fit.ok)
         {
           best = fit;
@@ -2900,54 +3086,21 @@ void Identifier::DetectArcs()
                    arc.turn * 180.0 / std::acos(-1.0) > kCornerTurnToleranceDegrees;
       if (!arc.corner)
       {
-        // A bend's circle from its joint vertices (algebraic least squares in the process
-        // plane; exact for vertices on one circle, a set function of the joints): the
-        // tangent-length construction above assumes arms tangent to the circle, which a
-        // route bend preceded by a spline piece is not (DS-SCT-001: 0.5 % radius error,
-        // 0.8 um centre offset on a 370 um bend). The exact separations of concentric
-        // bends (decision 85(1)) are the differences of these radii. A rounded corner
-        // keeps the tangent-length radius (its arms are tangent by construction).
+        // A bend's circle from its joint vertices (least squares; exact for vertices on one
+        // circle): the tangent-length construction above assumes arms tangent to the circle,
+        // which a route bend preceded by a spline piece is not (DS-SCT-001: 0.5 % radius
+        // error, 0.8 um centre offset on a 370 um bend). The exact separations of concentric
+        // bends (decision 85(1)) are the differences of these radii. A rounded corner keeps
+        // the tangent-length radius (its arms are tangent by construction).
         const Point3D normal = Normalize(
             Add(input.segments[path_segments[first.index % n]].process_normal,
                 input.segments[path_segments[(first.index + n - 1) % n]].process_normal));
-        const Point3D o = input.vertices[arc.joints.front()].coordinate;
-        Point3D u = first.in;
-        u = Normalize(Sub(u, Scale(Dot(u, normal), normal)));
-        const Point3D v = Normalize(Cross(normal, u));
-        // Kasa fit: x^2 + y^2 + D x + E y + F = 0.
-        double sxx = 0.0, sxy = 0.0, syy = 0.0, sx = 0.0, sy = 0.0, s1 = 0.0;
-        double sxz = 0.0, syz = 0.0, sz = 0.0;
-        for (const std::size_t jv : arc.joints)
+        Point3D center{};
+        double radius = 0.0;
+        if (LeastSquaresCircle(arc.joints, normal, first.in, center, radius))
         {
-          const Point3D d = Sub(input.vertices[jv].coordinate, o);
-          const double x = Dot(d, u), y = Dot(d, v), z = x * x + y * y;
-          sxx += x * x, sxy += x * y, syy += y * y, sx += x, sy += y, s1 += 1.0;
-          sxz += x * z, syz += y * z, sz += z;
-        }
-        // Normal equations for (D, E, F): [sxx sxy sx; sxy syy sy; sx sy s1] (D E F)^T =
-        // -(sxz syz sz)^T, solved by Cramer's rule.
-        const double a11 = sxx, a12 = sxy, a13 = sx, a22 = syy, a23 = sy, a33 = s1;
-        const double b1 = -sxz, b2 = -syz, b3 = -sz;
-        const double det = a11 * (a22 * a33 - a23 * a23) - a12 * (a12 * a33 - a23 * a13) +
-                           a13 * (a12 * a23 - a22 * a13);
-        if (std::abs(det) > 1.0e-30)
-        {
-          const double D = (b1 * (a22 * a33 - a23 * a23) - a12 * (b2 * a33 - a23 * b3) +
-                            a13 * (b2 * a23 - a22 * b3)) /
-                           det;
-          const double E = (a11 * (b2 * a33 - a23 * b3) - b1 * (a12 * a33 - a23 * a13) +
-                            a13 * (a12 * b3 - b2 * a13)) /
-                           det;
-          const double F = (a11 * (a22 * b3 - b2 * a23) - a12 * (a12 * b3 - b2 * a13) +
-                            b1 * (a12 * a23 - a22 * a13)) /
-                           det;
-          const double cx = -0.5 * D, cy = -0.5 * E;
-          const double radius2 = cx * cx + cy * cy - F;
-          if (radius2 > 0.0)
-          {
-            arc.radius = std::sqrt(radius2);
-            arc.center = Add(o, Add(Scale(cx, u), Scale(cy, v)));
-          }
+          arc.center = center;
+          arc.radius = radius;
         }
       }
       if (arc.corner)
@@ -6264,23 +6417,40 @@ double Identifier::ExtendClusters()
       {
         continue;
       }
-      const Point3D q0 = rp.At(piece.interval.first), q1 = rp.At(piece.interval.second);
-      if (!quantizer.Less(SegmentSegmentDistance(runs[r].start, runs[r].end, q0, q1),
-                          interaction))
+      const Chain &B = chains[chain_index.at(rp.chain)];
+      const int owner_cluster =
+          piece.owner < cluster_claimed.size() ? static_cast<int>(piece.owner) : -1;
+      // The part of the claimed piece outside the through-vertex zones of the shared
+      // vertices that are not the owner's members (an interaction has BOTH points outside
+      // the zones, as for the events: the window of a free corner lies inside its own zone
+      // and never absorbs its arms; a cluster's member vertices are the cluster's).
+      std::vector<Interval> piece_parts = {piece.interval};
+      if (rp.chain != runs[r].chain)
       {
-        continue;
+        std::vector<Interval> excluded;
+        for (const auto &zone : ThroughZonesExcept(piece.run, B, A, owner_cluster))
+        {
+          excluded.insert(excluded.end(), zone.begin(), zone.end());
+        }
+        piece_parts = SubtractIntervals(piece_parts, MergeIntervals(excluded, Tol()), Tol());
       }
-      auto found = RunIntervalWithin(r, q0, q1, interaction);
-      if (found.empty())
+      std::vector<Interval> found;
+      for (const auto &part : piece_parts)
       {
-        continue;
-      }
-      // Perpendicular projection onto the piece's line inside the (extended) piece.
-      {
+        const Point3D q0 = rp.At(part.first), q1 = rp.At(part.second);
+        if (!quantizer.Less(SegmentSegmentDistance(runs[r].start, runs[r].end, q0, q1),
+                            interaction))
+        {
+          continue;
+        }
+        auto within = RunIntervalWithin(r, q0, q1, interaction);
+        // Perpendicular projection onto the piece's line inside the (extended) part.
         const double g0 = Dot(Sub(runs[r].start, rp.start), rp.tangent);
         const double slope = Dot(runs[r].tangent, rp.tangent);
-        const double lo_p = piece.interval.first - piece.extend_lo;
-        const double hi_p = piece.interval.second + piece.extend_hi;
+        const double lo_p =
+            part.first - (std::abs(part.first - piece.interval.first) <= Tol() ? piece.extend_lo : 0.0);
+        const double hi_p =
+            part.second + (std::abs(part.second - piece.interval.second) <= Tol() ? piece.extend_hi : 0.0);
         std::vector<Interval> domain;
         if (std::abs(slope) <= kDirectionQuantum)
         {
@@ -6303,15 +6473,14 @@ double Identifier::ExtendClusters()
             domain.emplace_back(s0, s1);
           }
         }
-        found = IntersectIntervals(found, domain, Tol());
-        if (found.empty())
-        {
-          continue;
-        }
+        within = IntersectIntervals(within, domain, Tol());
+        found.insert(found.end(), within.begin(), within.end());
       }
-      const Chain &B = chains[chain_index.at(rp.chain)];
-      const int owner_cluster =
-          piece.owner < cluster_claimed.size() ? static_cast<int>(piece.owner) : -1;
+      found = MergeIntervals(std::move(found), Tol());
+      if (found.empty())
+      {
+        continue;
+      }
       if (rp.chain == runs[r].chain)
       {
         // The chain's own neighbourhood: only points more than pi R of arc length from the
@@ -6466,12 +6635,29 @@ double Identifier::ExtendClusters()
     }
   }
   double absorbed = 0.0;
+  const bool debug_extension = std::getenv("PALACE_IDENTIFICATION_DEBUG_EXTENSION") && input.log;
   for (const auto &absorption : absorptions)
   {
     new_claimed[owner_cluster[absorption.owners[0]]].emplace_back(absorption.run,
                                                                  absorption.interval);
     absorbed += absorption.interval.second - absorption.interval.first;
     extension_portions++;
+    if (debug_extension)
+    {
+      const Run &run = runs[absorption.run];
+      std::ostringstream line;
+      line << "    absorbed run " << absorption.run << " chain " << run.chain << " s ["
+           << absorption.interval.first << ", " << absorption.interval.second << "] of "
+           << run.length << " from (" << run.At(absorption.interval.first)[0] << ", "
+           << run.At(absorption.interval.first)[1] << ") to ("
+           << run.At(absorption.interval.second)[0] << ", "
+           << run.At(absorption.interval.second)[1] << ") owners";
+      for (const std::size_t owner : absorption.owners)
+      {
+        line << " " << owner;
+      }
+      input.log(line.str() + "\n");
+    }
   }
   extension_length += absorbed;
   extension_sites += involved_free_sites.size();
@@ -8179,10 +8365,14 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"ParallelCosineTolerance", kParallelCosineTolerance},
         {"RoundedCornerTangentTolerance", kRoundedCornerTangentTolerance},
         {"ArcFitToleranceRelative", kArcFitToleranceRelative},
-        {"ArcRule", "joints (>= 3) joined by pieces < 2R, same turn sign, <= 180 deg, one "
-                    "circle with the arm tangents within the fit tolerance: radius < R and "
-                    "turn > corner threshold = one rounded corner (own chain, arms meet "
-                    "through it); radius >= R = a bend of exact radius inside its chain"},
+        {"ArcRule", "joints (>= 3) joined by pieces < 2R (a piece >= 2R is allowed between "
+                    "two sub-corner joints: a chord of a smooth polyline bend; the scan then "
+                    "stops at the first failed fit), same turn sign, <= 180 deg, one circle "
+                    "with the arm tangents within the fit tolerance: radius < R and turn > "
+                    "corner threshold = one rounded corner (own chain, arms meet through it; "
+                    "tangent-length radius); radius >= R = a bend inside its chain whose "
+                    "circle is the least-squares fit of its joint vertices (exact for an "
+                    "inscribed polyline)"},
         {"LengthQuantumOverR", kLengthQuantumOverRadius},
         {"DirectionQuantum", kDirectionQuantum},
         {"SignatureLengthQuantumOverR", kSignatureLengthQuantumOverRadius},
@@ -8195,8 +8385,26 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "per sample: chord reading C = min over the two chains of the maximum sampled "
          "closest-point distance within max(R, local chord) of the sample / its foot where "
          "the chain bends, R on straight runs; inscribed reading C / cos(turn / 2) with "
-         "the "
-         "larger local joint turn; interacting iff both < 2R; feature separation = mean C"},
+         "the larger local joint turn; interacting iff both < 2R (the decision). The "
+         "feature separation (decision 85(1)) per link and curvature class is EXACT where "
+         "the geometry allows: the perpendicular distance of two exactly parallel straight "
+         "runs neither of which bends within R of the sample / foot, or the radius "
+         "difference of two fitted bend arcs whose centres coincide within the parameter "
+         "tolerance; a class with any exact piece takes the length-weighted mean of its "
+         "exact pieces, else the length-weighted mean chord reading (ExactParameters "
+         "false); never a sample-count-weighted mean"},
+        {"SignatureParameterToleranceOverR", kSignatureParameterToleranceOverRadius},
+        {"SignatureAngleToleranceDegrees", kSignatureAngleToleranceDegrees},
+        {"SignatureMatching",
+         "topology key = the signature with every continuous parameter (OffsetOverR, "
+         "SeparationOverR, RadiusOverR, CornerRadiusOverR; AngleDegrees, ArmAnglesDegrees) "
+         "removed; the library groups instances of one topology whose parameters agree "
+         "within the tolerances (single linkage over the distinct signatures, both "
+         "orientations of a translational signature) into one coupon at the representative "
+         "(midpoint of every parameter's range, in the orientation nearest to the "
+         "lexicographically smallest instance); the matcher accepts a model of the same "
+         "topology within the tolerance and takes the nearest (ties by model name); a "
+         "SpatialEdgeCluster signature matches exactly"},
         {"PairConstancyWindowOverR", 1.0},
         {"PairSampleSpacingOverR", 0.5},
         {"PairCandidateReachOverR",
@@ -8209,19 +8417,39 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"StackRule", "links (bent pairs) and translational spans sharing a run over a common "
                       "interval are one cross-section: k >= 3 edges with consecutive "
                       "separations < 2R are one ParallelEdgeCluster / "
-                      "CurvedParallelEdgeCluster (offsets from the consecutive links, gap "
-                      "pattern, conductors, bend radius), straight and along bends; the "
-                      "pairwise candidates inside it are superseded; a member taken by a "
-                      "cluster portion or a vertex window is recomposed out of the "
-                      "cross-section (the stack ends there); a chain folding back within 2R "
-                      "beyond pi R of arc length pairs with itself"},
+                      "CurvedParallelEdgeCluster (offsets from the consecutive links' "
+                      "separations of the cross-section's curvature class, gap pattern, "
+                      "conductors, bend radius), straight and along bends; the pairwise "
+                      "candidates inside it are superseded; every component (a lone pair "
+                      "included) is assembled per cross-section: a member taken by a cluster "
+                      "portion or a vertex window is recomposed out of the cross-section "
+                      "(the stack ends there); a chain folding back within 2R beyond pi R of "
+                      "arc length pairs with itself"},
+        {"StackCompositionCap", kStackCompositionCap},
+        {"ClusterExtensionRule",
+         "every single-edge portion (the isolated / curved remainder after clusters, "
+         "windows and pairs / stacks) within 2R (3D, strict) of a cluster's claimed "
+         "perimeter or of a free vertex feature's window on another chain (own chain beyond "
+         "pi R), faced ACROSS (perpendicular projection inside the claimed piece, extended "
+         "by 2R tan(turn) at interior joints), outside the through-vertex zones of vertices "
+         "not in that cluster, joins the cluster (a vertex feature so joined becomes a "
+         "cluster; several owners merge); iterated to closure with the stack recomposition; "
+         "pairs / stacks are never absorbed and their length within 2R of cluster metal is "
+         "Diagnostics.StackEndThirdBodyLength (decision 85(2))"},
+        {"MutualSidesOverhangOverSeparation",
+         std::sqrt((1.0 + kPairSeparationTolerance) * (1.0 + kPairSeparationTolerance) - 1.0)},
         {"KnifeEdgeBandRelative", kKnifeEdgeBandRelative},
         {"KnifeEdgeSampleSpacingOverR", kKnifeEdgeSampleSpacingOverRadius},
         {"FacingGateExclusions", "audit A8 (facing_check.py): isolated / curved edges facing "
                                  "another edge and pair / stack sides facing a third edge "
-                                 "within 2R must be zero apart from AtExactly2R, "
-                                 "ClusterNeighbour, VertexNeighbour, ThroughVertex, "
-                                 "SelfNeighbourhood (recorded with their lengths)"},
+                                 "within 2R (every facing segment tested; own sides = the "
+                                 "portions + member chains within the feature's reach) must "
+                                 "be zero apart from AtExactly2R, ThroughVertex, "
+                                 "SelfNeighbourhood and, for pair / stack sides only, "
+                                 "StackEndThirdBody (facing cluster / vertex metal) and "
+                                 "StackEndRecomposition (facing a pair / stack sharing a "
+                                 "member chain), each recorded with its length (decision "
+                                 "85(2): ClusterNeighbour / VertexNeighbour are gone)"},
         {"CrossLayerReachOverR", kInteractionDistanceOverRadius},
         {"PlaneRule", "features (pairs, clusters, vertex joins, translational classes) "
                       "never span two metal planes; metal of another plane within the "
