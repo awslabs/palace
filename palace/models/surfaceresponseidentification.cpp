@@ -117,6 +117,16 @@ constexpr int kPairSeparationSamplesPerInterval = 16;
 // on a wider bend earlier), so only points more than pi R apart along the chain can face
 // each other across a fold. Runs closer than pi R of arc length are never partners.
 constexpr double kSelfPairNeighbourhoodOverRadius = 3.14159265358979323846;
+// Knife-edge census (decision 82(4), 2026-09-25): every rule of the identification is a strict
+// comparison with a threshold (the interaction distance 2R, the cluster ball / vertex window
+// R, the straight-bend radius 10R, the corner turn 30 deg); a design whose dimensions sit on a
+// threshold is decided by roundoff. The manifest reports the perimeter length whose distance
+// to the nearest other perimeter point (3D; the same chain beyond the self-pair
+// neighbourhood) lies within the band of R and of 2R, the chain length whose windowed bend
+// radius lies within the band of 10R and the vertex count whose turn lies within the band of
+// 30 deg, each split into the below / above sides, sampled every kKnifeEdgeSampleSpacingOverR.
+constexpr double kKnifeEdgeBandRelative = 0.01;
+constexpr double kKnifeEdgeSampleSpacingOverRadius = 0.5;
 
 // ---------------------------------------------------------------------------------------
 // Vector helpers
@@ -1845,6 +1855,7 @@ private:
   void BuildClusters();
   void BuildVertexWindows();
   void Assign(IdentificationResult &result);
+  nlohmann::json KnifeEdgeCensus() const;
   std::vector<Interval> RunIntervalWithin(std::size_t run, const Point3D &a,
                                           const Point3D &b, double distance) const;
   std::vector<Interval>
@@ -5590,6 +5601,127 @@ void Identifier::BuildClusters()
   }
 }
 
+// Knife-edge census (rule at kKnifeEdgeBandRelative): distances sampled along every
+// non-excluded run to the nearest other run (3D, any plane; the same chain only beyond the
+// self-pair neighbourhood of arc length; adjacent runs sharing a vertex excluded), the
+// windowed bend radius along every chain, the geometric turn of every vertex of two runs.
+nlohmann::json Identifier::KnifeEdgeCensus() const
+{
+  const double band = kKnifeEdgeBandRelative * R;
+  const double spacing = kKnifeEdgeSampleSpacingOverRadius * R;
+  const double neighbourhood = kSelfPairNeighbourhoodOverRadius * R;
+  struct Band
+  {
+    double below = 0.0, above = 0.0;
+    void Add(double value, double threshold, double width, double weight)
+    {
+      if (std::abs(value - threshold) < width)
+      {
+        (value < threshold ? below : above) += weight;
+      }
+    }
+    nlohmann::json ToJson() const
+    {
+      return {{"Below", below}, {"Above", above}, {"Total", below + above}};
+    }
+  };
+  Band at_r, at_2r, at_bend, at_corner;
+  double sampled = 0.0;
+  const double reach = 2.0 * R + band + 2.0 * Tol();
+  for (std::size_t a = 0; a < runs.size(); a++)
+  {
+    const Run &ra = runs[a];
+    if (ra.excluded || ra.length <= 0.0)
+    {
+      continue;
+    }
+    const Chain &A = chains[chain_index.at(ra.chain)];
+    const double xa0 = A.run_offset[ra.index_in_chain];
+    const int n = std::max(1, static_cast<int>(std::ceil(ra.length / spacing)));
+    const double weight = ra.length / n;
+    const auto candidates = RunsNearRun(a, reach);
+    for (int i = 0; i < n; i++)
+    {
+      const double s = ra.length * (i + 0.5) / n;
+      const Point3D p = ra.At(s);
+      // Every other run within the reach is an interaction candidate of the sample: the
+      // sample counts once per threshold when any of them lies within the band (the far
+      // ground of a 2 / 2 / 2 um stack is 2R from the trace edge whose nearest neighbour is
+      // R away).
+      std::optional<double> near_r, near_2r;
+      for (const std::size_t b : candidates)
+      {
+        const Run &rb = runs[b];
+        if (b == a || rb.excluded || rb.start_vertex == ra.start_vertex ||
+            rb.start_vertex == ra.end_vertex || rb.end_vertex == ra.start_vertex ||
+            rb.end_vertex == ra.end_vertex)
+        {
+          continue;
+        }
+        if (rb.chain == ra.chain)
+        {
+          const double xb0 = A.run_offset[rb.index_in_chain];
+          if (ChainArcDistance(A, xb0, xb0 + rb.length, xa0 + s) < neighbourhood)
+          {
+            continue;
+          }
+        }
+        const double t = std::clamp(Dot(Sub(p, rb.start), rb.tangent), 0.0, rb.length);
+        const double d = Distance(p, rb.At(t));
+        if (std::abs(d - R) < band && (!near_r || std::abs(d - R) < std::abs(*near_r - R)))
+        {
+          near_r = d;
+        }
+        if (std::abs(d - 2.0 * R) < band &&
+            (!near_2r || std::abs(d - 2.0 * R) < std::abs(*near_2r - 2.0 * R)))
+        {
+          near_2r = d;
+        }
+      }
+      sampled += weight;
+      if (near_r)
+      {
+        at_r.Add(*near_r, R, band, weight);
+      }
+      if (near_2r)
+      {
+        at_2r.Add(*near_2r, 2.0 * R, band, weight);
+      }
+      const double kappa = WindowedCurvature(A, xa0 + s);
+      if (kappa > 0.0)
+      {
+        at_bend.Add(1.0 / kappa, kStraightBendRadiusOverRadius * R,
+                    kKnifeEdgeBandRelative * kStraightBendRadiusOverRadius * R, weight);
+      }
+    }
+  }
+  const double corner = kCornerTurnToleranceDegrees;
+  for (std::size_t v = 0; v < input.vertices.size(); v++)
+  {
+    const auto incident = RunsAtVertex(v);
+    if (incident.size() != 2)
+    {
+      continue;
+    }
+    const Point3D ta = ArmDirection(incident[0], v), tb = ArmDirection(incident[1], v);
+    const double turn =
+        180.0 - std::acos(std::clamp(Dot(ta, tb), -1.0, 1.0)) * 180.0 / std::acos(-1.0);
+    at_corner.Add(turn, corner, kKnifeEdgeBandRelative * corner, 1.0);
+  }
+  return {{"BandRelative", kKnifeEdgeBandRelative},
+          {"SampleSpacingOverR", kKnifeEdgeSampleSpacingOverRadius},
+          {"Rule", "perimeter length with another perimeter point (3D; the same chain beyond "
+                   "the self-pair neighbourhood) at a distance within the band of the "
+                   "threshold, split into the below / above sides; the chain length "
+                   "whose windowed bend radius lies within the band of the straight-bend "
+                   "radius; the vertices whose turn lies within the band of the corner "
+                   "threshold"},
+          {"SampledLength", sampled},
+          {"Distance", {{"R", at_r.ToJson()}, {"2R", at_2r.ToJson()}}},
+          {"BendRadius", {{"10R", at_bend.ToJson()}}},
+          {"CornerTurnDegrees", {{"30", at_corner.ToJson()}}}};
+}
+
 void Identifier::Assign(IdentificationResult &result)
 {
   // Vertex features outside clusters.
@@ -6466,6 +6598,15 @@ IdentificationResult Identifier::Identify()
   Assign(result);
   stage.End(std::to_string(result.features.size()) + " features, " +
             std::to_string(result.exclusions.size()) + " exclusion classes");
+  if (!runs.empty())
+  {
+    stage.Begin("knife-edge census");
+    const nlohmann::json census = KnifeEdgeCensus();
+    result.knife_edge_census = census.dump();
+    stage.End("distance within " + std::to_string(kKnifeEdgeBandRelative) + " R of R: " +
+              census["Distance"]["R"]["Total"].dump() + ", of 2R: " +
+              census["Distance"]["2R"]["Total"].dump() + " (mesh units)");
+  }
   if (input.log)
   {
     std::ostringstream text;
@@ -6569,6 +6710,7 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
   w.Pod(result.excluded_length);
   w.String(result.geometry_digest);
   w.Size(result.same_priority_claim_overlaps);
+  w.String(result.knife_edge_census);
   w.Size(result.features.size());
   for (const auto &f : result.features)
   {
@@ -6654,6 +6796,7 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
   result.excluded_length = r.Pod<double>();
   result.geometry_digest = r.String();
   result.same_priority_claim_overlaps = r.Size();
+  result.knife_edge_census = r.String();
   result.features.resize(r.Size());
   for (auto &f : result.features)
   {
@@ -6738,6 +6881,39 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
   }
   MFEM_VERIFY(r.Done(), "Identification result buffer was not consumed exactly!");
   return result;
+}
+
+// The census lengths (mesh units) converted to the manifest units; counts unchanged.
+nlohmann::json ScaledCensus(const std::string &text, double length_scale)
+{
+  if (text.empty())
+  {
+    return nullptr;
+  }
+  nlohmann::json census = nlohmann::json::parse(text);
+  for (const char *section : {"Distance", "BendRadius"})
+  {
+    if (!census.contains(section))
+    {
+      continue;
+    }
+    for (auto &[threshold, entry] : census[section].items())
+    {
+      (void)threshold;
+      for (const char *key : {"Below", "Above", "Total"})
+      {
+        if (entry.contains(key))
+        {
+          entry[key] = entry[key].get<double>() * length_scale;
+        }
+      }
+    }
+  }
+  if (census.contains("SampledLength"))
+  {
+    census["SampledLength"] = census["SampledLength"].get<double>() * length_scale;
+  }
+  return census;
 }
 
 nlohmann::json IdentificationResult::ToJson(double length_scale) const
@@ -6935,6 +7111,7 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"Rule", "claims of one priority by different features never overlap on a run "
                  "(clusters disjoint, windows abut, pairs / stacks assembled per "
                  "cross-section): claim resolution never decides by feature id"}}},
+      {"KnifeEdgeCensus", ScaledCensus(knife_edge_census, length_scale)},
       {"GeometryDigest", geometry_digest}};
 }
 

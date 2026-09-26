@@ -160,6 +160,10 @@ struct IdentificationResult
   // Claims of one priority by different features overlapping on a run (resolved by feature
   // id): the rules never produce one; reported under Diagnostics and gated by the audit.
   std::size_t same_priority_claim_overlaps = 0;
+  // Knife-edge census (decision 82(4)): the perimeter length whose interaction distance lies
+  // within a recorded band of every threshold of the rules (R, 2R, the 10R bend radius, the
+  // 30 deg corner turn), in mesh units; serialised as JSON text.
+  std::string knife_edge_census;
 
   // Manifest "Identification" object; the length scale converts mesh units for output.
   nlohmann::json ToJson(double length_scale) const;
