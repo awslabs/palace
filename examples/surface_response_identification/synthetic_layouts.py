@@ -927,6 +927,8 @@ def write_specification(layouts, path):
         lines.append(f"layout {lay['Name']}")
         lines.append(f"box {lay['HalfX']!r} {lay['HalfY']!r} {lay['Depth']!r} {lay['Height']!r}")
         lines.append(f"size {lay['LcFine']!r} {lay['LcFar']!r}")
+        if lay.get("Algorithm"):
+            lines.append(f"algorithm {int(lay['Algorithm'])}")
         for sh in lay["Sheets"]:
             lines.append(f"polygon {sh['Attribute']}" if sh["Z"] == 0.0 else f"sheet {sh['Attribute']} {sh['Z']!r}")
             for index, lp in enumerate(sh["Loops"]):

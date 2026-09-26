@@ -17,6 +17,9 @@
 #     layout NAME
 #     box HALF_X HALF_Y DEPTH HEIGHT
 #     size LC_FINE LC_FAR
+#     algorithm N                   # Gmsh 2D meshing algorithm (default 6 = Frontal-Delaunay;
+#                                   # 5 = Delaunay: a different node placement of one design,
+#                                   # the seeded "perturbation" of the re-mesh gate)
 #     polygon ATTRIBUTE            # a metal sheet on z = 0; the loop follows
 #     hole                          # the next loop is a hole of the current polygon
 #     v X Y                         # loop vertex
@@ -59,11 +62,12 @@ mutable struct Layout
     height::Float64
     lc_fine::Float64
     lc_far::Float64
+    algorithm::Int
     sheets::Vector{Sheet}
     walls::Vector{Wall}
     ports::Vector{Sheet}
 end
-Layout(name) = Layout(name, 30.0, 30.0, 15.0, 15.0, 1.0, 6.0, Sheet[], Wall[], Sheet[])
+Layout(name) = Layout(name, 30.0, 30.0, 15.0, 15.0, 1.0, 6.0, 6, Sheet[], Wall[], Sheet[])
 
 function parse_specification(path)
     layouts = Layout[]
@@ -84,6 +88,8 @@ function parse_specification(path)
             current.half_x, current.half_y, current.depth, current.height = numbers
         elseif keyword == "size"
             current.lc_fine, current.lc_far = numbers
+        elseif keyword == "algorithm"
+            current.algorithm = Int(numbers[1])
         elseif keyword == "polygon" || keyword == "sheet" || keyword == "port"
             z = keyword == "sheet" ? numbers[2] : 0.0
             sheet = Sheet(Int(numbers[1]), z, Loop[])
@@ -250,7 +256,7 @@ function generate(layout, output_directory)
     gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
     gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
     gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
-    gmsh.option.setNumber("Mesh.Algorithm", 6)
+    gmsh.option.setNumber("Mesh.Algorithm", layout.algorithm)
     gmsh.option.setNumber("Mesh.Algorithm3D", 10)
     gmsh.option.setNumber("Mesh.Optimize", 1)
     gmsh.option.setNumber("Mesh.ElementOrder", 1)

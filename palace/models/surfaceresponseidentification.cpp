@@ -2648,6 +2648,15 @@ void Identifier::DetectArcs()
     paths++;
     const bool closed = path_vertices.front() == path_vertices.back() &&
                         path_segments.size() > 2 && Continues(path_vertices.front());
+    // The arcs of the path in one traversal direction, without side effects (the greedy
+    // scan from every unconsumed joint depends on the direction where pseudo-arcs of a
+    // spline compete with a true arc; both directions are scanned below and the one
+    // absorbing more joints is applied, so that the result does not depend on the input
+    // orientation and a mirrored mesh gives the mirrored arcs).
+    auto ScanPath = [&](const std::vector<std::size_t> &path_segments,
+                        const std::vector<std::size_t> &path_vertices) -> std::vector<Arc>
+    {
+    std::vector<Arc> found;
     // Pieces (maximal collinear runs of segments) and the joints between them.
     struct Joint
     {
@@ -2677,7 +2686,7 @@ void Identifier::DetectArcs()
     }
     if (joints.size() < 2)
     {
-      continue;
+      return found;
     }
     // Path position of every vertex.
     std::vector<double> position(path_vertices.size(), 0.0);
@@ -2948,29 +2957,7 @@ void Identifier::DetectArcs()
           arc.radius = radius;
           arc.turn = 2.0 * std::acos(-1.0);
           arc.corner = false;
-          for (const std::size_t seg : arc.segments)
-          {
-            segment_arc[seg] = static_cast<int>(arcs.size());
-          }
-          for (const std::size_t v : arc.joints)
-          {
-            vertex_arc[v] = static_cast<int>(arcs.size());
-            auto &vertex = input.vertices[v];
-            if (vertex.physical_type && *vertex.physical_type == MetalEdgeVertexType::CORNER)
-            {
-              vertex.physical_type = MetalEdgeVertexType::REGULAR;
-              arc.absorbed_corners.push_back(v);
-              const int ca = ChainGroup(input.segments[incident[v][0]].chain);
-              const int cb = ChainGroup(input.segments[incident[v][1]].chain);
-              chain_group.try_emplace(ca, ca);
-              chain_group.try_emplace(cb, cb);
-              if (ca != cb)
-              {
-                chain_group[std::max(ca, cb)] = std::min(ca, cb);
-              }
-            }
-          }
-          arcs.push_back(std::move(arc));
+          found.push_back(std::move(arc));
           std::fill(consumed.begin(), consumed.end(), true);
         }
       }
@@ -3044,7 +3031,18 @@ void Identifier::DetectArcs()
                       .process_normal));
           Point3D center{};
           double radius = 0.0;
+          // Every joint on the least-squares circle to the signature parameter tolerance
+          // (the long-chord arcs exist for EXACT parameters; a spline section fitted
+          // piecewise deviates by micrometres and stays a polyline read off its chords).
           fit.ok = LeastSquaresCircle(range_vertices, normal, joints[i].in, center, radius) &&
+                   std::all_of(range_vertices.begin(), range_vertices.end(),
+                               [&](std::size_t jv)
+                               {
+                                 return std::abs(Distance(input.vertices[jv].coordinate,
+                                                          center) -
+                                                 radius) <=
+                                        kSignatureParameterToleranceOverRadius * R;
+                               }) &&
                    TurnsConsistent(range, center, radius, false);
         }
         if (fit.ok)
@@ -3103,6 +3101,48 @@ void Identifier::DetectArcs()
           arc.radius = radius;
         }
       }
+      found.push_back(std::move(arc));
+    }
+    return found;
+  };
+    auto Score = [&](const std::vector<Arc> &list)
+    {
+      std::size_t absorbed = 0;
+      std::string serial;
+      for (const auto &arc : list)
+      {
+        absorbed += arc.joints.size();
+      }
+      std::vector<std::string> keys;
+      for (const auto &arc : list)
+      {
+        std::ostringstream key;
+        key << std::setprecision(12) << arc.center[0] << "," << arc.center[1] << ","
+            << arc.center[2] << "," << arc.radius << "," << arc.joints.size();
+        keys.push_back(key.str());
+      }
+      std::sort(keys.begin(), keys.end());
+      for (const auto &key : keys)
+      {
+        serial += key + ";";
+      }
+      return std::make_tuple(absorbed, list.size(), serial);
+    };
+    std::vector<Arc> forward = ScanPath(path_segments, path_vertices);
+    std::vector<std::size_t> reversed_segments(path_segments.rbegin(), path_segments.rend());
+    std::vector<std::size_t> reversed_vertices(path_vertices.rbegin(), path_vertices.rend());
+    std::vector<Arc> backward = ScanPath(reversed_segments, reversed_vertices);
+    const auto score_forward = Score(forward), score_backward = Score(backward);
+    // More joints absorbed, then more arcs, then the smaller serialisation (a set function).
+    std::vector<Arc> &chosen =
+        std::make_tuple(std::get<0>(score_backward), std::get<1>(score_backward),
+                        std::get<2>(score_forward)) >
+                std::make_tuple(std::get<0>(score_forward), std::get<1>(score_forward),
+                                std::get<2>(score_backward))
+            ? backward
+            : forward;
+    for (Arc &arc : chosen)
+    {
       if (arc.corner)
       {
         // A rounded corner is a corner: the arc is a chain of its own between its tangent
@@ -3150,7 +3190,6 @@ void Identifier::DetectArcs()
           }
         }
       }
-
       arcs.push_back(std::move(arc));
     }
   }
@@ -5965,7 +6004,7 @@ void Identifier::BuildClusters()
         // closed chain), as run parameters.
         auto Partner = [&](double x0, double y0, double y1)
         {
-          return [=, &ca, this](double s)
+          return [=, &ca](double s)
           {
             const double x = x0 + s;
             std::vector<Interval> near;
