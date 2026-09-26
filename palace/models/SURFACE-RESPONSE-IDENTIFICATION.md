@@ -270,7 +270,72 @@ smaller endpoint.
    DS-SCT-001 this leaves knife-edge pieces at exactly 2R across the trace whose two sides
    read differently (unequal chords: 7.5 um ground chords against 4 um trace chords) — the
    patch construction refuses such a pair (its sides do not face each other at its
-   separation within 10 %, twice the pair tolerance) and reports it.
+   separation within 10 %, twice the pair tolerance) and reports it — RESOLVED by the
+   stack rule below (2026-09-25).
+   **Stack rule (decision 82(2), 2026-09-25; replaces the PENDING item above and the
+   decision-78 tie-break).** The locally constant, interacting facing relations of the
+   bent-pair rule (one *link* per chain pair and separation group) and the translational
+   spans of the rigid parallel runs are the pairwise facing relations of the perimeter.
+   Links and spans sharing a run over a common interval (union-find in canonical order) are
+   ONE cross-section component; a lone two-edge link or span is the pair feature above; every
+   other component is assembled per cross-section: along every member chain the pieces are
+   cut at the piece ends of every link on it (per curvature class), at the ends of the
+   higher-priority claims on it (cluster portions, vertex windows) and at the images of the
+   other members' cuts through the links (the foot on the partner chain), and the composition
+   at the middle of every elementary interval is read off the active links: from the chain,
+   the partner chains reached through the links (breadth first, each at the foot of the
+   previous point; a chain facing itself takes its foot outside the pi R neighbourhood),
+   ordered along the in-plane normal. k >= 3 edges = a `ParallelEdgeCluster`
+   (`CurvedParallelEdgeCluster` where a member is curved: `RadiusOverR` = the tightest
+   windowed radius over the members), k = 2 the pair classes; the signature offsets are the
+   sums of the CONSECUTIVE links' separations (a non-consecutive link within 2R, e.g. the
+   outer edges of a 4-edge stack at 4 um and R = 2.1 um, does not enter), the gap sides and
+   conductors are read at the members; sides in the canonical signature order (chirality +1
+   for every asymmetric cross-section; a symmetric one, chirality 0, puts the member with the
+   smallest (chain, position) on side 0); one feature per (type, signature, curvature class,
+   member chains) — a straight stack on the two leads of a bend is ONE feature, the bend a
+   second. **Stack-end rule:** a member taken by a cluster portion or a vertex window is not
+   part of the cross-section and is not traversed: the stack ends at the claim boundary and
+   the remaining members are recomposed there (a smaller stack, a pair, or nothing — the
+   member alone returns to the chain's isolated / curved edge as a recorded
+   `ClusterNeighbour` / `VertexNeighbour`). The pairwise candidates inside a stack are
+   superseded by it: no two claims of the pair priority ever overlap and claim resolution never
+   decides by feature id (`Diagnostics.SamePriorityClaimOverlaps` = 0 is gated). The chord
+   reading of a locally constant sample takes the window maximum over the locally CONSTANT
+   samples only (the window of a full chord crossing a taper kink read 2.15 - 2.7 um for a
+   2 um gap on DS-SCT-001 and formed a separation group of its own). **Self-pairing:** a chain
+   folding back onto itself pairs with itself: every point of a run is a candidate and its
+   partner is the closest point of the chain at least `SelfPairNeighbourhoodOverR` = pi R of
+   arc length away (on the tightest bend, radius R, the chord reaches 2R after half a turn =
+   pi R of arc; Schur's comparison: two points closer than pi R along a chain of curvature
+   <= 1 / R are within 2R of each other along any bend of radius >= R, so only points farther
+   apart along the chain can face each other across a fold). Recorded geometric fact: a smooth
+   chain of curvature <= 1 / R has its legs >= 2R apart after a 180 deg turn (displacement =
+   int sin(theta) / kappa dtheta >= 2R), so a semicircular hairpin never faces itself within
+   2R (legs closer than 2R have an inner fold below R = a rounded corner whose arms are
+   distinct chains); the rule applies to non-circular folds of sub-corner joints (no arc
+   fits) and to convergent legs. Tried and rejected (2026-09-25): making a rounded corner's
+   foreign concentric neighbour event-eligible turned each DS-SCT-001 flux-loop end into one
+   160 um cluster (the event set of a chain facing an arc reaches sqrt(3) R past the tangent
+   points, the R balls another R, and the cores merged with the trace-junction clusters 1.5 R
+   away); a rounded corner stays a vertex whose concentric neighbour is a constant non-event,
+   and the pair / stack side facing its arc or window is a recorded `VertexNeighbour`.
+   **Sampling margins (supervisor addition (b), verified):** the bent-pair candidate reach
+   2R (1 + 0.05) enters only the candidate gathering (`RunIntervalWithin`,
+   `SegmentSegmentDistance`); the interaction decision is `quantizer.Less(upper, 2R)` (strict,
+   3D); the mutual-sides test at the pair separation x 1.05 trims a side whose partner piece
+   is gone (a facing test); the assembly accepts a foot within the reach only along a link
+   already decided interacting. **Facing gates (audit A8, `facing_check.py`):** the length of
+   isolated / curved edge portions facing another edge of the plane within 2R and of pair /
+   stack sides facing a third edge within 2R must be zero apart from the recorded exclusions
+   `AtExactly2R` (strict rule), `ClusterNeighbour` (the facing portion is a cluster's: claim
+   radius R), `VertexNeighbour` (corner window, rounded-corner arc, endpoint / junction
+   window), `ThroughVertex` (sample and foot within 2R of one vertex feature),
+   `SelfNeighbourhood` (own chain within pi R of arc); the own sides of a pair / stack are its
+   member chains. Gate on synthetic stacks (straight k = 3..6 symmetric / asymmetric / around
+   2R / wide ground, curved k = 3..6 at rho / R = 3, 8, 30, taper, U-ring, hairpins, kinked
+   hairpin: 33 / 35 layouts, 2 meshes not loadable), DS-SCT-001 (three 4-edge stacks of 2.2 /
+   1.2 / 3.2 mm, isolated facing 676 -> 0 um unexcluded), transmon, two-transmon chain.
    Limitations recorded: a taper faster than 5 % per 2R is events (a cluster), a slower one
    is a pair described by its mean separation (a slow taper crossing 2R is split at the
    crossing sample); the joint between a straight lead and a coarse polyline
@@ -359,6 +424,21 @@ Consequences (recorded in the manifest under `Library.DecisionQuantization` and
   `Separation / R = 1` on both sides and its corners are plain corners: no knife edge between
   1.95 / 2 / 2.05 um beyond the separation value itself.
 
+**Knife-edge census (decision 82(4), 2026-09-25).** The strict rule is kept and the matching
+radius is chosen off the common layout dimensions (the default of the identification tools is
+R = 2.1 um: thresholds R 2.1, 2R 4.2, 10R 21 um; the library's `MatchingRadius` stays
+authoritative and R = 2 um libraries are unchanged). So that any design can check its R, the
+manifest reports `Identification.KnifeEdgeCensus`: the perimeter length with another perimeter
+point (3D; the same chain beyond the self-pair neighbourhood; runs sharing a vertex excluded)
+at a distance within `KnifeEdgeBandRelative` = 0.01 of R and of 2R, the chain length whose
+windowed bend radius lies within 1 % of `StraightBendRadiusOverR` R, and the vertices whose
+turn lies within 1 % of the corner threshold, each split into the below / above sides
+(samples every 0.5 R). DS-SCT-001 at R = 2 um: 7,247 um within 1 % of R and 7,175 um within
+1 % of 2R (the 2 / 2 / 2 um flux lines). The library continuity gate
+(`coupon_library.py continuity`, `qualification-gates.json` LibraryContinuity: a pair / stack
+model whose consecutive separations are all >= 2R (1 - 0.01) responds per edge and per unit
+length like the isolated-edge model within 1 %) runs on every written process library.
+
 ## (e) Patch construction from the features (phase 4; solve path and patch dry run)
 
 The three-dimensional correction patches are built from the feature list (`ResponseCorrection.
@@ -439,7 +519,9 @@ matching pass). The new top-level `Identification` object carries the contract:
                   "PairSeparationToleranceRelative": 0.05, "PairSeparationSamplesPerInterval": 16,
                   "PairSeparationEstimate": "per sample: chord reading C = min over the two chains of the maximum sampled closest-point distance within max(R, local chord) of the sample / its foot where the chain bends, R on straight runs; inscribed reading C / cos(turn / 2) with the larger local joint turn; interacting iff both < 2R; feature separation = mean C",
                   "PairConstancyWindowOverR": 1, "PairSampleSpacingOverR": 0.5,
-                  "PairCandidateReachOverR": 2.1, "CrossLayerReachOverR": 2,
+                  "PairCandidateReachOverR": 2.1, "SamplingMargins": "...", "CrossLayerReachOverR": 2,
+                  "SelfPairNeighbourhoodOverR": 3.14159, "StackRule": "...",
+                  "KnifeEdgeBandRelative": 0.01, "FacingGateExclusions": "...",
                   "PlaneRule": "...", "PortRule": "...",
                   "Comparison": "strict less on the quantized grid"},
   "ReferenceProcessNormal": [nx, ny, nz],
@@ -455,6 +537,10 @@ matching pass). The new top-level `Identification` object carries the contract:
                   "Feature": k} | {"Point": ..., "Class": "TruncationCut"} ],
   "Exclusions": [ {"Class": "...", "Reason": "...", "Count": n, "Length": L} ],
   "Totals": {"PerimeterLength": L, "AssignedLength": La, "ExcludedLength": Le},
+  "Diagnostics": {"SamePriorityClaimOverlaps": 0, "Rule": "..."},
+  "KnifeEdgeCensus": {"BandRelative": 0.01, "SampleSpacingOverR": 0.5, "SampledLength": L,
+                      "Distance": {"R": {"Below": L, "Above": L, "Total": L}, "2R": {...}},
+                      "BendRadius": {"10R": {...}}, "CornerTurnDegrees": {"30": {...}}},
   "GeometryDigest": "sha256"
 }
 ```

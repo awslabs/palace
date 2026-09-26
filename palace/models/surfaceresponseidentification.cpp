@@ -7088,8 +7088,17 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
                       "separations < 2R are one ParallelEdgeCluster / "
                       "CurvedParallelEdgeCluster (offsets from the consecutive links, gap "
                       "pattern, conductors, bend radius), straight and along bends; the "
-                      "pairwise candidates inside it are superseded; a chain folding back "
-                      "within 2R beyond pi R of arc length pairs with itself"},
+                      "pairwise candidates inside it are superseded; a member taken by a "
+                      "cluster portion or a vertex window is recomposed out of the "
+                      "cross-section (the stack ends there); a chain folding back within 2R "
+                      "beyond pi R of arc length pairs with itself"},
+        {"KnifeEdgeBandRelative", kKnifeEdgeBandRelative},
+        {"KnifeEdgeSampleSpacingOverR", kKnifeEdgeSampleSpacingOverRadius},
+        {"FacingGateExclusions", "audit A8 (facing_check.py): isolated / curved edges facing "
+                                 "another edge and pair / stack sides facing a third edge "
+                                 "within 2R must be zero apart from AtExactly2R, "
+                                 "ClusterNeighbour, VertexNeighbour, ThroughVertex, "
+                                 "SelfNeighbourhood (recorded with their lengths)"},
         {"CrossLayerReachOverR", kInteractionDistanceOverRadius},
         {"PlaneRule", "features (pairs, clusters, vertex joins, translational classes) "
                       "never span two metal planes; metal of another plane within the "
