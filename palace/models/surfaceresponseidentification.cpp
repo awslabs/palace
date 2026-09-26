@@ -5356,6 +5356,9 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     bool exact = true;    // every consecutive separation entering the offsets is exact
     bool geometric_fallback = false;
     bool cap_reached = false;
+    // Lateral positions of the partner feet that are cluster / window metal (taken): a taken
+    // member between two members of the cross-section interrupts it.
+    std::vector<double> taken_positions;
   };
   std::size_t fallbacks = 0, cap_hits = 0;
   auto Compose = [&](int chain, double x)
@@ -5394,10 +5397,19 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
         const auto foot = ClosestPointOnChain(
             ChainOf(other), node.point,
             link.Self() ? std::optional<double>(node.x) : std::nullopt, reach);
-        if (!std::isfinite(foot.distance) || !quantizer.Less(foot.distance, reach) ||
-            Taken(other, foot.x))
+        if (!std::isfinite(foot.distance) || !quantizer.Less(foot.distance, reach))
         {
-          continue;  // no partner there, or the partner is cluster / window metal
+          continue;  // no partner there
+        }
+        if (Taken(other, foot.x))
+        {
+          // The partner is cluster / window metal: not a member, but it stands between the
+          // members on either side of it (a 2 um strip inside a cluster between two edges 4
+          // um apart must not leave those two as a "pair" across it: DS-SCT-002's 60
+          // UnclassifiedParallelPair of 144 um at R = 2.1 um).
+          const Point3D q = runs[foot.run].At(foot.s);
+          composition.taken_positions.push_back(Dot(Sub(q, p), composition.lateral));
+          continue;
         }
         const bool present = std::any_of(
             composition.nodes.begin(), composition.nodes.end(),
@@ -5419,6 +5431,30 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     auto Less = [](const Node &a, const Node &b)
     { return std::tie(a.position, a.chain, a.x) < std::tie(b.position, b.chain, b.x); };
     std::sort(composition.nodes.begin(), composition.nodes.end(), Less);
+    // A taken member laterally between two members cuts the cross-section: the part holding
+    // the seed (position 0) is the cross-section through (chain, x); the members beyond the
+    // taken one are composed from their own chains.
+    if (!composition.taken_positions.empty())
+    {
+      double lo = -std::numeric_limits<double>::infinity();
+      double hi = std::numeric_limits<double>::infinity();
+      for (const double t : composition.taken_positions)
+      {
+        if (t < -Tol() && t > lo)
+        {
+          lo = t;
+        }
+        if (t > Tol() && t < hi)
+        {
+          hi = t;
+        }
+      }
+      composition.nodes.erase(std::remove_if(composition.nodes.begin(),
+                                             composition.nodes.end(),
+                                             [&](const Node &n)
+                                             { return n.position < lo || n.position > hi; }),
+                              composition.nodes.end());
+    }
     // Provisional orientation (final: the canonical signature's, below): the member with
     // the smallest (chain, position along its chain) on side 0 (the two-edge convention:
     // side 0 = chain A, the lower chain index), which decides only for a cross-section that
