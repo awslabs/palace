@@ -1913,6 +1913,12 @@ private:
   }
   std::vector<std::vector<EventCore>> cluster_cores;
   std::vector<std::vector<std::size_t>> cluster_sites;
+  // Claimed portions per cluster (run, interval), sorted; extended by ExtendClusters.
+  std::vector<std::vector<std::pair<std::size_t, Interval>>> cluster_claimed;
+  // Cluster extension diagnostics (decision 85(2)).
+  std::size_t extension_passes = 0, extension_portions = 0, extension_sites = 0;
+  double extension_length = 0.0;
+  double stack_end_third_body_length = 0.0;
   std::map<std::size_t, int> vertex_feature;  // mesh vertex -> feature id
   // Raw material of the pair / stack assembly (decision 82(2), BuildPairsAndStacks): the
   // locally constant, interacting facing relations of the bent-pair rule (one link per
@@ -2215,6 +2221,9 @@ private:
   void AssembleStack(const std::vector<std::size_t> &link_items,
                      const std::vector<std::size_t> &span_items);
   void BuildClusters();
+  double ExtendClusters();
+  void EmitClusters();
+  double StackEndThirdBodyLength() const;
   void BuildVertexWindows();
   void Assign(IdentificationResult &result);
   nlohmann::json KnifeEdgeCensus() const;
@@ -4837,14 +4846,11 @@ void Identifier::BuildPairsAndStacks()
     const double offset = C.run_offset[runs[r].index_in_chain];
     taken_on_chain[C.id].emplace_back(offset + interval.first, offset + interval.second);
   };
-  for (std::size_t r = 0; r < runs.size(); r++)
+  for (const auto &claimed : cluster_claimed)
   {
-    for (const auto &claim : claims[r])
+    for (const auto &[r, interval] : claimed)
     {
-      if (claim.priority == 0)
-      {
-        Take(r, claim.interval);
-      }
+      Take(r, interval);
     }
   }
   for (const auto &site : sites)
@@ -6088,15 +6094,12 @@ void Identifier::BuildClusters()
   // Claimed portions: run intervals within R of a core, plus the member sites' windows. The
   // candidate runs of a cluster are the runs whose boxes lie within the ball of one of its
   // cores and the runs of its sites' windows, in run order (the former loop over every
-  // run).
+  // run). The features are emitted by EmitClusters after the extension (decision 85(2)).
   std::size_t largest_cluster_edges = 0;
-  double signature_seconds = 0.0;
+  cluster_claimed.assign(cluster_cores.size(), {});
   for (std::size_t c = 0; c < cluster_cores.size(); c++)
   {
     stage.Progress(c, cluster_cores.size());
-    std::vector<SignaturePortion> portions;
-    std::vector<SignatureVertex> vertices;
-    std::vector<std::pair<std::size_t, Interval>> claimed;
     std::vector<std::size_t> candidate_runs;
     for (const auto &core : cluster_cores[c])
     {
@@ -6145,11 +6148,470 @@ void Identifier::BuildClusters()
       }
       for (const auto &interval : MergeIntervals(intervals, Tol()))
       {
-        claimed.emplace_back(r, interval);
-        portions.push_back({runs[r].At(interval.first), runs[r].At(interval.second),
-                            runs[r].gap_direction, runs[r].conductor,
-                            InterfaceNames(runs[r].targets), runs[r].boundary_law});
+        cluster_claimed[c].emplace_back(r, interval);
       }
+    }
+    MFEM_VERIFY(!cluster_claimed[c].empty(), "A spatial cluster claims no perimeter!");
+    largest_cluster_edges = std::max(largest_cluster_edges, cluster_claimed[c].size());
+  }
+  {
+    std::ostringstream counts;
+    counts << run_pairs_examined << " run pairs within reach, " << run_cores
+           << " event cores on runs + " << (cores.size() - run_cores) << " site cores, "
+           << cluster_cores.size() << " clusters (largest " << largest_cluster_edges
+           << " edges before the extension)";
+    stage.End(counts.str());
+  }
+}
+
+// Cluster extension (decision 85(2)). Every single-edge portion — a run interval outside
+// every cluster portion, vertex window, pair / stack claim and CrossLayer zone, i.e. what
+// would become an IsolatedEdge / CurvedEdge — whose 3D distance to a cluster's claimed
+// perimeter on another chain (or on its own chain beyond the self-pair neighbourhood) is
+// strictly below 2R, outside the through-vertex zones of the two chains, joins that cluster
+// over the sub-interval within 2R; a single-edge portion within 2R of the window of a vertex
+// feature outside every cluster makes that vertex a cluster together with the portion. A
+// portion within 2R of several clusters (or vertex features) merges them (union-find: the
+// result does not depend on the order). Pairs and stacks are joint descriptions and are
+// never absorbed; the stack-end recomposition then runs again on the enlarged claims, and
+// the extension iterates to closure over the single-edge portions only. Returns the
+// absorbed length of this pass (0 = closure).
+double Identifier::ExtendClusters()
+{
+  const double interaction = kInteractionDistanceOverRadius * R;
+  const double neighbourhood = kSelfPairNeighbourhoodOverRadius * R;
+  const double sliver = kSignatureLengthQuantumOverRadius * R;
+  // Taken intervals per run: cluster portions, non-cluster windows, pair / stack claims,
+  // CrossLayer zones. The remainder of every run is the single-edge candidate set.
+  std::vector<std::vector<Interval>> taken(runs.size());
+  for (std::size_t c = 0; c < cluster_claimed.size(); c++)
+  {
+    for (const auto &[r, interval] : cluster_claimed[c])
+    {
+      taken[r].push_back(interval);
+    }
+  }
+  std::vector<std::size_t> free_sites;
+  for (std::size_t s = 0; s < sites.size(); s++)
+  {
+    if (sites[s].cluster < 0)
+    {
+      free_sites.push_back(s);
+      for (const auto &[r, interval] : sites[s].window)
+      {
+        taken[r].push_back(interval);
+      }
+    }
+  }
+  for (std::size_t r = 0; r < runs.size(); r++)
+  {
+    for (const auto &claim : claims[r])
+    {
+      taken[r].push_back(claim.interval);
+    }
+    for (const auto &zone : cross_layer[r])
+    {
+      taken[r].push_back(zone);
+    }
+  }
+  // Claimed pieces of the clusters and the windows of the free sites, indexed by their
+  // boxes: piece -> (cluster index, or sites.size() offset for a free site).
+  struct Piece
+  {
+    std::size_t run;
+    Interval interval;
+    std::size_t owner;  // cluster c, or cluster_claimed.size() + free site index
+  };
+  std::vector<Piece> pieces;
+  for (std::size_t c = 0; c < cluster_claimed.size(); c++)
+  {
+    for (const auto &[r, interval] : cluster_claimed[c])
+    {
+      pieces.push_back({r, interval, c});
+    }
+  }
+  for (std::size_t k = 0; k < free_sites.size(); k++)
+  {
+    for (const auto &[r, interval] : sites[free_sites[k]].window)
+    {
+      pieces.push_back({r, interval, cluster_claimed.size() + k});
+    }
+  }
+  if (pieces.empty())
+  {
+    return 0.0;
+  }
+  Point3D lo{}, hi{};
+  for (std::size_t i = 0; i < pieces.size(); i++)
+  {
+    const Run &run = runs[pieces[i].run];
+    Point3D plo, phi;
+    BoundingBox(run.At(pieces[i].interval.first), run.At(pieces[i].interval.second), plo, phi);
+    for (int d = 0; d < 3; d++)
+    {
+      lo[d] = i == 0 ? plo[d] : std::min(lo[d], plo[d]);
+      hi[d] = i == 0 ? phi[d] : std::max(hi[d], phi[d]);
+    }
+  }
+  UniformGrid piece_grid(4.0 * R, lo);
+  for (std::size_t i = 0; i < pieces.size(); i++)
+  {
+    const Run &run = runs[pieces[i].run];
+    Point3D plo, phi;
+    BoundingBox(run.At(pieces[i].interval.first), run.At(pieces[i].interval.second), plo, phi);
+    piece_grid.Insert(i, plo, phi);
+  }
+  // Absorptions of this pass: (run, interval, owners) computed from the state before the
+  // pass; applied afterwards.
+  struct Absorption
+  {
+    std::size_t run;
+    Interval interval;
+    std::vector<std::size_t> owners;
+  };
+  std::vector<Absorption> absorptions;
+  for (std::size_t r = 0; r < runs.size(); r++)
+  {
+    if (runs[r].excluded)
+    {
+      continue;
+    }
+    stage.Progress(r, runs.size(), "cluster extension");
+    const auto remainder =
+        SubtractIntervals({Interval{0.0, runs[r].length}}, MergeIntervals(taken[r], Tol()), Tol());
+    if (remainder.empty())
+    {
+      continue;
+    }
+    const Chain &A = chains[chain_index.at(runs[r].chain)];
+    const double x_a0 = A.run_offset[runs[r].index_in_chain];
+    Point3D rlo, rhi;
+    BoundingBox(runs[r].start, runs[r].end, rlo, rhi);
+    std::map<std::size_t, std::vector<Interval>> within_by_owner;
+    std::map<int, std::vector<std::vector<Interval>>> zones_by_chain;
+    for (const std::size_t i : piece_grid.Query(rlo, rhi, interaction + 2.0 * Tol()))
+    {
+      const Piece &piece = pieces[i];
+      const Run &rp = runs[piece.run];
+      if (rp.excluded || run_plane[piece.run] != run_plane[r])
+      {
+        continue;
+      }
+      const Point3D q0 = rp.At(piece.interval.first), q1 = rp.At(piece.interval.second);
+      if (!quantizer.Less(SegmentSegmentDistance(runs[r].start, runs[r].end, q0, q1),
+                          interaction))
+      {
+        continue;
+      }
+      auto found = RunIntervalWithin(r, q0, q1, interaction);
+      if (found.empty())
+      {
+        continue;
+      }
+      const Chain &B = chains[chain_index.at(rp.chain)];
+      if (rp.chain == runs[r].chain)
+      {
+        // The chain's own neighbourhood: only points more than pi R of arc length from the
+        // piece can face it across a fold.
+        const double b0 = B.run_offset[rp.index_in_chain] + piece.interval.first;
+        const double b1 = B.run_offset[rp.index_in_chain] + piece.interval.second;
+        std::vector<Interval> allowed;
+        for (const auto &interval : found)
+        {
+          // Points of [interval] on run r whose arc distance to [b0, b1] is >= pi R: the
+          // complement of the neighbourhood [b0 - pi R, b1 + pi R] (wrapping on a loop).
+          std::vector<Interval> near;
+          for (const double shift :
+               A.closed ? std::vector<double>{-A.length, 0.0, A.length} : std::vector<double>{0.0})
+          {
+            const double n0 = b0 + shift - neighbourhood - x_a0;
+            const double n1 = b1 + shift + neighbourhood - x_a0;
+            if (n1 > n0)
+            {
+              near.emplace_back(n0, n1);
+            }
+          }
+          const auto far = SubtractIntervals({interval}, MergeIntervals(near, Tol()), Tol());
+          allowed.insert(allowed.end(), far.begin(), far.end());
+        }
+        found = allowed;
+      }
+      else
+      {
+        auto zit = zones_by_chain.find(rp.chain);
+        if (zit == zones_by_chain.end())
+        {
+          zit = zones_by_chain.emplace(rp.chain, ThroughZones(r, A, B)).first;
+        }
+        std::vector<Interval> excluded;
+        for (const auto &zone : zit->second)
+        {
+          excluded.insert(excluded.end(), zone.begin(), zone.end());
+        }
+        found = SubtractIntervals(found, MergeIntervals(excluded, Tol()), Tol());
+      }
+      auto &list = within_by_owner[piece.owner];
+      list.insert(list.end(), found.begin(), found.end());
+    }
+    if (within_by_owner.empty())
+    {
+      continue;
+    }
+    // Per remainder piece: the sub-intervals within 2R of every owner; overlapping
+    // sub-intervals of different owners are one absorption with several owners (merged).
+    for (const auto &free : remainder)
+    {
+      std::vector<std::pair<Interval, std::size_t>> hits;
+      for (auto &[owner, list] : within_by_owner)
+      {
+        for (const auto &interval : IntersectIntervals({free}, MergeIntervals(list, Tol()), Tol()))
+        {
+          if (interval.second - interval.first > sliver)
+          {
+            hits.emplace_back(interval, owner);
+          }
+        }
+      }
+      if (hits.empty())
+      {
+        continue;
+      }
+      std::sort(hits.begin(), hits.end());
+      // Merge overlapping / touching hits into absorptions carrying every owner.
+      std::vector<Absorption> merged;
+      for (const auto &[interval, owner] : hits)
+      {
+        if (!merged.empty() && interval.first <= merged.back().interval.second + Tol())
+        {
+          merged.back().interval.second = std::max(merged.back().interval.second, interval.second);
+          merged.back().owners.push_back(owner);
+        }
+        else
+        {
+          merged.push_back({r, interval, {owner}});
+        }
+      }
+      absorptions.insert(absorptions.end(), merged.begin(), merged.end());
+    }
+  }
+  if (absorptions.empty())
+  {
+    return 0.0;
+  }
+  // Owners of one absorption are one cluster (union-find over clusters and free sites).
+  const std::size_t n_owner = cluster_claimed.size() + free_sites.size();
+  UnionFind uf(n_owner);
+  for (const auto &absorption : absorptions)
+  {
+    for (std::size_t k = 1; k < absorption.owners.size(); k++)
+    {
+      uf.Union(absorption.owners[0], absorption.owners[k]);
+    }
+  }
+  // Every free site that took part becomes a cluster of its own (its window), then the
+  // roots are merged: new cluster indices in the order of the smallest member owner.
+  std::vector<std::size_t> owner_cluster(n_owner, std::numeric_limits<std::size_t>::max());
+  std::vector<std::vector<std::pair<std::size_t, Interval>>> new_claimed;
+  std::vector<std::vector<EventCore>> new_cores;
+  std::vector<std::vector<std::size_t>> new_sites;
+  std::set<std::size_t> involved_free_sites;
+  for (const auto &absorption : absorptions)
+  {
+    for (const std::size_t owner : absorption.owners)
+    {
+      if (owner >= cluster_claimed.size())
+      {
+        involved_free_sites.insert(owner);
+      }
+    }
+  }
+  std::map<std::size_t, std::size_t> root_cluster;
+  for (std::size_t owner = 0; owner < n_owner; owner++)
+  {
+    const bool is_site = owner >= cluster_claimed.size();
+    if (is_site && involved_free_sites.count(owner) == 0)
+    {
+      continue;  // a vertex feature nothing joined stays a vertex feature
+    }
+    const std::size_t root = uf.Find(owner);
+    auto [it, inserted] = root_cluster.emplace(root, new_claimed.size());
+    if (inserted)
+    {
+      new_claimed.emplace_back();
+      new_cores.emplace_back();
+      new_sites.emplace_back();
+    }
+    const std::size_t c = it->second;
+    owner_cluster[owner] = c;
+    if (is_site)
+    {
+      const std::size_t s = free_sites[owner - cluster_claimed.size()];
+      new_sites[c].push_back(s);
+      for (const auto &[r, interval] : sites[s].window)
+      {
+        new_claimed[c].emplace_back(r, interval);
+      }
+    }
+    else
+    {
+      new_claimed[c].insert(new_claimed[c].end(), cluster_claimed[owner].begin(),
+                            cluster_claimed[owner].end());
+      new_cores[c].insert(new_cores[c].end(), cluster_cores[owner].begin(),
+                          cluster_cores[owner].end());
+      new_sites[c].insert(new_sites[c].end(), cluster_sites[owner].begin(),
+                          cluster_sites[owner].end());
+    }
+  }
+  double absorbed = 0.0;
+  for (const auto &absorption : absorptions)
+  {
+    new_claimed[owner_cluster[absorption.owners[0]]].emplace_back(absorption.run,
+                                                                 absorption.interval);
+    absorbed += absorption.interval.second - absorption.interval.first;
+    extension_portions++;
+  }
+  extension_length += absorbed;
+  extension_sites += involved_free_sites.size();
+  // Merge the intervals per run inside every cluster.
+  for (auto &claimed : new_claimed)
+  {
+    std::map<std::size_t, std::vector<Interval>> by_run;
+    for (const auto &[r, interval] : claimed)
+    {
+      by_run[r].push_back(interval);
+    }
+    claimed.clear();
+    for (auto &[r, list] : by_run)
+    {
+      for (const auto &interval : MergeIntervals(std::move(list), Tol()))
+      {
+        claimed.emplace_back(r, interval);
+      }
+    }
+    std::sort(claimed.begin(), claimed.end());
+  }
+  cluster_claimed = std::move(new_claimed);
+  cluster_cores = std::move(new_cores);
+  cluster_sites = std::move(new_sites);
+  for (std::size_t c = 0; c < cluster_sites.size(); c++)
+  {
+    std::sort(cluster_sites[c].begin(), cluster_sites[c].end());
+    for (const std::size_t s : cluster_sites[c])
+    {
+      sites[s].cluster = static_cast<int>(c);
+    }
+  }
+  return absorbed;
+}
+
+// Stack-end third-body length (decision 85(2), reported): pair / stack claims within 2R of
+// a cluster's claimed perimeter on another chain (outside the through-vertex zones) — a
+// joint description next to a cluster, not absorbed by it.
+double Identifier::StackEndThirdBodyLength() const
+{
+  const double interaction = kInteractionDistanceOverRadius * R;
+  std::vector<std::tuple<std::size_t, Interval>> pieces;
+  for (std::size_t c = 0; c < cluster_claimed.size(); c++)
+  {
+    for (const auto &[r, interval] : cluster_claimed[c])
+    {
+      pieces.emplace_back(r, interval);
+    }
+  }
+  if (pieces.empty())
+  {
+    return 0.0;
+  }
+  Point3D lo{}, hi{};
+  for (std::size_t i = 0; i < pieces.size(); i++)
+  {
+    const auto &[r, interval] = pieces[i];
+    Point3D plo, phi;
+    BoundingBox(runs[r].At(interval.first), runs[r].At(interval.second), plo, phi);
+    for (int d = 0; d < 3; d++)
+    {
+      lo[d] = i == 0 ? plo[d] : std::min(lo[d], plo[d]);
+      hi[d] = i == 0 ? phi[d] : std::max(hi[d], phi[d]);
+    }
+  }
+  UniformGrid piece_grid(4.0 * R, lo);
+  for (std::size_t i = 0; i < pieces.size(); i++)
+  {
+    const auto &[r, interval] = pieces[i];
+    Point3D plo, phi;
+    BoundingBox(runs[r].At(interval.first), runs[r].At(interval.second), plo, phi);
+    piece_grid.Insert(i, plo, phi);
+  }
+  double total = 0.0;
+  for (std::size_t r = 0; r < runs.size(); r++)
+  {
+    if (runs[r].excluded || claims[r].empty())
+    {
+      continue;
+    }
+    std::vector<Interval> joint;
+    for (const auto &claim : claims[r])
+    {
+      if (claim.priority == 2)
+      {
+        joint.push_back(claim.interval);
+      }
+    }
+    if (joint.empty())
+    {
+      continue;
+    }
+    joint = MergeIntervals(std::move(joint), Tol());
+    const Chain &A = chains[chain_index.at(runs[r].chain)];
+    Point3D rlo, rhi;
+    BoundingBox(runs[r].start, runs[r].end, rlo, rhi);
+    std::vector<Interval> within;
+    for (const std::size_t i : piece_grid.Query(rlo, rhi, interaction + 2.0 * Tol()))
+    {
+      const auto &[rp, interval] = pieces[i];
+      if (runs[rp].excluded || rp == r || runs[rp].chain == runs[r].chain ||
+          run_plane[rp] != run_plane[r])
+      {
+        continue;
+      }
+      const Point3D q0 = runs[rp].At(interval.first), q1 = runs[rp].At(interval.second);
+      auto found = RunIntervalWithin(r, q0, q1, interaction);
+      if (found.empty())
+      {
+        continue;
+      }
+      std::vector<Interval> excluded;
+      for (const auto &zone : ThroughZones(r, A, chains[chain_index.at(runs[rp].chain)]))
+      {
+        excluded.insert(excluded.end(), zone.begin(), zone.end());
+      }
+      found = SubtractIntervals(found, MergeIntervals(excluded, Tol()), Tol());
+      within.insert(within.end(), found.begin(), found.end());
+    }
+    for (const auto &interval : IntersectIntervals(joint, MergeIntervals(within, Tol()), Tol()))
+    {
+      total += interval.second - interval.first;
+    }
+  }
+  return total;
+}
+
+// The cluster features from the final claimed portions and member sites (after the
+// extension): canonical signature, priority-0 claims, vertex membership.
+void Identifier::EmitClusters()
+{
+  double signature_seconds = 0.0;
+  std::size_t largest_cluster_edges = 0;
+  for (std::size_t c = 0; c < cluster_claimed.size(); c++)
+  {
+    stage.Progress(c, cluster_claimed.size());
+    std::vector<SignaturePortion> portions;
+    std::vector<SignatureVertex> vertices;
+    for (const auto &[r, interval] : cluster_claimed[c])
+    {
+      portions.push_back({runs[r].At(interval.first), runs[r].At(interval.second),
+                          runs[r].gap_direction, runs[r].conductor,
+                          InterfaceNames(runs[r].targets), runs[r].boundary_law});
     }
     for (const std::size_t s : cluster_sites[c])
     {
@@ -6164,7 +6626,7 @@ void Identifier::BuildClusters()
         {
           stage.Progress(done, total,
                          "candidate frames of cluster " + std::to_string(c) + " / " +
-                             std::to_string(cluster_cores.size()) + ", " +
+                             std::to_string(cluster_claimed.size()) + ", " +
                              std::to_string(portions.size()) + " edges");
         });
     signature_seconds +=
@@ -6175,7 +6637,7 @@ void Identifier::BuildClusters()
     const int feature = NewFeature("SpatialEdgeCluster", signature, canonical.chirality);
     features[feature].origin = canonical.origin;
     features[feature].axes = canonical.axes;
-    for (const auto &[r, interval] : claimed)
+    for (const auto &[r, interval] : cluster_claimed[c])
     {
       claims[r].push_back({feature, 0, interval});
     }
@@ -6190,9 +6652,7 @@ void Identifier::BuildClusters()
   }
   {
     std::ostringstream counts;
-    counts << run_pairs_examined << " run pairs within reach, " << run_cores
-           << " event cores on runs + " << (cores.size() - run_cores) << " site cores, "
-           << cluster_cores.size() << " clusters (largest " << largest_cluster_edges
+    counts << cluster_claimed.size() << " clusters (largest " << largest_cluster_edges
            << " edges), canonical signatures " << std::fixed << std::setprecision(2)
            << signature_seconds << " s, " << features.size() << " features so far";
     stage.End(counts.str());
@@ -7116,6 +7576,8 @@ void Identifier::Assign(IdentificationResult &result)
   result.same_priority_claim_overlaps = same_priority_claim_overlaps;
   result.stack_geometric_offsets = stack_geometric_offsets;
   result.stack_composition_cap_hits = stack_composition_cap_hits;
+  result.extension = {extension_passes, extension_portions, extension_sites,
+                      extension_length, stack_end_third_body_length};
   result.features = features;
   result.radius = R;
   result.reference_process_normal = n_ref;
@@ -7191,8 +7653,42 @@ IdentificationResult Identifier::Identify()
     BuildTranslationalFeatures();
     stage.Begin("events / cores / clusters");
     BuildClusters();
-    stage.Begin("pairs / stacks");
-    BuildPairsAndStacks();
+    // Pairs / stacks, then the cluster extension over the single-edge remainder (decision
+    // 85(2)), iterated to closure: an enlarged cluster claim moves the stack ends, and the
+    // recomposed stacks leave new single-edge portions to test.
+    for (std::size_t pass = 0;; pass++)
+    {
+      const std::size_t n_features = features.size();
+      stage.Begin("pairs / stacks (pass " + std::to_string(pass + 1) + ")");
+      stack_geometric_offsets = 0;
+      stack_composition_cap_hits = 0;
+      BuildPairsAndStacks();
+      stage.Begin("cluster extension (pass " + std::to_string(pass + 1) + ")");
+      const double absorbed = ExtendClusters();
+      extension_passes++;
+      stage.End("absorbed " + std::to_string(absorbed) + " (mesh units) in " +
+                std::to_string(extension_portions) + " portions so far, " +
+                std::to_string(cluster_claimed.size()) + " clusters");
+      if (absorbed <= 0.0)
+      {
+        break;
+      }
+      // The pair / stack features and claims are rebuilt on the enlarged claims.
+      features.resize(n_features);
+      feature_max_kappa.resize(n_features);
+      feature_sides.resize(n_features);
+      for (auto &run_claims : claims)
+      {
+        run_claims.erase(std::remove_if(run_claims.begin(), run_claims.end(),
+                                        [](const Claim &c) { return c.priority == 2; }),
+                         run_claims.end());
+      }
+    }
+    stage.Begin("stack-end third body");
+    stack_end_third_body_length = StackEndThirdBodyLength();
+    stage.End(std::to_string(stack_end_third_body_length) + " (mesh units)");
+    stage.Begin("cluster signatures");
+    EmitClusters();
   }
   stage.Begin("claim resolution / assignment / tables");
   Assign(result);
@@ -7312,6 +7808,11 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
   w.Size(result.same_priority_claim_overlaps);
   w.Size(result.stack_geometric_offsets);
   w.Size(result.stack_composition_cap_hits);
+  w.Size(result.extension.passes);
+  w.Size(result.extension.portions);
+  w.Size(result.extension.sites);
+  w.Pod(result.extension.length);
+  w.Pod(result.extension.stack_end_third_body_length);
   w.String(result.knife_edge_census);
   w.Size(result.features.size());
   for (const auto &f : result.features)
@@ -7402,6 +7903,11 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
   result.same_priority_claim_overlaps = r.Size();
   result.stack_geometric_offsets = r.Size();
   result.stack_composition_cap_hits = r.Size();
+  result.extension.passes = r.Size();
+  result.extension.portions = r.Size();
+  result.extension.sites = r.Size();
+  result.extension.length = r.Pod<double>();
+  result.extension.stack_end_third_body_length = r.Pod<double>();
   result.knife_edge_census = r.String();
   result.features.resize(r.Size());
   for (auto &f : result.features)
@@ -7736,7 +8242,19 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
                  "cross-section): claim resolution never decides by feature id"},
         {"StackGeometricOffsetIntervals", stack_geometric_offsets},
         {"StackCompositionCapHits", stack_composition_cap_hits},
-        {"StackCompositionCap", kStackCompositionCap}}},
+        {"StackCompositionCap", kStackCompositionCap},
+        {"ClusterExtension",
+         {{"Passes", extension.passes},
+          {"AbsorbedPortions", extension.portions},
+          {"AbsorbedLength", L(extension.length)},
+          {"VertexFeaturesJoined", extension.sites},
+          {"Rule", "every single-edge portion (isolated / curved edge remainder) within 2R "
+                   "(3D, strict) of a cluster's claimed perimeter or of a vertex feature's "
+                   "window on another chain (or its own chain beyond pi R), outside the "
+                   "through-vertex zones, joins that cluster (a vertex feature so joined "
+                   "becomes a cluster); iterated to closure over single-edge portions; "
+                   "pairs / stacks are never absorbed (decision 85(2))"}}},
+        {"StackEndThirdBodyLength", L(extension.stack_end_third_body_length)}}},
       {"KnifeEdgeCensus", ScaledCensus(knife_edge_census, length_scale)},
       {"GeometryDigest", geometry_digest}};
 }

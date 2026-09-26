@@ -18,20 +18,31 @@ asks the geometry directly, with a uniform grid over the perimeter segments (chi
 Distances are three-dimensional (the two metal planes of a flip chip do not face each other
 when they are more than 2R apart); sites and boxes are in the plan view (x, y).
 
-Hard gates (decision 82(2), 2026-09-25): the facing length is a gate, not a diagnostic — it
-must be zero apart from the RECORDED exclusions, each reported with its length:
+Hard gates (decision 82(2), 2026-09-25; exemptions narrowed by decision 85(2), 2026-09-26):
+the facing length is a gate, not a diagnostic — it must be zero apart from the RECORDED
+exclusions, each reported with its length:
 * `AtExactly2R`: the facing distance is exactly 2R on the decision grid (the strict rule: no
   interaction);
-* `ClusterNeighbour`: the facing portion belongs to a `SpatialEdgeCluster` — the cluster region
-  is the union of radius-R balls around the event cores (its claim radius R, decision 82(1)), so
-  metal between R and 2R of a cluster's edge faces it without being inside it;
-* `VertexNeighbour`: the facing portion belongs to a vertex feature (a corner window, a rounded
-  corner's arc, an endpoint or junction window): the vertex describes its own neighbourhood;
 * `ThroughVertex`: the sample and its facing point lie within 2R of one vertex feature (the
   arms of a corner or junction meet through it: design (b) 1, `ThroughVertexZoneOverR`);
 * `SelfNeighbourhood`: the facing point lies on the sample's own chain less than pi R of arc
   length away (the bottom of a U of radius >= R faces itself within 2R without a fold:
-  `SelfPairNeighbourhoodOverR`).
+  `SelfPairNeighbourhoodOverR`);
+* `StackEndThirdBody` (pair / stack sides only): the facing portion belongs to a
+  `SpatialEdgeCluster` or a vertex feature — a joint description (pair / stack) is never
+  absorbed by a cluster (decision 85(2)); its length within 2R of cluster / vertex metal is the
+  stack-end third body, reported here and in the manifest Diagnostics;
+* `StackEndRecomposition` (pair / stack sides only): the facing portion belongs to another
+  pair / stack feature sharing a member chain with the sample's feature — the same route's
+  cross-section recomposed at a stack end or at a straight / curved class boundary, where the
+  partner's foot lies just across the cut (sub-chord lengths; reported);
+* segments with a recorded manifest exclusion (Port, CrossLayer, NonManifold, ...) are never
+  facing candidates.
+The former `ClusterNeighbour` / `VertexNeighbour` exemptions of the ISOLATED gate are gone
+(decision 85(2)): a single-edge portion within 2R of a cluster's or a vertex feature's claimed
+perimeter now joins the cluster, so such a facing is a defect. Every facing segment within 2R is tested (not only
+the nearest), and the own sides of a pair / stack are the segments carrying its portions plus
+the member chains within the feature's reach (its lateral span) of them — not the whole chains.
 
 Output: per class the sampled length, the facing length and its fraction; the flagged samples
 grouped into sites (samples within `--site-radius` of each other, default 25 R) ranked by
@@ -52,7 +63,8 @@ PAIR_CLASSES = ("SameConductorGap", "DifferentConductorGap", "SameConductorStrip
                 "CurvedSameConductorGap", "CurvedDifferentConductorGap", "CurvedSameConductorStrip",
                 "ParallelEdgeCluster", "CurvedParallelEdgeCluster")
 VERTEX_CLASSES = ("ConvexCorner", "ConcaveCorner", "Endpoint", "Junction")
-EXCLUSION_CLASSES = ("AtExactly2R", "ClusterNeighbour", "VertexNeighbour", "ThroughVertex", "SelfNeighbourhood")
+EXCLUSION_CLASSES = ("AtExactly2R", "ThroughVertex", "SelfNeighbourhood", "StackEndThirdBody", "StackEndRecomposition")
+PAIR_SEPARATION_TOLERANCE = 0.05  # Identification.Conventions PairSeparationToleranceRelative
 THROUGH_VERTEX_ZONE_OVER_R = 2.0
 # A chain's points closer than pi R along the chain are within 2R of each other along any bend
 # of radius >= R (Schur): the local neighbourhood that never pairs with itself
@@ -132,10 +144,12 @@ LENGTH_QUANTUM_OVER_R = 1.0e-8
 
 
 def facing_samples(grid, p0, p1, excluded, points, tangents, owners, own_mask, radius):
-    """For every sample point: the closest facing (across) non-excluded segment whose distance is
-    at most 2R (within the decision quantum) and neither the sample's own segment nor in own_mask
-    (the feature's own sides); -1 when none; the foot on that segment. The caller separates the
-    strictly interacting samples (quantized distance < 2R) from those at exactly 2R."""
+    """Every facing (across) non-excluded segment within 2R (within the decision quantum) of
+    every sample point that is neither the sample's own segment nor in own_mask (the feature's
+    own sides): arrays (sample index, segment index, distance, foot) sorted by (sample,
+    distance). ALL facing segments are returned (decision 85 review M5: the nearest one alone
+    masked a second, unexcluded edge behind an excluded one); the caller separates the strictly
+    interacting hits (quantized distance < 2R) from those at exactly 2R."""
     sample_indices, segment_indices = grid.candidates(points)
     a, b = p0[segment_indices], p1[segment_indices]
     ab = b - a
@@ -147,18 +161,9 @@ def facing_samples(grid, p0, p1, excluded, points, tangents, owners, own_mask, r
     cosine = np.abs((d * tangents[sample_indices]).sum(1)) / np.maximum(r, 1e-30)
     ok = ((r <= 2 * radius + 0.5 * LENGTH_QUANTUM_OVER_R * radius) & (r > 1e-9) & (cosine < 0.5) & ~excluded[segment_indices]
           & (segment_indices != owners[sample_indices]) & ~own_mask[segment_indices])
-    best = np.full(len(points), -1, dtype=np.int64)
-    best_r = np.full(len(points), np.inf)
-    best_foot = np.zeros((len(points), 3))
-    if ok.any():
-        si, sj, ri, fi = sample_indices[ok], segment_indices[ok], r[ok], foot[ok]
-        order = np.lexsort((ri, si))
-        si, sj, ri, fi = si[order], sj[order], ri[order], fi[order]
-        first = np.concatenate([[True], si[1:] != si[:-1]])
-        best[si[first]] = sj[first]
-        best_r[si[first]] = ri[first]
-        best_foot[si[first]] = fi[first]
-    return best, best_r, best_foot
+    si, sj, ri, fi = sample_indices[ok], segment_indices[ok], r[ok], foot[ok]
+    order = np.lexsort((ri, si))
+    return si[order], sj[order], ri[order], fi[order]
 
 
 def portion_samples(p0, p1, length, portions, spacing):
@@ -234,6 +239,8 @@ class ClaimLookup:
 
     def __init__(self, identification, p0, p1, length):
         self.feature_type = {f["Id"]: f["Type"] for f in identification["Features"]}
+        chain_of = {i: s.get("Chain") for i, s in enumerate(identification["Segments"])}
+        self.member_chains = {f["Id"]: {chain_of[seg] for seg, _, _ in f.get("Portions", [])} - {None} for f in identification["Features"]}
         self.portions = {}
         for i, s in enumerate(identification["Segments"]):
             if "Portions" in s:
@@ -343,12 +350,13 @@ def classify_flag(lookup, flag, radius):
     """Recorded exclusion class of a flagged sample, or None (a genuine defect)."""
     seg = flag["FacingSegment"]
     foot = np.asarray(flag["FacingPoint"])
-    feature = lookup.feature_at(seg, foot)
-    ftype = lookup.feature_type.get(feature) if feature is not None else None
-    if ftype == "SpatialEdgeCluster":
-        return "ClusterNeighbour"
-    if ftype in VERTEX_CLASSES:
-        return "VertexNeighbour"
+    if flag["Class"] in PAIR_CLASSES:
+        feature = lookup.feature_at(seg, foot)
+        ftype = lookup.feature_type.get(feature) if feature is not None else None
+        if ftype == "SpatialEdgeCluster" or ftype in VERTEX_CLASSES:
+            return "StackEndThirdBody"
+        if ftype in PAIR_CLASSES and lookup.member_chains.get(feature, set()) & lookup.member_chains.get(flag["Feature"], set()):
+            return "StackEndRecomposition"
     if lookup.through_vertex(flag["Point"], foot, THROUGH_VERTEX_ZONE_OVER_R * radius):
         return "ThroughVertex"
     arc = lookup.arc_distance(flag["Segment"], flag["Point"], seg, foot)
@@ -368,9 +376,58 @@ def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=2000
             segments_of_chain[s["Chain"]].append(i)
     chain_of = {i: s.get("Chain") for i, s in enumerate(identification["Segments"])}
 
-    def own_chain_segments(feature):
-        chains = {chain_of[seg] for seg, _, _ in feature["Portions"]}
-        return [i for c in chains if c is not None for i in segments_of_chain[c]]
+    def feature_reach(feature):
+        """Lateral span of a pair / stack (its largest offset) x (1 + the pair tolerance): how
+        far along the member chains the partner's foot of a sample can lie beyond the feature's
+        own portions."""
+        signature = feature.get("Signature") or {}
+        span = 0.0
+        if "Edges" in signature:
+            span = max(float(e["OffsetOverR"]) for e in signature["Edges"])
+        elif "SeparationOverR" in signature:
+            span = float(signature["SeparationOverR"])
+        return span * radius * (1.0 + PAIR_SEPARATION_TOLERANCE)
+
+    def own_side_segments(feature):
+        """The segments carrying the feature's portions plus the segments of the same chains
+        whose chain interval lies within the feature's reach of those portions (decision 85
+        review M5: not the whole member chains — a long ground chain must not mask a third edge
+        across a narrow strip)."""
+        reach = feature_reach(feature)
+        own = set()
+        by_chain = defaultdict(list)
+        for seg, s0, s1 in feature["Portions"]:
+            own.add(int(seg))
+            c = chain_of[seg]
+            if c is None or seg not in lookup.chain_position:
+                continue
+            x, forward = lookup.chain_position[seg]
+            lo = x + (s0 if forward else length[seg] - s1)
+            hi = x + (s1 if forward else length[seg] - s0)
+            by_chain[c].append((lo - reach, hi + reach))
+        for c, intervals in by_chain.items():
+            intervals.sort()
+            merged = []
+            for lo, hi in intervals:
+                if merged and lo <= merged[-1][1]:
+                    merged[-1][1] = max(merged[-1][1], hi)
+                else:
+                    merged.append([lo, hi])
+            total = lookup.chain_length.get(c, 0.0)
+            closed = lookup.chain_closed.get(c, False)
+            for i in segments_of_chain[c]:
+                if i not in lookup.chain_position:
+                    continue
+                x, _ = lookup.chain_position[i]
+                a, b = x, x + length[i]
+                for lo, hi in merged:
+                    hit = a <= hi and b >= lo
+                    if closed and total > 0 and not hit:
+                        hit = (a + total <= hi and b + total >= lo) or (a - total <= hi and b - total >= lo)
+                    if hit:
+                        own.add(i)
+                        break
+        return sorted(own)
     own_mask = np.zeros(len(p0), dtype=bool)
     totals = defaultdict(float)
     facing = defaultdict(float)
@@ -391,33 +448,52 @@ def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=2000
         points, tangents, weights, owners = sampled
         counts[ftype] += 1
         totals[ftype] += float(weights.sum())
-        # A pair's / stack's own sides are its member EDGES (the chains of its portions): the
-        # same chain's portions claimed by a neighbouring feature (the curved section of the
-        # same pair, the next stack of a taper) are not a third edge.
-        own_segments = own_chain_segments(feature) if ftype in PAIR_CLASSES else []
+        # A pair's / stack's own sides: the segments of its portions and the member chains
+        # within its reach of them (the curved section of the same pair, the next stack of a
+        # taper, the partner's foot beyond a cut are not a third edge; the rest of a long ground
+        # chain is).
+        own_segments = own_side_segments(feature) if ftype in PAIR_CLASSES else []
         own_mask[own_segments] = True
         for first in range(0, len(points), batch):
             sl = slice(first, first + batch)
-            best, best_r, best_foot = facing_samples(grid, p0, p1, excluded, points[sl], tangents[sl], owners[sl], own_mask, radius)
-            found = best >= 0
-            # Strict less than 2R on the classifier's quantized grid; the rest is exactly 2R.
-            hit = found & (np.round(best_r / quantum) < np.round(2.0 * radius / quantum))
-            at_2r[ftype] += float(weights[sl][found & ~hit].sum())
-            excluded_length[ftype]["AtExactly2R"] += float(weights[sl][found & ~hit].sum())
-            if not hit.any():
+            si, sj, ri, fi = facing_samples(grid, p0, p1, excluded, points[sl], tangents[sl], owners[sl], own_mask, radius)
+            if len(si) == 0:
                 continue
-            facing[ftype] += float(weights[sl][hit].sum())
-            for k in np.nonzero(hit)[0]:
-                flag = {"Class": ftype, "Feature": feature["Id"], "Segment": int(owners[sl][k]), "FacingSegment": int(best[k]),
-                        "Distance": float(best_r[k]), "Weight": float(weights[sl][k]), "Point": [float(v) for v in points[sl][k]],
-                        "FacingPoint": [float(v) for v in best_foot[k]]}
-                flag["Exclusion"] = classify_flag(lookup, flag, radius)
-                if flag["Exclusion"] is None:
-                    unexcluded[ftype] += flag["Weight"]
+            # Strict less than 2R on the classifier's quantized grid; the rest is exactly 2R.
+            interacting = np.round(ri / quantum) < np.round(2.0 * radius / quantum)
+            # Every sample: its facing hits in distance order; the sample counts once — flagged
+            # by its nearest UNEXCLUDED interacting hit, else excluded by the class of its
+            # nearest hit (AtExactly2R when every hit is at 2R).
+            starts = np.concatenate([[0], np.nonzero(si[1:] != si[:-1])[0] + 1, [len(si)]])
+            for a, b in zip(starts[:-1], starts[1:]):
+                k = int(si[a])
+                weight = float(weights[sl][k])
+                hits = [(int(sj[i]), float(ri[i]), fi[i], bool(interacting[i])) for i in range(a, b)]
+                if not any(h[3] for h in hits):
+                    at_2r[ftype] += weight
+                    excluded_length[ftype]["AtExactly2R"] += weight
+                    continue
+                facing[ftype] += weight
+                nearest_exclusion = None
+                flagged = None
+                for seg, dist, foot, inter in hits:
+                    if not inter:
+                        continue
+                    flag = {"Class": ftype, "Feature": feature["Id"], "Segment": int(owners[sl][k]), "FacingSegment": seg,
+                            "Distance": dist, "Weight": weight, "Point": [float(v) for v in points[sl][k]],
+                            "FacingPoint": [float(v) for v in foot]}
+                    flag["Exclusion"] = classify_flag(lookup, flag, radius)
+                    if flag["Exclusion"] is None:
+                        flagged = flag
+                        break
+                    if nearest_exclusion is None:
+                        nearest_exclusion = flag["Exclusion"]
+                if flagged is not None:
+                    unexcluded[ftype] += weight
                     flagged_features[ftype].add(feature["Id"])
-                    flags.append(flag)
+                    flags.append(flagged)
                 else:
-                    excluded_length[ftype][flag["Exclusion"]] += flag["Weight"]
+                    excluded_length[ftype][nearest_exclusion] += weight
         own_mask[own_segments] = False
     sites = group_sites(flags, site_radius_over_r * radius)
     histogram = defaultdict(float)
@@ -457,8 +533,8 @@ def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=2000
         "Gates": {"IsolatedFacing": isolated_unexcluded == 0.0, "PairThirdEdge": pair_unexcluded == 0.0},
         "KnifeEdgeRule": f"strict less than 2R on the grid of {LENGTH_QUANTUM_OVER_R:g} R (the classifier's rule); AtExactly2RLength is the facing length at exactly 2R, not flagged",
         "Exclusions": {"AtExactly2R": "facing at exactly 2R on the decision grid (no interaction under the strict rule)",
-                       "ClusterNeighbour": "the facing portion belongs to a SpatialEdgeCluster (claim radius R around the event cores, decision 82(1))",
-                       "VertexNeighbour": "the facing portion belongs to a vertex feature (corner window, rounded-corner arc, endpoint / junction window)",
+                       "StackEndThirdBody": "pair / stack side facing a SpatialEdgeCluster or a vertex feature within 2R (a joint description next to a cluster is not absorbed, decision 85(2); reported as Diagnostics.StackEndThirdBodyLength)",
+                       "StackEndRecomposition": "pair / stack side facing another pair / stack feature that shares a member chain (the route's cross-section recomposed at a stack end or class boundary; the partner's foot across the cut)",
                        "ThroughVertex": f"sample and facing point within {THROUGH_VERTEX_ZONE_OVER_R:g} R of one vertex feature (arms meeting through it, design (b) 1)",
                        "SelfNeighbourhood": f"facing point on the sample's own chain less than {SELF_PAIR_NEIGHBOURHOOD_OVER_R:.6g} R of arc length away (the local neighbourhood of a bend, SelfPairNeighbourhoodOverR)"},
         "DistanceHistogram": dict(sorted(histogram.items())),
@@ -480,7 +556,7 @@ def facing_gates(manifest, spacing=0.5):
                       "Detail": {"UnexcludedFacingLength": block["UnexcludedFacingLength"], "FacingLength": block.get("FacingLength", block.get("ThirdEdgeLength")),
                                  "SampledLength": block["SampledLength"], "ExcludedLength": block["ExcludedLength"], "AtExactly2RLength": block["AtExactly2RLength"],
                                  "Sites": [{k: s[k] for k in ("Length", "Classes", "Features", "MinDistance", "Box")} for s in result["Sites"][:5]],
-                                 "Basis": "facing_check.py: strict < 2R (3D) on the decision grid; exclusions AtExactly2R / ClusterNeighbour / VertexNeighbour / ThroughVertex recorded"}})
+                                 "Basis": "facing_check.py: strict < 2R (3D) on the decision grid, every facing segment within 2R tested, own sides = portions + member chains within the feature's reach; exclusions AtExactly2R / ThroughVertex / SelfNeighbourhood recorded (decision 85(2))"}})
     return gates, result
 
 

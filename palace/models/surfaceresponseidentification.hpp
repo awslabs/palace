@@ -172,6 +172,18 @@ struct IdentificationResult
   // distance for want of a consecutive link, and those whose composition reached the cap.
   std::size_t stack_geometric_offsets = 0;
   std::size_t stack_composition_cap_hits = 0;
+  // Cluster extension (decision 85(2)): passes to closure, absorbed single-edge portions
+  // and length, vertex features that became clusters; the pair / stack length within 2R of
+  // a cluster's claimed perimeter (the stack-end third body, not absorbed), mesh units.
+  struct ClusterExtension
+  {
+    std::size_t passes = 0;
+    std::size_t portions = 0;
+    std::size_t sites = 0;
+    double length = 0.0;
+    double stack_end_third_body_length = 0.0;
+  };
+  ClusterExtension extension;
   // Knife-edge census (decision 82(4)): the perimeter length whose interaction distance lies
   // within a recorded band of every threshold of the rules (R, 2R, the 10R bend radius, the
   // 30 deg corner turn), in mesh units; serialised as JSON text.
