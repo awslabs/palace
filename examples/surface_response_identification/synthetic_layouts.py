@@ -772,6 +772,10 @@ def stack_suite():
             w = 2.0 * rho - g
             r_in, r_out = 0.5 * g, 2.0 * rho - 0.5 * g
             hx = math.ceil(r_out) + (9.0 if q < 8 else 14.0)
+            # The fold's outer arc reaches y = -r_out: the box must hold it (review m8: at rho =
+            # 8 R the 31 um fold crossed the former 30 um half-height and Gmsh's boolean left a
+            # mesh MFEM could not load).
+            hy = max(30.0, hx)
             corner = r_in < R
             outer_curved = r_out < STRAIGHT_BEND_RADIUS_OVER_R * R
             strip = w < 2.0 * R
@@ -810,7 +814,7 @@ def stack_suite():
             expected = {"Features": dict(features), "FacingGates": True}
             if corner and strip:
                 expected["Offsets"] = {"ParallelEdgeCluster": [[0.0, w / R, (w + g) / R, (2 * w + g) / R]]}
-            layouts.append(layout(f"hairpin-rho{q:g}-g{gq:g}".replace(".", "p"), [sheet(GROUND, hairpin(rho, g, 30.0))], half_x=hx, half_y=30.0, lc_fine=(0.5 if r_in < 2.5 else 1.0) if q < 8 else 0.7, lc_far=6.0 if q < 8 else 5.0, notes=f"hairpin strip of width {w:g} um (centreline radius {q:g} R, legs {gq:g} R apart): " + "; ".join(notes), bend={"Radius": rho}, expected=expected))
+            layouts.append(layout(f"hairpin-rho{q:g}-g{gq:g}".replace(".", "p"), [sheet(GROUND, hairpin(rho, g, hy))], half_x=hx, half_y=hy, lc_fine=(0.5 if r_in < 2.5 else 1.0) if q < 8 else 0.7, lc_far=6.0 if q < 8 else 5.0, notes=f"hairpin strip of width {w:g} um (centreline radius {q:g} R, legs {gq:g} R apart): " + "; ".join(notes), bend={"Radius": rho}, expected=expected))
 
     # The self-facing chain: a kinked hairpin whose inner fold is a non-circular polyline
     # (no arc fits: the fold stays in the chain) with the legs 1.5 R apart: the inner chain

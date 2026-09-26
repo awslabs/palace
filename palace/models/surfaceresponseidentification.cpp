@@ -3382,28 +3382,45 @@ Identifier::ChainPoint Identifier::ClosestPointOnChain(const Chain &chain,
                                                        std::optional<double> max_distance) const
 {
   const double neighbourhood = kSelfPairNeighbourhoodOverRadius * R;
-  auto Excluded = [&](std::size_t k)
+  // The part of run k at least the self-pair neighbourhood of arc length from exclude_x
+  // (point-wise: the former run-level exclusion dropped a whole 28 um leg of a hairpin for
+  // every point of its fold, which then had no partner at all), as run-parameter intervals.
+  auto Allowed = [&](std::size_t k)
   {
-    return exclude_x &&
-           quantizer.Less(ChainArcDistance(chain, chain.run_offset[k],
-                                           chain.run_offset[k] + runs[chain.runs[k]].length,
-                                           *exclude_x),
-                          neighbourhood);
+    const double x0 = chain.run_offset[k], x1 = x0 + runs[chain.runs[k]].length;
+    std::vector<Interval> allowed = {Interval{0.0, x1 - x0}};
+    if (!exclude_x)
+    {
+      return allowed;
+    }
+    std::vector<Interval> near;
+    for (const double shift :
+         chain.closed ? std::vector<double>{-chain.length, 0.0, chain.length}
+                      : std::vector<double>{0.0})
+    {
+      const double lo = std::max(x0, *exclude_x + shift - neighbourhood) - x0;
+      const double hi = std::min(x1, *exclude_x + shift + neighbourhood) - x0;
+      if (hi - lo > Tol())
+      {
+        near.emplace_back(lo, hi);
+      }
+    }
+    return SubtractIntervals(allowed, MergeIntervals(near, Tol()), Tol());
   };
   ChainPoint best;
   best.distance = std::numeric_limits<double>::infinity();
   auto Evaluate = [&](std::size_t k)
   {
-    if (Excluded(k))
-    {
-      return;
-    }
     const Run &r = runs[chain.runs[k]];
-    const double s = std::clamp(Dot(Sub(p, r.start), r.tangent), 0.0, r.length);
-    const double distance = Distance(p, r.At(s));
-    if (distance < best.distance)
+    for (const auto &interval : Allowed(k))
     {
-      best = {chain.runs[k], s, chain.run_offset[k] + s, distance};
+      const double s =
+          std::clamp(Dot(Sub(p, r.start), r.tangent), interval.first, interval.second);
+      const double distance = Distance(p, r.At(s));
+      if (distance < best.distance)
+      {
+        best = {chain.runs[k], s, chain.run_offset[k] + s, distance};
+      }
     }
   };
   // Grid rings around p until no farther cell can hold a run as close as the best so far
@@ -4421,6 +4438,25 @@ void Identifier::BuildBentPairs()
       if (!self)
       {
         Split(pieces_b, constant_b, separation_b, upper_b, sub_b);
+      }
+      if (std::getenv("PALACE_IDENTIFICATION_DEBUG_PIECES") && input.log)
+      {
+        std::ostringstream dbg;
+        dbg << "  DEBUG pieces of chains " << A.id << " - " << B.id << ":\n";
+        for (const auto *list : {&sub_a, &sub_b})
+        {
+          for (const auto &piece : *list)
+          {
+            const Run &rr = runs[piece.run];
+            dbg << "    side " << (list == &sub_a ? 0 : 1) << " run " << piece.run << " s ["
+                << piece.interval.first << ", " << piece.interval.second << "] at ("
+                << rr.At(piece.interval.first)[0] << ", " << rr.At(piece.interval.first)[1]
+                << ") constant " << piece.constant << " interacting " << piece.interacting
+                << " separation " << piece.separation << (piece.exact ? " exact" : " chord")
+                << (piece.curved ? " curved" : " straight") << "\n";
+          }
+        }
+        input.log(dbg.str());
       }
       // Locally constant portions that do not interact (separation at or beyond 2R): no
       // feature, but their cross-chord interactions are not events. Portions that are not
@@ -5793,9 +5829,16 @@ void Identifier::BuildClusters()
   const double join = kVertexJoinsClusterOverRadius * R;
 
   std::vector<EventCore> cores;
+  // self_partner (a chain facing itself): the part of run b at least pi R of arc length
+  // from the chain position x of a point of run a; the piece of a is then subdivided into
+  // sub-pieces of at most R / 2 and each faces the partner region of its midpoint (the
+  // former run-level zone excluded a whole run within pi R of the other run's nearest end,
+  // which hid the fold end of a hairpin facing the far part of a long leg).
   auto CoresOnRun = [&](std::size_t a, std::size_t b,
                         const std::vector<std::vector<Interval>> &zones_a,
-                        const std::vector<std::vector<Interval>> &zones_b)
+                        const std::vector<std::vector<Interval>> &zones_b,
+                        const std::function<std::vector<Interval>(double)> *self_partner =
+                            nullptr)
   {
     const Run &ra = runs[a];
     const Run &rb = runs[b];
@@ -5839,13 +5882,29 @@ void Identifier::BuildClusters()
       }
       const auto complement = SubtractIntervals({Interval{0.0, rb.length}},
                                                 MergeIntervals(excluded, Tol()), Tol());
-      for (const auto &piece : complement)
+      const std::size_t sub_pieces =
+          self_partner ? std::max<std::size_t>(
+                             1, static_cast<std::size_t>(std::ceil((hi - lo) / (0.5 * R))))
+                       : 1;
+      for (std::size_t q = 0; q < sub_pieces; q++)
       {
-        const Point3D q0 = rb.At(piece.first), q1 = rb.At(piece.second);
-        auto f = [&](double s) { return PointSegmentDistance(ra.At(s), q0, q1); };
-        if (auto interval = ConvexSublevelInterval(f, lo, hi, interaction, quantizer))
+        const double sub_lo = lo + (hi - lo) * q / sub_pieces;
+        const double sub_hi = lo + (hi - lo) * (q + 1) / sub_pieces;
+        std::vector<Interval> partner = complement;
+        if (self_partner)
         {
-          found.push_back(*interval);
+          partner = IntersectIntervals(complement, (*self_partner)(0.5 * (sub_lo + sub_hi)),
+                                       Tol());
+        }
+        for (const auto &piece : partner)
+        {
+          const Point3D q0 = rb.At(piece.first), q1 = rb.At(piece.second);
+          auto f = [&](double s) { return PointSegmentDistance(ra.At(s), q0, q1); };
+          if (auto interval =
+                  ConvexSublevelInterval(f, sub_lo, sub_hi, interaction, quantizer))
+          {
+            found.push_back(*interval);
+          }
         }
       }
     }
@@ -5881,7 +5940,7 @@ void Identifier::BuildClusters()
       // run a is the part within pi R of arc length of run b (its ends), in place of the
       // shared-vertex zones (every vertex of a chain is shared with itself).
       const bool self = runs[a].chain == runs[b].chain;
-      std::vector<std::vector<Interval>> self_zone_a, self_zone_b;
+      std::function<std::vector<Interval>(double)> self_partner_on_b, self_partner_on_a;
       if (self)
       {
         if (ca.Rigid())
@@ -5901,25 +5960,32 @@ void Identifier::BuildClusters()
         {
           continue;
         }
-        auto Zone = [&](double x0, double x1, double y0, double y1)
+        // The partner region on run [y0, y1] of a point at run parameter s of run [x0, x1]:
+        // the run's points at least pi R of arc length away (the shorter way round on a
+        // closed chain), as run parameters.
+        auto Partner = [&](double x0, double y0, double y1)
         {
-          // Points of [x0, x1] within the neighbourhood (arc length) of [y0, y1], as run
-          // parameters; the shorter way round on a closed chain.
-          std::vector<Interval> zone;
-          for (const double shift : ca.closed ? std::vector<double>{-ca.length, 0.0, ca.length}
-                                              : std::vector<double>{0.0})
+          return [=, &ca, this](double s)
           {
-            const double lo = std::max(x0, y0 + shift - neighbourhood) - x0;
-            const double hi = std::min(x1, y1 + shift + neighbourhood) - x0;
-            if (hi - lo > Tol())
+            const double x = x0 + s;
+            std::vector<Interval> near;
+            for (const double shift : ca.closed
+                                          ? std::vector<double>{-ca.length, 0.0, ca.length}
+                                          : std::vector<double>{0.0})
             {
-              zone.emplace_back(lo, hi);
+              const double lo = std::max(y0, x + shift - neighbourhood) - y0;
+              const double hi = std::min(y1, x + shift + neighbourhood) - y0;
+              if (hi - lo > Tol())
+              {
+                near.emplace_back(lo, hi);
+              }
             }
-          }
-          return MergeIntervals(std::move(zone), Tol());
+            return SubtractIntervals({Interval{0.0, y1 - y0}}, MergeIntervals(near, Tol()),
+                                     Tol());
+          };
         };
-        self_zone_a.push_back(Zone(a0, a1, b0, b1));
-        self_zone_b.push_back(Zone(b0, b1, a0, a1));
+        self_partner_on_b = Partner(a0, b0, b1);
+        self_partner_on_a = Partner(b0, a0, a1);
       }
       run_pairs_examined++;
       if (ca.Rigid() && cb.Rigid() &&
@@ -5934,8 +6000,12 @@ void Identifier::BuildClusters()
       {
         continue;
       }
-      std::vector<std::vector<Interval>> zones_a = self ? self_zone_a : ThroughZones(a, ca, cb),
-                                         zones_b = self ? self_zone_b : ThroughZones(b, cb, ca);
+      std::vector<std::vector<Interval>> zones_a =
+                                             self ? std::vector<std::vector<Interval>>{}
+                                                  : ThroughZones(a, ca, cb),
+                                         zones_b =
+                                             self ? std::vector<std::vector<Interval>>{}
+                                                  : ThroughZones(b, cb, ca);
       // Portions of a constant-separation pair along a bend with the other chain (a pair
       // feature, or a non-interacting pair at or beyond 2R) are not events.
       std::vector<Interval> bent_a, bent_b;
@@ -5961,8 +6031,8 @@ void Identifier::BuildClusters()
       {
         zones_b.push_back(MergeIntervals(bent_b, Tol()));
       }
-      CoresOnRun(a, b, zones_a, zones_b);
-      CoresOnRun(b, a, zones_b, zones_a);
+      CoresOnRun(a, b, zones_a, zones_b, self ? &self_partner_on_b : nullptr);
+      CoresOnRun(b, a, zones_b, zones_a, self ? &self_partner_on_a : nullptr);
     }
   }
 
@@ -6475,6 +6545,24 @@ double Identifier::ExtendClusters()
         }
         within = IntersectIntervals(within, domain, Tol());
         found.insert(found.end(), within.begin(), within.end());
+        // A claimed piece ending where its CHAIN ends (a strip end, the tangent point of a
+        // rounded corner's arc chain) faces the metal around that end within the full 2R
+        // ball: nothing continues beyond it that could pair with the neighbour (the
+        // perpendicular rule only guards a claim end inside a continuing chain).
+        for (const bool at_start : {true, false})
+        {
+          const double s_end = at_start ? part.first : part.second;
+          const std::size_t k = rp.index_in_chain;
+          const bool run_end = at_start ? s_end <= Tol() : s_end >= rp.length - Tol();
+          const bool chain_end =
+              !B.closed && (at_start ? k == 0 : k + 1 == B.runs.size());
+          if (run_end && chain_end)
+          {
+            const Point3D e = rp.At(s_end);
+            const auto ball = RunIntervalWithin(r, e, e, interaction);
+            found.insert(found.end(), ball.begin(), ball.end());
+          }
+        }
       }
       found = MergeIntervals(std::move(found), Tol());
       if (found.empty())
@@ -7042,15 +7130,18 @@ void Identifier::Assign(IdentificationResult &result)
     }
     stage.Progress(r, runs.size(), "claims");
     auto &run_claims = claims[r];
+    // Claims by priority, then by position along the run (never by feature id, review m1):
+    // claims of one priority never overlap (clusters disjoint, windows shortened to abut,
+    // pairs / stacks assembled per cross-section; Diagnostics.SamePriorityClaimOverlaps is
+    // gated at 0 by the audit), so their order within a priority is immaterial to the
+    // assignment; were one to overlap, the earlier interval along the run would win.
     std::sort(run_claims.begin(), run_claims.end(),
               [](const Claim &a, const Claim &b)
               {
-                return std::tie(a.priority, a.feature, a.interval) <
-                       std::tie(b.priority, b.feature, b.interval);
+                return std::tie(a.priority, a.interval, a.feature) <
+                       std::tie(b.priority, b.interval, b.feature);
               });
-    // Two claims of one priority by different features overlapping on the run would be
-    // decided by the feature id below: the rules (clusters disjoint, windows shortened to
-    // abut, pairs / stacks assembled per cross-section) never produce one; counted.
+    // Two claims of one priority by different features overlapping on the run: counted.
     for (std::size_t i = 0; i < run_claims.size(); i++)
     {
       for (std::size_t j = i + 1;
@@ -7888,9 +7979,18 @@ IdentificationResult Identifier::Identify()
     stage.Begin("knife-edge census");
     const nlohmann::json census = KnifeEdgeCensus();
     result.knife_edge_census = census.dump();
-    stage.End("distance within " + std::to_string(kKnifeEdgeBandRelative) + " R of R: " +
-              census["Distance"]["R"]["Total"].dump() + ", of 2R: " +
-              census["Distance"]["2R"]["Total"].dump() + " (mesh units)");
+    {
+      // The census is in mesh units (the manifest scales it to its length unit); the log
+      // also gives the lengths in units of R so that the two readings cannot be confused.
+      const double at_R = census["Distance"]["R"]["Total"].get<double>();
+      const double at_2R = census["Distance"]["2R"]["Total"].get<double>();
+      std::ostringstream text;
+      text << "distance within " << kKnifeEdgeBandRelative << " R of R: " << at_R
+           << " mesh units = " << std::fixed << std::setprecision(1) << at_R / R
+           << " R, of 2R: " << std::defaultfloat << at_2R << " mesh units = " << std::fixed
+           << std::setprecision(1) << at_2R / R << " R";
+      stage.End(text.str());
+    }
   }
   if (input.log)
   {

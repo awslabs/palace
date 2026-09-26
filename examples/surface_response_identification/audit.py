@@ -647,6 +647,18 @@ def run_audit(args):
         progress("facing gates (A8)")
         facing_gate_list, facing_result = facing_check.facing_gates(manifest)
         gates.extend(facing_gate_list)
+        # A9 (review m1): claims of one priority never overlap on a run, so claim resolution
+        # never had to decide between two features (the classifier counts every such overlap).
+        diagnostics = identification.get("Diagnostics") or {}
+        overlaps = diagnostics.get("SamePriorityClaimOverlaps")
+        gates.append(gate("A9-same-priority-claim-overlaps", overlaps == 0,
+                          {"SamePriorityClaimOverlaps": overlaps,
+                           "StackCompositionCapHits": diagnostics.get("StackCompositionCapHits"),
+                           "StackGeometricOffsetIntervals": diagnostics.get("StackGeometricOffsetIntervals"),
+                           "ClusterExtension": {k: v for k, v in (diagnostics.get("ClusterExtension") or {}).items() if k != "Rule"},
+                           "StackEndThirdBodyLength": diagnostics.get("StackEndThirdBodyLength"),
+                           "Basis": "Identification.Diagnostics.SamePriorityClaimOverlaps == 0 (the claim sort is by priority and position, never by feature id)"},
+                          evaluable=overlaps is not None))
         v2_summary["Facing"] = {k: facing_result[k] for k in ("Isolated", "Pairs", "ByClass", "Exclusions", "KnifeEdgeRule", "DistanceHistogram")}
         patches_path = getattr(args, "patches", None) or os.path.join(os.path.dirname(os.path.abspath(args.manifest)), "surface-response-patches.csv")
         if os.path.exists(patches_path):
