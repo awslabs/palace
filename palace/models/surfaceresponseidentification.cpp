@@ -2225,9 +2225,8 @@ private:
   void AssembleStack(const std::vector<std::size_t> &link_items,
                      const std::vector<std::size_t> &span_items);
   void BuildClusters();
-  double ExtendClusters();
+  double ExtendClusters(bool measure_joint_claims = false);
   void EmitClusters();
-  double StackEndThirdBodyLength() const;
   void BuildVertexWindows();
   void Assign(IdentificationResult &result);
   nlohmann::json KnifeEdgeCensus() const;
@@ -3140,6 +3139,30 @@ void Identifier::DetectArcs()
     }
     return found;
   };
+    // Tie-break serialisation of an arc set: per arc the radius, the total turn, the joint
+    // count, the distance of its centre from the path's joint centroid and the arc-length
+    // position of its first joint measured from the nearer path end — every entry invariant
+    // under translation, rotation, mirroring and path reversal, on the signature grid (the
+    // former absolute centre coordinates made the choice between two equally absorbing
+    // arc sets depend on the input orientation: DS-SCT-001 mirrored read another chopping
+    // of a spline bend into exact-fit arcs, moved a curved boundary 0.036 um and a cluster
+    // boundary 0.03 um; review fix-3 m2).
+    Point3D path_centroid{};
+    std::vector<double> path_position(path_vertices.size(), 0.0);
+    {
+      const std::size_t distinct = closed ? path_vertices.size() - 1 : path_vertices.size();
+      for (std::size_t k = 0; k < distinct; k++)
+      {
+        path_centroid = Add(path_centroid, input.vertices[path_vertices[k]].coordinate);
+      }
+      path_centroid = Scale(1.0 / static_cast<double>(distinct), path_centroid);
+      for (std::size_t k = 0; k < path_segments.size(); k++)
+      {
+        const auto &segment = input.segments[path_segments[k]];
+        path_position[k + 1] = path_position[k] + Distance(segment.p0, segment.p1);
+      }
+    }
+    const double path_total = path_position.back();
     auto Score = [&](const std::vector<Arc> &list)
     {
       std::size_t absorbed = 0;
@@ -3151,9 +3174,23 @@ void Identifier::DetectArcs()
       std::vector<std::string> keys;
       for (const auto &arc : list)
       {
+        double x_first = 0.0;
+        for (std::size_t k = 0; k < path_vertices.size(); k++)
+        {
+          if (path_vertices[k] == arc.joints.front())
+          {
+            x_first = path_position[k];
+            break;
+          }
+        }
+        const double from_end = closed ? 0.0 : std::min(x_first, path_total - x_first);
         std::ostringstream key;
-        key << std::setprecision(12) << arc.center[0] << "," << arc.center[1] << ","
-            << arc.center[2] << "," << arc.radius << "," << arc.joints.size();
+        key << RoundTo(arc.radius / R, kSignatureLengthQuantumOverRadius) << ","
+            << RoundTo(arc.turn * 180.0 / std::acos(-1.0), kSignatureAngleQuantumDegrees)
+            << "," << arc.joints.size() << ","
+            << RoundTo(Distance(arc.center, path_centroid) / R,
+                       kSignatureLengthQuantumOverRadius)
+            << "," << RoundTo(from_end / R, kSignatureLengthQuantumOverRadius);
         keys.push_back(key.str());
       }
       std::sort(keys.begin(), keys.end());
@@ -4170,6 +4207,23 @@ void Identifier::BuildBentPairs()
         }
       }
       const auto paired = SubtractIntervals(within, MergeIntervals(excluded, Tol()), Tol());
+      if (std::getenv("PALACE_IDENTIFICATION_DEBUG_PIECES") && input.log)
+      {
+        std::ostringstream dbg;
+        dbg << std::setprecision(10) << "  DEBUG facing run " << a << " of chain " << A.id
+            << " vs chain " << B.id << " start (" << ra.start[0] << ", " << ra.start[1]
+            << ") length " << ra.length << " within";
+        for (const auto &w : within)
+        {
+          dbg << " [" << w.first << ", " << w.second << "]";
+        }
+        dbg << " excluded";
+        for (const auto &w : excluded)
+        {
+          dbg << " [" << w.first << ", " << w.second << "]";
+        }
+        input.log(dbg.str() + "\n");
+      }
       for (const auto &interval : paired)
       {
         // Cuts at A's curved boundaries and at B's curved boundaries mapped onto the run.
@@ -6345,6 +6399,28 @@ void Identifier::BuildClusters()
            << " edges before the extension)";
     stage.End(counts.str());
   }
+  if (std::getenv("PALACE_IDENTIFICATION_DEBUG_EXTENSION") && input.log)
+  {
+    std::ostringstream dbg;
+    dbg << std::setprecision(10);
+    for (std::size_t c = 0; c < cluster_claimed.size(); c++)
+    {
+      for (const auto &core : cluster_cores[c])
+      {
+        dbg << "    base core cluster " << c << " run " << core.run << " from (" << core.p0[0]
+            << ", " << core.p0[1] << ") to (" << core.p1[0] << ", " << core.p1[1] << ")\n";
+      }
+      for (const auto &[r, interval] : cluster_claimed[c])
+      {
+        const Run &run = runs[r];
+        dbg << "    base claim cluster " << c << " run " << r << " chain " << run.chain << " s ["
+            << interval.first << ", " << interval.second << "] of " << run.length << " from ("
+            << run.At(interval.first)[0] << ", " << run.At(interval.first)[1] << ") to ("
+            << run.At(interval.second)[0] << ", " << run.At(interval.second)[1] << ")\n";
+      }
+    }
+    input.log(dbg.str());
+  }
 }
 
 // Cluster extension (decision 85(2)). Every single-edge portion — a run interval outside
@@ -6358,8 +6434,14 @@ void Identifier::BuildClusters()
 // result does not depend on the order). Pairs and stacks are joint descriptions and are
 // never absorbed; the stack-end recomposition then runs again on the enlarged claims, and
 // the extension iterates to closure over the single-edge portions only. Returns the
-// absorbed length of this pass (0 = closure).
-double Identifier::ExtendClusters()
+// absorbed length of this pass; a pass whose candidates total at most the signature
+// parameter tolerance (1e-3 R) is NOT applied (closure test before the application, review
+// fix-3 m8: the pairs / stacks are never left unrecomposed against an applied absorption).
+// With measure_joint_claims the SAME across rule is evaluated on the pair / stack claims
+// (priority 2) instead of the single-edge remainder and nothing is absorbed: the returned
+// length is Diagnostics.StackEndThirdBodyLength (decision 85(2)), the one definition the
+// facing gate's StackEndRecomposition / StackEndThirdBody classes sample (review m5).
+double Identifier::ExtendClusters(bool measure_joint_claims)
 {
   const double interaction = kInteractionDistanceOverRadius * R;
   const double neighbourhood = kSelfPairNeighbourhoodOverRadius * R;
@@ -6577,9 +6659,24 @@ double Identifier::ExtendClusters()
     {
       continue;
     }
-    stage.Progress(r, runs.size(), "cluster extension");
-    const auto remainder =
-        SubtractIntervals({Interval{0.0, runs[r].length}}, MergeIntervals(taken[r], Tol()), Tol());
+    stage.Progress(r, runs.size(), measure_joint_claims ? "stack-end third body" : "cluster extension");
+    std::vector<Interval> remainder;
+    if (measure_joint_claims)
+    {
+      for (const auto &claim : claims[r])
+      {
+        if (claim.priority == 2)
+        {
+          remainder.push_back(claim.interval);
+        }
+      }
+      remainder = MergeIntervals(std::move(remainder), Tol());
+    }
+    else
+    {
+      remainder = SubtractIntervals({Interval{0.0, runs[r].length}},
+                                    MergeIntervals(taken[r], Tol()), Tol());
+    }
     if (remainder.empty())
     {
       continue;
@@ -6765,9 +6862,18 @@ double Identifier::ExtendClusters()
       absorptions.insert(absorptions.end(), merged.begin(), merged.end());
     }
   }
-  if (absorptions.empty())
+  double candidate_length = 0.0;
+  for (const auto &absorption : absorptions)
   {
-    return 0.0;
+    candidate_length += absorption.interval.second - absorption.interval.first;
+  }
+  if (measure_joint_claims ||
+      candidate_length <= kSignatureParameterToleranceOverRadius * R)
+  {
+    // Measurement only, or closure: below the resolution of every parameter and gate;
+    // nothing is applied, so the pairs / stacks of this pass stay consistent with the
+    // claims they were assembled on.
+    return candidate_length;
   }
   // Owners of one absorption are one cluster (union-find over clusters and free sites).
   const std::size_t n_owner = cluster_claimed.size() + free_sites.size();
@@ -6890,98 +6996,6 @@ double Identifier::ExtendClusters()
     }
   }
   return absorbed;
-}
-
-// Stack-end third-body length (decision 85(2), reported): pair / stack claims within 2R of
-// a cluster's claimed perimeter on another chain (outside the through-vertex zones) — a
-// joint description next to a cluster, not absorbed by it.
-double Identifier::StackEndThirdBodyLength() const
-{
-  const double interaction = kInteractionDistanceOverRadius * R;
-  std::vector<std::tuple<std::size_t, Interval>> pieces;
-  for (std::size_t c = 0; c < cluster_claimed.size(); c++)
-  {
-    for (const auto &[r, interval] : cluster_claimed[c])
-    {
-      pieces.emplace_back(r, interval);
-    }
-  }
-  if (pieces.empty())
-  {
-    return 0.0;
-  }
-  Point3D lo{}, hi{};
-  for (std::size_t i = 0; i < pieces.size(); i++)
-  {
-    const auto &[r, interval] = pieces[i];
-    Point3D plo, phi;
-    BoundingBox(runs[r].At(interval.first), runs[r].At(interval.second), plo, phi);
-    for (int d = 0; d < 3; d++)
-    {
-      lo[d] = i == 0 ? plo[d] : std::min(lo[d], plo[d]);
-      hi[d] = i == 0 ? phi[d] : std::max(hi[d], phi[d]);
-    }
-  }
-  UniformGrid piece_grid(4.0 * R, lo);
-  for (std::size_t i = 0; i < pieces.size(); i++)
-  {
-    const auto &[r, interval] = pieces[i];
-    Point3D plo, phi;
-    BoundingBox(runs[r].At(interval.first), runs[r].At(interval.second), plo, phi);
-    piece_grid.Insert(i, plo, phi);
-  }
-  double total = 0.0;
-  for (std::size_t r = 0; r < runs.size(); r++)
-  {
-    if (runs[r].excluded || claims[r].empty())
-    {
-      continue;
-    }
-    std::vector<Interval> joint;
-    for (const auto &claim : claims[r])
-    {
-      if (claim.priority == 2)
-      {
-        joint.push_back(claim.interval);
-      }
-    }
-    if (joint.empty())
-    {
-      continue;
-    }
-    joint = MergeIntervals(std::move(joint), Tol());
-    const Chain &A = chains[chain_index.at(runs[r].chain)];
-    Point3D rlo, rhi;
-    BoundingBox(runs[r].start, runs[r].end, rlo, rhi);
-    std::vector<Interval> within;
-    for (const std::size_t i : piece_grid.Query(rlo, rhi, interaction + 2.0 * Tol()))
-    {
-      const auto &[rp, interval] = pieces[i];
-      if (runs[rp].excluded || rp == r || runs[rp].chain == runs[r].chain ||
-          run_plane[rp] != run_plane[r])
-      {
-        continue;
-      }
-      const Point3D q0 = runs[rp].At(interval.first), q1 = runs[rp].At(interval.second);
-      auto found = RunIntervalWithin(r, q0, q1, interaction);
-      if (found.empty())
-      {
-        continue;
-      }
-      std::vector<Interval> excluded;
-      for (const auto &zone : ThroughZones(r, A, chains[chain_index.at(runs[rp].chain)]))
-      {
-        excluded.insert(excluded.end(), zone.begin(), zone.end());
-      }
-      found = SubtractIntervals(found, MergeIntervals(excluded, Tol()), Tol());
-      within.insert(within.end(), found.begin(), found.end());
-    }
-    for (const auto &interval : IntersectIntervals(joint, MergeIntervals(within, Tol()), Tol()))
-    {
-      total += interval.second - interval.first;
-    }
-  }
-  return total;
 }
 
 // The cluster features from the final claimed portions and member sites (after the
@@ -8034,6 +8048,40 @@ IdentificationResult Identifier::Identify()
         curved += chain.curved.size();
       }
       stage.End(std::to_string(curved) + " curved chain intervals");
+      if (std::getenv("PALACE_IDENTIFICATION_DEBUG_CHAINS") && input.log)
+      {
+        std::ostringstream dbg;
+        dbg << std::setprecision(10);
+        for (const auto &chain : chains)
+        {
+          const Run &first = runs[chain.runs.front()], &last = runs[chain.runs.back()];
+          dbg << "  DEBUG chain " << chain.id << (chain.closed ? " closed" : " open") << " runs "
+              << chain.runs.size() << " length " << chain.length << " from (" << first.start[0]
+              << ", " << first.start[1] << ") to (" << last.end[0] << ", " << last.end[1]
+              << ") curved";
+          for (const auto &c : chain.curved)
+          {
+            dbg << " [" << c.first << ", " << c.second << "]";
+          }
+          dbg << " joints";
+          for (std::size_t k = 0; k < chain.joint_turn.size(); k++)
+          {
+            if (chain.joint_turn[k] > 1.0e-6)
+            {
+              const Run &run = runs[chain.runs[k]];
+              dbg << " (" << run.start[0] << ", " << run.start[1] << ": "
+                  << chain.joint_turn[k] * 180.0 / std::acos(-1.0) << " deg)";
+            }
+          }
+          dbg << " arcs";
+          for (const auto &[arc, x0, x1] : chain.arc_spans)
+          {
+            dbg << " (" << arc << " [" << x0 << ", " << x1 << "] r " << arcs[arc].radius << ")";
+          }
+          input.log(dbg.str() + "\n");
+          dbg.str("");
+        }
+      }
     }
     stage.Begin("vertex windows");
     BuildVertexWindows();
@@ -8060,9 +8108,11 @@ IdentificationResult Identifier::Identify()
       stage.End("absorbed " + std::to_string(absorbed) + " (mesh units) in " +
                 std::to_string(extension_portions) + " portions so far, " +
                 std::to_string(cluster_claimed.size()) + " clusters");
-      // Closure: a pass absorbing less than the signature parameter tolerance (1e-3 R) in
-      // total moves no parameter and no gate (DS-SCT-002 at R 2.1: pass 1 absorbed the
-      // neighbours, passes 3-15 re-cut 1 nm slivers at the new breakpoints for 8 s each).
+      // Closure: a pass whose candidates total at most the signature parameter tolerance
+      // (1e-3 R) moves no parameter and no gate (DS-SCT-002 at R 2.1: pass 1 absorbed the
+      // neighbours, passes 3-15 re-cut 1 nm slivers at the new breakpoints for 8 s each);
+      // ExtendClusters has NOT applied it (tested before the application, review m8), so
+      // the pairs / stacks of this pass are the final ones.
       if (absorbed <= kSignatureParameterToleranceOverRadius * R)
       {
         break;
@@ -8079,7 +8129,7 @@ IdentificationResult Identifier::Identify()
       }
     }
     stage.Begin("stack-end third body");
-    stack_end_third_body_length = StackEndThirdBodyLength();
+    stack_end_third_body_length = ExtendClusters(true);
     stage.End(std::to_string(stack_end_third_body_length) + " (mesh units)");
     stage.Begin("cluster signatures");
     EmitClusters();
@@ -8579,14 +8629,31 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"ParallelCosineTolerance", kParallelCosineTolerance},
         {"RoundedCornerTangentTolerance", kRoundedCornerTangentTolerance},
         {"ArcFitToleranceRelative", kArcFitToleranceRelative},
+        {"ArcFitAbsoluteToleranceOverR", kArcFitAbsoluteToleranceOverRadius},
+        {"ArcInscribedAngleToleranceRelative", kArcFitToleranceRelative},
+        {"ArcTangentLengthPreferenceOverTolerance", 10.0},
         {"ArcRule", "joints (>= 3) joined by pieces < 2R (a piece >= 2R is allowed between "
-                    "two sub-corner joints: a chord of a smooth polyline bend; the scan then "
-                    "stops at the first failed fit), same turn sign, <= 180 deg, one circle "
-                    "with the arm tangents within the fit tolerance: radius < R and turn > "
-                    "corner threshold = one rounded corner (own chain, arms meet through it; "
-                    "tangent-length radius); radius >= R = a bend inside its chain whose "
-                    "circle is the least-squares fit of its joint vertices (exact for an "
-                    "inscribed polyline)"},
+                    "two sub-corner joints: a chord of a smooth polyline bend; in that "
+                    "long-chord regime every joint lies on the least-squares circle within "
+                    "the signature parameter tolerance, every interior turn satisfies the "
+                    "inscribed-angle relation within ArcInscribedAngleToleranceRelative and "
+                    "the scan stops at the first failed fit), same turn sign, <= 180 deg "
+                    "(a closed path of sub-corner joints on one circle turning 360 deg is "
+                    "one arc), one circle with the arm tangents within the fit tolerance "
+                    "(tangent lengths equal within ArcFitToleranceRelative; every joint "
+                    "within min(ArcFitToleranceRelative x radius, "
+                    "ArcFitAbsoluteToleranceOverR x R) of the circle): radius < R and turn "
+                    "> corner threshold = one rounded corner (own chain, arms meet through "
+                    "it; tangent-length radius); radius >= R = a bend inside its chain whose "
+                    "circle is the tangent-length circle when every joint lies on it within "
+                    "ArcTangentLengthPreferenceOverTolerance x the parameter tolerance, "
+                    "else the least-squares fit of its joint vertices (exact for an "
+                    "inscribed polyline; non-tangent arms after a spline piece); both "
+                    "traversal directions of a path are scanned and the set absorbing more "
+                    "joints wins, then fewer arcs, then the smaller serialisation of "
+                    "(radius, turn, joints, centre distance from the path centroid, first "
+                    "joint's distance from the nearer path end) on the signature grid: a "
+                    "translated, rotated or mirrored mesh gives the congruent arcs"},
         {"LengthQuantumOverR", kLengthQuantumOverRadius},
         {"DirectionQuantum", kDirectionQuantum},
         {"SignatureLengthQuantumOverR", kSignatureLengthQuantumOverRadius},
@@ -8640,16 +8707,23 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
                       "(the stack ends there); a chain folding back within 2R beyond pi R of "
                       "arc length pairs with itself"},
         {"StackCompositionCap", kStackCompositionCap},
+        {"ClusterExtensionWedgeCapDegrees", kCornerTurnToleranceDegrees},
+        {"ClusterExtensionClosureOverR", kSignatureParameterToleranceOverRadius},
         {"ClusterExtensionRule",
          "every single-edge portion (the isolated / curved remainder after clusters, "
          "windows and pairs / stacks) within 2R (3D, strict) of a cluster's claimed "
          "perimeter or of a free vertex feature's window on another chain (own chain beyond "
          "pi R), faced ACROSS (perpendicular projection inside the claimed piece, extended "
-         "by 2R tan(turn) at interior joints), outside the through-vertex zones of vertices "
-         "not in that cluster, joins the cluster (a vertex feature so joined becomes a "
-         "cluster; several owners merge); iterated to closure with the stack recomposition; "
-         "pairs / stacks are never absorbed and their length within 2R of cluster metal is "
-         "Diagnostics.StackEndThirdBodyLength (decision 85(2))"},
+         "by 2R tan(turn) at interior joints of the claimed chain interval with the turn "
+         "capped at ClusterExtensionWedgeCapDegrees, never past the end of the claimed "
+         "interval; the full 2R ball around a claimed piece ending where its chain ends), "
+         "outside the through-vertex zones of vertices not in that cluster, joins the "
+         "cluster (a vertex feature so joined becomes a cluster; several owners merge); "
+         "iterated to closure with the stack recomposition, a pass is applied only when its "
+         "candidates total more than ClusterExtensionClosureOverR x R (ratified as the "
+         "'across' rule, decision 88(2)); pairs / stacks are never absorbed and their claimed "
+         "length satisfying the same across rule is Diagnostics.StackEndThirdBodyLength "
+         "(decision 85(2))"},
         {"MutualSidesOverhangOverSeparation",
          std::sqrt((1.0 + kPairSeparationTolerance) * (1.0 + kPairSeparationTolerance) - 1.0)},
         {"KnifeEdgeBandRelative", kKnifeEdgeBandRelative},
@@ -8695,11 +8769,21 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
           {"VertexFeaturesJoined", extension.sites},
           {"Rule", "every single-edge portion (isolated / curved edge remainder) within 2R "
                    "(3D, strict) of a cluster's claimed perimeter or of a vertex feature's "
-                   "window on another chain (or its own chain beyond pi R), outside the "
-                   "through-vertex zones, joins that cluster (a vertex feature so joined "
-                   "becomes a cluster); iterated to closure over single-edge portions; "
-                   "pairs / stacks are never absorbed (decision 85(2))"}}},
-        {"StackEndThirdBodyLength", L(extension.stack_end_third_body_length)}}},
+                   "window on another chain (or its own chain beyond pi R), faced across "
+                   "(Conventions.ClusterExtensionRule), outside the through-vertex zones of "
+                   "non-member vertices, joins that cluster (a vertex feature so joined "
+                   "becomes a cluster); iterated to closure over single-edge portions (a "
+                   "pass below ClusterExtensionClosureOverR x R is not applied); pairs / "
+                   "stacks are never absorbed (decision 85(2), across rule ratified 88(2))"}}},
+        {"StackEndThirdBodyLength", L(extension.stack_end_third_body_length)},
+        {"StackEndThirdBodyRule",
+         "pair / stack claimed length within 2R (3D, strict) of a cluster's claimed "
+         "perimeter or a free vertex feature's window, faced across by the cluster "
+         "extension's rule, outside the through-vertex zones of non-member vertices "
+         "(the same predicate as the extension, evaluated on the pair / stack claims and "
+         "never absorbed); the facing gate's StackEndThirdBody class is the sampled "
+         "reading of the same definition (0.5 R samples, across = the facing direction "
+         "within 60 deg of the sample's normal, through-vertex zones excluded first)"}}},
       {"KnifeEdgeCensus", ScaledCensus(knife_edge_census, length_scale)},
       {"GeometryDigest", geometry_digest}};
 }

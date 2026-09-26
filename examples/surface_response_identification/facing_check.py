@@ -35,9 +35,19 @@ exclusions, each reported with its length:
 * `StackEndRecomposition` (pair / stack sides only): the facing portion belongs to another
   pair / stack feature sharing a member chain with the sample's feature — the same route's
   cross-section recomposed at a stack end or at a straight / curved class boundary, where the
-  partner's foot lies just across the cut (sub-chord lengths; reported);
+  partner's foot lies just across the cut (sub-chord lengths; reported). BOUNDED (review fix-3
+  m4): a recomposition is a sub-chord event, so the exempt length of one site (one ordered
+  pair of features) is at most `STACK_END_RECOMPOSITION_SITE_CAP_OVER_R` = 1 R and the total
+  over the manifest at most 1 R per pair / stack feature involved
+  (`STACK_END_RECOMPOSITION_TOTAL_CAP_OVER_R_PER_FEATURE`); a site or a total beyond its cap is
+  NOT exempt (two overlapping two-edge pairs across a sub-2R trace — the decision-78 defect —
+  would run along the whole route and fail the gate); both totals are reported in R;
 * segments with a recorded manifest exclusion (Port, CrossLayer, NonManifold, ...) are never
   facing candidates.
+Reported metric (decision 88(2), not a gate): `ClusterProximityNotAcross` — the isolated /
+curved edge length with cluster or vertex-feature metal within 2R (3D, strict) that is NOT
+faced across (the extension's across rule leaves it single-edge), split into the recorded
+`ThroughVertex` / `SelfNeighbourhood` exemptions and the residual outside them, per class.
 The former `ClusterNeighbour` / `VertexNeighbour` exemptions of the ISOLATED gate are gone
 (decision 85(2)): a single-edge portion within 2R of a cluster's or a vertex feature's claimed
 perimeter now joins the cluster, so such a facing is a defect. Every facing segment within 2R is tested (not only
@@ -64,6 +74,11 @@ PAIR_CLASSES = ("SameConductorGap", "DifferentConductorGap", "SameConductorStrip
                 "ParallelEdgeCluster", "CurvedParallelEdgeCluster")
 VERTEX_CLASSES = ("ConvexCorner", "ConcaveCorner", "Endpoint", "Junction")
 EXCLUSION_CLASSES = ("AtExactly2R", "ThroughVertex", "SelfNeighbourhood", "StackEndThirdBody", "StackEndRecomposition")
+# Bound of the StackEndRecomposition exemption (review fix-3 m4): a recomposition at a stack end
+# or class boundary is a sub-chord event, so one site (one ordered pair of features) may exempt
+# at most one R and the whole manifest at most one R per pair / stack feature involved.
+STACK_END_RECOMPOSITION_SITE_CAP_OVER_R = 1.0
+STACK_END_RECOMPOSITION_TOTAL_CAP_OVER_R_PER_FEATURE = 1.0
 PAIR_SEPARATION_TOLERANCE = 0.05  # Identification.Conventions PairSeparationToleranceRelative
 THROUGH_VERTEX_ZONE_OVER_R = 2.0
 # A chain's points closer than pi R along the chain are within 2R of each other along any bend
@@ -164,6 +179,27 @@ def facing_samples(grid, p0, p1, excluded, points, tangents, owners, own_mask, r
     si, sj, ri, fi = sample_indices[ok], segment_indices[ok], r[ok], foot[ok]
     order = np.lexsort((ri, si))
     return si[order], sj[order], ri[order], fi[order]
+
+
+def proximity_samples(grid, p0, p1, excluded, points, tangents, owners, candidate_mask, radius):
+    """Every non-excluded candidate segment within 2R (strict, on the decision grid) of every
+    sample point in ANY direction, with the across flag (|cos| < 0.5 of the sample tangent):
+    arrays (sample index, segment index, distance, foot, across)."""
+    sample_indices, segment_indices = grid.candidates(points)
+    a, b = p0[segment_indices], p1[segment_indices]
+    ab = b - a
+    p = points[sample_indices]
+    t = np.clip(((p - a) * ab).sum(1) / np.maximum((ab * ab).sum(1), 1e-30), 0.0, 1.0)
+    foot = a + t[:, None] * ab
+    d = foot - p
+    r = np.sqrt((d * d).sum(1))
+    cosine = np.abs((d * tangents[sample_indices]).sum(1)) / np.maximum(r, 1e-30)
+    quantum = LENGTH_QUANTUM_OVER_R * radius
+    ok = ((np.round(r / quantum) < np.round(2.0 * radius / quantum)) & (r > 1e-9) & ~excluded[segment_indices]
+          & candidate_mask[segment_indices] & (segment_indices != owners[sample_indices]))
+    si, sj, ri, fi, ci = sample_indices[ok], segment_indices[ok], r[ok], foot[ok], cosine[ok] < 0.5
+    order = np.lexsort((ri, si))
+    return si[order], sj[order], ri[order], fi[order], ci[order]
 
 
 def portion_samples(p0, p1, length, portions, spacing):
@@ -347,21 +383,26 @@ class ClaimLookup:
 
 
 def classify_flag(lookup, flag, radius):
-    """Recorded exclusion class of a flagged sample, or None (a genuine defect)."""
+    """Recorded exclusion class of a flagged sample, or None (a genuine defect). The
+    through-vertex zone and the self neighbourhood are tested first: the pair-side classes
+    below measure the stack-end third body / recomposition OUTSIDE them (the identification's
+    Diagnostics.StackEndThirdBodyLength excludes the through-vertex zones of non-member
+    vertices; one definition, review fix-3 m5). The facing feature id is recorded in the flag."""
     seg = flag["FacingSegment"]
     foot = np.asarray(flag["FacingPoint"])
-    if flag["Class"] in PAIR_CLASSES:
-        feature = lookup.feature_at(seg, foot)
-        ftype = lookup.feature_type.get(feature) if feature is not None else None
-        if ftype == "SpatialEdgeCluster" or ftype in VERTEX_CLASSES:
-            return "StackEndThirdBody"
-        if ftype in PAIR_CLASSES and lookup.member_chains.get(feature, set()) & lookup.member_chains.get(flag["Feature"], set()):
-            return "StackEndRecomposition"
+    feature = lookup.feature_at(seg, foot)
+    flag["FacingFeature"] = feature
     if lookup.through_vertex(flag["Point"], foot, THROUGH_VERTEX_ZONE_OVER_R * radius):
         return "ThroughVertex"
     arc = lookup.arc_distance(flag["Segment"], flag["Point"], seg, foot)
     if arc is not None and arc < SELF_PAIR_NEIGHBOURHOOD_OVER_R * radius:
         return "SelfNeighbourhood"
+    if flag["Class"] in PAIR_CLASSES:
+        ftype = lookup.feature_type.get(feature) if feature is not None else None
+        if ftype == "SpatialEdgeCluster" or ftype in VERTEX_CLASSES:
+            return "StackEndThirdBody"
+        if ftype in PAIR_CLASSES and lookup.member_chains.get(feature, set()) & lookup.member_chains.get(flag["Feature"], set()):
+            return "StackEndRecomposition"
     return None
 
 
@@ -438,6 +479,18 @@ def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=2000
     quantum = LENGTH_QUANTUM_OVER_R * radius
     flagged_features = defaultdict(set)
     flags = []
+    # StackEndRecomposition exemptions per site (feature, facing feature): bounded afterwards.
+    recomposition_sites = defaultdict(lambda: {"Length": 0.0, "Class": None, "Flags": []})
+    # Cluster / vertex-feature metal within 2R of isolated / curved samples in ANY direction:
+    # the samples with no across hit are the not-across residual (decision 88(2) metric).
+    cluster_mask = np.zeros(len(p0), dtype=bool)
+    for i, seg in enumerate(identification["Segments"]):
+        for _, _, f in seg.get("Portions", []):
+            if lookup.feature_type.get(int(f)) == "SpatialEdgeCluster" or lookup.feature_type.get(int(f)) in VERTEX_CLASSES:
+                cluster_mask[i] = True
+                break
+    not_across = defaultdict(lambda: defaultdict(float))  # class -> exemption / Residual -> length
+    not_across_flags = []
     for feature in features:
         ftype = feature["Type"]
         if ftype not in ISOLATED_CLASSES + PAIR_CLASSES:
@@ -475,6 +528,7 @@ def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=2000
                     continue
                 facing[ftype] += weight
                 nearest_exclusion = None
+                nearest_flag = None
                 flagged = None
                 for seg, dist, foot, inter in hits:
                     if not inter:
@@ -488,13 +542,66 @@ def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=2000
                         break
                     if nearest_exclusion is None:
                         nearest_exclusion = flag["Exclusion"]
+                        nearest_flag = flag
                 if flagged is not None:
                     unexcluded[ftype] += weight
                     flagged_features[ftype].add(feature["Id"])
                     flags.append(flagged)
                 else:
                     excluded_length[ftype][nearest_exclusion] += weight
+                    if nearest_exclusion == "StackEndRecomposition":
+                        site = recomposition_sites[(feature["Id"], nearest_flag["FacingFeature"])]
+                        site["Length"] += weight
+                        site["Class"] = ftype
+                        site["Flags"].append(nearest_flag)
+            if ftype in ISOLATED_CLASSES:
+                # Not-across residual: samples with cluster / vertex metal within 2R but no
+                # across hit at all (the across hits are gated above).
+                si2, sj2, ri2, fi2, ci2 = proximity_samples(grid, p0, p1, excluded, points[sl], tangents[sl], owners[sl], cluster_mask, radius)
+                if len(si2):
+                    starts2 = np.concatenate([[0], np.nonzero(si2[1:] != si2[:-1])[0] + 1, [len(si2)]])
+                    for a, b in zip(starts2[:-1], starts2[1:]):
+                        if np.any(ci2[a:b]):
+                            continue
+                        k = int(si2[a])
+                        weight = float(weights[sl][k])
+                        probe = {"Class": ftype, "Feature": feature["Id"], "Segment": int(owners[sl][k]), "FacingSegment": int(sj2[a]),
+                                 "Distance": float(ri2[a]), "Weight": weight, "Point": [float(v) for v in points[sl][k]],
+                                 "FacingPoint": [float(v) for v in fi2[a]]}
+                        exemption = classify_flag(lookup, probe, radius)
+                        key = exemption if exemption in ("ThroughVertex", "SelfNeighbourhood") else "Residual"
+                        not_across[ftype][key] += weight
+                        if key == "Residual":
+                            not_across_flags.append(probe)
         own_mask[own_segments] = False
+    # Bound of the StackEndRecomposition exemption (m4): a site beyond 1 R, or every site once
+    # the total exceeds 1 R per pair / stack feature involved, is not exempt.
+    site_cap = STACK_END_RECOMPOSITION_SITE_CAP_OVER_R * radius
+    recomposition_total = sum(site["Length"] for site in recomposition_sites.values())
+    recomposition_features = {f for f, _ in recomposition_sites} | {g for _, g in recomposition_sites if g is not None}
+    total_cap = STACK_END_RECOMPOSITION_TOTAL_CAP_OVER_R_PER_FEATURE * radius * max(1, len(recomposition_features))
+    over_cap = []
+    for (feature_id, facing_id), site in recomposition_sites.items():
+        beyond_site = site["Length"] > site_cap
+        beyond_total = recomposition_total > total_cap
+        if beyond_site or beyond_total:
+            over_cap.append({"Feature": feature_id, "FacingFeature": facing_id, "Length": site["Length"], "Class": site["Class"],
+                             "Reason": "site beyond 1 R" if beyond_site else "total beyond 1 R per feature"})
+            excluded_length[site["Class"]]["StackEndRecomposition"] -= site["Length"]
+            unexcluded[site["Class"]] += site["Length"]
+            flagged_features[site["Class"]].add(feature_id)
+            for flag in site["Flags"]:
+                flag["Exclusion"] = None
+                flag["ExclusionRefused"] = "StackEndRecomposition beyond its cap"
+                flags.append(flag)
+    recomposition_report = {
+        "Sites": len(recomposition_sites), "TotalLength": recomposition_total, "TotalOverR": recomposition_total / radius,
+        "MaxSiteLength": max((site["Length"] for site in recomposition_sites.values()), default=0.0),
+        "MaxSiteOverR": max((site["Length"] for site in recomposition_sites.values()), default=0.0) / radius,
+        "SiteCapOverR": STACK_END_RECOMPOSITION_SITE_CAP_OVER_R, "TotalCapOverR": total_cap / radius,
+        "FeaturesInvolved": len(recomposition_features), "SitesBeyondCap": over_cap,
+        "TopSites": sorted(({"Feature": f, "FacingFeature": g, "Length": site["Length"]} for (f, g), site in recomposition_sites.items()), key=lambda r: -r["Length"])[:10],
+    }
     sites = group_sites(flags, site_radius_over_r * radius)
     histogram = defaultdict(float)
     for f in flags:
@@ -531,10 +638,19 @@ def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=2000
                   "AtExactly2RLength": sum(at_2r.get(c, 0.0) for c in PAIR_CLASSES),
                   "ExcludedLength": excluded_by(PAIR_CLASSES), "UnexcludedFacingLength": pair_unexcluded},
         "Gates": {"IsolatedFacing": isolated_unexcluded == 0.0, "PairThirdEdge": pair_unexcluded == 0.0},
+        "StackEndRecomposition": recomposition_report,
+        "ClusterProximityNotAcross": {
+            "Rule": "isolated / curved edge length with cluster or vertex-feature metal within 2R (3D, strict) in any direction and no across hit (|cos| < 0.5): the length the extension's across rule leaves single-edge (decision 88(2) metric, reported, not gated)",
+            "ByClass": {cls: dict(v) for cls, v in not_across.items()},
+            "ResidualLength": sum(v.get("Residual", 0.0) for v in not_across.values()),
+            "ThroughVertexLength": sum(v.get("ThroughVertex", 0.0) for v in not_across.values()),
+            "SelfNeighbourhoodLength": sum(v.get("SelfNeighbourhood", 0.0) for v in not_across.values()),
+            "ResidualSites": group_sites(not_across_flags, site_radius_over_r * radius)[:10],
+        },
         "KnifeEdgeRule": f"strict less than 2R on the grid of {LENGTH_QUANTUM_OVER_R:g} R (the classifier's rule); AtExactly2RLength is the facing length at exactly 2R, not flagged",
         "Exclusions": {"AtExactly2R": "facing at exactly 2R on the decision grid (no interaction under the strict rule)",
                        "StackEndThirdBody": "pair / stack side facing a SpatialEdgeCluster or a vertex feature within 2R (a joint description next to a cluster is not absorbed, decision 85(2); reported as Diagnostics.StackEndThirdBodyLength)",
-                       "StackEndRecomposition": "pair / stack side facing another pair / stack feature that shares a member chain (the route's cross-section recomposed at a stack end or class boundary; the partner's foot across the cut)",
+                       "StackEndRecomposition": f"pair / stack side facing another pair / stack feature that shares a member chain (the route's cross-section recomposed at a stack end or class boundary; the partner's foot across the cut); bounded: at most {STACK_END_RECOMPOSITION_SITE_CAP_OVER_R:g} R per site and {STACK_END_RECOMPOSITION_TOTAL_CAP_OVER_R_PER_FEATURE:g} R per pair / stack feature involved in total, beyond which the length is not exempt",
                        "ThroughVertex": f"sample and facing point within {THROUGH_VERTEX_ZONE_OVER_R:g} R of one vertex feature (arms meeting through it, design (b) 1)",
                        "SelfNeighbourhood": f"facing point on the sample's own chain less than {SELF_PAIR_NEIGHBOURHOOD_OVER_R:.6g} R of arc length away (the local neighbourhood of a bend, SelfPairNeighbourhoodOverR)"},
         "DistanceHistogram": dict(sorted(histogram.items())),
@@ -556,7 +672,9 @@ def facing_gates(manifest, spacing=0.5):
                       "Detail": {"UnexcludedFacingLength": block["UnexcludedFacingLength"], "FacingLength": block.get("FacingLength", block.get("ThirdEdgeLength")),
                                  "SampledLength": block["SampledLength"], "ExcludedLength": block["ExcludedLength"], "AtExactly2RLength": block["AtExactly2RLength"],
                                  "Sites": [{k: s[k] for k in ("Length", "Classes", "Features", "MinDistance", "Box")} for s in result["Sites"][:5]],
-                                 "Basis": "facing_check.py: strict < 2R (3D) on the decision grid, every facing segment within 2R tested, own sides = portions + member chains within the feature's reach; exclusions AtExactly2R / ThroughVertex / SelfNeighbourhood recorded (decision 85(2))"}})
+                                 "Basis": "facing_check.py: strict < 2R (3D) on the decision grid, every facing segment within 2R tested, own sides = portions + member chains within the feature's reach; exclusions AtExactly2R / ThroughVertex / SelfNeighbourhood recorded (decision 85(2)); StackEndRecomposition bounded per site / total (review fix-3 m4)"}})
+    gates[-1]["Detail"]["StackEndRecomposition"] = {k: result["StackEndRecomposition"][k] for k in ("Sites", "TotalLength", "TotalOverR", "MaxSiteOverR", "SiteCapOverR", "TotalCapOverR", "SitesBeyondCap")}
+    gates[0]["Detail"]["ClusterProximityNotAcross"] = {k: result["ClusterProximityNotAcross"][k] for k in ("ResidualLength", "ThroughVertexLength", "SelfNeighbourhoodLength", "Rule")}
     return gates, result
 
 
@@ -581,6 +699,12 @@ def main(argv=None):
               f"{'face another edge' if cls in ISOLATED_CLASSES else 'face a third edge'} within 2R, of which {row['UnexcludedFacingLength']:.1f} um outside the recorded exclusions "
               f"({row['FlaggedFeatures']} features); excluded {({k: round(v, 1) for k, v in row['ExcludedLength'].items()})}; "
               f"{row['AtExactly2RLength']:.1f} um at exactly 2R (not flagged)")
+    na = result["ClusterProximityNotAcross"]
+    print(f"cluster / vertex metal within 2R of isolated / curved edges NOT across: residual {na['ResidualLength']:.3f} um "
+          f"(ThroughVertex {na['ThroughVertexLength']:.3f}, SelfNeighbourhood {na['SelfNeighbourhoodLength']:.3f} um)")
+    rc = result["StackEndRecomposition"]
+    print(f"StackEndRecomposition: {rc['Sites']} sites, total {rc['TotalLength']:.3f} um = {rc['TotalOverR']:.3f} R (cap {rc['TotalCapOverR']:.1f} R), "
+          f"largest site {rc['MaxSiteOverR']:.3f} R (cap {rc['SiteCapOverR']:g} R), beyond cap {len(rc['SitesBeyondCap'])}")
     print(f"isolated: {result['Isolated']['UnexcludedFacingLength']:.1f} um unexcluded of {result['Isolated']['FacingLength']:.1f} facing / {result['Isolated']['SampledLength']:.1f} um; "
           f"pairs / stacks: {result['Pairs']['UnexcludedFacingLength']:.1f} um unexcluded of {result['Pairs']['ThirdEdgeLength']:.1f} with a third edge / {result['Pairs']['SampledLength']:.1f} um; "
           f"gates isolated {'PASS' if result['Gates']['IsolatedFacing'] else 'FAIL'}, pairs {'PASS' if result['Gates']['PairThirdEdge'] else 'FAIL'}; "

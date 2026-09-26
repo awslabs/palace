@@ -1,0 +1,30 @@
+{
+  "Version": 3,
+  "Name": "surface-preflight-seed-R1.9",
+  "MatchingRadius": 1.9,
+  "Fabrication": {
+    "LengthUnit": "um",
+    "MetalThickness": 0.1,
+    "OveretchDepth": 0.05,
+    "SidewallAngleDegrees": 90.0,
+    "TopRoundingRadius": 0.0,
+    "BottomRoundingRadius": 0.0,
+    "SubstratePermittivity": 11.45,
+    "InterfaceLayers": {
+      "SA": {
+        "Thickness": 0.002,
+        "Permittivity": 4.0
+      },
+      "MS": {
+        "Thickness": 0.002,
+        "Permittivity": 11.45
+      },
+      "MA": {
+        "Thickness": 0.002,
+        "Permittivity": 10.0
+      }
+    }
+  },
+  "Models": [],
+  "Note": "Geometry-only preflight seed (decision 88(1), 2026-09-26): matching radius 1.9 um, off the common 2 / 4 / 20 um layout dimensions (R 1.9, 2R 3.8, 10R 19 um; the 2D locality study found R = 1.9 / 2.0 / 2.1 um equivalent within 0.2 % and recommends 1.9 on cost); no models. The library MatchingRadius stays authoritative for a run; existing R = 2 um libraries are unchanged."
+}

@@ -487,6 +487,9 @@ class IdentificationGateTest(AuditGateTest):
             "Vertices": vertices,
             "Exclusions": [{"Class": k, "Reason": "test", "Count": exclusions[k][0], "Length": exclusions[k][1]} for k in order],
             "Totals": {"PerimeterLength": assigned + excluded, "AssignedLength": assigned, "ExcludedLength": excluded},
+            # The classifier always writes Diagnostics (gate A9 reads SamePriorityClaimOverlaps).
+            "Diagnostics": {"SamePriorityClaimOverlaps": 0, "StackGeometricOffsetIntervals": 0, "StackCompositionCapHits": 0, "StackCompositionCap": 64,
+                            "ClusterExtension": {"Passes": 1, "AbsorbedPortions": 0, "AbsorbedLength": 0.0, "VertexFeaturesJoined": 0}, "StackEndThirdBodyLength": 0.0},
             "GeometryDigest": "digest",
         }
 
@@ -498,12 +501,26 @@ class IdentificationGateTest(AuditGateTest):
 
     def test_complete_identification_passes(self):
         code, gates, result = self.run_gates(self.v2_manifest(self.identification()))
-        for name in ("perimeter-agreement", "A1-length-partition", "A1-count-partition", "A1-multiplicity", "A1-weights", "A1-vertex-census", "A1-exclusions-recorded", "A2-cluster-balls"):
+        for name in ("perimeter-agreement", "A1-length-partition", "A1-count-partition", "A1-multiplicity", "A1-weights", "A1-vertex-census", "A1-exclusions-recorded", "A2-cluster-balls", "A9-same-priority-claim-overlaps"):
             self.assertEqual(gates[name], "PASS", name)
         self.assertEqual(code, 0)
         self.assertEqual(result["Identification"]["Features"]["IsolatedEdge"], 12)
         self.assertAlmostEqual(result["Identification"]["Totals"]["AssignedLength"], 16.0)
         self.assertEqual(result["ByGate"]["A1-vertex-census"]["ManifestExcludedVertices"], 4)
+
+    def test_a9_needs_the_diagnostics(self):
+        """A manifest without Diagnostics cannot be gated on the claim overlaps (NOT-EVALUABLE
+        counts as a failure), a manifest reporting an overlap fails A9 (review fix-3 M1)."""
+        ident = self.identification()
+        del ident["Diagnostics"]
+        code, gates, _ = self.run_gates(self.v2_manifest(ident))
+        self.assertEqual(gates["A9-same-priority-claim-overlaps"], "NOT-EVALUABLE")
+        self.assertEqual(code, 1)
+        ident = self.identification()
+        ident["Diagnostics"]["SamePriorityClaimOverlaps"] = 2
+        code, gates, _ = self.run_gates(self.v2_manifest(ident))
+        self.assertEqual(gates["A9-same-priority-claim-overlaps"], "FAIL")
+        self.assertEqual(code, 1)
 
     def test_defects_fail_the_exact_gates(self):
         ident = self.identification()

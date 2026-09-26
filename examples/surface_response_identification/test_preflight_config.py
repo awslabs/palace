@@ -73,6 +73,21 @@ class PreflightConfigTest(unittest.TestCase):
         self.assertEqual(config["Model"]["Refinement"]["UniformLevels"], 1)
         self.assertIs(config["Model"]["CrackInternalBoundaryElements"], False)
 
+    def test_default_seed_is_the_r1p9_geometry_only_library(self):
+        """Decision 88(1): the tools default to the R = 1.9 um geometry-only seed (no models,
+        off the 2 / 4 / 20 um layout dimensions); the R 2.1 seed of decision 82(4) is kept."""
+        from surface_response_identification.preflight_config import DEFAULT_RADIUS, DEFAULT_SEED_LIBRARY
+        self.assertEqual(DEFAULT_RADIUS, 1.9)
+        with open(DEFAULT_SEED_LIBRARY) as source:
+            seed = json.load(source)
+        self.assertEqual(seed["MatchingRadius"], 1.9)
+        self.assertEqual(seed["Models"], [])
+        with open(os.path.join(os.path.dirname(DEFAULT_SEED_LIBRARY), "preflight_seed_r2p1.json")) as source:
+            self.assertEqual(json.load(source)["MatchingRadius"], 2.1)
+        config = preflight_config("m.msh2", ground=[4], terminals=[], sa=[8], library=DEFAULT_SEED_LIBRARY, output_directory="out")
+        for entry in config["Boundaries"]["Postprocessing"]["Dielectric"]:
+            self.assertEqual(entry["EdgeDistances"], [1.9])
+
     def test_command_line_writes_the_file(self):
         output = os.path.join(self.directory.name, "cfg", "config.json")
         main(["--mesh", "m.msh2", "--ground", "5", "--terminal", "9", "--sa", "8", "--library", self.library, "--output", output, "--no-crack", "--l0", "1e-3"])

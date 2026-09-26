@@ -13,7 +13,7 @@ library and the target interfaces. Nothing here depends on a particular device.
 
     python3 -m surface_response_identification.preflight_config --mesh M.msh2 \\
         --ground 5 6 7 --terminal 9 --sa 8 --library lib.json --output cfg.json \\
-        [--ms 5 6 7 9] [--ma ...] [--uniform-levels 1] [--no-crack] [--l0 1e-6] [--radius 2.1]
+        [--ms 5 6 7 9] [--ma ...] [--uniform-levels 1] [--no-crack] [--l0 1e-6] [--radius 1.9]
         [--plane 114@0,0,1 --plane 10,17,25,119,126@0,0,-1]   # per metal plane: MS + MA targets
                                                              # with their own EdgeFrameNormal
                                                              # (flip-chip: the top chip faces down)
@@ -23,12 +23,15 @@ import argparse
 import json
 import os
 
-# Decision 82(4) (2026-09-25): the default matching radius of the identification tools is
-# 2.1 um — off the common 2 / 4 / 20 um layout dimensions (R 2.1, 2R 4.2, 10R 21 um); the
-# library's MatchingRadius stays authoritative for a run and existing R = 2 um libraries are
-# unchanged. The geometry-only seed carries the fabrication layers and no models.
-DEFAULT_RADIUS = 2.1
-DEFAULT_SEED_LIBRARY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seeds", "preflight_seed_r2p1.json")
+# Decision 88(1) (2026-09-26; was 2.1 um by decision 82(4)): the default matching radius of
+# the identification tools is 1.9 um — off the common 2 / 4 / 20 um layout dimensions (R 1.9,
+# 2R 3.8, 10R 19 um; the 2D locality study found R = 1.9 / 2.0 / 2.1 um equivalent within
+# 0.2 % and 1.9 the cheapest: the 4 um separations stay isolated edges); the library's
+# MatchingRadius stays authoritative for a run and existing R = 2 um libraries are
+# unchanged. The geometry-only seed carries the fabrication layers and no models (the R 2.1
+# seed is kept for comparison runs).
+DEFAULT_RADIUS = 1.9
+DEFAULT_SEED_LIBRARY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seeds", "preflight_seed_r1p9.json")
 
 
 def preflight_config(
@@ -167,10 +170,10 @@ def main(argv=None):
     parser.add_argument("--substrate", type=int, nargs="+", default=[1])
     parser.add_argument("--vacuum", type=int, nargs="+", default=[2])
     parser.add_argument("--library", default=DEFAULT_SEED_LIBRARY,
-                        help="process library; its MatchingRadius is authoritative (default: the geometry-only seed at R = 2.1 um, decision 82(4))")
+                        help="process library; its MatchingRadius is authoritative (default: the geometry-only seed at R = 1.9 um, decision 88(1))")
     parser.add_argument("--output", required=True, help="configuration file to write")
     parser.add_argument("--postpro", help="Problem.Output (default: <output dir>/postpro)")
-    parser.add_argument("--radius", type=float, default=DEFAULT_RADIUS, help="matching radius when the library has none (default 2.1 um, decision 82(4))")
+    parser.add_argument("--radius", type=float, default=DEFAULT_RADIUS, help="matching radius when the library has none (default 1.9 um, decision 88(1))")
     parser.add_argument("--l0", type=float, default=1.0e-6)
     parser.add_argument("--uniform-levels", type=int, default=0)
     parser.add_argument("--no-crack", action="store_true", help="Model.CrackInternalBoundaryElements false")
