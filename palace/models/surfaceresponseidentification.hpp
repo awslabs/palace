@@ -157,6 +157,9 @@ struct IdentificationResult
   double assigned_length = 0.0;
   double excluded_length = 0.0;
   std::string geometry_digest;
+  // Claims of one priority by different features overlapping on a run (resolved by feature
+  // id): the rules never produce one; reported under Diagnostics and gated by the audit.
+  std::size_t same_priority_claim_overlaps = 0;
 
   // Manifest "Identification" object; the length scale converts mesh units for output.
   nlohmann::json ToJson(double length_scale) const;

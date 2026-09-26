@@ -108,6 +108,15 @@ constexpr double kStraightBendRadiusOverRadius = 10.0;
 constexpr double kCurvatureWindowOverRadius = 1.0;
 constexpr double kPairSeparationTolerance = 0.05;
 constexpr int kPairSeparationSamplesPerInterval = 16;
+// Self-pairing (decision 82(2) addition, 2026-09-25): a chain folding back onto itself
+// within 2R through a bend of radius >= R (a hairpin, a meander with smooth bends, the
+// U-turn of a narrow strip whose fold is not a rounded corner) pairs with itself. The
+// local neighbourhood along the chain takes no part: two points of one chain closer than
+// pi R along the chain are within 2R of each other along any bend of radius >= R (on the
+// tightest bend, radius R, the chord reaches 2R exactly after half a turn = pi R of arc;
+// on a wider bend earlier), so only points more than pi R apart along the chain can face
+// each other across a fold. Runs closer than pi R of arc length are never partners.
+constexpr double kSelfPairNeighbourhoodOverRadius = 3.14159265358979323846;
 
 // ---------------------------------------------------------------------------------------
 // Vector helpers
@@ -1540,6 +1549,9 @@ private:
   // Zones of the chains connected through an arc (the arc plays the shared vertex): per
   // chain pair (ascending ids), the arcs joining them.
   std::map<std::pair<int, int>, std::vector<int>> through_arc;
+  // Chains of the rounded-corner arcs: the arc plays the shared vertex of its arms, is
+  // claimed whole by its corner feature and never pairs (a vertex has no pair).
+  std::set<int> corner_arc_chains;
   // Through-vertex zones of chain A's run a with respect to chain B: within 2R of every
   // shared vertex and of every run of an arc joining the two chains.
   std::vector<std::vector<Interval>> ThroughZones(std::size_t a, const Chain &A,
@@ -1594,6 +1606,47 @@ private:
   std::vector<std::vector<EventCore>> cluster_cores;
   std::vector<std::vector<std::size_t>> cluster_sites;
   std::map<std::size_t, int> vertex_feature;  // mesh vertex -> feature id
+  // Raw material of the pair / stack assembly (decision 82(2), BuildPairsAndStacks): the
+  // locally constant, interacting facing relations of the bent-pair rule (one link per
+  // chain pair and separation group; chain_a == chain_b for a chain facing itself across a
+  // fold) and the translational spans of the rigid parallel runs. Links and spans sharing
+  // a run over a common interval are one cross-section: a multi-edge stack.
+  struct LinkPiece
+  {
+    std::size_t run;
+    Interval interval;
+    bool curved;
+    double max_kappa;
+    double weighted_separation;
+    int sample_count;
+  };
+  struct PairLink
+  {
+    int chain_a = -1, chain_b = -1;
+    double separation = 0.0;  // mean chord reading over the samples
+    Point3D lead_point{}, lateral_ab{};
+    std::size_t run_a = 0, run_b = 0;  // the runs at the lead pair of points
+    std::array<std::vector<LinkPiece>, 2> pieces;  // side 0 on chain a, side 1 on chain b
+    bool Self() const { return chain_a == chain_b; }
+  };
+  std::vector<PairLink> pair_links;
+  struct TranslationalSpan
+  {
+    struct Member
+    {
+      std::size_t run;
+      double w;
+      int gap_sign;
+      Interval interval;  // run parameter
+    };
+    std::vector<Member> members;  // sorted by lateral offset w
+    double lo = 0.0, hi = 0.0;
+    Point3D axis{}, lateral{};
+  };
+  std::vector<TranslationalSpan> translational_spans;
+  // Claims of the same priority overlapping on a run would be resolved by feature id — a
+  // tie-break the rules must never need (decision 82(2)); counted and reported.
+  std::size_t same_priority_claim_overlaps = 0;
   // Acceleration only (every result is the former all-pairs answer): the runs by their
   // boxes and the runs incident to every vertex.
   std::optional<UniformGrid> run_grid;
@@ -1780,6 +1833,11 @@ private:
   void ComputeCurvature();
   void BuildTranslationalFeatures();
   void BuildBentPairs();
+  void BuildPairsAndStacks();
+  void EmitPairLink(const PairLink &link);
+  void EmitTranslationalSpan(const TranslationalSpan &span);
+  void AssembleStack(const std::vector<std::size_t> &link_items,
+                     const std::vector<std::size_t> &span_items);
   void BuildClusters();
   void BuildVertexWindows();
   void Assign(IdentificationResult &result);
@@ -1800,7 +1858,16 @@ private:
     double x = 0.0;
     double distance = 0.0;
   };
-  ChainPoint ClosestPointOnChain(const Chain &chain, const Point3D &p) const;
+  // Closest point of the chain to p; with exclude_x, the runs within the self-pair
+  // neighbourhood (kSelfPairNeighbourhoodOverRadius R of arc length, wrapping on a closed
+  // chain) of the chain position exclude_x are not candidates (a chain facing itself).
+  ChainPoint ClosestPointOnChain(const Chain &chain, const Point3D &p,
+                                 std::optional<double> exclude_x = std::nullopt) const;
+  // Arc-length distance between the chain interval [x0, x1] and the chain position x
+  // (wrapping on a closed chain).
+  double ChainArcDistance(const Chain &chain, double x0, double x1, double x) const;
+  Point3D ChainAt(const Chain &chain, double x, std::size_t *run_out = nullptr,
+                  double *s_out = nullptr) const;
   std::size_t RunIndexInChain(const Chain &chain, std::size_t run) const;
 };
 
@@ -2506,6 +2573,7 @@ void Identifier::BuildArcSites()
     {
       continue;
     }
+    corner_arc_chains.insert(arc.chain);
     {
       const int ca = runs[static_cast<std::size_t>(before)].chain;
       const int cb = runs[static_cast<std::size_t>(after)].chain;
@@ -2658,13 +2726,64 @@ bool Identifier::IsCurvedAt(const Chain &chain, double x, std::size_t *section) 
   return false;
 }
 
-Identifier::ChainPoint Identifier::ClosestPointOnChain(const Chain &chain,
-                                                       const Point3D &p) const
+double Identifier::ChainArcDistance(const Chain &chain, double x0, double x1, double x) const
 {
+  double distance = x < x0 ? x0 - x : (x > x1 ? x - x1 : 0.0);
+  if (chain.closed && chain.length > 0.0)
+  {
+    // Wrapping: the position x shifted by one period on either side.
+    for (const double shift : {-chain.length, chain.length})
+    {
+      const double xs = x + shift;
+      distance = std::min(distance, xs < x0 ? x0 - xs : (xs > x1 ? xs - x1 : 0.0));
+    }
+  }
+  return distance;
+}
+
+Point3D Identifier::ChainAt(const Chain &chain, double x, std::size_t *run_out,
+                            double *s_out) const
+{
+  const std::size_t k = std::min(
+      static_cast<std::size_t>(
+          std::upper_bound(chain.run_offset.begin(), chain.run_offset.end(), x) -
+          chain.run_offset.begin()) -
+          1,
+      chain.runs.size() - 1);
+  const std::size_t r = chain.runs[k];
+  const double s = std::clamp(x - chain.run_offset[k], 0.0, runs[r].length);
+  if (run_out)
+  {
+    *run_out = r;
+  }
+  if (s_out)
+  {
+    *s_out = s;
+  }
+  return runs[r].At(s);
+}
+
+Identifier::ChainPoint Identifier::ClosestPointOnChain(const Chain &chain,
+                                                       const Point3D &p,
+                                                       std::optional<double> exclude_x) const
+{
+  const double neighbourhood = kSelfPairNeighbourhoodOverRadius * R;
+  auto Excluded = [&](std::size_t k)
+  {
+    return exclude_x &&
+           quantizer.Less(ChainArcDistance(chain, chain.run_offset[k],
+                                           chain.run_offset[k] + runs[chain.runs[k]].length,
+                                           *exclude_x),
+                          neighbourhood);
+  };
   ChainPoint best;
   best.distance = std::numeric_limits<double>::infinity();
   auto Evaluate = [&](std::size_t k)
   {
+    if (Excluded(k))
+    {
+      return;
+    }
     const Run &r = runs[chain.runs[k]];
     const double s = std::clamp(Dot(Sub(p, r.start), r.tangent), 0.0, r.length);
     const double distance = Distance(p, r.At(s));
@@ -3170,6 +3289,22 @@ void Identifier::BuildBentPairs()
   };
   auto Pieces = [&](const Chain &A, const Chain &B, std::vector<Piece> &pieces)
   {
+    // A chain facing itself across a fold (A == B): partner runs at least pi R of arc
+    // length away along the chain (kSelfPairNeighbourhoodOverRadius), the foot taken
+    // outside that neighbourhood, no shared-vertex zones (every vertex is shared).
+    const bool self = A.id == B.id;
+    const double neighbourhood = kSelfPairNeighbourhoodOverRadius * R;
+    auto SelfExcluded = [&](std::size_t ka, std::size_t kb)
+    {
+      if (!self)
+      {
+        return false;
+      }
+      const double a0 = A.run_offset[ka], a1 = a0 + runs[A.runs[ka]].length;
+      const double b0 = A.run_offset[kb], b1 = b0 + runs[A.runs[kb]].length;
+      const double gap = std::min(ChainArcDistance(A, a0, a1, b0), ChainArcDistance(A, a0, a1, b1));
+      return quantizer.Less(gap, neighbourhood);
+    };
     for (const std::size_t ka : RunsOfChainFacing(A, B))
     {
       const std::size_t a = A.runs[ka];
@@ -3185,7 +3320,7 @@ void Identifier::BuildBentPairs()
       {
         const std::size_t b = B.runs[kb];
         const Run &rb = runs[b];
-        if (rb.excluded ||
+        if (rb.excluded || SelfExcluded(ka, kb) ||
             !quantizer.Less(SegmentSegmentDistance(ra.start, ra.end, rb.start, rb.end),
                             reach))
         {
@@ -3239,9 +3374,12 @@ void Identifier::BuildBentPairs()
           excluded.insert(excluded.end(), near_end.begin(), near_end.end());
         }
       }
-      for (const auto &zone_intervals : ThroughZones(a, A, B))
+      if (!self)
       {
-        excluded.insert(excluded.end(), zone_intervals.begin(), zone_intervals.end());
+        for (const auto &zone_intervals : ThroughZones(a, A, B))
+        {
+          excluded.insert(excluded.end(), zone_intervals.begin(), zone_intervals.end());
+        }
       }
       const auto paired = SubtractIntervals(within, MergeIntervals(excluded, Tol()), Tol());
       for (const auto &interval : paired)
@@ -3302,8 +3440,13 @@ void Identifier::BuildBentPairs()
           const double x0 = A.run_offset[ka] + piece.first;
           const double x1 = A.run_offset[ka] + piece.second;
           const double mid = 0.5 * (x0 + x1);
-          const auto q_mid =
-              ClosestPointOnChain(B, ra.At(0.5 * (piece.first + piece.second)));
+          const auto q_mid = ClosestPointOnChain(
+              B, ra.At(0.5 * (piece.first + piece.second)),
+              self ? std::optional<double>(mid) : std::nullopt);
+          if (!std::isfinite(q_mid.distance))
+          {
+            continue;  // self: no partner outside the neighbourhood
+          }
           const bool curved = IsCurvedAt(A, mid) || IsCurvedAt(B, q_mid.x);
           const double max_kappa =
               std::max(MaxCurvature(A, x0, x1), WindowedCurvature(B, q_mid.x));
@@ -3315,7 +3458,12 @@ void Identifier::BuildBentPairs()
           {
             const double s = piece.first + (piece.second - piece.first) * i_s / n_samples;
             const double x = A.run_offset[ka] + s;
-            const auto q = ClosestPointOnChain(B, ra.At(s));
+            const auto q = ClosestPointOnChain(B, ra.At(s),
+                                               self ? std::optional<double>(x) : std::nullopt);
+            if (!std::isfinite(q.distance))
+            {
+              continue;
+            }
             const double half_own =
                 WindowedCurvature(A, x) > 0.0 ? std::max(R, ra.length) : R;
             const double half_other =
@@ -3456,14 +3604,16 @@ void Identifier::BuildBentPairs()
     }
   };
 
-  std::size_t chain_pairs_examined = 0, chain_pairs_paired = 0;
+  std::size_t chain_pairs_examined = 0, chain_pairs_paired = 0, self_pairs = 0;
   std::vector<std::size_t> partners;
   for (std::size_t ca = 0; ca < chains.size(); ca++)
   {
     stage.Progress(ca, chains.size());
     // Candidate partners cb > ca (ascending: the former loop over every later chain): the
     // chains with a run within the reach of a run of this chain. A pair without such runs
-    // has no facing pieces and contributed nothing.
+    // has no facing pieces and contributed nothing. The chain itself (cb == ca) is a
+    // candidate when it has joints: a chain folding back within 2R through a bend >= R
+    // faces itself (kSelfPairNeighbourhoodOverRadius).
     partners.clear();
     for (const std::size_t a : chains[ca].runs)
     {
@@ -3474,7 +3624,7 @@ void Identifier::BuildBentPairs()
       for (const std::size_t r : RunsNearRun(a, margin))
       {
         const std::size_t cb = chain_index.at(runs[r].chain);
-        if (cb > ca && !runs[r].excluded)
+        if ((cb > ca || (cb == ca && !chains[ca].Rigid())) && !runs[r].excluded)
         {
           partners.push_back(cb);
         }
@@ -3486,6 +3636,7 @@ void Identifier::BuildBentPairs()
     {
       const Chain &A = chains[ca];
       const Chain &B = chains[cb];
+      const bool self = ca == cb;
       if (!usable[ca] || !usable[cb] ||
           run_plane[A.runs.front()] != run_plane[B.runs.front()])
       {
@@ -3511,19 +3662,28 @@ void Identifier::BuildBentPairs()
       chain_pairs_examined++;
       std::vector<Piece> pieces_a, pieces_b;
       Pieces(A, B, pieces_a);
-      Pieces(B, A, pieces_b);
-      if (pieces_a.empty() || pieces_b.empty())
+      if (!self)
+      {
+        Pieces(B, A, pieces_b);
+      }
+      if (pieces_a.empty() || (!self && pieces_b.empty()))
       {
         continue;
       }
       chain_pairs_paired++;
       std::vector<char> constant_a, constant_b;
       std::vector<double> separation_a, separation_b, upper_a, upper_b;
-      Classify(pieces_a, pieces_b, constant_a, separation_a, upper_a);
-      Classify(pieces_b, pieces_a, constant_b, separation_b, upper_b);
+      Classify(pieces_a, self ? pieces_a : pieces_b, constant_a, separation_a, upper_a);
+      if (!self)
+      {
+        Classify(pieces_b, pieces_a, constant_b, separation_b, upper_b);
+      }
       std::vector<SubPiece> sub_a, sub_b;
       Split(pieces_a, constant_a, separation_a, upper_a, sub_a);
-      Split(pieces_b, constant_b, separation_b, upper_b, sub_b);
+      if (!self)
+      {
+        Split(pieces_b, constant_b, separation_b, upper_b, sub_b);
+      }
       // Locally constant portions that do not interact (separation at or beyond 2R): no
       // feature, but their cross-chord interactions are not events. Portions that are not
       // locally constant (divergence at tees and port ends, fast tapers, acute arms) keep
@@ -3543,6 +3703,13 @@ void Identifier::BuildBentPairs()
         }
       }
       if (!any_interacting)
+      {
+        continue;
+      }
+      // A rounded corner is a vertex: its arc never pairs (its constant facing pieces are
+      // no events either, like the arms of a sharp corner facing the same edge; the corner
+      // feature claims the arc).
+      if (corner_arc_chains.count(A.id) > 0 || corner_arc_chains.count(B.id) > 0)
       {
         continue;
       }
@@ -3589,8 +3756,9 @@ void Identifier::BuildBentPairs()
       }
       for (const auto &[g0, g1] : groups)
       {
-        // Frame: lateral from A to B at the group's first piece (on A when the group has
-        // one, else on B); gap signs relative to it.
+        // Lead piece (on A when the group has one, else on B) and the lateral A -> B there:
+        // the frame of a two-edge feature (side 0 = chain A); a chain facing itself takes
+        // its foot outside the self-pair neighbourhood.
         const GroupedPiece *lead = nullptr;
         for (std::size_t i = g0; i < g1; i++)
         {
@@ -3601,96 +3769,136 @@ void Identifier::BuildBentPairs()
         }
         const bool lead_on_a = lead->side == 0;
         const Chain &lead_other = lead_on_a ? B : A;
-        const Point3D pa = runs[lead->piece->run].At(
-            0.5 * (lead->piece->interval.first + lead->piece->interval.second));
-        const auto qb = ClosestPointOnChain(lead_other, pa);
+        const double lead_s =
+            0.5 * (lead->piece->interval.first + lead->piece->interval.second);
+        const Point3D pa = runs[lead->piece->run].At(lead_s);
+        const Chain &lead_chain = lead_on_a ? A : B;
+        const auto qb = ClosestPointOnChain(
+            lead_other, pa,
+            self ? std::optional<double>(
+                       lead_chain.run_offset[RunIndexInChain(lead_chain, lead->piece->run)] +
+                       lead_s)
+                 : std::nullopt);
+        if (!std::isfinite(qb.distance))
+        {
+          continue;
+        }
         const Point3D lateral = Normalize(Sub(runs[qb.run].At(qb.s), pa));
-        // ra = the run on A, rb = the run on B of the lead pair of points.
-        const Run &ra = lead_on_a ? runs[lead->piece->run] : runs[qb.run];
-        const Run &rb = lead_on_a ? runs[qb.run] : runs[lead->piece->run];
-        const Point3D lateral_ab = lead_on_a ? lateral : Scale(-1.0, lateral);
-        const int gap_a = Dot(ra.gap_direction, lateral_ab) > 0.0 ? 1 : -1;
-        const int gap_b = Dot(rb.gap_direction, lateral_ab) > 0.0 ? 1 : -1;
-        const bool same = ra.conductor == rb.conductor;
-        std::string base;
-        std::optional<std::string> reason;
-        if (gap_a > 0 && gap_b < 0)
+        PairLink link;
+        link.chain_a = A.id;
+        link.chain_b = B.id;
+        link.run_a = lead_on_a ? lead->piece->run : qb.run;
+        link.run_b = lead_on_a ? qb.run : lead->piece->run;
+        link.lateral_ab = lead_on_a ? lateral : Scale(-1.0, lateral);
+        link.lead_point = lead_on_a ? pa : runs[qb.run].At(qb.s);
+        double weighted = 0.0;
+        int samples = 0;
+        for (std::size_t i = g0; i < g1; i++)
         {
-          base = same ? "SameConductorGap" : "DifferentConductorGap";
+          const SubPiece &piece = *grouped[i].piece;
+          link.pieces[static_cast<std::size_t>(grouped[i].side)].push_back(
+              {piece.run, piece.interval, piece.curved, piece.max_kappa,
+               piece.weighted_separation, piece.sample_count});
+          weighted += piece.weighted_separation;
+          samples += piece.sample_count;
         }
-        else if (gap_a < 0 && gap_b > 0)
-        {
-          base = "SameConductorStrip";
-        }
-        else
-        {
-          base = "UnclassifiedParallelPair";
-          reason =
-              "parallel metal edges within 2R with the gap on the same side (overlapping "
-              "metal in one process plane)";
-        }
-        for (const bool curved_class : {false, true})
-        {
-          double length = 0.0, max_kappa = 0.0, weighted = 0.0;
-          int samples = 0;
-          for (std::size_t i = g0; i < g1; i++)
-          {
-            const SubPiece &piece = *grouped[i].piece;
-            if (piece.curved != curved_class)
-            {
-              continue;
-            }
-            length += piece.interval.second - piece.interval.first;
-            max_kappa = std::max(max_kappa, piece.max_kappa);
-            weighted += piece.weighted_separation;
-            samples += piece.sample_count;
-          }
-          if (length <= kSignatureLengthQuantumOverRadius * R)
-          {
-            continue;  // slivers between cuts, below the signature grid
-          }
-          // One separation per pair and curvature class: the mean chord reading of its
-          // samples (exact for a constant pair; a slow taper is described by its mean).
-          const double separation = weighted / samples;
-          std::vector<TranslationalEdge> edges = {
-              {0.0, gap_a, ra.conductor, InterfaceNames(ra.targets), ra.boundary_law},
-              {separation, gap_b, rb.conductor, InterfaceNames(rb.targets),
-               rb.boundary_law}};
-          auto translational = CanonicalTranslationalSignature(edges, R);
-          nlohmann::json signature = std::move(translational.signature);
-          std::string type = base;
-          if (reason)
-          {
-            signature["Reason"] = *reason;
-          }
-          if (curved_class)
-          {
-            type = "Curved" + base;
-            MFEM_VERIFY(max_kappa > 0.0, "A curved pair without curvature!");
-            signature["RadiusOverR"] =
-                RoundTo(1.0 / (max_kappa * R), kSignatureLengthQuantumOverRadius);
-          }
-          const int feature = NewFeature(type, signature, translational.chirality);
-          features[feature].origin = lead_on_a ? pa : runs[qb.run].At(qb.s);
-          features[feature].axes = {ra.tangent, lateral_ab, n_ref};
-          feature_sides[feature] = 2;
-          for (std::size_t i = g0; i < g1; i++)
-          {
-            const SubPiece &piece = *grouped[i].piece;
-            if (piece.curved != curved_class)
-            {
-              continue;
-            }
-            claims[piece.run].push_back({feature, 2, piece.interval, grouped[i].side});
-          }
-        }
+        // One separation per link (and per curvature class of its feature, taken again
+        // from the class's own samples when emitted): the mean chord reading.
+        link.separation = weighted / samples;
+        self_pairs += self ? 1 : 0;
+        pair_links.push_back(std::move(link));
       }
     }
   }
   stage.End(std::to_string(chains.size()) + " chains, " +
             std::to_string(chain_pairs_examined) + " chain pairs within reach, " +
             std::to_string(chain_pairs_paired) + " with facing pieces, " +
-            std::to_string(features.size()) + " features so far");
+            std::to_string(pair_links.size()) + " pair links (" +
+            std::to_string(self_pairs) + " of chains facing themselves)");
+}
+
+// A single link is the two-edge feature of the bent-pair rule (side 0 = chain A, the
+// lateral from A to B at the lead piece), split by curvature class.
+void Identifier::EmitPairLink(const PairLink &link)
+{
+  const Run &ra = runs[link.run_a];
+  const Run &rb = runs[link.run_b];
+  const int gap_a = Dot(ra.gap_direction, link.lateral_ab) > 0.0 ? 1 : -1;
+  const int gap_b = Dot(rb.gap_direction, link.lateral_ab) > 0.0 ? 1 : -1;
+  const bool same = ra.conductor == rb.conductor;
+  std::string base;
+  std::optional<std::string> reason;
+  if (gap_a > 0 && gap_b < 0)
+  {
+    base = same ? "SameConductorGap" : "DifferentConductorGap";
+  }
+  else if (gap_a < 0 && gap_b > 0)
+  {
+    base = "SameConductorStrip";
+  }
+  else
+  {
+    base = "UnclassifiedParallelPair";
+    reason = "parallel metal edges within 2R with the gap on the same side (overlapping "
+             "metal in one process plane)";
+  }
+  for (const bool curved_class : {false, true})
+  {
+    double length = 0.0, max_kappa = 0.0, weighted = 0.0;
+    int samples = 0;
+    for (int side = 0; side < 2; side++)
+    {
+      for (const auto &piece : link.pieces[static_cast<std::size_t>(side)])
+      {
+        if (piece.curved != curved_class)
+        {
+          continue;
+        }
+        length += piece.interval.second - piece.interval.first;
+        max_kappa = std::max(max_kappa, piece.max_kappa);
+        weighted += piece.weighted_separation;
+        samples += piece.sample_count;
+      }
+    }
+    if (length <= kSignatureLengthQuantumOverRadius * R)
+    {
+      continue;  // slivers between cuts, below the signature grid
+    }
+    // One separation per pair and curvature class: the mean chord reading of its samples
+    // (exact for a constant pair; a slow taper is described by its mean).
+    const double separation = weighted / samples;
+    std::vector<TranslationalEdge> edges = {
+        {0.0, gap_a, ra.conductor, InterfaceNames(ra.targets), ra.boundary_law},
+        {separation, gap_b, rb.conductor, InterfaceNames(rb.targets), rb.boundary_law}};
+    auto translational = CanonicalTranslationalSignature(edges, R);
+    nlohmann::json signature = std::move(translational.signature);
+    std::string type = base;
+    if (reason)
+    {
+      signature["Reason"] = *reason;
+    }
+    if (curved_class)
+    {
+      type = "Curved" + base;
+      MFEM_VERIFY(max_kappa > 0.0, "A curved pair without curvature!");
+      signature["RadiusOverR"] =
+          RoundTo(1.0 / (max_kappa * R), kSignatureLengthQuantumOverRadius);
+    }
+    const int feature = NewFeature(type, signature, translational.chirality);
+    features[feature].origin = link.lead_point;
+    features[feature].axes = {ra.tangent, link.lateral_ab, n_ref};
+    feature_sides[feature] = 2;
+    for (int side = 0; side < 2; side++)
+    {
+      for (const auto &piece : link.pieces[static_cast<std::size_t>(side)])
+      {
+        if (piece.curved == curved_class)
+        {
+          claims[piece.run].push_back({feature, 2, piece.interval, side});
+        }
+      }
+    }
+  }
 }
 
 // Interval of run parameter s where the distance from run(s) to the segment [a, b] is below
@@ -3875,57 +4083,14 @@ void Identifier::BuildTranslationalFeatures()
     }
     for (const auto &span : spans)
     {
-      std::vector<TranslationalEdge> edges;
+      TranslationalSpan record;
+      record.lo = span.lo;
+      record.hi = span.hi;
+      record.axis = axis;
+      record.lateral = lateral;
       for (const std::size_t m : span.component)
       {
         const auto &member = members[m];
-        edges.push_back({member.w, member.gap_sign, runs[member.run].conductor,
-                         InterfaceNames(runs[member.run].targets),
-                         runs[member.run].boundary_law});
-      }
-      auto translational = CanonicalTranslationalSignature(edges, R);
-      nlohmann::json best = std::move(translational.signature);
-      const int chirality = translational.chirality;
-      std::string type;
-      std::optional<std::pair<std::string, std::string>> exclusion;
-      if (span.component.size() == 2)
-      {
-        const auto &lower = members[span.component[0]], &upper = members[span.component[1]];
-        const bool same = runs[lower.run].conductor == runs[upper.run].conductor;
-        if (lower.gap_sign > 0 && upper.gap_sign < 0)
-        {
-          type = same ? "SameConductorGap" : "DifferentConductorGap";
-        }
-        else if (lower.gap_sign < 0 && upper.gap_sign > 0)
-        {
-          type = "SameConductorStrip";
-        }
-        else
-        {
-          exclusion = std::make_pair(
-              "IncompatibleParallelPair",
-              "parallel metal edges within 2R with the gap on the same side (overlapping "
-              "metal in one process plane)");
-        }
-      }
-      else
-      {
-        type = "ParallelEdgeCluster";
-      }
-      // A same-side pair cannot occur in one process plane; it is described (and never
-      // matched) as an UnclassifiedParallelPair feature so that the partition stays exact.
-      if (exclusion)
-      {
-        type = "UnclassifiedParallelPair";
-        best["Reason"] = exclusion->second;
-      }
-      const int feature = NewFeature(type, best, chirality);
-      features[feature].origin = Scale(0.5 * (span.lo + span.hi), axis);
-      features[feature].axes = {axis, lateral, n_ref};
-      feature_sides[feature] = static_cast<int>(span.component.size());
-      for (std::size_t k = 0; k < span.component.size(); k++)
-      {
-        const auto &member = members[span.component[k]];
         const Run &run = runs[member.run];
         const bool forward = Dot(run.tangent, axis) > 0.0;
         const double us = Dot(run.start, axis);
@@ -3933,21 +4098,697 @@ void Identifier::BuildTranslationalFeatures()
         double s1 = forward ? span.hi - us : us - span.lo;
         s0 = std::clamp(s0, 0.0, run.length);
         s1 = std::clamp(s1, 0.0, run.length);
-        if (s1 - s0 <= Tol())
-        {
-          continue;
-        }
-        // Side k = the k-th edge in increasing lateral offset (the signature's order for
-        // chirality +1, reversed for -1).
-        claims[member.run].push_back({feature, 2, {s0, s1}, static_cast<int>(k)});
+        record.members.push_back({member.run, member.w, member.gap_sign, {s0, s1}});
       }
+      translational_spans.push_back(std::move(record));
     }
     total_spans += spans.size();
   }
   stage.End(std::to_string(classes.size()) + " direction classes, " +
             std::to_string(total_members) + " rigid runs, " + std::to_string(total_spans) +
-            " translational spans, " + std::to_string(features.size()) +
-            " features so far");
+            " translational spans");
+}
+
+// A span of rigid parallel runs alone is the translational feature of design (b) 2: a pair
+// or a ParallelEdgeCluster with the members' lateral offsets, side k = the k-th edge in
+// increasing lateral offset.
+void Identifier::EmitTranslationalSpan(const TranslationalSpan &span)
+{
+  std::vector<TranslationalEdge> edges;
+  for (const auto &member : span.members)
+  {
+    edges.push_back({member.w, member.gap_sign, runs[member.run].conductor,
+                     InterfaceNames(runs[member.run].targets),
+                     runs[member.run].boundary_law});
+  }
+  auto translational = CanonicalTranslationalSignature(edges, R);
+  nlohmann::json best = std::move(translational.signature);
+  const int chirality = translational.chirality;
+  std::string type;
+  std::optional<std::pair<std::string, std::string>> exclusion;
+  if (span.members.size() == 2)
+  {
+    const auto &lower = span.members[0], &upper = span.members[1];
+    const bool same = runs[lower.run].conductor == runs[upper.run].conductor;
+    if (lower.gap_sign > 0 && upper.gap_sign < 0)
+    {
+      type = same ? "SameConductorGap" : "DifferentConductorGap";
+    }
+    else if (lower.gap_sign < 0 && upper.gap_sign > 0)
+    {
+      type = "SameConductorStrip";
+    }
+    else
+    {
+      exclusion = std::make_pair(
+          "IncompatibleParallelPair",
+          "parallel metal edges within 2R with the gap on the same side (overlapping "
+          "metal in one process plane)");
+    }
+  }
+  else
+  {
+    type = "ParallelEdgeCluster";
+  }
+  // A same-side pair cannot occur in one process plane; it is described (and never
+  // matched) as an UnclassifiedParallelPair feature so that the partition stays exact.
+  if (exclusion)
+  {
+    type = "UnclassifiedParallelPair";
+    best["Reason"] = exclusion->second;
+  }
+  const int feature = NewFeature(type, best, chirality);
+  features[feature].origin = Scale(0.5 * (span.lo + span.hi), span.axis);
+  features[feature].axes = {span.axis, span.lateral, n_ref};
+  feature_sides[feature] = static_cast<int>(span.members.size());
+  for (std::size_t k = 0; k < span.members.size(); k++)
+  {
+    const auto &member = span.members[k];
+    if (member.interval.second - member.interval.first <= Tol())
+    {
+      continue;
+    }
+    // Side k = the k-th edge in increasing lateral offset (the signature's order for
+    // chirality +1, reversed for -1).
+    claims[member.run].push_back({feature, 2, member.interval, static_cast<int>(k)});
+  }
+}
+
+// Pair / stack assembly (decision 82(2)). The pair links of the bent-pair rule and the
+// translational spans of the rigid parallel runs are the pairwise facing relations of the
+// perimeter; where several of them share a run over a common interval, the edges are one
+// translation-invariant cross-section of k >= 3 edges with consecutive separations below
+// 2R — a stack — and the stack is ONE feature (ParallelEdgeCluster, or
+// CurvedParallelEdgeCluster along a bend, with the ordered offsets / R, the gap pattern,
+// the conductor identities and the bend radius in its signature), on straight runs and
+// along curved routes alike. The pairwise candidates inside a stack are superseded by the
+// stack: no two claims of the pair priority ever overlap, so claim resolution never keeps
+// or drops a feature by its id (decision 78). A link or span alone is the pair / span
+// feature of the former rules, unchanged.
+void Identifier::BuildPairsAndStacks()
+{
+  const std::size_t n_links = pair_links.size(), n_spans = translational_spans.size();
+  const std::size_t n_items = n_links + n_spans;
+  struct RunInterval
+  {
+    double lo, hi;
+    std::size_t item;
+  };
+  std::map<std::size_t, std::vector<RunInterval>> by_run;
+  for (std::size_t i = 0; i < n_links; i++)
+  {
+    for (const auto &side : pair_links[i].pieces)
+    {
+      for (const auto &piece : side)
+      {
+        by_run[piece.run].push_back({piece.interval.first, piece.interval.second, i});
+      }
+    }
+  }
+  for (std::size_t j = 0; j < n_spans; j++)
+  {
+    for (const auto &member : translational_spans[j].members)
+    {
+      by_run[member.run].push_back(
+          {member.interval.first, member.interval.second, n_links + j});
+    }
+  }
+  // Items sharing a run over an interval longer than the decision quantum are one
+  // cross-section (union-find over the items; the result does not depend on the order).
+  UnionFind uf(n_items);
+  for (auto &[run, list] : by_run)
+  {
+    (void)run;
+    std::sort(list.begin(), list.end(),
+              [](const RunInterval &a, const RunInterval &b)
+              { return std::tie(a.lo, a.hi, a.item) < std::tie(b.lo, b.hi, b.item); });
+    for (std::size_t i = 0; i < list.size(); i++)
+    {
+      for (std::size_t j = i + 1; j < list.size() && list[j].lo < list[i].hi - Tol(); j++)
+      {
+        if (list[i].item != list[j].item)
+        {
+          uf.Union(list[i].item, list[j].item);
+        }
+      }
+    }
+  }
+  std::map<std::size_t, std::pair<std::vector<std::size_t>, std::vector<std::size_t>>>
+      components;  // root -> (links, spans) in ascending item order
+  std::vector<std::size_t> component_order;
+  for (std::size_t item = 0; item < n_items; item++)
+  {
+    const std::size_t root = uf.Find(item);
+    auto [it, inserted] = components.emplace(root, std::make_pair(std::vector<std::size_t>{},
+                                                                  std::vector<std::size_t>{}));
+    if (inserted)
+    {
+      component_order.push_back(root);
+    }
+    if (item < n_links)
+    {
+      it->second.first.push_back(item);
+    }
+    else
+    {
+      it->second.second.push_back(item - n_links);
+    }
+  }
+  std::size_t pairs = 0, spans = 0, stacks = 0;
+  const std::size_t features_before = features.size();
+  for (std::size_t k = 0; k < component_order.size(); k++)
+  {
+    stage.Progress(k, component_order.size(), "pair / stack components");
+    const auto &[links, span_items] = components.at(component_order[k]);
+    if (links.size() == 1 && span_items.empty() && !pair_links[links.front()].Self())
+    {
+      EmitPairLink(pair_links[links.front()]);
+      pairs++;
+    }
+    else if (links.empty() && span_items.size() == 1)
+    {
+      EmitTranslationalSpan(translational_spans[span_items.front()]);
+      spans++;
+    }
+    else
+    {
+      AssembleStack(links, span_items);
+      stacks++;
+    }
+  }
+  stage.End(std::to_string(component_order.size()) + " cross-section components: " +
+            std::to_string(pairs) + " single links, " + std::to_string(spans) +
+            " single spans, " + std::to_string(stacks) +
+            " assembled (stacks, chains facing themselves, mixed), " +
+            std::to_string(features.size() - features_before) + " features, " +
+            std::to_string(features.size()) + " features so far");
+}
+
+// One cross-section component of several links / spans (or a chain facing itself). Along
+// every member chain the link pieces are cut at every breakpoint — the piece ends of every
+// link on the chain and the images of the other chains' breakpoints through the links
+// (the closest point on the partner chain, so that a stack end on one edge cuts every
+// edge of the stack at the same cross-section) — and the composition of the cross-section
+// at the middle of every elementary interval is read off the links active there: from the
+// chain, the partner chains reached through active links (breadth first), each at the foot
+// of the previous point, ordered by their lateral position along the in-plane normal. The
+// signature offsets are the sums of the CONSECUTIVE links' separations (path independent:
+// a non-consecutive link within 2R, e.g. the outer edges of a 4-edge stack at 4 um and R =
+// 2.1 um, does not enter), gap sides and conductors read at the members; one feature per
+// (type, signature without the bend radius, curvature class, member chains), its
+// RadiusOverR the tightest windowed radius over its pieces as for the two-edge pairs. Sides
+// are ranked along the lateral axis oriented so that the member with the smallest (chain,
+// position) sits on side 0 (the convention of the two-edge pairs, where side 0 is chain A);
+// the chirality is the signature's relative to that orientation.
+void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
+                               const std::vector<std::size_t> &span_items)
+{
+  const double reach = kInteractionDistanceOverRadius * R * (1.0 + kPairSeparationTolerance);
+  const double neighbourhood = kSelfPairNeighbourhoodOverRadius * R;
+  struct ELink
+  {
+    int chain_a, chain_b;
+    double separation;
+    std::array<std::vector<LinkPiece>, 2> pieces;
+    bool Self() const { return chain_a == chain_b; }
+  };
+  std::vector<ELink> elinks;
+  for (const std::size_t i : link_items)
+  {
+    const PairLink &link = pair_links[i];
+    elinks.push_back({link.chain_a, link.chain_b, link.separation, link.pieces});
+  }
+  for (const std::size_t j : span_items)
+  {
+    const TranslationalSpan &span = translational_spans[j];
+    for (std::size_t m = 0; m + 1 < span.members.size(); m++)
+    {
+      const auto &lower = span.members[m], &upper = span.members[m + 1];
+      ELink e{runs[lower.run].chain, runs[upper.run].chain, upper.w - lower.w, {}};
+      e.pieces[0].push_back({lower.run, lower.interval, false, 0.0, 0.0, 0});
+      e.pieces[1].push_back({upper.run, upper.interval, false, 0.0, 0.0, 0});
+      elinks.push_back(std::move(e));
+    }
+  }
+  auto ChainOf = [&](int id) -> const Chain & { return chains[chain_index.at(id)]; };
+  auto ChainInterval = [&](const LinkPiece &piece)
+  {
+    const Chain &c = ChainOf(runs[piece.run].chain);
+    const double offset = c.run_offset[runs[piece.run].index_in_chain];
+    return Interval{offset + piece.interval.first, offset + piece.interval.second};
+  };
+  // Links on every chain: (link, side), in link order.
+  std::map<int, std::vector<std::pair<std::size_t, int>>> links_on_chain;
+  std::map<int, std::vector<double>> breakpoints;
+  for (std::size_t e = 0; e < elinks.size(); e++)
+  {
+    for (int side = 0; side < 2; side++)
+    {
+      const int chain = side == 0 ? elinks[e].chain_a : elinks[e].chain_b;
+      if (elinks[e].pieces[static_cast<std::size_t>(side)].empty())
+      {
+        continue;
+      }
+      links_on_chain[chain].emplace_back(e, side);
+      for (const auto &piece : elinks[e].pieces[static_cast<std::size_t>(side)])
+      {
+        const auto interval = ChainInterval(piece);
+        breakpoints[chain].push_back(interval.first);
+        breakpoints[chain].push_back(interval.second);
+      }
+    }
+  }
+  auto Contains = [&](const LinkPiece &piece, double x)
+  {
+    const auto interval = ChainInterval(piece);
+    return x >= interval.first - Tol() && x <= interval.second + Tol();
+  };
+  auto StrictlyInside = [&](const LinkPiece &piece, double x)
+  {
+    const auto interval = ChainInterval(piece);
+    return x > interval.first + Tol() && x < interval.second - Tol();
+  };
+  auto AddBreakpoint = [&](int chain, double x)
+  {
+    auto &list = breakpoints[chain];
+    for (const double y : list)
+    {
+      if (std::abs(y - x) <= Tol())
+      {
+        return false;
+      }
+    }
+    list.push_back(x);
+    return true;
+  };
+  // Images of the breakpoints through the links, breadth first over the chains (bounded by
+  // the number of links: an image travels at most once over every link).
+  {
+    std::map<int, std::vector<double>> frontier = breakpoints;
+    for (std::size_t depth = 0; depth <= elinks.size() && !frontier.empty(); depth++)
+    {
+      std::map<int, std::vector<double>> next;
+      for (const auto &[chain, xs] : frontier)
+      {
+        const auto it = links_on_chain.find(chain);
+        if (it == links_on_chain.end())
+        {
+          continue;
+        }
+        for (const double x : xs)
+        {
+          for (const auto &[e, side] : it->second)
+          {
+            const ELink &link = elinks[e];
+            bool active = false;
+            for (const auto &piece : link.pieces[static_cast<std::size_t>(side)])
+            {
+              active = active || StrictlyInside(piece, x);
+            }
+            if (!active)
+            {
+              continue;
+            }
+            const int other = side == 0 ? link.chain_b : link.chain_a;
+            const Point3D p = ChainAt(ChainOf(chain), x);
+            const auto foot = ClosestPointOnChain(
+                ChainOf(other), p, link.Self() ? std::optional<double>(x) : std::nullopt);
+            if (!std::isfinite(foot.distance) || !quantizer.Less(foot.distance, reach))
+            {
+              continue;
+            }
+            if (AddBreakpoint(other, foot.x))
+            {
+              next[other].push_back(foot.x);
+            }
+          }
+        }
+      }
+      frontier = std::move(next);
+    }
+  }
+  // Composition of the cross-section through (chain, x).
+  struct Node
+  {
+    int chain;
+    double x;
+    Point3D point;
+    std::size_t run;
+    double position;  // along the lateral axis
+  };
+  struct Composition
+  {
+    std::vector<Node> nodes;  // in increasing position along `lateral`
+    Point3D lateral;
+    std::vector<double> offsets;
+    bool geometric_fallback = false;
+  };
+  std::size_t fallbacks = 0;
+  auto Compose = [&](int chain, double x)
+  {
+    Composition composition;
+    std::size_t run = 0;
+    double s = 0.0;
+    const Point3D p = ChainAt(ChainOf(chain), x, &run, &s);
+    composition.lateral = Normalize(Cross(n_ref, runs[run].tangent));
+    composition.nodes.push_back({chain, x, p, run, 0.0});
+    for (std::size_t i = 0; i < composition.nodes.size() && composition.nodes.size() < 64; i++)
+    {
+      const Node node = composition.nodes[i];
+      const auto it = links_on_chain.find(node.chain);
+      if (it == links_on_chain.end())
+      {
+        continue;
+      }
+      for (const auto &[e, side] : it->second)
+      {
+        const ELink &link = elinks[e];
+        bool active = false;
+        for (const auto &piece : link.pieces[static_cast<std::size_t>(side)])
+        {
+          active = active || Contains(piece, node.x);
+        }
+        if (!active)
+        {
+          continue;
+        }
+        const int other = side == 0 ? link.chain_b : link.chain_a;
+        const auto foot = ClosestPointOnChain(
+            ChainOf(other), node.point,
+            link.Self() ? std::optional<double>(node.x) : std::nullopt);
+        if (!std::isfinite(foot.distance) || !quantizer.Less(foot.distance, reach))
+        {
+          continue;
+        }
+        const bool present = std::any_of(
+            composition.nodes.begin(), composition.nodes.end(),
+            [&](const Node &n)
+            {
+              return n.chain == other &&
+                     quantizer.Less(ChainArcDistance(ChainOf(other), n.x, n.x, foot.x),
+                                    neighbourhood);
+            });
+        if (present)
+        {
+          continue;
+        }
+        const Point3D q = runs[foot.run].At(foot.s);
+        composition.nodes.push_back(
+            {other, foot.x, q, foot.run, Dot(Sub(q, p), composition.lateral)});
+      }
+    }
+    auto Less = [](const Node &a, const Node &b)
+    { return std::tie(a.position, a.chain, a.x) < std::tie(b.position, b.chain, b.x); };
+    std::sort(composition.nodes.begin(), composition.nodes.end(), Less);
+    // Orientation: the member with the smallest (chain, position along its chain) on side
+    // 0 (the two-edge convention: side 0 = chain A, the lower chain index).
+    auto Key = [](const Node &n) { return std::make_pair(n.chain, n.x); };
+    if (Key(composition.nodes.back()) < Key(composition.nodes.front()))
+    {
+      std::reverse(composition.nodes.begin(), composition.nodes.end());
+      composition.lateral = Scale(-1.0, composition.lateral);
+      for (auto &n : composition.nodes)
+      {
+        n.position = -n.position;
+      }
+    }
+    // Offsets from the consecutive links' separations.
+    composition.offsets.assign(composition.nodes.size(), 0.0);
+    for (std::size_t i = 0; i + 1 < composition.nodes.size(); i++)
+    {
+      const Node &lower = composition.nodes[i], &upper = composition.nodes[i + 1];
+      std::optional<double> separation;
+      const auto it = links_on_chain.find(lower.chain);
+      if (it != links_on_chain.end())
+      {
+        for (const auto &[e, side] : it->second)
+        {
+          const ELink &link = elinks[e];
+          const int other = side == 0 ? link.chain_b : link.chain_a;
+          if (other != upper.chain || separation)
+          {
+            continue;
+          }
+          for (const auto &piece : link.pieces[static_cast<std::size_t>(side)])
+          {
+            if (Contains(piece, lower.x))
+            {
+              separation = link.separation;
+              break;
+            }
+          }
+        }
+      }
+      if (!separation)
+      {
+        separation = upper.position - lower.position;  // geometric (no consecutive link)
+        composition.geometric_fallback = true;
+      }
+      composition.offsets[i + 1] = composition.offsets[i] + *separation;
+    }
+    return composition;
+  };
+  // Elementary intervals of every chain, their compositions, grouped into features.
+  struct Assigned
+  {
+    int chain;
+    double x0, x1;
+    std::string key;
+    int side;
+    bool curved;
+    double max_kappa;
+    std::string type;
+    nlohmann::json signature;
+    int chirality;
+    std::optional<std::string> reason;
+    Point3D origin;
+    std::array<Point3D, 3> axes;
+    int sides;
+  };
+  std::vector<Assigned> assigned;
+  for (auto &[chain, list] : breakpoints)
+  {
+    std::sort(list.begin(), list.end());
+    const auto it = links_on_chain.find(chain);
+    if (it == links_on_chain.end())
+    {
+      continue;
+    }
+    const Chain &C = ChainOf(chain);
+    std::vector<Assigned> on_chain;
+    for (std::size_t i = 0; i + 1 < list.size(); i++)
+    {
+      const double x0 = list[i], x1 = list[i + 1];
+      if (x1 - x0 <= Tol())
+      {
+        continue;
+      }
+      const double mid = 0.5 * (x0 + x1);
+      bool covered = false;
+      for (const auto &[e, side] : it->second)
+      {
+        for (const auto &piece : elinks[e].pieces[static_cast<std::size_t>(side)])
+        {
+          covered = covered || Contains(piece, mid);
+        }
+      }
+      if (!covered)
+      {
+        continue;
+      }
+      const auto composition = Compose(chain, mid);
+      const std::size_t k = composition.nodes.size();
+      if (k < 2)
+      {
+        continue;
+      }
+      fallbacks += composition.geometric_fallback ? 1 : 0;
+      std::vector<TranslationalEdge> edges;
+      bool curved = false;
+      double max_kappa = 0.0;
+      std::vector<int> member_chains;
+      int own_side = -1;
+      for (std::size_t n = 0; n < k; n++)
+      {
+        const Node &node = composition.nodes[n];
+        const Run &run = runs[node.run];
+        edges.push_back({composition.offsets[n],
+                         Dot(run.gap_direction, composition.lateral) > 0.0 ? 1 : -1,
+                         run.conductor, InterfaceNames(run.targets), run.boundary_law});
+        curved = curved || IsCurvedAt(ChainOf(node.chain), node.x);
+        max_kappa = std::max(max_kappa, WindowedCurvature(ChainOf(node.chain), node.x));
+        member_chains.push_back(node.chain);
+        if (node.chain == chain && own_side < 0 &&
+            quantizer.Less(ChainArcDistance(C, node.x, node.x, mid), neighbourhood))
+        {
+          own_side = static_cast<int>(n);
+        }
+      }
+      if (own_side < 0)
+      {
+        continue;
+      }
+      max_kappa = std::max(max_kappa, MaxCurvature(C, x0, x1));
+      auto translational = CanonicalTranslationalSignature(edges, R);
+      std::string type;
+      std::optional<std::string> reason;
+      if (k == 2)
+      {
+        const bool same = runs[composition.nodes[0].run].conductor ==
+                          runs[composition.nodes[1].run].conductor;
+        const int gap_lower = edges[0].gap_sign, gap_upper = edges[1].gap_sign;
+        if (gap_lower > 0 && gap_upper < 0)
+        {
+          type = same ? "SameConductorGap" : "DifferentConductorGap";
+        }
+        else if (gap_lower < 0 && gap_upper > 0)
+        {
+          type = "SameConductorStrip";
+        }
+        else
+        {
+          type = "UnclassifiedParallelPair";
+          reason = "parallel metal edges within 2R with the gap on the same side "
+                   "(overlapping metal in one process plane)";
+        }
+      }
+      else
+      {
+        type = "ParallelEdgeCluster";
+      }
+      std::sort(member_chains.begin(), member_chains.end());
+      std::string key = type + "|" + translational.signature.dump() + "|" +
+                        (curved ? "curved" : "straight") + "|";
+      for (const int m : member_chains)
+      {
+        key += std::to_string(m) + ",";
+      }
+      const Node &first = composition.nodes.front();
+      on_chain.push_back({chain, x0, x1, key, own_side, curved, max_kappa, type,
+                          translational.signature, translational.chirality, reason,
+                          first.point,
+                          {runs[first.run].tangent, composition.lateral, n_ref},
+                          static_cast<int>(k)});
+    }
+    // Adjacent elementary intervals of one feature and side merge.
+    for (auto &entry : on_chain)
+    {
+      if (!assigned.empty() && assigned.back().chain == entry.chain &&
+          assigned.back().key == entry.key && assigned.back().side == entry.side &&
+          std::abs(assigned.back().x1 - entry.x0) <= Tol())
+      {
+        assigned.back().x1 = entry.x1;
+        assigned.back().max_kappa = std::max(assigned.back().max_kappa, entry.max_kappa);
+      }
+      else
+      {
+        assigned.push_back(std::move(entry));
+      }
+    }
+  }
+  if (std::getenv("PALACE_IDENTIFICATION_DEBUG") && input.log)
+  {
+    std::ostringstream dbg;
+    dbg << "  DEBUG component: " << elinks.size() << " elinks\n";
+    for (const auto &e : elinks)
+    {
+      dbg << "    link " << e.chain_a << " - " << e.chain_b << " sep " << e.separation
+          << " pieces " << e.pieces[0].size() << " / " << e.pieces[1].size() << "\n";
+      for (const int c : {e.chain_a, e.chain_b})
+      {
+        const Chain &C = ChainOf(c);
+        const Run &r0 = runs[C.runs.front()];
+        dbg << "      chain " << c << " runs " << C.runs.size() << " length " << C.length
+            << " start (" << r0.start[0] << ", " << r0.start[1] << ") curved intervals "
+            << C.curved.size() << "\n";
+      }
+      for (int side = 0; side < 2; side++)
+        for (const auto &piece : e.pieces[static_cast<std::size_t>(side)])
+        {
+          const auto iv = ChainInterval(piece);
+          dbg << "      side " << side << " run " << piece.run << " x [" << iv.first << ", " << iv.second << "] curved " << piece.curved << "\n";
+        }
+    }
+    for (const auto &a : assigned)
+    {
+      dbg << "    assigned chain " << a.chain << " [" << a.x0 << ", " << a.x1 << "] side " << a.side
+          << " k " << a.sides << " curved " << a.curved << " " << a.type << "\n";
+    }
+    input.log(dbg.str());
+  }
+  // Features: one per key (in first-appearance order over the chains), RadiusOverR from
+  // the tightest windowed radius over the feature's pieces.
+  std::map<std::string, std::vector<std::size_t>> groups;
+  std::vector<std::string> group_order;
+  for (std::size_t i = 0; i < assigned.size(); i++)
+  {
+    auto [it, inserted] = groups.emplace(assigned[i].key, std::vector<std::size_t>{});
+    if (inserted)
+    {
+      group_order.push_back(assigned[i].key);
+    }
+    it->second.push_back(i);
+  }
+  for (const auto &key : group_order)
+  {
+    const auto &members = groups.at(key);
+    const Assigned &lead = assigned[members.front()];
+    double length = 0.0, max_kappa = 0.0;
+    for (const std::size_t i : members)
+    {
+      length += assigned[i].x1 - assigned[i].x0;
+      max_kappa = std::max(max_kappa, assigned[i].max_kappa);
+    }
+    if (length <= kSignatureLengthQuantumOverRadius * R)
+    {
+      continue;  // slivers between cuts, below the signature grid
+    }
+    nlohmann::json signature = lead.signature;
+    std::string type = lead.type;
+    if (lead.reason)
+    {
+      signature["Reason"] = *lead.reason;
+    }
+    if (lead.curved)
+    {
+      type = "Curved" + type;
+      MFEM_VERIFY(max_kappa > 0.0, "A curved pair / stack without curvature!");
+      signature["RadiusOverR"] =
+          RoundTo(1.0 / (max_kappa * R), kSignatureLengthQuantumOverRadius);
+    }
+    const int feature = NewFeature(type, signature, lead.chirality);
+    features[feature].origin = lead.origin;
+    features[feature].axes = lead.axes;
+    feature_sides[feature] = lead.sides;
+    for (const std::size_t i : members)
+    {
+      const Assigned &entry = assigned[i];
+      const Chain &C = ChainOf(entry.chain);
+      // Runs overlapping [x0, x1] (run_offset ascending).
+      std::size_t kr = std::min(
+          static_cast<std::size_t>(
+              std::upper_bound(C.run_offset.begin(), C.run_offset.end(), entry.x0) -
+              C.run_offset.begin()) -
+              1,
+          C.runs.size() - 1);
+      for (; kr < C.runs.size() && C.run_offset[kr] < entry.x1 - Tol(); kr++)
+      {
+        const double offset = C.run_offset[kr];
+        const Run &run = runs[C.runs[kr]];
+        const double s0 = std::max(entry.x0, offset) - offset;
+        const double s1 = std::min(entry.x1, offset + run.length) - offset;
+        if (s1 - s0 > Tol())
+        {
+          claims[C.runs[kr]].push_back({feature, 2, {s0, s1}, entry.side});
+        }
+      }
+    }
+  }
+  if (fallbacks > 0 && input.log)
+  {
+    input.log("  Identification stacks: " + std::to_string(fallbacks) +
+              " elementary intervals with a geometric offset (no consecutive link)\n");
+  }
 }
 
 // Window of a vertex site along one incident run and, for curved chains, the following
@@ -4502,6 +5343,23 @@ void Identifier::Assign(IdentificationResult &result)
                 return std::tie(a.priority, a.feature, a.interval) <
                        std::tie(b.priority, b.feature, b.interval);
               });
+    // Two claims of one priority by different features overlapping on the run would be
+    // decided by the feature id below: the rules (clusters disjoint, windows shortened to
+    // abut, pairs / stacks assembled per cross-section) never produce one; counted.
+    for (std::size_t i = 0; i < run_claims.size(); i++)
+    {
+      for (std::size_t j = i + 1;
+           j < run_claims.size() && run_claims[j].priority == run_claims[i].priority; j++)
+      {
+        if (run_claims[i].feature != run_claims[j].feature &&
+            std::min(run_claims[i].interval.second, run_claims[j].interval.second) -
+                    std::max(run_claims[i].interval.first, run_claims[j].interval.first) >
+                Tol())
+        {
+          same_priority_claim_overlaps++;
+        }
+      }
+    }
     // CrossLayer zones are excluded before any feature claims the run.
     std::vector<Interval> taken = cross_layer[r];
     for (const auto &claim : run_claims)
@@ -5154,6 +6012,7 @@ void Identifier::Assign(IdentificationResult &result)
     digest_input += '\n';
   }
   result.geometry_digest = Sha256HexImpl(digest_input);
+  result.same_priority_claim_overlaps = same_priority_claim_overlaps;
   result.features = features;
   result.radius = R;
   result.reference_process_normal = n_ref;
@@ -5225,10 +6084,12 @@ IdentificationResult Identifier::Identify()
     stage.End(std::to_string(sites.size()) + " sites");
     stage.Begin("bent pairs");
     BuildBentPairs();
+    stage.Begin("translational spans");
+    BuildTranslationalFeatures();
+    stage.Begin("pairs / stacks");
+    BuildPairsAndStacks();
     stage.Begin("events / cores / clusters");
     BuildClusters();
-    stage.Begin("translational features");
-    BuildTranslationalFeatures();
   }
   stage.Begin("claim resolution / assignment / tables");
   Assign(result);
@@ -5336,6 +6197,7 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
   w.Pod(result.assigned_length);
   w.Pod(result.excluded_length);
   w.String(result.geometry_digest);
+  w.Size(result.same_priority_claim_overlaps);
   w.Size(result.features.size());
   for (const auto &f : result.features)
   {
@@ -5420,6 +6282,7 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
   result.assigned_length = r.Pod<double>();
   result.excluded_length = r.Pod<double>();
   result.geometry_digest = r.String();
+  result.same_priority_claim_overlaps = r.Size();
   result.features.resize(r.Size());
   for (auto &f : result.features)
   {
@@ -5668,6 +6531,18 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"PairSampleSpacingOverR", 0.5},
         {"PairCandidateReachOverR",
          kInteractionDistanceOverRadius * (1.0 + kPairSeparationTolerance)},
+        {"SamplingMargins", "the bent-pair candidate reach 2R (1 + 0.05) and the mutual-sides "
+                            "facing test at the pair separation x 1.05 gather candidates / "
+                            "samples only; every interaction decision is the 3D distance "
+                            "strictly below 2R on the quantized grid"},
+        {"SelfPairNeighbourhoodOverR", kSelfPairNeighbourhoodOverRadius},
+        {"StackRule", "links (bent pairs) and translational spans sharing a run over a common "
+                      "interval are one cross-section: k >= 3 edges with consecutive "
+                      "separations < 2R are one ParallelEdgeCluster / "
+                      "CurvedParallelEdgeCluster (offsets from the consecutive links, gap "
+                      "pattern, conductors, bend radius), straight and along bends; the "
+                      "pairwise candidates inside it are superseded; a chain folding back "
+                      "within 2R beyond pi R of arc length pairs with itself"},
         {"CrossLayerReachOverR", kInteractionDistanceOverRadius},
         {"PlaneRule", "features (pairs, clusters, vertex joins, translational classes) "
                       "never span two metal planes; metal of another plane within the "
@@ -5684,6 +6559,11 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
        {{"PerimeterLength", L(perimeter_length)},
         {"AssignedLength", L(assigned_length)},
         {"ExcludedLength", L(excluded_length)}}},
+      {"Diagnostics",
+       {{"SamePriorityClaimOverlaps", same_priority_claim_overlaps},
+        {"Rule", "claims of one priority by different features never overlap on a run "
+                 "(clusters disjoint, windows abut, pairs / stacks assembled per "
+                 "cross-section): claim resolution never decides by feature id"}}},
       {"GeometryDigest", geometry_digest}};
 }
 
