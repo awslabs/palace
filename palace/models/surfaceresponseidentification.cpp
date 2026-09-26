@@ -3312,16 +3312,38 @@ void Identifier::BuildBentPairs()
     // outside that neighbourhood, no shared-vertex zones (every vertex is shared).
     const bool self = A.id == B.id;
     const double neighbourhood = kSelfPairNeighbourhoodOverRadius * R;
-    auto SelfExcluded = [&](std::size_t ka, std::size_t kb)
+    // A chain facing itself: a run pair whose points are all within the neighbourhood of
+    // each other along the chain (the largest arc distance between the two runs below pi R)
+    // never faces; otherwise every point of run ka is a candidate and its partner is the
+    // closest point of the chain OUTSIDE the neighbourhood of that point (the per-sample foot
+    // below), so that the pair starts exactly where the facing point is pi R of arc away.
+    auto SelfAllowed = [&](std::size_t ka, std::size_t kb)
     {
-      if (!self)
-      {
-        return false;
-      }
+      std::vector<Interval> allowed;
       const double a0 = A.run_offset[ka], a1 = a0 + runs[A.runs[ka]].length;
       const double b0 = A.run_offset[kb], b1 = b0 + runs[A.runs[kb]].length;
-      const double gap = std::min(ChainArcDistance(A, a0, a1, b0), ChainArcDistance(A, a0, a1, b1));
-      return quantizer.Less(gap, neighbourhood);
+      if (!self)
+      {
+        allowed.emplace_back(0.0, a1 - a0);
+        return allowed;
+      }
+      if (ka == kb)
+      {
+        return allowed;
+      }
+      double farthest = std::max(std::abs(b1 - a0), std::abs(a1 - b0));
+      if (A.closed)
+      {
+        // The shorter way round for the two far ends.
+        farthest = std::max(std::min(std::abs(b1 - a0), A.length - std::abs(b1 - a0)),
+                            std::min(std::abs(a1 - b0), A.length - std::abs(a1 - b0)));
+      }
+      if (quantizer.Less(farthest, neighbourhood))
+      {
+        return allowed;
+      }
+      allowed.emplace_back(0.0, a1 - a0);
+      return allowed;
     };
     for (const std::size_t ka : RunsOfChainFacing(A, B))
     {
@@ -3338,13 +3360,17 @@ void Identifier::BuildBentPairs()
       {
         const std::size_t b = B.runs[kb];
         const Run &rb = runs[b];
-        if (rb.excluded || SelfExcluded(ka, kb) ||
+        if (rb.excluded ||
             !quantizer.Less(SegmentSegmentDistance(ra.start, ra.end, rb.start, rb.end),
                             reach))
         {
           continue;
         }
-        const auto found = RunIntervalWithin(a, rb.start, rb.end, reach);
+        auto found = RunIntervalWithin(a, rb.start, rb.end, reach);
+        if (self)
+        {
+          found = IntersectIntervals(found, SelfAllowed(ka, kb), Tol());
+        }
         within.insert(within.end(), found.begin(), found.end());
       }
       within = MergeIntervals(within, Tol());
@@ -4322,12 +4348,17 @@ void Identifier::BuildPairsAndStacks()
   {
     stage.Progress(k, component_order.size(), "pair / stack components");
     const auto &[links, span_items] = components.at(component_order[k]);
+    // A lone two-edge link or span is the pair feature of the former rules (a side taken by
+    // a cluster or a vertex window is trimmed by the mutual-sides rule of the claim
+    // resolution); everything else — a span of three or more rigid runs included — is
+    // assembled per cross-section with the taken rule.
     if (links.size() == 1 && span_items.empty() && !pair_links[links.front()].Self())
     {
       EmitPairLink(pair_links[links.front()]);
       pairs++;
     }
-    else if (links.empty() && span_items.size() == 1)
+    else if (links.empty() && span_items.size() == 1 &&
+             translational_spans[span_items.front()].members.size() == 2)
     {
       EmitTranslationalSpan(translational_spans[span_items.front()]);
       spans++;
@@ -4370,6 +4401,7 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
 {
   const double reach = kInteractionDistanceOverRadius * R * (1.0 + kPairSeparationTolerance);
   const double neighbourhood = kSelfPairNeighbourhoodOverRadius * R;
+  const bool debug_log = std::getenv("PALACE_IDENTIFICATION_DEBUG") && input.log;
   struct ELink
   {
     int chain_a, chain_b;
@@ -4706,6 +4738,16 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       }
       auto composition = Compose(chain, mid);
       const std::size_t k = composition.nodes.size();
+      if (debug_log)
+      {
+        std::ostringstream line;
+        line << "    interval chain " << chain << " [" << x0 << ", " << x1 << "] nodes " << k;
+        for (const auto &node : composition.nodes)
+        {
+          line << " (" << node.chain << " @ " << node.x << ")";
+        }
+        input.log(line.str() + "\n");
+      }
       if (k < 2)
       {
         continue;

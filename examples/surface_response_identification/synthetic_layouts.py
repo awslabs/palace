@@ -516,6 +516,311 @@ def decision_82_suite():
     return layouts
 
 
+def arc_band(r_in, r_out, sweep_degrees=90.0, lead=12.0, cap=True):
+    """A band between the radii r_in < r_out along a circular path about the origin from the
+    angle -90 deg (the point (0, -r), heading +x) counter-clockwise over sweep_degrees, with
+    straight tangent leads of the given length at both ends; true circular arcs (Gmsh) split
+    into pieces below 180 deg. Counter-clockwise outline. cap=False leaves the end edges to be
+    cut by the truncation box (the caller sizes the box)."""
+    sweep = math.radians(sweep_degrees)
+    a0 = -0.5 * math.pi
+    a1 = a0 + sweep
+    t0 = np.array([math.cos(a0 + 0.5 * math.pi), math.sin(a0 + 0.5 * math.pi)])  # heading at the start
+    t1 = np.array([math.cos(a1 + 0.5 * math.pi), math.sin(a1 + 0.5 * math.pi)])
+    def at(r, a):
+        return (r * math.cos(a), r * math.sin(a))
+    pieces = max(1, int(math.ceil(sweep_degrees / 90.0 - 1.0e-9)))
+    points, arcs = [], {}
+    # Outer side forward: start lead, arc, end lead.
+    p = np.array(at(r_out, a0))
+    points.append(tuple(p - lead * t0))
+    points.append(tuple(p))
+    for k in range(1, pieces + 1):
+        points.append(at(r_out, a0 + sweep * k / pieces))
+        arcs[len(points)] = (0.0, 0.0)  # 1-based: the arc ends at this vertex
+    q = np.array(at(r_out, a1))
+    points.append(tuple(q + lead * t1))
+    # Inner side backward.
+    q = np.array(at(r_in, a1))
+    points.append(tuple(q + lead * t1))
+    points.append(tuple(q))
+    for k in range(pieces - 1, -1, -1):
+        points.append(at(r_in, a0 + sweep * k / pieces))
+        arcs[len(points)] = (0.0, 0.0)
+    p = np.array(at(r_in, a0))
+    points.append(tuple(p - lead * t0))
+    return loop(points, arcs)
+
+
+def hairpin(rho, gap, half_y):
+    """A strip of width w = 2 rho - gap folded through a semicircle of centreline radius rho
+    about the origin (the fold below y = 0), its two legs running up to y = half_y (the
+    truncation): the inner edges of the legs face each other across `gap` at x = +-gap / 2, the
+    inner fold has radius gap / 2 and the outer fold 2 rho - gap / 2."""
+    r_in = 0.5 * gap
+    r_out = 2.0 * rho - 0.5 * gap
+    points = [(-r_out, half_y), (-r_out, 0.0), (0.0, -r_out), (r_out, 0.0), (r_out, half_y),
+              (r_in, half_y), (r_in, 0.0), (0.0, -r_in), (-r_in, 0.0), (-r_in, half_y)]
+    arcs = {3: (0.0, 0.0), 4: (0.0, 0.0), 8: (0.0, 0.0), 9: (0.0, 0.0)}  # 1-based end vertices
+    return loop(points, arcs)
+
+
+def kinked_hairpin(gap, width, half_y, turns_degrees=(22.0, 27.0, 24.0, 29.0, 23.0, 28.0, 27.0), chords=(0.35, 0.65, 0.45, 0.8, 0.5, 0.7)):
+    """A strip whose inner edge folds through 180 deg along a NON-circular polyline (unequal
+    chords and turns, every turn below the corner threshold, the total 180 deg): no arc fits
+    it (the arc rule's 5 % circle test fails), so the fold stays inside the chain and the two
+    inner legs, `gap` apart, are one chain facing itself — the self-pairing case. The outer
+    edge is the exact offset polyline at `width` (> 2R: no strip pair). The fold's chords are
+    scaled so that the polyline closes on the leg separation."""
+    heading = -0.5 * math.pi
+    pts = [np.array([0.0, 0.0])]
+    turns = [t * 180.0 / sum(turns_degrees) for t in turns_degrees]
+    for c, t in zip(chords, turns[:-1]):
+        heading += math.radians(t)
+        pts.append(pts[-1] + c * np.array([math.cos(heading), math.sin(heading)]))
+    scale = gap / (pts[-1][0] - pts[0][0])
+    pts = [p * scale for p in pts]
+    shift = np.array([-0.5 * gap, 0.0]) - pts[0]
+    inner = [np.array([-0.5 * gap, half_y])] + [p + shift for p in pts] + [np.array([0.5 * gap, half_y])]
+    # Exact offset polyline by width to the right of the travel direction (away from the slot).
+    outer = []
+    n = len(inner)
+    for i, p in enumerate(inner):
+        if i == 0 or i == n - 1:
+            d = inner[1] - inner[0] if i == 0 else inner[-1] - inner[-2]
+            d = d / np.linalg.norm(d)
+            outer.append(p + width * np.array([d[1], -d[0]]))
+        else:
+            d0 = p - inner[i - 1]
+            d1 = inner[i + 1] - p
+            n0 = np.array([d0[1], -d0[0]]) / np.linalg.norm(d0)
+            n1 = np.array([d1[1], -d1[0]]) / np.linalg.norm(d1)
+            b = n0 + n1
+            b = b / np.linalg.norm(b)
+            outer.append(p + (width / (b @ n0)) * b)
+    return loop([tuple(p) for p in outer] + [tuple(p) for p in inner[::-1]])
+
+
+def stack_suite():
+    """Decision 82(2) oracle cases (multi-edge cross-section stacks) with their expectation
+    stated before running. Straight stacks: bars along x from -30 to 30 (end corners inside
+    the box: one corner cluster per end) between ground bars that reach the truncation box
+    (no ground corners); curved stacks: bands along a 90 deg arc with 12 um leads (arc_band);
+    the taper, the U-ring, the wide ground, the hairpins and the kinked (self-facing) hairpin.
+    R = 2 um: a 2 um gap / trace is 1R, 4 um exactly 2R (no interaction, strict rule)."""
+    R = RADIUS
+    layouts = []
+    L, half = 30.0, 40.0
+
+    def straight(name, traces, ground_below_gap, ground_above_gap, offsets, isolated, notes, strips=0, extra=None):
+        """strips: recomposed SameConductorStrip features next to the end clusters (the trace
+        alone where its ground partners are cluster material while the trace edges, exactly R
+        from the cores, are not); extra: further recomposed features at the stack ends
+        ({"ParallelEdgeCluster": [offsets, ...], "<PairType>": count})."""
+        sheets = []
+        y = 0.0
+        for width, gap in traces:
+            sheets.append(sheet(GROUND, rectangle(-L, y, L, y + width)))
+            y += width + gap
+        y_top = y - traces[-1][1]
+        if ground_below_gap is not None:
+            sheets.append(sheet(GROUND, rectangle(-half, -8.0 - ground_below_gap, half, -ground_below_gap)))
+        if ground_above_gap is not None:
+            sheets.append(sheet(GROUND, rectangle(-half, y_top + ground_above_gap, half, y_top + ground_above_gap + 8.0)))
+        extra = dict(extra or {})
+        extra_stacks = extra.pop("ParallelEdgeCluster", [])
+        features = {"ParallelEdgeCluster": 1 + len(extra_stacks), "SpatialEdgeCluster": 2, "IsolatedEdge": isolated, **extra}
+        if strips:
+            features["SameConductorStrip"] = strips
+        expected = {"Features": features, "Offsets": {"ParallelEdgeCluster": [offsets] + extra_stacks}, "FacingGates": True}
+        layouts.append(layout(f"stack-{name}", sheets, half_x=half, half_y=half, lc_fine=1.0, lc_far=6.0, notes=notes, expected=expected))
+
+    # k = 3: ground | 2 | trace 2: edges G-top, T-bottom, T-top at 0 / 1R / 2R (the trace's top
+    # edge faces nothing but is the strip partner of its bottom edge). Isolated edges are one
+    # feature per chain: the ground's far edge and its near edge beyond the end clusters (2 per
+    # ground). Where the end cluster holds the ground edge (R around its cores) but not the
+    # trace edges (exactly R away: the knife edge), the trace pair is recomposed as a
+    # SameConductorStrip (the stack-end rule); with a ground on both sides the trace edges
+    # between the two ground claims are recomposed the same way.
+    straight("k3-2-2", [(2.0, 0.0)], 2.0, None, [0.0, 1.0, 2.0], 2, "ground | 2 um gap | 2 um trace: a 3-edge stack at 0 / 1 / 2 R over the straight run, one corner cluster per trace end, the ground's far edge and its near edge beyond the clusters isolated; the trace strip recomposed next to the clusters", strips=1)
+    straight("k3-1p5-3", [(3.0, 0.0)], 1.5, None, [0.0, 0.75, 2.25], 3, "ground | 1.5 um gap | 3 um trace: 3-edge stack at 0 / 0.75 / 2.25 R (asymmetric); the trace's bottom edge is 0.75 R from the ground's cluster cores (inside the end cluster over a shorter reach than the ground itself), its top edge 1.5 R from them: the top edge is isolated next to the clusters (ClusterNeighbour), the trace strip recomposed between the two claim ends", strips=1)
+    straight("k3-3-1", [(1.0, 0.0)], 3.0, None, [0.0, 1.5, 2.0], 2, "ground | 3 um gap | 1 um trace: 3-edge stack at 0 / 1.5 / 2 R", strips=1)
+    straight("k4-2-2-2", [(2.0, 0.0)], 2.0, 2.0, [0.0, 1.0, 2.0, 3.0], 4, "ground | 2 | trace 2 | 2 | ground (the DS-SCT-001 flux line): a 4-edge stack at 0 / 1 / 2 / 3 R; isolated: two far edges + the near edges beyond the end clusters", strips=1)
+    straight("k4-1-1p5-3", [(1.5, 0.0)], 1.0, 3.0, [0.0, 0.5, 1.25, 2.75], 5, "ground | 1 | trace 1.5 | 3 | ground: asymmetric 4-edge stack at 0 / 0.5 / 1.25 / 2.75 R; stack ends (cluster claims of unequal reach: lower ground to 2 R + sqrt(15) um, trace bottom 0.5 R from its cores, upper ground to 2 R + sqrt(7) um): a 3-edge stack (trace | 3 | ground) then a DifferentConductorGap (trace top | ground) then the trace top alone", strips=0, extra={"ParallelEdgeCluster": [[0.0, 0.75, 2.25]], "DifferentConductorGap": 1})
+    straight("k5-2-2-2-2", [(2.0, 2.0), (2.0, 0.0)], 2.0, None, [0.0, 1.0, 2.0, 3.0, 4.0], 4, "ground | 2 | trace 2 | 2 | trace 2: 5-edge stack at 0 .. 4 R; each trace's end edge makes events on the other trace's facing long edge (within 2R of it, not through-vertex), so the inner edges are cluster material to 2 R + sqrt(12) um while the outer edges (exactly R from the cores) are isolated there", strips=0)
+    straight("k6-2-2-2-2-2", [(2.0, 2.0), (2.0, 0.0)], 2.0, 2.0, [0.0, 1.0, 2.0, 3.0, 4.0, 5.0], 6, "ground | 2 | trace | 2 | trace | 2 | ground: 6-edge stack at 0 .. 5 R; the traces' inner edges and both grounds are cluster material at the ends, the traces' outer edges isolated there", strips=0)
+    # Around 2R: the second gap at 3.9 um joins the stack (k = 4), at exactly 4.0 = 2R and at
+    # 4.1 um it does not (k = 3, the upper ground's near edge isolated; its end corners are
+    # beyond 2R of the trace corners, so it takes no part in the end clusters).
+    straight("k4-2-2-3p9", [(2.0, 0.0)], 2.0, 3.9, [0.0, 1.0, 2.0, 3.95], 4, "ground | 2 | trace 2 | 3.9 | ground: the 3.9 um gap (< 2R) makes a 4-edge stack at 0 / 1 / 2 / 3.95 R; the upper ground's cluster claim is shorter (its cores within 2R of the trace end edge span sqrt(16 - 3.9^2) um): a 3-edge stack trace | 3.9 | ground between the two claims, the trace strip alone before it", strips=1, extra={"ParallelEdgeCluster": [[0.0, 1.0, 2.95]]})
+    straight("k3-2-2-4p0", [(2.0, 0.0)], 2.0, 4.0, [0.0, 1.0, 2.0], 4, "ground | 2 | trace 2 | 4.0 = 2R | ground: the knife edge — exactly 2R does not interact: a 3-edge stack, the upper ground's edges isolated", strips=1)
+    straight("k3-2-2-4p1", [(2.0, 0.0)], 2.0, 4.1, [0.0, 1.0, 2.0], 4, "ground | 2 | trace 2 | 4.1 | ground: 3-edge stack, the upper ground isolated", strips=1)
+    straight("k3-wide-ground", [(2.0, 0.0)], 2.0, 6.0, [0.0, 1.0, 2.0], 4, "a 3-edge stack (ground | 2 | trace 2) next to a wide ground edge 6 um = 3R above the trace: the wide edge is isolated over its whole length (no third-edge facing)", strips=1)
+
+    # Curved stacks: bands about the origin from -90 deg over 90 deg with 12 um leads; the
+    # innermost edge at r0 = rho (the tightest bend of the stack, RadiusOverR = rho / R for the
+    # curved class when rho < 10 R). Traces 3 um wide (1.5 R), gaps 2 um; the ground band 8 um.
+    for q in (3.0, 8.0, 30.0):
+        rho = q * R
+        curved = q < STRAIGHT_BEND_RADIUS_OVER_R
+        r_far = rho + 3.0 + 2.0 + 8.0
+        far_curved = r_far < STRAIGHT_BEND_RADIUS_OVER_R * R
+        extent = r_far + 12.0 + 4.0
+        hx = math.ceil(extent) + 2.0
+        # k = 3: trace + ground: stacks straight on the two leads and curved along the arc (or
+        # one straight stack when rho >= 10 R); the ground's far edge: isolated leads + curved
+        # arc (or one isolated edge); its end edges beyond the corner cluster and the far
+        # corner window: one isolated piece each; far corners convex.
+        # The straight stack is ONE feature on both leads (one feature per signature, class and
+        # member chains); the ground's far edge one isolated chain (+ a curved section) and
+        # its two end edges isolated between the cluster and the far corner's window; the
+        # trace's inner edge is isolated next to the end clusters (its partner, the trace's
+        # outer edge, inside the cluster; itself exactly R from the cores: ClusterNeighbour).
+        k3 = [0.0, 1.5, 2.5]
+        stacks = {"ParallelEdgeCluster": 1, "CurvedParallelEdgeCluster": 1} if curved else {"ParallelEdgeCluster": 1}
+        far = ({"IsolatedEdge": 1 + 2 + 1, "CurvedEdge": 1} if far_curved else {"IsolatedEdge": 1 + 2 + 1})
+        expected = {"Features": {**stacks, "SpatialEdgeCluster": 2, "ConvexCorner": 2, **far},
+                    "Offsets": {t: [k3] * n for t, n in stacks.items()}, "FacingGates": True}
+        if curved:
+            expected["StackRadii"] = {"CurvedParallelEdgeCluster": [q]}
+        layouts.append(layout(f"stack-curved-k3-rho{q:g}", [sheet(GROUND, arc_band(rho, rho + 3.0)), sheet(GROUND, arc_band(rho + 5.0, rho + 13.0))], half_x=hx, half_y=hx, lc_fine=1.0, lc_far=max(6.0, hx / 6.0), notes=f"3 um trace (inner radius {q:g} R) | 2 um gap | 8 um ground band along a 90 deg bend with 12 um leads: 3-edge stack at 0 / 1.5 / 2.5 R, {'curved along the bend (RadiusOverR ' + f'{q:g}' + ') and straight on the leads' if curved else 'straight-like throughout (one feature, bend annotation)'}", bend={"Radius": rho}, expected=expected))
+        # k = 4: two 3 um traces 2 um apart, nothing else: 0 / 1.5 / 2.5 / 4 R.
+        k4 = [0.0, 1.5, 2.5, 4.0]
+        expected = {"Features": {**stacks, "SpatialEdgeCluster": 2, "IsolatedEdge": 2}, "Offsets": {t: [k4] * n for t, n in stacks.items()}, "FacingGates": True}
+        if curved:
+            expected["StackRadii"] = {"CurvedParallelEdgeCluster": [q]}
+        hx4 = math.ceil(rho + 8.0 + 12.0 + 4.0) + 2.0
+        layouts.append(layout(f"stack-curved-k4-rho{q:g}", [sheet(GROUND, arc_band(rho, rho + 3.0)), sheet(GROUND, arc_band(rho + 5.0, rho + 8.0))], half_x=hx4, half_y=hx4, lc_fine=1.0, lc_far=max(6.0, hx4 / 6.0), notes=f"two 3 um traces 2 um apart along a 90 deg bend (inner radius {q:g} R): 4-edge stack at 0 / 1.5 / 2.5 / 4 R", bend={"Radius": rho}, expected=expected))
+        # k = 5: two traces + ground: 0 / 1.5 / 2.5 / 4 / 5 R.
+        k5 = [0.0, 1.5, 2.5, 4.0, 5.0]
+        r_far5 = rho + 8.0 + 2.0 + 8.0
+        far_curved5 = r_far5 < STRAIGHT_BEND_RADIUS_OVER_R * R
+        far = ({"IsolatedEdge": 1 + 2 + 1, "CurvedEdge": 1} if far_curved5 else {"IsolatedEdge": 1 + 2 + 1})
+        expected = {"Features": {**stacks, "SpatialEdgeCluster": 2, "ConvexCorner": 2, **far}, "Offsets": {t: [k5] * n for t, n in stacks.items()}, "FacingGates": True}
+        if curved:
+            expected["StackRadii"] = {"CurvedParallelEdgeCluster": [q]}
+        hx5 = math.ceil(r_far5 + 12.0 + 4.0) + 2.0
+        layouts.append(layout(f"stack-curved-k5-rho{q:g}", [sheet(GROUND, arc_band(rho, rho + 3.0)), sheet(GROUND, arc_band(rho + 5.0, rho + 8.0)), sheet(GROUND, arc_band(rho + 10.0, rho + 18.0))], half_x=hx5, half_y=hx5, lc_fine=1.0, lc_far=max(6.0, hx5 / 6.0), notes=f"two 3 um traces and an 8 um ground band, 2 um gaps, along a 90 deg bend (inner radius {q:g} R): 5-edge stack at 0 / 1.5 / 2.5 / 4 / 5 R", bend={"Radius": rho}, expected=expected))
+        # k = 6: three traces: 0 / 1.5 / 2.5 / 4 / 5 / 6.5 R.
+        k6 = [0.0, 1.5, 2.5, 4.0, 5.0, 6.5]
+        expected = {"Features": {**stacks, "SpatialEdgeCluster": 2, "IsolatedEdge": 2}, "Offsets": {t: [k6] * n for t, n in stacks.items()}, "FacingGates": True}
+        if curved:
+            expected["StackRadii"] = {"CurvedParallelEdgeCluster": [q]}
+        hx6 = math.ceil(rho + 13.0 + 12.0 + 4.0) + 2.0
+        layouts.append(layout(f"stack-curved-k6-rho{q:g}", [sheet(GROUND, arc_band(rho, rho + 3.0)), sheet(GROUND, arc_band(rho + 5.0, rho + 8.0)), sheet(GROUND, arc_band(rho + 10.0, rho + 13.0))], half_x=hx6, half_y=hx6, lc_fine=1.0, lc_far=max(6.0, hx6 / 6.0), notes=f"three 3 um traces 2 um apart along a 90 deg bend (inner radius {q:g} R): 6-edge stack at 0 / 1.5 / 2.5 / 4 / 5 / 6.5 R", bend={"Radius": rho}, expected=expected))
+
+    # Taper: a 2 um trace between ground edges whose gap tapers from 6 um (3R: isolated ground
+    # edges, the trace's own strip pair) to 2 um (a 4-edge stack) through 8 deg kinks over 14.2 um
+    # per side (variation 14 % per R: not locally constant -> one cluster over the taper joining
+    # both sides through the trace). All bars reach the truncation in x.
+    dx = 4.0 / math.tan(math.radians(8.0))
+    ground_lower = loop([(-half, -14.0), (half, -14.0), (half, -2.0), (dx / 2, -2.0), (-dx / 2, -6.0), (-half, -6.0)])
+    ground_upper = loop([(-half, 8.0), (-dx / 2, 8.0), (dx / 2, 4.0), (half, 4.0), (half, 16.0), (-half, 16.0)])
+    layouts.append(layout("stack-taper-wide-to-narrow", [sheet(GROUND, rectangle(-half, 0.0, half, 2.0)), sheet(GROUND, ground_lower), sheet(GROUND, ground_upper)], half_x=half, half_y=half, lc_fine=1.0, lc_far=6.0, notes="2 um trace between ground edges tapering from a 6 um gap (isolated ground edges + the trace strip pair at 1R) to 2 um (4-edge stack at 0 / 1 / 2 / 3 R) through 8 deg kinks: the taper is not locally constant and is one cluster; the wide-end kinks read curved (8 deg over 1 R: radius 7 R)", expected={
+        "FeaturesSubset": {"ParallelEdgeCluster": 1, "SameConductorStrip": 1, "SpatialEdgeCluster": 1},
+        "Offsets": {"ParallelEdgeCluster": [[0.0, 1.0, 2.0, 3.0]]}, "FacingGates": True}))
+
+    # U-ring (the DS-SCT-001 / DS-SCT-002 flux-line end): a 2 um trace from the top truncation
+    # into a rounded-rectangle ring (strip 2 um; hole 12 x 10 um with 1 um = 0.5 R corners, outer
+    # corners 3 um), the ground 2 um outside (corners 5 um) and along the feed. Stacks: the feed
+    # (4 edges at 0 / 1 / 2 / 3 R) and the ring's left / right / bottom sides (3 edges: ground |
+    # ring outer | ring inner at 0 / 1 / 2 R) between the rounded corners' windows; the bends
+    # are curved gaps (ground / ring outer, radii 5 and 3 um), the inner corners rounded
+    # concave corners, the junction a cluster.
+    ring_hole = rounded_rectangle(6.0, 5.0, 1.0)
+    ring_outer_pts = rounded_rectangle(8.0, 7.0, 3.0)
+    def with_feed(rr, x_feed, y_top):
+        """Insert the feed (x = +-x_feed up to y_top) into the top edge of a rounded rectangle."""
+        pts = rr["Points"]; arcs = rr["Arcs"]  # arcs keyed by 1-based end vertex
+        # The top edge runs from the 4th point (right-top arc end) to the 5th (left-top arc start).
+        out = []; new_arcs = {}
+        for k, p in enumerate(pts, start=1):
+            out.append(p)
+            if k in arcs:
+                new_arcs[len(out)] = arcs[k]
+            if k == 4:
+                out += [(x_feed, p[1]), (x_feed, y_top), (-x_feed, y_top), (-x_feed, p[1])]
+        return loop(out, new_arcs)
+    ring_metal = with_feed(ring_outer_pts, 1.0, half)
+    # The ground: the box minus the feed slot and the ring's surroundings as ONE loop (a hole
+    # touching the truncation boundary is not a valid sheet): clockwise around the ring.
+    gr = rounded_rectangle(10.0, 9.0, 5.0)
+    g_pts, g_arcs = gr["Points"], gr["Arcs"]  # 1-based arc end keys
+    ground_pts = [(-half, -half), (half, -half), (half, half), (3.0, half), (3.0, 9.0)]
+    ground_arcs = {}
+    # Around the ring clockwise: from the 4th point (5, 9) back through 3, 2, 1, 8, 7, 6, 5.
+    order = [4, 3, 2, 1, 8, 7, 6, 5]
+    for i, k in enumerate(order):
+        ground_pts.append(g_pts[k - 1])
+        # Going backwards, the arc that ended at vertex k (key k) now runs from k to k - 1:
+        # it ends at the NEXT appended vertex.
+        if k in g_arcs and i + 1 < len(order):
+            ground_arcs[len(ground_pts) + 1] = g_arcs[k]
+    ground_pts += [(-3.0, 9.0), (-3.0, half), (-half, half)]
+    ground_metal = loop(ground_pts, ground_arcs)
+    layouts.append(layout("stack-u-ring", [sheet(GROUND, ring_metal, holes=[ring_hole]), sheet(GROUND, ground_metal)], half_x=half, half_y=half, lc_fine=0.5, lc_far=6.0, notes="flux-line end: 2 um trace feeding a 2 um ring (hole 12 x 10 um, 0.5 R inner corners, 3 um outer corners) inside a ground at 2 um (5 um corners): the feed is a 4-edge stack, the ring's three free sides 3-edge stacks between the rounded corners' windows, curved ground / ring gaps around the bends, four rounded concave corners, the junction a cluster; recomposed 2-edge gaps where the inner edge is in a corner window", expected={
+        "FeaturesSubset": {"ParallelEdgeCluster": 4},
+        "Offsets": {"ParallelEdgeCluster": [[0.0, 1.0, 2.0, 3.0], [0.0, 1.0, 2.0], [0.0, 1.0, 2.0], [0.0, 1.0, 2.0]]}, "FacingGates": True}))
+
+    # Hairpins (supervisor addition): a strip of width 2 rho - g folded through a semicircle of
+    # centreline radius rho, legs to the truncation; inner fold radius g / 2 (a rounded concave
+    # corner of 180 deg turn below R, a bend at and above R), outer fold 2 rho - g / 2.
+    for q in (1.5, 3.0, 8.0):
+        rho = q * R
+        for gq in (1.0, 1.8, 2.2):
+            g = gq * R
+            w = 2.0 * rho - g
+            r_in, r_out = 0.5 * g, 2.0 * rho - 0.5 * g
+            hx = math.ceil(r_out) + (9.0 if q < 8 else 14.0)
+            corner = r_in < R
+            outer_curved = r_out < STRAIGHT_BEND_RADIUS_OVER_R * R
+            strip = w < 2.0 * R
+            gap_pair = g < 2.0 * R
+            features = Counter()
+            notes = []
+            if corner:
+                features["ConcaveCorner"] += 1
+                notes.append(f"inner fold {r_in / R:g} R < R: one rounded concave corner (180 deg turn) claiming the arc and R along each leg")
+                # The legs are rigid runs: the translational rule pairs them from the corner's
+                # window on (no through-vertex zone for exactly parallel rigid runs; the corner
+                # window is the only exclusion) as a gap (w >= 2R) or, with the strip pair, a
+                # 4-edge stack outer | strip | inner | gap | inner | strip | outer.
+                if strip:
+                    features["ParallelEdgeCluster"] += 1
+                    notes.append(f"4-edge stack at 0 / {w / R:g} / {(w + g) / R:g} / {(2 * w + g) / R:g} R from the corner window on; the outer legs opposite the window are isolated (one outer chain)")
+                else:
+                    features["SameConductorGap"] += 1
+                    notes.append(f"inner legs {gq:g} R apart: one SameConductorGap from the corner window on")
+                features["IsolatedEdge"] += 1  # the outer chain (both legs)
+                if outer_curved:
+                    features["CurvedEdge"] += 1
+                    notes.append(f"outer fold {r_out / R:g} R: a curved edge (concentric with the corner arc, a vertex neighbour)")
+                else:
+                    notes.append(f"outer chain straight-like ({r_out / R:g} R >= 10 R): one isolated edge incl. the fold")
+            else:
+                if strip:
+                    features["SameConductorStrip"] += 1
+                    features["CurvedSameConductorStrip"] += 1
+                    notes.append(f"strip {w / R:g} R pairs along the whole U (straight legs one feature, curved fold radius {r_in / R:g} R)")
+                else:
+                    features["IsolatedEdge"] += 2  # inner and outer chains (legs)
+                    features["CurvedEdge"] += 1 + (1 if outer_curved else 0)
+                    notes.append(f"legs {gq:g} R apart beyond 2R: inner chain isolated legs + curved fold ({r_in / R:g} R); outer chain isolated legs" + (f" + curved fold ({r_out / R:g} R)" if outer_curved else f" (fold {r_out / R:g} R straight-like)"))
+                    notes.append("the inner fold faces itself within 2R across the U: SelfNeighbourhood (below pi R of arc length), no pair")
+            expected = {"Features": dict(features), "FacingGates": True}
+            if corner and strip:
+                expected["Offsets"] = {"ParallelEdgeCluster": [[0.0, w / R, (w + g) / R, (2 * w + g) / R]]}
+            layouts.append(layout(f"hairpin-rho{q:g}-g{gq:g}".replace(".", "p"), [sheet(GROUND, hairpin(rho, g, 30.0))], half_x=hx, half_y=30.0, lc_fine=(0.5 if r_in < 2.5 else 1.0) if q < 8 else 0.7, lc_far=6.0 if q < 8 else 5.0, notes=f"hairpin strip of width {w:g} um (centreline radius {q:g} R, legs {gq:g} R apart): " + "; ".join(notes), bend={"Radius": rho}, expected=expected))
+
+    # The self-facing chain: a kinked hairpin whose inner fold is a non-circular polyline
+    # (no arc fits: the fold stays in the chain) with the legs 1.5 R apart: the inner chain
+    # pairs with itself beyond the pi R neighbourhood (SameConductorGap), the fold a curved
+    # edge; the outer edge (offset 2.5 R: no strip pair) isolated legs + a curved fold.
+    layouts.append(layout("hairpin-kinked-g1p5", [sheet(GROUND, kinked_hairpin(1.5 * R, 2.5 * R, 30.0))], half_x=20.0, half_y=30.0, lc_fine=0.3, lc_far=6.0, notes="kinked hairpin: the inner edge folds through 180 deg along a non-circular polyline (turns 18-32 deg, unequal chords) with the legs 1.5 R apart: one chain facing itself -> SameConductorGap beyond pi R of arc length, the fold a CurvedEdge; outer edge 2.5 R away: two isolated legs + a curved fold", expected={
+        "FeaturesSubset": {"SameConductorGap": 1}, "FacingGates": True}))
+    return layouts
+
+
 def check_expected(manifest, expected, radius=RADIUS):
     """Compare a manifest with a stated expectation: feature counts by type, exclusion lengths by
     class (relative tolerance `Tolerance`, default 1e-6 of the perimeter), vertex types, and the
@@ -539,6 +844,41 @@ def check_expected(manifest, expected, radius=RADIUS):
     if "ExcludedVertices" in expected:
         n = sum(1 for v in ident["Vertices"] if v["Type"] == "Excluded")
         checks["ExcludedVertices"] = {"Expected": expected["ExcludedVertices"], "Manifest": n, "Pass": n == expected["ExcludedVertices"]}
+    if "FeaturesSubset" in expected:
+        checks["FeaturesSubset"] = {"Expected": dict(expected["FeaturesSubset"]), "Manifest": {k: features.get(k, 0) for k in expected["FeaturesSubset"]}, "Pass": all(features.get(k, 0) == v for k, v in expected["FeaturesSubset"].items())}
+    if "Offsets" in expected:
+        # Offsets / R of every pair / stack feature of the type (sorted lists), compared as a
+        # multiset with a tolerance of 0.02 R (the chord readings of concentric polylines).
+        result = {}
+        ok = True
+        def same(a, b):
+            return len(a) == len(b) and all(abs(x - y) <= 0.02 for x, y in zip(a, b))
+        for ftype, wanted in expected["Offsets"].items():
+            found = [sorted(e["OffsetOverR"] for e in f["Signature"]["Edges"]) for f in ident["Features"] if f["Type"] == ftype]
+            # The signature is canonical: either orientation of the stated offsets may be the
+            # one serialised (the lexicographically smaller); accept both, greedily matched.
+            remaining = list(found)
+            match = len(found) == len(wanted)
+            for v in wanted:
+                v = sorted(v)
+                mirrored = sorted(v[-1] - x for x in v)
+                hit = next((i for i, a in enumerate(remaining) if same(a, v) or same(a, mirrored)), None)
+                if hit is None:
+                    match = False
+                else:
+                    remaining.pop(hit)
+            result[ftype] = {"Expected": [sorted(v) for v in wanted], "Manifest": found, "Pass": match}
+            ok = ok and match
+        checks["Offsets"] = {"ByType": result, "Pass": ok}
+    if "StackRadii" in expected:
+        result = {}
+        ok = True
+        for ftype, wanted in expected["StackRadii"].items():
+            found = sorted(f["Signature"]["RadiusOverR"] for f in ident["Features"] if f["Type"] == ftype)
+            match = len(found) == len(wanted) and all(abs(a - b) <= 0.05 * b for a, b in zip(found, sorted(wanted)))
+            result[ftype] = {"Expected": sorted(wanted), "Manifest": found, "Pass": match}
+            ok = ok and match
+        checks["StackRadii"] = {"ByType": result, "Pass": ok}
     if "CornerSignatures" in expected:
         found = Counter(f"{f['Type']}@{f['Signature']['AngleDegrees']:g}@{f['Signature']['CornerRadiusOverR']:g}" for f in ident["Features"] if f["Type"] in ("ConvexCorner", "ConcaveCorner") and f["Signature"].get("CornerRadiusOverR", 0.0) > 0.0)
         checks["CornerSignatures"] = {"Expected": dict(expected["CornerSignatures"]), "Manifest": dict(found), "Pass": found == Counter(expected["CornerSignatures"])}
