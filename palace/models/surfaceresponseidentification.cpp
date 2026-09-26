@@ -2216,8 +2216,6 @@ private:
   void BuildTranslationalFeatures();
   void BuildBentPairs();
   void BuildPairsAndStacks();
-  void EmitPairLink(const PairLink &link);
-  void EmitTranslationalSpan(const TranslationalSpan &span);
   void AssembleStack(const std::vector<std::size_t> &link_items,
                      const std::vector<std::size_t> &span_items);
   void BuildClusters();
@@ -4467,90 +4465,6 @@ void Identifier::BuildBentPairs()
             std::to_string(self_pairs) + " of chains facing themselves)");
 }
 
-// A single link is the two-edge feature of the bent-pair rule (side 0 = chain A, the
-// lateral from A to B at the lead piece), split by curvature class.
-void Identifier::EmitPairLink(const PairLink &link)
-{
-  const Run &ra = runs[link.run_a];
-  const Run &rb = runs[link.run_b];
-  const int gap_a = Dot(ra.gap_direction, link.lateral_ab) > 0.0 ? 1 : -1;
-  const int gap_b = Dot(rb.gap_direction, link.lateral_ab) > 0.0 ? 1 : -1;
-  const bool same = ra.conductor == rb.conductor;
-  std::string base;
-  std::optional<std::string> reason;
-  if (gap_a > 0 && gap_b < 0)
-  {
-    base = same ? "SameConductorGap" : "DifferentConductorGap";
-  }
-  else if (gap_a < 0 && gap_b > 0)
-  {
-    base = "SameConductorStrip";
-  }
-  else
-  {
-    base = "UnclassifiedParallelPair";
-    reason = "parallel metal edges within 2R with the gap on the same side (overlapping "
-             "metal in one process plane)";
-  }
-  for (const bool curved_class : {false, true})
-  {
-    double length = 0.0, max_kappa = 0.0;
-    for (int side = 0; side < 2; side++)
-    {
-      for (const auto &piece : link.pieces[static_cast<std::size_t>(side)])
-      {
-        if (piece.curved != curved_class)
-        {
-          continue;
-        }
-        length += piece.interval.second - piece.interval.first;
-        max_kappa = std::max(max_kappa, piece.max_kappa);
-      }
-    }
-    if (length <= kSignatureLengthQuantumOverRadius * R)
-    {
-      continue;  // slivers between cuts, below the signature grid
-    }
-    // One separation per pair and curvature class (decision 85(1)): the class's exact
-    // geometric separation when it has exact pieces, else its length-weighted chord
-    // reading (a slow taper is described by its mean).
-    const ClassSeparation &class_separation = link.separation[curved_class ? 1 : 0];
-    const double separation = class_separation.value;
-    std::vector<TranslationalEdge> edges = {
-        {0.0, gap_a, ra.conductor, InterfaceNames(ra.targets), ra.boundary_law},
-        {separation, gap_b, rb.conductor, InterfaceNames(rb.targets), rb.boundary_law}};
-    auto translational = CanonicalTranslationalSignature(edges, R);
-    nlohmann::json signature = std::move(translational.signature);
-    std::string type = base;
-    if (reason)
-    {
-      signature["Reason"] = *reason;
-    }
-    if (curved_class)
-    {
-      type = "Curved" + base;
-      MFEM_VERIFY(max_kappa > 0.0, "A curved pair without curvature!");
-      signature["RadiusOverR"] =
-          RoundTo(1.0 / (max_kappa * R), kSignatureLengthQuantumOverRadius);
-    }
-    const int feature = NewFeature(type, signature, translational.chirality);
-    features[feature].origin = link.lead_point;
-    features[feature].axes = {ra.tangent, link.lateral_ab, n_ref};
-    features[feature].exact_parameters = class_separation.exact;
-    feature_sides[feature] = 2;
-    for (int side = 0; side < 2; side++)
-    {
-      for (const auto &piece : link.pieces[static_cast<std::size_t>(side)])
-      {
-        if (piece.curved == curved_class)
-        {
-          claims[piece.run].push_back({feature, 2, piece.interval, side});
-        }
-      }
-    }
-  }
-}
-
 // Interval of run parameter s where the distance from run(s) to the segment [a, b] is below
 // the given distance (convex sublevel set).
 std::vector<Interval> Identifier::RunIntervalWithin(std::size_t run, const Point3D &a,
@@ -4759,71 +4673,6 @@ void Identifier::BuildTranslationalFeatures()
             " translational spans");
 }
 
-// A span of rigid parallel runs alone is the translational feature of design (b) 2: a pair
-// or a ParallelEdgeCluster with the members' lateral offsets, side k = the k-th edge in
-// increasing lateral offset.
-void Identifier::EmitTranslationalSpan(const TranslationalSpan &span)
-{
-  std::vector<TranslationalEdge> edges;
-  for (const auto &member : span.members)
-  {
-    edges.push_back({member.w, member.gap_sign, runs[member.run].conductor,
-                     InterfaceNames(runs[member.run].targets),
-                     runs[member.run].boundary_law});
-  }
-  auto translational = CanonicalTranslationalSignature(edges, R);
-  nlohmann::json best = std::move(translational.signature);
-  const int chirality = translational.chirality;
-  std::string type;
-  std::optional<std::pair<std::string, std::string>> exclusion;
-  if (span.members.size() == 2)
-  {
-    const auto &lower = span.members[0], &upper = span.members[1];
-    const bool same = runs[lower.run].conductor == runs[upper.run].conductor;
-    if (lower.gap_sign > 0 && upper.gap_sign < 0)
-    {
-      type = same ? "SameConductorGap" : "DifferentConductorGap";
-    }
-    else if (lower.gap_sign < 0 && upper.gap_sign > 0)
-    {
-      type = "SameConductorStrip";
-    }
-    else
-    {
-      exclusion = std::make_pair(
-          "IncompatibleParallelPair",
-          "parallel metal edges within 2R with the gap on the same side (overlapping "
-          "metal in one process plane)");
-    }
-  }
-  else
-  {
-    type = "ParallelEdgeCluster";
-  }
-  // A same-side pair cannot occur in one process plane; it is described (and never
-  // matched) as an UnclassifiedParallelPair feature so that the partition stays exact.
-  if (exclusion)
-  {
-    type = "UnclassifiedParallelPair";
-    best["Reason"] = exclusion->second;
-  }
-  const int feature = NewFeature(type, best, chirality);
-  features[feature].origin = Scale(0.5 * (span.lo + span.hi), span.axis);
-  features[feature].axes = {span.axis, span.lateral, n_ref};
-  feature_sides[feature] = static_cast<int>(span.members.size());
-  for (std::size_t k = 0; k < span.members.size(); k++)
-  {
-    const auto &member = span.members[k];
-    if (member.interval.second - member.interval.first <= Tol())
-    {
-      continue;
-    }
-    // Side k = the k-th edge in increasing lateral offset (the signature's order for
-    // chirality +1, reversed for -1).
-    claims[member.run].push_back({feature, 2, member.interval, static_cast<int>(k)});
-  }
-}
-
 // Pair / stack assembly (decision 82(2)). The pair links of the bent-pair rule and the
 // translational spans of the rigid parallel runs are the pairwise facing relations of the
 // perimeter; where several of them share a run over a common interval, the edges are one
@@ -4941,31 +4790,31 @@ void Identifier::BuildPairsAndStacks()
   {
     stage.Progress(k, component_order.size(), "pair / stack components");
     const auto &[links, span_items] = components.at(component_order[k]);
-    // A lone two-edge link or span is the pair feature of the former rules (a side taken by
-    // a cluster or a vertex window is trimmed by the mutual-sides rule of the claim
-    // resolution); everything else — a span of three or more rigid runs included — is
-    // assembled per cross-section with the taken rule.
-    if (links.size() == 1 && span_items.empty() && !pair_links[links.front()].Self())
+    // Every component — a lone two-edge link or span included — is assembled per
+    // cross-section with the taken rule (decision 85(2)): a pair side whose partner is
+    // cluster / window metal is no pair there and returns to the single-edge remainder,
+    // where the cluster extension tests it (the former lone-link path left such a side to
+    // the mutual-sides trimming of the claim resolution, after the extension).
+    if (links.size() == 1 && span_items.empty())
     {
-      EmitPairLink(pair_links[links.front()]);
       pairs++;
     }
     else if (links.empty() && span_items.size() == 1 &&
              translational_spans[span_items.front()].members.size() == 2)
     {
-      EmitTranslationalSpan(translational_spans[span_items.front()]);
       spans++;
     }
     else
     {
-      AssembleStack(links, span_items);
       stacks++;
     }
+    AssembleStack(links, span_items);
   }
   stage.End(std::to_string(component_order.size()) + " cross-section components: " +
             std::to_string(pairs) + " single links, " + std::to_string(spans) +
             " single spans, " + std::to_string(stacks) +
-            " assembled (stacks, chains facing themselves, mixed), " +
+            " multi-link (stacks, chains facing themselves, mixed), all assembled per "
+            "cross-section, " +
             std::to_string(features.size() - features_before) + " features, " +
             std::to_string(features.size()) + " features so far");
 }
@@ -6215,27 +6064,93 @@ double Identifier::ExtendClusters()
     }
   }
   // Claimed pieces of the clusters and the windows of the free sites, indexed by their
-  // boxes: piece -> (cluster index, or sites.size() offset for a free site).
+  // boxes: piece -> (cluster index, or cluster_claimed.size() + free site index), with the
+  // piece's chain interval and the projection extension at its ends (below).
   struct Piece
   {
     std::size_t run;
     Interval interval;
     std::size_t owner;  // cluster c, or cluster_claimed.size() + free site index
+    double extend_lo, extend_hi;  // projection-domain extension at the piece ends
   };
   std::vector<Piece> pieces;
+  // A single-edge point joins the owner where its PERPENDICULAR projection onto a claimed
+  // piece falls inside the piece and its distance to the piece is below 2R: the claimed
+  // perimeter is faced across, never reached diagonally past its end (a diagonal reach
+  // would creep along a sub-2R strip: the partner beyond the claim end pairs with the
+  // free continuation instead). Inside a claimed chain interval the perpendicular domains of
+  // consecutive pieces leave a wedge at every joint; each piece's domain is extended there
+  // by 2R tan(turn) (the wedge's width at 2R; never at the end of a claimed interval).
+  auto AddPieces = [&](std::size_t owner,
+                       const std::vector<std::pair<std::size_t, Interval>> &claimed)
+  {
+    std::map<int, std::vector<Interval>> by_chain;
+    for (const auto &[r, interval] : claimed)
+    {
+      const Chain &C = chains[chain_index.at(runs[r].chain)];
+      const double offset = C.run_offset[runs[r].index_in_chain];
+      by_chain[C.id].emplace_back(offset + interval.first, offset + interval.second);
+    }
+    for (auto &[chain, list] : by_chain)
+    {
+      (void)chain;
+      list = MergeIntervals(std::move(list), Tol());
+    }
+    for (const auto &[r, interval] : claimed)
+    {
+      const Chain &C = chains[chain_index.at(runs[r].chain)];
+      const std::size_t k = runs[r].index_in_chain;
+      const double offset = C.run_offset[k];
+      const double x0 = offset + interval.first, x1 = offset + interval.second;
+      const auto &list = by_chain.at(C.id);
+      const Interval *whole = nullptr;
+      for (const auto &candidate : list)
+      {
+        if (x0 >= candidate.first - Tol() && x1 <= candidate.second + Tol())
+        {
+          whole = &candidate;
+          break;
+        }
+      }
+      auto Extension = [&](bool at_start)
+      {
+        const double x = at_start ? x0 : x1;
+        if (!whole || x <= whole->first + Tol() || x >= whole->second - Tol())
+        {
+          return 0.0;  // the end of the claimed chain interval: no reach past it
+        }
+        // The joint at this piece end: the run boundary (joint_turn[k] before run k,
+        // joint_turn[k + 1] after; wrapping on a closed chain), 0 inside a run.
+        const double s_end = at_start ? interval.first : interval.second;
+        double turn = 0.0;
+        if (at_start && s_end <= Tol())
+        {
+          turn = C.joint_turn.empty() ? 0.0 : C.joint_turn[k];
+        }
+        else if (!at_start && s_end >= runs[r].length - Tol())
+        {
+          if (k + 1 < C.runs.size())
+          {
+            turn = C.joint_turn[k + 1];
+          }
+          else if (C.closed && !C.joint_turn.empty())
+          {
+            turn = C.joint_turn[0];
+          }
+        }
+        turn = std::min(turn, kCornerTurnToleranceDegrees * std::acos(-1.0) / 180.0);
+        return interaction * std::tan(turn);
+      };
+      pieces.push_back({r, interval, owner, Extension(true), Extension(false)});
+    }
+  };
   for (std::size_t c = 0; c < cluster_claimed.size(); c++)
   {
-    for (const auto &[r, interval] : cluster_claimed[c])
-    {
-      pieces.push_back({r, interval, c});
-    }
+    AddPieces(c, cluster_claimed[c]);
   }
   for (std::size_t k = 0; k < free_sites.size(); k++)
   {
-    for (const auto &[r, interval] : sites[free_sites[k]].window)
-    {
-      pieces.push_back({r, interval, cluster_claimed.size() + k});
-    }
+    AddPieces(cluster_claimed.size() + k, sites[free_sites[k]].window);
   }
   if (pieces.empty())
   {
@@ -6261,6 +6176,58 @@ double Identifier::ExtendClusters()
     BoundingBox(run.At(pieces[i].interval.first), run.At(pieces[i].interval.second), plo, phi);
     piece_grid.Insert(i, plo, phi);
   }
+  // Site of every feature vertex (the through-vertex zones of a cluster's own member
+  // vertices do not exclude: the cluster describes them).
+  std::map<std::size_t, std::size_t> site_of_vertex;
+  for (std::size_t i = 0; i < sites.size(); i++)
+  {
+    if (sites[i].vertex)
+    {
+      site_of_vertex.try_emplace(*sites[i].vertex, i);
+    }
+  }
+  auto ThroughZonesExcept = [&](std::size_t a, const Chain &A, const Chain &B, int cluster)
+  {
+    std::vector<std::vector<Interval>> zones;
+    for (const std::size_t v : SharedVertices(A, B))
+    {
+      const auto sv = site_of_vertex.find(v);
+      if (cluster >= 0 && sv != site_of_vertex.end() && sites[sv->second].cluster == cluster)
+      {
+        continue;
+      }
+      const Point3D &p = input.vertices[v].coordinate;
+      zones.push_back(RunIntervalWithin(a, p, p, kThroughVertexZoneOverRadius * R));
+    }
+    const auto it =
+        through_arc.find(std::make_pair(std::min(A.id, B.id), std::max(A.id, B.id)));
+    if (it != through_arc.end())
+    {
+      for (const int arc : it->second)
+      {
+        const Arc &fitted = arcs[static_cast<std::size_t>(arc)];
+        if (cluster >= 0 && fitted.feature >= 0 &&
+            sites[static_cast<std::size_t>(fitted.feature)].cluster == cluster)
+        {
+          continue;
+        }
+        const auto ci = chain_index.find(fitted.chain);
+        if (ci == chain_index.end())
+        {
+          continue;
+        }
+        std::vector<Interval> zone;
+        for (const std::size_t r : chains[ci->second].runs)
+        {
+          const auto within = RunIntervalWithin(a, runs[r].start, runs[r].end,
+                                                kThroughVertexZoneOverRadius * R);
+          zone.insert(zone.end(), within.begin(), within.end());
+        }
+        zones.push_back(MergeIntervals(std::move(zone), Tol()));
+      }
+    }
+    return zones;
+  };
   // Absorptions of this pass: (run, interval, owners) computed from the state before the
   // pass; applied afterwards.
   struct Absorption
@@ -6288,12 +6255,12 @@ double Identifier::ExtendClusters()
     Point3D rlo, rhi;
     BoundingBox(runs[r].start, runs[r].end, rlo, rhi);
     std::map<std::size_t, std::vector<Interval>> within_by_owner;
-    std::map<int, std::vector<std::vector<Interval>>> zones_by_chain;
+    std::map<std::pair<int, int>, std::vector<std::vector<Interval>>> zones_by_chain;
     for (const std::size_t i : piece_grid.Query(rlo, rhi, interaction + 2.0 * Tol()))
     {
       const Piece &piece = pieces[i];
       const Run &rp = runs[piece.run];
-      if (rp.excluded || run_plane[piece.run] != run_plane[r])
+      if (rp.excluded || piece.run == r || run_plane[piece.run] != run_plane[r])
       {
         continue;
       }
@@ -6308,7 +6275,43 @@ double Identifier::ExtendClusters()
       {
         continue;
       }
+      // Perpendicular projection onto the piece's line inside the (extended) piece.
+      {
+        const double g0 = Dot(Sub(runs[r].start, rp.start), rp.tangent);
+        const double slope = Dot(runs[r].tangent, rp.tangent);
+        const double lo_p = piece.interval.first - piece.extend_lo;
+        const double hi_p = piece.interval.second + piece.extend_hi;
+        std::vector<Interval> domain;
+        if (std::abs(slope) <= kDirectionQuantum)
+        {
+          if (g0 >= lo_p - Tol() && g0 <= hi_p + Tol())
+          {
+            domain.emplace_back(0.0, runs[r].length);
+          }
+        }
+        else
+        {
+          double s0 = (lo_p - g0) / slope, s1 = (hi_p - g0) / slope;
+          if (s0 > s1)
+          {
+            std::swap(s0, s1);
+          }
+          s0 = std::clamp(s0, 0.0, runs[r].length);
+          s1 = std::clamp(s1, 0.0, runs[r].length);
+          if (s1 - s0 > Tol())
+          {
+            domain.emplace_back(s0, s1);
+          }
+        }
+        found = IntersectIntervals(found, domain, Tol());
+        if (found.empty())
+        {
+          continue;
+        }
+      }
       const Chain &B = chains[chain_index.at(rp.chain)];
+      const int owner_cluster =
+          piece.owner < cluster_claimed.size() ? static_cast<int>(piece.owner) : -1;
       if (rp.chain == runs[r].chain)
       {
         // The chain's own neighbourhood: only points more than pi R of arc length from the
@@ -6318,8 +6321,6 @@ double Identifier::ExtendClusters()
         std::vector<Interval> allowed;
         for (const auto &interval : found)
         {
-          // Points of [interval] on run r whose arc distance to [b0, b1] is >= pi R: the
-          // complement of the neighbourhood [b0 - pi R, b1 + pi R] (wrapping on a loop).
           std::vector<Interval> near;
           for (const double shift :
                A.closed ? std::vector<double>{-A.length, 0.0, A.length} : std::vector<double>{0.0})
@@ -6338,10 +6339,12 @@ double Identifier::ExtendClusters()
       }
       else
       {
-        auto zit = zones_by_chain.find(rp.chain);
+        const auto zone_key = std::make_pair(rp.chain, owner_cluster);
+        auto zit = zones_by_chain.find(zone_key);
         if (zit == zones_by_chain.end())
         {
-          zit = zones_by_chain.emplace(rp.chain, ThroughZones(r, A, B)).first;
+          zit = zones_by_chain.emplace(zone_key, ThroughZonesExcept(r, A, B, owner_cluster))
+                    .first;
         }
         std::vector<Interval> excluded;
         for (const auto &zone : zit->second)
