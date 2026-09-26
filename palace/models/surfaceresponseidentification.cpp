@@ -3553,8 +3553,15 @@ void Identifier::BuildBentPairs()
     auto ByX = [](const Sample *u, const Sample *v) { return u->x < v->x; };
     std::sort(own_samples.begin(), own_samples.end(), ByX);
     std::sort(other_samples.begin(), other_samples.end(), ByX);
-    auto WindowMax =
-        [&](const std::vector<const Sample *> &list, double x, double half, double *min_out)
+    // Window maximum / minimum of the sampled distances within half of x along one chain;
+    // with a constancy mask only the locally constant samples count (the chord reading of
+    // a constant sample must not reach into a diverging neighbour: the last chord before a
+    // taper kink, whose window of a full chord crosses the kink, read 2.15 - 2.7 um for a
+    // 2 um gap on DS-SCT-001 and formed a separation group, a sliver pair and a hole in the
+    // stack).
+    auto WindowMax = [&](const std::vector<const Sample *> &list,
+                         const std::vector<char> *mask, double x, double half,
+                         double *min_out)
     {
       Sample probe{};
       probe.x = x - half;
@@ -3564,6 +3571,10 @@ void Identifier::BuildBentPairs()
       double max_d = 0.0, min_d = std::numeric_limits<double>::infinity();
       for (auto it = lo; it != hi; ++it)
       {
+        if (mask && !(*mask)[static_cast<std::size_t>(it - list.begin())])
+        {
+          continue;
+        }
         max_d = std::max(max_d, (*it)->d);
         min_d = std::min(min_d, (*it)->d);
       }
@@ -3573,19 +3584,38 @@ void Identifier::BuildBentPairs()
       }
       return max_d;
     };
+    // Local constancy of every sample of both chains (in the sorted order).
+    auto Constancy = [&](const std::vector<const Sample *> &list)
+    {
+      std::vector<char> flags(list.size());
+      for (std::size_t i = 0; i < list.size(); i++)
+      {
+        double min_d = 0.0;
+        const double max_d = WindowMax(list, nullptr, list[i]->x, R, &min_d);
+        flags[i] = !quantizer.Less(kPairSeparationTolerance * min_d, max_d - min_d);
+      }
+      return flags;
+    };
+    const std::vector<char> own_constant = Constancy(own_samples);
+    const std::vector<char> other_constant = Constancy(other_samples);
+    std::map<const Sample *, std::size_t> own_index;
+    for (std::size_t i = 0; i < own_samples.size(); i++)
+    {
+      own_index.emplace(own_samples[i], i);
+    }
     for (auto &piece : own)
     {
       for (const auto &sample : piece.samples)
       {
-        double min_d = 0.0;
-        const double max_own = WindowMax(own_samples, sample.x, R, &min_d);
-        constant.push_back(
-            !quantizer.Less(kPairSeparationTolerance * min_d, max_own - min_d));
-        const double w_own = WindowMax(own_samples, sample.x, sample.half_own, nullptr);
+        const bool is_constant = own_constant[own_index.at(&sample)] != 0;
+        constant.push_back(is_constant);
+        const double w_own =
+            WindowMax(own_samples, &own_constant, sample.x, sample.half_own, nullptr);
         const double w_other =
             other_samples.empty()
                 ? w_own
-                : WindowMax(other_samples, sample.qx, sample.half_other, nullptr);
+                : WindowMax(other_samples, &other_constant, sample.qx, sample.half_other,
+                            nullptr);
         // Chord reading C (exact for an offset polyline) and the inscribed-vertex reading
         // C / cos(turn / 2) (exact for two polylines inscribed in the curves at aligned
         // angles): the pair interacts only when both readings are below 2R.
@@ -3806,6 +3836,35 @@ void Identifier::BuildBentPairs()
         }
         groups.emplace_back(i, j);
         i = j;
+      }
+      if (std::getenv("PALACE_IDENTIFICATION_DEBUG_GROUPS") && input.log && groups.size() > 1)
+      {
+        std::ostringstream dbg;
+        dbg << "  DEBUG groups of chains " << A.id << " - " << B.id << ":\n";
+        for (const auto &[g0, g1] : groups)
+        {
+          double length = 0.0;
+          for (std::size_t i = g0; i < g1; i++)
+          {
+            length += grouped[i].piece->interval.second - grouped[i].piece->interval.first;
+          }
+          dbg << "    group mean " << grouped[g0].mean_separation << " .. "
+              << grouped[g1 - 1].mean_separation << " pieces " << (g1 - g0) << " length "
+              << length << "\n";
+          if (g1 - g0 <= 4)
+          {
+            for (std::size_t i = g0; i < g1; i++)
+            {
+              const auto &pc = *grouped[i].piece;
+              const Run &rr = runs[pc.run];
+              dbg << "      side " << grouped[i].side << " run " << pc.run << " s [" << pc.interval.first
+                  << ", " << pc.interval.second << "] of " << rr.length << " at (" << rr.At(pc.interval.first)[0]
+                  << ", " << rr.At(pc.interval.first)[1] << ") samples " << pc.sample_count
+                  << " mean " << grouped[i].mean_separation << "\n";
+            }
+          }
+        }
+        input.log(dbg.str());
       }
       for (const auto &[g0, g1] : groups)
       {
@@ -4402,6 +4461,29 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
   const double reach = kInteractionDistanceOverRadius * R * (1.0 + kPairSeparationTolerance);
   const double neighbourhood = kSelfPairNeighbourhoodOverRadius * R;
   const bool debug_log = std::getenv("PALACE_IDENTIFICATION_DEBUG") && input.log;
+  // Phase timing of a component (PALACE_IDENTIFICATION_DEBUG_TIMING), for the chip-scale
+  // routes.
+  const bool debug_timing = std::getenv("PALACE_IDENTIFICATION_DEBUG_TIMING") && input.log;
+  auto timer_started = std::chrono::steady_clock::now();
+  std::string timer_phase = "setup";
+  auto StackTimer = [&](const std::string &phase)
+  {
+    if (debug_timing)
+    {
+      const auto now = std::chrono::steady_clock::now();
+      const double seconds = std::chrono::duration<double>(now - timer_started).count();
+      if (seconds > 0.05)
+      {
+        std::ostringstream line;
+        line << "    stack component (" << link_items.size() << " links, " << span_items.size()
+             << " spans): " << timer_phase << " " << std::fixed << std::setprecision(2)
+             << seconds << " s\n";
+        input.log(line.str());
+      }
+      timer_started = now;
+      timer_phase = phase;
+    }
+  };
   struct ELink
   {
     int chain_a, chain_b;
@@ -4434,6 +4516,50 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     const double offset = c.run_offset[runs[piece.run].index_in_chain];
     return Interval{offset + piece.interval.first, offset + piece.interval.second};
   };
+  // Chain intervals of every link side, sorted (the pieces of one side are disjoint): the
+  // membership tests below are binary searches instead of scans over every piece.
+  std::vector<std::array<std::vector<Interval>, 2>> side_intervals(elinks.size());
+  for (std::size_t e = 0; e < elinks.size(); e++)
+  {
+    for (int side = 0; side < 2; side++)
+    {
+      auto &list = side_intervals[e][static_cast<std::size_t>(side)];
+      for (const auto &piece : elinks[e].pieces[static_cast<std::size_t>(side)])
+      {
+        list.push_back(ChainInterval(piece));
+      }
+      // Touching pieces (the sub-pieces of consecutive runs, whose analytic ends differ by
+      // roundoff below the signature grid) are one interval: the composition cannot change
+      // inside it, so its interior run joints are no breakpoints.
+      list = MergeIntervals(std::move(list), kSignatureLengthQuantumOverRadius * R);
+    }
+  }
+  // The interval of the link side holding x within the tolerance (closed), or null.
+  auto IntervalAt = [&](std::size_t e, int side, double x, double tolerance) -> const Interval *
+  {
+    const auto &list = side_intervals[e][static_cast<std::size_t>(side)];
+    auto it = std::upper_bound(list.begin(), list.end(), x,
+                               [](double value, const Interval &interval)
+                               { return value < interval.first; });
+    // Candidates: the interval starting at or before x (it - 1) and, within the tolerance,
+    // the one starting just after.
+    for (auto candidate : {it == list.begin() ? list.end() : it - 1, it})
+    {
+      if (candidate != list.end() && x >= candidate->first - tolerance &&
+          x <= candidate->second + tolerance)
+      {
+        return &*candidate;
+      }
+    }
+    return nullptr;
+  };
+  auto ActiveAt = [&](std::size_t e, int side, double x)
+  { return IntervalAt(e, side, x, Tol()) != nullptr; };
+  auto StrictlyActiveAt = [&](std::size_t e, int side, double x)
+  {
+    const Interval *interval = IntervalAt(e, side, x, Tol());
+    return interval && x > interval->first + Tol() && x < interval->second - Tol();
+  };
   // Links on every chain: (link, side), in link order. Breakpoints per chain (sorted, no
   // two within the decision quantum): the piece ends of every link on the chain and the
   // ends of the higher-priority claims (cluster portions, vertex windows) on it — where a
@@ -4441,11 +4567,14 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
   // the remaining members are recomposed (the stack-end rule of decision 82(2)).
   std::map<int, std::vector<std::pair<std::size_t, int>>> links_on_chain;
   std::map<int, std::set<double>> breakpoints;
+  // Breakpoints closer than the signature grid are one cut (an elementary interval below
+  // the grid is roundoff between two claim boundaries and joins its neighbour anyway).
+  const double breakpoint_grid = kSignatureLengthQuantumOverRadius * R;
   auto AddBreakpoint = [&](int chain, double x)
   {
     auto &list = breakpoints[chain];
-    auto it = list.lower_bound(x - Tol());
-    if (it != list.end() && std::abs(*it - x) <= Tol())
+    auto it = list.lower_bound(x - breakpoint_grid);
+    if (it != list.end() && std::abs(*it - x) <= breakpoint_grid)
     {
       return false;
     }
@@ -4462,11 +4591,24 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
         continue;
       }
       links_on_chain[chain].emplace_back(e, side);
-      for (const auto &piece : elinks[e].pieces[static_cast<std::size_t>(side)])
+      // Breakpoints: the ends of the merged pieces of each curvature class (a run joint
+      // inside a class is no breakpoint; the curved boundary between the classes is one).
+      for (const bool curved_class : {false, true})
       {
-        const auto interval = ChainInterval(piece);
-        AddBreakpoint(chain, interval.first);
-        AddBreakpoint(chain, interval.second);
+        std::vector<Interval> of_class;
+        for (const auto &piece : elinks[e].pieces[static_cast<std::size_t>(side)])
+        {
+          if (piece.curved == curved_class)
+          {
+            of_class.push_back(ChainInterval(piece));
+          }
+        }
+        for (const auto &interval :
+             MergeIntervals(std::move(of_class), kSignatureLengthQuantumOverRadius * R))
+        {
+          AddBreakpoint(chain, interval.first);
+          AddBreakpoint(chain, interval.second);
+        }
       }
     }
   }
@@ -4484,16 +4626,6 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       AddBreakpoint(chain, interval.second);
     }
   }
-  auto Contains = [&](const LinkPiece &piece, double x)
-  {
-    const auto interval = ChainInterval(piece);
-    return x >= interval.first - Tol() && x <= interval.second + Tol();
-  };
-  auto StrictlyInside = [&](const LinkPiece &piece, double x)
-  {
-    const auto interval = ChainInterval(piece);
-    return x > interval.first + Tol() && x < interval.second - Tol();
-  };
   // A chain position inside a cluster portion or a vertex window (taken_on_chain: sorted,
   // disjoint) takes no part in a cross-section.
   auto Taken = [&](int chain, double x)
@@ -4509,6 +4641,7 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
                                { return value < interval.first; });
     return iv != list.begin() && x < (iv - 1)->second - Tol() && x > (iv - 1)->first + Tol();
   };
+  StackTimer("images");
   // Images of the breakpoints through the links, breadth first over the chains (bounded by
   // the number of links: an image travels at most once over every link).
   {
@@ -4532,12 +4665,7 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
           for (const auto &[e, side] : it->second)
           {
             const ELink &link = elinks[e];
-            bool active = false;
-            for (const auto &piece : link.pieces[static_cast<std::size_t>(side)])
-            {
-              active = active || StrictlyInside(piece, x);
-            }
-            if (!active)
+            if (!StrictlyActiveAt(e, side, x))
             {
               continue;
             }
@@ -4560,6 +4688,7 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       frontier = std::move(next);
     }
   }
+  StackTimer("compose-def");
   // Composition of the cross-section through (chain, x).
   struct Node
   {
@@ -4600,12 +4729,7 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       for (const auto &[e, side] : it->second)
       {
         const ELink &link = elinks[e];
-        bool active = false;
-        for (const auto &piece : link.pieces[static_cast<std::size_t>(side)])
-        {
-          active = active || Contains(piece, node.x);
-        }
-        if (!active)
+        if (!ActiveAt(e, side, node.x))
         {
           continue;
         }
@@ -4669,13 +4793,9 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
           {
             continue;
           }
-          for (const auto &piece : link.pieces[static_cast<std::size_t>(side)])
+          if (ActiveAt(e, side, lower.x))
           {
-            if (Contains(piece, lower.x))
-            {
-              separation = link.separation;
-              break;
-            }
+            separation = link.separation;
           }
         }
       }
@@ -4688,6 +4808,27 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     }
     return composition;
   };
+  StackTimer("intervals");
+  if (debug_timing)
+  {
+    std::ostringstream line;
+    line << "    stack component breakpoints per chain:";
+    for (const auto &[chain, list] : breakpoints)
+    {
+      line << " " << chain << ":" << list.size();
+    }
+    line << "; link side intervals:";
+    for (std::size_t e = 0; e < elinks.size(); e++)
+    {
+      line << " " << side_intervals[e][0].size() << "/" << side_intervals[e][1].size();
+      const auto &list = side_intervals[e][0];
+      for (std::size_t i = 0; i < std::min<std::size_t>(list.size(), 6); i++)
+      {
+        line << " [" << std::setprecision(8) << list[i].first << ", " << list[i].second << "]";
+      }
+    }
+    input.log(line.str() + "\n");
+  }
   // Elementary intervals of every chain, their compositions, grouped into features.
   struct Assigned
   {
@@ -4719,18 +4860,15 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     for (std::size_t i = 0; i + 1 < list.size(); i++)
     {
       const double x0 = list[i], x1 = list[i + 1];
-      if (x1 - x0 <= Tol())
+      if (x1 - x0 <= breakpoint_grid)
       {
-        continue;
+        continue;  // below the signature grid: roundoff between two cuts
       }
       const double mid = 0.5 * (x0 + x1);
       bool covered = false;
       for (const auto &[e, side] : it->second)
       {
-        for (const auto &piece : elinks[e].pieces[static_cast<std::size_t>(side)])
-        {
-          covered = covered || Contains(piece, mid);
-        }
+        covered = covered || ActiveAt(e, side, mid);
       }
       if (!covered)
       {
@@ -4738,7 +4876,7 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       }
       auto composition = Compose(chain, mid);
       const std::size_t k = composition.nodes.size();
-      if (debug_log)
+      if (debug_log && (composition.nodes.size() < 2 || x1 - x0 > R))
       {
         std::ostringstream line;
         line << "    interval chain " << chain << " [" << x0 << ", " << x1 << "] nodes " << k;
@@ -4808,6 +4946,10 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       }
       if (own_side < 0)
       {
+        if (debug_log)
+        {
+          input.log("      no own side within the neighbourhood: skipped\n");
+        }
         continue;
       }
       max_kappa = std::max(max_kappa, MaxCurvature(C, x0, x1));
@@ -4893,10 +5035,12 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     for (const auto &a : assigned)
     {
       dbg << "    assigned chain " << a.chain << " [" << a.x0 << ", " << a.x1 << "] side " << a.side
-          << " k " << a.sides << " curved " << a.curved << " " << a.type << "\n";
+          << " k " << a.sides << " curved " << a.curved << " " << a.type << " key "
+          << std::hash<std::string>{}(a.key) % 100000 << "\n";
     }
     input.log(dbg.str());
   }
+  StackTimer("features");
   // Features: one per key (in first-appearance order over the chains), RadiusOverR from
   // the tightest windowed radius over the feature's pieces.
   std::map<std::string, std::vector<std::size_t>> groups;
@@ -4965,6 +5109,7 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       }
     }
   }
+  StackTimer("end");
   if (fallbacks > 0 && input.log)
   {
     input.log("  Identification stacks: " + std::to_string(fallbacks) +
@@ -5551,6 +5696,51 @@ void Identifier::Assign(IdentificationResult &result)
         taken.push_back(piece);
       }
       taken = MergeIntervals(taken, Tol());
+    }
+    if (const char *debug_segment = std::getenv("PALACE_IDENTIFICATION_DEBUG_SEGMENT");
+        debug_segment && input.log)
+    {
+      const auto wanted = static_cast<std::size_t>(std::atol(debug_segment));
+      // A negative value: every run whose sorted claims of one feature leave a gap longer
+      // than 0.1 R between them.
+      bool gap = false;
+      if (std::atol(debug_segment) < 0)
+      {
+        std::vector<std::tuple<double, double, int>> pieces;
+        for (const auto &claim : run_claims)
+        {
+          pieces.emplace_back(claim.interval.first, claim.interval.second, claim.feature);
+        }
+        std::sort(pieces.begin(), pieces.end());
+        for (std::size_t i = 1; i < pieces.size(); i++)
+        {
+          if (std::get<2>(pieces[i]) == std::get<2>(pieces[i - 1]) &&
+              std::get<0>(pieces[i]) - std::get<1>(pieces[i - 1]) > 0.1 * R)
+          {
+            gap = true;
+          }
+        }
+      }
+      if (gap || std::any_of(runs[r].segments.begin(), runs[r].segments.end(),
+                             [&](const RunSegment &rs) { return rs.segment == wanted; }))
+      {
+        std::ostringstream dbg;
+        dbg << "  DEBUG run " << r << " (segment " << wanted << ") length " << runs[r].length
+            << " from (" << runs[r].start[0] << ", " << runs[r].start[1] << ") to ("
+            << runs[r].end[0] << ", " << runs[r].end[1] << ") claims:\n";
+        for (const auto &claim : run_claims)
+        {
+          dbg << "    feature " << claim.feature << " priority " << claim.priority << " ["
+              << claim.interval.first << ", " << claim.interval.second << "] side "
+              << claim.side << " " << features[static_cast<std::size_t>(claim.feature)].type
+              << "\n";
+        }
+        for (const auto &rs : runs[r].segments)
+        {
+          dbg << "    segment " << rs.segment << " t [" << rs.t0 << ", " << rs.t1 << "]\n";
+        }
+        input.log(dbg.str());
+      }
     }
     // Pieces below the signature grid are roundoff between the boundaries of two claims (a
     // cluster ball cutting a pair piece, a claim ending next to a run end): each joins the

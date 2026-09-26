@@ -41,6 +41,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "surface_response_identification"
 
+from . import facing_check  # noqa: E402
 from . import manifest as M  # noqa: E402
 from . import perimeter as P  # noqa: E402
 from .msh2 import read_msh2  # noqa: E402
@@ -639,6 +640,14 @@ def run_audit(args):
     patch_summary = None
     if identification:
         gates, v2_summary = identification_gates(identification, perimeter, census, radius, targets)
+        # Hard facing gates (decision 82(2)): no isolated / curved edge faces another edge of
+        # its plane within 2R and no pair / stack side faces a third edge within 2R, apart
+        # from the recorded exclusions (facing_check.py; every exclusion reported with its
+        # length).
+        progress("facing gates (A8)")
+        facing_gate_list, facing_result = facing_check.facing_gates(manifest)
+        gates.extend(facing_gate_list)
+        v2_summary["Facing"] = {k: facing_result[k] for k in ("Isolated", "Pairs", "ByClass", "Exclusions", "KnifeEdgeRule", "DistanceHistogram")}
         patches_path = getattr(args, "patches", None) or os.path.join(os.path.dirname(os.path.abspath(args.manifest)), "surface-response-patches.csv")
         if os.path.exists(patches_path):
             patch_gate_list, patch_summary = patch_gates(identification, load_patches(patches_path), radius)
