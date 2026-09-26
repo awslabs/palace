@@ -8739,8 +8739,11 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
                                  "SelfNeighbourhood and, for pair / stack sides only, "
                                  "StackEndThirdBody (facing cluster / vertex metal) and "
                                  "StackEndRecomposition (facing a pair / stack sharing a "
-                                 "member chain), each recorded with its length (decision "
-                                 "85(2): ClusterNeighbour / VertexNeighbour are gone)"},
+                                 "member chain; bounded to 1 R per site and 1 R per feature in "
+                                 "total) and, for isolated / curved portions shorter than the "
+                                 "signature parameter tolerance, SubToleranceFeature, each "
+                                 "recorded with its length (decision 85(2): ClusterNeighbour / "
+                                 "VertexNeighbour are gone)"},
         {"CrossLayerReachOverR", kInteractionDistanceOverRadius},
         {"PlaneRule", "features (pairs, clusters, vertex joins, translational classes) "
                       "never span two metal planes; metal of another plane within the "

@@ -536,7 +536,13 @@ smaller endpoint.
    the manifest at most 1 R per pair / stack feature involved in total; beyond either cap
    the length is not exempt (two overlapping two-edge pairs across a sub-2R trace — the
    decision-78 defect — would run along the whole route and fail the gate); the site count,
-   total and largest site are reported in R. Diagnostics also record the stack assembly's
+   total and largest site are reported in R. One further recorded exemption of the isolated gate
+   (2026-09-26): `SubToleranceFeature` — an isolated / curved PORTION shorter than the signature
+   parameter tolerance 1e-3 R, i.e. an unclaimed remainder between two claim boundaries that the
+   across rule does not cover (DS-SCT-001: a 0.18-0.24 nm piece between a cluster claim end and
+   a stack cut image, facing the neighbouring route at 2.0 um); it has no resolvable parameter,
+   the exemption is bounded to 1e-3 R per such portion and their count is reported (DS-SCT-001
+   at R 1.9: 17 portions, 0.18 nm facing). Diagnostics also record the stack assembly's
    `StackCompositionCap` (64 members: far above any physical stack — the chip's widest has
    12 edges — bounding a runaway traversal through inconsistent links; hits counted,
    review m2) and `StackGeometricOffsetIntervals` (elementary intervals whose consecutive
