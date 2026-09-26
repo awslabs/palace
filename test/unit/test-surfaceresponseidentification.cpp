@@ -1109,3 +1109,186 @@ TEST_CASE("SurfaceResponseIdentificationStacks", "[surfaceresponseidentification
     CHECK(counts["SameConductorGap"] == 0);
   }
 }
+
+TEST_CASE("SurfaceResponseIdentificationExactParametersAndExtension",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Decision 85 (2026-09-26). (1) Exact signature parameters: the curved 3-edge stack of the
+  // previous test at two discretisations of the bend (5 and 2.5 deg steps) gives IDENTICAL
+  // offsets (0 / 1.5 / 2.5 R exactly: the arc radius differences) and bend radius, hence
+  // one signature key; the tolerance API groups near-identical instances and tells the
+  // mirror orientation apart from a different topology. (2) Cluster extension: the two
+  // 12 x 8 pads of the first test have every single-edge portion within 2R of a cluster's
+  // claimed perimeter absorbed (the gap edges between the end clusters are the pair, the
+  // remainder isolated only where nothing is within 2R across).
+  const double R = 2.0;
+  // A band between two concentric circles (vertices ON the circles: the inscribed
+  // construction of a CAD polygonisation) with tangent leads, counter-clockwise.
+  auto InscribedBand = [](double r_in, double r_out, double sweep_degrees, double step_degrees,
+                          double lead)
+  {
+    const int steps = static_cast<int>(std::lround(sweep_degrees / step_degrees));
+    const double sweep = sweep_degrees * std::acos(-1.0) / 180.0;
+    std::vector<Point2> inner, outer;
+    for (int k = 0; k <= steps; k++)
+    {
+      const double phi = sweep * k / steps;
+      inner.push_back({r_in * std::cos(phi), r_in * std::sin(phi)});
+      outer.push_back({r_out * std::cos(phi), r_out * std::sin(phi)});
+    }
+    // Leads along the tangents at phi = 0 (direction -y) and phi = sweep.
+    const Point2 t0 = {0.0, -1.0}, t1 = {-std::sin(sweep), std::cos(sweep)};
+    std::vector<Point2> loop = {{r_in, -lead}};
+    loop.insert(loop.end(), inner.begin(), inner.end());
+    loop.push_back({inner.back()[0] + lead * t1[0], inner.back()[1] + lead * t1[1]});
+    loop.push_back({outer.back()[0] + lead * t1[0], outer.back()[1] + lead * t1[1]});
+    loop.insert(loop.end(), outer.rbegin(), outer.rend());
+    loop.push_back({r_out, -lead});
+    (void)t0;
+    return loop;
+  };
+  SECTION("exact offsets at two discretisations (inscribed bands)")
+  {
+    // Trace 3 um from 3R, gap 2 um, ground 8 um: offsets 0 / 1.5 / 2.5 R exactly at 5 and
+    // 2.5 deg steps, bend radius exactly 3R, identical keys.
+    std::vector<std::string> keys;
+    for (const double step : {5.0, 2.5})
+    {
+      const double r0 = 3.0 * R;
+      const auto trace = InscribedBand(r0, r0 + 3.0, 90.0, step, 12.0);
+      const auto ground = InscribedBand(r0 + 5.0, r0 + 13.0, 90.0, step, 12.0);
+      const auto result = IdentifyMetalPerimeter(MakeInput({{trace, 0, 1.0}, {ground, 0, 1.0}}, R));
+      int stacks = 0;
+      for (const auto &feature : result.features)
+      {
+        if (feature.type == "ParallelEdgeCluster" ||
+            feature.type == "CurvedParallelEdgeCluster")
+        {
+          INFO("step " << step << " " << feature.type << " " << feature.signature.dump());
+          std::vector<double> offsets;
+          for (const auto &edge : feature.signature["Edges"])
+          {
+            offsets.push_back(edge["OffsetOverR"].get<double>());
+          }
+          std::sort(offsets.begin(), offsets.end());
+          REQUIRE(offsets.size() == 3);
+          // Either orientation: the consecutive separations are the gap (1R) and the
+          // trace width (1.5R), the span 2.5R.
+          std::vector<double> gaps = {offsets[1] - offsets[0], offsets[2] - offsets[1]};
+          std::sort(gaps.begin(), gaps.end());
+          CHECK_THAT(gaps[0], WithinAbs(1.0, 1.0e-9));
+          CHECK_THAT(gaps[1], WithinAbs(1.5, 1.0e-9));
+          CHECK_THAT(offsets[2], WithinAbs(2.5, 1.0e-9));
+          CHECK(feature.exact_parameters);
+          if (feature.type == "CurvedParallelEdgeCluster")
+          {
+            CHECK_THAT(feature.signature["RadiusOverR"].get<double>(), WithinAbs(3.0, 1.0e-9));
+          }
+          keys.push_back(feature.type + feature.signature_key);
+          stacks++;
+        }
+      }
+      CHECK(stacks == 2);
+    }
+    std::sort(keys.begin(), keys.end());
+    REQUIRE(keys.size() == 4);
+    CHECK(keys[0] == keys[1]);
+    CHECK(keys[2] == keys[3]);
+  }
+  SECTION("offset polylines agree within the tolerance")
+  {
+    // The mitre-offset construction of ArcBar (parallel chords, vertices off the design
+    // circles): no exact arc reading, the chord reading stays within the signature parameter
+    // tolerance of the design offsets at both discretisations (the recorded ambiguity).
+    for (const double step : {5.0, 2.5})
+    {
+      const double centre = 3.0 * R + 1.5;
+      const auto trace = ArcBar(3.0, centre, 90.0, step, 12.0, 0.0);
+      const auto ground = ArcBar(8.0, centre, 90.0, step, 12.0, -(1.5 + 2.0 + 4.0));
+      const auto result = IdentifyMetalPerimeter(MakeInput({{trace, 0, 1.0}, {ground, 0, 1.0}}, R));
+      for (const auto &feature : result.features)
+      {
+        if (feature.type == "ParallelEdgeCluster" ||
+            feature.type == "CurvedParallelEdgeCluster")
+        {
+          INFO("step " << step << " " << feature.type << " " << feature.signature.dump());
+          std::vector<double> offsets;
+          for (const auto &edge : feature.signature["Edges"])
+          {
+            offsets.push_back(edge["OffsetOverR"].get<double>());
+          }
+          std::sort(offsets.begin(), offsets.end());
+          REQUIRE(offsets.size() == 3);
+          std::vector<double> gaps = {offsets[1] - offsets[0], offsets[2] - offsets[1]};
+          std::sort(gaps.begin(), gaps.end());
+          CHECK_THAT(gaps[0], WithinAbs(1.0, kSignatureParameterToleranceOverRadius));
+          CHECK_THAT(gaps[1], WithinAbs(1.5, kSignatureParameterToleranceOverRadius));
+          CHECK_THAT(offsets[2], WithinAbs(2.5, kSignatureParameterToleranceOverRadius));
+        }
+      }
+    }
+  }
+  SECTION("signature tolerance API")
+  {
+    auto Stack = [&](std::vector<double> offsets, std::vector<int> conductors)
+    {
+      std::vector<TranslationalEdge> edges;
+      const int gaps[4] = {1, -1, 1, -1};
+      for (std::size_t i = 0; i < offsets.size(); i++)
+      {
+        edges.push_back({offsets[i] * R, gaps[i], conductors[i], {"SA"}, "{}"});
+      }
+      nlohmann::json signature = CanonicalTranslationalSignature(edges, R).signature;
+      signature["Type"] = "ParallelEdgeCluster";
+      return signature;
+    };
+    const auto a = Stack({0.0, 1.0004, 2.0006, 3.0008}, {1, 2, 2, 1});
+    const auto b = Stack({0.0, 0.9996, 1.9998, 3.0002}, {1, 2, 2, 1});
+    const auto far = Stack({0.0, 1.003, 2.004, 3.005}, {1, 2, 2, 1});
+    const auto other = Stack({0.0, 1.0, 2.0, 3.0}, {1, 2, 3, 1});
+    const auto pa = SplitSignatureParameters(a), pb = SplitSignatureParameters(b);
+    CHECK(pa.topology_key == pb.topology_key);
+    CHECK(pa.lengths_over_R.size() == 4);
+    REQUIRE(SignatureDeviation(a, b).has_value());
+    CHECK(*SignatureDeviation(a, b) <= 1.0);
+    CHECK(*SignatureDeviation(a, MirrorTranslationalSignature(b)) <= 1.0);
+    CHECK(*SignatureDeviation(a, far) > 1.0);
+    CHECK(!SignatureDeviation(a, other).has_value());
+    const auto representative = RepresentativeSignature({a, b});
+    CHECK(*SignatureDeviation(representative, a) <= 1.0);
+    CHECK(*SignatureDeviation(representative, b) <= 1.0);
+    CHECK(RepresentativeSignature({b, a}) == representative);
+    // A corner: angles within 1e-2 deg agree, beyond do not.
+    const auto c1 = CanonicalCornerSignature({"SA"}, "{}", 90.0, 0.25);
+    const auto c2 = CanonicalCornerSignature({"SA"}, "{}", 90.005, 0.2505);
+    const auto c3 = CanonicalCornerSignature({"SA"}, "{}", 90.05, 0.25);
+    CHECK(*SignatureDeviation(c1, c2) <= 1.0);
+    CHECK(*SignatureDeviation(c1, c3) > 1.0);
+  }
+  SECTION("cluster extension on the two pads")
+  {
+    const std::vector<LoopSpec> pads = {{Rectangle(-13.0, -6.0, -1.0, 6.0), 0, 1.0},
+                                        {Rectangle(1.0, -6.0, 13.0, 6.0), 0, 1.0}};
+    const auto input = MakeInput(pads, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    // The gap edges (x = -1 and x = 1, |y| < 6): the end clusters claim R around their
+    // cores; the 2 um gap between them is the pair; no isolated portion remains on them
+    // (a gap-edge portion facing the cluster across at 1R joins the cluster).
+    for (const auto &feature : result.features)
+    {
+      if (feature.type == "IsolatedEdge")
+      {
+        for (const auto &portion : feature.portions)
+        {
+          const auto &s = input.segments[portion.segment];
+          INFO("isolated portion (" << s.p0[0] << "," << s.p0[1] << ")-(" << s.p1[0] << ","
+                                    << s.p1[1] << ") " << portion.s0 << ".." << portion.s1);
+          CHECK(std::abs(std::abs(s.p0[0]) - 1.0) > 1.0e-9);
+        }
+      }
+    }
+    CHECK(result.extension.passes >= 1);
+    CHECK(result.extension.length >= 0.0);
+  }
+}

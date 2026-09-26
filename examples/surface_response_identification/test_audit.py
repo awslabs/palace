@@ -628,35 +628,74 @@ class PatchGateTest(unittest.TestCase):
 
 
 class SignatureLibraryTest(unittest.TestCase):
-    def test_one_model_per_hash_with_version1_parameters(self):
+    LAW = "{\"Type\":\"PEC\"}"
+
+    def stack(self, feature_id, offsets, gaps=(1, -1, 1, -1), conductors=(1, 2, 2, 1)):
+        edges = [{"OffsetOverR": o, "GapSide": g, "Conductor": c, "Interfaces": ["SA"], "Law": self.LAW}
+                 for o, g, c in zip(offsets, gaps, conductors)]
+        return {"Id": feature_id, "Type": "ParallelEdgeCluster", "Hash": f"{feature_id:064x}",
+                "Signature": {"Type": "ParallelEdgeCluster", "Edges": edges}, "Length": 1.0}
+
+    def test_one_model_per_coupon_with_version1_parameters(self):
         from .signature_library import build_signature_library
 
         manifest = {
             "Identification": {
                 "MatchingRadius": 2.0,
                 "Features": [
-                    {"Id": 0, "Type": "IsolatedEdge", "Hash": "a" * 64, "Signature": {"Type": "IsolatedEdge", "Interfaces": ["SA"], "Law": "{\"Type\":\"PEC\"}"}},
-                    {"Id": 1, "Type": "IsolatedEdge", "Hash": "a" * 64, "Signature": {"Type": "IsolatedEdge", "Interfaces": ["SA"], "Law": "{\"Type\":\"PEC\"}"}},
-                    {"Id": 2, "Type": "ConcaveCorner", "Hash": "b" * 64, "Signature": {"Type": "ConcaveCorner", "AngleDegrees": 90.0, "CornerRadiusOverR": 0.25, "Interfaces": ["SA"], "Law": "{\"Type\":\"PEC\"}"}},
-                    {"Id": 3, "Type": "DifferentConductorGap", "Hash": "c" * 64, "Signature": {"Type": "DifferentConductorGap", "SeparationOverR": 0.95, "Edges": [{"Conductor": 1}, {"Conductor": 2}]}},
+                    {"Id": 0, "Type": "IsolatedEdge", "Hash": "a" * 64, "Signature": {"Type": "IsolatedEdge", "Interfaces": ["SA"], "Law": self.LAW}},
+                    {"Id": 1, "Type": "IsolatedEdge", "Hash": "a" * 64, "Signature": {"Type": "IsolatedEdge", "Interfaces": ["SA"], "Law": self.LAW}},
+                    {"Id": 2, "Type": "ConcaveCorner", "Hash": "b" * 64, "Signature": {"Type": "ConcaveCorner", "AngleDegrees": 90.0, "CornerRadiusOverR": 0.25, "Interfaces": ["SA"], "Law": self.LAW}},
+                    {"Id": 3, "Type": "DifferentConductorGap", "Hash": "c" * 64, "Signature": {"Type": "DifferentConductorGap", "SeparationOverR": 0.95,
+                     "Edges": [{"OffsetOverR": 0.0, "GapSide": 1, "Conductor": 1, "Interfaces": ["SA"], "Law": self.LAW}, {"OffsetOverR": 0.95, "GapSide": -1, "Conductor": 2, "Interfaces": ["SA"], "Law": self.LAW}]}},
                     {"Id": 4, "Type": "SpatialEdgeCluster", "Hash": "d" * 64, "Signature": {"Type": "SpatialEdgeCluster", "EdgeCount": 3, "Portions": [{"Conductor": 1}, {"Conductor": 2}, {"Conductor": 1}]}},
                     {"Id": 5, "Type": "UnclassifiedParallelPair", "Hash": "e" * 64, "Signature": {"Type": "UnclassifiedParallelPair"}},
                 ],
             }
         }
         library = build_signature_library(manifest)
-        names = {m["Name"]: m for m in library["Models"]}
-        self.assertEqual(len(names), 4)  # one per hash; the unclassified pair has no model
+        by_topology = {}
+        for m in library["Models"]:
+            by_topology.setdefault(m["Topology"], []).append(m)
+        self.assertEqual(len(library["Models"]), 4)  # one per coupon; the unclassified pair has no model
         self.assertEqual(library["MatchingRadius"], 2.0)
-        self.assertEqual(names["ConcaveCorner-bbbbbbbbbbbb"]["Angle"], 90.0)
-        self.assertEqual(names["ConcaveCorner-bbbbbbbbbbbb"]["CornerRadius"], 0.5)
-        self.assertEqual(names["DifferentConductorGap-cccccccccccc"]["Separation"], 1.9)
-        self.assertEqual(len(names["DifferentConductorGap-cccccccccccc"]["ConductorReferences"]), 2)
-        self.assertEqual(len(names["SpatialEdgeCluster-dddddddddddd"]["ConductorReferences"]), 2)
-        self.assertNotIn("Edges", names["SpatialEdgeCluster-dddddddddddd"])
-        self.assertEqual(names["IsolatedEdge-aaaaaaaaaaaa"]["CouponDepth"], 2.0)
+        self.assertEqual(by_topology["IsolatedEdge"][0]["Instances"], 2)
+        self.assertEqual(by_topology["ConcaveCorner"][0]["Angle"], 90.0)
+        self.assertEqual(by_topology["ConcaveCorner"][0]["CornerRadius"], 0.5)
+        self.assertEqual(by_topology["DifferentConductorGap"][0]["Separation"], 1.9)
+        self.assertEqual(len(by_topology["DifferentConductorGap"][0]["ConductorReferences"]), 2)
+        self.assertEqual(len(by_topology["SpatialEdgeCluster"][0]["ConductorReferences"]), 2)
+        self.assertNotIn("Edges", by_topology["SpatialEdgeCluster"][0])
+        self.assertEqual(by_topology["IsolatedEdge"][0]["CouponDepth"], 2.0)
         for m in library["Models"]:
             self.assertEqual(m["Signature"]["Type"], m["Topology"])
+            self.assertEqual(m["ParameterSpread"], 0.0)
+
+    def test_instances_within_the_tolerance_are_one_coupon(self):
+        """Decision 85(1): three 4-edge stacks whose offsets agree within 1e-3 R (one in the mirror
+        orientation) are one coupon at the midpoint representative; a fourth 2e-3 R away is a
+        second coupon; the grouping does not depend on the feature order."""
+        from .signature_library import build_signature_library, signature_deviation, mirror_translational
+
+        a = self.stack(0, [0.0, 1.0004, 2.0006, 3.0008])
+        b = self.stack(1, [0.0, 0.9996, 1.9998, 3.0002])
+        c = mirror_translational(self.stack(2, [0.0, 1.0002, 2.0004, 3.0006])["Signature"])
+        c = {"Id": 2, "Type": "ParallelEdgeCluster", "Hash": "2" * 64, "Signature": c, "Length": 1.0}
+        d = self.stack(3, [0.0, 1.0030, 2.0040, 3.0050])
+        for order in ([a, b, c, d], [d, c, b, a], [b, d, a, c]):
+            library = build_signature_library({"Identification": {"MatchingRadius": 2.0, "Features": order}})
+            self.assertEqual(len(library["Models"]), 2, [m["Signature"]["Edges"] for m in library["Models"]])
+            coupon = max(library["Models"], key=lambda m: m["Instances"])
+            self.assertEqual(coupon["Instances"], 3)
+            offsets = [e["OffsetOverR"] for e in coupon["Signature"]["Edges"]]
+            # The lead is b (the smallest serialisation); a is nearer to it in its mirror
+            # orientation (0 / 1.0002 / 2.0004 / 3.0008): midpoints of the aligned ranges.
+            self.assertEqual([round(o, 6) for o in offsets], [0.0, 0.9999, 2.0001, 3.0005])
+            self.assertLessEqual(coupon["ParameterSpread"], 1.0)
+            for member in (a, b, c):
+                self.assertLessEqual(signature_deviation(coupon["Signature"], member["Signature"]), 1.0)
+            self.assertGreater(signature_deviation(coupon["Signature"], d["Signature"]), 1.0)
+        self.assertIsNone(signature_deviation(a["Signature"], self.stack(9, [0.0, 1.0, 2.0, 3.0], conductors=(1, 2, 3, 1))["Signature"]))
 
 
 if __name__ == "__main__":
