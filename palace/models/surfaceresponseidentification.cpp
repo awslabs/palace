@@ -2907,13 +2907,15 @@ void Identifier::DetectArcs()
       // The same piece rule as the open scan: every piece < 2R, or a piece >= 2R only
       // between two sub-corner joints (a rectangle's four 90 deg corners are concyclic but
       // are corners).
+      // Every joint sub-corner: a polygon with corner-class turns (a square hole, an octagon)
+      // is a polygon with corners whatever its size, not a circle.
       double total = 0.0;
       bool same_sign = true, pieces_ok = true;
       for (std::size_t j = 0; j < m; j++)
       {
         const Joint &joint = joints[j];
         total += joint.turn;
-        same_sign = same_sign && joint.sign == joints.front().sign;
+        same_sign = same_sign && joint.sign == joints.front().sign && joint.turn <= corner_turn;
         const Joint &next = joints[(j + 1) % m];
         if (!quantizer.Less(Gap(j, (j + 1) % m), interaction) &&
             (joint.turn > corner_turn || next.turn > corner_turn))
