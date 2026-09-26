@@ -382,11 +382,16 @@ def identification_gates(identification, perimeter, census, radius, targets, com
     manifest_rounded = typed.get("RoundedCorner", 0)
     audit_feature_vertices = census["FeatureVertices"]
     audit_rounded = census["RoundedRuns"]["RoundedCorners"]
+    # Corner angles compared on a 1e-3 deg grid: the classifier reads the arm directions from
+    # maximal collinear RUNS (segments collinear within DirectionQuantum 1e-12 on the cosine,
+    # i.e. 8e-5 deg), the audit from the two incident segments, so the two readings of one
+    # corner differ by up to ~1e-4 deg (DS-SCT-002: 17 of 10,020 corners at 89.99993-89.99994
+    # vs 90.0), far below the 1e-2 deg signature angle tolerance.
     manifest_angles = Counter()
     for v in manifest_vertices:
         if v["Type"] in ("ConvexCorner", "ConcaveCorner"):
-            manifest_angles[round(180.0 - float(v["TurnDegrees"]), 6)] += 1
-    audit_angles = Counter(round(180.0 - c["TurnDegrees"], 6) for c in census["Corners"] if c["Kind"] == "CORNER" and not c["Excluded"])
+            manifest_angles[round(180.0 - float(v["TurnDegrees"]), 3)] += 1
+    audit_angles = Counter(round(180.0 - c["TurnDegrees"], 3) for c in census["Corners"] if c["Kind"] == "CORNER" and not c["Excluded"])
     # Excluded vertices (every incident run excluded, or within 2R of off-plane metal) are
     # accounted on both sides; point contacts are reported, never silent.
     manifest_point_contacts = sum(1 for v in manifest_vertices if v.get("PointContact"))
