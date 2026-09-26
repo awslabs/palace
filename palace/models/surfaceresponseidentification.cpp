@@ -8024,7 +8024,10 @@ IdentificationResult Identifier::Identify()
       stage.End("absorbed " + std::to_string(absorbed) + " (mesh units) in " +
                 std::to_string(extension_portions) + " portions so far, " +
                 std::to_string(cluster_claimed.size()) + " clusters");
-      if (absorbed <= 0.0)
+      // Closure: a pass absorbing less than the signature parameter tolerance (1e-3 R) in
+      // total moves no parameter and no gate (DS-SCT-002 at R 2.1: pass 1 absorbed the
+      // neighbours, passes 3-15 re-cut 1 nm slivers at the new breakpoints for 8 s each).
+      if (absorbed <= kSignatureParameterToleranceOverRadius * R)
       {
         break;
       }

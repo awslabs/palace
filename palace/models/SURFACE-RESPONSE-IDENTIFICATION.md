@@ -454,9 +454,11 @@ smaller endpoint.
    member). Pairs and stacks are joint descriptions and are never absorbed. The extension
    iterates to closure: an enlarged claim moves the stack ends (the stack-end rule
    recomposes the members on the new claims) and the recomposed stacks leave new single-edge
-   portions to test; the loop stops when a pass absorbs nothing (DS-SCT-001: 3 passes, 127
-   portions, 37.6 um; transmon 8.9 um; two-transmon chain 17.9 um — exactly the former
-   `ClusterNeighbour` lengths). The pair / stack length within 2R of a cluster's claimed
+   portions to test; the loop stops when a pass absorbs less than the signature parameter
+   tolerance 1e-3 R in total — below the resolution of every parameter and gate (DS-SCT-001:
+   2 passes, 127 portions, 44.6 um; transmon 12.8 um; two-transmon chain 25.6 um — the
+   former `ClusterNeighbour` lengths plus the recomposed pair-side pieces; DS-SCT-002 at
+   R 2.1: pass 1 absorbed everything, passes 3-15 had re-cut 1 nm slivers for 8 s each). The pair / stack length within 2R of a cluster's claimed
    perimeter (across, outside the through-vertex zones) is the *stack-end third body*,
    reported as `Diagnostics.StackEndThirdBodyLength` (DS-SCT-001: 148 um) and by the facing
    gate as the recorded pair-side class `StackEndThirdBody`. Facing gates (audit A8,
