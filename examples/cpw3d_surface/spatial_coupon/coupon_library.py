@@ -55,6 +55,7 @@ import register_case  # noqa: E402
 import run_gmsh_only_matrix  # noqa: E402
 sys.path.insert(0, str(HERE / "qualify"))
 import qualify_library  # noqa: E402
+import library_continuity  # noqa: E402
 
 
 def parse_registration(value):
@@ -101,6 +102,11 @@ def build_parser():
                             "decisions 54b / 57) or ear-clipping (the gallery producer's)")
     qualify = commands.add_parser("qualify", help="physics qualification of the built coupons against their references")
     qualify_library.add_arguments(qualify)
+    continuity = commands.add_parser("continuity", help="library continuity gate (decision 82(4)): a pair / stack model at 2R "
+                                                        "equals two isolated edges within the recorded tolerance")
+    continuity.add_argument("library", help="process-library.json")
+    continuity.add_argument("--gates", default=library_continuity.GATES_FILE)
+    continuity.add_argument("--output", help="write the gate record here (default: stdout)")
     return parser
 
 
@@ -109,6 +115,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command == "qualify":
         return qualify_library.run_from_args(args)
+    if args.command == "continuity":
+        return library_continuity.main([args.library, "--gates", args.gates] + (["--output", args.output] if args.output else []))
     if args.command != "build":
         parser.error(f"unknown command {args.command}")
     if args.register and (args.footprint is None or args.inventory_status is None):

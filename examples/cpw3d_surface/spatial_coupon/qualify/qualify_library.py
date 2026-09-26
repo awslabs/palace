@@ -112,6 +112,7 @@ import classify_sources  # noqa: E402
 import compare_matrices  # noqa: E402
 import estimate_stages  # noqa: E402
 import gates as gate_evaluation  # noqa: E402
+import library_continuity  # noqa: E402
 import job_split  # noqa: E402
 import key_sources  # noqa: E402
 import locate_sources  # noqa: E402
@@ -1683,11 +1684,19 @@ def run_qualify(args, *, log=log_line):
               "Library": library_totals(records, args=args, remote=remote, profile=profile, wall_seconds=time.time() - start,
                                         first_submission=first_submission, last_fetch=last_fetch, jobs=jobs,
                                         cap=profile["UserJobCap"])}
-    write_json(root / LIBRARY_QUALIFICATION_RECORD, record)
     library = process_library_entries(records, contexts, manifest_path=manifest_path, manifest=manifest, root=root,
                                       merge_into=args.merge_into)
     write_json(root / PROCESS_LIBRARY_RECORD, library)
     write_json(root / PROCESS_LIBRARY_PREFLIGHT_RECORD, preflight_process_library(library))
+    # Library continuity gate (decision 82(4)): a pair / stack model at 2R equals two isolated
+    # edges within the recorded tolerance; NotApplicable until the library holds such a model
+    # and an isolated-edge model (the planned regeneration).
+    try:
+        record["LibraryContinuity"] = library_continuity.evaluate(str(root / PROCESS_LIBRARY_RECORD), gates, library)
+    except Exception as exception:  # noqa: BLE001 - the gate must never lose the qualification record
+        record["LibraryContinuity"] = {"Gate": "LibraryContinuity", "Verdict": "Error", "Reason": repr(exception)}
+    log(f"library continuity gate: {record['LibraryContinuity']['Verdict']}")
+    write_json(root / LIBRARY_QUALIFICATION_RECORD, record)
     return record
 
 

@@ -54,6 +54,13 @@
       "MAObservableRule": "decision 61a: the p-sequence gate on the MA evaluates the sharp-edge extrapolated p_MA_sharp (the tail measured at each order from that order's own shells) in place of the raw p_MA, whose step is dominated by the innermost ring's resolution; the raw p_MA step is still recorded",
       "MaximumAbsoluteEnergyStep": 0.01,
       "MaximumAbsoluteParticipationStep": 0.05
+    },
+    "LibraryContinuity": {
+      "Statement": "every pair / stack model whose consecutive edge separations are all at or above 2R (1 - ThresholdBandOverR) responds per edge and per unit length like the isolated-edge model within MaximumRelativeOffset (decision 82(4): the strict interaction rule at 2R is continuous only if the pair model at the threshold equals two isolated edges)",
+      "Quantity": "per edge: sum of the diagonal domain-response entries Q_ii of the basis points nearest to the edge line, divided by the edge length (library_continuity.py)",
+      "MaximumRelativeOffset": 0.01,
+      "ThresholdBandOverR": 0.01,
+      "Scope": "runs on the written process-library.json of every qualify run (NotApplicable without a pair / stack at the threshold or without an isolated-edge model); synthetic library data tests in test_library_continuity.py"
     }
   },
   "Verdicts": {
