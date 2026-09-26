@@ -6434,9 +6434,13 @@ void Identifier::BuildClusters()
 // result does not depend on the order). Pairs and stacks are joint descriptions and are
 // never absorbed; the stack-end recomposition then runs again on the enlarged claims, and
 // the extension iterates to closure over the single-edge portions only. Returns the
-// absorbed length of this pass; a pass whose candidates total at most the signature
-// parameter tolerance (1e-3 R) is NOT applied (closure test before the application, review
-// fix-3 m8: the pairs / stacks are never left unrecomposed against an applied absorption).
+// absorbed length of this pass (the caller stops when it is at most the signature
+// parameter tolerance 1e-3 R: that last pass IS applied without a further recomposition —
+// its pieces come from the unclaimed remainder, so no pair / stack claim overlaps them and
+// the partition holds; the stack cut images on the other members are then consistent with
+// the final claims to within the tolerance, below the resolution of every parameter; NOT
+// applying it would leave sub-tolerance unclaimed slivers as isolated features facing the
+// cluster metal, e.g. a 0.24 nm IsolatedEdge on DS-SCT-001 — review fix-3 m8, stated).
 // With measure_joint_claims the SAME across rule is evaluated on the pair / stack claims
 // (priority 2) instead of the single-edge remainder and nothing is absorbed: the returned
 // length is Diagnostics.StackEndThirdBodyLength (decision 85(2)), the one definition the
@@ -6867,13 +6871,9 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
   {
     candidate_length += absorption.interval.second - absorption.interval.first;
   }
-  if (measure_joint_claims ||
-      candidate_length <= kSignatureParameterToleranceOverRadius * R)
+  if (measure_joint_claims)
   {
-    // Measurement only, or closure: below the resolution of every parameter and gate;
-    // nothing is applied, so the pairs / stacks of this pass stay consistent with the
-    // claims they were assembled on.
-    return candidate_length;
+    return candidate_length;  // measurement only: nothing absorbed
   }
   // Owners of one absorption are one cluster (union-find over clusters and free sites).
   const std::size_t n_owner = cluster_claimed.size() + free_sites.size();
@@ -8108,11 +8108,13 @@ IdentificationResult Identifier::Identify()
       stage.End("absorbed " + std::to_string(absorbed) + " (mesh units) in " +
                 std::to_string(extension_portions) + " portions so far, " +
                 std::to_string(cluster_claimed.size()) + " clusters");
-      // Closure: a pass whose candidates total at most the signature parameter tolerance
-      // (1e-3 R) moves no parameter and no gate (DS-SCT-002 at R 2.1: pass 1 absorbed the
-      // neighbours, passes 3-15 re-cut 1 nm slivers at the new breakpoints for 8 s each);
-      // ExtendClusters has NOT applied it (tested before the application, review m8), so
-      // the pairs / stacks of this pass are the final ones.
+      // Closure: a pass absorbing at most the signature parameter tolerance (1e-3 R) in
+      // total moves no parameter and no gate (DS-SCT-002 at R 2.1: pass 1 absorbed the
+      // neighbours, passes 3-15 re-cut 1 nm slivers at the new breakpoints for 8 s each).
+      // Its absorptions are applied (they come from the unclaimed remainder: no pair / stack
+      // claim overlaps them) and the pairs / stacks are not recomposed again: their cut
+      // images differ from the final claims by less than the tolerance (review m8, stated
+      // in the design doc; not applying them left sub-tolerance isolated slivers).
       if (absorbed <= kSignatureParameterToleranceOverRadius * R)
       {
         break;
@@ -8719,9 +8721,10 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "interval; the full 2R ball around a claimed piece ending where its chain ends), "
          "outside the through-vertex zones of vertices not in that cluster, joins the "
          "cluster (a vertex feature so joined becomes a cluster; several owners merge); "
-         "iterated to closure with the stack recomposition, a pass is applied only when its "
-         "candidates total more than ClusterExtensionClosureOverR x R (ratified as the "
-         "'across' rule, decision 88(2)); pairs / stacks are never absorbed and their claimed "
+         "iterated to closure with the stack recomposition, stopping after a pass that "
+         "absorbs at most ClusterExtensionClosureOverR x R in total (that pass is applied, "
+         "the stacks are not recomposed again: sub-tolerance) (ratified as the 'across' "
+         "rule, decision 88(2)); pairs / stacks are never absorbed and their claimed "
          "length satisfying the same across rule is Diagnostics.StackEndThirdBodyLength "
          "(decision 85(2))"},
         {"MutualSidesOverhangOverSeparation",
@@ -8772,9 +8775,10 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
                    "window on another chain (or its own chain beyond pi R), faced across "
                    "(Conventions.ClusterExtensionRule), outside the through-vertex zones of "
                    "non-member vertices, joins that cluster (a vertex feature so joined "
-                   "becomes a cluster); iterated to closure over single-edge portions (a "
-                   "pass below ClusterExtensionClosureOverR x R is not applied); pairs / "
-                   "stacks are never absorbed (decision 85(2), across rule ratified 88(2))"}}},
+                   "becomes a cluster); iterated to closure over single-edge portions (the "
+                   "loop stops after a pass absorbing at most ClusterExtensionClosureOverR x "
+                   "R, applied without a further recomposition); pairs / stacks are never "
+                   "absorbed (decision 85(2), across rule ratified 88(2))"}}},
         {"StackEndThirdBodyLength", L(extension.stack_end_third_body_length)},
         {"StackEndThirdBodyRule",
          "pair / stack claimed length within 2R (3D, strict) of a cluster's claimed "

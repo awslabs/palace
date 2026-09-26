@@ -494,11 +494,18 @@ smaller endpoint.
    member). Pairs and stacks are joint descriptions and are never absorbed. The extension
    iterates to closure: an enlarged claim moves the stack ends (the stack-end rule
    recomposes the members on the new claims) and the recomposed stacks leave new single-edge
-   portions to test; the loop stops when a pass's candidates total at most the signature
-   parameter tolerance `ClusterExtensionClosureOverR` = 1e-3 R — below the resolution of
-   every parameter and gate — and such a pass is NOT applied (the closure is tested before
-   the application, review fix-3 m8: the pairs / stacks of the last pass are always the ones
-   assembled on the final claims; DS-SCT-001: 2 passes, 126 portions, 44.7 um; transmon
+   portions to test; the loop stops when a pass absorbs at most the signature parameter
+   tolerance `ClusterExtensionClosureOverR` = 1e-3 R in total — below the resolution of
+   every parameter and gate. That last pass IS applied and the pairs / stacks are not
+   recomposed again (stated, review fix-3 m8): its pieces come from the unclaimed remainder,
+   so no pair / stack claim overlaps them and the partition gates hold; the stack cut images
+   on the other member chains then differ from the final claims by less than the tolerance
+   (a sub-tolerance inconsistency of an exact-match cluster signature's last piece). The
+   alternative — testing the closure before applying — was tried and rejected (2026-09-26):
+   it left the sub-tolerance unclaimed remainder as isolated slivers facing the cluster metal
+   (DS-SCT-001: a 0.24 nm `IsolatedEdge` failing the A8 facing gate), and recomposing after
+   the last application re-creates such slivers at the moved cut images (the 1 nm slivers
+   of DS-SCT-002's passes 3-15). (DS-SCT-001: 2 passes, 127 portions, 44.7 um; transmon
    12.8 um; two-transmon chain 25.6 um — the former `ClusterNeighbour` lengths plus the
    recomposed pair-side pieces; DS-SCT-002 at R 2.1: pass 1 absorbed everything, passes
    3-15 had re-cut 1 nm slivers for 8 s each). The pair / stack claimed length satisfying
