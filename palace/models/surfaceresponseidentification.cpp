@@ -5308,14 +5308,60 @@ void Identifier::BuildClusters()
     // order of the loop over every b).
     for (const std::size_t b : RunsNearRun(a, interaction + 2.0 * Tol()))
     {
-      if (b <= a || runs[b].excluded || runs[a].chain == runs[b].chain ||
-          run_plane[a] != run_plane[b])
+      if (b <= a || runs[b].excluded || run_plane[a] != run_plane[b])
       {
         continue;  // no events between two metal planes (decision 82(1))
       }
-      run_pairs_examined++;
       const Chain &ca = chains[chain_index.at(runs[a].chain)];
       const Chain &cb = chains[chain_index.at(runs[b].chain)];
+      // Two runs of ONE chain (a chain facing itself, decision 82(2) addition): no events
+      // within the self-pair neighbourhood of pi R along the chain (the local neighbourhood of
+      // a bend); beyond it the runs interact like two chains — a strip flaring into a pad
+      // diverges (not constant) and is a cluster, as it would be for two chains. The zone of
+      // run a is the part within pi R of arc length of run b (its ends), in place of the
+      // shared-vertex zones (every vertex of a chain is shared with itself).
+      const bool self = runs[a].chain == runs[b].chain;
+      std::vector<std::vector<Interval>> self_zone_a, self_zone_b;
+      if (self)
+      {
+        if (ca.Rigid())
+        {
+          continue;  // one run: no other run of the chain
+        }
+        const double neighbourhood = kSelfPairNeighbourhoodOverRadius * R;
+        const double a0 = ca.run_offset[runs[a].index_in_chain], a1 = a0 + runs[a].length;
+        const double b0 = ca.run_offset[runs[b].index_in_chain], b1 = b0 + runs[b].length;
+        double farthest = std::max(std::abs(b1 - a0), std::abs(a1 - b0));
+        if (ca.closed)
+        {
+          farthest = std::max(std::min(std::abs(b1 - a0), ca.length - std::abs(b1 - a0)),
+                              std::min(std::abs(a1 - b0), ca.length - std::abs(a1 - b0)));
+        }
+        if (quantizer.Less(farthest, neighbourhood))
+        {
+          continue;
+        }
+        auto Zone = [&](double x0, double x1, double y0, double y1)
+        {
+          // Points of [x0, x1] within the neighbourhood (arc length) of [y0, y1], as run
+          // parameters; the shorter way round on a closed chain.
+          std::vector<Interval> zone;
+          for (const double shift : ca.closed ? std::vector<double>{-ca.length, 0.0, ca.length}
+                                              : std::vector<double>{0.0})
+          {
+            const double lo = std::max(x0, y0 + shift - neighbourhood) - x0;
+            const double hi = std::min(x1, y1 + shift + neighbourhood) - x0;
+            if (hi - lo > Tol())
+            {
+              zone.emplace_back(lo, hi);
+            }
+          }
+          return MergeIntervals(std::move(zone), Tol());
+        };
+        self_zone_a.push_back(Zone(a0, a1, b0, b1));
+        self_zone_b.push_back(Zone(b0, b1, a0, a1));
+      }
+      run_pairs_examined++;
       if (ca.Rigid() && cb.Rigid() &&
           !DirectionLess(std::abs(Dot(runs[a].tangent, runs[b].tangent)),
                          1.0 - kParallelCosineTolerance))
@@ -5328,8 +5374,8 @@ void Identifier::BuildClusters()
       {
         continue;
       }
-      std::vector<std::vector<Interval>> zones_a = ThroughZones(a, ca, cb),
-                                         zones_b = ThroughZones(b, cb, ca);
+      std::vector<std::vector<Interval>> zones_a = self ? self_zone_a : ThroughZones(a, ca, cb),
+                                         zones_b = self ? self_zone_b : ThroughZones(b, cb, ca);
       // Portions of a constant-separation pair along a bend with the other chain (a pair
       // feature, or a non-interacting pair at or beyond 2R) are not events.
       std::vector<Interval> bent_a, bent_b;
