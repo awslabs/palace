@@ -1644,6 +1644,10 @@ private:
     Point3D axis{}, lateral{};
   };
   std::vector<TranslationalSpan> translational_spans;
+  // Per chain id: the chain intervals (sorted, disjoint) claimed by clusters and by vertex
+  // windows before the pair / stack assembly; a member of a cross-section taken there is
+  // not part of it (the stack-end rule).
+  std::map<int, std::vector<Interval>> taken_on_chain;
   // Claims of the same priority overlapping on a run would be resolved by feature id — a
   // tie-break the rules must never need (decision 82(2)); counted and reported.
   std::size_t same_priority_claim_overlaps = 0;
@@ -1860,9 +1864,12 @@ private:
   };
   // Closest point of the chain to p; with exclude_x, the runs within the self-pair
   // neighbourhood (kSelfPairNeighbourhoodOverRadius R of arc length, wrapping on a closed
-  // chain) of the chain position exclude_x are not candidates (a chain facing itself).
+  // chain) of the chain position exclude_x are not candidates (a chain facing itself); with
+  // max_distance, the search stops beyond it and returns an infinite distance when no
+  // candidate lies within it (the callers use the result only within their reach).
   ChainPoint ClosestPointOnChain(const Chain &chain, const Point3D &p,
-                                 std::optional<double> exclude_x = std::nullopt) const;
+                                 std::optional<double> exclude_x = std::nullopt,
+                                 std::optional<double> max_distance = std::nullopt) const;
   // Arc-length distance between the chain interval [x0, x1] and the chain position x
   // (wrapping on a closed chain).
   double ChainArcDistance(const Chain &chain, double x0, double x1, double x) const;
@@ -2765,7 +2772,8 @@ Point3D Identifier::ChainAt(const Chain &chain, double x, std::size_t *run_out,
 
 Identifier::ChainPoint Identifier::ClosestPointOnChain(const Chain &chain,
                                                        const Point3D &p,
-                                                       std::optional<double> exclude_x) const
+                                                       std::optional<double> exclude_x,
+                                                       std::optional<double> max_distance) const
 {
   const double neighbourhood = kSelfPairNeighbourhoodOverRadius * R;
   auto Excluded = [&](std::size_t k)
@@ -2804,6 +2812,11 @@ Identifier::ChainPoint Identifier::ClosestPointOnChain(const Chain &chain,
     {
       break;
     }
+    if (max_distance && k > 0 &&
+        static_cast<double>(k - 1) * run_grid->CellSize() > *max_distance + Tol())
+    {
+      break;  // nothing closer than max_distance beyond this ring
+    }
     ring.clear();
     run_grid->Ring(p, k, ring);
     for (const std::size_t r : ring)
@@ -2822,6 +2835,11 @@ Identifier::ChainPoint Identifier::ClosestPointOnChain(const Chain &chain,
   for (const std::size_t k : candidates)
   {
     Evaluate(k);
+  }
+  if (max_distance && best.distance > *max_distance + Tol())
+  {
+    best = ChainPoint{};
+    best.distance = std::numeric_limits<double>::infinity();
   }
   return best;
 }
@@ -3442,7 +3460,8 @@ void Identifier::BuildBentPairs()
           const double mid = 0.5 * (x0 + x1);
           const auto q_mid = ClosestPointOnChain(
               B, ra.At(0.5 * (piece.first + piece.second)),
-              self ? std::optional<double>(mid) : std::nullopt);
+              self ? std::optional<double>(mid) : std::nullopt,
+              self ? std::optional<double>(reach) : std::nullopt);
           if (!std::isfinite(q_mid.distance))
           {
             continue;  // self: no partner outside the neighbourhood
@@ -3459,7 +3478,8 @@ void Identifier::BuildBentPairs()
             const double s = piece.first + (piece.second - piece.first) * i_s / n_samples;
             const double x = A.run_offset[ka] + s;
             const auto q = ClosestPointOnChain(B, ra.At(s),
-                                               self ? std::optional<double>(x) : std::nullopt);
+                                               self ? std::optional<double>(x) : std::nullopt,
+                                               self ? std::optional<double>(reach) : std::nullopt);
             if (!std::isfinite(q.distance))
             {
               continue;
@@ -3706,9 +3726,16 @@ void Identifier::BuildBentPairs()
       {
         continue;
       }
-      // A rounded corner is a vertex: its arc never pairs (its constant facing pieces are
-      // no events either, like the arms of a sharp corner facing the same edge; the corner
-      // feature claims the arc).
+      // A rounded corner is a vertex: its arc never pairs, and a foreign chain concentric
+      // with it (a constant facing piece) is no event either — like the arms of a sharp
+      // corner nested at the same separations, whose arms face the foreign arms at exactly
+      // the separation and never closer. (Tried and rejected, 2026-09-25: keeping the
+      // arc's foreign facing pieces event-eligible made the DS-SCT-001 flux-loop ends one
+      // 160 um cluster each: the event set of a chain facing an arc reaches sqrt(3) R past
+      // the tangent points, the R-balls another R, and the cores merged with the trace
+      // junction clusters 1.5 R away.) The member the corner turns away is recomposed out
+      // of the stack by the taken rule (AssembleStack); the pair / stack side facing the
+      // corner's arc or window is a recorded neighbour of a vertex feature.
       if (corner_arc_chains.count(A.id) > 0 || corner_arc_chains.count(B.id) > 0)
       {
         continue;
@@ -3778,7 +3805,8 @@ void Identifier::BuildBentPairs()
             self ? std::optional<double>(
                        lead_chain.run_offset[RunIndexInChain(lead_chain, lead->piece->run)] +
                        lead_s)
-                 : std::nullopt);
+                 : std::nullopt,
+            self ? std::optional<double>(reach) : std::nullopt);
         if (!std::isfinite(qb.distance))
         {
           continue;
@@ -4187,6 +4215,40 @@ void Identifier::EmitTranslationalSpan(const TranslationalSpan &span)
 // feature of the former rules, unchanged.
 void Identifier::BuildPairsAndStacks()
 {
+  // Chain intervals taken before the assembly: cluster portions (priority 0 claims) and the
+  // windows of the vertex features outside clusters (priority 1, claimed in Assign).
+  taken_on_chain.clear();
+  auto Take = [&](std::size_t r, const Interval &interval)
+  {
+    const Chain &C = chains[chain_index.at(runs[r].chain)];
+    const double offset = C.run_offset[runs[r].index_in_chain];
+    taken_on_chain[C.id].emplace_back(offset + interval.first, offset + interval.second);
+  };
+  for (std::size_t r = 0; r < runs.size(); r++)
+  {
+    for (const auto &claim : claims[r])
+    {
+      if (claim.priority == 0)
+      {
+        Take(r, claim.interval);
+      }
+    }
+  }
+  for (const auto &site : sites)
+  {
+    if (site.cluster < 0)
+    {
+      for (const auto &[r, interval] : site.window)
+      {
+        Take(r, interval);
+      }
+    }
+  }
+  for (auto &[chain, list] : taken_on_chain)
+  {
+    (void)chain;
+    list = MergeIntervals(std::move(list), Tol());
+  }
   const std::size_t n_links = pair_links.size(), n_spans = translational_spans.size();
   const std::size_t n_items = n_links + n_spans;
   struct RunInterval
@@ -4296,10 +4358,13 @@ void Identifier::BuildPairsAndStacks()
 // a non-consecutive link within 2R, e.g. the outer edges of a 4-edge stack at 4 um and R =
 // 2.1 um, does not enter), gap sides and conductors read at the members; one feature per
 // (type, signature without the bend radius, curvature class, member chains), its
-// RadiusOverR the tightest windowed radius over its pieces as for the two-edge pairs. Sides
-// are ranked along the lateral axis oriented so that the member with the smallest (chain,
-// position) sits on side 0 (the convention of the two-edge pairs, where side 0 is chain A);
-// the chirality is the signature's relative to that orientation.
+// RadiusOverR the tightest windowed radius over its pieces as for the two-edge pairs. A
+// member taken by a cluster portion or a vertex window (taken_on_chain) is not part of the
+// cross-section and is not traversed: the stack ends at the claim boundary (a breakpoint on
+// every member through the links) and the remaining members are recomposed there (a
+// smaller stack, a pair, or nothing). Sides are ranked along the lateral axis in the
+// canonical order of the signature (chirality +1; a symmetric cross-section, chirality 0,
+// puts the member with the smallest (chain, position) on side 0).
 void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
                                const std::vector<std::size_t> &span_items)
 {
@@ -4337,9 +4402,24 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     const double offset = c.run_offset[runs[piece.run].index_in_chain];
     return Interval{offset + piece.interval.first, offset + piece.interval.second};
   };
-  // Links on every chain: (link, side), in link order.
+  // Links on every chain: (link, side), in link order. Breakpoints per chain (sorted, no
+  // two within the decision quantum): the piece ends of every link on the chain and the
+  // ends of the higher-priority claims (cluster portions, vertex windows) on it — where a
+  // member of the cross-section is taken by a cluster or a vertex window the stack ends and
+  // the remaining members are recomposed (the stack-end rule of decision 82(2)).
   std::map<int, std::vector<std::pair<std::size_t, int>>> links_on_chain;
-  std::map<int, std::vector<double>> breakpoints;
+  std::map<int, std::set<double>> breakpoints;
+  auto AddBreakpoint = [&](int chain, double x)
+  {
+    auto &list = breakpoints[chain];
+    auto it = list.lower_bound(x - Tol());
+    if (it != list.end() && std::abs(*it - x) <= Tol())
+    {
+      return false;
+    }
+    list.insert(x);
+    return true;
+  };
   for (std::size_t e = 0; e < elinks.size(); e++)
   {
     for (int side = 0; side < 2; side++)
@@ -4353,9 +4433,23 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       for (const auto &piece : elinks[e].pieces[static_cast<std::size_t>(side)])
       {
         const auto interval = ChainInterval(piece);
-        breakpoints[chain].push_back(interval.first);
-        breakpoints[chain].push_back(interval.second);
+        AddBreakpoint(chain, interval.first);
+        AddBreakpoint(chain, interval.second);
       }
+    }
+  }
+  for (const auto &[chain, links] : links_on_chain)
+  {
+    (void)links;
+    const auto it = taken_on_chain.find(chain);
+    if (it == taken_on_chain.end())
+    {
+      continue;
+    }
+    for (const auto &interval : it->second)
+    {
+      AddBreakpoint(chain, interval.first);
+      AddBreakpoint(chain, interval.second);
     }
   }
   auto Contains = [&](const LinkPiece &piece, double x)
@@ -4368,23 +4462,29 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     const auto interval = ChainInterval(piece);
     return x > interval.first + Tol() && x < interval.second - Tol();
   };
-  auto AddBreakpoint = [&](int chain, double x)
+  // A chain position inside a cluster portion or a vertex window (taken_on_chain: sorted,
+  // disjoint) takes no part in a cross-section.
+  auto Taken = [&](int chain, double x)
   {
-    auto &list = breakpoints[chain];
-    for (const double y : list)
+    const auto it = taken_on_chain.find(chain);
+    if (it == taken_on_chain.end())
     {
-      if (std::abs(y - x) <= Tol())
-      {
-        return false;
-      }
+      return false;
     }
-    list.push_back(x);
-    return true;
+    const auto &list = it->second;
+    auto iv = std::upper_bound(list.begin(), list.end(), x,
+                               [](double value, const Interval &interval)
+                               { return value < interval.first; });
+    return iv != list.begin() && x < (iv - 1)->second - Tol() && x > (iv - 1)->first + Tol();
   };
   // Images of the breakpoints through the links, breadth first over the chains (bounded by
   // the number of links: an image travels at most once over every link).
   {
-    std::map<int, std::vector<double>> frontier = breakpoints;
+    std::map<int, std::vector<double>> frontier;
+    for (const auto &[chain, xs] : breakpoints)
+    {
+      frontier[chain].assign(xs.begin(), xs.end());
+    }
     for (std::size_t depth = 0; depth <= elinks.size() && !frontier.empty(); depth++)
     {
       std::map<int, std::vector<double>> next;
@@ -4412,7 +4512,8 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
             const int other = side == 0 ? link.chain_b : link.chain_a;
             const Point3D p = ChainAt(ChainOf(chain), x);
             const auto foot = ClosestPointOnChain(
-                ChainOf(other), p, link.Self() ? std::optional<double>(x) : std::nullopt);
+                ChainOf(other), p, link.Self() ? std::optional<double>(x) : std::nullopt,
+                reach);
             if (!std::isfinite(foot.distance) || !quantizer.Less(foot.distance, reach))
             {
               continue;
@@ -4451,6 +4552,10 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     double s = 0.0;
     const Point3D p = ChainAt(ChainOf(chain), x, &run, &s);
     composition.lateral = Normalize(Cross(n_ref, runs[run].tangent));
+    if (Taken(chain, x))
+    {
+      return composition;  // a cluster portion / vertex window: no cross-section of its own
+    }
     composition.nodes.push_back({chain, x, p, run, 0.0});
     for (std::size_t i = 0; i < composition.nodes.size() && composition.nodes.size() < 64; i++)
     {
@@ -4475,10 +4580,11 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
         const int other = side == 0 ? link.chain_b : link.chain_a;
         const auto foot = ClosestPointOnChain(
             ChainOf(other), node.point,
-            link.Self() ? std::optional<double>(node.x) : std::nullopt);
-        if (!std::isfinite(foot.distance) || !quantizer.Less(foot.distance, reach))
+            link.Self() ? std::optional<double>(node.x) : std::nullopt, reach);
+        if (!std::isfinite(foot.distance) || !quantizer.Less(foot.distance, reach) ||
+            Taken(other, foot.x))
         {
-          continue;
+          continue;  // no partner there, or the partner is cluster / window metal
         }
         const bool present = std::any_of(
             composition.nodes.begin(), composition.nodes.end(),
@@ -4500,8 +4606,10 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     auto Less = [](const Node &a, const Node &b)
     { return std::tie(a.position, a.chain, a.x) < std::tie(b.position, b.chain, b.x); };
     std::sort(composition.nodes.begin(), composition.nodes.end(), Less);
-    // Orientation: the member with the smallest (chain, position along its chain) on side
-    // 0 (the two-edge convention: side 0 = chain A, the lower chain index).
+    // Provisional orientation (final: the canonical signature's, below): the member with
+    // the smallest (chain, position along its chain) on side 0 (the two-edge convention:
+    // side 0 = chain A, the lower chain index), which decides only for a cross-section that
+    // is its own mirror image.
     auto Key = [](const Node &n) { return std::make_pair(n.chain, n.x); };
     if (Key(composition.nodes.back()) < Key(composition.nodes.front()))
     {
@@ -4566,9 +4674,9 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     int sides;
   };
   std::vector<Assigned> assigned;
-  for (auto &[chain, list] : breakpoints)
+  for (const auto &[chain, sorted_breakpoints] : breakpoints)
   {
-    std::sort(list.begin(), list.end());
+    const std::vector<double> list(sorted_breakpoints.begin(), sorted_breakpoints.end());
     const auto it = links_on_chain.find(chain);
     if (it == links_on_chain.end())
     {
@@ -4596,7 +4704,7 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       {
         continue;
       }
-      const auto composition = Compose(chain, mid);
+      auto composition = Compose(chain, mid);
       const std::size_t k = composition.nodes.size();
       if (k < 2)
       {
@@ -4604,6 +4712,42 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       }
       fallbacks += composition.geometric_fallback ? 1 : 0;
       std::vector<TranslationalEdge> edges;
+      auto Edges = [&]()
+      {
+        edges.clear();
+        for (std::size_t n = 0; n < k; n++)
+        {
+          const Run &run = runs[composition.nodes[n].run];
+          edges.push_back({composition.offsets[n],
+                           Dot(run.gap_direction, composition.lateral) > 0.0 ? 1 : -1,
+                           run.conductor, InterfaceNames(run.targets), run.boundary_law});
+        }
+      };
+      Edges();
+      auto translational = CanonicalTranslationalSignature(edges, R);
+      // Sides in the canonical order: for a cross-section that is not its own mirror image
+      // the lateral axis is oriented so that the signature's first edge is side 0 (chirality
+      // +1 always; the same sides at every cross-section of the feature whatever the chain
+      // numbering), a symmetric one keeps the provisional orientation (chirality 0).
+      if (translational.chirality < 0)
+      {
+        std::reverse(composition.nodes.begin(), composition.nodes.end());
+        composition.lateral = Scale(-1.0, composition.lateral);
+        const double span = composition.offsets.back();
+        for (std::size_t n = 0; n < k; n++)
+        {
+          composition.nodes[n].position = -composition.nodes[n].position;
+        }
+        std::reverse(composition.offsets.begin(), composition.offsets.end());
+        for (auto &offset : composition.offsets)
+        {
+          offset = span - offset;
+        }
+        Edges();
+        translational = CanonicalTranslationalSignature(edges, R);
+        MFEM_VERIFY(translational.chirality > 0,
+                    "The reversed cross-section is not the canonical orientation!");
+      }
       bool curved = false;
       double max_kappa = 0.0;
       std::vector<int> member_chains;
@@ -4611,10 +4755,6 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       for (std::size_t n = 0; n < k; n++)
       {
         const Node &node = composition.nodes[n];
-        const Run &run = runs[node.run];
-        edges.push_back({composition.offsets[n],
-                         Dot(run.gap_direction, composition.lateral) > 0.0 ? 1 : -1,
-                         run.conductor, InterfaceNames(run.targets), run.boundary_law});
         curved = curved || IsCurvedAt(ChainOf(node.chain), node.x);
         max_kappa = std::max(max_kappa, WindowedCurvature(ChainOf(node.chain), node.x));
         member_chains.push_back(node.chain);
@@ -4629,7 +4769,6 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
         continue;
       }
       max_kappa = std::max(max_kappa, MaxCurvature(C, x0, x1));
-      auto translational = CanonicalTranslationalSignature(edges, R);
       std::string type;
       std::optional<std::string> reason;
       if (k == 2)
@@ -6086,10 +6225,10 @@ IdentificationResult Identifier::Identify()
     BuildBentPairs();
     stage.Begin("translational spans");
     BuildTranslationalFeatures();
-    stage.Begin("pairs / stacks");
-    BuildPairsAndStacks();
     stage.Begin("events / cores / clusters");
     BuildClusters();
+    stage.Begin("pairs / stacks");
+    BuildPairsAndStacks();
   }
   stage.Begin("claim resolution / assignment / tables");
   Assign(result);
