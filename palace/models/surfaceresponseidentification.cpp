@@ -58,6 +58,12 @@ constexpr double kParallelCosineTolerance = 1.0e-8;
 // arc) — the description does not depend on the number of chords.
 constexpr double kArcFitToleranceRelative = 0.05;
 constexpr double kRoundedCornerTangentTolerance = kArcFitToleranceRelative;
+// Absolute cap of the radial fit tolerance (decision 85(1)): a joint of an arc lies within
+// min(5 % of the radius, 0.05 R) of the circle. The relative tolerance alone let a 200 um
+// route bend absorb an adjoining spline joint 10 um off its circle; 0.05 R (0.1 um at R = 2
+// um) is 50x the signature parameter tolerance and 50x the 1 % chord noise of the fillet
+// gate's perturbed variant, and far below any distance the response resolves.
+constexpr double kArcFitAbsoluteToleranceOverRadius = 0.05;
 
 // Curved-edge chain rule (decision 73(1), design (b) 7). The turn at every sub-corner joint
 // of a chain is spread over the two adjacent half-chords (the polyline's discrete curvature
@@ -2881,10 +2887,16 @@ void Identifier::DetectArcs()
       {
         return fit;
       }
+      // Every joint on the circle within the fit tolerance, relative to the radius and at
+      // most kArcFitAbsoluteToleranceOverRadius x R: 5 % of a 200 um route bend is 10 um and
+      // absorbed the first joint of an adjoining spline, which then biased the least-squares
+      // circle (0.3 um centre offset) and lost the exact separation of the concentric route.
+      const double radial_tolerance =
+          std::min(kArcFitToleranceRelative * radius, kArcFitAbsoluteToleranceOverRadius * R);
       for (std::size_t j = 0; j < count; j++)
       {
         const Point3D p = input.vertices[joints[(i + j) % m].vertex].coordinate;
-        if (std::abs(Distance(p, center) - radius) > kArcFitToleranceRelative * radius)
+        if (std::abs(Distance(p, center) - radius) > radial_tolerance)
         {
           return fit;
         }
@@ -3095,9 +3107,30 @@ void Identifier::DetectArcs()
         const Point3D normal = Normalize(
             Add(input.segments[path_segments[first.index % n]].process_normal,
                 input.segments[path_segments[(first.index + n - 1) % n]].process_normal));
+        // The tangent-length circle is the better conditioned estimator for a short arc (a
+        // least-squares radius amplifies vertex noise by ~1 / (1 - cos(turn / 2)): 13x for a
+        // 45 deg fillet): it is kept when every joint lies on it within 10x the signature
+        // parameter tolerance (tangent arms), else the least-squares circle takes over
+        // (non-tangent arms: a route bend between spline pieces).
+        double tangent_deviation = 0.0;
+        for (const std::size_t jv : arc.joints)
+        {
+          tangent_deviation = std::max(
+              tangent_deviation,
+              std::abs(Distance(input.vertices[jv].coordinate, arc.center) - arc.radius));
+        }
         Point3D center{};
         double radius = 0.0;
-        if (LeastSquaresCircle(arc.joints, normal, first.in, center, radius))
+        if (std::getenv("PALACE_IDENTIFICATION_DEBUG_ARCS") && input.log)
+        {
+          std::ostringstream line;
+          line << "    arc joints " << arc.joints.size() << " radius " << arc.radius
+               << " tangent deviation " << tangent_deviation << " (" << tangent_deviation / R
+               << " R)\n";
+          input.log(line.str());
+        }
+        if (tangent_deviation > 10.0 * kSignatureParameterToleranceOverRadius * R &&
+            LeastSquaresCircle(arc.joints, normal, first.in, center, radius))
         {
           arc.center = center;
           arc.radius = radius;
@@ -3135,11 +3168,12 @@ void Identifier::DetectArcs()
     std::vector<std::size_t> reversed_vertices(path_vertices.rbegin(), path_vertices.rend());
     std::vector<Arc> backward = ScanPath(reversed_segments, reversed_vertices);
     const auto score_forward = Score(forward), score_backward = Score(backward);
-    // More joints absorbed, then more arcs, then the smaller serialisation (a set function).
+    // More joints absorbed, then FEWER arcs (one arc over a perturbed fillet rather than two
+    // sub-ranges), then the smaller serialisation (a set function).
     std::vector<Arc> &chosen =
-        std::make_tuple(std::get<0>(score_backward), std::get<1>(score_backward),
+        std::make_tuple(std::get<0>(score_backward), -static_cast<long long>(std::get<1>(score_backward)),
                         std::get<2>(score_forward)) >
-                std::make_tuple(std::get<0>(score_forward), std::get<1>(score_forward),
+                std::make_tuple(std::get<0>(score_forward), -static_cast<long long>(std::get<1>(score_forward)),
                                 std::get<2>(score_backward))
             ? backward
             : forward;
