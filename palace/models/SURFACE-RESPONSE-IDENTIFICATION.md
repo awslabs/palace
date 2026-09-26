@@ -144,11 +144,38 @@ smaller endpoint.
    `RadiusOverR` < 1, never two 180 deg "rounded corners" split at a numbering-dependent
    joint (review m6; every joint must be sub-corner: a square hole is a 4-corner polygon);
    (iv) both traversal directions of every path are scanned and the arc set absorbing more
-   joints is applied (ties: more arcs, then the smaller serialisation) — the greedy scan
-   from the first unconsumed joint depended on the input orientation, and a mirrored mesh
-   now gives the mirrored arcs. Gate (`permute_msh2.py`): DS-SCT-001 and a synthetic stack
-   renumbered (seeded node / element permutation) give identical manifest content, mirrored
-   in x the same signature multiset, lengths and digest with the cluster chirality negated.
+   joints is applied (ties: FEWER arcs, then the smaller serialisation of the set, per arc
+   (radius / R, turn, joint count, centre distance from the path's vertex centroid / R,
+   first joint's arc-length distance from the nearer path end / R) on the signature grid
+   — every entry invariant under translation, rotation, mirroring and path reversal; the
+   former serialisation of absolute centre coordinates was not, and on DS-SCT-001 mirrored
+   it chose the other chopping of a spline route bend into exact-fit arcs, which moved a
+   curved-class boundary by 0.036 um, a cluster core by 0.12 um and a cluster boundary by
+   0.03 um (review fix-3 m2; fixed 2026-09-26, the mirrored manifest is now byte-identical
+   apart from the chirality signs)) — the greedy scan from the first unconsumed joint
+   depended on the input orientation, and a mirrored mesh gives the mirrored arcs. Recorded
+   limitation: a spline-discretised bend (vertices within the 1e-3 R exact-fit tolerance of
+   a circle only over ~10 joints) is chopped into consecutive exact-fit arcs whose cut
+   positions depend on the scan direction; the tie-break makes the choice orientation-free
+   but the chopping itself is a property of the polyline, not of the design curve. Only a
+   path whose two direction scans give congruent arc sets with different joints (a path
+   that is its own mirror image along its length) remains ambiguous. Further recorded
+   constants of the arc rule (`Conventions.ArcFitAbsoluteToleranceOverR` = 0.05,
+   `ArcInscribedAngleToleranceRelative` = 0.05, `ArcTangentLengthPreferenceOverTolerance`
+   = 10): a joint of an arc lies within min(5 % of the radius, 0.05 R) of the circle (the
+   relative tolerance alone let a 200 um route bend absorb an adjoining spline joint 10 um
+   off its circle; 0.05 R is 50x the parameter tolerance and far below any distance the
+   response resolves); in the long-chord regime every interior joint's turn equals half
+   the sum of the central angles of its two chords on the fitted circle within 5 % (exact
+   for an inscribed polyline; a rounded rectangle whose sixteen vertices are nearly
+   concyclic fails at the fillet ends); a bend keeps the tangent-length circle when every
+   joint lies on it within 10x the parameter tolerance (the better conditioned estimator for
+   a short arc: a least-squares radius amplifies vertex noise by ~1 / (1 - cos(turn / 2)),
+   13x for a 45 deg fillet), else the least-squares circle takes over (non-tangent arms
+   after a spline piece). Gates (`permute_msh2.py`): DS-SCT-001 and a synthetic stack
+   renumbered (seeded node / element permutation) give identical manifest content; mirrored
+   in x, DS-SCT-001 and the stack suite give identical content with every
+   `SpatialEdgeCluster` chirality negated (the mirror gate, decision 88).
    **Self-pairing point-wise (2026-09-26):** the partner search of a chain facing itself and
    the self events exclude the part of a run within pi R of arc length of the POINT (the
    former run-level exclusion dropped a whole 28 um leg of a hairpin for every point of its
@@ -419,8 +446,11 @@ smaller endpoint.
    depend on the instance order) at the representative signature `RepresentativeSignature`
    — every parameter the midpoint of its range over the group, each instance taken in the
    orientation nearest to the lexicographically smallest instance, substituted into that
-   instance (a function of the set alone) — with the group's `Instances` and
-   `ParameterSpread` (max normalised deviation of a member from the representative; a
+   instance (a function of the set alone) — with the group's `Instances` (the number of
+   FEATURE instances in the group; `DistinctSignatures` the number of distinct signatures
+   among them; the version-1 `Count` stays the mesh-segment / feature count of the record
+   as before — one semantics in the version-1 record and in `signature_library.py`, review
+   fix-3 m5) and `ParameterSpread` (max normalised deviation of a member from the representative; a
    single-linkage chain wider than twice the tolerance would leave members unmatched and is
    visible here) recorded in the version-1 `Requirements` record and in the signature-only
    library (`signature_library.py`, the same rule in Python). The *matcher*
@@ -431,20 +461,30 @@ smaller endpoint.
    `SpatialEdgeCluster` signature (a whole plan-view geometry in a canonical frame whose
    lexicographically minimal frame is discontinuous in the coordinates) has no tolerance: it
    matches exactly. Gate (A5 set identity, re-mesh): the stack suite, the bent-pair cases
-   and the fillet suite meshed at >= 3 mesh sizes plus a seeded perturbation give the same
+   and the fillet suite meshed at >= 3 mesh sizes plus a seeded node perturbation (decision
+   88(3): the perimeter nodes moved radially by at most the signature parameter tolerance
+   1e-3 R and the interior nodes placed by Gmsh's Delaunay algorithm, as the re-mesh gate's
+   Delaunay variant; the former 1 %-of-chord vertex noise, 1.0-1.6e-2 R on the long chords
+   of the q = 5-9 bends, was a different geometry under the exact-parameter contract) give the same
    topology keys and parameters within the tolerance; DS-SCT-001's three identical 2 / 2 / 2
    um routes give ONE key (0 / 1 / 2 / 3 R exactly, chirality 0; before: three keys 0.04-0.6 %
    apart).
-   **Cluster extension (decision 85(2), 2026-09-26; review M4).** Every *single-edge portion*
+   **Cluster extension (decision 85(2), 2026-09-26; review M4; the "across" wording ratified
+   by decision 88(2)).** Every *single-edge portion*
    — the remainder of a run outside every cluster portion, vertex window, pair / stack claim
    and CrossLayer zone, i.e. what would become an `IsolatedEdge` / `CurvedEdge` — whose 3D
    distance to a cluster's claimed perimeter on another chain (or on its own chain beyond the
    pi R self-pair neighbourhood) is strictly below 2R, faced ACROSS (the perpendicular
    projection of the point onto the claimed piece falls inside the piece; at an interior
    joint of a claimed chain interval the piece's domain is extended by 2R tan(turn), the
-   width of the wedge between consecutive perpendicular domains; never past the end of the
-   claimed interval — a diagonal reach would creep along a sub-2R strip, whereas the
-   partner beyond the claim end pairs with the free continuation), outside the through-vertex
+   width of the wedge between consecutive perpendicular domains, with the turn capped at the
+   corner threshold `ClusterExtensionWedgeCapDegrees` = 30 deg (a joint turning more is a
+   corner vertex whose own window and through-vertex zone take over; the cap bounds the
+   wedge at 2R tan(30 deg) = 1.15 R); never past the end of the claimed interval — a
+   diagonal reach would creep along a sub-2R strip, whereas the partner beyond the claim
+   end pairs with the free continuation; a claimed piece ending where its CHAIN ends — a
+   strip end, the tangent point of a rounded corner's arc chain — faces the metal around
+   that end within the full 2R ball, since nothing continues beyond it), outside the through-vertex
    zones of the shared vertices that are NOT members of that cluster, joins the cluster over
    that sub-interval. The same for a vertex feature outside every cluster: a single-edge
    portion faced across within 2R of its window (outside its own through-vertex zone — the
@@ -454,14 +494,26 @@ smaller endpoint.
    member). Pairs and stacks are joint descriptions and are never absorbed. The extension
    iterates to closure: an enlarged claim moves the stack ends (the stack-end rule
    recomposes the members on the new claims) and the recomposed stacks leave new single-edge
-   portions to test; the loop stops when a pass absorbs less than the signature parameter
-   tolerance 1e-3 R in total — below the resolution of every parameter and gate (DS-SCT-001:
-   2 passes, 127 portions, 44.6 um; transmon 12.8 um; two-transmon chain 25.6 um — the
-   former `ClusterNeighbour` lengths plus the recomposed pair-side pieces; DS-SCT-002 at
-   R 2.1: pass 1 absorbed everything, passes 3-15 had re-cut 1 nm slivers for 8 s each). The pair / stack length within 2R of a cluster's claimed
-   perimeter (across, outside the through-vertex zones) is the *stack-end third body*,
-   reported as `Diagnostics.StackEndThirdBodyLength` (DS-SCT-001: 148 um) and by the facing
-   gate as the recorded pair-side class `StackEndThirdBody`. Facing gates (audit A8,
+   portions to test; the loop stops when a pass's candidates total at most the signature
+   parameter tolerance `ClusterExtensionClosureOverR` = 1e-3 R — below the resolution of
+   every parameter and gate — and such a pass is NOT applied (the closure is tested before
+   the application, review fix-3 m8: the pairs / stacks of the last pass are always the ones
+   assembled on the final claims; DS-SCT-001: 2 passes, 126 portions, 44.7 um; transmon
+   12.8 um; two-transmon chain 25.6 um — the former `ClusterNeighbour` lengths plus the
+   recomposed pair-side pieces; DS-SCT-002 at R 2.1: pass 1 absorbed everything, passes
+   3-15 had re-cut 1 nm slivers for 8 s each). The pair / stack claimed length satisfying
+   the SAME across rule (within 2R of a cluster's claimed perimeter or a free vertex
+   feature's window, faced across, outside the through-vertex zones of non-member vertices;
+   `ExtendClusters` evaluated on the pair / stack claims without absorbing) is the
+   *stack-end third body*, reported as `Diagnostics.StackEndThirdBodyLength`
+   (`Diagnostics.StackEndThirdBodyRule`; DS-SCT-001: 155 um) and sampled by the facing gate
+   as the pair-side class `StackEndThirdBody` (0.5 R samples, across = the facing direction
+   within 60 deg of the sample normal, the through-vertex zones excluded first: the two
+   readings are one definition, review fix-3 m5). Reported metric (decision 88(2), not a
+   gate): `facing_check.ClusterProximityNotAcross` — the isolated / curved edge length with
+   cluster or vertex-feature metal within 2R in ANY direction and no across hit, i.e. what
+   the across rule leaves single-edge, split into the `ThroughVertex` / `SelfNeighbourhood`
+   exemptions and the residual. Facing gates (audit A8,
    `facing_check.py`) after this decision: every facing segment within 2R is tested (the
    nearest alone masked a second edge behind an excluded one); the own sides of a pair /
    stack are the segments of its portions plus the member chains within the feature's reach
@@ -471,7 +523,13 @@ smaller endpoint.
    and for pair / stack sides only `StackEndThirdBody` and `StackEndRecomposition` (facing
    another pair / stack that shares a member chain: the route's cross-section recomposed at a
    stack end or class boundary, the partner's foot across the cut; sub-chord lengths,
-   DS-SCT-001 2.1 um), each with its length. Diagnostics also record the stack assembly's
+   DS-SCT-001 2.1 um), each with its length. The `StackEndRecomposition` exemption is
+   BOUNDED (review fix-3 m4): a recomposition is a sub-chord event, so one site (one ordered
+   pair of features) may exempt at most `STACK_END_RECOMPOSITION_SITE_CAP_OVER_R` = 1 R and
+   the manifest at most 1 R per pair / stack feature involved in total; beyond either cap
+   the length is not exempt (two overlapping two-edge pairs across a sub-2R trace — the
+   decision-78 defect — would run along the whole route and fail the gate); the site count,
+   total and largest site are reported in R. Diagnostics also record the stack assembly's
    `StackCompositionCap` (64 members: far above any physical stack — the chip's widest has
    12 edges — bounding a runaway traversal through inconsistent links; hits counted,
    review m2) and `StackGeometricOffsetIntervals` (elementary intervals whose consecutive
@@ -560,10 +618,16 @@ Consequences (recorded in the manifest under `Library.DecisionQuantization` and
   `Separation / R = 1` on both sides and its corners are plain corners: no knife edge between
   1.95 / 2 / 2.05 um beyond the separation value itself.
 
-**Knife-edge census (decision 82(4), 2026-09-25).** The strict rule is kept and the matching
-radius is chosen off the common layout dimensions (the default of the identification tools is
-R = 2.1 um: thresholds R 2.1, 2R 4.2, 10R 21 um; the library's `MatchingRadius` stays
-authoritative and R = 2 um libraries are unchanged). So that any design can check its R, the
+**Knife-edge census (decision 82(4), 2026-09-25; R = 1.9 um by decision 88(1), 2026-09-26).**
+The strict rule is kept and the matching radius is chosen off the common layout dimensions:
+the default of the identification tools (`preflight_config.py`, seed
+`seeds/preflight_seed_r1p9.json`; the R 2.1 seed of decision 82(4) is kept for comparison
+runs) is R = 1.9 um — thresholds R 1.9, 2R 3.8, 10R 19 um; the 2D locality study
+(2026-09-26) found R = 1.9 / 2.0 / 2.1 um equivalent within 0.2 % at the knife edge and far,
+so the choice is one of cost: at 1.9 um the 4 um separations stay isolated edges (DS-SCT-002:
+895 um within 1 % of 2R = 3.8 um against 577.6 mm at R = 2.0 um and 7.0 mm at 2.1 um; 2
+stack coupons); the library's `MatchingRadius` stays authoritative and R = 2 um libraries are
+unchanged. So that any design can check its R, the
 manifest reports `Identification.KnifeEdgeCensus`: the perimeter length with another perimeter
 point (3D; the same chain beyond the self-pair neighbourhood; runs sharing a vertex excluded)
 at a distance within `KnifeEdgeBandRelative` = 0.01 of R and of 2R, the chain length whose
@@ -614,7 +678,8 @@ own; a model matches every feature of its topology whose parameters lie within t
 tolerance (decision 85(1): 1e-3 R for lengths, 1e-2 deg for angles; the nearest model wins,
 ties by name), and the library builder groups the feature instances of one topology within
 the tolerance into one coupon at their representative signature (the version-1 `Requirements`
-record carries `Signature`, `Instances`, `ParameterSpread`, `ExactParameters`; the
+record carries `Signature`, `Instances` (feature instances), `DistinctSignatures`,
+`ParameterSpread`, `ExactParameters`; the
 `ParallelEdgeCluster` / `CurvedParallelEdgeCluster` `Geometry` carries `Edges`, `EdgeCount`
 and, for the curved class, `BendRadius`); the curved classes (`CurvedEdge`, `CurvedSameConductorGap`, `CurvedDifferentConductorGap`,
 `CurvedSameConductorStrip`) exist only as signature-keyed models and are patched like their
@@ -656,6 +721,8 @@ matching pass). The new top-level `Identification` object carries the contract:
                   "ThroughVertexZoneOverR": 2, "ClusterBallOverR": 1,
                   "VertexJoinsClusterOverR": 2, "VertexWindowOverR": 1,
                   "ParallelCosineTolerance": 1e-8, "RoundedCornerTangentTolerance": 0.05, "ArcFitToleranceRelative": 0.05,
+                  "ArcFitAbsoluteToleranceOverR": 0.05, "ArcInscribedAngleToleranceRelative": 0.05,
+                  "ArcTangentLengthPreferenceOverTolerance": 10, "ArcRule": "...",
                   "SignatureLengthQuantumOverR": 1e-6, "SignatureAngleQuantumDegrees": 1e-6,
                   "StraightBendRadiusOverR": 10, "CurvatureWindowOverR": 1,
                   "PairSeparationToleranceRelative": 0.05, "PairSeparationSamplesPerInterval": 16,
@@ -663,7 +730,8 @@ matching pass). The new top-level `Identification` object carries the contract:
                   "PairConstancyWindowOverR": 1, "PairSampleSpacingOverR": 0.5,
                   "PairCandidateReachOverR": 2.1, "SamplingMargins": "...", "CrossLayerReachOverR": 2,
                   "SelfPairNeighbourhoodOverR": 3.14159, "StackRule": "...",
-                  "StackCompositionCap": 64, "ClusterExtensionRule": "...",
+                  "StackCompositionCap": 64, "ClusterExtensionWedgeCapDegrees": 30,
+                  "ClusterExtensionClosureOverR": 1e-3, "ClusterExtensionRule": "...",
                   "SignatureParameterToleranceOverR": 1e-3, "SignatureAngleToleranceDegrees": 1e-2,
                   "SignatureMatching": "...", "MutualSidesOverhangOverSeparation": 0.32,
                   "KnifeEdgeBandRelative": 0.01, "FacingGateExclusions": "...",
@@ -686,7 +754,7 @@ matching pass). The new top-level `Identification` object carries the contract:
                   "StackGeometricOffsetIntervals": 0, "StackCompositionCapHits": 0, "StackCompositionCap": 64,
                   "ClusterExtension": {"Passes": n, "AbsorbedPortions": n, "AbsorbedLength": L,
                                        "VertexFeaturesJoined": n, "Rule": "..."},
-                  "StackEndThirdBodyLength": L},
+                  "StackEndThirdBodyLength": L, "StackEndThirdBodyRule": "..."},
   "KnifeEdgeCensus": {"BandRelative": 0.01, "SampleSpacingOverR": 0.5, "SampledLength": L,
                       "Distance": {"R": {"Below": L, "Above": L, "Total": L}, "2R": {...}},
                       "BendRadius": {"10R": {...}}, "CornerTurnDegrees": {"30": {...}}},

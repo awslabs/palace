@@ -216,6 +216,7 @@ def build_signature_library(manifest, name="signature-only", matrix_directory="s
             "Topology": feature["Type"],
             "Signature": representative,
             "Instances": len(members),
+            "DistinctSignatures": len({json.dumps(f["Signature"], sort_keys=True) for f in members}),
             "ParameterSpread": spread,
             "FabricatedMatrix": f"{matrix_directory}/{model_name}-fabricated.csv",
             "ThinMatrix": f"{matrix_directory}/{model_name}-thin.csv",

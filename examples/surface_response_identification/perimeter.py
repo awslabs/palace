@@ -906,21 +906,36 @@ def chain_vertex_sequences(perimeter):
 
 
 ARC_FIT_TOLERANCE = 0.05
+# Decision 85(1) amendments of the arc rule (Identification.Conventions): the absolute radial
+# cap of the fit tolerance and the exact-fit tolerance of the long-chord regime.
+ARC_FIT_ABSOLUTE_TOLERANCE_OVER_R = 0.05
+SIGNATURE_PARAMETER_TOLERANCE_OVER_R = 1.0e-3
 
 
 def arc_groups(perimeter, radius, corner_tolerance_degrees=CORNER_ANGLE_TOLERANCE_DEGREES):
-    """The classifier's arc rule (surfaceresponseidentification.cpp DetectArcs, decision 82(3)):
-    along every path of PHYSICAL edges through vertices with exactly two of them (regular or
-    corner), the joints are the non-collinear vertices; from every unconsumed joint the largest
-    range of at least three following joints connected by pieces shorter than 2R, turning the
-    same way, totalling at most 180 deg and fitting one circle with the two arm tangents
-    (tangent lengths equal within ARC_FIT_TOLERANCE, every joint within ARC_FIT_TOLERANCE x
-    radius of the circle; antiparallel arms: half their separation) is an arc. Radius below R
-    with a turn above the corner threshold: one rounded corner; otherwise a bend of that exact
-    radius. Corner vertices inside an arc are absorbed (no corner of their own). Returns the
-    arcs with their absorbed corner vertices."""
+    """The classifier's arc rule (surfaceresponseidentification.cpp DetectArcs, decision 82(3)
+    with the decision-85(1) amendments): along every path of PHYSICAL edges through vertices
+    with exactly two of them (regular or corner), the joints are the non-collinear vertices;
+    from every unconsumed joint the largest range of at least three following joints turning
+    the same way, totalling at most 180 deg and fitting one circle with the two arm tangents
+    (tangent lengths equal within ARC_FIT_TOLERANCE, every joint within min(ARC_FIT_TOLERANCE x
+    radius, ARC_FIT_ABSOLUTE_TOLERANCE_OVER_R x R) of the circle; antiparallel arms: half their
+    separation) is an arc. The pieces between consecutive joints are shorter than 2R, except
+    that a piece >= 2R is allowed between two sub-corner joints (a chord of a smooth polyline
+    bend): in that long-chord regime every joint must lie on the least-squares circle within
+    the signature parameter tolerance, every interior turn must satisfy the inscribed-angle
+    relation within the fit tolerance, and the scan stops at the first failed fit. A closed
+    path of sub-corner joints on one circle turning 360 deg is one arc. Both traversal
+    directions are scanned and the set absorbing more joints wins (then fewer arcs, then the
+    smaller invariant serialisation). Radius below R with a turn above the corner threshold:
+    one rounded corner; otherwise a bend of that exact radius (the tangent-length circle when
+    every joint lies on it within 10x the parameter tolerance, else the least-squares circle).
+    Corner vertices inside an arc are absorbed (no corner of their own). Returns the arcs with
+    their absorbed corner vertices."""
     quantum = 1.0e-8 * radius
     interaction = 2.0 * radius
+    corner_turn = math.radians(corner_tolerance_degrees)
+    parameter_tolerance = SIGNATURE_PARAMETER_TOLERANCE_OVER_R * radius
     incident = defaultdict(list)
     for index, edge in enumerate(perimeter.edges):
         if edge.kind == "PHYSICAL" and edge.chain >= 0:
@@ -937,6 +952,29 @@ def arc_groups(perimeter, radius, corner_tolerance_degrees=CORNER_ANGLE_TOLERANC
     visited = set()
     arcs = []
     normal = np.asarray(perimeter.process_normal, dtype=float)
+
+    def least_squares_circle(points, tangent):
+        """Algebraic (Kasa) circle through the points in the plane of the process normal, in
+        the frame (u = tangent, v = normal x u) at the first point; None when degenerate."""
+        o = points[0]
+        u = tangent - normal * float(tangent @ normal)
+        if np.linalg.norm(u) <= 1.0e-12:
+            return None
+        u = u / np.linalg.norm(u)
+        v = np.cross(normal, u)
+        xy = np.array([[float((p - o) @ u), float((p - o) @ v)] for p in points])
+        a = np.column_stack([xy[:, 0], xy[:, 1], np.ones(len(xy))])
+        b = -(xy[:, 0] ** 2 + xy[:, 1] ** 2)
+        try:
+            (d, e, f), *_ = np.linalg.lstsq(a, b, rcond=None)
+        except np.linalg.LinAlgError:
+            return None
+        cx, cy = -0.5 * d, -0.5 * e
+        r2 = cx * cx + cy * cy - f
+        if not r2 > 0.0:
+            return None
+        return o + cx * u + cy * v, math.sqrt(r2)
+
     for seed in range(len(perimeter.edges)):
         if seed in visited or perimeter.edges[seed].kind != "PHYSICAL" or perimeter.edges[seed].chain < 0:
             continue
@@ -963,116 +1001,232 @@ def arc_groups(perimeter, radius, corner_tolerance_degrees=CORNER_ANGLE_TOLERANC
                 path_vertices.append(v)
                 break
             s = nxt
-        n = len(path_edges)
-        closed = path_vertices[0] == path_vertices[-1] and n > 2 and continues(path_vertices[0])
-        points = [perimeter.vertices[x].point for x in path_vertices]
-        position = [0.0]
-        for k in range(n):
-            position.append(position[-1] + float(np.linalg.norm(points[k + 1] - points[k])))
-        length = position[n]
-
-        def direction(k):
-            d = points[k + 1] - points[k]
-            return d / np.linalg.norm(d)
-
-        joints = []  # (vertex, path index, in, out, |turn|, sign)
-        for k in range(0 if closed else 1, n):
-            d_in = direction((k - 1) % n)
-            d_out = direction(k)
-            dot = float(max(-1.0, min(1.0, d_in @ d_out)))
-            if _quantize(dot) >= _quantize(1.0 - DIRECTION_QUANTUM):
-                continue
-            sign = 1 if float(np.cross(d_in, d_out) @ normal) >= 0.0 else -1
-            joints.append((path_vertices[k], k, d_in, d_out, math.acos(dot), sign))
-        if len(joints) < 3:
-            continue
-        m = len(joints)
-        if closed:
-            gaps = []
-            for j in range(m):
-                gap = position[joints[j][1]] - position[joints[j - 1][1]]
-                gaps.append(gap + length if gap <= 0.0 else gap)
-            best = int(np.argmax(gaps))
-            joints = joints[best:] + joints[:best]
-
-        def gap(ja, jb):
-            d = position[joints[jb][1]] - position[joints[ja][1]]
-            return d + length if d < 0.0 else d
-
-        def try_fit(i, count):
-            first, last = joints[i], joints[(i + count - 1) % m]
-            ta, tb = first[2], last[3]
-            Ta, Tb = perimeter.vertices[first[0]].point, perimeter.vertices[last[0]].point
-            turn = sum(joints[(i + j) % m][4] for j in range(count))
-            angle = math.acos(max(-1.0, min(1.0, float(ta @ tb))))
-            if abs(angle - turn) > 1.0e-6 and abs(2.0 * math.pi - angle - turn) > 1.0e-6:
-                return None
-            na = first[5] * np.cross(normal, ta)
-            na = na / np.linalg.norm(na)
-            if math.sin(turn) > 1.0e-9 and turn < math.pi - 1.0e-9:
-                w = Tb - Ta
-                wx, wy = float(w @ ta), float(w @ na)
-                tbx, tby = float(tb @ ta), float(tb @ na)
-                if abs(tby) <= 1.0e-12:
-                    return None
-                b = wy / tby
-                a = wx - b * tbx
-                if not (a > 0.0 and b > 0.0) or abs(a - b) > ARC_FIT_TOLERANCE * max(a, b):
-                    return None
-                rho = 0.5 * (a + b) / math.tan(0.5 * turn)
-                centre = Ta + rho * na
+        closed = path_vertices[0] == path_vertices[-1] and len(path_edges) > 2 and continues(path_vertices[0])
+        chain = perimeter.edges[path_edges[0]].chain
+        found = None
+        for direction in (1, -1):
+            if direction > 0:
+                edges_d, vertices_d = path_edges, path_vertices
             else:
-                w = Tb - Ta
-                along, across = float(w @ ta), float(w @ na)
-                if across <= 0.0 or abs(along) > ARC_FIT_TOLERANCE * across:
-                    return None
-                rho = 0.5 * across
-                centre = Ta + rho * na
-            if not rho > 0.0:
-                return None
-            for j in range(count):
-                p = perimeter.vertices[joints[(i + j) % m][0]].point
-                if abs(float(np.linalg.norm(p - centre)) - rho) > ARC_FIT_TOLERANCE * rho:
-                    return None
-            return rho, turn
-
-        consumed = [False] * m
-        for i in range(m):
-            if consumed[i]:
-                continue
-            best_count, best = 0, None
-            turn = joints[i][4]
-            for count in range(2, m + 1):
-                prev, k = (i + count - 2) % m, (i + count - 1) % m
-                if (not closed and i + count - 1 >= m) or k == i or consumed[k] or joints[k][5] != joints[i][5] or not gap(prev, k) < interaction - quantum:
-                    break
-                turn += joints[k][4]
-                if turn > math.pi + 1.0e-9:
-                    break
-                if count < 3:
-                    continue
-                fit = try_fit(i, count)
-                if fit is not None:
-                    best, best_count = fit, count
-            if best_count == 0:
-                continue
-            members = [joints[(i + j) % m][0] for j in range(best_count)]
-            for j in range(best_count):
-                consumed[(i + j) % m] = True
-            rho, total = best
+                edges_d, vertices_d = path_edges[::-1], path_vertices[::-1]
+            candidate = _scan_arc_path(perimeter, edges_d, vertices_d, closed, normal, radius, interaction, quantum,
+                                       corner_turn, parameter_tolerance, least_squares_circle)
+            if found is None or _arc_set_score(candidate, perimeter, path_vertices, path_edges, closed, normal, radius) > \
+                    _arc_set_score(found, perimeter, path_vertices, path_edges, closed, normal, radius):
+                found = candidate
+        for arc in found:
+            arc["Chain"] = chain
+            rho, total = arc["Radius"], arc["Turn"]
             corner = rho < radius - quantum and math.degrees(total) > corner_tolerance_degrees
             arcs.append({
-                "Joints": members,
-                "AbsorbedCorners": [v for v in members if perimeter.vertices[v].physical_kind == "CORNER"],
+                "Joints": arc["Joints"],
+                "AbsorbedCorners": [v for v in arc["Joints"] if perimeter.vertices[v].physical_kind == "CORNER"],
                 "Radius": rho,
                 "RadiusOverR": rho / radius,
                 "TurnDegrees": math.degrees(total),
                 "AngleDegrees": 180.0 - math.degrees(total),
                 "Rounded": corner,
-                "Chain": perimeter.edges[path_edges[0]].chain,
-                "Vertices": len(members),
+                "Chain": chain,
+                "Vertices": len(arc["Joints"]),
             })
     return arcs
+
+
+def _arc_set_score(arc_list, perimeter, path_vertices, path_edges, closed, normal, radius):
+    """The classifier's tie-break between the two traversal directions: more joints absorbed,
+    fewer arcs, then the smaller serialisation of (radius, turn, joints, centre distance from
+    the path centroid, first joint's distance from the nearer path end) on the signature grid
+    (invariant under translation, rotation, mirroring and reversal)."""
+    distinct = path_vertices[:-1] if closed else path_vertices
+    centroid = np.mean([perimeter.vertices[v].point for v in distinct], axis=0)
+    position = [0.0]
+    for e in path_edges:
+        position.append(position[-1] + perimeter.edges[e].length)
+    total = position[-1]
+    index_of = {v: k for k, v in reversed(list(enumerate(path_vertices)))}
+    keys = []
+    for arc in arc_list:
+        x_first = position[index_of[arc["Joints"][0]]]
+        from_end = 0.0 if closed else min(x_first, total - x_first)
+        keys.append("%.6f,%.6f,%d,%.6f,%.6f" % (round(arc["Radius"] / radius, 6), round(math.degrees(arc["Turn"]), 6), len(arc["Joints"]),
+                                                round(float(np.linalg.norm(arc["Centre"] - centroid)) / radius, 6), round(from_end / radius, 6)))
+    serial = ";".join(sorted(keys))
+    absorbed = sum(len(arc["Joints"]) for arc in arc_list)
+    # Larger tuple wins: more absorbed, fewer arcs (negated), then the smaller serial (the
+    # classifier compares the serial of the other side, so a smaller serial wins).
+    return (absorbed, -len(arc_list), _Reversed(serial))
+
+
+class _Reversed:
+    """Orders strings in reverse (the smaller serialisation wins a max-comparison)."""
+
+    def __init__(self, value):
+        self.value = value
+
+    def __lt__(self, other):
+        return self.value > other.value
+
+    def __gt__(self, other):
+        return self.value < other.value
+
+    def __eq__(self, other):
+        return self.value == other.value
+
+
+def _scan_arc_path(perimeter, path_edges, path_vertices, closed, normal, radius, interaction, quantum, corner_turn,
+                   parameter_tolerance, least_squares_circle):
+    """One traversal direction of the classifier's greedy arc scan (DetectArcs ScanPath)."""
+    n = len(path_edges)
+    points = [perimeter.vertices[x].point for x in path_vertices]
+    position = [0.0]
+    for k in range(n):
+        position.append(position[-1] + float(np.linalg.norm(points[k + 1] - points[k])))
+    length = position[n]
+
+    def direction(k):
+        d = points[k + 1] - points[k]
+        return d / np.linalg.norm(d)
+
+    joints = []  # (vertex, path index, in, out, |turn|, sign)
+    for k in range(0 if closed else 1, n):
+        d_in = direction((k - 1) % n)
+        d_out = direction(k)
+        dot = float(max(-1.0, min(1.0, d_in @ d_out)))
+        if _quantize(dot) >= _quantize(1.0 - DIRECTION_QUANTUM):
+            continue
+        sign = 1 if float(np.cross(d_in, d_out) @ normal) >= 0.0 else -1
+        joints.append((path_vertices[k], k, d_in, d_out, math.acos(dot), sign))
+    found = []
+    if len(joints) < 2:
+        return found
+    m = len(joints)
+    if closed:
+        gaps = []
+        for j in range(m):
+            gap = position[joints[j][1]] - position[joints[j - 1][1]]
+            gaps.append(gap + length if gap <= 0.0 else gap)
+        best = int(np.argmax(gaps))
+        joints = joints[best:] + joints[:best]
+
+    def gap(ja, jb):
+        d = position[joints[jb][1]] - position[joints[ja][1]]
+        return d + length if d < 0.0 else d
+
+    def turns_consistent(indices, rho, cyclic):
+        """Inscribed-angle relation at every interior joint (all joints on a loop)."""
+        count = len(indices)
+
+        def central(ja, jb):
+            chord = float(np.linalg.norm(perimeter.vertices[joints[ja][0]].point - perimeter.vertices[joints[jb][0]].point))
+            return 2.0 * math.asin(max(0.0, min(1.0, 0.5 * chord / rho)))
+
+        for q in range(0 if cyclic else 1, count if cyclic else count - 1):
+            prev, here, nxt = indices[(q + count - 1) % count], indices[q], indices[(q + 1) % count]
+            expected = 0.5 * (central(prev, here) + central(here, nxt))
+            if abs(joints[here][4] - expected) > ARC_FIT_TOLERANCE * expected:
+                return False
+        return True
+
+    def try_fit(i, count):
+        first, last = joints[i], joints[(i + count - 1) % m]
+        ta, tb = first[2], last[3]
+        Ta, Tb = perimeter.vertices[first[0]].point, perimeter.vertices[last[0]].point
+        turn = sum(joints[(i + j) % m][4] for j in range(count))
+        angle = math.acos(max(-1.0, min(1.0, float(ta @ tb))))
+        if abs(angle - turn) > 1.0e-6 and abs(2.0 * math.pi - angle - turn) > 1.0e-6:
+            return None
+        na = first[5] * np.cross(normal, ta)
+        na = na / np.linalg.norm(na)
+        if math.sin(turn) > 1.0e-9 and turn < math.pi - 1.0e-9:
+            w = Tb - Ta
+            wx, wy = float(w @ ta), float(w @ na)
+            tbx, tby = float(tb @ ta), float(tb @ na)
+            if abs(tby) <= 1.0e-12:
+                return None
+            b = wy / tby
+            a = wx - b * tbx
+            if not (a > 0.0 and b > 0.0) or abs(a - b) > ARC_FIT_TOLERANCE * max(a, b):
+                return None
+            rho = 0.5 * (a + b) / math.tan(0.5 * turn)
+            centre = Ta + rho * na
+        else:
+            w = Tb - Ta
+            along, across = float(w @ ta), float(w @ na)
+            if across <= 0.0 or abs(along) > ARC_FIT_TOLERANCE * across:
+                return None
+            rho = 0.5 * across
+            centre = Ta + rho * na
+        if not rho > 0.0:
+            return None
+        radial_tolerance = min(ARC_FIT_TOLERANCE * rho, ARC_FIT_ABSOLUTE_TOLERANCE_OVER_R * radius)
+        for j in range(count):
+            p = perimeter.vertices[joints[(i + j) % m][0]].point
+            if abs(float(np.linalg.norm(p - centre)) - rho) > radial_tolerance:
+                return None
+        return rho, turn, centre
+
+    consumed = [False] * m
+    # A closed path of sub-corner joints turning one way through 360 deg on one circle is one
+    # arc (a round pad or hole).
+    if closed and m >= 3:
+        total = sum(j[4] for j in joints)
+        same_sign = all(j[5] == joints[0][5] and j[4] <= corner_turn for j in joints)
+        pieces_ok = all(gap(j, (j + 1) % m) < interaction - quantum or (joints[j][4] <= corner_turn and joints[(j + 1) % m][4] <= corner_turn) for j in range(m))
+        if same_sign and pieces_ok and abs(total - 2.0 * math.pi) < 1.0e-6:
+            fit = least_squares_circle([perimeter.vertices[j[0]].point for j in joints], joints[0][2])
+            if fit is not None:
+                centre, rho = fit
+                on_circle = all(abs(float(np.linalg.norm(perimeter.vertices[j[0]].point - centre)) - rho) <= ARC_FIT_TOLERANCE * rho for j in joints)
+                if on_circle and turns_consistent(list(range(m)), rho, True):
+                    found.append({"Joints": [j[0] for j in joints], "Radius": rho, "Turn": 2.0 * math.pi, "Centre": centre})
+                    consumed = [True] * m
+    for i in range(m):
+        if consumed[i]:
+            continue
+        best_count, best = 0, None
+        turn = joints[i][4]
+        long_pieces = False
+        for count in range(2, m + 1):
+            prev, k = (i + count - 2) % m, (i + count - 1) % m
+            if (not closed and i + count - 1 >= m) or k == i or consumed[k] or joints[k][5] != joints[i][5]:
+                break
+            if not gap(prev, k) < interaction - quantum:
+                if joints[prev][4] > corner_turn or joints[k][4] > corner_turn:
+                    break
+                long_pieces = True
+            turn += joints[k][4]
+            if turn > math.pi + 1.0e-9:
+                break
+            if count < 3:
+                continue
+            fit = try_fit(i, count)
+            if fit is not None and long_pieces:
+                indices = [(i + j) % m for j in range(count)]
+                ls = least_squares_circle([perimeter.vertices[joints[j][0]].point for j in indices], joints[i][2])
+                ok = ls is not None and all(abs(float(np.linalg.norm(perimeter.vertices[joints[j][0]].point - ls[0])) - ls[1]) <= parameter_tolerance for j in indices) \
+                    and turns_consistent(indices, ls[1], False)
+                fit = fit if ok else None
+            if fit is not None:
+                best, best_count = fit, count
+            elif long_pieces:
+                break
+        if best_count == 0:
+            continue
+        members = [joints[(i + j) % m][0] for j in range(best_count)]
+        for j in range(best_count):
+            consumed[(i + j) % m] = True
+        rho, total, centre = best
+        corner = rho < radius - quantum and math.degrees(total) > math.degrees(corner_turn)
+        if not corner:
+            # A bend keeps the tangent-length circle when every joint lies on it within 10x the
+            # parameter tolerance, else the least-squares circle (non-tangent arms).
+            deviation = max(abs(float(np.linalg.norm(perimeter.vertices[v].point - centre)) - rho) for v in members)
+            if deviation > 10.0 * parameter_tolerance:
+                ls = least_squares_circle([perimeter.vertices[v].point for v in members], joints[i][2])
+                if ls is not None:
+                    centre, rho = ls
+        found.append({"Joints": members, "Radius": rho, "Turn": total, "Centre": centre})
+    return found
 
 
 def rounded_runs(perimeter, radius):

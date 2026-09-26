@@ -5630,7 +5630,8 @@ IdentificationResult RunGeometryIdentification(
   struct Instance
   {
     nlohmann::json signature;
-    int count = 0;
+    int count = 0;     // version-1 Count: mesh segments (longitudinal) or features (vertex)
+    int features = 0;  // feature instances (the library's coupon Instances)
     double length = 0.0;
     std::set<std::string> models;
     bool exact = true;
@@ -5697,6 +5698,7 @@ IdentificationResult RunGeometryIdentification(
       it->second.order.push_back(feature.signature_key);
     }
     instance->second.count += count;
+    instance->second.features++;
     instance->second.length += feature.length;
     instance->second.exact = instance->second.exact && feature.exact_parameters;
     if (feature.matched_model)
@@ -5742,7 +5744,7 @@ IdentificationResult RunGeometryIdentification(
     {
       (void)root;
       std::vector<nlohmann::json> signatures;
-      int count = 0;
+      int count = 0, feature_instances = 0;
       double length = 0.0;
       std::set<std::string> models;
       bool exact = true;
@@ -5751,6 +5753,7 @@ IdentificationResult RunGeometryIdentification(
         const Instance &instance = base.instances.at(base.order[i]);
         signatures.push_back(instance.signature);
         count += instance.count;
+        feature_instances += instance.features;
         length += instance.length;
         models.insert(instance.models.begin(), instance.models.end());
         exact = exact && instance.exact;
@@ -5771,7 +5774,8 @@ IdentificationResult RunGeometryIdentification(
                                {"BoundaryCondition", base.law},
                                {"Hash", hash},
                                {"Signature", representative},
-                               {"Instances", signatures.size()},
+                               {"Instances", feature_instances},
+                               {"DistinctSignatures", signatures.size()},
                                {"ParameterSpread", spread},
                                {"ExactParameters", exact}};
       if (!models.empty())

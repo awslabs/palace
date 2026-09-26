@@ -350,6 +350,28 @@ def filleted_polygon(vertices, radius, chords, perturb=None, fillet=None):
 FILLET_RATIOS = [0.1, 0.25, 0.5, 0.9, 1.1, 2.0, 5.0, 9.0, 11.0, 20.0]
 FILLET_TURNS = [45, 90, 135, 180]
 FILLET_CHORDS = [2, 4, 8, 16]
+# Perturbed variant of the fillet gate (decision 88(3), 2026-09-26): the perimeter nodes of
+# the 8-chord fillet move radially by at most the signature parameter tolerance
+# (Identification.Conventions SignatureParameterToleranceOverR = 1e-3 R) and the interior
+# nodes are placed by Gmsh's Delaunay algorithm (5) instead of Frontal-Delaunay (6) — another
+# node placement of the same design within the tolerance, as the re-mesh gate's Delaunay
+# variant; the former 1 %-of-chord vertex noise (1.0-1.6e-2 R for the long chords of the
+# q = 5-9 bends) was a different geometry under the exact-parameter contract. The amplitude
+# is further capped at a quarter of (chord x turn per chord) so that no joint's turn changes
+# sign (a radial displacement d changes a joint's turn by up to ~4 d / chord; a polyline with
+# an inflection is another design, not a node placement of this one): the cap is below the
+# tolerance only for the smallest fillets (q = 0.1 R at 45 / 90 deg, q = 0.25 R at 45 deg,
+# whose 8 chords are 20-60 nm long).
+FILLET_PERTURBATION_OVER_R = 1.0e-3
+FILLET_PERTURBATION_TURN_FRACTION = 0.25
+FILLET_PERTURBED_ALGORITHM = 5
+
+
+def fillet_perturbation(radius, rho, turn_degrees, chords):
+    """Radial node perturbation of the perturbed fillet variant, relative to rho."""
+    chord = fillet_chord_length(rho, turn_degrees, chords)
+    amplitude = min(FILLET_PERTURBATION_OVER_R * radius, FILLET_PERTURBATION_TURN_FRACTION * chord * math.radians(turn_degrees) / chords)
+    return amplitude / rho
 
 
 def fillet_chord_length(radius, turn_degrees, chords):
@@ -360,7 +382,8 @@ def fillet_suite(ratios=FILLET_RATIOS, turns=FILLET_TURNS, chords=FILLET_CHORDS,
     """Decision 82(3) mesh-independence gate: a bar (width 4R) bent by the turn with both bend
     corners filleted at rho = ratio x R (45 / 90 / 135 deg), or a strip of width 2 rho ending in
     a semicircle (180 deg), each meshed with 2 / 4 / 8 / 16 chords per fillet plus a seeded
-    radial perturbation (1 % of the chord) of the chord vertices at 8 chords; and the DS-SCT-002
+    node perturbation at 8 chords (perimeter nodes moved radially by <= the signature parameter
+    tolerance 1e-3 R, interior nodes by the Delaunay algorithm: decision 88(3)); and the DS-SCT-002
     cross-shaped pattern (1 um fillets = 0.5 R with two 45 deg chords). Expectation per case:
     rho < R -> one rounded corner per fillet (total turn, rho / R), no CurvedEdge; R <= rho <
     10 R -> one CurvedEdge per fillet with RadiusOverR = rho / R exactly; rho >= 10 R ->
@@ -373,9 +396,11 @@ def fillet_suite(ratios=FILLET_RATIOS, turns=FILLET_TURNS, chords=FILLET_CHORDS,
     for q in ratios:
         rho = q * R
         for turn in turns:
-            # Perturbation: 1 % of the chord length, radially (a mesh-noise scale: the joint
-            # turns keep their sign; a perturbation on the scale of rho is a different arc).
-            variants = [(n, None) for n in chords] + [(perturbed_chords, 0.01 * fillet_chord_length(rho, turn, perturbed_chords) / rho)]
+            # Perturbation: the perimeter nodes move radially by at most the signature
+            # parameter tolerance (FILLET_PERTURBATION_OVER_R x R, relative to rho here); the
+            # joint turns keep their sign and every joint stays within the tolerance of the
+            # design circle, so the exact tangent-length radius is unchanged.
+            variants = [(n, None) for n in chords] + [(perturbed_chords, fillet_perturbation(R, rho, turn, perturbed_chords))]
             for n, perturbation in variants:
                 tag = f"fillet-q{q:g}-t{turn}-c{n}" + ("-perturbed" if perturbation else "")
                 perturb = (np.random.default_rng(20260925), perturbation) if perturbation else None
@@ -410,7 +435,7 @@ def fillet_suite(ratios=FILLET_RATIOS, turns=FILLET_TURNS, chords=FILLET_CHORDS,
                         "CurvedRadii": {f"{q:g}": 2} if (1.0 <= q < 10.0) else {},
                         "BendAnnotation": q if q >= 10.0 else None,
                     }
-                    lay = layout(tag, [sheet(GROUND, poly)], half_x=half_x, half_y=half_y, lc_fine=min(1.0, max(0.05, rho)), lc_far=max(6.0, half_x / 5.0), notes=f"bar of width 4R bent by {turn} deg, both bend corners filleted with rho = {q:g} R as {n} chords" + (" (chord vertices perturbed radially by 1 % of the chord)" if perturbation else ""), expected=expected)
+                    lay = layout(tag, [sheet(GROUND, poly)], half_x=half_x, half_y=half_y, lc_fine=min(1.0, max(0.05, rho)), lc_far=max(6.0, half_x / 5.0), notes=f"bar of width 4R bent by {turn} deg, both bend corners filleted with rho = {q:g} R as {n} chords" + (f" (perimeter nodes perturbed radially by <= {perturbation * rho / R:.2e} R, Delaunay interior)" if perturbation else ""), expected=expected)
                 else:
                     # U-turn: strip of width 2 rho from the box edge x = -half_x to x = 0, semicircular end.
                     half_x = math.ceil(max(30.0, 6.0 * R + 2.0 * rho)); half_y = math.ceil(max(30.0, rho + 8.0 * R))
@@ -431,8 +456,10 @@ def fillet_suite(ratios=FILLET_RATIOS, turns=FILLET_TURNS, chords=FILLET_CHORDS,
                         "BendAnnotation": q if q >= 10.0 else None,
                         "Vertices": {"TruncationCut": 2},
                     }
-                    lay = layout(tag, [sheet(GROUND, poly)], half_x=half_x, half_y=half_y, lc_fine=min(1.0, max(0.05, rho)), lc_far=max(6.0, half_x / 5.0), notes=f"strip of width 2 rho = {2 * q:g} R ending in a semicircle of {n} chords (a U-turn)" + (" (chord vertices perturbed radially by 1 % of the chord)" if perturbation else ""), expected=expected)
-                lay["Fillet"] = {"RatioOverR": q, "TurnDegrees": turn, "Chords": n, "Perturbed": bool(perturbation), "ChordOverR": fillet_chord_length(rho, turn, n) / R}
+                    lay = layout(tag, [sheet(GROUND, poly)], half_x=half_x, half_y=half_y, lc_fine=min(1.0, max(0.05, rho)), lc_far=max(6.0, half_x / 5.0), notes=f"strip of width 2 rho = {2 * q:g} R ending in a semicircle of {n} chords (a U-turn)" + (f" (perimeter nodes perturbed radially by <= {perturbation * rho / R:.2e} R, Delaunay interior)" if perturbation else ""), expected=expected)
+                if perturbation:
+                    lay["Algorithm"] = FILLET_PERTURBED_ALGORITHM
+                lay["Fillet"] = {"RatioOverR": q, "TurnDegrees": turn, "Chords": n, "Perturbed": bool(perturbation), "PerturbationOverR": (perturbation * rho / R) if perturbation else 0.0, "ChordOverR": fillet_chord_length(rho, turn, n) / R}
                 layouts.append(lay)
     # DS-SCT-002: a cross of 6 um arms with 1 um fillets meshed as two 45 deg chords.
     cross = cross_shape(12.0, 6.0)["Points"]
