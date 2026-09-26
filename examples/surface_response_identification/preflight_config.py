@@ -28,7 +28,7 @@ import os
 # library's MatchingRadius stays authoritative for a run and existing R = 2 um libraries are
 # unchanged. The geometry-only seed carries the fabrication layers and no models.
 DEFAULT_RADIUS = 2.1
-DEFAULT_SEED_LIBRARY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "preflight_seed_r2p1.json")
+DEFAULT_SEED_LIBRARY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seeds", "preflight_seed_r2p1.json")
 
 
 def preflight_config(
