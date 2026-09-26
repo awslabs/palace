@@ -936,3 +936,165 @@ TEST_CASE("SurfaceResponseIdentificationPortCutAndBroadcast",
   CHECK(copy.ToJson(1.0) == result.ToJson(1.0));
   CHECK(copy.geometry_digest == result.geometry_digest);
 }
+
+TEST_CASE("SurfaceResponseIdentificationStacks", "[surfaceresponseidentification][Serial]")
+{
+  // Decision 82(2): a translation-invariant cross-section of k >= 3 edges whose consecutive
+  // separations are below 2R is ONE feature (ParallelEdgeCluster, CurvedParallelEdgeCluster
+  // along a bend), straight and curved; the pairwise candidates inside it are superseded (no
+  // claim of one priority ever overlaps another: Diagnostics); a member taken by a cluster is
+  // recomposed out of the cross-section at the stack ends; sides in the canonical order.
+  const double R = 2.0;
+  auto Offsets = [](const IdentifiedFeature &f)
+  {
+    std::vector<double> offsets;
+    for (const auto &edge : f.signature["Edges"])
+    {
+      offsets.push_back(edge["OffsetOverR"].get<double>());
+    }
+    return offsets;
+  };
+  // Either orientation of the stated offsets may be the canonical one.
+  auto Matches = [](std::vector<double> found, std::vector<double> wanted)
+  {
+    std::sort(found.begin(), found.end());
+    std::sort(wanted.begin(), wanted.end());
+    if (found.size() != wanted.size())
+    {
+      return false;
+    }
+    std::vector<double> mirrored;
+    for (const double w : wanted)
+    {
+      mirrored.push_back(wanted.back() - w);
+    }
+    std::sort(mirrored.begin(), mirrored.end());
+    for (const auto *candidate : {&wanted, &mirrored})
+    {
+      bool ok = true;
+      for (std::size_t i = 0; i < found.size(); i++)
+      {
+        ok = ok && std::abs(found[i] - (*candidate)[i]) <= 0.02;
+      }
+      if (ok)
+      {
+        return true;
+      }
+    }
+    return false;
+  };
+  SECTION("straight 4-edge stack: ground | 2 | trace 2 | 2 | ground")
+  {
+    // The bars end inside the domain (end corners): one corner cluster per end. Both
+    // grounds are cluster material next to the trace's end edge (events within 2R of it)
+    // over a longer reach than the trace edges, exactly R from the cores: the trace strip is
+    // recomposed there (the stack-end rule).
+    const auto input = MakeInput({{Rectangle(-40.0, -10.0, 40.0, -2.0), 0, 1.0},
+                                  {Rectangle(-30.0, 0.0, 30.0, 2.0), 0, 1.0},
+                                  {Rectangle(-40.0, 4.0, 40.0, 12.0), 0, 1.0}},
+                                 R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    CHECK(result.same_priority_claim_overlaps == 0);
+    std::map<std::string, int> counts;
+    const IdentifiedFeature *stack = nullptr;
+    for (const auto &feature : result.features)
+    {
+      counts[feature.type]++;
+      if (feature.type == "ParallelEdgeCluster")
+      {
+        stack = &feature;
+      }
+    }
+    CHECK(counts["ParallelEdgeCluster"] == 1);
+    CHECK(counts["SameConductorStrip"] == 1);
+    CHECK(counts["SpatialEdgeCluster"] == 2);
+    REQUIRE(stack != nullptr);
+    CHECK(Matches(Offsets(*stack), {0.0, 1.0, 2.0, 3.0}));
+    CHECK(stack->signature["Edges"].size() == 4);
+    // Every side present with the same length (a symmetric cross-section), all four sides
+    // over the same longitudinal extent: the ground cores within 2R of the trace end edge
+    // reach sqrt((2R)^2 - (2 um)^2) = sqrt(12) um past the trace end, their R balls another
+    // R, so |x| < 30 - sqrt(12) - R um.
+    std::map<int, double> side_length;
+    for (const auto &portion : stack->portions)
+    {
+      side_length[portion.side] += portion.s1 - portion.s0;
+    }
+    REQUIRE(side_length.size() == 4);
+    for (const auto &[side, length] : side_length)
+    {
+      INFO("side " << side);
+      CHECK_THAT(length, WithinAbs(2.0 * (30.0 - std::sqrt(12.0) - R), 0.05));
+    }
+    CHECK(stack->chirality != -1);
+  }
+  SECTION("asymmetric straight stack: sides in the canonical order")
+  {
+    // ground | 1 | trace 1.5 | 3 | ground: offsets 0 / 0.5 / 1.25 / 2.75 R; chirality +1 and
+    // one side index per physical edge over the whole feature.
+    const auto input = MakeInput({{Rectangle(-40.0, -9.0, 40.0, -1.0), 0, 1.0},
+                                  {Rectangle(-30.0, 0.0, 30.0, 1.5), 0, 1.0},
+                                  {Rectangle(-40.0, 4.5, 40.0, 12.5), 0, 1.0}},
+                                 R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    CHECK(result.same_priority_claim_overlaps == 0);
+    int stacks = 0;
+    for (const auto &feature : result.features)
+    {
+      if (feature.type != "ParallelEdgeCluster" || feature.signature["Edges"].size() != 4)
+      {
+        continue;
+      }
+      stacks++;
+      CHECK(Matches(Offsets(feature), {0.0, 0.5, 1.25, 2.75}));
+      CHECK(feature.chirality == 1);
+      // The side of a portion is a function of its edge (the segment's y coordinate).
+      std::map<int, std::set<int>> sides_of_y;
+      for (const auto &portion : feature.portions)
+      {
+        const double y = input.segments[portion.segment].p0[1];
+        sides_of_y[static_cast<int>(std::lround(10.0 * y))].insert(portion.side);
+      }
+      CHECK(sides_of_y.size() == 4);
+      for (const auto &[y, sides] : sides_of_y)
+      {
+        INFO("y / 10 " << y);
+        CHECK(sides.size() == 1);
+      }
+    }
+    CHECK(stacks == 1);
+  }
+  SECTION("curved 3-edge stack along a 3R bend")
+  {
+    // A 3 um trace (inner radius 3R) and an 8 um ground band 2 um outside it along a 90 deg
+    // bend of the centreline with 12 um leads: a straight ParallelEdgeCluster on the leads and
+    // a CurvedParallelEdgeCluster along the bend with RadiusOverR = the trace's inner radius.
+    const double centre = 3.0 * R + 1.5;
+    const auto trace = ArcBar(3.0, centre, 90.0, 5.0, 12.0, 0.0);
+    const auto ground = ArcBar(8.0, centre, 90.0, 5.0, 12.0, -(1.5 + 2.0 + 4.0));
+    const auto input = MakeInput({{trace, 0, 1.0}, {ground, 0, 1.0}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    CHECK(result.same_priority_claim_overlaps == 0);
+    std::map<std::string, int> counts;
+    for (const auto &feature : result.features)
+    {
+      counts[feature.type]++;
+      if (feature.type == "ParallelEdgeCluster" || feature.type == "CurvedParallelEdgeCluster")
+      {
+        CHECK(Matches(Offsets(feature), {0.0, 1.5, 2.5}));
+      }
+      if (feature.type == "CurvedParallelEdgeCluster")
+      {
+        CHECK_THAT(feature.signature["RadiusOverR"].get<double>(), WithinAbs(3.0, 0.15));
+      }
+    }
+    CHECK(counts["ParallelEdgeCluster"] == 1);
+    CHECK(counts["CurvedParallelEdgeCluster"] == 1);
+    CHECK(counts["SpatialEdgeCluster"] == 2);
+    CHECK(counts["CurvedSameConductorGap"] == 0);
+    CHECK(counts["SameConductorGap"] == 0);
+  }
+}
