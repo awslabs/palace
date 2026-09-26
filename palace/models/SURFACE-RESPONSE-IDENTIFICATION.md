@@ -192,7 +192,10 @@ smaller endpoint.
    after a spline piece). Gates (`permute_msh2.py`): DS-SCT-001 and a synthetic stack
    renumbered (seeded node / element permutation) give identical manifest content; mirrored
    in x, DS-SCT-001 and the stack suite give identical content with every
-   `SpatialEdgeCluster` chirality negated (the mirror gate, decision 88).
+   `SpatialEdgeCluster` chirality negated (the mirror gate, decision 88); rotated by 37 deg
+   about the plan-view normal (`--rotate-degrees`), the 42 closed filleted loops of the
+   fillet gate give identical coordinate-free content and digest (the closed-loop rotation
+   variant of the mirror gate, review fix-4 m-C).
    **Self-pairing point-wise (2026-09-26):** the partner search of a chain facing itself and
    the self events exclude the part of a run within pi R of arc length of the POINT (the
    former run-level exclusion dropped a whole 28 um leg of a hairpin for every point of its
@@ -533,7 +536,26 @@ smaller endpoint.
    (`Diagnostics.StackEndThirdBodyRule`; DS-SCT-001: 155 um) and sampled by the facing gate
    as the pair-side class `StackEndThirdBody` (0.5 R samples, across = the facing direction
    within 60 deg of the sample normal, the through-vertex zones excluded first: the two
-   readings are one definition, review fix-3 m5). Reported metric (decision 88(2), not a
+   readings are one definition, review fix-3 m5). **Why the two readings differ on DS-SCT-001
+   (reconciled interval by interval, review fix-4; `PALACE_IDENTIFICATION_DEBUG_EXTENSION`
+   dumps the measured intervals, `facing_check --excluded-samples` every excluded sample):**
+   every gate sample read as `StackEndThirdBody` or `ThroughVertex` lies INSIDE an analytic
+   interval (R 2.0: 34.9 + 92.9 = 127.8 um of the 155.1 um; R 1.9: 21.0 + 51.3 = 72.3 of
+   100.8 um) — the gate's `ThroughVertex` class is a finer split of the same length, since
+   the analytic rule excludes only the through-vertex zones of vertices shared by the two
+   chains that are not the owner's members; nothing the gate reads as third body lies
+   outside the analytic intervals (`StackEndRecomposition`, pair facing pair, is by
+   definition not third body). The remainder (30.6 um at R 2.0, 29.4 um at R 1.9, minus
+   0.9-3.3 um of 0.5 um sample discretisation at the interval ends) is stack claim length
+   whose facing cluster or corner-window claim lies ON THE STACK'S OWN MEMBER CHAINS within
+   its lateral reach — the flux-line ends, where a member chain continues into the
+   termination corner cluster — which the gate's own-side rule (portions + member chains
+   within reach, review fix-3 M5) masks before any facing test (28.6 um of it is across in
+   the gate's sense, 2.0 um only within the analytic perpendicular domain / wedge). One
+   definition, two instruments: the analytic reading is the authoritative
+   `StackEndThirdBodyLength`; the gate's number is a lower bound that equals it wherever no
+   member chain carries cluster metal within the stack's reach (the chip: 45.9 = 45.9 um).
+   Reported metric (decision 88(2), not a
    gate): `facing_check.ClusterProximityNotAcross` — the isolated / curved edge length with
    cluster or vertex-feature metal within 2R in ANY direction and no across hit, i.e. what
    the across rule leaves single-edge, split into the `ThroughVertex` / `SelfNeighbourhood`
@@ -656,7 +678,23 @@ Consequences (recorded in the manifest under `Library.DecisionQuantization` and
 * a chain portion belongs to a cluster when its distance to an event core is < R;
 * the strip at exactly R (`strip-2`, the transmon's 64 segments) is a `SameConductorStrip` at
   `Separation / R = 1` on both sides and its corners are plain corners: no knife edge between
-  1.95 / 2 / 2.05 um beyond the separation value itself.
+  1.95 / 2 / 2.05 um beyond the separation value itself;
+* **recorded knife-edge residual (synthetic `gap-bend-r{50,250}-2Rminus-step{5,15}`, review
+  fix-4):** two concentric 8 um bars at the design gap 2R - 1e-3 R along a polyline bend whose
+  offset sides are MITRED at the joints (vertex displacement g / (2 cos(step / 2)), an exact
+  offset path) carry two separations at once: the chords are parallel at exactly g = 3.998 um
+  (< 2R), while the joint vertices lie on circles whose radii differ by g / cos(step / 2) =
+  4.033 um at 15 deg and 4.002 um at 5 deg per vertex (> 2R; 3.99815 um at 1 deg, < 2R). The
+  identification decides the pair from the fitted-circle separation (the curve reading, so
+  that mid-chord dips of a coarse polyline never create events — DS-SCT-001's 4 um CPW gaps at
+  R = 2 um) and reads the 5 / 15 deg bends as isolated edges; the facing gate measures the
+  chord distance 3.998 um < 2R and flags 79-139 um (A8 FAIL; the 1 deg variants and every
+  2R / 2R + 1e-3 R variant pass, the exact-2R ones as `AtExactly2R`). The two readings of one
+  polyline differ by g (1 / cos(step / 2) - 1) = 8.6e-3 g at 15 deg = 17x the 1e-3 R margin
+  of the design value below 2R, so the polyline is not one geometry at the scale of the
+  knife edge; no consistent reading resolves it and neither is wrong. Not in any gate set
+  (the identity set records the manifests); a design at 2R - 1e-3 R on a coarse polyline
+  bend is exactly what the knife-edge census flags (perimeter within 1 % of 2R).
 
 **Knife-edge census (decision 82(4), 2026-09-25; R = 1.9 um by decision 88(1), 2026-09-26).**
 The strict rule is kept and the matching radius is chosen off the common layout dimensions:

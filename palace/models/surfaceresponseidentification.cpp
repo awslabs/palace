@@ -3115,8 +3115,8 @@ void Identifier::DetectArcs()
         // least-squares radius amplifies vertex noise by ~1 / (1 - cos(turn / 2)): 13x for a
         // 45 deg fillet): it is kept when every joint lies on it within
         // kArcTangentLengthPreferenceOverTolerance x the signature parameter tolerance
-        // (tangent arms), else the least-squares circle takes over (non-tangent arms: a route
-        // bend between spline pieces).
+        // (tangent arms), else the least-squares circle takes over (non-tangent arms: a
+        // route bend between spline pieces).
         double tangent_deviation = 0.0;
         for (const std::size_t jv : arc.joints)
         {
@@ -8674,7 +8674,8 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"ArcFitToleranceRelative", kArcFitToleranceRelative},
         {"ArcFitAbsoluteToleranceOverR", kArcFitAbsoluteToleranceOverRadius},
         {"ArcInscribedAngleToleranceRelative", kArcFitToleranceRelative},
-        {"ArcTangentLengthPreferenceOverTolerance", kArcTangentLengthPreferenceOverTolerance},
+        {"ArcTangentLengthPreferenceOverTolerance",
+         kArcTangentLengthPreferenceOverTolerance},
         {"ArcRule", "joints (>= 3) joined by pieces < 2R (a piece >= 2R is allowed between "
                     "two sub-corner joints: a chord of a smooth polyline bend; in that "
                     "long-chord regime every joint lies on the least-squares circle within "
@@ -8699,7 +8700,7 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
                     "pair of serialisations of the two scans is orientation invariant): a "
                     "translated, rotated or mirrored mesh gives the congruent arcs; a "
                     "closed path is scanned from the joint after its longest piece (ties: "
-                    "the first from the seed vertex), so no arc is split by the loop start"},
+                    "the first from the seed vertex): no arc is split by the loop start"},
         {"LengthQuantumOverR", kLengthQuantumOverRadius},
         {"DirectionQuantum", kDirectionQuantum},
         {"SignatureLengthQuantumOverR", kSignatureLengthQuantumOverRadius},
@@ -8783,13 +8784,14 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
                                  "SelfNeighbourhood and, for pair / stack sides only, "
                                  "StackEndThirdBody (facing cluster / vertex metal) and "
                                  "StackEndRecomposition (facing a pair / stack sharing a "
-                                 "member chain; bounded to 1 R per site, the operative bound, "
-                                 "and 1 R per feature in total) and, for isolated / curved "
-                                 "portions shorter than the signature parameter tolerance that "
-                                 "are an unclaimed remainder bounded on both sides along their "
-                                 "run by other features' claims, or a whole feature shorter "
-                                 "than the tolerance, SubToleranceFeature (decision 89), each "
-                                 "recorded with its length (decision 85(2): ClusterNeighbour / "
+                                 "member chain; bounded to 1 R per site, the operative "
+                                 "bound, and 1 R per feature in total) and, for isolated / "
+                                 "curved portions shorter than the signature parameter "
+                                 "tolerance that are an unclaimed remainder bounded on "
+                                 "both sides along their run by other features' claims, "
+                                 "or a whole feature shorter than the tolerance, "
+                                 "SubToleranceFeature (decision 89), each recorded with "
+                                 "its length (decision 85(2): ClusterNeighbour / "
                                  "VertexNeighbour are gone)"},
         {"CrossLayerReachOverR", kInteractionDistanceOverRadius},
         {"PlaneRule", "features (pairs, clusters, vertex joins, translational classes) "
