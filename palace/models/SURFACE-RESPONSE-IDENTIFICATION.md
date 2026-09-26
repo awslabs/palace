@@ -142,7 +142,18 @@ smaller endpoint.
    circle (a round pad, hole or via) is ONE arc of total turn 2 pi and a bend of exact
    radius whatever its radius: a circle of radius < R is one `CurvedEdge` with
    `RadiusOverR` < 1, never two 180 deg "rounded corners" split at a numbering-dependent
-   joint (review m6). Two-joint polylines are never arcs (a chamfer, and a square strip end
+   joint (review m6; every joint must be sub-corner: a square hole is a 4-corner polygon);
+   (iv) both traversal directions of every path are scanned and the arc set absorbing more
+   joints is applied (ties: more arcs, then the smaller serialisation) — the greedy scan
+   from the first unconsumed joint depended on the input orientation, and a mirrored mesh
+   now gives the mirrored arcs. Gate (`permute_msh2.py`): DS-SCT-001 and a synthetic stack
+   renumbered (seeded node / element permutation) give identical manifest content, mirrored
+   in x the same signature multiset, lengths and digest with the cluster chirality negated.
+   **Self-pairing point-wise (2026-09-26):** the partner search of a chain facing itself and
+   the self events exclude the part of a run within pi R of arc length of the POINT (the
+   former run-level exclusion dropped a whole 28 um leg of a hairpin for every point of its
+   fold, so that the fold end facing the far leg at 1.6R had no partner and no event; it is
+   a cluster now). Two-joint polylines are never arcs (a chamfer, and a square strip end
    — the diameter chord of a semicircle — cannot be told from a one-chord arc: they stay
    corners). An arc of radius < R whose total turn exceeds the corner threshold is ONE
    rounded corner: `ConvexCorner` / `ConcaveCorner` by the side of the centre (convex when
