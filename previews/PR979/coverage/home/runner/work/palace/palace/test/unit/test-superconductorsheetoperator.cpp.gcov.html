@@ -1,0 +1,142 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - home/runner/work/palace/palace/test/unit/test-superconductorsheetoperator.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../../../../../../../index.html">top level</a> - <a href="index.html">/home/runner/work/palace/palace/test/unit</a> - test-superconductorsheetoperator.cpp<span style="font-size: 80%;"> (source / <a href="test-superconductorsheetoperator.cpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">20</td>
+            <td class="headerCovTableEntry">20</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-09-26 01:19:01</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">1</td>
+            <td class="headerCovTableEntry">1</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #include &lt;cmath&gt;</span>
+<span id="L5"><span class="lineNum">       5</span>              : #include &lt;catch2/catch_test_macros.hpp&gt;</span>
+<span id="L6"><span class="lineNum">       6</span>              : #include &lt;catch2/matchers/catch_matchers_floating_point.hpp&gt;</span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &quot;models/superconductorsheetoperator.hpp&quot;</span>
+<span id="L8"><span class="lineNum">       8</span>              : </span>
+<span id="L9"><span class="lineNum">       9</span>              : using namespace palace;</span>
+<span id="L10"><span class="lineNum">      10</span>              : </span>
+<span id="L11"><span class="lineNum">      11</span>              : // The finite-thickness London kinetic sheet inductance L_ksq = lambda * coth(d/lambda) is</span>
+<span id="L12"><span class="lineNum">      12</span>              : // the experimentally validated form (Tolpygo et al., Supercond. Sci. Technol. 34, 085005</span>
+<span id="L13"><span class="lineNum">      13</span>              : // (2021), for Nb films down to 120 nm). It reduces to the thin-film Pearl limit lambda^2/d</span>
+<span id="L14"><span class="lineNum">      14</span>              : // for d &lt;&lt; lambda and saturates at lambda for d &gt;&gt; lambda; the old sheet used the thin-film</span>
+<span id="L15"><span class="lineNum">      15</span>              : // expression, which undercounts the kinetic inductance by (d/lambda)*coth(d/lambda) once</span>
+<span id="L16"><span class="lineNum">      16</span>              : // d &gt;~ lambda (e.g. ~2.3x at the MIT-LL SFQ5ee geometry d=200 nm, lambda=90 nm).</span>
+<span id="L17"><span class="lineNum">      17</span> <span class="tlaGNC tlaBgGNC">           4 : TEST_CASE(&quot;Superconductor sheet kinetic inductance&quot;, &quot;[superconductor][Serial]&quot;)</span></span>
+<span id="L18"><span class="lineNum">      18</span>              : {</span>
+<span id="L19"><span class="lineNum">      19</span>              :   auto Lksq = [](double lam, double d)</span>
+<span id="L20"><span class="lineNum">      20</span> <span class="tlaGNC">          23 :   { return SuperconductorSheetOperator::KineticSheetInductance(lam, d); };</span></span>
+<span id="L21"><span class="lineNum">      21</span>              : </span>
+<span id="L22"><span class="lineNum">      22</span> <span class="tlaGNC">           4 :   SECTION(&quot;Matches lambda*coth(d/lambda)&quot;)</span></span>
+<span id="L23"><span class="lineNum">      23</span>              :   {</span>
+<span id="L24"><span class="lineNum">      24</span> <span class="tlaGNC">           5 :     for (double lam : {0.05, 0.09, 0.4, 1.0})</span></span>
+<span id="L25"><span class="lineNum">      25</span>              :     {</span>
+<span id="L26"><span class="lineNum">      26</span> <span class="tlaGNC">          24 :       for (double d : {0.02, 0.1, 0.2, 0.5, 2.0})</span></span>
+<span id="L27"><span class="lineNum">      27</span>              :       {</span>
+<span id="L28"><span class="lineNum">      28</span> <span class="tlaGNC">          40 :         CHECK_THAT(Lksq(lam, d),</span></span>
+<span id="L29"><span class="lineNum">      29</span>              :                    Catch::Matchers::WithinRel(lam / std::tanh(d / lam), 1.0e-12));</span>
+<span id="L30"><span class="lineNum">      30</span>              :       }</span>
+<span id="L31"><span class="lineNum">      31</span>              :     }</span>
+<span id="L32"><span class="lineNum">      32</span> <span class="tlaGNC">           4 :   }</span></span>
+<span id="L33"><span class="lineNum">      33</span>              : </span>
+<span id="L34"><span class="lineNum">      34</span> <span class="tlaGNC">           4 :   SECTION(&quot;Thin-film limit d &lt;&lt; lambda -&gt; lambda^2/d&quot;)</span></span>
+<span id="L35"><span class="lineNum">      35</span>              :   {</span>
+<span id="L36"><span class="lineNum">      36</span>              :     // coth(x) -&gt; 1/x + x/3, so lambda*coth(d/lambda) -&gt; lambda^2/d to O((d/lambda)^2).</span>
+<span id="L37"><span class="lineNum">      37</span>              :     const double lam = 0.4, d = 1.0e-3;  // d/lambda = 2.5e-3</span>
+<span id="L38"><span class="lineNum">      38</span> <span class="tlaGNC">           3 :     CHECK_THAT(Lksq(lam, d), Catch::Matchers::WithinRel(lam * lam / d, 1.0e-5));</span></span>
+<span id="L39"><span class="lineNum">      39</span> <span class="tlaGNC">           4 :   }</span></span>
+<span id="L40"><span class="lineNum">      40</span>              : </span>
+<span id="L41"><span class="lineNum">      41</span> <span class="tlaGNC">           4 :   SECTION(&quot;Thick-film limit d &gt;&gt; lambda -&gt; lambda&quot;)</span></span>
+<span id="L42"><span class="lineNum">      42</span>              :   {</span>
+<span id="L43"><span class="lineNum">      43</span>              :     const double lam = 0.09, d = 10.0;  // d/lambda ~ 111</span>
+<span id="L44"><span class="lineNum">      44</span> <span class="tlaGNC">           2 :     CHECK_THAT(Lksq(lam, d), Catch::Matchers::WithinRel(lam, 1.0e-6));</span></span>
+<span id="L45"><span class="lineNum">      45</span> <span class="tlaGNC">           4 :   }</span></span>
+<span id="L46"><span class="lineNum">      46</span>              : </span>
+<span id="L47"><span class="lineNum">      47</span> <span class="tlaGNC">           4 :   SECTION(&quot;Finite-thickness enhancement over thin-film at MIT-LL geometry&quot;)</span></span>
+<span id="L48"><span class="lineNum">      48</span>              :   {</span>
+<span id="L49"><span class="lineNum">      49</span>              :     // d = 200 nm, lambda = 90 nm (d/lambda = 2.222): the finite-thickness value exceeds the</span>
+<span id="L50"><span class="lineNum">      50</span>              :     // thin-film lambda^2/d by the factor (d/lambda)*coth(d/lambda), ~2.28x here.</span>
+<span id="L51"><span class="lineNum">      51</span>              :     const double lam = 0.09, d = 0.2;</span>
+<span id="L52"><span class="lineNum">      52</span>              :     const double thin = lam * lam / d;</span>
+<span id="L53"><span class="lineNum">      53</span> <span class="tlaGNC">           1 :     const double factor = Lksq(lam, d) / thin;</span></span>
+<span id="L54"><span class="lineNum">      54</span> <span class="tlaGNC">           3 :     CHECK_THAT(factor, Catch::Matchers::WithinRel((d / lam) / std::tanh(d / lam), 1.0e-12));</span></span>
+<span id="L55"><span class="lineNum">      55</span> <span class="tlaGNC">           1 :     CHECK(factor &gt; 2.2);</span></span>
+<span id="L56"><span class="lineNum">      56</span> <span class="tlaGNC">           1 :     CHECK(factor &lt; 2.4);</span></span>
+<span id="L57"><span class="lineNum">      57</span> <span class="tlaGNC">           4 :   }</span></span>
+<span id="L58"><span class="lineNum">      58</span> <span class="tlaGNC">           4 : }</span></span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>
