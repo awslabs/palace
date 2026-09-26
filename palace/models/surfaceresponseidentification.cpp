@@ -117,6 +117,12 @@ constexpr int kPairSeparationSamplesPerInterval = 16;
 // on a wider bend earlier), so only points more than pi R apart along the chain can face
 // each other across a fold. Runs closer than pi R of arc length are never partners.
 constexpr double kSelfPairNeighbourhoodOverRadius = 3.14159265358979323846;
+// Stack composition cap (decision 82(2) assembly): the breadth-first traversal of the
+// links from a chain position stops after this many members. A cross-section of k edges
+// spans at least (k - 1) x (the smallest gap) laterally; the cap is far above any physical
+// stack (the chip's widest stack has 12 edges) and only bounds a runaway traversal through
+// inconsistent links; every hit is counted under Diagnostics.StackCompositionCapHits.
+constexpr std::size_t kStackCompositionCap = 64;
 // Knife-edge census (decision 82(4), 2026-09-25): every rule of the identification is a strict
 // comparison with a threshold (the interaction distance 2R, the cluster ball / vertex window
 // R, the straight-bend radius 10R, the corner turn 30 deg); a design whose dimensions sit on a
@@ -980,6 +986,280 @@ std::pair<std::string, std::string> SignatureKeyAndHash(nlohmann::json signature
   return {key, Sha256HexImpl(key)};
 }
 
+namespace
+{
+
+// Continuous entries of the signatures (design (b)): lengths in units of R and angles in
+// degrees; every other entry is topology.
+bool IsLengthParameter(const std::string &key)
+{
+  return key == "OffsetOverR" || key == "SeparationOverR" || key == "RadiusOverR" ||
+         key == "CornerRadiusOverR";
+}
+
+bool IsAngleParameter(const std::string &key)
+{
+  return key == "AngleDegrees" || key == "ArmAnglesDegrees";
+}
+
+void SplitParameters(nlohmann::json &node, SignatureParameters &out)
+{
+  if (node.is_object())
+  {
+    for (auto it = node.begin(); it != node.end(); ++it)
+    {
+      const bool length = IsLengthParameter(it.key());
+      const bool angle = IsAngleParameter(it.key());
+      if (length || angle)
+      {
+        auto &list = length ? out.lengths_over_R : out.angles_degrees;
+        if (it.value().is_array())
+        {
+          for (const auto &v : it.value())
+          {
+            list.push_back(v.get<double>());
+          }
+        }
+        else
+        {
+          list.push_back(it.value().get<double>());
+        }
+        it.value() = nullptr;
+      }
+      else
+      {
+        SplitParameters(it.value(), out);
+      }
+    }
+  }
+  else if (node.is_array())
+  {
+    for (auto &v : node)
+    {
+      SplitParameters(v, out);
+    }
+  }
+}
+
+}  // namespace
+
+SignatureParameters SplitSignatureParameters(const nlohmann::json &signature)
+{
+  SignatureParameters out;
+  if (signature.contains("Type") && signature["Type"] == "SpatialEdgeCluster")
+  {
+    out.topology_key = signature.dump();
+    return out;
+  }
+  nlohmann::json topology = signature;
+  SplitParameters(topology, out);
+  out.topology_key = topology.dump();
+  return out;
+}
+
+nlohmann::json MirrorTranslationalSignature(const nlohmann::json &signature)
+{
+  if (!signature.is_object() || !signature.contains("Edges") || !signature["Edges"].is_array() ||
+      signature["Edges"].empty())
+  {
+    return signature;
+  }
+  nlohmann::json mirror = signature;
+  const auto &edges = signature["Edges"];
+  const double span = edges.back()["OffsetOverR"].get<double>();
+  nlohmann::json list = nlohmann::json::array();
+  std::map<int, int> labels;
+  for (auto it = edges.rbegin(); it != edges.rend(); ++it)
+  {
+    nlohmann::json edge = *it;
+    edge["OffsetOverR"] = RoundTo(span - (*it)["OffsetOverR"].get<double>(),
+                                  kSignatureLengthQuantumOverRadius);
+    edge["GapSide"] = -(*it)["GapSide"].get<int>();
+    const auto [label, inserted] =
+        labels.emplace((*it)["Conductor"].get<int>(), static_cast<int>(labels.size()) + 1);
+    (void)inserted;
+    edge["Conductor"] = label->second;
+    list.push_back(std::move(edge));
+  }
+  mirror["Edges"] = std::move(list);
+  return mirror;
+}
+
+namespace
+{
+
+void SubstituteParameters(nlohmann::json &node, const std::vector<double> &lengths,
+                          const std::vector<double> &angles, std::size_t &next_length,
+                          std::size_t &next_angle)
+{
+  if (node.is_object())
+  {
+    for (auto it = node.begin(); it != node.end(); ++it)
+    {
+      const bool length = IsLengthParameter(it.key());
+      const bool angle = IsAngleParameter(it.key());
+      if (length || angle)
+      {
+        const auto &list = length ? lengths : angles;
+        auto &next = length ? next_length : next_angle;
+        const double quantum =
+            length ? kSignatureLengthQuantumOverRadius : kSignatureAngleQuantumDegrees;
+        if (it.value().is_array())
+        {
+          for (auto &v : it.value())
+          {
+            MFEM_VERIFY(next < list.size(), "Signature parameter substitution out of range!");
+            v = RoundTo(list[next++], quantum);
+          }
+        }
+        else
+        {
+          MFEM_VERIFY(next < list.size(), "Signature parameter substitution out of range!");
+          it.value() = RoundTo(list[next++], quantum);
+        }
+      }
+      else
+      {
+        SubstituteParameters(it.value(), lengths, angles, next_length, next_angle);
+      }
+    }
+  }
+  else if (node.is_array())
+  {
+    for (auto &v : node)
+    {
+      SubstituteParameters(v, lengths, angles, next_length, next_angle);
+    }
+  }
+}
+
+}  // namespace
+
+nlohmann::json SubstituteSignatureParameters(const nlohmann::json &signature,
+                                             const std::vector<double> &lengths_over_R,
+                                             const std::vector<double> &angles_degrees)
+{
+  nlohmann::json out = signature;
+  if (signature.contains("Type") && signature["Type"] == "SpatialEdgeCluster")
+  {
+    return out;
+  }
+  std::size_t next_length = 0, next_angle = 0;
+  SubstituteParameters(out, lengths_over_R, angles_degrees, next_length, next_angle);
+  MFEM_VERIFY(next_length == lengths_over_R.size() && next_angle == angles_degrees.size(),
+              "Signature parameter substitution left parameters unused!");
+  return out;
+}
+
+nlohmann::json RepresentativeSignature(const std::vector<nlohmann::json> &signatures)
+{
+  MFEM_VERIFY(!signatures.empty(), "A representative signature needs at least one instance!");
+  // The lead: the lexicographically smallest serialisation (a set function).
+  const nlohmann::json *lead = &signatures.front();
+  std::string lead_key = lead->dump();
+  for (const auto &signature : signatures)
+  {
+    const std::string key = signature.dump();
+    if (key < lead_key)
+    {
+      lead_key = key;
+      lead = &signature;
+    }
+  }
+  const SignatureParameters lead_parameters = SplitSignatureParameters(*lead);
+  std::vector<double> lo_length = lead_parameters.lengths_over_R,
+                      hi_length = lead_parameters.lengths_over_R;
+  std::vector<double> lo_angle = lead_parameters.angles_degrees,
+                      hi_angle = lead_parameters.angles_degrees;
+  for (const auto &signature : signatures)
+  {
+    // The orientation of this instance nearest to the lead.
+    std::optional<double> best;
+    SignatureParameters aligned;
+    for (const nlohmann::json &candidate :
+         {signature, MirrorTranslationalSignature(signature)})
+    {
+      const SignatureParameters parameters = SplitSignatureParameters(candidate);
+      if (parameters.topology_key != lead_parameters.topology_key ||
+          parameters.lengths_over_R.size() != lo_length.size() ||
+          parameters.angles_degrees.size() != lo_angle.size())
+      {
+        continue;
+      }
+      double deviation = 0.0;
+      for (std::size_t i = 0; i < lo_length.size(); i++)
+      {
+        deviation = std::max(deviation, std::abs(parameters.lengths_over_R[i] -
+                                                 lead_parameters.lengths_over_R[i]));
+      }
+      for (std::size_t i = 0; i < lo_angle.size(); i++)
+      {
+        deviation = std::max(deviation, std::abs(parameters.angles_degrees[i] -
+                                                 lead_parameters.angles_degrees[i]));
+      }
+      if (!best || deviation < *best)
+      {
+        best = deviation;
+        aligned = parameters;
+      }
+    }
+    MFEM_VERIFY(best.has_value(),
+                "A representative signature over instances of different topologies!");
+    for (std::size_t i = 0; i < lo_length.size(); i++)
+    {
+      lo_length[i] = std::min(lo_length[i], aligned.lengths_over_R[i]);
+      hi_length[i] = std::max(hi_length[i], aligned.lengths_over_R[i]);
+    }
+    for (std::size_t i = 0; i < lo_angle.size(); i++)
+    {
+      lo_angle[i] = std::min(lo_angle[i], aligned.angles_degrees[i]);
+      hi_angle[i] = std::max(hi_angle[i], aligned.angles_degrees[i]);
+    }
+  }
+  std::vector<double> lengths(lo_length.size()), angles(lo_angle.size());
+  for (std::size_t i = 0; i < lengths.size(); i++)
+  {
+    lengths[i] = 0.5 * (lo_length[i] + hi_length[i]);
+  }
+  for (std::size_t i = 0; i < angles.size(); i++)
+  {
+    angles[i] = 0.5 * (lo_angle[i] + hi_angle[i]);
+  }
+  return SubstituteSignatureParameters(*lead, lengths, angles);
+}
+
+std::optional<double> SignatureDeviation(const nlohmann::json &a, const nlohmann::json &b)
+{
+  const SignatureParameters pa = SplitSignatureParameters(a);
+  std::optional<double> best;
+  for (const nlohmann::json &candidate : {b, MirrorTranslationalSignature(b)})
+  {
+    const SignatureParameters pb = SplitSignatureParameters(candidate);
+    if (pa.topology_key != pb.topology_key ||
+        pa.lengths_over_R.size() != pb.lengths_over_R.size() ||
+        pa.angles_degrees.size() != pb.angles_degrees.size())
+    {
+      continue;
+    }
+    double deviation = 0.0;
+    for (std::size_t i = 0; i < pa.lengths_over_R.size(); i++)
+    {
+      deviation = std::max(deviation, std::abs(pa.lengths_over_R[i] - pb.lengths_over_R[i]) /
+                                          kSignatureParameterToleranceOverRadius);
+    }
+    for (std::size_t i = 0; i < pa.angles_degrees.size(); i++)
+    {
+      deviation = std::max(deviation, std::abs(pa.angles_degrees[i] - pb.angles_degrees[i]) /
+                                          kSignatureAngleToleranceDegrees);
+    }
+    if (!best || deviation < *best)
+    {
+      best = deviation;
+    }
+  }
+  return best;
+}
+
 nlohmann::json CanonicalCornerSignature(const std::vector<std::string> &interfaces,
                                         const std::string &boundary_law,
                                         double angle_degrees, double corner_radius_over_R)
@@ -1599,6 +1879,24 @@ private:
   std::vector<Arc> arcs;
   std::vector<int> vertex_arc;   // per mesh vertex: the arc holding it as a joint, or -1
   std::vector<int> segment_arc;  // per segment: the BEND arc it lies on, or -1
+  // The bend arc a run lies on (its segments all lie on one arc or on none), or -1.
+  int RunArc(std::size_t run) const
+  {
+    const auto &segments = runs[run].segments;
+    if (segments.empty() || segment_arc.empty())
+    {
+      return -1;
+    }
+    const int arc = segment_arc[segments.front().segment];
+    for (const auto &rs : segments)
+    {
+      if (segment_arc[rs.segment] != arc)
+      {
+        return -1;
+      }
+    }
+    return arc;
+  }
   // Chains joined through the corner vertices absorbed by a bend are one chain (union-find
   // over the input chain ids, applied to the segments before the runs are built), so that a
   // chord count that puts a corner vertex inside a bend does not split the chain.
@@ -1627,13 +1925,72 @@ private:
     Interval interval;
     bool curved;
     double max_kappa;
-    double weighted_separation;
-    int sample_count;
+    double separation;  // the piece's mean separation (exact or chord, see `exact`)
+    bool exact;
   };
+  // Separation of a link per curvature class (index 0 straight-like, 1 curved), decision
+  // 85(1): the length-weighted mean of the class's exact piece separations (two exactly
+  // parallel straight runs, two concentric fitted arcs) when it has any, else of its chord
+  // readings (`exact` false: a polyline bend with chords beyond 2R, a taper, a transition).
+  struct ClassSeparation
+  {
+    double value = 0.0;
+    bool exact = false;
+    bool present = false;
+  };
+  using LinkSeparation = std::array<ClassSeparation, 2>;
+  static LinkSeparation LinkSeparations(const std::array<std::vector<LinkPiece>, 2> &pieces)
+  {
+    LinkSeparation result;
+    for (int curved_class = 0; curved_class < 2; curved_class++)
+    {
+      double exact_sum = 0.0, exact_length = 0.0, chord_sum = 0.0, chord_length = 0.0;
+      for (const auto &side : pieces)
+      {
+        for (const auto &piece : side)
+        {
+          if (piece.curved != (curved_class == 1))
+          {
+            continue;
+          }
+          const double length = piece.interval.second - piece.interval.first;
+          if (piece.exact)
+          {
+            exact_sum += piece.separation * length;
+            exact_length += length;
+          }
+          else
+          {
+            chord_sum += piece.separation * length;
+            chord_length += length;
+          }
+        }
+      }
+      auto &entry = result[static_cast<std::size_t>(curved_class)];
+      if (exact_length > 0.0)
+      {
+        entry = {exact_sum / exact_length, true, true};
+      }
+      else if (chord_length > 0.0)
+      {
+        entry = {chord_sum / chord_length, false, true};
+      }
+    }
+    for (int curved_class = 0; curved_class < 2; curved_class++)
+    {
+      auto &entry = result[static_cast<std::size_t>(curved_class)];
+      const auto &other = result[static_cast<std::size_t>(1 - curved_class)];
+      if (!entry.present && other.present)
+      {
+        entry = {other.value, other.exact, false};
+      }
+    }
+    return result;
+  }
   struct PairLink
   {
     int chain_a = -1, chain_b = -1;
-    double separation = 0.0;  // mean chord reading over the samples
+    LinkSeparation separation;  // per curvature class
     Point3D lead_point{}, lateral_ab{};
     std::size_t run_a = 0, run_b = 0;  // the runs at the lead pair of points
     std::array<std::vector<LinkPiece>, 2> pieces;  // side 0 on chain a, side 1 on chain b
@@ -1661,6 +2018,11 @@ private:
   // Claims of the same priority overlapping on a run would be resolved by feature id — a
   // tie-break the rules must never need (decision 82(2)); counted and reported.
   std::size_t same_priority_claim_overlaps = 0;
+  // Stack assembly diagnostics (reported under Diagnostics): elementary intervals whose
+  // offsets took a geometric lateral distance for want of a consecutive link, and those
+  // whose composition reached kStackCompositionCap members.
+  std::size_t stack_geometric_offsets = 0;
+  std::size_t stack_composition_cap_hits = 0;
   // Acceleration only (every result is the former all-pairs answer): the runs by their
   // boxes and the runs incident to every vertex.
   std::optional<UniformGrid> run_grid;
@@ -2450,10 +2812,19 @@ void Identifier::DetectArcs()
       {
         continue;
       }
-      // Extend while the pieces are short, the turn monotone and at most 180 deg.
+      // Extend while the pieces are short, the turn monotone and at most 180 deg. A piece
+      // of 2R or longer stops the arc when either of its joints is a corner-class turn (a
+      // polygonal design — an octagon with long sides — stays corners); between two
+      // sub-corner joints a long piece is a chord of a smooth polyline bend (decision 85(1):
+      // DS-SCT-001's 367-373 um route bends are meshed with 4 um chords = 2R at R = 2 um and
+      // their design radii — the exact stack separations — come from the fitted circle).
+      // In that long-chord regime the scan stops at the first failed fit (the short-chord
+      // scan keeps its full range, so that a perturbed joint inside a fillet is still
+      // absorbed by a larger range).
       std::size_t best_count = 0;
       Fit best;
       double turn = joints[i].turn;
+      bool long_pieces = false;
       // At least three joints (two chords): a polyline with two joints is a chamfer or a
       // square strip end, which no test can tell from a one-chord arc (the diameter chord
       // of a semicircle is the square end): those stay corners.
@@ -2461,9 +2832,17 @@ void Identifier::DetectArcs()
       {
         const std::size_t prev = (i + count - 2) % m, k = (i + count - 1) % m;
         if ((!closed && i + count - 1 >= m) || k == i || consumed[k] ||
-            joints[k].sign != joints[i].sign || !quantizer.Less(Gap(prev, k), interaction))
+            joints[k].sign != joints[i].sign)
         {
           break;
+        }
+        if (!quantizer.Less(Gap(prev, k), interaction))
+        {
+          if (joints[prev].turn > corner_turn || joints[k].turn > corner_turn)
+          {
+            break;
+          }
+          long_pieces = true;
         }
         turn += joints[k].turn;
         if (turn > std::acos(-1.0) + 1.0e-9)
@@ -2479,6 +2858,10 @@ void Identifier::DetectArcs()
         {
           best = fit;
           best_count = count;
+        }
+        else if (long_pieces)
+        {
+          break;
         }
       }
       if (best_count == 0)
@@ -2508,6 +2891,58 @@ void Identifier::DetectArcs()
       arc.turn = best.turn;
       arc.corner = quantizer.Less(arc.radius, R) &&
                    arc.turn * 180.0 / std::acos(-1.0) > kCornerTurnToleranceDegrees;
+      if (!arc.corner)
+      {
+        // A bend's circle from its joint vertices (algebraic least squares in the process
+        // plane; exact for vertices on one circle, a set function of the joints): the
+        // tangent-length construction above assumes arms tangent to the circle, which a
+        // route bend preceded by a spline piece is not (DS-SCT-001: 0.5 % radius error,
+        // 0.8 um centre offset on a 370 um bend). The exact separations of concentric
+        // bends (decision 85(1)) are the differences of these radii. A rounded corner
+        // keeps the tangent-length radius (its arms are tangent by construction).
+        const Point3D normal = Normalize(
+            Add(input.segments[path_segments[first.index % n]].process_normal,
+                input.segments[path_segments[(first.index + n - 1) % n]].process_normal));
+        const Point3D o = input.vertices[arc.joints.front()].coordinate;
+        Point3D u = first.in;
+        u = Normalize(Sub(u, Scale(Dot(u, normal), normal)));
+        const Point3D v = Normalize(Cross(normal, u));
+        // Kasa fit: x^2 + y^2 + D x + E y + F = 0.
+        double sxx = 0.0, sxy = 0.0, syy = 0.0, sx = 0.0, sy = 0.0, s1 = 0.0;
+        double sxz = 0.0, syz = 0.0, sz = 0.0;
+        for (const std::size_t jv : arc.joints)
+        {
+          const Point3D d = Sub(input.vertices[jv].coordinate, o);
+          const double x = Dot(d, u), y = Dot(d, v), z = x * x + y * y;
+          sxx += x * x, sxy += x * y, syy += y * y, sx += x, sy += y, s1 += 1.0;
+          sxz += x * z, syz += y * z, sz += z;
+        }
+        // Normal equations for (D, E, F): [sxx sxy sx; sxy syy sy; sx sy s1] (D E F)^T =
+        // -(sxz syz sz)^T, solved by Cramer's rule.
+        const double a11 = sxx, a12 = sxy, a13 = sx, a22 = syy, a23 = sy, a33 = s1;
+        const double b1 = -sxz, b2 = -syz, b3 = -sz;
+        const double det = a11 * (a22 * a33 - a23 * a23) - a12 * (a12 * a33 - a23 * a13) +
+                           a13 * (a12 * a23 - a22 * a13);
+        if (std::abs(det) > 1.0e-30)
+        {
+          const double D = (b1 * (a22 * a33 - a23 * a23) - a12 * (b2 * a33 - a23 * b3) +
+                            a13 * (b2 * a23 - a22 * b3)) /
+                           det;
+          const double E = (a11 * (b2 * a33 - a23 * b3) - b1 * (a12 * a33 - a23 * a13) +
+                            a13 * (a12 * b3 - b2 * a13)) /
+                           det;
+          const double F = (a11 * (a22 * b3 - b2 * a23) - a12 * (a12 * b3 - b2 * a13) +
+                            b1 * (a12 * a23 - a22 * a13)) /
+                           det;
+          const double cx = -0.5 * D, cy = -0.5 * E;
+          const double radius2 = cx * cx + cy * cy - F;
+          if (radius2 > 0.0)
+          {
+            arc.radius = std::sqrt(radius2);
+            arc.center = Add(o, Add(Scale(cx, u), Scale(cy, v)));
+          }
+        }
+      }
       if (arc.corner)
       {
         // A rounded corner is a corner: the arc is a chain of its own between its tangent
@@ -3183,6 +3618,11 @@ void Identifier::BuildBentPairs()
     // run: the chord reading C and the inscribed-vertex reading C / cos(turn / 2) of the
     // pair separation differ by this discretisation ambiguity.
     double turn;
+    // Exact geometric separation of the sample (decision 85(1)): the perpendicular distance
+    // of two exactly parallel straight runs, or the radius difference of two concentric
+    // fitted bend arcs; absent where only the chord reading exists (a polyline bend with
+    // chords beyond 2R, a taper, the transition between a lead and an arc).
+    std::optional<double> exact;
   };
   // The larger joint turn at the two ends of run k of a chain (0 at an open chain's ends).
   auto LocalTurn = [&](const Chain &chain, std::size_t k)
@@ -3206,6 +3646,47 @@ void Identifier::BuildBentPairs()
     bool curved;
     double max_kappa;
     std::vector<Sample> samples;  // ordered along the run
+  };
+  // Exact separation of a sample on run a whose foot lies on run b (decision 85(1)): two
+  // concentric fitted bend arcs (the radius difference; the arc rule's centres and radii
+  // are exact for polylines inscribed in the design circles at any chord count) or two
+  // exactly parallel straight runs where neither chain bends within R of the sample / the
+  // foot (the leads of a route: the perpendicular distance of their lines; a chord of a
+  // coarse polyline bend has a joint within R and is read off the chords like the rest).
+  auto ExactSeparation = [&](std::size_t a, std::size_t b, double kappa_a,
+                             double kappa_b) -> std::optional<double>
+  {
+    if (a == b)
+    {
+      return std::nullopt;
+    }
+    const Run &ra = runs[a];
+    const Run &rb = runs[b];
+    const int arc_a = RunArc(a), arc_b = RunArc(b);
+    if (arc_a >= 0 && arc_b >= 0)
+    {
+      if (arc_a == arc_b)
+      {
+        return std::nullopt;  // a chain facing itself along one arc
+      }
+      // Concentric within the signature parameter tolerance: the radius difference is then
+      // exact to that tolerance (the centre offset bounds its error); two local circles of a
+      // spline (a spiral fitted piecewise) are not concentric and read off the chords.
+      const Arc &A = arcs[static_cast<std::size_t>(arc_a)];
+      const Arc &B = arcs[static_cast<std::size_t>(arc_b)];
+      if (Distance(A.center, B.center) <= kSignatureParameterToleranceOverRadius * R)
+      {
+        return std::abs(A.radius - B.radius);
+      }
+      return std::nullopt;
+    }
+    if (arc_a < 0 && arc_b < 0 && kappa_a <= 0.0 && kappa_b <= 0.0 &&
+        !DirectionLess(std::abs(Dot(ra.tangent, rb.tangent)), 1.0 - kParallelCosineTolerance))
+    {
+      const Point3D delta = Sub(rb.start, ra.start);
+      return Norm(Sub(delta, Scale(Dot(delta, ra.tangent), ra.tangent)));
+    }
+    return std::nullopt;
   };
   // Candidate pieces of chain A's runs with respect to chain B (within the reach, not
   // beyond either end of B, outside the shared-vertex zones, cut at the curved boundaries
@@ -3521,14 +4002,15 @@ void Identifier::BuildBentPairs()
             {
               continue;
             }
-            const double half_own =
-                WindowedCurvature(A, x) > 0.0 ? std::max(R, ra.length) : R;
+            const double kappa_own = WindowedCurvature(A, x);
+            const double kappa_other = WindowedCurvature(B, q.x);
+            const double half_own = kappa_own > 0.0 ? std::max(R, ra.length) : R;
             const double half_other =
-                WindowedCurvature(B, q.x) > 0.0 ? std::max(R, runs[q.run].length) : R;
+                kappa_other > 0.0 ? std::max(R, runs[q.run].length) : R;
             const double turn =
                 std::max(LocalTurn(A, ka), LocalTurn(B, RunIndexInChain(B, q.run)));
-            result.samples.push_back(
-                {a, s, x, q.distance, q.x, half_own, half_other, turn});
+            result.samples.push_back({a, s, x, q.distance, q.x, half_own, half_other, turn,
+                                      ExactSeparation(a, q.run, kappa_own, kappa_other)});
           }
           pieces.push_back(std::move(result));
         }
@@ -3637,7 +4119,9 @@ void Identifier::BuildBentPairs()
     }
   };
   // Sub-pieces of one status along a piece: consecutive samples with the same (constant,
-  // interacting) flags; the cut between two samples of different status is halfway.
+  // interacting) flags; the cut between two samples of different status is halfway. The
+  // sub-piece's separation is the mean of its samples' EXACT separations when it has any
+  // (decision 85(1)), else the mean chord reading (`exact` false).
   struct SubPiece
   {
     std::size_t run;
@@ -3646,8 +4130,8 @@ void Identifier::BuildBentPairs()
     double max_kappa;
     bool constant;
     bool interacting;
-    double weighted_separation;  // sum over samples of the separation, for the mean
-    int sample_count;
+    double separation;
+    bool exact;
   };
   auto Split = [&](const std::vector<Piece> &pieces, const std::vector<char> &constant,
                    const std::vector<double> &separation, const std::vector<double> &upper,
@@ -3663,11 +4147,17 @@ void Identifier::BuildBentPairs()
         const bool c = constant[k + i];
         const bool inter = quantizer.Less(upper[k + i], interaction);
         std::size_t j = i;
-        double weighted = 0.0;
+        double chord_sum = 0.0, exact_sum = 0.0;
+        int exact_count = 0;
         while (j < n && constant[k + j] == c &&
                quantizer.Less(upper[k + j], interaction) == inter)
         {
-          weighted += separation[k + j];
+          chord_sum += separation[k + j];
+          if (piece.samples[j].exact)
+          {
+            exact_sum += *piece.samples[j].exact;
+            exact_count++;
+          }
           j++;
         }
         const double s_lo = i == 0 ? piece.interval.first
@@ -3682,8 +4172,9 @@ void Identifier::BuildBentPairs()
                          piece.max_kappa,
                          c,
                          inter,
-                         weighted,
-                         static_cast<int>(j - i)});
+                         exact_count > 0 ? exact_sum / exact_count
+                                         : chord_sum / static_cast<double>(j - i),
+                         exact_count > 0});
         }
         i = j;
       }
@@ -3825,10 +4316,9 @@ void Identifier::BuildBentPairs()
         const int side = list == &sub_a ? 0 : 1;  // A at offset 0, B at the separation
         for (const auto &piece : *list)
         {
-          if (piece.constant && piece.interacting && piece.sample_count > 0)
+          if (piece.constant && piece.interacting)
           {
-            grouped.push_back(
-                {&piece, side, piece.weighted_separation / piece.sample_count});
+            grouped.push_back({&piece, side, piece.separation});
           }
         }
       }
@@ -3870,7 +4360,7 @@ void Identifier::BuildBentPairs()
               const Run &rr = runs[pc.run];
               dbg << "      side " << grouped[i].side << " run " << pc.run << " s [" << pc.interval.first
                   << ", " << pc.interval.second << "] of " << rr.length << " at (" << rr.At(pc.interval.first)[0]
-                  << ", " << rr.At(pc.interval.first)[1] << ") samples " << pc.sample_count
+                  << ", " << rr.At(pc.interval.first)[1] << ") " << (pc.exact ? "exact" : "chord")
                   << " mean " << grouped[i].mean_separation << "\n";
             }
           }
@@ -3915,20 +4405,47 @@ void Identifier::BuildBentPairs()
         link.run_b = lead_on_a ? qb.run : lead->piece->run;
         link.lateral_ab = lead_on_a ? lateral : Scale(-1.0, lateral);
         link.lead_point = lead_on_a ? pa : runs[qb.run].At(qb.s);
-        double weighted = 0.0;
-        int samples = 0;
         for (std::size_t i = g0; i < g1; i++)
         {
           const SubPiece &piece = *grouped[i].piece;
           link.pieces[static_cast<std::size_t>(grouped[i].side)].push_back(
-              {piece.run, piece.interval, piece.curved, piece.max_kappa,
-               piece.weighted_separation, piece.sample_count});
-          weighted += piece.weighted_separation;
-          samples += piece.sample_count;
+              {piece.run, piece.interval, piece.curved, piece.max_kappa, piece.separation,
+               piece.exact});
         }
-        // One separation per link (and per curvature class of its feature, taken again
-        // from the class's own samples when emitted): the mean chord reading.
-        link.separation = weighted / samples;
+        // One separation per link and curvature class (decision 85(1)): the length-weighted
+        // mean of the class's EXACT piece separations when it has any, else of its chord
+        // readings; a class without pieces takes the other class's value (the composition
+        // reads the class of the whole cross-section).
+        link.separation = LinkSeparations(link.pieces);
+        if (std::getenv("PALACE_IDENTIFICATION_DEBUG_EXACT") && input.log)
+        {
+          std::ostringstream dbg;
+          dbg << "  DEBUG link " << A.id << " - " << B.id << " separation straight "
+              << link.separation[0].value << (link.separation[0].exact ? " exact" : " chord")
+              << " curved " << link.separation[1].value
+              << (link.separation[1].exact ? " exact" : " chord") << "\n";
+          for (int side = 0; side < 2; side++)
+          {
+            for (const auto &piece : link.pieces[static_cast<std::size_t>(side)])
+            {
+              const Run &rr = runs[piece.run];
+              dbg << "    side " << side << " run " << piece.run << " len " << rr.length
+                  << " s [" << piece.interval.first << ", " << piece.interval.second
+                  << "] arc " << RunArc(piece.run);
+              if (RunArc(piece.run) >= 0)
+              {
+                const Arc &arc = arcs[static_cast<std::size_t>(RunArc(piece.run))];
+                dbg << " (r " << arc.radius << " c " << arc.center[0] << "," << arc.center[1]
+                    << " joints " << arc.joints.size() << " turn " << arc.turn << ")";
+              }
+              dbg << (piece.curved ? " curved" : " straight")
+                  << (piece.exact ? " EXACT " : " chord ") << piece.separation << " at ("
+                  << rr.At(piece.interval.first)[0] << ", " << rr.At(piece.interval.first)[1]
+                  << ")\n";
+            }
+          }
+          input.log(dbg.str());
+        }
         self_pairs += self ? 1 : 0;
         pair_links.push_back(std::move(link));
       }
@@ -3968,8 +4485,7 @@ void Identifier::EmitPairLink(const PairLink &link)
   }
   for (const bool curved_class : {false, true})
   {
-    double length = 0.0, max_kappa = 0.0, weighted = 0.0;
-    int samples = 0;
+    double length = 0.0, max_kappa = 0.0;
     for (int side = 0; side < 2; side++)
     {
       for (const auto &piece : link.pieces[static_cast<std::size_t>(side)])
@@ -3980,17 +4496,17 @@ void Identifier::EmitPairLink(const PairLink &link)
         }
         length += piece.interval.second - piece.interval.first;
         max_kappa = std::max(max_kappa, piece.max_kappa);
-        weighted += piece.weighted_separation;
-        samples += piece.sample_count;
       }
     }
     if (length <= kSignatureLengthQuantumOverRadius * R)
     {
       continue;  // slivers between cuts, below the signature grid
     }
-    // One separation per pair and curvature class: the mean chord reading of its samples
-    // (exact for a constant pair; a slow taper is described by its mean).
-    const double separation = weighted / samples;
+    // One separation per pair and curvature class (decision 85(1)): the class's exact
+    // geometric separation when it has exact pieces, else its length-weighted chord
+    // reading (a slow taper is described by its mean).
+    const ClassSeparation &class_separation = link.separation[curved_class ? 1 : 0];
+    const double separation = class_separation.value;
     std::vector<TranslationalEdge> edges = {
         {0.0, gap_a, ra.conductor, InterfaceNames(ra.targets), ra.boundary_law},
         {separation, gap_b, rb.conductor, InterfaceNames(rb.targets), rb.boundary_law}};
@@ -4011,6 +4527,7 @@ void Identifier::EmitPairLink(const PairLink &link)
     const int feature = NewFeature(type, signature, translational.chirality);
     features[feature].origin = link.lead_point;
     features[feature].axes = {ra.tangent, link.lateral_ab, n_ref};
+    features[feature].exact_parameters = class_separation.exact;
     feature_sides[feature] = 2;
     for (int side = 0; side < 2; side++)
     {
@@ -4498,7 +5015,7 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
   struct ELink
   {
     int chain_a, chain_b;
-    double separation;
+    LinkSeparation separation;  // per curvature class
     std::array<std::vector<LinkPiece>, 2> pieces;
     bool Self() const { return chain_a == chain_b; }
   };
@@ -4514,9 +5031,11 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     for (std::size_t m = 0; m + 1 < span.members.size(); m++)
     {
       const auto &lower = span.members[m], &upper = span.members[m + 1];
-      ELink e{runs[lower.run].chain, runs[upper.run].chain, upper.w - lower.w, {}};
-      e.pieces[0].push_back({lower.run, lower.interval, false, 0.0, 0.0, 0});
-      e.pieces[1].push_back({upper.run, upper.interval, false, 0.0, 0.0, 0});
+      // Two rigid parallel runs: the lateral offset difference is exact for both classes.
+      const ClassSeparation exact{upper.w - lower.w, true, true};
+      ELink e{runs[lower.run].chain, runs[upper.run].chain, {exact, exact}, {}};
+      e.pieces[0].push_back({lower.run, lower.interval, false, 0.0, exact.value, true});
+      e.pieces[1].push_back({upper.run, upper.interval, false, 0.0, exact.value, true});
       elinks.push_back(std::move(e));
     }
   }
@@ -4714,9 +5233,12 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     std::vector<Node> nodes;  // in increasing position along `lateral`
     Point3D lateral;
     std::vector<double> offsets;
+    bool curved = false;  // a member is curved at the cross-section
+    bool exact = true;    // every consecutive separation entering the offsets is exact
     bool geometric_fallback = false;
+    bool cap_reached = false;
   };
-  std::size_t fallbacks = 0;
+  std::size_t fallbacks = 0, cap_hits = 0;
   auto Compose = [&](int chain, double x)
   {
     Composition composition;
@@ -4729,8 +5251,13 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       return composition;  // a cluster portion / vertex window: no cross-section of its own
     }
     composition.nodes.push_back({chain, x, p, run, 0.0});
-    for (std::size_t i = 0; i < composition.nodes.size() && composition.nodes.size() < 64; i++)
+    for (std::size_t i = 0; i < composition.nodes.size(); i++)
     {
+      if (composition.nodes.size() >= kStackCompositionCap)
+      {
+        composition.cap_reached = true;
+        break;
+      }
       const Node node = composition.nodes[i];
       const auto it = links_on_chain.find(node.chain);
       if (it == links_on_chain.end())
@@ -4787,7 +5314,13 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
         n.position = -n.position;
       }
     }
-    // Offsets from the consecutive links' separations.
+    // Class of the cross-section: curved where a member is curved (the class decides which
+    // separation of every consecutive link enters the offsets, decision 85(1)).
+    for (const Node &node : composition.nodes)
+    {
+      composition.curved = composition.curved || IsCurvedAt(ChainOf(node.chain), node.x);
+    }
+    // Offsets from the consecutive links' separations of the cross-section's class.
     composition.offsets.assign(composition.nodes.size(), 0.0);
     for (std::size_t i = 0; i + 1 < composition.nodes.size(); i++)
     {
@@ -4806,7 +5339,10 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
           }
           if (ActiveAt(e, side, lower.x))
           {
-            separation = link.separation;
+            const ClassSeparation &of_class =
+                link.separation[composition.curved ? 1 : 0];
+            separation = of_class.value;
+            composition.exact = composition.exact && of_class.exact;
           }
         }
       }
@@ -4814,6 +5350,7 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       {
         separation = upper.position - lower.position;  // geometric (no consecutive link)
         composition.geometric_fallback = true;
+        composition.exact = false;
       }
       composition.offsets[i + 1] = composition.offsets[i] + *separation;
     }
@@ -4856,6 +5393,7 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     Point3D origin;
     std::array<Point3D, 3> axes;
     int sides;
+    bool exact;
   };
   std::vector<Assigned> assigned;
   for (const auto &[chain, sorted_breakpoints] : breakpoints)
@@ -4902,6 +5440,7 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
         continue;
       }
       fallbacks += composition.geometric_fallback ? 1 : 0;
+      cap_hits += composition.cap_reached ? 1 : 0;
       std::vector<TranslationalEdge> edges;
       auto Edges = [&]()
       {
@@ -4939,14 +5478,13 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
         MFEM_VERIFY(translational.chirality > 0,
                     "The reversed cross-section is not the canonical orientation!");
       }
-      bool curved = false;
+      const bool curved = composition.curved;
       double max_kappa = 0.0;
       std::vector<int> member_chains;
       int own_side = -1;
       for (std::size_t n = 0; n < k; n++)
       {
         const Node &node = composition.nodes[n];
-        curved = curved || IsCurvedAt(ChainOf(node.chain), node.x);
         max_kappa = std::max(max_kappa, WindowedCurvature(ChainOf(node.chain), node.x));
         member_chains.push_back(node.chain);
         if (node.chain == chain && own_side < 0 &&
@@ -5002,7 +5540,7 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
                           translational.signature, translational.chirality, reason,
                           first.point,
                           {runs[first.run].tangent, composition.lateral, n_ref},
-                          static_cast<int>(k)});
+                          static_cast<int>(k), composition.exact});
     }
     // Adjacent elementary intervals of one feature and side merge.
     for (auto &entry : on_chain)
@@ -5013,6 +5551,7 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       {
         assigned.back().x1 = entry.x1;
         assigned.back().max_kappa = std::max(assigned.back().max_kappa, entry.max_kappa);
+        assigned.back().exact = assigned.back().exact && entry.exact;
       }
       else
       {
@@ -5026,7 +5565,9 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     dbg << "  DEBUG component: " << elinks.size() << " elinks\n";
     for (const auto &e : elinks)
     {
-      dbg << "    link " << e.chain_a << " - " << e.chain_b << " sep " << e.separation
+      dbg << "    link " << e.chain_a << " - " << e.chain_b << " sep "
+          << e.separation[0].value << (e.separation[0].exact ? " (exact)" : " (chord)")
+          << " / " << e.separation[1].value << (e.separation[1].exact ? " (exact)" : " (chord)")
           << " pieces " << e.pieces[0].size() << " / " << e.pieces[1].size() << "\n";
       for (const int c : {e.chain_a, e.chain_b})
       {
@@ -5096,6 +5637,9 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     features[feature].origin = lead.origin;
     features[feature].axes = lead.axes;
     feature_sides[feature] = lead.sides;
+    features[feature].exact_parameters =
+        std::all_of(members.begin(), members.end(),
+                    [&](std::size_t i) { return assigned[i].exact; });
     for (const std::size_t i : members)
     {
       const Assigned &entry = assigned[i];
@@ -5121,10 +5665,18 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     }
   }
   StackTimer("end");
+  stack_geometric_offsets += fallbacks;
+  stack_composition_cap_hits += cap_hits;
   if (fallbacks > 0 && input.log)
   {
     input.log("  Identification stacks: " + std::to_string(fallbacks) +
               " elementary intervals with a geometric offset (no consecutive link)\n");
+  }
+  if (cap_hits > 0 && input.log)
+  {
+    input.log("  Identification stacks: " + std::to_string(cap_hits) +
+              " elementary intervals reached the composition cap of " +
+              std::to_string(kStackCompositionCap) + " members\n");
   }
 }
 
@@ -6562,6 +7114,8 @@ void Identifier::Assign(IdentificationResult &result)
   }
   result.geometry_digest = Sha256HexImpl(digest_input);
   result.same_priority_claim_overlaps = same_priority_claim_overlaps;
+  result.stack_geometric_offsets = stack_geometric_offsets;
+  result.stack_composition_cap_hits = stack_composition_cap_hits;
   result.features = features;
   result.radius = R;
   result.reference_process_normal = n_ref;
@@ -6756,6 +7310,8 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
   w.Pod(result.excluded_length);
   w.String(result.geometry_digest);
   w.Size(result.same_priority_claim_overlaps);
+  w.Size(result.stack_geometric_offsets);
+  w.Size(result.stack_composition_cap_hits);
   w.String(result.knife_edge_census);
   w.Size(result.features.size());
   for (const auto &f : result.features)
@@ -6787,8 +7343,10 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
     }
     w.Pod(f.bend_radius_over_R.has_value());
     w.Pod(f.bend_radius_over_R.value_or(0.0));
+    w.Pod(f.exact_parameters);
     w.Pod(f.matched_model.has_value());
     w.String(f.matched_model.value_or(""));
+    w.Pod(f.match_deviation.value_or(-1.0));
   }
   w.Size(result.segments.size());
   for (const auto &s : result.segments)
@@ -6842,6 +7400,8 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
   result.excluded_length = r.Pod<double>();
   result.geometry_digest = r.String();
   result.same_priority_claim_overlaps = r.Size();
+  result.stack_geometric_offsets = r.Size();
+  result.stack_composition_cap_hits = r.Size();
   result.knife_edge_census = r.String();
   result.features.resize(r.Size());
   for (auto &f : result.features)
@@ -6877,8 +7437,14 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
     {
       f.bend_radius_over_R = bend;
     }
+    f.exact_parameters = r.Pod<bool>();
     const bool has_model = r.Pod<bool>();
     const std::string model = r.String();
+    const double deviation = r.Pod<double>();
+    if (deviation >= 0.0)
+    {
+      f.match_deviation = deviation;
+    }
     if (has_model)
     {
       f.matched_model = model;
@@ -7014,10 +7580,12 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
                                          kSignatureLengthQuantumOverRadius) *
                               kSignatureLengthQuantumOverRadius)
              : nlohmann::json(nullptr)},
+        {"ExactParameters", feature.exact_parameters},
         {"Match", {{"Status", feature.matched_model ? "Matched" : "Missing"}}}};
     if (feature.matched_model)
     {
       entry["Match"]["Model"] = *feature.matched_model;
+      entry["Match"]["Deviation"] = feature.match_deviation.value_or(0.0);
     }
     if (multi_sided)
     {
@@ -7165,7 +7733,10 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
        {{"SamePriorityClaimOverlaps", same_priority_claim_overlaps},
         {"Rule", "claims of one priority by different features never overlap on a run "
                  "(clusters disjoint, windows abut, pairs / stacks assembled per "
-                 "cross-section): claim resolution never decides by feature id"}}},
+                 "cross-section): claim resolution never decides by feature id"},
+        {"StackGeometricOffsetIntervals", stack_geometric_offsets},
+        {"StackCompositionCapHits", stack_composition_cap_hits},
+        {"StackCompositionCap", kStackCompositionCap}}},
       {"KnifeEdgeCensus", ScaledCensus(knife_edge_census, length_scale)},
       {"GeometryDigest", geometry_digest}};
 }

@@ -105,9 +105,17 @@ struct IdentifiedFeature
   // Curvature annotation (not hashed): the tightest windowed bend radius over the claimed
   // portions in units of R; absent when every portion lies on a straight chain.
   std::optional<double> bend_radius_over_R;
+  // Provenance annotation (not hashed, decision 85(1)): every continuous parameter of the
+  // signature is an exact geometric reading (parallel straight runs, concentric fitted
+  // arcs, arm directions); false when a pair / stack separation had to be read off the
+  // chords of a polyline (recorded discretisation ambiguity, absorbed by the library's
+  // parameter tolerance).
+  bool exact_parameters = true;
 
-  // Filled by the matching pass.
+  // Filled by the matching pass: the model within the signature parameter tolerance and its
+  // normalised deviation (max |difference| / tolerance over the parameters, <= 1).
   std::optional<std::string> matched_model;
+  std::optional<double> match_deviation;
 };
 
 struct IdentifiedSegment
@@ -160,6 +168,10 @@ struct IdentificationResult
   // Claims of one priority by different features overlapping on a run (resolved by feature
   // id): the rules never produce one; reported under Diagnostics and gated by the audit.
   std::size_t same_priority_claim_overlaps = 0;
+  // Stack assembly diagnostics: elementary intervals whose offsets took a geometric lateral
+  // distance for want of a consecutive link, and those whose composition reached the cap.
+  std::size_t stack_geometric_offsets = 0;
+  std::size_t stack_composition_cap_hits = 0;
   // Knife-edge census (decision 82(4)): the perimeter length whose interaction distance lies
   // within a recorded band of every threshold of the rules (R, 2R, the 10R bend radius, the
   // 30 deg corner turn), in mesh units; serialised as JSON text.
@@ -273,6 +285,64 @@ nlohmann::json CanonicalJunctionSignature(const std::vector<std::string> &interf
 // Feature signature key and hash shared by device features and library models.
 std::pair<std::string, std::string> SignatureKeyAndHash(nlohmann::json signature,
                                                         const std::string &type);
+
+// Parameter tolerance of the signature contract (decision 85(1)). Every continuous
+// parameter of a signature is an exact geometric reading where the geometry allows one
+// (parallel straight runs, concentric fitted arcs, arm directions) and a chord reading with
+// the recorded discretisation ambiguity otherwise; two signatures whose TOPOLOGY (the
+// signature with every continuous parameter removed) is equal and whose parameters agree
+// within these tolerances describe one design cross-section: the library groups such
+// feature instances into ONE coupon at a representative value and the matcher accepts a
+// model within the tolerance, the nearest one (order independent; ties by model name).
+// Lengths (offsets, separations, radii in units of R): 1e-3 R — far above the chord
+// ambiguity w (1 / cos(turn / 2) - 1) of sub-2-degree polyline joints (< 1e-4 R at 4R) and
+// the signature grid (1e-6 R), far below any separation difference the response resolves
+// (sensitivity O(1) per R: 1e-3 of the pair correction). Angles (corner, junction arms):
+// 1e-2 deg (a displacement of 1.7e-4 R at distance R — below the length tolerance; the
+// angles come from straight arm directions and are exact).
+constexpr double kSignatureParameterToleranceOverRadius = 1.0e-3;
+constexpr double kSignatureAngleToleranceDegrees = 1.0e-2;
+
+struct SignatureParameters
+{
+  // The signature with every continuous parameter replaced by null (serialised): equal for
+  // every instance of one design topology.
+  std::string topology_key;
+  std::vector<double> lengths_over_R;  // in the traversal order of the signature
+  std::vector<double> angles_degrees;
+};
+
+// Splits a canonical signature into its topology key and its continuous parameters. A
+// SpatialEdgeCluster signature (a whole plan-view geometry in a canonical frame) has no
+// tolerance: its topology key is the full signature and its parameter lists are empty.
+SignatureParameters SplitSignatureParameters(const nlohmann::json &signature);
+
+// Mirror image of a translational signature (an `Edges` list): the edge order reversed,
+// gap sides negated, offsets taken from the top edge, conductors relabelled by first
+// appearance; any other signature is returned unchanged. Two instances of one asymmetric
+// stack can canonicalise to opposite orientations when their offsets differ by less than
+// the tolerance, so a tolerance comparison tries both orientations.
+nlohmann::json MirrorTranslationalSignature(const nlohmann::json &signature);
+
+// Normalised deviation of two signatures of one type: the maximum over the parameters of
+// |difference| / tolerance (both orientations of a translational signature; the smaller),
+// or nullopt when the topology keys differ. Within tolerance iff the value is <= 1.
+std::optional<double> SignatureDeviation(const nlohmann::json &a, const nlohmann::json &b);
+
+// The signature with its continuous parameters replaced, in the traversal order of
+// SplitSignatureParameters (rounded to the signature grids).
+nlohmann::json SubstituteSignatureParameters(const nlohmann::json &signature,
+                                             const std::vector<double> &lengths_over_R,
+                                             const std::vector<double> &angles_degrees);
+
+// Representative of a set of signature instances of one topology (the library's coupon,
+// decision 85(1)): the parameters of every instance in the orientation nearest to the
+// lexicographically smallest instance, each parameter the midpoint of its range over the
+// set, substituted into that smallest instance — a function of the set alone. With
+// single-linkage grouping at the tolerance the representative lies within the tolerance
+// of every member whenever the group's parameter range is within twice the tolerance (the
+// range is reported by the caller).
+nlohmann::json RepresentativeSignature(const std::vector<nlohmann::json> &signatures);
 
 std::string Sha256Hex(const std::string &text);
 

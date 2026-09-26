@@ -5175,11 +5175,78 @@ ModelClusterSignature(const LibraryModel &model, double radius,
                                    radius);
 }
 
-std::map<std::string, std::string>
-LibrarySignatureKeys(const ProcessLibrary &library,
-                     const AutomaticResponseRequirements &requirements)
+// Library models by signature topology (decision 85(1)): a feature matches the model of its
+// type whose topology key equals its own and whose continuous parameters lie within the
+// signature tolerance (kSignatureParameterToleranceOverRadius / kSignatureAngleToleranceDegrees,
+// both orientations of a translational signature); among several the nearest (the smallest
+// normalised deviation), ties by model name — a deterministic choice independent of the
+// feature or model order.
+class LibrarySignatureIndex
 {
-  std::map<std::string, std::string> keys;
+public:
+  void Add(nlohmann::json signature, const std::string &type, const std::string &name)
+  {
+    signature["Type"] = type;
+    const std::size_t index = entries.size();
+    for (const nlohmann::json &orientation :
+         {signature, MirrorTranslationalSignature(signature)})
+    {
+      by_topology[SplitSignatureParameters(orientation).topology_key].push_back(index);
+    }
+    entries.push_back({std::move(signature), name});
+  }
+
+  // The matched model and its normalised deviation (<= 1), or nullopt.
+  std::optional<std::pair<std::string, double>>
+  Match(const nlohmann::json &feature_signature) const
+  {
+    const auto it = by_topology.find(SplitSignatureParameters(feature_signature).topology_key);
+    if (it == by_topology.end())
+    {
+      return std::nullopt;
+    }
+    std::optional<std::pair<double, std::string>> best;
+    std::set<std::size_t> seen;
+    for (const std::size_t index : it->second)
+    {
+      if (!seen.insert(index).second)
+      {
+        continue;
+      }
+      const auto deviation = SignatureDeviation(feature_signature, entries[index].signature);
+      if (!deviation || *deviation > 1.0)
+      {
+        continue;
+      }
+      const std::pair<double, std::string> candidate{*deviation, entries[index].name};
+      if (!best || candidate < *best)
+      {
+        best = candidate;
+      }
+    }
+    if (!best)
+    {
+      return std::nullopt;
+    }
+    return std::make_pair(best->second, best->first);
+  }
+
+  std::size_t Size() const { return entries.size(); }
+
+private:
+  struct Entry
+  {
+    nlohmann::json signature;
+    std::string name;
+  };
+  std::vector<Entry> entries;
+  std::map<std::string, std::vector<std::size_t>> by_topology;
+};
+
+LibrarySignatureIndex LibrarySignatureKeys(const ProcessLibrary &library,
+                                           const AutomaticResponseRequirements &requirements)
+{
+  LibrarySignatureIndex index;
   const double R = library.matching_radius;
   auto Law = [&](const MetalBoundaryLaw &law) { return LibraryLawKey(law, requirements); };
   for (const auto &model : library.models)
@@ -5192,20 +5259,18 @@ LibrarySignatureKeys(const ProcessLibrary &library,
     std::sort(interfaces.begin(), interfaces.end());
     interfaces.erase(std::unique(interfaces.begin(), interfaces.end()), interfaces.end());
     const std::string law = Law(model.boundary_condition);
-    std::optional<std::pair<std::string, std::string>> key;
+    std::optional<std::pair<nlohmann::json, std::string>> key;  // signature, type
     if (model.identification_signature)
     {
-      key = SignatureKeyAndHash(
-          *model.identification_signature,
-          model.identification_signature->at("Type").get<std::string>());
-      keys.emplace(key->first, model.name);
+      index.Add(*model.identification_signature,
+                model.identification_signature->at("Type").get<std::string>(), model.name);
       continue;
     }
     switch (model.topology)
     {
       case LibraryTopology::ISOLATED_EDGE:
-        key =
-            SignatureKeyAndHash({{"Interfaces", interfaces}, {"Law", law}}, "IsolatedEdge");
+        key = std::make_pair(nlohmann::json{{"Interfaces", interfaces}, {"Law", law}},
+                             std::string("IsolatedEdge"));
         break;
       case LibraryTopology::SAME_CONDUCTOR_GAP:
       case LibraryTopology::DIFFERENT_CONDUCTOR_GAP:
@@ -5216,8 +5281,8 @@ LibrarySignatureKeys(const ProcessLibrary &library,
           std::vector<TranslationalEdge> edges = {
               {0.0, strip ? -1 : 1, 1, interfaces, law},
               {model.separation, strip ? 1 : -1, different ? 2 : 1, interfaces, law}};
-          key = SignatureKeyAndHash(CanonicalTranslationalSignature(edges, R).signature,
-                                    TopologyIdentifier(model.topology));
+          key = std::make_pair(CanonicalTranslationalSignature(edges, R).signature,
+                               TopologyIdentifier(model.topology));
           break;
         }
       case LibraryTopology::PARALLEL_EDGE_CLUSTER:
@@ -5230,20 +5295,21 @@ LibrarySignatureKeys(const ProcessLibrary &library,
           }
           if (edges.size() >= 2)
           {
-            key = SignatureKeyAndHash(CanonicalTranslationalSignature(edges, R).signature,
-                                      "ParallelEdgeCluster");
+            key = std::make_pair(CanonicalTranslationalSignature(edges, R).signature,
+                                 std::string("ParallelEdgeCluster"));
           }
           break;
         }
       case LibraryTopology::CONVEX_CORNER:
       case LibraryTopology::CONCAVE_CORNER:
-        key = SignatureKeyAndHash(
+        key = std::make_pair(
             CanonicalCornerSignature(interfaces, law, model.angle * 180.0 / std::acos(-1.0),
                                      model.corner_radius / R),
             TopologyIdentifier(model.topology));
         break;
       case LibraryTopology::ENDPOINT:
-        key = SignatureKeyAndHash({{"Interfaces", interfaces}, {"Law", law}}, "Endpoint");
+        key = std::make_pair(nlohmann::json{{"Interfaces", interfaces}, {"Law", law}},
+                             std::string("Endpoint"));
         break;
       case LibraryTopology::JUNCTION:
         {
@@ -5259,8 +5325,8 @@ LibrarySignatureKeys(const ProcessLibrary &library,
           }
           if (!differences.empty())
           {
-            key = SignatureKeyAndHash(
-                CanonicalJunctionSignature(interfaces, law, differences), "Junction");
+            key = std::make_pair(CanonicalJunctionSignature(interfaces, law, differences),
+                                 std::string("Junction"));
           }
           break;
         }
@@ -5270,7 +5336,7 @@ LibrarySignatureKeys(const ProcessLibrary &library,
           {
             nlohmann::json signature = canonical->signature;
             signature["EdgeCount"] = model.spatial_edges.size();
-            key = SignatureKeyAndHash(signature, "SpatialEdgeCluster");
+            key = std::make_pair(signature, std::string("SpatialEdgeCluster"));
           }
           break;
         }
@@ -5282,10 +5348,10 @@ LibrarySignatureKeys(const ProcessLibrary &library,
     }
     if (key)
     {
-      keys.emplace(key->first, model.name);
+      index.Add(key->first, key->second, model.name);
     }
   }
-  return keys;
+  return index;
 }
 
 // Geometry identification (design: SURFACE-RESPONSE-IDENTIFICATION.md): pure function of
@@ -5470,13 +5536,15 @@ IdentificationResult RunGeometryIdentification(
                    p[0], p[1], p[2], vertex.type);
     }
   }
-  // Matching pass: signature lookup only (the solve path consumes it as well).
+  // Matching pass (the solve path consumes it as well): the model of the feature's
+  // topology within the signature parameter tolerance, the nearest one (decision 85(1)).
   const auto library_keys = LibrarySignatureKeys(library, describer);
   for (auto &feature : result.features)
   {
-    if (auto it = library_keys.find(feature.signature_key); it != library_keys.end())
+    if (const auto match = library_keys.Match(feature.signature))
     {
-      feature.matched_model = it->second;
+      feature.matched_model = match->first;
+      feature.match_deviation = match->second;
     }
   }
   if (!requirements || !root)
@@ -5484,9 +5552,95 @@ IdentificationResult RunGeometryIdentification(
     return result;  // the manifest is built and written on the root
   }
 
-  // Version-1 records derived from the features.
+  // Version-1 records derived from the features. Features of one topology whose signature
+  // parameters agree within the signature tolerance are ONE record (the library's coupon,
+  // decision 85(1)): single-linkage grouping over the distinct signatures (order
+  // independent), the record's Geometry / Hash from the group's representative signature
+  // (RepresentativeSignature), Count and TotalEdgeLength summed, the group's parameter
+  // spread recorded.
   requirements->ActivateIdentification();
   const double R = library.matching_radius;
+  auto GeometryOf = [&](const std::string &type, const nlohmann::json &sig)
+  {
+    nlohmann::json geometry_json;
+    if (type == "IsolatedEdge")
+    {
+      // The version-1 isolated-edge record carried {"EdgeCount": 1}; consumers of the derived
+      // Requirements (prepare_surface_response_coupons.plan_from_manifest) read Geometry.
+      geometry_json["EdgeCount"] = 1;
+    }
+    else if (type == "CurvedEdge")
+    {
+      geometry_json["EdgeCount"] = 1;
+      geometry_json["BendRadius"] =
+          requirements->ScaleLength(sig["RadiusOverR"].get<double>() * R);
+    }
+    else if (type == "SameConductorGap" || type == "DifferentConductorGap" ||
+             type == "SameConductorStrip" || type == "UnclassifiedParallelPair" ||
+             type == "CurvedSameConductorGap" || type == "CurvedDifferentConductorGap" ||
+             type == "CurvedSameConductorStrip" || type == "CurvedUnclassifiedParallelPair")
+    {
+      geometry_json["EdgeCount"] = 2;
+      geometry_json["Separation"] =
+          requirements->ScaleLength(sig["SeparationOverR"].get<double>() * R);
+      if (sig.contains("RadiusOverR"))
+      {
+        geometry_json["BendRadius"] =
+            requirements->ScaleLength(sig["RadiusOverR"].get<double>() * R);
+      }
+    }
+    else if (type == "ParallelEdgeCluster" || type == "CurvedParallelEdgeCluster")
+    {
+      nlohmann::json edges = nlohmann::json::array();
+      for (const auto &edge : sig["Edges"])
+      {
+        edges.push_back(
+            {{"Offset",
+              {requirements->ScaleLength(edge["OffsetOverR"].get<double>() * R), 0.0}},
+             {"GapDirection", {static_cast<double>(edge["GapSide"].get<int>()), 0.0}},
+             {"Conductor", edge["Conductor"]}});
+      }
+      geometry_json["Edges"] = edges;
+      geometry_json["EdgeCount"] = sig["Edges"].size();
+      if (sig.contains("RadiusOverR"))
+      {
+        geometry_json["BendRadius"] =
+            requirements->ScaleLength(sig["RadiusOverR"].get<double>() * R);
+      }
+    }
+    else if (type == "ConvexCorner" || type == "ConcaveCorner")
+    {
+      geometry_json["AngleDegrees"] = sig["AngleDegrees"];
+      geometry_json["CornerRadius"] =
+          requirements->ScaleLength(sig["CornerRadiusOverR"].get<double>() * R);
+    }
+    else if (type == "Junction")
+    {
+      geometry_json["ArmAnglesDegrees"] = sig["ArmAnglesDegrees"];
+    }
+    else if (type == "SpatialEdgeCluster")
+    {
+      geometry_json["EdgeCount"] = sig["EdgeCount"];
+      geometry_json["Signature"] = sig;
+    }
+    return geometry_json;
+  };
+  struct Instance
+  {
+    nlohmann::json signature;
+    int count = 0;
+    double length = 0.0;
+    std::set<std::string> models;
+    bool exact = true;
+  };
+  struct GroupBase
+  {
+    std::string type;
+    nlohmann::json interfaces, law;
+    std::map<std::string, Instance> instances;  // by signature key
+    std::vector<std::string> order;
+  };
+  std::map<std::string, GroupBase> bases;
   for (const auto &feature : result.features)
   {
     std::set<std::map<InterfaceDielectric, int>> target_maps;
@@ -5514,86 +5668,121 @@ IdentificationResult RunGeometryIdentification(
       law = nlohmann::json::parse(
           input.segments[feature.portions.front().segment].boundary_law);
     }
-    nlohmann::json geometry_json;
-    const auto &sig = feature.signature;
-    int count = 1;
-    if (feature.type == "IsolatedEdge")
+    const bool per_segment =
+        feature.type != "ConvexCorner" && feature.type != "ConcaveCorner" &&
+        feature.type != "Junction" && feature.type != "Endpoint" &&
+        feature.type != "SpatialEdgeCluster";
+    const int count = per_segment ? static_cast<int>(feature.portions.size()) : 1;
+    const std::string base_key = feature.type + "|" + interfaces.dump() + "|" + law.dump() +
+                                 "|" + SplitSignatureParameters(feature.signature).topology_key;
+    // Both orientations of a translational signature belong to one base (the mirror's
+    // topology key may be the smaller one).
+    const std::string mirror_key =
+        feature.type + "|" + interfaces.dump() + "|" + law.dump() + "|" +
+        SplitSignatureParameters(MirrorTranslationalSignature(feature.signature)).topology_key;
+    auto [it, inserted] = bases.emplace(std::min(base_key, mirror_key), GroupBase{});
+    if (inserted)
     {
-      // The version-1 isolated-edge record carried {"EdgeCount": 1}; consumers of the derived
-      // Requirements (prepare_surface_response_coupons.plan_from_manifest) read Geometry.
-      geometry_json["EdgeCount"] = 1;
-      count = static_cast<int>(feature.portions.size());
+      it->second.type = feature.type;
+      it->second.interfaces = interfaces;
+      it->second.law = law;
     }
-    else if (feature.type == "CurvedEdge")
+    auto [instance, new_instance] =
+        it->second.instances.emplace(feature.signature_key, Instance{});
+    if (new_instance)
     {
-      geometry_json["EdgeCount"] = 1;
-      geometry_json["BendRadius"] =
-          requirements->ScaleLength(sig["RadiusOverR"].get<double>() * R);
-      count = static_cast<int>(feature.portions.size());
+      instance->second.signature = feature.signature;
+      it->second.order.push_back(feature.signature_key);
     }
-    else if (feature.type == "SameConductorGap" ||
-             feature.type == "DifferentConductorGap" ||
-             feature.type == "SameConductorStrip" ||
-             feature.type == "UnclassifiedParallelPair" ||
-             feature.type == "CurvedSameConductorGap" ||
-             feature.type == "CurvedDifferentConductorGap" ||
-             feature.type == "CurvedSameConductorStrip" ||
-             feature.type == "CurvedUnclassifiedParallelPair")
-    {
-      geometry_json["EdgeCount"] = 2;
-      geometry_json["Separation"] =
-          requirements->ScaleLength(sig["SeparationOverR"].get<double>() * R);
-      if (sig.contains("RadiusOverR"))
-      {
-        geometry_json["BendRadius"] =
-            requirements->ScaleLength(sig["RadiusOverR"].get<double>() * R);
-      }
-      count = static_cast<int>(feature.portions.size());
-    }
-    else if (feature.type == "ParallelEdgeCluster")
-    {
-      nlohmann::json edges = nlohmann::json::array();
-      for (const auto &edge : sig["Edges"])
-      {
-        edges.push_back(
-            {{"Offset",
-              {requirements->ScaleLength(edge["OffsetOverR"].get<double>() * R), 0.0}},
-             {"GapDirection", {static_cast<double>(edge["GapSide"].get<int>()), 0.0}},
-             {"Conductor", edge["Conductor"]}});
-      }
-      geometry_json["Edges"] = edges;
-      geometry_json["EdgeCount"] = sig["Edges"].size();
-      count = static_cast<int>(feature.portions.size());
-    }
-    else if (feature.type == "ConvexCorner" || feature.type == "ConcaveCorner")
-    {
-      geometry_json["AngleDegrees"] = sig["AngleDegrees"];
-      geometry_json["CornerRadius"] =
-          requirements->ScaleLength(sig["CornerRadiusOverR"].get<double>() * R);
-    }
-    else if (feature.type == "Junction")
-    {
-      geometry_json["ArmAnglesDegrees"] = sig["ArmAnglesDegrees"];
-    }
-    else if (feature.type == "SpatialEdgeCluster")
-    {
-      geometry_json["EdgeCount"] = sig["EdgeCount"];
-      geometry_json["Signature"] = sig;
-    }
-    nlohmann::json record = {{"Dimension", 3},
-                             {"Topology", feature.type},
-                             {"Status", feature.matched_model ? "Exact" : "Missing"},
-                             {"Geometry", geometry_json},
-                             {"Interfaces", interfaces},
-                             {"BoundaryCondition", law},
-                             {"Hash", feature.hash}};
+    instance->second.count += count;
+    instance->second.length += feature.length;
+    instance->second.exact = instance->second.exact && feature.exact_parameters;
     if (feature.matched_model)
     {
-      record["SelectedModels"] = nlohmann::json::array({{{"Name", *feature.matched_model},
-                                                         {"Topology", feature.type},
-                                                         {"Weight", 1.0}}});
+      instance->second.models.insert(*feature.matched_model);
     }
-    requirements->AddFeatureRecord(record, count, feature.length);
+  }
+  for (auto &[base_key, base] : bases)
+  {
+    (void)base_key;
+    // Single linkage over the distinct signatures at the tolerance (union-find; the
+    // result does not depend on the order).
+    const std::size_t n = base.order.size();
+    std::vector<std::size_t> parent(n);
+    std::iota(parent.begin(), parent.end(), 0);
+    auto Find = [&](std::size_t i)
+    {
+      while (parent[i] != i)
+      {
+        parent[i] = parent[parent[i]];
+        i = parent[i];
+      }
+      return i;
+    };
+    for (std::size_t i = 0; i < n; i++)
+    {
+      for (std::size_t j = i + 1; j < n; j++)
+      {
+        const auto deviation = SignatureDeviation(base.instances.at(base.order[i]).signature,
+                                                  base.instances.at(base.order[j]).signature);
+        if (deviation && *deviation <= 1.0)
+        {
+          parent[Find(i)] = Find(j);
+        }
+      }
+    }
+    std::map<std::size_t, std::vector<std::size_t>> groups;
+    for (std::size_t i = 0; i < n; i++)
+    {
+      groups[Find(i)].push_back(i);
+    }
+    for (const auto &[root, members] : groups)
+    {
+      (void)root;
+      std::vector<nlohmann::json> signatures;
+      int count = 0;
+      double length = 0.0;
+      std::set<std::string> models;
+      bool exact = true;
+      for (const std::size_t i : members)
+      {
+        const Instance &instance = base.instances.at(base.order[i]);
+        signatures.push_back(instance.signature);
+        count += instance.count;
+        length += instance.length;
+        models.insert(instance.models.begin(), instance.models.end());
+        exact = exact && instance.exact;
+      }
+      const nlohmann::json representative = RepresentativeSignature(signatures);
+      double spread = 0.0;
+      for (const auto &signature : signatures)
+      {
+        spread = std::max(spread, SignatureDeviation(representative, signature).value_or(0.0));
+      }
+      const auto [key, hash] = SignatureKeyAndHash(representative, base.type);
+      (void)key;
+      nlohmann::json record = {{"Dimension", 3},
+                               {"Topology", base.type},
+                               {"Status", models.empty() ? "Missing" : "Exact"},
+                               {"Geometry", GeometryOf(base.type, representative)},
+                               {"Interfaces", base.interfaces},
+                               {"BoundaryCondition", base.law},
+                               {"Hash", hash},
+                               {"Signature", representative},
+                               {"Instances", signatures.size()},
+                               {"ParameterSpread", spread},
+                               {"ExactParameters", exact}};
+      if (!models.empty())
+      {
+        nlohmann::json selected = nlohmann::json::array();
+        for (const auto &model : models)
+        {
+          selected.push_back({{"Name", model}, {"Topology", base.type}, {"Weight", 1.0}});
+        }
+        record["SelectedModels"] = selected;
+      }
+      requirements->AddFeatureRecord(record, count, length);
+    }
   }
   requirements->SetIdentification(result.ToJson(requirements->CoordinateScale()));
   return result;
