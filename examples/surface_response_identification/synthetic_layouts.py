@@ -641,14 +641,17 @@ def stack_suite():
     # ground). Where the end cluster holds the ground edge (R around its cores) but not the
     # trace edges (exactly R away: the knife edge), the trace pair is recomposed as a
     # SameConductorStrip (the stack-end rule); with a ground on both sides the trace edges
-    # between the two ground claims are recomposed the same way.
+    # between the two ground claims are recomposed the same way. Decision 85(2) (2026-09-26):
+    # a member alone next to a cluster (its partners cluster material, itself within 2R of
+    # the cluster's claimed perimeter across) JOINS the cluster instead of standing as an
+    # isolated ClusterNeighbour edge — the isolated counts below are restated accordingly.
     straight("k3-2-2", [(2.0, 0.0)], 2.0, None, [0.0, 1.0, 2.0], 2, "ground | 2 um gap | 2 um trace: a 3-edge stack at 0 / 1 / 2 R over the straight run, one corner cluster per trace end, the ground's far edge and its near edge beyond the clusters isolated; the trace strip recomposed next to the clusters", strips=1)
-    straight("k3-1p5-3", [(3.0, 0.0)], 1.5, None, [0.0, 0.75, 2.25], 3, "ground | 1.5 um gap | 3 um trace: 3-edge stack at 0 / 0.75 / 2.25 R (asymmetric); the trace's bottom edge is 0.75 R from the ground's cluster cores (inside the end cluster over a shorter reach than the ground itself), its top edge 1.5 R from them: the top edge is isolated next to the clusters (ClusterNeighbour), the trace strip recomposed between the two claim ends", strips=1)
+    straight("k3-1p5-3", [(3.0, 0.0)], 1.5, None, [0.0, 0.75, 2.25], 2, "ground | 1.5 um gap | 3 um trace: 3-edge stack at 0 / 0.75 / 2.25 R (asymmetric); the trace's bottom edge is 0.75 R from the ground's cluster cores (inside the end cluster over a shorter reach than the ground itself), its top edge 1.5 R from them: the top edge alone next to the clusters joins them (decision 85(2); was an isolated ClusterNeighbour), the trace strip recomposed between the two claim ends", strips=1)
     straight("k3-3-1", [(1.0, 0.0)], 3.0, None, [0.0, 1.5, 2.0], 2, "ground | 3 um gap | 1 um trace: 3-edge stack at 0 / 1.5 / 2 R", strips=1)
     straight("k4-2-2-2", [(2.0, 0.0)], 2.0, 2.0, [0.0, 1.0, 2.0, 3.0], 4, "ground | 2 | trace 2 | 2 | ground (the DS-SCT-001 flux line): a 4-edge stack at 0 / 1 / 2 / 3 R; isolated: two far edges + the near edges beyond the end clusters", strips=1)
-    straight("k4-1-1p5-3", [(1.5, 0.0)], 1.0, 3.0, [0.0, 0.5, 1.25, 2.75], 5, "ground | 1 | trace 1.5 | 3 | ground: asymmetric 4-edge stack at 0 / 0.5 / 1.25 / 2.75 R; stack ends (cluster claims of unequal reach: lower ground to 2 R + sqrt(15) um, trace bottom 0.5 R from its cores, upper ground to 2 R + sqrt(7) um): a 3-edge stack (trace | 3 | ground) then a DifferentConductorGap (trace top | ground) then the trace top alone", strips=0, extra={"ParallelEdgeCluster": [[0.0, 0.75, 2.25]], "DifferentConductorGap": 1})
-    straight("k5-2-2-2-2", [(2.0, 2.0), (2.0, 0.0)], 2.0, None, [0.0, 1.0, 2.0, 3.0, 4.0], 4, "ground | 2 | trace 2 | 2 | trace 2: 5-edge stack at 0 .. 4 R; each trace's end edge makes events on the other trace's facing long edge (within 2R of it, not through-vertex), so the inner edges are cluster material to 2 R + sqrt(12) um while the outer edges (exactly R from the cores) are isolated there", strips=0)
-    straight("k6-2-2-2-2-2", [(2.0, 2.0), (2.0, 0.0)], 2.0, 2.0, [0.0, 1.0, 2.0, 3.0, 4.0, 5.0], 6, "ground | 2 | trace | 2 | trace | 2 | ground: 6-edge stack at 0 .. 5 R; the traces' inner edges and both grounds are cluster material at the ends, the traces' outer edges isolated there", strips=0)
+    straight("k4-1-1p5-3", [(1.5, 0.0)], 1.0, 3.0, [0.0, 0.5, 1.25, 2.75], 4, "ground | 1 | trace 1.5 | 3 | ground: asymmetric 4-edge stack at 0 / 0.5 / 1.25 / 2.75 R; stack ends (cluster claims of unequal reach: lower ground to 2 R + sqrt(15) um, trace bottom 0.5 R from its cores, upper ground to 2 R + sqrt(7) um): a 3-edge stack (trace | 3 | ground) then a DifferentConductorGap (trace top | ground); the trace top alone beyond joins the cluster (decision 85(2))", strips=0, extra={"ParallelEdgeCluster": [[0.0, 0.75, 2.25]], "DifferentConductorGap": 1})
+    straight("k5-2-2-2-2", [(2.0, 2.0), (2.0, 0.0)], 2.0, None, [0.0, 1.0, 2.0, 3.0, 4.0], 2, "ground | 2 | trace 2 | 2 | trace 2: 5-edge stack at 0 .. 4 R; each trace's end edge makes events on the other trace's facing long edge (within 2R of it, not through-vertex), so the inner edges are cluster material to 2 R + sqrt(12) um while the outer edges (exactly R from the cores) join the clusters (decision 85(2); were isolated ClusterNeighbours): isolated = the ground's two edges", strips=0)
+    straight("k6-2-2-2-2-2", [(2.0, 2.0), (2.0, 0.0)], 2.0, 2.0, [0.0, 1.0, 2.0, 3.0, 4.0, 5.0], 4, "ground | 2 | trace | 2 | trace | 2 | ground: 6-edge stack at 0 .. 5 R; the traces' inner edges and both grounds are cluster material at the ends, the traces' outer edges there join the clusters (decision 85(2)): isolated = the grounds' four edges", strips=0)
     # Around 2R: the second gap at 3.9 um joins the stack (k = 4), at exactly 4.0 = 2R and at
     # 4.1 um it does not (k = 3, the upper ground's near edge isolated; its end corners are
     # beyond 2R of the trace corners, so it takes no part in the end clusters).
@@ -674,19 +677,21 @@ def stack_suite():
         # The straight stack is ONE feature on both leads (one feature per signature, class and
         # member chains); the ground's far edge one isolated chain (+ a curved section) and
         # its two end edges isolated between the cluster and the far corner's window; the
-        # trace's inner edge is isolated next to the end clusters (its partner, the trace's
-        # outer edge, inside the cluster; itself exactly R from the cores: ClusterNeighbour).
+        # trace's inner edge next to the end clusters (its partner, the trace's outer edge,
+        # inside the cluster; itself exactly R from the cores) JOINS the clusters (decision
+        # 85(2); was an isolated ClusterNeighbour): isolated = far edge + two end edges.
         k3 = [0.0, 1.5, 2.5]
         stacks = {"ParallelEdgeCluster": 1, "CurvedParallelEdgeCluster": 1} if curved else {"ParallelEdgeCluster": 1}
-        far = ({"IsolatedEdge": 1 + 2 + 1, "CurvedEdge": 1} if far_curved else {"IsolatedEdge": 1 + 2 + 1})
+        far = ({"IsolatedEdge": 1 + 2, "CurvedEdge": 1} if far_curved else {"IsolatedEdge": 1 + 2})
         expected = {"Features": {**stacks, "SpatialEdgeCluster": 2, "ConvexCorner": 2, **far},
                     "Offsets": {t: [k3] * n for t, n in stacks.items()}, "FacingGates": True}
         if curved:
             expected["StackRadii"] = {"CurvedParallelEdgeCluster": [q]}
         layouts.append(layout(f"stack-curved-k3-rho{q:g}", [sheet(GROUND, arc_band(rho, rho + 3.0)), sheet(GROUND, arc_band(rho + 5.0, rho + 13.0))], half_x=hx, half_y=hx, lc_fine=1.0, lc_far=max(6.0, hx / 6.0), notes=f"3 um trace (inner radius {q:g} R) | 2 um gap | 8 um ground band along a 90 deg bend with 12 um leads: 3-edge stack at 0 / 1.5 / 2.5 R, {'curved along the bend (RadiusOverR ' + f'{q:g}' + ') and straight on the leads' if curved else 'straight-like throughout (one feature, bend annotation)'}", bend={"Radius": rho}, expected=expected))
-        # k = 4: two 3 um traces 2 um apart, nothing else: 0 / 1.5 / 2.5 / 4 R.
+        # k = 4: two 3 um traces 2 um apart, nothing else: 0 / 1.5 / 2.5 / 4 R; the outer
+        # edges next to the end clusters join them (decision 85(2)): nothing isolated.
         k4 = [0.0, 1.5, 2.5, 4.0]
-        expected = {"Features": {**stacks, "SpatialEdgeCluster": 2, "IsolatedEdge": 2}, "Offsets": {t: [k4] * n for t, n in stacks.items()}, "FacingGates": True}
+        expected = {"Features": {**stacks, "SpatialEdgeCluster": 2}, "Offsets": {t: [k4] * n for t, n in stacks.items()}, "FacingGates": True}
         if curved:
             expected["StackRadii"] = {"CurvedParallelEdgeCluster": [q]}
         hx4 = math.ceil(rho + 8.0 + 12.0 + 4.0) + 2.0
@@ -695,15 +700,16 @@ def stack_suite():
         k5 = [0.0, 1.5, 2.5, 4.0, 5.0]
         r_far5 = rho + 8.0 + 2.0 + 8.0
         far_curved5 = r_far5 < STRAIGHT_BEND_RADIUS_OVER_R * R
-        far = ({"IsolatedEdge": 1 + 2 + 1, "CurvedEdge": 1} if far_curved5 else {"IsolatedEdge": 1 + 2 + 1})
+        far = ({"IsolatedEdge": 1 + 2, "CurvedEdge": 1} if far_curved5 else {"IsolatedEdge": 1 + 2})
         expected = {"Features": {**stacks, "SpatialEdgeCluster": 2, "ConvexCorner": 2, **far}, "Offsets": {t: [k5] * n for t, n in stacks.items()}, "FacingGates": True}
         if curved:
             expected["StackRadii"] = {"CurvedParallelEdgeCluster": [q]}
         hx5 = math.ceil(r_far5 + 12.0 + 4.0) + 2.0
         layouts.append(layout(f"stack-curved-k5-rho{q:g}", [sheet(GROUND, arc_band(rho, rho + 3.0)), sheet(GROUND, arc_band(rho + 5.0, rho + 8.0)), sheet(GROUND, arc_band(rho + 10.0, rho + 18.0))], half_x=hx5, half_y=hx5, lc_fine=1.0, lc_far=max(6.0, hx5 / 6.0), notes=f"two 3 um traces and an 8 um ground band, 2 um gaps, along a 90 deg bend (inner radius {q:g} R): 5-edge stack at 0 / 1.5 / 2.5 / 4 / 5 R", bend={"Radius": rho}, expected=expected))
-        # k = 6: three traces: 0 / 1.5 / 2.5 / 4 / 5 / 6.5 R.
+        # k = 6: three traces: 0 / 1.5 / 2.5 / 4 / 5 / 6.5 R; the outer edges next to the
+        # end clusters join them (decision 85(2)): nothing isolated.
         k6 = [0.0, 1.5, 2.5, 4.0, 5.0, 6.5]
-        expected = {"Features": {**stacks, "SpatialEdgeCluster": 2, "IsolatedEdge": 2}, "Offsets": {t: [k6] * n for t, n in stacks.items()}, "FacingGates": True}
+        expected = {"Features": {**stacks, "SpatialEdgeCluster": 2}, "Offsets": {t: [k6] * n for t, n in stacks.items()}, "FacingGates": True}
         if curved:
             expected["StackRadii"] = {"CurvedParallelEdgeCluster": [q]}
         hx6 = math.ceil(rho + 13.0 + 12.0 + 4.0) + 2.0
@@ -783,8 +789,12 @@ def stack_suite():
             features = Counter()
             notes = []
             if corner:
-                features["ConcaveCorner"] += 1
-                notes.append(f"inner fold {r_in / R:g} R < R: one rounded concave corner (180 deg turn) claiming the arc and R along each leg")
+                # Decision 85(2): the outer fold within 2R of the corner's arc (strip w = 2 rho - g
+                # below 2R; at w = 2R exactly the inscribed outer chords dip below 2R: the
+                # recorded knife edge, mesh dependent) joins the corner, which is then a cluster.
+                outer_joins = w < 2.0 * R + 1.0e-9
+                features["SpatialEdgeCluster" if outer_joins else "ConcaveCorner"] += 1
+                notes.append(f"inner fold {r_in / R:g} R < R: one rounded concave corner (180 deg turn) claiming the arc and R along each leg" + ("; the outer fold within 2R of its arc joins it: a cluster (decision 85(2))" if outer_joins else ""))
                 # The legs are rigid runs: the translational rule pairs them from the corner's
                 # window on (no through-vertex zone for exactly parallel rigid runs; the corner
                 # window is the only exclusion) as a gap (w >= 2R) or, with the strip pair, a
@@ -795,10 +805,14 @@ def stack_suite():
                 else:
                     features["SameConductorGap"] += 1
                     notes.append(f"inner legs {gq:g} R apart: one SameConductorGap from the corner window on")
-                features["IsolatedEdge"] += 1  # the outer chain (both legs)
+                if not (outer_joins and strip):
+                    features["IsolatedEdge"] += 1  # the outer chain (both legs)
                 if outer_curved:
-                    features["CurvedEdge"] += 1
-                    notes.append(f"outer fold {r_out / R:g} R: a curved edge (concentric with the corner arc, a vertex neighbour)")
+                    if not (outer_joins and w < 1.5 * R):
+                        features["CurvedEdge"] += 1
+                        notes.append(f"outer fold {r_out / R:g} R: a curved edge (concentric with the corner arc" + (", its chords within 2R of the arc absorbed by the cluster" if outer_joins else ", a vertex neighbour") + ")")
+                    else:
+                        notes.append(f"outer fold {r_out / R:g} R entirely within 2R of the corner arc: absorbed by the cluster; the outer legs are stack members")
                 else:
                     notes.append(f"outer chain straight-like ({r_out / R:g} R >= 10 R): one isolated edge incl. the fold")
             else:
@@ -820,8 +834,8 @@ def stack_suite():
     # (no arc fits: the fold stays in the chain) with the legs 1.5 R apart: the inner chain
     # pairs with itself beyond the pi R neighbourhood (SameConductorGap), the fold a curved
     # edge; the outer edge (offset 2.5 R: no strip pair) isolated legs + a curved fold.
-    layouts.append(layout("hairpin-kinked-g1p5", [sheet(GROUND, kinked_hairpin(1.5 * R, 2.5 * R, 30.0))], half_x=20.0, half_y=30.0, lc_fine=0.3, lc_far=6.0, notes="kinked hairpin: the inner edge folds through 180 deg along a non-circular polyline (turns 18-32 deg, unequal chords) with the legs 1.5 R apart: one chain facing itself -> SameConductorGap beyond pi R of arc length, the fold a CurvedEdge; outer edge 2.5 R away: two isolated legs + a curved fold", expected={
-        "FeaturesSubset": {"SameConductorGap": 1}, "FacingGates": True}))
+    layouts.append(layout("hairpin-kinked-g1p5", [sheet(GROUND, kinked_hairpin(1.5 * R, 2.5 * R, 30.0))], half_x=20.0, half_y=30.0, lc_fine=0.3, lc_far=6.0, notes="kinked hairpin: the inner edge folds through 180 deg along a non-circular polyline (turns 18-32 deg, unequal chords) with the legs 1.5 R apart: one chain facing itself -> SameConductorGap beyond pi R of arc length; the fold's end faces the far leg within 2R beyond pi R of arc at a non-constant separation: events, a cluster (decision 82(2) self events point-wise, 2026-09-26); the rest of the fold a CurvedEdge; outer edge 2.5 R away: two isolated legs + a curved fold", expected={
+        "FeaturesSubset": {"SameConductorGap": 1, "SpatialEdgeCluster": 1}, "FacingGates": True}))
     return layouts
 
 
