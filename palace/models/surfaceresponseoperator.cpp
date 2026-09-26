@@ -4600,10 +4600,12 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
             group.targets, boundary_condition, ClusterGeometry(), library,
             &*model_selection, 0.0);
       }
-      if (patch.conductor_references.empty())
-      {
-        patch.conductor_references = model_selection->conductor_references;
-      }
+      // The patch carries the selected model's conductor references for every cluster size
+      // (a ResponsePatchData starts with the configuration default {{0, 0, 0}}, so an
+      // "if empty" guard never fired and the 1- / 2-site patches kept the default: a
+      // same-conductor gap pair read its reference potential in the gap, a
+      // different-conductor gap pair aborted on the reference count).
+      patch.conductor_references = model_selection->conductor_references;
       if (diagnostics && !patch.maxwell_reference_is_pec &&
           patch.conductor_references.size() == 2 && cluster.size() == 2)
       {

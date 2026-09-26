@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <map>
 #include <memory>
@@ -74,6 +75,10 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       temp.temp_dir / "fabrication-process-exact-pair-2d.json";
   const auto different_pair_library_2d_path =
       temp.temp_dir / "fabrication-process-different-pair-2d.json";
+  const auto reference_strip_library_2d_path =
+      temp.temp_dir / "fabrication-process-reference-strip-2d.json";
+  const auto reference_gap_library_2d_path =
+      temp.temp_dir / "fabrication-process-reference-gap-2d.json";
   const auto interpolated_pair_library_2d_path =
       temp.temp_dir / "fabrication-process-interpolated-pair-2d.json";
   const auto parallel_cluster_library_2d_path =
@@ -326,6 +331,14 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     different_pair_library_2d["Models"][0]["Separation"] = 0.4;
     std::ofstream different_pair_output_2d(different_pair_library_2d_path);
     different_pair_output_2d << different_pair_library_2d.dump(2) << "\n";
+    // Pair models with explicit, non-default conductor references (the 2D pair patches must
+    // carry them: a ResponsePatchData starts with the configuration default {{0, 0, 0}}).
+    auto reference_strip_library_2d = exact_pair_library_2d;
+    reference_strip_library_2d["Name"] = "unit-test-reference-strip-2d";
+    reference_strip_library_2d["Models"][0]["Reference"] = {0.05, -0.1, 0.0};
+    std::ofstream reference_strip_output_2d(reference_strip_library_2d_path);
+    reference_strip_output_2d << reference_strip_library_2d.dump(2) << "\n";
+
     auto interpolated_pair_library_2d = exact_pair_library_2d;
     interpolated_pair_library_2d["Name"] = "unit-test-interpolated-pair-2d";
     auto lower_pair_model_2d = exact_pair_model_2d;
@@ -402,6 +415,22 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     coupled_model["ThinMatrix"] = coupled_thin_path.string();
     coupled_model["FabricatedSurfaceMatrix"] = coupled_fabricated_surface_path.string();
     coupled_model["ThinSurfaceMatrix"] = coupled_thin_surface_path.string();
+    // The two-reference gap model of the 2D conductor-reference regression (the coupled
+    // model's matrices and contour paths, a 2D separation and references).
+    auto reference_gap_library_2d = different_pair_library_2d;
+    reference_gap_library_2d["Name"] = "unit-test-reference-gap-2d";
+    reference_gap_library_2d["TraceLiftVersion"] = coupled_library_3d["TraceLiftVersion"];
+    auto reference_gap_model_2d = different_pair_library_2d["Models"][0];
+    reference_gap_model_2d["Name"] = "different-gap-0.4-referenced";
+    reference_gap_model_2d["ConductorReferences"] = {{-0.2, 0.0, 0.0}, {0.2, 0.0, 0.0}};
+    for (const char *key : {"OpenContourPaths", "FabricatedMatrix", "ThinMatrix",
+                            "FabricatedSurfaceMatrix", "ThinSurfaceMatrix"})
+    {
+      reference_gap_model_2d[key] = coupled_model[key];
+    }
+    reference_gap_library_2d["Models"] = {reference_gap_model_2d};
+    std::ofstream reference_gap_output_2d(reference_gap_library_2d_path);
+    reference_gap_output_2d << reference_gap_library_2d.dump(2) << "\n";
     auto interpolated_coupled_library_3d = coupled_library_3d;
     auto lower_coupled_model = coupled_model;
     lower_coupled_model["Name"] = "terminal-ground-gap-10um";
@@ -2043,6 +2072,125 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   SurfaceResponseOperator exact_pair_response_2d(exact_pair_iodata_2d, automatic_laplace);
   CHECK(exact_pair_response_2d.GetPatchCount() == 1);
   CHECK(exact_pair_response_2d.GetBasisSize() == 4);
+
+  // Regression (2D pair conductor references, 2026-09-26): the 1- / 2-site patches of
+  // BuildAutomaticResponseData2D carry the selected model's conductor references — the
+  // former "if empty" guard never fired because a ResponsePatchData starts with the
+  // configuration default {{0, 0, 0}} (a same-conductor gap pair read its reference in the
+  // gap, a different-conductor gap pair aborted on the reference count). Checked through the
+  // response-geometry cache, which serialises every patch.
+  {
+    const auto cache_path = temp.temp_dir / "reference-pairs-2d-cache.json";
+    auto PatchReferences = [&](const fs::path &path)
+    {
+      std::vector<std::vector<std::array<double, 3>>> references;
+      if (Mpi::Root(Mpi::World()))
+      {
+        std::ifstream input(path);
+        REQUIRE(input);
+        const json cache = json::parse(input);
+        for (const auto &patch : cache["Patches"])
+        {
+          references.push_back(
+              patch["ConductorReferences"].get<std::vector<std::array<double, 3>>>());
+        }
+      }
+      return references;
+    };
+    auto CheckReferences = [&](const std::vector<std::vector<std::array<double, 3>>> &found,
+                               const std::vector<std::array<double, 3>> &expected)
+    {
+      if (Mpi::Root(Mpi::World()))
+      {
+        REQUIRE(!found.empty());
+        for (const auto &references : found)
+        {
+          REQUIRE(references.size() == expected.size());
+          for (std::size_t i = 0; i < expected.size(); i++)
+          {
+            for (int d = 0; d < 3; d++)
+            {
+              CHECK_THAT(references[i][d], WithinAbs(expected[i][d], 1.0e-12));
+            }
+          }
+        }
+      }
+    };
+    setenv("PALACE_RESPONSE_GEOMETRY_CACHE", cache_path.c_str(), 1);
+    setenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE", "1", 1);
+    // Same-conductor strip pair (two sites) with an explicit model reference.
+    auto reference_strip_config_2d = exact_pair_config_2d;
+    reference_strip_config_2d["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+        reference_strip_library_2d_path.string();
+    IoData reference_strip_iodata_2d(reference_strip_config_2d, false);
+    reference_strip_iodata_2d.boundaries.cracked_attributes.insert(9);
+    reference_strip_iodata_2d.boundaries.cracked_attributes.insert(10);
+    SurfaceResponseOperator reference_strip_response_2d(reference_strip_iodata_2d,
+                                                        automatic_laplace);
+    CHECK(reference_strip_response_2d.GetPatchCount() == 1);
+    Mpi::Barrier(Mpi::World());
+    CheckReferences(PatchReferences(cache_path), {{0.05, -0.1, 0.0}});
+    // Different-conductor gap pair (two sites of different conductors) with two references.
+    auto reference_gap_config_2d = automatic_config;
+    reference_gap_config_2d["Boundaries"]["Ground"]["Attributes"] = {1, 3, 4, 9};
+    reference_gap_config_2d["Boundaries"]["Terminal"][0]["Attributes"] = {2, 10};
+    reference_gap_config_2d["Boundaries"]["Postprocessing"]["Dielectric"][0]
+                           ["EdgeAttributes"] = {9, 10};
+    reference_gap_config_2d["Boundaries"]["Postprocessing"]["Dielectric"][0]
+                           ["EdgeDistances"] = {0.25};
+    reference_gap_config_2d["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+        reference_gap_library_2d_path.string();
+    IoData reference_gap_iodata_2d(reference_gap_config_2d, false);
+    reference_gap_iodata_2d.boundaries.cracked_attributes.insert(9);
+    reference_gap_iodata_2d.boundaries.cracked_attributes.insert(10);
+    mfem::Mesh reference_gap_serial =
+        mfem::Mesh::MakeCartesian2D(10, 4, mfem::Element::TRIANGLE, false, 1.0, 1.0);
+    for (int face = 0; face < reference_gap_serial.GetNumFaces(); face++)
+    {
+      int element1, element2;
+      reference_gap_serial.GetFaceElements(face, &element1, &element2);
+      if (element1 < 0 || element2 < 0)
+      {
+        continue;
+      }
+      mfem::Array<int> vertices;
+      reference_gap_serial.GetFaceVertices(face, vertices);
+      if (vertices.Size() != 2)
+      {
+        continue;
+      }
+      const double *p0 = reference_gap_serial.GetVertex(vertices[0]);
+      const double *p1 = reference_gap_serial.GetVertex(vertices[1]);
+      const double xmin = std::min(p0[0], p1[0]);
+      const double xmax = std::max(p0[0], p1[0]);
+      if (std::abs(p0[1] - 0.5) < 1.0e-12 && std::abs(p1[1] - 0.5) < 1.0e-12 &&
+          (xmax <= 0.3 + 1.0e-12 || xmin >= 0.7 - 1.0e-12))
+      {
+        reference_gap_serial.AddBdrElement(
+            reference_gap_serial.GetFace(face)->Duplicate(&reference_gap_serial));
+        reference_gap_serial.SetBdrAttribute(reference_gap_serial.GetNBE() - 1,
+                                             xmax <= 0.3 + 1.0e-12 ? 9 : 10);
+      }
+    }
+    reference_gap_serial.FinalizeTopology();
+    reference_gap_serial.Finalize();
+    while (reference_gap_serial.GetNE() < Mpi::Size(Mpi::World()))
+    {
+      reference_gap_serial.UniformRefinement();
+    }
+    auto reference_gap_parallel =
+        std::make_unique<mfem::ParMesh>(Mpi::World(), reference_gap_serial);
+    std::vector<std::unique_ptr<Mesh>> reference_gap_meshes;
+    reference_gap_meshes.push_back(std::make_unique<Mesh>(std::move(reference_gap_parallel)));
+    LaplaceOperator reference_gap_laplace(reference_gap_iodata_2d, reference_gap_meshes);
+    SurfaceResponseOperator reference_gap_response_2d(reference_gap_iodata_2d,
+                                                      reference_gap_laplace);
+    CHECK(reference_gap_response_2d.GetPatchCount() == 1);
+    Mpi::Barrier(Mpi::World());
+    CheckReferences(PatchReferences(cache_path), {{-0.2, 0.0, 0.0}, {0.2, 0.0, 0.0}});
+    unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE");
+    unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE");
+  }
 
   auto interpolated_pair_config_2d = exact_pair_config_2d;
   interpolated_pair_config_2d["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
