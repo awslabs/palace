@@ -1044,6 +1044,20 @@ characteristic lengths. `CouponDepth` is required for 3D; a model-level value ov
 the library default. Omitting it preserves the legacy 2D assumption that coupon and
 application use the same `Lc`.
 
+Curved coupons (a curvature family, decision 92) are built on axisymmetric $(r, z)$ meshes
+(`Model.Axisymmetric`: the cross-section placed at $r = \rho$ with the metal inside the
+circle, `"Convexity": "Convex"`, or outside, `"Concave"`). Their records carry
+`"Topology": "CurvedEdge"`, `"Kappa"` $= R / \rho$ and `"Convexity"`, and their response
+matrices are full-revolution energies, so `CouponDepth` must be the edge length
+$2 \pi \rho$. The straight model of the analogous topology is the $\kappa = 0$ anchor. A
+curved feature of curvature $\kappa$ is corrected by a runtime model interpolated in
+$\kappa$: the exact coupon at a node, the linear combination of the anchor and the smallest
+node for $\kappa$ at or below it (the first-order correction of straight-like features),
+otherwise the cubic Lagrange interpolant on the four nearest nodes, formed on the matrices
+(negative weights never reach a patch). A $\kappa$ beyond the largest node is reported
+unmatched, never treated as straight. On an axisymmetric application mesh, every isolated
+edge site at $r = \rho$ is such a curved edge with patch weight $2 \pi \rho /$ `CouponDepth`.
+
 Paired-edge models require a positive `Separation`. Palace prefers the closest model
 within its nonnegative `SeparationTolerance`. Otherwise it uses the narrowest bracket
 formed by lower- and upper-separation entries of the same topology. It combines the two
