@@ -147,6 +147,17 @@ constexpr double kSelfPairNeighbourhoodOverRadius = 3.14159265358979323846;
 // stack (the chip's widest stack has 12 edges) and only bounds a runaway traversal through
 // inconsistent links; every hit is counted under Diagnostics.StackCompositionCapHits.
 constexpr std::size_t kStackCompositionCap = 64;
+// Stack-end images (decision 93, DS-CTX-003 defect 1): the foot of a breakpoint on a partner
+// chain within this distance (units of R) of an existing breakpoint of that chain is the
+// same cut and creates no new breakpoint; the signature parameter tolerance, below which the
+// contract resolves no parameter.
+constexpr double kStackImageToleranceOverRadius = kSignatureParameterToleranceOverRadius;
+// Cluster extension closure (decision 93, DS-CTX-003 defect 2): the extension / stack
+// recomposition loop stops after this many passes, or when a pass repeats the previous one
+// (the same absorbed length and portion count: the recomposed stacks re-cut the same slivers
+// at the moved cut images, DS-CTX-003 80 nm / 16 portions in passes 2-5); the last pass is
+// applied without a further recomposition, as for a sub-tolerance pass.
+constexpr std::size_t kClusterExtensionMaxPasses = 12;
 // Knife-edge census (decision 82(4), 2026-09-25): every rule of the identification is a strict
 // comparison with a threshold (the interaction distance 2R, the cluster ball / vertex window
 // R, the straight-bend radius 10R, the corner turn 30 deg); a design whose dimensions sit on a
@@ -2541,6 +2552,10 @@ private:
   // whose composition reached kStackCompositionCap members.
   std::size_t stack_geometric_offsets = 0;
   std::size_t stack_composition_cap_hits = 0;
+  std::size_t stack_images_merged = 0;
+  // Closure of the extension loop (decision 93): stopped by the pass cap or by a repeated
+  // pass (reported).
+  bool extension_cap_reached = false, extension_repeat_detected = false;
   // Acceleration only (every result is the former all-pairs answer): the runs by their
   // boxes and the runs incident to every vertex.
   std::optional<UniformGrid> run_grid;
@@ -6005,6 +6020,26 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     list.insert(x);
     return true;
   };
+  // An IMAGE (the foot of a breakpoint on a partner chain) within the signature parameter
+  // tolerance of an existing breakpoint is the same cut (decision 93, DS-CTX-003 defect 1):
+  // on bent partner chains that are not concentric the foot of a foot drifts away from its
+  // source by less than the tolerance per hop, and under the 1e-6 R grid every hop multiplied
+  // the breakpoints (10 seeds -> 10^6 per chain, 744 s per pass) into pm-long elementary
+  // intervals of one composition. An elementary interval shorter than the tolerance carries
+  // no parameter the contract resolves.
+  const double image_grid = kStackImageToleranceOverRadius * R;
+  auto AddImage = [&](int chain, double x)
+  {
+    auto &list = breakpoints[chain];
+    auto it = list.lower_bound(x - image_grid);
+    if (it != list.end() && *it <= x + image_grid)
+    {
+      stack_images_merged++;
+      return false;
+    }
+    list.insert(x);
+    return true;
+  };
   for (std::size_t e = 0; e < elinks.size(); e++)
   {
     for (int side = 0; side < 2; side++)
@@ -6117,7 +6152,7 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
             {
               continue;
             }
-            if (AddBreakpoint(other, foot.x))
+            if (AddImage(other, foot.x))
             {
               next[other].emplace_back(foot.x, from_taken);
             }
@@ -8984,8 +9019,10 @@ void Identifier::Assign(IdentificationResult &result)
   result.same_priority_claim_overlaps = same_priority_claim_overlaps;
   result.stack_geometric_offsets = stack_geometric_offsets;
   result.stack_composition_cap_hits = stack_composition_cap_hits;
-  result.extension = {extension_passes, extension_portions, extension_sites,
-                      extension_length, stack_end_third_body_length};
+  result.stack_images_merged = stack_images_merged;
+  result.extension = {extension_passes,  extension_portions,           extension_sites,
+                      extension_length,  stack_end_third_body_length, extension_cap_reached,
+                      extension_repeat_detected};
   result.features = features;
   result.radius = R;
   result.reference_process_normal = n_ref;
@@ -9099,16 +9136,21 @@ IdentificationResult Identifier::Identify()
     // Pairs / stacks, then the cluster extension over the single-edge remainder (decision
     // 85(2)), iterated to closure: an enlarged cluster claim moves the stack ends, and the
     // recomposed stacks leave new single-edge portions to test.
+    double previous_absorbed = -1.0;
+    std::size_t previous_portions = 0;
     for (std::size_t pass = 0;; pass++)
     {
       const std::size_t n_features = features.size();
       stage.Begin("pairs / stacks (pass " + std::to_string(pass + 1) + ")");
       stack_geometric_offsets = 0;
       stack_composition_cap_hits = 0;
+      stack_images_merged = 0;
       BuildPairsAndStacks();
       stage.Begin("cluster extension (pass " + std::to_string(pass + 1) + ")");
+      const std::size_t portions_before = extension_portions;
       const double absorbed = ExtendClusters();
       extension_passes++;
+      const std::size_t pass_portions = extension_portions - portions_before;
       stage.End("absorbed " + std::to_string(absorbed) + " (mesh units) in " +
                 std::to_string(extension_portions) + " portions so far, " +
                 std::to_string(cluster_claimed.size()) + " clusters");
@@ -9123,6 +9165,36 @@ IdentificationResult Identifier::Identify()
       {
         break;
       }
+      // Decision 93 (DS-CTX-003 defect 2): a pass that repeats the previous one (the same
+      // absorbed length on the decision grid and the same portion count: the recomposed
+      // stacks re-cut the same slivers at the moved cut images) or the pass cap ends the
+      // loop the same way (applied, not recomposed; reported under Diagnostics).
+      if (previous_absorbed >= 0.0 && quantizer.Equal(absorbed, previous_absorbed) &&
+          pass_portions == previous_portions)
+      {
+        extension_repeat_detected = true;
+        if (input.log)
+        {
+          input.log("  Identification cluster extension: pass " + std::to_string(pass + 1) +
+                    " repeats pass " + std::to_string(pass) + " (absorbed " +
+                    std::to_string(absorbed) + " in " + std::to_string(pass_portions) +
+                    " portions): closure by repetition\n");
+        }
+        break;
+      }
+      if (pass + 1 >= kClusterExtensionMaxPasses)
+      {
+        extension_cap_reached = true;
+        if (input.log)
+        {
+          input.log("  Identification cluster extension: pass cap " +
+                    std::to_string(kClusterExtensionMaxPasses) + " reached (absorbed " +
+                    std::to_string(absorbed) + " in the last pass)\n");
+        }
+        break;
+      }
+      previous_absorbed = absorbed;
+      previous_portions = pass_portions;
       // The pair / stack features and claims are rebuilt on the enlarged claims.
       features.resize(n_features);
       feature_max_kappa.resize(n_features);
@@ -9272,6 +9344,9 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
   w.Size(result.extension.sites);
   w.Pod(result.extension.length);
   w.Pod(result.extension.stack_end_third_body_length);
+  w.Pod(result.extension.cap_reached);
+  w.Pod(result.extension.repeat_detected);
+  w.Size(result.stack_images_merged);
   w.String(result.knife_edge_census);
   w.Size(result.features.size());
   for (const auto &f : result.features)
@@ -9378,6 +9453,9 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
   result.extension.sites = r.Size();
   result.extension.length = r.Pod<double>();
   result.extension.stack_end_third_body_length = r.Pod<double>();
+  result.extension.cap_reached = r.Pod<bool>();
+  result.extension.repeat_detected = r.Pod<bool>();
+  result.stack_images_merged = r.Size();
   result.knife_edge_census = r.String();
   result.features.resize(r.Size());
   for (auto &f : result.features)
@@ -9776,6 +9854,8 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"StackCompositionCap", kStackCompositionCap},
         {"ClusterExtensionWedgeCapDegrees", kCornerTurnToleranceDegrees},
         {"ClusterExtensionClosureOverR", kSignatureParameterToleranceOverRadius},
+        {"ClusterExtensionMaxPasses", kClusterExtensionMaxPasses},
+        {"StackImageToleranceOverR", kStackImageToleranceOverRadius},
         {"ClusterExtensionRule",
          "every single-edge portion (the isolated / curved remainder after clusters, "
          "windows and pairs / stacks) within 2R (3D, strict) of a cluster's claimed "
@@ -9838,8 +9918,13 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"StackGeometricOffsetIntervals", stack_geometric_offsets},
         {"StackCompositionCapHits", stack_composition_cap_hits},
         {"StackCompositionCap", kStackCompositionCap},
+        {"StackImagesMerged", stack_images_merged},
+        {"StackImageToleranceOverR", kStackImageToleranceOverRadius},
         {"ClusterExtension",
          {{"Passes", extension.passes},
+          {"MaxPasses", kClusterExtensionMaxPasses},
+          {"CapReached", extension.cap_reached},
+          {"RepeatDetected", extension.repeat_detected},
           {"AbsorbedPortions", extension.portions},
           {"AbsorbedLength", L(extension.length)},
           {"VertexFeaturesJoined", extension.sites},
@@ -9850,7 +9935,9 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
                    "non-member vertices, joins that cluster (a vertex feature so joined "
                    "becomes a cluster); iterated to closure over single-edge portions (the "
                    "loop stops after a pass absorbing at most ClusterExtensionClosureOverR x "
-                   "R, applied without a further recomposition); pairs / stacks are never "
+                   "R, after a pass repeating the previous one (same absorbed length and "
+                   "portion count) or after MaxPasses passes (decision 93), the last pass "
+                   "applied without a further recomposition); pairs / stacks are never "
                    "absorbed (decision 85(2), across rule ratified 88(2))"}}},
         {"StackEndThirdBodyLength", L(extension.stack_end_third_body_length)},
         {"StackEndThirdBodyRule",
