@@ -1292,3 +1292,171 @@ TEST_CASE("SurfaceResponseIdentificationExactParametersAndExtension",
     CHECK(result.extension.length >= 0.0);
   }
 }
+
+namespace
+{
+
+// A hairpin strip (synthetic_layouts.py hairpin): width 2 rho - gap folded through a
+// semicircle of centreline radius rho about the origin (the fold below y = 0), the legs up to
+// y = half_y and closed across the top; inner fold radius gap / 2, outer 2 rho - gap / 2,
+// each fold a polyline of `chords` chords (counter-clockwise loop).
+std::vector<Point2> Hairpin(double rho, double gap, double half_y, int chords)
+{
+  const double r_in = 0.5 * gap, r_out = 2.0 * rho - 0.5 * gap;
+  std::vector<Point2> points = {{-r_out, half_y}};
+  for (int k = 0; k <= chords; k++)
+  {
+    const double angle = std::acos(-1.0) * (1.0 + static_cast<double>(k) / chords);
+    points.push_back({r_out * std::cos(angle), r_out * std::sin(angle)});
+  }
+  points.push_back({r_out, half_y});
+  points.push_back({r_in, half_y});
+  for (int k = chords; k >= 0; k--)
+  {
+    const double angle = std::acos(-1.0) * (1.0 + static_cast<double>(k) / chords);
+    points.push_back({r_in * std::cos(angle), r_in * std::sin(angle)});
+  }
+  points.push_back({-r_in, half_y});
+  return points;
+}
+
+}  // namespace
+
+TEST_CASE("SurfaceResponseIdentificationArcClusters",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Option A (decision 91(1)): a cluster holding fitted arcs is described on the design
+  // circles, so its signature, extent and edge count do not depend on the chord count.
+  const double R = 2.0;
+  SECTION("rounded finger ends: two fillets and the end edge")
+  {
+    // A 3 x 20 um finger (1.5 R wide) with 1 um fillets (0.5 R: rounded corners): the two
+    // corner sites of each end are 3 um < 2R apart, an event of their own; each end is one
+    // cluster of two arcs, the end edge and R along both sides (5 edges), identical for
+    // 2 / 4 / 8 / 16 chords per fillet; the long sides between the clusters are a strip.
+    std::optional<std::string> hash;
+    std::optional<nlohmann::json> signature;
+    for (const int chords : {2, 4, 8, 16})
+    {
+      const auto input = MakeInput({{RoundedRectangle(10.0, 1.5, 1.0, chords), 0, 0.5}}, R);
+      const auto result = IdentifyMetalPerimeter(input);
+      CheckPartition(input, result);
+      std::map<std::string, int> counts;
+      std::set<std::string> hashes;
+      for (const auto &feature : result.features)
+      {
+        counts[feature.type]++;
+        if (feature.type == "SpatialEdgeCluster")
+        {
+          hashes.insert(feature.hash);
+          CHECK(feature.signature["EdgeCount"].get<int>() == 5);
+          int arcs = 0;
+          for (const auto &portion : feature.signature["Portions"])
+          {
+            arcs += portion.contains("Arc") ? 1 : 0;
+            if (portion.contains("Arc"))
+            {
+              CHECK(portion["GapRadial"].get<int>() == 1);  // metal inside the fillet circle
+            }
+          }
+          CHECK(arcs == 2);
+          if (!signature)
+          {
+            signature = feature.signature;
+          }
+          else
+          {
+            INFO("chords " << chords << ": " << feature.signature.dump() << " vs "
+                           << signature->dump());
+            CHECK(feature.signature == *signature);
+          }
+        }
+      }
+      INFO("chords " << chords);
+      CHECK(counts["SpatialEdgeCluster"] == 2);
+      CHECK(hashes.size() == 1);  // the two ends are congruent
+      if (!hash)
+      {
+        hash = *hashes.begin();
+      }
+      else
+      {
+        CHECK(*hashes.begin() == *hash);
+      }
+      CHECK(counts["ConvexCorner"] == 0);
+      CHECK(result.arcs.size() == 4);
+      for (const auto &arc : result.arcs)
+      {
+        CHECK(arc.kind == "RoundedCorner");
+        CHECK_THAT(arc.radius, WithinAbs(1.0, 1.0e-9));
+        CHECK_THAT(arc.turn_degrees, WithinAbs(90.0, 1.0e-9));
+      }
+      // Every mesh segment of a fillet (its chords, subdivided at 0.5 um) points at its arc.
+      std::size_t on_arcs = 0, arc_segments = 0;
+      for (const auto &segment : result.segments)
+      {
+        on_arcs += segment.arc >= 0 ? 1 : 0;
+      }
+      for (const auto &arc : result.arcs)
+      {
+        arc_segments += arc.segments;
+      }
+      CHECK(on_arcs == arc_segments);
+      CHECK(on_arcs >= static_cast<std::size_t>(4 * chords));
+    }
+  }
+  SECTION("hairpin: a rounded corner and a concentric bend")
+  {
+    // Centreline radius 1.5 R, legs 1.8 R apart: inner fold 0.9 R (a 180 deg rounded
+    // corner), outer fold 2.1 R (a bend) 1.2 R away, the strip 1.2 R wide. The outer fold
+    // joins the corner across (decision 85(2)): one cluster of two concentric semicircles
+    // and the four leg pieces of length R (6 edges), identical for 8 / 16 / 32 chords. The
+    // loop closes across the top with sharp corners 1.8 R apart: a second, straight cluster.
+    std::optional<nlohmann::json> signature;
+    for (const int chords : {8, 16, 32})
+    {
+      const auto input = MakeInput({{Hairpin(1.5 * R, 1.8 * R, 30.0, chords), 0, 0.5}}, R);
+      const auto result = IdentifyMetalPerimeter(input);
+      CheckPartition(input, result);
+      std::map<std::string, int> counts;
+      int arc_clusters = 0;
+      for (const auto &feature : result.features)
+      {
+        counts[feature.type]++;
+        if (feature.type != "SpatialEdgeCluster")
+        {
+          continue;
+        }
+        int arcs = 0;
+        for (const auto &portion : feature.signature["Portions"])
+        {
+          arcs += portion.contains("Arc") ? 1 : 0;
+        }
+        if (arcs == 0)
+        {
+          continue;
+        }
+        arc_clusters++;
+        CHECK(arcs == 2);
+        CHECK(feature.signature["EdgeCount"].get<int>() == 6);
+        if (!signature)
+        {
+          signature = feature.signature;
+        }
+        else
+        {
+          INFO("chords " << chords << ": " << feature.signature.dump() << " vs "
+                         << signature->dump());
+          CHECK(feature.signature == *signature);
+        }
+        CHECK(feature.vertices.empty());  // the rounded corner is a virtual site
+        CHECK(feature.signature["Vertices"].size() == 1);
+      }
+      INFO("chords " << chords);
+      CHECK(arc_clusters == 1);
+      CHECK(counts["SpatialEdgeCluster"] == 2);
+      CHECK(counts["ParallelEdgeCluster"] == 1);  // the 4-edge stack of the legs
+      CHECK(counts["ConcaveCorner"] == 0);
+    }
+  }
+}
