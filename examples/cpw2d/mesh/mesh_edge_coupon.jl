@@ -12,6 +12,12 @@
 # metal inside the circle (r < rho, a disk edge), `:concave` mirrors the
 # cross-section so the metal lies outside (r > rho, a hole edge). The contour
 # is [rho - R, rho + R] x [-R, R]; every physical group keeps its meaning.
+# The mesh is generated on the canonical cross-section and then moved by the
+# affine map x -> rho + sign x, so every coupon of a curvature family (all
+# rho, both convexities, the straight anchor) shares one triangulation: the
+# thin edge's mesh-cutoff energy is identical across the family and the
+# response differences are pure curvature (no mesh noise in the kappa
+# interpolation).
 
 import Gmsh: gmsh
 
@@ -77,20 +83,12 @@ function generate_edge_coupon(;
     axisymmetric_radius == 0 || axisymmetric_radius > radius ||
         error("axisymmetric_radius must exceed the coupon radius (the contour must not cross the axis)")
     convexity in (:convex, :concave) || error("convexity must be :convex or :concave")
-    # Map from the canonical cross-section (edge at x = 0, metal at x < 0) to
-    # the mesh: X(x) = rho + sign x; the inverse U(x) classifies mesh entities.
+    # The geometry and mesh are canonical (edge at x = 0, metal at x < 0); the
+    # placement x -> rho + sign x is applied to the mesh nodes at the end.
     sign = convexity == :convex ? 1.0 : -1.0
     rho = axisymmetric_radius
-    X(x) = rho + sign * x
-    U(x) = sign * (x - rho)
-    function rect(x, y, dx, dy)
-        x1, x2 = minmax(X(x), X(x + dx))
-        return occ.addRectangle(x1, y, 0.0, x2 - x1, dy)
-    end
-    function polygon(corners)
-        mapped = [((X(c[1][1]), c[1][2]), c[2]) for c in corners]
-        return shape(occ, sign > 0 ? mapped : reverse(mapped))
-    end
+    rect(x, y, dx, dy) = occ.addRectangle(x, y, 0.0, dx, dy)
+    polygon(corners) = shape(occ, corners)
     t_metal > 0 || error("t_metal must be positive")
     overetch > 0 || error("overetch must be positive")
     0 < sidewall_angle <= 90 ||
@@ -161,7 +159,7 @@ function generate_edge_coupon(;
         up, _ = gmsh.model.getAdjacencies(dim, tag)
         isempty([surface for surface in up if surface in model_surfaces]) && continue
         xmin, ymin, _, xmax, ymax, _ = gmsh.model.getBoundingBox(dim, tag)
-        xmid = U(0.5 * (xmin + xmax))
+        xmid = 0.5 * (xmin + xmax)
         ymid = 0.5 * (ymin + ymax)
         horizontal = ymax - ymin < tolerance
         vertical = xmax - xmin < tolerance
@@ -235,6 +233,12 @@ function generate_edge_coupon(;
     gmsh.model.mesh.optimize("Netgen")
     gmsh.model.mesh.setOrder(mesh_order)
     mesh_order > 1 && gmsh.model.mesh.optimize("HighOrderElastic")
+    if rho > 0
+        # Place the canonical mesh: x -> rho + sign x (a mirror for the concave
+        # coupon; MFEM restores the element orientation on load).
+        gmsh.model.mesh.affineTransform(
+            [sign, 0.0, 0.0, rho, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0])
+    end
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
     gmsh.option.setNumber("Mesh.Binary", 1)
     gmsh.write(filename)
