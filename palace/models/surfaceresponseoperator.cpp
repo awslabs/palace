@@ -729,14 +729,14 @@ struct EdgeSegment3D
 // sqrt(2e-8) rad, so the overlap of the first projected back onto the second may overshoot
 // the second by that angle times the projected distances (DS-SCT-001: the two edges of a
 // CPW gap along a 250 um bend at 4 um chords differ by 3e-5 to 1e-4 rad); the callers clamp
-// the interval to the second segment. Anything beyond that bound is a genuine inconsistency.
+// the interval to the second segment. Anything beyond that bound is a genuine
+// inconsistency.
 void VerifyParallelOverlap(const EdgeSegment3D &first, const EdgeSegment3D &second,
                            double tangent_dot, double second_begin, double second_end,
                            double tolerance, double interaction_distance)
 {
   const double overlap_tolerance =
-      tolerance +
-      std::sqrt(2.0e-8) * (first.length + second.length + interaction_distance);
+      tolerance + std::sqrt(2.0e-8) * (first.length + second.length + interaction_distance);
   MFEM_VERIFY(second_begin >= -overlap_tolerance &&
                   second_end <= second.length + overlap_tolerance,
               "Inconsistent overlap between nearby parallel metal edges (second segment "
@@ -1544,8 +1544,9 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
       MFEM_VERIFY(std::isfinite(*model.kappa) && *model.kappa > 0.0 && *model.kappa < 1.0,
                   "Fabrication-process response model Kappa = R / rho must lie in (0, 1)!");
       const std::string convexity = entry.at("Convexity").get<std::string>();
-      MFEM_VERIFY(convexity == "Convex" || convexity == "Concave",
-                  "Fabrication-process response model Convexity must be Convex or Concave!");
+      MFEM_VERIFY(
+          convexity == "Convex" || convexity == "Concave",
+          "Fabrication-process response model Convexity must be Convex or Concave!");
       model.convex = convexity == "Convex";
       MFEM_VERIFY(model.coupon_depth > 0.0,
                   "Fabrication-process response model \""
@@ -1780,10 +1781,14 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
           "Qualified or Unqualified!");
       model.boundary_law_physics_qualified = qualification->at("Status") == "Qualified";
     }
-    // A curved model has no version-1 geometry parameters: it is keyed by its Signature.
-    MFEM_VERIFY(!IsCurvedTopology(model.topology) || model.identification_signature,
+    // A curved model has no version-1 geometry parameters: it is keyed by its Signature,
+    // or it is a curvature-family node (Kappa + Convexity) interpolated in kappa.
+    MFEM_VERIFY(!IsCurvedTopology(model.topology) || model.identification_signature ||
+                    model.kappa,
                 "Curved fabrication-process response model \""
-                    << model.name << "\" requires its identification Signature!");
+                    << model.name
+                    << "\" requires its identification Signature or a Kappa / Convexity "
+                       "curvature-family record!");
     if (model.topology == LibraryTopology::ISOLATED_EDGE || spatial_response ||
         parallel_cluster || model.topology == LibraryTopology::CURVED_EDGE)
     {
@@ -1857,10 +1862,11 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                     (parallel_cluster && model.identification_signature),
                 "ParallelEdgeCluster response models require Edges (or a Signature), and "
                 "other topologies cannot specify them!");
-    MFEM_VERIFY(spatial_cluster == !model.spatial_edges.empty() ||
-                    (spatial_cluster && model.identification_signature),
-                "SpatialEdgeCluster response models require spatial Edges (or a Signature), "
-                "and other topologies cannot specify them!");
+    MFEM_VERIFY(
+        spatial_cluster == !model.spatial_edges.empty() ||
+            (spatial_cluster && model.identification_signature),
+        "SpatialEdgeCluster response models require spatial Edges (or a Signature), "
+        "and other topologies cannot specify them!");
     MFEM_VERIFY(spatial_cluster || endpoint || junction || !model.plan_view_boundary,
                 "PlanViewBoundary is supported only by SpatialEdgeCluster, Endpoint, or "
                 "Junction models!");
@@ -2598,15 +2604,15 @@ std::string CanonicalPlanViewBoundary(
 
     for (const auto &[segment, count] : counts)
     {
-      MFEM_VERIFY(count <= 2,
-                  "Plan-view facets form a nonmanifold surface (segment ["
-                      << segment.first[0] * tolerance << ", " << segment.first[1] * tolerance
-                      << ", " << segment.first[2] * tolerance << "] - ["
-                      << segment.second[0] * tolerance << ", "
-                      << segment.second[1] * tolerance << ", "
-                      << segment.second[2] * tolerance << "] shared by " << count
-                      << " facets of " << unique_polygons.size() << " in conductor "
-                      << group.first << ")!");
+      MFEM_VERIFY(count <= 2, "Plan-view facets form a nonmanifold surface (segment ["
+                                  << segment.first[0] * tolerance << ", "
+                                  << segment.first[1] * tolerance << ", "
+                                  << segment.first[2] * tolerance << "] - ["
+                                  << segment.second[0] * tolerance << ", "
+                                  << segment.second[1] * tolerance << ", "
+                                  << segment.second[2] * tolerance << "] shared by "
+                                  << count << " facets of " << unique_polygons.size()
+                                  << " in conductor " << group.first << ")!");
     }
     std::set<QuantizedSegment3D> boundary;
     for (const auto &[segment, count] : counts)
@@ -3237,11 +3243,12 @@ LibraryTopology CurvedTopologyOf(LibraryTopology straight)
 
 // Curvature interpolation (decision 92): a curved feature of curvature kappa = R / rho and
 // given convexity is modelled by the Lagrange combination of the family's coupons in kappa:
-// the straight anchor (kappa 0, the model of the analogous straight topology) and the curved
-// coupons (Kappa, Convexity) of the library. Rule, deterministic and recorded: an exact node
-// (|kappa - node| <= 1e-9) is that coupon; kappa at or below the smallest curved node is the
-// linear combination of the anchor and that node (the first-order correction dR/dkappa of
-// straight-like features); otherwise the cubic Lagrange interpolant on the four nodes
+// the straight anchor (kappa 0, the model of the analogous straight topology) and the
+// curved coupons (Kappa, Convexity) of the library. Rule, deterministic and recorded: an
+// exact node
+// (|kappa - node| <= 1e-9) is that coupon; kappa at or below the smallest curved node is
+// the linear combination of the anchor and that node (the first-order correction dR/dkappa
+// of straight-like features); otherwise the cubic Lagrange interpolant on the four nodes
 // nearest to kappa (all nodes when fewer). A kappa beyond the largest node is refused
 // (reason), never treated as straight.
 struct CurvedFamilySelection
@@ -3298,7 +3305,8 @@ FindCurvedLibraryModel(const ProcessLibrary &library, LibraryTopology straight_t
   for (std::size_t i = 1; i < nodes.size(); i++)
   {
     MFEM_VERIFY(nodes[i].first - nodes[i - 1].first > 1.0e-9,
-                "Curvature family has two " << convexity << " " << TopologyName(curved_topology)
+                "Curvature family has two " << convexity << " "
+                                            << TopologyName(curved_topology)
                                             << " coupons at the same Kappa!");
   }
   CurvedFamilySelection selection;
@@ -3340,7 +3348,8 @@ FindCurvedLibraryModel(const ProcessLibrary &library, LibraryTopology straight_t
       begin = std::min(interval > 0 ? interval - 1 : 0, abscissae.size() - 4);
       end = begin + 4;
     }
-    selection.rule = (end - begin == 4) ? "cubic" : (end - begin == 3 ? "quadratic" : "linear");
+    selection.rule =
+        (end - begin == 4) ? "cubic" : (end - begin == 3 ? "quadratic" : "linear");
   }
   for (std::size_t i = begin; i < end; i++)
   {
@@ -5440,11 +5449,10 @@ std::optional<SpatialClusterSelection3D> FindSpatialClusterLibraryModel(
 std::string LibraryLawKey(const MetalBoundaryLaw &law,
                           const AutomaticResponseRequirements &describer)
 {
-  return law.parameters_verified
-             ? describer.DescribeBoundaryCondition(law).dump()
-             : nlohmann::json{{"Type", BoundaryConditionName(law.type)},
-                              {"Unverified", true}}
-                   .dump();
+  return law.parameters_verified ? describer.DescribeBoundaryCondition(law).dump()
+                                 : nlohmann::json{{"Type", BoundaryConditionName(law.type)},
+                                                  {"Unverified", true}}
+                                       .dump();
 }
 
 // Canonical cluster signature of a SpatialEdgeCluster model's stored edges; its frame
@@ -5483,10 +5491,10 @@ ModelClusterSignature(const LibraryModel &model, double radius,
 
 // Library models by signature topology (decision 85(1)): a feature matches the model of its
 // type whose topology key equals its own and whose continuous parameters lie within the
-// signature tolerance (kSignatureParameterToleranceOverRadius / kSignatureAngleToleranceDegrees,
-// both orientations of a translational signature); among several the nearest (the smallest
-// normalised deviation), ties by model name — a deterministic choice independent of the
-// feature or model order.
+// signature tolerance (kSignatureParameterToleranceOverRadius /
+// kSignatureAngleToleranceDegrees, both orientations of a translational signature); among
+// several the nearest (the smallest normalised deviation), ties by model name — a
+// deterministic choice independent of the feature or model order.
 class LibrarySignatureIndex
 {
 public:
@@ -5506,7 +5514,8 @@ public:
   std::optional<std::pair<std::string, double>>
   Match(const nlohmann::json &feature_signature) const
   {
-    const auto it = by_topology.find(SplitSignatureParameters(feature_signature).topology_key);
+    const auto it =
+        by_topology.find(SplitSignatureParameters(feature_signature).topology_key);
     if (it == by_topology.end())
     {
       return std::nullopt;
@@ -5519,7 +5528,8 @@ public:
       {
         continue;
       }
-      const auto deviation = SignatureDeviation(feature_signature, entries[index].signature);
+      const auto deviation =
+          SignatureDeviation(feature_signature, entries[index].signature);
       if (!deviation || *deviation > 1.0)
       {
         continue;
@@ -5549,8 +5559,9 @@ private:
   std::map<std::string, std::vector<std::size_t>> by_topology;
 };
 
-LibrarySignatureIndex LibrarySignatureKeys(const ProcessLibrary &library,
-                                           const AutomaticResponseRequirements &requirements)
+LibrarySignatureIndex
+LibrarySignatureKeys(const ProcessLibrary &library,
+                     const AutomaticResponseRequirements &requirements)
 {
   LibrarySignatureIndex index;
   const double R = library.matching_radius;
@@ -5608,10 +5619,10 @@ LibrarySignatureIndex LibrarySignatureKeys(const ProcessLibrary &library,
         }
       case LibraryTopology::CONVEX_CORNER:
       case LibraryTopology::CONCAVE_CORNER:
-        key = std::make_pair(
-            CanonicalCornerSignature(interfaces, law, model.angle * 180.0 / std::acos(-1.0),
-                                     model.corner_radius / R),
-            TopologyIdentifier(model.topology));
+        key = std::make_pair(CanonicalCornerSignature(interfaces, law,
+                                                      model.angle * 180.0 / std::acos(-1.0),
+                                                      model.corner_radius / R),
+                             TopologyIdentifier(model.topology));
         break;
       case LibraryTopology::ENDPOINT:
         key = std::make_pair(nlohmann::json{{"Interfaces", interfaces}, {"Law", law}},
@@ -5825,9 +5836,10 @@ IdentificationResult RunGeometryIdentification(
       exclusions += fmt::format("{}{}: {:d} ({:.6e})", exclusions.empty() ? "" : ", ",
                                 exclusion.cls, exclusion.count, exclusion.length);
     }
-    Mpi::Print("Geometry identification: {:d} features on {:d} segments; exclusions {{{}}}\n",
-               static_cast<int>(result.features.size()),
-               static_cast<int>(result.segments.size()), exclusions);
+    Mpi::Print(
+        "Geometry identification: {:d} features on {:d} segments; exclusions {{{}}}\n",
+        static_cast<int>(result.features.size()), static_cast<int>(result.segments.size()),
+        exclusions);
   }
   int point_contacts = 0;
   for (const auto &vertex : result.vertices)
@@ -5871,8 +5883,9 @@ IdentificationResult RunGeometryIdentification(
     nlohmann::json geometry_json;
     if (type == "IsolatedEdge")
     {
-      // The version-1 isolated-edge record carried {"EdgeCount": 1}; consumers of the derived
-      // Requirements (prepare_surface_response_coupons.plan_from_manifest) read Geometry.
+      // The version-1 isolated-edge record carried {"EdgeCount": 1}; consumers of the
+      // derived Requirements (prepare_surface_response_coupons.plan_from_manifest) read
+      // Geometry.
       geometry_json["EdgeCount"] = 1;
     }
     else if (type == "CurvedEdge")
@@ -5975,18 +5988,20 @@ IdentificationResult RunGeometryIdentification(
       law = nlohmann::json::parse(
           input.segments[feature.portions.front().segment].boundary_law);
     }
-    const bool per_segment =
-        feature.type != "ConvexCorner" && feature.type != "ConcaveCorner" &&
-        feature.type != "Junction" && feature.type != "Endpoint" &&
-        feature.type != "SpatialEdgeCluster";
+    const bool per_segment = feature.type != "ConvexCorner" &&
+                             feature.type != "ConcaveCorner" &&
+                             feature.type != "Junction" && feature.type != "Endpoint" &&
+                             feature.type != "SpatialEdgeCluster";
     const int count = per_segment ? static_cast<int>(feature.portions.size()) : 1;
     const std::string base_key = feature.type + "|" + interfaces.dump() + "|" + law.dump() +
-                                 "|" + SplitSignatureParameters(feature.signature).topology_key;
+                                 "|" +
+                                 SplitSignatureParameters(feature.signature).topology_key;
     // Both orientations of a translational signature belong to one base (the mirror's
     // topology key may be the smaller one).
     const std::string mirror_key =
         feature.type + "|" + interfaces.dump() + "|" + law.dump() + "|" +
-        SplitSignatureParameters(MirrorTranslationalSignature(feature.signature)).topology_key;
+        SplitSignatureParameters(MirrorTranslationalSignature(feature.signature))
+            .topology_key;
     auto [it, inserted] = bases.emplace(std::min(base_key, mirror_key), GroupBase{});
     if (inserted)
     {
@@ -6031,8 +6046,9 @@ IdentificationResult RunGeometryIdentification(
     {
       for (std::size_t j = i + 1; j < n; j++)
       {
-        const auto deviation = SignatureDeviation(base.instances.at(base.order[i]).signature,
-                                                  base.instances.at(base.order[j]).signature);
+        const auto deviation =
+            SignatureDeviation(base.instances.at(base.order[i]).signature,
+                               base.instances.at(base.order[j]).signature);
         if (deviation && *deviation <= 1.0)
         {
           parent[Find(i)] = Find(j);
@@ -6066,7 +6082,8 @@ IdentificationResult RunGeometryIdentification(
       double spread = 0.0;
       for (const auto &signature : signatures)
       {
-        spread = std::max(spread, SignatureDeviation(representative, signature).value_or(0.0));
+        spread =
+            std::max(spread, SignatureDeviation(representative, signature).value_or(0.0));
       }
       const auto [key, hash] = SignatureKeyAndHash(representative, base.type);
       (void)key;
@@ -6164,10 +6181,10 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
     const bool forward = identification.segments[portion.segment].key[0] == segment.p0;
     FramedPortion fp;
     fp.segment = &segment;
-    fp.a = std::clamp(forward ? portion.s0 : segment.length - portion.s1, 0.0,
-                      segment.length);
-    fp.b = std::clamp(forward ? portion.s1 : segment.length - portion.s0, 0.0,
-                      segment.length);
+    fp.a =
+        std::clamp(forward ? portion.s0 : segment.length - portion.s1, 0.0, segment.length);
+    fp.b =
+        std::clamp(forward ? portion.s1 : segment.length - portion.s0, 0.0, segment.length);
     fp.geometry_index = portion.segment;
     fp.s0 = portion.s0;
     fp.s1 = portion.s1;
@@ -6217,7 +6234,8 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
     patch.provenance.model_weight = 1.0;
     if (diagnostics)
     {
-      diagnostics->boundary_law_verified &= IsBoundaryLawVerified(library.models[model_index]);
+      diagnostics->boundary_law_verified &=
+          IsBoundaryLawVerified(library.models[model_index]);
     }
     result.patches.push_back(std::move(patch));
     summary.patches_by_type[feature.type]++;
@@ -6373,7 +6391,8 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
                    });
       }
     }
-    else if (feature.type == "SameConductorGap" || feature.type == "DifferentConductorGap" ||
+    else if (feature.type == "SameConductorGap" ||
+             feature.type == "DifferentConductorGap" ||
              feature.type == "SameConductorStrip" ||
              feature.type == "CurvedSameConductorGap" ||
              feature.type == "CurvedDifferentConductorGap" ||
@@ -6411,7 +6430,8 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
         {
           for (const double t : {fp.a, 0.5 * (fp.a + fp.b), fp.b})
           {
-            const Foot foot = ClosestFoot(Interpolate(*fp.segment, t), *ordered[1 - k].second);
+            const Foot foot =
+                ClosestFoot(Interpolate(*fp.segment, t), *ordered[1 - k].second);
             if (std::abs(Distance(Interpolate(*fp.segment, t), foot.point) - separation) >
                 kPairPatchSeparationTolerance * separation)
             {
@@ -6429,9 +6449,10 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
       {
         summary.inconsistent_features.push_back(feature.id);
         summary.inconsistent_length += feature_length;
-        Mpi::Warning("Feature {:d} ({}, {:.6e} length units): the two sides do not face each "
-                     "other at its separation {:.6e}; the pair is omitted (not patched).\n",
-                     feature.id, feature.type, feature_length, separation);
+        Mpi::Warning(
+            "Feature {:d} ({}, {:.6e} length units): the two sides do not face each "
+            "other at its separation {:.6e}; the pair is omitted (not patched).\n",
+            feature.id, feature.type, feature_length, separation);
         continue;
       }
       for (int k = 0; k < 2; k++)
@@ -6479,8 +6500,8 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
     else if (feature.type == "ParallelEdgeCluster")
     {
       // Sides in increasing lateral offset (the identification's labels; reversed for
-      // chirality -1) = the model's edges by offset; conductor labels by first appearance in
-      // that order.
+      // chirality -1) = the model's edges by offset; conductor labels by first appearance
+      // in that order.
       std::map<int, std::vector<FramedPortion>> sides;
       for (const auto &fp : portions)
       {
@@ -6498,7 +6519,8 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
       {
         std::reverse(ordered.begin(), ordered.end());
       }
-      MFEM_VERIFY(model.cluster_edges.empty() || model.cluster_edges.size() == ordered.size(),
+      MFEM_VERIFY(model.cluster_edges.empty() ||
+                      model.cluster_edges.size() == ordered.size(),
                   "A parallel-edge cluster model's edge count differs from the feature!");
       std::vector<std::size_t> reference_sides;  // first side of every conductor label
       {
@@ -6664,7 +6686,7 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
     else
     {
       MFEM_ABORT("No patch construction for the matched feature type \"" << feature.type
-                                                                        << "\"!");
+                                                                         << "\"!");
     }
   }
   return summary;
@@ -6885,9 +6907,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     {
       std::vector<bool> ambiguous_side;
       const auto process_normals = BuildMetalEdgeProcessNormals(
-          mesh, geometry, missing, [&](int attribute)
-          { return mat_op.GetLightSpeedMax(attribute); }, group.process_normal,
-          &ambiguous_side);
+          mesh, geometry, missing,
+          [&](int attribute) { return mat_op.GetLightSpeedMax(attribute); },
+          group.process_normal, &ambiguous_side);
       const auto gap_directions =
           BuildMetalEdgeGapDirections(mesh, geometry, missing, process_normals);
       for (std::size_t i = 0; i < missing.size(); i++)
@@ -7641,8 +7663,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   {
     (void)signature;
     auto segments = BuildSegments(group, group.segments);
-    global_segments.insert(global_segments.end(),
-                           std::make_move_iterator(segments.begin()),
+    global_segments.insert(global_segments.end(), std::make_move_iterator(segments.begin()),
                            std::make_move_iterator(segments.end()));
   }
   GeometryStageLine("framed: " + std::to_string(global_segments.size()) +
@@ -7684,8 +7705,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                                                     iodata.InputsNondimensionalized());
   const bool frame_normal_configured =
       std::any_of(iodata.boundaries.postpro.dielectric.begin(),
-                  iodata.boundaries.postpro.dielectric.end(),
-                  [](const auto &entry) { return entry.second.edge_frame_normal.has_value(); });
+                  iodata.boundaries.postpro.dielectric.end(), [](const auto &entry)
+                  { return entry.second.edge_frame_normal.has_value(); });
   const auto identification = RunGeometryIdentification(
       mesh.GetComm(), geometry, global_segments, library,
       requirements ? *requirements : law_describer, requirements, frame_normal_configured);
@@ -7737,12 +7758,13 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                static_cast<int>(result.models.size()));
     if (!summary.inconsistent_features.empty())
     {
-      Mpi::Warning("{} matched pair feature(s) ({:.6e} length units) whose sides do not face "
-                   "each other at their separation are omitted (identification defect, "
-                   "recorded; ids {} ...).\n",
-                   static_cast<int>(summary.inconsistent_features.size()),
-                   summary.inconsistent_length * coordinate_scale,
-                   summary.inconsistent_features.front());
+      Mpi::Warning(
+          "{} matched pair feature(s) ({:.6e} length units) whose sides do not face "
+          "each other at their separation are omitted (identification defect, "
+          "recorded; ids {} ...).\n",
+          static_cast<int>(summary.inconsistent_features.size()),
+          summary.inconsistent_length * coordinate_scale,
+          summary.inconsistent_features.front());
     }
     if (summary.unmatched_features > 0 || !summary.inconsistent_features.empty())
     {
@@ -10486,7 +10508,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                             "No compatible parallel-edge cluster model");
         }
       }
-      omitted_parallel_cluster_spans += static_cast<int>(unmatched_parallel_clusters.size());
+      omitted_parallel_cluster_spans +=
+          static_cast<int>(unmatched_parallel_clusters.size());
     }
     for (const auto &span : parallel_cluster_spans)
     {
@@ -10779,8 +10802,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
           {pair.first_begin, pair.first_end}};
       // A longitudinal span claimed by a parallel-edge cluster (matched or unmatched: an
       // unmatched cluster span is omitted, never re-described by its pairs) is not a pair.
-      auto SubtractSpan = [&](const std::vector<std::size_t> &cluster, const Point3D &tangent,
-                              double begin, double end)
+      auto SubtractSpan = [&](const std::vector<std::size_t> &cluster,
+                              const Point3D &tangent, double begin, double end)
       {
         if (std::find(cluster.begin(), cluster.end(), pair.first) == cluster.end() ||
             std::find(cluster.begin(), cluster.end(), pair.second) == cluster.end())
@@ -10900,11 +10923,12 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
 
     if (!nonparallel_omitted_segments.empty())
     {
-      Mpi::Warning("Omitting {} of {} three-dimensional target edge segments in non-parallel "
-                   "neighborhoods without a matched cluster model (correction disabled for "
-                   "these segments only).\n",
-                   static_cast<int>(nonparallel_omitted_segments.size()),
-                   static_cast<int>(segments.size()));
+      Mpi::Warning(
+          "Omitting {} of {} three-dimensional target edge segments in non-parallel "
+          "neighborhoods without a matched cluster model (correction disabled for "
+          "these segments only).\n",
+          static_cast<int>(nonparallel_omitted_segments.size()),
+          static_cast<int>(segments.size()));
     }
     for (std::size_t i = 0; group_matched && i < segments.size(); i++)
     {
@@ -10963,14 +10987,16 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
           "correction is disabled for these spans only.\n",
           library.name, omitted_isolated_intervals);
     }
-    if (omitted_parallel_cluster_spans + omitted_pair_intervals + omitted_isolated_intervals >
+    if (omitted_parallel_cluster_spans + omitted_pair_intervals +
+            omitted_isolated_intervals >
         0)
     {
-      Mpi::Warning("Omitting {} parallel-edge cluster span(s), {} paired-edge interval(s) and "
-                   "{} isolated interval(s) without a library model in this interface group "
-                   "(correction disabled for these features only).\n",
-                   omitted_parallel_cluster_spans, omitted_pair_intervals,
-                   omitted_isolated_intervals);
+      Mpi::Warning(
+          "Omitting {} parallel-edge cluster span(s), {} paired-edge interval(s) and "
+          "{} isolated interval(s) without a library model in this interface group "
+          "(correction disabled for these features only).\n",
+          omitted_parallel_cluster_spans, omitted_pair_intervals,
+          omitted_isolated_intervals);
     }
 
     if (!group_matched)
@@ -10985,7 +11011,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     }
     if (!requirements &&
         request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR &&
-        (omitted_parallel_cluster_spans + omitted_pair_intervals + omitted_isolated_intervals +
+        (omitted_parallel_cluster_spans + omitted_pair_intervals +
+             omitted_isolated_intervals +
              static_cast<int>(nonparallel_omitted_segments.size()) >
          0))
     {
@@ -11414,8 +11441,9 @@ mfem::DenseMatrix BlendedDomainResponseMatrix(
     MFEM_VERIFY(std::isfinite(source.weight),
                 "Interpolated response model weights must be finite!");
     result.Add(source.weight,
-               ReadDenseDomainResponseMatrix(
-                   fabricated ? source.fabricated_matrix : source.thin_matrix, expected_size));
+               ReadDenseDomainResponseMatrix(fabricated ? source.fabricated_matrix
+                                                        : source.thin_matrix,
+                                             expected_size));
   }
   return result;
 }
@@ -11589,9 +11617,9 @@ std::map<int, mfem::DenseMatrix> BlendedSurfaceResponseMatrices(
 {
   if (config.blend.empty())
   {
-    return ReadSurfaceResponseMatrices(
-        fabricated ? config.fabricated_surface_matrix : config.thin_surface_matrix,
-        expected_size);
+    return ReadSurfaceResponseMatrices(fabricated ? config.fabricated_surface_matrix
+                                                  : config.thin_surface_matrix,
+                                       expected_size);
   }
   std::map<int, mfem::DenseMatrix> result;
   std::set<int> interfaces;
@@ -11644,8 +11672,7 @@ SurfaceResponseMatrices BuildSurfaceResponseMatrices(
               "FabricatedSurfaceMatrix, ThinSurfaceMatrix, and Interfaces must be "
               "specified together for response-corrected surface participation!");
 
-  auto fabricated =
-      BlendedSurfaceResponseMatrices(config, true, expected_size);
+  auto fabricated = BlendedSurfaceResponseMatrices(config, true, expected_size);
   auto thin = BlendedSurfaceResponseMatrices(config, false, expected_size);
   const double voltage_scale = units.GetScaleFactor<Units::ValueType::VOLTAGE>();
   const double energy_scale = units.GetScaleFactor<Units::ValueType::ENERGY>();
@@ -11965,8 +11992,8 @@ void WriteSurfaceResponsePatches(const ResponseCorrectionData &data,
            << model->second->name << ',' << patch.model << ',' << patch.weight << ','
            << provenance.model_weight << ',' << provenance.quadrature_weight << ','
            << provenance.side_factor << ','
-           << requirements.ScaleLength(provenance.coupon_depth) << ','
-           << provenance.segment << ',' << requirements.ScaleLength(provenance.s0) << ','
+           << requirements.ScaleLength(provenance.coupon_depth) << ',' << provenance.segment
+           << ',' << requirements.ScaleLength(provenance.s0) << ','
            << requirements.ScaleLength(provenance.s1);
     for (const double value : patch.origin)
     {

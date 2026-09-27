@@ -2073,12 +2073,147 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(exact_pair_response_2d.GetPatchCount() == 1);
   CHECK(exact_pair_response_2d.GetBasisSize() == 4);
 
+  // Curvature family on an axisymmetric (r, z) mesh (decision 92): the metal line from
+  // r = 0.25 to 0.75 at R = 0.1 has a concave edge (gap toward -r) at kappa = 0.4 and a
+  // convex one at kappa = 0.1333; each is corrected by a runtime model interpolated in
+  // kappa between the straight anchor and the family's coupons (cubic Lagrange on the four
+  // nearest nodes) with patch weight 2 pi r / CouponDepth; a missing convexity is never
+  // straight.
+  {
+    const auto curved_library_path = temp.temp_dir / "fabrication-process-curved-2d.json";
+    const auto convex_only_library_path =
+        temp.temp_dir / "fabrication-process-curved-convex-only-2d.json";
+    if (Mpi::Root(Mpi::World()))
+    {
+      std::ifstream input(library_path);
+      json curved_library = json::parse(input);
+      curved_library["Name"] = "unit-test-curved-2d";
+      auto anchor = curved_library["Models"][0];
+      anchor["CouponDepth"] = 1055.0;
+      curved_library["Models"] = {anchor};
+      for (const char *convexity : {"Convex", "Concave"})
+      {
+        for (const double kappa : {0.1, 0.25, 0.5, 0.8})
+        {
+          auto model = anchor;
+          model["Name"] = std::string("curved-") + convexity + "-" + std::to_string(kappa);
+          model["Topology"] = "CurvedEdge";
+          model["Kappa"] = kappa;
+          model["Convexity"] = convexity;
+          model["CouponDepth"] = 2.0 * M_PI * 0.1 / kappa;
+          curved_library["Models"].push_back(model);
+        }
+      }
+      std::ofstream output(curved_library_path);
+      output << curved_library.dump(2) << "\n";
+      auto convex_only = curved_library;
+      convex_only["Models"].erase(convex_only["Models"].begin() + 5,
+                                  convex_only["Models"].end());
+      std::ofstream convex_only_output(convex_only_library_path);
+      convex_only_output << convex_only.dump(2) << "\n";
+    }
+    Mpi::Barrier(Mpi::World());
+    auto curved_config = automatic_config;
+    curved_config["Model"]["Axisymmetric"] = true;
+    curved_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+        curved_library_path.string();
+    IoData curved_iodata(curved_config, false);
+    curved_iodata.boundaries.cracked_attributes.insert(9);
+    curved_iodata.boundaries.cracked_attributes.insert(10);
+    automatic_meshes.back()->SetAxisymmetric(true);
+    SurfaceResponseOperator curved_response(curved_iodata, automatic_laplace);
+    CHECK(curved_response.GetPatchCount() == 2);
+    CHECK(curved_response.GetBasisSize() == 8);
+    const auto curved_statistics = curved_response.GetStatistics();
+    REQUIRE(curved_statistics["ModelCatalog"].size() == 2);
+    std::set<std::string> catalog;
+    for (const auto &entry : curved_statistics["ModelCatalog"])
+    {
+      catalog.insert(entry["Name"].get<std::string>());
+      CHECK(entry["Topology"] == "curved edge");
+    }
+    CHECK(catalog.count("isolated@concave-kappa0.4-cubic") == 1);
+    CHECK(catalog.count("isolated@convex-kappa0.133333333-cubic") == 1);
+
+    const auto curved_requirements_path =
+        temp.temp_dir / "surface-response-requirements-curved.json";
+    WriteSurfaceResponseRequirements(curved_iodata, *automatic_meshes.back(),
+                                     curved_requirements_path.string());
+    std::ifstream curved_input(curved_requirements_path);
+    REQUIRE(curved_input);
+    const json curved_requirements = json::parse(curved_input);
+    auto Lagrange = [](const std::vector<double> &nodes, double x)
+    {
+      std::vector<double> weights;
+      for (std::size_t i = 0; i < nodes.size(); i++)
+      {
+        double w = 1.0;
+        for (std::size_t j = 0; j < nodes.size(); j++)
+        {
+          if (j != i)
+          {
+            w *= (x - nodes[j]) / (nodes[i] - nodes[j]);
+          }
+        }
+        weights.push_back(w);
+      }
+      return weights;
+    };
+    int curved_records = 0;
+    for (const auto &record : curved_requirements["Requirements"])
+    {
+      if (record["Topology"] != "CurvedEdge")
+      {
+        continue;
+      }
+      curved_records++;
+      CHECK(record["Status"] == "Interpolated");
+      CHECK(record["Geometry"]["InterpolationRule"] == "cubic");
+      CHECK_THAT(record["Geometry"]["KappaMax"].get<double>(), WithinAbs(0.8, 1.0e-12));
+      const double kappa = record["Geometry"]["Kappa"].get<double>();
+      const bool convex = record["Geometry"]["Convexity"] == "Convex";
+      CHECK_THAT(kappa, WithinRel(convex ? 0.1 / 0.75 : 0.1 / 0.25, 1.0e-9));
+      const std::vector<double> nodes = convex ? std::vector<double>{0.0, 0.1, 0.25, 0.5}
+                                               : std::vector<double>{0.1, 0.25, 0.5, 0.8};
+      const auto weights = Lagrange(nodes, kappa);
+      REQUIRE(record["SelectedModels"].size() == 4);
+      double sum = 0.0;
+      for (std::size_t i = 0; i < 4; i++)
+      {
+        const auto &model = record["SelectedModels"][i];
+        CHECK_THAT(model["Weight"].get<double>(), WithinAbs(weights[i], 1.0e-6));
+        sum += model["Weight"].get<double>();
+        if (nodes[i] == 0.0)
+        {
+          CHECK(model["Name"] == "isolated");
+        }
+        else
+        {
+          CHECK(model["Topology"] == "CurvedEdge");
+        }
+      }
+      CHECK_THAT(sum, WithinAbs(1.0, 1.0e-6));
+    }
+    CHECK(curved_records == 2);
+
+    // Without concave coupons the concave edge is unmatched (reported, not straight).
+    auto convex_only_config = curved_config;
+    convex_only_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+        convex_only_library_path.string();
+    IoData convex_only_iodata(convex_only_config, false);
+    convex_only_iodata.boundaries.cracked_attributes.insert(9);
+    convex_only_iodata.boundaries.cracked_attributes.insert(10);
+    CHECK_THROWS_WITH(SurfaceResponseOperator(convex_only_iodata, automatic_laplace),
+                      Catch::Matchers::ContainsSubstring("response matching failed"));
+    automatic_meshes.back()->SetAxisymmetric(false);
+  }
+
   // Regression (2D pair conductor references, 2026-09-26): the 1- / 2-site patches of
   // BuildAutomaticResponseData2D carry the selected model's conductor references — the
   // former "if empty" guard never fired because a ResponsePatchData starts with the
   // configuration default {{0, 0, 0}} (a same-conductor gap pair read its reference in the
-  // gap, a different-conductor gap pair aborted on the reference count). Checked through the
-  // response-geometry cache, which serialises every patch.
+  // gap, a different-conductor gap pair aborted on the reference count). Checked through
+  // the response-geometry cache, which serialises every patch.
   {
     const auto cache_path = temp.temp_dir / "reference-pairs-2d-cache.json";
     auto PatchReferences = [&](const fs::path &path)
@@ -2181,7 +2316,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     auto reference_gap_parallel =
         std::make_unique<mfem::ParMesh>(Mpi::World(), reference_gap_serial);
     std::vector<std::unique_ptr<Mesh>> reference_gap_meshes;
-    reference_gap_meshes.push_back(std::make_unique<Mesh>(std::move(reference_gap_parallel)));
+    reference_gap_meshes.push_back(
+        std::make_unique<Mesh>(std::move(reference_gap_parallel)));
     LaplaceOperator reference_gap_laplace(reference_gap_iodata_2d, reference_gap_meshes);
     SurfaceResponseOperator reference_gap_response_2d(reference_gap_iodata_2d,
                                                       reference_gap_laplace);
@@ -3337,9 +3473,9 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   // (e)): the preflight is the patch dry run. With the legacy convex library every feature
   // is Missing (its models map three interface types, the island's features carry SA only:
   // key-based matching, no parametric tolerance), so nothing is patched and the solve path
-  // aborts under UnmatchedPolicy = Error. A signature-keyed library built from the manifest's
-  // own features patches every feature exactly once: the corner windows as one patch each
-  // in the feature frame, the isolated edges as one quadrature per portion.
+  // aborts under UnmatchedPolicy = Error. A signature-keyed library built from the
+  // manifest's own features patches every feature exactly once: the corner windows as one
+  // patch each in the feature frame, the isolated edges as one quadrature per portion.
   {
     auto features_island_config = island_config;
     auto &features_correction =
@@ -3373,14 +3509,17 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       {
         // The corner frame: x = the first arm, y = the second (counterclockwise about the
         // process normal), z = the process normal (design (b) 4).
-        const auto axes = feature["Frame"]["Axes"].get<std::array<std::array<double, 3>, 3>>();
+        const auto axes =
+            feature["Frame"]["Axes"].get<std::array<std::array<double, 3>, 3>>();
         CHECK_THAT(std::hypot(axes[0][0], axes[0][1], axes[0][2]), WithinAbs(1.0, 1.0e-12));
         CHECK_THAT(std::hypot(axes[1][0], axes[1][1], axes[1][2]), WithinAbs(1.0, 1.0e-12));
         CHECK_THAT(axes[2][1], WithinAbs(1.0, 1.0e-12));
-        CHECK_THAT(axes[0][0] * axes[1][0] + axes[0][1] * axes[1][1] + axes[0][2] * axes[1][2],
+        CHECK_THAT(axes[0][0] * axes[1][0] + axes[0][1] * axes[1][1] +
+                       axes[0][2] * axes[1][2],
                    WithinAbs(0.0, 1.0e-12));
         // Right-handed: x cross y = z.
-        CHECK_THAT(axes[0][2] * axes[1][0] - axes[0][0] * axes[1][2], WithinAbs(1.0, 1.0e-12));
+        CHECK_THAT(axes[0][2] * axes[1][0] - axes[0][0] * axes[1][2],
+                   WithinAbs(1.0, 1.0e-12));
       }
     }
     auto ReadPatches = [](const fs::path &path)
@@ -3414,7 +3553,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
 
     // Signature-keyed library from the manifest: the legacy corner matrices (12 knots, 3
     // contour groups) for the corners, the straight-edge matrices for the isolated edges.
-    const auto signature_library_path = temp.temp_dir / "fabrication-process-signature-3d.json";
+    const auto signature_library_path =
+        temp.temp_dir / "fabrication-process-signature-3d.json";
     if (Mpi::Root(Mpi::World()))
     {
       json signature_library = {{"Version", 2},
@@ -3501,13 +3641,14 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
         CHECK_THAT(std::stod(row[23]), WithinAbs(1.0, 1.0e-12));
         CHECK_THAT(std::abs(std::stod(row[16])) + std::abs(std::stod(row[18])),
                    WithinAbs(1.0, 1.0e-12));
-        CHECK_THAT(std::stod(row[16]) * std::stod(row[21]) - std::stod(row[18]) * std::stod(row[19]),
+        CHECK_THAT(std::stod(row[16]) * std::stod(row[21]) -
+                       std::stod(row[18]) * std::stod(row[19]),
                    WithinAbs(-1.0, 1.0e-12));
       }
       else
       {
         CHECK(segment >= 0);
-        CHECK(std::stod(row[8]) == 1.0);   // side factor of a single edge
+        CHECK(std::stod(row[8]) == 1.0);  // side factor of a single edge
         CHECK_THAT(std::stod(row[9]), WithinRel(0.2, 1.0e-12));  // coupon depth
         CHECK_THAT(weight, WithinRel(std::stod(row[7]) * (s1 - s0) / 0.2, 1.0e-12));
         if (intervals_by_feature[feature].insert({segment, s0, s1}).second)
@@ -3534,16 +3675,20 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       std::set<std::tuple<int, double, double>> portions;
       for (const auto &portion : feature["Portions"])
       {
-        portions.insert({portion[0].get<int>(), portion[1].get<double>(), portion[2].get<double>()});
+        portions.insert(
+            {portion[0].get<int>(), portion[1].get<double>(), portion[2].get<double>()});
       }
       CHECK(portions == intervals_by_feature.at(id));
     }
-    // The whole perimeter minus the corner windows (R along each of the 8 arms) is isolated.
-    CHECK_THAT(isolated_length, WithinAbs(island_perimeter - 2.0 * island_corners * 0.2, 1.0e-9));
+    // The whole perimeter minus the corner windows (R along each of the 8 arms) is
+    // isolated.
     CHECK_THAT(isolated_length,
-               WithinAbs(signature_identification["Totals"]["AssignedLength"].get<double>() -
-                             2.0 * island_corners * 0.2,
-                         1.0e-9));
+               WithinAbs(island_perimeter - 2.0 * island_corners * 0.2, 1.0e-9));
+    CHECK_THAT(
+        isolated_length,
+        WithinAbs(signature_identification["Totals"]["AssignedLength"].get<double>() -
+                      2.0 * island_corners * 0.2,
+                  1.0e-9));
     CHECK_THAT(total_weight, WithinRel(isolated_length / 0.2 + island_corners, 1.0e-12));
     // The solve path builds the same patches (no field solve: the operator only assembles
     // the local coupon responses).
@@ -3596,7 +3741,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   // component, so the two squares touching at one vertex are two conductors (a point
   // contact carries no galvanic connection); the legacy junction patch requires one
   // conductor on every arm and is not built. The vertex is reported as a PointContact.
-  CHECK(junction_island_response.GetPatchCount() == touching_island_response.GetPatchCount());
+  CHECK(junction_island_response.GetPatchCount() ==
+        touching_island_response.GetPatchCount());
   CHECK(junction_island_response.GetBasisSize() == touching_island_response.GetBasisSize());
   CHECK_THAT(junction_island_response.GetPatchWeight(),
              WithinRel(touching_island_response.GetPatchWeight(), 1.0e-12));
@@ -3985,9 +4131,10 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                      [](const auto &requirement)
                      { return requirement["Topology"] == "Junction"; }));
   const auto &junction_identification = junction_requirements["Identification"];
-  const auto junction_feature = std::find_if(
-      junction_identification["Features"].begin(), junction_identification["Features"].end(),
-      [](const auto &feature) { return feature["Type"] == "Junction"; });
+  const auto junction_feature =
+      std::find_if(junction_identification["Features"].begin(),
+                   junction_identification["Features"].end(),
+                   [](const auto &feature) { return feature["Type"] == "Junction"; });
   REQUIRE(junction_feature != junction_identification["Features"].end());
   CHECK((*junction_feature)["Match"]["Status"] == "Missing");
   const auto &arm_conductors = (*junction_feature)["Signature"]["ArmConductors"];
@@ -3995,8 +4142,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(std::set<int>(arm_conductors.begin(), arm_conductors.end()) == std::set<int>{1, 2});
   CHECK((*junction_feature)["Signature"]["ArmAnglesDegrees"].size() == 4);
   CHECK(std::count_if(junction_identification["Vertices"].begin(),
-                      junction_identification["Vertices"].end(),
-                      [](const auto &vertex)
+                      junction_identification["Vertices"].end(), [](const auto &vertex)
                       { return vertex.value("PointContact", false); }) == 1);
 
   auto impedance_junction_config = junction_maxwell_config;
@@ -4225,15 +4371,14 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     std::ifstream input(path);
     REQUIRE(input);
     const json manifest = json::parse(input);
-    const auto requirement =
-        std::find_if(manifest["LegacyRequirements"].begin(),
-                     manifest["LegacyRequirements"].end(),
-                     [&](const auto &entry)
-                     {
-                       return entry["Topology"] == "SpatialEdgeCluster" &&
-                              entry["Geometry"].contains("Edges") &&
-                              entry["Geometry"]["Edges"].size() == spatial_edges.size();
-                     });
+    const auto requirement = std::find_if(
+        manifest["LegacyRequirements"].begin(), manifest["LegacyRequirements"].end(),
+        [&](const auto &entry)
+        {
+          return entry["Topology"] == "SpatialEdgeCluster" &&
+                 entry["Geometry"].contains("Edges") &&
+                 entry["Geometry"]["Edges"].size() == spatial_edges.size();
+        });
     REQUIRE(requirement != manifest["LegacyRequirements"].end());
     CHECK((*requirement)["Status"] == expected_status);
   };
