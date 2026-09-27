@@ -59,6 +59,10 @@ private:
   std::unordered_map<int, std::unordered_map<int, int>> loc_bdr_attr;
   bool ceed_from_self = false;  // True after RebuildCeedAttributes()
 
+  // Axisymmetric (r, z) interpretation of a two-dimensional mesh: the libCEED geometry
+  // factors carry the revolution measure 2 pi x (see config::ModelData::axisymmetric).
+  bool axisymmetric = false;
+
   // Mesh data structures for assembling libCEED operators on a (mixed) mesh:
   //   - Mesh element indices for threads and element geometry types.
   //   - Attributes for domain and boundary elements. The attributes are not the same as the
@@ -94,6 +98,11 @@ public:
   auto SpaceDimension() const { return Get().SpaceDimension(); }
   auto GetNE() const { return Get().GetNE(); }
   auto GetNBE() const { return Get().GetNBE(); }
+
+  // Axisymmetric interpretation of a two-dimensional (r, z) mesh (x = r >= 0). Must be set
+  // before any libCEED geometry factor data is requested; resets cached geometry factors.
+  bool IsAxisymmetric() const { return axisymmetric; }
+  void SetAxisymmetric(bool axisymmetric);
 
   const auto &GetCeedAttributes() const { return loc_attr; }
   const auto &GetCeedBdrAttributes() const { return loc_bdr_attr; }

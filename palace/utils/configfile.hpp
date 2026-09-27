@@ -180,6 +180,12 @@ public:
   double L0 = 1.0e-6;
   double Lc = -1.0;
 
+  // Interpret a two-dimensional mesh as the (r, z) half-plane of an axisymmetric geometry
+  // (x = r >= 0, the axis at x = 0): every integral carries the full-revolution measure
+  // 2 pi r, so energies and capacitances are the three-dimensional quantities of the body
+  // of revolution. The axis boundary is natural (no boundary condition is required there).
+  bool axisymmetric = false;
+
   // Remove high-order curvature information from the mesh.
   bool remove_curvature = false;
 

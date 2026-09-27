@@ -258,6 +258,7 @@ ModelData::ModelData(const json &model)
   mesh = model.at("Mesh");  // Required
   L0 = model.value("L0", L0);
   Lc = model.value("Lc", Lc);
+  axisymmetric = model.value("Axisymmetric", axisymmetric);
   remove_curvature = model.value("RemoveCurvature", remove_curvature);
   make_simplex = model.value("MakeSimplex", make_simplex);
   make_hex = model.value("MakeHexahedral", make_hex);

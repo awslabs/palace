@@ -100,6 +100,41 @@ double EdgeDistanceWindowWeight(double distance, double distance_min, double dis
                            EdgeDistanceOutsideWeight(distance, distance_max, smoothing));
 }
 
+// Physical quadrature weight of a point, including the revolution measure 2 pi x of an
+// axisymmetric (r, z) mesh (config::ModelData::axisymmetric).
+double PhysicalQuadratureWeight(mfem::ElementTransformation &T,
+                                const mfem::IntegrationPoint &ip, bool axisymmetric)
+{
+  double weight = ip.weight * T.Weight();
+  if (axisymmetric)
+  {
+    mfem::Vector point(T.GetSpaceDim());
+    T.Transform(ip, point);
+    weight *= 2.0 * M_PI * point[0];
+  }
+  return weight;
+}
+
+// Wraps a coefficient with the revolution measure 2 pi x for MFEM integrators on an
+// axisymmetric (r, z) mesh.
+class AxisymmetricMeasureCoefficient : public mfem::Coefficient
+{
+private:
+  mfem::Coefficient &coefficient;
+
+public:
+  AxisymmetricMeasureCoefficient(mfem::Coefficient &coefficient) : coefficient(coefficient)
+  {
+  }
+
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
+  {
+    mfem::Vector point(T.GetSpaceDim());
+    T.Transform(ip, point);
+    return 2.0 * M_PI * point[0] * coefficient.Eval(T, ip);
+  }
+};
+
 class OwnershipCoefficient : public mfem::Coefficient
 {
 private:
@@ -327,7 +362,8 @@ SurfacePostOperator::SurfacePostOperator(
     const std::unordered_set<int> *cracked_attributes,
     const config::BoundaryData *boundaries,
     std::shared_ptr<const SurfacePostGeometry> *automatic_geometry)
-  : mat_op(mat_op), h1_fespace(h1_fespace), nd_fespace(nd_fespace)
+  : mat_op(mat_op), h1_fespace(h1_fespace), nd_fespace(nd_fespace),
+    axisymmetric(mat_op.GetMesh().IsAxisymmetric())
 {
   BlockTimer setup_timer(Timer::CONSTRUCT_SURFACE_POST);
 
@@ -797,7 +833,7 @@ SurfacePostOperator::GetInterfaceLocalEdgeElectricFieldEnergies(int idx,
       const double vertex_distance =
           data.edge_distance_tree->DistanceAlongEdgeToNonregularVertex(point,
                                                                        nearest.segment);
-      const double integration_weight = ip.weight * T->Weight();
+      const double integration_weight = PhysicalQuadratureWeight(*T, ip, axisymmetric);
       const double normal_energy =
           polarized ? integration_weight * normal_coefficient->Eval(*T, ip) : 0.0;
       const double tangential_energy =
@@ -1004,7 +1040,7 @@ SurfacePostOperator::GetInterfaceElectricFieldEnergyMatricesImpl(
       distances.push_back(std::sqrt(nearest.distance_squared));
       MFEM_VERIFY(!data.ownership || ip.weight >= 0.0,
                   "Ownership matrix quadrature requires nonnegative weights!");
-      const double weight = ip.weight * T->Weight();
+      const double weight = PhysicalQuadratureWeight(*T, ip, axisymmetric);
       MFEM_VERIFY(!(quadrature_extra > 0 || quadrature_rules) ||
                       (std::isfinite(weight) && weight > 0.0),
                   "Invalid physical surface quadrature weight!");
@@ -1138,7 +1174,8 @@ namespace
 // basis fields over chunks of samples so every product streams contiguous memory.
 void AccumulateInterfaceResponseGram(const double *rows, int basis_size,
                                      std::size_t sample_count, int components,
-                                     const double *sample_weights, mfem::DenseMatrix &normal,
+                                     const double *sample_weights,
+                                     mfem::DenseMatrix &normal,
                                      mfem::DenseMatrix &tangential)
 {
   constexpr int basis_block = 8;
@@ -1239,7 +1276,7 @@ SurfacePostOperator::CacheInterfaceResponseSamples() const
         samples.elements.push_back(be);
         samples.rules.push_back(&ir);
         samples.points.push_back(q);
-        samples.weights.push_back(ip.weight * T->Weight());
+        samples.weights.push_back(PhysicalQuadratureWeight(*T, ip, axisymmetric));
         samples.distances.push_back(std::sqrt(nearest.distance_squared));
       }
     }
@@ -1305,9 +1342,9 @@ void SurfacePostOperator::EvaluateInterfaceResponseRow(
 }
 
 std::vector<SurfacePostOperator::InterfaceResponseMatrix>
-SurfacePostOperator::AssembleInterfaceResponseMatrices(const InterfaceResponseSamples &samples,
-                                                       const double *rows, int basis_size,
-                                                       MPI_Comm comm) const
+SurfacePostOperator::AssembleInterfaceResponseMatrices(
+    const InterfaceResponseSamples &samples, const double *rows, int basis_size,
+    MPI_Comm comm) const
 {
   MFEM_VERIFY(basis_size > 0, "Streamed interface response requires basis fields!");
   const auto &data = *samples.data;
@@ -1442,7 +1479,7 @@ SurfacePostOperator::GetLocalVolumeEdgeElectricFieldEnergies(
       {
         AddFieldEnergy(E.Imag());
       }
-      const double integration_weight = ip.weight * T.Weight();
+      const double integration_weight = PhysicalQuadratureWeight(T, ip, axisymmetric);
       for (std::size_t radius = 0; radius < radius_count; radius++)
       {
         const double matching_distance = data.edge_distances[radius];
@@ -1524,14 +1561,17 @@ double SurfacePostOperator::GetLocalSurfaceIntegral(mfem::Coefficient &f,
         MFEM_VERIFY(point.weight >= 0.0,
                     "Ownership quadrature requires nonnegative weights!");
         T->SetIntPoint(&point);
-        integral += point.weight * T->Weight() * f.Eval(*T, point);
+        integral += PhysicalQuadratureWeight(*T, point, axisymmetric) * f.Eval(*T, point);
       }
     }
     return integral;
   }
+  AxisymmetricMeasureCoefficient axisymmetric_f(f);
   mfem::LinearForm s(&h1_fespace);
-  s.AddBoundaryIntegrator(new BoundaryLFIntegrator(f),
-                          const_cast<mfem::Array<int> &>(attr_marker));
+  s.AddBoundaryIntegrator(
+      new BoundaryLFIntegrator(
+          axisymmetric ? static_cast<mfem::Coefficient &>(axisymmetric_f) : f),
+      const_cast<mfem::Array<int> &>(attr_marker));
   s.UseFastAssembly(false);
   s.UseDevice(false);
   s.Assemble();

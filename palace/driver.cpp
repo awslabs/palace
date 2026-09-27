@@ -53,6 +53,43 @@ std::unique_ptr<BaseSolver> MakeSolver(const IoData &iodata, bool root, int size
   return nullptr;
 }
 
+// Axisymmetric (r, z) interpretation (config::ModelData::axisymmetric): the mesh must be
+// two-dimensional and lie in the half-plane x >= 0 (a tolerance of the mesh's own length
+// scale absorbs roundoff of nodes generated on the axis).
+void VerifyAxisymmetricMesh(mfem::ParMesh &mesh)
+{
+  MFEM_VERIFY(mesh.Dimension() == 2 && mesh.SpaceDimension() == 2,
+              "Model.Axisymmetric requires a two-dimensional (r, z) mesh, not (dim, "
+              "space_dim) = ("
+                  << mesh.Dimension() << ", " << mesh.SpaceDimension() << ")!");
+  mfem::Vector bbmin, bbmax;
+  mesh.GetBoundingBox(bbmin, bbmax, 2);
+  double extent = std::max(bbmax[0] - bbmin[0], bbmax[1] - bbmin[1]);
+  double xmin = mfem::infinity();
+  const auto *nodes = mesh.GetNodes();
+  if (nodes)
+  {
+    const auto *fespace = nodes->FESpace();
+    for (int i = 0; i < fespace->GetNDofs(); i++)
+    {
+      xmin = std::min(xmin, (*nodes)(fespace->DofToVDof(i, 0)));
+    }
+  }
+  else
+  {
+    for (int i = 0; i < mesh.GetNV(); i++)
+    {
+      xmin = std::min(xmin, mesh.GetVertex(i)[0]);
+    }
+  }
+  Mpi::GlobalMin(1, &xmin, mesh.GetComm());
+  Mpi::GlobalMax(1, &extent, mesh.GetComm());
+  MFEM_VERIFY(
+      xmin >= -1.0e-12 * extent,
+      "Model.Axisymmetric requires every mesh node to satisfy x = r >= 0 (found x = "
+          << xmin << ")!");
+}
+
 std::vector<std::unique_ptr<Mesh>> LoadMesh(IoData &iodata, MPI_Comm comm,
                                             const BaseSolver &solver)
 {
@@ -69,7 +106,17 @@ std::vector<std::unique_ptr<Mesh>> LoadMesh(IoData &iodata, MPI_Comm comm,
                                      memory_reporting::GetCurrentNodeMemoryStats(comm));
   for (auto &m : mfem_mesh)
   {
+    if (iodata.model.axisymmetric)
+    {
+      VerifyAxisymmetricMesh(*m);
+    }
     mesh.push_back(std::make_unique<Mesh>(std::move(m)));
+    mesh.back()->SetAxisymmetric(iodata.model.axisymmetric);
+  }
+  if (iodata.model.axisymmetric)
+  {
+    Mpi::Print(comm, "\nAxisymmetric (r, z) model: x = r >= 0, every integral carries the "
+                     "revolution measure 2 pi r\n");
   }
   return mesh;
 }

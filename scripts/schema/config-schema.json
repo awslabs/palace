@@ -65,6 +65,11 @@
           "description": "Characteristic length scale used for nondimensionalization, specified in mesh length units. This keyword should typically not be specified by the user. If omitted, Palace uses the largest mesh bounding-box dimension, `max_i(bbmax_i - bbmin_i)`. A value of `1.0` will disable nondimensionalization, so that all computations will take place in the same units as the mesh.",
           "exclusiveMinimum": 0.0
         },
+        "Axisymmetric": {
+          "type": "boolean",
+          "description": "Interpret a two-dimensional mesh as the (r, z) half-plane of an axisymmetric geometry: x = r >= 0 with the symmetry axis at x = 0. Every domain and boundary integral then carries the full-revolution measure 2\u03c0r, so energies, capacitances and surface participations are the three-dimensional quantities of the body of revolution. The axis boundary is natural (no boundary condition is required on it). Requires a two-dimensional mesh whose vertices all satisfy x >= 0.",
+          "default": false
+        },
         "RemoveCurvature": {
           "type": "boolean",
           "description": "Project high-order nodes to the mesh surface, removing all curvature before the simulation.",
