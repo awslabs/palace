@@ -111,10 +111,13 @@ def write_bases(output, radius, metal_thickness, basis_size, samples):
             )
         )
     )
+    # The hat traces (Palace DataFile) are in mesh coordinates; the library's basis points
+    # stay in the canonical coupon frame (edge at the origin, gap direction +x), which the
+    # matcher maps onto a device edge through the patch frame.
     points = PLACEMENT.to_mesh(
         [contour_point(distance, radius) for distance in distances]
     )
-    knots = PLACEMENT.to_mesh(
+    knots = np.asarray(
         [contour_point(distance, radius) for distance in knot_distances]
     )
     np.savetxt(
@@ -200,7 +203,8 @@ def write_heldout(output, traces, radius, metal_thickness):
             + 0.06 * y * y
         )
 
-    coefficients = potential(basis_points)
+    # basis_points.csv is canonical, the trace samples are in mesh coordinates.
+    coefficients = potential(PLACEMENT.to_mesh(basis_points))
     values = potential(coordinates)
     trace = output / "heldout_trace.csv"
     np.savetxt(
