@@ -232,6 +232,40 @@ smaller endpoint.
    a strip end or of an aperture narrower than 2R form one cluster instead of overlapping
    corner descriptions. Cluster portions have priority over vertex windows and parallel
    features.
+   **Curve-aware cluster geometry (option A, decision 91(1), 2026-09-27; fix-4 residual 1).**
+   Every run on a fitted arc (a rounded corner's or a bend's chord) carries the piece of the
+   fitted circle between its end angles (`BuildRunArcGeometry`; the run parameter maps
+   linearly onto the angle), and the cluster machinery evaluates it ON THE ARC: the event
+   sublevel sets (`CoresOnRun`), the core-core merge, the vertex join, the radius-R claims
+   (`RunIntervalWithinPiece`), the through zones it uses, the extension's across rule (the
+   domain of an arc piece is the radial projection inside its angular range; the wedge turn at
+   a piece end is read between arc tangents, so two chords of one circle or a chord meeting
+   its tangent arm turn by nothing) and the stack-end images of cluster / window ends on
+   concentric partner arcs (`ArcAwareImage`: a taken end on a bend cuts the concentric partner
+   radially). The distance along an arc is not convex: its sublevel sets are bracketed by
+   samples at most `ArcSampleSpacingOverR` = 0.05 R apart (at least 8 per piece) and the
+   crossings bisected (`SampledSublevelIntervals`), so the result depends on the geometry alone
+   to the bisection precision; two chords keep the former exact formulas, so a geometry without
+   arcs in its clusters is unchanged. The cluster's claims on one arc are ONE signature portion
+   (`ClusterSignaturePortions`), serialised in the frame as `{P: sorted ends, Arc: [centre,
+   midpoint], GapRadial: +1 metal inside the circle / -1 outside}` (a closed circle: equal
+   ends, the midpoint at the antipode); the frame candidates add the arc's end tangents and end
+   radial directions (none for a closed circle), the origin is the length-weighted centroid
+   with the arcs' analytic centroids, `EdgeCount` counts an arc portion once. The manifest
+   records the fitted arcs (`Arcs`: centre, radius, turn, kind RoundedCorner | Bend, joints,
+   segments) and every chord segment's arc (`Segments[].Arc`); the coupon builder chords a
+   signature arc at `ClusterArcChordStepDegrees` = 5 deg, finer so that no chord exceeds
+   `ClusterArcChordMaxLengthOverR` = 0.25 R (`signature_library.cluster_plan_view_edges`), so
+   the coupon geometry is a function of the signature and not of the device mesh. The facing
+   gate reads hits involving arc segments on the arcs too (`facing_check.ArcGeometry`). Result:
+   the re-mesh gate 74 / 74 (fix-4: 71 / 74; hairpin 12.08-13.40 um and u-ring 73.12-73.36 um
+   were the chord-based extents), 222 / 222 digests identical across the mesh variants; the
+   hairpin whose strip is exactly 2R wide (`hairpin-rho1p5-g1`) reads a rounded corner plus a
+   curved edge on every mesh (the concentric design circles are 2R apart: no event, the strict
+   rule), where the inscribed chords used to dip below 2R and form a mesh-dependent cluster
+   (the recorded knife edge, resolved on the design geometry); DS-SCT-001's three CPW
+   termination clusters go from 337 / 337 / 379 chord edges (three hashes) to 29 / 29 / 33
+   edges with 13-14 arc portions (two of them one hash: the same design box).
 4. **Vertex features.** A corner (2 chains, turn > 30 deg), endpoint (1 chain) or junction
    (>= 3 chains) that is not inside a cluster claims a *window* of length R along each of its
    chains, shortened to half the chain length when the chain ends at another vertex feature
@@ -801,6 +835,8 @@ matching pass). The new top-level `Identification` object carries the contract:
                   "ParallelCosineTolerance": 1e-8, "RoundedCornerTangentTolerance": 0.05, "ArcFitToleranceRelative": 0.05,
                   "ArcFitAbsoluteToleranceOverR": 0.05, "ArcInscribedAngleToleranceRelative": 0.05,
                   "ArcTangentLengthPreferenceOverTolerance": 10, "ArcRule": "...",
+                  "ArcSampleSpacingOverR": 0.05, "ClusterArcChordStepDegrees": 5,
+                  "ClusterArcChordMaxLengthOverR": 0.25, "ClusterGeometryRule": "...",
                   "SignatureLengthQuantumOverR": 1e-6, "SignatureAngleQuantumDegrees": 1e-6,
                   "StraightBendRadiusOverR": 10, "CurvatureWindowOverR": 1,
                   "PairSeparationToleranceRelative": 0.05, "PairSeparationSamplesPerInterval": 16,
@@ -821,9 +857,11 @@ matching pass). The new top-level `Identification` object carries the contract:
                  "Length": L, "Portions": [[segment, s0, s1], ...], "Vertices": [v, ...],
                  "Frame": {"Origin": [...], "Axes": [[...],[...],[...]]},
                  "Match": {"Status": "Matched" | "Missing", "Model": "name", "Deviation": d} } ],
-  "Segments":  [ {"Key": [[x0,y0,z0],[x1,y1,z1]], "Length": L, "Chain": c,
+  "Segments":  [ {"Key": [[x0,y0,z0],[x1,y1,z1]], "Length": L, "Chain": c, "Arc": a (chord of Arcs[a]; absent otherwise),
                   "Portions": [[s0, s1, feature], ...] } | {"Key": ..., "Length": L,
                   "Exclusion": {"Class": "...", "Reason": "..."}} ],
+  "Arcs":      [ {"Center": [...], "Radius": r, "RadiusOverR": r / R, "TurnDegrees": t,
+                  "Kind": "RoundedCorner" | "Bend", "Joints": n, "Segments": n} ],
   "Vertices":  [ {"Point": [...], "Type": "Corner|Endpoint|Junction", "TurnDegrees": t,
                   "Feature": k} | {"Point": ..., "Class": "TruncationCut"} ],
   "Exclusions": [ {"Class": "...", "Reason": "...", "Count": n, "Length": L} ],
