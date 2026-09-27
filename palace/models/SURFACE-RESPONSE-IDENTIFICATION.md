@@ -450,7 +450,10 @@ smaller endpoint.
    `SegmentSegmentDistance`); the interaction decision is `quantizer.Less(upper, 2R)` (strict,
    3D); the mutual-sides test at the pair separation x 1.05 trims a side whose partner piece
    is gone (a facing test; the separation is max(the feature's mean, the piece's LOCAL
-   separation to the partner chains): a slow taper's wider end is still facing — with the
+   separation to the partner chains) — the local separation samples the piece's two ends and
+   its midpoint only, so it is a lower bound of the piece's true maximum separation, exact
+   for a monotone taper (the recorded case) and for a constant pair: a slow taper's wider end
+   is still facing — with the
    mean alone DS-CTX-003's flux-line launchers, 1 -> 6 um over 560 um, lost the inner gap's
    pair where the outer links ended and read four isolated edges at 3.7 um, decision 103 /
    review m11; the synthetic `stack-taper-through-2R` is the reproducer); the assembly
@@ -791,7 +794,7 @@ Patch per class (weights in mesh units; `CouponDepth` = the model's longitudinal
 | pairs (`SameConductorGap`, `DifferentConductorGap`, `SameConductorStrip`, `Curved*`) | quadrature on **both** sides, side factor 1 / 2 (the longitudinal measure is the mean of the two sides: exact for a straight pair, the centreline for concentric arcs); at a sample p its foot q on the partner's portions | origin (e1 + e2) / 2, u from the model's first edge e1 toward e2, v = mean process normal; the first edge is the lower side along the feature's lateral axis `Frame.Axes[1]` (the higher one for `Chirality` -1: the canonical orientation is the mirror) | `(s1 - s0) x w_q x 1/2 / CouponDepth` |
 | `ParallelEdgeCluster` | quadrature on every side, side factor 1 / n; origin = the sample's foot on the canonical first side (the sample itself on that side); anchors = the feet on the first side of every conductor label | u = from the origin to its foot on the last side (the local lateral: a stack following straight-like bends turns with them — a feature-wide frame placed the meandering DS-SCT-001 flux-line stacks up to 49 deg off, found by the A10 placement audit), v = mean process normal | `(s1 - s0) x w_q / n / CouponDepth` |
 | `ConvexCorner`, `ConcaveCorner` (sharp or rounded), `Endpoint`, `Junction` | one patch at `Frame.Origin` (the vertex or the virtual corner of a fillet) | `Frame.Axes` (below) | model weight (1) |
-| `SpatialEdgeCluster` | one patch | a model carrying its `Signature` is built in that Signature's canonical frame and is placed with the identity map (m maps to `F.origin + F.axes^T m`; its stored `Edges`, when present, are verified at library load to lie on the Signature's portions — straight portions as segments, arc portions on their circle — within the signature tolerance, `VerifySpatialEdgesInSignatureFrame`, fail closed); a legacy model without a `Signature` maps a model-frame point m to `F.origin + F.axes^T M.axes (m - M.origin)`, M from `CanonicalClusterSignature` of its stored straight edges | model weight (1) |
+| `SpatialEdgeCluster` | one patch | a model carrying its `Signature` is built in that Signature's canonical frame and is placed with the identity map (m maps to `F.origin + F.axes^T m`; its stored `Edges`, when present, are verified at library load to lie on the Signature's portions — straight portions as segments, arc portions on their circle — within the signature tolerance, each edge on ONE portion whose relabelled `Conductor` is the edge's and whose `Interfaces` set is the set mapped to the edge's `InterfaceSlot` (a mirror-symmetric geometry with asymmetric labels lands on the portions but is refused), `VerifySpatialEdgesInSignatureFrame`, fail closed); a legacy model without a `Signature` maps a model-frame point m to `F.origin + F.axes^T M.axes (m - M.origin)`, M from `CanonicalClusterSignature` of its stored straight edges | model weight (1) |
 
 **Vertex-feature frames** (`Frame` of the manifest, shared by the library builder): corner:
 x = the first arm away from the (virtual) corner, the arms ordered so that the second is
@@ -856,7 +859,12 @@ patch origin. Model lengths are library units times R_mesh / R_library. `A10-pla
 class (features, checks, worst deviation / R, defects); a model the gate cannot evaluate is
 listed under `A10-placement-evaluable`, never silently passed. On the lane-2 transmon preflight
 the gate fails the pre-2394fdb0c run (worst 3.39 R on the 3-edge cluster) and passes the fixed
-one (5.1e-7 R).
+one (5.1e-7 R). Sensitivity per class (recorded): clusters and corners are read at the
+signature tolerance (1e-3 R); stack and pair patches are read on the mesh chords with the
+chord sagitta and the pair rule's own 5 % of the offset as allowances, so a stack / pair frame
+defect smaller than 5 % of the offset (0.1 R at a 2 R offset) is invisible to the gate by
+construction (the two stack defects it found were 0.7-2.3 R), and a slow taper wider than 5 %
+about its mean fails by construction (the coupon sits at the mean separation).
 
 ## (d) Manifest version 2
 

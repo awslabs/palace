@@ -1868,12 +1868,6 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
             (spatial_cluster && model.identification_signature),
         "SpatialEdgeCluster response models require spatial Edges (or a Signature), "
         "and other topologies cannot specify them!");
-    if (spatial_cluster && model.identification_signature && !model.spatial_edges.empty())
-    {
-      // The builder's contract: Edges in the canonical frame of the Signature (placed on a
-      // feature with the identity map).
-      VerifySpatialEdgesInSignatureFrame(model, library.matching_radius);
-    }
     MFEM_VERIFY(spatial_cluster || endpoint || junction || !model.plan_view_boundary,
                 "PlanViewBoundary is supported only by SpatialEdgeCluster, Endpoint, or "
                 "Junction models!");
@@ -2121,6 +2115,13 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
         model.interfaces.push_back({slot, type, coupon});
         mapped_interface_types.insert(type);
       }
+    }
+    if (spatial_cluster && model.identification_signature && !model.spatial_edges.empty())
+    {
+      // The builder's contract: Edges in the canonical frame of the Signature (placed on a
+      // feature with the identity map), each carrying its portion's Conductor and the
+      // InterfaceSlot mapped to its portion's interface set (after the Interfaces above).
+      VerifySpatialEdgesInSignatureFrame(model, library.matching_radius);
     }
     MFEM_VERIFY(model.response.fabricated_surface_matrix.empty() ||
                     !model.interfaces.empty(),
@@ -5551,8 +5552,11 @@ ModelClusterSignature(const LibraryModel &model, double radius,
 // (the feature's canonical frame is the model frame), which is exact for straight and arc
 // portions alike — ModelClusterSignature cannot rebuild an arc portion from chords, so a
 // re-canonicalisation of the chorded Edges would land in another frame. The contract is
-// verified here (fail closed): every edge endpoint lies on a portion of the Signature
-// within the signature parameter tolerance.
+// verified here (fail closed): every edge lies on one portion of the Signature (both
+// endpoints within the signature parameter tolerance) whose relabelled Conductor is the
+// edge's Conductor and whose interface set is the set of the edge's InterfaceSlot — a
+// geometrically mirror-symmetric cluster with asymmetric labels lands on the portions but
+// would attach its coupons to the wrong conductors / interfaces.
 void VerifySpatialEdgesInSignatureFrame(const LibraryModel &model, double radius)
 {
   MFEM_VERIFY(model.identification_signature && !model.spatial_edges.empty(),
@@ -5563,6 +5567,40 @@ void VerifySpatialEdgesInSignatureFrame(const LibraryModel &model, double radius
               "SpatialEdgeCluster model \"" << model.name
                                             << "\" Signature carries no Portions!");
   const double tolerance = kSignatureParameterToleranceOverRadius;  // in units of R
+  // The interface set of every InterfaceSlot (the types mapped to it; empty without a
+  // mapping), serialised as the Signature serialises a portion's Interfaces (sorted).
+  std::map<int, std::set<std::string>> slot_types;
+  for (const auto &interface : model.interfaces)
+  {
+    slot_types[interface.slot].insert(ToString(interface.type));
+  }
+  auto SlotInterfaceSet = [&](int slot)
+  {
+    std::set<std::string> types;
+    if (auto it = slot_types.find(slot); it != slot_types.end())
+    {
+      types = it->second;
+    }
+    return types;
+  };
+  auto PortionInterfaceSet = [](const nlohmann::json &portion)
+  {
+    std::set<std::string> types;
+    for (const auto &type : portion.value("Interfaces", nlohmann::json::array()))
+    {
+      types.insert(type.get<std::string>());
+    }
+    return types;
+  };
+  auto JoinSet = [](const std::set<std::string> &types)
+  {
+    std::string joined = "[";
+    for (const auto &type : types)
+    {
+      joined += (joined.size() > 1 ? ", " : "") + type;
+    }
+    return joined + "]";
+  };
   // Distance (in units of R) from a point q to a portion: a straight portion is the
   // segment P; an arc portion the arc from P[0] through the midpoint to P[1] (a closed
   // circle when the ends coincide).
@@ -5623,27 +5661,66 @@ void VerifySpatialEdgesInSignatureFrame(const LibraryModel &model, double radius
                     << e << " has ProcessNormal [" << edge.process_normal[0] << ", "
                     << edge.process_normal[1] << ", " << edge.process_normal[2] << "]!");
     const Point3D tangent = Normalize(Cross(edge.gap_direction, edge.process_normal));
-    for (const double s : edge.interval)
+    std::array<Point3D, 2> endpoints;
+    for (std::size_t k = 0; k < 2; k++)
     {
-      const Point3D p = Add(edge.point, Scale(s, tangent));
-      const std::array<double, 2> q = {p[0] / radius, p[1] / radius};
-      double nearest = std::numeric_limits<double>::infinity();
-      for (const auto &portion : signature["Portions"])
-      {
-        nearest = std::min(nearest, PortionDistance(portion, q));
-      }
-      MFEM_VERIFY(std::abs(p[2]) / radius <= tolerance && nearest <= tolerance,
+      endpoints[k] = Add(edge.point, Scale(edge.interval[k], tangent));
+      MFEM_VERIFY(std::abs(endpoints[k][2]) / radius <= tolerance,
                   "SpatialEdgeCluster model \""
                       << model.name << "\" carries a Signature but edge " << e
-                      << " endpoint [" << p[0] << ", " << p[1] << ", " << p[2] << "] lies "
-                      << nearest
-                      << " R from the nearest Signature portion "
-                         "(tolerance "
+                      << " endpoint [" << endpoints[k][0] << ", " << endpoints[k][1] << ", "
+                      << endpoints[k][2] << "] lies off the process plane (tolerance "
                       << tolerance
                       << " R): a version-2 model's Edges must be the Signature's portions "
-                         "in its canonical frame (Point = P x R, Interval along gap x "
-                         "normal; arc portions chorded on their circle)!");
+                         "in its canonical frame!");
     }
+    // The portion holding the edge: both endpoints within the tolerance (a builder edge is
+    // one straight portion or one chord of one arc portion). The nearest portion by the
+    // farther endpoint reports a geometric miss.
+    double nearest = std::numeric_limits<double>::infinity();
+    std::size_t nearest_portion = 0;
+    bool labels_agree = false;
+    for (std::size_t p = 0; p < signature["Portions"].size(); p++)
+    {
+      const auto &portion = signature["Portions"][p];
+      double distance = 0.0;
+      for (const auto &endpoint : endpoints)
+      {
+        const std::array<double, 2> q = {endpoint[0] / radius, endpoint[1] / radius};
+        distance = std::max(distance, PortionDistance(portion, q));
+      }
+      if (distance < nearest)
+      {
+        nearest = distance;
+        nearest_portion = p;
+      }
+      labels_agree =
+          labels_agree ||
+          (distance <= tolerance && portion.value("Conductor", 0) == edge.conductor &&
+           PortionInterfaceSet(portion) == SlotInterfaceSet(edge.interface_slot));
+    }
+    MFEM_VERIFY(nearest <= tolerance,
+                "SpatialEdgeCluster model \""
+                    << model.name << "\" carries a Signature but edge " << e
+                    << " endpoints [" << endpoints[0][0] << ", " << endpoints[0][1]
+                    << "] / [" << endpoints[1][0] << ", " << endpoints[1][1] << "] lie "
+                    << nearest << " R from the nearest Signature portion (tolerance "
+                    << tolerance
+                    << " R): a version-2 model's Edges must be the Signature's portions "
+                       "in its canonical frame (Point = P x R, Interval along gap x "
+                       "normal; arc portions chorded on their circle)!");
+    const auto &portion = signature["Portions"][nearest_portion];
+    MFEM_VERIFY(labels_agree,
+                "SpatialEdgeCluster model \""
+                    << model.name << "\" carries a Signature but edge " << e
+                    << " (Conductor " << edge.conductor << ", InterfaceSlot "
+                    << edge.interface_slot << " = "
+                    << JoinSet(SlotInterfaceSet(edge.interface_slot))
+                    << ") lies on Signature portion " << nearest_portion << " (Conductor "
+                    << portion.value("Conductor", 0) << ", Interfaces "
+                    << JoinSet(PortionInterfaceSet(portion))
+                    << "): a version-2 model's Edges carry their portion's relabelled "
+                       "Conductor and the InterfaceSlot mapped to its interface set!");
   }
 }
 

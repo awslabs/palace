@@ -4095,11 +4095,37 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   // gap x normal), every arc portion chorded into n = max(ceil(sweep / 5 deg),
   // ceil(arc length / 0.25 R), 1) chords with the radial gap at each chord's middle
   // (signature_library.cluster_plan_view_edges). Conductor labels 1, 2, ... in order of
-  // first occurrence (the canonical serialisation relabels the same way).
-  auto ChordedSignatureEdges = [](const json &signature, double radius)
+  // first occurrence (the canonical serialisation relabels the same way); InterfaceSlot k =
+  // the k-th distinct portion interface set in sorted order, the slots SignatureInterfaces
+  // maps (every type of slot k to Coupon 1).
+  auto SignatureInterfaceSets = [](const json &signature)
+  {
+    std::set<std::string> sets;
+    for (const auto &portion : signature["Portions"])
+    {
+      sets.insert(portion.value("Interfaces", json::array()).dump());
+    }
+    return std::vector<std::string>(sets.begin(), sets.end());
+  };
+  auto SignatureInterfaces = [&](const json &signature)
+  {
+    json interfaces = json::array();
+    const auto sets = SignatureInterfaceSets(signature);
+    for (std::size_t slot = 0; slot < sets.size(); slot++)
+    {
+      for (const auto &type : json::parse(sets[slot]))
+      {
+        interfaces.push_back({{"Slot", slot}, {"Type", type}, {"Coupon", 1}});
+      }
+    }
+    return interfaces;
+  };
+  auto ChordedSignatureEdges = [&](const json &signature, double radius)
   {
     json edges = json::array();
     std::map<int, int> conductor_labels;
+    const auto interface_sets = SignatureInterfaceSets(signature);
+    int interface_slot = 0;
     auto AddEdge = [&](std::array<double, 2> a, std::array<double, 2> b,
                        std::array<double, 2> gap, int conductor)
     {
@@ -4113,6 +4139,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                        {"ProcessNormal", {0.0, 0.0, 1.0}},
                        {"Interval", forward ? json{0.0, length} : json{-length, 0.0}},
                        {"Conductor", conductor},
+                       {"InterfaceSlot", interface_slot},
                        {"BoundaryCondition", "PEC"}});
     };
     for (const auto &portion : signature["Portions"])
@@ -4123,6 +4150,10 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
         conductor_labels[raw_conductor] = static_cast<int>(conductor_labels.size()) + 1;
       }
       const int conductor = conductor_labels.at(raw_conductor);
+      interface_slot =
+          static_cast<int>(std::find(interface_sets.begin(), interface_sets.end(),
+                                     portion.value("Interfaces", json::array()).dump()) -
+                           interface_sets.begin());
       const auto P = portion["P"].get<std::array<double, 4>>();
       const std::array<double, 2> a = {P[0], P[1]}, b = {P[2], P[3]};
       if (!portion.contains("Arc"))
@@ -4352,6 +4383,82 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                   .string()),
           Catch::Matchers::ContainsSubstring("canonical frame"));
     }
+    // The load-time contract is not geometric only: a cluster whose geometry is symmetric
+    // under x -> -x but whose labels are not (two facing edges of different conductors, the
+    // left one with the full interface set, the right one with SA alone) has mirrored
+    // Edges that land on the portions exactly, with every Conductor / InterfaceSlot
+    // attached to the wrong portion; the correct Edges load, the mirrored Edges and the
+    // Edges with the interface slots exchanged are refused.
+    {
+      auto labelled_library = signature_library;
+      auto &labelled_model = labelled_library["Models"].back();
+      labelled_model["Name"] = "v2-signature-cluster-asymmetric-labels";
+      labelled_model["Signature"] = {{"Type", "SpatialEdgeCluster"},
+                                     {"EdgeCount", 2},
+                                     {"Portions",
+                                      {{{"Conductor", 1},
+                                        {"Gap", {1.0, 0.0}},
+                                        {"Interfaces", {"MA", "MS", "SA"}},
+                                        {"Law", "{\"Type\":\"PEC\"}"},
+                                        {"P", {-1.0, -1.0, -1.0, 1.0}}},
+                                       {{"Conductor", 2},
+                                        {"Gap", {-1.0, 0.0}},
+                                        {"Interfaces", {"SA"}},
+                                        {"Law", "{\"Type\":\"PEC\"}"},
+                                        {"P", {1.0, -1.0, 1.0, 1.0}}}}},
+                                     {"Vertices", json::array()}};
+      const double radius = labelled_library["MatchingRadius"].get<double>();
+      labelled_model["Interfaces"] = SignatureInterfaces(labelled_model["Signature"]);
+      labelled_model["Edges"] = ChordedSignatureEdges(labelled_model["Signature"], radius);
+      REQUIRE(labelled_model["Edges"].size() == 2);
+      REQUIRE(labelled_model["Edges"][0]["InterfaceSlot"] == 0);  // [MA, MS, SA]
+      REQUIRE(labelled_model["Edges"][1]["InterfaceSlot"] == 1);  // [SA]
+      const auto labelled_library_path =
+          temp.temp_dir / "fabrication-process-v2-signature-asymmetric-labels-3d.json";
+      auto labelled_config = high_order_spatial_config;
+      labelled_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+          labelled_library_path.string();
+      auto WriteAndIdentify = [&](const json &library, const std::string &suffix)
+      {
+        {
+          std::ofstream output(labelled_library_path);
+          output << library.dump(2) << "\n";
+        }
+        IoData iodata(labelled_config, false);
+        iodata.boundaries.cracked_attributes.insert(9);
+        iodata.boundaries.cracked_attributes.insert(10);
+        WriteSurfaceResponseRequirements(
+            iodata, *high_order_spatial_mesh,
+            (temp.temp_dir /
+             ("surface-response-requirements-v2-labels-" + suffix + ".json"))
+                .string());
+      };
+      CHECK_NOTHROW(WriteAndIdentify(labelled_library, "correct"));
+      // Mirror x -> -x: Point.x and GapDirection.x change sign, the Interval (along
+      // gap x normal, which flips) is reversed; every endpoint lands on the other portion.
+      auto mirrored_library = labelled_library;
+      for (auto &edge : mirrored_library["Models"].back()["Edges"])
+      {
+        edge["Point"][0] = -edge["Point"][0].get<double>();
+        edge["GapDirection"][0] = -edge["GapDirection"][0].get<double>();
+        const auto interval = edge["Interval"].get<std::array<double, 2>>();
+        edge["Interval"] = {-interval[1], -interval[0]};
+      }
+      CHECK_THROWS_WITH(WriteAndIdentify(mirrored_library, "mirrored"),
+                        Catch::Matchers::ContainsSubstring("relabelled Conductor") &&
+                            Catch::Matchers::ContainsSubstring(
+                                "(Conductor 1, InterfaceSlot 0 = [MA, MS, SA]) lies on "
+                                "Signature portion 1 (Conductor 2, Interfaces [SA])"));
+      // The right geometry and conductors with the interface slots exchanged.
+      auto swapped_slots_library = labelled_library;
+      swapped_slots_library["Models"].back()["Edges"][0]["InterfaceSlot"] = 1;
+      swapped_slots_library["Models"].back()["Edges"][1]["InterfaceSlot"] = 0;
+      CHECK_THROWS_WITH(WriteAndIdentify(swapped_slots_library, "swapped-slots"),
+                        Catch::Matchers::ContainsSubstring("relabelled Conductor") &&
+                            Catch::Matchers::ContainsSubstring(
+                                "(Conductor 1, InterfaceSlot 1 = [SA]) lies on Signature "
+                                "portion 0 (Conductor 1, Interfaces [MA, MS, SA])"));
+    }
     signature_model.erase("Edges");  // keyed and built by the Signature alone
     std::ofstream signature_library_output(signature_library_path);
     signature_library_output << signature_library.dump(2) << "\n";
@@ -4402,6 +4509,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       auto &edges_model = edges_library["Models"].back();
       edges_model["Name"] = "v2-signature-cluster-edges";
       const double radius = edges_library["MatchingRadius"].get<double>();
+      edges_model["Interfaces"] = SignatureInterfaces((*cluster_feature)["Signature"]);
       edges_model["Edges"] = ChordedSignatureEdges((*cluster_feature)["Signature"], radius);
       CHECK(edges_model["Edges"].size() >
             (*cluster_feature)["Signature"]["Portions"].size());
@@ -4597,6 +4705,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
         {
           finger_model.erase(key);
         }
+        finger_model["Interfaces"] = SignatureInterfaces(*finger_signature);
         finger_model["Edges"] = ChordedSignatureEdges(*finger_signature, finger_R);
         CHECK(finger_model["Edges"].size() >= 3 + 2 * 18);  // 18 chords per quarter circle
         std::ofstream output(finger_library_path);

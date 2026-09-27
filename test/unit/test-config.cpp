@@ -839,6 +839,37 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   CHECK_THROWS(IoData(explicit_maxwell, false));
 }
 
+TEST_CASE("Config axisymmetric model electrostatic only", "[config][Serial]")
+{
+  // The 2 pi r measure is carried by the libCEED geometry factors and the electrostatic
+  // surface post-processing only (curved coupons on (r, z) meshes): every other problem
+  // type is refused with Model.Axisymmetric.
+  json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                 {"Model", {{"Mesh", "test.msh"}, {"Axisymmetric", true}}},
+                 {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                 {"Boundaries", json::object()},
+                 {"Solver", {{"Electrostatic", json::object()}}}};
+  const IoData electrostatic(config, false);
+  CHECK(electrostatic.model.axisymmetric);
+
+  for (const auto &[type, solver] : std::vector<std::pair<std::string, json>>{
+           {"Magnetostatic", json::object()},
+           {"Eigenmode", {{"Target", 1.0}}},
+           {"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.5}}},
+           {"Transient",
+            {{"Excitation", "Gaussian"}, {"MaxTime", 1.0}, {"TimeStep", 0.1}}}})
+  {
+    json refused = config;
+    refused["Problem"]["Type"] = type;
+    refused["Solver"] = {{type, solver}};
+    CHECK_THROWS_WITH(IoData(refused, false),
+                      Catch::Matchers::ContainsSubstring(
+                          "\"Model.Axisymmetric\" is only supported for electrostatic"));
+    refused["Model"]["Axisymmetric"] = false;
+    CHECK_NOTHROW(IoData(refused, false));
+  }
+}
+
 TEST_CASE("Config interface dielectric edge refinement", "[config][Serial]")
 {
   json dielectric = {{"Attributes", {1}},
