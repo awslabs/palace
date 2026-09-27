@@ -217,6 +217,54 @@ class CornerStackPair(unittest.TestCase):
         gates, _ = PC.placement_gates(identification, patches, library, R)
         self.assertEqual(next(g for g in gates if g["Gate"] == "A10-placement-pairs")["Status"], "FAIL")
 
+    def test_curved_pair_convexity_side(self):
+        # A concentric curved gap (inner arc radius 3 R, outer 3.5 R, separation 0.5 R) on
+        # 1-chord-per-5-deg polylines, side 0 = the inner arc; a curvature-family runtime
+        # model `<anchor>@convex-kappa...` resolves to its anchor and its e1 (origin - s/2 U)
+        # must sit on the INNER circle (Convex gap edge = metal inside the bend). With the
+        # geometrically right frame (U outward, e1 on side 0) a coupon of the WRONG convexity
+        # (the concave blend, the concave first-order node) is the defect the side checks
+        # cannot see; a runtime model of an unknown anchor is not evaluable.
+        centre = np.asarray([0.0, 0.0, 0.0])
+        segments, arcs, portions, sides = [], [], [], []
+        for side, radius in enumerate((3.0 * R, 3.5 * R)):
+            arcs.append({"Center": centre.tolist(), "Radius": radius, "RadiusOverR": radius / R, "TurnDegrees": 40.0, "Kind": "Bend", "Joints": 8, "Segments": 8})
+            for k in range(8):
+                a0, a1 = math.radians(5 * k), math.radians(5 * (k + 1))
+                p0 = [radius * math.cos(a0), radius * math.sin(a0), 0.0]
+                p1 = [radius * math.cos(a1), radius * math.sin(a1), 0.0]
+                length = float(np.linalg.norm(np.asarray(p1) - p0))
+                segments.append({"Key": [p0, p1], "Length": length, "Chain": side, "Arc": side})
+                portions.append([len(segments) - 1, 0.0, length])
+                sides.append(side)
+        feature = {"Id": 3, "Type": "CurvedSameConductorGap", "Signature": {"SeparationOverR": 0.5, "RadiusOverR": 3.0, "Convexity": "Convex"},
+                   "Hash": "c", "Chirality": 0, "Length": 40.0, "Portions": portions, "Sides": sides,
+                   "Frame": {"Origin": [0.0, 0.0, 0.0], "Axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]},
+                   "Match": {"Status": "Matched", "Model": "gap@convex-kappa0.333333333-cubic"}}
+        identification = {"MatchingRadius": R, "Segments": segments, "Arcs": arcs, "Features": [feature]}
+        library = {"MatchingRadius": R, "Models": [{"Name": "gap", "Topology": "SameConductorGap", "Separation": 0.5 * R},
+                                                   {"Name": "gap-concave-0.1", "Topology": "CurvedSameConductorGap", "Separation": 0.5 * R, "Kappa": 0.1, "Convexity": "Concave"}]}
+        # Patch at 20 deg: origin on the centreline radius 3.25 R, U radially outward (e1 inner).
+        angle = math.radians(20.0)
+        origin = np.asarray([3.25 * R * math.cos(angle), 3.25 * R * math.sin(angle), 0.0])
+        _, outward = frame((0.0, 0.0, 0.0), 20.0)
+        _, inward = frame((0.0, 0.0, 0.0), 200.0)
+        gates, _ = PC.placement_gates(identification, [patch(3, "gap@convex-kappa0.333333333-cubic", origin, outward, segment=0)], library, R)
+        pairs = next(g for g in gates if g["Gate"] == "A10-placement-pairs")
+        self.assertEqual(pairs["Status"], "PASS")
+        self.assertEqual(pairs["Detail"]["ConvexityChecks"], 1)
+        for wrong in ("gap@concave-kappa0.333333333-cubic", "gap-concave-0.1"):
+            gates, _ = PC.placement_gates(identification, [patch(3, wrong, origin, outward, segment=0)], library, R)
+            pairs = next(g for g in gates if g["Gate"] == "A10-placement-pairs")
+            self.assertEqual(pairs["Status"], "FAIL")
+            self.assertEqual(pairs["Detail"]["Examples"][0]["Defects"][0]["Point"], "patch 0 convexity")
+        # An inverted frame (U inward: e1 on the outer arc) fails the side check itself.
+        gates, _ = PC.placement_gates(identification, [patch(3, "gap@convex-kappa0.333333333-cubic", origin, inward, segment=0)], library, R)
+        self.assertEqual(next(g for g in gates if g["Gate"] == "A10-placement-pairs")["Status"], "FAIL")
+        # A runtime model whose anchor is not in the library is listed, never passed.
+        gates, _ = PC.placement_gates(identification, [patch(3, "other@convex-kappa0.3-cubic", origin, outward, segment=0)], library, R)
+        self.assertEqual(next(g for g in gates if g["Gate"] == "A10-placement-evaluable")["Status"], "FAIL")
+
 
 if __name__ == "__main__":
     unittest.main()

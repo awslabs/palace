@@ -465,6 +465,7 @@ def placement_gates(identification, patches, library, radius):
             "ToleranceOverR": SIGNATURE_TOLERANCE_OVER_R,
             "Models": sorted({m for e in entries for m in e.get("Models", [e["Model"]])}),
             "FeaturesWithDefects": len(defects),
+            "ConvexityChecks": sum(e.get("ConvexityChecks", 0) for e in entries),
             "Examples": [{k: v for k, v in e.items() if k != "Checks"} for e in defects[:6]],
             "Basis": "model geometry (library units x R_mesh / R_library) mapped through the dry-run patch frame lies on the feature's claimed portions (straight segments; arcs on their fitted circle within the claimed range) within the signature parameter tolerance; stack / pair patches on the mesh chords within the chord sagitta and the pair rule's 5 % of the offset (a slow taper wider than 5 % about its mean fails by construction: the coupon at the mean separation)",
         }
