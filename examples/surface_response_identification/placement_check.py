@@ -26,9 +26,12 @@ R_mesh / R_library):
   model ``CornerRadius`` (centre CornerRadius x bisector / sin(Angle / 2)).
 * ParallelEdgeCluster (stack): per longitudinal patch, origin + Offset_k u lies on the
   claimed portions of side k (sides in increasing lateral offset, reversed for chirality
-  -1, as the patch construction orders them).
+  -1, as the patch construction orders them); arc segments read as their mesh chords (the
+  patch sits on the mesh) with the chord's sagitta L^2 / (8 r) as an allowance (the design
+  offsets are the concentric circles' separations), and the pair rule's own 5 % of the
+  offset (PairSeparationToleranceRelative: the admissible variation of a pair's separation).
 * SameConductorGap / DifferentConductorGap / SameConductorStrip: origin -+ Separation / 2 u
-  lies on side 0 / 1 (swapped for chirality -1).
+  lies on side 0 / 1 (swapped for chirality -1), chords and the 5 % likewise.
 
 A model whose placement cannot be evaluated from its record (a curved pair, a topology the
 gate does not cover) is listed, never silently passed. This gate is the one a misplaced
@@ -56,6 +59,13 @@ from . import signature_library  # noqa: E402
 # lengths agree within this fraction of R; a placed model must agree with its feature at least
 # as well.
 SIGNATURE_TOLERANCE_OVER_R = 1.0e-3
+# Identification.Conventions PairSeparationToleranceRelative: the bent-pair rule admits a pair
+# whose sampled separation varies by this fraction (a slow taper is one pair at its mean
+# separation), so a pair / stack model's edge lines may sit this far from the mesh edges by
+# the rule's own definition; a taper wider than that about its mean fails the placement gate
+# by construction (the coupon at the mean separation is placed where the local separation
+# differs by more) - a recorded limitation of "one separation per pair", reported as such.
+PAIR_SEPARATION_TOLERANCE = 0.05
 
 CLUSTER_TYPES = ("SpatialEdgeCluster",)
 CORNER_TYPES = ("ConvexCorner", "ConcaveCorner")
@@ -101,6 +111,7 @@ class ClaimedGeometry:
         self.normal = np.asarray(normal, dtype=float)
         self.normal /= np.linalg.norm(self.normal)
         self.straight = []          # (p0, p1, side)
+        self.chords = []            # (p0, p1, side): the claimed mesh chords of arc segments
         self.arc_ranges = {}        # arc index -> dict(center, radius, u, v, angles, side)
         self.points = []            # claimed straight endpoints and arc ends (for the reverse check)
         sides = feature.get("Sides") or [0] * len(feature["Portions"])
@@ -115,19 +126,28 @@ class ClaimedGeometry:
                 self.points.append(p0)
                 self.points.append(p1)
                 continue
+            self.chords.append((p0, p1, int(side)))
             index = int(segment["Arc"])
             arc = arcs[index]
             entry = self.arc_ranges.get(index)
             if entry is None:
                 center = np.asarray(arc["Center"], dtype=float)
                 # In-plane basis of the arc: u toward the first claimed point, v = n x u.
-                u = p0 - center
+                u = key[0] - center
                 u -= float(np.dot(u, self.normal)) * self.normal
                 u /= np.linalg.norm(u)
                 v = np.cross(self.normal, u)
                 entry = {"center": center, "radius": float(arc["Radius"]), "u": u, "v": v, "angles": [], "side": int(side), "ends": {}}
                 self.arc_ranges[index] = entry
-            for q in (p0, p1):
+            # A claim cut inside a chord is a point of the ARC (the identification maps the
+            # run parameter linearly onto the angle), not of the chord: the claimed end is
+            # the circle point at the interpolated angle (a chord's interior lies up to its
+            # sagitta inside the circle).
+            a0, a1 = self._angle(entry, key[0]), self._angle(entry, key[1])
+            sweep = math.remainder(a1 - a0, 2.0 * math.pi)
+            for s in (float(s0), float(s1)):
+                angle = a0 + sweep * s / length
+                q = entry["center"] + entry["radius"] * (math.cos(angle) * entry["u"] + math.sin(angle) * entry["v"])
                 angle = self._angle(entry, q)
                 entry["angles"].append(angle)
                 entry["ends"][round(angle, 9)] = q
@@ -151,12 +171,21 @@ class ClaimedGeometry:
         excess = max(0.0, entry["min"] - angle, angle - entry["max"])
         return math.hypot(radial, excess * entry["radius"], out_of_plane)
 
-    def distance(self, point, side=None):
-        """Distance from a point to the claimed geometry (optionally of one side)."""
+    def distance(self, point, side=None, chords=False):
+        """Distance from a point to the claimed geometry (optionally of one side). Arc
+        segments are read on their fitted circle (a cluster model is built on the design
+        circle) or, with ``chords``, on the claimed mesh chords (a longitudinal patch sits on
+        the mesh: its origin is a quadrature point of the chord, up to the sagitta inside the
+        circle)."""
         best = math.inf
         for p0, p1, s in self.straight:
             if side is None or s == side:
                 best = min(best, _segment_distance(point, p0, p1))
+        if chords:
+            for p0, p1, s in self.chords:
+                if side is None or s == side:
+                    best = min(best, _segment_distance(point, p0, p1))
+            return best
         for entry in self.arc_ranges.values():
             if side is None or entry["side"] == side:
                 best = min(best, self._arc_distance(entry, point))
@@ -222,11 +251,23 @@ def placement_gates(identification, patches, library, radius):
         claimed = ClaimedGeometry(feature, segments, arcs, normal)
         entry = {"Feature": feature_id, "Type": kind, "Model": model_name, "WorstOverR": 0.0, "Checks": 0, "Defects": []}
 
-        def record(point_label, deviation, mapped=None):
+        def record(point_label, deviation, mapped=None, allowance=0.0):
             entry["Checks"] += 1
             entry["WorstOverR"] = max(entry["WorstOverR"], deviation / radius)
-            if deviation > tol and len(entry["Defects"]) < 8:
-                entry["Defects"].append({"Point": point_label, "DeviationOverR": deviation / radius, "Mapped": None if mapped is None else [float(x) for x in mapped]})
+            if deviation > tol + allowance and len(entry["Defects"]) < 8:
+                entry["Defects"].append({"Point": point_label, "DeviationOverR": deviation / radius, "AllowanceOverR": allowance / radius, "Mapped": None if mapped is None else [float(x) for x in mapped]})
+
+        def chord_sagitta(row):
+            """A longitudinal patch on a mesh chord of a fitted arc: the chord lies up to its
+            sagitta L^2 / (8 r) inside the design circle, and the concentric sides' chords are
+            offset by the same order; the model's design offsets are checked to within it."""
+            if row["Segment"] < 0:
+                return 0.0
+            segment = segments[row["Segment"]]
+            if "Arc" not in segment:
+                return 0.0
+            length = float(segment["Length"])
+            return length * length / (8.0 * float(arcs[int(segment["Arc"])]["Radius"]))
 
         if kind in CLUSTER_TYPES:
             pairs, source = model_cluster_edges(model, radius_library)
@@ -311,7 +352,8 @@ def placement_gates(identification, patches, library, radius):
                     origin, axes = row["Origin"], row["Axes"]
                     for k, offset in enumerate(offsets):
                         q = origin + offset * axes[0]
-                        record(f"patch {row['Patch']} edge {k}", claimed.distance(q, side=ordered[k]), q)
+                        record(f"patch {row['Patch']} edge {k}", claimed.distance(q, side=ordered[k], chords=True), q,
+                               max(chord_sagitta(row), PAIR_SEPARATION_TOLERANCE * offset - tol))
             entry["Patches"] = len(rows)
             results["Stacks"].append(entry)
         elif kind in PAIR_TYPES:
@@ -333,7 +375,8 @@ def placement_gates(identification, patches, library, radius):
                     origin, axes = row["Origin"], row["Axes"]
                     for k, sign in enumerate((-1.0, 1.0)):
                         q = origin + sign * 0.5 * separation * axes[0]
-                        record(f"patch {row['Patch']} side {k}", claimed.distance(q, side=ordered[k]), q)
+                        record(f"patch {row['Patch']} side {k}", claimed.distance(q, side=ordered[k], chords=True), q,
+                               max(chord_sagitta(row), PAIR_SEPARATION_TOLERANCE * 0.5 * separation - tol))
             entry["Patches"] = len(rows)
             results["Pairs"].append(entry)
         else:
@@ -353,7 +396,7 @@ def placement_gates(identification, patches, library, radius):
             "Models": sorted({e["Model"] for e in entries}),
             "FeaturesWithDefects": len(defects),
             "Examples": [{k: v for k, v in e.items() if k != "Checks"} for e in defects[:6]],
-            "Basis": "model geometry (library units x R_mesh / R_library) mapped through the dry-run patch frame lies on the feature's claimed portions (straight segments; arcs on their fitted circle within the claimed range) within the signature parameter tolerance",
+            "Basis": "model geometry (library units x R_mesh / R_library) mapped through the dry-run patch frame lies on the feature's claimed portions (straight segments; arcs on their fitted circle within the claimed range) within the signature parameter tolerance; stack / pair patches on the mesh chords within the chord sagitta and the pair rule's 5 % of the offset (a slow taper wider than 5 % about its mean fails by construction: the coupon at the mean separation)",
         }
         gates.append(gate(name, not defects, detail, evaluable=bool(entries)))
         summary[key] = {"Features": len(entries), "WorstDeviationOverR": worst, "FeaturesWithDefects": len(defects)}

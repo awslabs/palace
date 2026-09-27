@@ -195,8 +195,11 @@ class CornerStackPair(unittest.TestCase):
         patches = [patch(7, "stack", np.asarray([x, 2.5, 0.0]), down, segment=2, index=i) for i, x in enumerate((2.5, 5.0))]
         gates, _ = PC.placement_gates(identification, patches, library, R)
         self.assertEqual(next(g for g in gates if g["Gate"] == "A10-placement-stacks")["Status"], "PASS")
-        # An offset off by 2e-3 R fails.
+        # An offset off by 6 % of itself (beyond the pair rule's 5 %) fails; 2e-3 R (0.3 %) does not.
         library["Models"][0]["Edges"][1]["Offset"] = (0.75 + 0.002) * 1.9
+        gates, _ = PC.placement_gates(identification, patches, library, R)
+        self.assertEqual(next(g for g in gates if g["Gate"] == "A10-placement-stacks")["Status"], "PASS")
+        library["Models"][0]["Edges"][1]["Offset"] = 0.75 * 1.06 * 1.9
         gates, _ = PC.placement_gates(identification, patches, library, R)
         self.assertEqual(next(g for g in gates if g["Gate"] == "A10-placement-stacks")["Status"], "FAIL")
         # A pair: sides y = 0 and y = 1, separation 0.5 R, origin at the midline.
@@ -207,7 +210,10 @@ class CornerStackPair(unittest.TestCase):
         patches = [patch(8, "pair", np.asarray([4.0, 0.5, 0.0]), axes, segment=0, index=0)]
         gates, _ = PC.placement_gates(identification, patches, library, R)
         self.assertEqual(next(g for g in gates if g["Gate"] == "A10-placement-pairs")["Status"], "PASS")
-        library["Models"][0]["Separation"] = 1.1
+        library["Models"][0]["Separation"] = 1.04  # within the pair rule's 5 %
+        gates, _ = PC.placement_gates(identification, patches, library, R)
+        self.assertEqual(next(g for g in gates if g["Gate"] == "A10-placement-pairs")["Status"], "PASS")
+        library["Models"][0]["Separation"] = 1.2
         gates, _ = PC.placement_gates(identification, patches, library, R)
         self.assertEqual(next(g for g in gates if g["Gate"] == "A10-placement-pairs")["Status"], "FAIL")
 

@@ -6695,56 +6695,45 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
                   "Parallel-edge cluster model \""
                       << model.name
                       << "\" requires one conductor reference per canonical conductor!");
-      const Point3D axis = feature.axes[0];
-      const Point3D axis_u = Scale(feature.chirality < 0 ? -1.0 : 1.0, feature.axes[1]);
       Point3D axis_v{};
       for (const auto &fp : portions)
       {
         axis_v = Add(axis_v, Scale(fp.b - fp.a, fp.segment->axis_v));
       }
       axis_v = Normalize(axis_v);
-      // Point of a side at the longitudinal coordinate c along the feature axis.
-      auto PointOnSide = [&](const std::vector<FramedPortion> &side, double c)
-      {
-        const FramedPortion *best = nullptr;
-        double best_overshoot = mfem::infinity();
-        double best_t = 0.0;
-        for (const auto &fp : side)
-        {
-          const double orientation = Dot(fp.segment->tangent, axis);
-          const double t = (c - Dot(fp.segment->p0, axis)) / orientation;
-          const double overshoot = std::max({0.0, fp.a - t, t - fp.b});
-          if (overshoot < best_overshoot)
-          {
-            best_overshoot = overshoot;
-            best = &fp;
-            best_t = std::clamp(t, fp.a, fp.b);
-          }
-        }
-        MFEM_VERIFY(best, "A parallel-edge cluster side claims no portion!");
-        return Interpolate(*best->segment, best_t);
-      };
+      // Local frame at every sample, as for the pairs: the origin is the sample's foot on
+      // the canonical first side, the lateral axis points from there to its foot on the
+      // last side, and the conductor anchors are the feet on the first side of every
+      // conductor. (A feature-wide frame — the first run's tangent and the canonical
+      // lateral — placed every patch of a stack that turns, e.g. a flux line meandering
+      // through straight-like bends of radius 98 R over 2 mm, with its lateral axis up to
+      // 49 deg off the local perpendicular; the placement audit A10 on DS-SCT-001 found it.
+      // On a straight stack the local frame is the feature frame.)
+      const std::vector<FramedPortion> &first_side = *ordered.front().second;
+      const std::vector<FramedPortion> &last_side = *ordered.back().second;
       const double side_factor = 1.0 / static_cast<double>(ordered.size());
-      for (const auto &[lateral, side] : ordered)
+      for (std::size_t k = 0; k < ordered.size(); k++)
       {
-        (void)lateral;
-        for (const auto &fp : *side)
+        for (const auto &fp : *ordered[k].second)
         {
-          Quadrature(fp, side_factor, model_index, runtime, feature,
-                     [&](const Point3D &point, ResponsePatchData &patch)
-                     {
-                       const double c = Dot(point, axis);
-                       patch.origin = PointOnSide(*ordered.front().second, c);
-                       patch.axis_u = axis_u;
-                       patch.axis_v = axis_v;
-                       patch.axis_w = Normalize(Cross(axis_u, axis_v));
-                       patch.maxwell_reference_is_pec = all_pec;
-                       for (const std::size_t reference : reference_sides)
-                       {
-                         patch.maxwell_conductor_anchors.push_back(
-                             PointOnSide(*ordered[reference].second, c));
-                       }
-                     });
+          Quadrature(
+              fp, side_factor, model_index, runtime, feature,
+              [&](const Point3D &point, ResponsePatchData &patch)
+              {
+                patch.origin = k == 0 ? point : ClosestFoot(point, first_side).point;
+                const Point3D far = ClosestFoot(patch.origin, last_side).point;
+                patch.axis_u = Normalize(Subtract(far, patch.origin));
+                patch.axis_v = axis_v;
+                patch.axis_w = Normalize(Cross(patch.axis_u, patch.axis_v));
+                patch.maxwell_reference_is_pec = all_pec;
+                for (const std::size_t reference : reference_sides)
+                {
+                  patch.maxwell_conductor_anchors.push_back(
+                      reference == 0
+                          ? patch.origin
+                          : ClosestFoot(patch.origin, *ordered[reference].second).point);
+                }
+              });
         }
       }
     }
