@@ -5151,18 +5151,25 @@ ModelClusterSignature(const LibraryModel &model, double radius,
                       const AutomaticResponseRequirements &describer)
 {
   std::vector<SignaturePortion> portions;
-  std::map<int, InterfaceDielectric> slot_types;
+  // Every interface type of a slot, sorted by name: the identification serialises a
+  // portion's interfaces as a sorted set, and the canonical frame is chosen by that
+  // serialisation, so the model must serialise the same way to land in the same frame.
+  std::map<int, std::set<std::string>> slot_types;
   for (const auto &interface : model.interfaces)
   {
-    slot_types[interface.slot] = interface.type;
+    slot_types[interface.slot].insert(ToString(interface.type));
   }
   for (const auto &edge : model.spatial_edges)
   {
-    const Point3D tangent = Normalize(Cross(edge.process_normal, edge.gap_direction));
+    // The stored Interval runs along gap x normal: the convention of the spatial coupon
+    // generator, of AlignSpatialFrame and of the legacy site geometry below (normal x gap
+    // read the edges mirrored through their Point and canonicalised the model to a frame
+    // other than the one it was built in).
+    const Point3D tangent = Normalize(Cross(edge.gap_direction, edge.process_normal));
     std::vector<std::string> edge_interfaces;
     if (auto it = slot_types.find(edge.interface_slot); it != slot_types.end())
     {
-      edge_interfaces.push_back(ToString(it->second));
+      edge_interfaces.assign(it->second.begin(), it->second.end());
     }
     portions.push_back({Add(edge.point, Scale(edge.interval[0], tangent)),
                         Add(edge.point, Scale(edge.interval[1], tangent)),
