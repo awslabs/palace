@@ -55,9 +55,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 #### Bug Fixes
 
   - Corrected the `FluxLoop` hole inductance, which was low in 0.18 (e.g. the `circular_hole`
-    PEC limit moves from 2.00 to 2.85 pH): the excitation now constrains the fluxoid rather
-    than the flux. Re-run existing `FluxLoop` cases; the regression references were
-    re-baselined. [PR 929](https://github.com/awslabs/palace/pull/929).
+    PEC limit moves from 2.00 to 2.85 pH): 0.18 pinned the film's tangential field to a
+    regularized 2D surface-curl solution, whereas the film is now driven by a curl-free cut
+    generator and relaxes freely. Re-run existing `FluxLoop` cases; the regression references
+    were re-baselined. [PR 929](https://github.com/awslabs/palace/pull/929).
 
 #### Build system
 

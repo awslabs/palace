@@ -27,7 +27,7 @@
     "Superconductor":
     [
       {
-        // London sheet on strip body, ground plane, and walls (attr 3); L_ksq = μ₀ λ² / d,
+        // London sheet on strip body, ground plane, and walls (attr 3); L_ksq = μ₀ λ coth(d/λ),
         // extracted L = L_geom + L_kin. The terminal (attr 4) stays the pure current port.
         "Attributes": [3],
         "PenetrationDepth": 0.4,  // λ (μm)

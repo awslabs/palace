@@ -47,7 +47,7 @@
     [
       {
         "Attributes": [8],       // London film: total (geometric + kinetic) inductance
-        "PenetrationDepth": 0.4, // λ (μm); L_ksq = μ₀ λ² / d
+        "PenetrationDepth": 0.4, // λ (μm); L_ksq = μ₀ λ coth(d/λ)
         "Thickness": 0.1         // d (μm)
       }
     ],

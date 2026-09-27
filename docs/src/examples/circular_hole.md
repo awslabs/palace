@@ -31,10 +31,12 @@ where ``\mathbf{A}`` is the magnetic vector potential and ``\Phi`` the prescribe
 hole ``h``. For each hole a curl-free cohomology generator ``\mathbf{a}_h`` with loop
 circulation ``\Phi`` is constructed on the 3D mesh (a discrete gradient with a ``\Phi``-jump
 across a cut surface spanning the hole). The magnetostatic system is then solved with
-``\mathbf{a}_h`` as the drive, so the resulting field is the fluxoid-``\Phi`` state and the
-fluxoid ``\oint_h \mathbf{A}\cdot d\boldsymbol{\ell} = \Phi`` holds exactly, gauge-invariantly,
-and independently of the mesh partition. Only the loop fluxoid is pinned, so the shielding
-currents remain free to redistribute near the hole.
+``\mathbf{a}_h`` as the drive, pinning the fluxoid
+``\oint_h (\mathbf{A} + L_{\mathrm{ksq}}\mathbf{K}_s)\cdot d\boldsymbol{\ell} = \Phi`` (with
+sheet current ``\mathbf{K}_s = -(\mathbf{A}_t - \mathbf{a}_h)/L_{\mathrm{ksq}}``) exactly,
+gauge-invariantly, and independently of the mesh partition. At finite ``\lambda`` the magnetic
+flux ``\oint_h \mathbf{A}\cdot d\boldsymbol{\ell}`` is screened below ``\Phi``; only the fluxoid
+is pinned, so the shielding currents remain free to redistribute near the hole.
 
 Whether a film screens perfectly or penetrates is set by how its attribute is declared:
 
@@ -215,9 +217,10 @@ perfect-conductor limit:
 | ``0.4``          | ``1.633``                                           | ``15.164`` |
 
 At ``\lambda = 0.4\,\mu\text{m}`` the self-inductance is ``L = 15.164\,\text{pH}``, of which
-``2.853\,\text{pH}`` is geometric and ``\approx 12.31\,\text{pH}`` kinetic. The geometric value
-corresponds to a stored magnetic energy of ``E = \Phi_0^2/(2L)`` for one flux quantum
-``\Phi_0 = 2.0678\times10^{-15}\,\text{Wb}`` trapped in the hole.
+``\approx 3.38\,\text{pH}`` is geometric (the volume magnetic energy of the penetrating
+solution) and ``\approx 11.78\,\text{pH}`` kinetic: the field penetrates over ``\sim\lambda``,
+raising the geometric part above the ``2.853\,\text{pH}`` perfect-screening (``\lambda\to0``)
+value.
 
 The finite-``\lambda`` kinetic extraction is validated against Khapaev 1997 [[3]](#References),
 whose Table 1 gives ``L = 10.03\,\text{pH}`` for a rectangular hole (``2\times5\,\mu\text{m}``,
@@ -246,9 +249,10 @@ components ``J_x`` and ``J_y`` on the film:
 </p><br/>
 ```
 
-As a verification step, we compute the flux threading the hole by evaluating the surface integral
-``\int_h \mathbf{B} \cdot d\mathbf{S}`` over the hole area. The computed flux agrees with the
-prescribed value to high accuracy:
+As a verification step, we compute the magnetic flux threading the hole by evaluating the surface
+integral ``\int_h \mathbf{B} \cdot d\mathbf{S}`` over the hole area. At finite ``\lambda`` this
+flux is screened below the prescribed fluxoid ``\Phi`` — the balance is carried by the London
+kinetic term — as the solver's `fluxoid = ..., magnetic flux = ...` line reports:
 
 ```@raw html
 <br/><p align="center">
@@ -337,7 +341,8 @@ through each hole:
 </p><br/>
 ```
 
-Again, the computed flux through each hole matches the prescribed values:
+Again, at finite ``\lambda`` the magnetic flux through each hole is screened below the prescribed
+fluxoid:
 
 ```@raw html
 <br/><p align="center">

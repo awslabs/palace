@@ -40,7 +40,7 @@
     [
       {
         "Attributes": [8],       // shared London film carrying both holes
-        "PenetrationDepth": 0.4, // λ (μm); L_ksq = μ₀ λ² / d
+        "PenetrationDepth": 0.4, // λ (μm); L_ksq = μ₀ λ coth(d/λ)
         "Thickness": 0.1         // d (μm)
       }
     ],

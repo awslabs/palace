@@ -919,8 +919,8 @@ TEST_CASE("square_hole_flux_loop", "[Serial][Parallel][GPU][Regression]")
 }
 
 // London flux film (single hole, λ = 0.4 μm, d = 0.1 μm): the interior penetrates, so the
-// extracted self-inductance is the total L = L_geom + L_kin. Locks the finite-λ two-solve
-// path.
+// extracted self-inductance is the total L = L_geom + L_kin. Locks in the finite-λ London
+// extraction.
 TEST_CASE("circular_hole_london_flux", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -978,13 +978,10 @@ TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
                                   "nc_amr", opts);
 }
 
-// Mixed current-flux excitation. The aperture integral recovering M[1][2] is
-// reduced over surfaces the partitioner may split, so this case catches a
-// double-counted contribution.
-//
-// rtol is 5e-4: the tiny mutual (~8e-12 H) is a difference of large self-scale
-// terms, so partition FP jitter and toolchain differences amplify via
-// cancellation to a ~3e-4 cross-environment spread.
+// Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface
+// flux integral over the current port's aperture (not energy-recoverable); that quadrature
+// is reduced over partitioner-split faces, so M[1][2] shifts ~1e-4 across partitions and
+// ~3e-4 across toolchains (self terms stay within 1e-4). Hence rtol 5e-4.
 TEST_CASE("ring_disk_mixed_current_flux", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
