@@ -282,10 +282,12 @@ void CurlCurlOperator::CheckBoundaryProperties()
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   const auto dbc_marker = mesh::AttrToMarker(bdr_attr_max, dbc_attr);
   const auto surf_j_marker = mesh::AttrToMarker(bdr_attr_max, surf_j_op.GetAttrList());
+  const auto sc_marker = mesh::AttrToMarker(bdr_attr_max, sc_sheet_op.GetAttrList());
   for (int i = 0; i < dbc_marker.Size(); i++)
   {
-    MFEM_VERIFY(dbc_marker[i] + surf_j_marker[i] <= 1,
-                "Boundary attributes should not be specified with multiple BC!");
+    MFEM_VERIFY(dbc_marker[i] + surf_j_marker[i] + sc_marker[i] <= 1,
+                "Boundary attributes should not be specified with multiple BC "
+                "(PEC, SurfaceCurrent, Superconductor)!");
   }
 }
 
@@ -618,14 +620,17 @@ void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
   {
     double c_ah = MeasureLondonHoleFlux(idx, flux_solution);
     double phi = surf_flux_op.GetSource(idx).GetExcitationFlux();
-    if (std::abs(c_ah) > 1.0e-30)
+    // A linking generator has cᵀa_h ≈ Φ; near-zero means a degenerate cut (e.g. Direction
+    // not normal to the film), and normalizing by it would blow up — fail loud.
+    MFEM_VERIFY(std::abs(c_ah) > 1.0e-6 * std::abs(phi),
+                "London flux loop "
+                    << idx << " generator has near-zero circulation cᵀa_h = " << c_ah
+                    << " for fluxoid " << phi
+                    << "; check that FluxLoop \"Direction\" is normal to the film.");
+    flux_solution *= phi / c_ah;
+    if (boundary_values)
     {
-      double s = phi / c_ah;
-      flux_solution *= s;
-      if (boundary_values)
-      {
-        *boundary_values = flux_solution;
-      }
+      *boundary_values = flux_solution;
     }
   }
   M_sheet_->Mult(flux_solution, RHS);

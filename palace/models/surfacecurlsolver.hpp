@@ -11,7 +11,6 @@
 namespace palace
 {
 
-class IoData;
 class Mesh;
 class FiniteElementSpace;
 class MaterialOperator;

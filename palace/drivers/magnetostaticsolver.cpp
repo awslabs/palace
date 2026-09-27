@@ -607,9 +607,13 @@ void MagnetostaticSolver::PostprocessTerminals(
         Minv(i, j) = Minv(j, i) = cross_energy(i, j) / (Phi_inc[i] * Phi_inc[j]);
       }
     }
-    // Get inductance from reluctance: M = R^{-1}
+    // M = R^{-1}; mark NaN on a singular reluctance (dependent loops), which raw Invert
+    // would abort on.
     M = Minv;
-    M.Invert();
+    if (!InvertOrMarkSingular(M))
+    {
+      M = nan;
+    }
   }
   else if (n_current > 0 && n_flux > 0)
   {
@@ -734,9 +738,12 @@ void MagnetostaticSolver::PostprocessTerminals(
           M_sub(a, b) = M(recip_idx[a], recip_idx[b]);
         }
       }
-      // Reluctance R = M^{-1} over the sub-block.
+      // Reluctance R = M^{-1} over the sub-block (guard a singular sub-block, marking NaN).
       Minv_sub = M_sub;
-      Minv_sub.Invert();
+      if (!InvertOrMarkSingular(Minv_sub))
+      {
+        Minv_sub = nan;
+      }
       // Mutual inductance matrix Mm (current-difference form) over the sub-block.
       mfem::DenseMatrix Mm_sub(nr);
       for (int a = 0; a < nr; a++)

@@ -15,7 +15,6 @@
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
 #include "utils/communication.hpp"
-#include "utils/iodata.hpp"
 
 namespace palace
 {
