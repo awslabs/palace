@@ -256,7 +256,14 @@ def write_heldout(
         np.loadtxt(output / "basis_points.csv", delimiter=",", skiprows=1)
     )
 
-    def free_potential(coordinates, polynomial):
+    def free_potential(coordinates, polynomial, cut_potentials):
+        # The polynomial is blended over R / 3 from every conductor cut to the potential
+        # of the conductor there (`cut_potentials`, one per cut), so the trace is a
+        # continuous field: on the cut it equals the conductor's potential, which the
+        # constrained knots' hats (the conductor trace) carry. Blending a live cut to zero
+        # instead put a 1 V step against the metal within 4 hats of the cut, and the hat
+        # interpolant of that step - not the response matrices - lost 3 % of the domain
+        # and 12-19 % of the MS energy on the k4 / k6 stacks (library-v2 L2 finding).
         x = coordinates[:, 0] / radius
         y = coordinates[:, 1] / radius
         if cuts:
@@ -270,11 +277,17 @@ def write_heldout(
                     )
                 )
                 distances.append(np.hypot(coordinates[:, 0] - boundary_x, vertical))
-            distance = np.min(np.column_stack(distances), axis=1)
+            distances = np.column_stack(distances)
+            nearest = np.argmin(distances, axis=1)
+            distance = distances[np.arange(len(coordinates)), nearest]
             coordinate = np.clip(distance / (radius / 3.0), 0.0, 1.0)
             cutoff = coordinate * coordinate * (3.0 - 2.0 * coordinate)
+            targets = np.asarray(cut_potentials, dtype=float)[nearest]
         else:
             cutoff = np.ones(len(coordinates))
+            targets = np.zeros(len(coordinates))
+        if np.any(targets):
+            return cutoff * polynomial(x, y) + (1.0 - cutoff) * targets
         return cutoff * polynomial(x, y)
 
     heldout_polynomial = lambda x, y: (
@@ -285,13 +298,21 @@ def write_heldout(
             + 0.06 * y * y
     )
 
-    coefficients = list(free_potential(basis_points, heldout_polynomial))
-    values = free_potential(points, heldout_polynomial)
-    for path in conductor_traces:
-        coefficient = 1.0
-        coefficients.append(coefficient)
-        trace = np.atleast_2d(np.loadtxt(path, delimiter=",", skiprows=1))
-        values += coefficient * trace[:, 3]
+    # Every conductor other than the ground (conductor 1) is a terminal at 1 V in the
+    # held-out solve (TerminalAttributes); its trace on the box is that potential on its
+    # cut, carried into the blend, and every conductor coefficient is that potential.
+    heldout_conductor_potential = 1.0
+    heldout_cut_potentials = [
+        heldout_conductor_potential if conductor != 1 else 0.0
+        for _, _, conductor, _ in cuts
+    ]
+    grounded_cut_potentials = [0.0 for _ in cuts]
+    coefficients = list(
+        free_potential(basis_points, heldout_polynomial, heldout_cut_potentials)
+    )
+    values = free_potential(points, heldout_polynomial, heldout_cut_potentials)
+    for _ in conductor_traces:
+        coefficients.append(heldout_conductor_potential)
     trace_path = output / "heldout_trace.csv"
     np.savetxt(
         trace_path,
@@ -324,9 +345,12 @@ def write_heldout(
         probe_definitions, start=1
     ):
         path = output / f"probe_{index:02d}.csv"
+        # The probe solves ground every conductor: the polynomial is cut off to zero.
         np.savetxt(
             path,
-            np.column_stack((points, free_potential(points, polynomial))),
+            np.column_stack(
+                (points, free_potential(points, polynomial, grounded_cut_potentials))
+            ),
             delimiter=",",
             header="x,y,z,V",
             comments="",

@@ -232,40 +232,46 @@ def write_heldout(
         raise ValueError("Contour basis traces do not share one sampling grid")
 
     half_width = 0.5 * separation + radius
+    # The right conductor of a different-conductor gap is a terminal at this potential in
+    # the held-out solve; the polynomial blends to the potential of the conductor at each
+    # cut (zero at the ground) so the trace is a continuous field across the cut (see
+    # generate_edge_cluster_response.write_heldout).
+    conductor_coefficient = 0.17 if conductor_trace is not None else 0.0
 
     def free_potential(points):
         x = points[:, 0] / radius
         y = points[:, 1] / radius
-        if strip:
-            cutoff = np.ones(len(points))
-        else:
-            vertical_distance = np.maximum.reduce(
-                (
-                    -points[:, 1],
-                    points[:, 1] - metal_thickness,
-                    np.zeros(len(points)),
-                )
-            )
-            left = np.hypot(points[:, 0] + half_width, vertical_distance)
-            right = np.hypot(points[:, 0] - half_width, vertical_distance)
-            coordinate = np.clip(
-                np.minimum(left, right) / (radius / 3.0), 0.0, 1.0
-            )
-            cutoff = coordinate * coordinate * (3.0 - 2.0 * coordinate)
-        return cutoff * (
+        polynomial = (
             0.35
             + 0.20 * x
             - 0.15 * y
             + 0.08 * x * y
             + 0.06 * y * y
         )
+        if strip:
+            return polynomial
+        vertical_distance = np.maximum.reduce(
+            (
+                -points[:, 1],
+                points[:, 1] - metal_thickness,
+                np.zeros(len(points)),
+            )
+        )
+        left = np.hypot(points[:, 0] + half_width, vertical_distance)
+        right = np.hypot(points[:, 0] - half_width, vertical_distance)
+        coordinate = np.clip(
+            np.minimum(left, right) / (radius / 3.0), 0.0, 1.0
+        )
+        cutoff = coordinate * coordinate * (3.0 - 2.0 * coordinate)
+        if conductor_coefficient:
+            targets = np.where(right < left, conductor_coefficient, 0.0)
+            return cutoff * polynomial + (1.0 - cutoff) * targets
+        return cutoff * polynomial
 
     coefficients = list(free_potential(basis_points))
     values = free_potential(coordinates)
     if conductor_trace is not None:
-        conductor_coefficient = 0.17
         coefficients.append(conductor_coefficient)
-        values += conductor_coefficient * samples[-1][:, 3]
     coefficients = np.asarray(coefficients)
     trace = output / "heldout_trace.csv"
     np.savetxt(
