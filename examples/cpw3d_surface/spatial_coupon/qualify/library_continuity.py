@@ -17,7 +17,10 @@ model's frame (R = the library's MatchingRadius in the same units), the domain r
 matrix (`FabricatedMatrix`, CSV basis_i, basis_j, Q_ij) and `BasisPoints` (CSV x, y, z of every
 basis function, in the model's frame) resolved relative to the library file's directory or its
 `Root`. Basis points are assigned to the nearest edge line (the edge's Point along its
-longitudinal axis = the process normal x gap direction).
+longitudinal axis = the process normal x gap direction). The two-dimensional cross-section
+coupons (isolated edge, pairs by Separation, stacks by their offset Edges) carry no Point /
+Interval geometry: their edge lines are lifted from the 2D frame (`planar_edges`), the edge
+length is the model's CouponDepth (Palace's 2D normalisation, one depth per library).
 
     python3 library_continuity.py process-library.json [--gates qualification-gates.json]
 """
@@ -99,16 +102,70 @@ def distance_to_edge_line(point, frame):
     return math.sqrt(sum(v * v for v in perpendicular))
 
 
-def per_edge_response(model, library_path, library):
+# The two-dimensional cross-section coupons (examples/cpw2d: mesh_edge_coupon.jl,
+# mesh_edge_pair_coupon.jl, mesh_edge_cluster_coupon.jl) share one frame: the process
+# plane is y = 0 with the process normal +y, the edges run along z (the translation-invariant
+# direction) and lie at x = 0 (isolated), x = -+ separation / 2 (pairs) and x = the offsets
+# (stacks); every basis point has z = 0 and a per-edge response is per CouponDepth of the
+# translation-invariant direction (Palace's 2D normalisation; every model of one library uses
+# the same depth, so the per-length comparison is consistent).
+PLANAR_PROCESS_NORMAL = (0.0, 1.0, 0.0)
+
+
+def planar_edges(model, radius):
+    """The edge list of a two-dimensional model without stored Edges (isolated / pair), or a
+    stack's offset edges given as {Offset, GapDirection, Conductor} lifted to the planar
+    frame; None when the model is not a 2D cross-section coupon."""
+    depth = model.get("CouponDepth")
+    if depth is None:
+        return None
+    interval = [-0.5 * float(depth), 0.5 * float(depth)]
+
+    def edge(x, gap, conductor=1):
+        return {"Point": [x, 0.0, 0.0], "GapDirection": [float(gap), 0.0, 0.0], "ProcessNormal": list(PLANAR_PROCESS_NORMAL),
+                "Interval": interval, "Conductor": conductor}
+
+    topology = model.get("Topology")
+    edges = model.get("Edges")
+    if edges and all("Point" in e for e in edges):
+        return None   # a three-dimensional model: its Edges are complete
+    if topology in ISOLATED_TOPOLOGIES and not edges:
+        return [edge(0.0, 1.0)]
+    if topology in ("SameConductorGap", "DifferentConductorGap", "SameConductorStrip") and not edges:
+        separation = model.get("Separation")
+        if separation is None and model.get("Signature"):
+            separation = float(model["Signature"]["SeparationOverR"]) * radius
+        if separation is None:
+            return None
+        strip = topology == "SameConductorStrip"
+        return [edge(-0.5 * float(separation), -1.0 if strip else 1.0), edge(0.5 * float(separation), 1.0 if strip else -1.0,
+                                                                              2 if topology == "DifferentConductorGap" else 1)]
+    if topology in ("ParallelEdgeCluster",) and edges and all("Offset" in e for e in edges):
+        return [edge(float(e["Offset"]), float(e["GapDirection"]), int(e.get("Conductor", 1))) for e in edges]
+    return None
+
+
+def model_edges(model, radius):
+    """A model's edges with Point / GapDirection / ProcessNormal / Interval: its own Edges
+    (three-dimensional models) or the planar lift of a 2D cross-section coupon."""
+    planar = planar_edges(model, radius)
+    if planar is not None:
+        return planar
+    edges = model.get("Edges") or []
+    return edges if edges and all("Point" in e for e in edges) else []
+
+
+def per_edge_response(model, library_path, library, radius=None):
     """Per edge (in the model's Edges order): summed diagonal response of the basis points
     nearest to the edge line, divided by the edge length; None when the files are missing."""
     matrix_path = resolve(library_path, library, model.get("FabricatedMatrix") or model.get("Matrix"))
     basis_path = resolve(library_path, library, model.get("BasisPoints"))
-    if matrix_path is None or basis_path is None or not model.get("Edges"):
+    edges = model_edges(model, radius)
+    if matrix_path is None or basis_path is None or not edges:
         return None
     diagonal = read_matrix_diagonal(matrix_path)
     points = read_basis_points(basis_path)
-    frames = edge_frames(model["Edges"])
+    frames = edge_frames(edges)
     totals = [0.0] * len(frames)
     for index, point in enumerate(points, start=1):
         nearest = min(range(len(frames)), key=lambda k: distance_to_edge_line(point, frames[k]))
@@ -121,10 +178,10 @@ def per_edge_response(model, library_path, library):
     return responses
 
 
-def consecutive_separations(model):
+def consecutive_separations(model, radius=None):
     """Separations between consecutive edges along the lateral axis of a 2-edge or stack model
     (the edges sorted by their offset along the first edge's gap direction)."""
-    frames = edge_frames(model["Edges"])
+    frames = edge_frames(model_edges(model, radius))
     if len(frames) < 2:
         return []
     g = frames[0]["Gap"]
@@ -174,19 +231,19 @@ def evaluate(library_path, gates=None, library=None):
         record["Reason"] = str(exception)
         return record
     record["MatchingRadius"] = radius
-    isolated = [m for m in library.get("Models", []) if m.get("Topology") in ISOLATED_TOPOLOGIES and m.get("Edges")]
+    isolated = [m for m in library.get("Models", []) if m.get("Topology") in ISOLATED_TOPOLOGIES and model_edges(m, radius)]
     isolated_response = None
     for model in isolated:
-        response = per_edge_response(model, library_path, library)
+        response = per_edge_response(model, library_path, library, radius)
         if response:
             isolated_response = response[0]
             record["Isolated"] = {"Model": model["Name"], "ResponsePerLength": isolated_response}
             break
     candidates = []
     for model in library.get("Models", []):
-        if model.get("Topology") not in LONGITUDINAL_TOPOLOGIES or len(model.get("Edges", [])) < 2:
+        if model.get("Topology") not in LONGITUDINAL_TOPOLOGIES or len(model_edges(model, radius)) < 2:
             continue
-        separations = consecutive_separations(model)
+        separations = consecutive_separations(model, radius)
         if separations and all(s >= 2.0 * radius * (1.0 - band) for s in separations):
             candidates.append((model, separations))
     if not candidates:
@@ -200,7 +257,7 @@ def evaluate(library_path, gates=None, library=None):
         return record
     worst = 0.0
     for model, separations in candidates:
-        response = per_edge_response(model, library_path, library)
+        response = per_edge_response(model, library_path, library, radius)
         entry = {"Model": model["Name"], "Topology": model["Topology"], "SeparationsOverR": [s / radius for s in separations]}
         if response is None:
             entry["Status"] = "Unreadable"

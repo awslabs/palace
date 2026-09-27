@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import copy
 import csv
 import importlib.util
 import json
@@ -799,6 +800,79 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         edges = PREPARE.normalize_parallel_edges(coupon, 2.0)
         self.assertEqual([edge["Conductor"] for edge in edges], [1, 1, 2])
         self.assertEqual([edge["Offset"] for edge in edges], [0.0, 1.0, 2.0])
+
+    def test_parallel_stack_is_bounded_per_consecutive_link(self):
+        """Decision 82(2): a stack's consecutive edges interact below 2R; its span may
+        exceed 2R (the 4-edge 2 / 2 / 2 um flux line at R 1.9 spans 3.16 R), a link at or
+        beyond 2R is refused."""
+        def coupon(offsets):
+            return {"Id": "stack", "Geometry": {"Edges": [
+                {"Offset": [x, 0.0], "GapDirection": [1.0 if k % 2 == 0 else -1.0, 0.0], "Conductor": (1, 2, 2, 1)[k]}
+                for k, x in enumerate(offsets)]}}
+        R = 1.9
+        edges = PREPARE.normalize_parallel_edges(coupon([0.0, 2.0, 4.0, 6.0]), R)
+        self.assertEqual([edge["Offset"] for edge in edges], [0.0, 2.0, 4.0, 6.0])
+        with self.assertRaises(ValueError):
+            PREPARE.normalize_parallel_edges(coupon([0.0, 2.0, 4.0, 4.0 + 2.0 * R + 1e-6]), R)
+
+    def test_version2_signatures_are_carried_and_stamped(self):
+        """A version-2 record's Signature travels with the plan coupon and is stamped on the
+        written model that corresponds to it (pairs by Separation, stacks by their Edges,
+        corners by Angle / CornerRadius); a model matching two signatures fails closed."""
+        signature = {"Type": "SameConductorStrip", "SeparationOverR": 1.0526316,
+                     "Edges": [{"OffsetOverR": 0.0, "GapSide": -1, "Conductor": 1}, {"OffsetOverR": 1.0526316, "GapSide": 1, "Conductor": 1}]}
+        stack_signature = {"Type": "ParallelEdgeCluster", "Edges": [
+            {"OffsetOverR": 0.0, "GapSide": 1, "Conductor": 1}, {"OffsetOverR": 1.0526316, "GapSide": -1, "Conductor": 2},
+            {"OffsetOverR": 2.1052632, "GapSide": 1, "Conductor": 2}]}
+        manifest = {
+            "Version": 2,
+            "Library": {"MatchingRadius": 1.9, "Path": "seed.json"},
+            "Requirements": [
+                {"Topology": "SameConductorStrip", "Status": "Missing", "Count": 171, "TotalEdgeLength": 614.43,
+                 "Geometry": {"EdgeCount": 2, "Separation": 2.0000008}, "Interfaces": [], "BoundaryCondition": {"Type": "PEC"},
+                 "Signature": signature, "Hash": "ab" * 32, "Instances": 8, "DistinctSignatures": 1, "ParameterSpread": 0.0,
+                 "ExactParameters": True},
+                {"Topology": "ParallelEdgeCluster", "Status": "Missing", "Count": 10, "TotalEdgeLength": 30.0,
+                 "Geometry": {"EdgeCount": 3, "Edges": [{"Offset": [0.0, 0.0], "GapDirection": [1.0, 0.0], "Conductor": 1},
+                                                        {"Offset": [2.0, 0.0], "GapDirection": [-1.0, 0.0], "Conductor": 2},
+                                                        {"Offset": [4.0, 0.0], "GapDirection": [1.0, 0.0], "Conductor": 2}]},
+                 "Interfaces": [], "BoundaryCondition": {"Type": "PEC"}, "Signature": stack_signature, "Hash": "cd" * 32,
+                 "Instances": 2, "DistinctSignatures": 1, "ParameterSpread": 0.0, "ExactParameters": True},
+                {"Topology": "ConvexCorner", "Status": "Missing", "Count": 12, "TotalEdgeLength": 45.6,
+                 "Geometry": {"AngleDegrees": 90.0, "CornerRadius": 0.0}, "Interfaces": [], "BoundaryCondition": {"Type": "PEC"},
+                 "Signature": {"Type": "ConvexCorner", "AngleDegrees": 90.0, "CornerRadiusOverR": 0.0}, "Hash": "ef" * 32,
+                 "Instances": 12, "DistinctSignatures": 1, "ParameterSpread": 0.0, "ExactParameters": True},
+            ],
+        }
+        plan = PREPARE.plan_from_manifest(Path("m.json"), manifest, Path("seed.json"), {}, False)
+        by_topology = {coupon["Topology"]: coupon for coupon in plan["Coupons"]}
+        self.assertEqual(by_topology["SameConductorStrip"]["Signature"], signature)
+        self.assertEqual(by_topology["SameConductorStrip"]["Instances"], 8)
+        self.assertEqual(by_topology["ParallelEdgeCluster"]["Preparation"]["Method"], "ParallelClusterCoupon")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "process-library.json"
+            models = [
+                {"Name": "isolated", "Topology": "IsolatedEdge"},
+                {"Name": "strip", "Topology": "SameConductorStrip", "Separation": 2.0000008},
+                {"Name": "other-strip", "Topology": "SameConductorStrip", "Separation": 3.0},
+                {"Name": "stack", "Topology": "ParallelEdgeCluster",
+                 "Edges": [{"Offset": 0.0, "GapDirection": 1, "Conductor": 1}, {"Offset": 2.0, "GapDirection": -1, "Conductor": 2},
+                           {"Offset": 4.0, "GapDirection": 1, "Conductor": 2}]},
+                {"Name": "corner", "Topology": "ConvexCorner", "Angle": 90.0, "CornerRadius": 0.0},
+            ]
+            PREPARE.write_json(path, {"Version": 3, "Models": models})
+            self.assertEqual(PREPARE.stamp_library_signatures(path, plan["Coupons"]), 3)
+            stamped = {model["Name"]: model for model in PREPARE.load_json(path)["Models"]}
+            self.assertEqual(stamped["strip"]["Signature"], signature)
+            self.assertEqual(stamped["strip"]["Instances"], 8)
+            self.assertEqual(stamped["stack"]["Signature"], stack_signature)
+            self.assertEqual(stamped["corner"]["Signature"]["Type"], "ConvexCorner")
+            self.assertNotIn("Signature", stamped["isolated"])
+            self.assertNotIn("Signature", stamped["other-strip"])
+            duplicate = copy.deepcopy(by_topology["SameConductorStrip"])
+            duplicate["Signature"] = {**signature, "SeparationOverR": 1.0526317}
+            with self.assertRaises(ValueError):
+                PREPARE.stamp_library_signatures(path, plan["Coupons"] + [duplicate])
 
     def test_parallel_cluster_mesh_failure_prevents_full_response_solves(self):
         coupon = {

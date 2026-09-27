@@ -113,3 +113,48 @@ def test_without_isolated_model_is_not_applicable():
         record = LC.evaluate(path, gates(), library)
         assert record["Verdict"] == "NotApplicable"
         assert record["Candidates"] == ["pair-2R"]
+
+
+def write_planar_model(root, name, topology, edge_x, per_edge_total, depth=1055.0, points_per_edge=3, **fields):
+    """A two-dimensional cross-section model (no Point / Interval Edges): basis points in the
+    plane z = 0 next to each edge line x = edge_x[k], the geometry given as the 2D builders
+    write it (Separation for pairs, offset Edges for stacks, nothing for the isolated edge)."""
+    directory = os.path.join(root, name)
+    os.makedirs(directory, exist_ok=True)
+    basis, rows, index = [], [], 1
+    for k, x in enumerate(edge_x):
+        for m in range(points_per_edge):
+            basis.append((x + 0.01 * (m - 1), 0.3, 0.0))
+            rows.append((index, index, per_edge_total[k] / points_per_edge))
+            index += 1
+    with open(os.path.join(directory, "basis-points.csv"), "w") as target:
+        target.write("x,y,z\n")
+        for p in basis:
+            target.write(f"{p[0]!r},{p[1]!r},{p[2]!r}\n")
+    with open(os.path.join(directory, "domain-response-matrix.csv"), "w") as target:
+        target.write("  basis_i,  basis_j,                   Q_ij (J)\n")
+        for i, j, q in rows:
+            target.write(f" {i:.2e}, {j:.2e}, {q:+.12e}\n")
+    return {"Name": name, "Topology": topology, "CouponDepth": depth, **fields,
+            "FabricatedMatrix": os.path.join(name, "domain-response-matrix.csv"), "BasisPoints": os.path.join(name, "basis-points.csv")}
+
+
+def test_planar_cross_section_models_are_gated_through_their_2d_frame():
+    """The 2D isolated / pair / stack coupons carry no Point / Interval Edges: their edge lines
+    are lifted from the 2D frame (x = 0; -+ s / 2; the offsets) with the CouponDepth as the
+    edge length, so the recorded gate applies to real cross-section libraries."""
+    with tempfile.TemporaryDirectory() as root:
+        iso = write_planar_model(root, "isolated-edge", "IsolatedEdge", [0.0], [8.0])
+        pair = write_planar_model(root, "strip-2R", "SameConductorStrip", [-R, R], [8.0, 8.0], Separation=2.0 * R)
+        narrow = write_planar_model(root, "strip-1R", "SameConductorStrip", [-0.5 * R, 0.5 * R], [12.0, 12.0], Separation=R)
+        stack = write_planar_model(root, "stack-2R", "ParallelEdgeCluster", [0.0, 2.0 * R, 4.0 * R], [8.0, 8.0, 8.16],
+                                   Edges=[{"Offset": 0.0, "GapDirection": 1, "Conductor": 1}, {"Offset": 2.0 * R, "GapDirection": -1, "Conductor": 2},
+                                          {"Offset": 4.0 * R, "GapDirection": 1, "Conductor": 2}])
+        path, library = library_with(root, [iso, pair, narrow, stack])
+        record = LC.evaluate(path, gates(), library)
+        assert [m["Model"] for m in record["Models"]] == ["strip-2R", "stack-2R"]
+        assert abs(record["Isolated"]["ResponsePerLength"] - 8.0 / 1055.0) < 1e-15
+        assert record["Models"][0]["Status"] == "PASS"
+        assert record["Models"][1]["Status"] == "FAIL"   # 2 % on the third edge
+        assert record["Verdict"] == "Failed"
+        assert abs(record["WorstRelativeOffset"] - 0.02) < 1e-9

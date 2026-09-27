@@ -303,6 +303,11 @@ def plan_from_manifest(
             "CoverageStatus": requirement.get("Status"),
             "Preparation": preparation(requirement, spatial_mesh),
         }
+        # Version-2 records (SURFACE-RESPONSE-IDENTIFICATION.md (d)): the canonical
+        # Signature is the library model's key; the group statistics are recorded.
+        for key in ("Signature", "Hash", "Instances", "DistinctSignatures", "ParameterSpread", "ExactParameters"):
+            if key in requirement:
+                coupon[key] = copy.deepcopy(requirement[key])
         if uses_finite_impedance(coupon):
             coupon["Preparation"]["BoundaryLawQualification"] = "Missing"
         if "SelectedModels" in requirement:
@@ -322,6 +327,7 @@ def plan_from_manifest(
                 "Preparation",
                 "SelectedModels",
                 "CoverageReason",
+                "Signature",
             ):
                 if existing.get(field) != coupon.get(field):
                     raise ValueError(
@@ -656,14 +662,61 @@ def unclassified_plan_view_boundary(boundary):
 def model_matches_coupon(model, coupon):
     if model.get("Topology") != coupon["Topology"]:
         return False
+    geometry = coupon.get("Geometry") or {}
+
+    def close(a, b):
+        return math.isclose(float(a), float(b), rel_tol=1.0e-9, abs_tol=1.0e-9)
+
     if coupon["Topology"] in PAIRED_TOPOLOGIES:
-        return math.isclose(
-            float(model.get("Separation", math.nan)),
-            float(coupon["Geometry"]["Separation"]),
-            rel_tol=1.0e-12,
-            abs_tol=1.0e-12,
+        return close(model.get("Separation", math.nan), geometry["Separation"])
+    if coupon["Topology"] == "ParallelEdgeCluster":
+        model_edges = model.get("Edges") or []
+        coupon_edges = geometry.get("Edges") or []
+        if len(model_edges) != len(coupon_edges):
+            return False
+        for first, second in zip(model_edges, coupon_edges):
+            offset = second["Offset"][0] if isinstance(second["Offset"], list) else second["Offset"]
+            direction = second["GapDirection"][0] if isinstance(second["GapDirection"], list) else second["GapDirection"]
+            if not close(first["Offset"], offset) or int(round(float(first["GapDirection"]))) != int(round(float(direction))):
+                return False
+        return True
+    if coupon["Topology"] in CORNER_TOPOLOGIES:
+        return close(model.get("Angle", math.nan), geometry["AngleDegrees"]) and close(
+            model.get("CornerRadius", 0.0), geometry.get("CornerRadius", 0.0)
         )
+    if coupon["Topology"] == "Junction":
+        return list(model.get("ArmAngles", [])) == list(geometry.get("ArmAnglesDegrees", []))
     return True
+
+
+def stamp_library_signatures(path, coupons):
+    """Every model of a written library that corresponds to exactly one version-2 coupon
+    carries that coupon's canonical Signature (the matcher's key: exact for a
+    SpatialEdgeCluster, within the signature tolerance otherwise) and the coupon's group
+    statistics; a model matching several signature coupons is a contract error (fail
+    closed), a model matching none (a version-1 coupon, a base library) is left as written."""
+    library = load_json(path)
+    stamped = 0
+    for model in library.get("Models", []):
+        matches = [
+            coupon for coupon in coupons if "Signature" in coupon and model_matches_coupon(model, coupon)
+        ]
+        signatures = {json.dumps(coupon["Signature"], sort_keys=True) for coupon in matches}
+        if len(signatures) > 1:
+            raise ValueError(
+                f"model {model.get('Name')} matches {len(signatures)} version-2 coupon signatures: "
+                + ", ".join(sorted(coupon["Id"] for coupon in matches))
+            )
+        if not matches:
+            continue
+        coupon = matches[0]
+        model["Signature"] = copy.deepcopy(coupon["Signature"])
+        for key in ("Instances", "DistinctSignatures", "ParameterSpread"):
+            if key in coupon:
+                model[key] = coupon[key]
+        stamped += 1
+    write_json(path, library)
+    return stamped
 
 
 def stamp_library_boundary_conditions(path, coupons):
@@ -856,9 +909,16 @@ def normalize_parallel_edges(coupon, matching_radius):
         or any(abs(edge["GapDirection"]) != 1 for edge in edges)
     ):
         raise ValueError(f"{coupon['Id']} has invalid parallel-edge geometry")
-    if edges[-1]["Offset"] > 2.0 * matching_radius + tolerance:
+    # A stack is bounded per consecutive link (two consecutive edges interact iff their
+    # separation is below 2R; decision 82(2)): its total span may exceed 2R (the 4-edge
+    # 2 / 2 / 2 um flux line at R 1.9 spans 3.16 R).
+    if any(
+        second["Offset"] - first["Offset"] > 2.0 * matching_radius + tolerance
+        for first, second in zip(edges, edges[1:])
+    ):
         raise ValueError(
-            f"{coupon['Id']} spans more than the 2R interaction diameter"
+            f"{coupon['Id']} has consecutive edges farther apart than the 2R interaction "
+            "distance"
         )
     return edges
 
@@ -2235,6 +2295,16 @@ def execute(plan, library_path, args):
         for coupon in missing
         if coupon["Preparation"]["Method"] == "Unsupported"
     ]
+    # Families left to another builder (--skip-methods, e.g. SpatialCoupon: the prism-tube
+    # library of coupon_library.py build / qualify) are recorded, never failures.
+    skip_methods = set(getattr(args, "skip_methods", None) or [])
+    skipped = [
+        {"Ids": [coupon["Id"]], "Topologies": [coupon["Topology"]], "Method": coupon["Preparation"]["Method"],
+         "Reason": "left to another builder (--skip-methods)"}
+        for coupon in missing
+        if coupon["Preparation"]["Method"] in skip_methods
+    ]
+    missing = [coupon for coupon in missing if coupon["Preparation"]["Method"] not in skip_methods]
     libraries = [library_path]
     qualifications = []
     failures = [
@@ -2352,6 +2422,9 @@ def execute(plan, library_path, args):
     )
     coverage_only = getattr(args, "coverage_only", False)
     probe_study_only = getattr(args, "probe_study_only", False)
+    stamped = 0
+    if not probe_study_only and (destination / "process-library.json").is_file():
+        stamped = stamp_library_signatures(destination / "process-library.json", plan["Coupons"])
     geometry_complete = not failures and not probe_study_only
     probe_study_complete = not failures and probe_study_only
     qualification_manifest = {
@@ -2361,6 +2434,8 @@ def execute(plan, library_path, args):
         "GeneratedLibraries": [str(path) for path in libraries[1:]],
         "QualificationReports": [str(path) for path in qualifications],
         "Failures": failures,
+        "Skipped": skipped,
+        "SignatureModels": stamped,
         "GeometryComplete": geometry_complete,
         "ProbeStudyComplete": probe_study_complete,
         "QualificationRequired": not coverage_only and not probe_study_only,
@@ -2382,6 +2457,7 @@ def execute(plan, library_path, args):
         "Library": str(destination / "process-library.json"),
         "QualificationManifest": str(qualification_path),
         "Failures": failures,
+        "Skipped": skipped,
     }
     if probe_study_only:
         return probe_study_complete
@@ -2412,6 +2488,16 @@ def parse_args():
         help=(
             "Run FEM-order and mesh-resolution probes for every coupon, but stop before "
             "assembling full corner/spatial response matrices"
+        ),
+    )
+    parser.add_argument(
+        "--skip-methods",
+        nargs="+",
+        default=[],
+        choices=("StraightEdgeBuilder", "ParallelClusterCoupon", "CornerCoupon", "SpatialCoupon"),
+        help=(
+            "coupon families left to another builder (recorded under Skipped, never a failure): "
+            "SpatialCoupon when the prism-tube library (coupon_library.py build / qualify) builds them"
         ),
     )
     parser.add_argument("--cache", type=Path)
