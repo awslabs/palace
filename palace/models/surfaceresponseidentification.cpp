@@ -128,7 +128,8 @@ constexpr double kClusterArcChordMaxLengthOverRadius = 0.25;
 // read 3.9998 mid-chord and became 3 mm clusters). The pair feature's separation is the
 // mean chord reading over its samples; the cross-chord interactions of a locally constant
 // portion are never event cores, whether or not it interacts.
-constexpr double kStraightBendRadiusOverRadius = 10.0;
+// (kStraightBendRadiusOverRadius = 10 is declared in the header: the curvature families'
+// first-order rule is keyed to it.)
 constexpr double kCurvatureWindowOverRadius = 1.0;
 constexpr double kPairSeparationTolerance = 0.05;
 constexpr int kPairSeparationSamplesPerInterval = 16;
@@ -1259,8 +1260,18 @@ nlohmann::json PortionGeometryInFrame(const SignaturePortion &portion,
   {
     const SignatureArc &arc = *portion.arc;
     const auto c = LocalCoordinates(arc.center, origin, x, y, radius);
-    const auto m = LocalCoordinates(SignatureArcPoint(arc, 0.5 * (arc.theta0 + arc.theta1)),
-                                    origin, x, y, radius);
+    auto m = LocalCoordinates(SignatureArcPoint(arc, 0.5 * (arc.theta0 + arc.theta1)),
+                              origin, x, y, radius);
+    if (std::abs(arc.theta1 - arc.theta0) >= 2.0 * std::acos(-1.0) - 1.0e-9)
+    {
+      // A closed circle has no ends of its own (the mesh's first joint is not geometry):
+      // serialised as centre + radius, with the ends at the frame's +x point of the circle
+      // and the midpoint at its antipode, so every chording / start vertex agrees.
+      const double r = RoundTo(arc.radius / radius, kSignatureLengthQuantumOverRadius);
+      a = {c[0] + r, c[1]};
+      b = a;
+      m = {c[0] - r, c[1]};
+    }
     return nlohmann::json{{"P", {a[0], a[1], b[0], b[1]}},
                           {"Arc", {c[0], c[1], m[0], m[1]}},
                           {"GapRadial", arc.gap_radial},
@@ -1845,6 +1856,30 @@ CanonicalClusterSignature(const std::vector<SignaturePortion> &portions,
         AddCandidate(Scale(sign, t));
         AddCandidate(Scale(sign, Cross(n, t)));
       }
+    }
+  }
+  if (candidates.empty())
+  {
+    // Closed circles only: the directions from the centroid to the circle centres (none
+    // when concentric), else any fixed in-plane axis — the serialisation of concentric
+    // circles is the same in every frame.
+    for (const auto &portion : portions)
+    {
+      if (portion.arc)
+      {
+        AddCandidate(Sub(portion.arc->center, origin));
+      }
+    }
+    if (candidates.empty())
+    {
+      int axis = 0;
+      for (int d = 1; d < 3; d++)
+      {
+        axis = std::abs(n[d]) < std::abs(n[axis]) ? d : axis;
+      }
+      Point3D e{};
+      e[axis] = 1.0;
+      AddCandidate(e);
     }
   }
   CanonicalSignature best;

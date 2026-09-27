@@ -703,9 +703,15 @@ def stamp_library_signatures(path, coupons):
         ]
         signatures = {json.dumps(coupon["Signature"], sort_keys=True) for coupon in matches}
         if len(signatures) > 1:
+            # model_matches_coupon compares the geometry only (the boundary law is stamped
+            # per coupon by stamp_library_boundary_conditions): name each coupon's law so
+            # that two coupons of one geometry under different laws are read as the cause.
             raise ValueError(
                 f"model {model.get('Name')} matches {len(signatures)} version-2 coupon signatures: "
-                + ", ".join(sorted(coupon["Id"] for coupon in matches))
+                + ", ".join(
+                    f"{coupon['Id']} (BoundaryCondition {json.dumps(coupon.get('BoundaryCondition') or {'Type': 'PEC'}, sort_keys=True)})"
+                    for coupon in sorted(matches, key=lambda c: c["Id"])
+                )
             )
         if not matches:
             continue

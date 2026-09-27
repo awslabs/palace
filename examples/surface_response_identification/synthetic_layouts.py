@@ -808,6 +808,30 @@ def stack_suite():
         "FeaturesSubset": {"ParallelEdgeCluster": 1, "SameConductorStrip": 1, "SpatialEdgeCluster": 1},
         "Offsets": {"ParallelEdgeCluster": [[0.0, 1.0, 2.0, 3.0]]}, "FacingGates": True}))
 
+    # Slow taper through 2R (the DS-CTX-003 flux-line launcher, decision 103 / review m11): a
+    # trace between two ground edges, every separation a slow linear taper (2 % per um = 4 % of
+    # the separation per R window: locally constant, a pair everywhere it is below 2R). The
+    # gaps cross 2R = 4 um at x = -10, the trace width at x = +10, so the strict rule gives a
+    # 4-edge stack for x < -10, the trace's SameConductorStrip alone for -10 < x < 10 (the
+    # ground edges isolated) and four isolated edges for x > 10 — every bar reaches the
+    # truncation (no corners). The chip: 1 / 2 / 1 um at the far end widening to 6 / 5 / 6 um
+    # over 560 um, the four edges isolated from the point where the OUTER links (the trace
+    # widths) pass 2R, the inner gap's pair never continuing on its own.
+    taper_slope = 0.02
+
+    def taper_t(x):  # trace width: 2R at x = +10
+        return 2.0 * R + taper_slope * (x - 10.0)
+
+    def taper_g(x):  # gaps: 2R at x = -10
+        return 2.0 * R + taper_slope * (x + 10.0)
+
+    taper_trace = loop([(-half, -0.5 * taper_t(-half)), (half, -0.5 * taper_t(half)), (half, 0.5 * taper_t(half)), (-half, 0.5 * taper_t(-half))])
+    taper_ground_lower = loop([(-half, -14.0), (half, -14.0), (half, -0.5 * taper_t(half) - taper_g(half)), (-half, -0.5 * taper_t(-half) - taper_g(-half))])
+    taper_ground_upper = loop([(-half, 0.5 * taper_t(-half) + taper_g(-half)), (half, 0.5 * taper_t(half) + taper_g(half)), (half, 14.0), (-half, 14.0)])
+    layouts.append(layout("stack-taper-through-2R", [sheet(GROUND, taper_trace), sheet(GROUND, taper_ground_lower), sheet(GROUND, taper_ground_upper)], half_x=half, half_y=half, lc_fine=1.0, lc_far=6.0, notes="a trace between ground edges, every separation a 2 %/um linear taper: gaps 2R at x = -10, trace width 2R at x = +10 (DS-CTX-003 flux-line launcher): 4-edge stack for x < -10, the trace strip alone (ground edges isolated) for -10 < x < 10, four isolated edges beyond", expected={
+        "FeaturesSubset": {"ParallelEdgeCluster": 1, "SameConductorStrip": 1, "SpatialEdgeCluster": 0},
+        "FacingGates": True}))
+
     # U-ring (the DS-SCT-001 / DS-SCT-002 flux-line end): a 2 um trace from the top truncation
     # into a rounded-rectangle ring (strip 2 um; hole 12 x 10 um with 1 um = 0.5 R corners, outer
     # corners 3 um), the ground 2 um outside (corners 5 um) and along the feed. Stacks: the feed

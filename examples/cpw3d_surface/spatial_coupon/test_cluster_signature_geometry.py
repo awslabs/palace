@@ -3,6 +3,7 @@
 """cluster_signature_geometry: the spatial coupon geometry of a version-2 SpatialEdgeCluster
 signature (the v2 cluster contract) on synthetic signatures with known masks."""
 import json
+import math
 from pathlib import Path
 import sys
 import unittest
@@ -160,6 +161,67 @@ class TransmonSignatureTest(unittest.TestCase):
         states = csg.end_states(csg.portions_from_signature(signature, 1.9), csg.vertex_points(signature, 1.9), 1.9)
         self.assertEqual(states, [(False, True), (True, False), (True, True)])
         self.assertEqual(json.dumps(coupon["Geometry"]["Signature"], sort_keys=True), json.dumps(signature, sort_keys=True))
+
+
+class ArcPortionTest(unittest.TestCase):
+    """A rounded finger end (option A): the end edge, two 0.5 R fillet arcs (metal inside) and
+    R along both sides. The arcs are chorded at 5 deg / 0.25 R (18 chords per quarter circle):
+    every chord end lies on its circle, the chord's gap is radial, the model Edges are the
+    chords and the mask covers the conductor."""
+    R = 1.0
+
+    def signature(self):
+        c45 = 0.5 * math.cos(math.pi / 4)
+        top = {"Conductor": 1, "Interfaces": ["MA", "MS", "SA"], "Law": LAW, "P": [-0.5, 0.75, 0.0, 0.25],
+               "Arc": [-0.5, 0.25, -0.5 + c45, 0.25 + c45], "GapRadial": 1}
+        bottom = {"Conductor": 1, "Interfaces": ["MA", "MS", "SA"], "Law": LAW, "P": [-0.5, -0.75, 0.0, -0.25],
+                  "Arc": [-0.5, -0.25, -0.5 + c45, -0.25 - c45], "GapRadial": 1}
+        return {"Type": "SpatialEdgeCluster", "EdgeCount": 5,
+                "Portions": [portion((0.0, -0.25, 0.0, 0.25), (1.0, 0.0)), top, bottom,
+                             portion((-1.5, 0.75, -0.5, 0.75), (0.0, 1.0)), portion((-1.5, -0.75, -0.5, -0.75), (0.0, -1.0))],
+                "Vertices": []}
+
+    def test_arcs_are_chorded_on_their_circles(self):
+        portions = csg.portions_from_signature(self.signature(), self.R)
+        chords = [p for p in portions if p["Portion"] in (1, 2)]
+        self.assertEqual(len(portions), 3 + 2 * 18)
+        self.assertEqual(len(chords), 36)
+        for chord in chords:
+            center = np.asarray([-0.5, 0.25 if chord["Portion"] == 1 else -0.25])
+            for end in (chord["P0"], chord["P1"]):
+                self.assertAlmostEqual(float(np.linalg.norm(end - center)), 0.5, places=12)
+            middle = 0.5 * (chord["P0"] + chord["P1"])
+            radial = (middle - center) / np.linalg.norm(middle - center)
+            self.assertAlmostEqual(float(np.dot(radial, chord["Gap"])), 1.0, places=12)
+        # Consecutive chords connect; the arc ends meet the end edge and the sides.
+        states = csg.end_states(portions, [], self.R)
+        self.assertEqual(sum(free for state in states for free in state), 2)  # the two far side ends
+
+    def test_model_edges_are_the_chords_and_the_mask_covers_the_conductor(self):
+        signature = self.signature()
+        rec = {"Topology": "SpatialEdgeCluster", "Geometry": {"EdgeCount": 5, "Signature": signature}, "Signature": signature,
+               "Interfaces": INTERFACES, "BoundaryCondition": {"Type": "PEC"}}
+        coupon, edges = csg.cluster_coupon(rec, self.R, 0.1, 0.05)
+        self.assertEqual(len(edges), 3 + 2 * 18)
+        self.assertEqual(len(csg.model_edges(rec, self.R)), len(edges))
+        for edge in edges:
+            gap = np.asarray(edge["GapDirection"][:2])
+            tangent = np.asarray([gap[1], -gap[0]])
+            point = np.asarray(edge["Point"][:2])
+            for s in edge["Interval"]:
+                q = point + s * tangent
+                on_arc = min(abs(np.linalg.norm(q - np.asarray([-0.5, y])) - 0.5) for y in (0.25, -0.25))
+                on_straight = min(abs(q[0]) if abs(q[1]) <= 0.25 + 1e-9 else np.inf, abs(abs(q[1]) - 0.75) if q[0] <= -0.5 + 1e-9 else np.inf)
+                self.assertLess(min(on_arc, on_straight), 1.0e-9)
+        self.assertEqual({f["Conductor"] for f in coupon["Geometry"]["PlanViewFacets"]}, {1})
+        self.assertGreater(mask_area(coupon, 1), 0.0)
+        self.assertEqual(json.dumps(coupon["Geometry"]["Signature"], sort_keys=True), json.dumps(signature, sort_keys=True))
+
+    def test_straight_portion_without_gap_is_refused(self):
+        signature = self.signature()
+        del signature["Portions"][0]["Gap"]
+        with self.assertRaises(csg.SignatureGeometryError):
+            csg.portions_from_signature(signature, self.R)
 
 
 if __name__ == "__main__":

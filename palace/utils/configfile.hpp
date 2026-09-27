@@ -181,9 +181,11 @@ public:
   double Lc = -1.0;
 
   // Interpret a two-dimensional mesh as the (r, z) half-plane of an axisymmetric geometry
-  // (x = r >= 0, the axis at x = 0): every integral carries the full-revolution measure
-  // 2 pi r, so energies and capacitances are the three-dimensional quantities of the body
-  // of revolution. The axis boundary is natural (no boundary condition is required there).
+  // (x = r >= 0, the axis at x = 0): the electrostatic solve's domain and boundary
+  // integrals carry the full-revolution measure 2 pi r, so energies and capacitances are
+  // the three-dimensional quantities of the body of revolution. The axis boundary is
+  // natural (no boundary condition is required there). Electrostatic problems only
+  // (IoData::CheckConfiguration).
   bool axisymmetric = false;
 
   // Remove high-order curvature information from the mesh.

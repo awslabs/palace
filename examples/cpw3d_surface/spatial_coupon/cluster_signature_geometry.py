@@ -38,11 +38,12 @@ import sys
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-for path in (str(HERE), str(HERE.parents[1] / "cpw2d")):
+for path in (str(HERE), str(HERE.parents[1] / "cpw2d"), str(HERE.parents[1] / "surface_response_identification")):
     if path not in sys.path:
         sys.path.insert(0, path)
 import generate_spatial_response as spatial_generator  # noqa: E402
 import prepare_surface_response_coupons as planner  # noqa: E402
+import signature_library  # noqa: E402
 
 PROCESS_NORMAL = (0.0, 0.0, 1.0)
 # Signature coordinates live on the 1e-6 R grid (SignatureLengthQuantumOverR); two portion
@@ -56,17 +57,25 @@ class SignatureGeometryError(ValueError):
 
 
 def portions_from_signature(signature, radius):
-    """The portions of a SpatialEdgeCluster signature in mesh units (canonical frame)."""
+    """The portions of a SpatialEdgeCluster signature in mesh units (canonical frame). An arc
+    portion (option A: ``Arc`` = centre + midpoint, ``GapRadial``) is chorded at the canonical
+    step (signature_library.cluster_plan_view_edges: 5 deg / 0.25 R), each chord a straight
+    portion whose gap direction is the arc's radial direction at the chord's middle; the
+    chords are what the coupon's plan view and the model's Edges carry (Palace places a model
+    carrying its Signature with the identity map and verifies the chords against the arc)."""
     if signature.get("Type") != "SpatialEdgeCluster":
         raise SignatureGeometryError(f"not a SpatialEdgeCluster signature: {signature.get('Type')!r}")
     portions = []
     for index, entry in enumerate(signature["Portions"]):
-        p = [float(v) * radius for v in entry["P"]]
-        gap = np.asarray([float(v) for v in entry["Gap"]], dtype=float)
-        norm = np.linalg.norm(gap)
-        if len(p) != 4 or norm <= 0.0:
+        if "Arc" not in entry and ("Gap" not in entry or len(entry["P"]) != 4):
             raise SignatureGeometryError(f"portion {index} has an invalid P or Gap")
-        p0, p1 = np.asarray(p[:2]), np.asarray(p[2:])
+    for edge in signature_library.cluster_plan_view_edges(signature, radius):
+        index = edge["Portion"]
+        p0, p1 = np.asarray(edge["P0"], dtype=float), np.asarray(edge["P1"], dtype=float)
+        gap = np.asarray(edge["Gap"], dtype=float)
+        norm = np.linalg.norm(gap)
+        if norm <= 0.0:
+            raise SignatureGeometryError(f"portion {index} has an invalid P or Gap")
         length = float(np.linalg.norm(p1 - p0))
         if length <= 0.0:
             raise SignatureGeometryError(f"portion {index} has zero length")
@@ -74,8 +83,9 @@ def portions_from_signature(signature, radius):
         gap = gap / norm
         if abs(float(np.dot(tangent, gap))) > 1.0e-6:
             raise SignatureGeometryError(f"portion {index}: Gap is not perpendicular to the portion")
-        portions.append({"P0": p0, "P1": p1, "Gap": gap, "Length": length, "Conductor": int(entry["Conductor"]),
-                         "Interfaces": sorted(entry.get("Interfaces", [])), "Law": entry.get("Law", '{"Type":"PEC"}')})
+        portions.append({"P0": p0, "P1": p1, "Gap": gap, "Length": length, "Conductor": int(edge["Conductor"]),
+                         "Interfaces": sorted(edge.get("Interfaces") or []), "Law": edge.get("Law") or '{"Type":"PEC"}',
+                         "Portion": index})
     return portions
 
 

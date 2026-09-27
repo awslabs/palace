@@ -24,6 +24,9 @@ given with --patches) the gates A7 check the Features-driven patch construction:
 of every matched feature is integrated by exactly one longitudinal quadrature (weights summing
 to one), every vertex / cluster feature carries one patch, the patched feature set equals the
 matched manifest features, and no patch touches an unmatched feature or an excluded segment.
+Placement (A10, placement_check.py): with the library the preflight ran with (``Library.Path``
+or --library), every matched cluster / corner / stack / pair model mapped through its dry-run
+patch frame lands on the feature's claimed portions within the signature tolerance.
 """
 
 import argparse
@@ -44,6 +47,7 @@ if __package__ in (None, ""):
 from . import facing_check  # noqa: E402
 from . import manifest as M  # noqa: E402
 from . import perimeter as P  # noqa: E402
+from . import placement_check  # noqa: E402
 from .msh2 import read_msh2  # noqa: E402
 
 TURN_BINS = [0.0, 1.0e-6, 1.0, 2.0, 5.0, 10.0, 20.0, 29.999999, 30.000001, 45.0, 60.0, 89.999999, 90.000001, 120.0, 150.0, 180.0]
@@ -676,6 +680,21 @@ def run_audit(args):
             patch_gate_list, patch_summary = patch_gates(identification, load_patches(patches_path), radius)
             gates.extend(patch_gate_list)
             patch_summary["Path"] = os.path.abspath(patches_path)
+            # A10 placement (geometry only): every matched cluster / corner / stack / pair
+            # model mapped through its dry-run patch frame lands on the feature's claimed
+            # portions within the signature tolerance (placement_check.py). The library is
+            # the one the preflight ran with (Library.Path) unless given.
+            library_path = getattr(args, "library", None) or (manifest.get("Library") or {}).get("Path")
+            if library_path and os.path.exists(library_path):
+                progress("placement gates (A10)")
+                with open(library_path) as source:
+                    library = json.load(source)
+                placement_gate_list, placement_summary = placement_check.placement_gates(identification, placement_check.load_patches(patches_path), library, radius)
+                gates.extend(placement_gate_list)
+                placement_summary["Library"] = os.path.abspath(library_path)
+                patch_summary["Placement"] = placement_summary
+            else:
+                gates.append(gate("A10-placement-clusters", False, {"Reason": "library not found: pass --library", "Library": library_path}, evaluable=False))
     progress(f"{len(gates)} gates evaluated; summary")
     audit_segments = census["EdgesByClass"].get("PHYSICAL", 0) + census["EdgesByClass"].get("TRUNCATION", 0)
     if "MetalSegments" in statistics and not identification:
@@ -931,6 +950,7 @@ def main(argv=None):
     parser.add_argument("--log", help="palace stdout of the preflight (omission counts)")
     parser.add_argument("--compare", help="a second manifest to diff against (A3 / A5)")
     parser.add_argument("--patches", help="surface-response-patches.csv of the patch dry run (default: next to the manifest)")
+    parser.add_argument("--library", help="process-library.json the preflight ran with, for the A10 placement gates (default: the manifest's Library.Path)")
     parser.add_argument("--radius", type=float, help="matching radius in mesh units (default: manifest)")
     parser.add_argument("--corner-tolerance", type=float, default=P.CORNER_ANGLE_TOLERANCE_DEGREES, help="turn (deg) above which a vertex is a corner (classifier: 30)")
     parser.add_argument("--output-prefix", help="write <prefix>.json and <prefix>.md")

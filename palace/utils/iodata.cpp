@@ -293,6 +293,11 @@ void IoData::CheckConfiguration()
                   problem.type == ProblemType::ELECTROSTATIC,
               "Electrostatic \"ResponseCorrection\" is only supported for electrostatic "
               "simulations!");
+  // The 2 pi r measure is carried by the libCEED geometry factors and the electrostatic
+  // surface post-processing only; lumped-port areas, port voltage / current line
+  // integrals and the wave-port / far-field integrals are not weighted.
+  MFEM_VERIFY(!model.axisymmetric || problem.type == ProblemType::ELECTROSTATIC,
+              "\"Model.Axisymmetric\" is only supported for electrostatic simulations!");
   MFEM_VERIFY(!solver.surface_response_correction || problem.type == ProblemType::DRIVEN ||
                   problem.type == ProblemType::EIGENMODE ||
                   problem.type == ProblemType::BOUNDARYMODE,

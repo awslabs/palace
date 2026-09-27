@@ -1462,4 +1462,109 @@ TEST_CASE("SurfaceResponseIdentificationArcClusters",
       CHECK(counts["ConcaveCorner"] == 0);
     }
   }
+  SECTION("closed circles: small round pads inside a cluster")
+  {
+    // A disc of radius 0.5 R with its centre 1.2 R above a long bar edge lies entirely
+    // within 2R of the bar: the cluster claims the WHOLE circle as one closed-circle
+    // portion, serialised as centre + radius (its ends at the frame's +x point of the
+    // circle, the midpoint at the antipode), identical for 24 / 36 chords and for a mesh
+    // starting at another joint (the polygon rotated by a fraction of a chord). Two such
+    // discs alone (0.3 R, centres 1.2 R apart) form a cluster of closed circles only, whose
+    // frame comes from the centre-to-centre direction.
+    auto Disc = [&](double cx, double cy, double r, int chords, double start_degrees)
+    {
+      std::vector<Point2> disc;
+      for (int k = 0; k < chords; k++)
+      {
+        const double angle = (start_degrees + 360.0 * k / chords) * std::acos(-1.0) / 180.0;
+        disc.push_back({cx + r * std::cos(angle), cy + r * std::sin(angle)});
+      }
+      return disc;
+    };
+    const std::vector<std::pair<int, double>> meshes = {
+        {24, 0.0}, {36, 0.0}, {24, 7.0}, {36, 3.5}};
+    auto ClosedCirclePortions = [&](const IdentificationResult &result, int expected_arcs,
+                                    std::optional<nlohmann::json> &signature,
+                                    std::optional<std::string> &hash)
+    {
+      int clusters = 0;
+      for (const auto &feature : result.features)
+      {
+        if (feature.type != "SpatialEdgeCluster")
+        {
+          continue;
+        }
+        clusters++;
+        int closed = 0;
+        for (const auto &portion : feature.signature["Portions"])
+        {
+          if (!portion.contains("Arc"))
+          {
+            continue;
+          }
+          const auto P = portion["P"].get<std::array<double, 4>>();
+          const auto arc = portion["Arc"].get<std::array<double, 4>>();
+          CHECK(P[0] == P[2]);
+          CHECK(P[1] == P[3]);
+          // Ends at the circle's +x point, midpoint at the antipode.
+          const double r = P[0] - arc[0];
+          CHECK(r > 0.0);
+          CHECK_THAT(P[1], WithinAbs(arc[1], 1.0e-6));
+          CHECK_THAT(arc[2], WithinAbs(arc[0] - r, 1.0e-6));
+          CHECK_THAT(arc[3], WithinAbs(arc[1], 1.0e-6));
+          CHECK(portion["GapRadial"].get<int>() == 1);
+          closed++;
+        }
+        CHECK(closed == expected_arcs);
+        CHECK(!feature.hash.empty());
+        if (!signature)
+        {
+          signature = feature.signature;
+          hash = feature.hash;
+        }
+        else
+        {
+          INFO(feature.signature.dump() << " vs " << signature->dump());
+          CHECK(feature.signature == *signature);
+          CHECK(feature.hash == *hash);
+        }
+      }
+      return clusters;
+    };
+    {
+      std::optional<nlohmann::json> signature;
+      std::optional<std::string> hash;
+      for (const auto &[chords, start_degrees] : meshes)
+      {
+        const auto input =
+            MakeInput({{Rectangle(-20.0, -10.0, 20.0, 0.0), 0, 1.0},
+                       {Disc(0.0, 1.2 * R, 0.5 * R, chords, start_degrees), 1, 0.25}},
+                      R);
+        const auto result = IdentifyMetalPerimeter(input);
+        CheckPartition(input, result);
+        INFO("bar + disc: chords " << chords << " start " << start_degrees);
+        CHECK(ClosedCirclePortions(result, 1, signature, hash) == 1);
+      }
+      REQUIRE(signature);
+      CHECK((*signature)["Portions"].size() == 2);  // the bar window and the circle
+    }
+    {
+      std::optional<nlohmann::json> signature;
+      std::optional<std::string> hash;
+      for (const auto &[chords, start_degrees] : meshes)
+      {
+        const auto input =
+            MakeInput({{Disc(0.0, 0.0, 0.3 * R, chords, start_degrees), 0, 0.2},
+                       {Disc(1.2 * R, 0.0, 0.3 * R, chords, start_degrees + 5.0), 1, 0.2}},
+                      R);
+        const auto result = IdentifyMetalPerimeter(input);
+        CheckPartition(input, result);
+        INFO("two discs: chords " << chords << " start " << start_degrees);
+        CHECK(ClosedCirclePortions(result, 2, signature, hash) == 1);
+        CHECK(result.features.size() == 1);
+      }
+      REQUIRE(signature);
+      CHECK((*signature)["Portions"].size() == 2);
+    }
+  }
 }

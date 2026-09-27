@@ -1410,6 +1410,7 @@ bool IsBoundaryLawVerified(const LibraryModel &model)
 }
 
 std::string TopologyIdentifier(LibraryTopology topology);
+void VerifySpatialEdgesInSignatureFrame(const LibraryModel &model, double radius);
 
 ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                                   bool nondimensionalize, bool allow_empty_models = false,
@@ -1867,6 +1868,12 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
             (spatial_cluster && model.identification_signature),
         "SpatialEdgeCluster response models require spatial Edges (or a Signature), "
         "and other topologies cannot specify them!");
+    if (spatial_cluster && model.identification_signature && !model.spatial_edges.empty())
+    {
+      // The builder's contract: Edges in the canonical frame of the Signature (placed on a
+      // feature with the identity map).
+      VerifySpatialEdgesInSignatureFrame(model, library.matching_radius);
+    }
     MFEM_VERIFY(spatial_cluster || endpoint || junction || !model.plan_view_boundary,
                 "PlanViewBoundary is supported only by SpatialEdgeCluster, Endpoint, or "
                 "Junction models!");
@@ -2087,13 +2094,29 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
         MFEM_VERIFY(spatial_cluster || slot == 0,
                     "Nonzero interface Slots are supported only by SpatialEdgeCluster "
                     "response models!");
-        if (spatial_cluster)
+        if (spatial_cluster && !model.spatial_edges.empty())
         {
           MFEM_VERIFY(std::any_of(model.spatial_edges.begin(), model.spatial_edges.end(),
                                   [slot](const auto &edge)
                                   { return edge.interface_slot == slot; }),
                       "A SpatialEdgeCluster interface mapping refers to an unused "
                       "InterfaceSlot!");
+        }
+        else if (spatial_cluster)
+        {
+          // A Signature-only model's slots are the distinct interface sets of its
+          // Signature's portions (slot k = the k-th distinct set in sorted order).
+          std::set<std::string> portion_interface_sets;
+          for (const auto &portion :
+               model.identification_signature->value("Portions", nlohmann::json::array()))
+          {
+            portion_interface_sets.insert(
+                portion.value("Interfaces", nlohmann::json::array()).dump());
+          }
+          MFEM_VERIFY(slot < static_cast<int>(portion_interface_sets.size()),
+                      "A SpatialEdgeCluster interface mapping refers to InterfaceSlot "
+                          << slot << " but the model's Signature has only "
+                          << portion_interface_sets.size() << " interface slot(s)!");
         }
         model.interfaces.push_back({slot, type, coupon});
         mapped_interface_types.insert(type);
@@ -2372,6 +2395,12 @@ double Distance(const Point3D &a, const Point3D &b)
 // requirements output under Library.DecisionQuantization.
 constexpr double kDecisionLengthQuantumRelativeToMatchingRadius = 1.0e-8;
 constexpr double kDecisionDirectionQuantum = 1.0e-12;
+
+// Axisymmetric (r, z) edge sites: the gap direction of an edge on a curved (revolved) edge
+// is radial; a site whose in-plane gap direction makes a cosine below this with the r axis
+// (more than ~18 deg off radial) is not a revolved edge of the curvature family and is
+// refused. The same cosine bounds the "parallel" tests of the 2D site pairing below.
+constexpr double kAxisymmetricRadialGapCosine = 0.95;
 
 class DecisionQuantizer
 {
@@ -3245,18 +3274,21 @@ LibraryTopology CurvedTopologyOf(LibraryTopology straight)
 // given convexity is modelled by the Lagrange combination of the family's coupons in kappa:
 // the straight anchor (kappa 0, the model of the analogous straight topology) and the
 // curved coupons (Kappa, Convexity) of the library. Rule, deterministic and recorded: an
-// exact node
-// (|kappa - node| <= 1e-9) is that coupon; kappa at or below the smallest curved node is
-// the linear combination of the anchor and that node (the first-order correction dR/dkappa
-// of straight-like features); otherwise the cubic Lagrange interpolant on the four nodes
-// nearest to kappa (all nodes when fewer). A kappa beyond the largest node is refused
-// (reason), never treated as straight.
+// exact node (|kappa - node| <= 1e-9) is that coupon; kappa at or below the first-order
+// curvature 1 / StraightBendRadiusOverR (= 0.1: the identification's straight-like
+// threshold, decision 75) is the linear combination of the anchor and the family's node AT
+// that curvature (the first-order correction dR/dkappa of straight-like features) — a
+// library without that node refuses such a kappa (reason), never a linear rule on another
+// node; otherwise the cubic Lagrange interpolant on the four nodes nearest to kappa (all
+// nodes when fewer). A kappa beyond the largest node is refused (reason), never treated as
+// straight.
 struct CurvedFamilySelection
 {
   std::size_t anchor = 0;
   std::vector<LibrarySelection::WeightedModel> nodes;
   std::string rule;
   double kappa_max = 0.0;
+  double first_order_kappa = 1.0 / kStraightBendRadiusOverRadius;
 };
 
 std::optional<CurvedFamilySelection>
@@ -3331,8 +3363,21 @@ FindCurvedLibraryModel(const ProcessLibrary &library, LibraryTopology straight_t
   std::vector<std::pair<double, std::size_t>> abscissae = {{0.0, selection.anchor}};
   abscissae.insert(abscissae.end(), nodes.begin(), nodes.end());
   std::size_t begin = 0, end = abscissae.size();
-  if (kappa <= nodes.front().first)
+  if (kappa <= selection.first_order_kappa * (1.0 + 1.0e-9))
   {
+    const auto first_order_node = std::find_if(
+        nodes.begin(), nodes.end(), [&](const auto &node)
+        { return std::abs(node.first - selection.first_order_kappa) <= 1.0e-9; });
+    if (first_order_node == nodes.end())
+    {
+      reason = "kappa = " + std::to_string(kappa) +
+               " is in the first-order regime (<= 1 / StraightBendRadiusOverR = " +
+               std::to_string(selection.first_order_kappa) + ") but the library has no " +
+               convexity + " coupon at that kappa (smallest node " +
+               std::to_string(nodes.front().first) + ")";
+      return std::nullopt;
+    }
+    abscissae = {{0.0, selection.anchor}, *first_order_node};
     end = 2;
     selection.rule = "linear";
   }
@@ -4609,6 +4654,7 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
           {
             geometry["InterpolationRule"] = curved_selection->rule;
             geometry["KappaMax"] = curved_selection->kappa_max;
+            geometry["FirstOrderKappa"] = curved_selection->first_order_kappa;
           }
         }
         if (cluster.size() > 1)
@@ -4680,9 +4726,11 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
         }
         if (axisymmetric)
         {
-          MFEM_VERIFY(edge.point[0] > 0.0 && std::abs(edge.axis_u[0]) > 0.95,
+          MFEM_VERIFY(edge.point[0] > 0.0 &&
+                          std::abs(edge.axis_u[0]) > kAxisymmetricRadialGapCosine,
                       "An axisymmetric edge site must lie off the axis with an in-plane "
-                      "radial gap direction!");
+                      "radial gap direction (|cos| > "
+                          << kAxisymmetricRadialGapCosine << ")!");
           curved_kappa = group.matching_radius / edge.point[0];
           curved_convex = edge.axis_u[0] > 0.0;
           curved_edge_length = 2.0 * M_PI * edge.point[0];
@@ -5494,6 +5542,109 @@ ModelClusterSignature(const LibraryModel &model, double radius,
   }
   return CanonicalClusterSignature(portions, {}, model.spatial_edges.front().process_normal,
                                    radius);
+}
+
+// A version-2 SpatialEdgeCluster model (one carrying the identification's Signature) stores
+// its Edges in the canonical frame of that Signature: the library builder's contract (Point
+// = P x R, Interval along gap x normal, process normal +z; an arc portion chorded on its
+// circle). The patch construction then maps the model onto a feature with the identity
+// (the feature's canonical frame is the model frame), which is exact for straight and arc
+// portions alike — ModelClusterSignature cannot rebuild an arc portion from chords, so a
+// re-canonicalisation of the chorded Edges would land in another frame. The contract is
+// verified here (fail closed): every edge endpoint lies on a portion of the Signature
+// within the signature parameter tolerance.
+void VerifySpatialEdgesInSignatureFrame(const LibraryModel &model, double radius)
+{
+  MFEM_VERIFY(model.identification_signature && !model.spatial_edges.empty(),
+              "VerifySpatialEdgesInSignatureFrame needs a Signature and Edges!");
+  const auto &signature = *model.identification_signature;
+  MFEM_VERIFY(signature.contains("Portions") && signature["Portions"].is_array() &&
+                  !signature["Portions"].empty(),
+              "SpatialEdgeCluster model \"" << model.name
+                                            << "\" Signature carries no Portions!");
+  const double tolerance = kSignatureParameterToleranceOverRadius;  // in units of R
+  // Distance (in units of R) from a point q to a portion: a straight portion is the
+  // segment P; an arc portion the arc from P[0] through the midpoint to P[1] (a closed
+  // circle when the ends coincide).
+  auto PortionDistance = [&](const nlohmann::json &portion, const std::array<double, 2> &q)
+  {
+    const auto P = portion.at("P").get<std::array<double, 4>>();
+    const std::array<double, 2> a = {P[0], P[1]}, b = {P[2], P[3]};
+    if (!portion.contains("Arc"))
+    {
+      const double dx = b[0] - a[0], dy = b[1] - a[1];
+      const double length2 = dx * dx + dy * dy;
+      double s = length2 > 0.0 ? ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / length2 : 0.0;
+      s = std::clamp(s, 0.0, 1.0);
+      return std::hypot(q[0] - (a[0] + s * dx), q[1] - (a[1] + s * dy));
+    }
+    const auto arc = portion.at("Arc").get<std::array<double, 4>>();
+    const std::array<double, 2> c = {arc[0], arc[1]}, m = {arc[2], arc[3]};
+    const double r = std::hypot(a[0] - c[0], a[1] - c[1]);
+    const double radial = std::abs(std::hypot(q[0] - c[0], q[1] - c[1]) - r);
+    const bool closed = std::hypot(a[0] - b[0], a[1] - b[1]) <= 1.0e-9 * std::max(r, 1.0);
+    if (closed)
+    {
+      return radial;
+    }
+    const double two_pi = 2.0 * std::acos(-1.0);
+    auto Angle = [&](const std::array<double, 2> &p)
+    { return std::atan2(p[1] - c[1], p[0] - c[0]); };
+    const double ta = Angle(a);
+    // The arc runs from a to b through m: counterclockwise when m lies on the
+    // counterclockwise sweep from a to b, clockwise otherwise.
+    const double ccw = std::fmod(Angle(b) - ta + two_pi, two_pi);
+    const bool counterclockwise =
+        std::fmod(Angle(m) - ta + two_pi, two_pi) <= ccw + 1.0e-12;
+    const double sweep = counterclockwise ? ccw : ccw - two_pi;
+    double tq = std::fmod(Angle(q) - ta + two_pi, two_pi);
+    if (!counterclockwise)
+    {
+      tq = tq > 0.0 ? tq - two_pi : tq;
+    }
+    const bool within = counterclockwise ? tq <= sweep + 1.0e-12 : tq >= sweep - 1.0e-12;
+    if (within)
+    {
+      return radial;
+    }
+    return std::min(std::hypot(q[0] - a[0], q[1] - a[1]),
+                    std::hypot(q[0] - b[0], q[1] - b[1]));
+  };
+  for (std::size_t e = 0; e < model.spatial_edges.size(); e++)
+  {
+    const auto &edge = model.spatial_edges[e];
+    MFEM_VERIFY(std::abs(edge.process_normal[2] - 1.0) <= 1.0e-9 &&
+                    std::abs(edge.process_normal[0]) <= 1.0e-9 &&
+                    std::abs(edge.process_normal[1]) <= 1.0e-9,
+                "SpatialEdgeCluster model \""
+                    << model.name
+                    << "\" carries a Signature: its Edges must lie in the "
+                       "Signature's canonical frame (ProcessNormal [0, 0, 1]); edge "
+                    << e << " has ProcessNormal [" << edge.process_normal[0] << ", "
+                    << edge.process_normal[1] << ", " << edge.process_normal[2] << "]!");
+    const Point3D tangent = Normalize(Cross(edge.gap_direction, edge.process_normal));
+    for (const double s : edge.interval)
+    {
+      const Point3D p = Add(edge.point, Scale(s, tangent));
+      const std::array<double, 2> q = {p[0] / radius, p[1] / radius};
+      double nearest = std::numeric_limits<double>::infinity();
+      for (const auto &portion : signature["Portions"])
+      {
+        nearest = std::min(nearest, PortionDistance(portion, q));
+      }
+      MFEM_VERIFY(std::abs(p[2]) / radius <= tolerance && nearest <= tolerance,
+                  "SpatialEdgeCluster model \""
+                      << model.name << "\" carries a Signature but edge " << e
+                      << " endpoint [" << p[0] << ", " << p[1] << ", " << p[2] << "] lies "
+                      << nearest
+                      << " R from the nearest Signature portion "
+                         "(tolerance "
+                      << tolerance
+                      << " R): a version-2 model's Edges must be the Signature's portions "
+                         "in its canonical frame (Point = P x R, Interval along gap x "
+                         "normal; arc portions chorded on their circle)!");
+    }
+  }
 }
 
 // Library models by signature topology (decision 85(1)): a feature matches the model of its
@@ -6648,14 +6799,16 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
     }
     else if (feature.type == "SpatialEdgeCluster")
     {
-      // The model's edges (when stored) are expressed in its own frame; their canonical
-      // frame M and the feature's canonical frame F have the same serialisation, so a
-      // model-frame point m maps to F.origin + F.axes^T M.axes (m - M.origin). A model
-      // keyed by its Signature alone is built in the canonical frame (M = identity).
+      // A model keyed by its Signature is built in the canonical frame of that Signature
+      // (M = identity; its Edges, when stored, were verified against the Signature's
+      // portions at load — VerifySpatialEdgesInSignatureFrame). A legacy model's edges are
+      // expressed in its own frame; their canonical frame M and the feature's canonical
+      // frame F have the same serialisation, so a model-frame point m maps to F.origin +
+      // F.axes^T M.axes (m - M.origin).
       Point3D model_origin{};
       std::array<Point3D, 3> model_axes = {Point3D{1.0, 0.0, 0.0}, Point3D{0.0, 1.0, 0.0},
                                            Point3D{0.0, 0.0, 1.0}};
-      if (!model.spatial_edges.empty())
+      if (!model.spatial_edges.empty() && !model.identification_signature)
       {
         const auto canonical = ModelClusterSignature(model, R, describer);
         MFEM_VERIFY(canonical, "Unable to canonicalise a spatial edge-cluster model!");
@@ -11852,6 +12005,17 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                             {"StartConductor", entry.start_conductor},
                             {"EndConductor", entry.end_conductor}});
     }
+    // A curvature-family runtime model is its blend (weights x the source coupons'
+    // matrices); without it the reader would fall back to the anchor's straight matrices.
+    nlohmann::json blend = nlohmann::json::array();
+    for (const auto &source : model.blend)
+    {
+      blend.push_back({{"Weight", source.weight},
+                       {"FabricatedMatrix", source.fabricated_matrix},
+                       {"ThinMatrix", source.thin_matrix},
+                       {"FabricatedSurfaceMatrix", source.fabricated_surface_matrix},
+                       {"ThinSurfaceMatrix", source.thin_surface_matrix}});
+    }
     models.push_back({{"Index", model.idx},
                       {"Name", model.name},
                       {"Topology", model.topology},
@@ -11867,7 +12031,8 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                       {"ZeroTraceIndices", model.zero_trace_indices},
                       {"OpenContourPaths", std::move(open_paths)},
                       {"ConductorStateCount", model.conductor_state_count},
-                      {"Interfaces", std::move(interfaces)}});
+                      {"Interfaces", std::move(interfaces)},
+                      {"Blend", std::move(blend)}});
   }
   nlohmann::json patches = nlohmann::json::array();
   for (const auto &patch : config.patches)
@@ -11890,7 +12055,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  output << nlohmann::json{{"Version", 1},
+  output << nlohmann::json{{"Version", 2},
                            {"Models", std::move(models)},
                            {"Patches", std::move(patches)}}
                 .dump(2)
@@ -11904,8 +12069,11 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   MFEM_VERIFY(input, "Unable to read response-geometry cache \"" << path.string() << "\"!");
   nlohmann::json data;
   input >> data;
-  MFEM_VERIFY(data.value("Version", 0) == 1,
-              "Unsupported response-geometry cache version!");
+  MFEM_VERIFY(data.value("Version", 0) == 2,
+              "Unsupported response-geometry cache version "
+                  << data.value("Version", 0)
+                  << " (version 2 carries the curvature-family Blend of every model; "
+                     "delete a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
@@ -11935,6 +12103,20 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
     for (const auto &value : entry.value("Interfaces", nlohmann::json::array()))
     {
       model.interfaces.push_back({value.at("Target"), value.at("Coupon")});
+    }
+    // A blended (curvature-family) runtime model is only complete with its Blend (version
+    // 2 of the cache; a version-1 cache, which could describe such a model only as its
+    // anchor's straight matrices, is refused above).
+    for (const auto &value : entry.at("Blend"))
+    {
+      ResponseModelData::BlendSourceData source;
+      source.weight = value.at("Weight");
+      source.fabricated_matrix = value.at("FabricatedMatrix");
+      source.thin_matrix = value.at("ThinMatrix");
+      source.fabricated_surface_matrix =
+          value.value("FabricatedSurfaceMatrix", std::string{});
+      source.thin_surface_matrix = value.value("ThinSurfaceMatrix", std::string{});
+      model.blend.push_back(std::move(source));
     }
     result.models.push_back(std::move(model));
   }

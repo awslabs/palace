@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <map>
 #include <memory>
@@ -2092,6 +2093,25 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       auto anchor = curved_library["Models"][0];
       anchor["CouponDepth"] = 1055.0;
       curved_library["Models"] = {anchor};
+      // Every kappa node carries its own matrices (the anchor's scaled by 1 + kappa), so
+      // a blend differs from the anchor and the cache round trip below is discriminating.
+      auto ScaledMatrixFile =
+          [&](const std::string &source, const std::string &name, double factor)
+      {
+        std::ifstream input(source);
+        const auto target = temp.temp_dir / name;
+        std::ofstream output(target);
+        std::string line;
+        std::getline(input, line);
+        output << line << "\n";
+        while (std::getline(input, line))
+        {
+          const auto comma = line.rfind(',');
+          output << line.substr(0, comma + 1) << std::setprecision(17)
+                 << factor * std::stod(line.substr(comma + 1)) << "\n";
+        }
+        return target.string();
+      };
       for (const char *convexity : {"Convex", "Concave"})
       {
         for (const double kappa : {0.1, 0.25, 0.5, 0.8})
@@ -2102,6 +2122,16 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
           model["Kappa"] = kappa;
           model["Convexity"] = convexity;
           model["CouponDepth"] = 2.0 * M_PI * 0.1 / kappa;
+          const std::string suffix = model["Name"].get<std::string>();
+          for (const char *key : {"FabricatedMatrix", "ThinMatrix",
+                                  "FabricatedSurfaceMatrix", "ThinSurfaceMatrix"})
+          {
+            if (model.contains(key))
+            {
+              model[key] = ScaledMatrixFile(model[key].get<std::string>(),
+                                            suffix + "-" + key + ".csv", 1.0 + kappa);
+            }
+          }
           curved_library["Models"].push_back(model);
         }
       }
@@ -2135,6 +2165,66 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     }
     CHECK(catalog.count("isolated@concave-kappa0.4-cubic") == 1);
     CHECK(catalog.count("isolated@convex-kappa0.133333333-cubic") == 1);
+
+    // The response-geometry cache carries the blend of every runtime model (version 2):
+    // a run reloading the cache reproduces the blended response exactly, and a cache
+    // without the Blend entries is refused (never the anchor's straight matrices).
+    {
+      const auto cache_path = temp.temp_dir / "response-geometry-curved.json";
+      const std::string cache_string = cache_path.string();
+      setenv("PALACE_RESPONSE_GEOMETRY_CACHE", cache_string.c_str(), 1);
+      setenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE", "1", 1);
+      SurfaceResponseOperator written_response(curved_iodata, automatic_laplace);
+      Mpi::Barrier(Mpi::World());
+      unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE");
+      SurfaceResponseOperator loaded_response(curved_iodata, automatic_laplace);
+      unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE");
+      CHECK(loaded_response.GetPatchCount() == curved_response.GetPatchCount());
+      CHECK(loaded_response.GetBasisSize() == curved_response.GetBasisSize());
+      mfem::FunctionCoefficient curved_trace_coefficient(
+          [](const mfem::Vector &x) { return x[0] + 0.5 * x[1] * x[1]; });
+      mfem::ParGridFunction curved_trace_field(&automatic_laplace.GetH1Space().Get());
+      curved_trace_field.ProjectCoefficient(curved_trace_coefficient);
+      Vector curved_trace_true;
+      curved_trace_field.GetTrueDofs(curved_trace_true);
+      const auto fresh = curved_response.GetElectrostaticResponse(curved_trace_true);
+      const auto reloaded = loaded_response.GetElectrostaticResponse(curved_trace_true);
+      CHECK(fresh.domain_correction != 0.0);
+      CHECK_THAT(reloaded.domain_correction, WithinRel(fresh.domain_correction, 1.0e-12));
+      for (const auto &[interface, energy] : fresh.fabricated_surface_energy)
+      {
+        CHECK_THAT(reloaded.fabricated_surface_energy.at(interface),
+                   WithinRel(energy, 1.0e-12));
+      }
+      std::ifstream cache_input(cache_path);
+      REQUIRE(cache_input);
+      json cache = json::parse(cache_input);
+      CHECK(cache["Version"] == 2);
+      REQUIRE(cache["Models"].size() == 2);
+      for (auto &model : cache["Models"])
+      {
+        // Four sources per cubic blend; the weights carry the coupon-depth rescaling
+        // (Lagrange weight x D_anchor / D_node), so they do not sum to one.
+        REQUIRE(model["Blend"].size() == 4);
+        for (const auto &source : model["Blend"])
+        {
+          CHECK(std::isfinite(source["Weight"].get<double>()));
+          CHECK(!source["FabricatedMatrix"].get<std::string>().empty());
+        }
+        model.erase("Blend");
+      }
+      const auto stripped_path = temp.temp_dir / "response-geometry-curved-stripped.json";
+      if (Mpi::Root(Mpi::World()))
+      {
+        std::ofstream stripped(stripped_path);
+        stripped << cache.dump(2) << "\n";
+      }
+      Mpi::Barrier(Mpi::World());
+      const std::string stripped_string = stripped_path.string();
+      setenv("PALACE_RESPONSE_GEOMETRY_CACHE", stripped_string.c_str(), 1);
+      CHECK_THROWS(SurfaceResponseOperator(curved_iodata, automatic_laplace));
+      unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE");
+    }
 
     const auto curved_requirements_path =
         temp.temp_dir / "surface-response-requirements-curved.json";
@@ -2196,6 +2286,109 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       CHECK_THAT(sum, WithinAbs(1.0, 1.0e-6));
     }
     CHECK(curved_records == 2);
+
+    // Exact-node and first-order rules (the same metal line at other matching radii; the
+    // rule is keyed to 1 / StraightBendRadiusOverR = 0.1, not to the library's smallest
+    // node). R = 0.075: the convex edge at r = 0.75 sits on the kappa = 0.1 node (exact),
+    // the concave one at r = 0.25 is cubic at kappa 0.3. R = 0.025: the convex edge at
+    // kappa = 1/30 is linear between the anchor and the 0.1 node (weights 2/3, 1/3), the
+    // concave one exact at 0.1; without the 0.1 node the convex edge is refused (never a
+    // linear rule on the next node).
+    auto RescaledCurvedRun =
+        [&](double R, const std::vector<std::string> &drop_models, const std::string &tag)
+    {
+      const auto path = temp.temp_dir / ("fabrication-process-curved-" + tag + ".json");
+      if (Mpi::Root(Mpi::World()))
+      {
+        std::ifstream input(curved_library_path);
+        json library = json::parse(input);
+        library["MatchingRadius"] = R;
+        json models = json::array();
+        for (const auto &model : library["Models"])
+        {
+          if (std::find(drop_models.begin(), drop_models.end(),
+                        model["Name"].get<std::string>()) == drop_models.end())
+          {
+            models.push_back(model);
+          }
+        }
+        library["Models"] = models;
+        std::ofstream output(path);
+        output << library.dump(2) << "\n";
+      }
+      Mpi::Barrier(Mpi::World());
+      auto config = curved_config;
+      config["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeDistances"] = {R};
+      config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] = path.string();
+      return config;
+    };
+    auto CurvedRecords = [&](const json &config, const std::string &tag)
+    {
+      IoData iodata(config, false);
+      iodata.boundaries.cracked_attributes.insert(9);
+      iodata.boundaries.cracked_attributes.insert(10);
+      const auto path =
+          temp.temp_dir / ("surface-response-requirements-curved-" + tag + ".json");
+      WriteSurfaceResponseRequirements(iodata, *automatic_meshes.back(), path.string());
+      std::ifstream input(path);
+      REQUIRE(input);
+      const json requirements = json::parse(input);
+      std::map<std::string, json> records;  // by convexity
+      for (const auto &record : requirements["Requirements"])
+      {
+        if (record["Topology"] == "CurvedEdge")
+        {
+          records[record["Geometry"]["Convexity"].get<std::string>()] = record;
+        }
+      }
+      REQUIRE(records.size() == 2);
+      return records;
+    };
+    {
+      const auto records = CurvedRecords(RescaledCurvedRun(0.075, {}, "exact"), "exact");
+      const auto &convex = records.at("Convex");
+      CHECK(convex["Status"] == "Exact");
+      CHECK(convex["Geometry"]["InterpolationRule"] == "exact");
+      CHECK_THAT(convex["Geometry"]["Kappa"].get<double>(), WithinAbs(0.1, 1.0e-12));
+      CHECK_THAT(convex["Geometry"]["FirstOrderKappa"].get<double>(),
+                 WithinAbs(0.1, 1.0e-12));
+      REQUIRE(convex["SelectedModels"].size() == 1);
+      CHECK(convex["SelectedModels"][0]["Name"] == "curved-Convex-0.100000");
+      CHECK_THAT(convex["SelectedModels"][0]["Weight"].get<double>(),
+                 WithinAbs(1.0, 1.0e-12));
+      const auto &concave = records.at("Concave");
+      CHECK(concave["Geometry"]["InterpolationRule"] == "cubic");
+      CHECK_THAT(concave["Geometry"]["Kappa"].get<double>(), WithinAbs(0.3, 1.0e-12));
+      CHECK(concave["SelectedModels"].size() == 4);
+    }
+    {
+      const auto records = CurvedRecords(RescaledCurvedRun(0.025, {}, "linear"), "linear");
+      const auto &convex = records.at("Convex");
+      CHECK(convex["Status"] == "Interpolated");
+      CHECK(convex["Geometry"]["InterpolationRule"] == "linear");
+      CHECK_THAT(convex["Geometry"]["Kappa"].get<double>(), WithinAbs(1.0 / 30.0, 1.0e-12));
+      REQUIRE(convex["SelectedModels"].size() == 2);
+      CHECK(convex["SelectedModels"][0]["Name"] == "isolated");
+      CHECK_THAT(convex["SelectedModels"][0]["Weight"].get<double>(),
+                 WithinAbs(2.0 / 3.0, 1.0e-9));
+      CHECK(convex["SelectedModels"][1]["Name"] == "curved-Convex-0.100000");
+      CHECK_THAT(convex["SelectedModels"][1]["Weight"].get<double>(),
+                 WithinAbs(1.0 / 3.0, 1.0e-9));
+      const auto &concave = records.at("Concave");
+      CHECK(concave["Geometry"]["InterpolationRule"] == "exact");
+      CHECK(concave["SelectedModels"][0]["Name"] == "curved-Concave-0.100000");
+    }
+    {
+      // No convex 0.1 node: kappa = 1/30 is in the first-order regime and is refused
+      // (the 0.25 node is not used for a linear rule).
+      const auto config =
+          RescaledCurvedRun(0.025, {"curved-Convex-0.100000"}, "no-first-order-node");
+      IoData iodata(config, false);
+      iodata.boundaries.cracked_attributes.insert(9);
+      iodata.boundaries.cracked_attributes.insert(10);
+      CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, automatic_laplace),
+                        Catch::Matchers::ContainsSubstring("response matching failed"));
+    }
 
     // Without concave coupons the concave edge is unmatched (reported, not straight).
     auto convex_only_config = curved_config;
@@ -3897,6 +4090,232 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(matched_high_order_spatial !=
         exact_high_order_spatial_requirements["LegacyRequirements"].end());
 
+  // The library builder's model Edges of a SpatialEdgeCluster Signature (canonical frame,
+  // library units): every straight portion one edge (Point = P0 x R, Interval along
+  // gap x normal), every arc portion chorded into n = max(ceil(sweep / 5 deg),
+  // ceil(arc length / 0.25 R), 1) chords with the radial gap at each chord's middle
+  // (signature_library.cluster_plan_view_edges). Conductor labels 1, 2, ... in order of
+  // first occurrence (the canonical serialisation relabels the same way).
+  auto ChordedSignatureEdges = [](const json &signature, double radius)
+  {
+    json edges = json::array();
+    std::map<int, int> conductor_labels;
+    auto AddEdge = [&](std::array<double, 2> a, std::array<double, 2> b,
+                       std::array<double, 2> gap, int conductor)
+    {
+      const double gap_norm = std::hypot(gap[0], gap[1]);
+      gap = {gap[0] / gap_norm, gap[1] / gap_norm};
+      const double dx = (b[0] - a[0]) * radius, dy = (b[1] - a[1]) * radius;
+      const double length = std::hypot(dx, dy);
+      const bool forward = dx * gap[1] - dy * gap[0] > 0.0;  // along gap x (+z)
+      edges.push_back({{"Point", {a[0] * radius, a[1] * radius, 0.0}},
+                       {"GapDirection", {gap[0], gap[1], 0.0}},
+                       {"ProcessNormal", {0.0, 0.0, 1.0}},
+                       {"Interval", forward ? json{0.0, length} : json{-length, 0.0}},
+                       {"Conductor", conductor},
+                       {"BoundaryCondition", "PEC"}});
+    };
+    for (const auto &portion : signature["Portions"])
+    {
+      const int raw_conductor = portion["Conductor"].get<int>();
+      if (!conductor_labels.count(raw_conductor))
+      {
+        conductor_labels[raw_conductor] = static_cast<int>(conductor_labels.size()) + 1;
+      }
+      const int conductor = conductor_labels.at(raw_conductor);
+      const auto P = portion["P"].get<std::array<double, 4>>();
+      const std::array<double, 2> a = {P[0], P[1]}, b = {P[2], P[3]};
+      if (!portion.contains("Arc"))
+      {
+        AddEdge(a, b, portion["Gap"].get<std::array<double, 2>>(), conductor);
+        continue;
+      }
+      const auto arc = portion["Arc"].get<std::array<double, 4>>();
+      const std::array<double, 2> c = {arc[0], arc[1]}, m = {arc[2], arc[3]};
+      const double r = std::hypot(a[0] - c[0], a[1] - c[1]);
+      auto Angle = [&](const std::array<double, 2> &p)
+      { return std::atan2(p[1] - c[1], p[0] - c[0]); };
+      const double two_pi = 2.0 * std::acos(-1.0);
+      const double ta = Angle(a);
+      const double ccw = std::fmod(Angle(b) - ta + two_pi, two_pi);
+      const double sweep =
+          std::fmod(Angle(m) - ta + two_pi, two_pi) <= ccw + 1.0e-12 ? ccw : ccw - two_pi;
+      const int chords = std::max(
+          {static_cast<int>(std::ceil(std::abs(sweep) / (5.0 * two_pi / 360.0) - 1.0e-9)),
+           static_cast<int>(std::ceil(r * std::abs(sweep) / 0.25 - 1.0e-9)), 1});
+      const double gap_sign = portion["GapRadial"].get<int>();
+      for (int k = 0; k < chords; k++)
+      {
+        const double t0 = ta + sweep * k / chords, t1 = ta + sweep * (k + 1) / chords;
+        const double tm = 0.5 * (t0 + t1);
+        AddEdge({c[0] + r * std::cos(t0), c[1] + r * std::sin(t0)},
+                {c[0] + r * std::cos(t1), c[1] + r * std::sin(t1)},
+                {gap_sign * std::cos(tm), gap_sign * std::sin(tm)}, conductor);
+      }
+    }
+    return edges;
+  };
+  // Rows of the patch dry run (surface-response-patches.csv).
+  auto ReadPatchRows = [](const fs::path &path)
+  {
+    std::vector<std::vector<std::string>> rows;
+    std::ifstream input(path);
+    REQUIRE(input);
+    std::string line;
+    std::getline(input, line);  // header
+    while (std::getline(input, line))
+    {
+      std::vector<std::string> fields;
+      std::stringstream stream(line);
+      std::string field;
+      while (std::getline(stream, field, ','))
+      {
+        fields.push_back(field);
+      }
+      rows.push_back(std::move(fields));
+    }
+    return rows;
+  };
+  // Every endpoint of the model's Edges (library units = mesh units here), mapped through
+  // the feature's dry-run patch frame (Origin 13-15, AxisU / V / W 16-24), lies on the
+  // feature's claimed portions in the mesh: a straight portion endpoint, or a fitted arc
+  // (radially on the circle, within the angular range of the claimed chords).
+  auto CheckPlacedModelEdges = [](const json &feature, const json &identification,
+                                  const std::vector<std::vector<std::string>> &patch_rows,
+                                  const json &model_edges, double tolerance)
+  {
+    const auto &segments = identification["Segments"];
+    const auto &arcs = identification["Arcs"];
+    std::vector<std::array<double, 3>> straight_endpoints;
+    struct ClaimedArc
+    {
+      std::array<double, 3> center;
+      double radius;
+      std::array<double, 3> u, v;  // in-plane basis: u toward the first claimed point
+      double angle_min = 0.0, angle_max = 0.0;
+    };
+    std::map<int, ClaimedArc> claimed_arcs;
+    const auto n = feature["Frame"]["Axes"][2].get<std::array<double, 3>>();
+    auto ArcAngle = [&](const ClaimedArc &arc, const std::array<double, 3> &q)
+    {
+      double x = 0.0, y = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        x += (q[d] - arc.center[d]) * arc.u[d];
+        y += (q[d] - arc.center[d]) * arc.v[d];
+      }
+      return std::atan2(y, x);
+    };
+    for (const auto &portion : feature["Portions"])
+    {
+      const auto &segment = segments[portion[0].get<int>()];
+      const auto key = segment["Key"].get<std::array<std::array<double, 3>, 2>>();
+      const double length = segment["Length"].get<double>();
+      for (int end = 1; end <= 2; end++)
+      {
+        const double s = portion[end].get<double>() / length;
+        const std::array<double, 3> point = {key[0][0] + s * (key[1][0] - key[0][0]),
+                                             key[0][1] + s * (key[1][1] - key[0][1]),
+                                             key[0][2] + s * (key[1][2] - key[0][2])};
+        if (!segment.contains("Arc"))
+        {
+          straight_endpoints.push_back(point);
+          continue;
+        }
+        const int arc_index = segment["Arc"].get<int>();
+        auto it = claimed_arcs.find(arc_index);
+        if (it == claimed_arcs.end())
+        {
+          ClaimedArc arc{arcs[arc_index]["Center"].get<std::array<double, 3>>(),
+                         arcs[arc_index]["Radius"].get<double>()};
+          std::array<double, 3> u{};
+          double dot = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            dot += (point[d] - arc.center[d]) * n[d];
+          }
+          for (int d = 0; d < 3; d++)
+          {
+            u[d] = point[d] - arc.center[d] - dot * n[d];
+          }
+          const double norm = std::hypot(u[0], u[1], u[2]);
+          arc.u = {u[0] / norm, u[1] / norm, u[2] / norm};
+          arc.v = {n[1] * arc.u[2] - n[2] * arc.u[1], n[2] * arc.u[0] - n[0] * arc.u[2],
+                   n[0] * arc.u[1] - n[1] * arc.u[0]};
+          it = claimed_arcs.emplace(arc_index, arc).first;
+        }
+        const double angle = ArcAngle(it->second, point);
+        it->second.angle_min = std::min(it->second.angle_min, angle);
+        it->second.angle_max = std::max(it->second.angle_max, angle);
+      }
+    }
+    const auto patch =
+        std::find_if(patch_rows.begin(), patch_rows.end(), [&](const auto &row)
+                     { return std::stoi(row[1]) == feature["Id"].get<int>(); });
+    REQUIRE(patch != patch_rows.end());
+    CHECK((*patch)[2] == "spatial edge cluster");  // the model topology label
+    std::array<double, 3> origin{};
+    std::array<std::array<double, 3>, 3> axes{};
+    for (int d = 0; d < 3; d++)
+    {
+      origin[d] = std::stod((*patch)[13 + d]);
+      for (int a = 0; a < 3; a++)
+      {
+        axes[a][d] = std::stod((*patch)[16 + 3 * a + d]);
+      }
+    }
+    for (const auto &edge : model_edges)
+    {
+      const auto point = edge["Point"].get<std::array<double, 3>>();
+      const auto gap = edge["GapDirection"].get<std::array<double, 3>>();
+      const auto interval = edge["Interval"].get<std::array<double, 2>>();
+      const std::array<double, 3> tangent = {gap[1], -gap[0], 0.0};  // gap x (+z)
+      for (const double s : interval)
+      {
+        std::array<double, 3> mapped = origin;
+        for (int d = 0; d < 3; d++)
+        {
+          const double local = point[d] + s * tangent[d];
+          for (int k = 0; k < 3; k++)
+          {
+            mapped[k] += local * axes[d][k];
+          }
+        }
+        double nearest = std::numeric_limits<double>::infinity();
+        for (const auto &endpoint : straight_endpoints)
+        {
+          nearest =
+              std::min(nearest, std::hypot(mapped[0] - endpoint[0], mapped[1] - endpoint[1],
+                                           mapped[2] - endpoint[2]));
+        }
+        for (const auto &[index, arc] : claimed_arcs)
+        {
+          double out_of_plane = 0.0, in_plane2 = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            out_of_plane += (mapped[d] - arc.center[d]) * n[d];
+          }
+          for (int d = 0; d < 3; d++)
+          {
+            const double r = mapped[d] - arc.center[d] - out_of_plane * n[d];
+            in_plane2 += r * r;
+          }
+          const double radial = std::abs(std::sqrt(in_plane2) - arc.radius);
+          const double angle = ArcAngle(arc, mapped);
+          const double angular_excess =
+              std::max({0.0, arc.angle_min - angle, angle - arc.angle_max});
+          nearest = std::min(nearest,
+                             std::hypot(radial, angular_excess * arc.radius, out_of_plane));
+        }
+        INFO("feature " << feature["Id"] << " model edge point (" << point[0] << ", "
+                        << point[1] << ") s " << s << " mapped to (" << mapped[0] << ", "
+                        << mapped[1] << ", " << mapped[2] << ")");
+        CHECK_THAT(nearest, WithinAbs(0.0, tolerance));
+      }
+    }
+    return claimed_arcs.size();
+  };
+
   // Version-2 round trip: a model carrying a feature's canonical Signature matches that
   // feature by key (and only that feature), independent of the mesh ordering.
   {
@@ -3913,11 +4332,30 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     signature_model["Signature"] = (*cluster_feature)["Signature"];
     const auto signature_library_path =
         temp.temp_dir / "fabrication-process-v2-signature-3d.json";
+    high_order_spatial_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+        signature_library_path.string();
+    // A Signature model's Edges must be the Signature's portions in its canonical frame:
+    // the legacy Edges inherited here (the classifier's mesh-frame description, process
+    // normal +y) are refused at library load (fail closed), never re-canonicalised.
+    {
+      std::ofstream output(signature_library_path);
+      output << signature_library.dump(2) << "\n";
+    }
+    {
+      IoData legacy_edges_iodata(high_order_spatial_config, false);
+      legacy_edges_iodata.boundaries.cracked_attributes.insert(9);
+      legacy_edges_iodata.boundaries.cracked_attributes.insert(10);
+      CHECK_THROWS_WITH(
+          WriteSurfaceResponseRequirements(
+              legacy_edges_iodata, *high_order_spatial_mesh,
+              (temp.temp_dir / "surface-response-requirements-v2-legacy-edges.json")
+                  .string()),
+          Catch::Matchers::ContainsSubstring("canonical frame"));
+    }
+    signature_model.erase("Edges");  // keyed and built by the Signature alone
     std::ofstream signature_library_output(signature_library_path);
     signature_library_output << signature_library.dump(2) << "\n";
     signature_library_output.close();
-    high_order_spatial_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
-        signature_library_path.string();
     IoData signature_iodata(high_order_spatial_config, false);
     signature_iodata.boundaries.cracked_attributes.insert(9);
     signature_iodata.boundaries.cracked_attributes.insert(10);
@@ -3951,46 +4389,22 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                       }));
 
     // A version-2 model that also stores its Edges in the canonical frame (the library
-    // builder's contract: Point = P0 x R, Interval along gap x normal, the Signature's own
-    // portions) is canonicalised by ModelClusterSignature back to the frame it was built in,
-    // so the patch dry run maps every model edge endpoint onto the feature's portion
-    // endpoints in the mesh. (A tangent of the opposite sign reads the edges mirrored
-    // through their Point and places the coupon elsewhere on the device.)
+    // builder's contract: Point = P x R, Interval along gap x normal, the Signature's own
+    // portions, an arc portion chorded at 5 deg / 0.25 R as signature_library
+    // .cluster_plan_view_edges does) is placed with the identity map, so the patch dry run
+    // maps every model edge endpoint onto the feature's portions in the mesh: a straight
+    // edge endpoint onto a portion endpoint, a chord endpoint onto the fitted arc within
+    // the claimed angular range. (A re-canonicalisation of the stored Edges read the arc
+    // chords / the tangent of the opposite sign in another frame and placed the coupon
+    // elsewhere on the device: the 2394fdb0c failure class.)
     {
       auto edges_library = signature_library;
       auto &edges_model = edges_library["Models"].back();
       edges_model["Name"] = "v2-signature-cluster-edges";
       const double radius = edges_library["MatchingRadius"].get<double>();
-      const auto &cluster_signature = (*cluster_feature)["Signature"];
-      edges_model["Edges"] = json::array();
-      double signature_length = 0.0;
-      // The library wants conductor labels 1, 2, ... in order of first occurrence; the
-      // canonical serialisation relabels conductors the same way, so this is immaterial.
-      std::map<int, int> conductor_labels;
-      for (const auto &portion : cluster_signature["Portions"])
-      {
-        const int conductor = portion["Conductor"].get<int>();
-        if (!conductor_labels.count(conductor))
-        {
-          conductor_labels[conductor] = static_cast<int>(conductor_labels.size()) + 1;
-        }
-        const auto P = portion["P"].get<std::array<double, 4>>();
-        auto gap = portion["Gap"].get<std::array<double, 2>>();
-        // The signature stores directions on its quantum; the library wants unit vectors.
-        const double gap_norm = std::hypot(gap[0], gap[1]);
-        gap = {gap[0] / gap_norm, gap[1] / gap_norm};
-        const double dx = (P[2] - P[0]) * radius, dy = (P[3] - P[1]) * radius;
-        const double length = std::hypot(dx, dy);
-        signature_length += length;
-        const bool forward = dx * gap[1] - dy * gap[0] > 0.0;  // along gap x (+z)
-        edges_model["Edges"].push_back(
-            {{"Point", {P[0] * radius, P[1] * radius, 0.0}},
-             {"GapDirection", {gap[0], gap[1], 0.0}},
-             {"ProcessNormal", {0.0, 0.0, 1.0}},
-             {"Interval", forward ? json{0.0, length} : json{-length, 0.0}},
-             {"Conductor", conductor_labels.at(portion["Conductor"].get<int>())},
-             {"BoundaryCondition", "PEC"}});
-      }
+      edges_model["Edges"] = ChordedSignatureEdges((*cluster_feature)["Signature"], radius);
+      CHECK(edges_model["Edges"].size() >
+            (*cluster_feature)["Signature"]["Portions"].size());
       const auto edges_library_path =
           temp.temp_dir / "fabrication-process-v2-signature-edges-3d.json";
       std::ofstream edges_library_output(edges_library_path);
@@ -4012,7 +4426,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       REQUIRE(edges_requirements_input);
       const auto edges_requirements = json::parse(edges_requirements_input);
       const auto &edges_identification = edges_requirements["Identification"];
-      const auto &segments = edges_identification["Segments"];
+      const auto patch_rows = ReadPatchRows(edges_patches_path);
       int checked_clusters = 0;
       for (const auto &feature : edges_identification["Features"])
       {
@@ -4022,88 +4436,203 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
         }
         REQUIRE(feature["Match"]["Status"] == "Matched");
         REQUIRE(feature["Match"]["Model"] == "v2-signature-cluster-edges");
-        // Portion endpoints of the feature in mesh coordinates.
-        std::vector<std::array<double, 3>> device_endpoints;
-        for (const auto &portion : feature["Portions"])
-        {
-          const auto &segment = segments[portion[0].get<int>()];
-          const auto key = segment["Key"].get<std::array<std::array<double, 3>, 2>>();
-          const double length = segment["Length"].get<double>();
-          for (int end = 1; end <= 2; end++)
-          {
-            const double s = portion[end].get<double>() / length;
-            device_endpoints.push_back({key[0][0] + s * (key[1][0] - key[0][0]),
-                                        key[0][1] + s * (key[1][1] - key[0][1]),
-                                        key[0][2] + s * (key[1][2] - key[0][2])});
-          }
-        }
-        // The dry-run patch of this feature: Origin (13-15), AxisU / V / W (16-24).
-        std::vector<std::vector<std::string>> patch_rows;
-        {
-          std::ifstream input(edges_patches_path);
-          REQUIRE(input);
-          std::string line;
-          std::getline(input, line);  // header
-          while (std::getline(input, line))
-          {
-            std::vector<std::string> fields;
-            std::stringstream stream(line);
-            std::string field;
-            while (std::getline(stream, field, ','))
-            {
-              fields.push_back(field);
-            }
-            patch_rows.push_back(std::move(fields));
-          }
-        }
-        const auto patch = std::find_if(
-            patch_rows.begin(), patch_rows.end(), [&](const auto &row)
-            { return std::stoi(row[1]) == feature["Id"].get<int>(); });
-        REQUIRE(patch != patch_rows.end());
-        CHECK((*patch)[2] == "spatial edge cluster");  // the model topology label
-        std::array<double, 3> origin{};
-        std::array<std::array<double, 3>, 3> axes{};
-        for (int d = 0; d < 3; d++)
-        {
-          origin[d] = std::stod((*patch)[13 + d]);
-          for (int a = 0; a < 3; a++)
-          {
-            axes[a][d] = std::stod((*patch)[16 + 3 * a + d]);
-          }
-        }
-        // Library units -> mesh units through the feature's own length.
-        const double scale = feature["Length"].get<double>() / signature_length;
-        const double tolerance = 1.0e-6 * radius * scale;
-        for (const auto &edge : edges_model["Edges"])
-        {
-          const auto point = edge["Point"].get<std::array<double, 3>>();
-          const auto gap = edge["GapDirection"].get<std::array<double, 3>>();
-          const auto interval = edge["Interval"].get<std::array<double, 2>>();
-          const std::array<double, 3> tangent = {gap[1], -gap[0], 0.0};  // gap x (+z)
-          for (const double s : interval)
-          {
-            std::array<double, 3> mapped = origin;
-            for (int d = 0; d < 3; d++)
-            {
-              const double local = scale * (point[d] + s * tangent[d]);
-              for (int k = 0; k < 3; k++)
-              {
-                mapped[k] += local * axes[d][k];
-              }
-            }
-            double nearest = std::numeric_limits<double>::infinity();
-            for (const auto &endpoint : device_endpoints)
-            {
-              nearest = std::min(nearest, std::hypot(mapped[0] - endpoint[0],
-                                                     mapped[1] - endpoint[1],
-                                                     mapped[2] - endpoint[2]));
-            }
-            CHECK_THAT(nearest, WithinAbs(0.0, tolerance));
-          }
-        }
+        CheckPlacedModelEdges(feature, edges_identification, patch_rows,
+                              edges_model["Edges"], 1.0e-6 * radius);
         checked_clusters++;
       }
       CHECK(checked_clusters >= 1);
+    }
+  }
+
+  // Version-2 round trip with ARC portions (option A): a 1.5 R x 6 R finger with 0.5 R
+  // fillets is one SpatialEdgeCluster per end (two fillet arcs, the end edge, R along both
+  // sides). The library builder chords each arc portion of the Signature at 5 deg / 0.25 R
+  // and stores the chords as the model's Edges in the canonical frame
+  // (signature_library.cluster_plan_view_edges); the patch construction must place such a
+  // model with the identity (its chords cannot be re-canonicalised into arc portions), so
+  // every chord endpoint lands on the feature's arc in the mesh and every straight edge
+  // endpoint on a portion endpoint, for both finger ends (rotated frames) and independent
+  // of the mesh's chord count (4 / 8 chords per fillet).
+  {
+    constexpr double finger_R = 0.2;  // the spatial library's MatchingRadius
+    constexpr double fillet_radius = 0.5 * finger_R;
+    constexpr double finger_x0 = 0.4, finger_x1 = 1.6, finger_z0 = 0.35, finger_z1 = 0.65;
+    auto MakeFilletedFingerMesh = [&](int elements_per_fillet)
+    {
+      const double h = fillet_radius / elements_per_fillet;
+      const int nx = static_cast<int>(std::lround(2.0 / h)),
+                nz = static_cast<int>(std::lround(1.0 / h));
+      mfem::Mesh serial =
+          mfem::Mesh::MakeCartesian3D(nx, 4, nz, mfem::Element::HEXAHEDRON, 2.0, 1.0, 1.0);
+      for (int face = 0; face < serial.GetNumFaces(); face++)
+      {
+        int element1, element2;
+        serial.GetFaceElements(face, &element1, &element2);
+        if (element1 < 0 || element2 < 0)
+        {
+          continue;
+        }
+        mfem::Array<int> vertices;
+        serial.GetFaceVertices(face, vertices);
+        bool on_plane = true, inside = true;
+        for (const int vertex : vertices)
+        {
+          const double *point = serial.GetVertex(vertex);
+          on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
+          inside = inside && point[0] >= finger_x0 - 1.0e-12 &&
+                   point[0] <= finger_x1 + 1.0e-12 && point[2] >= finger_z0 - 1.0e-12 &&
+                   point[2] <= finger_z1 + 1.0e-12;
+        }
+        if (on_plane && inside)
+        {
+          serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+          serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+        }
+      }
+      // Each corner square [0, r]^2 of the finger (local coordinates from the fillet
+      // centre outward) is mapped square-by-square onto concentric quarter circles: the
+      // level-m square boundary onto the arc of radius m, so the outline becomes a
+      // polyline of 2 elements_per_fillet chords on the design circle and no element is
+      // inverted.
+      for (int vertex = 0; vertex < serial.GetNV(); vertex++)
+      {
+        double *point = serial.GetVertex(vertex);
+        if (std::abs(point[1] - 0.5) > 1.0e-12)
+        {
+          continue;
+        }
+        for (const double sign_x : {-1.0, 1.0})
+        {
+          for (const double sign_z : {-1.0, 1.0})
+          {
+            const double corner_x = sign_x > 0 ? finger_x1 : finger_x0;
+            const double corner_z = sign_z > 0 ? finger_z1 : finger_z0;
+            const double center_x = corner_x - sign_x * fillet_radius;
+            const double center_z = corner_z - sign_z * fillet_radius;
+            const double local_x = sign_x * (point[0] - center_x);
+            const double local_z = sign_z * (point[2] - center_z);
+            if (local_x < -1.0e-12 || local_x > fillet_radius + 1.0e-12 ||
+                local_z < -1.0e-12 || local_z > fillet_radius + 1.0e-12)
+            {
+              continue;
+            }
+            const double m = std::max(local_x, local_z);
+            if (m <= 1.0e-12)
+            {
+              break;
+            }
+            const double angle =
+                std::abs(local_z - m) <= 1.0e-12
+                    ? 0.5 * std::acos(-1.0) - 0.25 * std::acos(-1.0) * local_x / m
+                    : 0.25 * std::acos(-1.0) * local_z / m;
+            point[0] = center_x + sign_x * m * std::cos(angle);
+            point[2] = center_z + sign_z * m * std::sin(angle);
+            break;
+          }
+        }
+      }
+      serial.FinalizeTopology();
+      serial.Finalize();
+      return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+    };
+    auto finger_config = island_config;
+    finger_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+        spatial_cluster_library_3d_path.string();
+    finger_config["Solver"]["Electrostatic"]["ResponseCorrection"]["UnmatchedPolicy"] =
+        "Warn";
+    finger_config["Solver"]["Electrostatic"]["ResponseCorrection"].erase(
+        "PatchConstruction");
+    // The feature's Signature from the coarse mesh (4 chords per fillet).
+    std::optional<json> finger_signature;
+    std::optional<std::string> finger_hash;
+    const auto finger_library_path =
+        temp.temp_dir / "fabrication-process-v2-arc-cluster.json";
+    for (const int elements_per_fillet : {2, 4})
+    {
+      auto finger_mesh = MakeFilletedFingerMesh(elements_per_fillet);
+      const auto finger_requirements_path =
+          temp.temp_dir / "surface-response-requirements-arc-finger.json";
+      const auto finger_patches_path = temp.temp_dir / "surface-response-patches.csv";
+      if (!finger_signature)
+      {
+        IoData finger_iodata(finger_config, false);
+        finger_iodata.boundaries.cracked_attributes.insert(9);
+        WriteSurfaceResponseRequirements(finger_iodata, *finger_mesh,
+                                         finger_requirements_path.string());
+        std::ifstream input(finger_requirements_path);
+        REQUIRE(input);
+        const auto requirements = json::parse(input);
+        for (const auto &feature : requirements["Identification"]["Features"])
+        {
+          if (feature["Type"] != "SpatialEdgeCluster")
+          {
+            continue;
+          }
+          int arcs = 0;
+          for (const auto &portion : feature["Signature"]["Portions"])
+          {
+            arcs += portion.contains("Arc") ? 1 : 0;
+          }
+          REQUIRE(arcs == 2);
+          REQUIRE(feature["Signature"]["EdgeCount"].get<int>() == 5);
+          if (!finger_signature)
+          {
+            finger_signature = feature["Signature"];
+            finger_hash = feature["Hash"].get<std::string>();
+          }
+          else
+          {
+            CHECK(feature["Hash"].get<std::string>() == *finger_hash);  // congruent ends
+          }
+        }
+        REQUIRE(finger_signature);
+        // The builder's model: verbatim Signature, Edges = straight portions and the
+        // chorded arcs (5 deg / 0.25 R) in the canonical frame, gap x normal intervals.
+        auto finger_library = exact_high_order_spatial_library;
+        auto &finger_model = finger_library["Models"].back();
+        finger_model["Name"] = "v2-signature-arc-cluster-edges";
+        finger_model["Signature"] = *finger_signature;
+        for (const char *key : {"ConductorReferences", "OpenContourPaths", "SupportPoints",
+                                "PlanViewBoundary"})
+        {
+          finger_model.erase(key);
+        }
+        finger_model["Edges"] = ChordedSignatureEdges(*finger_signature, finger_R);
+        CHECK(finger_model["Edges"].size() >= 3 + 2 * 18);  // 18 chords per quarter circle
+        std::ofstream output(finger_library_path);
+        output << finger_library.dump(2) << "\n";
+        output.close();
+        finger_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+            finger_library_path.string();
+      }
+      IoData finger_iodata(finger_config, false);
+      finger_iodata.boundaries.cracked_attributes.insert(9);
+      WriteSurfaceResponseRequirements(finger_iodata, *finger_mesh,
+                                       finger_requirements_path.string());
+      std::ifstream input(finger_requirements_path);
+      REQUIRE(input);
+      const auto requirements = json::parse(input);
+      const auto &identification = requirements["Identification"];
+      const auto patch_rows = ReadPatchRows(finger_patches_path);
+      std::ifstream library_input(finger_library_path);
+      const json model_edges = json::parse(library_input)["Models"].back()["Edges"];
+      int checked_clusters = 0;
+      for (const auto &feature : identification["Features"])
+      {
+        if (feature["Type"] != "SpatialEdgeCluster")
+        {
+          continue;
+        }
+        INFO("elements per fillet " << elements_per_fillet << ", feature "
+                                    << feature["Id"]);
+        CHECK(feature["Hash"].get<std::string>() == *finger_hash);  // chord-count free
+        REQUIRE(feature["Match"]["Status"] == "Matched");
+        REQUIRE(feature["Match"]["Model"] == "v2-signature-arc-cluster-edges");
+        CHECK(CheckPlacedModelEdges(feature, identification, patch_rows, model_edges,
+                                    1.0e-6 * finger_R) == 2);  // both fillets claimed
+        checked_clusters++;
+      }
+      CHECK(checked_clusters == 2);  // both finger ends
     }
   }
 

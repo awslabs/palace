@@ -67,7 +67,7 @@
         },
         "Axisymmetric": {
           "type": "boolean",
-          "description": "Interpret a two-dimensional mesh as the (r, z) half-plane of an axisymmetric geometry: x = r >= 0 with the symmetry axis at x = 0. Every domain and boundary integral then carries the full-revolution measure 2\u03c0r, so energies, capacitances and surface participations are the three-dimensional quantities of the body of revolution. The axis boundary is natural (no boundary condition is required on it). Requires a two-dimensional mesh whose vertices all satisfy x >= 0.",
+          "description": "Interpret a two-dimensional mesh as the (r, z) half-plane of an axisymmetric geometry: x = r >= 0 with the symmetry axis at x = 0. The domain and boundary integrals of the electrostatic solve (operators, energies, error estimates, surface post-processing and surface-response quadrature) then carry the full-revolution measure 2\u03c0r, so energies, capacitances and surface participations are the three-dimensional quantities of the body of revolution. The axis boundary is natural (no boundary condition is required on it). Electrostatic problems only (lumped-port areas and port voltage / current line integrals are not weighted); requires a two-dimensional mesh whose vertices all satisfy x >= 0.",
           "default": false
         },
         "RemoveCurvature": {

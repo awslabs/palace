@@ -313,6 +313,13 @@ TranslationalSignature CanonicalTranslationalSignature(std::vector<Translational
 constexpr double kSignatureLengthQuantumOverRadius = 1.0e-6;
 constexpr double kSignatureAngleQuantumDegrees = 1.0e-6;
 
+// Straight-like bend threshold (decision 75; the curved-edge chain rule in the .cpp): a
+// chain point whose windowed bend radius is at or above this multiple of R is a straight
+// edge; below it a CurvedEdge. The curvature families' first-order (linear) rule applies at
+// kappa = R / rho <= 1 / kStraightBendRadiusOverRadius (recorded as
+// StraightBendRadiusOverR).
+constexpr double kStraightBendRadiusOverRadius = 10.0;
+
 // Corner / junction signatures (without "Type"), shared by device features and library
 // models so that one canonicalisation produces both keys.
 nlohmann::json CanonicalCornerSignature(const std::vector<std::string> &interfaces,

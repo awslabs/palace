@@ -904,7 +904,10 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             self.assertNotIn("Signature", stamped["other-strip"])
             duplicate = copy.deepcopy(by_topology["SameConductorStrip"])
             duplicate["Signature"] = {**signature, "SeparationOverR": 1.0526317}
-            with self.assertRaises(ValueError):
+            duplicate["BoundaryCondition"] = {"Type": "Impedance", "Ls": 1.0e-13}
+            # The message names every matching coupon with its boundary law (the geometry
+            # match ignores the law; a second law on one geometry is the usual cause).
+            with self.assertRaisesRegex(ValueError, r"matches 2 version-2 coupon signatures.*Impedance"):
                 PREPARE.stamp_library_signatures(path, plan["Coupons"] + [duplicate])
 
     def test_parallel_cluster_mesh_failure_prevents_full_response_solves(self):

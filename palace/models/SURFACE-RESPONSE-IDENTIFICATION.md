@@ -248,10 +248,19 @@ smaller endpoint.
    to the bisection precision; two chords keep the former exact formulas, so a geometry without
    arcs in its clusters is unchanged. The cluster's claims on one arc are ONE signature portion
    (`ClusterSignaturePortions`), serialised in the frame as `{P: sorted ends, Arc: [centre,
-   midpoint], GapRadial: +1 metal inside the circle / -1 outside}` (a closed circle: equal
-   ends, the midpoint at the antipode); the frame candidates add the arc's end tangents and end
-   radial directions (none for a closed circle), the origin is the length-weighted centroid
-   with the arcs' analytic centroids, `EdgeCount` counts an arc portion once. The manifest
+   midpoint], GapRadial: +1 metal inside the circle / -1 outside}` (a closed circle claimed
+   whole has no ends of its own: it is serialised as centre + radius, with `P` the circle's
+   point on the frame's +x side, repeated, and the midpoint at its antipode, so the mesh's
+   first joint never enters); the frame candidates add the arc's end tangents and end radial
+   directions (none for a closed circle; a cluster of closed circles only takes the
+   centroid-to-centre directions, or a fixed in-plane axis when they are concentric), the
+   origin is the length-weighted centroid with the arcs' analytic centroids, `EdgeCount`
+   counts an arc portion once. Known behaviour of the arc fit (recorded from the synthetic
+   arc set): two tangent fillets joined by a straight end edge shorter than the arc-fit
+   tolerance (e.g. two 0.75 R fillets of a 1.5 R + 0.3 R finger end) lie on one circle within
+   the tolerance and are absorbed into ONE semicircular arc — a straight edge shorter than the
+   fit tolerance between tangent fillets does not survive as a straight portion (the synthetic
+   set uses 0.25 / 0.5 / 0.7 R fillets for that reason). The manifest
    records the fitted arcs (`Arcs`: centre, radius, turn, kind RoundedCorner | Bend, joints,
    segments) and every chord segment's arc (`Segments[].Arc`); the coupon builder chords a
    signature arc at `ClusterArcChordStepDegrees` = 5 deg, finer so that no chord exceeds
@@ -773,7 +782,7 @@ Patch per class (weights in mesh units; `CouponDepth` = the model's longitudinal
 | pairs (`SameConductorGap`, `DifferentConductorGap`, `SameConductorStrip`, `Curved*`) | quadrature on **both** sides, side factor 1 / 2 (the longitudinal measure is the mean of the two sides: exact for a straight pair, the centreline for concentric arcs); at a sample p its foot q on the partner's portions | origin (e1 + e2) / 2, u from the model's first edge e1 toward e2, v = mean process normal; the first edge is the lower side along the feature's lateral axis `Frame.Axes[1]` (the higher one for `Chirality` -1: the canonical orientation is the mirror) | `(s1 - s0) x w_q x 1/2 / CouponDepth` |
 | `ParallelEdgeCluster` | quadrature on every side, side factor 1 / n; origin on the canonical first edge at the sample's longitudinal coordinate; anchors on the first edge of every conductor label | u = lateral axis toward increasing canonical offsets, v = mean process normal | `(s1 - s0) x w_q / n / CouponDepth` |
 | `ConvexCorner`, `ConcaveCorner` (sharp or rounded), `Endpoint`, `Junction` | one patch at `Frame.Origin` (the vertex or the virtual corner of a fillet) | `Frame.Axes` (below) | model weight (1) |
-| `SpatialEdgeCluster` | one patch | the model's canonical frame composed with the feature's: a model-frame point m maps to `F.origin + F.axes^T M.axes (m - M.origin)`, M from `CanonicalClusterSignature` of the model's stored edges (identity for a model keyed by its `Signature` alone, which is built in the canonical frame) | model weight (1) |
+| `SpatialEdgeCluster` | one patch | a model carrying its `Signature` is built in that Signature's canonical frame and is placed with the identity map (m maps to `F.origin + F.axes^T m`; its stored `Edges`, when present, are verified at library load to lie on the Signature's portions — straight portions as segments, arc portions on their circle — within the signature tolerance, `VerifySpatialEdgesInSignatureFrame`, fail closed); a legacy model without a `Signature` maps a model-frame point m to `F.origin + F.axes^T M.axes (m - M.origin)`, M from `CanonicalClusterSignature` of its stored straight edges | model weight (1) |
 
 **Vertex-feature frames** (`Frame` of the manifest, shared by the library builder): corner:
 x = the first arm away from the (virtual) corner, the arms ordered so that the second is
@@ -796,7 +805,13 @@ record carries `Signature`, `Instances` (feature instances), `DistinctSignatures
 and, for the curved class, `BendRadius`); the curved classes (`CurvedEdge`, `CurvedSameConductorGap`, `CurvedDifferentConductorGap`,
 `CurvedSameConductorStrip`) exist only as signature-keyed models and are patched like their
 straight analogues along the curved portions; a cluster model keyed by its signature needs no
-`Edges`. A model's interface types are part of its key (a model mapping MA + MS + SA never
+`Edges`, and when it stores them (the library builder: the Signature's straight portions as
+edges and every arc portion chorded at `ClusterArcChordStepDegrees` / `ClusterArcChordMaxLengthOverR`,
+`cluster_signature_geometry.portions_from_signature`) they must be the Signature's portions in
+its canonical frame (Point = P x R, Interval along gap x normal, process normal +z): the
+placement is then the identity, exact for arc clusters, whose chords could not be
+re-canonicalised into arc portions (a chorded model re-canonicalised from its chords landed in
+another frame: the 2394fdb0c failure class). A model's interface types are part of its key (a model mapping MA + MS + SA never
 matches an SA-only feature). Runtime models are one per (library model, target interfaces by
 slot; slot k = the k-th distinct target map of the feature's portions in sorted order).
 
@@ -814,6 +829,25 @@ patch on an unmatched feature, an excluded segment or an excluded portion. With 
 signature-only library built from the manifest's own features
 (`examples/surface_response_identification/signature_library.py`) the covered length equals
 `Totals.AssignedLength`: the whole perimeter minus the recorded exclusions.
+
+**Placement audit (gates A10, `placement_check.py`; geometry only).** The coverage gates see
+where a coupon is applied, not how it is oriented: a misplaced coupon (a version-2 cluster
+model canonicalised to another frame, 2394fdb0c: SA +19 / MS +527 %) passes every A1 / A7 gate.
+With the library the preflight ran with (`Library.Path` of the manifest or `--library`), every
+matched cluster / corner / stack / pair model is mapped through the patch frame the dry run
+wrote and must land on the feature's claimed portions within the signature parameter
+tolerance (1e-3 R): a `SpatialEdgeCluster` model's `Edges` (or the chorded portions of a
+Signature-only model) — every edge endpoint on a claimed straight sub-segment or on a claimed
+arc (radially on the fitted circle, within the claimed angular range), and every claimed
+straight endpoint / arc end on the mapped model polyline; a corner model's arms (+u and the
+model `Angle` counterclockwise; a rounded corner's claimed chords on the fillet circle of the
+model `CornerRadius`); a stack model's `Offset`s along u from the patch origin on the claimed
+side of that offset (sides reversed for `Chirality` -1); a pair model's `Separation` about the
+patch origin. Model lengths are library units times R_mesh / R_library. `A10-placement-*` per
+class (features, checks, worst deviation / R, defects); a model the gate cannot evaluate is
+listed under `A10-placement-evaluable`, never silently passed. On the lane-2 transmon preflight
+the gate fails the pre-2394fdb0c run (worst 3.39 R on the 3-edge cluster) and passes the fixed
+one (5.1e-7 R).
 
 ## (d) Manifest version 2
 
