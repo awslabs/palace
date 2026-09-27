@@ -15,6 +15,17 @@ INTERFACES = {
     "MA": (10.0, 3.0e-2),
 }
 
+# Boundary attributes of mesh_corner_coupon.jl (thin and fabricated): the matching box and
+# the substrate-air surface. The metal edge lines of every interface are the perimeter of
+# the SA surface (the metal outline of the thin sheet; the foot of the fabricated slab where
+# the SA plane / trench wall meets the MS face) minus its edges on the matching box. This is
+# the line the legacy automatic extraction returned; the version-2 perimeter classification
+# (identification phase 3) classifies every edge of the fabricated slab as a fold between
+# non-coplanar metal faces (MS / sidewall, top / sidewall) and retains no one-sided metal
+# perimeter, so `AutomaticEdges` finds nothing on a fabricated corner coupon.
+MATCHING_SURFACE_ATTRIBUTE = 1
+SA_ATTRIBUTE = 3
+
 
 def square_ring(half_width, z, size):
     if size < 8 or size % 8:
@@ -378,8 +389,8 @@ def dielectric(
         "LossTan": loss_tangent,
         "LocalizeEdgeEnergy": True,
         "SaveLocalEdgeEnergy": False,
-        "AutomaticEdges": True,
-        "EdgeExcludeAttributes": [1],
+        "EdgeAttributes": [SA_ATTRIBUTE],
+        "EdgeExcludeAttributes": [MATCHING_SURFACE_ATTRIBUTE],
         "EdgeFrameNormal": [0.0, 0.0, 1.0],
         "EdgeDistances": [radius],
     }

@@ -520,6 +520,39 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                 PREPARE.preparation(requirement)["Method"], "Unsupported"
             )
 
+    def test_corner_config_edge_lines_are_the_sa_perimeter(self):
+        # The fabricated corner coupon is a 3D metal slab whose every edge is a fold between
+        # non-coplanar metal faces: the version-2 automatic perimeter extraction retains no
+        # one-sided metal edge on it ("No physical metal perimeter was found"). The coupon
+        # therefore names its edge lines explicitly as the perimeter of the SA surface minus
+        # the matching box, for the thin sheet and the fabricated slab alike.
+        for fabricated in (False, True):
+            config = CORNER.make_config(
+                Path("."),
+                "corner",
+                Path("mesh.msh"),
+                [Path("trace.csv")],
+                1.9,
+                2,
+                fabricated,
+                11.47,
+                {"SA": (0.002, 4.0), "MS": (0.002, 11.47), "MA": (0.002, 10.0)},
+            )
+            dielectrics = config["Boundaries"]["Postprocessing"]["Dielectric"]
+            self.assertEqual([entry["Type"] for entry in dielectrics], ["SA", "MS", "MA"])
+            for entry in dielectrics:
+                self.assertNotIn("AutomaticEdges", entry)
+                self.assertEqual(entry["EdgeAttributes"], [CORNER.SA_ATTRIBUTE])
+                self.assertEqual(
+                    entry["EdgeExcludeAttributes"], [CORNER.MATCHING_SURFACE_ATTRIBUTE]
+                )
+                self.assertEqual(entry["EdgeFrameNormal"], [0.0, 0.0, 1.0])
+                self.assertEqual(entry["EdgeDistances"], [1.9])
+            self.assertEqual(dielectrics[0]["Attributes"], [CORNER.SA_ATTRIBUTE])
+            self.assertEqual(
+                config["Boundaries"]["Ground"]["Attributes"], [2, 4] if fabricated else [2]
+            )
+
     def test_corner_trace_mask_and_reference_follow_requested_angle(self):
         center = CORNER.corner_center(60.0, 0.5)
         np.testing.assert_allclose(
