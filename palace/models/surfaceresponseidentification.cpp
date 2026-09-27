@@ -6855,8 +6855,26 @@ void Identifier::BuildClusters()
             const double scale = run_arcs[a] && ra.length > 0.0
                                      ? run_arcs[a]->piece.Length() / ra.length
                                      : 1.0;
+            double lo_a = sub_lo, hi_a = sub_hi;
+            if (!run_arcs[a])
+            {
+              // A straight run against an arc piece: bracket by the convex sublevel set of
+              // the distance to the piece's chord below 2R + sagitta (a long ground edge is
+              // not sampled along its whole length for every fillet chord near it).
+              auto chord = [&](double s)
+              { return PointSegmentDistance(ra.At(s), target.a, target.b); };
+              const auto bracket = ConvexSublevelInterval(
+                  chord, sub_lo, sub_hi, interaction + target.Sagitta() + 2.0 * Tol(),
+                  quantizer);
+              if (!bracket)
+              {
+                continue;
+              }
+              lo_a = bracket->first;
+              hi_a = bracket->second;
+            }
             for (const auto &interval :
-                 SampledSublevelIntervals(f, sub_lo, sub_hi, interaction, quantizer,
+                 SampledSublevelIntervals(f, lo_a, hi_a, interaction, quantizer,
                                           ArcSampleStep() / std::max(scale, 1.0e-300)))
             {
               found.push_back(interval);
