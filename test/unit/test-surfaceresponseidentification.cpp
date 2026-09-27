@@ -1297,9 +1297,9 @@ namespace
 {
 
 // A hairpin strip (synthetic_layouts.py hairpin): width 2 rho - gap folded through a
-// semicircle of centreline radius rho about the origin (the fold below y = 0), the legs up to
-// y = half_y and closed across the top; inner fold radius gap / 2, outer 2 rho - gap / 2,
-// each fold a polyline of `chords` chords (counter-clockwise loop).
+// semicircle of centreline radius rho about the origin (the fold below y = 0), the legs up
+// to y = half_y and closed across the top; inner fold radius gap / 2, outer 2 rho - gap /
+// 2, each fold a polyline of `chords` chords (counter-clockwise loop).
 std::vector<Point2> Hairpin(double rho, double gap, double half_y, int chords)
 {
   const double r_in = 0.5 * gap, r_out = 2.0 * rho - 0.5 * gap;
@@ -1356,7 +1356,8 @@ TEST_CASE("SurfaceResponseIdentificationArcClusters",
             arcs += portion.contains("Arc") ? 1 : 0;
             if (portion.contains("Arc"))
             {
-              CHECK(portion["GapRadial"].get<int>() == 1);  // metal inside the fillet circle
+              // Metal inside the fillet circle.
+              CHECK(portion["GapRadial"].get<int>() == 1);
             }
           }
           CHECK(arcs == 2);
@@ -1391,7 +1392,8 @@ TEST_CASE("SurfaceResponseIdentificationArcClusters",
         CHECK_THAT(arc.radius, WithinAbs(1.0, 1.0e-9));
         CHECK_THAT(arc.turn_degrees, WithinAbs(90.0, 1.0e-9));
       }
-      // Every mesh segment of a fillet (its chords, subdivided at 0.5 um) points at its arc.
+      // Every mesh segment of a fillet (its chords, subdivided at 0.5 um) points at its
+      // arc.
       std::size_t on_arcs = 0, arc_segments = 0;
       for (const auto &segment : result.segments)
       {
@@ -1411,7 +1413,8 @@ TEST_CASE("SurfaceResponseIdentificationArcClusters",
     // corner), outer fold 2.1 R (a bend) 1.2 R away, the strip 1.2 R wide. The outer fold
     // joins the corner across (decision 85(2)): one cluster of two concentric semicircles
     // and the four leg pieces of length R (6 edges), identical for 8 / 16 / 32 chords. The
-    // loop closes across the top with sharp corners 1.8 R apart: a second, straight cluster.
+    // loop closes across the top with sharp corners 1.8 R apart: a second, straight
+    // cluster.
     std::optional<nlohmann::json> signature;
     for (const int chords : {8, 16, 32})
     {

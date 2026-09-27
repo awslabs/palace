@@ -124,7 +124,8 @@ struct IdentifiedSegment
   std::array<std::array<double, 3>, 2> key{};
   double length = 0.0;
   int chain = -1;
-  // The fitted arc (index into IdentificationResult::arcs) the segment is a chord of, or -1.
+  // The fitted arc (index into IdentificationResult::arcs) the segment is a chord of, or
+  // -1.
   int arc = -1;
   std::vector<std::array<double, 3>> portions;  // {s0, s1, feature id}
   // Parts of a segment excluded analytically (CrossLayer zones within 2R of off-plane
