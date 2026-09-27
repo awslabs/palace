@@ -823,7 +823,11 @@ edges and every arc portion chorded at `ClusterArcChordStepDegrees` / `ClusterAr
 its canonical frame (Point = P x R, Interval along gap x normal, process normal +z): the
 placement is then the identity, exact for arc clusters, whose chords could not be
 re-canonicalised into arc portions (a chorded model re-canonicalised from its chords landed in
-another frame: the 2394fdb0c failure class). A model's interface types are part of its key (a model mapping MA + MS + SA never
+another frame: the 2394fdb0c failure class; the re-canonicalisation also chose, for the transmon's
+180-deg-symmetric 10-edge JJ cluster, the frame rotated by 180 deg — geometry-identical, so the
+placement audit passed, but the two leads are different conductors: the coupon's conductor-1 edges
+sat on the conductor-2 lead, self-consistent SA -0.10 % on the device; the identity placement with
+the label check above removes this class). A model's interface types are part of its key (a model mapping MA + MS + SA never
 matches an SA-only feature). Runtime models are one per (library model, target interfaces by
 slot; slot k = the k-th distinct target map of the feature's portions in sorted order).
 
