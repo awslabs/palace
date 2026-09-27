@@ -817,9 +817,12 @@ def stack_suite():
             notes = []
             if corner:
                 # Decision 85(2): the outer fold within 2R of the corner's arc (strip w = 2 rho - g
-                # below 2R; at w = 2R exactly the inscribed outer chords dip below 2R: the
-                # recorded knife edge, mesh dependent) joins the corner, which is then a cluster.
-                outer_joins = w < 2.0 * R + 1.0e-9
+                # below 2R) joins the corner, which is then a cluster. At w = 2R exactly the
+                # concentric design circles are 2R apart: not interacting (strict rule) — the
+                # cluster machinery reads the fitted arcs (option A, decision 91(1)), so the
+                # inscribed outer chords dipping below 2R no longer create events (they did
+                # before: the recorded mesh-dependent knife edge of hairpin-rho1p5-g1).
+                outer_joins = w < 2.0 * R - 1.0e-9
                 features["SpatialEdgeCluster" if outer_joins else "ConcaveCorner"] += 1
                 notes.append(f"inner fold {r_in / R:g} R < R: one rounded concave corner (180 deg turn) claiming the arc and R along each leg" + ("; the outer fold within 2R of its arc joins it: a cluster (decision 85(2))" if outer_joins else ""))
                 # The legs are rigid runs: the translational rule pairs them from the corner's

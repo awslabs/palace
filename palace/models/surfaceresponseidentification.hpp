@@ -204,6 +204,22 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer);
 // shared by the device features and the library models so that both sides are hashed by
 // the same function. Every portion is {p0, p1, gap direction, process normal, conductor,
 // interface types, law}; the result is the minimal serialisation over the candidate frames.
+// A signature portion on a fitted circular arc (option A, decision 91(1)): the portion's
+// end points are p0 = point(theta0), p1 = point(theta1) with point(theta) = center +
+// radius (cos theta u + sin theta v); |theta1 - theta0| <= 2 pi (a closed circle has p0 =
+// p1). The gap direction of an arc portion is radial: gap_radial = +1 away from the centre
+// (metal inside the circle: a convex edge), -1 toward it (metal outside: concave).
+struct SignatureArc
+{
+  std::array<double, 3> center{};
+  double radius = 0.0;
+  std::array<double, 3> u{};
+  std::array<double, 3> v{};
+  double theta0 = 0.0;
+  double theta1 = 0.0;
+  int gap_radial = 1;
+};
+
 struct SignaturePortion
 {
   std::array<double, 3> p0{};
@@ -212,6 +228,9 @@ struct SignaturePortion
   int conductor = 0;
   std::vector<std::string> interfaces;
   std::string boundary_law;
+  // Set when the portion lies on a fitted arc: serialised as the arc (centre, radius,
+  // angular range) in the frame; the library builder chords it at the canonical step.
+  std::optional<SignatureArc> arc;
 };
 
 struct SignatureVertex
