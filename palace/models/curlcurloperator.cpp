@@ -551,6 +551,23 @@ void CurlCurlOperator::GetCurrentExcitationVector(int idx, Vector &RHS)
   linalg::SetSubVector(RHS, dbc_tdof_lists.back(), 0.0);
 }
 
+void CurlCurlOperator::EnsureSheetMass()
+{
+  if (M_sheet_)
+  {
+    return;
+  }
+  MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
+  sc_sheet_op.AddStiffnessBdrCoefficients(1.0, fbr);
+  BilinearForm m(GetNDSpace());
+  if (!fbr.empty())
+  {
+    m.AddBoundaryIntegrator<VectorFEMassIntegrator>(fbr);
+  }
+  auto m_mat = m.Assemble(GetNDSpaces(), false);
+  M_sheet_ = std::make_unique<ParOperator>(std::move(m_mat.back()), GetNDSpace());
+}
+
 template <ProblemType T>
 void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
                                                PostOperator<T> &post_op)
@@ -595,21 +612,9 @@ void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
   // LHS the RHS is M_sheet·a_h. The film is absent from dbc_tdof_lists (only PEC DOFs are
   // pinned), so its interior relaxes freely; as λ→0 the penalty drives A_t → a_h (geometric
   // limit) and at finite λ the film penetrates and stores kinetic energy.
-  if (!M_sheet_)
-  {
-    MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
-    sc_sheet_op.AddStiffnessBdrCoefficients(1.0, fbr);
-    BilinearForm m(GetNDSpace());
-    if (!fbr.empty())
-    {
-      m.AddBoundaryIntegrator<VectorFEMassIntegrator>(fbr);
-    }
-    auto m_mat = m.Assemble(GetNDSpaces(), false);
-    M_sheet_ = std::make_unique<ParOperator>(std::move(m_mat.back()), GetNDSpace());
-  }
-  // Normalize the generator so its exact fluxoid cᵀa_h = ∮a_h·dl equals Φ. The driver still
-  // enforces the constraint on the full solution via α; this just keeps the drive
-  // normalized.
+  EnsureSheetMass();
+  // Normalize the generator so its exact fluxoid cᵀa_h = ∮a_h·dl equals Φ; the solve A =
+  // A_p is then the fluxoid-Φ state directly.
   {
     double c_ah = MeasureLondonHoleFlux(idx, flux_solution);
     double phi = surf_flux_op.GetSource(idx).GetExcitationFlux();

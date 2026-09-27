@@ -300,6 +300,21 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           return {indicator, curlcurl_op.GlobalTrueVSize()};
         }
       }
+
+      // A current step over a Superconductor sheet stores sheet kinetic energy (a_h = 0);
+      // M_mag is volume-only, so capture AᵀM_sheet·A for the reported energy, mirroring the
+      // flux branch's shifted term.
+      if (!curlcurl_op.GetSuperconductorOp().empty())
+      {
+        Vector msd(A[step].Size());
+        msd.UseDevice(true);
+        curlcurl_op.ApplySheetMass(A[step], msd);
+        london_kinetic += linalg::Dot(curlcurl_op.GetComm(), A[step], msd);
+        london_ah[step].SetSize(A[step].Size());
+        london_ah[step].UseDevice(true);
+        london_ah[step] = 0.0;
+        london_ms_shifted[step] = msd;
+      }
     }
     else
     {
