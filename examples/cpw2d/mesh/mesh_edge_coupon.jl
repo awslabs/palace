@@ -5,6 +5,13 @@
 # are in microns. The edge is at the origin, metal extends toward negative x,
 # substrate occupies negative y, and the matching contour is a square of
 # half-width R.
+#
+# Curved (axisymmetric) coupon: with `axisymmetric_radius` rho > 0 the same
+# cross-section is placed in the (r, z) half-plane (x = r) with the edge at
+# r = rho, for Palace `Model.Axisymmetric`: `convexity = :convex` keeps the
+# metal inside the circle (r < rho, a disk edge), `:concave` mirrors the
+# cross-section so the metal lies outside (r > rho, a hole edge). The contour
+# is [rho - R, rho + R] x [-R, R]; every physical group keeps its meaning.
 
 import Gmsh: gmsh
 
@@ -61,9 +68,29 @@ function generate_edge_coupon(;
     lc_fine::Float64 = 0.002,
     lc_far::Float64 = 0.05,
     mesh_order::Int = 2,
+    axisymmetric_radius::Float64 = 0.0,
+    convexity::Symbol = :convex,
     filename::String,
 )
     radius > 0 || error("radius must be positive")
+    axisymmetric_radius >= 0 || error("axisymmetric_radius must be nonnegative")
+    axisymmetric_radius == 0 || axisymmetric_radius > radius ||
+        error("axisymmetric_radius must exceed the coupon radius (the contour must not cross the axis)")
+    convexity in (:convex, :concave) || error("convexity must be :convex or :concave")
+    # Map from the canonical cross-section (edge at x = 0, metal at x < 0) to
+    # the mesh: X(x) = rho + sign x; the inverse U(x) classifies mesh entities.
+    sign = convexity == :convex ? 1.0 : -1.0
+    rho = axisymmetric_radius
+    X(x) = rho + sign * x
+    U(x) = sign * (x - rho)
+    function rect(x, y, dx, dy)
+        x1, x2 = minmax(X(x), X(x + dx))
+        return occ.addRectangle(x1, y, 0.0, x2 - x1, dy)
+    end
+    function polygon(corners)
+        mapped = [((X(c[1][1]), c[1][2]), c[2]) for c in corners]
+        return shape(occ, sign > 0 ? mapped : reverse(mapped))
+    end
     t_metal > 0 || error("t_metal must be positive")
     overetch > 0 || error("overetch must be positive")
     0 < sidewall_angle <= 90 ||
@@ -85,16 +112,15 @@ function generate_edge_coupon(;
         metal_pullback = t_metal / tan(angle)
         trench_pullback = overetch / tan(angle)
         extension = 0.2
-        outer = occ.addRectangle(-radius, -radius, 0.0, 2radius, 2radius)
-        metal = shape(occ, [
+        outer = rect(-radius, -radius, 2radius, 2radius)
+        metal = polygon([
             ((-radius - extension, 0.0), 0.0),
             ((0.0, 0.0), 0.0),
             ((-metal_pullback, t_metal), r_top),
             ((-radius - extension, t_metal), 0.0),
         ])
-        substrate_base =
-            occ.addRectangle(-radius, -radius, 0.0, 2radius, radius)
-        trench = shape(occ, [
+        substrate_base = rect(-radius, -radius, 2radius, radius)
+        trench = polygon([
             ((0.0, 0.0), 0.0),
             ((trench_pullback, -overetch), r_bottom),
             ((radius + extension, -overetch), 0.0),
@@ -107,10 +133,10 @@ function generate_edge_coupon(;
         occ.fragment(vcat(vacuum, substrate), [])
     else
         surfaces = [
-            occ.addRectangle(-radius, -radius, 0.0, radius, radius),
-            occ.addRectangle(0.0, -radius, 0.0, radius, radius),
-            occ.addRectangle(-radius, 0.0, 0.0, radius, radius),
-            occ.addRectangle(0.0, 0.0, 0.0, radius, radius),
+            rect(-radius, -radius, radius, radius),
+            rect(0.0, -radius, radius, radius),
+            rect(-radius, 0.0, radius, radius),
+            rect(0.0, 0.0, radius, radius),
         ]
         occ.fragment([(2, surface) for surface in surfaces], [])
     end
@@ -135,7 +161,7 @@ function generate_edge_coupon(;
         up, _ = gmsh.model.getAdjacencies(dim, tag)
         isempty([surface for surface in up if surface in model_surfaces]) && continue
         xmin, ymin, _, xmax, ymax, _ = gmsh.model.getBoundingBox(dim, tag)
-        xmid = 0.5 * (xmin + xmax)
+        xmid = U(0.5 * (xmin + xmax))
         ymid = 0.5 * (ymin + ymax)
         horizontal = ymax - ymin < tolerance
         vertical = xmax - xmin < tolerance
@@ -213,7 +239,8 @@ function generate_edge_coupon(;
     gmsh.option.setNumber("Mesh.Binary", 1)
     gmsh.write(filename)
 
-    println("Edge coupon: R=$(radius) um, fabricated=$(fabricated)")
+    println("Edge coupon: R=$(radius) um, fabricated=$(fabricated)" *
+            (rho > 0 ? ", axisymmetric rho=$(rho) um ($(convexity))" : ""))
     for (dim, tag) in gmsh.model.getPhysicalGroups()
         name = gmsh.model.getPhysicalName(dim, tag)
         entities = gmsh.model.getEntitiesForPhysicalGroup(dim, tag)
@@ -229,7 +256,8 @@ function main(args)
         error("Usage: mesh_edge_coupon.jl thin|fabricated OUTPUT.msh " *
               "[--radius R] [--metal-thickness T] [--overetch D] " *
               "[--sidewall-angle A] [--top-radius R] [--bottom-radius R] " *
-              "[--lc-fine H] [--lc-far H] [--mesh-order P]")
+              "[--lc-fine H] [--lc-far H] [--mesh-order P] " *
+              "[--axisymmetric-radius RHO] [--convexity convex|concave]")
     kind = args[1]
     kind in ("thin", "fabricated") || error("Unknown coupon kind: $kind")
     options = Dict{String,String}()
@@ -252,6 +280,8 @@ function main(args)
         "--lc-fine",
         "--lc-far",
         "--mesh-order",
+        "--axisymmetric-radius",
+        "--convexity",
     ])
     unknown = setdiff(Set(keys(options)), allowed)
     isempty(unknown) || error("Unknown option(s): $(join(sort(collect(unknown)), ", "))")
@@ -271,6 +301,8 @@ function main(args)
         lc_fine = float_option("--lc-fine", 0.002),
         lc_far = float_option("--lc-far", 0.05),
         mesh_order = int_option("--mesh-order", 2),
+        axisymmetric_radius = float_option("--axisymmetric-radius", 0.0),
+        convexity = Symbol(get(options, "--convexity", "convex")),
         filename = abspath(args[2]),
     )
 end

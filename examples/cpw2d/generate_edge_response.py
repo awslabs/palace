@@ -1,12 +1,53 @@
 #!/usr/bin/env python3
 
-"""Generate contour hat bases and Palace configs for one isolated-edge coupon."""
+"""Generate contour hat bases and Palace configs for one isolated-edge coupon.
+
+Curved (axisymmetric) coupon: --axisymmetric-radius RHO places the same cross-section in
+the (r, z) half-plane with the edge at r = RHO (Palace Model.Axisymmetric; the meshes from
+mesh_edge_coupon.jl with the same --axisymmetric-radius / --convexity), so the coupon
+represents the circular edge of a disk (--convexity convex, metal inside) or of a hole
+(concave, metal outside) of radius RHO. Its response matrices are full-revolution energies
+and the library record carries CouponDepth = 2 pi RHO (the edge length), Topology
+CurvedEdge, Kappa = R / RHO and Convexity; the straight coupon (RHO = 0) is the kappa = 0
+anchor of the curved family."""
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 import numpy as np
+
+
+class CouponPlacement:
+    """Map from the canonical cross-section (edge at x = 0, metal at x < 0) to the mesh:
+    x -> rho + sign x (sign +1 convex, -1 concave); the identity for a straight coupon."""
+
+    def __init__(self, axisymmetric_radius=0.0, convexity="convex"):
+        if axisymmetric_radius < 0.0:
+            raise ValueError("axisymmetric radius must be nonnegative")
+        if convexity not in ("convex", "concave"):
+            raise ValueError("convexity must be convex or concave")
+        self.rho = axisymmetric_radius
+        self.convexity = convexity
+        self.sign = 1.0 if convexity == "convex" else -1.0
+
+    @property
+    def axisymmetric(self):
+        return self.rho > 0.0
+
+    def to_mesh(self, points):
+        points = np.array(points, dtype=float, copy=True)
+        points[..., 0] = self.rho + self.sign * points[..., 0]
+        return points
+
+    def to_canonical(self, points):
+        points = np.array(points, dtype=float, copy=True)
+        points[..., 0] = self.sign * (points[..., 0] - self.rho)
+        return points
+
+
+PLACEMENT = CouponPlacement()
 
 
 INTERFACE_PROPERTIES = {
@@ -70,8 +111,10 @@ def write_bases(output, radius, metal_thickness, basis_size, samples):
             )
         )
     )
-    points = np.asarray([contour_point(distance, radius) for distance in distances])
-    knots = np.asarray(
+    points = PLACEMENT.to_mesh(
+        [contour_point(distance, radius) for distance in distances]
+    )
+    knots = PLACEMENT.to_mesh(
         [contour_point(distance, radius) for distance in knot_distances]
     )
     np.savetxt(
@@ -134,6 +177,7 @@ def write_heldout(output, traces, radius, metal_thickness):
         raise ValueError("Contour basis traces do not share one sampling grid")
 
     def potential(points):
+        points = PLACEMENT.to_canonical(points)
         x = points[:, 0] / radius
         y = points[:, 1] / radius
         distance_to_cut = np.hypot(
@@ -247,13 +291,16 @@ def make_config(
             dielectric(2, [2], "MS", *interface_layers["MS"]),
             dielectric(3, [2], "MA", *interface_layers["MA"]),
         ]
+    model = {"Mesh": str(mesh), "L0": 1.0e-6, "Lc": coupon_depth}
+    if PLACEMENT.axisymmetric:
+        model["Axisymmetric"] = True
     return {
         "Problem": {
             "Type": "Electrostatic",
             "Verbose": 1,
             "Output": str(output / "postpro" / name),
         },
-        "Model": {"Mesh": str(mesh), "L0": 1.0e-6, "Lc": coupon_depth},
+        "Model": model,
         "Domains": {
             "Materials": [
                 {"Attributes": [1], "Permittivity": substrate_permittivity},
@@ -299,6 +346,24 @@ def make_config(
     }
 
 
+def curved_model_fields(radius):
+    """Library record fields of a curved (axisymmetric) coupon: the edge of a disk (convex)
+    or hole (concave) of radius rho has Kappa = R / rho, its response is a full-revolution
+    energy so its CouponDepth is the edge length 2 pi rho, and the model name carries kappa
+    (a straight coupon is the kappa = 0 anchor and keeps the IsolatedEdge record)."""
+    if not PLACEMENT.axisymmetric:
+        return {}
+    kappa = radius / PLACEMENT.rho
+    return {
+        "Name": f"curved-edge-{PLACEMENT.convexity}-kappa{kappa:.6g}",
+        "Topology": "CurvedEdge",
+        "Kappa": kappa,
+        "Convexity": PLACEMENT.convexity.capitalize(),
+        "AxisymmetricRadius": PLACEMENT.rho,
+        "CouponDepth": 2.0 * math.pi * PLACEMENT.rho,
+    }
+
+
 def write_library(
     output,
     name,
@@ -330,6 +395,7 @@ def write_library(
             {
                 "Name": "isolated-edge",
                 "Topology": "IsolatedEdge",
+                **curved_model_fields(radius),
                 "FabricatedMatrix":
                     "postpro/edge_fabricated/domain-response-matrix.csv",
                 "ThinMatrix": "postpro/edge_thin/domain-response-matrix.csv",
@@ -369,6 +435,12 @@ def main():
     parser.add_argument("--edge-distances", type=float, nargs="+", default=None,
                         help="localized-energy radii (um) of every interface, e.g. the 3D shell radii "
                              "(default 0.2 alone; the largest must be 0.2, the historical coupon radius)")
+    parser.add_argument("--axisymmetric-radius", type=float, default=0.0,
+                        help="place the cross-section at r = RHO in the (r, z) half-plane for a "
+                             "curved (Model.Axisymmetric) coupon; 0 = straight coupon")
+    parser.add_argument("--convexity", choices=("convex", "concave"), default="convex",
+                        help="curved coupon: metal inside (convex, disk edge) or outside "
+                             "(concave, hole edge) the circle r = RHO")
     parser.add_argument("--library-name", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--thin-mesh", type=Path)
@@ -390,6 +462,10 @@ def main():
     )
     if any(value <= 0.0 for value in material_values):
         parser.error("substrate and interface-layer properties must be positive")
+    global PLACEMENT
+    PLACEMENT = CouponPlacement(args.axisymmetric_radius, args.convexity)
+    if PLACEMENT.axisymmetric and PLACEMENT.rho <= args.radius:
+        parser.error("--axisymmetric-radius must exceed the coupon radius")
     interface_layers = {
         "SA": (args.sa_thickness, args.sa_permittivity),
         "MS": (args.ms_thickness, args.ms_permittivity),
