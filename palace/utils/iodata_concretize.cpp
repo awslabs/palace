@@ -343,6 +343,7 @@ void ConcretizeModel(const config::ModelData &model, json &j_model)
   // because the mesh has not been loaded yet. If the user wrote Lc explicitly, the
   // original key already survives untouched.
   ApplyEntries(j_model, {{"L0", model.L0},
+                         {"Axisymmetric", model.axisymmetric},
                          {"RemoveCurvature", model.remove_curvature},
                          {"MakeSimplex", model.make_simplex},
                          {"MakeHexahedral", model.make_hex},
