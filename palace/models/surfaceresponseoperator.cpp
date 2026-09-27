@@ -4596,7 +4596,8 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
               "a two-dimensional mesh!");
   // Axisymmetric (r, z) device: every edge site at r = rho is the circular edge of a disk
   // (gap toward +r: metal inside, convex) or a hole (concave) with kappa = R / rho and edge
-  // length 2 pi rho; it is corrected by the curvature family interpolated at kappa.
+  // length 2 pi rho; a pair of sites is a concentric annular gap / strip with kappa =
+  // R / rho_inner; both are corrected by the curvature family interpolated at kappa.
   const bool axisymmetric = mat_op.GetMesh().IsAxisymmetric();
   const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
   const auto library =
@@ -4896,18 +4897,18 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
           curved_edge_length = 2.0 * M_PI * edge.point[0];
         }
       }
-      else if (axisymmetric)
+      else if (axisymmetric && cluster.size() > 2)
       {
         group_matched = false;
-        Mpi::Warning("Axisymmetric response matching supports isolated edges only ({} "
-                     "nearby edges at r = {:.6e} mesh units); correction is disabled for "
-                     "this interface group!\n",
+        Mpi::Warning("Axisymmetric response matching supports isolated edges and pairs "
+                     "only ({} nearby edges at r = {:.6e} mesh units); correction is "
+                     "disabled for this interface group!\n",
                      cluster.size(), sites[cluster.front()].point[0] * coordinate_scale);
         if (requirements)
         {
           requirements->Add(2, LibraryTopology::SPATIAL_EDGE_CLUSTER, group.targets,
                             boundary_condition, ClusterGeometry(), library, nullptr, 0.0,
-                            "Curved pair / cluster coupons are not available");
+                            "Curved cluster coupons are not available");
           unmatched_clusters++;
           continue;
         }
@@ -4919,6 +4920,22 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
         const auto &first = sites[cluster[0]];
         const auto &second = sites[cluster[1]];
         separation = Distance(first.point, second.point);
+        if (axisymmetric)
+        {
+          // Concentric pair (an annular gap / strip): the family's Kappa = R / rho_inner,
+          // Convexity that of the model's first edge e1 = `first` (metal inside the bend
+          // when its gap points to +r), CouponDepth = the centreline 2 pi (rho + s / 2)
+          // (the pair measure: the mean of the two sides).
+          MFEM_VERIFY(std::min(first.point[0], second.point[0]) > 0.0 &&
+                          std::abs(first.axis_u[0]) > kAxisymmetricRadialGapCosine &&
+                          std::abs(second.axis_u[0]) > kAxisymmetricRadialGapCosine,
+                      "An axisymmetric pair must lie off the axis with in-plane radial gap "
+                      "directions (|cos| > "
+                          << kAxisymmetricRadialGapCosine << ")!");
+          curved_kappa = group.matching_radius / std::min(first.point[0], second.point[0]);
+          curved_convex = first.axis_u[0] > 0.0;
+          curved_edge_length = M_PI * (first.point[0] + second.point[0]);
+        }
         Point2D direction = Normalize(
             Point2D{second.point[0] - first.point[0], second.point[1] - first.point[1]});
         const bool facing =

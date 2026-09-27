@@ -298,6 +298,22 @@ void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostati
               {{"Target", interface.target}, {"Coupon", interface.coupon}});
         }
       }
+      if (!model.blend.empty())
+      {
+        // A curvature-family runtime model is its blend (weight x source matrices, the
+        // anchor's basis); the paths above alone would read as the straight anchor.
+        j_model["Name"] = model.name;
+        j_model["Blend"] = json::array();
+        for (const auto &source : model.blend)
+        {
+          j_model["Blend"].push_back(
+              {{"Weight", source.weight},
+               {"FabricatedMatrix", source.fabricated_matrix},
+               {"ThinMatrix", source.thin_matrix},
+               {"FabricatedSurfaceMatrix", source.fabricated_surface_matrix},
+               {"ThinSurfaceMatrix", source.thin_surface_matrix}});
+        }
+      }
       j_response["Models"].push_back(std::move(j_model));
     }
     j_response["Patches"] = json::array();
