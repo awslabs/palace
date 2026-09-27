@@ -9199,10 +9199,14 @@ IdentificationResult Identifier::Identify()
         break;
       }
       // Decision 93 (DS-CTX-003 defect 2): a pass that repeats the previous one (the same
-      // absorbed length on the decision grid and the same portion count: the recomposed
-      // stacks re-cut the same slivers at the moved cut images) or the pass cap ends the
-      // loop the same way (applied, not recomposed; reported under Diagnostics).
-      if (previous_absorbed >= 0.0 && quantizer.Equal(absorbed, previous_absorbed) &&
+      // absorbed length within the signature parameter tolerance and the same portion count:
+      // the recomposed stacks re-cut the same slivers at the moved cut images; DS-CTX-003
+      // absorbed 80 nm in 9 portions on every pass from the 3rd, each pass's total differing
+      // from the last by picometres) or the pass cap ends the loop the same way (applied,
+      // not recomposed; reported under Diagnostics).
+      if (previous_absorbed >= 0.0 &&
+          std::abs(absorbed - previous_absorbed) <=
+              kSignatureParameterToleranceOverRadius * R &&
           pass_portions == previous_portions)
       {
         extension_repeat_detected = true;
