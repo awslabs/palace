@@ -334,6 +334,18 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       mesh.back()->Update();
     }
 
+    // Record the adapted mesh's topology now, paired with the mesh file RebalanceMesh
+    // wrote, so it matches even if the following solve does not converge (SavedAdaptedMesh
+    // contract).
+    if (refinement.save_adapt_mesh)
+    {
+      mesh::CompleteMeshEntityCounts(*mesh.back(), mesh_counts);
+      if (mesh_counts.valid)
+      {
+        SaveMetadata(mesh_counts);
+      }
+    }
+
     // Print statistics (element counts, size h, and shape regularity kappa) for the
     // newly-refined mesh so the evolution of mesh quality under AMR is visible.
     mesh::PrintMeshInfo(*mesh.back(), iodata, /*full=*/false);
@@ -344,8 +356,8 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     std::tie(indicators, ntdof) = Solve(mesh);
     if (!solve_converged_)
     {
-      // Keep the previous converged iteration: restore its DOF count and skip the metadata
-      // write below, so the summary and palace.json describe it, not the failed mesh.
+      // Keep the previous converged iteration for the summary/CSVs (restore its DOF count);
+      // the refined mesh file and its topology (recorded above) describe the failed solve.
       Mpi::Warning(
           comm,
           "Solve did not converge after refinement iteration {:d}; halting AMR and "
@@ -355,16 +367,6 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       break;
     }
     err = indicators.Norml2(comm);
-
-    // Record the converged adapted mesh's topology into palace.json.
-    if (refinement.save_adapt_mesh)
-    {
-      mesh::CompleteMeshEntityCounts(*mesh.back(), mesh_counts);
-      if (mesh_counts.valid)
-      {
-        SaveMetadata(mesh_counts);
-      }
-    }
 
     // Record that this AMR iteration has completed; the Solve above has already written all
     // of its postprocessing output. The 1-based index (it + 1, since the initial solve is

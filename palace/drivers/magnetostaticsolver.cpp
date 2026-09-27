@@ -115,7 +115,6 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // so K preconditions itself.
   auto P_london = curlcurl_op.GetPreconditionerMatrix();
   const auto &Curl = curlcurl_op.GetCurlMatrix();
-  SaveMetadata(curlcurl_op.GetNDSpaces());
 
   // Set up the linear solver. Each inactive surface current port is treated during the
   // sweep either as Open (natural BC, no current across it) or Short (PEC, screening
@@ -458,6 +457,10 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Postprocess the inductance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
+  // Record space/DOF and solver metadata here (not at construction) so an AMR
+  // non-convergence early return leaves palace.json describing the last converged
+  // iteration.
+  SaveMetadata(curlcurl_op.GetNDSpaces());
   SaveMetadata(ksp);
   PostprocessTerminals(post_op, curlcurl_op.GetSurfaceCurrentOp(),
                        curlcurl_op.GetSurfaceFluxOp(), A, I_inc, Phi_inc, linked_flux,
