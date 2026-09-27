@@ -4068,7 +4068,7 @@ double Identifier::SignedTurn(const Chain &chain, double x0, double x1) const
 }
 
 void Identifier::AccumulateSignedCurvature(const Chain &chain, double x0, double x1,
-                                          SignedCurvatureExtremes &extremes) const
+                                           SignedCurvatureExtremes &extremes) const
 {
   if (x1 < x0)
   {
@@ -4532,9 +4532,8 @@ void Identifier::ComputeCurvature()
         {
           // The arc turns toward its centre: toward the metal when the centre and the gap
           // lie on opposite sides of the run.
-          const bool centre_left =
-              Dot(Sub(arc.center, run.At(0.5 * run.length)),
-                  Cross(run.process_normal, run.tangent)) > 0.0;
+          const bool centre_left = Dot(Sub(arc.center, run.At(0.5 * run.length)),
+                                       Cross(run.process_normal, run.tangent)) > 0.0;
           toward_metal = centre_left != GapLeft(run) ? 1.0 : -1.0;
         }
       }
@@ -4578,7 +4577,8 @@ void Identifier::ComputeCurvature()
                               : signed_density});
       }
     }
-    std::vector<double> cumulative(pieces.size() + 1, 0.0), signed_cumulative(pieces.size() + 1, 0.0);
+    std::vector<double> cumulative(pieces.size() + 1, 0.0),
+        signed_cumulative(pieces.size() + 1, 0.0);
     for (std::size_t i = 0; i < pieces.size(); i++)
     {
       cumulative[i + 1] = cumulative[i] + pieces[i].density * (pieces[i].x1 - pieces[i].x0);
@@ -9097,8 +9097,8 @@ void Identifier::Assign(IdentificationResult &result)
         }
         const auto [s0, s1] = *portion;
         table.portions.push_back({s0, s1, static_cast<double>(feature)});
-        const double turn = SignedTurn(chain, offset + std::max(lo, rs.t0),
-                                       offset + std::min(hi, rs.t1));
+        const double turn =
+            SignedTurn(chain, offset + std::max(lo, rs.t0), offset + std::min(hi, rs.t1));
         features[feature].portions.push_back({rs.segment, s0, s1, side, turn});
         features[feature].length += s1 - s0;
         result.assigned_length += s1 - s0;

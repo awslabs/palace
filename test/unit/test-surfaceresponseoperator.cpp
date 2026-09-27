@@ -4758,7 +4758,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   // anchor alone (recorded).
   {
     constexpr double ring_R = 0.2;
-    auto MakeRingMesh = [&](double extent, double h, const std::vector<std::array<double, 2>> &rings)
+    auto MakeRingMesh =
+        [&](double extent, double h, const std::vector<std::array<double, 2>> &rings)
     {
       const int n = static_cast<int>(std::lround(extent / h));
       mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(n, 4, n, mfem::Element::HEXAHEDRON,
@@ -4819,8 +4820,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     };
     // Extent 12: the outer ring (radius 4.6) stays more than 2 R from the PEC box walls (a
     // planar edge within 2 R of a wall is a CrossLayer exclusion).
-    auto ring_mesh = MakeRingMesh(12.0, 0.1, {{3.0 * ring_R, 6.0 * ring_R},
-                                             {20.0 * ring_R, 23.0 * ring_R}});
+    auto ring_mesh = MakeRingMesh(
+        12.0, 0.1, {{3.0 * ring_R, 6.0 * ring_R}, {20.0 * ring_R, 23.0 * ring_R}});
     // Library: the SA-only isolated anchor at R 0.2 (matched by key) and the CurvedEdge
     // nodes of both convexities at kappa 0.1 / 0.25 / 0.5 / 0.8 (the anchor's matrices; the
     // weights are checked, not the values).
@@ -4874,7 +4875,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     auto &ring_correction = ring_config["Solver"]["Electrostatic"]["ResponseCorrection"];
     ring_correction.erase("PatchConstruction");
     ring_correction["UnmatchedPolicy"] = "Warn";
-    const auto ring_manifest_path = temp.temp_dir / "surface-response-requirements-rings.json";
+    const auto ring_manifest_path =
+        temp.temp_dir / "surface-response-requirements-rings.json";
     const auto ring_patches_path = temp.temp_dir / "surface-response-patches.csv";
     auto RunRings = [&](const fs::path &library)
     {
@@ -4882,7 +4884,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       IoData ring_iodata(ring_config, false);
       ring_iodata.boundaries.cracked_attributes.insert(9);
       fs::remove(ring_patches_path);
-      WriteSurfaceResponseRequirements(ring_iodata, *ring_mesh, ring_manifest_path.string());
+      WriteSurfaceResponseRequirements(ring_iodata, *ring_mesh,
+                                       ring_manifest_path.string());
       Mpi::Barrier(Mpi::World());
       std::ifstream input(ring_manifest_path);
       REQUIRE(input);
@@ -4903,7 +4906,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
         const double model_weight = std::stod(row[6]), quadrature = std::stod(row[7]);
         interval_sums[{std::stoi(row[10]), std::stod(row[11]), std::stod(row[12])}] +=
             model_weight * quadrature;
-        auto [it, inserted] = model_weights.emplace(row[3], std::make_pair(model_weight, model_weight));
+        auto [it, inserted] =
+            model_weights.emplace(row[3], std::make_pair(model_weight, model_weight));
         if (!inserted)
         {
           it->second.first = std::min(it->second.first, model_weight);
@@ -4935,14 +4939,18 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
         {
           curved++;
           const double radius = feature["Signature"]["RadiusOverR"].get<double>();
-          const std::string convexity = feature["Signature"]["Convexity"].get<std::string>();
+          const std::string convexity =
+              feature["Signature"]["Convexity"].get<std::string>();
           const bool inner = radius < 4.5;
           CHECK_THAT(radius, WithinAbs(inner ? 3.0 : 6.0, 1.0e-3));
           CHECK(convexity == (inner ? "Concave" : "Convex"));
           const std::string model = feature["Match"]["Model"].get<std::string>();
-          CHECK(model.rfind("isolated@" + std::string(inner ? "concave" : "convex") + "-kappa", 0) == 0);
+          CHECK(model.rfind("isolated@" + std::string(inner ? "concave" : "convex") +
+                                "-kappa",
+                            0) == 0);
           CHECK(model.find("-cubic") != std::string::npos);
-          CHECK(feature["Match"]["Note"].get<std::string>().find("cubic") != std::string::npos);
+          CHECK(feature["Match"]["Note"].get<std::string>().find("cubic") !=
+                std::string::npos);
           REQUIRE(model_weights.size() == 1);
           CHECK(model_weights.begin()->first == model);
           CHECK_THAT(model_weights.begin()->second.second, WithinAbs(1.0, 1.0e-12));
@@ -4966,8 +4974,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
           // Anchor + the node of the turn's convexity at a = (R / rho) / 0.1.
           const double a = (inner ? 1.0 / 20.0 : 1.0 / 23.0) / 0.1;
           REQUIRE(model_weights.size() == 2);
-          const std::string node =
-              std::string("curved-") + (inner ? "Concave" : "Convex") + "-" + std::to_string(0.1);
+          const std::string node = std::string("curved-") + (inner ? "Concave" : "Convex") +
+                                   "-" + std::to_string(0.1);
           REQUIRE(model_weights.count("isolated") == 1);
           REQUIRE(model_weights.count(node) == 1);
           CHECK_THAT(model_weights.at(node).first, WithinAbs(a, 0.02));
@@ -5005,7 +5013,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       int unmatched = 0, anchor_only = 0;
       for (const auto &feature : manifest["Identification"]["Features"])
       {
-        if (feature["Type"] == "CurvedEdge" && feature["Signature"]["Convexity"] == "Concave")
+        if (feature["Type"] == "CurvedEdge" &&
+            feature["Signature"]["Convexity"] == "Concave")
         {
           CHECK(feature["Match"]["Status"] == "Missing");
           CHECK(feature["Match"]["Note"].get<std::string>().find("no concave") !=
@@ -5015,7 +5024,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
         if (feature["Type"] == "IsolatedEdge" && !feature["BendRadiusOverR"].is_null() &&
             feature["BendRadiusOverR"].get<double>() < 21.5)
         {
-          const auto [interval_sums, model_weights] = PatchSummary(feature["Id"].get<int>());
+          const auto [interval_sums, model_weights] =
+              PatchSummary(feature["Id"].get<int>());
           REQUIRE(model_weights.size() == 1);
           CHECK(model_weights.begin()->first == "isolated");
           CHECK_THAT(model_weights.begin()->second.first, WithinAbs(1.0, 1.0e-12));

@@ -283,17 +283,19 @@ std::vector<Point2> BarAroundCentreline(const std::vector<Point2> &centreline, d
 std::vector<Point2> ArcBar(double width, double radius, double sweep_degrees,
                            double step_degrees, double lead = 6.0, double offset = 0.0)
 {
-  const int steps = std::max(1, static_cast<int>(std::lround(sweep_degrees / step_degrees)));
+  const int steps =
+      std::max(1, static_cast<int>(std::lround(sweep_degrees / step_degrees)));
   const double step = sweep_degrees * std::acos(-1.0) / 180.0 / steps;
   std::vector<Point2> centreline;
   for (int k = 0; k <= steps; k++)
   {
-    centreline.push_back({radius * std::sin(k * step), radius - radius * std::cos(k * step)});
+    centreline.push_back(
+        {radius * std::sin(k * step), radius - radius * std::cos(k * step)});
   }
   const Point2 d_end = {std::cos(steps * step), std::sin(steps * step)};
   centreline.insert(centreline.begin(), {-lead, 0.0});
-  centreline.push_back({centreline.back()[0] + lead * d_end[0],
-                        centreline.back()[1] + lead * d_end[1]});
+  centreline.push_back(
+      {centreline.back()[0] + lead * d_end[0], centreline.back()[1] + lead * d_end[1]});
   return BarAroundCentreline(centreline, width, offset);
 }
 
@@ -302,12 +304,14 @@ std::vector<Point2> ArcBar(double width, double radius, double sweep_degrees,
 std::vector<Point2> SBar(double width, double radius, double sweep_degrees,
                          double step_degrees, double lead = 6.0)
 {
-  const int steps = std::max(1, static_cast<int>(std::lround(sweep_degrees / step_degrees)));
+  const int steps =
+      std::max(1, static_cast<int>(std::lround(sweep_degrees / step_degrees)));
   const double step = sweep_degrees * std::acos(-1.0) / 180.0 / steps;
   std::vector<Point2> centreline = {{-lead, 0.0}};
   for (int k = 0; k <= steps; k++)
   {
-    centreline.push_back({radius * std::sin(k * step), radius - radius * std::cos(k * step)});
+    centreline.push_back(
+        {radius * std::sin(k * step), radius - radius * std::cos(k * step)});
   }
   // Second arc: centre at the reflection of the first centre through the join point, the
   // tangent turning back to +x.
@@ -791,7 +795,8 @@ TEST_CASE("SurfaceResponseIdentificationConvexity",
     const auto input = MakeInput({{loop, 0, 1.0}}, R);
     const auto result = IdentifyMetalPerimeter(input);
     CheckPartition(input, result);
-    std::map<double, std::pair<std::string, double>> by_radius;  // RadiusOverR -> (convexity, turn)
+    std::map<double, std::pair<std::string, double>>
+        by_radius;  // RadiusOverR -> (convexity, turn)
     for (const auto &feature : result.features)
     {
       if (feature.type == "CurvedEdge")
@@ -887,8 +892,7 @@ TEST_CASE("SurfaceResponseIdentificationConvexity",
       }
       REQUIRE(first_count > 0);
       REQUIRE(other_count > 0);
-      const bool first_inner =
-          first_radius / first_count < other_radius / other_count;
+      const bool first_inner = first_radius / first_count < other_radius / other_count;
       CHECK(convexity == (first_inner ? "Concave" : "Convex"));
     }
     CHECK(curved_strips == 1);

@@ -3465,8 +3465,8 @@ std::string CurvedRuntimeModelName(const std::string &anchor, bool convex, doubl
                                    const std::string &rule)
 {
   std::ostringstream name;
-  name << anchor << "@" << (convex ? "convex" : "concave") << "-kappa" << std::setprecision(9)
-       << kappa << "-" << rule;
+  name << anchor << "@" << (convex ? "convex" : "concave") << "-kappa"
+       << std::setprecision(9) << kappa << "-" << rule;
   return name.str();
 }
 
@@ -3562,10 +3562,9 @@ FirstOrderNodes FindFirstOrderNodes(const ProcessLibrary &library, std::size_t a
       continue;
     }
     auto &slot = *model.convex ? nodes.convex : nodes.concave;
-    MFEM_VERIFY(!slot, "Curvature family has two "
-                           << (*model.convex ? "convex" : "concave") << " "
-                           << TopologyName(curved_topology)
-                           << " coupons at the first-order kappa!");
+    MFEM_VERIFY(!slot, "Curvature family has two " << (*model.convex ? "convex" : "concave")
+                                                   << " " << TopologyName(curved_topology)
+                                                   << " coupons at the first-order kappa!");
     slot = i;
   }
   return nodes;
@@ -6649,14 +6648,12 @@ struct FeaturePatchSummary
 // chord / inscribed readings add < 1 %).
 constexpr double kPairPatchSeparationTolerance = 0.10;
 
-FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
-                                        const IdentificationResult &identification,
-                                        const std::vector<EdgeSegment3D> &framed_segments,
-                                        const mfem::IntegrationRule &quadrature,
-                                        const AutomaticResponseRequirements &describer,
-                                        AutomaticResponseDiagnostics *diagnostics,
-                                        ResponseCorrectionData &result,
-                                        const std::map<int, FeatureCurvatureMatch> &curved_matches = {})
+FeaturePatchSummary BuildFeaturePatches(
+    const ProcessLibrary &library, const IdentificationResult &identification,
+    const std::vector<EdgeSegment3D> &framed_segments,
+    const mfem::IntegrationRule &quadrature, const AutomaticResponseRequirements &describer,
+    AutomaticResponseDiagnostics *diagnostics, ResponseCorrectionData &result,
+    const std::map<int, FeatureCurvatureMatch> &curved_matches = {})
 {
   FeaturePatchSummary summary;
   const double R = library.matching_radius;
@@ -6728,8 +6725,8 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
       key += ";";
     }
     const auto &source = library.models[model_index];
-    auto [it, inserted] = runtime_models.emplace(
-        std::make_pair(blend ? blend->name : source.name, key), 0);
+    auto [it, inserted] =
+        runtime_models.emplace(std::make_pair(blend ? blend->name : source.name, key), 0);
     if (inserted)
     {
       auto model = source.response;
@@ -6808,7 +6805,8 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
     std::vector<std::tuple<std::size_t, int, double>> terms = {{model_index, runtime, 1.0}};
     if (split && split->a > 0.0)
     {
-      terms = {{model_index, runtime, 1.0 - split->a}, {split->node, split->runtime, split->a}};
+      terms = {{model_index, runtime, 1.0 - split->a},
+               {split->node, split->runtime, split->a}};
       MFEM_VERIFY(library.models[split->node].coupon_depth > 0.0,
                   "Curvature interpolation requires CouponDepth on every coupon!");
     }
@@ -7019,11 +7017,10 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
       for (const auto &fp : portions)
       {
         const EdgeSegment3D &segment = *fp.segment;
-        const auto split =
-            straight_like_bend
-                ? SplitOf(fp, first_order_nodes, targets_by_slot, true, false, 0.0,
-                          model_index)
-                : std::nullopt;
+        const auto split = straight_like_bend
+                               ? SplitOf(fp, first_order_nodes, targets_by_slot, true,
+                                         false, 0.0, model_index)
+                               : std::nullopt;
         Quadrature(
             fp, 1.0, model_index, runtime, feature,
             [&](const Point3D &point, ResponsePatchData &patch)
@@ -7033,9 +7030,9 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
               patch.axis_v = segment.axis_v;
               patch.axis_w = Normalize(Cross(segment.axis_u, segment.axis_v));
               patch.maxwell_reference_is_pec = IsPec(segment);
-              patch.maxwell_conductor_anchors = {
-                  patch.maxwell_reference_is_pec ? Add(point, Scale(-R, segment.axis_u))
-                                                 : point};
+              patch.maxwell_conductor_anchors = {patch.maxwell_reference_is_pec
+                                                     ? Add(point, Scale(-R, segment.axis_u))
+                                                     : point};
             },
             split);
       }
@@ -7065,10 +7062,11 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
       {
         std::swap(ordered[0], ordered[1]);
       }
-      const bool strip = model.topology == LibraryTopology::SAME_CONDUCTOR_STRIP ||
-                         model.topology == LibraryTopology::CURVED_SAME_CONDUCTOR_STRIP ||
-                         (blend && blend->topology ==
-                                       TopologyName(LibraryTopology::CURVED_SAME_CONDUCTOR_STRIP));
+      const bool strip =
+          model.topology == LibraryTopology::SAME_CONDUCTOR_STRIP ||
+          model.topology == LibraryTopology::CURVED_SAME_CONDUCTOR_STRIP ||
+          (blend &&
+           blend->topology == TopologyName(LibraryTopology::CURVED_SAME_CONDUCTOR_STRIP));
       MFEM_VERIFY(model.conductor_references.size() <= 2,
                   "A paired-edge response model requires at most two conductor "
                   "references!");
@@ -7112,45 +7110,44 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
         const auto &other = *ordered[1 - k].second;
         for (const auto &fp : side)
         {
-          const auto split =
-              straight_like_bend
-                  ? SplitOf(fp, first_order_nodes, targets_by_slot, k == 0, strip,
-                            separation, model_index)
-                  : std::nullopt;
-          Quadrature(fp, 0.5, model_index, runtime, feature,
-                     [&](const Point3D &point, ResponsePatchData &patch)
-                     {
-                       const Foot foot = ClosestFoot(point, other);
-                       const Point3D e1 = k == 0 ? point : foot.point;
-                       const Point3D e2 = k == 0 ? foot.point : point;
-                       const EdgeSegment3D &first = k == 0 ? *fp.segment : *foot.segment;
-                       const EdgeSegment3D &second = k == 0 ? *foot.segment : *fp.segment;
-                       patch.origin = Scale(0.5, Add(e1, e2));
-                       patch.axis_u = Normalize(Subtract(e2, e1));
-                       patch.axis_v = Normalize(Add(first.axis_v, second.axis_v));
-                       patch.axis_w = Normalize(Cross(patch.axis_u, patch.axis_v));
-                       patch.maxwell_reference_is_pec = IsPec(first) && IsPec(second);
-                       if (!patch.maxwell_reference_is_pec)
-                       {
-                         patch.maxwell_conductor_anchors = {e1};
-                       }
-                       else if (model.conductor_references.size() > 1)
-                       {
-                         // The physical edge points as local conductor anchors so that the
-                         // Maxwell quadrature spans only the dielectric gap.
-                         patch.maxwell_conductor_anchors = {e1, e2};
-                       }
-                       else if (strip)
-                       {
-                         patch.maxwell_conductor_anchors = {patch.origin};
-                       }
-                       else
-                       {
-                         patch.maxwell_conductor_anchors = {
-                             Add(e1, Scale(-R, first.axis_u))};
-                       }
-                     },
-                     split);
+          const auto split = straight_like_bend
+                                 ? SplitOf(fp, first_order_nodes, targets_by_slot, k == 0,
+                                           strip, separation, model_index)
+                                 : std::nullopt;
+          Quadrature(
+              fp, 0.5, model_index, runtime, feature,
+              [&](const Point3D &point, ResponsePatchData &patch)
+              {
+                const Foot foot = ClosestFoot(point, other);
+                const Point3D e1 = k == 0 ? point : foot.point;
+                const Point3D e2 = k == 0 ? foot.point : point;
+                const EdgeSegment3D &first = k == 0 ? *fp.segment : *foot.segment;
+                const EdgeSegment3D &second = k == 0 ? *foot.segment : *fp.segment;
+                patch.origin = Scale(0.5, Add(e1, e2));
+                patch.axis_u = Normalize(Subtract(e2, e1));
+                patch.axis_v = Normalize(Add(first.axis_v, second.axis_v));
+                patch.axis_w = Normalize(Cross(patch.axis_u, patch.axis_v));
+                patch.maxwell_reference_is_pec = IsPec(first) && IsPec(second);
+                if (!patch.maxwell_reference_is_pec)
+                {
+                  patch.maxwell_conductor_anchors = {e1};
+                }
+                else if (model.conductor_references.size() > 1)
+                {
+                  // The physical edge points as local conductor anchors so that the
+                  // Maxwell quadrature spans only the dielectric gap.
+                  patch.maxwell_conductor_anchors = {e1, e2};
+                }
+                else if (strip)
+                {
+                  patch.maxwell_conductor_anchors = {patch.origin};
+                }
+                else
+                {
+                  patch.maxwell_conductor_anchors = {Add(e1, Scale(-R, first.axis_u))};
+                }
+              },
+              split);
         }
       }
     }
@@ -8360,10 +8357,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                   iodata.boundaries.postpro.dielectric.end(), [](const auto &entry)
                   { return entry.second.edge_frame_normal.has_value(); });
   std::map<int, FeatureCurvatureMatch> curved_matches;
-  const auto identification = RunGeometryIdentification(
-      mesh.GetComm(), geometry, global_segments, library,
-      requirements ? *requirements : law_describer, requirements, frame_normal_configured,
-      &curved_matches);
+  const auto identification =
+      RunGeometryIdentification(mesh.GetComm(), geometry, global_segments, library,
+                                requirements ? *requirements : law_describer, requirements,
+                                frame_normal_configured, &curved_matches);
   GeometryStageLine("identified and matched: " +
                     std::to_string(identification.features.size()) + " features");
   if (request.patch_construction == ResponseCorrectionData::PatchConstruction::FEATURES)
