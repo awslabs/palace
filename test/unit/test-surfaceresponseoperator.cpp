@@ -4745,6 +4745,288 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     }
   }
 
+  // Curvature family on the three-dimensional FEATURES path (C4, decision 108): two thin
+  // annuli of width 3 R on one plane. Annulus A (3 R .. 6 R) has two CurvedEdge features
+  // (inner edge concave at kappa 1/3, outer convex at 1/6), matched to the family's cubic
+  // blend at their kappa (a runtime model named <anchor>@<convexity>-kappa<k>-cubic with
+  // Lagrange weights on the four nodes); annulus B (20 R .. 23 R) has two straight-like
+  // isolated edges whose bend annotation and per-portion turns evaluate the first-order
+  // term: every quadrature point splits between the anchor (model weight 1 - a) and the
+  // family node at kappa 0.1 of the turn's convexity (a = kappa / 0.1 = 0.5 inner, 20 / 23
+  // x 0.5 outer). A library without the concave nodes leaves the concave CurvedEdge
+  // unmatched with the reason (never straight) and the concave first-order term at the
+  // anchor alone (recorded).
+  {
+    constexpr double ring_R = 0.2;
+    auto MakeRingMesh = [&](double extent, double h, const std::vector<std::array<double, 2>> &rings)
+    {
+      const int n = static_cast<int>(std::lround(extent / h));
+      mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(n, 4, n, mfem::Element::HEXAHEDRON,
+                                                      extent, 1.0, extent);
+      const double c = 0.5 * extent;
+      auto Level = [&](const double *point)
+      { return std::max(std::abs(point[0] - c), std::abs(point[2] - c)); };
+      for (int face = 0; face < serial.GetNumFaces(); face++)
+      {
+        int element1, element2;
+        serial.GetFaceElements(face, &element1, &element2);
+        if (element1 < 0 || element2 < 0)
+        {
+          continue;
+        }
+        mfem::Array<int> vertices;
+        serial.GetFaceVertices(face, vertices);
+        bool on_plane = true;
+        double level_min = mfem::infinity(), level_max = 0.0;
+        for (const int vertex : vertices)
+        {
+          const double *point = serial.GetVertex(vertex);
+          on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
+          level_min = std::min(level_min, Level(point));
+          level_max = std::max(level_max, Level(point));
+        }
+        if (!on_plane)
+        {
+          continue;
+        }
+        for (const auto &[r_in, r_out] : rings)
+        {
+          if (level_min >= r_in - 1.0e-9 && level_max <= r_out + 1.0e-9)
+          {
+            serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+            serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+          }
+        }
+      }
+      // Concentric squares of the (x, z) grid onto concentric circles (radial projection
+      // of every vertex onto the circle of its square's half-side): the ring outlines
+      // become inscribed polylines on the design circles at the grid's chord count.
+      for (int vertex = 0; vertex < serial.GetNV(); vertex++)
+      {
+        double *point = serial.GetVertex(vertex);
+        const double lx = point[0] - c, lz = point[2] - c;
+        const double m = std::max(std::abs(lx), std::abs(lz));
+        const double norm = std::hypot(lx, lz);
+        if (norm > 1.0e-12)
+        {
+          point[0] = c + m * lx / norm;
+          point[2] = c + m * lz / norm;
+        }
+      }
+      serial.FinalizeTopology();
+      serial.Finalize();
+      return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+    };
+    // Extent 12: the outer ring (radius 4.6) stays more than 2 R from the PEC box walls (a
+    // planar edge within 2 R of a wall is a CrossLayer exclusion).
+    auto ring_mesh = MakeRingMesh(12.0, 0.1, {{3.0 * ring_R, 6.0 * ring_R},
+                                             {20.0 * ring_R, 23.0 * ring_R}});
+    // Library: the SA-only isolated anchor at R 0.2 (matched by key) and the CurvedEdge
+    // nodes of both convexities at kappa 0.1 / 0.25 / 0.5 / 0.8 (the anchor's matrices; the
+    // weights are checked, not the values).
+    const auto ring_library_path = temp.temp_dir / "fabrication-process-curved-3d.json";
+    const auto ring_convex_only_path =
+        temp.temp_dir / "fabrication-process-curved-convex-only-3d.json";
+    if (Mpi::Root(Mpi::World()))
+    {
+      json ring_library = {
+          {"Version", 3},
+          {"TraceLiftVersion", 2},
+          {"Name", "unit-test-curved-3d"},
+          {"MatchingRadius", ring_R},
+          {"CouponDepth", 0.2},
+          {"Fabrication",
+           {{"InterfaceLayers", {{"SA", {{"Thickness", 0.002}, {"Permittivity", 4.0}}}}}}},
+          {"Models", json::array()}};
+      json anchor = {{"Name", "isolated"},
+                     {"Topology", "IsolatedEdge"},
+                     {"CouponDepth", 0.2},
+                     {"FabricatedMatrix", fabricated_path.string()},
+                     {"ThinMatrix", thin_path.string()},
+                     {"FabricatedSurfaceMatrix", fabricated_surface_path.string()},
+                     {"ThinSurfaceMatrix", thin_surface_path.string()},
+                     {"BasisPoints", points_path.string()},
+                     {"Interfaces", {{{"Type", "SA"}, {"Coupon", 1}}}}};
+      ring_library["Models"].push_back(anchor);
+      for (const char *convexity : {"Convex", "Concave"})
+      {
+        for (const double kappa : {0.1, 0.25, 0.5, 0.8})
+        {
+          auto model = anchor;
+          model["Name"] = std::string("curved-") + convexity + "-" + std::to_string(kappa);
+          model["Topology"] = "CurvedEdge";
+          model["Kappa"] = kappa;
+          model["Convexity"] = convexity;
+          model["CouponDepth"] = 2.0 * M_PI * ring_R / kappa;
+          ring_library["Models"].push_back(model);
+        }
+      }
+      std::ofstream output(ring_library_path);
+      output << ring_library.dump(2) << "\n";
+      auto convex_only = ring_library;
+      convex_only["Models"].erase(convex_only["Models"].begin() + 5,
+                                  convex_only["Models"].end());
+      std::ofstream convex_only_output(ring_convex_only_path);
+      convex_only_output << convex_only.dump(2) << "\n";
+    }
+    Mpi::Barrier(Mpi::World());
+    auto ring_config = island_config;
+    auto &ring_correction = ring_config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    ring_correction.erase("PatchConstruction");
+    ring_correction["UnmatchedPolicy"] = "Warn";
+    const auto ring_manifest_path = temp.temp_dir / "surface-response-requirements-rings.json";
+    const auto ring_patches_path = temp.temp_dir / "surface-response-patches.csv";
+    auto RunRings = [&](const fs::path &library)
+    {
+      ring_correction["Library"] = library.string();
+      IoData ring_iodata(ring_config, false);
+      ring_iodata.boundaries.cracked_attributes.insert(9);
+      fs::remove(ring_patches_path);
+      WriteSurfaceResponseRequirements(ring_iodata, *ring_mesh, ring_manifest_path.string());
+      Mpi::Barrier(Mpi::World());
+      std::ifstream input(ring_manifest_path);
+      REQUIRE(input);
+      return json::parse(input);
+    };
+    // Per feature: the sum over its patch rows of ModelWeight x QuadratureWeight per
+    // (Segment, S0, S1) interval and the set of models with their ModelWeight range.
+    auto PatchSummary = [&](int feature_id)
+    {
+      std::map<std::tuple<int, double, double>, double> interval_sums;
+      std::map<std::string, std::pair<double, double>> model_weights;  // min, max
+      for (const auto &row : ReadPatchRows(ring_patches_path))
+      {
+        if (std::stoi(row[1]) != feature_id)
+        {
+          continue;
+        }
+        const double model_weight = std::stod(row[6]), quadrature = std::stod(row[7]);
+        interval_sums[{std::stoi(row[10]), std::stod(row[11]), std::stod(row[12])}] +=
+            model_weight * quadrature;
+        auto [it, inserted] = model_weights.emplace(row[3], std::make_pair(model_weight, model_weight));
+        if (!inserted)
+        {
+          it->second.first = std::min(it->second.first, model_weight);
+          it->second.second = std::max(it->second.second, model_weight);
+        }
+      }
+      return std::make_pair(interval_sums, model_weights);
+    };
+    {
+      const json manifest = RunRings(ring_library_path);
+      const auto &features = manifest["Identification"]["Features"];
+      int curved = 0, straight_like = 0;
+      for (const auto &feature : features)
+      {
+        const std::string type = feature["Type"].get<std::string>();
+        if (type != "CurvedEdge" && type != "IsolatedEdge")
+        {
+          continue;
+        }
+        REQUIRE(feature["Match"]["Status"] == "Matched");
+        const auto [interval_sums, model_weights] = PatchSummary(feature["Id"].get<int>());
+        REQUIRE(!interval_sums.empty());
+        for (const auto &[interval, sum] : interval_sums)
+        {
+          (void)interval;
+          CHECK_THAT(sum, WithinAbs(1.0, 1.0e-9));
+        }
+        if (type == "CurvedEdge")
+        {
+          curved++;
+          const double radius = feature["Signature"]["RadiusOverR"].get<double>();
+          const std::string convexity = feature["Signature"]["Convexity"].get<std::string>();
+          const bool inner = radius < 4.5;
+          CHECK_THAT(radius, WithinAbs(inner ? 3.0 : 6.0, 1.0e-3));
+          CHECK(convexity == (inner ? "Concave" : "Convex"));
+          const std::string model = feature["Match"]["Model"].get<std::string>();
+          CHECK(model.rfind("isolated@" + std::string(inner ? "concave" : "convex") + "-kappa", 0) == 0);
+          CHECK(model.find("-cubic") != std::string::npos);
+          CHECK(feature["Match"]["Note"].get<std::string>().find("cubic") != std::string::npos);
+          REQUIRE(model_weights.size() == 1);
+          CHECK(model_weights.begin()->first == model);
+          CHECK_THAT(model_weights.begin()->second.second, WithinAbs(1.0, 1.0e-12));
+          CHECK_THAT(feature["TurnTowardMetal"].get<double>(),
+                     WithinRel((inner ? -1.0 : 1.0) * 2.0 * M_PI, 0.02));
+        }
+        else
+        {
+          REQUIRE(!feature["BendRadiusOverR"].is_null());
+          const double bend = feature["BendRadiusOverR"].get<double>();
+          if (bend > 100.0)
+          {
+            continue;  // no bend of note
+          }
+          straight_like++;
+          const bool inner = bend < 21.5;
+          CHECK_THAT(bend, WithinAbs(inner ? 20.0 : 23.0, 1.0e-3));
+          CHECK(feature["Match"]["Model"] == "isolated");
+          CHECK_THAT(feature["TurnTowardMetal"].get<double>(),
+                     WithinRel((inner ? -1.0 : 1.0) * 2.0 * M_PI, 0.02));
+          // Anchor + the node of the turn's convexity at a = (R / rho) / 0.1.
+          const double a = (inner ? 1.0 / 20.0 : 1.0 / 23.0) / 0.1;
+          REQUIRE(model_weights.size() == 2);
+          const std::string node =
+              std::string("curved-") + (inner ? "Concave" : "Convex") + "-" + std::to_string(0.1);
+          REQUIRE(model_weights.count("isolated") == 1);
+          REQUIRE(model_weights.count(node) == 1);
+          CHECK_THAT(model_weights.at(node).first, WithinAbs(a, 0.02));
+          CHECK_THAT(model_weights.at(node).second, WithinAbs(a, 0.02));
+          CHECK_THAT(model_weights.at("isolated").first, WithinAbs(1.0 - a, 0.02));
+        }
+      }
+      CHECK(curved == 2);
+      CHECK(straight_like == 2);
+      // The version-1 records: the curved groups Interpolated with their family.
+      int interpolated = 0;
+      for (const auto &record : manifest["Requirements"])
+      {
+        if (record["Topology"] != "CurvedEdge")
+        {
+          continue;
+        }
+        CHECK(record["Status"] == "Interpolated");
+        REQUIRE(record.contains("CurvatureFamily"));
+        CHECK(record["CurvatureFamily"]["InterpolationRule"] == "cubic");
+        double weights = 0.0;
+        for (const auto &node : record["CurvatureFamily"]["Nodes"])
+        {
+          weights += node["Weight"].get<double>();
+        }
+        CHECK_THAT(weights, WithinAbs(1.0, 1.0e-9));
+        interpolated++;
+      }
+      CHECK(interpolated == 2);
+    }
+    {
+      // Without concave coupons: the inner CurvedEdge is unmatched with the reason and the
+      // inner straight-like edge keeps the anchor alone.
+      const json manifest = RunRings(ring_convex_only_path);
+      int unmatched = 0, anchor_only = 0;
+      for (const auto &feature : manifest["Identification"]["Features"])
+      {
+        if (feature["Type"] == "CurvedEdge" && feature["Signature"]["Convexity"] == "Concave")
+        {
+          CHECK(feature["Match"]["Status"] == "Missing");
+          CHECK(feature["Match"]["Note"].get<std::string>().find("no concave") !=
+                std::string::npos);
+          unmatched++;
+        }
+        if (feature["Type"] == "IsolatedEdge" && !feature["BendRadiusOverR"].is_null() &&
+            feature["BendRadiusOverR"].get<double>() < 21.5)
+        {
+          const auto [interval_sums, model_weights] = PatchSummary(feature["Id"].get<int>());
+          REQUIRE(model_weights.size() == 1);
+          CHECK(model_weights.begin()->first == "isolated");
+          CHECK_THAT(model_weights.begin()->second.first, WithinAbs(1.0, 1.0e-12));
+          anchor_only++;
+        }
+      }
+      CHECK(unmatched == 1);
+      CHECK(anchor_only == 1);
+    }
+  }
+
   auto rounded_concave_island_config = island_config;
   rounded_concave_island_config["Solver"]["Electrostatic"]["ResponseCorrection"]
                                ["Library"] = rounded_concave_library_3d_path.string();

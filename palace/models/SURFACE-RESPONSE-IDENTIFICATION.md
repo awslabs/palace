@@ -316,9 +316,22 @@ smaller endpoint.
    synthetic class changes between the two). Consequences:
    * a straight-like chain portion is described by the straight features (isolated edge,
      pair) with a `BendRadiusOverR` annotation on every feature (the tightest windowed radius
-     over its portions; not hashed; null on straight chains);
+     over its portions; not hashed; null on straight chains) and, on such a feature, every
+     portion's **signed windowed turn toward the metal** (`PortionTurns`, radians: the
+     integral over the portion of the *signed* windowed curvature, positive where the edge
+     bends around its metal — a disk-like edge — negative around its gap; not hashed; the
+     sum `TurnTowardMetal` for a one-sided feature). The turn is the weight of the
+     first-order curvature term (design (e): C4, decision 108);
    * an unpaired curved portion is a `CurvedEdge` feature (one per curved chain section)
-     with `RadiusOverR` = the section's tightest windowed radius in the signature;
+     with `RadiusOverR` = the section's tightest windowed radius and `Convexity` in the
+     signature: `Convex` when the signed windowed curvature over the section bends around
+     the metal (the edge of a disk; the curved coupon of a disk edge models it), `Concave`
+     around the gap (a hole edge), `Mixed` when both senses reach the curved regime inside
+     one section (an S-bend whose two arcs lie within the window of each other: reported
+     in the signature and never read as one convexity — such a feature is unmatched with
+     the reason; a straight-like wobble of the minority sense is not a bend of the class).
+     The sign convention is the coupons': the curvature family (`Kappa`, `Convexity`
+     records) of a disk edge is `Convex`;
    * a fillet at a corner (radius < R; the run-based rounded-corner rule of item 4, computed
      from the arms' accumulated turn and the tangent distances, hence refinement-invariant)
      is a rounded corner and takes no part in the curvature;
@@ -369,7 +382,13 @@ smaller endpoint.
      7.9 um chords on a 370 um bend, so that one design cross-section hashed to several
      keys: review B1), the curved pieces a `CurvedSameConductorStrip` /
      `CurvedSameConductorGap` / `CurvedDifferentConductorGap` with `RadiusOverR` = the tightest
-     windowed radius of the two sides (the inner side of concentric arcs). The cross-chord
+     windowed radius of the two sides (the inner side of concentric arcs) and `Convexity` =
+     that of the signature's FIRST edge (side 0 for chirality >= 0, the last side for -1:
+     the edge the library model's first edge e1 is placed on), read on that side's pieces
+     or, when it carries no curvature of its own, as the opposite of the far side's
+     (concentric edges bend in opposite senses relative to their gaps: for a gap the inner
+     edge is convex, for a strip the inner edge is concave); curved stacks
+     (`CurvedParallelEdgeCluster`) record it the same way. The cross-chord
      interactions of a locally constant portion are never events, whether or not it
      interacts, so the concentric chords of a bend never form a spatial cluster and nothing
      is omitted as "nonparallel".
@@ -805,6 +824,44 @@ counterclockwise in (x, y). A legacy junction model (absolute `ArmAngles`) is ma
 canonical order (first arm angle theta, orientation): u = cos(theta) D - sigma sin(theta) (n x D),
 v = sigma (n x u), sigma = +1 when both orientations agree.
 
+**Curvature (C4, decision 108; the two-dimensional axisymmetric path uses the same rules).**
+A curved feature (`CurvedEdge`, `CurvedSameConductorGap`, `CurvedDifferentConductorGap`,
+`CurvedSameConductorStrip`) that no Signature-keyed model matches exactly is modelled by the
+**curvature family** of its straight analogue: the anchor (the straight model at the
+feature's separation) and the library's coupons of the curved topology with `Kappa` =
+R / rho (rho the edge radius, for a pair the INNER edge's) and `Convexity` (that of the
+model's first edge e1: metal inside the bend), at kappa = 1 / `RadiusOverR` and the
+feature's `Convexity`, with `FindCurvedLibraryModel`'s recorded rule: an exact node is that
+coupon, kappa <= 1 / `StraightBendRadiusOverR` the linear combination of the anchor and the
+node AT that kappa, otherwise the cubic Lagrange interpolant on the four nearest nodes; the
+combination is one runtime model `<anchor>@<convexity>-kappa<k>-<rule>` whose matrices are
+the weighted sum of the nodes' matrices rescaled to the anchor's `CouponDepth` (Lagrange
+weights may be negative), patched like the straight analogue (`Match.Note` records the rule,
+the version-1 record `CurvatureFamily` the anchor / nodes / weights, `Status`
+`Interpolated`). Never silently straight: a curved feature the family cannot model (no
+anchor, no coupons of its convexity, kappa above the largest node, an anchor mapping other
+interfaces, `Mixed` convexity) is unmatched with the reason in `Match.Note`; a curved pair
+whose (class, separation) group has no family is unmatched the same way. **First-order term
+of a straight-like feature** (`BendRadiusOverR` >= `StraightBendRadiusOverR` on an
+`IsolatedEdge` / straight pair): the recorded linear rule, evaluated per portion where the
+curvature is — a straight-like feature spans bends of both senses and straight legs (a
+meander), so one feature-wide kappa would carry the wrong sign and magnitude. Every
+quadrature point of a portion with a nonzero signed turn splits between the anchor (model
+weight 1 - a) and the family node at kappa 0.1 of the turn's convexity (weight a =
+kappa_local / 0.1, kappa_local = R |turn| / length, clamped to [0, 1]; for a pair the inner
+edge's kappa: an outer-side sample reads rho_inner = rho - s, and the node's convexity is
+e1's — the far side turns in the opposite sense): two co-located positive patches whose
+assembled matrices are the linear interpolant (identical to blending the matrices for the
+fixed-trace and self-consistent closures, equal to second order in the node - anchor
+difference for the fixed-flux transform, which is per model). A missing first-order node
+leaves the anchor alone on that portion, counted and warned (`Curvature:` summary line;
+never silent); the A7 audit's per-interval rule (sum of quadrature x model weights = 1) and
+the per-patch weight formula hold with two models per interval. The A10 placement audit
+resolves a family runtime model to its anchor and checks, for every curved pair patch (blend
+or first-order node), that e1 sits on the side of the coupon's recorded `Convexity` (the
+inner circle of a gap / the outer circle of a strip for `Convex`, read on the claimed fitted
+arc under e1).
+
 **Library contract.** A model keyed by its `Signature` (the feature's canonical object, `Type`
 included; `Signature.Type` must equal `Topology`) needs no version-1 geometry parameters of its
 own; a model matches every feature of its topology whose parameters lie within the signature
@@ -910,8 +967,11 @@ matching pass). The new top-level `Identification` object carries the contract:
   "Features": [ {"Id": k, "Type": "...", "Signature": {...}, "Hash": "sha256", "Chirality": +-1,
                  "BendRadiusOverR": r | null, "ExactParameters": true | false,
                  "Length": L, "Portions": [[segment, s0, s1], ...], "Vertices": [v, ...],
+                 "PortionTurns": [t, ...] (features with a bend: signed turn toward the metal per portion, radians),
+                 "TurnTowardMetal": t (one-sided features with a bend),
                  "Frame": {"Origin": [...], "Axes": [[...],[...],[...]]},
-                 "Match": {"Status": "Matched" | "Missing", "Model": "name", "Deviation": d} } ],
+                 "Match": {"Status": "Matched" | "Missing", "Model": "name", "Deviation": d,
+                           "Note": "curvature family: <rule> at kappa k (<convexity>)" | "curvature family: <refusal reason>"} } ],
   "Segments":  [ {"Key": [[x0,y0,z0],[x1,y1,z1]], "Length": L, "Chain": c, "Arc": a (chord of Arcs[a]; absent otherwise),
                   "Portions": [[s0, s1, feature], ...] } | {"Key": ..., "Length": L,
                   "Exclusion": {"Class": "...", "Reason": "..."}} ],

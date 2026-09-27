@@ -231,21 +231,13 @@ std::vector<Point2> Rectangle(double x0, double y0, double x1, double y1)
 // offset + width / 2] of the centreline polyline (two bars of opposite offsets about one
 // centreline face each other across a gap whose chords are exactly parallel at the design
 // separation, like an offset path).
-std::vector<Point2> ArcBar(double width, double radius, double sweep_degrees,
-                           double step_degrees, double lead = 6.0, double offset = 0.0)
+// Counter-clockwise loop of a bar of the given width around a centreline polyline that
+// turns left overall (the smaller-offset side forward, the larger back); `offset` shifts
+// the bar sideways.
+std::vector<Point2> BarAroundCentreline(const std::vector<Point2> &centreline, double width,
+                                        double offset = 0.0)
 {
-  const int steps = std::max(1, static_cast<int>(std::lround(sweep_degrees / step_degrees)));
-  const double step = sweep_degrees * std::acos(-1.0) / 180.0 / steps;
   const double h = 0.5 * width;
-  std::vector<Point2> centreline;
-  for (int k = 0; k <= steps; k++)
-  {
-    centreline.push_back({radius * std::sin(k * step), radius - radius * std::cos(k * step)});
-  }
-  const Point2 d_end = {std::cos(steps * step), std::sin(steps * step)};
-  centreline.insert(centreline.begin(), {-lead, 0.0});
-  centreline.push_back({centreline.back()[0] + lead * d_end[0],
-                        centreline.back()[1] + lead * d_end[1]});
   auto Offset = [&](double sign)
   {
     std::vector<Point2> result;
@@ -286,6 +278,50 @@ std::vector<Point2> ArcBar(double width, double radius, double sweep_degrees,
   const std::vector<Point2> left = Offset(1.0);
   points.insert(points.end(), left.rbegin(), left.rend());
   return points;
+}
+
+std::vector<Point2> ArcBar(double width, double radius, double sweep_degrees,
+                           double step_degrees, double lead = 6.0, double offset = 0.0)
+{
+  const int steps = std::max(1, static_cast<int>(std::lround(sweep_degrees / step_degrees)));
+  const double step = sweep_degrees * std::acos(-1.0) / 180.0 / steps;
+  std::vector<Point2> centreline;
+  for (int k = 0; k <= steps; k++)
+  {
+    centreline.push_back({radius * std::sin(k * step), radius - radius * std::cos(k * step)});
+  }
+  const Point2 d_end = {std::cos(steps * step), std::sin(steps * step)};
+  centreline.insert(centreline.begin(), {-lead, 0.0});
+  centreline.push_back({centreline.back()[0] + lead * d_end[0],
+                        centreline.back()[1] + lead * d_end[1]});
+  return BarAroundCentreline(centreline, width, offset);
+}
+
+// A bar along an S-bend: a left arc of the given radius and sweep followed by a right arc
+// of the same radius and sweep (the tangent returns to +x), straight leads at both ends.
+std::vector<Point2> SBar(double width, double radius, double sweep_degrees,
+                         double step_degrees, double lead = 6.0)
+{
+  const int steps = std::max(1, static_cast<int>(std::lround(sweep_degrees / step_degrees)));
+  const double step = sweep_degrees * std::acos(-1.0) / 180.0 / steps;
+  std::vector<Point2> centreline = {{-lead, 0.0}};
+  for (int k = 0; k <= steps; k++)
+  {
+    centreline.push_back({radius * std::sin(k * step), radius - radius * std::cos(k * step)});
+  }
+  // Second arc: centre at the reflection of the first centre through the join point, the
+  // tangent turning back to +x.
+  const double sweep = steps * step;
+  const Point2 join = centreline.back();
+  const Point2 centre2 = {2.0 * join[0], 2.0 * join[1] - radius};
+  for (int k = 1; k <= steps; k++)
+  {
+    const double angle = sweep - k * step;  // tangent angle from +x
+    centreline.push_back(
+        {centre2[0] - radius * std::sin(angle), centre2[1] + radius * std::cos(angle)});
+  }
+  centreline.push_back({centreline.back()[0] + lead, centreline.back()[1]});
+  return BarAroundCentreline(centreline, width);
 }
 
 // Every segment is either excluded or covered exactly once; every corner has a feature.
@@ -736,6 +772,139 @@ TEST_CASE("SurfaceResponseIdentificationCurvedEdges",
     REQUIRE(radii.size() == 2);
     CHECK_THAT(radii[0], WithinRel(5.0 / R, 0.03));   // inner side, radius 8 - 3
     CHECK_THAT(radii[1], WithinRel(11.0 / R, 0.03));  // outer side, radius 8 + 3
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationConvexity",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Convexity (decision 108 / C4): the signed windowed curvature toward the metal. A wide
+  // bar (3 R) along a 90 deg bend: the inner side's edge bends around the gap (Concave: a
+  // hole-like edge), the outer side's around the metal (Convex: a disk-like edge); every
+  // portion carries its signed turn, whose sum over a CurvedEdge is the bend's sweep in the
+  // metal-ward sense (within the window's smoothing across the section ends); a mirrored
+  // scene keeps the convexities (a mirror does not exchange inside and outside).
+  const double R = 2.0;
+  const double quarter = 0.5 * std::acos(-1.0);
+  auto Convexities = [&](const std::vector<Point2> &loop)
+  {
+    const auto input = MakeInput({{loop, 0, 1.0}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    std::map<double, std::pair<std::string, double>> by_radius;  // RadiusOverR -> (convexity, turn)
+    for (const auto &feature : result.features)
+    {
+      if (feature.type == "CurvedEdge")
+      {
+        double turn = 0.0;
+        for (const auto &portion : feature.portions)
+        {
+          turn += portion.turn;
+        }
+        by_radius[feature.signature["RadiusOverR"].get<double>()] = {
+            feature.signature["Convexity"].get<std::string>(), turn};
+      }
+      else
+      {
+        CHECK_FALSE(feature.signature.contains("Convexity"));
+      }
+    }
+    return by_radius;
+  };
+  {
+    const auto by_radius = Convexities(ArcBar(6.0, 8.0, 90.0, 5.0));
+    REQUIRE(by_radius.size() == 2);
+    const auto inner = by_radius.begin(), outer = std::next(inner);
+    CHECK(inner->second.first == "Concave");
+    CHECK(outer->second.first == "Convex");
+    CHECK_THAT(inner->second.second, WithinRel(-quarter, 0.10));
+    CHECK_THAT(outer->second.second, WithinRel(quarter, 0.10));
+    // Mirrored in y (the bend turns right): the same classes and convexities.
+    auto mirrored = ArcBar(6.0, 8.0, 90.0, 5.0);
+    for (auto &p : mirrored)
+    {
+      p[1] = -p[1];
+    }
+    std::reverse(mirrored.begin(), mirrored.end());  // keep the loop counter-clockwise
+    const auto mirrored_by_radius = Convexities(mirrored);
+    REQUIRE(mirrored_by_radius.size() == 2);
+    CHECK(mirrored_by_radius.begin()->second.first == "Concave");
+    CHECK(std::next(mirrored_by_radius.begin())->second.first == "Convex");
+    CHECK_THAT(mirrored_by_radius.begin()->second.second, WithinRel(-quarter, 0.10));
+  }
+  // Straight-like bend (radius 50 = 25 R): no CurvedEdge; the isolated edges carry the
+  // bend annotation and their portions the signed turn (the inner side around the gap).
+  {
+    const auto input = MakeInput({{ArcBar(6.0, 50.0, 45.0, 1.0), 0, 1.0}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    int annotated = 0;
+    for (const auto &feature : result.features)
+    {
+      CHECK(feature.type != "CurvedEdge");
+      if (feature.type == "IsolatedEdge" && feature.bend_radius_over_R)
+      {
+        double turn = 0.0;
+        for (const auto &portion : feature.portions)
+        {
+          turn += portion.turn;
+        }
+        if (std::abs(turn) > 0.1)
+        {
+          annotated++;
+          const bool inner = *feature.bend_radius_over_R < 25.0;
+          CHECK_THAT(turn, WithinRel((inner ? -1.0 : 1.0) * 0.5 * quarter, 0.10));
+        }
+      }
+    }
+    CHECK(annotated == 2);
+  }
+  // A curved strip (1.5 R wide along a 5 um bend) records the convexity of its first side
+  // (the edge the coupon's first edge e1 lands on): the inner side of a strip has its metal
+  // outside the bend (Concave), the outer side inside (Convex).
+  {
+    const auto input = MakeInput({{ArcBar(3.0, 5.0, 90.0, 5.0), 0, 1.0}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    int curved_strips = 0;
+    for (const auto &feature : result.features)
+    {
+      if (feature.type != "CurvedSameConductorStrip")
+      {
+        continue;
+      }
+      curved_strips++;
+      const std::string convexity = feature.signature["Convexity"].get<std::string>();
+      // The first side (side 0 for chirality >= 0, the last for -1): inner when its
+      // portions lie closer to the bend centre (0, 5) than the other side's.
+      const int first_side = feature.chirality < 0 ? 1 : 0;
+      double first_radius = 0.0, other_radius = 0.0;
+      int first_count = 0, other_count = 0;
+      for (const auto &portion : feature.portions)
+      {
+        const auto &p0 = input.segments[portion.segment].p0;
+        const double r = std::hypot(p0[0], p0[1] - 5.0);
+        (portion.side == first_side ? first_radius : other_radius) += r;
+        (portion.side == first_side ? first_count : other_count)++;
+      }
+      REQUIRE(first_count > 0);
+      REQUIRE(other_count > 0);
+      const bool first_inner =
+          first_radius / first_count < other_radius / other_count;
+      CHECK(convexity == (first_inner ? "Concave" : "Convex"));
+    }
+    CHECK(curved_strips == 1);
+  }
+  // An S-bend of two 40 deg arcs of radius 6 (3 R): one curved section with both senses in
+  // the curved regime -> Convexity "Mixed" (reported, never one convexity).
+  {
+    const auto by_radius = Convexities(SBar(6.0, 6.0, 40.0, 4.0));
+    REQUIRE(!by_radius.empty());
+    int mixed = 0;
+    for (const auto &[radius, entry] : by_radius)
+    {
+      (void)radius;
+      mixed += entry.first == "Mixed";
+    }
+    CHECK(mixed >= 1);
   }
 }
 
