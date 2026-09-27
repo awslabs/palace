@@ -477,6 +477,58 @@ def fillet_suite(ratios=FILLET_RATIOS, turns=FILLET_TURNS, chords=FILLET_CHORDS,
     return layouts
 
 
+ARC_CLUSTER_CORNER_RATIOS = [0.25, 0.5, 0.75]
+ARC_CLUSTER_CORNER_CHORDS = [2, 4, 8, 16]
+ARC_CLUSTER_BEND_RATIOS = [1.5, 3.0, 6.0]
+ARC_CLUSTER_BEND_CHORDS = [24, 48, 96, 192]
+
+
+def arc_cluster_suite(corner_ratios=ARC_CLUSTER_CORNER_RATIOS, corner_chords=ARC_CLUSTER_CORNER_CHORDS, bend_ratios=ARC_CLUSTER_BEND_RATIOS, bend_chords=ARC_CLUSTER_BEND_CHORDS):
+    """Option A gate (decision 91(1)): clusters holding fitted arcs at several chord counts must
+    give ONE signature per design. Two families x three radii x four chord counts:
+    ``arc-cluster-finger-q*-c*``: a finger of width 1.8 R from the box edge whose two end corners
+    are fillets of rho = q R (< R: rounded corners) as n chords each; the corner sites are 1.8 R
+    apart (an event of their own), so the end is one SpatialEdgeCluster of two arcs, the end edge
+    and R along both sides (5 edges); the sides are a SameConductorStrip.
+    ``arc-cluster-disk-q*-c*``: a round pad of radius rho = q R (>= R: a closed bend of exact
+    radius, one CurvedEdge chain) as n chords, and a finger of width 1.8 R from the box edge
+    ending 1 R before the pad: the finger's end-corner cluster absorbs the pad's edge across
+    (decision 85(2)) — a cluster with a bend arc portion; the rest of the pad is a CurvedEdge.
+    Gate: the cluster hash is identical across the chord counts of a design (run_arc_cluster_gate)."""
+    R = RADIUS
+    layouts = []
+    width = 1.8 * R
+    for q in corner_ratios:
+        rho = q * R
+        for n in corner_chords:
+            half_x = 30.0
+            base = [(-half_x, -0.5 * width), (0.0, -0.5 * width), (0.0, 0.5 * width), (-half_x, 0.5 * width)]
+            poly = filleted_polygon(base, rho, n, fillet=lambda i: i in (1, 2))
+            layouts.append(layout(f"arc-cluster-finger-q{q:g}-c{n}".replace(".", "p"), [sheet(GROUND, poly)], half_x=half_x, half_y=30.0, lc_fine=min(0.5, rho), lc_far=6.0, notes=f"finger of width 1.8 R with two end fillets of rho = {q:g} R as {n} chords: one cluster (two arcs, the end edge, R along the sides) + the sides' strip", expected={
+                "Features": {"SpatialEdgeCluster": 1, "SameConductorStrip": 1},
+                "Vertices": {"TruncationCut": 2},
+                "Exclusions": {},
+                "FacingGates": True,
+            }, ))
+            layouts[-1]["ArcCluster"] = {"Family": "finger", "RatioOverR": q, "Chords": n}
+    for q in bend_ratios:
+        rho = q * R
+        for n in bend_chords:
+            half_x = math.ceil(rho + 12.0 * R + 4.0)
+            half_y = math.ceil(max(30.0, rho + 6.0 * R))
+            disk = loop([(rho * math.cos(2.0 * math.pi * k / n), rho * math.sin(2.0 * math.pi * k / n)) for k in range(n)])
+            x_end = -rho - R
+            finger = rectangle(-half_x, -0.5 * width, x_end, 0.5 * width)
+            layouts.append(layout(f"arc-cluster-disk-q{q:g}-c{n}".replace(".", "p"), [sheet(GROUND, disk), sheet(GROUND, finger)], half_x=half_x, half_y=half_y, lc_fine=min(0.5, 2.0 * math.pi * rho / n), lc_far=6.0, notes=f"round pad of radius {q:g} R as {n} chords (a closed bend) facing a 1.8 R finger end 1 R away: the finger's end cluster absorbs the pad edge across (a bend arc portion); the rest of the pad a CurvedEdge; the finger sides a strip", expected={
+                "Features": {"SpatialEdgeCluster": 1, "SameConductorStrip": 1, "CurvedEdge": 1},
+                "Vertices": {"TruncationCut": 2},
+                "Exclusions": {},
+                "FacingGates": True,
+            }))
+            layouts[-1]["ArcCluster"] = {"Family": "disk", "RatioOverR": q, "Chords": n}
+    return layouts
+
+
 def decision_82_suite():
     """Oracle cases of the decision-82 rules with their expectation stated before running
     (`Expected`, checked by check_expected): (1) one interaction distance and no cross-plane

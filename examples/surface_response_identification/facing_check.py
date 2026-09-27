@@ -225,6 +225,96 @@ def proximity_samples(grid, p0, p1, excluded, points, tangents, owners, candidat
     return si[order], sj[order], ri[order], fi[order], ci[order]
 
 
+class ArcGeometry:
+    """Design-curve reading of the facing distances (option A, decision 91(1)): a manifest
+    with an `Arcs` table and `Segments[].Arc` marks every chord segment of a fitted arc; the
+    identification evaluates the cluster machinery on the arcs, so the gate measures a hit that
+    involves an arc segment on the arcs too — the sample projected radially onto its circle, the
+    hit segment replaced by its arc piece (the angular range of its end points). Two concentric
+    polylines exactly 2R apart by design then read 2R (not the chord's 2R - sagitta), like the
+    identification. Chord-to-chord hits are unchanged."""
+
+    def __init__(self, identification, p0, p1):
+        arcs = identification.get("Arcs") or []
+        n = len(p0)
+        self.arc_of = np.full(n, -1, dtype=np.int64)
+        for i, seg in enumerate(identification["Segments"]):
+            if "Arc" in seg:
+                self.arc_of[i] = int(seg["Arc"])
+        self.active = bool(arcs) and bool((self.arc_of >= 0).any())
+        if not self.active:
+            return
+        self.center = np.array([a["Center"][:3] for a in arcs], dtype=float)
+        self.radius = np.array([a["Radius"] for a in arcs], dtype=float)
+        # Angular range of every arc segment about its centre (plan view).
+        self.theta0 = np.zeros(n); self.theta1 = np.zeros(n)
+        on = self.arc_of >= 0
+        c = self.center[self.arc_of[on]]
+        d0 = p0[on] - c; d1 = p1[on] - c
+        t0 = np.arctan2(d0[:, 1], d0[:, 0]); t1 = np.arctan2(d1[:, 1], d1[:, 0])
+        # Shortest signed sweep from t0 to t1 (a chord subtends less than pi).
+        sweep = (t1 - t0 + np.pi) % (2.0 * np.pi) - np.pi
+        self.theta0[on] = t0; self.theta1[on] = t0 + sweep
+        self.corrected = 0
+
+    def project(self, points, owners):
+        """Sample points on arc segments moved radially onto their circle."""
+        if not self.active:
+            return points
+        arcs = self.arc_of[owners]
+        on = arcs >= 0
+        if not on.any():
+            return points
+        out = points.copy()
+        c = self.center[arcs[on]]
+        d = out[on] - c
+        d[:, 2] = 0.0
+        norm = np.sqrt((d * d).sum(1))
+        ok = norm > 0.0
+        scale = np.where(ok, self.radius[arcs[on]] / np.maximum(norm, 1e-300), 1.0)
+        out[on] = c + d * scale[:, None] + np.array([0.0, 0.0, 1.0]) * (out[on] - c)[:, 2:3]
+        return out
+
+    def distances(self, points, owners, sample_indices, segment_indices, r, p0, p1):
+        """The hit distances re-read on the arcs where the sample or the hit segment lies on one."""
+        if not self.active:
+            return r
+        owner_arc = self.arc_of[owners[sample_indices]]
+        hit_arc = self.arc_of[segment_indices]
+        involved = (owner_arc >= 0) | (hit_arc >= 0)
+        if not involved.any():
+            return r
+        r = r.copy()
+        p = self.project(points[sample_indices[involved]], owners[sample_indices[involved]])
+        segs = segment_indices[involved]
+        out = np.empty(len(segs))
+        # Chord hits from the projected sample.
+        a, b = p0[segs], p1[segs]
+        ab = b - a
+        t = np.clip(((p - a) * ab).sum(1) / np.maximum((ab * ab).sum(1), 1e-30), 0.0, 1.0)
+        foot = a + t[:, None] * ab
+        out[:] = np.sqrt(((foot - p) ** 2).sum(1))
+        # Arc hits: radial distance inside the angular range, else the nearer end.
+        on = hit_arc[involved] >= 0
+        if on.any():
+            arcs = hit_arc[involved][on]
+            c = self.center[arcs]
+            q = p[on]
+            d = q - c
+            in_plane = np.hypot(d[:, 0], d[:, 1])
+            theta = np.arctan2(d[:, 1], d[:, 0])
+            lo = np.minimum(self.theta0[segs[on]], self.theta1[segs[on]]); hi = np.maximum(self.theta0[segs[on]], self.theta1[segs[on]])
+            mid = 0.5 * (lo + hi)
+            theta = theta + 2.0 * np.pi * np.round((mid - theta) / (2.0 * np.pi))
+            inside = (theta >= lo) & (theta <= hi) & (in_plane > 0.0)
+            radial = np.hypot(in_plane - self.radius[arcs], d[:, 2])
+            ends = np.minimum(np.sqrt(((p0[segs[on]] - q) ** 2).sum(1)), np.sqrt(((p1[segs[on]] - q) ** 2).sum(1)))
+            out[on] = np.where(inside, radial, ends)
+        self.corrected += int(involved.sum())
+        r[involved] = out
+        return r
+
+
 def portion_samples(p0, p1, length, portions, spacing):
     """Sample points, tangents, weights (length per sample), segment ids and portion lengths of
     feature portions."""
@@ -483,6 +573,7 @@ def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=2000
     identification, p0, p1, length, excluded, radius = load(manifest_path)
     features = identification["Features"]
     grid = SegmentGrid(p0, p1, cell=2.0 * radius)
+    arc_geometry = ArcGeometry(identification, p0, p1)
     lookup = ClaimLookup(identification, p0, p1, length)
     segments_of_chain = defaultdict(list)
     for i, s in enumerate(identification["Segments"]):
@@ -608,6 +699,7 @@ def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=2000
             si, sj, ri, fi = facing_samples(grid, p0, p1, excluded, points[sl], tangents[sl], owners[sl], own_mask, radius)
             if len(si) == 0:
                 continue
+            ri = arc_geometry.distances(points[sl], owners[sl], si, sj, ri, p0, p1)
             # Strict less than 2R on the classifier's quantized grid; the rest is exactly 2R.
             interacting = np.round(ri / quantum) < np.round(2.0 * radius / quantum)
             # Every sample: its facing hits in distance order; the sample counts once — flagged
@@ -660,6 +752,9 @@ def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=2000
                 # Not-across residual: samples with cluster / vertex metal within 2R but no
                 # across hit at all (the across hits are gated above).
                 si2, sj2, ri2, fi2, ci2 = proximity_samples(grid, p0, p1, excluded, points[sl], tangents[sl], owners[sl], cluster_mask, radius)
+                ri2 = arc_geometry.distances(points[sl], owners[sl], si2, sj2, ri2, p0, p1)
+                keep = np.round(ri2 / quantum) < np.round(2.0 * radius / quantum)
+                si2, sj2, ri2, fi2, ci2 = si2[keep], sj2[keep], ri2[keep], fi2[keep], ci2[keep]
                 if len(si2):
                     starts2 = np.concatenate([[0], np.nonzero(si2[1:] != si2[:-1])[0] + 1, [len(si2)]])
                     for a, b in zip(starts2[:-1], starts2[1:]):
@@ -753,6 +848,8 @@ def facing_check(manifest_path, spacing=0.5, site_radius_over_r=25.0, batch=2000
             "ResidualSites": group_sites(not_across_flags, site_radius_over_r * radius)[:10],
         },
         "KnifeEdgeRule": f"strict less than 2R on the grid of {LENGTH_QUANTUM_OVER_R:g} R (the classifier's rule); AtExactly2RLength is the facing length at exactly 2R, not flagged",
+        "ArcGeometry": {"Active": arc_geometry.active, "CorrectedHits": getattr(arc_geometry, "corrected", 0),
+                        "Rule": "hits involving a segment of a fitted arc (Segments[].Arc, table Arcs) are measured on the arcs: the sample projected radially onto its circle, the hit segment as its arc piece (option A, decision 91(1): the identification's reading of the design curves)"},
         "Exclusions": {"AtExactly2R": "facing at exactly 2R on the decision grid (no interaction under the strict rule)",
                        "StackEndThirdBody": "pair / stack side facing a SpatialEdgeCluster or a vertex feature within 2R (a joint description next to a cluster is not absorbed, decision 85(2); reported as Diagnostics.StackEndThirdBodyLength)",
                        "StackEndRecomposition": f"pair / stack side facing another pair / stack feature that shares a member chain (the route's cross-section recomposed at a stack end or class boundary; the partner's foot across the cut); bounded: at most {STACK_END_RECOMPOSITION_SITE_CAP_OVER_R:g} R per site (the operative bound) and {STACK_END_RECOMPOSITION_TOTAL_CAP_OVER_R_PER_FEATURE:g} R per pair / stack feature involved in total, beyond which the length is not exempt",
