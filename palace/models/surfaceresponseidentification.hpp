@@ -124,6 +124,8 @@ struct IdentifiedSegment
   std::array<std::array<double, 3>, 2> key{};
   double length = 0.0;
   int chain = -1;
+  // The fitted arc (index into IdentificationResult::arcs) the segment is a chord of, or -1.
+  int arc = -1;
   std::vector<std::array<double, 3>> portions;  // {s0, s1, feature id}
   // Parts of a segment excluded analytically (CrossLayer zones within 2R of off-plane
   // metal): {s0, s1, index into IdentificationResult::exclusions}.
@@ -145,6 +147,20 @@ struct IdentifiedVertex
   bool point_contact = false;
 };
 
+// A fitted arc of the perimeter path (design (b) 3, arc rule; option A): the circle every
+// chord segment of the arc is evaluated on by the cluster machinery.
+struct IdentifiedArc
+{
+  std::array<double, 3> center{};
+  double radius = 0.0;
+  double turn_degrees = 0.0;
+  // RoundedCorner (radius below R, turn above the corner threshold: a vertex feature) or
+  // Bend (exact-radius bend inside its chain).
+  std::string kind;
+  std::size_t joints = 0;
+  std::size_t segments = 0;
+};
+
 struct IdentificationExclusion
 {
   std::string cls;
@@ -160,6 +176,7 @@ struct IdentificationResult
   std::vector<IdentifiedFeature> features;
   std::vector<IdentifiedSegment> segments;
   std::vector<IdentifiedVertex> vertices;
+  std::vector<IdentifiedArc> arcs;
   std::vector<IdentificationExclusion> exclusions;
   double perimeter_length = 0.0;
   double assigned_length = 0.0;

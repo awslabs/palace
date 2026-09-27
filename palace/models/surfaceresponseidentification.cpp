@@ -8635,6 +8635,19 @@ void Identifier::Assign(IdentificationResult &result)
     }
   }
 
+  // Fitted arcs (rounded corners and bends).
+  std::vector<int> segment_any_arc(input.segments.size(), -1);
+  for (std::size_t a = 0; a < arcs.size(); a++)
+  {
+    const Arc &arc = arcs[a];
+    result.arcs.push_back({arc.center, arc.radius, arc.turn * 180.0 / std::acos(-1.0),
+                           arc.corner ? "RoundedCorner" : "Bend", arc.joints.size(),
+                           arc.segments.size()});
+    for (const std::size_t s : arc.segments)
+    {
+      segment_any_arc[s] = static_cast<int>(a);
+    }
+  }
   // Per-segment table.
   result.segments.resize(input.segments.size());
   for (std::size_t i = 0; i < input.segments.size(); i++)
@@ -8648,6 +8661,7 @@ void Identifier::Assign(IdentificationResult &result)
             : std::array<std::array<double, 3>, 2>{segment.p1, segment.p0};
     result.segments[i].length = length;
     result.segments[i].chain = segment.chain;
+    result.segments[i].arc = i < segment_any_arc.size() ? segment_any_arc[i] : -1;
     if (segment.truncation)
     {
       result.segments[i].exclusion =
@@ -9301,6 +9315,7 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
     w.Point(s.key[1]);
     w.Pod(s.length);
     w.Pod(s.chain);
+    w.Pod(s.arc);
     w.Size(s.portions.size());
     for (const auto &p : s.portions)
     {
@@ -9331,6 +9346,16 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
     w.String(x.reason);
     w.Pod(x.count);
     w.Pod(x.length);
+  }
+  w.Size(result.arcs.size());
+  for (const auto &a : result.arcs)
+  {
+    w.Point(a.center);
+    w.Pod(a.radius);
+    w.Pod(a.turn_degrees);
+    w.String(a.kind);
+    w.Size(a.joints);
+    w.Size(a.segments);
   }
   return std::move(w.buffer);
 }
@@ -9408,6 +9433,7 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
     s.key[1] = r.Point();
     s.length = r.Pod<double>();
     s.chain = r.Pod<int>();
+    s.arc = r.Pod<int>();
     s.portions.resize(r.Size());
     for (auto &p : s.portions)
     {
@@ -9441,6 +9467,16 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
     x.reason = r.String();
     x.count = r.Pod<int>();
     x.length = r.Pod<double>();
+  }
+  result.arcs.resize(r.Size());
+  for (auto &a : result.arcs)
+  {
+    a.center = r.Point();
+    a.radius = r.Pod<double>();
+    a.turn_degrees = r.Pod<double>();
+    a.kind = r.String();
+    a.joints = r.Size();
+    a.segments = r.Size();
   }
   MFEM_VERIFY(r.Done(), "Identification result buffer was not consumed exactly!");
   return result;
@@ -9552,6 +9588,10 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
     nlohmann::json entry = {{"Key", {P(segment.key[0]), P(segment.key[1])}},
                             {"Length", L(segment.length)},
                             {"Chain", segment.chain}};
+    if (segment.arc >= 0)
+    {
+      entry["Arc"] = segment.arc;
+    }
     if (segment.exclusion)
     {
       entry["Exclusion"] = {{"Class", segment.exclusion->first},
@@ -9576,6 +9616,18 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
       }
     }
     segment_list.push_back(std::move(entry));
+  }
+  nlohmann::json arc_list = nlohmann::json::array();
+  for (const auto &arc : arcs)
+  {
+    arc_list.push_back({{"Center", P(arc.center)},
+                        {"Radius", L(arc.radius)},
+                        {"RadiusOverR", RoundTo(arc.radius / radius,
+                                                kSignatureLengthQuantumOverRadius)},
+                        {"TurnDegrees", RoundTo(arc.turn_degrees, kSignatureAngleQuantumDegrees)},
+                        {"Kind", arc.kind},
+                        {"Joints", arc.joints},
+                        {"Segments", arc.segments}});
   }
   nlohmann::json vertex_list = nlohmann::json::array();
   for (const auto &vertex : vertices)
@@ -9625,6 +9677,25 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"ArcInscribedAngleToleranceRelative", kArcFitToleranceRelative},
         {"ArcTangentLengthPreferenceOverTolerance",
          kArcTangentLengthPreferenceOverTolerance},
+        {"ArcSampleSpacingOverR", kArcSampleSpacingOverRadius},
+        {"ClusterArcChordStepDegrees", kClusterArcChordStepDegrees},
+        {"ClusterArcChordMaxLengthOverR", kClusterArcChordMaxLengthOverRadius},
+        {"ClusterGeometryRule",
+         "option A (decision 91(1)): every run on a fitted arc (rounded corner or bend, "
+         "table Arcs; Segments[].Arc) is evaluated on the arc by the cluster machinery — "
+         "event cores, core merging, the vertex join, the radius-R claims, the through "
+         "zones, the extension's across rule (radial projection inside an arc piece; the "
+         "wedge turn between arc tangents), the stack-end images of cluster / window ends "
+         "on concentric partner arcs — so that a cluster's extent is a function of the "
+         "design curves; the sublevel sets along an arc are bracketed by samples at most "
+         "ArcSampleSpacingOverR x R apart and their crossings bisected; a cluster's claims on "
+         "one arc are ONE signature portion serialised as {P: sorted ends, Arc: centre + "
+         "midpoint, GapRadial: +1 metal inside the circle / -1 outside} in the frame (frame "
+         "candidates: the arc's end tangents and end radial directions; origin: the "
+         "length-weighted centroid with the arcs' analytic centroids); the library builder "
+         "chords a signature arc at ClusterArcChordStepDegrees, finer so that no chord "
+         "exceeds ClusterArcChordMaxLengthOverR x R (canonical: the coupon geometry does not "
+         "depend on the device mesh); two chords keep the former exact formulas"},
         {"ArcRule", "joints (>= 3) joined by pieces < 2R (a piece >= 2R is allowed between "
                     "two sub-corner joints: a chord of a smooth polyline bend; in that "
                     "long-chord regime every joint lies on the least-squares circle within "
@@ -9753,6 +9824,7 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
       {"Features", feature_list},
       {"Segments", segment_list},
       {"Vertices", vertex_list},
+      {"Arcs", arc_list},
       {"Exclusions", exclusion_list},
       {"Totals",
        {{"PerimeterLength", L(perimeter_length)},
