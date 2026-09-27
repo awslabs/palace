@@ -449,8 +449,12 @@ smaller endpoint.
    2R (1 + 0.05) enters only the candidate gathering (`RunIntervalWithin`,
    `SegmentSegmentDistance`); the interaction decision is `quantizer.Less(upper, 2R)` (strict,
    3D); the mutual-sides test at the pair separation x 1.05 trims a side whose partner piece
-   is gone (a facing test); the assembly accepts a foot within the reach only along a link
-   already decided interacting. **Facing gates (audit A8, `facing_check.py`):** the length of
+   is gone (a facing test; the separation is max(the feature's mean, the piece's LOCAL
+   separation to the partner chains): a slow taper's wider end is still facing — with the
+   mean alone DS-CTX-003's flux-line launchers, 1 -> 6 um over 560 um, lost the inner gap's
+   pair where the outer links ended and read four isolated edges at 3.7 um, decision 103 /
+   review m11; the synthetic `stack-taper-through-2R` is the reproducer); the assembly
+   accepts a foot within the reach only along a link already decided interacting. **Facing gates (audit A8, `facing_check.py`):** the length of
    isolated / curved edge portions facing another edge of the plane within 2R and of pair /
    stack sides facing a third edge within 2R must be zero apart from the recorded exclusions
    `AtExactly2R` (strict rule), `ClusterNeighbour` (the facing portion is a cluster's: claim
@@ -654,8 +658,13 @@ smaller endpoint.
    claim radius of the region, not an interaction decision; the bent-pair candidate reach
    2R (1 + 0.05) is the SAMPLING margin of the constancy test (its interaction decision is
    the same strict < 2R on the curve separation) and the mutual-sides facing test uses the
-   pair's own separation x 1.05 — both recorded here as the two non-2R constants that
-   remain, neither decides an interaction.
+   pair's own separation x 1.05 (the mean, or the piece's local separation when larger) —
+   both recorded here as the two non-2R constants that remain, neither decides an
+   interaction. Recorded taper residual: the chord reading is the window MAXIMUM over R (a
+   full chord on a curved chain), so along a slow taper a pair ends where that maximum
+   reaches 2R — up to slope x window before the strict local crossing (DS-CTX-003 launchers:
+   0.03-0.13 um = 4-16 um along the edge; audit A8 81.8 um at 5 sites after the fix, 529.5 um
+   at 10 sites before); a rule question for the USER list, not a threshold to add here.
    **Port rule (decision 82(5)).** Ports are not metal: a one-sided perimeter segment
    coincident with an edge of a LumpedPort / WavePort boundary face of the configuration
    (attributes from `Boundaries.LumpedPort[].Attributes` / `Elements[].Attributes` and
@@ -780,7 +789,7 @@ Patch per class (weights in mesh units; `CouponDepth` = the model's longitudinal
 |---|---|---|---|
 | `IsolatedEdge`, `CurvedEdge` | one per quadrature point of every portion (`2 x order` Gauss points) | u = gap direction, v = process normal of the segment | `(s1 - s0) x w_q / CouponDepth` |
 | pairs (`SameConductorGap`, `DifferentConductorGap`, `SameConductorStrip`, `Curved*`) | quadrature on **both** sides, side factor 1 / 2 (the longitudinal measure is the mean of the two sides: exact for a straight pair, the centreline for concentric arcs); at a sample p its foot q on the partner's portions | origin (e1 + e2) / 2, u from the model's first edge e1 toward e2, v = mean process normal; the first edge is the lower side along the feature's lateral axis `Frame.Axes[1]` (the higher one for `Chirality` -1: the canonical orientation is the mirror) | `(s1 - s0) x w_q x 1/2 / CouponDepth` |
-| `ParallelEdgeCluster` | quadrature on every side, side factor 1 / n; origin on the canonical first edge at the sample's longitudinal coordinate; anchors on the first edge of every conductor label | u = lateral axis toward increasing canonical offsets, v = mean process normal | `(s1 - s0) x w_q / n / CouponDepth` |
+| `ParallelEdgeCluster` | quadrature on every side, side factor 1 / n; origin = the sample's foot on the canonical first side (the sample itself on that side); anchors = the feet on the first side of every conductor label | u = from the origin to its foot on the last side (the local lateral: a stack following straight-like bends turns with them — a feature-wide frame placed the meandering DS-SCT-001 flux-line stacks up to 49 deg off, found by the A10 placement audit), v = mean process normal | `(s1 - s0) x w_q / n / CouponDepth` |
 | `ConvexCorner`, `ConcaveCorner` (sharp or rounded), `Endpoint`, `Junction` | one patch at `Frame.Origin` (the vertex or the virtual corner of a fillet) | `Frame.Axes` (below) | model weight (1) |
 | `SpatialEdgeCluster` | one patch | a model carrying its `Signature` is built in that Signature's canonical frame and is placed with the identity map (m maps to `F.origin + F.axes^T m`; its stored `Edges`, when present, are verified at library load to lie on the Signature's portions — straight portions as segments, arc portions on their circle — within the signature tolerance, `VerifySpatialEdgesInSignatureFrame`, fail closed); a legacy model without a `Signature` maps a model-frame point m to `F.origin + F.axes^T M.axes (m - M.origin)`, M from `CanonicalClusterSignature` of its stored straight edges | model weight (1) |
 
