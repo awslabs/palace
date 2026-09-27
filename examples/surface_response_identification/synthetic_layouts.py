@@ -477,7 +477,10 @@ def fillet_suite(ratios=FILLET_RATIOS, turns=FILLET_TURNS, chords=FILLET_CHORDS,
     return layouts
 
 
-ARC_CLUSTER_CORNER_RATIOS = [0.25, 0.5, 0.75]
+# The largest fillet ratio keeps the end edge at 0.4 R: at 0.75 R (end edge 0.3 R) the two
+# 2-chord fillets and the end edge lie within the 5 % arc-fit tolerance of ONE semicircle of
+# radius 0.9 R (a single 180 deg rounded corner: the coarsest polyline is another geometry).
+ARC_CLUSTER_CORNER_RATIOS = [0.25, 0.5, 0.7]
 ARC_CLUSTER_CORNER_CHORDS = [2, 4, 8, 16]
 ARC_CLUSTER_BEND_RATIOS = [1.5, 3.0, 6.0]
 ARC_CLUSTER_BEND_CHORDS = [24, 48, 96, 192]
