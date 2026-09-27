@@ -50,12 +50,15 @@ int CeedGeometryDataGetSpaceDimension(CeedElemRestriction geom_data_restr, CeedI
                                       CeedInt *space_dim);
 
 // Assemble libCEED mesh geometry factor quadrature data for use in a partially assembled
-// libCEED operator.
+// libCEED operator. With axisymmetric = true (two-dimensional (r, z) meshes only) the
+// quadrature weight qw det(J) is multiplied by the revolution measure 2 pi x so that every
+// operator built on this data integrates over the body of revolution.
 void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
                               CeedBasis mesh_basis, CeedVector mesh_nodes,
                               CeedElemRestriction attr_restr, CeedBasis attr_basis,
                               CeedVector elem_attr, CeedVector geom_data,
-                              CeedElemRestriction geom_data_restr);
+                              CeedElemRestriction geom_data_restr,
+                              bool axisymmetric = false);
 
 // Construct libCEED operator using the given quadrature data, element restriction, and
 // basis objects.

@@ -180,6 +180,12 @@ public:
   double L0 = 1.0e-6;
   double Lc = -1.0;
 
+  // Interpret a two-dimensional mesh as the (r, z) half-plane of an axisymmetric geometry
+  // (x = r >= 0, the axis at x = 0): every integral carries the full-revolution measure
+  // 2 pi r, so energies and capacitances are the three-dimensional quantities of the body
+  // of revolution. The axis boundary is natural (no boundary condition is required there).
+  bool axisymmetric = false;
+
   // Remove high-order curvature information from the mesh.
   bool remove_curvature = false;
 
@@ -1099,6 +1105,21 @@ public:
 
     // Mapping from global target interface index to coupon interface index.
     std::vector<ResponseCorrectionInterfaceData> interfaces;
+
+    // Internal (automatic matching): a runtime model interpolated between library coupons
+    // that share one basis. When nonempty, each of the four response matrices is the sum
+    // over the sources of weight x (that source's matrix) and the paths above are unused.
+    // Used for the curvature families (CurvedEdge coupons at several kappa = R / rho plus
+    // the straight anchor) whose response is interpolated in kappa.
+    struct BlendSourceData
+    {
+      double weight = 1.0;
+      std::string fabricated_matrix;
+      std::string thin_matrix;
+      std::string fabricated_surface_matrix;
+      std::string thin_surface_matrix;
+    };
+    std::vector<BlendSourceData> blend;
   };
 
   struct ResponseCorrectionData

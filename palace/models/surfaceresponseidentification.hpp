@@ -124,6 +124,9 @@ struct IdentifiedSegment
   std::array<std::array<double, 3>, 2> key{};
   double length = 0.0;
   int chain = -1;
+  // The fitted arc (index into IdentificationResult::arcs) the segment is a chord of, or
+  // -1.
+  int arc = -1;
   std::vector<std::array<double, 3>> portions;  // {s0, s1, feature id}
   // Parts of a segment excluded analytically (CrossLayer zones within 2R of off-plane
   // metal): {s0, s1, index into IdentificationResult::exclusions}.
@@ -145,6 +148,20 @@ struct IdentifiedVertex
   bool point_contact = false;
 };
 
+// A fitted arc of the perimeter path (design (b) 3, arc rule; option A): the circle every
+// chord segment of the arc is evaluated on by the cluster machinery.
+struct IdentifiedArc
+{
+  std::array<double, 3> center{};
+  double radius = 0.0;
+  double turn_degrees = 0.0;
+  // RoundedCorner (radius below R, turn above the corner threshold: a vertex feature) or
+  // Bend (exact-radius bend inside its chain).
+  std::string kind;
+  std::size_t joints = 0;
+  std::size_t segments = 0;
+};
+
 struct IdentificationExclusion
 {
   std::string cls;
@@ -160,6 +177,7 @@ struct IdentificationResult
   std::vector<IdentifiedFeature> features;
   std::vector<IdentifiedSegment> segments;
   std::vector<IdentifiedVertex> vertices;
+  std::vector<IdentifiedArc> arcs;
   std::vector<IdentificationExclusion> exclusions;
   double perimeter_length = 0.0;
   double assigned_length = 0.0;
@@ -172,6 +190,8 @@ struct IdentificationResult
   // distance for want of a consecutive link, and those whose composition reached the cap.
   std::size_t stack_geometric_offsets = 0;
   std::size_t stack_composition_cap_hits = 0;
+  // Stack-end images merged into an existing breakpoint within the tolerance (decision 93).
+  std::size_t stack_images_merged = 0;
   // Cluster extension (decision 85(2)): passes to closure, absorbed single-edge portions
   // and length, vertex features that became clusters; the pair / stack length within 2R of
   // a cluster's claimed perimeter (the stack-end third body, not absorbed), mesh units.
@@ -182,6 +202,10 @@ struct IdentificationResult
     std::size_t sites = 0;
     double length = 0.0;
     double stack_end_third_body_length = 0.0;
+    // Closure by the pass cap or by a repeated pass (decision 93) instead of a
+    // sub-tolerance pass.
+    bool cap_reached = false;
+    bool repeat_detected = false;
   };
   ClusterExtension extension;
   // Knife-edge census (decision 82(4)): the perimeter length whose interaction distance lies
@@ -204,6 +228,22 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer);
 // shared by the device features and the library models so that both sides are hashed by
 // the same function. Every portion is {p0, p1, gap direction, process normal, conductor,
 // interface types, law}; the result is the minimal serialisation over the candidate frames.
+// A signature portion on a fitted circular arc (option A, decision 91(1)): the portion's
+// end points are p0 = point(theta0), p1 = point(theta1) with point(theta) = center +
+// radius (cos theta u + sin theta v); |theta1 - theta0| <= 2 pi (a closed circle has p0 =
+// p1). The gap direction of an arc portion is radial: gap_radial = +1 away from the centre
+// (metal inside the circle: a convex edge), -1 toward it (metal outside: concave).
+struct SignatureArc
+{
+  std::array<double, 3> center{};
+  double radius = 0.0;
+  std::array<double, 3> u{};
+  std::array<double, 3> v{};
+  double theta0 = 0.0;
+  double theta1 = 0.0;
+  int gap_radial = 1;
+};
+
 struct SignaturePortion
 {
   std::array<double, 3> p0{};
@@ -212,6 +252,9 @@ struct SignaturePortion
   int conductor = 0;
   std::vector<std::string> interfaces;
   std::string boundary_law;
+  // Set when the portion lies on a fitted arc: serialised as the arc (centre, radius,
+  // angular range) in the frame; the library builder chords it at the canonical step.
+  std::optional<SignatureArc> arc;
 };
 
 struct SignatureVertex

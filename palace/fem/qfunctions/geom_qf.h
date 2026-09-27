@@ -9,11 +9,15 @@
 // in[0] is element attributes, shape [Q]
 // in[1] is quadrature weights, shape [Q]
 // in[2] is Jacobians, shape [qcomp=dim, ncomp=space_dim, Q]
+// (axisymmetric variants: in[3] is the mesh coordinates at quadrature points, shape
+//  [ncomp=space_dim, Q], and qw * det(J) carries the revolution measure 2 pi x)
 // out[0] is quadrature data, stored as {attribute, Jacobian determinant, (transpose)
 //        adjugate Jacobian} quadrature data, shape [ncomp=2+space_dim*dim, Q]
 
 #include "21/geom_21_qf.h"
+#include "21/geom_axisymmetric_21_qf.h"
 #include "22/geom_22_qf.h"
+#include "22/geom_axisymmetric_22_qf.h"
 #include "31/geom_31_qf.h"
 #include "32/geom_32_qf.h"
 #include "33/geom_33_qf.h"

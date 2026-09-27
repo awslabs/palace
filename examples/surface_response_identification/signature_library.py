@@ -198,6 +198,58 @@ def group_features(features):
     return groups
 
 
+# Canonical chording of the arc portions of a SpatialEdgeCluster signature (option A,
+# Identification.Conventions ClusterArcChordStepDegrees / ClusterArcChordMaxLengthOverR): the
+# coupon builder receives the arcs and chords them at this step, so that the coupon geometry
+# is a function of the signature and not of the device mesh.
+CLUSTER_ARC_CHORD_STEP_DEGREES = 5.0
+CLUSTER_ARC_CHORD_MAX_LENGTH_OVER_R = 0.25
+
+
+def cluster_plan_view_edges(signature, radius, step_degrees=CLUSTER_ARC_CHORD_STEP_DEGREES, max_chord_over_R=CLUSTER_ARC_CHORD_MAX_LENGTH_OVER_R):
+    """Straight plan-view edges of a SpatialEdgeCluster signature in its canonical frame
+    (mesh units = the signature's units of R times ``radius``): every straight portion as one
+    edge ``{"P0", "P1", "Gap", "Conductor", "Interfaces", "Law", "Portion"}``; every arc
+    portion (``Arc`` = centre + midpoint, ``GapRadial``) chorded into n equal chords, n =
+    max(ceil(sweep / step), ceil(arc length / (max_chord_over_R R)), 1), each chord's gap
+    direction the arc's radial direction at the chord's middle (times ``GapRadial``). A closed
+    circle (equal ends) is chorded over 2 pi."""
+    import math
+    edges = []
+    for index, portion in enumerate(signature["Portions"]):
+        p = [float(v) * radius for v in portion["P"]]
+        a, b = (p[0], p[1]), (p[2], p[3])
+        common = {"Conductor": int(portion["Conductor"]), "Interfaces": portion.get("Interfaces", []), "Law": portion.get("Law"), "Portion": index}
+        if "Arc" not in portion:
+            edges.append(dict(common, P0=a, P1=b, Gap=(float(portion["Gap"][0]), float(portion["Gap"][1]))))
+            continue
+        arc = [float(v) * radius for v in portion["Arc"]]
+        c, m = (arc[0], arc[1]), (arc[2], arc[3])
+        r = math.hypot(a[0] - c[0], a[1] - c[1])
+        angle = lambda q: math.atan2(q[1] - c[1], q[0] - c[0])
+        ta, tb, tm = angle(a), angle(b), angle(m)
+        closed = math.hypot(a[0] - b[0], a[1] - b[1]) <= 1.0e-9 * max(r, 1.0)
+        if closed:
+            sweep = 2.0 * math.pi
+        else:
+            # The arc from a to b through m: the counterclockwise sweep from a to b holds m, or
+            # the clockwise one does.
+            ccw = (tb - ta) % (2.0 * math.pi)
+            if ((tm - ta) % (2.0 * math.pi)) <= ccw + 1.0e-12:
+                sweep = ccw
+            else:
+                sweep = ccw - 2.0 * math.pi
+        n = max(int(math.ceil(abs(sweep) / math.radians(step_degrees) - 1.0e-9)), int(math.ceil(r * abs(sweep) / (max_chord_over_R * radius) - 1.0e-9)), 1)
+        sign = int(portion["GapRadial"])
+        for k in range(n):
+            t0, t1 = ta + sweep * k / n, ta + sweep * (k + 1) / n
+            q0 = (c[0] + r * math.cos(t0), c[1] + r * math.sin(t0))
+            q1 = (c[0] + r * math.cos(t1), c[1] + r * math.sin(t1))
+            tmid = 0.5 * (t0 + t1)
+            edges.append(dict(common, P0=q0, P1=q1, Gap=(sign * math.cos(tmid), sign * math.sin(tmid)), Chord=k, Chords=n))
+    return edges
+
+
 def signature_hash(signature):
     import hashlib
     return hashlib.sha256(json.dumps(signature, separators=(",", ":"), sort_keys=True).encode()).hexdigest()

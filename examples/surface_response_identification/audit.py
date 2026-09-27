@@ -431,6 +431,12 @@ def identification_gates(identification, perimeter, census, radius, targets, com
     audit_by_class = defaultdict(float)
     for kind, cls in EXCLUSION_CLASS_OF_AUDIT_KIND.items():
         audit_by_class[cls] += census["LengthByClass"].get(kind, 0.0)
+    # CrossLayer is an analytic zone of the TARGETED planar edges (the classifier never sees
+    # an untargeted edge, which it records whole as Untargeted): the audit's CROSS_LAYER
+    # length is summed over every physical edge, so the comparison takes the targeted part
+    # (decision 93: DS-OSC-003's 16.2 mm of CrossLayer lay on 1,185 untargeted PCB-face edges
+    # and failed the gate although the manifest was right).
+    audit_by_class["CrossLayer"] = float(census.get("TargetedCrossLayerLength", audit_by_class.get("CrossLayer", 0.0)))
     for cls, audit_length in sorted(audit_by_class.items()):
         exclusion_detail[cls] = {"AuditLength": audit_length, "RecordedLength": recorded.get(cls, 0.0)}
         if abs(recorded.get(cls, 0.0) - audit_length) > 1.0e-6 * max(audit_length, radius):

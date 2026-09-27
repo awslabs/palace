@@ -144,7 +144,8 @@ auto GetElementIndices(const mfem::ParMesh &mesh, bool use_bdr, int start, int s
 }
 
 auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int> &indices,
-                          const mfem::GridFunction &mesh_nodes, const Vector &elem_attr)
+                          const mfem::GridFunction &mesh_nodes, const Vector &elem_attr,
+                          bool axisymmetric)
 {
   const mfem::FiniteElementSpace &mesh_fespace = *mesh_nodes.FESpace();
   const mfem::Mesh &mesh = *mesh_fespace.GetMesh();
@@ -197,7 +198,7 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   // Compute the required geometry factors at quadrature points.
   ceed::AssembleCeedGeometryData(ceed, mesh_restr, mesh_basis, mesh_nodes_vec, attr_restr,
                                  attr_basis, elem_attr_vec, data.geom_data,
-                                 data.geom_data_restr);
+                                 data.geom_data_restr, axisymmetric);
   PalaceCeedCall(ceed, CeedVectorDestroy(&mesh_nodes_vec));
   PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_restr));
   PalaceCeedCall(ceed, CeedBasisDestroy(&mesh_basis));
@@ -211,7 +212,7 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
 auto BuildCeedGeomFactorData(
     const mfem::ParMesh &mesh, const std::unordered_map<int, int> &loc_attr,
     const std::unordered_map<int, std::unordered_map<int, int>> &loc_bdr_attr, Ceed ceed,
-    bool ceed_from_self)
+    bool ceed_from_self, bool axisymmetric)
 {
   // Create a list of the element indices in the mesh corresponding to a given thread and
   // element geometry type and corresponding geometry factor data. libCEED operators will be
@@ -276,8 +277,9 @@ auto BuildCeedGeomFactorData(
       {
         elem_attr[k] = GetCeedAttribute(indices[k]);
       }
-      geom_data_map.emplace(
-          geom, AssembleGeometryData(ceed, geom, indices, *mesh.GetNodes(), elem_attr));
+      geom_data_map.emplace(geom,
+                            AssembleGeometryData(ceed, geom, indices, *mesh.GetNodes(),
+                                                 elem_attr, axisymmetric));
     }
   }
 
@@ -308,8 +310,9 @@ auto BuildCeedGeomFactorData(
       {
         elem_attr[k] = GetCeedAttribute(indices[k]);
       }
-      geom_data_map.emplace(
-          geom, AssembleGeometryData(ceed, geom, indices, *mesh.GetNodes(), elem_attr));
+      geom_data_map.emplace(geom,
+                            AssembleGeometryData(ceed, geom, indices, *mesh.GetNodes(),
+                                                 elem_attr, axisymmetric));
     }
   }
 
@@ -326,10 +329,22 @@ Mesh::GetCeedGeomFactorData(Ceed ceed) const
   auto &geom_data_map = it->second;
   if (geom_data_map.empty() && !loc_attr.empty())
   {
-    geom_data_map =
-        BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, ceed, ceed_from_self);
+    geom_data_map = BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, ceed,
+                                            ceed_from_self, axisymmetric);
   }
   return geom_data_map;
+}
+
+void Mesh::SetAxisymmetric(bool axisymmetric)
+{
+  if (this->axisymmetric == axisymmetric)
+  {
+    return;
+  }
+  MFEM_VERIFY(!axisymmetric || (Dimension() == 2 && SpaceDimension() == 2),
+              "Axisymmetric (r, z) interpretation requires a two-dimensional mesh!");
+  this->axisymmetric = axisymmetric;
+  ResetCeedObjects();
 }
 
 void Mesh::ResetCeedObjects()

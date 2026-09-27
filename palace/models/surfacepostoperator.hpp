@@ -137,6 +137,10 @@ private:
   // owned).
   mfem::ParFiniteElementSpace &nd_fespace;
 
+  // Axisymmetric (r, z) mesh: every MFEM-side surface and volume quadrature weight carries
+  // the revolution measure 2 pi x (the libCEED operators carry it in their geometry data).
+  const bool axisymmetric;
+
   struct LocalVolumeEdgeEnergyCache
   {
     const EdgeDistanceTree *edge_distance_tree;
@@ -292,7 +296,8 @@ private:
 public:
   std::vector<InterfaceResponseMatrix>
   AssembleInterfaceResponseMatrices(const InterfaceResponseSamples &samples,
-                                    const double *rows, int basis_size, MPI_Comm comm) const;
+                                    const double *rows, int basis_size,
+                                    MPI_Comm comm) const;
 
   std::size_t GetNInterfaceEdgeEntries() const;
   std::size_t GetNInterfaceLocalEdgeEntries() const;

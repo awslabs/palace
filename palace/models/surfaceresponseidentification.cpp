@@ -69,6 +69,19 @@ constexpr double kArcFitAbsoluteToleranceOverRadius = 0.05;
 // otherwise the least-squares circle of its joints takes over (non-tangent arms after a
 // spline piece). Recorded as Conventions.ArcTangentLengthPreferenceOverTolerance.
 constexpr double kArcTangentLengthPreferenceOverTolerance = 10.0;
+// Curve-aware cluster geometry (option A, decision 91(1)): every run on a fitted arc
+// (rounded corner or bend) is evaluated on the arc — event cores, core merging, the vertex
+// join, the radius-R claims, the extension and the signature portions — so that a cluster's
+// extent and signature are functions of the design curve, not of the chord count. The
+// distance along an arc is not convex: its sublevel sets are bracketed by samples at most
+// this spacing apart (in units of R; at least kArcSampleMinimumIntervals per piece) and
+// their crossings located by bisection; recorded as Conventions.ArcSampleSpacingOverR. The
+// library builder chords a signature arc at the canonical angular step
+// kClusterArcChordStepDegrees (or finer so that no chord exceeds
+// kClusterArcChordMaxLengthOverR x R), so that the coupon geometry is mesh independent.
+constexpr double kArcSampleSpacingOverRadius = 0.05;
+constexpr double kClusterArcChordStepDegrees = 5.0;
+constexpr double kClusterArcChordMaxLengthOverRadius = 0.25;
 
 // Curved-edge chain rule (decision 73(1), design (b) 7). The turn at every sub-corner joint
 // of a chain is spread over the two adjacent half-chords (the polyline's discrete curvature
@@ -134,6 +147,17 @@ constexpr double kSelfPairNeighbourhoodOverRadius = 3.14159265358979323846;
 // stack (the chip's widest stack has 12 edges) and only bounds a runaway traversal through
 // inconsistent links; every hit is counted under Diagnostics.StackCompositionCapHits.
 constexpr std::size_t kStackCompositionCap = 64;
+// Stack-end images (decision 93, DS-CTX-003 defect 1): the foot of a breakpoint on a
+// partner chain within this distance (units of R) of an existing breakpoint of that chain
+// is the same cut and creates no new breakpoint; the signature parameter tolerance, below
+// which the contract resolves no parameter.
+constexpr double kStackImageToleranceOverRadius = kSignatureParameterToleranceOverRadius;
+// Cluster extension closure (decision 93, DS-CTX-003 defect 2): the extension / stack
+// recomposition loop stops after this many passes, or when a pass repeats the previous one
+// (the same absorbed length and portion count: the recomposed stacks re-cut the same
+// slivers at the moved cut images, DS-CTX-003 80 nm / 16 portions in passes 2-5); the last
+// pass is applied without a further recomposition, as for a sub-tolerance pass.
+constexpr std::size_t kClusterExtensionMaxPasses = 12;
 // Knife-edge census (decision 82(4), 2026-09-25): every rule of the identification is a strict
 // comparison with a threshold (the interaction distance 2R, the cluster ball / vertex window
 // R, the straight-bend radius 10R, the corner turn 30 deg); a design whose dimensions sit on a
@@ -436,6 +460,297 @@ std::optional<Interval> ConvexSublevelInterval(const std::function<double(double
     return inside;
   };
   return Interval{Bisect(s_min, lo), Bisect(s_min, hi)};
+}
+
+// Minimizer of a continuous function on [a, b] by golden-section search (the bracket comes
+// from a sampled local minimum: the function is unimodal there).
+std::pair<double, double> GoldenMinimum(const std::function<double(double)> &f, double a,
+                                        double b)
+{
+  constexpr double golden = 0.6180339887498949;
+  const double span = b - a;
+  double c = b - golden * (b - a), d = a + golden * (b - a);
+  double fc = f(c), fd = f(d);
+  for (int it = 0; it < 90 && (b - a) > 1.0e-14 * span; it++)
+  {
+    if (fc < fd)
+    {
+      b = d;
+      d = c;
+      fd = fc;
+      c = b - golden * (b - a);
+      fc = f(c);
+    }
+    else
+    {
+      a = c;
+      c = d;
+      fc = fd;
+      d = a + golden * (b - a);
+      fd = f(d);
+    }
+  }
+  const double s = 0.5 * (a + b);
+  return {s, f(s)};
+}
+
+// Sublevel set {s in [lo, hi] : f(s) < level} of a continuous function that need not be
+// convex (the distance along a circular arc, or a distance restricted to a projection
+// domain, +inf outside it), as merged intervals: f is sampled every `step` (at least
+// kArcSampleMinimumIntervals intervals), every local minimum of the samples is refined by
+// golden section, the emptiness is decided by the quantized comparison of the smallest
+// refined minimum with the level (as for ConvexSublevelInterval) and every crossing between
+// consecutive points of different status is located by bisection on the predicate. The
+// result depends on the geometry alone up to the bisection precision (the sample positions
+// only bracket the crossings), so that a re-meshed arc gives the same intervals.
+constexpr std::size_t kArcSampleMinimumIntervals = 8;
+std::vector<Interval> SampledSublevelIntervals(const std::function<double(double)> &f,
+                                               double lo, double hi, double level,
+                                               const Quantizer &quantizer, double step)
+{
+  std::vector<Interval> result;
+  if (hi - lo <= 0.0 || !(step > 0.0))
+  {
+    return result;
+  }
+  const std::size_t n = std::max<std::size_t>(
+      kArcSampleMinimumIntervals, static_cast<std::size_t>(std::ceil((hi - lo) / step)));
+  std::vector<std::pair<double, double>> points;  // (s, f(s)), sorted by s
+  points.reserve(2 * n + 2);
+  for (std::size_t k = 0; k <= n; k++)
+  {
+    const double s =
+        k == n ? hi : lo + (hi - lo) * static_cast<double>(k) / static_cast<double>(n);
+    points.emplace_back(s, f(s));
+  }
+  const std::size_t samples = points.size();
+  std::vector<std::pair<double, double>> refined;
+  for (std::size_t k = 0; k < samples; k++)
+  {
+    const double value = points[k].second;
+    if (!std::isfinite(value))
+    {
+      continue;
+    }
+    const bool left_ok = k == 0 || !(points[k - 1].second < value);
+    const bool right_ok = k + 1 == samples || !(points[k + 1].second < value);
+    if (left_ok && right_ok)
+    {
+      const double a = points[k > 0 ? k - 1 : 0].first;
+      const double b = points[std::min(k + 1, samples - 1)].first;
+      auto minimum = GoldenMinimum(f, a, b);
+      if (!(minimum.second < value))
+      {
+        minimum = points[k];
+      }
+      refined.push_back(minimum);
+    }
+  }
+  double f_min = std::numeric_limits<double>::infinity();
+  for (const auto &point : refined)
+  {
+    f_min = std::min(f_min, point.second);
+  }
+  for (const auto &point : points)
+  {
+    f_min = std::min(f_min, point.second);
+  }
+  if (!std::isfinite(f_min) || !quantizer.Less(f_min, level))
+  {
+    return result;
+  }
+  points.insert(points.end(), refined.begin(), refined.end());
+  std::sort(points.begin(), points.end());
+  auto Bisect = [&](double inside, double outside)
+  {
+    for (int it = 0; it < 100 && std::abs(outside - inside) > 1.0e-15 * (hi - lo); it++)
+    {
+      const double mid = 0.5 * (inside + outside);
+      (f(mid) < level ? inside : outside) = mid;
+    }
+    return inside;
+  };
+  std::size_t i = 0;
+  while (i < points.size())
+  {
+    if (!(points[i].second < level))
+    {
+      i++;
+      continue;
+    }
+    std::size_t j = i;
+    while (j + 1 < points.size() && points[j + 1].second < level)
+    {
+      j++;
+    }
+    const double start = i == 0 ? lo : Bisect(points[i].first, points[i - 1].first);
+    const double end =
+        j + 1 == points.size() ? hi : Bisect(points[j].first, points[j + 1].first);
+    result.emplace_back(start, end);
+    i = j + 1;
+  }
+  return MergeIntervals(std::move(result), 0.0);
+}
+
+// ---------------------------------------------------------------------------------------
+// Circular arcs (option A, decision 91(1)): the geometry of the perimeter on a fitted arc
+// ---------------------------------------------------------------------------------------
+
+// A circular arc piece: centre, radius, orthonormal in-plane basis (u, v) and the signed
+// angular range from theta0 to theta1 (point(theta) = c + r (cos theta u + sin theta v)).
+// The runs of a fitted arc (rounded corner or bend) are chords of one circle; their claims
+// are evaluated on the arc so that a cluster's extent is a function of the design curve and
+// not of the chord count (fix-4 residual 1: the hairpin cluster moved 12.08-13.40 um and
+// the u-ring cluster 73.12-73.36 um across re-meshes on chord geometry).
+struct ArcPiece
+{
+  Point3D center{};
+  double radius = 0.0;
+  Point3D u{}, v{};
+  double theta0 = 0.0, theta1 = 0.0;
+
+  Point3D At(double theta) const
+  {
+    return Add(center,
+               Add(Scale(radius * std::cos(theta), u), Scale(radius * std::sin(theta), v)));
+  }
+  // Point at the fraction t in [0, 1] of the angular range.
+  Point3D AtFraction(double t) const { return At(theta0 + t * (theta1 - theta0)); }
+  double Sweep() const { return std::abs(theta1 - theta0); }
+  double Length() const { return radius * Sweep(); }
+  Point3D Normal() const { return Cross(u, v); }
+  // Unit tangent in the direction of travel (theta0 -> theta1) and the outward radial
+  // direction at theta.
+  Point3D Tangent(double theta) const
+  {
+    const double sign = theta1 >= theta0 ? 1.0 : -1.0;
+    return Scale(sign, Add(Scale(-std::sin(theta), u), Scale(std::cos(theta), v)));
+  }
+  Point3D Radial(double theta) const
+  {
+    return Add(Scale(std::cos(theta), u), Scale(std::sin(theta), v));
+  }
+  // The sub-arc between the fractions t0 and t1 of the angular range.
+  ArcPiece SubArc(double t0, double t1) const
+  {
+    ArcPiece piece = *this;
+    piece.theta0 = theta0 + t0 * (theta1 - theta0);
+    piece.theta1 = theta0 + t1 * (theta1 - theta0);
+    return piece;
+  }
+  // Angle of a point's in-plane direction from the centre, reduced into the range
+  // [theta_min - pi, theta_min + pi) about the middle of the angular range.
+  double AngleOf(const Point3D &p) const
+  {
+    const Point3D d = Sub(p, center);
+    double theta = std::atan2(Dot(d, v), Dot(d, u));
+    const double middle = 0.5 * (theta0 + theta1);
+    const double two_pi = 2.0 * std::acos(-1.0);
+    while (theta < middle - std::acos(-1.0))
+    {
+      theta += two_pi;
+    }
+    while (theta >= middle + std::acos(-1.0))
+    {
+      theta -= two_pi;
+    }
+    return theta;
+  }
+  bool Contains(double theta) const
+  {
+    return theta >= std::min(theta0, theta1) && theta <= std::max(theta0, theta1);
+  }
+};
+
+// Exact distance from a point to an arc piece: the radial distance in the arc plane where
+// the point's angle falls inside the range, else the distance to the nearer end.
+double PointArcDistance(const Point3D &p, const ArcPiece &arc)
+{
+  const Point3D d = Sub(p, arc.center);
+  const double x = Dot(d, arc.u), y = Dot(d, arc.v);
+  const double in_plane = std::hypot(x, y);
+  const Point3D n = arc.Normal();
+  const double off_plane = Dot(d, n);
+  if (in_plane > 0.0)
+  {
+    const double theta = arc.AngleOf(p);
+    if (arc.Contains(theta))
+    {
+      return std::hypot(in_plane - arc.radius, off_plane);
+    }
+  }
+  return std::min(Distance(p, arc.At(arc.theta0)), Distance(p, arc.At(arc.theta1)));
+}
+
+// A straight segment or an arc piece (the geometry of a run interval or of a claimed core).
+struct CurvePiece
+{
+  Point3D a{}, b{};
+  std::optional<ArcPiece> arc;
+
+  Point3D At(double t) const  // t in [0, 1]
+  {
+    return arc ? arc->AtFraction(t) : Add(a, Scale(t, Sub(b, a)));
+  }
+  double Length() const { return arc ? arc->Length() : Distance(a, b); }
+  // Every point of an arc piece lies within its sagitta of its chord: the chord distance
+  // minus the sagitta is a lower bound of the distance to the arc.
+  double Sagitta() const
+  {
+    return arc ? arc->radius *
+                     (1.0 - std::cos(0.5 * std::min(arc->Sweep(), std::acos(-1.0))))
+               : 0.0;
+  }
+};
+
+double PointPieceDistance(const Point3D &p, const CurvePiece &piece)
+{
+  return piece.arc ? PointArcDistance(p, *piece.arc)
+                   : PointSegmentDistance(p, piece.a, piece.b);
+}
+
+// Minimum of a continuous function of one parameter sampled every `step` over [0, 1] in
+// parameter length `length` (at least kArcSampleMinimumIntervals intervals), every local
+// minimum of the samples refined by golden section.
+double SampledMinimum(const std::function<double(double)> &f, double length, double step)
+{
+  const std::size_t n = std::max<std::size_t>(
+      kArcSampleMinimumIntervals,
+      static_cast<std::size_t>(std::ceil(length / std::max(step, 1.0e-300))));
+  std::vector<double> values(n + 1);
+  for (std::size_t k = 0; k <= n; k++)
+  {
+    values[k] = f(static_cast<double>(k) / static_cast<double>(n));
+  }
+  double best = std::numeric_limits<double>::infinity();
+  for (std::size_t k = 0; k <= n; k++)
+  {
+    const bool left_ok = k == 0 || !(values[k - 1] < values[k]);
+    const bool right_ok = k == n || !(values[k + 1] < values[k]);
+    if (left_ok && right_ok)
+    {
+      const double a = static_cast<double>(k > 0 ? k - 1 : 0) / static_cast<double>(n);
+      const double b = static_cast<double>(std::min(k + 1, n)) / static_cast<double>(n);
+      best = std::min({best, values[k], GoldenMinimum(f, a, b).second});
+    }
+  }
+  return best;
+}
+
+// Minimal distance between two pieces: the exact segment formula for two segments; with an
+// arc the arc side is sampled (the distance from a point of one piece to the other piece is
+// exact) at `step` and every local minimum refined, so that the result is the geometric
+// minimum to the golden-section precision.
+double PiecePieceDistance(const CurvePiece &A, const CurvePiece &B, double step)
+{
+  if (!A.arc && !B.arc)
+  {
+    return SegmentSegmentDistance(A.a, A.b, B.a, B.b);
+  }
+  const CurvePiece &sampled = A.arc ? A : B;
+  const CurvePiece &other = A.arc ? B : A;
+  return SampledMinimum([&](double t) { return PointPieceDistance(sampled.At(t), other); },
+                        sampled.Length(), step);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -889,6 +1204,47 @@ std::array<double, 2> LocalCoordinates(const Point3D &p, const Point3D &origin,
 
 // The geometry entry of one portion in the frame (its sort key in the serialisation is the
 // dump of this object; the conductor label is added after sorting).
+// Point of a signature arc at the angle theta.
+Point3D SignatureArcPoint(const SignatureArc &arc, double theta)
+{
+  return Add(arc.center, Add(Scale(arc.radius * std::cos(theta), arc.u),
+                             Scale(arc.radius * std::sin(theta), arc.v)));
+}
+
+// Unit direction at the angle theta: the tangent in the direction of travel (theta0 ->
+// theta1) or the outward radial direction.
+Point3D SignatureArcTangent(const SignatureArc &arc, double theta)
+{
+  const double sign = arc.theta1 >= arc.theta0 ? 1.0 : -1.0;
+  return Scale(sign, Add(Scale(-std::sin(theta), arc.u), Scale(std::cos(theta), arc.v)));
+}
+
+Point3D SignatureArcRadial(const SignatureArc &arc, double theta)
+{
+  return Add(Scale(std::cos(theta), arc.u), Scale(std::sin(theta), arc.v));
+}
+
+double SignatureArcLength(const SignatureArc &arc)
+{
+  return arc.radius * std::abs(arc.theta1 - arc.theta0);
+}
+
+// Centroid of the arc (length weighted): centre + radius sin(sweep / 2) / (sweep / 2) along
+// the middle radial direction.
+Point3D SignatureArcCentroid(const SignatureArc &arc)
+{
+  const double half = 0.5 * std::abs(arc.theta1 - arc.theta0);
+  const double factor = half > 1.0e-12 ? std::sin(half) / half : 1.0;
+  return Add(arc.center, Scale(arc.radius * factor,
+                               SignatureArcRadial(arc, 0.5 * (arc.theta0 + arc.theta1))));
+}
+
+// The geometry entry of one portion in the frame (its sort key in the serialisation is the
+// dump of this object; the conductor label is added after sorting). An arc portion is the
+// sorted pair of its end points, its centre and its midpoint (the point midway along the
+// arc: with the ends it fixes the circle and the side; a closed circle has equal ends and
+// the midpoint at the antipode) and its radial gap sign, so that a re-meshed arc with other
+// chords serialises identically.
 nlohmann::json PortionGeometryInFrame(const SignaturePortion &portion,
                                       const Point3D &origin, const Point3D &x,
                                       const Point3D &y, double radius)
@@ -898,6 +1254,18 @@ nlohmann::json PortionGeometryInFrame(const SignaturePortion &portion,
   if (b < a)
   {
     std::swap(a, b);
+  }
+  if (portion.arc)
+  {
+    const SignatureArc &arc = *portion.arc;
+    const auto c = LocalCoordinates(arc.center, origin, x, y, radius);
+    const auto m = LocalCoordinates(SignatureArcPoint(arc, 0.5 * (arc.theta0 + arc.theta1)),
+                                    origin, x, y, radius);
+    return nlohmann::json{{"P", {a[0], a[1], b[0], b[1]}},
+                          {"Arc", {c[0], c[1], m[0], m[1]}},
+                          {"GapRadial", arc.gap_radial},
+                          {"Interfaces", portion.interfaces},
+                          {"Law", portion.boundary_law}};
   }
   return nlohmann::json{
       {"P", {a[0], a[1], b[0], b[1]}},
@@ -1414,18 +1782,28 @@ CanonicalClusterSignature(const std::vector<SignaturePortion> &portions,
 {
   MFEM_VERIFY(!portions.empty(), "A cluster signature needs at least one edge portion!");
   const Point3D n = Normalize(process_normal);
-  // Origin: length-weighted centroid of the portions.
+  // Origin: length-weighted centroid of the portions (an arc portion: its arc length and
+  // the analytic centroid of the arc).
   Point3D origin{};
   double total = 0.0;
   for (const auto &portion : portions)
   {
+    if (portion.arc)
+    {
+      const double length = SignatureArcLength(*portion.arc);
+      origin = Add(origin, Scale(length, SignatureArcCentroid(*portion.arc)));
+      total += length;
+      continue;
+    }
     const double length = Distance(portion.p0, portion.p1);
     origin = Add(origin, Scale(0.5 * length, Add(portion.p0, portion.p1)));
     total += length;
   }
   MFEM_VERIFY(total > 0.0, "A cluster signature needs portions of positive length!");
   origin = Scale(1.0 / total, origin);
-  // Candidate in-plane axes: portion tangents and their perpendiculars, both signs.
+  // Candidate in-plane axes: portion tangents and their perpendiculars, both signs; an arc
+  // portion contributes its end tangents and end radial directions (a closed circle none:
+  // its ends are a property of the mesh).
   std::vector<Point3D> candidates;
   std::set<std::array<long long int, 3>> seen;
   auto AddCandidate = [&](Point3D v)
@@ -1443,11 +1821,30 @@ CanonicalClusterSignature(const std::vector<SignaturePortion> &portions,
   };
   for (const auto &portion : portions)
   {
-    const Point3D t = Normalize(Sub(portion.p1, portion.p0));
-    for (const double sign : {1.0, -1.0})
+    std::vector<Point3D> directions;
+    if (portion.arc)
     {
-      AddCandidate(Scale(sign, t));
-      AddCandidate(Scale(sign, Cross(n, t)));
+      const SignatureArc &arc = *portion.arc;
+      if (std::abs(arc.theta1 - arc.theta0) < 2.0 * std::acos(-1.0) - 1.0e-9)
+      {
+        for (const double theta : {arc.theta0, arc.theta1})
+        {
+          directions.push_back(SignatureArcTangent(arc, theta));
+          directions.push_back(SignatureArcRadial(arc, theta));
+        }
+      }
+    }
+    else
+    {
+      directions.push_back(Normalize(Sub(portion.p1, portion.p0)));
+    }
+    for (const Point3D &t : directions)
+    {
+      for (const double sign : {1.0, -1.0})
+      {
+        AddCandidate(Scale(sign, t));
+        AddCandidate(Scale(sign, Cross(n, t)));
+      }
     }
   }
   CanonicalSignature best;
@@ -1525,6 +1922,9 @@ struct EventCore
   Interval interval;
   Point3D p0{}, p1{};
   int plane = 0;  // cores of two metal planes never merge (decision 82(1))
+  // The core's geometry: the run interval on its arc where the run lies on one (option A),
+  // else the chord [p0, p1] (a site core is the point p0 = p1).
+  CurvePiece piece;
 };
 
 struct UnionFind
@@ -1854,15 +2254,20 @@ private:
   // claimed whole by its corner feature and never pairs (a vertex has no pair).
   std::set<int> corner_arc_chains;
   // Through-vertex zones of chain A's run a with respect to chain B: within 2R of every
-  // shared vertex and of every run of an arc joining the two chains.
-  std::vector<std::vector<Interval>> ThroughZones(std::size_t a, const Chain &A,
-                                                  const Chain &B) const
+  // shared vertex and of every run of an arc joining the two chains. With on_arcs (the
+  // cluster machinery, option A) the run and the arc's runs are evaluated on their fitted
+  // circles; the pair rules keep the chord reading (candidate-gathering margins).
+  std::vector<std::vector<Interval>>
+  ThroughZones(std::size_t a, const Chain &A, const Chain &B, bool on_arcs = false) const
   {
     std::vector<std::vector<Interval>> zones;
     for (const std::size_t v : SharedVertices(A, B))
     {
       const Point3D &p = input.vertices[v].coordinate;
-      zones.push_back(RunIntervalWithin(a, p, p, kThroughVertexZoneOverRadius * R));
+      zones.push_back(on_arcs
+                          ? RunIntervalWithinPiece(a, CurvePiece{p, p, std::nullopt},
+                                                   kThroughVertexZoneOverRadius * R)
+                          : RunIntervalWithin(a, p, p, kThroughVertexZoneOverRadius * R));
     }
     const auto it =
         through_arc.find(std::make_pair(std::min(A.id, B.id), std::max(A.id, B.id)));
@@ -1878,8 +2283,11 @@ private:
         std::vector<Interval> zone;
         for (const std::size_t r : chains[ci->second].runs)
         {
-          const auto within = RunIntervalWithin(a, runs[r].start, runs[r].end,
-                                                kThroughVertexZoneOverRadius * R);
+          const auto within = on_arcs
+                                  ? RunIntervalWithinPiece(a, WholeRunPiece(r),
+                                                           kThroughVertexZoneOverRadius * R)
+                                  : RunIntervalWithin(a, runs[r].start, runs[r].end,
+                                                      kThroughVertexZoneOverRadius * R);
           zone.insert(zone.end(), within.begin(), within.end());
         }
         zones.push_back(MergeIntervals(std::move(zone), Tol()));
@@ -1890,6 +2298,115 @@ private:
   std::vector<Arc> arcs;
   std::vector<int> vertex_arc;   // per mesh vertex: the arc holding it as a joint, or -1
   std::vector<int> segment_arc;  // per segment: the BEND arc it lies on, or -1
+  // Arc geometry of every run lying on a fitted arc (rounded corner or bend; option A): the
+  // run's chord as the piece of the fitted circle between its end angles (theta0 at s = 0,
+  // theta1 at s = length; the run parameter maps linearly onto the angle). Filled by
+  // BuildRunArcGeometry after BuildRunIndex.
+  struct RunArcGeometry
+  {
+    int arc = -1;
+    ArcPiece piece;
+  };
+  std::vector<std::optional<RunArcGeometry>> run_arcs;
+  // The largest sagitta of an arc run (0 without arcs): a run's arc lies within it of the
+  // run's chord box, so a box query for the geometry within a margin adds it.
+  double max_run_sagitta = 0.0;
+  void BuildRunArcGeometry();
+  double ArcSampleStep() const { return kArcSampleSpacingOverRadius * R; }
+  // The point of run r at parameter s (on its arc when it lies on one, else on the chord).
+  Point3D RunPoint(std::size_t r, double s) const
+  {
+    const auto &geometry = run_arcs[r];
+    if (geometry)
+    {
+      const double t = runs[r].length > 0.0 ? s / runs[r].length : 0.0;
+      return geometry->piece.AtFraction(t);
+    }
+    return runs[r].At(s);
+  }
+  // The geometry of the run interval [s0, s1] (an arc piece or a segment).
+  CurvePiece RunPiece(std::size_t r, double s0, double s1) const
+  {
+    CurvePiece piece;
+    piece.a = runs[r].At(s0);
+    piece.b = runs[r].At(s1);
+    const auto &geometry = run_arcs[r];
+    if (geometry)
+    {
+      const double length = runs[r].length;
+      piece.arc = geometry->piece.SubArc(length > 0.0 ? s0 / length : 0.0,
+                                         length > 0.0 ? s1 / length : 1.0);
+      piece.a = piece.arc->At(piece.arc->theta0);
+      piece.b = piece.arc->At(piece.arc->theta1);
+    }
+    return piece;
+  }
+  CurvePiece WholeRunPiece(std::size_t r) const { return RunPiece(r, 0.0, runs[r].length); }
+  // Unit tangent of run r at parameter s in the run direction (on its arc when on one).
+  Point3D RunTangent(std::size_t r, double s) const
+  {
+    const auto &geometry = run_arcs[r];
+    if (geometry)
+    {
+      const double t = runs[r].length > 0.0 ? s / runs[r].length : 0.0;
+      const ArcPiece &arc = geometry->piece;
+      return arc.Tangent(arc.theta0 + t * (arc.theta1 - arc.theta0));
+    }
+    return runs[r].tangent;
+  }
+  // Turn at the joint before run k of the chain (Chain::joint_turn[k]) read on the fitted
+  // geometry: between the end tangent of the previous run and the start tangent of run k on
+  // their arcs where they lie on one (two chords of one circle, or a chord and its tangent
+  // arm, turn by nothing); the chord reading where neither run is on an arc.
+  double GeometricJointTurn(const Chain &C, std::size_t k) const
+  {
+    const std::size_t m = C.runs.size();
+    if (k >= m || C.joint_turn.size() != m)
+    {
+      return 0.0;
+    }
+    const std::size_t prev = (k + m - 1) % m;
+    if (!run_arcs[C.runs[k]] && !run_arcs[C.runs[prev]])
+    {
+      return C.joint_turn[k];
+    }
+    if ((k == 0 && !C.closed) || C.joint_turn[k] <= 0.0)
+    {
+      return 0.0;
+    }
+    const Point3D t_in = RunTangent(C.runs[prev], runs[C.runs[prev]].length);
+    const Point3D t_out = RunTangent(C.runs[k], 0.0);
+    return std::acos(std::clamp(Dot(t_in, t_out), -1.0, 1.0));
+  }
+  // Minimal distance between two run pieces (exact for two chords; the arc side sampled).
+  double PieceDistance(const CurvePiece &A, const CurvePiece &B) const
+  {
+    return PiecePieceDistance(A, B, ArcSampleStep());
+  }
+  // Interval of the run parameter where the run's point (on its arc or chord) lies within
+  // `distance` of the piece: the convex solver on two chords (the former
+  // RunIntervalWithin(run, a, b, distance) exactly), the sampled solver otherwise,
+  // bracketed by the convex sublevel set of the chord distance below distance + sagitta.
+  std::vector<Interval> RunIntervalWithinPiece(std::size_t run, const CurvePiece &piece,
+                                               double distance) const;
+  // The candidate runs whose boxes lie within margin of a piece's box (the sagitta of an
+  // arc piece is inside the box of its chord ends only when the box is enlarged by it).
+  std::vector<std::size_t> RunsNearPiece(const CurvePiece &piece, double margin) const
+  {
+    Point3D lo, hi;
+    BoundingBox(piece.a, piece.b, lo, hi);
+    return RunsNear(lo, hi, margin + piece.Sagitta() + max_run_sagitta);
+  }
+  static void PieceBoundingBox(const CurvePiece &piece, Point3D &lo, Point3D &hi)
+  {
+    BoundingBox(piece.a, piece.b, lo, hi);
+    const double sagitta = piece.Sagitta();
+    for (int d = 0; d < 3; d++)
+    {
+      lo[d] -= sagitta;
+      hi[d] += sagitta;
+    }
+  }
   // The bend arc a run lies on (its segments all lie on one arc or on none), or -1.
   int RunArc(std::size_t run) const
   {
@@ -2040,6 +2557,10 @@ private:
   // whose composition reached kStackCompositionCap members.
   std::size_t stack_geometric_offsets = 0;
   std::size_t stack_composition_cap_hits = 0;
+  std::size_t stack_images_merged = 0;
+  // Closure of the extension loop (decision 93): stopped by the pass cap or by a repeated
+  // pass (reported).
+  bool extension_cap_reached = false, extension_repeat_detected = false;
   // Acceleration only (every result is the former all-pairs answer): the runs by their
   // boxes and the runs incident to every vertex.
   std::optional<UniformGrid> run_grid;
@@ -2232,6 +2753,8 @@ private:
   void BuildClusters();
   double ExtendClusters(bool measure_joint_claims = false);
   void EmitClusters();
+  std::vector<SignaturePortion> ClusterSignaturePortions(
+      const std::vector<std::pair<std::size_t, Interval>> &claimed) const;
   void BuildVertexWindows();
   void Assign(IdentificationResult &result);
   nlohmann::json KnifeEdgeCensus() const;
@@ -2260,6 +2783,13 @@ private:
   ChainPoint ClosestPointOnChain(const Chain &chain, const Point3D &p,
                                  std::optional<double> exclude_x = std::nullopt,
                                  std::optional<double> max_distance = std::nullopt) const;
+  // Image of the chain position x of `source` on `other` read on the fitted arcs (option
+  // A): the point on the source's arc where it lies on one, and the foot on the other
+  // chain's arc run holding the radial projection of that point (two concentric bends image
+  // radially, whatever their chords); the chord reading of ClosestPointOnChain otherwise.
+  ChainPoint ArcAwareImage(const Chain &source, double x, const Chain &other,
+                           std::optional<double> exclude_x,
+                           std::optional<double> max_distance) const;
   // Arc-length distance between the chain interval [x0, x1] and the chain position x
   // (wrapping on a closed chain).
   double ChainArcDistance(const Chain &chain, double x0, double x1, double x) const;
@@ -3596,6 +4126,112 @@ Identifier::ChainPoint Identifier::ClosestPointOnChain(const Chain &chain,
   return best;
 }
 
+Identifier::ChainPoint Identifier::ArcAwareImage(const Chain &source, double x,
+                                                 const Chain &other,
+                                                 std::optional<double> exclude_x,
+                                                 std::optional<double> max_distance) const
+{
+  std::size_t source_run = 0;
+  double source_s = 0.0;
+  ChainAt(source, x, &source_run, &source_s);
+  const Point3D p = RunPoint(source_run, source_s);
+  ChainPoint foot = ClosestPointOnChain(other, p, exclude_x, max_distance);
+  if (!std::isfinite(foot.distance) || !run_arcs[foot.run])
+  {
+    return foot;
+  }
+  // The foot on the arc: the run of the same arc (in chain order from the chord foot's run,
+  // both ways) whose angular range holds the radial projection of p; else the chord foot's
+  // run clamped at the nearer end.
+  const int arc = run_arcs[foot.run]->arc;
+  const std::size_t m = other.runs.size();
+  const std::size_t k0 = runs[foot.run].index_in_chain;
+  auto OnRun = [&](std::size_t k, bool clamp) -> std::optional<ChainPoint>
+  {
+    const std::size_t r = other.runs[k];
+    if (!run_arcs[r] || run_arcs[r]->arc != arc || runs[r].excluded)
+    {
+      return std::nullopt;
+    }
+    const ArcPiece &piece = run_arcs[r]->piece;
+    double theta = piece.AngleOf(p);
+    if (!piece.Contains(theta))
+    {
+      if (!clamp)
+      {
+        return std::nullopt;
+      }
+      theta = std::clamp(theta, std::min(piece.theta0, piece.theta1),
+                         std::max(piece.theta0, piece.theta1));
+    }
+    const double sweep = piece.theta1 - piece.theta0;
+    const double t = std::abs(sweep) > 0.0 ? (theta - piece.theta0) / sweep : 0.0;
+    const double s = std::clamp(t, 0.0, 1.0) * runs[r].length;
+    ChainPoint image{r, s, other.run_offset[k] + s, Distance(p, piece.At(theta))};
+    if (exclude_x)
+    {
+      const double neighbourhood = kSelfPairNeighbourhoodOverRadius * R;
+      if (ChainArcDistance(other, image.x, image.x, *exclude_x) < neighbourhood)
+      {
+        return std::nullopt;
+      }
+    }
+    return image;
+  };
+  if (auto image = OnRun(k0, false))
+  {
+    return *image;
+  }
+  for (std::size_t step = 1; step < m; step++)
+  {
+    for (const int direction : {1, -1})
+    {
+      const long long int index =
+          static_cast<long long int>(k0) + direction * static_cast<long long int>(step);
+      if (!other.closed && (index < 0 || index >= static_cast<long long int>(m)))
+      {
+        continue;
+      }
+      const std::size_t k = static_cast<std::size_t>(
+          (index % static_cast<long long int>(m) + static_cast<long long int>(m)) %
+          static_cast<long long int>(m));
+      if (!run_arcs[other.runs[k]] || run_arcs[other.runs[k]]->arc != arc)
+      {
+        continue;
+      }
+      if (auto image = OnRun(k, false))
+      {
+        return *image;
+      }
+    }
+    // Both directions left the arc: stop at the first step where neither neighbour is on
+    // it.
+    bool any = false;
+    for (const int direction : {1, -1})
+    {
+      const long long int index =
+          static_cast<long long int>(k0) + direction * static_cast<long long int>(step);
+      if (!other.closed && (index < 0 || index >= static_cast<long long int>(m)))
+      {
+        continue;
+      }
+      const std::size_t k = static_cast<std::size_t>(
+          (index % static_cast<long long int>(m) + static_cast<long long int>(m)) %
+          static_cast<long long int>(m));
+      any = any || (run_arcs[other.runs[k]] && run_arcs[other.runs[k]]->arc == arc);
+    }
+    if (!any)
+    {
+      break;
+    }
+  }
+  if (auto image = OnRun(k0, true))
+  {
+    return *image;
+  }
+  return foot;
+}
+
 // The turn at every joint of a chain (a sub-corner vertex between two runs) is spread over
 // the two adjacent half-chords; the windowed curvature at x is the integral of that density
 // over [x - W/2, x + W/2] (W = kCurvatureWindowOverRadius R, clipped at the ends of an open
@@ -4815,6 +5451,100 @@ std::vector<Interval> Identifier::RunIntervalWithin(std::size_t run, const Point
   return result;
 }
 
+// The cluster machinery's form of RunIntervalWithin (option A): the run's points on its arc
+// where it lies on one, the piece an arc where it is one; two chords take the former path.
+std::vector<Interval> Identifier::RunIntervalWithinPiece(std::size_t run,
+                                                         const CurvePiece &piece,
+                                                         double distance) const
+{
+  const Run &r = runs[run];
+  if (!run_arcs[run] && !piece.arc)
+  {
+    return RunIntervalWithin(run, piece.a, piece.b, distance);
+  }
+  auto f = [&](double s) { return PointPieceDistance(RunPoint(run, s), piece); };
+  double lo = 0.0, hi = r.length;
+  if (!run_arcs[run])
+  {
+    // A straight run against an arc piece: the sublevel set lies inside the convex sublevel
+    // set of the distance to the piece's chord below distance + sagitta.
+    auto chord = [&](double s) { return PointSegmentDistance(r.At(s), piece.a, piece.b); };
+    const auto bracket = ConvexSublevelInterval(
+        chord, 0.0, r.length, distance + piece.Sagitta() + 2.0 * Tol(), quantizer);
+    if (!bracket)
+    {
+      return {};
+    }
+    lo = bracket->first;
+    hi = bracket->second;
+  }
+  // The sample spacing in run parameter: the arc length of an arc run exceeds its chord.
+  const double scale =
+      run_arcs[run] && r.length > 0.0 ? run_arcs[run]->piece.Length() / r.length : 1.0;
+  return SampledSublevelIntervals(f, lo, hi, distance, quantizer,
+                                  ArcSampleStep() / std::max(scale, 1.0e-300));
+}
+
+// The runs of every fitted arc (rounded corners and bends alike) as pieces of the fitted
+// circle: a run belongs to an arc when all its segments do (a run is a maximal collinear
+// sequence, so a chord between two joints is one run); its end angles are those of its
+// end points about the centre in the plane of the run's process normal.
+void Identifier::BuildRunArcGeometry()
+{
+  run_arcs.assign(runs.size(), std::nullopt);
+  std::vector<int> any_arc(input.segments.size(), -1);
+  for (std::size_t a = 0; a < arcs.size(); a++)
+  {
+    for (const std::size_t s : arcs[a].segments)
+    {
+      any_arc[s] = static_cast<int>(a);
+    }
+  }
+  for (std::size_t r = 0; r < runs.size(); r++)
+  {
+    const Run &run = runs[r];
+    if (run.segments.empty() || run.length <= 0.0)
+    {
+      continue;
+    }
+    const int arc = any_arc[run.segments.front().segment];
+    if (arc < 0 || std::any_of(
+                       run.segments.begin(), run.segments.end(),
+                       [&](const RunSegment &rs) { return any_arc[rs.segment] != arc; }))
+    {
+      continue;
+    }
+    const Arc &fitted = arcs[static_cast<std::size_t>(arc)];
+    if (!(fitted.radius > 0.0))
+    {
+      continue;
+    }
+    const Point3D n = Normalize(run.process_normal);
+    Point3D d0 = Sub(run.start, fitted.center), d1 = Sub(run.end, fitted.center);
+    d0 = Sub(d0, Scale(Dot(d0, n), n));
+    d1 = Sub(d1, Scale(Dot(d1, n), n));
+    if (Norm(d0) <= 1.0e-12 * fitted.radius || Norm(d1) <= 1.0e-12 * fitted.radius)
+    {
+      continue;
+    }
+    RunArcGeometry geometry;
+    geometry.arc = arc;
+    geometry.piece.center = fitted.center;
+    geometry.piece.radius = fitted.radius;
+    geometry.piece.u = Normalize(d0);
+    geometry.piece.v = Normalize(Cross(n, geometry.piece.u));
+    geometry.piece.theta0 = 0.0;
+    geometry.piece.theta1 =
+        std::atan2(Dot(d1, geometry.piece.v), Dot(d1, geometry.piece.u));
+    if (std::abs(geometry.piece.theta1) <= 1.0e-12)
+    {
+      continue;  // degenerate chord
+    }
+    run_arcs[r] = geometry;
+    max_run_sagitta = std::max(max_run_sagitta, WholeRunPiece(r).Sagitta());
+  }
+}
+
 // Parallel classes -> elementary longitudinal intervals -> connected active runs.
 void Identifier::BuildTranslationalFeatures()
 {
@@ -5301,6 +6031,26 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     list.insert(x);
     return true;
   };
+  // An IMAGE (the foot of a breakpoint on a partner chain) within the signature parameter
+  // tolerance of an existing breakpoint is the same cut (decision 93, DS-CTX-003 defect 1):
+  // on bent partner chains that are not concentric the foot of a foot drifts away from its
+  // source by less than the tolerance per hop, and under the 1e-6 R grid every hop
+  // multiplied the breakpoints (10 seeds -> 10^6 per chain, 744 s per pass) into pm-long
+  // elementary intervals of one composition. An elementary interval shorter than the
+  // tolerance carries no parameter the contract resolves.
+  const double image_grid = kStackImageToleranceOverRadius * R;
+  auto AddImage = [&](int chain, double x)
+  {
+    auto &list = breakpoints[chain];
+    auto it = list.lower_bound(x - image_grid);
+    if (it != list.end() && *it <= x + image_grid)
+    {
+      stack_images_merged++;
+      return false;
+    }
+    list.insert(x);
+    return true;
+  };
   for (std::size_t e = 0; e < elinks.size(); e++)
   {
     for (int side = 0; side < 2; side++)
@@ -5332,6 +6082,10 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       }
     }
   }
+  // The taken (cluster portion / vertex window) ends are imaged on the fitted arcs (option
+  // A: a cluster boundary on a bend cuts the concentric partner radially, whatever the
+  // chords), their images likewise; the link piece ends keep the chord reading.
+  std::map<int, std::set<double>> taken_breakpoints;
   for (const auto &[chain, links] : links_on_chain)
   {
     (void)links;
@@ -5342,8 +6096,13 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     }
     for (const auto &interval : it->second)
     {
-      AddBreakpoint(chain, interval.first);
-      AddBreakpoint(chain, interval.second);
+      for (const double x : {interval.first, interval.second})
+      {
+        if (AddBreakpoint(chain, x))
+        {
+          taken_breakpoints[chain].insert(x);
+        }
+      }
     }
   }
   // A chain position inside a cluster portion or a vertex window (taken_on_chain: sorted,
@@ -5365,14 +6124,19 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
   // Images of the breakpoints through the links, breadth first over the chains (bounded by
   // the number of links: an image travels at most once over every link).
   {
-    std::map<int, std::vector<double>> frontier;
+    std::map<int, std::vector<std::pair<double, bool>>> frontier;  // (x, from a taken end)
     for (const auto &[chain, xs] : breakpoints)
     {
-      frontier[chain].assign(xs.begin(), xs.end());
+      const auto taken_it = taken_breakpoints.find(chain);
+      for (const double x : xs)
+      {
+        frontier[chain].emplace_back(x, taken_it != taken_breakpoints.end() &&
+                                            taken_it->second.count(x) > 0);
+      }
     }
     for (std::size_t depth = 0; depth <= elinks.size() && !frontier.empty(); depth++)
     {
-      std::map<int, std::vector<double>> next;
+      std::map<int, std::vector<std::pair<double, bool>>> next;
       for (const auto &[chain, xs] : frontier)
       {
         const auto it = links_on_chain.find(chain);
@@ -5380,7 +6144,7 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
         {
           continue;
         }
-        for (const double x : xs)
+        for (const auto &[x, from_taken] : xs)
         {
           for (const auto &[e, side] : it->second)
           {
@@ -5390,17 +6154,19 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
               continue;
             }
             const int other = side == 0 ? link.chain_b : link.chain_a;
-            const Point3D p = ChainAt(ChainOf(chain), x);
-            const auto foot = ClosestPointOnChain(
-                ChainOf(other), p, link.Self() ? std::optional<double>(x) : std::nullopt,
-                reach);
+            const auto exclude = link.Self() ? std::optional<double>(x) : std::nullopt;
+            const auto foot =
+                from_taken
+                    ? ArcAwareImage(ChainOf(chain), x, ChainOf(other), exclude, reach)
+                    : ClosestPointOnChain(ChainOf(other), ChainAt(ChainOf(chain), x),
+                                          exclude, reach);
             if (!std::isfinite(foot.distance) || !quantizer.Less(foot.distance, reach))
             {
               continue;
             }
-            if (AddBreakpoint(other, foot.x))
+            if (AddImage(other, foot.x))
             {
-              next[other].push_back(foot.x);
+              next[other].emplace_back(foot.x, from_taken);
             }
           }
         }
@@ -6080,6 +6846,41 @@ void Identifier::BuildClusters()
         }
         for (const auto &piece : partner)
         {
+          if (run_arcs[a] || run_arcs[b])
+          {
+            // Option A: the event set on the fitted arcs (the sampled sublevel solver; the
+            // distance along an arc is not convex).
+            const CurvePiece target = RunPiece(b, piece.first, piece.second);
+            auto f = [&](double s) { return PointPieceDistance(RunPoint(a, s), target); };
+            const double scale = run_arcs[a] && ra.length > 0.0
+                                     ? run_arcs[a]->piece.Length() / ra.length
+                                     : 1.0;
+            double lo_a = sub_lo, hi_a = sub_hi;
+            if (!run_arcs[a])
+            {
+              // A straight run against an arc piece: bracket by the convex sublevel set of
+              // the distance to the piece's chord below 2R + sagitta (a long ground edge is
+              // not sampled along its whole length for every fillet chord near it).
+              auto chord = [&](double s)
+              { return PointSegmentDistance(ra.At(s), target.a, target.b); };
+              const auto bracket = ConvexSublevelInterval(
+                  chord, sub_lo, sub_hi, interaction + target.Sagitta() + 2.0 * Tol(),
+                  quantizer);
+              if (!bracket)
+              {
+                continue;
+              }
+              lo_a = bracket->first;
+              hi_a = bracket->second;
+            }
+            for (const auto &interval :
+                 SampledSublevelIntervals(f, lo_a, hi_a, interaction, quantizer,
+                                          ArcSampleStep() / std::max(scale, 1.0e-300)))
+            {
+              found.push_back(interval);
+            }
+            continue;
+          }
           const Point3D q0 = rb.At(piece.first), q1 = rb.At(piece.second);
           auto f = [&](double s) { return PointSegmentDistance(ra.At(s), q0, q1); };
           if (auto interval =
@@ -6092,8 +6893,8 @@ void Identifier::BuildClusters()
     }
     for (const auto &interval : MergeIntervals(found, Tol()))
     {
-      cores.push_back(
-          {a, interval, ra.At(interval.first), ra.At(interval.second), run_plane[a]});
+      const CurvePiece piece = RunPiece(a, interval.first, interval.second);
+      cores.push_back({a, interval, piece.a, piece.b, run_plane[a], piece});
     }
   };
 
@@ -6107,7 +6908,8 @@ void Identifier::BuildClusters()
     stage.Progress(a, runs.size());
     // Candidates b > a whose boxes lie within the interaction distance (sorted: the former
     // order of the loop over every b).
-    for (const std::size_t b : RunsNearRun(a, interaction + 2.0 * Tol()))
+    for (const std::size_t b : RunsNearRun(
+             a, interaction + 2.0 * Tol() + WholeRunPiece(a).Sagitta() + max_run_sagitta))
     {
       if (b <= a || runs[b].excluded || run_plane[a] != run_plane[b])
       {
@@ -6176,18 +6978,16 @@ void Identifier::BuildClusters()
       {
         continue;  // parallel straight runs: a translational interaction
       }
-      if (!quantizer.Less(SegmentSegmentDistance(runs[a].start, runs[a].end, runs[b].start,
-                                                 runs[b].end),
-                          interaction))
+      if (!quantizer.Less(PieceDistance(WholeRunPiece(a), WholeRunPiece(b)), interaction))
       {
         continue;
       }
       std::vector<std::vector<Interval>> zones_a =
                                              self ? std::vector<std::vector<Interval>>{}
-                                                  : ThroughZones(a, ca, cb),
+                                                  : ThroughZones(a, ca, cb, true),
                                          zones_b =
                                              self ? std::vector<std::vector<Interval>>{}
-                                                  : ThroughZones(b, cb, ca);
+                                                  : ThroughZones(b, cb, ca, true);
       // Portions of a constant-separation pair along a bend with the other chain (a pair
       // feature, or a non-interacting pair at or beyond 2R) are not events.
       std::vector<Interval> bent_a, bent_b;
@@ -6250,12 +7050,14 @@ void Identifier::BuildClusters()
                          {0.0, 0.0},
                          sites[i].point,
                          sites[i].point,
-                         SitePlane(sites[i])});
+                         SitePlane(sites[i]),
+                         CurvePiece{sites[i].point, sites[i].point, std::nullopt}});
         cores.push_back({std::numeric_limits<std::size_t>::max(),
                          {0.0, 0.0},
                          sites[j].point,
                          sites[j].point,
-                         SitePlane(sites[j])});
+                         SitePlane(sites[j]),
+                         CurvePiece{sites[j].point, sites[j].point, std::nullopt}});
       }
     }
   }
@@ -6266,7 +7068,7 @@ void Identifier::BuildClusters()
   for (std::size_t i = 0; i < cores.size(); i++)
   {
     Point3D lo, hi;
-    BoundingBox(cores[i].p0, cores[i].p1, lo, hi);
+    PieceBoundingBox(cores[i].piece, lo, hi);
     for (int d = 0; d < 3; d++)
     {
       cores_lo[d] = i == 0 ? lo[d] : std::min(cores_lo[d], lo[d]);
@@ -6277,23 +7079,21 @@ void Identifier::BuildClusters()
   for (std::size_t i = 0; i < cores.size(); i++)
   {
     Point3D lo, hi;
-    BoundingBox(cores[i].p0, cores[i].p1, lo, hi);
+    PieceBoundingBox(cores[i].piece, lo, hi);
     core_grid.Insert(i, lo, hi);
   }
   UnionFind uf(cores.size());
   for (std::size_t i = 0; i < cores.size(); i++)
   {
     Point3D lo, hi;
-    BoundingBox(cores[i].p0, cores[i].p1, lo, hi);
+    PieceBoundingBox(cores[i].piece, lo, hi);
     for (const std::size_t j : core_grid.Query(lo, hi, interaction + 2.0 * Tol()))
     {
       if (j <= i || cores[i].plane != cores[j].plane)
       {
         continue;
       }
-      if (quantizer.Less(
-              SegmentSegmentDistance(cores[i].p0, cores[i].p1, cores[j].p0, cores[j].p1),
-              interaction))
+      if (quantizer.Less(PieceDistance(cores[i].piece, cores[j].piece), interaction))
       {
         uf.Union(i, j);
       }
@@ -6310,8 +7110,7 @@ void Identifier::BuildClusters()
          core_grid.Query(sites[s].point, sites[s].point, join + 2.0 * Tol()))
     {
       if (cores[i].plane == SitePlane(sites[s]) &&
-          quantizer.Less(PointSegmentDistance(sites[s].point, cores[i].p0, cores[i].p1),
-                         join))
+          quantizer.Less(PointPieceDistance(sites[s].point, cores[i].piece), join))
       {
         if (root)
         {
@@ -6357,9 +7156,7 @@ void Identifier::BuildClusters()
     std::vector<std::size_t> candidate_runs;
     for (const auto &core : cluster_cores[c])
     {
-      Point3D lo, hi;
-      BoundingBox(core.p0, core.p1, lo, hi);
-      const auto near = RunsNear(lo, hi, ball + 2.0 * Tol());
+      const auto near = RunsNearPiece(core.piece, ball + 2.0 * Tol());
       candidate_runs.insert(candidate_runs.end(), near.begin(), near.end());
     }
     for (const std::size_t s : cluster_sites[c])
@@ -6380,14 +7177,14 @@ void Identifier::BuildClusters()
         continue;
       }
       std::vector<Interval> intervals;
+      const CurvePiece run_piece = WholeRunPiece(r);
       for (const auto &core : cluster_cores[c])
       {
-        if (!quantizer.Less(
-                SegmentSegmentDistance(runs[r].start, runs[r].end, core.p0, core.p1), ball))
+        if (!quantizer.Less(PieceDistance(run_piece, core.piece), ball))
         {
           continue;
         }
-        const auto within = RunIntervalWithin(r, core.p0, core.p1, ball);
+        const auto within = RunIntervalWithinPiece(r, core.piece, ball);
         intervals.insert(intervals.end(), within.begin(), within.end());
       }
       for (const std::size_t s : cluster_sites[c])
@@ -6430,10 +7227,11 @@ void Identifier::BuildClusters()
       for (const auto &[r, interval] : cluster_claimed[c])
       {
         const Run &run = runs[r];
-        dbg << "    base claim cluster " << c << " run " << r << " chain " << run.chain << " s ["
-            << interval.first << ", " << interval.second << "] of " << run.length << " from ("
-            << run.At(interval.first)[0] << ", " << run.At(interval.first)[1] << ") to ("
-            << run.At(interval.second)[0] << ", " << run.At(interval.second)[1] << ")\n";
+        dbg << "    base claim cluster " << c << " run " << r << " chain " << run.chain
+            << " s [" << interval.first << ", " << interval.second << "] of " << run.length
+            << " from (" << RunPoint(r, interval.first)[0] << ", "
+            << RunPoint(r, interval.first)[1] << ") to (" << RunPoint(r, interval.second)[0]
+            << ", " << RunPoint(r, interval.second)[1] << ")\n";
       }
     }
     input.log(dbg.str());
@@ -6557,22 +7355,25 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
           return 0.0;  // the end of the claimed chain interval: no reach past it
         }
         // The joint at this piece end: the run boundary (joint_turn[k] before run k,
-        // joint_turn[k + 1] after; wrapping on a closed chain), 0 inside a run.
+        // joint_turn[k + 1] after; wrapping on a closed chain), 0 inside a run. At a joint
+        // of an arc run the turn is read between the arc tangents (option A): consecutive
+        // chords of one circle and a chord meeting its tangent arm turn by nothing on the
+        // fitted geometry, so the wedge does not depend on the chord count.
         const double s_end = at_start ? interval.first : interval.second;
         double turn = 0.0;
         if (at_start && s_end <= Tol())
         {
-          turn = C.joint_turn.empty() ? 0.0 : C.joint_turn[k];
+          turn = C.joint_turn.empty() ? 0.0 : GeometricJointTurn(C, k);
         }
         else if (!at_start && s_end >= runs[r].length - Tol())
         {
           if (k + 1 < C.runs.size())
           {
-            turn = C.joint_turn[k + 1];
+            turn = GeometricJointTurn(C, k + 1);
           }
           else if (C.closed && !C.joint_turn.empty())
           {
-            turn = C.joint_turn[0];
+            turn = GeometricJointTurn(C, 0);
           }
         }
         turn = std::min(turn, kCornerTurnToleranceDegrees * std::acos(-1.0) / 180.0);
@@ -6596,9 +7397,10 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
   Point3D lo{}, hi{};
   for (std::size_t i = 0; i < pieces.size(); i++)
   {
-    const Run &run = runs[pieces[i].run];
     Point3D plo, phi;
-    BoundingBox(run.At(pieces[i].interval.first), run.At(pieces[i].interval.second), plo, phi);
+    PieceBoundingBox(
+        RunPiece(pieces[i].run, pieces[i].interval.first, pieces[i].interval.second), plo,
+        phi);
     for (int d = 0; d < 3; d++)
     {
       lo[d] = i == 0 ? plo[d] : std::min(lo[d], plo[d]);
@@ -6608,9 +7410,10 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
   UniformGrid piece_grid(4.0 * R, lo);
   for (std::size_t i = 0; i < pieces.size(); i++)
   {
-    const Run &run = runs[pieces[i].run];
     Point3D plo, phi;
-    BoundingBox(run.At(pieces[i].interval.first), run.At(pieces[i].interval.second), plo, phi);
+    PieceBoundingBox(
+        RunPiece(pieces[i].run, pieces[i].interval.first, pieces[i].interval.second), plo,
+        phi);
     piece_grid.Insert(i, plo, phi);
   }
   // Site of every feature vertex (the through-vertex zones of a cluster's own member
@@ -6634,7 +7437,8 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
         continue;
       }
       const Point3D &p = input.vertices[v].coordinate;
-      zones.push_back(RunIntervalWithin(a, p, p, kThroughVertexZoneOverRadius * R));
+      zones.push_back(RunIntervalWithinPiece(a, CurvePiece{p, p, std::nullopt},
+                                             kThroughVertexZoneOverRadius * R));
     }
     const auto it =
         through_arc.find(std::make_pair(std::min(A.id, B.id), std::max(A.id, B.id)));
@@ -6656,8 +7460,8 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
         std::vector<Interval> zone;
         for (const std::size_t r : chains[ci->second].runs)
         {
-          const auto within = RunIntervalWithin(a, runs[r].start, runs[r].end,
-                                                kThroughVertexZoneOverRadius * R);
+          const auto within =
+              RunIntervalWithinPiece(a, WholeRunPiece(r), kThroughVertexZoneOverRadius * R);
           zone.insert(zone.end(), within.begin(), within.end());
         }
         zones.push_back(MergeIntervals(std::move(zone), Tol()));
@@ -6737,43 +7541,105 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
       for (const auto &part : piece_parts)
       {
         const Point3D q0 = rp.At(part.first), q1 = rp.At(part.second);
-        if (!quantizer.Less(SegmentSegmentDistance(runs[r].start, runs[r].end, q0, q1),
-                            interaction))
-        {
-          continue;
-        }
-        auto within = RunIntervalWithin(r, q0, q1, interaction);
-        // Perpendicular projection onto the piece's line inside the (extended) part.
-        const double g0 = Dot(Sub(runs[r].start, rp.start), rp.tangent);
-        const double slope = Dot(runs[r].tangent, rp.tangent);
         const double lo_p =
-            part.first - (std::abs(part.first - piece.interval.first) <= Tol() ? piece.extend_lo : 0.0);
+            part.first -
+            (std::abs(part.first - piece.interval.first) <= Tol() ? piece.extend_lo : 0.0);
         const double hi_p =
-            part.second + (std::abs(part.second - piece.interval.second) <= Tol() ? piece.extend_hi : 0.0);
-        std::vector<Interval> domain;
-        if (std::abs(slope) <= kDirectionQuantum)
+            part.second + (std::abs(part.second - piece.interval.second) <= Tol()
+                               ? piece.extend_hi
+                               : 0.0);
+        if (run_arcs[r] || run_arcs[piece.run])
         {
-          if (g0 >= lo_p - Tol() && g0 <= hi_p + Tol())
+          // Option A: the claimed part and / or the candidate run on their fitted arcs. The
+          // across domain of an arc part is the radial projection inside its angular range
+          // (extended by the wedge as an angle); a straight part keeps the perpendicular
+          // projection of the candidate's arc points onto its line. The sublevel set of the
+          // distance restricted to the domain is solved on the samples.
+          const CurvePiece target = RunPiece(piece.run, part.first, part.second);
+          if (!quantizer.Less(PieceDistance(WholeRunPiece(r), target), interaction))
           {
-            domain.emplace_back(0.0, runs[r].length);
+            continue;
+          }
+          std::function<bool(const Point3D &)> in_domain;
+          if (target.arc)
+          {
+            const ArcPiece &arc = *target.arc;
+            const double angle_lo =
+                std::min(arc.theta0, arc.theta1) - (part.first - lo_p) / arc.radius;
+            const double angle_hi =
+                std::max(arc.theta0, arc.theta1) + (hi_p - part.second) / arc.radius;
+            in_domain = [&arc, angle_lo, angle_hi](const Point3D &p)
+            {
+              const Point3D d = Sub(p, arc.center);
+              if (std::hypot(Dot(d, arc.u), Dot(d, arc.v)) <= 0.0)
+              {
+                return false;
+              }
+              const double theta = arc.AngleOf(p);
+              return theta >= angle_lo && theta <= angle_hi;
+            };
+          }
+          else
+          {
+            in_domain = [&rp, lo_p, hi_p](const Point3D &p)
+            {
+              const double g = Dot(Sub(p, rp.start), rp.tangent);
+              return g >= lo_p && g <= hi_p;
+            };
+          }
+          auto f = [&](double s)
+          {
+            const Point3D p = RunPoint(r, s);
+            return in_domain(p) ? PointPieceDistance(p, target)
+                                : std::numeric_limits<double>::infinity();
+          };
+          const double scale = run_arcs[r] && runs[r].length > 0.0
+                                   ? run_arcs[r]->piece.Length() / runs[r].length
+                                   : 1.0;
+          for (const auto &bracket : RunIntervalWithinPiece(r, target, interaction))
+          {
+            const auto within = SampledSublevelIntervals(
+                f, bracket.first, bracket.second, interaction, quantizer,
+                ArcSampleStep() / std::max(scale, 1.0e-300));
+            found.insert(found.end(), within.begin(), within.end());
           }
         }
         else
         {
-          double s0 = (lo_p - g0) / slope, s1 = (hi_p - g0) / slope;
-          if (s0 > s1)
+          if (!quantizer.Less(SegmentSegmentDistance(runs[r].start, runs[r].end, q0, q1),
+                              interaction))
           {
-            std::swap(s0, s1);
+            continue;
           }
-          s0 = std::clamp(s0, 0.0, runs[r].length);
-          s1 = std::clamp(s1, 0.0, runs[r].length);
-          if (s1 - s0 > Tol())
+          auto within = RunIntervalWithin(r, q0, q1, interaction);
+          // Perpendicular projection onto the piece's line inside the (extended) part.
+          const double g0 = Dot(Sub(runs[r].start, rp.start), rp.tangent);
+          const double slope = Dot(runs[r].tangent, rp.tangent);
+          std::vector<Interval> domain;
+          if (std::abs(slope) <= kDirectionQuantum)
           {
-            domain.emplace_back(s0, s1);
+            if (g0 >= lo_p - Tol() && g0 <= hi_p + Tol())
+            {
+              domain.emplace_back(0.0, runs[r].length);
+            }
           }
+          else
+          {
+            double s0 = (lo_p - g0) / slope, s1 = (hi_p - g0) / slope;
+            if (s0 > s1)
+            {
+              std::swap(s0, s1);
+            }
+            s0 = std::clamp(s0, 0.0, runs[r].length);
+            s1 = std::clamp(s1, 0.0, runs[r].length);
+            if (s1 - s0 > Tol())
+            {
+              domain.emplace_back(s0, s1);
+            }
+          }
+          within = IntersectIntervals(within, domain, Tol());
+          found.insert(found.end(), within.begin(), within.end());
         }
-        within = IntersectIntervals(within, domain, Tol());
-        found.insert(found.end(), within.begin(), within.end());
         // A claimed piece ending where its CHAIN ends (a strip end, the tangent point of a
         // rounded corner's arc chain) faces the metal around that end within the full 2R
         // ball: nothing continues beyond it that could pair with the neighbour (the
@@ -6787,8 +7653,9 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
               !B.closed && (at_start ? k == 0 : k + 1 == B.runs.size());
           if (run_end && chain_end)
           {
-            const Point3D e = rp.At(s_end);
-            const auto ball = RunIntervalWithin(r, e, e, interaction);
+            const Point3D e = RunPoint(piece.run, s_end);
+            const auto ball =
+                RunIntervalWithinPiece(r, CurvePiece{e, e, std::nullopt}, interaction);
             found.insert(found.end(), ball.begin(), ball.end());
           }
         }
@@ -6797,6 +7664,19 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
       if (found.empty())
       {
         continue;
+      }
+      if (std::getenv("PALACE_IDENTIFICATION_DEBUG_EXTENSION_PIECES") && input.log)
+      {
+        std::ostringstream dbg;
+        dbg << std::setprecision(10) << "    extension run " << r << " piece run "
+            << piece.run << " s [" << piece.interval.first << ", " << piece.interval.second
+            << "] ext " << piece.extend_lo << " / " << piece.extend_hi << " owner "
+            << piece.owner << " found";
+        for (const auto &interval : found)
+        {
+          dbg << " [" << interval.first << ", " << interval.second << "]";
+        }
+        input.log(dbg.str() + "\n");
       }
       if (rp.chain == runs[r].chain)
       {
@@ -6902,10 +7782,11 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
         const Run &run = runs[absorption.run];
         dbg << "    third body run " << absorption.run << " chain " << run.chain << " s ["
             << absorption.interval.first << ", " << absorption.interval.second << "] of "
-            << run.length << " from (" << run.At(absorption.interval.first)[0] << ", "
-            << run.At(absorption.interval.first)[1] << ") to ("
-            << run.At(absorption.interval.second)[0] << ", "
-            << run.At(absorption.interval.second)[1] << ") owners";
+            << run.length << " from ("
+            << RunPoint(absorption.run, absorption.interval.first)[0] << ", "
+            << RunPoint(absorption.run, absorption.interval.first)[1] << ") to ("
+            << RunPoint(absorption.run, absorption.interval.second)[0] << ", "
+            << RunPoint(absorption.run, absorption.interval.second)[1] << ") owners";
         for (const std::size_t owner : absorption.owners)
         {
           dbg << " " << owner;
@@ -6994,10 +7875,11 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
       std::ostringstream line;
       line << "    absorbed run " << absorption.run << " chain " << run.chain << " s ["
            << absorption.interval.first << ", " << absorption.interval.second << "] of "
-           << run.length << " from (" << run.At(absorption.interval.first)[0] << ", "
-           << run.At(absorption.interval.first)[1] << ") to ("
-           << run.At(absorption.interval.second)[0] << ", "
-           << run.At(absorption.interval.second)[1] << ") owners";
+           << run.length << " from ("
+           << RunPoint(absorption.run, absorption.interval.first)[0] << ", "
+           << RunPoint(absorption.run, absorption.interval.first)[1] << ") to ("
+           << RunPoint(absorption.run, absorption.interval.second)[0] << ", "
+           << RunPoint(absorption.run, absorption.interval.second)[1] << ") owners";
       for (const std::size_t owner : absorption.owners)
       {
         line << " " << owner;
@@ -7041,6 +7923,145 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
 
 // The cluster features from the final claimed portions and member sites (after the
 // extension): canonical signature, priority-0 claims, vertex membership.
+// The signature portions of a cluster's claimed run intervals: a chord portion per
+// straight run interval; the intervals on the runs of one fitted arc merged, in angular
+// order, wherever they abut (within the decision tolerance along the arc) with the same
+// conductor, interfaces, law and radial gap sign, into ONE arc portion (option A: the
+// serialisation of a cluster holding a rounded corner or a bend does not depend on the
+// chord count). A closed circle claimed whole is one portion of sweep 2 pi.
+std::vector<SignaturePortion> Identifier::ClusterSignaturePortions(
+    const std::vector<std::pair<std::size_t, Interval>> &claimed) const
+{
+  std::vector<SignaturePortion> portions;
+  struct ArcPart
+  {
+    double lo, hi;  // angles in the arc's frame
+    std::size_t run;
+    int gap_radial;
+  };
+  std::map<int, std::vector<ArcPart>> parts_by_arc;
+  std::map<int, SignatureArc> frame_by_arc;
+  const double two_pi = 2.0 * std::acos(-1.0);
+  for (const auto &[r, interval] : claimed)
+  {
+    if (!run_arcs[r])
+    {
+      portions.push_back({runs[r].At(interval.first), runs[r].At(interval.second),
+                          runs[r].gap_direction, runs[r].conductor,
+                          InterfaceNames(runs[r].targets), runs[r].boundary_law});
+      continue;
+    }
+    const int a = run_arcs[r]->arc;
+    const Arc &fitted = arcs[static_cast<std::size_t>(a)];
+    auto fit = frame_by_arc.find(a);
+    if (fit == frame_by_arc.end())
+    {
+      // The arc's angular frame: u along the radial direction of the arc's MIDPOINT (the
+      // arc then spans [-turn / 2, turn / 2]: no wrap-around for a turn below 2 pi), v = n
+      // x u with n the plane normal of the arc's runs.
+      const Point3D n = Normalize(runs[r].process_normal);
+      Point3D d_a = Sub(input.vertices[fitted.joints.front()].coordinate, fitted.center);
+      d_a = Normalize(Sub(d_a, Scale(Dot(d_a, n), n)));
+      const Point3D v_a = Normalize(Cross(n, d_a));
+      double sign = 1.0;
+      if (fitted.joints.size() > 1)
+      {
+        const Point3D d_1 = Sub(input.vertices[fitted.joints[1]].coordinate, fitted.center);
+        sign = Dot(d_1, v_a) >= 0.0 ? 1.0 : -1.0;
+      }
+      const double mid = 0.5 * sign * fitted.turn;
+      SignatureArc frame;
+      frame.center = fitted.center;
+      frame.radius = fitted.radius;
+      frame.u = Add(Scale(std::cos(mid), d_a), Scale(std::sin(mid), v_a));
+      frame.v = Normalize(Cross(n, frame.u));
+      fit = frame_by_arc.emplace(a, frame).first;
+    }
+    const SignatureArc &frame = fit->second;
+    auto AngleOf = [&](const Point3D &p)
+    {
+      const Point3D d = Sub(p, frame.center);
+      return std::atan2(Dot(d, frame.v), Dot(d, frame.u));
+    };
+    const double s_mid = 0.5 * (interval.first + interval.second);
+    const Point3D radial = SignatureArcRadial(frame, AngleOf(RunPoint(r, s_mid)));
+    const int gap_radial = Dot(runs[r].gap_direction, radial) >= 0.0 ? 1 : -1;
+    double t0 = AngleOf(RunPoint(r, interval.first));
+    double t1 = AngleOf(RunPoint(r, interval.second));
+    if (t0 > t1)
+    {
+      std::swap(t0, t1);
+    }
+    if (t1 - t0 > std::acos(-1.0))
+    {
+      // The chord crosses the seam at +-pi (a closed circle's antipode of the first joint):
+      // split it there.
+      parts_by_arc[a].push_back({t1, std::acos(-1.0), r, gap_radial});
+      t1 = t0;
+      t0 = -std::acos(-1.0);
+    }
+    parts_by_arc[a].push_back({t0, t1, r, gap_radial});
+  }
+  for (auto &[a, parts] : parts_by_arc)
+  {
+    const SignatureArc &frame = frame_by_arc.at(a);
+    const double angle_tolerance = Tol() / frame.radius;
+    std::sort(parts.begin(), parts.end(),
+              [](const ArcPart &x, const ArcPart &y) { return x.lo < y.lo; });
+    auto SameKind = [&](const ArcPart &x, const ArcPart &y)
+    {
+      const Run &rx = runs[x.run], &ry = runs[y.run];
+      return x.gap_radial == y.gap_radial && rx.conductor == ry.conductor &&
+             rx.targets == ry.targets && rx.boundary_law == ry.boundary_law;
+    };
+    std::vector<ArcPart> merged;
+    for (const auto &part : parts)
+    {
+      if (!merged.empty() && part.lo <= merged.back().hi + angle_tolerance &&
+          SameKind(merged.back(), part))
+      {
+        merged.back().hi = std::max(merged.back().hi, part.hi);
+      }
+      else
+      {
+        merged.push_back(part);
+      }
+    }
+    // Wrap-around at the seam (+-pi): the last part reaching pi joins the first starting at
+    // -pi.
+    if (merged.size() >= 2 && merged.back().hi >= std::acos(-1.0) - angle_tolerance &&
+        merged.front().lo <= -std::acos(-1.0) + angle_tolerance &&
+        SameKind(merged.back(), merged.front()))
+    {
+      merged.back().hi += merged.front().hi + std::acos(-1.0);
+      merged.erase(merged.begin());
+    }
+    for (const auto &part : merged)
+    {
+      SignatureArc arc = frame;
+      arc.theta0 = part.lo;
+      arc.theta1 = part.hi;
+      arc.gap_radial = part.gap_radial;
+      if (arc.theta1 - arc.theta0 >= two_pi - angle_tolerance)
+      {
+        arc.theta0 = 0.0;
+        arc.theta1 = two_pi;
+      }
+      const Run &run = runs[part.run];
+      SignaturePortion portion;
+      portion.p0 = SignatureArcPoint(arc, arc.theta0);
+      portion.p1 = SignatureArcPoint(arc, arc.theta1);
+      portion.gap_direction = run.gap_direction;
+      portion.conductor = run.conductor;
+      portion.interfaces = InterfaceNames(run.targets);
+      portion.boundary_law = run.boundary_law;
+      portion.arc = arc;
+      portions.push_back(std::move(portion));
+    }
+  }
+  return portions;
+}
+
 void Identifier::EmitClusters()
 {
   double signature_seconds = 0.0;
@@ -7048,14 +8069,8 @@ void Identifier::EmitClusters()
   for (std::size_t c = 0; c < cluster_claimed.size(); c++)
   {
     stage.Progress(c, cluster_claimed.size());
-    std::vector<SignaturePortion> portions;
+    std::vector<SignaturePortion> portions = ClusterSignaturePortions(cluster_claimed[c]);
     std::vector<SignatureVertex> vertices;
-    for (const auto &[r, interval] : cluster_claimed[c])
-    {
-      portions.push_back({runs[r].At(interval.first), runs[r].At(interval.second),
-                          runs[r].gap_direction, runs[r].conductor,
-                          InterfaceNames(runs[r].targets), runs[r].boundary_law});
-    }
     for (const std::size_t s : cluster_sites[c])
     {
       vertices.push_back({sites[s].point, sites[s].type, sites[s].turn_degrees});
@@ -7687,6 +8702,19 @@ void Identifier::Assign(IdentificationResult &result)
     }
   }
 
+  // Fitted arcs (rounded corners and bends).
+  std::vector<int> segment_any_arc(input.segments.size(), -1);
+  for (std::size_t a = 0; a < arcs.size(); a++)
+  {
+    const Arc &arc = arcs[a];
+    result.arcs.push_back({arc.center, arc.radius, arc.turn * 180.0 / std::acos(-1.0),
+                           arc.corner ? "RoundedCorner" : "Bend", arc.joints.size(),
+                           arc.segments.size()});
+    for (const std::size_t s : arc.segments)
+    {
+      segment_any_arc[s] = static_cast<int>(a);
+    }
+  }
   // Per-segment table.
   result.segments.resize(input.segments.size());
   for (std::size_t i = 0; i < input.segments.size(); i++)
@@ -7700,6 +8728,7 @@ void Identifier::Assign(IdentificationResult &result)
             : std::array<std::array<double, 3>, 2>{segment.p1, segment.p0};
     result.segments[i].length = length;
     result.segments[i].chain = segment.chain;
+    result.segments[i].arc = i < segment_any_arc.size() ? segment_any_arc[i] : -1;
     if (segment.truncation)
     {
       result.segments[i].exclusion =
@@ -8022,8 +9051,11 @@ void Identifier::Assign(IdentificationResult &result)
   result.same_priority_claim_overlaps = same_priority_claim_overlaps;
   result.stack_geometric_offsets = stack_geometric_offsets;
   result.stack_composition_cap_hits = stack_composition_cap_hits;
-  result.extension = {extension_passes, extension_portions, extension_sites,
-                      extension_length, stack_end_third_body_length};
+  result.stack_images_merged = stack_images_merged;
+  result.extension = {
+      extension_passes,         extension_portions,          extension_sites,
+      extension_length,         stack_end_third_body_length, extension_cap_reached,
+      extension_repeat_detected};
   result.features = features;
   result.radius = R;
   result.reference_process_normal = n_ref;
@@ -8052,6 +9084,7 @@ IdentificationResult Identifier::Identify()
   stage.Begin("runs / chains");
   BuildRuns(input, runs, chains, chain_index);
   BuildRunIndex();
+  BuildRunArcGeometry();
   claims.assign(runs.size(), {});
   bent_claims.assign(runs.size(), {});
   stage.End(std::to_string(input.segments.size()) + " segments, " +
@@ -8136,16 +9169,21 @@ IdentificationResult Identifier::Identify()
     // Pairs / stacks, then the cluster extension over the single-edge remainder (decision
     // 85(2)), iterated to closure: an enlarged cluster claim moves the stack ends, and the
     // recomposed stacks leave new single-edge portions to test.
+    double previous_absorbed = -1.0;
+    std::size_t previous_portions = 0;
     for (std::size_t pass = 0;; pass++)
     {
       const std::size_t n_features = features.size();
       stage.Begin("pairs / stacks (pass " + std::to_string(pass + 1) + ")");
       stack_geometric_offsets = 0;
       stack_composition_cap_hits = 0;
+      stack_images_merged = 0;
       BuildPairsAndStacks();
       stage.Begin("cluster extension (pass " + std::to_string(pass + 1) + ")");
+      const std::size_t portions_before = extension_portions;
       const double absorbed = ExtendClusters();
       extension_passes++;
+      const std::size_t pass_portions = extension_portions - portions_before;
       stage.End("absorbed " + std::to_string(absorbed) + " (mesh units) in " +
                 std::to_string(extension_portions) + " portions so far, " +
                 std::to_string(cluster_claimed.size()) + " clusters");
@@ -8160,6 +9198,40 @@ IdentificationResult Identifier::Identify()
       {
         break;
       }
+      // Decision 93 (DS-CTX-003 defect 2): a pass that repeats the previous one (the same
+      // absorbed length within the signature parameter tolerance and the same portion count:
+      // the recomposed stacks re-cut the same slivers at the moved cut images; DS-CTX-003
+      // absorbed 80 nm in 9 portions on every pass from the 3rd, each pass's total differing
+      // from the last by picometres) or the pass cap ends the loop the same way (applied,
+      // not recomposed; reported under Diagnostics).
+      if (previous_absorbed >= 0.0 &&
+          std::abs(absorbed - previous_absorbed) <=
+              kSignatureParameterToleranceOverRadius * R &&
+          pass_portions == previous_portions)
+      {
+        extension_repeat_detected = true;
+        if (input.log)
+        {
+          input.log("  Identification cluster extension: pass " + std::to_string(pass + 1) +
+                    " repeats pass " + std::to_string(pass) + " (absorbed " +
+                    std::to_string(absorbed) + " in " + std::to_string(pass_portions) +
+                    " portions): closure by repetition\n");
+        }
+        break;
+      }
+      if (pass + 1 >= kClusterExtensionMaxPasses)
+      {
+        extension_cap_reached = true;
+        if (input.log)
+        {
+          input.log("  Identification cluster extension: pass cap " +
+                    std::to_string(kClusterExtensionMaxPasses) + " reached (absorbed " +
+                    std::to_string(absorbed) + " in the last pass)\n");
+        }
+        break;
+      }
+      previous_absorbed = absorbed;
+      previous_portions = pass_portions;
       // The pair / stack features and claims are rebuilt on the enlarged claims.
       features.resize(n_features);
       feature_max_kappa.resize(n_features);
@@ -8309,6 +9381,9 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
   w.Size(result.extension.sites);
   w.Pod(result.extension.length);
   w.Pod(result.extension.stack_end_third_body_length);
+  w.Pod(result.extension.cap_reached);
+  w.Pod(result.extension.repeat_detected);
+  w.Size(result.stack_images_merged);
   w.String(result.knife_edge_census);
   w.Size(result.features.size());
   for (const auto &f : result.features)
@@ -8352,6 +9427,7 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
     w.Point(s.key[1]);
     w.Pod(s.length);
     w.Pod(s.chain);
+    w.Pod(s.arc);
     w.Size(s.portions.size());
     for (const auto &p : s.portions)
     {
@@ -8383,6 +9459,16 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
     w.Pod(x.count);
     w.Pod(x.length);
   }
+  w.Size(result.arcs.size());
+  for (const auto &a : result.arcs)
+  {
+    w.Point(a.center);
+    w.Pod(a.radius);
+    w.Pod(a.turn_degrees);
+    w.String(a.kind);
+    w.Size(a.joints);
+    w.Size(a.segments);
+  }
   return std::move(w.buffer);
 }
 
@@ -8404,6 +9490,9 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
   result.extension.sites = r.Size();
   result.extension.length = r.Pod<double>();
   result.extension.stack_end_third_body_length = r.Pod<double>();
+  result.extension.cap_reached = r.Pod<bool>();
+  result.extension.repeat_detected = r.Pod<bool>();
+  result.stack_images_merged = r.Size();
   result.knife_edge_census = r.String();
   result.features.resize(r.Size());
   for (auto &f : result.features)
@@ -8459,6 +9548,7 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
     s.key[1] = r.Point();
     s.length = r.Pod<double>();
     s.chain = r.Pod<int>();
+    s.arc = r.Pod<int>();
     s.portions.resize(r.Size());
     for (auto &p : s.portions)
     {
@@ -8492,6 +9582,16 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
     x.reason = r.String();
     x.count = r.Pod<int>();
     x.length = r.Pod<double>();
+  }
+  result.arcs.resize(r.Size());
+  for (auto &a : result.arcs)
+  {
+    a.center = r.Point();
+    a.radius = r.Pod<double>();
+    a.turn_degrees = r.Pod<double>();
+    a.kind = r.String();
+    a.joints = r.Size();
+    a.segments = r.Size();
   }
   MFEM_VERIFY(r.Done(), "Identification result buffer was not consumed exactly!");
   return result;
@@ -8603,6 +9703,10 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
     nlohmann::json entry = {{"Key", {P(segment.key[0]), P(segment.key[1])}},
                             {"Length", L(segment.length)},
                             {"Chain", segment.chain}};
+    if (segment.arc >= 0)
+    {
+      entry["Arc"] = segment.arc;
+    }
     if (segment.exclusion)
     {
       entry["Exclusion"] = {{"Class", segment.exclusion->first},
@@ -8627,6 +9731,18 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
       }
     }
     segment_list.push_back(std::move(entry));
+  }
+  nlohmann::json arc_list = nlohmann::json::array();
+  for (const auto &arc : arcs)
+  {
+    arc_list.push_back(
+        {{"Center", P(arc.center)},
+         {"Radius", L(arc.radius)},
+         {"RadiusOverR", RoundTo(arc.radius / radius, kSignatureLengthQuantumOverRadius)},
+         {"TurnDegrees", RoundTo(arc.turn_degrees, kSignatureAngleQuantumDegrees)},
+         {"Kind", arc.kind},
+         {"Joints", arc.joints},
+         {"Segments", arc.segments}});
   }
   nlohmann::json vertex_list = nlohmann::json::array();
   for (const auto &vertex : vertices)
@@ -8676,31 +9792,54 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"ArcInscribedAngleToleranceRelative", kArcFitToleranceRelative},
         {"ArcTangentLengthPreferenceOverTolerance",
          kArcTangentLengthPreferenceOverTolerance},
-        {"ArcRule", "joints (>= 3) joined by pieces < 2R (a piece >= 2R is allowed between "
-                    "two sub-corner joints: a chord of a smooth polyline bend; in that "
-                    "long-chord regime every joint lies on the least-squares circle within "
-                    "the signature parameter tolerance, every interior turn satisfies the "
-                    "inscribed-angle relation within ArcInscribedAngleToleranceRelative and "
-                    "the scan stops at the first failed fit), same turn sign, <= 180 deg "
-                    "(a closed path of sub-corner joints on one circle turning 360 deg is "
-                    "one arc), one circle with the arm tangents within the fit tolerance "
-                    "(tangent lengths equal within ArcFitToleranceRelative; every joint "
-                    "within min(ArcFitToleranceRelative x radius, "
-                    "ArcFitAbsoluteToleranceOverR x R) of the circle): radius < R and turn "
-                    "> corner threshold = one rounded corner (own chain, arms meet through "
-                    "it; tangent-length radius); radius >= R = a bend inside its chain whose "
-                    "circle is the tangent-length circle when every joint lies on it within "
-                    "ArcTangentLengthPreferenceOverTolerance x the parameter tolerance, "
-                    "else the least-squares fit of its joint vertices (exact for an "
-                    "inscribed polyline; non-tangent arms after a spline piece); both "
-                    "traversal directions of a path are scanned and the set absorbing more "
-                    "joints wins, then fewer arcs, then the smaller serialisation of "
-                    "(radius, turn, joints, centre distance from the path centroid, first "
-                    "joint's distance from the nearer path end) on the signature grid (the "
-                    "pair of serialisations of the two scans is orientation invariant): a "
-                    "translated, rotated or mirrored mesh gives the congruent arcs; a "
-                    "closed path is scanned from the joint after its longest piece (ties: "
-                    "the first from the seed vertex): no arc is split by the loop start"},
+        {"ArcSampleSpacingOverR", kArcSampleSpacingOverRadius},
+        {"ClusterArcChordStepDegrees", kClusterArcChordStepDegrees},
+        {"ClusterArcChordMaxLengthOverR", kClusterArcChordMaxLengthOverRadius},
+        {"ClusterGeometryRule",
+         "option A (decision 91(1)): every run on a fitted arc (rounded corner or bend, "
+         "table Arcs; Segments[].Arc) is evaluated on the arc by the cluster machinery — "
+         "event cores, core merging, the vertex join, the radius-R claims, the through "
+         "zones, the extension's across rule (radial projection inside an arc piece; the "
+         "wedge turn between arc tangents), the stack-end images of cluster / window ends "
+         "on concentric partner arcs — so that a cluster's extent is a function of the "
+         "design curves; the sublevel sets along an arc are bracketed by samples at most "
+         "ArcSampleSpacingOverR x R apart and their crossings bisected; a cluster's claims "
+         "on "
+         "one arc are ONE signature portion serialised as {P: sorted ends, Arc: centre + "
+         "midpoint, GapRadial: +1 metal inside the circle / -1 outside} in the frame "
+         "(frame "
+         "candidates: the arc's end tangents and end radial directions; origin: the "
+         "length-weighted centroid with the arcs' analytic centroids); the library builder "
+         "chords a signature arc at ClusterArcChordStepDegrees, finer so that no chord "
+         "exceeds ClusterArcChordMaxLengthOverR x R (canonical: the coupon geometry does "
+         "not "
+         "depend on the device mesh); two chords keep the former exact formulas"},
+        {"ArcRule",
+         "joints (>= 3) joined by pieces < 2R (a piece >= 2R is allowed between "
+         "two sub-corner joints: a chord of a smooth polyline bend; in that "
+         "long-chord regime every joint lies on the least-squares circle within "
+         "the signature parameter tolerance, every interior turn satisfies the "
+         "inscribed-angle relation within ArcInscribedAngleToleranceRelative and "
+         "the scan stops at the first failed fit), same turn sign, <= 180 deg "
+         "(a closed path of sub-corner joints on one circle turning 360 deg is "
+         "one arc), one circle with the arm tangents within the fit tolerance "
+         "(tangent lengths equal within ArcFitToleranceRelative; every joint "
+         "within min(ArcFitToleranceRelative x radius, "
+         "ArcFitAbsoluteToleranceOverR x R) of the circle): radius < R and turn "
+         "> corner threshold = one rounded corner (own chain, arms meet through "
+         "it; tangent-length radius); radius >= R = a bend inside its chain whose "
+         "circle is the tangent-length circle when every joint lies on it within "
+         "ArcTangentLengthPreferenceOverTolerance x the parameter tolerance, "
+         "else the least-squares fit of its joint vertices (exact for an "
+         "inscribed polyline; non-tangent arms after a spline piece); both "
+         "traversal directions of a path are scanned and the set absorbing more "
+         "joints wins, then fewer arcs, then the smaller serialisation of "
+         "(radius, turn, joints, centre distance from the path centroid, first "
+         "joint's distance from the nearer path end) on the signature grid (the "
+         "pair of serialisations of the two scans is orientation invariant): a "
+         "translated, rotated or mirrored mesh gives the congruent arcs; a "
+         "closed path is scanned from the joint after its longest piece (ties: "
+         "the first from the seed vertex): no arc is split by the loop start"},
         {"LengthQuantumOverR", kLengthQuantumOverRadius},
         {"DirectionQuantum", kDirectionQuantum},
         {"SignatureLengthQuantumOverR", kSignatureLengthQuantumOverRadius},
@@ -8737,29 +9876,34 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"PairSampleSpacingOverR", 0.5},
         {"PairCandidateReachOverR",
          kInteractionDistanceOverRadius * (1.0 + kPairSeparationTolerance)},
-        {"SamplingMargins", "the bent-pair candidate reach 2R (1 + 0.05) and the mutual-sides "
-                            "facing test at the pair separation x 1.05 gather candidates / "
-                            "samples only; every interaction decision is the 3D distance "
-                            "strictly below 2R on the quantized grid"},
+        {"SamplingMargins",
+         "the bent-pair candidate reach 2R (1 + 0.05) and the mutual-sides "
+         "facing test at the pair separation x 1.05 gather candidates / "
+         "samples only; every interaction decision is the 3D distance "
+         "strictly below 2R on the quantized grid"},
         {"SelfPairNeighbourhoodOverR", kSelfPairNeighbourhoodOverRadius},
-        {"StackRule", "links (bent pairs) and translational spans sharing a run over a common "
-                      "interval are one cross-section: k >= 3 edges with consecutive "
-                      "separations < 2R are one ParallelEdgeCluster / "
-                      "CurvedParallelEdgeCluster (offsets from the consecutive links' "
-                      "separations of the cross-section's curvature class, gap pattern, "
-                      "conductors, bend radius), straight and along bends; the pairwise "
-                      "candidates inside it are superseded; every component (a lone pair "
-                      "included) is assembled per cross-section: a member taken by a cluster "
-                      "portion or a vertex window is recomposed out of the cross-section "
-                      "(the stack ends there); a chain folding back within 2R beyond pi R of "
-                      "arc length pairs with itself"},
+        {"StackRule",
+         "links (bent pairs) and translational spans sharing a run over a common "
+         "interval are one cross-section: k >= 3 edges with consecutive "
+         "separations < 2R are one ParallelEdgeCluster / "
+         "CurvedParallelEdgeCluster (offsets from the consecutive links' "
+         "separations of the cross-section's curvature class, gap pattern, "
+         "conductors, bend radius), straight and along bends; the pairwise "
+         "candidates inside it are superseded; every component (a lone pair "
+         "included) is assembled per cross-section: a member taken by a cluster "
+         "portion or a vertex window is recomposed out of the cross-section "
+         "(the stack ends there); a chain folding back within 2R beyond pi R of "
+         "arc length pairs with itself"},
         {"StackCompositionCap", kStackCompositionCap},
         {"ClusterExtensionWedgeCapDegrees", kCornerTurnToleranceDegrees},
         {"ClusterExtensionClosureOverR", kSignatureParameterToleranceOverRadius},
+        {"ClusterExtensionMaxPasses", kClusterExtensionMaxPasses},
+        {"StackImageToleranceOverR", kStackImageToleranceOverRadius},
         {"ClusterExtensionRule",
          "every single-edge portion (the isolated / curved remainder after clusters, "
          "windows and pairs / stacks) within 2R (3D, strict) of a cluster's claimed "
-         "perimeter or of a free vertex feature's window on another chain (own chain beyond "
+         "perimeter or of a free vertex feature's window on another chain (own chain "
+         "beyond "
          "pi R), faced ACROSS (perpendicular projection inside the claimed piece, extended "
          "by 2R tan(turn) at interior joints of the claimed chain interval with the turn "
          "capped at ClusterExtensionWedgeCapDegrees, never past the end of the claimed "
@@ -8773,26 +9917,28 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "length satisfying the same across rule is Diagnostics.StackEndThirdBodyLength "
          "(decision 85(2))"},
         {"MutualSidesOverhangOverSeparation",
-         std::sqrt((1.0 + kPairSeparationTolerance) * (1.0 + kPairSeparationTolerance) - 1.0)},
+         std::sqrt((1.0 + kPairSeparationTolerance) * (1.0 + kPairSeparationTolerance) -
+                   1.0)},
         {"KnifeEdgeBandRelative", kKnifeEdgeBandRelative},
         {"KnifeEdgeSampleSpacingOverR", kKnifeEdgeSampleSpacingOverRadius},
-        {"FacingGateExclusions", "audit A8 (facing_check.py): isolated / curved edges facing "
-                                 "another edge and pair / stack sides facing a third edge "
-                                 "within 2R (every facing segment tested; own sides = the "
-                                 "portions + member chains within the feature's reach) must "
-                                 "be zero apart from AtExactly2R, ThroughVertex, "
-                                 "SelfNeighbourhood and, for pair / stack sides only, "
-                                 "StackEndThirdBody (facing cluster / vertex metal) and "
-                                 "StackEndRecomposition (facing a pair / stack sharing a "
-                                 "member chain; bounded to 1 R per site, the operative "
-                                 "bound, and 1 R per feature in total) and, for isolated / "
-                                 "curved portions shorter than the signature parameter "
-                                 "tolerance that are an unclaimed remainder bounded on "
-                                 "both sides along their run by other features' claims, "
-                                 "or a whole feature shorter than the tolerance, "
-                                 "SubToleranceFeature (decision 89), each recorded with "
-                                 "its length (decision 85(2): ClusterNeighbour / "
-                                 "VertexNeighbour are gone)"},
+        {"FacingGateExclusions",
+         "audit A8 (facing_check.py): isolated / curved edges facing "
+         "another edge and pair / stack sides facing a third edge "
+         "within 2R (every facing segment tested; own sides = the "
+         "portions + member chains within the feature's reach) must "
+         "be zero apart from AtExactly2R, ThroughVertex, "
+         "SelfNeighbourhood and, for pair / stack sides only, "
+         "StackEndThirdBody (facing cluster / vertex metal) and "
+         "StackEndRecomposition (facing a pair / stack sharing a "
+         "member chain; bounded to 1 R per site, the operative "
+         "bound, and 1 R per feature in total) and, for isolated / "
+         "curved portions shorter than the signature parameter "
+         "tolerance that are an unclaimed remainder bounded on "
+         "both sides along their run by other features' claims, "
+         "or a whole feature shorter than the tolerance, "
+         "SubToleranceFeature (decision 89), each recorded with "
+         "its length (decision 85(2): ClusterNeighbour / "
+         "VertexNeighbour are gone)"},
         {"CrossLayerReachOverR", kInteractionDistanceOverRadius},
         {"PlaneRule", "features (pairs, clusters, vertex joins, translational classes) "
                       "never span two metal planes; metal of another plane within the "
@@ -8804,6 +9950,7 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
       {"Features", feature_list},
       {"Segments", segment_list},
       {"Vertices", vertex_list},
+      {"Arcs", arc_list},
       {"Exclusions", exclusion_list},
       {"Totals",
        {{"PerimeterLength", L(perimeter_length)},
@@ -8817,20 +9964,28 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"StackGeometricOffsetIntervals", stack_geometric_offsets},
         {"StackCompositionCapHits", stack_composition_cap_hits},
         {"StackCompositionCap", kStackCompositionCap},
+        {"StackImagesMerged", stack_images_merged},
+        {"StackImageToleranceOverR", kStackImageToleranceOverRadius},
         {"ClusterExtension",
          {{"Passes", extension.passes},
+          {"MaxPasses", kClusterExtensionMaxPasses},
+          {"CapReached", extension.cap_reached},
+          {"RepeatDetected", extension.repeat_detected},
           {"AbsorbedPortions", extension.portions},
           {"AbsorbedLength", L(extension.length)},
           {"VertexFeaturesJoined", extension.sites},
-          {"Rule", "every single-edge portion (isolated / curved edge remainder) within 2R "
-                   "(3D, strict) of a cluster's claimed perimeter or of a vertex feature's "
-                   "window on another chain (or its own chain beyond pi R), faced across "
-                   "(Conventions.ClusterExtensionRule), outside the through-vertex zones of "
-                   "non-member vertices, joins that cluster (a vertex feature so joined "
-                   "becomes a cluster); iterated to closure over single-edge portions (the "
-                   "loop stops after a pass absorbing at most ClusterExtensionClosureOverR x "
-                   "R, applied without a further recomposition); pairs / stacks are never "
-                   "absorbed (decision 85(2), across rule ratified 88(2))"}}},
+          {"Rule",
+           "every single-edge portion (isolated / curved edge remainder) within 2R "
+           "(3D, strict) of a cluster's claimed perimeter or of a vertex feature's "
+           "window on another chain (or its own chain beyond pi R), faced across "
+           "(Conventions.ClusterExtensionRule), outside the through-vertex zones of "
+           "non-member vertices, joins that cluster (a vertex feature so joined "
+           "becomes a cluster); iterated to closure over single-edge portions (the "
+           "loop stops after a pass absorbing at most ClusterExtensionClosureOverR x "
+           "R, after a pass repeating the previous one (same absorbed length and "
+           "portion count) or after MaxPasses passes (decision 93), the last pass "
+           "applied without a further recomposition); pairs / stacks are never "
+           "absorbed (decision 85(2), across rule ratified 88(2))"}}},
         {"StackEndThirdBodyLength", L(extension.stack_end_third_body_length)},
         {"StackEndThirdBodyRule",
          "pair / stack claimed length within 2R (3D, strict) of a cluster's claimed "

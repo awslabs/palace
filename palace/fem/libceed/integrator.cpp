@@ -336,51 +336,81 @@ void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
                               CeedBasis mesh_basis, CeedVector mesh_nodes,
                               CeedElemRestriction attr_restr, CeedBasis attr_basis,
                               CeedVector elem_attr, CeedVector geom_data,
-                              CeedElemRestriction geom_data_restr)
+                              CeedElemRestriction geom_data_restr, bool axisymmetric)
 {
   CeedInt dim, space_dim, num_qpts;
   PalaceCeedCall(ceed, CeedBasisGetDimension(mesh_basis, &dim));
   PalaceCeedCall(ceed, CeedBasisGetNumComponents(mesh_basis, &space_dim));
   PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(mesh_basis, &num_qpts));
 
-  // Create the QFunction that computes the quadrature data.
+  // Create the QFunction that computes the quadrature data. The axisymmetric variants take
+  // the mesh coordinates at quadrature points as an additional input and scale the weight
+  // by the revolution measure 2 pi x.
   CeedQFunction build_qf;
-  switch (10 * space_dim + dim)
+  if (axisymmetric)
   {
-    case 22:
-      PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
-                               ceed, 1, f_build_geom_factor_22,
-                               PalaceQFunctionRelativePath(f_build_geom_factor_22_loc),
-                               &build_qf));
-      break;
-    case 33:
-      PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
-                               ceed, 1, f_build_geom_factor_33,
-                               PalaceQFunctionRelativePath(f_build_geom_factor_33_loc),
-                               &build_qf));
-      break;
-    case 21:
-      PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
-                               ceed, 1, f_build_geom_factor_21,
-                               PalaceQFunctionRelativePath(f_build_geom_factor_21_loc),
-                               &build_qf));
-      break;
-    case 31:
-      PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
-                               ceed, 1, f_build_geom_factor_31,
-                               PalaceQFunctionRelativePath(f_build_geom_factor_31_loc),
-                               &build_qf));
-      break;
-    case 32:
-      PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
-                               ceed, 1, f_build_geom_factor_32,
-                               PalaceQFunctionRelativePath(f_build_geom_factor_32_loc),
-                               &build_qf));
-      break;
-    default:
-      MFEM_ABORT("Invalid value of (dim, space_dim) = ("
-                 << dim << ", " << space_dim << ") for geometry factor quadrature data!");
-      build_qf = nullptr;  // Silence compiler warning
+    switch (10 * space_dim + dim)
+    {
+      case 22:
+        PalaceCeedCall(
+            ceed, CeedQFunctionCreateInterior(
+                      ceed, 1, f_build_geom_factor_axisymmetric_22,
+                      PalaceQFunctionRelativePath(f_build_geom_factor_axisymmetric_22_loc),
+                      &build_qf));
+        break;
+      case 21:
+        PalaceCeedCall(
+            ceed, CeedQFunctionCreateInterior(
+                      ceed, 1, f_build_geom_factor_axisymmetric_21,
+                      PalaceQFunctionRelativePath(f_build_geom_factor_axisymmetric_21_loc),
+                      &build_qf));
+        break;
+      default:
+        MFEM_ABORT("Axisymmetric geometry factor quadrature data requires (dim, space_dim) "
+                   "= (2, 2) or (1, 2), not ("
+                   << dim << ", " << space_dim << ")!");
+        build_qf = nullptr;  // Silence compiler warning
+    }
+  }
+  else
+  {
+    switch (10 * space_dim + dim)
+    {
+      case 22:
+        PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
+                                 ceed, 1, f_build_geom_factor_22,
+                                 PalaceQFunctionRelativePath(f_build_geom_factor_22_loc),
+                                 &build_qf));
+        break;
+      case 33:
+        PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
+                                 ceed, 1, f_build_geom_factor_33,
+                                 PalaceQFunctionRelativePath(f_build_geom_factor_33_loc),
+                                 &build_qf));
+        break;
+      case 21:
+        PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
+                                 ceed, 1, f_build_geom_factor_21,
+                                 PalaceQFunctionRelativePath(f_build_geom_factor_21_loc),
+                                 &build_qf));
+        break;
+      case 31:
+        PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
+                                 ceed, 1, f_build_geom_factor_31,
+                                 PalaceQFunctionRelativePath(f_build_geom_factor_31_loc),
+                                 &build_qf));
+        break;
+      case 32:
+        PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
+                                 ceed, 1, f_build_geom_factor_32,
+                                 PalaceQFunctionRelativePath(f_build_geom_factor_32_loc),
+                                 &build_qf));
+        break;
+      default:
+        MFEM_ABORT("Invalid value of (dim, space_dim) = ("
+                   << dim << ", " << space_dim << ") for geometry factor quadrature data!");
+        build_qf = nullptr;  // Silence compiler warning
+    }
   }
 
   // Inputs/outputs.
@@ -388,6 +418,10 @@ void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
   PalaceCeedCall(ceed, CeedQFunctionAddInput(build_qf, "q_w", 1, CEED_EVAL_WEIGHT));
   PalaceCeedCall(
       ceed, CeedQFunctionAddInput(build_qf, "grad_x", space_dim * dim, CEED_EVAL_GRAD));
+  if (axisymmetric)
+  {
+    PalaceCeedCall(ceed, CeedQFunctionAddInput(build_qf, "x", space_dim, CEED_EVAL_INTERP));
+  }
   {
     CeedInt geom_data_size;
     PalaceCeedCall(ceed,
@@ -409,6 +443,11 @@ void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
                                             mesh_basis, CEED_VECTOR_NONE));
   PalaceCeedCall(ceed, CeedOperatorSetField(build_op, "grad_x", mesh_restr, mesh_basis,
                                             CEED_VECTOR_ACTIVE));
+  if (axisymmetric)
+  {
+    PalaceCeedCall(ceed, CeedOperatorSetField(build_op, "x", mesh_restr, mesh_basis,
+                                              CEED_VECTOR_ACTIVE));
+  }
   PalaceCeedCall(ceed, CeedOperatorSetField(build_op, "geom_data", geom_data_restr,
                                             CEED_BASIS_NONE, CEED_VECTOR_ACTIVE));
 

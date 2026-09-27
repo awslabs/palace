@@ -13,7 +13,9 @@ Windows: `--zoom X0 X1 Y0 Y1 [--zoom ...]` explicit; `--auto` adds (a) the large
 (b) one example of every class, (c) the top facing-check sites (`--facing facing.json`, from
 `facing_check.py`); `--regions regions.json` adds named windows ({"name": [x0, x1, y0, y1], ...}).
 Every zoom is drawn once per metal plane present in the window (a flip chip's planes overlap in the
-plan view); planes with fewer than `--min-plane-segments` segments (PEC box edges) get no figures.
+plan view); planes with fewer than `--min-plane-segments` IDENTIFIED segments (PEC box edges, excluded
+wirebond walls) get no overview, and at most `--max-overviews` planes (those with the most identified
+segments) are drawn.
 Every figure is listed in `<prefix>-figures.json` (file, kind, plane, window, what it shows).
 
     python3 -m surface_response_identification.plot_identification MANIFEST OUT_PREFIX \\
@@ -239,7 +241,10 @@ def main(argv=None):
     ap.add_argument("out_prefix")
     ap.add_argument("--metal", action="append", default=[], help="npz of metal triangles (mesh_census.py --extract); repeatable")
     ap.add_argument("--min-plane-segments", type=int, default=100,
-                    help="planes with fewer perimeter segments (the box edges of a PEC simulation boundary) get no figures")
+                    help="planes with fewer IDENTIFIED perimeter segments (segments without a manifest exclusion; the box edges of a PEC simulation boundary, the wirebond walls) get no overview")
+    ap.add_argument("--max-overviews", type=int, default=8,
+                    help="at most this many overviews: the planes with the most identified segments (DS-OSC-003's 577 k wirebond triangles gave ~460 distinct segment z values)")
+    ap.add_argument("--all-planes", action="store_true", help="count every segment (excluded ones too) when choosing the overview planes")
     ap.add_argument("--facing", help="facing_check.py JSON: sites are boxed and zoomed")
     ap.add_argument("--regions", help="JSON {name: [x0, x1, y0, y1]} of named windows")
     ap.add_argument("--zoom", type=float, nargs=4, action="append", default=[], metavar=("X0", "X1", "Y0", "Y1"))
@@ -259,8 +264,12 @@ def main(argv=None):
     index = []
     plane_counts = defaultdict(int)
     for s in segments:
-        plane_counts[round(s["Key"][0][2], 6)] += 1
+        if args.all_planes or "Exclusion" not in s:
+            plane_counts[round(s["Key"][0][2], 6)] += 1
     planes = sorted(z for z, n in plane_counts.items() if n >= args.min_plane_segments)
+    if len(planes) > args.max_overviews:
+        planes = sorted(sorted(planes, key=lambda z: -plane_counts[z])[: args.max_overviews])
+        print(f"overviews limited to the {args.max_overviews} planes with the most identified segments (of {len(plane_counts)} planes)", flush=True)
     for plane in planes:
         fig, ax = plt.subplots(figsize=(18, 11))
         filled = draw(ax, segments, features, tris, tags, plane=plane, label_clusters=True, facing_sites=facing["Sites"][: args.sites] if facing else None,
