@@ -828,9 +828,9 @@ def stack_suite():
     taper_trace = loop([(-half, -0.5 * taper_t(-half)), (half, -0.5 * taper_t(half)), (half, 0.5 * taper_t(half)), (-half, 0.5 * taper_t(-half))])
     taper_ground_lower = loop([(-half, -14.0), (half, -14.0), (half, -0.5 * taper_t(half) - taper_g(half)), (-half, -0.5 * taper_t(-half) - taper_g(-half))])
     taper_ground_upper = loop([(-half, 0.5 * taper_t(-half) + taper_g(-half)), (half, 0.5 * taper_t(half) + taper_g(half)), (half, 14.0), (-half, 14.0)])
-    layouts.append(layout("stack-taper-through-2R", [sheet(GROUND, taper_trace), sheet(GROUND, taper_ground_lower), sheet(GROUND, taper_ground_upper)], half_x=half, half_y=half, lc_fine=1.0, lc_far=6.0, notes="a trace between ground edges, every separation a 2 %/um linear taper: gaps 2R at x = -10, trace width 2R at x = +10 (DS-CTX-003 flux-line launcher): 4-edge stack for x < -10, the trace strip alone (ground edges isolated) for -10 < x < 10, four isolated edges beyond", expected={
-        "FeaturesSubset": {"ParallelEdgeCluster": 1, "SameConductorStrip": 1, "SpatialEdgeCluster": 0},
-        "FacingGates": True}))
+    layouts.append(layout("stack-taper-through-2R", [sheet(GROUND, taper_trace), sheet(GROUND, taper_ground_lower), sheet(GROUND, taper_ground_upper)], half_x=half, half_y=half, lc_fine=1.0, lc_far=6.0, notes="a trace between ground edges, every separation a 2 %/um linear taper: gaps 2R at x = -10, trace width 2R at x = +10 (DS-CTX-003 flux-line launcher): 4-edge stack for x < -10, the trace strip alone (ground edges isolated) for -10 < x < 10 (the strip must reach x ~ +9: the chord reading is the window maximum over R, so a pair ends R before the geometric 2R crossing), four isolated edges beyond; the six chain ends at the left truncation (1.4 R apart) form one small cluster", expected={
+        "FeaturesSubset": {"ParallelEdgeCluster": 1, "SameConductorStrip": 1, "SpatialEdgeCluster": 1},
+        "MinimumLength": {"SameConductorStrip": 36.0}}))
 
     # U-ring (the DS-SCT-001 / DS-SCT-002 flux-line end): a 2 um trace from the top truncation
     # into a rounded-rectangle ring (strip 2 um; hole 12 x 10 um with 1 um = 0.5 R corners, outer
@@ -973,6 +973,13 @@ def check_expected(manifest, expected, radius=RADIUS):
         checks["ExcludedVertices"] = {"Expected": expected["ExcludedVertices"], "Manifest": n, "Pass": n == expected["ExcludedVertices"]}
     if "FeaturesSubset" in expected:
         checks["FeaturesSubset"] = {"Expected": dict(expected["FeaturesSubset"]), "Manifest": {k: features.get(k, 0) for k in expected["FeaturesSubset"]}, "Pass": all(features.get(k, 0) == v for k, v in expected["FeaturesSubset"].items())}
+    if "MinimumLength" in expected:
+        # Total claimed length per feature type at least the stated value (a pair that must
+        # extend along a taper up to its 2R crossing).
+        lengths = defaultdict(float)
+        for f in ident["Features"]:
+            lengths[f["Type"]] += float(f["Length"])
+        checks["MinimumLength"] = {"Expected": dict(expected["MinimumLength"]), "Manifest": {k: lengths.get(k, 0.0) for k in expected["MinimumLength"]}, "Pass": all(lengths.get(k, 0.0) >= v for k, v in expected["MinimumLength"].items())}
     if "Offsets" in expected:
         # Offsets / R of every pair / stack feature of the type (sorted lists), compared as a
         # multiset with a tolerance of 0.02 R (the chord readings of concentric polylines).

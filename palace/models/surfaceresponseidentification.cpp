@@ -8488,8 +8488,14 @@ void Identifier::Assign(IdentificationResult &result)
     // A pair's two sides face each other: the part of one side whose facing point lies
     // beyond the other side's surviving pieces (a cluster ball or a vertex window took the
     // partner piece but not this one) is not paired there and returns to the run; the
-    // facing test is the pair tolerance on the separation (a slow taper's wider end is
-    // still facing). Recorded as claim resolution: both sides of a pair are then mutual.
+    // facing test is the pair tolerance on the separation — the LOCAL separation of the
+    // piece (its ends and midpoint to the partner chain), never below the feature's mean:
+    // a slow taper's wider end is still facing (the pair rule admitted it on its local
+    // reading below 2R), while the mean alone cut every pair whose separation grows by more
+    // than the tolerance along its length (DS-CTX-003's flux-line launcher, 1 -> 6 um over
+    // 560 um: the inner gap's pair vanished where the outer links ended and the four edges
+    // read isolated at 3.7 um; review m11). A constant pair reads its mean everywhere.
+    // Recorded as claim resolution: both sides of a pair are then mutual.
     struct SidePiece
     {
       std::size_t run;
@@ -8514,23 +8520,54 @@ void Identifier::Assign(IdentificationResult &result)
       {
         continue;
       }
-      const double reach = features[feature].signature["SeparationOverR"].get<double>() *
-                           R * (1.0 + kPairSeparationTolerance);
+      const double mean_separation =
+          features[feature].signature["SeparationOverR"].get<double>() * R;
       // The other side's pieces by run: a piece faces only the pieces on runs whose boxes
       // lie within the reach of its own run (the facing intervals of every other piece are
       // empty; the union is sorted, so the candidate order does not matter).
       std::array<std::map<std::size_t, std::vector<const SidePiece *>>, 2> pieces_by_run;
+      std::array<std::set<int>, 2> side_chains;
       for (int k = 0; k < 2; k++)
       {
         for (const auto &piece : sides[k])
         {
           pieces_by_run[k][piece.run].push_back(&piece);
+          side_chains[k].insert(runs[piece.run].chain);
         }
       }
+      // The local separation of a side piece: the largest distance from its ends and
+      // midpoint to the partner side's chains (within the pair rule's candidate reach).
+      const double candidate_reach =
+          kInteractionDistanceOverRadius * R * (1.0 + kPairSeparationTolerance);
+      auto LocalSeparation = [&](const SidePiece &piece, int k)
+      {
+        double local = 0.0;
+        for (const double s : {piece.lo, 0.5 * (piece.lo + piece.hi), piece.hi})
+        {
+          const Point3D p = runs[piece.run].At(s);
+          double nearest = std::numeric_limits<double>::infinity();
+          for (const int other_chain : side_chains[1 - k])
+          {
+            const auto foot = ClosestPointOnChain(chains[chain_index.at(other_chain)], p,
+                                                  std::nullopt, candidate_reach);
+            if (std::isfinite(foot.distance))
+            {
+              nearest = std::min(nearest, foot.distance);
+            }
+          }
+          if (std::isfinite(nearest))
+          {
+            local = std::max(local, nearest);
+          }
+        }
+        return local;
+      };
       for (int k = 0; k < 2; k++)
       {
         for (const auto &piece : sides[k])
         {
+          const double reach = std::max(mean_separation, LocalSeparation(piece, k)) *
+                               (1.0 + kPairSeparationTolerance);
           std::vector<Interval> facing;
           for (const std::size_t other_run : RunsNearRun(piece.run, reach + 2.0 * Tol()))
           {
