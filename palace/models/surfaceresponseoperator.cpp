@@ -660,6 +660,13 @@ struct LibraryModel
   // Version-2 identification signature (the feature's canonical Signature object,
   // dimensionless parameters) which the key-based matching pass looks up directly.
   std::optional<nlohmann::json> identification_signature;
+
+  // Curvature family node (curved coupons built on axisymmetric (r, z) meshes): the
+  // coupon's kappa = R / rho and whether the metal lies inside the circle (convex, a disk
+  // edge) or outside (concave, a hole edge). A straight coupon of the analogous topology is
+  // the kappa = 0 anchor of both convexities.
+  std::optional<double> kappa;
+  std::optional<bool> convex;
 };
 
 struct ProcessLibrary
@@ -928,12 +935,6 @@ struct AttributedSegment2D
   int attribute = 0;
 };
 
-struct PendingPatch
-{
-  std::size_t library_model = 0;
-  ResponsePatchData patch;
-};
-
 struct LibrarySelection
 {
   struct WeightedModel
@@ -947,6 +948,25 @@ struct LibrarySelection
   double normalized_distance = 0.0;
 
   bool IsInterpolated() const { return models.size() > 1; }
+};
+
+// A runtime model interpolated in kappa = R / rho between the coupons of a curvature family
+// (decision 92): the anchor (straight coupon, kappa 0) supplies the basis, interfaces and
+// conductor references; the matrices are the Lagrange combination of the nodes' matrices,
+// each scaled to the anchor's coupon depth (per unit edge length).
+struct PendingBlend
+{
+  std::string name;
+  std::string topology;
+  std::size_t anchor = 0;
+  std::vector<LibrarySelection::WeightedModel> nodes;
+};
+
+struct PendingPatch
+{
+  std::size_t library_model = 0;
+  ResponsePatchData patch;
+  std::optional<PendingBlend> blend;
 };
 
 struct ParallelClusterSelection
@@ -1514,6 +1534,23 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
     else
     {
       model.coupon_depth = default_coupon_depth;
+    }
+    if (auto kappa = entry.find("Kappa"); kappa != entry.end())
+    {
+      MFEM_VERIFY(IsCurvedTopology(model.topology),
+                  "Fabrication-process response model \""
+                      << model.name << "\" carries Kappa but is not a curved topology!");
+      model.kappa = kappa->get<double>();
+      MFEM_VERIFY(std::isfinite(*model.kappa) && *model.kappa > 0.0 && *model.kappa < 1.0,
+                  "Fabrication-process response model Kappa = R / rho must lie in (0, 1)!");
+      const std::string convexity = entry.at("Convexity").get<std::string>();
+      MFEM_VERIFY(convexity == "Convex" || convexity == "Concave",
+                  "Fabrication-process response model Convexity must be Convex or Concave!");
+      model.convex = convexity == "Convex";
+      MFEM_VERIFY(model.coupon_depth > 0.0,
+                  "Fabrication-process response model \""
+                      << model.name
+                      << "\" requires CouponDepth (the curved edge length 2 pi rho)!");
     }
     const bool parallel_cluster = model.topology == LibraryTopology::PARALLEL_EDGE_CLUSTER;
     const bool spatial_cluster = model.topology == LibraryTopology::SPATIAL_EDGE_CLUSTER;
@@ -3179,6 +3216,147 @@ std::optional<LibrarySelection> FindLibraryModel(const ProcessLibrary &library,
   return selection;
 }
 
+std::string TopologyName(LibraryTopology topology);
+
+LibraryTopology CurvedTopologyOf(LibraryTopology straight)
+{
+  switch (straight)
+  {
+    case LibraryTopology::ISOLATED_EDGE:
+      return LibraryTopology::CURVED_EDGE;
+    case LibraryTopology::SAME_CONDUCTOR_GAP:
+      return LibraryTopology::CURVED_SAME_CONDUCTOR_GAP;
+    case LibraryTopology::DIFFERENT_CONDUCTOR_GAP:
+      return LibraryTopology::CURVED_DIFFERENT_CONDUCTOR_GAP;
+    case LibraryTopology::SAME_CONDUCTOR_STRIP:
+      return LibraryTopology::CURVED_SAME_CONDUCTOR_STRIP;
+    default:
+      return straight;
+  }
+}
+
+// Curvature interpolation (decision 92): a curved feature of curvature kappa = R / rho and
+// given convexity is modelled by the Lagrange combination of the family's coupons in kappa:
+// the straight anchor (kappa 0, the model of the analogous straight topology) and the curved
+// coupons (Kappa, Convexity) of the library. Rule, deterministic and recorded: an exact node
+// (|kappa - node| <= 1e-9) is that coupon; kappa at or below the smallest curved node is the
+// linear combination of the anchor and that node (the first-order correction dR/dkappa of
+// straight-like features); otherwise the cubic Lagrange interpolant on the four nodes
+// nearest to kappa (all nodes when fewer). A kappa beyond the largest node is refused
+// (reason), never treated as straight.
+struct CurvedFamilySelection
+{
+  std::size_t anchor = 0;
+  std::vector<LibrarySelection::WeightedModel> nodes;
+  std::string rule;
+  double kappa_max = 0.0;
+};
+
+std::optional<CurvedFamilySelection>
+FindCurvedLibraryModel(const ProcessLibrary &library, LibraryTopology straight_topology,
+                       double separation, bool convex, double kappa,
+                       const MetalBoundaryLaw &boundary_condition, std::string &reason)
+{
+  MFEM_VERIFY(std::isfinite(kappa) && kappa > 0.0,
+              "Curvature interpolation requires a positive finite kappa = R / rho!");
+  const auto anchor =
+      FindLibraryModel(library, straight_topology, separation, boundary_condition);
+  if (!anchor || anchor->IsInterpolated())
+  {
+    reason = "no straight " + TopologyName(straight_topology) +
+             " anchor coupon for the curvature family";
+    return std::nullopt;
+  }
+  const LibraryTopology curved_topology = CurvedTopologyOf(straight_topology);
+  std::vector<std::pair<double, std::size_t>> nodes;
+  for (std::size_t i = 0; i < library.models.size(); i++)
+  {
+    const auto &model = library.models[i];
+    if (model.topology != curved_topology || !model.kappa || !model.convex ||
+        *model.convex != convex ||
+        !CompatibleBoundaryLaw(model.boundary_condition, boundary_condition))
+    {
+      continue;
+    }
+    const double separation_tolerance =
+        std::max(model.separation_tolerance,
+                 1.0e-10 * std::max(library.matching_radius, separation));
+    if (std::abs(model.separation - separation) > separation_tolerance)
+    {
+      continue;
+    }
+    nodes.emplace_back(*model.kappa, i);
+  }
+  const std::string convexity = convex ? "convex" : "concave";
+  if (nodes.empty())
+  {
+    reason = "library has no " + convexity + " " + TopologyName(curved_topology) +
+             " coupons (Kappa records)";
+    return std::nullopt;
+  }
+  std::sort(nodes.begin(), nodes.end());
+  for (std::size_t i = 1; i < nodes.size(); i++)
+  {
+    MFEM_VERIFY(nodes[i].first - nodes[i - 1].first > 1.0e-9,
+                "Curvature family has two " << convexity << " " << TopologyName(curved_topology)
+                                            << " coupons at the same Kappa!");
+  }
+  CurvedFamilySelection selection;
+  selection.anchor = anchor->models.front().index;
+  selection.kappa_max = nodes.back().first;
+  if (kappa > selection.kappa_max * (1.0 + 1.0e-9))
+  {
+    reason = "kappa = " + std::to_string(kappa) + " exceeds the largest " + convexity +
+             " coupon kappa " + std::to_string(selection.kappa_max);
+    return std::nullopt;
+  }
+  for (const auto &[node_kappa, index] : nodes)
+  {
+    if (std::abs(kappa - node_kappa) <= 1.0e-9)
+    {
+      selection.nodes = {{index, 1.0}};
+      selection.rule = "exact";
+      return selection;
+    }
+  }
+  // Abscissae: the anchor at kappa 0 then the curved nodes.
+  std::vector<std::pair<double, std::size_t>> abscissae = {{0.0, selection.anchor}};
+  abscissae.insert(abscissae.end(), nodes.begin(), nodes.end());
+  std::size_t begin = 0, end = abscissae.size();
+  if (kappa <= nodes.front().first)
+  {
+    end = 2;
+    selection.rule = "linear";
+  }
+  else
+  {
+    std::size_t interval = 0;
+    while (interval + 1 < abscissae.size() && abscissae[interval + 1].first < kappa)
+    {
+      interval++;
+    }
+    if (abscissae.size() > 4)
+    {
+      begin = std::min(interval > 0 ? interval - 1 : 0, abscissae.size() - 4);
+      end = begin + 4;
+    }
+    selection.rule = (end - begin == 4) ? "cubic" : (end - begin == 3 ? "quadratic" : "linear");
+  }
+  for (std::size_t i = begin; i < end; i++)
+  {
+    double weight = 1.0;
+    for (std::size_t j = begin; j < end; j++)
+    {
+      if (j != i)
+      {
+        weight *= (kappa - abscissae[j].first) / (abscissae[i].first - abscissae[j].first);
+      }
+    }
+    selection.nodes.push_back({abscissae[i].second, weight});
+  }
+  return selection;
+}
+
 std::optional<LibrarySelection>
 FindCornerLibraryModel(const ProcessLibrary &library, LibraryTopology topology,
                        double angle, double radius,
@@ -4202,6 +4380,10 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
   MFEM_VERIFY(mesh.Dimension() == 2 && mesh.SpaceDimension() == 2,
               "Automatic two-dimensional fabrication-process response matching requires "
               "a two-dimensional mesh!");
+  // Axisymmetric (r, z) device: every edge site at r = rho is the circular edge of a disk
+  // (gap toward +r: metal inside, convex) or a hole (concave) with kappa = R / rho and edge
+  // length 2 pi rho; it is corrected by the curvature family interpolated at kappa.
+  const bool axisymmetric = mat_op.GetMesh().IsAxisymmetric();
   const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
   const auto library =
       ReadProcessLibrary(request.library, iodata.units, iodata.InputsNondimensionalized(),
@@ -4397,10 +4579,29 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
       double separation = 0.0;
       ResponsePatchData patch;
       std::optional<LibrarySelection> model_selection;
+      std::optional<CurvedFamilySelection> curved_selection;
+      double curved_kappa = 0.0, curved_edge_length = 0.0;
+      bool curved_convex = true;
       const auto boundary_condition = sites[cluster.front()].boundary_condition;
       auto ClusterGeometry = [&]()
       {
         nlohmann::json geometry = {{"EdgeCount", cluster.size()}};
+        if (axisymmetric)
+        {
+          geometry["AxisymmetricRadius"] =
+              requirements ? requirements->ScaleLength(sites[cluster.front()].point[0])
+                           : 0.0;
+          if (curved_kappa > 0.0)
+          {
+            geometry["Kappa"] = curved_kappa;
+            geometry["Convexity"] = curved_convex ? "Convex" : "Concave";
+          }
+          if (curved_selection)
+          {
+            geometry["InterpolationRule"] = curved_selection->rule;
+            geometry["KappaMax"] = curved_selection->kappa_max;
+          }
+        }
         if (cluster.size() > 1)
         {
           geometry["Separation"] =
@@ -4468,6 +4669,33 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
         {
           patch.maxwell_conductor_anchors = {patch.origin};
         }
+        if (axisymmetric)
+        {
+          MFEM_VERIFY(edge.point[0] > 0.0 && std::abs(edge.axis_u[0]) > 0.95,
+                      "An axisymmetric edge site must lie off the axis with an in-plane "
+                      "radial gap direction!");
+          curved_kappa = group.matching_radius / edge.point[0];
+          curved_convex = edge.axis_u[0] > 0.0;
+          curved_edge_length = 2.0 * M_PI * edge.point[0];
+        }
+      }
+      else if (axisymmetric)
+      {
+        group_matched = false;
+        Mpi::Warning("Axisymmetric response matching supports isolated edges only ({} "
+                     "nearby edges at r = {:.6e} mesh units); correction is disabled for "
+                     "this interface group!\n",
+                     cluster.size(), sites[cluster.front()].point[0] * coordinate_scale);
+        if (requirements)
+        {
+          requirements->Add(2, LibraryTopology::SPATIAL_EDGE_CLUSTER, group.targets,
+                            boundary_condition, ClusterGeometry(), library, nullptr, 0.0,
+                            "Curved pair / cluster coupons are not available");
+          unmatched_clusters++;
+          continue;
+        }
+        unmatched_clusters++;
+        break;
       }
       else if (cluster.size() == 2)
       {
@@ -4570,6 +4798,41 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
         }
       }
 
+      if (!model_selection && curved_kappa > 0.0)
+      {
+        // Never silently straight: an axisymmetric edge is corrected by the curvature
+        // family interpolated at its kappa, or reported unmatched with the reason.
+        std::string reason;
+        curved_selection =
+            FindCurvedLibraryModel(library, topology, separation, curved_convex,
+                                   curved_kappa, boundary_condition, reason);
+        if (!curved_selection)
+        {
+          group_matched = false;
+          Mpi::Warning("Fabrication-process response library \"{}\" cannot model the {} "
+                       "curved edge at r = {:.6e} mesh units (kappa = {:.4f}): {}; "
+                       "correction is disabled for this interface group!\n",
+                       library.name, curved_convex ? "convex" : "concave",
+                       sites[cluster.front()].point[0] * coordinate_scale, curved_kappa,
+                       reason);
+          if (requirements)
+          {
+            requirements->Add(2, CurvedTopologyOf(topology), group.targets,
+                              boundary_condition, ClusterGeometry(), library, nullptr, 0.0,
+                              "Curvature family: " + reason);
+            unmatched_clusters++;
+            continue;
+          }
+          unmatched_clusters++;
+          break;
+        }
+        LibrarySelection selection;
+        selection.models = curved_selection->nodes;
+        selection.conductor_references =
+            library.models[curved_selection->anchor].conductor_references;
+        selection.normalized_distance = 0.0;
+        model_selection = selection;
+      }
       if (!model_selection)
       {
         model_selection =
@@ -4595,10 +4858,12 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
       }
       if (requirements)
       {
-        requirements->Add(
-            2, cluster.size() > 2 ? LibraryTopology::PARALLEL_EDGE_CLUSTER : topology,
-            group.targets, boundary_condition, ClusterGeometry(), library,
-            &*model_selection, 0.0);
+        requirements->Add(2,
+                          cluster.size() > 2 ? LibraryTopology::PARALLEL_EDGE_CLUSTER
+                          : curved_selection ? CurvedTopologyOf(topology)
+                                             : topology,
+                          group.targets, boundary_condition, ClusterGeometry(), library,
+                          &*model_selection, 0.0);
       }
       // The patch carries the selected model's conductor references for every cluster size
       // (a ResponsePatchData starts with the configuration default {{0, 0, 0}}, so an
@@ -4615,6 +4880,24 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
       }
       group_maximum_library_distance =
           std::max(group_maximum_library_distance, model_selection->normalized_distance);
+      if (curved_selection)
+      {
+        // One patch on a runtime model interpolated in kappa (Lagrange weights may be
+        // negative, so the combination is formed on the matrices, not on patch weights);
+        // the patch weight is the curved edge length over the anchor's coupon depth.
+        const auto &anchor = library.models[curved_selection->anchor];
+        MFEM_VERIFY(anchor.coupon_depth > 0.0,
+                    "Curvature interpolation requires CouponDepth on the straight anchor!");
+        std::ostringstream name;
+        name << anchor.name << "@" << (curved_convex ? "convex" : "concave") << "-kappa"
+             << std::setprecision(9) << curved_kappa << "-" << curved_selection->rule;
+        PendingBlend blend{name.str(), TopologyName(CurvedTopologyOf(topology)),
+                           curved_selection->anchor, curved_selection->nodes};
+        auto weighted_patch = patch;
+        weighted_patch.weight = curved_edge_length / anchor.coupon_depth;
+        pending.push_back({curved_selection->anchor, std::move(weighted_patch), blend});
+        continue;
+      }
       if (model_selection->IsInterpolated())
       {
         patch.interpolation_group = next_interpolation_group++;
@@ -4651,18 +4934,39 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
             IsBoundaryLawVerified(library.models[selection.library_model]);
       }
     }
-    std::map<std::size_t, int> runtime_models;
+    std::map<std::string, int> runtime_models;
     for (auto &selection : pending)
     {
-      auto [model_it, inserted] =
-          runtime_models.emplace(selection.library_model, next_model_index);
+      const auto &source = library.models[selection.library_model];
+      const std::string key = selection.blend ? selection.blend->name : source.name;
+      auto [model_it, inserted] = runtime_models.emplace(key, next_model_index);
       if (inserted)
       {
-        const auto &source = library.models[selection.library_model];
         auto model = source.response;
         model.idx = next_model_index++;
-        model.name = source.name;
+        model.name = key;
         model.topology = TopologyName(source.topology);
+        if (selection.blend)
+        {
+          // The anchor's basis and interfaces; matrices = sum of the nodes' matrices, each
+          // per unit edge length and rescaled to the anchor's coupon depth.
+          model.topology = selection.blend->topology;
+          std::ostringstream nodes;
+          for (const auto &node : selection.blend->nodes)
+          {
+            const auto &coupon = library.models[node.index];
+            MFEM_VERIFY(coupon.coupon_depth > 0.0,
+                        "Curvature interpolation requires CouponDepth on every coupon!");
+            model.blend.push_back({node.weight * source.coupon_depth / coupon.coupon_depth,
+                                   coupon.response.fabricated_matrix,
+                                   coupon.response.thin_matrix,
+                                   coupon.response.fabricated_surface_matrix,
+                                   coupon.response.thin_surface_matrix});
+            nodes << (model.blend.size() == 1 ? "" : ", ") << coupon.name << " x "
+                  << std::setprecision(6) << node.weight;
+          }
+          Mpi::Print(" Curvature interpolation {}: {}\n", key, nodes.str());
+        }
         MapLibraryInterfaces(source, {{0, group.targets}}, model);
         result.models.push_back(std::move(model));
       }
@@ -11082,18 +11386,46 @@ struct DomainResponseMatrices
   mfem::DenseMatrix fixed_flux_defect;
 };
 
-DomainResponseMatrices
-BuildDomainResponseMatrices(const std::string &fabricated_path,
-                            const std::string &thin_path, int expected_size,
-                            const std::vector<int> &zero_trace_indices, const Units &units)
+// Read one domain response matrix file as a dense matrix of the expected size.
+mfem::DenseMatrix ReadDenseDomainResponseMatrix(const std::string &path, int expected_size)
 {
-  auto [fabricated_size, fabricated_entries] = ReadDomainResponseMatrix(fabricated_path);
-  auto [thin_size, thin_entries] = ReadDomainResponseMatrix(thin_path);
-  MFEM_VERIFY(fabricated_size == expected_size && thin_size == expected_size,
-              "Response matrices and basis point file have inconsistent sizes!");
+  auto [size, entries] = ReadDomainResponseMatrix(path);
+  MFEM_VERIFY(size == expected_size,
+              "Response matrix \"" << path
+                                   << "\" and basis point file have inconsistent sizes!");
+  return BuildDenseMatrix(entries, expected_size, path);
+}
 
-  auto fabricated = BuildDenseMatrix(fabricated_entries, expected_size, fabricated_path);
-  auto thin = BuildDenseMatrix(thin_entries, expected_size, thin_path);
+// A model's domain response matrix: the file itself, or for an interpolated model (config
+// blend) the weighted sum of its sources' files (all on the model's basis).
+mfem::DenseMatrix BlendedDomainResponseMatrix(
+    const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
+    bool fabricated, int expected_size)
+{
+  if (config.blend.empty())
+  {
+    return ReadDenseDomainResponseMatrix(
+        fabricated ? config.fabricated_matrix : config.thin_matrix, expected_size);
+  }
+  mfem::DenseMatrix result(expected_size);
+  result = 0.0;
+  for (const auto &source : config.blend)
+  {
+    MFEM_VERIFY(std::isfinite(source.weight),
+                "Interpolated response model weights must be finite!");
+    result.Add(source.weight,
+               ReadDenseDomainResponseMatrix(
+                   fabricated ? source.fabricated_matrix : source.thin_matrix, expected_size));
+  }
+  return result;
+}
+
+DomainResponseMatrices BuildDomainResponseMatrices(
+    const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
+    int expected_size, const std::vector<int> &zero_trace_indices, const Units &units)
+{
+  auto fabricated = BlendedDomainResponseMatrix(config, true, expected_size);
+  auto thin = BlendedDomainResponseMatrix(config, false, expected_size);
 
   // The CSV stores coupon energy Q in joules for basis traces measured in volts.
   // Internally, 1/2 xᵀ C x must equal the nondimensional energy defect, so
@@ -11249,6 +11581,47 @@ std::map<int, mfem::DenseMatrix> ReadSurfaceResponseMatrices(const std::string &
   return matrices;
 }
 
+// A model's per-coupon-interface surface response matrices: the file itself, or for an
+// interpolated model (config blend) the weighted sum of its sources' files.
+std::map<int, mfem::DenseMatrix> BlendedSurfaceResponseMatrices(
+    const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
+    bool fabricated, int expected_size)
+{
+  if (config.blend.empty())
+  {
+    return ReadSurfaceResponseMatrices(
+        fabricated ? config.fabricated_surface_matrix : config.thin_surface_matrix,
+        expected_size);
+  }
+  std::map<int, mfem::DenseMatrix> result;
+  std::set<int> interfaces;
+  for (const auto &source : config.blend)
+  {
+    auto matrices = ReadSurfaceResponseMatrices(
+        fabricated ? source.fabricated_surface_matrix : source.thin_surface_matrix,
+        expected_size);
+    std::set<int> source_interfaces;
+    for (auto &[interface, matrix] : matrices)
+    {
+      source_interfaces.insert(interface);
+      auto [it, inserted] = result.emplace(interface, mfem::DenseMatrix(expected_size));
+      if (inserted)
+      {
+        it->second = 0.0;
+      }
+      it->second.Add(source.weight, matrix);
+    }
+    if (&source == &config.blend.front())
+    {
+      interfaces = source_interfaces;
+    }
+    MFEM_VERIFY(source_interfaces == interfaces,
+                "Interpolated response model sources do not share the same coupon "
+                "interfaces!");
+  }
+  return result;
+}
+
 struct SurfaceResponseMatrices
 {
   std::map<int, mfem::DenseMatrix> fabricated;
@@ -11272,8 +11645,8 @@ SurfaceResponseMatrices BuildSurfaceResponseMatrices(
               "specified together for response-corrected surface participation!");
 
   auto fabricated =
-      ReadSurfaceResponseMatrices(config.fabricated_surface_matrix, expected_size);
-  auto thin = ReadSurfaceResponseMatrices(config.thin_surface_matrix, expected_size);
+      BlendedSurfaceResponseMatrices(config, true, expected_size);
+  auto thin = BlendedSurfaceResponseMatrices(config, false, expected_size);
   const double voltage_scale = units.GetScaleFactor<Units::ValueType::VOLTAGE>();
   const double energy_scale = units.GetScaleFactor<Units::ValueType::ENERGY>();
   const double scale = voltage_scale * voltage_scale / energy_scale;
@@ -12116,8 +12489,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       mfem::DenseMatrixInverse(mass, true).GetInverseMatrix(model.mortar_mass_inverse);
     }
     auto domain_response = BuildDomainResponseMatrices(
-        model_config.fabricated_matrix, model_config.thin_matrix, model.basis_size,
-        model.zero_trace_indices, iodata.units);
+        model_config, model.basis_size, model.zero_trace_indices, iodata.units);
     model.fabricated_domain = std::move(domain_response.fabricated);
     model.thin_domain = std::move(domain_response.thin);
     model.domain_defect = std::move(domain_response.defect);
@@ -12834,8 +13206,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
           "Response-correction OpenContourPaths do not partition BasisPoints!");
     }
     auto domain_response = BuildDomainResponseMatrices(
-        model_config.fabricated_matrix, model_config.thin_matrix, model.basis_size,
-        model.zero_trace_indices, iodata.units);
+        model_config, model.basis_size, model.zero_trace_indices, iodata.units);
     model.fabricated_domain = std::move(domain_response.fabricated);
     model.thin_domain = std::move(domain_response.thin);
     model.domain_defect = std::move(domain_response.defect);

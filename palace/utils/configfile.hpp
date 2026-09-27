@@ -1105,6 +1105,21 @@ public:
 
     // Mapping from global target interface index to coupon interface index.
     std::vector<ResponseCorrectionInterfaceData> interfaces;
+
+    // Internal (automatic matching): a runtime model interpolated between library coupons
+    // that share one basis. When nonempty, each of the four response matrices is the sum
+    // over the sources of weight x (that source's matrix) and the paths above are unused.
+    // Used for the curvature families (CurvedEdge coupons at several kappa = R / rho plus
+    // the straight anchor) whose response is interpolated in kappa.
+    struct BlendSourceData
+    {
+      double weight = 1.0;
+      std::string fabricated_matrix;
+      std::string thin_matrix;
+      std::string fabricated_surface_matrix;
+      std::string thin_surface_matrix;
+    };
+    std::vector<BlendSourceData> blend;
   };
 
   struct ResponseCorrectionData
