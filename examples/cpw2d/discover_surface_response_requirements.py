@@ -12,11 +12,17 @@ import json
 import math
 import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
 
 import prepare_surface_response_coupons as planner
+
+IDENTIFICATION_TOOLS = Path(__file__).resolve().parent.parent / "surface_response_identification"
+if str(IDENTIFICATION_TOOLS) not in sys.path:
+    sys.path.insert(0, str(IDENTIFICATION_TOOLS))
+import signature_library  # noqa: E402
 
 
 def load_json(path):
@@ -154,6 +160,29 @@ def spatial_support_points(geometry, matching_radius, fabrication):
 
 
 def placeholder_model(requirement, matching_radius, fabrication=None):
+    if "Signature" in requirement:
+        # A version-2 record (SURFACE-RESPONSE-IDENTIFICATION.md (d)): the model is keyed by
+        # the record's canonical Signature (its representative over the tolerance group), which
+        # the matcher accepts for every topology; no version-1 site geometry exists or is needed.
+        digest = requirement["Hash"][:16]
+        model = signature_library.signature_model(
+            requirement["Topology"], requirement["Signature"], float(matching_radius),
+            f"__preflight_placeholder_{digest}", "__preflight_dummy")
+        model["BoundaryLawQualification"] = {
+            "Version": 1,
+            "Status": "Unqualified",
+            "Calibration": "GeometryDiscoveryOnly",
+            "FrequencyUniversal": False,
+        }
+        if requirement["Topology"] != "SpatialEdgeCluster":
+            # The library reader binds a spatial model's interface mappings (and with them
+            # its surface matrices) to the InterfaceSlot of its stored Edges; a signature-only
+            # placeholder has none (the matching key is the Signature, whose portions carry
+            # the interface types), so it declares neither.
+            model["FabricatedSurfaceMatrix"] = "__preflight_dummy_fabricated_surface.csv"
+            model["ThinSurfaceMatrix"] = "__preflight_dummy_thin_surface.csv"
+            model["Interfaces"] = unique_interfaces(requirement)
+        return digest, model
     signature = planner.coupon_signature(requirement)
     digest = hashlib.sha256(
         json.dumps(signature, sort_keys=True, separators=(",", ":")).encode()

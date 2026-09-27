@@ -1,11 +1,12 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 """`coupon-library build --device` on the transmon example (the device the gallery cases
-came from): discovery -> planner -> generate_spatial_response.py --basis-only ->
-content-hashed source directories -> register_case (idempotent) -> preflight.  The
-four-edge / three-edge / two-edge / ten-edge device coupons reproduce the gallery
-cases' frozen geometry files byte for byte; the other families are recorded out of
-scope.  Needs the Palace executable (build/bin/palace) for the geometry preflights."""
+came from): discovery (version-2 identification manifest) -> planner ->
+cluster_signature_geometry (the v2 cluster contract: the coupon in the canonical frame of
+the record's Signature) -> generate_spatial_response.py --basis-only -> content-hashed
+source directories -> register_case (idempotent) -> preflight.  The other families are
+recorded out of scope.  Needs the Palace executable (build/bin/palace) for the geometry
+preflights."""
 import csv
 import json
 import os
@@ -19,9 +20,13 @@ import unittest
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE / "qualify"))
+sys.path.insert(0, str(HERE.parents[1] / "cpw2d"))
+import numpy as np  # noqa: E402
+
 import case_inputs  # noqa: E402
 import coupon_library  # noqa: E402
 import device_coupons  # noqa: E402
+import prepare_surface_response_coupons as planner  # noqa: E402
 import register_case  # noqa: E402
 import trace_basis  # noqa: E402
 from derive_semantic_contract import derive as derive_contract  # noqa: E402
@@ -31,12 +36,6 @@ PALACE = Path(os.environ.get("PALACE_EXECUTABLE", REPOSITORY / "build" / "bin" /
 TRANSMON = REPOSITORY / "examples" / "transmon"
 DEVICE_CONFIG = TRANSMON / "transmon_surface_coarse.json"
 PROCESS_SEED = TRANSMON / "benchmark" / "transmon_surface_process_seed.json"
-# The gallery cases the transmon's discovery closure names (their producer model digests).
-GALLERY_MODELS = {"9d2cb9bbb3fe": "four-edge-9d2cb9bbb3fe", "419576fdab24": "three-edge-419576fdab24",
-                  "3f8992613e95": "two-edge-3f8992613e95", "6791f1c84123": "ten-edge-6791f1c84123"}
-# Byte-identical to the gallery's frozen files; the plan-view mask's facet tessellation
-# follows the device mesh (same footprint: equal facet area per conductor and plane).
-GEOMETRY_FILES = ("mesh-signature.csv", "plan-view-boundary.csv", "process.toml")
 
 
 def mask_areas(path):
@@ -123,14 +122,11 @@ class DeviceCouponsTest(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(cls.tmp, True)
 
-    def coupon_of(self, model_digest):
-        return next(coupon for coupon in self.record["Coupons"] if coupon["Requirement"].endswith(model_digest))
-
     def test_discovery_maps_to_content_hashed_spatial_source_directories(self):
         record = self.record
         self.assertEqual(record["Device"]["SHA256"], case_inputs.sha256(self.device))
         self.assertTrue(record["Discovery"]["Complete"] is False)     # against the empty seed every requirement is Missing
-        self.assertGreaterEqual(len(record["Coupons"]), 4)
+        self.assertGreaterEqual(len(record["Coupons"]), 3)
         self.assertTrue(record["OutOfScope"])
         self.assertEqual({item["Method"] for item in record["OutOfScope"]}, {"CornerCoupon", "StraightEdgeBuilder"})
         # The device basis default is the Delaunay cap triangulation (decision 57), recorded in
@@ -158,16 +154,47 @@ class DeviceCouponsTest(unittest.TestCase):
             self.assertEqual(int(basis["Basis"].max()) + contract["ConductorStates"], contract["Sources"])
             self.assertEqual(contract["FrameFitResidual"], 0.0)
             self.assertEqual(coupon["Sources"], contract["Sources"])
-        for digest, case_id in GALLERY_MODELS.items():
-            coupon = self.coupon_of(digest)
-            for name in GEOMETRY_FILES:
-                self.assertEqual(case_inputs.sha256(Path(coupon["Directory"]) / name),
-                                 case_inputs.sha256(HERE / "testdata" / case_id / name), f"{case_id}/{name}")
-            device_areas = mask_areas(Path(coupon["Directory"]) / "plan-view-mask.csv")
-            gallery_areas = mask_areas(HERE / "testdata" / case_id / "plan-view-mask.csv")
-            self.assertEqual(set(device_areas), set(gallery_areas), case_id)
-            for key, value in gallery_areas.items():
-                self.assertAlmostEqual(device_areas[key], value, delta=1e-9 * max(1.0, value), msg=f"{case_id} {key}")
+        # The v2 cluster contract: every device coupon is built in the canonical frame of its
+        # signature; the model carries the record's Signature (the matcher's exact key) and,
+        # as Edges, the claimed portions exactly; the mask covers every conductor, its
+        # physical boundary segments lie on the portions' lines, and the mesh-signature rows
+        # (the generator's frame) reproduce the portions' lines up to the frame rotation.
+        closure = json.loads(Path(record["Discovery"]["Manifest"]).read_text())
+        by_id = {planner.coupon_id(requirement): requirement for requirement in closure["Requirements"]}
+        radius = record["ProcessLibrary"]["MatchingRadius"]
+        for coupon in record["Coupons"]:
+            requirement = by_id[coupon["Requirement"]]
+            signature = requirement["Signature"]
+            self.assertEqual(signature["Type"], "SpatialEdgeCluster")
+            self.assertEqual(coupon["EdgeCount"], len(signature["Portions"]))
+            directory = Path(coupon["Directory"])
+            model = json.loads((directory / "process-library.json").read_text())["Models"][0]
+            self.assertEqual(model["Signature"], signature)
+            portions = sorted(tuple(round(v * radius, 6) for v in p["P"]) for p in signature["Portions"])
+            reconstructed = []
+            for edge in model["Edges"]:
+                gap, point = np.asarray(edge["GapDirection"]), np.asarray(edge["Point"])
+                tangent = np.cross(gap, np.asarray(edge["ProcessNormal"]))
+                a, b = [(point + s * tangent)[:2] for s in edge["Interval"]]
+                a, b = (tuple(round(float(v), 6) for v in a), tuple(round(float(v), 6) for v in b))
+                reconstructed.append(min(a, b) + max(a, b))
+            self.assertEqual(sorted(reconstructed), portions, coupon["Case"])
+            conductors = {int(p["Conductor"]) for p in signature["Portions"]}
+            areas = mask_areas(directory / "plan-view-mask.csv")
+            self.assertEqual({conductor for conductor, _ in areas}, conductors, coupon["Case"])
+            self.assertTrue(all(area > 0.0 for area in areas.values()))
+            with open(directory / "plan-view-boundary.csv", newline="") as stream:
+                loops = list(csv.DictReader(stream))
+            with open(directory / "mesh-signature.csv", newline="") as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual(len(rows), coupon["EdgeCount"])
+            lines = [((float(r["Px"]), float(r["Py"])), (float(r["Tx"]), float(r["Ty"]))) for r in rows]
+            physical = [row for row in loops if row["Class"] == "Physical"]
+            self.assertTrue(physical)
+            for row in physical:
+                x, y = float(row["X"]), float(row["Y"])
+                self.assertTrue(any(abs((x - px) * ty - (y - py) * tx) <= 1e-6 for (px, py), (tx, ty) in lines),
+                                f"{coupon['Case']}: physical boundary vertex ({x}, {y}) off every edge line")
 
     def test_rerun_is_idempotent_by_content(self):
         again = device_coupons.prepare_device_sources(self.device, palace=PALACE, output=self.tmp / "device",

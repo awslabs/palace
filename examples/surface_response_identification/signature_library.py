@@ -203,53 +203,60 @@ def signature_hash(signature):
     return hashlib.sha256(json.dumps(signature, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
 
 
+def signature_model(feature_type, signature, radius, model_name, matrix_directory="signature-only-matrices"):
+    """A geometry-only library model keyed by its canonical ``Signature`` (placeholder matrix
+    paths; the version-1 geometry parameters the library reader validates are derived from
+    the signature, the matching itself is by Signature). Shared by the signature-only library
+    and the discovery placeholders (discover_surface_response_requirements.py)."""
+    feature = {"Type": feature_type, "Signature": signature}
+    model = {
+        "Name": model_name,
+        "Topology": feature_type,
+        "Signature": signature,
+        "FabricatedMatrix": f"{matrix_directory}/{model_name}-fabricated.csv",
+        "ThinMatrix": f"{matrix_directory}/{model_name}-thin.csv",
+        "BasisPoints": f"{matrix_directory}/{model_name}-basis-points.csv",
+    }
+    if feature_type in LONGITUDINAL_TYPES:
+        # Longitudinal coupon depth: the matching radius (any positive depth; the dry run
+        # records it with every patch weight).
+        model["CouponDepth"] = radius
+    if feature_type in PAIR_TYPES:
+        model["Separation"] = float(signature["SeparationOverR"]) * radius
+    elif feature_type in ("ConvexCorner", "ConcaveCorner"):
+        model["Angle"] = float(signature["AngleDegrees"])
+        model["CornerRadius"] = float(signature["CornerRadiusOverR"]) * radius
+    elif feature_type == "Junction":
+        angles, total = [], 0.0
+        for difference in signature["ArmAnglesDegrees"]:
+            angles.append(total)
+            total += float(difference)
+        model["ArmAngles"] = angles
+    elif feature_type == "ParallelEdgeCluster":
+        model["Edges"] = [{"Offset": float(e["OffsetOverR"]) * radius, "GapDirection": int(e["GapSide"]), "Conductor": int(e["Conductor"])} for e in signature["Edges"]]
+    conductors = conductor_count(feature)
+    if conductors > 1:
+        # One reference per canonical conductor label; positions are placeholders.
+        model["ConductorReferences"] = [[0.0, 0.0, -radius * (k + 1)] for k in range(conductors)]
+    if feature_type != "SpatialEdgeCluster":
+        law = json.loads(signature["Law"]) if "Law" in signature else {"Type": "PEC"}
+        if law != {"Type": "PEC"}:
+            model["BoundaryCondition"] = law
+    return model
+
+
 def build_signature_library(manifest, name="signature-only", matrix_directory="signature-only-matrices"):
     identification = manifest["Identification"]
     radius = float(identification["MatchingRadius"])
     models = []
     modelled = [f for f in identification["Features"] if f["Type"] not in UNMODELLED_TYPES]
     for representative, members, spread in group_features(modelled):
-        feature = {"Type": members[0]["Type"], "Signature": representative}
-        model_name = f"{feature['Type']}-{signature_hash(representative)[:12]}"
-        model = {
-            "Name": model_name,
-            "Topology": feature["Type"],
-            "Signature": representative,
-            "Instances": len(members),
-            "DistinctSignatures": len({json.dumps(f["Signature"], sort_keys=True) for f in members}),
-            "ParameterSpread": spread,
-            "FabricatedMatrix": f"{matrix_directory}/{model_name}-fabricated.csv",
-            "ThinMatrix": f"{matrix_directory}/{model_name}-thin.csv",
-            "BasisPoints": f"{matrix_directory}/{model_name}-basis-points.csv",
-        }
-        signature = feature["Signature"]
-        if feature["Type"] in LONGITUDINAL_TYPES:
-            # Longitudinal coupon depth: the matching radius (any positive depth; the dry run
-            # records it with every patch weight).
-            model["CouponDepth"] = radius
-        # Version-1 geometry parameters derived from the signature (the library reader
-        # validates them; the matching itself is by Signature).
-        if feature["Type"] in PAIR_TYPES:
-            model["Separation"] = float(signature["SeparationOverR"]) * radius
-        elif feature["Type"] in ("ConvexCorner", "ConcaveCorner"):
-            model["Angle"] = float(signature["AngleDegrees"])
-            model["CornerRadius"] = float(signature["CornerRadiusOverR"]) * radius
-        elif feature["Type"] == "Junction":
-            angles, total = [], 0.0
-            for difference in signature["ArmAnglesDegrees"]:
-                angles.append(total)
-                total += float(difference)
-            model["ArmAngles"] = angles
-        elif feature["Type"] == "ParallelEdgeCluster":
-            model["Edges"] = [{"Offset": float(e["OffsetOverR"]) * radius, "GapDirection": int(e["GapSide"]), "Conductor": int(e["Conductor"])} for e in signature["Edges"]]
-        conductors = conductor_count(feature)
-        if conductors > 1:
-            # One reference per canonical conductor label; positions are placeholders.
-            model["ConductorReferences"] = [[0.0, 0.0, -radius * (k + 1)] for k in range(conductors)]
-        if feature["Type"] != "SpatialEdgeCluster":
-            law = json.loads(feature["Signature"]["Law"]) if "Law" in feature["Signature"] else {"Type": "PEC"}
-            if law != {"Type": "PEC"}:
-                model["BoundaryCondition"] = law
+        feature_type = members[0]["Type"]
+        model_name = f"{feature_type}-{signature_hash(representative)[:12]}"
+        model = signature_model(feature_type, representative, radius, model_name, matrix_directory)
+        model["Instances"] = len(members)
+        model["DistinctSignatures"] = len({json.dumps(f["Signature"], sort_keys=True) for f in members})
+        model["ParameterSpread"] = spread
         models.append(model)
     return {"Version": 2, "Name": name, "MatchingRadius": radius, "TraceLiftVersion": 2, "Models": models}
 

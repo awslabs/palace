@@ -53,6 +53,7 @@ CPW2D = HERE.parents[1] / "cpw2d"
 for path in (str(HERE), str(CPW2D)):
     if path not in sys.path:
         sys.path.insert(0, path)
+import cluster_signature_geometry  # noqa: E402
 import prepare_surface_response_coupons as planner  # noqa: E402
 import register_case  # noqa: E402
 from refreeze_manifest_tools import PRODUCTION_MANIFEST  # noqa: E402
@@ -108,11 +109,24 @@ def shared_mesh_recipe(manifest):
     return paths.pop()
 
 
-def coupon_geometry(coupon, radius):
-    """The coupon written for the generator: the requirement with the planner's canonical
-    plan-view boundary and mask regularization (prepare_surface_response_coupons.spatial_spec)."""
+def coupon_geometry(coupon, radius, parameters=None):
+    """The coupon written for the generator. A version-2 record (Geometry.Signature, no
+    Edges: the v2 cluster contract) is built in the canonical frame from its signature alone
+    (cluster_signature_geometry.cluster_coupon: edge rows from the portions, the plan-view
+    mask from the arrangement of the extended chains); a version-1 record keeps the
+    requirement with the planner's canonical plan-view boundary and mask regularization
+    (prepare_surface_response_coupons.spatial_spec)."""
     generated = copy.deepcopy(coupon)
     geometry = generated["Geometry"]
+    if coupon["Topology"] == "SpatialEdgeCluster" and "Signature" in geometry and not geometry.get("Edges"):
+        if parameters is None:
+            raise DeviceAdapterError(f"coupon {coupon['Id']}: the signature geometry needs the process parameters")
+        try:
+            generated, _ = cluster_signature_geometry.cluster_coupon(
+                generated, radius, parameters["metal_thickness"], parameters["overetch"])
+        except cluster_signature_geometry.SignatureGeometryError as error:
+            raise DeviceAdapterError(f"coupon {coupon['Id']}: no coupon geometry from its signature: {error}") from error
+        return generated
     facets = geometry.get("PlanViewFacets", [])
     if not facets:
         raise DeviceAdapterError(f"coupon {coupon['Id']} carries no PlanViewFacets: the Gmsh-only recipe needs the "
@@ -129,13 +143,32 @@ def coupon_geometry(coupon, radius):
             "BoundaryCondition": coupon["BoundaryCondition"]}
 
 
+def stamp_signature_model(library_path, coupon, radius):
+    """A version-2 coupon's model carries the record's canonical Signature (the matcher's
+    exact key for a SpatialEdgeCluster) and, as Edges, the claimed portions exactly (what
+    ModelClusterSignature canonicalises to the feature's frame; the generator wrote the
+    lengthened rows of the mesh geometry there). Version-1 coupons are left as written."""
+    geometry = coupon["Geometry"]
+    if coupon["Topology"] != "SpatialEdgeCluster" or "Signature" not in geometry or geometry.get("Edges"):
+        return False
+    library_path = Path(library_path)
+    library = json.loads(library_path.read_text())
+    if len(library.get("Models", [])) != 1:
+        raise DeviceAdapterError(f"{library_path}: the generator wrote {len(library.get('Models', []))} models, not one")
+    model = library["Models"][0]
+    model["Signature"] = geometry["Signature"]
+    model["Edges"] = cluster_signature_geometry.model_edges(coupon, radius)
+    library_path.write_text(json.dumps(library, indent=2) + "\n")
+    return True
+
+
 def generate_sources(coupon, work, *, radius, parameters, ring_size, cap_triangulation=DEFAULT_CAP_TRIANGULATION,
                      python=sys.executable):
     """generate_spatial_response.py --basis-only into `work`; returns the generator command."""
     work = Path(work)
     work.mkdir(parents=True, exist_ok=True)
     coupon_path = work / "coupon.json"
-    coupon_path.write_text(json.dumps(coupon_geometry(coupon, radius), indent=2) + "\n")
+    coupon_path.write_text(json.dumps(coupon_geometry(coupon, radius, parameters), indent=2) + "\n")
     command = [python, str(GENERATOR), str(coupon_path), "--output", str(work), "--radius", str(radius),
                "--metal-thickness", str(parameters["metal_thickness"]), "--overetch-depth", str(parameters["overetch"]),
                "--sidewall-angle", str(parameters["sidewall_angle"]), "--top-rounding", str(parameters["top_radius"]),
@@ -148,6 +181,7 @@ def generate_sources(coupon, work, *, radius, parameters, ring_size, cap_triangu
         failure = work / "generation-failure.json"
         reason = json.loads(failure.read_text()).get("Reason") if failure.is_file() else f"rc {result.returncode}"
         raise DeviceAdapterError(f"coupon {coupon['Id']}: the spatial generator stopped: {reason} (see {work / 'generate.log'})")
+    stamp_signature_model(work / "process-library.json", coupon, radius)
     return command
 
 
@@ -236,9 +270,15 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                             "Interfaces": coupon["Interfaces"], "BoundaryCondition": coupon["BoundaryCondition"],
                             "DeviceOccurrences": coupon["DeviceOccurrences"], "DeviceEdgeLength": coupon["DeviceEdgeLength"]},
             "Generator": {"Command": command, "RingSize": ring_size, "CapTriangulation": cap_triangulation,
-                          "PlanViewBoundary": "prepare_surface_response_coupons.canonical_plan_view_boundary of the "
-                                              "requirement's PlanViewFacets (process axis 1), MaskRegularization "
-                                              "TaperAndRound / Vertical (the planner's execute rule)"},
+                          "PlanViewBoundary": ("cluster_signature_geometry.cluster_coupon: the coupon in the canonical "
+                                               "frame of the version-2 Signature (edge rows from the portions, free ends "
+                                               "extended to the box, mask = metal faces of the arrangement of the "
+                                               "extended chains), boundary by canonical_plan_view_boundary (process "
+                                               "axis 2); the model carries the Signature and the exact portions as Edges"
+                                               if "Signature" in coupon["Geometry"] and not coupon["Geometry"].get("Edges")
+                                               else "prepare_surface_response_coupons.canonical_plan_view_boundary of the "
+                                                    "requirement's PlanViewFacets (process axis 1), MaskRegularization "
+                                                    "TaperAndRound / Vertical (the planner's execute rule)")},
             "ContentHash": {"SHA256": digest, "Roles": digests, "Rule": "SHA-256 over the sorted (role, digest) pairs of "
                             "the bound source files; the case id is spatial-<edges>-edge-<first 12 hex>"},
             "EtchFootprint": {"Declared": register_case.PRODUCER_DEFAULT_ETCH_FOOTPRINT,
