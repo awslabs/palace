@@ -41,17 +41,6 @@ double ComputeFluxThroughSurface(const mfem::ParGridFunction &B_gf,
                                  const MaterialOperator &mat_op,
                                  const mfem::Vector &flux_direction, MPI_Comm comm);
 
-void VerifyFluxThroughHoles(const mfem::ParGridFunction &B_gf,
-                            const std::vector<int> &hole_attributes,
-                            const std::vector<double> &target_fluxes, const Mesh &mesh,
-                            const MaterialOperator &mat_op,
-                            const mfem::Vector &flux_direction, MPI_Comm comm);
-
-// Verify flux through all holes in a multi flux setting
-void VerifyFluxThroughAllHoles(const mfem::ParGridFunction &B_gf, const IoData &iodata,
-                               int current_flux_loop_idx, const Mesh &mesh,
-                               const MaterialOperator &mat_op, MPI_Comm comm);
-
 }  // namespace palace
 
 #endif  // PALACE_DRIVERS_SURFACE_CURL_SOLVER_HPP

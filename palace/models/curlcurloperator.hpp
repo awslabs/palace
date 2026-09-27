@@ -242,17 +242,9 @@ public:
                                Vector *boundary_values);
 
   // True if flux loop idx has a London (finite-λ) film. Its flux excitation uses the
-  // shifted London sheet penalty ½∫(1/L_ksq)|A_t − a_h|² (RHS = M_sheet·a_h), so the driver
-  // measures the realized hole flux for normalization and corrects the extracted energy to
-  // |A_t − a_h|².
+  // shifted London sheet penalty ½∫(1/L_ksq)|A_t − a_h|² (RHS = M_sheet·a_h), and the
+  // extracted energy is corrected to |A_t − a_h|².
   bool IsLondonFluxLoop(int idx) const { return london_flux_loops_.count(idx) > 0; }
-
-  // Copy the fluxoid constraint functional c for London flux loop idx (c = Curlᵀ·f_hole,
-  // zeroed on the PEC essential set). Used as the RHS of the fluxoid-mode solve A_h = K⁻¹c.
-  void GetFluxConstraintVector(int idx, Vector &c) const
-  {
-    c = london_flux_constraint_.at(idx);
-  }
 
   // Measure the hole flux ∮A·dl = cᵀA of a candidate London field via the stored fluxoid
   // functional (exact by Stokes; cheaper than integrating B·n over the hole).
