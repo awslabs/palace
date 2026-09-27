@@ -6,6 +6,19 @@
 # regions bounding a gap are equipotential, as for a ground-plane cutout. Set
 # different_conductors=true for independent gap conductors or strip=true for a
 # central metal strip.
+#
+# Curved (axisymmetric) pair coupon: with `axisymmetric_radius` rho > 0 the same
+# cross-section is placed in the (r, z) half-plane (x = r) with the INNER edge at
+# r = rho (the pair occupies r in [rho, rho + separation]) for Palace
+# `Model.Axisymmetric`. `convexity` names the curvature of the canonical left
+# edge (the model's first edge e1, conductor 1) relative to its gap direction as
+# the identification records it: `:convex` = e1's metal inside the bend (e1 is
+# the inner edge of a gap, the outer edge of a strip), `:concave` = the mirrored
+# placement. The mesh is generated on the canonical cross-section (edges at
+# -+ separation / 2) and moved by the affine map x -> rho + separation / 2 + sign x
+# (sign +1 when e1 is the inner edge), so every coupon of a curvature family (all
+# rho, both convexities, the straight anchor) shares one triangulation (see
+# mesh_edge_coupon.jl).
 
 import Gmsh: gmsh
 
@@ -65,12 +78,22 @@ function generate_edge_pair_coupon(;
     lc_fine::Float64 = 0.002,
     lc_far::Float64 = 0.05,
     mesh_order::Int = 2,
+    axisymmetric_radius::Float64 = 0.0,
+    convexity::Symbol = :convex,
     filename::String,
 )
     cutout_width > 0 || error("cutout_width must be positive")
     radius > 0 || error("radius must be positive")
     !(strip && different_conductors) ||
         error("A physical metal strip cannot use different conductors")
+    axisymmetric_radius >= 0 || error("axisymmetric_radius must be nonnegative")
+    axisymmetric_radius == 0 || axisymmetric_radius > radius ||
+        error("axisymmetric_radius must exceed the coupon radius (the contour must not cross the axis)")
+    convexity in (:convex, :concave) || error("convexity must be :convex or :concave")
+    # e1's gap points toward +x (inner -> outward) for a gap, toward -x for a strip.
+    e1_inner = (convexity == :convex) != strip
+    sign = e1_inner ? 1.0 : -1.0
+    rho = axisymmetric_radius
     half_gap = 0.5 * cutout_width
     half_width = half_gap + radius
     tolerance = 1.0e-5
@@ -291,13 +314,20 @@ function generate_edge_pair_coupon(;
     gmsh.model.mesh.optimize("Netgen")
     gmsh.model.mesh.setOrder(mesh_order)
     mesh_order > 1 && gmsh.model.mesh.optimize("HighOrderElastic")
+    if rho > 0
+        # Place the canonical mesh: x -> rho + half_gap + sign x (a mirror when e1 is
+        # the outer edge; MFEM restores the element orientation on load).
+        gmsh.model.mesh.affineTransform(
+            [sign, 0.0, 0.0, rho + half_gap, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0])
+    end
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
     gmsh.option.setNumber("Mesh.Binary", 1)
     gmsh.write(filename)
 
     println("Pair coupon: separation=$(cutout_width) um, R=$(radius) um, " *
             "fabricated=$(fabricated), different_conductors=$(different_conductors), " *
-            "strip=$(strip)")
+            "strip=$(strip)" *
+            (rho > 0 ? ", axisymmetric inner radius rho=$(rho) um ($(convexity))" : ""))
     for (dim, tag) in gmsh.model.getPhysicalGroups()
         name = gmsh.model.getPhysicalName(dim, tag)
         entities = gmsh.model.getEntitiesForPhysicalGroup(dim, tag)
@@ -314,7 +344,8 @@ function main(args)
               "OUTPUT.msh [same|different|strip] [--radius R] " *
               "[--metal-thickness T] [--overetch D] [--sidewall-angle A] " *
               "[--top-radius R] [--bottom-radius R] [--lc-fine H] " *
-              "[--lc-far H] [--mesh-order P]")
+              "[--lc-far H] [--mesh-order P] [--axisymmetric-radius RHO] " *
+              "[--convexity convex|concave]")
     kind = args[1]
     kind in ("thin", "fabricated") || error("Unknown coupon kind: $kind")
     has_mode = length(args) >= 4 && !startswith(args[4], "--")
@@ -343,6 +374,8 @@ function main(args)
         "--lc-fine",
         "--lc-far",
         "--mesh-order",
+        "--axisymmetric-radius",
+        "--convexity",
     ])
     unknown = setdiff(Set(keys(options)), allowed)
     isempty(unknown) || error("Unknown option(s): $(join(sort(collect(unknown)), ", "))")
@@ -365,6 +398,8 @@ function main(args)
         lc_fine = float_option("--lc-fine", 0.002),
         lc_far = float_option("--lc-far", 0.05),
         mesh_order = int_option("--mesh-order", 2),
+        axisymmetric_radius = float_option("--axisymmetric-radius", 0.0),
+        convexity = Symbol(get(options, "--convexity", "convex")),
         filename = abspath(args[3]),
     )
 end

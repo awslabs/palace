@@ -892,6 +892,11 @@ struct Chain
   std::vector<std::pair<double, double>> kappa_nodes;
   std::vector<Interval> curved;
   std::vector<double> curved_max_kappa;
+  // The signed windowed curvature at the same nodes: positive where the chain turns toward
+  // its metal (a convex bend: metal inside the bend, the edge of a disk), negative toward
+  // the gap (concave, the edge of a hole). Its integral over a portion is the portion's
+  // signed turn toward the metal (radians), the weight of the first-order curvature term.
+  std::vector<double> signed_kappa_nodes;
   // Fitted bend arcs on this chain: (arc, x0, x1) of the arc runs (Identifier::arcs).
   std::vector<std::tuple<int, double, double>> arc_spans;
 
@@ -2802,6 +2807,25 @@ private:
   // Curved-edge chain rule helpers on the chain arc length x.
   double WindowedCurvature(const Chain &chain, double x) const;
   double MaxCurvature(const Chain &chain, double x0, double x1) const;
+  // Integral of the signed windowed curvature over the chain interval [x0, x1]: the signed
+  // turn toward the metal (radians; exact on the piecewise-linear nodes).
+  double SignedTurn(const Chain &chain, double x0, double x1) const;
+  // Extremes of the signed windowed curvature over the chain interval [x0, x1]: the
+  // largest value toward the metal (positive) and toward the gap (negative), accumulated
+  // into `extremes` (so that several intervals of one feature side combine).
+  struct SignedCurvatureExtremes
+  {
+    double toward_metal = 0.0, toward_gap = 0.0;
+  };
+  void AccumulateSignedCurvature(const Chain &chain, double x0, double x1,
+                                 SignedCurvatureExtremes &extremes) const;
+  // Convexity read on the extremes: "Convex" when the signed windowed curvature bends
+  // around the metal (the edge of a disk), "Concave" when around the gap (the edge of a
+  // hole), "Mixed" when both senses reach the curved regime (windowed bend radius below
+  // kStraightBendRadiusOverRadius R: an S-bend inside one curved section — reported in
+  // the signature, never read as one convexity; a straight-like wobble of the minority
+  // sense is not a bend of the class), empty when the interval carries no curvature.
+  std::string ConvexityName(const SignedCurvatureExtremes &extremes) const;
   bool IsCurvedAt(const Chain &chain, double x, std::size_t *section = nullptr) const;
   struct ChainPoint
   {
@@ -4013,6 +4037,101 @@ double Identifier::MaxCurvature(const Chain &chain, double x0, double x1) const
   return best;
 }
 
+double Identifier::SignedTurn(const Chain &chain, double x0, double x1) const
+{
+  if (x1 < x0)
+  {
+    std::swap(x0, x1);
+  }
+  const auto &nodes = chain.kappa_nodes;
+  if (nodes.size() < 2 || x1 <= x0)
+  {
+    return 0.0;
+  }
+  // Piecewise-linear signed curvature on the nodes; exact trapezoids on [x0, x1].
+  auto At = [&](std::size_t i, double x)
+  {
+    const double span = nodes[i + 1].first - nodes[i].first;
+    const double w = span > 0.0 ? std::clamp((x - nodes[i].first) / span, 0.0, 1.0) : 0.0;
+    return (1.0 - w) * chain.signed_kappa_nodes[i] + w * chain.signed_kappa_nodes[i + 1];
+  };
+  double turn = 0.0;
+  for (std::size_t i = 0; i + 1 < nodes.size(); i++)
+  {
+    const double a = std::max(x0, nodes[i].first), b = std::min(x1, nodes[i + 1].first);
+    if (b > a)
+    {
+      turn += 0.5 * (At(i, a) + At(i, b)) * (b - a);
+    }
+  }
+  return turn;
+}
+
+void Identifier::AccumulateSignedCurvature(const Chain &chain, double x0, double x1,
+                                          SignedCurvatureExtremes &extremes) const
+{
+  if (x1 < x0)
+  {
+    std::swap(x0, x1);
+  }
+  const auto &nodes = chain.kappa_nodes;
+  if (nodes.empty())
+  {
+    return;
+  }
+  auto Read = [&](double x)
+  {
+    const auto upper =
+        std::upper_bound(nodes.begin(), nodes.end(), std::make_pair(x, 0.0),
+                         [](const auto &a, const auto &b) { return a.first < b.first; });
+    double value = 0.0;
+    if (upper == nodes.begin())
+    {
+      value = chain.signed_kappa_nodes.front();
+    }
+    else if (upper == nodes.end())
+    {
+      value = chain.signed_kappa_nodes.back();
+    }
+    else
+    {
+      const auto i = static_cast<std::size_t>(upper - nodes.begin()) - 1;
+      const double span = nodes[i + 1].first - nodes[i].first;
+      const double w = span > 0.0 ? (x - nodes[i].first) / span : 0.0;
+      value = (1.0 - w) * chain.signed_kappa_nodes[i] + w * chain.signed_kappa_nodes[i + 1];
+    }
+    extremes.toward_metal = std::max(extremes.toward_metal, value);
+    extremes.toward_gap = std::max(extremes.toward_gap, -value);
+  };
+  Read(x0);
+  Read(x1);
+  auto first =
+      std::upper_bound(nodes.begin(), nodes.end(), std::make_pair(x0, 0.0),
+                       [](const auto &a, const auto &b) { return a.first < b.first; });
+  for (auto it = first; it != nodes.end() && it->first < x1; ++it)
+  {
+    Read(it->first);
+  }
+}
+
+std::string Identifier::ConvexityName(const SignedCurvatureExtremes &extremes) const
+{
+  if (std::max(extremes.toward_metal, extremes.toward_gap) <= 0.0)
+  {
+    return "";
+  }
+  // The same reading as the curved-section rule: a sense is a bend of the class when its
+  // windowed bend radius is (quantized strictly) below the straight threshold.
+  const double straight_radius = kStraightBendRadiusOverRadius * R;
+  auto Curved = [&](double kappa)
+  { return kappa > 0.0 && quantizer.Less(1.0 / kappa, straight_radius); };
+  if (Curved(extremes.toward_metal) && Curved(extremes.toward_gap))
+  {
+    return "Mixed";
+  }
+  return extremes.toward_gap > extremes.toward_metal ? "Concave" : "Convex";
+}
+
 bool Identifier::IsCurvedAt(const Chain &chain, double x, std::size_t *section) const
 {
   // The curved intervals are disjoint and ascending: the first whose end reaches x is the
@@ -4295,12 +4414,18 @@ void Identifier::ComputeCurvature()
       chain.joint_excluded.assign(m, false);
     }
     chain.kappa_nodes.clear();
+    chain.signed_kappa_nodes.clear();
     chain.curved.clear();
     chain.curved_max_kappa.clear();
     if (m < 2 || chain.length <= 0.0)
     {
       continue;
     }
+    // Side of the gap along the chain (constant: the chain bounds one metal face): +1 when
+    // the gap lies to the left of the traversal (process normal x tangent), -1 to the
+    // right. A turn toward the metal is a turn away from the gap.
+    auto GapLeft = [&](const Run &run)
+    { return Dot(run.gap_direction, Cross(run.process_normal, run.tangent)) > 0.0; };
     // Joints of a fitted arc (DetectArcs) take no part as joints: a rounded corner accounts
     // for them; a bend contributes its exact density 1 / radius over the arc below.
     std::set<int> chain_arcs;
@@ -4335,6 +4460,7 @@ void Identifier::ComputeCurvature()
     struct Piece
     {
       double x0, x1, density;
+      double signed_density;  // toward the metal positive
     };
     std::vector<Piece> contributions;
     for (std::size_t k = 0; k < m; k++)
@@ -4344,23 +4470,28 @@ void Identifier::ComputeCurvature()
         continue;
       }
       const std::size_t prev = (k + m - 1) % m;
-      const double half_prev = 0.5 * runs[chain.runs[prev]].length;
-      const double half = 0.5 * runs[chain.runs[k]].length;
+      const Run &a = runs[chain.runs[prev]];
+      const Run &b = runs[chain.runs[k]];
+      const double half_prev = 0.5 * a.length;
+      const double half = 0.5 * b.length;
       const double window = half_prev + half;
       if (window <= 0.0)
       {
         continue;
       }
       const double density = chain.joint_turn[k] / window;
+      const bool turn_left = Dot(Cross(a.tangent, b.tangent), b.process_normal) > 0.0;
+      const double toward_metal = turn_left != GapLeft(b) ? 1.0 : -1.0;
       const double x = chain.run_offset[k];
       if (x - half_prev < 0.0)  // the joint before run 0 of a closed chain wraps
       {
-        contributions.push_back({x - half_prev + chain.length, chain.length, density});
-        contributions.push_back({0.0, x + half, density});
+        contributions.push_back(
+            {x - half_prev + chain.length, chain.length, density, toward_metal * density});
+        contributions.push_back({0.0, x + half, density, toward_metal * density});
       }
       else
       {
-        contributions.push_back({x - half_prev, x + half, density});
+        contributions.push_back({x - half_prev, x + half, density, toward_metal * density});
       }
     }
     // Bend arcs touching this chain (through a joint or an arc segment of one of its runs):
@@ -4380,6 +4511,7 @@ void Identifier::ComputeCurvature()
     {
       const Arc &arc = arcs[static_cast<std::size_t>(a)];
       std::vector<Interval> spans;
+      std::optional<double> toward_metal;
       for (const std::size_t s : arc.segments)
       {
         const long long int r = run_of_segment[s];
@@ -4387,53 +4519,83 @@ void Identifier::ComputeCurvature()
         {
           continue;
         }
-        const std::size_t k = runs[static_cast<std::size_t>(r)].index_in_chain;
-        for (const auto &rs : runs[static_cast<std::size_t>(r)].segments)
+        const Run &run = runs[static_cast<std::size_t>(r)];
+        const std::size_t k = run.index_in_chain;
+        for (const auto &rs : run.segments)
         {
           if (rs.segment == s)
           {
             spans.emplace_back(chain.run_offset[k] + rs.t0, chain.run_offset[k] + rs.t1);
           }
         }
+        if (!toward_metal)
+        {
+          // The arc turns toward its centre: toward the metal when the centre and the gap
+          // lie on opposite sides of the run.
+          const bool centre_left =
+              Dot(Sub(arc.center, run.At(0.5 * run.length)),
+                  Cross(run.process_normal, run.tangent)) > 0.0;
+          toward_metal = centre_left != GapLeft(run) ? 1.0 : -1.0;
+        }
       }
       for (const auto &span : MergeIntervals(std::move(spans), Tol()))
       {
-        contributions.push_back({span.first, span.second, 1.0 / arc.radius});
+        contributions.push_back(
+            {span.first, span.second, 1.0 / arc.radius, *toward_metal / arc.radius});
         chain.arc_spans.emplace_back(a, span.first, span.second);
       }
     }
-    // Sweep over the contribution ends (+density at x0, -density at x1).
-    std::vector<std::pair<double, double>> events = {{0.0, 0.0}, {chain.length, 0.0}};
+    // Sweep over the contribution ends (+density at x0, -density at x1); the signed
+    // density is carried alongside (the same breakpoints).
+    struct Event
+    {
+      double x, density, signed_density;
+      bool operator<(const Event &other) const
+      {
+        return std::tie(x, density, signed_density) <
+               std::tie(other.x, other.density, other.signed_density);
+      }
+    };
+    std::vector<Event> events = {{0.0, 0.0, 0.0}, {chain.length, 0.0, 0.0}};
     for (const auto &c : contributions)
     {
-      events.emplace_back(std::clamp(c.x0, 0.0, chain.length), c.density);
-      events.emplace_back(std::clamp(c.x1, 0.0, chain.length), -c.density);
+      events.push_back({std::clamp(c.x0, 0.0, chain.length), c.density, c.signed_density});
+      events.push_back(
+          {std::clamp(c.x1, 0.0, chain.length), -c.density, -c.signed_density});
     }
     std::sort(events.begin(), events.end());
     std::vector<Piece> pieces;
-    double density = 0.0;
+    double density = 0.0, signed_density = 0.0;
     for (std::size_t i = 0; i < events.size(); i++)
     {
-      density += events[i].second;
-      if (i + 1 < events.size() && events[i + 1].first > events[i].first)
+      density += events[i].density;
+      signed_density += events[i].signed_density;
+      if (i + 1 < events.size() && events[i + 1].x > events[i].x)
       {
-        pieces.push_back({events[i].first, events[i + 1].first, std::max(0.0, density)});
+        pieces.push_back({events[i].x, events[i + 1].x, std::max(0.0, density),
+                          std::abs(signed_density) <= 1.0e-12 * std::abs(density)
+                              ? 0.0
+                              : signed_density});
       }
     }
-    std::vector<double> cumulative(pieces.size() + 1, 0.0);
+    std::vector<double> cumulative(pieces.size() + 1, 0.0), signed_cumulative(pieces.size() + 1, 0.0);
     for (std::size_t i = 0; i < pieces.size(); i++)
     {
       cumulative[i + 1] = cumulative[i] + pieces[i].density * (pieces[i].x1 - pieces[i].x0);
+      signed_cumulative[i + 1] =
+          signed_cumulative[i] + pieces[i].signed_density * (pieces[i].x1 - pieces[i].x0);
     }
     const double total_turn = cumulative.back();
-    auto F = [&](double x)
+    const double total_signed_turn = signed_cumulative.back();
+    auto Cumulative = [&](double x, bool with_sign)
     {
+      const auto &sums = with_sign ? signed_cumulative : cumulative;
       double shift = 0.0;
       if (chain.closed)
       {
         const double periods = std::floor(x / chain.length);
         x -= periods * chain.length;
-        shift = periods * total_turn;
+        shift = periods * (with_sign ? total_signed_turn : total_turn);
       }
       else
       {
@@ -4448,10 +4610,13 @@ void Identifier::ComputeCurvature()
         return shift;
       }
       const auto i = static_cast<std::size_t>(after - pieces.begin()) - 1;
-      return cumulative[i] +
-             pieces[i].density * (std::min(x, pieces[i].x1) - pieces[i].x0) + shift;
+      const double rho = with_sign ? pieces[i].signed_density : pieces[i].density;
+      return sums[i] + rho * (std::min(x, pieces[i].x1) - pieces[i].x0) + shift;
     };
+    auto F = [&](double x) { return Cumulative(x, false); };
     auto Kappa = [&](double x) { return (F(x + 0.5 * W) - F(x - 0.5 * W)) / W; };
+    auto SignedKappa = [&](double x)
+    { return (Cumulative(x + 0.5 * W, true) - Cumulative(x - 0.5 * W, true)) / W; };
     // Nodes: the ends, every density breakpoint shifted by +-W/2 (periodic images for a
     // closed chain).
     std::vector<double> xs = {0.0, chain.length};
@@ -4480,6 +4645,7 @@ void Identifier::ComputeCurvature()
     for (const double x : xs)
     {
       chain.kappa_nodes.emplace_back(x, Kappa(x));
+      chain.signed_kappa_nodes.push_back(SignedKappa(x));
     }
     // Curved: windowed bend radius 1 / kappa below the straight threshold (quantized).
     auto Curved = [&](double kappa)
@@ -6659,6 +6825,33 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       MFEM_VERIFY(max_kappa > 0.0, "A curved pair / stack without curvature!");
       signature["RadiusOverR"] =
           RoundTo(1.0 / (max_kappa * R), kSignatureLengthQuantumOverRadius);
+      // Convexity of the signature's first edge (side 0 for chirality >= 0, the last side
+      // for -1: the edge the library model's e1 is placed on): metal inside / outside the
+      // bend relative to its gap direction, read on that side's pieces — or as the
+      // opposite of the far side's when it carries no curvature of its own (a straight
+      // edge facing a bent one within the pair tolerance; concentric edges bend in
+      // opposite senses relative to their gaps). The curvature family of that convexity
+      // models the pair.
+      const int first_side = lead.chirality < 0 ? lead.sides - 1 : 0;
+      const int last_side = lead.chirality < 0 ? 0 : lead.sides - 1;
+      SignedCurvatureExtremes first, last;
+      for (const std::size_t i : members)
+      {
+        const Assigned &entry = assigned[i];
+        if (entry.side == first_side || entry.side == last_side)
+        {
+          AccumulateSignedCurvature(ChainOf(entry.chain), entry.x0, entry.x1,
+                                    entry.side == first_side ? first : last);
+        }
+      }
+      std::string convexity = ConvexityName(first);
+      if (convexity.empty())
+      {
+        const std::string other = ConvexityName(last);
+        convexity = other == "Convex" ? "Concave" : other == "Concave" ? "Convex" : other;
+      }
+      MFEM_VERIFY(!convexity.empty(), "A curved pair / stack without signed curvature!");
+      signature["Convexity"] = convexity;
     }
     const int feature = NewFeature(type, signature, lead.chirality);
     features[feature].origin = lead.origin;
@@ -8705,6 +8898,16 @@ void Identifier::Assign(IdentificationResult &result)
         signature["RadiusOverR"] =
             RoundTo(1.0 / (chain.curved_max_kappa[curved_section[i]] * R),
                     kSignatureLengthQuantumOverRadius);
+        {
+          // Convexity of the section (metal inside / outside the bend relative to the gap
+          // direction): the curvature family of that convexity models it.
+          const Interval &section = chain.curved[curved_section[i]];
+          SignedCurvatureExtremes extremes;
+          AccumulateSignedCurvature(chain, section.first, section.second, extremes);
+          const std::string convexity = ConvexityName(extremes);
+          MFEM_VERIFY(!convexity.empty(), "A curved section without signed curvature!");
+          signature["Convexity"] = convexity;
+        }
         signature["Type"] = "CurvedEdge";
         // One feature per curved section of the chain — or per fitted bend arc when the
         // section lies on one (the arc's parts on either side of an absorbed corner vertex
@@ -8883,6 +9086,8 @@ void Identifier::Assign(IdentificationResult &result)
         }
         return std::array<double, 2>{s0, s1};
       };
+      const Chain &chain = chains[chain_index.at(runs[r].chain)];
+      const double offset = chain.run_offset[RunIndexInChain(chain, r)];
       for (const auto &[lo, hi, feature, side] : assigned[r])
       {
         const auto portion = SegmentPortion(lo, hi);
@@ -8892,7 +9097,9 @@ void Identifier::Assign(IdentificationResult &result)
         }
         const auto [s0, s1] = *portion;
         table.portions.push_back({s0, s1, static_cast<double>(feature)});
-        features[feature].portions.push_back({rs.segment, s0, s1, side});
+        const double turn = SignedTurn(chain, offset + std::max(lo, rs.t0),
+                                       offset + std::min(hi, rs.t1));
+        features[feature].portions.push_back({rs.segment, s0, s1, side, turn});
         features[feature].length += s1 - s0;
         result.assigned_length += s1 - s0;
       }
@@ -9474,6 +9681,7 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
       w.Pod(p.s0);
       w.Pod(p.s1);
       w.Pod(p.side);
+      w.Pod(p.turn);
     }
     w.Size(f.vertices.size());
     for (const std::size_t v : f.vertices)
@@ -9491,6 +9699,8 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
     w.Pod(f.matched_model.has_value());
     w.String(f.matched_model.value_or(""));
     w.Pod(f.match_deviation.value_or(-1.0));
+    w.Pod(f.match_note.has_value());
+    w.String(f.match_note.value_or(""));
   }
   w.Size(result.segments.size());
   for (const auto &s : result.segments)
@@ -9583,6 +9793,7 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
       p.s0 = r.Pod<double>();
       p.s1 = r.Pod<double>();
       p.side = r.Pod<int>();
+      p.turn = r.Pod<double>();
     }
     f.vertices.resize(r.Size());
     for (auto &v : f.vertices)
@@ -9611,6 +9822,12 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
     if (has_model)
     {
       f.matched_model = model;
+    }
+    const bool has_note = r.Pod<bool>();
+    const std::string note = r.String();
+    if (has_note)
+    {
+      f.match_note = note;
     }
   }
   result.segments.resize(r.Size());
@@ -9729,12 +9946,17 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
   {
     nlohmann::json portions = nlohmann::json::array();
     nlohmann::json sides = nlohmann::json::array();
+    nlohmann::json turns = nlohmann::json::array();
     bool multi_sided = false;
+    double total_turn = 0.0;
     for (const auto &portion : feature.portions)
     {
       portions.push_back({portion.segment, L(portion.s0), L(portion.s1)});
       sides.push_back(portion.side);
       multi_sided = multi_sided || portion.side != 0;
+      const double turn = std::round(portion.turn * 1.0e9) * 1.0e-9;
+      turns.push_back(turn == 0.0 ? 0.0 : turn);
+      total_turn += portion.turn;
     }
     nlohmann::json entry = {
         {"Id", feature.id},
@@ -9761,11 +9983,28 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
       entry["Match"]["Model"] = *feature.matched_model;
       entry["Match"]["Deviation"] = feature.match_deviation.value_or(0.0);
     }
+    if (feature.match_note)
+    {
+      entry["Match"]["Note"] = *feature.match_note;
+    }
     if (multi_sided)
     {
       // Side of every portion of a pair / parallel cluster (parallel to Portions): the
       // signature's edge order for chirality +1, reversed for -1.
       entry["Sides"] = sides;
+    }
+    if (feature.bend_radius_over_R)
+    {
+      // Signed turn toward the metal of every portion (radians, parallel to Portions; not
+      // hashed): the weight of the first-order curvature term on a straight-like feature
+      // (design (b)7); absent on features of straight chains. Their sum for a one-sided
+      // feature (the sides of a pair turn in opposite senses).
+      entry["PortionTurns"] = turns;
+      if (!multi_sided)
+      {
+        const double sum = std::round(total_turn * 1.0e9) * 1.0e-9;
+        entry["TurnTowardMetal"] = sum == 0.0 ? 0.0 : sum;
+      }
     }
     feature_list.push_back(std::move(entry));
   }

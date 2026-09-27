@@ -30,11 +30,18 @@ R_mesh / R_library):
   patch sits on the mesh) with the chord's sagitta L^2 / (8 r) as an allowance (the design
   offsets are the concentric circles' separations), and the pair rule's own 5 % of the
   offset (PairSeparationToleranceRelative: the admissible variation of a pair's separation).
-* SameConductorGap / DifferentConductorGap / SameConductorStrip: origin -+ Separation / 2 u
-  lies on side 0 / 1 (swapped for chirality -1), chords and the 5 % likewise.
+* SameConductorGap / DifferentConductorGap / SameConductorStrip and their Curved* classes:
+  origin -+ Separation / 2 u lies on side 0 / 1 (swapped for chirality -1), chords and the
+  5 % likewise. A curvature-family runtime model ``<anchor>@<convexity>-kappa<k>-<rule>``
+  resolves to its anchor (same basis, separation and references); a first-order node (a
+  straight-like bend splits its quadrature between the anchor and the family node at
+  kappa = 1 / StraightBendRadiusOverR) is a library model. For every patch of such a curved
+  coupon the model's first edge e1 must sit on the side of the coupon's recorded Convexity:
+  the inner circle of a gap / the outer circle of a strip for Convex (read on the claimed
+  fitted arc under e1; a chord without a fitted arc is not checked).
 
-A model whose placement cannot be evaluated from its record (a curved pair, a topology the
-gate does not cover) is listed, never silently passed. This gate is the one a misplaced
+A model whose placement cannot be evaluated from its record (a topology the gate does not
+cover, a runtime model the library does not resolve) is listed, never silently passed. This gate is the one a misplaced
 coupon fails while every coverage gate passes (the 2394fdb0c failure class: a version-2
 cluster model canonicalised to another frame; a chorded arc model re-canonicalised from its
 chords).
@@ -70,7 +77,45 @@ PAIR_SEPARATION_TOLERANCE = 0.05
 CLUSTER_TYPES = ("SpatialEdgeCluster",)
 CORNER_TYPES = ("ConvexCorner", "ConcaveCorner")
 STACK_TYPES = ("ParallelEdgeCluster",)
-PAIR_TYPES = ("SameConductorGap", "DifferentConductorGap", "SameConductorStrip")
+PAIR_TYPES = ("SameConductorGap", "DifferentConductorGap", "SameConductorStrip",
+              "CurvedSameConductorGap", "CurvedDifferentConductorGap", "CurvedSameConductorStrip")
+STRIP_TYPES = ("SameConductorStrip", "CurvedSameConductorStrip")
+
+
+def resolve_model(models, name):
+    """The library model a dry-run patch refers to: the model of that name, or for a
+    curvature-family runtime model `<anchor>@<convexity>-kappa<k>-<rule>` its straight anchor
+    (the blend shares the anchor's basis, separation and conductor references) together with
+    the blend's convexity. Returns (model, convexity or None)."""
+    model = models.get(name)
+    if model is not None:
+        return model, model.get("Convexity")
+    if "@" in name:
+        anchor, tail = name.rsplit("@", 1)
+        model = models.get(anchor)
+        if model is not None and "-kappa" in tail:
+            convexity = tail.split("-kappa", 1)[0]
+            return model, convexity.capitalize()
+    return None, None
+
+
+def pair_side_convexity(claimed, row, separation, strip):
+    """Convexity of the model's first edge e1 as placed by a pair patch, read on the claimed
+    fitted arc under e1 (metal inside the bend = Convex: e1 on the inner circle of a gap or
+    the outer circle of a strip); None when e1 lies on no fitted arc (a straight chord)."""
+    origin, axes = row["Origin"], row["Axes"]
+    e1 = origin - 0.5 * separation * axes[0]
+    e2 = origin + 0.5 * separation * axes[0]
+    best = None
+    for entry in claimed.arc_ranges.values():
+        d = abs(float(np.linalg.norm(e1 - entry["center"])) - entry["radius"])
+        if best is None or d < best[0]:
+            best = (d, entry)
+    if best is None or best[0] > PAIR_SEPARATION_TOLERANCE * separation:
+        return None
+    center = best[1]["center"]
+    e1_inner = float(np.linalg.norm(e1 - center)) < float(np.linalg.norm(e2 - center))
+    return "Convex" if e1_inner != strip else "Concave"
 
 
 def gate(name, passed, detail, evaluable=True):
@@ -241,12 +286,18 @@ def placement_gates(identification, patches, library, radius):
         if feature is None or feature["Match"]["Status"] != "Matched":
             continue
         kind = feature["Type"]
-        model_name = rows[0]["Model"]
-        model = models.get(model_name)
-        if model is None:
+        # A feature's patches may refer to several runtime models (a straight-like bend
+        # splits its quadrature between the anchor and the family's first-order node); every
+        # one must resolve to a library model (a curvature-family blend to its anchor).
+        model_names = sorted({r["Model"] for r in rows})
+        model_name = model_names[0]
+        resolved = {name: resolve_model(models, name) for name in model_names}
+        missing = [name for name, (m, _) in resolved.items() if m is None]
+        if missing:
             # The dry run wrote the model's name; a library without it cannot be audited.
-            not_evaluable.append({"Feature": feature_id, "Type": kind, "Model": model_name, "Reason": "model not in the library"})
+            not_evaluable.append({"Feature": feature_id, "Type": kind, "Model": ", ".join(missing), "Reason": "model not in the library"})
             continue
+        model = resolved[model_name][0]
         normal = np.asarray(feature["Frame"]["Axes"][2], dtype=float)
         claimed = ClaimedGeometry(feature, segments, arcs, normal)
         entry = {"Feature": feature_id, "Type": kind, "Model": model_name, "WorstOverR": 0.0, "Checks": 0, "Defects": []}
@@ -364,9 +415,15 @@ def placement_gates(identification, patches, library, radius):
             else:
                 not_evaluable.append({"Feature": feature_id, "Type": kind, "Model": model_name, "Reason": "no Separation and no Signature"})
                 continue
+            for name, (other, _) in resolved.items():
+                if abs(float(other.get("Separation", separation / scale)) * scale - separation) > tol:
+                    entry["Defects"].append({"Point": "model separations", "DeviationOverR": math.inf, "Mapped": None, "Models": model_names})
+                    entry["Checks"] += 1
             sides = claimed.sides()
             chirality = int(feature.get("Chirality", 1))
             ordered = sides if chirality >= 0 else list(reversed(sides))
+            strip = kind in STRIP_TYPES
+            convexity_checks = 0
             if len(ordered) != 2:
                 entry["Defects"].append({"Point": "side count", "DeviationOverR": math.inf, "Mapped": None, "Sides": len(ordered)})
                 entry["Checks"] += 1
@@ -377,7 +434,20 @@ def placement_gates(identification, patches, library, radius):
                         q = origin + sign * 0.5 * separation * axes[0]
                         record(f"patch {row['Patch']} side {k}", claimed.distance(q, side=ordered[k], chords=True), q,
                                max(chord_sagitta(row), PAIR_SEPARATION_TOLERANCE * 0.5 * separation - tol))
+                    # Curved coupon on a bent pair (a curvature family blend or a first-order
+                    # node): the model's e1 must sit on the side of its recorded convexity
+                    # (inner circle of a gap / outer circle of a strip for Convex).
+                    expected = resolved[row["Model"]][1]
+                    if expected in ("Convex", "Concave"):
+                        placed = pair_side_convexity(claimed, row, separation, strip)
+                        if placed is not None:
+                            convexity_checks += 1
+                            entry["Checks"] += 1
+                            if placed != expected and len(entry["Defects"]) < 8:
+                                entry["Defects"].append({"Point": f"patch {row['Patch']} convexity", "DeviationOverR": math.inf, "Mapped": [float(x) for x in origin], "Model": row["Model"], "Expected": expected, "Placed": placed})
             entry["Patches"] = len(rows)
+            entry["Models"] = model_names
+            entry["ConvexityChecks"] = convexity_checks
             results["Pairs"].append(entry)
         else:
             continue  # isolated / curved edges: the patch is the quadrature point itself
@@ -393,7 +463,7 @@ def placement_gates(identification, patches, library, radius):
             "Checks": sum(e["Checks"] for e in entries),
             "WorstDeviationOverR": worst,
             "ToleranceOverR": SIGNATURE_TOLERANCE_OVER_R,
-            "Models": sorted({e["Model"] for e in entries}),
+            "Models": sorted({m for e in entries for m in e.get("Models", [e["Model"]])}),
             "FeaturesWithDefects": len(defects),
             "Examples": [{k: v for k, v in e.items() if k != "Checks"} for e in defects[:6]],
             "Basis": "model geometry (library units x R_mesh / R_library) mapped through the dry-run patch frame lies on the feature's claimed portions (straight segments; arcs on their fitted circle within the claimed range) within the signature parameter tolerance; stack / pair patches on the mesh chords within the chord sagitta and the pair rule's 5 % of the offset (a slow taper wider than 5 % about its mean fails by construction: the coupon at the mean separation)",

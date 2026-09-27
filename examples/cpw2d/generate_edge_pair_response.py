@@ -1,12 +1,69 @@
 #!/usr/bin/env python3
 
-"""Generate contour hat bases and Palace configs for a coupled edge-pair coupon."""
+"""Generate contour hat bases and Palace configs for a coupled edge-pair coupon.
+
+Curved (axisymmetric) pair coupon: --axisymmetric-radius RHO places the same cross-section
+in the (r, z) half-plane with the INNER edge at r = rho (the pair occupies r in
+[rho, rho + separation]; mesh_edge_pair_coupon.jl with the same --axisymmetric-radius /
+--convexity), so the coupon represents the concentric circular edges of an annular gap /
+strip. --convexity names the curvature of the canonical left edge (the model's first edge
+e1, conductor 1) relative to its gap direction as the identification records it: convex =
+e1's metal inside the bend (e1 is the inner edge of a gap, the outer edge of a strip),
+concave = the mirrored placement. The library record then carries Topology
+Curved<straight topology>, Kappa = R / rho, Convexity, AxisymmetricRadius and CouponDepth =
+2 pi (rho + separation / 2), the full-revolution length of the pair's centreline (the
+FEATURES pair measure: the mean of the two sides).
+"""
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 import numpy as np
+
+
+class PairPlacement:
+    """Map from the canonical pair cross-section (edges at -+ separation / 2) to the mesh:
+    x -> rho + separation / 2 + sign x with sign +1 when e1 is the inner edge (a convex gap
+    edge or a concave strip edge), -1 otherwise; the identity for a straight coupon (see
+    generate_edge_response.CouponPlacement)."""
+
+    def __init__(self, axisymmetric_radius=0.0, convexity="convex", separation=0.0,
+                 strip=False):
+        if axisymmetric_radius < 0.0:
+            raise ValueError("axisymmetric radius must be nonnegative")
+        if convexity not in ("convex", "concave"):
+            raise ValueError("convexity must be convex or concave")
+        self.rho = axisymmetric_radius
+        self.convexity = convexity
+        # e1's gap points toward +x (inner -> outward) for a gap, toward -x for a strip.
+        self.e1_inner = (convexity == "convex") != bool(strip)
+        self.sign = 1.0 if self.e1_inner else -1.0
+        self.half_gap = 0.5 * separation
+
+    @property
+    def axisymmetric(self):
+        return self.rho > 0.0
+
+    @property
+    def centreline_radius(self):
+        return self.rho + self.half_gap
+
+    def to_mesh(self, points):
+        points = np.array(points, dtype=float, copy=True)
+        if self.axisymmetric:
+            points[..., 0] = self.centreline_radius + self.sign * points[..., 0]
+        return points
+
+    def to_canonical(self, points):
+        points = np.array(points, dtype=float, copy=True)
+        if self.axisymmetric:
+            points[..., 0] = self.sign * (points[..., 0] - self.centreline_radius)
+        return points
+
+
+PLACEMENT = PairPlacement()
 
 
 INTERFACE_PROPERTIES = {
@@ -94,7 +151,10 @@ def write_bases(
             )
         )
     )
-    points = np.asarray(
+    # The hat traces (Palace DataFile) are in mesh coordinates; the library's basis points
+    # stay in the canonical coupon frame (edges at -+ separation / 2), which the matcher
+    # maps onto a device pair through the patch frame.
+    points = PLACEMENT.to_mesh(
         [contour_point(distance, half_width, radius) for distance in distances]
     )
     knots = np.asarray(
@@ -239,6 +299,7 @@ def write_heldout(
     conductor_coefficient = 0.17 if conductor_trace is not None else 0.0
 
     def free_potential(points):
+        points = PLACEMENT.to_canonical(points)
         x = points[:, 0] / radius
         y = points[:, 1] / radius
         polynomial = (
@@ -268,7 +329,8 @@ def write_heldout(
             return cutoff * polynomial + (1.0 - cutoff) * targets
         return cutoff * polynomial
 
-    coefficients = list(free_potential(basis_points))
+    # basis_points.csv is canonical, the trace samples are in mesh coordinates.
+    coefficients = list(free_potential(PLACEMENT.to_mesh(basis_points)))
     values = free_potential(coordinates)
     if conductor_trace is not None:
         coefficients.append(conductor_coefficient)
@@ -402,13 +464,16 @@ def make_config(
                 "DataFile": str(conductor_trace),
             }
         )
+    model = {"Mesh": str(mesh), "L0": 1.0e-6, "Lc": coupon_depth}
+    if PLACEMENT.axisymmetric:
+        model["Axisymmetric"] = True
     return {
         "Problem": {
             "Type": "Electrostatic",
             "Verbose": 1,
             "Output": str(output / "postpro" / name),
         },
-        "Model": {"Mesh": str(mesh), "L0": 1.0e-6, "Lc": coupon_depth},
+        "Model": model,
         "Domains": {
             "Materials": [
                 {"Attributes": [1], "Permittivity": substrate_permittivity},
@@ -444,6 +509,27 @@ def make_config(
                 "EstimatorMG": True,
             },
         },
+    }
+
+
+def curved_model_fields(topology, topology_name, separation, radius):
+    """Library record fields of a curved (axisymmetric) pair coupon: concentric edges with
+    the inner one at rho have Kappa = R / rho, the response is a full-revolution energy so
+    the CouponDepth is the centreline length 2 pi (rho + separation / 2), Convexity is the
+    curvature of the model's first edge e1 relative to its gap direction (convex = metal
+    inside the bend: e1 inner for a gap, e1 outer for a strip); a straight coupon is the
+    kappa = 0 anchor and keeps its straight record."""
+    if not PLACEMENT.axisymmetric:
+        return {}
+    kappa = radius / PLACEMENT.rho
+    return {
+        "Name": f"curved-{topology_name}-{separation:g}um-{PLACEMENT.convexity}-"
+                f"kappa{kappa:.6g}",
+        "Topology": "Curved" + topology,
+        "Kappa": kappa,
+        "Convexity": PLACEMENT.convexity.capitalize(),
+        "AxisymmetricRadius": PLACEMENT.rho,
+        "CouponDepth": 2.0 * math.pi * PLACEMENT.centreline_radius,
     }
 
 
@@ -493,6 +579,7 @@ def write_library(
             {"Type": "MA", "Coupon": 3},
         ],
     }
+    model.update(curved_model_fields(topology, topology_name, separation, radius))
     reference_offset = half_gap + 0.5 * radius
     if different_conductors:
         model["ConductorReferences"] = [
@@ -560,7 +647,19 @@ def main():
     topology = parser.add_mutually_exclusive_group()
     topology.add_argument("--different-conductors", action="store_true")
     topology.add_argument("--strip", action="store_true")
+    parser.add_argument("--axisymmetric-radius", type=float, default=0.0,
+                        help="curved coupon: inner edge radius rho (um) in the (r, z) half-plane "
+                             "(0 = straight); the mesh must be placed the same way")
+    parser.add_argument("--convexity", choices=("convex", "concave"), default="convex",
+                        help="curved coupon: curvature of the model's first edge e1 relative to "
+                             "its gap direction (convex = metal inside the bend: e1 inner for a "
+                             "gap, outer for a strip; concave = the mirrored placement)")
     args = parser.parse_args()
+    global PLACEMENT
+    PLACEMENT = PairPlacement(args.axisymmetric_radius, args.convexity, args.separation,
+                              args.strip)
+    if PLACEMENT.axisymmetric and PLACEMENT.rho <= args.radius:
+        parser.error("--axisymmetric-radius must exceed the coupon radius")
     if args.edge_distances is not None:
         distances = sorted(set(args.edge_distances))
         if not distances or any(d <= 0.0 for d in distances) or max(distances) != DEFAULT_EDGE_DISTANCES[0]:

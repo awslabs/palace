@@ -3412,6 +3412,165 @@ FindCurvedLibraryModel(const ProcessLibrary &library, LibraryTopology straight_t
   return selection;
 }
 
+// Curvature family on the three-dimensional FEATURES path (design (b)7 / (e)): a curved
+// feature (CurvedEdge, curved pair) carries RadiusOverR and Convexity in its signature;
+// when no Signature-keyed model matches it exactly, the family of its straight analogue
+// (the anchor at the feature's separation) interpolated at kappa = 1 / RadiusOverR with
+// FindCurvedLibraryModel's rule models it. A feature the family cannot model (no anchor,
+// no coupons of its convexity, kappa beyond the largest node, "Mixed" convexity: an S-bend
+// inside one curved section) is reported unmatched with the reason — never straight.
+struct FeatureCurvatureMatch
+{
+  CurvedFamilySelection selection;
+  std::string name;  // runtime model: <anchor>@<convexity>-kappa<kappa>-<rule>
+  std::string topology;
+  double kappa = 0.0;
+  bool convex = true;
+};
+
+std::optional<LibraryTopology> StraightTopologyOfCurvedFeature(const std::string &type)
+{
+  if (type == "CurvedEdge")
+  {
+    return LibraryTopology::ISOLATED_EDGE;
+  }
+  if (type == "CurvedSameConductorGap")
+  {
+    return LibraryTopology::SAME_CONDUCTOR_GAP;
+  }
+  if (type == "CurvedDifferentConductorGap")
+  {
+    return LibraryTopology::DIFFERENT_CONDUCTOR_GAP;
+  }
+  if (type == "CurvedSameConductorStrip")
+  {
+    return LibraryTopology::SAME_CONDUCTOR_STRIP;
+  }
+  return std::nullopt;
+}
+
+std::vector<std::string> ModelInterfaceNames(const LibraryModel &model)
+{
+  std::vector<std::string> names;
+  for (const auto &interface : model.interfaces)
+  {
+    names.push_back(ToString(interface.type));
+  }
+  std::sort(names.begin(), names.end());
+  names.erase(std::unique(names.begin(), names.end()), names.end());
+  return names;
+}
+
+std::string CurvedRuntimeModelName(const std::string &anchor, bool convex, double kappa,
+                                   const std::string &rule)
+{
+  std::ostringstream name;
+  name << anchor << "@" << (convex ? "convex" : "concave") << "-kappa" << std::setprecision(9)
+       << kappa << "-" << rule;
+  return name.str();
+}
+
+std::optional<FeatureCurvatureMatch>
+MatchCurvatureFamily(const ProcessLibrary &library, const IdentifiedFeature &feature,
+                     const MetalBoundaryLaw &boundary_condition, std::string &reason)
+{
+  const auto straight = StraightTopologyOfCurvedFeature(feature.type);
+  if (!straight)
+  {
+    reason = "no curvature family for " + feature.type;
+    return std::nullopt;
+  }
+  const auto &sig = feature.signature;
+  if (!sig.contains("RadiusOverR") || !sig.contains("Convexity"))
+  {
+    reason = "signature without RadiusOverR / Convexity";
+    return std::nullopt;
+  }
+  const std::string convexity = sig["Convexity"].get<std::string>();
+  if (convexity == "Mixed")
+  {
+    reason = "mixed convexity (bends of both senses in the curved regime inside one "
+             "section)";
+    return std::nullopt;
+  }
+  const bool convex = convexity == "Convex";
+  const double radius_over_R = sig["RadiusOverR"].get<double>();
+  MFEM_VERIFY(radius_over_R > 0.0, "A curved feature requires a positive RadiusOverR!");
+  const double kappa = 1.0 / radius_over_R;
+  const double separation =
+      sig.contains("SeparationOverR")
+          ? sig["SeparationOverR"].get<double>() * library.matching_radius
+          : 0.0;
+  auto selection = FindCurvedLibraryModel(library, *straight, separation, convex, kappa,
+                                          boundary_condition, reason);
+  if (!selection)
+  {
+    return std::nullopt;
+  }
+  const auto &anchor = library.models[selection->anchor];
+  if (sig.contains("Interfaces") &&
+      sig["Interfaces"].get<std::vector<std::string>>() != ModelInterfaceNames(anchor))
+  {
+    reason = "the family anchor \"" + anchor.name +
+             "\" does not map the feature's interfaces " + sig["Interfaces"].dump();
+    return std::nullopt;
+  }
+  FeatureCurvatureMatch match;
+  match.selection = *selection;
+  match.name = CurvedRuntimeModelName(anchor.name, convex, kappa, selection->rule);
+  match.topology = TopologyName(CurvedTopologyOf(*straight));
+  match.kappa = kappa;
+  match.convex = convex;
+  return match;
+}
+
+// First-order curvature term of a straight-like feature (windowed bend radius >= 10 R,
+// described by its straight model): the family node AT kappa = 1 / StraightBendRadiusOverR
+// of each convexity for the feature's straight model (its anchor). The term is evaluated
+// per portion on its signed windowed turn (IdentifiedPortion::turn); a missing node is
+// recorded (the feature keeps its straight model: the recorded straight-like rule).
+struct FirstOrderNodes
+{
+  std::optional<std::size_t> convex, concave;
+};
+
+FirstOrderNodes FindFirstOrderNodes(const ProcessLibrary &library, std::size_t anchor_index)
+{
+  FirstOrderNodes nodes;
+  const auto &anchor = library.models[anchor_index];
+  const LibraryTopology curved_topology = CurvedTopologyOf(anchor.topology);
+  if (curved_topology == anchor.topology)
+  {
+    return nodes;
+  }
+  const double first_order_kappa = 1.0 / kStraightBendRadiusOverRadius;
+  for (std::size_t i = 0; i < library.models.size(); i++)
+  {
+    const auto &model = library.models[i];
+    if (model.topology != curved_topology || !model.kappa || !model.convex ||
+        std::abs(*model.kappa - first_order_kappa) > 1.0e-9 ||
+        !CompatibleBoundaryLaw(model.boundary_condition, anchor.boundary_condition) ||
+        ModelInterfaceNames(model) != ModelInterfaceNames(anchor))
+    {
+      continue;
+    }
+    const double separation_tolerance =
+        std::max(model.separation_tolerance,
+                 1.0e-10 * std::max(library.matching_radius, anchor.separation));
+    if (std::abs(model.separation - anchor.separation) > separation_tolerance)
+    {
+      continue;
+    }
+    auto &slot = *model.convex ? nodes.convex : nodes.concave;
+    MFEM_VERIFY(!slot, "Curvature family has two "
+                           << (*model.convex ? "convex" : "concave") << " "
+                           << TopologyName(curved_topology)
+                           << " coupons at the first-order kappa!");
+    slot = i;
+  }
+  return nodes;
+}
+
 std::optional<LibrarySelection>
 FindCornerLibraryModel(const ProcessLibrary &library, LibraryTopology topology,
                        double angle, double radius,
@@ -5917,7 +6076,8 @@ IdentificationResult RunGeometryIdentification(
     MPI_Comm comm, const MetalEdgeGeometry &geometry,
     const std::vector<EdgeSegment3D> &framed_segments, const ProcessLibrary &library,
     const AutomaticResponseRequirements &describer,
-    AutomaticResponseRequirements *requirements, bool frame_normal_configured)
+    AutomaticResponseRequirements *requirements, bool frame_normal_configured,
+    std::map<int, FeatureCurvatureMatch> *curved_matches = nullptr)
 {
   const bool root = Mpi::Root(comm);
   // A one-sided edge whose face is not parallel to the process plane (the area-weighted
@@ -6092,12 +6252,57 @@ IdentificationResult RunGeometryIdentification(
   // Matching pass (the solve path consumes it as well): the model of the feature's
   // topology within the signature parameter tolerance, the nearest one (decision 85(1)).
   const auto library_keys = LibrarySignatureKeys(library, describer);
+  std::map<int, nlohmann::json> curvature_records;  // per feature, for the manifest
   for (auto &feature : result.features)
   {
     if (const auto match = library_keys.Match(feature.signature))
     {
       feature.matched_model = match->first;
       feature.match_deviation = match->second;
+    }
+    else if (StraightTopologyOfCurvedFeature(feature.type) && !feature.portions.empty())
+    {
+      // Curvature family (never silently straight): matched at its kappa or reported with
+      // the reason. The same deterministic selection on every rank (library + signature).
+      const auto it = framed.find(feature.portions.front().segment);
+      MFEM_VERIFY(it != framed.end(),
+                  "A curved feature portion lies on a segment without an edge frame!");
+      std::string reason;
+      const auto match =
+          MatchCurvatureFamily(library, feature, it->second->boundary_condition, reason);
+      if (match)
+      {
+        feature.matched_model = match->name;
+        feature.match_deviation = 0.0;
+        std::ostringstream note;
+        note << "curvature family: " << match->selection.rule << " at kappa "
+             << std::setprecision(6) << match->kappa << " ("
+             << (match->convex ? "convex" : "concave") << ")";
+        feature.match_note = note.str();
+        nlohmann::json nodes = nlohmann::json::array();
+        for (const auto &node : match->selection.nodes)
+        {
+          nodes.push_back({{"Name", library.models[node.index].name},
+                           {"Kappa", library.models[node.index].kappa.value_or(0.0)},
+                           {"Weight", node.weight}});
+        }
+        curvature_records[feature.id] = {
+            {"Anchor", library.models[match->selection.anchor].name},
+            {"Kappa", match->kappa},
+            {"Convexity", match->convex ? "Convex" : "Concave"},
+            {"InterpolationRule", match->selection.rule},
+            {"KappaMax", match->selection.kappa_max},
+            {"FirstOrderKappa", match->selection.first_order_kappa},
+            {"Nodes", nodes}};
+        if (curved_matches)
+        {
+          curved_matches->emplace(feature.id, *match);
+        }
+      }
+      else
+      {
+        feature.match_note = "curvature family: " + reason;
+      }
     }
   }
   if (!requirements || !root)
@@ -6128,6 +6333,11 @@ IdentificationResult RunGeometryIdentification(
       geometry_json["EdgeCount"] = 1;
       geometry_json["BendRadius"] =
           requirements->ScaleLength(sig["RadiusOverR"].get<double>() * R);
+      geometry_json["Kappa"] = 1.0 / sig["RadiusOverR"].get<double>();
+      if (sig.contains("Convexity"))
+      {
+        geometry_json["Convexity"] = sig["Convexity"];
+      }
     }
     else if (type == "SameConductorGap" || type == "DifferentConductorGap" ||
              type == "SameConductorStrip" || type == "UnclassifiedParallelPair" ||
@@ -6141,6 +6351,11 @@ IdentificationResult RunGeometryIdentification(
       {
         geometry_json["BendRadius"] =
             requirements->ScaleLength(sig["RadiusOverR"].get<double>() * R);
+        geometry_json["Kappa"] = 1.0 / sig["RadiusOverR"].get<double>();
+      }
+      if (sig.contains("Convexity"))
+      {
+        geometry_json["Convexity"] = sig["Convexity"];
       }
     }
     else if (type == "ParallelEdgeCluster" || type == "CurvedParallelEdgeCluster")
@@ -6187,6 +6402,8 @@ IdentificationResult RunGeometryIdentification(
     double length = 0.0;
     std::set<std::string> models;
     bool exact = true;
+    nlohmann::json curvature_family;  // the family selection of a curved feature
+    std::set<std::string> notes;      // matching notes (family refusals)
   };
   struct GroupBase
   {
@@ -6259,6 +6476,15 @@ IdentificationResult RunGeometryIdentification(
     {
       instance->second.models.insert(*feature.matched_model);
     }
+    if (const auto record = curvature_records.find(feature.id);
+        record != curvature_records.end())
+    {
+      instance->second.curvature_family = record->second;
+    }
+    else if (feature.match_note && !feature.matched_model)
+    {
+      instance->second.notes.insert(*feature.match_note);
+    }
   }
   for (auto &[base_key, base] : bases)
   {
@@ -6301,7 +6527,8 @@ IdentificationResult RunGeometryIdentification(
       std::vector<nlohmann::json> signatures;
       int count = 0, feature_instances = 0;
       double length = 0.0;
-      std::set<std::string> models;
+      std::set<std::string> models, notes;
+      nlohmann::json curvature_family;
       bool exact = true;
       for (const std::size_t i : members)
       {
@@ -6311,6 +6538,11 @@ IdentificationResult RunGeometryIdentification(
         feature_instances += instance.features;
         length += instance.length;
         models.insert(instance.models.begin(), instance.models.end());
+        notes.insert(instance.notes.begin(), instance.notes.end());
+        if (curvature_family.is_null() && !instance.curvature_family.is_null())
+        {
+          curvature_family = instance.curvature_family;
+        }
         exact = exact && instance.exact;
       }
       const nlohmann::json representative = RepresentativeSignature(signatures);
@@ -6343,6 +6575,21 @@ IdentificationResult RunGeometryIdentification(
         }
         record["SelectedModels"] = selected;
       }
+      if (!curvature_family.is_null())
+      {
+        // The family selection (anchor, nodes, weights, rule) is the recorded
+        // interpolation at the group's kappa (a group spans one signature tolerance);
+        // Status "Interpolated" as on the two-dimensional path unless kappa is a node.
+        record["CurvatureFamily"] = curvature_family;
+        if (curvature_family["InterpolationRule"] != "exact")
+        {
+          record["Status"] = "Interpolated";
+        }
+      }
+      if (!notes.empty())
+      {
+        record["Notes"] = notes;
+      }
       requirements->AddFeatureRecord(record, count, length);
     }
   }
@@ -6369,6 +6616,15 @@ struct FeaturePatchSummary
   // with a warning, never patched silently.
   std::vector<int> inconsistent_features;
   double inconsistent_length = 0.0;
+  // Curvature (design (b)7): features patched by a curvature family blend, and the
+  // straight-like features with a bend whose first-order term was evaluated (both family
+  // nodes at 1 / StraightBendRadiusOverR found) or could not be (a node missing: the
+  // feature keeps its straight model; count and bent length recorded, never silent).
+  int curved_family_features = 0;
+  int first_order_features = 0;
+  int first_order_missing_features = 0;
+  double first_order_missing_turn = 0.0;  // |turn| (radians) left uncorrected
+  std::set<std::string> first_order_missing_nodes;
 };
 
 // A pair's sample-to-partner distances must agree with its separation within twice the
@@ -6382,7 +6638,8 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
                                         const mfem::IntegrationRule &quadrature,
                                         const AutomaticResponseRequirements &describer,
                                         AutomaticResponseDiagnostics *diagnostics,
-                                        ResponseCorrectionData &result)
+                                        ResponseCorrectionData &result,
+                                        const std::map<int, FeatureCurvatureMatch> &curved_matches = {})
 {
   FeaturePatchSummary summary;
   const double R = library.matching_radius;
@@ -6406,6 +6663,7 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
     std::size_t geometry_index = 0;
     double s0 = 0.0, s1 = 0.0;
     int side = 0;
+    double turn = 0.0;  // signed windowed turn toward the metal (radians)
   };
   auto Frame = [&](const IdentifiedPortion &portion)
   {
@@ -6424,17 +6682,23 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
     fp.s0 = portion.s0;
     fp.s1 = portion.s1;
     fp.side = portion.side;
+    fp.turn = portion.turn;
     return fp;
   };
   auto IsPec = [](const EdgeSegment3D &segment)
   { return segment.boundary_condition.type == MetalBoundaryConditionType::PEC; };
 
-  // One runtime model per (library model, target interfaces by slot).
-  std::map<std::pair<std::size_t, std::string>, int> runtime_models;
+  // One runtime model per (library model, target interfaces by slot); a curvature-family
+  // blend is one runtime model per (blend name, slots): the anchor's basis and interfaces
+  // with matrices = the weighted sum of the nodes' matrices, each rescaled to the anchor's
+  // coupon depth (Lagrange weights may be negative, so the combination is formed on the
+  // matrices, as on the two-dimensional path).
+  std::map<std::pair<std::string, std::string>, int> runtime_models;
   int next_model_index = 1;
   auto RuntimeModel =
       [&](std::size_t model_index,
-          const std::map<int, std::map<InterfaceDielectric, int>> &targets_by_slot)
+          const std::map<int, std::map<InterfaceDielectric, int>> &targets_by_slot,
+          const FeatureCurvatureMatch *blend = nullptr)
   {
     std::string key;
     for (const auto &[slot, targets] : targets_by_slot)
@@ -6446,14 +6710,35 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
       }
       key += ";";
     }
-    auto [it, inserted] = runtime_models.emplace(std::make_pair(model_index, key), 0);
+    const auto &source = library.models[model_index];
+    auto [it, inserted] = runtime_models.emplace(
+        std::make_pair(blend ? blend->name : source.name, key), 0);
     if (inserted)
     {
-      const auto &source = library.models[model_index];
       auto model = source.response;
       model.idx = next_model_index++;
-      model.name = source.name;
-      model.topology = TopologyName(source.topology);
+      model.name = blend ? blend->name : source.name;
+      model.topology = blend ? blend->topology : TopologyName(source.topology);
+      if (blend)
+      {
+        MFEM_VERIFY(source.coupon_depth > 0.0,
+                    "Curvature interpolation requires CouponDepth on the straight anchor!");
+        std::ostringstream nodes;
+        for (const auto &node : blend->selection.nodes)
+        {
+          const auto &coupon = library.models[node.index];
+          MFEM_VERIFY(coupon.coupon_depth > 0.0,
+                      "Curvature interpolation requires CouponDepth on every coupon!");
+          model.blend.push_back({node.weight * source.coupon_depth / coupon.coupon_depth,
+                                 coupon.response.fabricated_matrix,
+                                 coupon.response.thin_matrix,
+                                 coupon.response.fabricated_surface_matrix,
+                                 coupon.response.thin_surface_matrix});
+          nodes << (model.blend.size() == 1 ? "" : ", ") << coupon.name << " x "
+                << std::setprecision(6) << node.weight;
+        }
+        Mpi::Print(" Curvature interpolation {}: {}\n", blend->name, nodes.str());
+      }
       MapLibraryInterfaces(source, targets_by_slot, model);
       result.models.push_back(std::move(model));
       it->second = result.models.back().idx;
@@ -6462,11 +6747,11 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
   };
 
   auto Emit = [&](ResponsePatchData patch, std::size_t model_index, int runtime,
-                  const IdentifiedFeature &feature)
+                  const IdentifiedFeature &feature, double model_weight = 1.0)
   {
     patch.model = runtime;
     patch.provenance.feature = feature.id;
-    patch.provenance.model_weight = 1.0;
+    patch.provenance.model_weight = model_weight;
     if (diagnostics)
     {
       diagnostics->boundary_law_verified &=
@@ -6476,34 +6761,107 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
     summary.patches_by_type[feature.type]++;
   };
 
+  // First-order curvature term of a straight-like portion (design (b)7, the linear rule
+  // keyed to StraightBendRadiusOverR evaluated where the curvature is): the portion's
+  // local kappa = R |turn| / length (dimensionless, <= 1 / StraightBendRadiusOverR on a
+  // straight-like chain) splits every quadrature point between the anchor (model weight
+  // 1 - a) and the family node at the first-order kappa of the turn's convexity (weight
+  // a = kappa / FirstOrderKappa): two co-located positive patches whose assembled matrices
+  // are the linear interpolant. For a pair the kappa is that of the INNER edge (the
+  // family's Kappa = R / rho_inner): an outer-side sample reads rho_inner = rho - s.
+  struct FirstOrderSplit
+  {
+    std::size_t node = 0;  // library index of the first-order node
+    int runtime = 0;
+    double a = 0.0;  // weight of the node (0: anchor only)
+  };
   // Longitudinal quadrature over one framed portion: one patch per quadrature point,
-  // weight = portion length x quadrature weight x side factor / coupon depth.
+  // weight = portion length x quadrature weight x side factor / coupon depth (times the
+  // model weight of a first-order split).
   auto Quadrature = [&](const FramedPortion &fp, double side_factor,
                         std::size_t model_index, int runtime,
-                        const IdentifiedFeature &feature, const auto &Place)
+                        const IdentifiedFeature &feature, const auto &Place,
+                        const std::optional<FirstOrderSplit> &split = std::nullopt)
   {
     const auto &model = library.models[model_index];
     MFEM_VERIFY(model.coupon_depth > 0.0,
                 "Three-dimensional response correction requires CouponDepth for every "
                 "selected fabrication-process response model (\""
                     << model.name << "\")!");
+    std::vector<std::tuple<std::size_t, int, double>> terms = {{model_index, runtime, 1.0}};
+    if (split && split->a > 0.0)
+    {
+      terms = {{model_index, runtime, 1.0 - split->a}, {split->node, split->runtime, split->a}};
+      MFEM_VERIFY(library.models[split->node].coupon_depth > 0.0,
+                  "Curvature interpolation requires CouponDepth on every coupon!");
+    }
     for (int q = 0; q < quadrature.GetNPoints(); q++)
     {
       const auto &ip = quadrature.IntPoint(q);
       const double t = fp.a + (fp.b - fp.a) * ip.x;
       const Point3D point = Interpolate(*fp.segment, t);
-      ResponsePatchData patch;
-      Place(point, patch);
-      patch.conductor_references = model.conductor_references;
-      patch.weight = side_factor * (fp.b - fp.a) * ip.weight / model.coupon_depth;
-      patch.provenance.segment = static_cast<int>(fp.geometry_index);
-      patch.provenance.s0 = fp.s0;
-      patch.provenance.s1 = fp.s1;
-      patch.provenance.quadrature_weight = ip.weight;
-      patch.provenance.side_factor = side_factor;
-      patch.provenance.coupon_depth = model.coupon_depth;
-      Emit(std::move(patch), model_index, runtime, feature);
+      for (const auto &[term_model, term_runtime, model_weight] : terms)
+      {
+        if (model_weight <= 0.0)
+        {
+          continue;
+        }
+        const auto &term = library.models[term_model];
+        ResponsePatchData patch;
+        Place(point, patch);
+        patch.conductor_references = term.conductor_references;
+        patch.weight =
+            model_weight * side_factor * (fp.b - fp.a) * ip.weight / term.coupon_depth;
+        patch.provenance.segment = static_cast<int>(fp.geometry_index);
+        patch.provenance.s0 = fp.s0;
+        patch.provenance.s1 = fp.s1;
+        patch.provenance.quadrature_weight = ip.weight;
+        patch.provenance.side_factor = side_factor;
+        patch.provenance.coupon_depth = term.coupon_depth;
+        Emit(std::move(patch), term_model, term_runtime, feature, model_weight);
+      }
     }
+  };
+  // The first-order split of a portion of a straight-like feature: the node of the turn's
+  // convexity (for a pair: of the edge the model's first edge e1 lands on — the far side
+  // turns in the opposite sense) at a = kappa_inner / FirstOrderKappa, clamped to [0, 1]
+  // (roundoff at the straight-like boundary); nullopt (anchor only, recorded) when the node
+  // is missing or the portion carries no turn.
+  const double first_order_kappa = 1.0 / kStraightBendRadiusOverRadius;
+  auto SplitOf = [&](const FramedPortion &fp, const FirstOrderNodes &nodes,
+                     const std::map<int, std::map<InterfaceDielectric, int>> &slots,
+                     bool e1_side, bool strip, double separation,
+                     std::size_t anchor_index) -> std::optional<FirstOrderSplit>
+  {
+    const double length = fp.b - fp.a;
+    if (std::abs(fp.turn) <= 0.0 || length <= 0.0)
+    {
+      return std::nullopt;
+    }
+    const bool convex_e1 = e1_side ? fp.turn > 0.0 : fp.turn < 0.0;
+    // Inner edge of a pair: the convex edge of a gap, the concave edge of a strip.
+    const bool inner = separation <= 0.0 || ((fp.turn > 0.0) != strip);
+    const double rho_side = length / std::abs(fp.turn);
+    const double rho_inner = inner ? rho_side : rho_side - separation;
+    if (rho_inner <= 0.0)
+    {
+      return std::nullopt;  // an outer edge tighter than the separation: not a pair bend
+    }
+    const double kappa = R / rho_inner;
+    const auto node = convex_e1 ? nodes.convex : nodes.concave;
+    if (!node)
+    {
+      summary.first_order_missing_turn += std::abs(fp.turn);
+      summary.first_order_missing_nodes.insert(
+          TopologyName(CurvedTopologyOf(library.models[anchor_index].topology)) +
+          std::string(convex_e1 ? " convex" : " concave"));
+      return std::nullopt;
+    }
+    FirstOrderSplit split;
+    split.node = *node;
+    split.runtime = RuntimeModel(*node, slots);
+    split.a = std::clamp(kappa / first_order_kappa, 0.0, 1.0);
+    return split;
   };
 
   // Closest point of p on the sub-segments of the other side of a pair.
@@ -6569,10 +6927,28 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
       }
       continue;
     }
-    const auto model_it = model_by_name.find(*feature.matched_model);
-    MFEM_VERIFY(model_it != model_by_name.end(),
-                "Matched library model \"" << *feature.matched_model << "\" not found!");
-    const std::size_t model_index = model_it->second;
+    // The feature's model: a library model by name, or a curvature-family blend on its
+    // anchor (the straight analogue; the runtime model carries the blended matrices).
+    const auto curved_match = curved_matches.find(feature.id);
+    const FeatureCurvatureMatch *blend =
+        curved_match != curved_matches.end() ? &curved_match->second : nullptr;
+    std::size_t model_index = 0;
+    if (blend)
+    {
+      MFEM_VERIFY(blend->name == *feature.matched_model,
+                  "Curved feature " << feature.id << " matched \"" << *feature.matched_model
+                                    << "\" but its curvature family is \"" << blend->name
+                                    << "\"!");
+      model_index = blend->selection.anchor;
+      summary.curved_family_features++;
+    }
+    else
+    {
+      const auto model_it = model_by_name.find(*feature.matched_model);
+      MFEM_VERIFY(model_it != model_by_name.end(),
+                  "Matched library model \"" << *feature.matched_model << "\" not found!");
+      model_index = model_it->second;
+    }
     const auto &model = library.models[model_index];
     summary.matched_features++;
     summary.matched_length += feature_length;
@@ -6603,27 +6979,48 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
     {
       targets_by_slot.emplace(static_cast<int>(targets_by_slot.size()), targets);
     }
-    const int runtime = RuntimeModel(model_index, targets_by_slot);
+    const int runtime = RuntimeModel(model_index, targets_by_slot, blend);
     const Point3D n = feature.axes[2];
+    // First-order curvature term of a straight-like feature with a bend (a straight
+    // model on portions with a nonzero turn): the family nodes at the first-order kappa.
+    const bool straight_like_bend =
+        !blend && feature.bend_radius_over_R &&
+        (feature.type == "IsolatedEdge" || feature.type == "SameConductorGap" ||
+         feature.type == "DifferentConductorGap" || feature.type == "SameConductorStrip") &&
+        std::any_of(portions.begin(), portions.end(),
+                    [](const FramedPortion &fp) { return fp.turn != 0.0; });
+    FirstOrderNodes first_order_nodes;
+    if (straight_like_bend)
+    {
+      first_order_nodes = FindFirstOrderNodes(library, model_index);
+      summary.first_order_features++;
+    }
+    const double missing_turn_before = summary.first_order_missing_turn;
 
     if (feature.type == "IsolatedEdge" || feature.type == "CurvedEdge")
     {
       for (const auto &fp : portions)
       {
         const EdgeSegment3D &segment = *fp.segment;
-        Quadrature(fp, 1.0, model_index, runtime, feature,
-                   [&](const Point3D &point, ResponsePatchData &patch)
-                   {
-                     patch.origin = point;
-                     patch.axis_u = segment.axis_u;
-                     patch.axis_v = segment.axis_v;
-                     patch.axis_w = Normalize(Cross(segment.axis_u, segment.axis_v));
-                     patch.maxwell_reference_is_pec = IsPec(segment);
-                     patch.maxwell_conductor_anchors = {
-                         patch.maxwell_reference_is_pec
-                             ? Add(point, Scale(-R, segment.axis_u))
-                             : point};
-                   });
+        const auto split =
+            straight_like_bend
+                ? SplitOf(fp, first_order_nodes, targets_by_slot, true, false, 0.0,
+                          model_index)
+                : std::nullopt;
+        Quadrature(
+            fp, 1.0, model_index, runtime, feature,
+            [&](const Point3D &point, ResponsePatchData &patch)
+            {
+              patch.origin = point;
+              patch.axis_u = segment.axis_u;
+              patch.axis_v = segment.axis_v;
+              patch.axis_w = Normalize(Cross(segment.axis_u, segment.axis_v));
+              patch.maxwell_reference_is_pec = IsPec(segment);
+              patch.maxwell_conductor_anchors = {
+                  patch.maxwell_reference_is_pec ? Add(point, Scale(-R, segment.axis_u))
+                                                 : point};
+            },
+            split);
       }
     }
     else if (feature.type == "SameConductorGap" ||
@@ -6652,7 +7049,9 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
         std::swap(ordered[0], ordered[1]);
       }
       const bool strip = model.topology == LibraryTopology::SAME_CONDUCTOR_STRIP ||
-                         model.topology == LibraryTopology::CURVED_SAME_CONDUCTOR_STRIP;
+                         model.topology == LibraryTopology::CURVED_SAME_CONDUCTOR_STRIP ||
+                         (blend && blend->topology ==
+                                       TopologyName(LibraryTopology::CURVED_SAME_CONDUCTOR_STRIP));
       MFEM_VERIFY(model.conductor_references.size() <= 2,
                   "A paired-edge response model requires at most two conductor "
                   "references!");
@@ -6696,6 +7095,11 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
         const auto &other = *ordered[1 - k].second;
         for (const auto &fp : side)
         {
+          const auto split =
+              straight_like_bend
+                  ? SplitOf(fp, first_order_nodes, targets_by_slot, k == 0, strip,
+                            separation, model_index)
+                  : std::nullopt;
           Quadrature(fp, 0.5, model_index, runtime, feature,
                      [&](const Point3D &point, ResponsePatchData &patch)
                      {
@@ -6728,7 +7132,8 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
                          patch.maxwell_conductor_anchors = {
                              Add(e1, Scale(-R, first.axis_u))};
                        }
-                     });
+                     },
+                     split);
         }
       }
     }
@@ -6913,6 +7318,10 @@ FeaturePatchSummary BuildFeaturePatches(const ProcessLibrary &library,
     {
       MFEM_ABORT("No patch construction for the matched feature type \"" << feature.type
                                                                          << "\"!");
+    }
+    if (straight_like_bend && summary.first_order_missing_turn > missing_turn_before)
+    {
+      summary.first_order_missing_features++;
     }
   }
   return summary;
@@ -7933,9 +8342,11 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       std::any_of(iodata.boundaries.postpro.dielectric.begin(),
                   iodata.boundaries.postpro.dielectric.end(), [](const auto &entry)
                   { return entry.second.edge_frame_normal.has_value(); });
+  std::map<int, FeatureCurvatureMatch> curved_matches;
   const auto identification = RunGeometryIdentification(
       mesh.GetComm(), geometry, global_segments, library,
-      requirements ? *requirements : law_describer, requirements, frame_normal_configured);
+      requirements ? *requirements : law_describer, requirements, frame_normal_configured,
+      &curved_matches);
   GeometryStageLine("identified and matched: " +
                     std::to_string(identification.features.size()) + " features");
   if (request.patch_construction == ResponseCorrectionData::PatchConstruction::FEATURES)
@@ -7958,7 +8369,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     }
     const auto summary = BuildFeaturePatches(
         library, identification, global_segments, quadrature,
-        requirements ? *requirements : law_describer, diagnostics, result);
+        requirements ? *requirements : law_describer, diagnostics, result, curved_matches);
     GeometryStageLine("patches built: " + std::to_string(result.patches.size()));
     std::string unmatched;
     for (const auto &[type, entry] : summary.unmatched_by_type)
@@ -7976,12 +8387,29 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                " Matched features: {:d} ({:.6e})\n"
                " Unmatched features (omitted alone): {:d} ({:.6e}) {{{}}}\n"
                " Patches: {:d} {{{}}}\n"
-               " Runtime models: {:d}\n",
+               " Runtime models: {:d}\n"
+               " Curvature: {:d} feature(s) on a curvature family, {:d} straight-like "
+               "feature(s) with a first-order term\n",
                library.name, summary.matched_features,
                summary.matched_length * coordinate_scale, summary.unmatched_features,
                summary.unmatched_length * coordinate_scale, unmatched,
                static_cast<int>(result.patches.size()), patches,
-               static_cast<int>(result.models.size()));
+               static_cast<int>(result.models.size()), summary.curved_family_features,
+               summary.first_order_features);
+    if (summary.first_order_missing_features > 0)
+    {
+      std::string nodes;
+      for (const auto &node : summary.first_order_missing_nodes)
+      {
+        nodes += (nodes.empty() ? "" : ", ") + node;
+      }
+      Mpi::Warning("Fabrication-process response library \"{}\" has no first-order "
+                   "curvature node (kappa = 1 / StraightBendRadiusOverR) for {} "
+                   "straight-like feature(s) with bends ({:.6e} rad of turn left at the "
+                   "straight model; missing nodes: {}).\n",
+                   library.name, summary.first_order_missing_features,
+                   summary.first_order_missing_turn, nodes);
+    }
     if (!summary.inconsistent_features.empty())
     {
       Mpi::Warning(

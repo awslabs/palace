@@ -86,6 +86,12 @@ struct IdentifiedPortion
   // axis, i.e. the signature's first edge for chirality +1 and its last for -1); 0
   // otherwise.
   int side = 0;
+  // Signed turn of the portion toward its metal (radians): the integral of the chain's
+  // signed windowed curvature over the portion (positive where the edge bends around its
+  // metal — convex, a disk edge — negative around the gap — concave); zero on a straight
+  // chain. Not hashed. The first-order curvature term of a straight-like feature is this
+  // turn times the family's curvature derivative (design (b)7).
+  double turn = 0.0;
 };
 
 struct IdentifiedFeature
@@ -116,6 +122,10 @@ struct IdentifiedFeature
   // normalised deviation (max |difference| / tolerance over the parameters, <= 1).
   std::optional<std::string> matched_model;
   std::optional<double> match_deviation;
+  // Matching note (not hashed): for a curved feature matched by its curvature family the
+  // interpolation rule and kappa, for an unmatched curved feature the reason (never
+  // silently straight); for a straight-like feature the first-order term's node status.
+  std::optional<std::string> match_note;
 };
 
 struct IdentifiedSegment
