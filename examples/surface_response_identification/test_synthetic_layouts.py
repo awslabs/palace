@@ -77,11 +77,18 @@ class OracleTest(unittest.TestCase):
             self.assertEqual(len(ends), 4)
             self.assertEqual(len(orc["Corners"]), 6)
 
-    def test_turn_of_exactly_30_degrees_is_straight_for_the_classifier(self):
+    def test_turn_of_30_degrees_is_a_corner_and_a_sub_noise_kink_is_straight(self):
+        # USER decision 117(4): the corner threshold is the joint NOISE threshold (1 deg); a
+        # 30 deg bend corner (formerly a sub-corner joint absorbed into the chain) is a corner
+        # unless a fitted arc absorbs it — a single joint is never an arc.
         lay = S.layout("bar150", [S.sheet(S.GROUND, S.bent_bar(6.0, 16.0, 150.0))])
         orc = S.oracle(lay)
-        self.assertEqual(orc["ClassifierCornerCount"], 4)
-        self.assertEqual(orc["SubThresholdTurns"], 2)
+        self.assertEqual(orc["ClassifierCornerCount"], 6)
+        self.assertEqual(orc["SubThresholdTurns"], 0)
+        # A 0.5 deg kink (interior angle 179.5 deg) is below the noise threshold: straight.
+        kink = S.oracle(S.layout("bar179p5", [S.sheet(S.GROUND, S.bent_bar(6.0, 16.0, 179.5))]))
+        self.assertEqual(kink["ClassifierCornerCount"], 4)
+        self.assertEqual(kink["SubThresholdTurns"], 2)
 
     def test_truncation_edge_is_not_physical_perimeter(self):
         lay = S.layout("edge", [S.sheet(S.GROUND, S.rectangle(-30.0, -3.0, 6.0, 3.0))])
@@ -135,12 +142,13 @@ class OracleTest(unittest.TestCase):
         self.assertEqual(orc["ClassifierCornerCount"], 4)
 
     def test_arc_bar_sides_pair_along_the_bend_with_the_design_curvature_class(self):
-        # Curved-edge chain rule: the two sides of a constant-width polyline bend are a pair
-        # (separation constant within 5 %: 3 / cos(10 deg) at 20 deg per vertex), their
-        # cross-chord interactions are not events (the two bar ends are the only cores), and
-        # the expected class follows the inner-side design radius vs 20 R: r = 5 (1.75 R)
-        # curved, r = 50 (24.25 R) straight-like.
-        for radius, sweep, step, curved in [(5.0, 90.0, 20.0, True), (50.0, 45.0, 20.0, False), (250.0, 15.0, 5.0, False)]:
+        # Curved-edge chain rule: the two sides of a constant-width polyline bend that resolves
+        # its circle (sagitta rule: 5 deg per vertex on 5 um, 1 deg on 50 / 250 um; the mitred
+        # offset vertices within 1e-3 R of the circle) are a pair (separation constant within
+        # 5 %), their cross-chord interactions are not events (the two bar ends are the only
+        # cores), and the expected class follows the inner-side design radius vs 10 R: r = 5
+        # (1.75 R) curved, r = 50 (24.25 R) straight-like.
+        for radius, sweep, step, curved in [(5.0, 90.0, 5.0, True), (50.0, 45.0, 1.0, False), (250.0, 15.0, 1.0, False)]:
             lay = S.layout("arc", [S.sheet(S.GROUND, S.arc_bar(3.0, radius, sweep, step))], half_x=300.0, half_y=300.0, bend={"Radius": radius, "Width": 3.0})
             orc = S.oracle(lay)
             self.assertEqual(len(orc["BentPairs"]), 1, (radius, step))
@@ -153,16 +161,28 @@ class OracleTest(unittest.TestCase):
             self.assertTrue(all(p["InBentPair"] for p in orc["ParallelPairs"]))
             self.assertEqual(orc["CornerPairsWithin2R"], 2)
             self.assertEqual(orc["StandaloneCornerCount"], 0)
+        # A coarse polyline (5 um radius at 22.5 deg per vertex: sagitta 0.06 R; 50 um at
+        # 22.5 deg; 250 um at 5 deg: 0.12 R) is corners at its joints under the sagitta rule
+        # (USER decision 117(4)): no bent pair along the bend, no curved class.
+        for radius, sweep, step in [(5.0, 90.0, 20.0), (50.0, 45.0, 20.0), (250.0, 15.0, 5.0)]:
+            lay = S.layout("arc", [S.sheet(S.GROUND, S.arc_bar(3.0, radius, sweep, step))], half_x=300.0, half_y=300.0, bend={"Radius": radius, "Width": 3.0})
+            orc = S.oracle(lay)
+            self.assertGreater(orc["ClassifierCornerCount"], 4, (radius, step))
+            self.assertFalse(any("Curved" in c for r in orc["BentPairs"] for c in r["ExpectedClasses"]), (radius, step))
+            self.assertTrue(all(not c["OnArc"] for c in orc["Corners"]), (radius, step))
 
     def test_gap_along_a_bend_is_decided_on_the_curve_separation(self):
-        # A gap of exactly 2R between two concentric bars: the polyline chords dip below 2R
-        # mid-chord (4 cos(7.5 deg) = 3.966 at 15 deg per vertex, 3.9996 at 1 deg) but the
-        # pair separation (the smaller directional maximum, reached at the vertices) is the
-        # design gap, so exactly 2R and 2R + 1e-3 R do not interact at any discretisation
-        # (no events either: the corners stay standalone) and 2R - 1e-3 R is a
-        # DifferentConductorGap with the two corner pairs across the gap as clusters.
+        # A gap of exactly 2R between two concentric bars at 1 deg per vertex (the mitred
+        # offset vertices of the 8 um bars lie on their circles within 1e-3 R only at this
+        # step: 4 (1 / cos(step / 4) - 1 / cos(step / 2)) = 0.11 nm; at 5 deg it is 2.9 nm and
+        # the end joints of the polyline arcs are corners under the sagitta rule): the polyline
+        # chords dip below 2R mid-chord (3.9996) but the pair separation (the smaller
+        # directional maximum, reached at the vertices) is the design gap, so exactly 2R and
+        # 2R + 1e-3 R do not interact (no events either: the corners stay standalone) and
+        # 2R - 1e-3 R is a DifferentConductorGap with the two corner pairs across the gap as
+        # clusters.
         for radius, sweep in [(50.0, 45.0), (250.0, 15.0)]:
-            for step in [1.0, 5.0, 15.0]:
+            for step in [1.0]:
                 for gap in (4.0, 3.998, 4.002):
                     # Interacting where both readings of the separation are below 2R: at the
                     # straight leads (joint turn = half a step) when gap / cos(step / 4) < 2R.
@@ -205,7 +225,15 @@ class OracleTest(unittest.TestCase):
         # one pair read locally (mean separation between its ends), a fast taper (80 deg) is
         # events only.
         layouts = {lay["Name"]: lay for lay in S.stress_suite()}
-        for name in ("cpw-tee-r50-step5", "cpw-port-r50-step15"):
+        # The tee / port layouts of the stress suite at 1 deg per vertex (their 5 / 15 deg
+        # variants are mitred offsets whose end vertices lie 3-11 nm off the circles: corners
+        # at the polyline ends under the sagitta rule).
+        centre = S.arc_bar(8.0, 50.0, 90.0, 1.0, lead=6.0, lead_end=9.0, tee=(40.0, 6.0))
+        flanks = [S.arc_bar(8.0, 50.0, 90.0, 1.0, lead=6.0, lead_end=6.0, offset=sign * (3.0 + 8.0)) for sign in (1.0, -1.0)]
+        layouts["cpw-tee-r50-step1"] = S.layout("cpw-tee-r50-step1", [S.sheet(S.GROUND, centre), S.sheet(S.GROUND, flanks[0]), S.sheet(S.GROUND, flanks[1])], half_x=84.0, half_y=90.0, bend={"Radius": 50.0, "Width": 8.0, "Gap": 3.0, "Clusters": 4})
+        port = [S.arc_bar(8.0, 50.0, 45.0, 1.0, lead=60.0, lead_end=6.0, offset=o) for o in (0.0, 11.0, -11.0)]
+        layouts["cpw-port-r50-step1"] = S.layout("cpw-port-r50-step1", [S.sheet(S.GROUND, p) for p in port], half_x=60.0, half_y=60.0, bend={"Radius": 50.0, "Width": 8.0, "Gap": 3.0})
+        for name in ("cpw-tee-r50-step1", "cpw-port-r50-step1"):
             orc = S.oracle(layouts[name])
             pairs = [r for r in orc["BentPairs"] if r["Interacting"]]
             self.assertEqual(len(pairs), 2, name)
