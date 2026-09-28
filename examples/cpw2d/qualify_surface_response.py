@@ -177,6 +177,59 @@ def convergence_check(name, current, previous, matrix_limit, energy_limit=None):
     }
 
 
+DOMAIN_DEFECT_DEFINITION = (
+    "relative change of the held-out correction energy c^T D c between consecutive "
+    "orders, D = Q_fabricated - Q_thin (domain), c = the held-out trace coefficients "
+    "(USER decision 117(3), 2026-09-28)"
+)
+DOMAIN_DEFECT_PREVIOUS_DEFINITION = (
+    "relative Frobenius change ||D - D_previous||_F / ||D||_F of the free-trace "
+    "defect matrix (the recorded gate until decision 117(3); ||D||_F is carried by "
+    "1-2 edge hats at the mesh-noise floor of independently meshed coupons, so it "
+    "does not track the device-relevant correction); reported, not gated"
+)
+
+
+def domain_defect_check(current, previous, active, energy_limit, matrix_limit):
+    """Domain-defect convergence gate on the held-out correction energy (decision
+    117(3)): |c^T D c - c^T D_prev c| / |c^T D c| within energy_limit percent for the
+    held-out trace c. The previous definition (relative Frobenius change of D) is
+    recorded next to it against its former limit but does not decide the gate."""
+    defect = restrict(
+        current["responses"]["fabricated"]["domain"]
+        - current["responses"]["thin"]["domain"],
+        active,
+    )
+    old_defect = restrict(
+        previous["responses"]["fabricated"]["domain"]
+        - previous["responses"]["thin"]["domain"],
+        active,
+    )
+    coefficients = current["coefficients"][active]
+    energy = float(coefficients @ defect @ coefficients)
+    old_energy = float(coefficients @ old_defect @ coefficients)
+    scale = max(abs(energy), np.finfo(float).tiny)
+    energy_change = abs(energy - old_energy) / scale
+    passed = math.isfinite(energy_change) and 100.0 * energy_change <= energy_limit
+    former = convergence_check("domain-defect", defect, old_defect, matrix_limit)
+    return {
+        "Quantity": "domain-defect",
+        "Definition": DOMAIN_DEFECT_DEFINITION,
+        "HeldoutCorrectionEnergy": energy,
+        "PreviousHeldoutCorrectionEnergy": old_energy,
+        "HeldoutCorrectionEnergyChangePercent": 100.0 * energy_change,
+        "HeldoutCorrectionEnergyLimitPercent": energy_limit,
+        "PreviousDefinition": {
+            "Definition": DOMAIN_DEFECT_PREVIOUS_DEFINITION,
+            "MatrixChangePercent": former["MatrixChangePercent"],
+            "WorstEnergyChangePercent": former["WorstEnergyChangePercent"],
+            "MatrixLimitPercent": matrix_limit,
+            "Passed": former["Passed"],
+        },
+        "Passed": bool(passed),
+    }
+
+
 def heldout_checks(response, maximum_error):
     coefficients = response["coefficients"]
     checks = []
@@ -245,7 +298,16 @@ def main():
     parser.add_argument("--max-heldout-error", type=float, default=10.0)
     parser.add_argument("--max-fabricated-matrix-change", type=float, default=5.0)
     parser.add_argument("--max-fabricated-energy-change", type=float, default=10.0)
-    parser.add_argument("--max-domain-defect-change", type=float, default=5.0)
+    parser.add_argument(
+        "--max-domain-defect-change",
+        type=float,
+        default=5.0,
+        help=(
+            "Limit (percent) on the change of the held-out correction energy c^T D c "
+            "between consecutive orders (decision 117(3)); the former Frobenius "
+            "change of D is recorded against the same number but not gated"
+        ),
+    )
     args = parser.parse_args()
     positive = (
         args.max_heldout_error,
@@ -315,19 +377,12 @@ def main():
                     args.max_fabricated_matrix_change,
                 )
             )
-        defect = (
-            current["responses"]["fabricated"]["domain"]
-            - current["responses"]["thin"]["domain"]
-        )
-        old_defect = (
-            previous["responses"]["fabricated"]["domain"]
-            - previous["responses"]["thin"]["domain"]
-        )
         convergence.append(
-            convergence_check(
-                "domain-defect",
-                restrict(defect, active),
-                restrict(old_defect, active),
+            domain_defect_check(
+                current,
+                previous,
+                active,
+                args.max_domain_defect_change,
                 args.max_domain_defect_change,
             )
         )
@@ -336,7 +391,7 @@ def main():
         check["Passed"] for check in matrix_checks + convergence + heldout
     )
     report = {
-        "Version": 1,
+        "Version": 2,
         "Calibration": str(root),
         "PreviousCalibration": (
             str(previous_root) if previous_root is not None else None

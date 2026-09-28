@@ -1,5 +1,5 @@
 {
-  "Version": 1,
+  "Version": 2,
   "Copyright": "Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
   "SPDX-License-Identifier": "Apache-2.0",
   "Purpose": "Machine-readable qualification gates of a coupon's response matrices against its graded_v2 reference (supervisor decision 48 and the 2026-09-20 gate confirmation): the class statements of the geometry-independence suite's physics table, evaluated on the free view. Changing a threshold means editing this frozen file; every qualification record carries its SHA-256.",
@@ -56,10 +56,13 @@
       "MaximumAbsoluteParticipationStep": 0.05
     },
     "LibraryContinuity": {
-      "Statement": "every pair / stack model whose consecutive edge separations are all at or above 2R (1 - ThresholdBandOverR) responds per edge and per unit length like the isolated-edge model within MaximumRelativeOffset (decision 82(4): the strict interaction rule at 2R is continuous only if the pair model at the threshold equals two isolated edges)",
-      "Quantity": "per edge: sum of the diagonal domain-response entries Q_ii of the basis points nearest to the edge line, divided by the edge length (library_continuity.py)",
+      "Statement": "every pair / stack model whose consecutive edge separations are all at or above 2R (1 - ThresholdBandOverR) responds per basis function like the isolated-edge model within MaximumRelativeOffset (decision 82(4): the strict interaction rule at 2R is continuous only if the pair model at the threshold equals two isolated edges; USER decision 117(3), 2026-09-28: compared per basis function)",
+      "Quantity": "per edge: the energy-weighted per-basis-function offset (sum of the diagonal domain-response entries Q_ii of the basis functions assigned to the edge over the sum of the isolated-edge model's Q_ii at the same positions in the edge's local frame, minus one), each candidate basis function matched to the isolated basis function within MatchToleranceOverSpacing x the isolated hat spacing; basis functions within CornerExclusionOverR x R of a corner of the isolated coupon's box are not compared (the box truncation changes their support); unmatched basis functions are reported, never gated; the per-hat offsets (median, worst) are recorded (library_continuity.py)",
+      "PreviousQuantity": "until decision 117(3): per edge, the sum of Q_ii of the basis points nearest to the edge line divided by the edge length: a hat-count artefact (-23 / -51 / -24 % at the 1.985 R threshold stack whose per-hat response agrees within 1 %); evaluated and recorded as PreviousDefinition, not gated",
       "MaximumRelativeOffset": 0.01,
       "ThresholdBandOverR": 0.01,
+      "MatchToleranceOverSpacing": 0.5,
+      "CornerExclusionOverR": 0.25,
       "Scope": "runs on the written process-library.json of every qualify run (NotApplicable without a pair / stack at the threshold or without an isolated-edge model); synthetic library data tests in test_library_continuity.py"
     }
   },
