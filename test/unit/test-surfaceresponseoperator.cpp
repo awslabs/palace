@@ -4357,18 +4357,20 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     const auto &segment = rounded_geometry.segments[segment_index];
     rounded_vertices.insert(segment.vertices.begin(), segment.vertices.end());
   }
-  // Under the joint noise threshold (kCornerTurnToleranceDegrees = 1 deg, USER decision
-  // 117(4)) the sampled fillet joints (8-45 deg per chord) are CORNER vertices of the
-  // perimeter extraction; the identification's arc rule absorbs the ones on a fitted arc.
-  // The legacy per-group classifier below (PatchConstruction "Legacy", comparison only)
-  // re-extracts the perimeter at its own 30 deg corner class (kLegacyCornerTurnToleranceDegrees)
-  // so that its rounded-run rule still reads the fillets as REGULAR runs.
+  // Under the geometric joint noise rule (kJointNoiseSagittaOverRadius = 0.05, USER decision
+  // 121 (B)) the sampled fillet joints (8-45 deg per chord on chords far below R: implied
+  // sagitta (c / 2) tan(t / 4) below 0.05 R) are REGULAR joints of the perimeter extraction
+  // (the 1 deg angular threshold of 117(4) made them corners); the identification reads the
+  // non-collinear joints regardless and its arc rule fits the fillets. The legacy per-group
+  // classifier below (PatchConstruction "Legacy", comparison only) re-extracts the
+  // perimeter at its own 30 deg corner class (kLegacyCornerTurnToleranceDegrees) so that its
+  // rounded-run rule reads the fillets as REGULAR runs.
   CHECK(std::count_if(rounded_vertices.begin(), rounded_vertices.end(),
                       [&](std::size_t vertex)
                       {
                         return rounded_geometry.vertices[vertex].physical_type ==
                                MetalEdgeVertexType::CORNER;
-                      }) >= 8);
+                      }) == 0);
 
   std::vector<std::unique_ptr<Mesh>> rounded_island_meshes;
   rounded_island_meshes.push_back(std::make_unique<Mesh>(MakeIslandMesh(true)));
@@ -5440,6 +5442,344 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       }
       CHECK(unmatched == 1);
       CHECK(anchor_only == 1);
+    }
+  }
+
+  // Angle-interpolated corner family on the FEATURES path (USER decision 121 (C)): a
+  // hexagonal island with vertices (+-L, 0), (+-0.8 L, +-L) on one plane (L = 1 = 5 R) has
+  // two convex corners of 157.38 deg (turn 22.62 deg, at (+-L, 0)) and four of 101.31 deg
+  // (turn 78.69 deg). With sharp convex coupons at 90 / 120 / 150 deg and the straight
+  // anchor (Angle 180) on one box basis, the 157 deg corners are in the first-order regime
+  // (turn below the smallest coupon turn 30 deg: linear anchor / 150 deg node with weights
+  // 1 - 22.62 / 30 and 22.62 / 30) and the 101 deg corners are cubic Lagrange on the four
+  // abscissae (turns 0 / 30 / 60 / 90), weights summing to one; the runtime models are
+  // named <base>@corner-angle<deg>-<rule> on the nearest node; every corner is patched once
+  // (weight one) in its frame. Without the 90 deg coupon the 101 deg corners are sharper than
+  // the sharpest coupon: unmatched with the reason (never the nearest node); without the
+  // anchor the 157 deg corners are unmatched (no first-order anchor).
+  {
+    constexpr double hex_R = 0.2;
+    constexpr double hex_L = 1.0;
+    constexpr double hex_g = 0.8;
+    auto MakeHexagonMesh = [&](double extent, double h)
+    {
+      const int n = static_cast<int>(std::lround(extent / h));
+      mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(n, 4, n, mfem::Element::HEXAHEDRON,
+                                                      extent, 1.0, extent);
+      const double c = 0.5 * extent;
+      auto Level = [&](const double *point)
+      { return std::max(std::abs(point[0] - c), std::abs(point[2] - c)); };
+      for (int face = 0; face < serial.GetNumFaces(); face++)
+      {
+        int element1, element2;
+        serial.GetFaceElements(face, &element1, &element2);
+        if (element1 < 0 || element2 < 0)
+        {
+          continue;
+        }
+        mfem::Array<int> vertices;
+        serial.GetFaceVertices(face, vertices);
+        bool on_plane = true;
+        double level_max = 0.0;
+        for (const int vertex : vertices)
+        {
+          const double *point = serial.GetVertex(vertex);
+          on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
+          level_max = std::max(level_max, Level(point));
+        }
+        if (on_plane && level_max <= hex_L + 1.0e-9)
+        {
+          serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+          serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+        }
+      }
+      // Radial map of every concentric square of the (x, z) grid onto the hexagon with
+      // vertices (+-1, 0), (+-g, +-1) at the same level: the square's boundary points land
+      // on the hexagon's sides (collinear between its vertices, which are grid points), so
+      // the island outline is the exact hexagon at every level.
+      const std::vector<std::array<double, 2>> hexagon = {
+          {1.0, 0.0}, {hex_g, 1.0}, {-hex_g, 1.0}, {-1.0, 0.0}, {-hex_g, -1.0}, {hex_g, -1.0}};
+      auto PolygonRadius = [&](double ux, double uz)
+      {
+        double r = mfem::infinity();
+        for (std::size_t k = 0; k < hexagon.size(); k++)
+        {
+          const auto &a = hexagon[k], &b = hexagon[(k + 1) % hexagon.size()];
+          const double nx = b[1] - a[1], nz = a[0] - b[0];  // outward normal of side a -> b
+          const double denominator = nx * ux + nz * uz;
+          if (denominator > 1.0e-14)
+          {
+            r = std::min(r, (nx * a[0] + nz * a[1]) / denominator);
+          }
+        }
+        return r;
+      };
+      // The map is the hexagon map up to level 2 L, blends linearly to the identity at
+      // level 3 L and leaves the outer grid (the PEC box walls stay on the bounding box, so
+      // that the island's plane remains the process plane) unchanged.
+      for (int vertex = 0; vertex < serial.GetNV(); vertex++)
+      {
+        double *point = serial.GetVertex(vertex);
+        const double lx = point[0] - c, lz = point[2] - c;
+        const double norm = std::hypot(lx, lz);
+        const double level = std::max(std::abs(lx), std::abs(lz));
+        if (norm > 1.0e-12 && level < 3.0 * hex_L - 1.0e-9)
+        {
+          const double ux = lx / norm, uz = lz / norm;
+          const double square = 1.0 / std::max(std::abs(ux), std::abs(uz));
+          const double hexagon_scale = PolygonRadius(ux, uz) / square;
+          const double blend =
+              level <= 2.0 * hex_L ? 1.0 : (3.0 * hex_L - level) / hex_L;
+          const double scale = 1.0 + blend * (hexagon_scale - 1.0);
+          point[0] = c + scale * lx;
+          point[2] = c + scale * lz;
+        }
+      }
+      serial.FinalizeTopology();
+      serial.Finalize();
+      return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+    };
+    // Extent 8: the hexagon (level 1) stays more than 2 R from the PEC box walls.
+    auto hexagon_mesh = MakeHexagonMesh(8.0, 0.1);
+    const auto corner_family_path = temp.temp_dir / "fabrication-process-corner-family.json";
+    const auto corner_family_no90_path =
+        temp.temp_dir / "fabrication-process-corner-family-no90.json";
+    const auto corner_family_no_anchor_path =
+        temp.temp_dir / "fabrication-process-corner-family-no-anchor.json";
+    if (Mpi::Root(Mpi::World()))
+    {
+      json family_library = {
+          {"Version", 3},
+          {"TraceLiftVersion", 2},
+          {"Name", "unit-test-corner-family-3d"},
+          {"MatchingRadius", hex_R},
+          {"Fabrication",
+           {{"InterfaceLayers", {{"SA", {{"Thickness", 0.002}, {"Permittivity", 4.0}}}}}}},
+          {"Models", json::array()}};
+      json isolated = {{"Name", "isolated"},
+                       {"Topology", "IsolatedEdge"},
+                       {"CouponDepth", 0.2},
+                       {"FabricatedMatrix", fabricated_path.string()},
+                       {"ThinMatrix", thin_path.string()},
+                       {"FabricatedSurfaceMatrix", fabricated_surface_path.string()},
+                       {"ThinSurfaceMatrix", thin_surface_path.string()},
+                       {"BasisPoints", points_path.string()},
+                       {"Interfaces", {{{"Type", "SA"}, {"Coupon", 1}}}}};
+      family_library["Models"].push_back(isolated);
+      for (const double angle : {90.0, 120.0, 150.0, 180.0})
+      {
+        json model = {{"Name", "convex-corner-" + std::to_string(static_cast<int>(angle))},
+                      {"Topology", "ConvexCorner"},
+                      {"Angle", angle},
+                      {"AngleDegrees", angle},
+                      {"Convexity", "Convex"},
+                      {"AngleTolerance", 1.0e-6},
+                      {"CornerRadius", 0.0},
+                      {"CornerRadiusTolerance", 0.0},
+                      {"FabricatedMatrix", corner_fabricated_path.string()},
+                      {"ThinMatrix", corner_thin_path.string()},
+                      {"FabricatedSurfaceMatrix", corner_fabricated_surface_path.string()},
+                      {"ThinSurfaceMatrix", corner_thin_surface_path.string()},
+                      {"BasisPoints", corner_points_path.string()},
+                      {"ContourGroups", {4, 4, 4}},
+                      {"Interfaces", {{{"Type", "SA"}, {"Coupon", 1}}}}};
+        family_library["Models"].push_back(model);
+      }
+      std::ofstream output(corner_family_path);
+      output << family_library.dump(2) << "\n";
+      auto no90 = family_library;
+      no90["Name"] = "unit-test-corner-family-no90-3d";
+      no90["Models"].erase(no90["Models"].begin() + 1);
+      std::ofstream no90_output(corner_family_no90_path);
+      no90_output << no90.dump(2) << "\n";
+      auto no_anchor = family_library;
+      no_anchor["Name"] = "unit-test-corner-family-no-anchor-3d";
+      no_anchor["Models"].erase(no_anchor["Models"].end() - 1);
+      std::ofstream no_anchor_output(corner_family_no_anchor_path);
+      no_anchor_output << no_anchor.dump(2) << "\n";
+    }
+    Mpi::Barrier(Mpi::World());
+    auto hexagon_config = island_config;
+    auto &hexagon_correction = hexagon_config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    hexagon_correction.erase("PatchConstruction");
+    hexagon_correction["UnmatchedPolicy"] = "Warn";
+    const auto hexagon_manifest_path =
+        temp.temp_dir / "surface-response-requirements-hexagon.json";
+    const auto hexagon_patches_path = temp.temp_dir / "surface-response-patches.csv";
+    auto RunHexagon = [&](const fs::path &library)
+    {
+      hexagon_correction["Library"] = library.string();
+      IoData hexagon_iodata(hexagon_config, false);
+      hexagon_iodata.boundaries.cracked_attributes.insert(9);
+      fs::remove(hexagon_patches_path);
+      WriteSurfaceResponseRequirements(hexagon_iodata, *hexagon_mesh,
+                                       hexagon_manifest_path.string());
+      Mpi::Barrier(Mpi::World());
+      std::ifstream input(hexagon_manifest_path);
+      REQUIRE(input);
+      return json::parse(input);
+    };
+    const double wide_angle = 180.0 - 2.0 * std::atan(1.0 - hex_g) * 180.0 / M_PI;  // 157.38
+    const double narrow_angle = 90.0 + std::atan(1.0 - hex_g) * 180.0 / M_PI;        // 101.31
+    {
+      const json manifest = RunHexagon(corner_family_path);
+      int wide = 0, narrow = 0;
+      for (const auto &feature : manifest["Identification"]["Features"])
+      {
+        if (feature["Type"] != "ConvexCorner")
+        {
+          continue;
+        }
+        const double angle = feature["Signature"]["AngleDegrees"].get<double>();
+        CHECK(feature["Signature"]["CornerRadiusOverR"].get<double>() == 0.0);
+        CHECK(feature["Match"]["Status"] == "Matched");
+        const std::string model = feature["Match"]["Model"].get<std::string>();
+        if (std::abs(angle - wide_angle) < 1.0e-6)
+        {
+          CHECK(model.find("convex-corner-150@corner-angle") != std::string::npos);
+          CHECK(model.find("-linear") != std::string::npos);
+          wide++;
+        }
+        else
+        {
+          CHECK_THAT(angle, WithinAbs(narrow_angle, 1.0e-6));
+          CHECK(model.find("convex-corner-90@corner-angle") != std::string::npos);
+          CHECK(model.find("-cubic") != std::string::npos);
+          narrow++;
+        }
+        // One patch of weight one per corner.
+        int patches = 0;
+        for (const auto &row : ReadPatchRows(hexagon_patches_path))
+        {
+          if (std::stoi(row[1]) == feature["Id"].get<int>())
+          {
+            CHECK(row[3] == model);
+            CHECK_THAT(std::stod(row[6]), WithinAbs(1.0, 1.0e-12));
+            patches++;
+          }
+        }
+        CHECK(patches == 1);
+      }
+      CHECK(wide == 2);
+      CHECK(narrow == 4);
+      // The version-1 records: Interpolated with the family selection and its weights.
+      int records = 0;
+      for (const auto &record : manifest["Requirements"])
+      {
+        if (record["Topology"] != "ConvexCorner")
+        {
+          continue;
+        }
+        CHECK(record["Status"] == "Interpolated");
+        REQUIRE(record.contains("CornerFamily"));
+        const auto &family = record["CornerFamily"];
+        const double angle = family["AngleDegrees"].get<double>();
+        CHECK(family["Convexity"] == "Convex");
+        CHECK_THAT(family["MaxTurnDegrees"].get<double>(), WithinAbs(90.0, 1.0e-9));
+        CHECK_THAT(family["FirstOrderTurnDegrees"].get<double>(), WithinAbs(30.0, 1.0e-9));
+        // (The node angles are the models' Angle in radians back in degrees, the group's
+        // AngleDegrees the representative on the 1e-6 deg signature grid: keys rounded,
+        // weights compared at 1e-6.)
+        std::map<double, double> weights;
+        for (const auto &node : family["Nodes"])
+        {
+          weights[std::round(node["AngleDegrees"].get<double>() * 1.0e6) * 1.0e-6] =
+              node["Weight"].get<double>();
+        }
+        double sum = 0.0;
+        for (const auto &[node_angle, weight] : weights)
+        {
+          (void)node_angle;
+          sum += weight;
+        }
+        CHECK_THAT(sum, WithinAbs(1.0, 1.0e-9));
+        if (std::abs(angle - wide_angle) < 1.0e-6)
+        {
+          CHECK(family["InterpolationRule"] == "linear");
+          REQUIRE(weights.size() == 2);
+          const double t = 180.0 - wide_angle;
+          CHECK_THAT(weights.at(180.0), WithinAbs(1.0 - t / 30.0, 1.0e-6));
+          CHECK_THAT(weights.at(150.0), WithinAbs(t / 30.0, 1.0e-6));
+        }
+        else
+        {
+          CHECK(family["InterpolationRule"] == "cubic");
+          REQUIRE(weights.size() == 4);
+          const double t = 180.0 - narrow_angle;
+          for (const auto &[node_angle, weight] : weights)
+          {
+            double expected = 1.0;
+            const double ti = 180.0 - node_angle;
+            for (const auto &[other_angle, other_weight] : weights)
+            {
+              (void)other_weight;
+              const double tj = 180.0 - other_angle;
+              if (other_angle != node_angle)
+              {
+                expected *= (t - tj) / (ti - tj);
+              }
+            }
+            CHECK_THAT(weight, WithinAbs(expected, 1.0e-6));
+          }
+        }
+        records++;
+      }
+      CHECK(records == 2);
+    }
+    {
+      // Without the 90 deg coupon the 101 deg corners are sharper than the sharpest coupon
+      // (120 deg): unmatched with the reason; the 157 deg corners keep their linear blend.
+      const json manifest = RunHexagon(corner_family_no90_path);
+      int refused = 0, linear = 0;
+      for (const auto &feature : manifest["Identification"]["Features"])
+      {
+        if (feature["Type"] != "ConvexCorner")
+        {
+          continue;
+        }
+        if (feature["Match"]["Status"] == "Missing")
+        {
+          CHECK(feature["Match"]["Note"].get<std::string>().find("sharper than") !=
+                std::string::npos);
+          refused++;
+        }
+        else
+        {
+          CHECK(feature["Match"]["Model"].get<std::string>().find("-linear") !=
+                std::string::npos);
+          linear++;
+        }
+      }
+      CHECK(refused == 4);
+      CHECK(linear == 2);
+    }
+    {
+      // Without the straight anchor the 157 deg corners (first-order regime) are unmatched
+      // with the reason; the 101 deg corners are cubic on the three remaining nodes'
+      // window (quadratic: 90 / 120 / 150).
+      const json manifest = RunHexagon(corner_family_no_anchor_path);
+      int refused = 0, quadratic = 0;
+      for (const auto &feature : manifest["Identification"]["Features"])
+      {
+        if (feature["Type"] != "ConvexCorner")
+        {
+          continue;
+        }
+        if (feature["Match"]["Status"] == "Missing")
+        {
+          CHECK(feature["Match"]["Note"].get<std::string>().find("no straight anchor") !=
+                std::string::npos);
+          refused++;
+        }
+        else
+        {
+          CHECK(feature["Match"]["Model"].get<std::string>().find("-quadratic") !=
+                std::string::npos);
+          quadratic++;
+        }
+      }
+      CHECK(refused == 2);
+      CHECK(quadratic == 4);
     }
   }
 

@@ -1502,7 +1502,9 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
     model.topology = ParseLibraryTopology(entry.at("Topology").get<std::string>());
     model.separation = entry.value("Separation", 0.0) / coordinate_scale;
     model.separation_tolerance = entry.value("SeparationTolerance", 0.0) / coordinate_scale;
-    model.angle = entry.value("Angle", 0.0) * std::acos(-1.0) / 180.0;
+    // Corner models record Angle (degrees; the corner family's records also carry
+    // AngleDegrees, accepted as the same value).
+    model.angle = entry.value("Angle", entry.value("AngleDegrees", 0.0)) * std::acos(-1.0) / 180.0;
     model.angle_tolerance = entry.value("AngleTolerance", 0.0) * std::acos(-1.0) / 180.0;
     model.corner_radius = entry.value("CornerRadius", 0.0) / coordinate_scale;
     model.corner_radius_tolerance =
@@ -1811,11 +1813,15 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
     }
     if (corner)
     {
+      // Angle in (0, 180]: 180 is the straight edge through the corner box, the anchor of
+      // the angle-interpolated corner family (USER decision 121 (C)); no device corner has
+      // that angle (a corner is a joint that is not noise), so the anchor is only ever
+      // reached through MatchCornerFamily.
       MFEM_VERIFY(std::isfinite(model.angle) && model.angle > 0.0 &&
-                      model.angle < std::acos(-1.0) &&
+                      model.angle <= std::acos(-1.0) + 1.0e-12 &&
                       std::isfinite(model.angle_tolerance) && model.angle_tolerance >= 0.0,
-                  "Corner response models require Angle strictly between zero and 180 "
-                  "degrees and a nonnegative AngleTolerance!");
+                  "Corner response models require Angle in (0, 180] degrees and a "
+                  "nonnegative AngleTolerance!");
       MFEM_VERIFY(std::isfinite(model.corner_radius) && model.corner_radius >= 0.0 &&
                       model.corner_radius < library.matching_radius &&
                       std::isfinite(model.corner_radius_tolerance) &&
@@ -3535,6 +3541,213 @@ MatchCurvatureFamily(const ProcessLibrary &library, const IdentifiedFeature &fea
   match.topology = TopologyName(CurvedTopologyOf(*straight));
   match.kappa = kappa;
   match.convex = convex;
+  return match;
+}
+
+// Angle-interpolated corner family on the FEATURES path (USER decision 121 (C)): a SHARP
+// corner feature (CornerRadiusOverR 0) of one convexity whose angle no library coupon
+// matches within the signature tolerance is modelled by the family of sharp corner coupons
+// of that convexity, interfaces and law, interpolated in the TURN t = 180 - AngleDegrees:
+// the nodes are the coupons' turns (e.g. 90 / 75 / 60 / 45 / 30 / 15 deg for 90 / 105 / 120 /
+// 135 / 150 / 165 deg corners) and the anchor is the straight edge through the corner box
+// (Angle 180, t = 0: the family's 180-deg anchor, built on the same basis). Rule: an exact
+// node within kSignatureAngleToleranceDegrees -> that coupon; t at or below the smallest
+// node turn -> linear between the anchor and that node (first order in the turn: the corner
+// excess of a small turn is O(t), as the curvature family's first-order regime); otherwise
+// cubic Lagrange on the four nearest abscissae (anchor included); t above the largest node
+// turn (an angle sharper than the sharpest coupon) -> unmatched with the reason — never
+// silently straight, never the nearest node. The turn is the interpolation variable because
+// the coupon's response is smooth in the arm direction and t = 0 is the straight anchor
+// where the first-order regime is anchored (the angle itself is the same variable shifted).
+// The runtime model is the BLEND of the nodes' matrices (Lagrange weights may be negative;
+// the corner coupons share one box basis, checked at match time) on the basis of the
+// nearest node (its ZeroTraceIndices: the knots inside the metal at the nearest coupon
+// angle; the corner coupons have no coupon depth, the weights apply as they are). Rounded
+// corners keep their per-radius coupons (CornerRadiusInterpolation): no angle family.
+std::vector<std::array<double, 3>> ReadBasisPoints(const std::string &path);
+
+struct FeatureCornerMatch
+{
+  std::size_t base = 0;  // the nearest node: basis, zero trace indices, references
+  std::vector<LibrarySelection::WeightedModel> nodes;
+  std::string rule;
+  std::string name;  // runtime model: <base>@corner-angle<deg>-<rule>
+  std::string topology;
+  double angle_degrees = 0.0;
+  double turn_degrees = 0.0;
+  double max_turn_degrees = 0.0;
+  double first_order_turn_degrees = 0.0;
+};
+
+std::string CornerRuntimeModelName(const std::string &base, double angle_degrees,
+                                   const std::string &rule)
+{
+  std::ostringstream name;
+  name << base << "@corner-angle" << std::setprecision(9) << angle_degrees << "-" << rule;
+  return name.str();
+}
+
+std::optional<FeatureCornerMatch>
+MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &feature,
+                  const MetalBoundaryLaw &boundary_condition, std::string &reason)
+{
+  const auto topology = ParseLibraryTopology(feature.type);
+  if (topology != LibraryTopology::CONVEX_CORNER &&
+      topology != LibraryTopology::CONCAVE_CORNER)
+  {
+    reason = "no corner family for " + feature.type;
+    return std::nullopt;
+  }
+  const auto &sig = feature.signature;
+  if (!sig.contains("AngleDegrees") || !sig.contains("CornerRadiusOverR"))
+  {
+    reason = "signature without AngleDegrees / CornerRadiusOverR";
+    return std::nullopt;
+  }
+  if (sig["CornerRadiusOverR"].get<double>() > 0.0)
+  {
+    reason = "rounded corner (CornerRadiusOverR > 0): per-radius coupons only, no angle "
+             "family";
+    return std::nullopt;
+  }
+  const double angle = sig["AngleDegrees"].get<double>();
+  MFEM_VERIFY(angle > 0.0 && angle < 180.0,
+              "A sharp corner feature requires AngleDegrees strictly between 0 and 180!");
+  const double turn = 180.0 - angle;
+  const std::vector<std::string> interfaces =
+      sig.contains("Interfaces") ? sig["Interfaces"].get<std::vector<std::string>>()
+                                 : std::vector<std::string>{};
+  // The family: sharp coupons of the feature's topology, interfaces and law, by turn.
+  std::vector<std::pair<double, std::size_t>> nodes;  // (turn, index); the anchor at 0
+  for (std::size_t i = 0; i < library.models.size(); i++)
+  {
+    const auto &model = library.models[i];
+    if (model.topology != topology || model.corner_radius != 0.0 ||
+        !CompatibleBoundaryLaw(model.boundary_condition, boundary_condition) ||
+        (sig.contains("Interfaces") && ModelInterfaceNames(model) != interfaces))
+    {
+      continue;
+    }
+    nodes.emplace_back(180.0 - model.angle * 180.0 / std::acos(-1.0), i);
+  }
+  const std::string convexity = topology == LibraryTopology::CONVEX_CORNER ? "convex" : "concave";
+  if (nodes.empty())
+  {
+    reason = "library has no sharp " + convexity + " corner coupons for the interfaces " +
+             sig["Interfaces"].dump();
+    return std::nullopt;
+  }
+  std::sort(nodes.begin(), nodes.end());
+  for (std::size_t i = 1; i < nodes.size(); i++)
+  {
+    MFEM_VERIFY(nodes[i].first - nodes[i - 1].first > kSignatureAngleToleranceDegrees,
+                "Corner family has two sharp " << convexity
+                                               << " coupons at the same angle!");
+  }
+  // One box basis for the whole family (the blend combines matrices coefficient by
+  // coefficient): every coupon's BasisPoints equal the first's.
+  {
+    const auto &first = library.models[nodes.front().second];
+    const auto first_points = ReadBasisPoints(first.response.basis_points);
+    for (const auto &[node_turn, index] : nodes)
+    {
+      (void)node_turn;
+      const auto &model = library.models[index];
+      const auto points = ReadBasisPoints(model.response.basis_points);
+      MFEM_VERIFY(points.size() == first_points.size(),
+                  "Corner family coupons \"" << model.name << "\" and \"" << first.name
+                                             << "\" have different basis sizes!");
+      for (std::size_t k = 0; k < points.size(); k++)
+      {
+        MFEM_VERIFY(Distance(points[k], first_points[k]) <= 1.0e-9 * library.matching_radius,
+                    "Corner family coupons \"" << model.name << "\" and \"" << first.name
+                                               << "\" have different basis points!");
+      }
+    }
+  }
+  FeatureCornerMatch match;
+  match.angle_degrees = angle;
+  match.turn_degrees = turn;
+  match.topology = feature.type;
+  match.max_turn_degrees = nodes.back().first;
+  const bool has_anchor = std::abs(nodes.front().first) <= kSignatureAngleToleranceDegrees;
+  std::vector<std::pair<double, std::size_t>> corners(nodes.begin() + (has_anchor ? 1 : 0),
+                                                      nodes.end());
+  if (corners.empty())
+  {
+    reason = "library has only the straight anchor of the " + convexity + " corner family";
+    return std::nullopt;
+  }
+  match.first_order_turn_degrees = corners.front().first;
+  if (turn > match.max_turn_degrees + kSignatureAngleToleranceDegrees)
+  {
+    std::ostringstream text;
+    text << "corner angle " << angle << " deg is sharper than the smallest " << convexity
+         << " coupon angle " << 180.0 - match.max_turn_degrees << " deg (no extrapolation)";
+    reason = text.str();
+    return std::nullopt;
+  }
+  // The nearest node is the base (basis, zero trace indices, conductor references).
+  match.base = std::min_element(nodes.begin(), nodes.end(),
+                                [&](const auto &a, const auto &b)
+                                { return std::abs(a.first - turn) < std::abs(b.first - turn); })
+                   ->second;
+  for (const auto &[node_turn, index] : nodes)
+  {
+    if (std::abs(turn - node_turn) <= kSignatureAngleToleranceDegrees)
+    {
+      match.nodes = {{index, 1.0}};
+      match.rule = "exact";
+      match.base = index;
+      match.name = CornerRuntimeModelName(library.models[index].name, angle, match.rule);
+      return match;
+    }
+  }
+  std::vector<std::pair<double, std::size_t>> abscissae;
+  if (turn < match.first_order_turn_degrees)
+  {
+    if (!has_anchor)
+    {
+      std::ostringstream text;
+      text << "corner angle " << angle << " deg is in the first-order regime (turn below the "
+           << "smallest coupon turn " << match.first_order_turn_degrees
+           << " deg) but the library has no straight anchor (Angle 180) of the " << convexity
+           << " corner family";
+      reason = text.str();
+      return std::nullopt;
+    }
+    abscissae = {nodes.front(), corners.front()};
+    match.rule = "linear";
+  }
+  else
+  {
+    std::size_t interval = 0;
+    while (interval + 1 < nodes.size() && nodes[interval + 1].first < turn)
+    {
+      interval++;
+    }
+    std::size_t begin = 0, end = nodes.size();
+    if (nodes.size() > 4)
+    {
+      begin = std::min(interval > 0 ? interval - 1 : 0, nodes.size() - 4);
+      end = begin + 4;
+    }
+    abscissae.assign(nodes.begin() + begin, nodes.begin() + end);
+    match.rule = (end - begin == 4) ? "cubic" : (end - begin == 3 ? "quadratic" : "linear");
+  }
+  for (std::size_t i = 0; i < abscissae.size(); i++)
+  {
+    double weight = 1.0;
+    for (std::size_t j = 0; j < abscissae.size(); j++)
+    {
+      if (j != i)
+      {
+        weight *= (turn - abscissae[j].first) / (abscissae[i].first - abscissae[j].first);
+      }
+    }
+    match.nodes.push_back({abscissae[i].second, weight});
+  }
+  match.name = CornerRuntimeModelName(library.models[match.base].name, angle, match.rule);
   return match;
 }
 
@@ -6107,7 +6320,8 @@ IdentificationResult RunGeometryIdentification(
     const std::vector<EdgeSegment3D> &framed_segments, const ProcessLibrary &library,
     const AutomaticResponseRequirements &describer,
     AutomaticResponseRequirements *requirements, bool frame_normal_configured,
-    std::map<int, FeatureCurvatureMatch> *curved_matches = nullptr)
+    std::map<int, FeatureCurvatureMatch> *curved_matches = nullptr,
+    std::map<int, FeatureCornerMatch> *corner_matches = nullptr)
 {
   const bool root = Mpi::Root(comm);
   // A one-sided edge whose face is not parallel to the process plane (the area-weighted
@@ -6283,6 +6497,7 @@ IdentificationResult RunGeometryIdentification(
   // topology within the signature parameter tolerance, the nearest one (decision 85(1)).
   const auto library_keys = LibrarySignatureKeys(library, describer);
   std::map<int, nlohmann::json> curvature_records;  // per feature, for the manifest
+  std::map<int, nlohmann::json> corner_records;     // per feature, for the manifest
   for (auto &feature : result.features)
   {
     if (const auto match = library_keys.Match(feature.signature))
@@ -6332,6 +6547,53 @@ IdentificationResult RunGeometryIdentification(
       else
       {
         feature.match_note = "curvature family: " + reason;
+      }
+    }
+    else if ((feature.type == "ConvexCorner" || feature.type == "ConcaveCorner") &&
+             !feature.portions.empty())
+    {
+      // Angle-interpolated corner family (USER decision 121 (C)): a sharp corner without
+      // an exact coupon is interpolated in its turn or reported with the reason (never
+      // silently straight, never the nearest coupon).
+      const auto it = framed.find(feature.portions.front().segment);
+      MFEM_VERIFY(it != framed.end(),
+                  "A corner feature portion lies on a segment without an edge frame!");
+      std::string reason;
+      const auto match =
+          MatchCornerFamily(library, feature, it->second->boundary_condition, reason);
+      if (match)
+      {
+        feature.matched_model = match->name;
+        feature.match_deviation = 0.0;
+        std::ostringstream note;
+        note << "corner family: " << match->rule << " at " << std::setprecision(6)
+             << match->angle_degrees << " deg (turn " << match->turn_degrees << ")";
+        feature.match_note = note.str();
+        nlohmann::json nodes = nlohmann::json::array();
+        for (const auto &node : match->nodes)
+        {
+          nodes.push_back(
+              {{"Name", library.models[node.index].name},
+               {"AngleDegrees", library.models[node.index].angle * 180.0 / std::acos(-1.0)},
+               {"Weight", node.weight}});
+        }
+        corner_records[feature.id] = {
+            {"Base", library.models[match->base].name},
+            {"AngleDegrees", match->angle_degrees},
+            {"TurnDegrees", match->turn_degrees},
+            {"Convexity", feature.type == "ConvexCorner" ? "Convex" : "Concave"},
+            {"InterpolationRule", match->rule},
+            {"MaxTurnDegrees", match->max_turn_degrees},
+            {"FirstOrderTurnDegrees", match->first_order_turn_degrees},
+            {"Nodes", nodes}};
+        if (corner_matches)
+        {
+          corner_matches->emplace(feature.id, *match);
+        }
+      }
+      else
+      {
+        feature.match_note = "corner family: " + reason;
       }
     }
   }
@@ -6433,6 +6695,7 @@ IdentificationResult RunGeometryIdentification(
     std::set<std::string> models;
     bool exact = true;
     nlohmann::json curvature_family;  // the family selection of a curved feature
+    nlohmann::json corner_family;     // the family selection of an interpolated corner
     std::set<std::string> notes;      // matching notes (family refusals)
   };
   struct GroupBase
@@ -6511,6 +6774,11 @@ IdentificationResult RunGeometryIdentification(
     {
       instance->second.curvature_family = record->second;
     }
+    else if (const auto corner = corner_records.find(feature.id);
+             corner != corner_records.end())
+    {
+      instance->second.corner_family = corner->second;
+    }
     else if (feature.match_note && !feature.matched_model)
     {
       instance->second.notes.insert(*feature.match_note);
@@ -6558,7 +6826,7 @@ IdentificationResult RunGeometryIdentification(
       int count = 0, feature_instances = 0;
       double length = 0.0;
       std::set<std::string> models, notes;
-      nlohmann::json curvature_family;
+      nlohmann::json curvature_family, corner_family;
       bool exact = true;
       for (const std::size_t i : members)
       {
@@ -6572,6 +6840,10 @@ IdentificationResult RunGeometryIdentification(
         if (curvature_family.is_null() && !instance.curvature_family.is_null())
         {
           curvature_family = instance.curvature_family;
+        }
+        if (corner_family.is_null() && !instance.corner_family.is_null())
+        {
+          corner_family = instance.corner_family;
         }
         exact = exact && instance.exact;
       }
@@ -6616,6 +6888,16 @@ IdentificationResult RunGeometryIdentification(
           record["Status"] = "Interpolated";
         }
       }
+      if (!corner_family.is_null())
+      {
+        // The corner family selection (base, nodes, weights, rule) at the group's angle
+        // (a group spans one signature tolerance).
+        record["CornerFamily"] = corner_family;
+        if (corner_family["InterpolationRule"] != "exact")
+        {
+          record["Status"] = "Interpolated";
+        }
+      }
       if (!notes.empty())
       {
         record["Notes"] = notes;
@@ -6651,6 +6933,7 @@ struct FeaturePatchSummary
   // nodes at 1 / StraightBendRadiusOverR found) or could not be (a node missing: the
   // feature keeps its straight model; count and bent length recorded, never silent).
   int curved_family_features = 0;
+  int corner_family_features = 0;  // corners patched by an angle-interpolated blend
   int first_order_features = 0;
   int first_order_missing_features = 0;
   double first_order_missing_turn = 0.0;  // |turn| (radians) left uncorrected
@@ -6667,7 +6950,8 @@ FeaturePatchSummary BuildFeaturePatches(
     const std::vector<EdgeSegment3D> &framed_segments,
     const mfem::IntegrationRule &quadrature, const AutomaticResponseRequirements &describer,
     AutomaticResponseDiagnostics *diagnostics, ResponseCorrectionData &result,
-    const std::map<int, FeatureCurvatureMatch> &curved_matches = {})
+    const std::map<int, FeatureCurvatureMatch> &curved_matches = {},
+    const std::map<int, FeatureCornerMatch> &corner_matches = {})
 {
   FeaturePatchSummary summary;
   const double R = library.matching_radius;
@@ -6716,17 +7000,28 @@ FeaturePatchSummary BuildFeaturePatches(
   auto IsPec = [](const EdgeSegment3D &segment)
   { return segment.boundary_condition.type == MetalBoundaryConditionType::PEC; };
 
-  // One runtime model per (library model, target interfaces by slot); a curvature-family
-  // blend is one runtime model per (blend name, slots): the anchor's basis and interfaces
-  // with matrices = the weighted sum of the nodes' matrices, each rescaled to the anchor's
-  // coupon depth (Lagrange weights may be negative, so the combination is formed on the
-  // matrices, as on the two-dimensional path).
+  // One runtime model per (library model, target interfaces by slot); a family blend
+  // (curvature family, corner family) is one runtime model per (blend name, slots): the
+  // base model's basis and interfaces with matrices = the weighted sum of the nodes'
+  // matrices (Lagrange weights may be negative, so the combination is formed on the
+  // matrices, as on the two-dimensional path). A curvature blend rescales every node to the
+  // anchor's coupon depth (per unit edge length); a corner blend has no depth (one patch of
+  // weight one per corner) and combines the coupons' matrices as they are.
+  struct FamilyBlend
+  {
+    std::string name;
+    std::string topology;
+    std::size_t base = 0;  // the runtime model's basis / interfaces / references
+    std::vector<LibrarySelection::WeightedModel> nodes;
+    bool per_unit_length = true;
+    std::string label;
+  };
   std::map<std::pair<std::string, std::string>, int> runtime_models;
   int next_model_index = 1;
   auto RuntimeModel =
       [&](std::size_t model_index,
           const std::map<int, std::map<InterfaceDielectric, int>> &targets_by_slot,
-          const FeatureCurvatureMatch *blend = nullptr)
+          const FamilyBlend *blend = nullptr)
   {
     std::string key;
     for (const auto &[slot, targets] : targets_by_slot)
@@ -6739,6 +7034,8 @@ FeaturePatchSummary BuildFeaturePatches(
       key += ";";
     }
     const auto &source = library.models[model_index];
+    MFEM_VERIFY(!blend || blend->base == model_index,
+                "A family blend must be built on its base model!");
     auto [it, inserted] =
         runtime_models.emplace(std::make_pair(blend ? blend->name : source.name, key), 0);
     if (inserted)
@@ -6749,29 +7046,43 @@ FeaturePatchSummary BuildFeaturePatches(
       model.topology = blend ? blend->topology : TopologyName(source.topology);
       if (blend)
       {
-        MFEM_VERIFY(source.coupon_depth > 0.0,
+        MFEM_VERIFY(!blend->per_unit_length || source.coupon_depth > 0.0,
                     "Curvature interpolation requires CouponDepth on the straight anchor!");
         std::ostringstream nodes;
-        for (const auto &node : blend->selection.nodes)
+        for (const auto &node : blend->nodes)
         {
           const auto &coupon = library.models[node.index];
-          MFEM_VERIFY(coupon.coupon_depth > 0.0,
-                      "Curvature interpolation requires CouponDepth on every coupon!");
-          model.blend.push_back({node.weight * source.coupon_depth / coupon.coupon_depth,
-                                 coupon.response.fabricated_matrix,
+          double weight = node.weight;
+          if (blend->per_unit_length)
+          {
+            MFEM_VERIFY(coupon.coupon_depth > 0.0,
+                        "Curvature interpolation requires CouponDepth on every coupon!");
+            weight *= source.coupon_depth / coupon.coupon_depth;
+          }
+          model.blend.push_back({weight, coupon.response.fabricated_matrix,
                                  coupon.response.thin_matrix,
                                  coupon.response.fabricated_surface_matrix,
                                  coupon.response.thin_surface_matrix});
           nodes << (model.blend.size() == 1 ? "" : ", ") << coupon.name << " x "
                 << std::setprecision(6) << node.weight;
         }
-        Mpi::Print(" Curvature interpolation {}: {}\n", blend->name, nodes.str());
+        Mpi::Print(" {} {}: {}\n", blend->label, blend->name, nodes.str());
       }
       MapLibraryInterfaces(source, targets_by_slot, model);
       result.models.push_back(std::move(model));
       it->second = result.models.back().idx;
     }
     return it->second;
+  };
+  auto CurvatureBlend = [](const FeatureCurvatureMatch &match)
+  {
+    return FamilyBlend{match.name, match.topology, match.selection.anchor,
+                       match.selection.nodes, true, "Curvature interpolation"};
+  };
+  auto CornerBlend = [](const FeatureCornerMatch &match)
+  {
+    return FamilyBlend{match.name, match.topology, match.base, match.nodes, false,
+                       "Corner interpolation"};
   };
 
   auto Emit = [&](ResponsePatchData patch, std::size_t model_index, int runtime,
@@ -6956,20 +7267,34 @@ FeaturePatchSummary BuildFeaturePatches(
       }
       continue;
     }
-    // The feature's model: a library model by name, or a curvature-family blend on its
-    // anchor (the straight analogue; the runtime model carries the blended matrices).
+    // The feature's model: a library model by name, a curvature-family blend on its
+    // anchor (the straight analogue) or a corner-family blend on its nearest node (the
+    // runtime model carries the blended matrices).
     const auto curved_match = curved_matches.find(feature.id);
-    const FeatureCurvatureMatch *blend =
+    const auto corner_match = corner_matches.find(feature.id);
+    std::optional<FamilyBlend> family;
+    const FeatureCurvatureMatch *curved_blend =
         curved_match != curved_matches.end() ? &curved_match->second : nullptr;
     std::size_t model_index = 0;
-    if (blend)
+    if (curved_blend)
     {
-      MFEM_VERIFY(blend->name == *feature.matched_model,
+      MFEM_VERIFY(curved_blend->name == *feature.matched_model,
                   "Curved feature " << feature.id << " matched \"" << *feature.matched_model
-                                    << "\" but its curvature family is \"" << blend->name
-                                    << "\"!");
-      model_index = blend->selection.anchor;
+                                    << "\" but its curvature family is \""
+                                    << curved_blend->name << "\"!");
+      family = CurvatureBlend(*curved_blend);
+      model_index = curved_blend->selection.anchor;
       summary.curved_family_features++;
+    }
+    else if (corner_match != corner_matches.end())
+    {
+      MFEM_VERIFY(corner_match->second.name == *feature.matched_model,
+                  "Corner feature " << feature.id << " matched \"" << *feature.matched_model
+                                    << "\" but its corner family is \""
+                                    << corner_match->second.name << "\"!");
+      family = CornerBlend(corner_match->second);
+      model_index = corner_match->second.base;
+      summary.corner_family_features++;
     }
     else
     {
@@ -7008,10 +7333,11 @@ FeaturePatchSummary BuildFeaturePatches(
     {
       targets_by_slot.emplace(static_cast<int>(targets_by_slot.size()), targets);
     }
-    const int runtime = RuntimeModel(model_index, targets_by_slot, blend);
+    const int runtime = RuntimeModel(model_index, targets_by_slot, family ? &*family : nullptr);
     const Point3D n = feature.axes[2];
     // First-order curvature term of a straight-like feature with a bend (a straight
     // model on portions with a nonzero turn): the family nodes at the first-order kappa.
+    const FeatureCurvatureMatch *blend = curved_blend;
     const bool straight_like_bend =
         !blend && feature.bend_radius_over_R &&
         (feature.type == "IsolatedEdge" || feature.type == "SameConductorGap" ||
@@ -8373,10 +8699,11 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                   iodata.boundaries.postpro.dielectric.end(), [](const auto &entry)
                   { return entry.second.edge_frame_normal.has_value(); });
   std::map<int, FeatureCurvatureMatch> curved_matches;
+  std::map<int, FeatureCornerMatch> corner_matches;
   const auto identification =
       RunGeometryIdentification(mesh.GetComm(), geometry, global_segments, library,
                                 requirements ? *requirements : law_describer, requirements,
-                                frame_normal_configured, &curved_matches);
+                                frame_normal_configured, &curved_matches, &corner_matches);
   GeometryStageLine("identified and matched: " +
                     std::to_string(identification.features.size()) + " features");
   if (request.patch_construction == ResponseCorrectionData::PatchConstruction::FEATURES)
@@ -8399,7 +8726,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     }
     const auto summary = BuildFeaturePatches(
         library, identification, global_segments, quadrature,
-        requirements ? *requirements : law_describer, diagnostics, result, curved_matches);
+        requirements ? *requirements : law_describer, diagnostics, result, curved_matches,
+        corner_matches);
     GeometryStageLine("patches built: " + std::to_string(result.patches.size()));
     std::string unmatched;
     for (const auto &[type, entry] : summary.unmatched_by_type)
@@ -8419,13 +8747,14 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                " Patches: {:d} {{{}}}\n"
                " Runtime models: {:d}\n"
                " Curvature: {:d} feature(s) on a curvature family, {:d} straight-like "
-               "feature(s) with a first-order term\n",
+               "feature(s) with a first-order term\n"
+               " Corners: {:d} feature(s) on an angle-interpolated corner family\n",
                library.name, summary.matched_features,
                summary.matched_length * coordinate_scale, summary.unmatched_features,
                summary.unmatched_length * coordinate_scale, unmatched,
                static_cast<int>(result.patches.size()), patches,
                static_cast<int>(result.models.size()), summary.curved_family_features,
-               summary.first_order_features);
+               summary.first_order_features, summary.corner_family_features);
     if (summary.first_order_missing_features > 0)
     {
       std::string nodes;
