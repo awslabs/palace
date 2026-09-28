@@ -2791,7 +2791,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       {"PatchConstruction", "Legacy"}};
   IoData iodata_3d(config_3d, false);
   auto mesh_3d = mesh::ReadMesh(iodata_3d, Mpi::World());
-  const auto geometry_3d = ExtractMetalEdgeGeometry(*mesh_3d, iodata_3d.boundaries);
+  const auto geometry_3d = ExtractMetalEdgeGeometry(*mesh_3d, iodata_3d.boundaries, JointNoiseExtractionFor(iodata_3d.boundaries));
   const auto segment_indices =
       GetInterfaceMetalEdgeSegmentIndices(geometry_3d, 1, InterfaceDielectric::SA);
   double physical_edge_length = 0.0;
@@ -3806,7 +3806,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   concave_island_iodata.boundaries.cracked_attributes.insert(9);
   auto island_geometry_mesh = MakeIslandMesh();
   const auto island_geometry =
-      ExtractMetalEdgeGeometry(*island_geometry_mesh, concave_island_iodata.boundaries);
+      ExtractMetalEdgeGeometry(*island_geometry_mesh, concave_island_iodata.boundaries, JointNoiseExtractionFor(concave_island_iodata.boundaries));
   const auto island_segments =
       GetInterfaceMetalEdgeSegmentIndices(island_geometry, 4, InterfaceDielectric::SA);
   std::set<std::size_t> island_vertices;
@@ -4298,7 +4298,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
 
   auto touching_geometry_mesh = MakeTouchingIslandMesh();
   const auto touching_geometry =
-      ExtractMetalEdgeGeometry(*touching_geometry_mesh, convex_island_iodata.boundaries);
+      ExtractMetalEdgeGeometry(*touching_geometry_mesh, convex_island_iodata.boundaries, JointNoiseExtractionFor(convex_island_iodata.boundaries));
   const auto touching_segments =
       GetInterfaceMetalEdgeSegmentIndices(touching_geometry, 4, InterfaceDielectric::SA);
   std::set<std::size_t> touching_vertices;
@@ -4348,7 +4348,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   rounded_island_iodata.boundaries.cracked_attributes.insert(9);
   auto rounded_geometry_mesh = MakeIslandMesh(true);
   const auto rounded_geometry =
-      ExtractMetalEdgeGeometry(*rounded_geometry_mesh, rounded_island_iodata.boundaries);
+      ExtractMetalEdgeGeometry(*rounded_geometry_mesh, rounded_island_iodata.boundaries, JointNoiseExtractionFor(rounded_island_iodata.boundaries));
   const auto rounded_segments =
       GetInterfaceMetalEdgeSegmentIndices(rounded_geometry, 4, InterfaceDielectric::SA);
   std::set<std::size_t> rounded_vertices;
@@ -6447,7 +6447,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   strip_aperture_iodata.boundaries.cracked_attributes.insert(9);
   auto strip_geometry_mesh = MakePairedApertureMesh();
   const auto strip_geometry =
-      ExtractMetalEdgeGeometry(*strip_geometry_mesh, strip_aperture_iodata.boundaries);
+      ExtractMetalEdgeGeometry(*strip_geometry_mesh, strip_aperture_iodata.boundaries, JointNoiseExtractionFor(strip_aperture_iodata.boundaries));
   auto strip_segments =
       GetInterfaceMetalEdgeSegmentIndices(strip_geometry, 4, InterfaceDielectric::SA);
   ExcludeMetalEdgeSegmentIndices(*strip_geometry_mesh, strip_geometry, {1, 2, 3, 4, 5, 6},

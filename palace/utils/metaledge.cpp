@@ -311,12 +311,32 @@ void UnpackGeometry(const GeometryBuffers &b, MetalEdgeGeometry &g)
 
 }  // namespace
 
+MetalSurfaceExtraction JointNoiseExtractionFor(const config::BoundaryData &boundaries)
+{
+  double radius = 0.0;
+  for (const auto &[index, dielectric] : boundaries.postpro.dielectric)
+  {
+    if (dielectric.automatic_edges && !dielectric.edge_distances.empty())
+    {
+      radius = std::max(radius, dielectric.edge_distances.back());
+    }
+  }
+  MFEM_VERIFY(radius > 0.0,
+              "The joint noise rule of the metal edge extraction needs a length scale: no "
+              "automatic-edge interface dielectric configures EdgeDistances!");
+  return JointNoiseExtraction(radius);
+}
+
 MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
                                            const config::BoundaryData &boundaries,
                                            MetalSurfaceExtraction surface)
 {
   MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3,
               "Automatic metal edge extraction requires a three-dimensional mesh!");
+  MFEM_VERIFY((surface.joint_noise_sagitta > 0.0) !=
+                  surface.corner_turn_tolerance_degrees.has_value(),
+              "Metal edge extraction requires exactly one joint rule: a positive "
+              "joint_noise_sagitta (geometric) or corner_turn_tolerance_degrees (angular)!");
 
   std::map<int, std::vector<MetalBoundaryCondition>> attribute_conditions;
   auto AddCondition =
@@ -1478,23 +1498,30 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   result.physical_components = LabelComponents(true);
 
   // Boundary meshes commonly represent smooth layout curves by short polygonal facets. A
-  // vertex turning by at most the joint noise threshold (kCornerTurnToleranceDegrees,
-  // metaledge.hpp; surface.corner_turn_tolerance_degrees) is a regular vertex of its
-  // chain; every sharper turn is an explicit corner vertex, which the identification's arc
-  // rule absorbs when it lies on a fitted arc (a bend merges the chains it separates) and
-  // otherwise treats as a corner feature.
+  // two-segment vertex is a regular vertex of its chain (a straight continuation) under the
+  // joint noise rule (kJointNoiseSagittaOverRadius, metaledge.hpp; USER decision 121 (B)):
+  // the sagitta (c / 2) tan(turn / 4) implied by its turn on the shorter of its two adjacent
+  // straight pieces (collinear mesh segments merged) is below surface.joint_noise_sagitta.
+  // Every other joint is an explicit corner vertex, which the identification's arc rule
+  // absorbs when it lies on a fitted arc (a bend merges the chains it separates) and
+  // otherwise treats as a corner feature. The legacy per-group classifier (comparison only)
+  // passes its angular corner class instead (surface.corner_turn_tolerance_degrees).
   const double straight_dot_tolerance =
-      -std::cos(surface.corner_turn_tolerance_degrees * std::acos(-1.0) / 180.0);
-  // The turn test compares direction cosines on a fixed 1e-12 grid so that a roundoff-level
+      surface.corner_turn_tolerance_degrees
+          ? -std::cos(*surface.corner_turn_tolerance_degrees * std::acos(-1.0) / 180.0)
+          : -1.0;
+  // The turn tests compare direction cosines on a fixed 1e-12 grid so that a roundoff-level
   // perturbation of the vertex coordinates cannot flip a vertex between REGULAR and CORNER
-  // (the same direction quantum as the classification's parallelism tests).
+  // (the same direction quantum as the classification's parallelism tests); a collinear
+  // continuation (no joint) is a cosine within the direction quantum of -1 between the two
+  // outward directions, as the identification reads its joints.
   auto QuantizeDirection = QuantizeCosine;
   const double quantized_straight_dot_tolerance = QuantizeDirection(straight_dot_tolerance);
-  auto ClassifyVertex = [&](std::size_t vertex_index,
-                            bool physical) -> std::optional<MetalEdgeVertexType>
+  const double quantized_collinear = QuantizeDirection(1.0 - direction_quantum);
+  auto SegmentsAt = [&](std::size_t vertex_index, bool physical)
   {
-    auto &vertex = result.vertices[vertex_index];
     std::vector<std::size_t> segments;
+    const auto &vertex = result.vertices[vertex_index];
     segments.reserve(vertex.segments.size());
     for (const std::size_t segment : vertex.segments)
     {
@@ -1503,6 +1530,68 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
         segments.push_back(segment);
       }
     }
+    return segments;
+  };
+  auto UnitDirection = [&](std::size_t from, std::size_t to)
+  {
+    std::array<double, 3> d{};
+    double norm_squared = 0.0;
+    for (int k = 0; k < 3; k++)
+    {
+      d[k] = result.vertices[to].coordinate[k] - result.vertices[from].coordinate[k];
+      norm_squared += d[k] * d[k];
+    }
+    MFEM_VERIFY(norm_squared > 0.0, "Metal edge graph contains a zero-length segment!");
+    const double inverse_norm = 1.0 / std::sqrt(norm_squared);
+    for (double &value : d)
+    {
+      value *= inverse_norm;
+    }
+    return std::make_pair(d, std::sqrt(norm_squared));
+  };
+  // Length of the straight piece leaving vertex_index along segment: the segment and every
+  // following segment reached through a two-segment vertex whose turn is within the
+  // direction quantum of collinear (a refinement midpoint, a second-order mid-edge node),
+  // stopping at a joint, an endpoint, a junction or on return to the vertex.
+  auto PieceLength = [&](std::size_t vertex_index, std::size_t segment, bool physical)
+  {
+    double length = 0.0;
+    std::size_t current = vertex_index, s = segment;
+    for (std::size_t steps = 0; steps < result.segments.size(); steps++)
+    {
+      const auto &edge = result.segments[s];
+      const std::size_t other = edge.vertices[0] == current ? edge.vertices[1] : edge.vertices[0];
+      const auto [in, piece] = UnitDirection(current, other);
+      length += piece;
+      const auto next_segments = SegmentsAt(other, physical);
+      if (next_segments.size() != 2 || other == vertex_index)
+      {
+        break;
+      }
+      const std::size_t next = next_segments[0] == s ? next_segments[1] : next_segments[0];
+      const auto &next_edge = result.segments[next];
+      const std::size_t beyond =
+          next_edge.vertices[0] == other ? next_edge.vertices[1] : next_edge.vertices[0];
+      const auto [out, ignored] = UnitDirection(other, beyond);
+      (void)ignored;
+      double dot = 0.0;
+      for (int k = 0; k < 3; k++)
+      {
+        dot += in[k] * out[k];
+      }
+      if (QuantizeDirection(dot) < quantized_collinear)
+      {
+        break;  // a joint
+      }
+      current = other;
+      s = next;
+    }
+    return length;
+  };
+  auto ClassifyVertex = [&](std::size_t vertex_index,
+                            bool physical) -> std::optional<MetalEdgeVertexType>
+  {
+    const std::vector<std::size_t> segments = SegmentsAt(vertex_index, physical);
     if (segments.empty())
     {
       return std::nullopt;
@@ -1522,25 +1611,29 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
       const auto &edge = result.segments[segments[i]];
       const std::size_t other =
           edge.vertices[0] == vertex_index ? edge.vertices[1] : edge.vertices[0];
-      double norm_squared = 0.0;
-      for (int d = 0; d < 3; d++)
-      {
-        directions[i][d] = result.vertices[other].coordinate[d] - vertex.coordinate[d];
-        norm_squared += directions[i][d] * directions[i][d];
-      }
-      MFEM_VERIFY(norm_squared > 0.0, "Metal edge graph contains a zero-length segment!");
-      const double inverse_norm = 1.0 / std::sqrt(norm_squared);
-      for (double &value : directions[i])
-      {
-        value *= inverse_norm;
-      }
+      directions[i] = UnitDirection(vertex_index, other).first;
     }
     double dot = 0.0;
     for (int d = 0; d < 3; d++)
     {
       dot += directions[0][d] * directions[1][d];
     }
-    return QuantizeDirection(dot) <= quantized_straight_dot_tolerance
+    if (surface.corner_turn_tolerance_degrees)
+    {
+      return QuantizeDirection(dot) <= quantized_straight_dot_tolerance
+                 ? MetalEdgeVertexType::REGULAR
+                 : MetalEdgeVertexType::CORNER;
+    }
+    // Geometric joint noise rule: a collinear continuation is no joint; otherwise the
+    // implied sagitta of the turn on the shorter adjacent straight piece decides.
+    if (QuantizeDirection(-dot) >= quantized_collinear)
+    {
+      return MetalEdgeVertexType::REGULAR;
+    }
+    const double turn = std::acos(std::clamp(-dot, -1.0, 1.0));
+    const double shorter_piece = std::min(PieceLength(vertex_index, segments[0], physical),
+                                          PieceLength(vertex_index, segments[1], physical));
+    return JointIsNoise(turn, shorter_piece, surface.joint_noise_sagitta)
                ? MetalEdgeVertexType::REGULAR
                : MetalEdgeVertexType::CORNER;
   };

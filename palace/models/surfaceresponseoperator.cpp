@@ -2407,8 +2407,8 @@ constexpr double kDecisionLengthQuantumRelativeToMatchingRadius = 1.0e-8;
 constexpr double kDecisionDirectionQuantum = 1.0e-12;
 // Corner class of the legacy per-group classifier (PatchConstruction "Legacy", comparison
 // only): a two-segment vertex turning more than this is a corner, a smaller turn continues
-// the chain (decision 73). The identification uses the joint noise threshold
-// kCornerTurnToleranceDegrees (metaledge.hpp; USER decision 117(4)) instead.
+// the chain (decision 73). The identification uses the geometric joint noise rule
+// kJointNoiseSagittaOverRadius (metaledge.hpp; USER decision 121 (B)) instead.
 constexpr double kLegacyCornerTurnToleranceDegrees = 30.0;
 
 // Axisymmetric (r, z) edge sites: the gap direction of an edge on a curved (revolved) edge
@@ -7395,6 +7395,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   }
   MetalSurfaceExtraction surface;
   surface.classify_components = true;
+  // Geometric joint noise rule at the library's matching radius (USER decision 121 (B)).
+  surface.joint_noise_sagitta = kJointNoiseSagittaOverRadius * library.matching_radius;
   surface.retain_faces =
       requirements ||
       std::any_of(library.models.begin(), library.models.end(),
@@ -8482,6 +8484,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   // manifest above use the joint noise threshold (USER decision 117(4)).
   {
     MetalSurfaceExtraction legacy_surface = surface;
+    legacy_surface.joint_noise_sagitta = 0.0;
     legacy_surface.corner_turn_tolerance_degrees = kLegacyCornerTurnToleranceDegrees;
     geometry = ExtractMetalEdgeGeometry(mesh, iodata.boundaries, legacy_surface);
     surface_faces_by_component.clear();
