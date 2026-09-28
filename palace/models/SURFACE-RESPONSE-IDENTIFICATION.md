@@ -21,11 +21,15 @@ Its output is:
    one *exclusion record* `{class, reason}`. A segment is never both assigned and excluded, and
    no portion of an assigned segment is claimed by two features (A1: partition by length and by
    count, multiplicity 1).
-2. **Vertex table.** Every perimeter vertex whose turning angle exceeds the recorded joint
-   noise threshold (`CornerTurnToleranceDegrees` = 1, `metaledge.hpp`:
-   `kCornerTurnToleranceDegrees`, compared on the 1e-12 direction grid; USER decision 117(4),
-   2026-09-28, replacing the 30 deg corner-class threshold of decision 73) and that no fitted
-   arc absorbs (item 3, arc rule), and every endpoint / junction vertex that is not a
+2. **Vertex table.** Every perimeter vertex that is a joint (two segments, not collinear on
+   the 1e-12 direction grid) and NOT noise under the geometric joint noise rule
+   (`JointNoiseSagittaOverR` = 0.05, `metaledge.hpp`: `kJointNoiseSagittaOverRadius` /
+   `JointIsNoise`; USER decision 121 (B), 2026-09-28, replacing the 1 deg angular threshold
+   of decision 117(4) and the 30 deg corner-class threshold of decision 73: a joint turning
+   by t between two straight pieces — collinear mesh segments merged — is a straight
+   continuation when the sagitta (c / 2) tan(t / 4) it implies on the SHORTER adjacent piece
+   c is below 0.05 R, item 7) and that no fitted arc absorbs (item 3, arc rule), and every
+   endpoint / junction vertex that is not a
    simulation cut is mapped to exactly one vertex feature (corner / endpoint / junction) or to
    exactly one cluster (membership); a joint absorbed by an arc is a `RoundedCornerVertex` /
    `BendVertex` record of the arc. Vertices on the truncation boundary are cuts, not
@@ -80,7 +84,8 @@ classification and are expected to be `Missing` (decisions 70 / 71: regeneration
 Notation: R = matching radius (mesh units); all thresholds are multiples of R; all decisions
 are quantized as in (c). A *chain* is a maximal perimeter path through regular vertices
 (`physical_chain`, `metaledge.cpp`): a polyline of straight runs joined at sub-noise vertices
-(turn <= `CornerTurnToleranceDegrees` = 1 deg; item 7, the curved-edge chain rule), the
+(the geometric joint noise rule, `JointNoiseSagittaOverR` = 0.05: implied sagitta on the
+shorter adjacent piece below 0.05 R; items 1 and 7, the curved-edge chain rule), the
 chains a fitted bend arc's absorbed corners separated being merged by the identification
 (item 3) and a rounded corner's arc taking a chain of its own. Chain tangents are canonical: from the lexicographically
 smaller endpoint.
@@ -92,6 +97,38 @@ smaller endpoint.
    segments so that it is mesh independent; it makes corners with interior angle >= 60 deg
    plain corners and lets the arms of sharper corners interact beyond 2R from the vertex
    (2a sin(theta/2) < 2R for a >= 2R has solutions iff theta < 60 deg).
+   **Joint noise rule (USER decision 121 (B), 2026-09-28; `metaledge.hpp`
+   `kJointNoiseSagittaOverRadius` = 0.05, `JointIsNoise`, mirrored by `perimeter.joint_is_noise`
+   and the oracle's `_design_joint_is_noise`).** A two-segment vertex turning by t between two
+   straight pieces (the maximal collinear runs on either side, so that a refinement midpoint
+   or a second-order mid-edge node never changes the pieces: A5) is a straight continuation of
+   its chain — a REGULAR joint whose turn feeds the windowed curvature (item 7) — iff the
+   deviation from straight it implies at the resolution of the correction is below
+   `JointNoiseSagittaOverR` x R = 0.05 R: the sagitta (c / 2) tan(t / 4) of a chord of length
+   c = the SHORTER adjacent piece read as one chord of a circle turning t per chord
+   (sagitta = rho (1 - cos(t / 2)) with c = 2 rho sin(t / 2)); compared on a 1e-9 relative
+   grid. Every other joint is a corner vertex and a chain break unless the arc rule absorbs
+   it. Why this quantity and not the vertex distance from the line through its neighbours:
+   (i) it is the very quantity the arc rule records per chord (`Arcs[].MaxChordSagittaOverR`,
+   the mesh-coarseness diagnostic at the same 0.05 R), so a sub-noise joint is a chord joint
+   of a curve the correction cannot resolve — one constant for the noise threshold, the arc
+   diagnostic, the extraction, the identification's end-joint test, the census and the
+   audit mirror; (ii) sub-nm mesh slivers (the 1-2 nm flux-line segments of DS-SCT-002 whose
+   roundoff directions turned by more than 1 deg and fragmented the stacks under the angular
+   threshold, A8 2.1 mm) are bounded by c / 2 whatever their turn, a U-turn included
+   (tan(pi / 4) = 1); (iii) spline steps of 1-6 deg on 1-5 um chords (0.5-2.6 R at R 1.9)
+   imply 2-65 nm = 0.001-0.034 R and read as the smooth curves they discretise, where the
+   vertex distance c sin(t) (4x larger at small t) would keep 6 deg joints on 1 um chords as
+   174 deg corners; (iv) a real corner is never noise: 5 um arms turning 20 deg imply 0.23 R,
+   the chips' longest chords (5.3 R) turning 4.3 deg imply 0.05 R (the knife edge, in the
+   census as `JointNoiseSagittaOverR.0.05` on the shorter run). Consequences: the transmon's
+   sampled fillets and the chips' 174-179 deg "corners" of the angular threshold are chains
+   or arcs; a joint of 7.5 deg on 6 um leads at R 2 um implies 0.049 R (noise) — the census
+   band records such cases. The extraction receives the threshold in mesh units
+   (`MetalSurfaceExtraction::joint_noise_sagitta` = 0.05 x the library's matching radius; the
+   post-processing edge tools pass their largest edge distance); the legacy per-group
+   classifier (comparison only) keeps its angular 30 deg class
+   (`corner_turn_tolerance_degrees`).
 2. **Parallel pairs.** Two single-run chains whose tangents are parallel (|t1 . t2| >= 1 - 1e-8
    on the direction grid; chains with joints pair through item 7) with in-plane separation d < 2R and overlapping longitudinal extent form a
    *parallel interaction* over the overlap interval. Gap directions facing each other -> `Gap`
@@ -120,64 +157,72 @@ smaller endpoint.
    distance differing from 2R and joined the L2 junction regions of DS-SCT-002 to the L1
    flux-loop ends 2.4R below; an acute corner whose arms interact from 2R along the arms is
    now a corner feature next to a separate arm cluster, abutting at R along each arm).
-   **Arc rule — the sagitta form (USER decision 117(4), 2026-09-28; supersedes the
-   joint-turn / piece-length form of decisions 82(3) and 85(1) below, whose fixed points are
-   kept where noted).** Along every perimeter path through vertices with exactly two path
-   segments (regular or corner; a path stops at endpoints, junctions and cuts) the joints are
-   the non-collinear vertices. From every unconsumed joint, the largest range of at least
-   three following joints that turn the same way and total at most 180 deg is ONE arc **iff
-   its joint vertices lie on one circle within the recorded fit tolerance
-   `ArcFitToleranceOverR` = 1e-3 (the signature parameter tolerance) AND every chord's sagitta
-   rho (1 - cos(central angle / 2)) is below `SagittaOverR` = 0.05 times R** — the polyline is
-   an arc at the resolution of the correction (0.05 R = 95 nm at R 1.9 um: 50x the parameter
-   tolerance and below any distance the response resolves). The rule applies to bends
-   (radius >= R) and rounded corners (radius < R) alike; **no joint-turn threshold enters the
-   membership** (a 45 deg joint of a 2-chord 1 um fillet is absorbed, 76 nm = 0.04 R; a 45 deg
-   joint of a 4-chord 20 R semicircle is not, 1.5 R) **and no piece-length rule** (the cap
-   bounds a chord to 2 sqrt(0.1 R rho): 2R on a 10 R bend, DS-SCT-001's 4 um chords on 370 um
-   bends have a sagitta of 5 nm). The circle is (a) the one tangent to both arms at the end
-   joints (centre at Ta + rho na, rho from the tangent lengths; antiparallel arms: half their
-   separation) when every joint — the last one included, which unequal tangent lengths put
-   off the circle — lies on it within the fit tolerance; else (b), for a radius >= R over at
-   least FOUR joints, the algebraic least-squares circle of the joints (exact for an
-   inscribed polyline, a set function of the joints; three points are concyclic whatever they
-   are, which let a lead-end corner, an arc's first joint and its neighbour pass as a
-   "bend" of radius 350 um), with each arm meeting the circle's tangent at its end joint
-   within the noise threshold (a spline piece joining a bend tangent-continuously; read from
-   the fitted circle, whose tangent moves by 1e-3 R / rho for a 1e-3 R position error) or
-   lying on the circle as a chord (an arc starting at a corner that lies on its circle — the
-   sharp end of a rounded slot: the corner stays a corner, the arc starts at its next joint;
-   a lead meeting a circular arc at a 90 deg corner is neither, and the corner is never
-   absorbed). A rounded corner keeps the tangent construction only (its arms are tangent by
-   construction and its site — virtual corner, arm directions — has no meaning otherwise).
-   Every joint that no arc absorbs and that turns more than `CornerTurnToleranceDegrees` = 1
-   (the joint noise threshold, item 2) is a corner feature: DS-OSC-003's meander bends (4 / 6
-   chords per 180 deg on 8-26 R, sagitta 0.5-3.8 um) are 135 / 150 deg corners — the meshed
-   geometry, which is what both the thin and the thick simulation see — and the 30.000 deg
-   knife edge of the corner-class rule (96 corners vs the rest absorbed by roundoff) is gone;
-   its knife edge moves to the sagitta cap and the noise threshold, both in the census.
-   Recorded consequences: a polygon smaller than the resolution reads as an arc (a square
-   hole of side <= 0.24 R, a 3-chord notch of side <= 0.2 R); a spline discretised bend whose
-   vertices lie on one circle within 1e-3 R only over a few joints is chopped into exact-fit
-   arcs (as before) and its leftover joints above the noise threshold are corners of large
-   angle (177-179 deg; a corner of small turn is a corner); a synthetic mitred offset
-   polyline (vertices at h / cos(step / 2) from the centreline, its end vertices at
-   h / cos(step / 4)) is not concyclic within 1e-3 R for wide bars at coarse steps and reads
-   corners at the polyline ends where a CAD offset of an arc path (concentric arcs at the
-   same angles) reads one bend. The fillet gate and the arc-cluster gate hold over the
-   discretisations whose sagitta is below the cap (`Fillet.Resolved` / `ArcCluster.Resolved`
-   in `synthetic_layouts`), the coarser ones are reported with their corner readings, not
-   gated (20 formerly valid fillet cases, e.g. q = 5 R at 135 deg as 8 chords = 0.054 R, and
-   the 0.7 R fillet as 2 chords / the 6 R pad as 24 chords of the arc set). The noise
-   threshold (1 deg) from the chips' joint-turn census (user-decisions-117-sagitta/census):
-   the joints not on fitted arcs below 1 deg (38,479 / 17,298 / 8,471 on DS-SCT-002 /
-   DS-CTX-003 / DS-OSC-003) are a smooth continuum of spline steps (no gap between 0.05 and
-   2 deg; ~600 per 0.05 deg near 1 deg on DS-SCT-002), so no threshold near 1 deg is free of
-   a knife-edge population (604 / 153 / 12 joints within 1 % of 1 deg, 200 / 74 / 12 of them
-   not on arcs); 1 deg is the USER's value, a 1 deg joint between the chips' longest chords
-   (5.3 R) deviates from a straight continuation by (c / 2) tan(t / 4) = 0.012 R, four times
-   below the arc resolution, and the exact 1.000 deg comb tooth (90 / 90 discretisations, 358
-   joints on DS-SCT-002) lies on fitted arcs, which absorb it whatever the threshold.
+   **Arc rule — the CONCYCLICITY form (USER decisions 121 / 122, 2026-09-28; amends the
+   sagitta form of 117(4) below and supersedes the joint-turn / piece-length form of decisions
+   82(3) and 85(1), whose fixed points are kept where noted).** Along every perimeter path
+   through vertices with exactly two path segments (regular or corner; a path stops at
+   endpoints, junctions and cuts) the joints are the non-collinear vertices. From every
+   unconsumed joint, the largest range of at least three following joints that turn the same
+   way, **each by less than `ArcMaxJointTurnDegrees` = 50**, and total at most 180 deg is ONE
+   arc **iff its joint vertices lie on one circle within the recorded fit tolerance
+   `ArcFitToleranceOverR` = 1e-3 (the signature parameter tolerance)** — whatever the chord
+   sagitta. "We do not want to artificially classify curves as corners": a coarsely meshed
+   design curve is the curve it discretises (the transmon's 38.9 um CPW bends at 11-16 deg
+   per chord, sagitta 0.09-0.20 R, are bends again; DS-OSC-003's 4 / 6-chord meanders are
+   bends), and its coarseness is REPORTED: the largest chord sagitta rho (1 - cos(central
+   angle / 2)) of every arc is recorded (`Arcs[].MaxChordSagittaOverR`, on the 1e-6 R
+   signature grid) and the manifest's `MeshCoarsenessWarning` lists the arcs whose recorded
+   sagitta is at or above `SagittaOverR` = 0.05 R (count, arc length, worst sagitta, arc
+   indices; the identification log prints the same) — a mesh-coarseness diagnostic, not a
+   membership test (decision-117 review m2: the former strict-below membership test is gone;
+   the diagnostic's sense is "at or above 0.05 on the recorded grid"). The joint-turn cap
+   keeps regular polygons corners (a square turns 90 deg per joint, a hexagon 60; an octagon
+   at 45 deg per joint is a circle at the resolution of the correction — recorded knife edge,
+   in the census as `ArcMaxJointTurnDegrees.50`). The rule applies to bends (radius >= R) and
+   rounded corners (radius < R) alike, with no piece-length rule. The circle is (a) the one
+   tangent to both arms at the end joints (centre at Ta + rho na, rho from the tangent
+   lengths; antiparallel arms: half their separation) when every joint — the last one
+   included, which unequal tangent lengths put off the circle — lies on it within the fit
+   tolerance; else (b), **for a radius >= R over at least FOUR joints** (decision-117 review
+   m3, revisited under the concyclicity rule and KEPT: three points are concyclic whatever
+   they are, so without the sagitta test a 3-joint least-squares "bend" would absorb ANY three
+   consecutive same-sign joints — a lead-end corner, an arc's first joint and its neighbour
+   passed as a bend of radius 350 um under the former rule; with three joints only the
+   tangent construction, whose circle is fixed by the arms, is a test), the algebraic
+   least-squares circle of the joints (exact for an inscribed polyline, a set function of the
+   joints), with each arm meeting the circle's tangent at its end joint within the geometric
+   joint noise rule on the shorter of the arm piece and the first chord (a spline piece
+   joining a bend tangent-continuously; read from the fitted circle, whose tangent moves by
+   1e-3 R / rho for a 1e-3 R position error) or lying on the circle as a chord (an arc
+   starting at a corner that lies on its circle — the sharp end of a rounded slot: the corner
+   stays a corner, the arc starts at its next joint; a lead meeting a circular arc at a 90 deg
+   corner is neither, and the corner is never absorbed). A rounded corner keeps the tangent
+   construction only (its arms are tangent by construction and its site — virtual corner, arm
+   directions — has no meaning otherwise). Every joint that no arc absorbs and that is not
+   noise under the joint noise rule (item 1) is a corner feature — a two-joint chamfer, a
+   square strip end (the diameter chord of a semicircle cannot be told from a one-chord
+   arc), a polygon of 50 deg joints, the 90 deg lead-end corner of a rounded slot. Recorded
+   consequences: a spline-discretised bend whose vertices lie on one circle within 1e-3 R
+   only over a few joints is chopped into exact-fit arcs (as before) and its leftover joints
+   are corners only when they are not noise (a 1-6 deg spline step on chords below ~5 R is
+   noise: the 174-179 deg corner classes of the angular threshold are gone); a mitred offset
+   polyline of an arc (vertices at h / cos(step / 2) from the centreline, end vertices at
+   h / cos(step / 4)) is an arc where its joints lie on the circle tangent to both leads
+   (a two-chord mitre always; wider bars at coarser steps read corners at the polyline ends
+   where a CAD offset of an arc path — concentric arcs at the same angles — reads one bend).
+   The fillet gate and the arc-cluster gate hold over the discretisations whose joints all
+   turn less than the cap (`Fillet.Resolved` / `ArcCluster.Resolved` in `synthetic_layouts`:
+   a 2-chord 135 / 180 deg fillet turns 67.5 / 90 deg at its middle joint and is corners, a
+   4-chord 180 deg fillet at 45 deg is an arc; a closed circle needs more than 360 / 50
+   chords: an octagon), the coarse chords among them carry the diagnostic (`Coarse`); the
+   polygon cases are reported with their corner readings, not gated.
+   **Sagitta form of USER decision 117(4) (2026-09-28, amended above):** membership required
+   every chord's sagitta strictly below `SagittaOverR` R on the 1e-6 R grid and no joint-turn
+   threshold; it read the transmon's CPW bends as 387 corners of 164-175 deg (no library
+   coupons), DS-OSC-003's meanders as 135 / 150 deg corners and, with its 1 deg angular noise
+   threshold, the chips' spline joints as 24k / 15k corners of 150-180 deg (840 / 763 distinct
+   angles) and sub-nm slivers as stack-fragmenting corners (user-decisions-117-sagitta):
+   the reason for decisions 121 / 122.
    **Former form (decision 82(3), 2026-09-25; replaced the run-based rounded-corner rule of
    item 4 and the half-chord curvature of fitted arcs in item 7):** the largest range of at
    least three following joints connected by pieces shorter than 2R, turning the same way,
@@ -330,8 +375,8 @@ smaller endpoint.
    (the recorded knife edge, resolved on the design geometry); DS-SCT-001's three CPW
    termination clusters go from 337 / 337 / 379 chord edges (three hashes) to 29 / 29 / 33
    edges with 13-14 arc portions (two of them one hash: the same design box).
-4. **Vertex features.** A corner (2 chains, turn above the joint noise threshold
-   `CornerTurnToleranceDegrees` = 1 and not absorbed by a fitted arc), endpoint (1 chain) or junction
+4. **Vertex features.** A corner (2 chains, a joint that is not noise under the geometric
+   joint noise rule `JointNoiseSagittaOverR` = 0.05 and not absorbed by a fitted arc), endpoint (1 chain) or junction
    (>= 3 chains) that is not inside a cluster claims a *window* of length R along each of its
    chains, shortened to half the chain length when the chain ends at another vertex feature
    within 2R (two corners R apart on a strip end each claim half of the end edge). Corner
@@ -353,8 +398,9 @@ smaller endpoint.
 7. **Curved-edge chain rule** (decision 73(1); phase 2). A chain is defined by its
    significant vertices only: collinear splits (refinement midpoints, second-order mid-edge
    nodes) merge into one run, and the joints between runs that remain inside a chain — the
-   joints of fitted bend arcs and the sub-noise joints (turn <= `CornerTurnToleranceDegrees`
-   = 1 deg; USER decision 117(4): every other joint is a corner and a chain break) — are the
+   joints of fitted bend arcs and the sub-noise joints (implied sagitta on the shorter
+   adjacent piece below `JointNoiseSagittaOverR` R = 0.05 R; USER decision 121 (B): every
+   other joint is a corner and a chain break) — are the
    polyline's bends. The turn at every sub-noise joint (the joints of a fitted arc are
    accounted for by the arc: a rounded corner's turn, a bend's exact density 1 / radius) is
    spread over the two adjacent half-chords — the
@@ -944,6 +990,39 @@ or first-order node), that e1 sits on the side of the coupon's recorded `Convexi
 inner circle of a gap / the outer circle of a strip for `Convex`, read on the claimed fitted
 arc under e1).
 
+**Angle-interpolated corner family (USER decision 121 (C), 2026-09-28; `MatchCornerFamily`).**
+A SHARP corner feature (`ConvexCorner` / `ConcaveCorner`, `CornerRadiusOverR` 0) that no
+Signature-keyed model matches within the angle tolerance is modelled by the **corner family**
+of its convexity: the library's sharp corner coupons of the same topology, interfaces and law
+(records `Angle` / `AngleDegrees`, `Convexity`; one box basis for the whole family, checked at
+match time) interpolated in the TURN t = 180 - `AngleDegrees`. The interpolation variable is
+the turn because the coupon response is smooth in the arm direction and t = 0 is the straight
+edge, where the first-order regime is anchored: the family's anchor is the straight edge
+through the corner box (`Angle` 180, built by the corner generator on the same basis — the
+"180-deg anchor"; no device corner has that angle, a corner being a joint that is not noise).
+Rule (mirrors the curvature family's): an exact node within `SignatureAngleToleranceDegrees`
+-> that coupon; t at or below the smallest coupon turn (the largest coupon angle, e.g. 165
+deg -> 15 deg) -> linear between the anchor and that node (first order in the turn: the
+corner excess of a small turn is O(t), as the curvature family's first-order regime in
+kappa); otherwise cubic Lagrange on the four nearest abscissae (anchor included); t above the
+largest coupon turn (an angle sharper than the sharpest coupon) -> unmatched with the reason;
+a first-order corner without the anchor -> unmatched with the reason; a rounded corner ->
+refused (per-radius coupons and `CornerRadiusInterpolation` only, no angle family) — never
+silently straight, never the nearest coupon. The runtime model is the BLEND of the nodes'
+matrices on the basis of the NEAREST node (its `ZeroTraceIndices` — the knots inside the
+metal at the nearest coupon angle — and conductor references; Lagrange weights may be
+negative; corner coupons have no coupon depth: the weights apply as they are), named
+`<base>@corner-angle<deg>-<rule>`, patched once with weight one in the FEATURE's frame at the
+feature's angle like an exact coupon; `Match.Note` records the rule, the version-1 record
+`CornerFamily` the base / angle / turn / convexity / rule / nodes and weights, `Status`
+`Interpolated`. The A10 placement audit resolves the runtime model to its base coupon at the
+INTERPOLATED angle (`placement_check.resolve_model`), so the arms checked are the feature's.
+Recorded limitation: the box's trace knots inside the metal change with the angle (the zero
+set is piecewise constant in the angle, jumping at the knot angles 45 / 90 / 135 / 180 deg
+of the 8-knot rings), so the blend is exact in the matrices only where the nodes share a zero
+set; the held-out interpolation residual per node interval and the device-style check
+(corner-family-20260928) record the consequence.
+
 **Library contract.** A model keyed by its `Signature` (the feature's canonical object, `Type`
 included; `Signature.Type` must equal `Topology`) needs no version-1 geometry parameters of its
 own; a model matches every feature of its topology whose parameters lie within the signature
@@ -1023,10 +1102,11 @@ matching pass). The new top-level `Identification` object carries the contract:
 "Identification": {
   "Version": 2,
   "MatchingRadius": R,
-  "Conventions": {"CornerTurnToleranceDegrees": 1, "CornerRule": "...", "InteractionDistanceOverR": 2,
+  "Conventions": {"JointNoiseSagittaOverR": 0.05, "CornerRule": "...", "InteractionDistanceOverR": 2,
                   "ThroughVertexZoneOverR": 2, "ClusterBallOverR": 1,
                   "VertexJoinsClusterOverR": 2, "VertexWindowOverR": 1,
-                  "ParallelCosineTolerance": 1e-8, "ArcFitToleranceOverR": 1e-3, "SagittaOverR": 0.05,
+                  "ParallelCosineTolerance": 1e-8, "ArcFitToleranceOverR": 1e-3,
+                  "ArcMaxJointTurnDegrees": 50, "SagittaOverR": 0.05,
                   "ArcRule": "...",
                   "ArcSampleSpacingOverR": 0.05, "ClusterArcChordStepDegrees": 5,
                   "ClusterArcChordMaxLengthOverR": 0.25, "ClusterGeometryRule": "...",
@@ -1058,6 +1138,8 @@ matching pass). The new top-level `Identification` object carries the contract:
                   "Exclusion": {"Class": "...", "Reason": "..."}} ],
   "Arcs":      [ {"Center": [...], "Radius": r, "RadiusOverR": r / R, "TurnDegrees": t,
                   "MaxChordSagittaOverR": s, "Kind": "RoundedCorner" | "Bend", "Joints": n, "Segments": n} ],
+  "MeshCoarsenessWarning": {"SagittaOverR": 0.05, "Rule": "...", "Count": n, "Length": L,
+                            "WorstMaxChordSagittaOverR": s, "Arcs": [arc indices with s >= 0.05]},
   "Vertices":  [ {"Point": [...], "Type": "Corner|Endpoint|Junction", "TurnDegrees": t,
                   "Feature": k} | {"Point": ..., "Class": "TruncationCut"} ],
   "Exclusions": [ {"Class": "...", "Reason": "...", "Count": n, "Length": L} ],
@@ -1069,8 +1151,8 @@ matching pass). The new top-level `Identification` object carries the contract:
                   "StackEndThirdBodyLength": L, "StackEndThirdBodyRule": "..."},
   "KnifeEdgeCensus": {"BandRelative": 0.01, "SampleSpacingOverR": 0.5, "SampledLength": L,
                       "Distance": {"R": {"Below": L, "Above": L, "Total": L}, "2R": {...}},
-                      "BendRadius": {"10R": {...}}, "CornerTurnDegrees": {"1": {...}},
-                      "ArcSagittaOverR": {"0.05": {...}}},
+                      "BendRadius": {"10R": {...}}, "JointNoiseSagittaOverR": {"0.05": {...}},
+                      "ArcMaxJointTurnDegrees": {"50": {...}}, "ArcSagittaOverR": {"0.05": {...}}},
   "GeometryDigest": "sha256"
 }
 ```
