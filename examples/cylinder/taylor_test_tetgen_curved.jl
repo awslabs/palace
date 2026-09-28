@@ -2,9 +2,9 @@
 #
 # This is the full alternative meshing pathway exercised on the cylinder:
 #   1. EGADS cylinder primitive (R = 2.74 cm, H = 2.74 cm).
-#   2. TetGen graded linear mesh (EGADS.tetrahedralize_size_field).
-#   3. Vertex → CAD classification (EGADS.classify_tetgen_vertices).
-#   4. Continuation curving to a valid order-2 mesh (EGADS.curve_tetgen_mesh).
+#   2. TetGen graded linear mesh (EGADSTetGen.tetrahedralize_size_field).
+#   3. Vertex → CAD classification (EGADSTetGen.classify_tetgen_vertices).
+#   4. Continuation curving to a valid order-2 mesh (EGADSTetGen.curve_tetgen_mesh).
 #   5. Palace eigensolve + analytic mesh sensitivity (full-node export).
 #   6. Chain contraction df/dR = df/dx · dx/dR and Taylor verification.
 #
@@ -18,6 +18,8 @@ using LinearAlgebra, Printf
 using EGADS, TetGen
 
 include(joinpath(@__DIR__, "..", "shared", "palace_io.jl"))
+include(joinpath(@__DIR__, "..", "shared", "egads_tetgen.jl"))
+using .EGADSTetGen
 
 const R = 2.74
 const H = 2.74
@@ -31,20 +33,20 @@ EGADS.set_out_level!(ctx, 0)
 cyl = EGADS.make_cylinder(ctx, [0.0, 0.0, 0.0], [0.0, 0.0, H], R)
 
 println("TetGen mesh...")
-out = EGADS.tetrahedralize_size_field([cyl], "pAYQ";
+out = EGADSTetGen.tetrahedralize_size_field([cyl], "pAYQ";
     meshsize_callback = (x, y, z) -> 0.8, method = :callback,
     max_iterations = 3, angle = 30.0)
 println("  ", size(out.pointlist, 2), " vertices, ",
         size(out.tetrahedronlist, 2), " tets")
 
 println("Classify + curve...")
-cls = EGADS.classify_tetgen_vertices(out, cyl)
-curved = EGADS.curve_tetgen_mesh(out, cls, cyl; verbose = true)
+cls = EGADSTetGen.classify_tetgen_vertices(out, cyl)
+curved = EGADSTetGen.curve_tetgen_mesh(out, cls, cyl; verbose = true)
 @assert curved.t_final == 1.0 "curving did not reach t=1"
 @assert curved.min_detj_ratio > 0.0 "curved mesh invalid"
 
 nfaces = length(EGADS.get_body_topos(cyl, EGADS.OClass.FACE))
-EGADS.write_msh2_p2(MESH, curved; tet_attr = 1, tri_attr = m -> m,
+EGADSTetGen.write_msh2_p2(MESH, curved; tet_attr = 1, tri_attr = m -> m,
     physical_names = vcat([(3, 1, "volume")],
                           [(2, m, "face_$m") for m in 1:nfaces]))
 println("  wrote ", MESH)
