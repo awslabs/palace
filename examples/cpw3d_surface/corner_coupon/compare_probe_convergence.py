@@ -35,7 +35,7 @@ def read_matrix(path, size, value_column):
     return matrix
 
 
-def read_surface_matrices(path, size):
+def read_surface_matrices(path, size, value_column="Q_total_ij (J)"):
     matrices = {}
     seen = {}
     with path.open(newline="") as stream:
@@ -56,7 +56,7 @@ def read_surface_matrices(path, size):
                 )
             interface_seen.add(key)
             matrix = matrices.setdefault(interface, np.zeros((size, size)))
-            value = float(row["Q_total_ij (J)"])
+            value = float(row[value_column])
             matrix[i, j] += value
             if i != j:
                 matrix[j, i] += value

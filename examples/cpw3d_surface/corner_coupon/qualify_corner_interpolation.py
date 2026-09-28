@@ -70,9 +70,11 @@ def load_case(name, root):
             len(basis),
             "Q_ij (J)",
         )
+        # The compact library file: the within-R energy the library adds to a device.
         surfaces = response.read_surface_matrices(
             postpro / "surface-response-matrix-aggregate.csv",
             len(basis),
+            "Q_ij (J)",
         )
         if surfaces.keys() != interface_names.keys():
             raise ValueError(f"{root} has inconsistent interface response matrices")

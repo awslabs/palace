@@ -264,6 +264,10 @@ def write_bases(
     return paths, conductor_trace, open_contour_paths
 
 
+# Potential of every `TerminalAttributes` conductor in a Palace electrostatic solve.
+HELDOUT_TERMINAL_POTENTIAL = 1.0
+
+
 def write_heldout(
     output,
     traces,
@@ -292,11 +296,14 @@ def write_heldout(
         raise ValueError("Contour basis traces do not share one sampling grid")
 
     half_width = 0.5 * separation + radius
-    # The right conductor of a different-conductor gap is a terminal at this potential in
-    # the held-out solve; the polynomial blends to the potential of the conductor at each
-    # cut (zero at the ground) so the trace is a continuous field across the cut (see
-    # generate_edge_cluster_response.write_heldout).
-    conductor_coefficient = 0.17 if conductor_trace is not None else 0.0
+    # The right conductor of a different-conductor gap is a terminal in the held-out solve
+    # (`TerminalAttributes`, which Palace holds at ONE volt); the polynomial blends to the
+    # potential of the conductor at each cut (zero at the ground) so the trace is a
+    # continuous field across the cut, and the conductor coefficient is that same potential
+    # (see generate_edge_cluster_response.write_heldout). The former 0.17 V blend / coefficient
+    # against the 1 V terminal made the direct held-out energies 4.5-370x the prediction
+    # (C4 qualification finding).
+    conductor_coefficient = HELDOUT_TERMINAL_POTENTIAL if conductor_trace is not None else 0.0
 
     def free_potential(points):
         points = PLACEMENT.to_canonical(points)

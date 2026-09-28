@@ -124,6 +124,17 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       temp.temp_dir / "corner-fabricated-surface.csv";
   const auto corner_thin_surface_path = temp.temp_dir / "corner-thin-surface.csv";
   const auto convex_library_3d_path = temp.temp_dir / "fabrication-process-convex-3d.json";
+  // Corner (3D box) surface files of the within-R regression: whole-box Q_total inflated
+  // 3x with the within-R Q_ij unchanged; both scaled 3x; the legacy compact format without
+  // the within-R column; the within-R rows at another radius.
+  const auto inflated_box_convex_library_3d_path =
+      temp.temp_dir / "fabrication-process-convex-3d-inflated-box.json";
+  const auto scaled_convex_library_3d_path =
+      temp.temp_dir / "fabrication-process-convex-3d-scaled.json";
+  const auto legacy_compact_convex_library_3d_path =
+      temp.temp_dir / "fabrication-process-convex-3d-legacy-compact.json";
+  const auto other_radius_convex_library_3d_path =
+      temp.temp_dir / "fabrication-process-convex-3d-other-radius.json";
   const auto finite_impedance_convex_library_3d_path =
       temp.temp_dir / "fabrication-process-convex-finite-impedance-3d.json";
   const auto concave_library_3d_path =
@@ -212,18 +223,27 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
         }
       }
     };
-    auto write_surface_matrix = [](const auto &path, const auto &matrix)
+    // Coupon surface response files carry the energy within R of the coupon edges
+    // (`Q_ij (J)` at `R (m)`, the SI matching radius) and the whole-box `Q_total_ij (J)`.
+    // A spatial (3D box) model adds the within-R energy; the fixtures make both equal unless
+    // a test says otherwise (`box_scale`). Every 3D spatial library below uses
+    // MatchingRadius 0.2, and these IoData are not nondimensionalized (Units(1, 1): mesh
+    // units are metres), so the SI radius is 0.2 m.
+    constexpr double spatial_radius_m = 0.2;
+    auto write_surface_matrix = [](const auto &path, const auto &matrix,
+                                   double box_scale = 1.0, double radius_m = 0.2)
     {
       std::ofstream output(path);
-      output << "interface,edge,basis_i,basis_j,Q_total_ij (J)\n";
+      output << "interface,edge,R (m),basis_i,basis_j,Q_ij (J),Q_total_ij (J)\n";
       for (int edge = 1; edge <= 2; edge++)
       {
         for (std::size_t i = 0; i < matrix.size(); i++)
         {
           for (std::size_t j = i; j < matrix.size(); j++)
           {
-            output << "1," << edge << "," << i + 1 << "," << j + 1 << ","
-                   << 0.5 * matrix[i][j] << "\n";
+            output << "1," << edge << "," << radius_m << "," << i + 1 << "," << j + 1
+                   << "," << 0.5 * matrix[i][j] << "," << 0.5 * box_scale * matrix[i][j]
+                   << "\n";
           }
         }
       }
@@ -231,12 +251,13 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     auto write_compact_surface_matrix = [](const auto &path, const auto &matrix)
     {
       std::ofstream output(path);
-      output << "interface,edge,basis_i,basis_j,Q_total_ij (J)\n";
+      output << "interface,edge,R (m),basis_i,basis_j,Q_ij (J),Q_total_ij (J)\n";
       for (std::size_t i = 0; i < matrix.size(); i++)
       {
         for (std::size_t j = i; j < matrix.size(); j++)
         {
-          output << "1,1," << i + 1 << "," << j + 1 << "," << matrix[i][j] << "\n";
+          output << "1,1," << spatial_radius_m << "," << i + 1 << "," << j + 1 << ","
+                 << matrix[i][j] << "," << matrix[i][j] << "\n";
         }
       }
     };
@@ -651,6 +672,56 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     convex_library_3d["Models"].push_back(corner_model);
     std::ofstream convex_output_3d(convex_library_3d_path);
     convex_output_3d << convex_library_3d.dump(2) << "\n";
+    auto write_corner_variant_library = [&](const auto &library_path, const std::string &tag,
+                                            double within_scale, double box_scale,
+                                            double radius_m, bool legacy_compact)
+    {
+      const auto fabricated_surface =
+          temp.temp_dir / ("corner-fabricated-surface-" + tag + ".csv");
+      const auto thin_surface = temp.temp_dir / ("corner-thin-surface-" + tag + ".csv");
+      for (const auto &[path, matrix] : {std::pair{fabricated_surface, corner_fabricated},
+                                         std::pair{thin_surface, corner_thin}})
+      {
+        if (!legacy_compact)
+        {
+          // Same row structure (two half-edges, default stream precision) as the base
+          // corner file so that equal within-R values print identically.
+          auto scaled = matrix;
+          for (auto &row : scaled)
+          {
+            for (auto &value : row)
+            {
+              value *= within_scale;
+            }
+          }
+          write_surface_matrix(path, scaled, box_scale / within_scale, radius_m);
+          continue;
+        }
+        std::ofstream output(path);
+        output << "interface,edge,basis_i,basis_j,Q_total_ij (J)\n";
+        for (std::size_t i = 0; i < matrix.size(); i++)
+        {
+          for (std::size_t j = i; j < matrix.size(); j++)
+          {
+            output << "1,1," << i + 1 << "," << j + 1 << "," << matrix[i][j] << "\n";
+          }
+        }
+      }
+      auto library = convex_library_3d;
+      library["Name"] = "unit-test-process-convex-3d-" + tag;
+      library["Models"][1]["FabricatedSurfaceMatrix"] = fabricated_surface.string();
+      library["Models"][1]["ThinSurfaceMatrix"] = thin_surface.string();
+      std::ofstream output(library_path);
+      output << library.dump(2) << "\n";
+    };
+    write_corner_variant_library(inflated_box_convex_library_3d_path, "inflated-box", 1.0,
+                                 3.0, spatial_radius_m, false);
+    write_corner_variant_library(scaled_convex_library_3d_path, "scaled", 3.0, 3.0,
+                                 spatial_radius_m, false);
+    write_corner_variant_library(legacy_compact_convex_library_3d_path, "legacy-compact",
+                                 1.0, 1.0, spatial_radius_m, true);
+    write_corner_variant_library(other_radius_convex_library_3d_path, "other-radius", 1.0,
+                                 1.0, 2.0 * spatial_radius_m, false);
 
     auto finite_impedance_convex_library_3d = convex_library_3d;
     finite_impedance_convex_library_3d["Name"] =
@@ -722,18 +793,19 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     std::ofstream spatial_cluster_output_3d(spatial_cluster_library_3d_path);
     spatial_cluster_output_3d << spatial_cluster_library_3d.dump(2) << "\n";
 
-    auto write_cross_layer_surface_matrix = [](const auto &path, const auto &matrix)
+    auto write_cross_layer_surface_matrix = [&](const auto &path, const auto &matrix)
     {
       std::ofstream output(path);
-      output << "interface,edge,basis_i,basis_j,Q_total_ij (J)\n";
+      output << "interface,edge,R (m),basis_i,basis_j,Q_ij (J),Q_total_ij (J)\n";
       for (int interface = 1; interface <= 2; interface++)
       {
         for (std::size_t i = 0; i < matrix.size(); i++)
         {
           for (std::size_t j = i; j < matrix.size(); j++)
           {
-            output << interface << ",1," << i + 1 << "," << j + 1 << ","
-                   << 0.5 * matrix[i][j] << "\n";
+            output << interface << ",1," << spatial_radius_m << "," << i + 1 << ","
+                   << j + 1 << "," << 0.5 * matrix[i][j] << "," << 0.5 * matrix[i][j]
+                   << "\n";
           }
         }
       }
@@ -3662,6 +3734,63 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       (island_perimeter - 2.0 * island_corners * 0.2) / 0.2 + island_corners;
   CHECK_THAT(convex_island_response.GetPatchWeight(),
              WithinRel(expected_convex_weight, 1.0e-12));
+
+  // Regression (lane J double count, decision 112(a)): a spatial (3D box) coupon adds the
+  // energy within R of its edges (`Q_ij (J)` at the matching radius), not the whole-box
+  // `Q_total_ij (J)` — the device keeps its own raw energy beyond R inside the box. The
+  // island's convex corners are 3D box coupons: inflating their Q_total 3x with Q_ij
+  // unchanged must leave the fabricated surface energy unchanged (the old assembly read
+  // Q_total and grew), scaling Q_ij as well must change it (the corners contribute), and a
+  // corner file without the within-R column or with its rows at another radius is refused.
+  {
+    mfem::ParGridFunction island_potential(&convex_island_laplace.GetH1Space().Get());
+    mfem::FunctionCoefficient island_potential_coefficient(
+        [](const mfem::Vector &x) { return x[1] * (1.0 + 0.3 * x[0] - 0.2 * x[2]); });
+    island_potential.ProjectCoefficient(island_potential_coefficient);
+    Vector island_potential_true;
+    island_potential.GetTrueDofs(island_potential_true);
+    const auto convex_island_result =
+        convex_island_response.GetElectrostaticResponse(island_potential_true);
+    REQUIRE(convex_island_result.fabricated_surface_energy.at(4) > 0.0);
+    auto VariantConfig = [&](const auto &library_path)
+    {
+      auto config = convex_island_config;
+      config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+          library_path.string();
+      return config;
+    };
+    {
+      IoData inflated_iodata(VariantConfig(inflated_box_convex_library_3d_path), false);
+      inflated_iodata.boundaries.cracked_attributes.insert(9);
+      SurfaceResponseOperator inflated_response(inflated_iodata, convex_island_laplace);
+      const auto inflated_result =
+          inflated_response.GetElectrostaticResponse(island_potential_true);
+      CHECK_THAT(inflated_result.fabricated_surface_energy.at(4),
+                 WithinRel(convex_island_result.fabricated_surface_energy.at(4), 1.0e-12));
+      CHECK_THAT(inflated_result.fabricated_surface_energy_fixed_flux.at(4),
+                 WithinRel(convex_island_result.fabricated_surface_energy_fixed_flux.at(4),
+                           1.0e-12));
+    }
+    {
+      IoData scaled_iodata(VariantConfig(scaled_convex_library_3d_path), false);
+      scaled_iodata.boundaries.cracked_attributes.insert(9);
+      SurfaceResponseOperator scaled_response(scaled_iodata, convex_island_laplace);
+      const auto scaled_result =
+          scaled_response.GetElectrostaticResponse(island_potential_true);
+      CHECK(scaled_result.fabricated_surface_energy.at(4) >
+            1.01 * convex_island_result.fabricated_surface_energy.at(4));
+    }
+    {
+      IoData legacy_iodata(VariantConfig(legacy_compact_convex_library_3d_path), false);
+      legacy_iodata.boundaries.cracked_attributes.insert(9);
+      CHECK_THROWS(SurfaceResponseOperator(legacy_iodata, convex_island_laplace));
+    }
+    {
+      IoData other_radius_iodata(VariantConfig(other_radius_convex_library_3d_path), false);
+      other_radius_iodata.boundaries.cracked_attributes.insert(9);
+      CHECK_THROWS(SurfaceResponseOperator(other_radius_iodata, convex_island_laplace));
+    }
+  }
 
   // Features-driven patch construction (the default; SURFACE-RESPONSE-IDENTIFICATION.md
   // (e)): the preflight is the patch dry run. With the legacy convex library every feature

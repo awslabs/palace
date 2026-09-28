@@ -35,18 +35,37 @@ def read_domain_matrix(path, size):
 
 
 def aggregate_localized_surface_matrix(source, destination, size):
+    """Compact the coupon's per-edge surface response (Palace's surface-response-matrix.csv
+    at the single matching radius) into the library format: per interface, the sum over
+    the physical edges of the energy within R of the edges (`Q_ij (J)`, the union of the
+    radius-R tubes, which is what a spatial (3D box) coupon adds to the device: the device
+    keeps its own raw energy beyond R) next to the whole-box `Q_total_ij (J)`, with the
+    matching radius `R (m)`. Returns the within-R matrices."""
     values = {}
+    totals = {}
+    radii = set()
     with source.open(newline="") as stream:
         rows = csv.reader(stream)
         header = clean_header(next(rows))
         columns = {name: index for index, name in enumerate(header)}
+        for name in ("R (m)", "Q_ij (J)", "Q_total_ij (J)"):
+            if name not in columns:
+                raise ValueError(f"{source} lacks the column {name!r}")
         for row in rows:
             key = (
                 int(float(row[columns["interface"]])),
                 int(float(row[columns["basis_i"]])),
                 int(float(row[columns["basis_j"]])),
             )
+            radii.add(float(row[columns["R (m)"]]))
             values[key] = values.get(key, 0.0) + float(row[columns["Q_ij (J)"]])
+            totals[key] = totals.get(key, 0.0) + float(row[columns["Q_total_ij (J)"]])
+    if len(radii) != 1:
+        raise ValueError(
+            f"{source} must localize its edge energy at exactly one matching radius; "
+            f"found {sorted(radii)}"
+        )
+    radius = radii.pop()
 
     interfaces = sorted({key[0] for key in values})
     expected = size * (size + 1) // 2
@@ -61,11 +80,13 @@ def aggregate_localized_surface_matrix(source, destination, size):
     with destination.open("w", newline="") as stream:
         writer = csv.writer(stream, lineterminator="\n")
         writer.writerow(
-            ["interface", "edge", "basis_i", "basis_j", "Q_total_ij (J)"]
+            ["interface", "edge", "R (m)", "basis_i", "basis_j", "Q_ij (J)", "Q_total_ij (J)"]
         )
         for key in sorted(values):
             interface, i, j = key
-            writer.writerow((interface, 1, i, j, f"{values[key]:+.16e}"))
+            writer.writerow(
+                (interface, 1, f"{radius:.12e}", i, j, f"{values[key]:+.16e}", f"{totals[key]:+.16e}")
+            )
 
     matrices = {}
     for (interface, i, j), value in values.items():

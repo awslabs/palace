@@ -63,7 +63,10 @@ def read_surface_matrices(path, size):
             interface = int(float(row["interface"]))
             i = int(float(row["basis_i"])) - 1
             j = int(float(row["basis_j"])) - 1
-            value = float(row["Q_total_ij (J)"])
+            # The compact library file: the energy within R of the coupon edges (the
+            # value the library adds to a device); the former compact format carried it
+            # under the Q_total header.
+            value = float(row["Q_ij (J)"] if "Q_ij (J)" in row else row["Q_total_ij (J)"])
             matrix = matrices.setdefault(interface, np.zeros((size, size)))
             matrix[i, j] += value
             if i != j:

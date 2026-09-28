@@ -1914,6 +1914,15 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
       model.response.trace_triangles =
           ResolveLibraryPath(directory, trace_mesh->at("Triangles").get<std::string>());
     }
+    if (auto interior = entry.find("InteriorTraceCount"); interior != entry.end())
+    {
+      MFEM_VERIFY(interior->is_number_integer() && interior->get<int>() >= 0 &&
+                      spatial_response && !model.response.trace_vertices.empty(),
+                  "InteriorTraceCount requires a nonnegative count on a spatial response "
+                  "model with an explicit TraceMesh (its cap-interior hats are trace "
+                  "coefficients only through the trace mesh)!");
+      model.response.interior_trace_count = interior->get<int>();
+    }
     if (auto references = entry.find("ConductorReferences"); references != entry.end())
     {
       MFEM_VERIFY(version >= 2,
@@ -12193,29 +12202,75 @@ DomainResponseMatrices BuildDomainResponseMatrices(
           std::move(fixed_flux_transform), std::move(fixed_flux_defect)};
 }
 
-std::map<int, mfem::DenseMatrix> ReadSurfaceResponseMatrices(const std::string &path,
-                                                             int expected_size)
+// The coupon interface energy a model adds to the device. A translational (2D cross-
+// section) coupon spans exactly the matching radius on either side of its edges, so its
+// whole-box `Q_total_ij (J)` is the energy within R of its edges. A spatial (3D box)
+// coupon's box extends beyond R of its edges (pad continuations, the far under-metal
+// surface) and the device keeps its own raw energy there, so such a model must add the
+// localized `Q_ij (J)` column at the matching radius (`within_radius`, in the file's SI
+// units) instead: adding Q_total counted the box energy outside R twice (lane J, decision
+// 112(a)).
+std::map<int, mfem::DenseMatrix>
+ReadSurfaceResponseMatrices(const std::string &path, int expected_size,
+                            std::optional<double> within_radius = std::nullopt)
 {
   const Table table = ReadTable(path);
   const auto &interface_col = FindColumn(table, "interface", path);
   const auto &edge_col = FindColumn(table, "edge", path);
   const auto &basis_i = FindColumn(table, "basis_i", path);
   const auto &basis_j = FindColumn(table, "basis_j", path);
-  const auto &q = FindColumn(table, "Q_total_ij (J)", path);
+  const Column *distance_col = nullptr;
+  if (within_radius)
+  {
+    MFEM_VERIFY(std::isfinite(*within_radius) && *within_radius > 0.0,
+                "Spatial response models require a positive matching radius to select "
+                "their within-R surface response!");
+    for (auto it = table.cbegin(); it != table.cend(); ++it)
+    {
+      if (it->header_text == "R (m)")
+      {
+        distance_col = &*it;
+      }
+    }
+    MFEM_VERIFY(distance_col,
+                "Surface response matrix file \""
+                    << path
+                    << "\" of a spatial (3D box) response model has no \"R (m)\" "
+                       "column: such a model adds its within-R energy Q_ij, not the "
+                       "whole-box Q_total; regenerate the compact matrix with the "
+                       "localized column (finalize_corner_response.py) or publish the "
+                       "coupon's surface-response-matrix.csv!");
+  }
+  const auto &q =
+      FindColumn(table, within_radius ? "Q_ij (J)" : "Q_total_ij (J)", path);
   const std::size_t rows = q.n_rows();
   MFEM_VERIFY(interface_col.n_rows() == rows && edge_col.n_rows() == rows &&
-                  basis_i.n_rows() == rows && basis_j.n_rows() == rows,
+                  basis_i.n_rows() == rows && basis_j.n_rows() == rows &&
+                  (!distance_col || distance_col->n_rows() == rows),
               "Surface response matrix columns have inconsistent lengths in \"" << path
                                                                                 << "\"!");
 
   // Q_total is repeated for every matching radius. Deduplicate those rows for each
   // interface/edge/basis pair, then sum all physical coupon edges belonging to an
   // interface. This makes one matrix represent either a one-edge or a coupled multi-edge
-  // coupon.
+  // coupon. The within-R energy is read from the rows at the matching radius only.
   using Key = std::tuple<int, int, int, int>;
   std::map<Key, double> unique;
+  std::size_t radius_rows = 0;
   for (std::size_t row = 0; row < rows; row++)
   {
+    if (distance_col)
+    {
+      const double distance = distance_col->data[row];
+      MFEM_VERIFY(std::isfinite(distance) && distance > 0.0,
+                  "Invalid matching radius in surface response matrix file \"" << path
+                                                                              << "\"!");
+      if (std::abs(distance - *within_radius) > 1.0e-6 * *within_radius)
+      {
+        continue;
+      }
+      radius_rows++;
+    }
     const int interface = ParseIndex(interface_col.data[row], "interface", path);
     const int edge = ParseIndex(edge_col.data[row], "edge", path);
     const int i = ParseIndex(basis_i.data[row], "basis_i", path);
@@ -12232,6 +12287,11 @@ std::map<int, mfem::DenseMatrix> ReadSurfaceResponseMatrices(const std::string &
                   "Inconsistent repeated Q_total entry in \"" << path << "\"!");
     }
   }
+  MFEM_VERIFY(!distance_col || radius_rows > 0,
+              "Surface response matrix file \""
+                  << path << "\" has no within-R rows at the matching radius "
+                  << *within_radius << " m: a spatial (3D box) response model adds its "
+                  << "energy within R of its edges (Q_ij), not the whole-box Q_total!");
 
   std::map<int, std::vector<MatrixEntry>> entries;
   std::map<std::pair<int, int>, std::vector<bool>> have;
@@ -12281,13 +12341,13 @@ std::map<int, mfem::DenseMatrix> ReadSurfaceResponseMatrices(const std::string &
 // interpolated model (config blend) the weighted sum of its sources' files.
 std::map<int, mfem::DenseMatrix> BlendedSurfaceResponseMatrices(
     const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
-    bool fabricated, int expected_size)
+    bool fabricated, int expected_size, std::optional<double> within_radius)
 {
   if (config.blend.empty())
   {
     return ReadSurfaceResponseMatrices(fabricated ? config.fabricated_surface_matrix
                                                   : config.thin_surface_matrix,
-                                       expected_size);
+                                       expected_size, within_radius);
   }
   std::map<int, mfem::DenseMatrix> result;
   std::set<int> interfaces;
@@ -12295,7 +12355,7 @@ std::map<int, mfem::DenseMatrix> BlendedSurfaceResponseMatrices(
   {
     auto matrices = ReadSurfaceResponseMatrices(
         fabricated ? source.fabricated_surface_matrix : source.thin_surface_matrix,
-        expected_size);
+        expected_size, within_radius);
     std::set<int> source_interfaces;
     for (auto &[interface, matrix] : matrices)
     {
@@ -12324,9 +12384,39 @@ struct SurfaceResponseMatrices
   std::map<int, mfem::DenseMatrix> defects;
 };
 
+// `matching_radius` (mesh units) is the device's edge-localization radius R; a spatial
+// (3D box) model reads its within-R surface response at that radius, a translational
+// model its whole-box response (equal to within R by construction of the 2D coupon box).
+// The device's edge-localization radius R (mesh units): the largest EdgeDistances value
+// of the target dielectric interfaces, which the automatic library matching verifies
+// against the process library's MatchingRadius. Zero when no target interface localizes
+// its edge energy (explicit 2D configurations without spatial models).
+double TargetInterfaceMatchingRadius(const IoData &iodata,
+                                     const std::vector<int> &target_interfaces)
+{
+  const std::set<int> target_filter(target_interfaces.begin(), target_interfaces.end());
+  double radius = 0.0;
+  for (const auto &[index, dielectric] : iodata.boundaries.postpro.dielectric)
+  {
+    if ((!target_filter.empty() && target_filter.find(index) == target_filter.end()) ||
+        dielectric.type == InterfaceDielectric::DEFAULT ||
+        dielectric.edge_distances.empty())
+    {
+      continue;
+    }
+    const double candidate = dielectric.edge_distances.back();
+    MFEM_VERIFY(radius == 0.0 ||
+                    std::abs(candidate - radius) <= 1.0e-10 * std::max(candidate, radius),
+                "Response-corrected target interfaces must share one largest EdgeDistances "
+                "value (the library matching radius)!");
+    radius = candidate;
+  }
+  return radius;
+}
+
 SurfaceResponseMatrices BuildSurfaceResponseMatrices(
     const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
-    int expected_size, const Units &units)
+    int expected_size, const Units &units, double matching_radius)
 {
   if (config.fabricated_surface_matrix.empty() && config.thin_surface_matrix.empty())
   {
@@ -12340,8 +12430,16 @@ SurfaceResponseMatrices BuildSurfaceResponseMatrices(
               "FabricatedSurfaceMatrix, ThinSurfaceMatrix, and Interfaces must be "
               "specified together for response-corrected surface participation!");
 
-  auto fabricated = BlendedSurfaceResponseMatrices(config, true, expected_size);
-  auto thin = BlendedSurfaceResponseMatrices(config, false, expected_size);
+  std::optional<double> within_radius;
+  if (config.spatial_basis)
+  {
+    MFEM_VERIFY(std::isfinite(matching_radius) && matching_radius > 0.0,
+                "A spatial (3D box) response model requires the target interfaces' "
+                "matching radius to select its within-R surface response!");
+    within_radius = units.Dimensionalize<Units::ValueType::LENGTH>(matching_radius);
+  }
+  auto fabricated = BlendedSurfaceResponseMatrices(config, true, expected_size, within_radius);
+  auto thin = BlendedSurfaceResponseMatrices(config, false, expected_size, within_radius);
   const double voltage_scale = units.GetScaleFactor<Units::ValueType::VOLTAGE>();
   const double energy_scale = units.GetScaleFactor<Units::ValueType::ENERGY>();
   const double scale = voltage_scale * voltage_scale / energy_scale;
@@ -12538,6 +12636,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                       {"ContourGroups", model.contour_groups},
                       {"ZeroTraceIndices", model.zero_trace_indices},
                       {"OpenContourPaths", std::move(open_paths)},
+                      {"InteriorTraceCount", model.interior_trace_count},
                       {"ConductorStateCount", model.conductor_state_count},
                       {"Interfaces", std::move(interfaces)},
                       {"Blend", std::move(blend)}});
@@ -12602,6 +12701,7 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
     model.spatial_basis = entry.value("SpatialBasis", false);
     model.contour_groups = entry.value("ContourGroups", std::vector<int>{});
     model.zero_trace_indices = entry.value("ZeroTraceIndices", std::vector<int>{});
+    model.interior_trace_count = entry.value("InteriorTraceCount", 0);
     model.conductor_state_count = entry.value("ConductorStateCount", 0);
     for (const auto &value : entry.value("OpenContourPaths", nlohmann::json::array()))
     {
@@ -12887,6 +12987,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     MFEM_ABORT("Unknown translational response domain-correction mode!");
     return DomainCorrectionMode::FIXED_TRACE;
   };
+  const double target_matching_radius =
+      TargetInterfaceMatchingRadius(iodata, config->target_interfaces);
   for (const auto &model_config : config->models)
   {
     MFEM_VERIFY(model_config.idx > 0 &&
@@ -12923,18 +13025,29 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     MFEM_VERIFY(model.zero_trace_indices.empty() || model.open_contour_paths.empty(),
                 "Response-correction models cannot combine ZeroTraceIndices with "
                 "OpenContourPaths!");
+    // Cap-interior hats (trailing basis points on no contour) are trace coefficients only
+    // through the explicit trace mesh: collocated or surface-mortar spatial models.
+    model.interior_trace_count = model_config.interior_trace_count;
+    MFEM_VERIFY(model.interior_trace_count >= 0 &&
+                    model.interior_trace_count < model.contour_size &&
+                    (model.interior_trace_count == 0 ||
+                     (model.spatial_basis && !model_config.trace_vertices.empty())),
+                "InteriorTraceCount requires a spatial response model with an explicit "
+                "TraceMesh and fewer interior points than BasisPoints!");
+    const int contour_point_count = model.contour_size - model.interior_trace_count;
     if (model.contour_groups.empty() && model.open_contour_paths.empty())
     {
-      model.contour_groups.push_back(model.contour_size);
+      model.contour_groups.push_back(contour_point_count);
     }
     if (!model.contour_groups.empty())
     {
       MFEM_VERIFY(std::accumulate(model.contour_groups.begin(), model.contour_groups.end(),
-                                  0) == model.contour_size,
-                  "Response-correction ContourGroups do not partition BasisPoints!");
+                                  0) == contour_point_count,
+                  "Response-correction ContourGroups do not partition the contour "
+                  "BasisPoints (BasisPoints minus the trailing InteriorTraceCount)!");
       MFEM_VERIFY(std::all_of(model.zero_trace_indices.begin(),
                               model.zero_trace_indices.end(), [&](int index)
-                              { return index >= 0 && index < model.contour_size; }),
+                              { return index >= 0 && index < contour_point_count; }),
                   "Response-correction ZeroTraceIndices contain an invalid BasisPoints "
                   "index!");
     }
@@ -12945,15 +13058,16 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       {
         for (const int index : path.indices)
         {
-          MFEM_VERIFY(index >= 0 && index < model.contour_size && !assigned[index],
+          MFEM_VERIFY(index >= 0 && index < contour_point_count && !assigned[index],
                       "Response-correction OpenContourPaths contain an invalid or "
                       "duplicate BasisPoints index!");
           assigned[index] = true;
         }
       }
-      MFEM_VERIFY(
-          std::all_of(assigned.begin(), assigned.end(), [](bool value) { return value; }),
-          "Response-correction OpenContourPaths do not partition BasisPoints!");
+      MFEM_VERIFY(std::all_of(assigned.begin(), assigned.begin() + contour_point_count,
+                              [](bool value) { return value; }),
+                  "Response-correction OpenContourPaths do not partition the contour "
+                  "BasisPoints (BasisPoints minus the trailing InteriorTraceCount)!");
     }
     MFEM_VERIFY(config->trace_coupling !=
                         ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR ||
@@ -13220,7 +13334,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     model.fixed_flux_transform = std::move(domain_response.fixed_flux_transform);
     model.fixed_flux_domain_defect = std::move(domain_response.fixed_flux_defect);
     auto surface_response =
-        BuildSurfaceResponseMatrices(model_config, model.basis_size, iodata.units);
+        BuildSurfaceResponseMatrices(model_config, model.basis_size, iodata.units,
+                                     target_matching_radius);
     model.fabricated_surfaces = std::move(surface_response.fabricated);
     model.surface_defects = std::move(surface_response.defects);
     model_indices.emplace(model.idx, static_cast<int>(models.size()));
@@ -13852,6 +13967,8 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   std::vector<std::vector<std::array<double, 3>>> basis_points;
   models.reserve(config.models.size());
   basis_points.reserve(config.models.size());
+  const double target_matching_radius =
+      TargetInterfaceMatchingRadius(iodata, config.target_interfaces);
   for (const auto &model_config : config.models)
   {
     MFEM_VERIFY(model_config.idx > 0 &&
@@ -13891,6 +14008,10 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     MFEM_VERIFY(model.conductor_state_count == 0 || !model.open_contour_paths.empty(),
                 "Maxwell response correction requires OpenContourPaths for every "
                 "two-conductor coupon model!");
+    MFEM_VERIFY(model_config.interior_trace_count == 0,
+                "Maxwell response correction does not support cap-interior trace "
+                "coefficients (InteriorTraceCount): every coefficient must lie on a "
+                "Maxwell contour!");
     MFEM_VERIFY(model.contour_groups.empty() || model.open_contour_paths.empty(),
                 "Response-correction models cannot combine closed ContourGroups with "
                 "OpenContourPaths!");
@@ -13937,7 +14058,8 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     model.fixed_flux_transform = std::move(domain_response.fixed_flux_transform);
     model.fixed_flux_domain_defect = std::move(domain_response.fixed_flux_defect);
     auto surface_response =
-        BuildSurfaceResponseMatrices(model_config, model.basis_size, iodata.units);
+        BuildSurfaceResponseMatrices(model_config, model.basis_size, iodata.units,
+                                     target_matching_radius);
     model.fabricated_surfaces = std::move(surface_response.fabricated);
     model.surface_defects = std::move(surface_response.defects);
     model_indices.emplace(model.idx, static_cast<int>(models.size()));

@@ -156,6 +156,8 @@ private:
     std::vector<int> contour_groups;
     std::vector<int> zero_trace_indices;
     std::vector<OpenContourPath> open_contour_paths;
+    // Trailing basis points in the interior of the matching-box caps (on no contour).
+    int interior_trace_count = 0;
     bool surface_mortar = false;
     bool spatial_mortar = false;
     std::vector<MortarSegment> mortar_segments;

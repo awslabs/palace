@@ -235,17 +235,22 @@ class PairHeldoutTraceTest(unittest.TestCase):
             separation, True, False
         )
         self.assertIsNotNone(conductor_trace)
-        self.assertEqual(coefficients[-1], 0.17)
+        # The terminal is held at one volt by Palace (TerminalAttributes): the trace on its
+        # cut and its coefficient must be that potential (a 0.17 V blend against the 1 V
+        # terminal made the direct held-out energies 4.5-370x the prediction, C4 finding).
+        terminal = PAIR.HELDOUT_TERMINAL_POTENTIAL
+        self.assertEqual(terminal, 1.0)
+        self.assertEqual(coefficients[-1], terminal)
         points, values = heldout[:, :3], heldout[:, 3]
         right = cut_distance(points, half_width)
         on_cut = right <= 1.0e-12
         self.assertGreater(on_cut.sum(), 0)
-        np.testing.assert_allclose(values[on_cut], 0.17, rtol=0.0, atol=1.0e-12)
+        np.testing.assert_allclose(values[on_cut], terminal, rtol=0.0, atol=1.0e-12)
         near = (right > 1.0e-12) & (right < RADIUS / 3.0)
         np.testing.assert_allclose(
             values[near],
             smoothstep(right[near]) * polynomial(points[near])
-            + (1.0 - smoothstep(right[near])) * 0.17,
+            + (1.0 - smoothstep(right[near])) * terminal,
             rtol=0.0,
             atol=1.0e-12,
         )
@@ -257,27 +262,26 @@ class PairHeldoutTraceTest(unittest.TestCase):
             rtol=0.0,
             atol=1.0e-12,
         )
-        self.assertLess(np.abs(np.diff(values)).max(), 0.02)
+        self.assertLess(np.abs(np.diff(values)).max(), 0.05)
         interpolant = hat_interpolant(root, coefficients, list(traces) + [conductor_trace])
         error = np.abs(values - interpolant).max()
-        # The recorded construction (cutoff to zero, conductor trace at 0.17 V) on the same
-        # knots: a 0.17 V step against the metal the hats cannot follow.
+        # The recorded construction (cutoff to zero, conductor trace at the terminal
+        # potential) on the same knots: a 1 V step against the metal the hats cannot follow.
         distance = np.minimum(left, right)
-        former_values = smoothstep(distance) * polynomial(points) + 0.17 * np.loadtxt(
+        former_values = smoothstep(distance) * polynomial(points) + terminal * np.loadtxt(
             conductor_trace, delimiter=",", skiprows=1
         )[:, 3]
         basis_points = np.loadtxt(root / "basis_points.csv", delimiter=",", skiprows=1)
         knot_distance = np.minimum(
             cut_distance(basis_points, -half_width), cut_distance(basis_points, half_width)
         )
-        former_coefficients = list(smoothstep(knot_distance) * polynomial(basis_points)) + [0.17]
+        former_coefficients = list(smoothstep(knot_distance) * polynomial(basis_points)) + [
+            terminal
+        ]
         former = np.abs(
             former_values
             - hat_interpolant(root, former_coefficients, list(traces) + [conductor_trace])
         ).max()
-        # A 0.17 V terminal: the blend amplitude (polynomial - 0.17) is 0.7 of the former
-        # step, so the interpolation error shrinks by that ratio, not more.
-        self.assertLess(error, former)
         self.assertLess(error, 0.8 * former)
 
 
