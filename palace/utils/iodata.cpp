@@ -671,6 +671,17 @@ void IoData::CheckConfiguration()
                 "problem types!");
     MFEM_VERIFY(!sub.region_attributes.empty() && !sub.environment_attributes.empty(),
                 "Substructuring requires nonempty Region and Environment attribute sets!");
+    if (problem.type == ProblemType::MAGNETOSTATIC)
+    {
+      // Magnetostatic substructuring condenses Dirichlet-lift (flux-loop) excitations;
+      // surface-current sources need a gauge-free treatment of the singular curl-curl
+      // operator, which it does not provide yet. Reject them here rather than silently
+      // skipping them in a mixed configuration.
+      MFEM_VERIFY(boundaries.current.empty(),
+                  "Magnetostatic substructuring does not support \"SurfaceCurrent\" "
+                  "excitations yet; use \"FluxLoop\" excitations or remove "
+                  "\"Solver.Substructuring\"!");
+    }
     std::set<int> region_set(sub.region_attributes.begin(), sub.region_attributes.end());
     for (int a : sub.environment_attributes)
     {

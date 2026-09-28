@@ -178,6 +178,38 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     CHECK_THROWS_WITH(IoData(config, false),
                       Catch::Matchers::ContainsSubstring("must be disjoint"));
   }
+
+  SECTION("Magnetostatic substructuring rejects surface currents")
+  {
+    const json surface_current = {{{"Attributes", {4}}, {"Index", 1}, {"Direction", "+X"}}};
+    const json flux_loop = {{{"Index", 2},
+                             {"FluxLoopPEC", {6}},
+                             {"HoleAttributes", {7}},
+                             {"FluxAmounts", {1.0}},
+                             {"Direction", "+Z"}}};
+    auto make_config = [](const json &boundaries)
+    {
+      return json{{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+                  {"Model", {{"Mesh", "test.msh"}}},
+                  {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                  {"Boundaries", boundaries},
+                  {"Solver",
+                   {{"Substructuring",
+                     {{"Region", {{"Attributes", {1}}}},
+                      {"Environment", {{"Attributes", {2}}}}}}}}};
+    };
+    CHECK_NOTHROW(IoData(make_config({{"FluxLoop", flux_loop}}), false));
+    CHECK_THROWS_WITH(
+        IoData(make_config({{"SurfaceCurrent", surface_current}}), false),
+        Catch::Matchers::ContainsSubstring("does not support \"SurfaceCurrent\""));
+    // A (valid) mixed configuration is rejected, not silently reduced to its flux loops.
+    json mixed_current = surface_current;
+    mixed_current[0]["Aperture"] = {{"Attributes", {5}}, {"Direction", "+Z"}};
+    CHECK_THROWS_WITH(
+        IoData(make_config({{"SurfaceCurrent", mixed_current}, {"FluxLoop", flux_loop}}),
+               false),
+        Catch::Matchers::ContainsSubstring("does not support \"SurfaceCurrent\""));
+  }
 }
 
 TEST_CASE("Config Domain Postprocessing", "[config][Serial]")
