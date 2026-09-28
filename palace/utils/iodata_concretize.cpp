@@ -546,6 +546,7 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
       Concretize(j_sub, "SaveModel", sub.save_model);
     }
     Concretize(j_sub, "InterfaceOffdiagTol", sub.interface_offdiag_tol);
+    Concretize(j_sub, "FactorizationTol", sub.factorization_tol);
   }
 
   if (config.contains("Domains"))

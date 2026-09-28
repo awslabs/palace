@@ -2894,6 +2894,12 @@
           "minimum": 0,
           "default": 0,
           "description": "Relative tolerance for hierarchical (HODLR) off-diagonal low-rank compression of the interface operator S_E; 0 keeps it dense."
+        },
+        "FactorizationTol": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0,
+          "description": "Relative block low-rank (BLR) tolerance for the MUMPS environment factorization; 0 is exact. Trades a controlled accuracy loss (~the tolerance) for a much faster factorization. Only used with MUMPS."
         }
       }
     },

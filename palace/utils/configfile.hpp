@@ -1165,10 +1165,16 @@ public:
   std::string save_model = "";
 
   // Relative tolerance for a hierarchical (HODLR) off-diagonal low-rank compression of the
-  // interface operator S_E: 0 keeps S_E dense; t > 0 compresses well-separated interface-block
-  // couplings to relative accuracy t (the DtN's off-diagonal blocks are low-rank), trading a
-  // controlled accuracy loss for reduced S_E storage.
+  // interface operator S_E: 0 keeps S_E dense; t > 0 compresses well-separated
+  // interface-block couplings to relative accuracy t (the DtN's off-diagonal blocks are
+  // low-rank), trading a controlled accuracy loss for reduced S_E storage.
   double interface_offdiag_tol = 0.0;
+
+  // Relative block low-rank (BLR) tolerance for the MUMPS environment factorization (the
+  // Schur materialization of S_E and every environment solve): 0 is an exact factorization;
+  // t > 0 compresses the factors, trading a controlled accuracy loss for a faster
+  // factorization. Only used with MUMPS.
+  double factorization_tol = 0.0;
 
   SubstructuringData() = default;
   SubstructuringData(const json &substructuring);

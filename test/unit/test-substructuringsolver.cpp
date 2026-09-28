@@ -880,6 +880,53 @@ TEST_CASE("SubstructuringSolver magnetostatic energies on a re-meshed region",
   CHECK(d <= 1.0e-7 * m);  // see the tolerance note above
 }
 
+TEST_CASE("SubstructuringSolver block low-rank environment factorization",
+          "[substructure][Serial][Parallel]")
+{
+  // Solver.Substructuring.FactorizationTol > 0 selects a block low-rank (BLR) MUMPS
+  // environment factorization (the matrix is scaled so the tolerance is relative; the Schur
+  // and the solves are rescaled). The capacitance matrix must stay within ~the tolerance of
+  // the exact factorization. Without MUMPS the tolerance is ignored (exact).
+  const int order = GENERATE(1, 2);
+  CAPTURE(order);
+  auto capacitance = [order](double tol)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+            {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", order},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"FactorizationTol", tol}}}}}};
+    IoData iodata(config, false);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(8)));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+    return ss.CapacitanceMatrix({1, 2});
+  };
+  const mfem::DenseMatrix C0 = capacitance(0.0), C1 = capacitance(1.0e-10);
+  double d = 0.0, m = 0.0;
+  for (int i = 0; i < 2; i++)
+  {
+    for (int j = 0; j < 2; j++)
+    {
+      d = std::max(d, std::abs(C1(i, j) - C0(i, j)));
+      m = std::max(m, std::abs(C0(i, j)));
+    }
+  }
+  CHECK(d <= 1.0e-6 * m);
+}
+
 TEST_CASE("SubstructuringSolver capacitance from a model without terminal modes",
           "[substructure][Serial][Parallel]")
 {
