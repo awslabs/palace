@@ -1,10 +1,12 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <initializer_list>
 #include <limits>
 #include <vector>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "models/materialoperator.hpp"
@@ -144,6 +146,108 @@ TEST_CASE("MaterialPropertyCoefficient exact-zero predicate", "[materialoperator
     tiny = std::numeric_limits<double>::min();
     MaterialPropertyCoefficient tiny_coeff(attr_mat, tiny);
     CHECK_FALSE(tiny_coeff.IsExactlyZero());
+  }
+}
+
+TEST_CASE("MaterialPropertyCoefficient adds a term only to the listed attributes",
+          "[materialoperator][Serial]")
+{
+  using Catch::Matchers::WithinAbs;
+  using Catch::Matchers::WithinRel;
+  // Attributes with equal properties share one material entry. A later term added to some
+  // of the attributes of a shared entry must not reach the others, and a term stamped once
+  // per attribute (as the boundary operators do per port element or attribute) must be
+  // counted once on each.
+  auto Value = [](const MaterialPropertyCoefficient &coeff, int attr)
+  {
+    const int k = coeff.GetAttributeToMaterial()[attr - 1];
+    REQUIRE(k >= 0);
+    return coeff.GetMaterialProperties()(0, 0, k);
+  };
+  auto Attributes = [](std::initializer_list<int> attrs)
+  {
+    mfem::Array<int> attr_list;
+    for (auto attr : attrs)
+    {
+      attr_list.Append(attr);
+    }
+    return attr_list;
+  };
+
+  SECTION("Per-attribute stamping of a second term")
+  {
+    MaterialPropertyCoefficient fb(3);
+    for (int attr = 1; attr <= 3; attr++)
+    {
+      fb.AddMaterialProperty(attr, 2.0);
+    }
+    CHECK(fb.GetMaterialProperties().SizeK() == 1);  // Equal values share one entry
+    for (int attr = 1; attr <= 3; attr++)
+    {
+      fb.AddMaterialProperty(attr, 0.25);
+    }
+    for (int attr = 1; attr <= 3; attr++)
+    {
+      CHECK_THAT(Value(fb, attr), WithinRel(2.25, 1.0e-14));
+    }
+  }
+
+  SECTION("Second term on a subset of a shared entry")
+  {
+    MaterialPropertyCoefficient fb(3);
+    fb.AddMaterialProperty(Attributes({1, 2}), 2.0);
+    fb.AddMaterialProperty(3, 2.0);
+    CHECK(fb.GetMaterialProperties().SizeK() == 1);
+    fb.AddMaterialProperty(3, 0.25);
+    CHECK_THAT(Value(fb, 1), WithinRel(2.0, 1.0e-14));
+    CHECK_THAT(Value(fb, 2), WithinRel(2.0, 1.0e-14));
+    CHECK_THAT(Value(fb, 3), WithinRel(2.25, 1.0e-14));
+  }
+
+  SECTION("Sole user of an entry is updated in place")
+  {
+    MaterialPropertyCoefficient fb(2);
+    fb.AddMaterialProperty(Attributes({1, 2}), 1.0);
+    fb.AddMaterialProperty(Attributes({1, 2}), 2.0);
+    CHECK(fb.GetMaterialProperties().SizeK() == 1);
+    CHECK_THAT(Value(fb, 1), WithinRel(3.0, 1.0e-14));
+    CHECK_THAT(Value(fb, 2), WithinRel(3.0, 1.0e-14));
+  }
+
+  SECTION("Mixed assigned and unassigned attributes are rejected")
+  {
+    MaterialPropertyCoefficient fb(3);
+    fb.AddMaterialProperty(Attributes({1, 2}), 1.0);
+    CHECK_THROWS(fb.AddMaterialProperty(Attributes({3, 1}), 0.5));
+  }
+
+  SECTION("Tensor properties through AddCoefficient")
+  {
+    // All attributes share one entry; a second coefficient with a different map adds to
+    // attribute 1 alone and to attributes 2 and 3.
+    mfem::Array<int> attr_mat_a(3), attr_mat_b(3);
+    attr_mat_a = 0;
+    attr_mat_b[0] = 0;
+    attr_mat_b[1] = 1;
+    attr_mat_b[2] = 1;
+    mfem::DenseTensor tensor_a(2, 2, 1), tensor_b(2, 2, 2);
+    tensor_a = 0.0;
+    tensor_b = 0.0;
+    tensor_a(0, 0, 0) = tensor_a(1, 1, 0) = 1.0;
+    tensor_b(0, 1, 0) = tensor_b(1, 0, 0) = 0.5;
+    tensor_b(0, 0, 1) = 2.0;
+    MaterialPropertyCoefficient f(3);
+    f.AddCoefficient(attr_mat_a, tensor_a);
+    f.AddCoefficient(attr_mat_b, tensor_b);
+    const auto &attr_mat = f.GetAttributeToMaterial();
+    const auto &mat = f.GetMaterialProperties();
+    CHECK(attr_mat[0] != attr_mat[1]);
+    CHECK(attr_mat[1] == attr_mat[2]);
+    CHECK_THAT(mat(0, 0, attr_mat[0]), WithinRel(1.0, 1.0e-14));
+    CHECK_THAT(mat(0, 1, attr_mat[0]), WithinRel(0.5, 1.0e-14));
+    CHECK_THAT(mat(0, 0, attr_mat[1]), WithinRel(3.0, 1.0e-14));
+    CHECK_THAT(mat(0, 1, attr_mat[1]), WithinAbs(0.0, 0.0));
+    CHECK_THAT(mat(1, 1, attr_mat[1]), WithinRel(1.0, 1.0e-14));
   }
 }
 

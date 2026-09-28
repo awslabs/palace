@@ -17,6 +17,21 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### Bug Fixes
+
+  - Fixed boundary coefficient terms being added to attributes outside their boundary when
+    attributes with equal properties shared one material entry (a term stamped per attribute
+    or per port element was counted once per attribute on all of them). This affects every
+    coefficient combining several boundary terms: the boundary mode (wave port) system
+    matrices and the driven extra-system matrix (surface conductivity, rational impedance,
+    wave ports), whose results change for configurations with several such attributes, and
+    the 3D preconditioner, which now matches the intended matrix.
+    [PR 962](https://github.com/awslabs/palace/pull/962).
+  - Fixed the flux error estimators on meshes with several element geometry types, where
+    every estimate after the first (and the imaginary part of complex fields) reused stale
+    field data for all geometry types but the first.
+    [PR 962](https://github.com/awslabs/palace/pull/962).
+
 #### Performance Improvements
 
   - Accelerated adaptive online sweeps by replacing 2D wave-port EVP solves with a per-port
