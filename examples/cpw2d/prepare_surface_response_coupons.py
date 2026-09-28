@@ -235,7 +235,8 @@ def preparation(requirement, spatial_mesh=SPATIAL_MESH):
         }
     if topology in CORNER_TOPOLOGIES:
         angle = float(geometry.get("AngleDegrees", math.nan))
-        if math.isfinite(angle) and 0.0 < angle < 180.0:
+        # (0, 180]: 180 with a zero corner radius is the corner family's straight anchor.
+        if math.isfinite(angle) and 0.0 < angle <= 180.0 and (angle < 180.0 or float(geometry.get("CornerRadius", 0.0)) == 0.0):
             return {
                 "Method": "CornerCoupon",
                 "MeshGenerator": str(CORNER_MESH.relative_to(ROOT.parent.parent)),
@@ -245,7 +246,7 @@ def preparation(requirement, spatial_mesh=SPATIAL_MESH):
             }
         return {
             "Method": "Unsupported",
-            "Reason": "Corner angles must lie strictly between zero and 180 degrees",
+            "Reason": "Corner angles must lie in (0, 180] degrees (180 only for the sharp straight anchor)",
         }
     if topology in SPATIAL_TOPOLOGIES:
         return {
@@ -1599,10 +1600,12 @@ def build_corner(coupon, args, parameters, cache):
     )
     geometry = coupon["Geometry"]
     angle = float(geometry["AngleDegrees"])
-    if not math.isfinite(angle) or not 0.0 < angle < 180.0:
+    if not math.isfinite(angle) or not 0.0 < angle <= 180.0:
         raise ValueError(f"{coupon['Id']} requests invalid corner angle {angle:g}")
     topology = "convex" if coupon["Topology"] == "ConvexCorner" else "concave"
     corner_radius = float(geometry.get("CornerRadius", 0.0))
+    if angle == 180.0 and corner_radius > 0.0:
+        raise ValueError(f"{coupon['Id']}: the straight anchor (180 deg) has no corner radius")
     if (
         not math.isfinite(corner_radius)
         or not 0.0 <= corner_radius < args.matching_radius
@@ -1611,7 +1614,7 @@ def build_corner(coupon, args, parameters, cache):
             f"{coupon['Id']} corner radius must be finite and lie in "
             f"[0, {args.matching_radius:g})"
         )
-    tangent_distance = corner_radius / math.tan(0.5 * math.radians(angle))
+    tangent_distance = 0.0 if angle == 180.0 else corner_radius / math.tan(0.5 * math.radians(angle))
     if corner_radius > 0.0 and tangent_distance >= args.matching_radius:
         raise ValueError(
             f"{coupon['Id']} rounded-corner tangency distance "

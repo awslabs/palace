@@ -261,10 +261,19 @@ def convergence_probe_potentials(points, radius, metal_thickness):
     ]
 
 
+# The angle-interpolated corner family's straight anchor (USER decision 121 (C)): a sharp
+# "corner" of exactly 180 degrees, the straight edge through the corner box on the same basis.
+STRAIGHT_ANCHOR_TOLERANCE_DEGREES = 1.0e-9
+
+
+def is_straight_anchor(angle_degrees):
+    return abs(angle_degrees - 180.0) <= STRAIGHT_ANCHOR_TOLERANCE_DEGREES
+
+
 def corner_frame(angle_degrees):
     angle = np.deg2rad(angle_degrees)
-    if not 0.0 < angle < np.pi:
-        raise ValueError("corner angle must lie strictly between zero and 180 degrees")
+    if not 0.0 < angle <= np.pi + np.deg2rad(STRAIGHT_ANCHOR_TOLERANCE_DEGREES):
+        raise ValueError("corner angle must lie in (0, 180] degrees")
     first_normal = np.array([0.0, 1.0])
     second_normal = np.array([np.sin(angle), -np.cos(angle)])
     bisector = np.array([np.cos(0.5 * angle), np.sin(0.5 * angle)])
@@ -510,6 +519,11 @@ def write_library(
         "Name": model_name,
         "Topology": topology_name,
         "Angle": angle_degrees,
+        # Corner family records (USER decision 121 (C)): the angle and the convexity by name
+        # (the same values as Angle / Topology; the family interpolates sharp coupons of one
+        # Convexity in the turn 180 - AngleDegrees; Angle 180 = the family's straight anchor).
+        "AngleDegrees": angle_degrees,
+        "Convexity": topology.capitalize(),
         "AngleTolerance": 2.0,
         "CornerRadius": corner_radius,
         "CornerRadiusTolerance": corner_radius_tolerance,
@@ -593,12 +607,15 @@ def main():
     args = parser.parse_args()
     if args.radius <= 0.0:
         parser.error("--radius must be positive")
-    if not 0.0 < args.angle < 180.0:
-        parser.error("--angle must lie strictly between zero and 180 degrees")
+    if not (0.0 < args.angle < 180.0 or is_straight_anchor(args.angle)):
+        parser.error("--angle must lie strictly between zero and 180 degrees (180 = the straight anchor)")
+    if is_straight_anchor(args.angle) and args.corner_radius > 0.0:
+        parser.error("the straight anchor (--angle 180) has no corner radius")
     if not 0.0 <= args.corner_radius < args.radius:
         parser.error("--corner-radius must lie in [0, radius)")
-    tangent_distance = args.corner_radius / np.tan(
-        0.5 * np.deg2rad(args.angle)
+    tangent_distance = (
+        0.0 if is_straight_anchor(args.angle)
+        else args.corner_radius / np.tan(0.5 * np.deg2rad(args.angle))
     )
     if args.corner_radius > 0.0 and tangent_distance >= args.radius:
         parser.error(
