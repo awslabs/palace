@@ -6,7 +6,7 @@ import unittest
 import numpy as np
 from box_trace import complete_box_trace, validate_box_trace
 from generate_spatial_response import (NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE, build_matching_surface,
-                                       cap_triangulation_report, delaunay_flip_cap)
+                                       cap_interior_points, cap_triangulation_report, delaunay_flip_cap)
 
 
 def triangle_altitudes(points, triangles):
@@ -102,6 +102,39 @@ class BoxTraceTest(unittest.TestCase):
         self.assertTrue(validate_box_trace(delaunay[0], delaunay[1], bounds)['ClosedOrientedSurface'])
         with self.assertRaisesRegex(ValueError, 'cap triangulation'):
             build_matching_surface(bounds, [-2.05, 2.1], 8, [], 2., .1, 90., [], cap_triangulation='fan')
+
+    def test_cap_interior_hats_within_r_of_the_claimed_portions(self):
+        # One claimed edge portion along y in [-1, 1] at x = 0 (a 2 um lead in a 14 x 16 um
+        # box, R = 2): the interior hats of both caps lie within R of it and spacing / 2
+        # inside the rim, are appended after the ring knots (the trailing InteriorTraceCount)
+        # and the caps stay a closed oriented surface covering the box faces.
+        bounds = np.asarray([[-8., -8., -2.05], [6., 8., 2.1]])
+        edge = {'Point': np.array([0., 0., 0.]), 'Tangent': np.array([0., 1., 0.]),
+                'GapDirection': np.array([1., 0., 0.]), 'ProcessNormal': np.array([0., 0., 1.]),
+                'Interval': [-1., 1.], 'Conductor': 1, 'VertexArm': False}
+        ring_only = build_matching_surface(bounds, [-2.05, 0., 2.1], 8, [edge], 2., .1, 90., [],
+                                           cap_triangulation='delaunay')
+        for spacing in (1.0, 0.5):
+            points, triangles, groups = build_matching_surface(
+                bounds, [-2.05, 0., 2.1], 8, [edge], 2., .1, 90., [], cap_triangulation='delaunay',
+                cap_interior_spacing=spacing * 2.)
+            ring_points = sum(groups)
+            self.assertTrue(np.array_equal(points[:ring_points], ring_only[0]))
+            interior = points[ring_points:]
+            self.assertGreater(len(interior), 0)
+            self.assertEqual(len(interior) % 2, 0)
+            self.assertTrue(np.all(np.isin(interior[:, 2], (-2.05, 2.1))))
+            distance = np.hypot(interior[:, 0], np.maximum(np.abs(interior[:, 1]) - 1., 0.))
+            self.assertTrue(np.all(distance <= 2. + 1e-12))
+            self.assertTrue(np.all(interior[:, 0] >= -8. + spacing) and np.all(interior[:, 1] <= 8. - spacing))
+            self.assertTrue(validate_box_trace(points, triangles, bounds)['ClosedOrientedSurface'])
+            top = cap_interior_points(bounds, 2.1, [edge], 2., spacing * 2., ring_only[0][:8, :2])
+            self.assertEqual(len(top), len(interior) // 2)
+        far_edge = dict(edge, Point=np.array([-7.9, -7.9, 0.]), Interval=[0., 0.05])
+        # Every grid point is farther than R from a claim tucked in the rim corner: no hats.
+        self.assertEqual(len(cap_interior_points(bounds, 2.1, [far_edge], 0.5, 2., ring_only[0][:8, :2])), 0)
+        with self.assertRaisesRegex(ValueError, 'delaunay'):
+            build_matching_surface(bounds, [-2.05, 2.1], 8, [edge], 2., .1, 90., [], cap_interior_spacing=1.)
 
 
 if __name__=='__main__':unittest.main()

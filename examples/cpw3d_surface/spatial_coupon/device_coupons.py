@@ -63,6 +63,9 @@ GENERATOR = HERE / "generate_spatial_response.py"
 SPATIAL_METHOD = "SpatialCoupon"
 DEFAULT_RING_SIZE = 16   # prepare_surface_response_coupons --spatial-ring-size default
 DEFAULT_CAP_TRIANGULATION = "delaunay"   # generate_spatial_response --cap-triangulation (decisions 54b / 57)
+# generate_spatial_response --cap-interior-spacing (x R): interior cap hats within R of the claimed portions at the
+# ring spacing (decision 112(b): the ring-only JJ coupons interpolated the cap potential across the whole cap).
+DEFAULT_CAP_INTERIOR_SPACING = 1.0
 CAP_TRIANGULATIONS = ("ear-clipping", "delaunay")
 INVENTORY_STATUS = "DeviceDerived"
 # The bound source roles whose digests name a device coupon's directory (the manifest's
@@ -163,7 +166,7 @@ def stamp_signature_model(library_path, coupon, radius):
 
 
 def generate_sources(coupon, work, *, radius, parameters, ring_size, cap_triangulation=DEFAULT_CAP_TRIANGULATION,
-                     python=sys.executable):
+                     cap_interior_spacing=DEFAULT_CAP_INTERIOR_SPACING, python=sys.executable):
     """generate_spatial_response.py --basis-only into `work`; returns the generator command."""
     work = Path(work)
     work.mkdir(parents=True, exist_ok=True)
@@ -173,7 +176,8 @@ def generate_sources(coupon, work, *, radius, parameters, ring_size, cap_triangu
                "--metal-thickness", str(parameters["metal_thickness"]), "--overetch-depth", str(parameters["overetch"]),
                "--sidewall-angle", str(parameters["sidewall_angle"]), "--top-rounding", str(parameters["top_radius"]),
                "--trench-rounding", str(parameters["bottom_radius"]), "--ring-size", str(ring_size),
-               "--cap-triangulation", cap_triangulation, "--order", "1", "--model-name", coupon["Id"], "--basis-only"]
+               "--cap-triangulation", cap_triangulation, "--cap-interior-spacing", str(cap_interior_spacing),
+               "--order", "1", "--model-name", coupon["Id"], "--basis-only"]
     command += [str(item) for item in planner.material_options(parameters)]
     with open(work / "generate.log", "w") as log:
         result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT)
@@ -202,7 +206,8 @@ def content_hash(directory):
 
 
 def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODUCTION_MANIFEST, ring_size=DEFAULT_RING_SIZE,
-                           cap_triangulation=DEFAULT_CAP_TRIANGULATION, python=sys.executable, log=print):
+                           cap_triangulation=DEFAULT_CAP_TRIANGULATION,
+                           cap_interior_spacing=DEFAULT_CAP_INTERIOR_SPACING, python=sys.executable, log=print):
     """Steps 1-3: the source directories of every spatial coupon of the device under
     output/sources/<case id>; returns the device record (written to output/device-coupons.json)."""
     device_config = Path(device_config).resolve()
@@ -233,6 +238,11 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
               "Plan": {"Path": str(output / "coupon-plan.json"), "Summary": plan["Summary"]},
               "TraceBasis": {"RingSize": ring_size, "CapTriangulation": cap_triangulation,
                              "DefaultCapTriangulation": DEFAULT_CAP_TRIANGULATION,
+                             "CapInteriorSpacingOverR": cap_interior_spacing,
+                             "CapInteriorRule": "generate_spatial_response --cap-interior-spacing: interior cap hats "
+                                                "on a grid of this spacing (x R) within R of the claimed portions, "
+                                                "appended after the ring knots (InteriorTraceCount); 0 = ring-only "
+                                                "(the basis of the lane-J JJ coupons; decision 112(b))",
                              "Rule": "generate_spatial_response.build_matching_surface with the planner's default ring "
                                      "size (prepare_surface_response_coupons --spatial-ring-size), the basis every "
                                      "gallery case was produced with; CapTriangulation delaunay (the device default, "
@@ -254,7 +264,8 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
         if work.exists():
             shutil.rmtree(work)
         command = generate_sources(coupon, work, radius=radius, parameters=parameters, ring_size=ring_size,
-                                   cap_triangulation=cap_triangulation, python=python)
+                                   cap_triangulation=cap_triangulation, cap_interior_spacing=cap_interior_spacing,
+                                   python=python)
         write_process_toml(work / "process.toml", parameters, radius)
         digest, digests = content_hash(work)
         edge_count = int(coupon["Geometry"].get("EdgeCount", len(coupon["Geometry"].get("Edges", []))))
@@ -270,6 +281,7 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                             "Interfaces": coupon["Interfaces"], "BoundaryCondition": coupon["BoundaryCondition"],
                             "DeviceOccurrences": coupon["DeviceOccurrences"], "DeviceEdgeLength": coupon["DeviceEdgeLength"]},
             "Generator": {"Command": command, "RingSize": ring_size, "CapTriangulation": cap_triangulation,
+                          "CapInteriorSpacingOverR": cap_interior_spacing,
                           "PlanViewBoundary": ("cluster_signature_geometry.cluster_coupon: the coupon in the canonical "
                                                "frame of the version-2 Signature (edge rows from the portions, free ends "
                                                "extended to the box, mask = metal faces of the arrangement of the "
@@ -414,6 +426,10 @@ def main(argv=None):
     parser.add_argument("--cap-triangulation", choices=CAP_TRIANGULATIONS, default=DEFAULT_CAP_TRIANGULATION,
                         help="matching-box cap triangulation of the device basis (generate_spatial_response.py): "
                              "delaunay (default, decision 57) or ear-clipping (the gallery producer's)")
+    parser.add_argument("--cap-interior-spacing", type=float, default=DEFAULT_CAP_INTERIOR_SPACING,
+                        help="spacing (x R) of the interior cap hats within R of the claimed portions "
+                             f"(generate_spatial_response.py --cap-interior-spacing; default {DEFAULT_CAP_INTERIOR_SPACING}; "
+                             "0 = the ring-only basis)")
     parser.add_argument("--register", action="store_true", help="register the produced directories into --manifest")
     parser.add_argument("--work", type=Path, help="parent of the registration work directories")
     parser.add_argument("--julia", default=shutil.which("julia"))
@@ -424,7 +440,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         record = prepare_device_sources(args.device_config, palace=args.palace, output=args.output, manifest_path=args.manifest,
-                                        ring_size=args.ring_size, cap_triangulation=args.cap_triangulation, python=args.python)
+                                        ring_size=args.ring_size, cap_triangulation=args.cap_triangulation,
+                                        cap_interior_spacing=args.cap_interior_spacing, python=args.python)
         if args.register:
             register_device_sources(record, manifest_path=args.manifest, mesh_recipe=args.mesh_recipe, work=args.work,
                                     python=args.python, julia=args.julia, jobs=args.register_jobs)

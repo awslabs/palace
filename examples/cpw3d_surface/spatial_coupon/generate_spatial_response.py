@@ -620,6 +620,110 @@ def delaunay_flip_cap(triangles, points, start):
             return flips
 
 
+def claimed_plan_view_distance(points_xy, edges):
+    """Distance of plan-view points to the nearest CLAIMED edge portion (the coupon
+    geometry's Interval, not the continuation the coupon box extends them by)."""
+    points_xy = np.asarray(points_xy, dtype=float)
+    distance = np.full(len(points_xy), np.inf)
+    for edge in edges:
+        point = np.asarray(edge["Point"])[:2]
+        tangent = np.asarray(edge["Tangent"])[:2]
+        begin, end = edge["Interval"]
+        delta = points_xy - point
+        longitudinal = np.clip(delta @ tangent, begin, end)
+        foot = point + longitudinal[:, None] * tangent
+        distance = np.minimum(distance, np.linalg.norm(points_xy - foot, axis=1))
+    return distance
+
+
+def cap_interior_points(bounds, level, edges, radius, spacing, ring_xy):
+    """Interior vertices of one matching-box cap (plane z = level): a grid of the cap
+    aligned with the box (spacing `spacing`, centred), keeping the points within R of a
+    claimed edge portion and at least spacing / 2 inside the cap boundary and away from
+    every ring vertex (the ring already resolves the cap's rim). The cap hats above /
+    below claimed features much smaller than the box resolve the potential there instead
+    of interpolating it linearly across the whole cap from the rim (lane J, decision 112(b));
+    an empty result leaves the cap as before."""
+    xmin, ymin, _ = bounds[0]
+    xmax, ymax, _ = bounds[1]
+    xs = xmin + 0.5 * ((xmax - xmin) % spacing) + spacing * np.arange(
+        int(math.floor((xmax - xmin) / spacing)) + 1
+    )
+    ys = ymin + 0.5 * ((ymax - ymin) % spacing) + spacing * np.arange(
+        int(math.floor((ymax - ymin) / spacing)) + 1
+    )
+    grid = np.array([(x, y) for y in ys for x in xs])
+    margin = 0.5 * spacing
+    inside = (
+        (grid[:, 0] >= xmin + margin)
+        & (grid[:, 0] <= xmax - margin)
+        & (grid[:, 1] >= ymin + margin)
+        & (grid[:, 1] <= ymax - margin)
+    )
+    grid = grid[inside]
+    if not len(grid):
+        return np.zeros((0, 3))
+    claimed = claimed_plan_view_distance(grid, edges) <= radius + 1.0e-10 * radius
+    grid = grid[claimed]
+    if not len(grid):
+        return np.zeros((0, 3))
+    ring_xy = np.asarray(ring_xy)
+    separation = np.min(
+        np.linalg.norm(grid[:, None, :] - ring_xy[None, :, :], axis=2), axis=1
+    )
+    grid = grid[separation >= margin]
+    return np.column_stack((grid, np.full(len(grid), float(level))))
+
+
+def insert_cap_point(triangles, points, start, index):
+    """Insert points[index] (in the plane of the cap triangles[start:]) into the cap
+    triangulation: split the containing triangle into three (or the two triangles sharing
+    the edge it lies on into four), keeping the cap orientation; then Lawson flips restore
+    the Delaunay property. Raises when the point lies outside every cap triangle."""
+    xy = points[:, :2]
+    p = xy[index]
+    scale = np.ptp(xy[[v for t in triangles[start:] for v in t]], axis=0)
+    tolerance = 1.0e-12 * max(scale[0] * scale[1], 1.0)
+
+    def orient(a, b, c):
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+
+    for position in range(start, len(triangles)):
+        a, b, c = triangles[position]
+        sign = np.sign(orient(xy[a], xy[b], xy[c]))
+        sides = [sign * orient(xy[a], xy[b], p), sign * orient(xy[b], xy[c], p),
+                 sign * orient(xy[c], xy[a], p)]
+        if min(sides) < -tolerance:
+            continue
+        on_edge = [side <= tolerance for side in sides]
+        if sum(on_edge) >= 2:
+            raise ValueError("Cap interior point coincides with a cap vertex")
+        if not any(on_edge):
+            triangles[position] = (a, b, index)
+            triangles.append((b, c, index))
+            triangles.append((c, a, index))
+            return
+        edge_index = on_edge.index(True)
+        u, v = ((a, b), (b, c), (c, a))[edge_index]
+        w = (c, a, b)[edge_index]
+        neighbour = next(
+            (other for other in range(start, len(triangles))
+             if other != position and u in triangles[other] and v in triangles[other]),
+            None,
+        )
+        if neighbour is None:
+            raise ValueError("Cap interior point lies on the cap boundary")
+        triangles[position] = (u, index, w)
+        triangles.append((index, v, w))
+        na, nb, nc = triangles[neighbour]
+        z = next(vertex for vertex in (na, nb, nc) if vertex not in (u, v))
+        # The neighbour traverses the shared edge as (v, u); keep its orientation.
+        triangles[neighbour] = (v, index, z)
+        triangles.append((index, u, z))
+        return
+    raise ValueError("Cap interior point lies outside the cap")
+
+
 def cap_triangulation_report(points, triangles):
     """Minimum altitude and needle count (altitude < NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE x
     shortest edge) of the box triangulation, for the basis contract."""
@@ -644,9 +748,18 @@ def build_matching_surface(
     sidewall_angle,
     facets,
     cap_triangulation="ear-clipping",
+    cap_interior_spacing=0.0,
 ):
+    """Points, triangles and contour groups of the matching-box trace basis: one ring per
+    level, the rings connected, the two caps triangulated. With `cap_interior_spacing` > 0
+    (mesh units; requires the delaunay caps) each cap also carries interior hats on a grid
+    of that spacing within R of the claimed portions (cap_interior_points), appended after
+    every ring point so that the contour groups stay the leading block and the interior
+    count is the trailing block (the library's InteriorTraceCount)."""
     if cap_triangulation not in CAP_TRIANGULATIONS:
         raise ValueError(f"cap triangulation must be one of {CAP_TRIANGULATIONS}")
+    if cap_interior_spacing < 0.0 or (cap_interior_spacing > 0.0 and cap_triangulation != "delaunay"):
+        raise ValueError("cap interior hats require a positive spacing and the delaunay caps")
     levels = sorted(set(float(value) for value in levels))
     coordinates = matching_perimeter_coordinates(
         bounds,
@@ -666,11 +779,26 @@ def build_matching_surface(
         connect_rings(
             triangles, ring * ring_size, (ring + 1) * ring_size, ring_size
         )
-    for offset, reverse in ((0, True), ((len(rings) - 1) * ring_size, False)):
+    interior = []
+    if cap_interior_spacing > 0.0:
+        for level in (levels[0], levels[-1]):
+            interior.append(
+                cap_interior_points(
+                    bounds, level, edges, radius, cap_interior_spacing, rings[0][:, :2]
+                )
+            )
+        points = np.vstack([points] + interior)
+    interior_offset = len(rings) * ring_size
+    for cap, (offset, reverse) in enumerate(((0, True), ((len(rings) - 1) * ring_size, False))):
         start = len(triangles)
         cap_ring(triangles, points, offset, ring_size, reverse)
         if cap_triangulation == "delaunay":
             delaunay_flip_cap(triangles, points, start)
+            if interior:
+                for index in range(interior_offset, interior_offset + len(interior[cap])):
+                    insert_cap_point(triangles, points, start, index)
+                    delaunay_flip_cap(triangles, points, start)
+                interior_offset += len(interior[cap])
     return points, np.asarray(triangles, dtype=int), [ring_size] * len(rings)
 
 
@@ -850,6 +978,9 @@ def write_basis(output, points, triangles, active):
 
 
 def open_paths(contour_groups, labels, active, conductor_count):
+    """Open contour paths of the ring knots (every free ring knot exactly once); free
+    points beyond the rings (cap-interior hats) are on no path and are reported by the
+    library's InteriorTraceCount instead."""
     active_lookup = {vertex: index + 1 for index, vertex in enumerate(active)}
     paths = []
     offset = 0
@@ -891,9 +1022,11 @@ def open_paths(contour_groups, labels, active, conductor_count):
                 "EndConductor": end,
             }
         )
+    ring_points = sum(contour_groups)
+    ring_active = [active_lookup[vertex] for vertex in active if vertex < ring_points]
     assigned = sorted(index for path in result for index in path["Indices"])
-    if assigned != list(range(1, len(active) + 1)):
-        raise ValueError("Open contour paths do not partition the active trace")
+    if assigned != ring_active or ring_active != list(range(1, len(ring_active) + 1)):
+        raise ValueError("Open contour paths do not partition the active ring trace")
     return result
 
 
@@ -1283,6 +1416,7 @@ def write_library(
     interface_entries,
     fabrication,
     model_name,
+    interior_trace_count=0,
 ):
     topology = coupon["Topology"]
     geometry = coupon["Geometry"]
@@ -1355,6 +1489,9 @@ def write_library(
         model["ContourGroups"] = contour_groups
         if zero_indices:
             model["ZeroTraceIndices"] = zero_indices
+    if interior_trace_count:
+        # Trailing BasisPoints in the interior of the box caps (on no contour / path).
+        model["InteriorTraceCount"] = int(interior_trace_count)
     library = {
         "Version": 3,
         "TraceLiftVersion": 3,
@@ -1764,6 +1901,8 @@ def write_basis_contract(
     conductor_lift_paths,
     zero_indices,
     cap_triangulation="ear-clipping",
+    cap_interior_spacing=0.0,
+    interior_trace_count=0,
 ):
     """basis-contract.json of a freshly built trace basis (the layout of
     rebuild_box_coupon_inputs: Version 1, the model, the source counts, the box-trace
@@ -1820,6 +1959,16 @@ def write_basis_contract(
             ),
             **cap_triangulation_report(points, triangles),
         },
+        "CapInteriorHats": {
+            "SpacingOverR": float(cap_interior_spacing),
+            "Count": int(interior_trace_count),
+            "Rule": (
+                "cap_interior_points: a box-aligned grid of the two caps at SpacingOverR x R, "
+                "keeping the points within R of a claimed edge portion, spacing / 2 inside "
+                "the rim and away from every ring vertex; appended after the ring knots "
+                "(the library's InteriorTraceCount) and inserted into the delaunay caps"
+            ),
+        },
         "LibraryQualified": False,
     }
     (output / "basis-contract.json").write_text(json.dumps(report, indent=2) + "\n")
@@ -1849,6 +1998,19 @@ def main():
             "producer's, every gallery reference) or delaunay (Lawson flips of the "
             "clipped caps to the max-min-angle triangulation of the same vertices, "
             "no needle ears; device coupons only, supervisor decision 54b)"
+        ),
+    )
+    parser.add_argument(
+        "--cap-interior-spacing",
+        type=float,
+        default=0.0,
+        help=(
+            "Spacing (in units of the matching radius R) of the interior cap hats placed "
+            "within R of the claimed edge portions on the two matching-box caps (0: none, "
+            "the ring-only basis). Requires --cap-triangulation delaunay. A 3D cluster whose "
+            "claimed features are much smaller than its box (the transmon JJ leads) needs "
+            "them: the ring-only basis interpolated the cap potential linearly across the "
+            "whole cap (lane J, decision 112(b))"
         ),
     )
     parser.add_argument("--order", type=int, default=2)
@@ -1886,6 +2048,10 @@ def main():
         parser.error("sidewall angle must lie in (0, 90]")
     if args.order <= 0:
         parser.error("order must be positive")
+    if args.cap_interior_spacing < 0.0:
+        parser.error("cap interior spacing must be nonnegative")
+    if args.cap_interior_spacing > 0.0 and args.cap_triangulation != "delaunay":
+        parser.error("cap interior hats require --cap-triangulation delaunay")
 
     coupon_path = args.coupon.expanduser().resolve()
     coupon = load_json(coupon_path)
@@ -1962,7 +2128,10 @@ def main():
         args.sidewall_angle,
         facets,
         cap_triangulation=args.cap_triangulation,
+        cap_interior_spacing=args.cap_interior_spacing * args.radius,
     )
+    ring_point_count = sum(contour_groups)
+    interior_trace_count = len(points) - ring_point_count
     labels = conductor_at_points(
         points,
         edges,
@@ -1971,6 +2140,8 @@ def main():
         args.sidewall_angle,
         facets,
     )
+    if np.any(labels[ring_point_count:] != 0):
+        raise ValueError("A cap-interior hat lies on a conductor")
     conductor_count = max(edge["Conductor"] for edge in edges)
     if conductor_count == 1:
         active = np.arange(len(points))
@@ -2040,6 +2211,7 @@ def main():
             interfaces,
             fabrication,
             args.model_name,
+            interior_trace_count=interior_trace_count,
         )
         write_basis_contract(
             output,
@@ -2054,6 +2226,8 @@ def main():
             conductor_lift_paths,
             zero_indices,
             cap_triangulation=args.cap_triangulation,
+            cap_interior_spacing=args.cap_interior_spacing,
+            interior_trace_count=interior_trace_count,
         )
         print(output / "mesh-signature.csv")
         print(output / "basis-contract.json")
@@ -2235,6 +2409,7 @@ def main():
         interfaces,
         fabrication,
         args.model_name,
+        interior_trace_count=interior_trace_count,
     )
     print(output / "mesh-signature.csv")
     print(output / "spatial_thin.json")

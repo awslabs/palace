@@ -8,7 +8,7 @@
   coupon_library.py build [--register CASE_ID=SOURCE_DIR ... --footprint {bound,producer-default}
                            --inventory-status STATUS [--mesh-recipe PATH] [--provenance TEXT]] [--no-thin]
                           [--device PALACE_CONFIG --palace PATH [--device-output DIR] [--ring-size N]
-                           [--cap-triangulation METHOD]]
+                           [--cap-triangulation METHOD] [--cap-interior-spacing X]]
                           [--case ID ...] [--jobs N] [--build-limit N] [--root DIR] [--output PATH] [--manifest PATH]
   coupon_library.py qualify --build-record library-build.json --reference <campaign dir or none>
                             --remote HOST:ROOT [--orders p5] --controls p3,p5 --max-jobs N
@@ -96,6 +96,9 @@ def build_parser():
     build.add_argument("--device-output", type=Path, help="output of the device adapter (default ROOT/device)")
     build.add_argument("--ring-size", type=int, default=device_coupons.DEFAULT_RING_SIZE,
                        help="trace-basis ring size of the device coupons (the planner's default)")
+    build.add_argument("--cap-interior-spacing", type=float, default=device_coupons.DEFAULT_CAP_INTERIOR_SPACING,
+                       help="spacing (x R) of the interior cap hats within R of the claimed portions of a device "
+                            f"cluster coupon (default {device_coupons.DEFAULT_CAP_INTERIOR_SPACING}; 0 = ring-only)")
     build.add_argument("--cap-triangulation", choices=device_coupons.CAP_TRIANGULATIONS,
                        default=device_coupons.DEFAULT_CAP_TRIANGULATION,
                        help="matching-box cap triangulation of the device basis: delaunay (default; no needle ears, "
@@ -133,7 +136,8 @@ def main(argv=None):
         try:
             device_record = device_coupons.prepare_device_sources(
                 args.device, palace=args.palace, output=device_output, manifest_path=args.manifest, ring_size=args.ring_size,
-                cap_triangulation=args.cap_triangulation, python=args.python)
+                cap_triangulation=args.cap_triangulation, cap_interior_spacing=args.cap_interior_spacing,
+                python=args.python)
             device_coupons.register_device_sources(device_record, manifest_path=args.manifest, mesh_recipe=args.mesh_recipe,
                                                    work=(args.work or device_output / "register"), python=args.python,
                                                    julia=args.julia, jobs=args.register_jobs, thin=not args.no_thin)
