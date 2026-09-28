@@ -1,0 +1,17 @@
+diff --git a/repos/spack_repo/builtin/packages/mfem/package.py b/repos/spack_repo/builtin/packages/mfem/package.py
+index 8b7c9f25565..e5f6150c2fd 100644
+--- a/repos/spack_repo/builtin/packages/mfem/package.py
++++ b/repos/spack_repo/builtin/packages/mfem/package.py
+@@ -195,11 +195,10 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+     variant("libceed", default=False, description="Enable libCEED backend")
+     variant("umpire", default=False, description="Enable Umpire support")
+     variant("amgx", default=False, description="Enable NVIDIA AmgX solver support")
+-    # cuDSS support was added after the MFEM 4.9 release.
+     variant(
+         "cudss",
+         default=False,
+-        when="@develop",
++        when="@4.10:",
+         description="Enable NVIDIA cuDSS solver support",
+     )
+ 
