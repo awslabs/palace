@@ -87,10 +87,13 @@ def perimeter_census(perimeter, radius, targets):
             cuts += 1
             continue
         if v.physical_kind in ("CORNER", "ENDPOINT", "JUNCTION"):
-            # Every incident edge is an excluded class (embedded / non-planar metal) or the
-            # vertex lies within 2R of off-plane metal: an excluded vertex of the manifest
-            # (listed with the corners for the geometric comparison, not a feature vertex).
-            excluded = index in perimeter.excluded_vertices or not any(perimeter.edges[e].kind == "PHYSICAL" for e in v.edges)
+            # Every incident edge is an excluded class (embedded / non-planar metal, or a
+            # PHYSICAL edge without a target interface: the classifier's Untargeted exclusion,
+            # whose runs carry no site — the joints of DS-OSC-003's PCB-face outline above the
+            # 1 deg noise threshold) or the vertex lies within 2R of off-plane metal: an
+            # excluded vertex of the manifest (listed with the corners for the geometric
+            # comparison, not a feature vertex).
+            excluded = index in perimeter.excluded_vertices or not any(perimeter.edges[e].kind == "PHYSICAL" and any(i[0] in targets for i in perimeter.edges[e].interfaces) for e in v.edges)
             if excluded:
                 excluded_vertices.append([round(float(x), 9) for x in v.point])
             corners.append(
