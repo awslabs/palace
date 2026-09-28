@@ -7,19 +7,17 @@ import Gmsh: gmsh
 using DelimitedFiles
 
 function read_edges(path)
-    data, header = readdlm(path, ',', header = true)
+    data, header = readdlm(path, ',', header=true)
     names = vec(String.(header))
     columns = Dict(name => index for (index, name) in enumerate(names))
-    all(haskey(columns, name) for name in
-        ("Offset", "GapDirection", "Conductor")) ||
+    all(haskey(columns, name) for name in ("Offset", "GapDirection", "Conductor")) ||
         error("Cluster CSV must contain Offset, GapDirection, and Conductor")
     return [
         Dict(
             "Offset" => Float64(data[row, columns["Offset"]]),
             "GapDirection" => Int(data[row, columns["GapDirection"]]),
-            "Conductor" => Int(data[row, columns["Conductor"]]),
-        )
-        for row in axes(data, 1)
+            "Conductor" => Int(data[row, columns["Conductor"]])
+        ) for row in axes(data, 1)
     ]
 end
 
@@ -38,20 +36,22 @@ function fillet(c, p, n, radius)
     point_in = (c[1] - tangent * d1[1], c[2] - tangent * d1[2])
     point_out = (c[1] + tangent * d2[1], c[2] + tangent * d2[2])
     normal = (-d1[2], d1[1])
-    center = (point_in[1] + radius * normal[1],
-              point_in[2] + radius * normal[2])
+    center = (point_in[1] + radius * normal[1], point_in[2] + radius * normal[2])
     return (point_in, center, point_out)
 end
 
 function shape(occ, corners)
     count = length(corners)
     data = [
-        fillet(corners[i][1], corners[mod1(i - 1, count)][1],
-               corners[mod1(i + 1, count)][1], corners[i][2])
-        for i in 1:count
+        fillet(
+            corners[i][1],
+            corners[mod1(i - 1, count)][1],
+            corners[mod1(i + 1, count)][1],
+            corners[i][2]
+        ) for i = 1:count
     ]
     curves = Int32[]
-    for i in 1:count
+    for i = 1:count
         j = mod1(i + 1, count)
         p1 = occ.addPoint(data[i][3][1], data[i][3][2], 0.0)
         p2 = occ.addPoint(data[j][1][1], data[j][1][2], 0.0)
@@ -73,12 +73,11 @@ function classify_intervals(edges, radius)
     offsets[1] == 0.0 || error("The first edge offset must be zero")
     issorted(offsets) && all(diff(offsets) .> 0.0) ||
         error("Edge offsets must be strictly increasing")
-    all(abs.(directions) .== 1) ||
-        error("GapDirection must be +1 or -1")
+    all(abs.(directions) .== 1) || error("GapDirection must be +1 or -1")
 
     bounds = vcat(offsets[1] - radius, offsets, offsets[end] + radius)
     intervals = NamedTuple[]
-    for i in 1:length(bounds)-1
+    for i = 1:(length(bounds) - 1)
         metal = if i == 1
             directions[1] == 1
         elseif i == length(bounds) - 1
@@ -86,28 +85,33 @@ function classify_intervals(edges, radius)
         else
             right_of_left = directions[i - 1] == -1
             left_of_right = directions[i] == 1
-            right_of_left == left_of_right ||
-                error("Adjacent edge gap directions do not define one material interval")
+            right_of_left == left_of_right || error(
+                "Adjacent edge gap directions do not define one material interval"
+            )
             right_of_left
         end
         conductor = 0
         if metal
-            conductor = i == 1 ? conductors[1] :
-                        i == length(bounds) - 1 ? conductors[end] :
-                        begin
-                            conductors[i - 1] == conductors[i] ||
-                                error("Both boundaries of a metal strip must use one conductor")
-                            conductors[i]
-                        end
+            conductor =
+                i == 1 ? conductors[1] :
+                i == length(bounds) - 1 ? conductors[end] :
+                begin
+                    conductors[i - 1] == conductors[i] ||
+                        error("Both boundaries of a metal strip must use one conductor")
+                    conductors[i]
+                end
         end
-        push!(intervals, (
-            left = bounds[i],
-            right = bounds[i + 1],
-            left_edge = i > 1,
-            right_edge = i < length(bounds) - 1,
-            metal = metal,
-            conductor = conductor,
-        ))
+        push!(
+            intervals,
+            (
+                left=bounds[i],
+                right=bounds[i + 1],
+                left_edge=i > 1,
+                right_edge=i < length(bounds) - 1,
+                metal=metal,
+                conductor=conductor
+            )
+        )
     end
     labels = unique(interval.conductor for interval in intervals if interval.metal)
     sort(labels) == collect(1:maximum(labels)) ||
@@ -118,30 +122,28 @@ end
 function interval_at(intervals, x, metal)
     tolerance = 1.0e-8
     candidates = [
-        interval for interval in intervals
-        if interval.metal == metal &&
-           interval.left - tolerance <= x <= interval.right + tolerance
+        interval for interval in intervals if interval.metal == metal &&
+        interval.left - tolerance <= x <= interval.right + tolerance
     ]
     isempty(candidates) && return nothing
     return candidates[argmin(
-        abs(x - 0.5 * (interval.left + interval.right))
-        for interval in candidates
+        abs(x - 0.5 * (interval.left + interval.right)) for interval in candidates
     )]
 end
 
 function generate_edge_cluster_coupon(;
     spec::String,
     fabricated::Bool,
-    radius::Float64 = 2.0,
-    t_metal::Float64 = 0.1,
-    overetch::Float64 = 0.05,
-    sidewall_angle::Float64 = 80.0,
-    r_top::Float64 = 0.01,
-    r_bottom::Float64 = 0.01,
-    lc_fine::Float64 = 0.002,
-    lc_far::Float64 = 0.05,
-    mesh_order::Int = 2,
-    filename::String,
+    radius::Float64=2.0,
+    t_metal::Float64=0.1,
+    overetch::Float64=0.05,
+    sidewall_angle::Float64=80.0,
+    r_top::Float64=0.01,
+    r_bottom::Float64=0.01,
+    lc_fine::Float64=0.002,
+    lc_far::Float64=0.05,
+    mesh_order::Int=2,
+    filename::String
 )
     edges = read_edges(spec)
     intervals = classify_intervals(edges, radius)
@@ -149,8 +151,7 @@ function generate_edge_cluster_coupon(;
     xmax = intervals[end].right
     width = xmax - xmin
     tolerance = 1.0e-6 * max(radius, width)
-    0.0 < sidewall_angle <= 90.0 ||
-        error("sidewall_angle must lie in (0, 90]")
+    0.0 < sidewall_angle <= 90.0 || error("sidewall_angle must lie in (0, 90]")
 
     gmsh.initialize()
     gmsh.option.setNumber("General.Verbosity", 2)
@@ -161,61 +162,80 @@ function generate_edge_cluster_coupon(;
         metal_pullback = t_metal / tan(deg2rad(sidewall_angle))
         trench_pullback = overetch / tan(deg2rad(sidewall_angle))
         outer = occ.addRectangle(xmin, -radius, 0.0, width, 2radius)
-        metals = Tuple{Int32,Int32}[]
+        metals = Tuple{Int32, Int32}[]
         for interval in intervals
             interval.metal || continue
             top_left = interval.left + (interval.left_edge ? metal_pullback : 0.0)
             top_right = interval.right - (interval.right_edge ? metal_pullback : 0.0)
-            top_left < top_right ||
-                error("Metal sidewall pullback closes a cluster strip")
-            surface = shape(occ, [
-                ((interval.left, 0.0), 0.0),
-                ((interval.right, 0.0), 0.0),
-                ((top_right, t_metal), interval.right_edge ? r_top : 0.0),
-                ((top_left, t_metal), interval.left_edge ? r_top : 0.0),
-            ])
+            top_left < top_right || error("Metal sidewall pullback closes a cluster strip")
+            surface = shape(
+                occ,
+                [
+                    ((interval.left, 0.0), 0.0),
+                    ((interval.right, 0.0), 0.0),
+                    ((top_right, t_metal), interval.right_edge ? r_top : 0.0),
+                    ((top_left, t_metal), interval.left_edge ? r_top : 0.0)
+                ]
+            )
             push!(metals, (2, surface))
         end
         substrate_base = occ.addRectangle(xmin, -radius, 0.0, width, radius)
-        trenches = Tuple{Int32,Int32}[]
+        trenches = Tuple{Int32, Int32}[]
         if overetch > 0.0
             for interval in intervals
                 interval.metal && continue
-                bottom_left =
-                    interval.left + (interval.left_edge ? trench_pullback : 0.0)
+                bottom_left = interval.left + (interval.left_edge ? trench_pullback : 0.0)
                 bottom_right =
                     interval.right - (interval.right_edge ? trench_pullback : 0.0)
                 bottom_left < bottom_right ||
                     error("Trench sidewall pullback closes a cluster gap")
-                surface = shape(occ, [
-                    ((interval.left, 0.0), 0.0),
-                    ((bottom_left, -overetch), interval.left_edge ? r_bottom : 0.0),
-                    ((bottom_right, -overetch), interval.right_edge ? r_bottom : 0.0),
-                    ((interval.right, 0.0), 0.0),
-                ])
+                surface = shape(
+                    occ,
+                    [
+                        ((interval.left, 0.0), 0.0),
+                        ((bottom_left, -overetch), interval.left_edge ? r_bottom : 0.0),
+                        ((bottom_right, -overetch), interval.right_edge ? r_bottom : 0.0),
+                        ((interval.right, 0.0), 0.0)
+                    ]
+                )
                 push!(trenches, (2, surface))
             end
         end
-        substrate = isempty(trenches) ? [(2, substrate_base)] :
+        substrate =
+            isempty(trenches) ? [(2, substrate_base)] :
             first(occ.cut([(2, substrate_base)], trenches))
         field = first(occ.cut([(2, outer)], metals))
         vacuum = first(occ.cut(field, substrate, -1, true, false))
         occ.fragment(vcat(vacuum, substrate), [])
     else
-        surfaces = Tuple{Int32,Int32}[]
+        surfaces = Tuple{Int32, Int32}[]
         for interval in intervals
-            push!(surfaces, (
-                2,
-                occ.addRectangle(
-                    interval.left, -radius, 0.0,
-                    interval.right - interval.left, radius),
-            ))
-            push!(surfaces, (
-                2,
-                occ.addRectangle(
-                    interval.left, 0.0, 0.0,
-                    interval.right - interval.left, radius),
-            ))
+            push!(
+                surfaces,
+                (
+                    2,
+                    occ.addRectangle(
+                        interval.left,
+                        -radius,
+                        0.0,
+                        interval.right - interval.left,
+                        radius
+                    )
+                )
+            )
+            push!(
+                surfaces,
+                (
+                    2,
+                    occ.addRectangle(
+                        interval.left,
+                        0.0,
+                        0.0,
+                        interval.right - interval.left,
+                        radius
+                    )
+                )
+            )
         end
         occ.fragment(surfaces, [])
     end
@@ -225,16 +245,19 @@ function generate_edge_cluster_coupon(;
     vacuum_surfaces = Int32[]
     for (dim, tag) in gmsh.model.getEntities(2)
         _, y, _ = occ.getCenterOfMass(dim, tag)
-        push!(y < (fabricated ? -0.1 * max(overetch, t_metal) : 0.0) ?
-              substrate_surfaces : vacuum_surfaces, tag)
+        push!(
+            y < (fabricated ? -0.1 * max(overetch, t_metal) : 0.0) ? substrate_surfaces :
+            vacuum_surfaces,
+            tag
+        )
     end
     substrate_set = Set(substrate_surfaces)
     vacuum_set = Set(vacuum_surfaces)
 
     outer_curves = Int32[]
     sa_curves = Int32[]
-    ms_curves = Dict{Int,Vector{Int32}}()
-    ma_curves = Dict{Int,Vector{Int32}}()
+    ms_curves = Dict{Int, Vector{Int32}}()
+    ma_curves = Dict{Int, Vector{Int32}}()
     for interval in intervals
         if interval.metal
             get!(ms_curves, interval.conductor, Int32[])
@@ -246,17 +269,17 @@ function generate_edge_cluster_coupon(;
         up, _ = gmsh.model.getAdjacencies(dim, tag)
         adjacent = [surface for surface in up if surface in model_surfaces]
         isempty(adjacent) && continue
-        xmin_curve, ymin, _, xmax_curve, ymax, _ =
-            gmsh.model.getBoundingBox(dim, tag)
+        xmin_curve, ymin, _, xmax_curve, ymax, _ = gmsh.model.getBoundingBox(dim, tag)
         xmid = 0.5 * (xmin_curve + xmax_curve)
         ymid = 0.5 * (ymin + ymax)
         horizontal = ymax - ymin < tolerance
         vertical = xmax_curve - xmin_curve < tolerance
         on_outer =
-            (vertical && (abs(xmid - xmin) < tolerance ||
-                          abs(xmid - xmax) < tolerance)) ||
-            (horizontal && (abs(ymid + radius) < tolerance ||
-                            abs(ymid - radius) < tolerance))
+            (vertical && (abs(xmid - xmin) < tolerance || abs(xmid - xmax) < tolerance)) ||
+            (
+                horizontal &&
+                (abs(ymid + radius) < tolerance || abs(ymid - radius) < tolerance)
+            )
         if on_outer
             push!(outer_curves, tag)
             continue
@@ -266,12 +289,10 @@ function generate_edge_cluster_coupon(;
         adjacent_vacuum = any(surface in vacuum_set for surface in adjacent)
         if fabricated && adjacent_substrate && adjacent_vacuum
             push!(sa_curves, tag)
-        elseif fabricated && ymin >= -tolerance &&
-               ymax <= t_metal + tolerance
+        elseif fabricated && ymin >= -tolerance && ymax <= t_metal + tolerance
             interval = interval_at(intervals, xmid, true)
             if interval !== nothing
-                target = horizontal && abs(ymid) < tolerance ?
-                    ms_curves : ma_curves
+                target = horizontal && abs(ymid) < tolerance ? ms_curves : ma_curves
                 push!(target[interval.conductor], tag)
             end
         elseif !fabricated && horizontal && abs(ymid) < tolerance
@@ -288,22 +309,20 @@ function generate_edge_cluster_coupon(;
         (2, substrate_surfaces, 1, "substrate"),
         (2, vacuum_surfaces, 2, "vacuum"),
         (1, outer_curves, 1, "matching_contour"),
-        (1, sa_curves, 3, "SA"),
+        (1, sa_curves, 3, "SA")
     ]
     for conductor in sort(collect(keys(ms_curves)))
-        push!(groups, (
-            1,
-            ms_curves[conductor],
-            10 + conductor,
-            fabricated ? "MS_$conductor" : "thin_metal_$conductor",
-        ))
-        if fabricated
-            push!(groups, (
+        push!(
+            groups,
+            (
                 1,
-                ma_curves[conductor],
-                100 + conductor,
-                "MA_$conductor",
-            ))
+                ms_curves[conductor],
+                10 + conductor,
+                fabricated ? "MS_$conductor" : "thin_metal_$conductor"
+            )
+        )
+        if fabricated
+            push!(groups, (1, ma_curves[conductor], 100 + conductor, "MA_$conductor"))
         end
     end
     for (dim, entities, tag, name) in groups
@@ -314,7 +333,7 @@ function generate_edge_cluster_coupon(;
     features = vcat(
         sa_curves,
         collect(Iterators.flatten(values(ms_curves))),
-        collect(Iterators.flatten(values(ma_curves))),
+        collect(Iterators.flatten(values(ma_curves)))
     )
     gmsh.model.mesh.field.add("Distance", 1)
     gmsh.model.mesh.field.setNumbers(1, "CurvesList", Float64.(features))
@@ -332,7 +351,7 @@ function generate_edge_cluster_coupon(;
         ("Mesh.MeshSizeFromPoints", 0),
         ("Mesh.MeshSizeFromCurvature", 0),
         ("Mesh.MshFileVersion", 2.2),
-        ("Mesh.Binary", 1),
+        ("Mesh.Binary", 1)
     ]
         gmsh.option.setNumber(name, value)
     end
@@ -343,16 +362,17 @@ function generate_edge_cluster_coupon(;
     gmsh.write(filename)
     println("Parallel-edge cluster: fabricated=$fabricated, edges=$(length(edges))")
     println("  file=$filename")
-    gmsh.finalize()
+    return gmsh.finalize()
 end
 
 function parse_options(args)
-    length(args) >= 3 ||
-        error("Usage: mesh_edge_cluster_coupon.jl EDGES.csv thin|fabricated OUTPUT.msh [options]")
-    options = Dict{String,Any}(
+    length(args) >= 3 || error(
+        "Usage: mesh_edge_cluster_coupon.jl EDGES.csv thin|fabricated OUTPUT.msh [options]"
+    )
+    options = Dict{String, Any}(
         "spec" => abspath(args[1]),
         "fabricated" => args[2] == "fabricated",
-        "filename" => abspath(args[3]),
+        "filename" => abspath(args[3])
     )
     args[2] in ("thin", "fabricated") || error("Kind must be thin or fabricated")
     names = Dict(
@@ -364,7 +384,7 @@ function parse_options(args)
         "--bottom-radius" => ("r_bottom", Float64),
         "--lc-fine" => ("lc_fine", Float64),
         "--lc-far" => ("lc_far", Float64),
-        "--mesh-order" => ("mesh_order", Int),
+        "--mesh-order" => ("mesh_order", Int)
     )
     index = 4
     while index <= length(args)
@@ -381,17 +401,17 @@ end
 if abspath(PROGRAM_FILE) == @__FILE__
     options = parse_options(ARGS)
     generate_edge_cluster_coupon(;
-        spec = options["spec"],
-        fabricated = options["fabricated"],
-        filename = options["filename"],
-        radius = get(options, "radius", 2.0),
-        t_metal = get(options, "t_metal", 0.1),
-        overetch = get(options, "overetch", 0.05),
-        sidewall_angle = get(options, "sidewall_angle", 80.0),
-        r_top = get(options, "r_top", 0.01),
-        r_bottom = get(options, "r_bottom", 0.01),
-        lc_fine = get(options, "lc_fine", 0.002),
-        lc_far = get(options, "lc_far", 0.05),
-        mesh_order = get(options, "mesh_order", 2),
+        spec=options["spec"],
+        fabricated=options["fabricated"],
+        filename=options["filename"],
+        radius=get(options, "radius", 2.0),
+        t_metal=get(options, "t_metal", 0.1),
+        overetch=get(options, "overetch", 0.05),
+        sidewall_angle=get(options, "sidewall_angle", 80.0),
+        r_top=get(options, "r_top", 0.01),
+        r_bottom=get(options, "r_bottom", 0.01),
+        lc_fine=get(options, "lc_fine", 0.002),
+        lc_far=get(options, "lc_far", 0.05),
+        mesh_order=get(options, "mesh_order", 2)
     )
 end

@@ -4,10 +4,10 @@ This directory generates local electrostatic response models for convex and
 concave corner angles strictly between zero and 180 degrees. The coupon frame
 is the frame used by Palace's automatic corner placement:
 
-- the corner is at the origin;
-- the first incident metal-edge arm points along positive `x`;
-- the second arm is counterclockwise at the requested corner angle; and
-- positive `z` points from the substrate into vacuum.
+  - the corner is at the origin;
+  - the first incident metal-edge arm points along positive `x`;
+  - the second arm is counterclockwise at the requested corner angle; and
+  - positive `z` points from the substrate into vacuum.
 
 The fabricated prototype uses 100 nm metal, 50 nm substrate overetch, and 80
 degree sidewalls. The thin and fabricated geometries can use either a sharp
@@ -131,12 +131,12 @@ For `R = 2 um` and `rho = 0.5 um`, the refined convex thin/fabricated meshes
 contain 331,606/397,672 tetrahedra; the corresponding concave meshes contain
 332,156/395,665. Direct fabricated held-out energies changed as follows:
 
-| Topology | Order change | Domain | SA | MS | MA |
-|:--|:--|--:|--:|--:|--:|
-| Convex | p1 to p2 | `-1.31%` | `+4.14%` | `+1.19%` | `+10.16%` |
-| Convex | p2 to p3 | `-0.14%` | `+0.38%` | `-0.23%` | `+2.49%` |
-| Concave | p1 to p2 | `-1.16%` | `+5.04%` | `+0.22%` | `+4.06%` |
-| Concave | p2 to p3 | `-0.04%` | `+0.59%` | `-0.17%` | `+1.22%` |
+| Topology | Order change | Domain   | SA       | MS       | MA        |
+|:-------- |:------------ | --------:| --------:| --------:| ---------:|
+| Convex   | p1 to p2     | `-1.31%` | `+4.14%` | `+1.19%` | `+10.16%` |
+| Convex   | p2 to p3     | `-0.14%` | `+0.38%` | `-0.23%` | `+2.49%`  |
+| Concave  | p1 to p2     | `-1.16%` | `+5.04%` | `+0.22%` | `+4.06%`  |
+| Concave  | p2 to p3     | `-0.04%` | `+0.59%` | `-0.17%` | `+1.22%`  |
 
 The p1 convex 72-knot response matrix reproduced the independent compatible
 trace with domain, SA, MS, and MA errors of `+2.07%`, `+0.07%`, `+5.31%`, and
@@ -181,14 +181,14 @@ energy.
 For the refined `R = 2 um`, `rho = 0.5 um` meshes above, the p2-to-p3 projected
 matrix changes were:
 
-| Topology | Matrix | Domain | SA | MS | MA |
-|:--|:--|--:|--:|--:|--:|
-| Convex | Thin | `0.04%` | `3.99%` | `5.05%` | `6.83%` |
-| Convex | Fabricated | `0.09%` | `0.53%` | `0.27%` | `2.72%` |
-| Convex | Domain defect | `1.59%` | - | - | - |
-| Concave | Thin | `0.04%` | `5.25%` | `2.40%` | `3.19%` |
-| Concave | Fabricated | `0.05%` | `0.55%` | `0.15%` | `1.39%` |
-| Concave | Domain defect | `2.39%` | - | - | - |
+| Topology | Matrix        | Domain  | SA      | MS      | MA      |
+|:-------- |:------------- | -------:| -------:| -------:| -------:|
+| Convex   | Thin          | `0.04%` | `3.99%` | `5.05%` | `6.83%` |
+| Convex   | Fabricated    | `0.09%` | `0.53%` | `0.27%` | `2.72%` |
+| Convex   | Domain defect | `1.59%` | -       | -       | -       |
+| Concave  | Thin          | `0.04%` | `5.25%` | `2.40%` | `3.19%` |
+| Concave  | Fabricated    | `0.05%` | `0.55%` | `0.15%` | `1.39%` |
+| Concave  | Domain defect | `2.39%` | -       | -       | -       |
 
 The worst p2-to-p3 quadratic-energy changes over the probe space for the
 fabricated responses were `0.25/1.03/2.32/4.92%` for convex
@@ -230,10 +230,10 @@ smooth held-out trace, compared with an independently calibrated
 `rho = 0.5 um` response, were:
 
 | Interface | Fixed trace | Fixed flux |
-|:--|--:|--:|
-| SA | `+0.31%` | `-0.15%` |
-| MS | `+2.16%` | `+2.70%` |
-| MA | `+1.36%` | `+1.05%` |
+|:--------- | -----------:| ----------:|
+| SA        | `+0.31%`    | `-0.15%`   |
+| MS        | `+2.16%`    | `+2.70%`   |
+| MA        | `+1.36%`    | `+1.05%`   |
 
 The individual response-matrix norm errors were `1.3--3.9%`. The interpolated
 fabricated-minus-thin domain defect differed by `+16.5%` for this trace because
@@ -276,11 +276,11 @@ corner entry with the existing straight-edge entry. For a second-order device
 solve, Palace detected all four fillets automatically. The participation-ratio
 errors relative to the fabricated reference were:
 
-| Interface | Raw | Fixed trace | Fixed flux | Self-consistent |
-|:--|--:|--:|--:|--:|
-| SA | `-1.99%` | `-6.09%` | `-1.19%` | `+2.24%` |
-| MS | `-2.10%` | `-6.13%` | `+2.97%` | `-10.97%` |
-| MA | `-53.03%` | `+1.72%` | `-13.09%` | `-17.16%` |
+| Interface | Raw       | Fixed trace | Fixed flux | Self-consistent |
+|:--------- | ---------:| -----------:| ----------:| ---------------:|
+| SA        | `-1.99%`  | `-6.09%`    | `-1.19%`   | `+2.24%`        |
+| MS        | `-2.10%`  | `-6.13%`    | `+2.97%`   | `-10.97%`       |
+| MA        | `-53.03%` | `+1.72%`    | `-13.09%`  | `-17.16%`       |
 
 The fixed-trace/fixed-flux closure spread is 9.0--12.6%. Maxwell correction is
 postprocessing-only, so those two columns, together with the reported closure
@@ -314,11 +314,11 @@ mesh and its metal-edge segment is excluded from correction.
 For the second-order driven solve, the fabricated reference participation ratios and
 relative thin-metal errors were:
 
-| Interface | Fabricated reference | Raw | Fixed trace | Fixed flux | Self-consistent |
-|:--|--:|--:|--:|--:|--:|
-| SA | `5.2655e-4` | `-9.89%` | `-14.58%` | `-10.01%` | `-8.49%` |
-| MS | `1.0980e-3` | `-6.30%` | `-10.24%` | `-1.21%` | `-16.85%` |
-| MA | `1.9729e-5` | `-54.54%` | `-2.03%` | `-15.90%` | `-19.84%` |
+| Interface | Fabricated reference | Raw       | Fixed trace | Fixed flux | Self-consistent |
+|:--------- | --------------------:| ---------:| -----------:| ----------:| ---------------:|
+| SA        | `5.2655e-4`          | `-9.89%`  | `-14.58%`   | `-10.01%`  | `-8.49%`        |
+| MS        | `1.0980e-3`          | `-6.30%`  | `-10.24%`   | `-1.21%`   | `-16.85%`       |
+| MA        | `1.9729e-5`          | `-54.54%` | `-2.03%`    | `-15.90%`  | `-19.84%`       |
 
 The local Maxwell field passes the electrical-size and loop-closure checks, and all
 straight and rounded edge neighborhoods match the process library. The maximum
@@ -331,10 +331,10 @@ Replacing the exact `rho = 0.5 um` corner entry with the interpolated
 `rho = 0.25/0.75 um` entries gave:
 
 | Interface | Exact trace | Interpolated trace | Exact flux | Interpolated flux |
-|:--|--:|--:|--:|--:|
-| SA | `-14.58%` | `-13.90%` | `-10.01%` | `-9.00%` |
-| MS | `-10.24%` | `-8.69%` | `-1.21%` | `+0.68%` |
-| MA | `-2.03%` | `-0.05%` | `-15.90%` | `-13.85%` |
+|:--------- | -----------:| ------------------:| ----------:| -----------------:|
+| SA        | `-14.58%`   | `-13.90%`          | `-10.01%`  | `-9.00%`          |
+| MS        | `-10.24%`   | `-8.69%`           | `-1.21%`   | `+0.68%`          |
+| MA        | `-2.03%`    | `-0.05%`           | `-15.90%`  | `-13.85%`         |
 
 Thus radius interpolation changes the corrected device energies by about
 `0.6--2.6%`, consistent with the direct coupon test. The remaining device error
@@ -367,11 +367,11 @@ For a second-order device solve with one AMR iteration, using the fine
 175k- and 210k-element thin and fabricated corner coupons, the
 participation-ratio errors were:
 
-| Interface | Raw | Fixed trace | Fixed flux | Self-consistent |
-|:--|--:|--:|--:|--:|
-| SA | `-5.28%` | `-5.52%` | `+1.32%` | `+6.23%` |
-| MS | `-0.65%` | `+0.09%` | `+2.39%` | `+0.25%` |
-| MA | `-17.43%` | `+9.61%` | `-1.11%` | `-2.47%` |
+| Interface | Raw       | Fixed trace | Fixed flux | Self-consistent |
+|:--------- | ---------:| -----------:| ----------:| ---------------:|
+| SA        | `-5.28%`  | `-5.52%`    | `+1.32%`   | `+6.23%`        |
+| MS        | `-0.65%`  | `+0.09%`    | `+2.39%`   | `+0.25%`        |
+| MA        | `-17.43%` | `+9.61%`    | `-1.11%`   | `-2.47%`        |
 
 The corrected thin participations changed by at most `0.03%` from AMR 0 to
 AMR 1. The fabricated reference changed by `0.20%`, `0.16%`, and `0.03%` for
@@ -405,16 +405,16 @@ coupons and the runtime dielectric postprocessing configuration.
 For 100 nm metal, 50 nm overetch, and a `0.5 um` plan-view corner radius,
 six-field p1/p2/p3 probe studies gave the following p2-to-p3 changes:
 
-| Topology | Quantity | Matrix change | Worst energy change |
-|----------|----------|--------------:|--------------------:|
-| Convex | Fabricated domain | 0.09% | 0.24% |
-| Convex | Fabricated SA | 0.53% | 1.03% |
-| Convex | Fabricated MS | 0.27% | 2.32% |
-| Convex | Fabricated MA | 2.72% | 4.92% |
-| Concave | Fabricated domain | 0.05% | 0.16% |
-| Concave | Fabricated SA | 0.55% | 1.14% |
-| Concave | Fabricated MS | 0.15% | 1.24% |
-| Concave | Fabricated MA | 1.39% | 4.99% |
+| Topology | Quantity          | Matrix change | Worst energy change |
+|:-------- |:----------------- | -------------:| -------------------:|
+| Convex   | Fabricated domain | 0.09%         | 0.24%               |
+| Convex   | Fabricated SA     | 0.53%         | 1.03%               |
+| Convex   | Fabricated MS     | 0.27%         | 2.32%               |
+| Convex   | Fabricated MA     | 2.72%         | 4.92%               |
+| Concave  | Fabricated domain | 0.05%         | 0.16%               |
+| Concave  | Fabricated SA     | 0.55%         | 1.14%               |
+| Concave  | Fabricated MS     | 0.15%         | 1.24%               |
+| Concave  | Fabricated MA     | 1.39%         | 4.99%               |
 
 The fabricated-minus-thin domain defect changed by 1.59% for the convex
 coupon and 2.39% for the concave coupon. Both probe studies therefore pass
@@ -425,12 +425,12 @@ Full p2 matrices regenerated after adding all metal-interior trace knots to
 errors below compare direct held-out solves against the quadratic forms
 evaluated from the response matrices:
 
-| Topology | Coupon | Domain | SA | MS | MA |
-|----------|--------|-------:|---:|---:|---:|
-| Convex | Thin | `+1.88%` | `-0.10%` | `+4.45%` | `-2.56%` |
-| Convex | Fabricated | `+2.02%` | `+0.09%` | `+5.16%` | `-4.06%` |
-| Concave | Thin | `+0.47%` | `+5.40%` | `-0.24%` | `+1.14%` |
-| Concave | Fabricated | `+0.40%` | `+8.37%` | `-0.44%` | `+1.21%` |
+| Topology | Coupon     | Domain   | SA       | MS       | MA       |
+|:-------- |:---------- | --------:| --------:| --------:| --------:|
+| Convex   | Thin       | `+1.88%` | `-0.10%` | `+4.45%` | `-2.56%` |
+| Convex   | Fabricated | `+2.02%` | `+0.09%` | `+5.16%` | `-4.06%` |
+| Concave  | Thin       | `+0.47%` | `+5.40%` | `-0.24%` | `+1.14%` |
+| Concave  | Fabricated | `+0.40%` | `+8.37%` | `-0.44%` | `+1.21%` |
 
 The free-trace domain matrices are positive definite, with condition numbers
 of 83 or less, and all interface matrices are positive semidefinite to the
@@ -445,15 +445,15 @@ Rounded corner coupons with `R = 2 um`, `rho = 0.5 um`, and the default
 process were tested at `lc_fine = 0.02 um`. Passing p2-to-p3 cases were also
 tested at fixed p3 from `lc_fine = 0.04 um` to `0.02 um`:
 
-| Topology | Study | Result | Domain defect | Fabricated domain | SA | MS | MA | Max. worst energy |
-|----------|-------|:------:|--------------:|------------------:|---:|---:|---:|------------------:|
-| 45 degree convex | p2 to p3 | Pass | `0.66%` | `0.07%` | `0.52%` | `0.26%` | `2.41%` | `5.16%` |
-| 45 degree convex | h2 to h1 | Pass | `0.90%` | `0.03%` | `0.38%` | `0.71%` | `2.01%` | `5.70%` |
-| 45 degree concave | p2 to p3 | **Fail** | `5.09%` | `0.05%` | `0.68%` | `0.17%` | `0.82%` | `3.45%` |
-| 135 degree convex | p2 to p3 | Pass | `1.67%` | `0.09%` | `0.58%` | `0.15%` | `1.56%` | `3.97%` |
-| 135 degree convex | h2 to h1 | Pass | `1.25%` | `0.02%` | `0.40%` | `0.50%` | `1.00%` | `3.22%` |
-| 135 degree concave | p2 to p3 | Pass | `3.35%` | `0.07%` | `0.60%` | `0.15%` | `1.17%` | `2.79%` |
-| 135 degree concave | h2 to h1 | Pass | `1.95%` | `0.01%` | `0.47%` | `0.34%` | `0.92%` | `2.90%` |
+| Topology           | Study    | Result   | Domain defect | Fabricated domain | SA      | MS      | MA      | Max. worst energy |
+|:------------------ |:-------- |:--------:| -------------:| -----------------:| -------:| -------:| -------:| -----------------:|
+| 45 degree convex   | p2 to p3 | Pass     | `0.66%`       | `0.07%`           | `0.52%` | `0.26%` | `2.41%` | `5.16%`           |
+| 45 degree convex   | h2 to h1 | Pass     | `0.90%`       | `0.03%`           | `0.38%` | `0.71%` | `2.01%` | `5.70%`           |
+| 45 degree concave  | p2 to p3 | **Fail** | `5.09%`       | `0.05%`           | `0.68%` | `0.17%` | `0.82%` | `3.45%`           |
+| 135 degree convex  | p2 to p3 | Pass     | `1.67%`       | `0.09%`           | `0.58%` | `0.15%` | `1.56%` | `3.97%`           |
+| 135 degree convex  | h2 to h1 | Pass     | `1.25%`       | `0.02%`           | `0.40%` | `0.50%` | `1.00%` | `3.22%`           |
+| 135 degree concave | p2 to p3 | Pass     | `3.35%`       | `0.07%`           | `0.60%` | `0.15%` | `1.17%` | `2.79%`           |
+| 135 degree concave | h2 to h1 | Pass     | `1.95%`       | `0.01%`           | `0.47%` | `0.34%` | `0.92%` | `2.90%`           |
 
 The matrix columns report relative Frobenius changes; the last column is the
 largest fabricated worst-probe energy change across domain, SA, MS, and MA.
@@ -470,15 +470,15 @@ run, so these angle families are not yet qualified process-library entries.
 
 Before adding these matrices to a production process library:
 
-1. Add any missing cross-sectional process rounding and fabrication details.
-2. Check matching-radius and trace-basis convergence.
-3. Generate at least two positive-radius entries, sweep held-out plan-view
-   radii, and validate the interpolated response against fabricated references.
-4. Converge the fabrication-resolved concave-corner device reference.
-5. Combine the convex- and concave-corner entries with the process's isolated-
-   and paired-edge entries.
-6. Resolve the 45 degree concave p-order failure and converge additional corner
-   angles and nearby-edge configurations.
+ 1. Add any missing cross-sectional process rounding and fabrication details.
+ 2. Check matching-radius and trace-basis convergence.
+ 3. Generate at least two positive-radius entries, sweep held-out plan-view
+    radii, and validate the interpolated response against fabricated references.
+ 4. Converge the fabrication-resolved concave-corner device reference.
+ 5. Combine the convex- and concave-corner entries with the process's isolated-
+    and paired-edge entries.
+ 6. Resolve the 45 degree concave p-order failure and converge additional corner
+    angles and nearby-edge configurations.
 
 The generic geometry and trace-mask paths also have valid high-order meshes for
 sharp acute and obtuse coupons. Those sharp families still require the same p,

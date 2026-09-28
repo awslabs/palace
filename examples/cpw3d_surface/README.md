@@ -59,11 +59,11 @@ fabrication-resolved reference.
 
 The extrusion checks are independent of this cross-section refinement:
 
-- The 3D fabrication-resolved SA/MS/MA values agree with the converged 2D
-  values within `0.12%/0.84%/1.50%`.
-- The thin 50 and 200 um extrusions agree within `0.0041%` for all raw,
-  edge-decomposed, and corrected participation values. This verifies that
-  `EdgeExcludeAttributes` removes the artificial extrusion-end edges.
+  - The 3D fabrication-resolved SA/MS/MA values agree with the converged 2D
+    values within `0.12%/0.84%/1.50%`.
+  - The thin 50 and 200 um extrusions agree within `0.0041%` for all raw,
+    edge-decomposed, and corrected participation values. This verifies that
+    `EdgeExcludeAttributes` removes the artificial extrusion-end edges.
 
 Both committed configurations use `Refinement.MaxIts = 0`, so their error
 indicators are diagnostic only. They use a relaxed `EstimatorTol` to avoid
@@ -168,14 +168,14 @@ The large order-1 MA error is primarily a discretization effect, not an MS/MA
 grouping artifact. A compact 2D electrostatic p-refinement study on the same
 cross-section and response library gives fixed-trace SA/MS/MA errors:
 
-| Order | SA | MS | MA |
-| ---: | ---: | ---: | ---: |
-| 1 | `+2.69%` | `+3.56%` | `+22.76%` |
-| 2 | `+1.09%` | `-0.70%` | `+7.71%` |
-| 3 | `-0.78%` | `+0.41%` | `+6.27%` |
-| 4 | `-0.32%` | `-0.84%` | `+4.66%` |
-| 5 | `-1.19%` | `-0.45%` | `+4.14%` |
-| 6 | `-0.77%` | `-1.18%` | `+3.31%` |
+| Order | SA       | MS       | MA        |
+| -----:| --------:| --------:| ---------:|
+| 1     | `+2.69%` | `+3.56%` | `+22.76%` |
+| 2     | `+1.09%` | `-0.70%` | `+7.71%`  |
+| 3     | `-0.78%` | `+0.41%` | `+6.27%`  |
+| 4     | `-0.32%` | `-0.84%` | `+4.66%`  |
+| 5     | `-1.19%` | `-0.45%` | `+4.14%`  |
+| 6     | `-0.77%` | `-1.18%` | `+3.31%`  |
 
 The corrected MA value is stable to less than 0.5% between consecutive orders
 above order 2, while the fabrication-resolved reference is still converging.

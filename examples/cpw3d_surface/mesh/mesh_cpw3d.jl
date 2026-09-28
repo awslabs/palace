@@ -23,46 +23,46 @@ import Gmsh: gmsh
 
 function generate_cpw2d_mesh(;
     # --- Topology ---
-    flipchip::Bool       = false,
+    flipchip::Bool=false,
 
     # --- CPW geometry (μm) ---
-    w_trace::Float64     = 10.0,
-    w_gap::Float64       = 6.0,
-    w_ground::Float64    = 300.0,
+    w_trace::Float64  = 10.0,
+    w_gap::Float64    = 6.0,
+    w_ground::Float64 = 300.0,
 
     # --- Flip-chip only ---
-    cow::Float64         = 50.0,     # L1 cutout width
-    fc_gap::Float64      = 5.0,      # vacuum gap height
-    bb_offset::Float64   = 200.0,    # bump bond offset from center
-    bb_width::Float64    = 25.0,     # bump bond width
+    cow::Float64       = 50.0,     # L1 cutout width
+    fc_gap::Float64    = 5.0,      # vacuum gap height
+    bb_offset::Float64 = 200.0,    # bump bond offset from center
+    bb_width::Float64  = 25.0,     # bump bond width
 
     # --- Substrate ---
     h_substrate::Float64 = 525.0,
     h_vacuum::Float64    = 500.0,    # single-chip only: vacuum height above metal
 
     # --- Metal profile ---
-    t_metal::Float64         = 0.0,   # 0 = thin (PEC line), >0 = thick
-    overetch_depth::Float64  = 0.0,   # 0 = no overetch
-    sidewall_angle::Float64  = 90.0,  # degrees from horizontal (90=vertical)
-    r_top::Float64           = 0.0,   # fillet radius at vacuum-facing tips
-    r_bot::Float64           = 0.0,   # fillet radius at overetch trench bottom
+    t_metal::Float64        = 0.0,   # 0 = thin (PEC line), >0 = thick
+    overetch_depth::Float64 = 0.0,   # 0 = no overetch
+    sidewall_angle::Float64 = 90.0,  # degrees from horizontal (90=vertical)
+    r_top::Float64          = 0.0,   # fillet radius at vacuum-facing tips
+    r_bot::Float64          = 0.0,   # fillet radius at overetch trench bottom
 
     # --- Oxide ---
-    t_oxide::Float64     = 0.0,       # 0 = no oxide layers
+    t_oxide::Float64=0.0,       # 0 = no oxide layers
 
     # --- Mesh ---
-    lc_fine::Float64     = 0.03,
-    lc_far::Float64      = 60.0,
-    lc_transition::Float64 = 0.0,    # edge distance where size reaches lc_far; 0 = auto
-    mesh_order::Int      = 2,
+    lc_fine::Float64=0.03,
+    lc_far::Float64=60.0,
+    lc_transition::Float64=0.0,    # edge distance where size reaches lc_far; 0 = auto
+    mesh_order::Int=2,
 
     # --- Extrusion (quasi-2D) ---
     extrude_length::Float64 = 0.0,    # 0 = pure 2D, >0 = extrude +z by this length (μm)
     extrude_nz::Int         = 0,      # number of layers along z; 0 = auto (based on lc_fine)
 
     # --- Output ---
-    filename::String     = "cpw2d.msh",
-    verbose::Int         = 0
+    filename::String = "cpw2d.msh",
+    verbose::Int     = 0
 )
     thick = t_metal > 0
     has_overetch = overetch_depth > 0
@@ -88,12 +88,15 @@ function generate_cpw2d_mesh(;
     xc = w_box / 2.0
 
     # Key x-coordinates at substrate surface
-    x_tl = xc - w_trace/2;  x_tr = xc + w_trace/2
-    x_gl = x_tl - w_gap;    x_gr = x_tr + w_gap
+    x_tl = xc - w_trace/2;
+    x_tr = xc + w_trace/2
+    x_gl = x_tl - w_gap;
+    x_gr = x_tr + w_gap
 
     # Flip-chip specific
     if flipchip
-        x_cl = xc - cow/2;  x_cr = xc + cow/2
+        x_cl = xc - cow/2;
+        x_cr = xc + cow/2
         x_bll = xc - bb_offset - bb_width/2
         x_blr = xc - bb_offset + bb_width/2
         x_brl = xc + bb_offset - bb_width/2
@@ -102,7 +105,8 @@ function generate_cpw2d_mesh(;
         y2t = gap
         y2oe = gap + oe
     else
-        x_cl = x_gl; x_cr = x_gr  # single chip: cutout = full CPW gap region
+        x_cl = x_gl;
+        x_cr = x_gr  # single chip: cutout = full CPW gap region
     end
 
     # Y coordinates
@@ -119,10 +123,17 @@ function generate_cpw2d_mesh(;
     # =====================================================================
     function fillet(c, p, n, r)
         r <= 0 && return (c, c, c)
-        d1 = let v=(c[1]-p[1],c[2]-p[2]); L=hypot(v...); (v[1]/L,v[2]/L) end
-        d2 = let v=(n[1]-c[1],n[2]-c[2]); L=hypot(v...); (v[1]/L,v[2]/L) end
-        ce = clamp(d1[1]*d2[1]+d1[2]*d2[2],-1.0,1.0)
-        hi = (π-acos(ce))/2; t = r/tan(hi)
+        d1 = let v=(c[1]-p[1], c[2]-p[2]);
+            L=hypot(v...);
+            (v[1]/L, v[2]/L)
+        end
+        d2 = let v=(n[1]-c[1], n[2]-c[2]);
+            L=hypot(v...);
+            (v[1]/L, v[2]/L)
+        end
+        ce = clamp(d1[1]*d2[1]+d1[2]*d2[2], -1.0, 1.0)
+        hi = (π-acos(ce))/2;
+        t = r/tan(hi)
         Ti = (c[1]-t*d1[1], c[2]-t*d1[2])
         To = (c[1]+t*d2[1], c[2]+t*d2[2])
         nm = (-d1[2], d1[1])
@@ -132,11 +143,17 @@ function generate_cpw2d_mesh(;
 
     function shape(corners)
         nc = length(corners)
-        fd = [fillet(corners[i][1], corners[mod1(i-1,nc)][1], corners[mod1(i+1,nc)][1],
-                     corners[i][2]) for i in 1:nc]
+        fd = [
+            fillet(
+                corners[i][1],
+                corners[mod1(i-1, nc)][1],
+                corners[mod1(i+1, nc)][1],
+                corners[i][2]
+            ) for i = 1:nc
+        ]
         curves = Int32[]
-        for i in 1:nc
-            j = mod1(i+1,nc)
+        for i = 1:nc
+            j = mod1(i+1, nc)
             p1 = K.addPoint(fd[i][3][1], fd[i][3][2], 0.0)
             p2 = K.addPoint(fd[j][1][1], fd[j][1][2], 0.0)
             push!(curves, K.addLine(p1, p2))
@@ -154,9 +171,9 @@ function generate_cpw2d_mesh(;
     # =====================================================================
     function offset_corners(corners, d, sign; fixed_edges=Set{Int}())
         nc = length(corners)
-        edge_n = Vector{Tuple{Float64,Float64}}(undef, nc)
-        edge_t = Vector{Tuple{Float64,Float64}}(undef, nc)
-        for i in 1:nc
+        edge_n = Vector{Tuple{Float64, Float64}}(undef, nc)
+        edge_t = Vector{Tuple{Float64, Float64}}(undef, nc)
+        for i = 1:nc
             j = mod1(i+1, nc)
             dx = corners[j][1][1] - corners[i][1][1]
             dy = corners[j][1][2] - corners[i][1][2]
@@ -164,15 +181,21 @@ function generate_cpw2d_mesh(;
             edge_t[i] = (dx/L, dy/L)
             edge_n[i] = i in fixed_edges ? (0.0, 0.0) : (sign*dy/L, sign*-dx/L)
         end
-        result = Vector{Tuple{Tuple{Float64,Float64},Float64}}(undef, nc)
-        for i in 1:nc
+        result = Vector{Tuple{Tuple{Float64, Float64}, Float64}}(undef, nc)
+        for i = 1:nc
             pt, r = corners[i]
-            ei = mod1(i-1, nc); eo = i
-            n_in = edge_n[ei]; n_out = edge_n[eo]
-            in_fixed = ei in fixed_edges; out_fixed = eo in fixed_edges
-            bx = n_in[1]+n_out[1]; by = n_in[2]+n_out[2]; blen = hypot(bx, by)
+            ei = mod1(i-1, nc);
+            eo = i
+            n_in = edge_n[ei];
+            n_out = edge_n[eo]
+            in_fixed = ei in fixed_edges;
+            out_fixed = eo in fixed_edges
+            bx = n_in[1]+n_out[1];
+            by = n_in[2]+n_out[2];
+            blen = hypot(bx, by)
             if blen < 1e-12
-                result[i] = (pt, r > 0 ? max(r+sign*d, 0.0) : 0.0); continue
+                result[i] = (pt, r > 0 ? max(r+sign*d, 0.0) : 0.0);
+                continue
             end
             if in_fixed != out_fixed
                 # One edge fixed: slide along the fixed edge to maintain offset from non-fixed edge
@@ -200,30 +223,52 @@ function generate_cpw2d_mesh(;
 
     function shape_with_ref(corners, ref_corners)
         nc = length(corners)
-        fd = [fillet(corners[i][1], corners[mod1(i-1,nc)][1], corners[mod1(i+1,nc)][1],
-                     corners[i][2]) for i in 1:nc]
-        fd_ref = [fillet(ref_corners[i][1], ref_corners[mod1(i-1,nc)][1],
-                         ref_corners[mod1(i+1,nc)][1], ref_corners[i][2]) for i in 1:nc]
-        for i in 1:nc
-            r = corners[i][2]; r > 0 || continue
+        fd = [
+            fillet(
+                corners[i][1],
+                corners[mod1(i-1, nc)][1],
+                corners[mod1(i+1, nc)][1],
+                corners[i][2]
+            ) for i = 1:nc
+        ]
+        fd_ref = [
+            fillet(
+                ref_corners[i][1],
+                ref_corners[mod1(i-1, nc)][1],
+                ref_corners[mod1(i+1, nc)][1],
+                ref_corners[i][2]
+            ) for i = 1:nc
+        ]
+        for i = 1:nc
+            r = corners[i][2];
+            r > 0 || continue
             C = fd_ref[i][2]
-            Ti_old = fd[i][1]; To_old = fd[i][3]
-            di = (Ti_old[1]-C[1], Ti_old[2]-C[2]); Li = hypot(di...)
-            do_ = (To_old[1]-C[1], To_old[2]-C[2]); Lo = hypot(do_...)
-            Li < 1e-12 && continue; Lo < 1e-12 && continue
-            fd[i] = ((C[1]+r*di[1]/Li, C[2]+r*di[2]/Li), C,
-                     (C[1]+r*do_[1]/Lo, C[2]+r*do_[2]/Lo))
+            Ti_old = fd[i][1];
+            To_old = fd[i][3]
+            di = (Ti_old[1]-C[1], Ti_old[2]-C[2]);
+            Li = hypot(di...)
+            do_ = (To_old[1]-C[1], To_old[2]-C[2]);
+            Lo = hypot(do_...)
+            Li < 1e-12 && continue;
+            Lo < 1e-12 && continue
+            fd[i] = (
+                (C[1]+r*di[1]/Li, C[2]+r*di[2]/Li),
+                C,
+                (C[1]+r*do_[1]/Lo, C[2]+r*do_[2]/Lo)
+            )
         end
         curves = Int32[]
-        for i in 1:nc
-            j = mod1(i+1,nc)
-            Ti_out = fd[i][3]; Tj_in = fd[j][1]
+        for i = 1:nc
+            j = mod1(i+1, nc)
+            Ti_out = fd[i][3];
+            Tj_in = fd[j][1]
             d_line = hypot(Ti_out[1]-Tj_in[1], Ti_out[2]-Tj_in[2])
             p1 = K.addPoint(Ti_out[1], Ti_out[2], 0.0)
             p2 = K.addPoint(Tj_in[1], Tj_in[2], 0.0)
             d_line > 1e-10 && push!(curves, K.addLine(p1, p2))
             if corners[j][2] > 0
-                Cj = fd[j][2]; Tj_out = fd[j][3]
+                Cj = fd[j][2];
+                Tj_out = fd[j][3]
                 d_arc = hypot(Tj_in[1]-Tj_out[1], Tj_in[2]-Tj_out[2])
                 if d_arc > 1e-10
                     pc = K.addPoint(Cj[1], Cj[2], 0.0)
@@ -261,40 +306,60 @@ function generate_cpw2d_mesh(;
     end
 
     # --- PEC shapes and boolean operations ---
-    vac_result = Tuple{Int32,Int32}[]
-    oe_surfs = Tuple{Int32,Int32}[]
-    pec_corners = Dict{String, Vector{Tuple{Tuple{Float64,Float64},Float64}}}()
+    vac_result = Tuple{Int32, Int32}[]
+    oe_surfs = Tuple{Int32, Int32}[]
+    pec_corners = Dict{String, Vector{Tuple{Tuple{Float64, Float64}, Float64}}}()
 
     if thick
         # === THICK METAL ===
         if flipchip
             # L2 trace
-            c = [((x_tl, y2t), 0.0), ((x_tl+tp, y2b), r_top),
-                 ((x_tr-tp, y2b), r_top), ((x_tr, y2t), 0.0)]
+            c = [
+                ((x_tl, y2t), 0.0),
+                ((x_tl+tp, y2b), r_top),
+                ((x_tr-tp, y2b), r_top),
+                ((x_tr, y2t), 0.0)
+            ]
             pec_corners["L2_trace"] = c
             l2_trace = shape(c)
 
             # L2 ground left
-            c = [((-ext, y2t), 0.0), ((-ext, y2b), 0.0),
-                 ((x_gl-tp, y2b), r_top), ((x_gl, y2t), 0.0)]
+            c = [
+                ((-ext, y2t), 0.0),
+                ((-ext, y2b), 0.0),
+                ((x_gl-tp, y2b), r_top),
+                ((x_gl, y2t), 0.0)
+            ]
             pec_corners["L2_gl"] = c
             l2_gl = shape(c)
 
             # L2 ground right
-            c = [((x_gr, y2t), 0.0), ((x_gr+tp, y2b), r_top),
-                 ((w_box+ext, y2b), 0.0), ((w_box+ext, y2t), 0.0)]
+            c = [
+                ((x_gr, y2t), 0.0),
+                ((x_gr+tp, y2b), r_top),
+                ((w_box+ext, y2b), 0.0),
+                ((w_box+ext, y2t), 0.0)
+            ]
             pec_corners["L2_gr"] = c
             l2_gr = shape(c)
 
             # L1 ground left
-            c = [((-ext, 0.0), 0.0), ((x_cl, 0.0), 0.0),
-                 ((x_cl-tp, t_metal), r_top), ((-ext, t_metal), 0.0)]
+            c = [
+                ((-ext, 0.0), 0.0),
+                ((x_cl, 0.0), 0.0),
+                ((x_cl-tp, t_metal), r_top),
+                ((-ext, t_metal), 0.0)
+            ]
             pec_corners["L1_gl"] = c
             l1_gl = shape(c)
 
             # L1 ground right
-            c = [((x_cr, 0.0), 0.0), ((w_box+ext, 0.0), 0.0),
-                 ((w_box+ext, t_metal), 0.0), ((x_cr+tp, t_metal), r_top)]
+            c = [
+                ((x_cr, 0.0), 0.0),
+                ((w_box+ext, 0.0), 0.0),
+                ((w_box+ext, t_metal), 0.0),
+                ((x_cr+tp, t_metal), r_top)
+            ]
             pec_corners["L1_gr"] = c
             l1_gr = shape(c)
 
@@ -303,23 +368,44 @@ function generate_cpw2d_mesh(;
             bb_r = K.addRectangle(x_brl, 0.0, 0.0, bb_width, gap)
 
             # Cut PEC from vacuum
-            vr, _ = K.cut([(2, vac)],
-                [(2, l2_trace), (2, l2_gl), (2, l2_gr),
-                 (2, l1_gl), (2, l1_gr), (2, bb_l), (2, bb_r)])
+            vr, _ = K.cut(
+                [(2, vac)],
+                [
+                    (2, l2_trace),
+                    (2, l2_gl),
+                    (2, l2_gr),
+                    (2, l1_gl),
+                    (2, l1_gr),
+                    (2, bb_l),
+                    (2, bb_r)
+                ]
+            )
             vac_result = vr
 
             # Overetch shapes
             if has_overetch
-                c = [((x_tr, y2t), 0.0), ((x_gr, y2t), 0.0),
-                     ((x_gr-to, y2oe), r_bot), ((x_tr+to, y2oe), r_bot)]
+                c = [
+                    ((x_tr, y2t), 0.0),
+                    ((x_gr, y2t), 0.0),
+                    ((x_gr-to, y2oe), r_bot),
+                    ((x_tr+to, y2oe), r_bot)
+                ]
                 pec_corners["L2_oe_r"] = c
                 l2_oe_r = shape(c)
-                c = [((x_gl, y2t), 0.0), ((x_tl, y2t), 0.0),
-                     ((x_tl-to, y2oe), r_bot), ((x_gl+to, y2oe), r_bot)]
+                c = [
+                    ((x_gl, y2t), 0.0),
+                    ((x_tl, y2t), 0.0),
+                    ((x_tl-to, y2oe), r_bot),
+                    ((x_gl+to, y2oe), r_bot)
+                ]
                 pec_corners["L2_oe_l"] = c
                 l2_oe_l = shape(c)
-                c = [((x_cl+to, -oe), r_bot), ((x_cr-to, -oe), r_bot),
-                     ((x_cr, 0.0), 0.0), ((x_cl, 0.0), 0.0)]
+                c = [
+                    ((x_cl+to, -oe), r_bot),
+                    ((x_cr-to, -oe), r_bot),
+                    ((x_cr, 0.0), 0.0),
+                    ((x_cl, 0.0), 0.0)
+                ]
                 pec_corners["L1_oe"] = c
                 l1_oe = shape(c)
                 oe_surfs = [(2, l1_oe), (2, l2_oe_r), (2, l2_oe_l)]
@@ -333,20 +419,32 @@ function generate_cpw2d_mesh(;
         else
             # Single chip, thick metal
             # Trace
-            c = [((x_tl, 0.0), 0.0), ((x_tr, 0.0), 0.0),
-                 ((x_tr-tp, t_metal), r_top), ((x_tl+tp, t_metal), r_top)]
+            c = [
+                ((x_tl, 0.0), 0.0),
+                ((x_tr, 0.0), 0.0),
+                ((x_tr-tp, t_metal), r_top),
+                ((x_tl+tp, t_metal), r_top)
+            ]
             pec_corners["trace"] = c
             trace_surf = shape(c)
 
             # Ground left
-            c = [((-ext, 0.0), 0.0), ((x_gl, 0.0), 0.0),
-                 ((x_gl-tp, t_metal), r_top), ((-ext, t_metal), 0.0)]
+            c = [
+                ((-ext, 0.0), 0.0),
+                ((x_gl, 0.0), 0.0),
+                ((x_gl-tp, t_metal), r_top),
+                ((-ext, t_metal), 0.0)
+            ]
             pec_corners["ground_l"] = c
             gl_surf = shape(c)
 
             # Ground right
-            c = [((x_gr, 0.0), 0.0), ((w_box+ext, 0.0), 0.0),
-                 ((w_box+ext, t_metal), 0.0), ((x_gr+tp, t_metal), r_top)]
+            c = [
+                ((x_gr, 0.0), 0.0),
+                ((w_box+ext, 0.0), 0.0),
+                ((w_box+ext, t_metal), 0.0),
+                ((x_gr+tp, t_metal), r_top)
+            ]
             pec_corners["ground_r"] = c
             gr_surf = shape(c)
 
@@ -356,14 +454,20 @@ function generate_cpw2d_mesh(;
 
             # Overetch (CCW: TL → BL → BR → TR matching mesh_overetch.jl)
             if has_overetch
-                c_oe_r = [((x_tr, 0.0), 0.0),
-                          ((x_tr+to, -oe), r_bot), ((x_gr-to, -oe), r_bot),
-                          ((x_gr, 0.0), 0.0)]
+                c_oe_r = [
+                    ((x_tr, 0.0), 0.0),
+                    ((x_tr+to, -oe), r_bot),
+                    ((x_gr-to, -oe), r_bot),
+                    ((x_gr, 0.0), 0.0)
+                ]
                 pec_corners["oe_r"] = c_oe_r
                 oe_r = shape(c_oe_r)
-                c_oe_l = [((x_gl, 0.0), 0.0),
-                          ((x_gl+to, -oe), r_bot), ((x_tl-to, -oe), r_bot),
-                          ((x_tl, 0.0), 0.0)]
+                c_oe_l = [
+                    ((x_gl, 0.0), 0.0),
+                    ((x_gl+to, -oe), r_bot),
+                    ((x_tl-to, -oe), r_bot),
+                    ((x_tl, 0.0), 0.0)
+                ]
                 pec_corners["oe_l"] = c_oe_l
                 oe_l = shape(c_oe_l)
                 oe_surfs = [(2, oe_r), (2, oe_l)]
@@ -384,9 +488,12 @@ function generate_cpw2d_mesh(;
             vac_result = vr
 
             # Splitting lines inside the gap
-            split_x = sort(unique(filter(x -> x > 0 && x < w_box, [
-                x_cl, x_cr, x_gl, x_tl, x_tr, x_gr])))
-            split_lines = Tuple{Int,Int}[]
+            split_x = sort(
+                unique(
+                    filter(x -> x > 0 && x < w_box, [x_cl, x_cr, x_gl, x_tl, x_tr, x_gr])
+                )
+            )
+            split_lines = Tuple{Int, Int}[]
             for x in split_x
                 p1 = K.addPoint(x, 0.0, 0.0)
                 p2 = K.addPoint(x, gap, 0.0)
@@ -397,8 +504,9 @@ function generate_cpw2d_mesh(;
             K.synchronize()
         else
             # Single chip thin: fragment with splitting lines
-            split_x = sort(unique(filter(x -> x > 0 && x < w_box, [x_gl, x_tl, x_tr, x_gr])))
-            split_lines = Tuple{Int,Int}[]
+            split_x =
+                sort(unique(filter(x -> x > 0 && x < w_box, [x_gl, x_tl, x_tr, x_gr])))
+            split_lines = Tuple{Int, Int}[]
             for x in split_x
                 p1 = K.addPoint(x, 0.0, 0.0)
                 p2 = K.addPoint(x, y_vac_top, 0.0)
@@ -419,9 +527,13 @@ function generate_cpw2d_mesh(;
     if has_oxide && thick
         if flipchip
             # Metal rings (outward)
-            for (nm, fe) in [("L2_trace", Set{Int}()),
-                             ("L2_gl", Set([1])), ("L2_gr", Set([3])),
-                             ("L1_gl", Set([4])), ("L1_gr", Set([2]))]
+            for (nm, fe) in [
+                ("L2_trace", Set{Int}()),
+                ("L2_gl", Set([1])),
+                ("L2_gr", Set([3])),
+                ("L1_gl", Set([4])),
+                ("L1_gr", Set([2]))
+            ]
                 haskey(pec_corners, nm) || continue
                 # For ground planes: use box-clamped corners for the ring
                 c = pec_corners[nm]
@@ -437,8 +549,8 @@ function generate_cpw2d_mesh(;
             end
             # Overetch rings (inward, opening edge fixed)
             if has_overetch
-                for (nm, fe) in [("L2_oe_r", Set([1])), ("L2_oe_l", Set([1])),
-                                 ("L1_oe", Set([3]))]
+                for (nm, fe) in
+                    [("L2_oe_r", Set([1])), ("L2_oe_l", Set([1])), ("L1_oe", Set([3]))]
                     haskey(pec_corners, nm) || continue
                     c = pec_corners[nm]
                     lbl = startswith(nm, "L1") ? :SA_L1 : :SA_L2
@@ -450,8 +562,8 @@ function generate_cpw2d_mesh(;
             end
         else
             # Single chip metal rings
-            for (nm, fe) in [("trace", Set{Int}()),
-                             ("ground_l", Set([4])), ("ground_r", Set([2]))]
+            for (nm, fe) in
+                [("trace", Set{Int}()), ("ground_l", Set([4])), ("ground_r", Set([2]))]
                 haskey(pec_corners, nm) || continue
                 c = pec_corners[nm]
                 ring_c = c
@@ -491,12 +603,18 @@ function generate_cpw2d_mesh(;
 
             n_oxide = length(oxide_dt)
             oxide_frag_raw = Dict{Symbol, Set{Int}}()
-            for i in 1:n_oxide
+            for i = 1:n_oxide
                 typ = oxide_surfs[i][2]
                 s = get!(oxide_frag_raw, typ, Set{Int}())
-                for (d, t) in frag_map[i]; push!(s, t) end
+                for (d, t) in frag_map[i]
+                    ;
+                    push!(s, t)
+                end
             end
-            for s in values(oxide_frag_raw); union!(all_oxide_tags, s) end
+            for s in values(oxide_frag_raw)
+                ;
+                union!(all_oxide_tags, s)
+            end
         end
     end
 
@@ -508,7 +626,7 @@ function generate_cpw2d_mesh(;
     # 3D (dim=3) entities with the same logic.
     extruded = extrude_length > 0
     # Map from 2D oxide surface tags to 3D oxide volume tags (for classification).
-    oxide_2d_to_3d = Dict{Int,Int}()
+    oxide_2d_to_3d = Dict{Int, Int}()
 
     if extruded
         all_2d_entities = [(2, tag) for (_, tag) in gmsh.model.getEntities(2)]
@@ -518,11 +636,25 @@ function generate_cpw2d_mesh(;
         # unstructured extrusion (3D mesher decides z resolution via the
         # cross-section size field, isotropically scaled).
         if extrude_nz > 0
-            out = K.extrude(all_2d_entities, 0.0, 0.0, extrude_length,
-                            [extrude_nz], [1.0], false)
+            out = K.extrude(
+                all_2d_entities,
+                0.0,
+                0.0,
+                extrude_length,
+                [extrude_nz],
+                [1.0],
+                false
+            )
         else
-            out = K.extrude(all_2d_entities, 0.0, 0.0, extrude_length,
-                            Int[], Float64[], false)
+            out = K.extrude(
+                all_2d_entities,
+                0.0,
+                0.0,
+                extrude_length,
+                Int[],
+                Float64[],
+                false
+            )
         end
         K.synchronize()
 
@@ -531,8 +663,10 @@ function generate_cpw2d_mesh(;
         # Build a map from original 2D surface tag → 3D volume tag.
         pos = 1
         for (_, s) in all_2d_entities
-            top = out[pos]; pos += 1
-            vol = out[pos]; pos += 1
+            top = out[pos];
+            pos += 1
+            vol = out[pos];
+            pos += 1
             @assert top[1] == 2 && vol[1] == 3
             if s in all_oxide_tags
                 oxide_2d_to_3d[s] = vol[2]
@@ -555,25 +689,46 @@ function generate_cpw2d_mesh(;
     # Domain classification (uses (x,y) bounding box, works for 2D or 3D)
     # =====================================================================
     tol = 1e-6
-    l1_doms = Int[]; l2_doms = Int[]; gap_doms = Int[]
+    l1_doms = Int[];
+    l2_doms = Int[];
+    gap_doms = Int[]
 
     for (dim, tag) in gmsh.model.getEntities(dom_dim)
         tag in all_oxide_tags && continue
         bb = gmsh.model.getBoundingBox(dim, tag)
         ym = (bb[2]+bb[5])/2
         if flipchip
-            if ym < -oe - tol;        push!(l1_doms, tag)
-            elseif ym > gap+oe+tol;   push!(l2_doms, tag)
-            else;                      push!(gap_doms, tag) end
+            if ym < -oe - tol
+                ;
+                push!(l1_doms, tag)
+            elseif ym > gap+oe+tol
+                ;
+                push!(l2_doms, tag)
+            else
+                ;
+                push!(gap_doms, tag)
+            end
         else
-            if ym < -oe - tol;        push!(l1_doms, tag)
-            else;                      push!(gap_doms, tag) end
+            if ym < -oe - tol
+                ;
+                push!(l1_doms, tag)
+            else
+                ;
+                push!(gap_doms, tag)
+            end
         end
     end
 
     # Oxide domain classification (remap 2D oxide tags to 3D if extruded)
-    l1_ms_ox=Int[]; l1_ma_ox=Int[]; l2_ms_ox=Int[]; l2_ma_ox=Int[]
-    l1_sa_ox=Int[]; l2_sa_ox=Int[]; sc_ms_ox=Int[]; sc_ma_ox=Int[]; sc_sa_ox=Int[]
+    l1_ms_ox = Int[];
+    l1_ma_ox = Int[];
+    l2_ms_ox = Int[];
+    l2_ma_ox = Int[]
+    l1_sa_ox = Int[];
+    l2_sa_ox = Int[];
+    sc_ms_ox = Int[];
+    sc_ma_ox = Int[];
+    sc_sa_ox = Int[]
 
     map_ox = extruded ? (t -> oxide_2d_to_3d[t]) : identity
 
@@ -616,13 +771,17 @@ function generate_cpw2d_mesh(;
     model_doms = Set(tag for (dim, tag) in gmsh.model.getEntities(dom_dim))
     mr = max(r_top, r_bot, tp, to) + 0.01
 
-    pec_trace = Int[]; pec_ground = Int[]
-    pec_trace_ms = Int[]; pec_trace_ma = Int[]
-    pec_ground_ms = Int[]; pec_ground_ma = Int[]
-    bb_pec = Int[]; outer_c = Int[]
+    pec_trace = Int[];
+    pec_ground = Int[]
+    pec_trace_ms = Int[];
+    pec_trace_ma = Int[]
+    pec_ground_ms = Int[];
+    pec_ground_ma = Int[]
+    bb_pec = Int[];
+    outer_c = Int[]
     sa_curves = Int[]
     port_front = Int[]   # z = 0 end cap (waveport in 3D)
-    port_back  = Int[]   # z = extrude_length end cap (waveport in 3D)
+    port_back = Int[]   # z = extrude_length end cap (waveport in 3D)
 
     ms_domains = Set(vcat(l1_doms, l2_doms, l1_ms_ox, l2_ms_ox, sc_ms_ox))
     ma_domains = Set(vcat(gap_doms, l1_ma_ox, l2_ma_ox, sc_ma_ox))
@@ -656,9 +815,13 @@ function generate_cpw2d_mesh(;
         isempty(adj) && continue
 
         bb = gmsh.model.getBoundingBox(dim, tag)
-        xn,yn,zn,xx,yx,zx = bb
-        xm=(xn+xx)/2; ym=(yn+yx)/2; dx=xx-xn; dy=yx-yn
-        ih = dy<tol; iv = dx<tol
+        xn, yn, zn, xx, yx, zx = bb
+        xm = (xn+xx)/2;
+        ym = (yn+yx)/2;
+        dx = xx-xn;
+        dy = yx-yn
+        ih = dy<tol;
+        iv = dx<tol
 
         # Extrusion end caps (z-extent ≈ 0): these are the z=0 and z=L faces,
         # which are copies of the 2D cross-section. Classified as separate
@@ -675,8 +838,16 @@ function generate_cpw2d_mesh(;
         end
 
         # Outer box (lateral faces at cross-section boundary)
-        if iv && (abs(xn)<tol || abs(xx-w_box)<tol); push!(outer_c,tag); continue end
-        if ih && (abs(yn-y_sub_bot)<tol || abs(yx-y_vac_top)<tol); push!(outer_c,tag); continue end
+        if iv && (abs(xn)<tol || abs(xx-w_box)<tol)
+            ;
+            push!(outer_c, tag);
+            continue
+        end
+        if ih && (abs(yn-y_sub_bot)<tol || abs(yx-y_vac_top)<tol)
+            ;
+            push!(outer_c, tag);
+            continue
+        end
 
         if has_oxide && thick
             n_adj = length(adj)
@@ -707,7 +878,8 @@ function generate_cpw2d_mesh(;
                 in_bbl = xn>x_bll-tol && xx<x_blr+tol
                 in_bbr = xn>x_brl-tol && xx<x_brr+tol
                 if (in_bbl||in_bbr) && yn>-tol && yx<gap+tol
-                    push!(bb_pec,tag); continue
+                    push!(bb_pec, tag);
+                    continue
                 end
             end
 
@@ -718,31 +890,47 @@ function generate_cpw2d_mesh(;
                 in_bbl = xn>x_bll-tol && xx<x_blr+tol
                 in_bbr = xn>x_brl-tol && xx<x_brr+tol
                 if (in_bbl||in_bbr) && yn>-tol && yx<gap+tol
-                    push!(bb_pec,tag); continue end
+                    push!(bb_pec, tag);
+                    continue
+                end
 
                 # L2 trace
                 in_trace_x = xn > x_tl - mr && xx < x_tr + mr
                 if yn > y2b-tol && yx < y2t+tol && in_trace_x && !(in_bbl||in_bbr)
-                    add_pec!(true, tag, adj); continue end
+                    add_pec!(true, tag, adj);
+                    continue
+                end
 
                 # L2 ground
                 if yn > y2b-tol && yx < y2t+tol && !in_trace_x && !(in_bbl||in_bbr)
-                    add_pec!(false, tag, adj); continue end
+                    add_pec!(false, tag, adj);
+                    continue
+                end
 
                 # L1 ground
                 if yn > -tol && yx < t_metal+tol && !(in_bbl||in_bbr)
-                    add_pec!(false, tag, adj); continue end
+                    add_pec!(false, tag, adj);
+                    continue
+                end
 
                 # SA (overetch)
                 if has_overetch
                     in_cut_x = xn > x_cl-mr && xx < x_cr+mr
                     if yn > -oe-tol && yx < tol && in_cut_x
-                        if !(ih && abs(ym)<tol); push!(sa_curves, tag); continue end
+                        if !(ih && abs(ym)<tol)
+                            ;
+                            push!(sa_curves, tag);
+                            continue
+                        end
                     end
                     in_lgap = xn > x_gl-mr && xx < x_tl+mr
                     in_rgap = xn > x_tr-mr && xx < x_gr+mr
                     if yn > y2t-tol && yx < y2oe+tol && (in_lgap||in_rgap)
-                        if !(ih && abs(ym-gap)<tol); push!(sa_curves, tag); continue end
+                        if !(ih && abs(ym-gap)<tol)
+                            ;
+                            push!(sa_curves, tag);
+                            continue
+                        end
                     end
                 end
             else
@@ -751,7 +939,9 @@ function generate_cpw2d_mesh(;
                 in_rgap = xn > x_tr-mr && xx < x_gr+mr
                 in_lgap = xn > x_gl-mr && xx < x_tl+mr
                 if yn > -tol && yx < t_metal+tol && in_trace_x
-                    add_pec!(true, tag, adj); continue end
+                    add_pec!(true, tag, adj);
+                    continue
+                end
                 if ih && abs(ym)<tol && (in_rgap||in_lgap)
                     if has_overetch
                         # y=0 in gap is vacuum-vacuum interface, not SA
@@ -761,10 +951,14 @@ function generate_cpw2d_mesh(;
                     continue
                 end
                 if yn > -tol && yx < t_metal+tol && !in_trace_x
-                    add_pec!(false, tag, adj); continue end
+                    add_pec!(false, tag, adj);
+                    continue
+                end
                 if has_overetch
                     if yn > -oe-tol && yx < tol && (in_rgap||in_lgap)
-                        push!(sa_curves, tag); continue end
+                        push!(sa_curves, tag);
+                        continue
+                    end
                 end
             end
 
@@ -776,9 +970,16 @@ function generate_cpw2d_mesh(;
                     in_bbl = xn>x_bll-tol && xx<x_blr+tol
                     in_bbr = xn>x_brl-tol && xx<x_brr+tol
                     in_cutout = xn>x_cl-tol && xx<x_cr+tol
-                    if in_bbl||in_bbr; push!(bb_pec,tag)
-                    elseif in_cutout; push!(sa_curves,tag)
-                    else; push!(pec_ground,tag) end
+                    if in_bbl||in_bbr
+                        ;
+                        push!(bb_pec, tag)
+                    elseif in_cutout
+                        ;
+                        push!(sa_curves, tag)
+                    else
+                        ;
+                        push!(pec_ground, tag)
+                    end
                     continue
                 end
                 # y=gap (L2)
@@ -788,24 +989,41 @@ function generate_cpw2d_mesh(;
                     in_trace = xn>x_tl-tol && xx<x_tr+tol
                     in_gap_l = xn>x_gl-tol && xx<x_tl+tol
                     in_gap_r = xn>x_tr-tol && xx<x_gr+tol
-                    if in_bbl||in_bbr; push!(bb_pec,tag)
-                    elseif in_trace; push!(pec_trace,tag)
-                    elseif in_gap_l||in_gap_r; push!(sa_curves,tag)
-                    else; push!(pec_ground,tag) end
+                    if in_bbl||in_bbr
+                        ;
+                        push!(bb_pec, tag)
+                    elseif in_trace
+                        ;
+                        push!(pec_trace, tag)
+                    elseif in_gap_l||in_gap_r
+                        ;
+                        push!(sa_curves, tag)
+                    else
+                        ;
+                        push!(pec_ground, tag)
+                    end
                     continue
                 end
                 # Vertical BB sides
                 if iv && yn>-tol && yx<gap+tol
-                    near_bb = any(abs(xm-bx)<tol for bx in [x_bll,x_blr,x_brl,x_brr])
-                    if near_bb; push!(bb_pec,tag); continue end
+                    near_bb = any(abs(xm-bx)<tol for bx in [x_bll, x_blr, x_brl, x_brr])
+                    if near_bb
+                        ;
+                        push!(bb_pec, tag);
+                        continue
+                    end
                 end
             else
                 # Single chip thin: y=0 interface
                 if ih && abs(ym)<tol
-                    if xn>=x_tl-tol && xx<=x_tr+tol; push!(pec_trace,tag)
-                    elseif xx<=x_gl+tol || xn>=x_gr-tol; push!(pec_ground,tag)
+                    if xn>=x_tl-tol && xx<=x_tr+tol
+                        ;
+                        push!(pec_trace, tag)
+                    elseif xx<=x_gl+tol || xn>=x_gr-tol
+                        ;
+                        push!(pec_ground, tag)
                     elseif (xn>=x_gl-tol && xx<=x_tl+tol) || (xn>=x_tr-tol && xx<=x_gr+tol)
-                        push!(sa_curves,tag)
+                        push!(sa_curves, tag)
                     end
                     continue
                 end
@@ -818,24 +1036,33 @@ function generate_cpw2d_mesh(;
     # =====================================================================
     di = 1
     if flipchip
-        gmsh.model.addPhysicalGroup(dom_dim, l1_doms, di, "L1_substrate"); di+=1
-        gmsh.model.addPhysicalGroup(dom_dim, l2_doms, di, "L2_substrate"); di+=1
+        gmsh.model.addPhysicalGroup(dom_dim, l1_doms, di, "L1_substrate");
+        di += 1
+        gmsh.model.addPhysicalGroup(dom_dim, l2_doms, di, "L2_substrate");
+        di += 1
     else
-        gmsh.model.addPhysicalGroup(dom_dim, l1_doms, di, "substrate"); di+=1
+        gmsh.model.addPhysicalGroup(dom_dim, l1_doms, di, "substrate");
+        di += 1
     end
-    gmsh.model.addPhysicalGroup(dom_dim, gap_doms, di, "vacuum"); di+=1
+    gmsh.model.addPhysicalGroup(dom_dim, gap_doms, di, "vacuum");
+    di += 1
 
     if has_oxide && thick
         if flipchip
-            for (d, nm) in [(l1_ms_ox,"L1_MS_oxide"),(l1_ma_ox,"L1_MA_oxide"),
-                            (l2_ms_ox,"L2_MS_oxide"),(l2_ma_ox,"L2_MA_oxide"),
-                            (l1_sa_ox,"L1_SA_oxide"),(l2_sa_ox,"L2_SA_oxide")]
-                !isempty(d) && (gmsh.model.addPhysicalGroup(dom_dim, d, di, nm); di+=1)
+            for (d, nm) in [
+                (l1_ms_ox, "L1_MS_oxide"),
+                (l1_ma_ox, "L1_MA_oxide"),
+                (l2_ms_ox, "L2_MS_oxide"),
+                (l2_ma_ox, "L2_MA_oxide"),
+                (l1_sa_ox, "L1_SA_oxide"),
+                (l2_sa_ox, "L2_SA_oxide")
+            ]
+                !isempty(d) && (gmsh.model.addPhysicalGroup(dom_dim, d, di, nm); di += 1)
             end
         else
-            for (d, nm) in [(sc_ms_ox,"MS_oxide"),(sc_ma_ox,"MA_oxide"),
-                            (sc_sa_ox,"SA_oxide")]
-                !isempty(d) && (gmsh.model.addPhysicalGroup(dom_dim, d, di, nm); di+=1)
+            for (d, nm) in
+                [(sc_ms_ox, "MS_oxide"), (sc_ma_ox, "MA_oxide"), (sc_sa_ox, "SA_oxide")]
+                !isempty(d) && (gmsh.model.addPhysicalGroup(dom_dim, d, di, nm); di += 1)
             end
         end
     end
@@ -846,7 +1073,7 @@ function generate_cpw2d_mesh(;
             (pec_trace_ms, "PEC_trace_MS"),
             (pec_trace_ma, "PEC_trace_MA"),
             (pec_ground_ms, "PEC_ground_MS"),
-            (pec_ground_ma, "PEC_ground_MA"),
+            (pec_ground_ma, "PEC_ground_MA")
         ]
             !isempty(boundaries) &&
                 (gmsh.model.addPhysicalGroup(bdr_dim, boundaries, bi, name); bi += 1)
@@ -857,11 +1084,16 @@ function generate_cpw2d_mesh(;
         !isempty(pec_ground) &&
             (gmsh.model.addPhysicalGroup(bdr_dim, pec_ground, bi, "PEC_ground"); bi += 1)
     end
-    !isempty(bb_pec) && (gmsh.model.addPhysicalGroup(bdr_dim,bb_pec,bi,"bump_bonds"); bi+=1)
-    !isempty(sa_curves) && (gmsh.model.addPhysicalGroup(bdr_dim,sa_curves,bi,"SA"); bi+=1)
-    !isempty(outer_c) && (gmsh.model.addPhysicalGroup(bdr_dim,outer_c,bi,"outer"); bi+=1)
-    !isempty(port_front) && (gmsh.model.addPhysicalGroup(bdr_dim,port_front,bi,"port_front"); bi+=1)
-    !isempty(port_back) && (gmsh.model.addPhysicalGroup(bdr_dim,port_back,bi,"port_back"); bi+=1)
+    !isempty(bb_pec) &&
+        (gmsh.model.addPhysicalGroup(bdr_dim, bb_pec, bi, "bump_bonds"); bi += 1)
+    !isempty(sa_curves) &&
+        (gmsh.model.addPhysicalGroup(bdr_dim, sa_curves, bi, "SA"); bi += 1)
+    !isempty(outer_c) &&
+        (gmsh.model.addPhysicalGroup(bdr_dim, outer_c, bi, "outer"); bi += 1)
+    !isempty(port_front) &&
+        (gmsh.model.addPhysicalGroup(bdr_dim, port_front, bi, "port_front"); bi += 1)
+    !isempty(port_back) &&
+        (gmsh.model.addPhysicalGroup(bdr_dim, port_back, bi, "port_back"); bi += 1)
 
     # =====================================================================
     # Mesh size control
@@ -869,19 +1101,44 @@ function generate_cpw2d_mesh(;
     # Metal edge locations (x, y). In 2D we use points at (x,y,0); in 3D we
     # use vertical lines spanning the extrusion so the distance field is
     # z-invariant and preserves the cross-section resolution at every z.
-    edge_pts_xy = Tuple{Float64,Float64}[]
+    edge_pts_xy = Tuple{Float64, Float64}[]
     if thick
         if flipchip
-            append!(edge_pts_xy, [(x_tl+tp,y2b),(x_tr-tp,y2b),(x_gl-tp,y2b),(x_gr+tp,y2b),
-                                  (x_cl-tp,t_metal),(x_cr+tp,t_metal)])
+            append!(
+                edge_pts_xy,
+                [
+                    (x_tl+tp, y2b),
+                    (x_tr-tp, y2b),
+                    (x_gl-tp, y2b),
+                    (x_gr+tp, y2b),
+                    (x_cl-tp, t_metal),
+                    (x_cr+tp, t_metal)
+                ]
+            )
         else
-            append!(edge_pts_xy, [(x_tl+tp,t_metal),(x_tr-tp,t_metal),
-                                  (x_gl-tp,t_metal),(x_gr+tp,t_metal)])
+            append!(
+                edge_pts_xy,
+                [
+                    (x_tl+tp, t_metal),
+                    (x_tr-tp, t_metal),
+                    (x_gl-tp, t_metal),
+                    (x_gr+tp, t_metal)
+                ]
+            )
         end
     else
         if flipchip
-            append!(edge_pts_xy, [(x_tl,gap),(x_tr,gap),(x_gl,gap),(x_gr,gap),
-                                  (x_cl,0.0),(x_cr,0.0)])
+            append!(
+                edge_pts_xy,
+                [
+                    (x_tl, gap),
+                    (x_tr, gap),
+                    (x_gl, gap),
+                    (x_gr, gap),
+                    (x_cl, 0.0),
+                    (x_cr, 0.0)
+                ]
+            )
         else
             for x in [x_tl, x_tr, x_gl, x_gr]
                 push!(edge_pts_xy, (x, 0.0))
@@ -923,7 +1180,11 @@ function generate_cpw2d_mesh(;
     gmsh.model.mesh.field.setNumber(field_id, "SizeMin", lc_fine)
     gmsh.model.mesh.field.setNumber(field_id, "SizeMax", lc_far)
     dist_scale = flipchip ? gap : w_gap
-    gmsh.model.mesh.field.setNumber(field_id, "DistMin", thick ? 5.0*max(tox,t_metal/50) : 0.1)
+    gmsh.model.mesh.field.setNumber(
+        field_id,
+        "DistMin",
+        thick ? 5.0*max(tox, t_metal/50) : 0.1
+    )
     dist_max = lc_transition > 0.0 ? lc_transition : 200.0*dist_scale
     gmsh.model.mesh.field.setNumber(field_id, "DistMax", dist_max)
     thresh_id = field_id
@@ -957,10 +1218,15 @@ function generate_cpw2d_mesh(;
     gmsh.model.mesh.field.setNumbers(field_id, "FieldsList", fields_to_min)
     gmsh.model.mesh.field.setAsBackgroundMesh(field_id)
 
-    for (k,v) in [("Mesh.MeshSizeMin",lc_fine),("Mesh.MeshSizeMax",lc_far),
-                   ("Mesh.MeshSizeExtendFromBoundary",0),("Mesh.MeshSizeFromPoints",0),
-                   ("Mesh.MeshSizeFromCurvature",0)]
-        gmsh.option.setNumber(k,v) end
+    for (k, v) in [
+        ("Mesh.MeshSizeMin", lc_fine),
+        ("Mesh.MeshSizeMax", lc_far),
+        ("Mesh.MeshSizeExtendFromBoundary", 0),
+        ("Mesh.MeshSizeFromPoints", 0),
+        ("Mesh.MeshSizeFromCurvature", 0)
+    ]
+        gmsh.option.setNumber(k, v)
+    end
 
     if extruded
         gmsh.model.mesh.generate(3)
@@ -973,16 +1239,18 @@ function generate_cpw2d_mesh(;
         gmsh.model.mesh.optimize("HighOrderElastic")
     end
 
-    gmsh.option.setNumber("Mesh.MshFileVersion",2.2)
-    gmsh.option.setNumber("Mesh.Binary",1)
-    gmsh.write(joinpath(@__DIR__,filename))
+    gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+    gmsh.option.setNumber("Mesh.Binary", 1)
+    gmsh.write(joinpath(@__DIR__, filename))
 
     # Summary
     println("=== CPW $(extruded ? "Quasi-2D (3D)" : "2D") Cross-Section Mesh ===")
     println("  Topology: $(flipchip ? "flip-chip" : "single chip")")
     println("  Metal: $(thick ? "thick ($(t_metal*1000)nm)" : "thin")")
     if thick
-        println("  Sidewall: $(sidewall_angle)° r_top=$(r_top*1000)nm r_bot=$(r_bot*1000)nm")
+        println(
+            "  Sidewall: $(sidewall_angle)° r_top=$(r_top*1000)nm r_bot=$(r_bot*1000)nm"
+        )
         has_overetch && println("  Overetch: $(oe*1000)nm")
     end
     has_oxide && println("  Oxide: $(tox*1000)nm")
@@ -1004,5 +1272,5 @@ function generate_cpw2d_mesh(;
     println("  Nodes: $(length(gmsh.model.mesh.getNodes()[1]))")
     println("  File: $filename")
 
-    gmsh.finalize()
+    return gmsh.finalize()
 end
