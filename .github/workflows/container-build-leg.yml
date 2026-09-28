@@ -1,0 +1,94 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: container-build-leg
+
+# Reusable single-leg container build.
+#
+# Builds exactly one OCI/SIF leg for the given microarchitecture target on the
+# given self-hosted runner, and uploads its artifacts. It is the shared body
+# behind every container build:
+#
+# - the per-host non-tag callers (containers-x64/arm64/gpu.yml) call it once, so
+#   each host is its own top-level workflow run and publishes as soon as it is
+#   built (a `workflow_call` reuse runs INLINE in the caller's run, so it is the
+#   CALLER that fires the single `workflow_run` the publisher keys on);
+# - the release caller (containers.yml) calls it once per matrix leg, so a whole
+#   version still publishes atomically from one run.
+#
+# This workflow holds no publish credentials and makes no publish decision: the
+# trusted publish-containers workflow (which always runs from `main`) does.
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Self-hosted runner label to build on (e.g. x64, arm64, gpu).'
+        required: true
+        type: string
+      target:
+        description: 'Spack microarchitecture target; empty builds the host native ISA.'
+        required: false
+        type: string
+        default: ''
+      fetch-depth:
+        description: 'git checkout depth; release callers pass 0 to fetch tags.'
+        required: false
+        type: number
+        default: 1
+
+permissions:
+  packages: write
+  contents: read
+
+env:
+  GITHUB_USER: ${{ github.actor }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  # Filter to allow skipping the build if no relevant changes occurred.
+  filter:
+    runs-on: ubuntu-latest
+    outputs:
+      test: ${{ steps.filter.outputs.test }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            test:
+              - 'palace/**'
+              - 'cmake/**'
+              - 'scripts/schema/**'
+              - 'extern/**'
+              - 'spack_repo/**'
+              - '.github/actions/**'
+              - '.github/workflows/container-build-leg.yml'
+              - '.github/workflows/containers.yml'
+              - '.github/workflows/containers-*.yml'
+
+  build:
+    needs: filter
+    runs-on: [self-hosted, '${{ inputs.runner }}']
+    steps:
+      # Three cases bypass the paths-filter (see the callers for why each must
+      # always build):
+      #
+      # - workflow_dispatch: dispatching is an explicit publish request.
+      # - push to main: every commit on main must produce artifacts, because the
+      #   `main` channel publishes at an exact SHA; a docs-only push that skipped
+      #   the build would still succeed, trigger a publisher with nothing to
+      #   publish, and could move `main` off the SHA a real build is publishing.
+      # - release tags: a tag is usually cut on a commit already on main, so the
+      #   diff is empty and the filter would skip, silently dropping the publish.
+      - uses: actions/checkout@v6
+        if: needs.filter.outputs.test == 'true' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        with:
+          fetch-depth: ${{ inputs.fetch-depth }}
+      - uses: ./.github/actions/build-container
+        if: needs.filter.outputs.test == 'true' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        with:
+          target: ${{ inputs.target }}
+          # Passed through so the action can select the CUDA profile.
+          runner: ${{ inputs.runner }}
