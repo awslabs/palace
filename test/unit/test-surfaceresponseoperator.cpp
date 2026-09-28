@@ -178,6 +178,32 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       temp.temp_dir / "fabrication-process-spatial-cluster-parameter-mismatch-3d.json";
   const auto spatial_cluster_points_path =
       temp.temp_dir / "spatial-cluster-basis-points.csv";
+  // Cap-interior hats (InteriorTraceCount, decision 112(b)): the spatial cluster with two
+  // trailing basis points on no contour.
+  const auto cap_hat_spatial_cluster_library_3d_path =
+      temp.temp_dir / "fabrication-process-spatial-cluster-cap-hats-3d.json";
+  const auto cap_hat_loaded_spatial_cluster_library_3d_path =
+      temp.temp_dir / "fabrication-process-spatial-cluster-cap-hats-loaded-3d.json";
+  const auto cap_hat_full_partition_library_3d_path =
+      temp.temp_dir / "fabrication-process-spatial-cluster-cap-hats-full-partition-3d.json";
+  const auto cap_hat_without_trace_mesh_library_3d_path =
+      temp.temp_dir / "fabrication-process-spatial-cluster-cap-hats-no-trace-mesh-3d.json";
+  const auto cap_hat_translational_library_3d_path =
+      temp.temp_dir / "fabrication-process-cap-hats-translational-3d.json";
+  const auto cap_hat_points_path = temp.temp_dir / "cap-hat-basis-points.csv";
+  const auto cap_hat_trace_vertices_path = temp.temp_dir / "cap-hat-trace-vertices.csv";
+  const auto cap_hat_trace_triangles_path = temp.temp_dir / "cap-hat-trace-triangles.csv";
+  const auto cap_hat_fabricated_path = temp.temp_dir / "cap-hat-fabricated.csv";
+  const auto cap_hat_thin_path = temp.temp_dir / "cap-hat-thin.csv";
+  const auto cap_hat_fabricated_surface_path =
+      temp.temp_dir / "cap-hat-fabricated-surface.csv";
+  const auto cap_hat_thin_surface_path = temp.temp_dir / "cap-hat-thin-surface.csv";
+  const auto cap_hat_loaded_fabricated_path = temp.temp_dir / "cap-hat-loaded-fabricated.csv";
+  const auto cap_hat_loaded_thin_path = temp.temp_dir / "cap-hat-loaded-thin.csv";
+  const auto cap_hat_loaded_fabricated_surface_path =
+      temp.temp_dir / "cap-hat-loaded-fabricated-surface.csv";
+  const auto cap_hat_loaded_thin_surface_path =
+      temp.temp_dir / "cap-hat-loaded-thin-surface.csv";
   const auto cross_layer_fabricated_surface_path =
       temp.temp_dir / "cross-layer-fabricated-surface.csv";
   const auto cross_layer_thin_surface_path = temp.temp_dir / "cross-layer-thin-surface.csv";
@@ -792,6 +818,114 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     spatial_cluster_library_3d["Models"].push_back(std::move(spatial_cluster_model));
     std::ofstream spatial_cluster_output_3d(spatial_cluster_library_3d_path);
     spatial_cluster_output_3d << spatial_cluster_library_3d.dump(2) << "\n";
+
+    // The same cluster with two cap-interior hats: basis points 5 and 6 lie on no contour
+    // (the open paths partition the four ring knots only) and are declared by
+    // InteriorTraceCount 2 through an explicit TraceMesh that represents every coefficient.
+    // Matrices 7 x 7 (six points + the conductor state): the ring / conductor entries of
+    // the coupled fixture, the hat rows zero (the response of the ring-only model) or a
+    // diagonal hat energy equal in the fabricated and thin coupon (the surface energy
+    // grows with the hats, the domain defect does not).
+    {
+      std::ofstream points(cap_hat_points_path);
+      points << "x,y,z\n"
+             << "0.025,-0.025,0.02\n"
+             << "0.050,-0.050,0.02\n"
+             << "0.075,-0.075,-0.02\n"
+             << "0.100,-0.100,-0.02\n"
+             << "0.060,-0.030,0.02\n"
+             << "0.030,-0.060,-0.02\n";
+      std::ofstream vertices(cap_hat_trace_vertices_path);
+      vertices << "# index,x,y,z,basis,conductor\n"
+               << "1,0.025,-0.025,0.02,1,0\n"
+               << "2,0.050,-0.050,0.02,2,0\n"
+               << "3,0.075,-0.075,-0.02,3,0\n"
+               << "4,0.100,-0.100,-0.02,4,0\n"
+               << "5,0.060,-0.030,0.02,5,0\n"
+               << "6,0.030,-0.060,-0.02,6,0\n";
+      std::ofstream triangles(cap_hat_trace_triangles_path);
+      triangles << "# index,v1,v2,v3\n"
+                << "1,1,2,5\n"
+                << "2,2,3,5\n"
+                << "3,3,4,6\n"
+                << "4,2,3,6\n";
+    }
+    auto write_cap_hat_matrices = [&](double hat_energy, const auto &domain_fabricated_path,
+                                      const auto &domain_thin_path,
+                                      const auto &surface_fabricated_path,
+                                      const auto &surface_thin_path)
+    {
+      std::array<std::array<double, 7>, 7> cap_hat_fabricated{};
+      std::array<std::array<double, 7>, 7> cap_hat_thin{};
+      for (std::size_t i = 0; i < 4; i++)
+      {
+        cap_hat_fabricated[i][i] = coupled_fabricated[i][i];
+        cap_hat_thin[i][i] = coupled_thin[i][i];
+      }
+      cap_hat_fabricated[4][4] = cap_hat_fabricated[5][5] = hat_energy;
+      cap_hat_thin[4][4] = cap_hat_thin[5][5] = hat_energy;
+      cap_hat_fabricated[6][6] = coupled_fabricated[4][4];
+      cap_hat_thin[6][6] = coupled_thin[4][4];
+      write_domain_matrix(domain_fabricated_path, cap_hat_fabricated);
+      write_domain_matrix(domain_thin_path, cap_hat_thin);
+      write_surface_matrix(surface_fabricated_path, cap_hat_fabricated);
+      write_surface_matrix(surface_thin_path, cap_hat_thin);
+    };
+    write_cap_hat_matrices(0.0, cap_hat_fabricated_path, cap_hat_thin_path,
+                           cap_hat_fabricated_surface_path, cap_hat_thin_surface_path);
+    write_cap_hat_matrices(1.0e-12, cap_hat_loaded_fabricated_path, cap_hat_loaded_thin_path,
+                           cap_hat_loaded_fabricated_surface_path,
+                           cap_hat_loaded_thin_surface_path);
+    auto cap_hat_library_3d = spatial_cluster_library_3d;
+    cap_hat_library_3d["Name"] = "unit-test-process-spatial-cluster-cap-hats-3d";
+    auto &cap_hat_model = cap_hat_library_3d["Models"].back();
+    cap_hat_model["Name"] = "offset-corner-pair-cap-hats";
+    cap_hat_model["BasisPoints"] = cap_hat_points_path.string();
+    cap_hat_model["TraceMesh"] = {{"Vertices", cap_hat_trace_vertices_path.string()},
+                                 {"Triangles", cap_hat_trace_triangles_path.string()}};
+    cap_hat_model["InteriorTraceCount"] = 2;
+    cap_hat_model["FabricatedMatrix"] = cap_hat_fabricated_path.string();
+    cap_hat_model["ThinMatrix"] = cap_hat_thin_path.string();
+    cap_hat_model["FabricatedSurfaceMatrix"] = cap_hat_fabricated_surface_path.string();
+    cap_hat_model["ThinSurfaceMatrix"] = cap_hat_thin_surface_path.string();
+    std::ofstream cap_hat_output_3d(cap_hat_spatial_cluster_library_3d_path);
+    cap_hat_output_3d << cap_hat_library_3d.dump(2) << "\n";
+
+    auto cap_hat_loaded_library_3d = cap_hat_library_3d;
+    cap_hat_loaded_library_3d["Name"] =
+        "unit-test-process-spatial-cluster-cap-hats-loaded-3d";
+    auto &cap_hat_loaded_model = cap_hat_loaded_library_3d["Models"].back();
+    cap_hat_loaded_model["FabricatedMatrix"] = cap_hat_loaded_fabricated_path.string();
+    cap_hat_loaded_model["ThinMatrix"] = cap_hat_loaded_thin_path.string();
+    cap_hat_loaded_model["FabricatedSurfaceMatrix"] =
+        cap_hat_loaded_fabricated_surface_path.string();
+    cap_hat_loaded_model["ThinSurfaceMatrix"] = cap_hat_loaded_thin_surface_path.string();
+    std::ofstream cap_hat_loaded_output_3d(cap_hat_loaded_spatial_cluster_library_3d_path);
+    cap_hat_loaded_output_3d << cap_hat_loaded_library_3d.dump(2) << "\n";
+
+    // Refused: open paths summing to BasisPoints (the hats on a contour), the key without
+    // a TraceMesh, the key on a translational model.
+    auto cap_hat_full_partition_library_3d = cap_hat_library_3d;
+    cap_hat_full_partition_library_3d["Name"] =
+        "unit-test-process-spatial-cluster-cap-hats-full-partition-3d";
+    cap_hat_full_partition_library_3d["Models"].back()["OpenContourPaths"] = {
+        {{"Indices", {1, 2}}, {"StartConductor", 1}, {"EndConductor", 2}},
+        {{"Indices", {4, 3, 5, 6}}, {"StartConductor", 1}, {"EndConductor", 2}}};
+    std::ofstream cap_hat_full_partition_output_3d(cap_hat_full_partition_library_3d_path);
+    cap_hat_full_partition_output_3d << cap_hat_full_partition_library_3d.dump(2) << "\n";
+    auto cap_hat_without_trace_mesh_library_3d = cap_hat_library_3d;
+    cap_hat_without_trace_mesh_library_3d["Name"] =
+        "unit-test-process-spatial-cluster-cap-hats-no-trace-mesh-3d";
+    cap_hat_without_trace_mesh_library_3d["Models"].back().erase("TraceMesh");
+    std::ofstream cap_hat_without_trace_mesh_output_3d(
+        cap_hat_without_trace_mesh_library_3d_path);
+    cap_hat_without_trace_mesh_output_3d << cap_hat_without_trace_mesh_library_3d.dump(2)
+                                         << "\n";
+    auto cap_hat_translational_library_3d = library_3d;
+    cap_hat_translational_library_3d["Name"] = "unit-test-process-cap-hats-translational-3d";
+    cap_hat_translational_library_3d["Models"][0]["InteriorTraceCount"] = 1;
+    std::ofstream cap_hat_translational_output_3d(cap_hat_translational_library_3d_path);
+    cap_hat_translational_output_3d << cap_hat_translational_library_3d.dump(2) << "\n";
 
     auto write_cross_layer_surface_matrix = [&](const auto &path, const auto &matrix)
     {
@@ -3792,6 +3926,143 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     }
   }
 
+  // Cap-interior hats (decision 112(b), library key InteriorTraceCount): the trailing basis
+  // points of a spatial model lie on no contour and are ordinary trace coefficients. On the
+  // offset corner pair (electrostatic, Collocated): the cap-hat library whose open paths
+  // partition BasisPoints - InteriorTraceCount loads and, with zero hat rows, reproduces the
+  // ring-only model's response exactly; a hat energy enters the fabricated surface energy
+  // (and not the domain defect, equal in both coupons); the geometry cache carries the key
+  // (round trip exact) and a cache without it fails the partition check; refused: open paths
+  // summing to BasisPoints, the key without a TraceMesh, the key on a translational model.
+  {
+    auto cap_hat_config = island_config;
+    cap_hat_config["Boundaries"]["Terminal"] = {{{"Index", 1}, {"Attributes", {9}}},
+                                                {{"Index", 2}, {"Attributes", {10}}}};
+    cap_hat_config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {9, 10};
+    auto CapHatIoData = [&](const auto &library_path)
+    {
+      auto config = cap_hat_config;
+      config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+          library_path.string();
+      IoData iodata(config, false);
+      iodata.boundaries.cracked_attributes.insert(9);
+      iodata.boundaries.cracked_attributes.insert(10);
+      return iodata;
+    };
+    std::vector<std::unique_ptr<Mesh>> cap_hat_meshes;
+    cap_hat_meshes.push_back(std::make_unique<Mesh>(MakeOffsetCornerPairMesh()));
+    IoData ring_only_iodata = CapHatIoData(spatial_cluster_library_3d_path);
+    LaplaceOperator cap_hat_laplace(ring_only_iodata, cap_hat_meshes);
+    SurfaceResponseOperator ring_only_response(ring_only_iodata, cap_hat_laplace);
+    // One spatial edge-cluster patch (the two facing corners) among the isolated-edge and
+    // convex-corner patches of the two islands: the hats add two coefficients.
+    const int ring_only_patches = ring_only_response.GetPatchCount();
+    const int ring_only_basis = ring_only_response.GetBasisSize();
+    REQUIRE(ring_only_patches > 0);
+    mfem::ParGridFunction cap_hat_potential(&cap_hat_laplace.GetH1Space().Get());
+    mfem::FunctionCoefficient cap_hat_potential_coefficient(
+        [](const mfem::Vector &x) { return x[1] * (1.0 + 0.3 * x[0] - 0.2 * x[2]); });
+    cap_hat_potential.ProjectCoefficient(cap_hat_potential_coefficient);
+    Vector cap_hat_potential_true;
+    cap_hat_potential.GetTrueDofs(cap_hat_potential_true);
+    const auto ring_only_result =
+        ring_only_response.GetElectrostaticResponse(cap_hat_potential_true);
+    REQUIRE(ring_only_result.fabricated_surface_energy.at(4) > 0.0);
+    REQUIRE(ring_only_result.domain_correction != 0.0);
+
+    IoData cap_hat_iodata = CapHatIoData(cap_hat_spatial_cluster_library_3d_path);
+    SurfaceResponseOperator cap_hat_response(cap_hat_iodata, cap_hat_laplace);
+    CHECK(cap_hat_response.GetPatchCount() == ring_only_patches);
+    CHECK(cap_hat_response.GetBasisSize() == ring_only_basis + 2);
+    const auto cap_hat_result =
+        cap_hat_response.GetElectrostaticResponse(cap_hat_potential_true);
+    CHECK_THAT(cap_hat_result.domain_correction,
+               WithinRel(ring_only_result.domain_correction, 1.0e-12));
+    CHECK_THAT(cap_hat_result.domain_correction_fixed_flux,
+               WithinRel(ring_only_result.domain_correction_fixed_flux, 1.0e-9));
+    CHECK_THAT(cap_hat_result.fabricated_surface_energy.at(4),
+               WithinRel(ring_only_result.fabricated_surface_energy.at(4), 1.0e-12));
+    CHECK_THAT(cap_hat_result.fabricated_surface_energy_fixed_flux.at(4),
+               WithinRel(ring_only_result.fabricated_surface_energy_fixed_flux.at(4),
+                         1.0e-9));
+
+    IoData cap_hat_loaded_iodata =
+        CapHatIoData(cap_hat_loaded_spatial_cluster_library_3d_path);
+    SurfaceResponseOperator cap_hat_loaded_response(cap_hat_loaded_iodata, cap_hat_laplace);
+    CHECK(cap_hat_loaded_response.GetBasisSize() == ring_only_basis + 2);
+    const auto cap_hat_loaded_result =
+        cap_hat_loaded_response.GetElectrostaticResponse(cap_hat_potential_true);
+    CHECK_THAT(cap_hat_loaded_result.domain_correction,
+               WithinRel(ring_only_result.domain_correction, 1.0e-12));
+    // The one cluster patch among ~60 patches of the two islands: its two hats at a
+    // 1e-12 J diagonal raise the interface's fabricated surface energy by ~0.26 %.
+    CHECK(cap_hat_loaded_result.fabricated_surface_energy.at(4) >
+          1.001 * ring_only_result.fabricated_surface_energy.at(4));
+
+    {
+      const auto cache_path = temp.temp_dir / "response-geometry-cap-hats.json";
+      const std::string cache_string = cache_path.string();
+      setenv("PALACE_RESPONSE_GEOMETRY_CACHE", cache_string.c_str(), 1);
+      setenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE", "1", 1);
+      SurfaceResponseOperator written_response(cap_hat_loaded_iodata, cap_hat_laplace);
+      Mpi::Barrier(Mpi::World());
+      unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE");
+      SurfaceResponseOperator reloaded_response(cap_hat_loaded_iodata, cap_hat_laplace);
+      unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE");
+      CHECK(reloaded_response.GetPatchCount() == ring_only_patches);
+      CHECK(reloaded_response.GetBasisSize() == ring_only_basis + 2);
+      const auto reloaded_result =
+          reloaded_response.GetElectrostaticResponse(cap_hat_potential_true);
+      CHECK_THAT(reloaded_result.domain_correction,
+                 WithinRel(cap_hat_loaded_result.domain_correction, 1.0e-12));
+      CHECK_THAT(reloaded_result.fabricated_surface_energy.at(4),
+                 WithinRel(cap_hat_loaded_result.fabricated_surface_energy.at(4), 1.0e-12));
+      std::ifstream cache_input(cache_path);
+      REQUIRE(cache_input);
+      json cache = json::parse(cache_input);
+      cache_input.close();
+      CHECK(cache["Version"] == 2);
+      int cap_hat_models = 0;
+      for (auto &model : cache["Models"])
+      {
+        if (model["Name"] == "offset-corner-pair-cap-hats")
+        {
+          cap_hat_models++;
+          CHECK(model["InteriorTraceCount"] == 2);
+          CHECK(model["SpatialBasis"] == true);
+          model["InteriorTraceCount"] = 0;
+        }
+      }
+      CHECK(cap_hat_models == 1);
+      // Without the key the open paths partition four of six BasisPoints: refused.
+      const auto stale_path = temp.temp_dir / "response-geometry-cap-hats-stale.json";
+      if (Mpi::Root(Mpi::World()))
+      {
+        std::ofstream stale(stale_path);
+        stale << cache.dump(2) << "\n";
+      }
+      Mpi::Barrier(Mpi::World());
+      const std::string stale_string = stale_path.string();
+      setenv("PALACE_RESPONSE_GEOMETRY_CACHE", stale_string.c_str(), 1);
+      CHECK_THROWS_WITH(SurfaceResponseOperator(cap_hat_loaded_iodata, cap_hat_laplace),
+                        Catch::Matchers::ContainsSubstring("do not partition the contour"));
+      unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE");
+    }
+
+    IoData cap_hat_full_partition_iodata =
+        CapHatIoData(cap_hat_full_partition_library_3d_path);
+    CHECK_THROWS_WITH(SurfaceResponseOperator(cap_hat_full_partition_iodata, cap_hat_laplace),
+                      Catch::Matchers::ContainsSubstring("OpenContourPaths contain an invalid"));
+    IoData cap_hat_without_trace_mesh_iodata =
+        CapHatIoData(cap_hat_without_trace_mesh_library_3d_path);
+    CHECK_THROWS_WITH(
+        SurfaceResponseOperator(cap_hat_without_trace_mesh_iodata, cap_hat_laplace),
+        Catch::Matchers::ContainsSubstring("InteriorTraceCount requires"));
+    IoData cap_hat_translational_iodata = CapHatIoData(cap_hat_translational_library_3d_path);
+    CHECK_THROWS_WITH(SurfaceResponseOperator(cap_hat_translational_iodata, cap_hat_laplace),
+                      Catch::Matchers::ContainsSubstring("InteriorTraceCount requires"));
+  }
+
   // Features-driven patch construction (the default; SURFACE-RESPONSE-IDENTIFICATION.md
   // (e)): the preflight is the patch dry run. With the legacy convex library every feature
   // is Missing (its models map three interface types, the island's features carry SA only:
@@ -5415,6 +5686,20 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(spatial_cluster_result.loop_residual < 1.0e-10);
   CHECK_THAT(spatial_cluster_result.matched_length_fraction, WithinAbs(1.0, 1.0e-12));
   CHECK(spatial_cluster_result.corner_neighborhood_fraction == 0.0);
+
+  // Maxwell response correction refuses cap-interior trace coefficients (InteriorTraceCount):
+  // every Maxwell coefficient must lie on a contour.
+  {
+    auto cap_hat_maxwell_config = spatial_cluster_config;
+    cap_hat_maxwell_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+        cap_hat_spatial_cluster_library_3d_path.string();
+    IoData cap_hat_maxwell_iodata(cap_hat_maxwell_config, false);
+    cap_hat_maxwell_iodata.boundaries.cracked_attributes.insert(9);
+    cap_hat_maxwell_iodata.boundaries.cracked_attributes.insert(10);
+    CHECK_THROWS_WITH(SurfaceResponseOperator(cap_hat_maxwell_iodata, spatial_cluster_space),
+                      Catch::Matchers::ContainsSubstring(
+                          "Maxwell response correction does not support cap-interior"));
+  }
 
   auto missing_spatial_cluster_config = spatial_cluster_config;
   missing_spatial_cluster_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
