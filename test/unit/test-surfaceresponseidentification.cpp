@@ -1281,6 +1281,70 @@ TEST_CASE("SurfaceResponseIdentificationStacks", "[surfaceresponseidentification
     CHECK(counts["CurvedSameConductorGap"] == 0);
     CHECK(counts["SameConductorGap"] == 0);
   }
+  SECTION("curved 3-edge stack: convexity of every side related through the GapSides")
+  {
+    // The convexity of a curved stack is the signature's first edge's; AssembleStack reads
+    // it from the first side, else from the far side (opposite), else from the first interior
+    // side carrying curvature (review J/C4 m5): concentric sides bend in one geometric sense,
+    // so the convexity of edge k equals the first edge's when their GapSides agree and is the
+    // opposite otherwise. Asserted on every side of the 3-edge stack (the ground band outside
+    // and inside the bend: the first edge Convex in one scene and Concave in the other),
+    // reading each side's own convexity from its portions' signed turns (toward the metal
+    // positive). A stack whose outer sides are exactly straight while an interior one bends
+    // cannot be composed (a bent side against a straight partner leaves the pair constancy
+    // band where its windowed bend radius drops below 10R: the two rules meet at 2R x 5 %),
+    // so the interior-side branch itself is unreachable through IdentifyMetalPerimeter and
+    // the relation it encodes is what this test pins.
+    // Ground band outside the bend (trace centreline radius 3R + 1.5) or inside it (radius
+    // 3R + 1.5 + 2 + 8: the band's far edge at 3R).
+    std::set<std::string> first_edge_convexities;
+    for (const double ground_offset : {-(1.5 + 2.0 + 4.0), 1.5 + 2.0 + 4.0})
+    {
+      const double centre = 3.0 * R + 1.5 + (ground_offset > 0.0 ? 2.0 + 8.0 : 0.0);
+      const auto trace = ArcBar(3.0, centre, 90.0, 5.0, 12.0, 0.0);
+      const auto ground = ArcBar(8.0, centre, 90.0, 5.0, 12.0, ground_offset);
+      const auto input = MakeInput({{trace, 0, 1.0}, {ground, 0, 1.0}}, R);
+      const auto result = IdentifyMetalPerimeter(input);
+      CheckPartition(input, result);
+      int curved_stacks = 0;
+      for (const auto &feature : result.features)
+      {
+        if (feature.type != "CurvedParallelEdgeCluster")
+        {
+          continue;
+        }
+        curved_stacks++;
+        const auto &edges = feature.signature["Edges"];
+        REQUIRE(edges.size() == 3);
+        const std::string convexity = feature.signature["Convexity"].get<std::string>();
+        REQUIRE((convexity == "Convex" || convexity == "Concave"));
+        first_edge_convexities.insert(convexity);
+        std::map<int, double> side_turn;
+        for (const auto &portion : feature.portions)
+        {
+          side_turn[portion.side] += portion.turn;
+        }
+        REQUIRE(side_turn.size() == 3);
+        const int first_gap = edges.at(0)["GapSide"].get<int>();
+        for (int k = 0; k < 3; k++)
+        {
+          // Signature edge k lies on side k for chirality >= 0 and on side 2 - k for -1.
+          const int side = feature.chirality < 0 ? 2 - k : k;
+          const double turn = side_turn.at(side);
+          INFO("ground offset " << ground_offset << " edge " << k << " side " << side
+                                << " turn " << turn);
+          REQUIRE(std::abs(turn) > 0.1);
+          const std::string own = turn > 0.0 ? "Convex" : "Concave";
+          const bool same_gap = edges.at(k)["GapSide"].get<int>() * first_gap > 0;
+          const std::string related =
+              same_gap ? own : (own == "Convex" ? "Concave" : "Convex");
+          CHECK(related == convexity);
+        }
+      }
+      CHECK(curved_stacks == 1);
+    }
+    CHECK(first_edge_convexities == std::set<std::string>{"Concave", "Convex"});
+  }
 }
 
 TEST_CASE("SurfaceResponseIdentificationExactParametersAndExtension",
