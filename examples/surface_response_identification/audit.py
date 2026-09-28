@@ -642,7 +642,7 @@ def run_audit(args):
         if "EdgeFrameNormal" in entry:
             process_normal = entry["EdgeFrameNormal"]
     progress("extracting the perimeter from the mesh")
-    perimeter = P.extract_perimeter(mesh, config, process_normal=process_normal, corner_tolerance_degrees=args.corner_tolerance, radius=radius)
+    perimeter = P.extract_perimeter(mesh, config, process_normal=process_normal, radius=radius)
     progress(f"perimeter: {len(perimeter.edges)} edges, {len(perimeter.vertices)} vertices, {perimeter.chains} chains; census (edge interactions, rounded runs)")
     targets = set(P.target_interfaces(config)) or {i for i, _ in P.interface_attributes(config)}
     census = perimeter_census(perimeter, radius, targets)
@@ -776,7 +776,8 @@ def run_audit(args):
                     "ResidualMeaning": "audit vertices minus manifest vertex records: > 0 with clusters = absorbed into clusters or dropped (not enumerated by the contract), > 0 without clusters = dropped, < 0 = double counted",
                     "AuditInteriorAngles": {str(k): v for k, v in sorted(corner_angles.items())},
                     "ManifestCornerAngles": {str(k): v for k, v in sorted(manifest_angles.items())},
-                    "CornerTurnToleranceDegrees": args.corner_tolerance,
+                    "JointNoiseSagittaOverR": P.JOINT_NOISE_SAGITTA_OVER_R,
+                    "ArcMaxJointTurnDegrees": P.ARC_MAX_JOINT_TURN_DEGREES,
                 },
                 evaluable=not (residual > 0 and cluster_records > 0),
             )
@@ -955,7 +956,6 @@ def main(argv=None):
     parser.add_argument("--patches", help="surface-response-patches.csv of the patch dry run (default: next to the manifest)")
     parser.add_argument("--library", help="process-library.json the preflight ran with, for the A10 placement gates (default: the manifest's Library.Path)")
     parser.add_argument("--radius", type=float, help="matching radius in mesh units (default: manifest)")
-    parser.add_argument("--corner-tolerance", type=float, default=P.CORNER_ANGLE_TOLERANCE_DEGREES, help="turn (deg) above which a vertex is a corner (classifier: 30)")
     parser.add_argument("--output-prefix", help="write <prefix>.json and <prefix>.md")
     args = parser.parse_args(argv)
     result = run_audit(args)

@@ -855,15 +855,23 @@ unchanged. So that any design can check its R, the
 manifest reports `Identification.KnifeEdgeCensus`: the perimeter length with another perimeter
 point (3D; the same chain beyond the self-pair neighbourhood; runs sharing a vertex excluded)
 at a distance within `KnifeEdgeBandRelative` = 0.01 of R and of 2R, the chain length whose
-windowed bend radius lies within 1 % of `StraightBendRadiusOverR` R, the vertices whose
-turn lies within 1 % of the corner (joint noise) threshold and the vertices whose longer run,
-read as a chord at the joint's turn, has a sagitta (c / 2) tan(turn / 4) within 1 % of
-`SagittaOverR` R (`ArcSagittaOverR`), each split into the below / above sides (samples every
-0.5 R). DS-SCT-001 at R = 2 um: 7,247 um within 1 % of R and 7,175 um within
-1 % of 2R (the 2 / 2 / 2 um flux lines). The library continuity gate
-(`coupon_library.py continuity`, `qualification-gates.json` LibraryContinuity: a pair / stack
-model whose consecutive separations are all >= 2R (1 - 0.01) responds per edge and per unit
-length like the isolated-edge model within 1 %) runs on every written process library.
+windowed bend radius lies within 1 % of `StraightBendRadiusOverR` R, the two-run vertices
+whose implied sagitta (c / 2) tan(turn / 4) on the SHORTER run lies within 1 % of
+`JointNoiseSagittaOverR` R (the joint noise rule, `JointNoiseSagittaOverR`), whose turn lies
+within 1 % of `ArcMaxJointTurnDegrees` (the arc rule's cap, `ArcMaxJointTurnDegrees`) and
+whose LONGER run, read as a chord at the joint's turn, has a sagitta within 1 % of
+`SagittaOverR` R (the mesh-coarseness diagnostic, `ArcSagittaOverR`), each split into the
+below / above sides (samples every 0.5 R). DS-SCT-001 at R = 2 um: 7,247 um within 1 % of R
+and 7,175 um within 1 % of 2R (the 2 / 2 / 2 um flux lines). The library continuity gate
+(`coupon_library.py continuity`, `qualification-gates.json` LibraryContinuity Version 3, USER
+decisions 117(3) and 2026-09-28 on the decision-117 review MAJOR-2: a pair / stack model
+whose consecutive separations are all >= 2R (1 - 0.01) responds like the isolated-edge model
+per basis function at matched local positions — gated per edge on the energy-weighted
+matched offset within 1 % (`MaximumRelativeOffset`) AND per matched basis function within
+5 % (`PerBasisFunctionLimit`: a single hat carries the mesh noise of two independently meshed
+coupons, +-1-2 %, so the per-hat limit is looser than the aggregate; the recorded 1.985 R
+stack / pair pass with worst hats -1.8 / -2.3 / -1.6 and -1.3 %); an edge with zero matched
+basis functions is Failed, never NotApplicable) runs on every written process library.
 
 ## (e) Patch construction from the features (phase 4; solve path and patch dry run)
 

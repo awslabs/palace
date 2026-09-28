@@ -142,13 +142,18 @@ class OracleTest(unittest.TestCase):
         self.assertEqual(orc["ClassifierCornerCount"], 4)
 
     def test_arc_bar_sides_pair_along_the_bend_with_the_design_curvature_class(self):
-        # Curved-edge chain rule: the two sides of a constant-width polyline bend that resolves
-        # its circle (sagitta rule: 5 deg per vertex on 5 um, 1 deg on 50 / 250 um; the mitred
-        # offset vertices within 1e-3 R of the circle) are a pair (separation constant within
-        # 5 %), their cross-chord interactions are not events (the two bar ends are the only
-        # cores), and the expected class follows the inner-side design radius vs 10 R: r = 5
-        # (1.75 R) curved, r = 50 (24.25 R) straight-like.
-        for radius, sweep, step, curved in [(5.0, 90.0, 5.0, True), (50.0, 45.0, 1.0, False), (250.0, 15.0, 1.0, False)]:
+        # Curved-edge chain rule under the concyclicity arc rule and the geometric joint noise
+        # rule (USER decisions 121 / 122): the two sides of a constant-width polyline bend are a
+        # pair (separation constant within 5 %) when its joints are noise (5 um at 10 deg per
+        # vertex: 1.1 um chords imply 0.012 R, the mitred offsets 0.003 R off one circle: a
+        # sub-noise chain whose windowed curvature is the bend; at 20 deg the outer side's
+        # 2.5 um chords imply 0.062 R and the inner side's 1.4 um chords 0.034 R — a knife
+        # edge of the rule, not tested) or lie on one circle within 1e-3 R (5 deg on 5 um, 1 deg on 50 / 250 um,
+        # 5 deg on 250 um: the mitred offset vertices within the tolerance); their cross-chord
+        # interactions are not events (the two bar ends are the only cores), and the expected
+        # class follows the inner-side design radius vs 10 R: r = 5 (1.75 R) curved, r = 50
+        # (24.25 R) and r = 250 straight-like.
+        for radius, sweep, step, curved in [(5.0, 90.0, 5.0, True), (5.0, 90.0, 10.0, True), (50.0, 45.0, 1.0, False), (250.0, 15.0, 1.0, False), (250.0, 15.0, 5.0, False)]:
             lay = S.layout("arc", [S.sheet(S.GROUND, S.arc_bar(3.0, radius, sweep, step))], half_x=300.0, half_y=300.0, bend={"Radius": radius, "Width": 3.0})
             orc = S.oracle(lay)
             self.assertEqual(len(orc["BentPairs"]), 1, (radius, step))
@@ -161,10 +166,13 @@ class OracleTest(unittest.TestCase):
             self.assertTrue(all(p["InBentPair"] for p in orc["ParallelPairs"]))
             self.assertEqual(orc["CornerPairsWithin2R"], 2)
             self.assertEqual(orc["StandaloneCornerCount"], 0)
-        # A coarse polyline (5 um radius at 22.5 deg per vertex: sagitta 0.06 R; 50 um at
-        # 22.5 deg; 250 um at 5 deg: 0.12 R) is corners at its joints under the sagitta rule
-        # (USER decision 117(4)): no bent pair along the bend, no curved class.
-        for radius, sweep, step in [(5.0, 90.0, 20.0), (50.0, 45.0, 20.0), (250.0, 15.0, 5.0)]:
+        # A polyline whose joints turn 50 deg or more (50 um at 60 deg per vertex: a polygon
+        # of three chords) is corners at its joints whatever their concyclicity: no bent pair
+        # along the bend, no curved class, no joint on an arc. (The coarse mitred offsets at
+        # 15-22.5 deg per vertex that the sagitta form of 117(4) read as corners are arcs
+        # now: their joints lie on the circle tangent to both leads within 1e-3 R, with the
+        # chord sagitta recorded as the mesh-coarseness diagnostic.)
+        for radius, sweep, step in [(50.0, 180.0, 60.0)]:
             lay = S.layout("arc", [S.sheet(S.GROUND, S.arc_bar(3.0, radius, sweep, step))], half_x=300.0, half_y=300.0, bend={"Radius": radius, "Width": 3.0})
             orc = S.oracle(lay)
             self.assertGreater(orc["ClassifierCornerCount"], 4, (radius, step))

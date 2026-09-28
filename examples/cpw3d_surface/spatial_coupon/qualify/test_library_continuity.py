@@ -246,7 +246,10 @@ def test_corner_region_hats_are_excluded_and_unmatched_hats_are_reported():
         assert abs(record["WorstRelativeOffset"] - 0.4 / 26.0) < 1e-12
 
 
-def test_candidate_without_matched_hats_is_not_comparable():
+def test_candidate_without_matched_hats_fails():
+    """USER decision 2026-09-28 (decision-117 review MAJOR-2): an edge with zero matched basis
+    functions is Failed — a basis that matches nothing cannot pass silently (it was
+    NotComparable / NotApplicable before)."""
     with tempfile.TemporaryDirectory() as root:
         spacing = 0.125 * R
         iso = write_point_model(root, "isolated-edge", "IsolatedEdge", box_top(0.0, 1.0, spacing, 17), [2.0] * 17)
@@ -255,6 +258,34 @@ def test_candidate_without_matched_hats_is_not_comparable():
         pair = write_point_model(root, "gap-2R", "SameConductorGap", points, [2.0] * 32, Separation=2.0 * R)
         path, library = library_with(root, [iso, pair])
         record = LC.evaluate(path, gates(), library)
-        assert record["Verdict"] == "NotApplicable"
-        assert record["Models"][0]["Status"] == "NotComparable"
+        assert record["Verdict"] == "Failed"
+        assert record["Models"][0]["Status"] == "FAIL"
+        assert "zero matched hats" in record["Models"][0]["Reason"]
         assert all(edge["Matched"] == 0 for edge in record["Models"][0]["PerEdge"])
+
+
+def test_per_basis_function_limit_fails_a_hat_above_five_percent_with_a_passing_aggregate():
+    """USER decision 2026-09-28: every matched basis function is gated against
+    PerBasisFunctionLimit (5 %) as well as the edge aggregate (1 %): one hat +6 % on an edge
+    whose aggregate is +0.23 % fails; the same hat at +4 % (aggregate +0.15 %) passes, and so
+    do the recorded threshold stack / pair worst hats (-1.8 / -2.3 / -1.6 and -1.3 %)."""
+    with tempfile.TemporaryDirectory() as root:
+        spacing = 0.125 * R
+        iso = write_point_model(root, "isolated-edge", "IsolatedEdge", box_top(0.0, 1.0, spacing, 17), [1.0, 1.5] + [2.0] * 13 + [1.5, 1.0])
+        first = box_top(-R, 1.0, spacing, 17)[:-1]
+        second = box_top(R, -1.0, spacing, 17)[:-1]
+        base = [1.0, 1.5] + [2.0] * 13 + [1.5]
+        for worst_hat, expected in ((0.06, "Failed"), (0.04, "Passed"), (-0.023, "Passed"), (-0.013, "Passed")):
+            moved = list(base)
+            moved[8] = 2.0 * (1.0 + worst_hat)
+            pair = write_point_model(root, "gap-2R", "SameConductorGap", first + second, moved + base, Separation=2.0 * R)
+            path, library = library_with(root, [iso, pair])
+            record = LC.evaluate(path, gates(), library)
+            entry = record["Models"][0]
+            assert record["PerBasisFunctionLimit"] == 0.05
+            assert abs(entry["PerEdge"][0]["WorstPerHatOffset"] - worst_hat) < 1e-12, worst_hat
+            assert abs(entry["RelativeOffsets"][0] - 2.0 * worst_hat / 26.0) < 1e-12
+            assert entry["AggregateStatus"] == "PASS"
+            assert entry["PerBasisFunctionStatus"] == ("FAIL" if abs(worst_hat) > 0.05 else "PASS")
+            assert record["Verdict"] == expected, worst_hat
+            assert abs(record["WorstPerBasisFunctionOffset"] - abs(worst_hat)) < 1e-12

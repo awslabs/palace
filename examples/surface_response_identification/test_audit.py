@@ -201,7 +201,7 @@ class PerimeterTest(unittest.TestCase):
         self.assertEqual(perimeter.chains, 12)
 
     def test_interactions_report_the_strip_at_exactly_R(self):
-        perimeter = P.extract_perimeter(self.mesh(True), CONFIG)
+        perimeter = P.extract_perimeter(self.mesh(True), CONFIG, radius=2.0)
         interactions = P.edge_interactions(perimeter, 2.0)
         # A's right edge x = 4 faces B's left edge x = 6 across the SA gap: a parallel pair at
         # separation exactly R = 2 (the transmon shield-strip case).
@@ -210,19 +210,22 @@ class PerimeterTest(unittest.TestCase):
         self.assertTrue(all(d <= 4.0 + 1e-9 for _, _, d, _ in interactions))
 
     def test_corner_snap_rule_matches_classifier(self):
-        # A polyline vertex turning by 0.999 deg is REGULAR, one turning by 1.001 is a
-        # CORNER (metaledge.hpp kCornerTurnToleranceDegrees = 1 deg, the joint noise
-        # threshold of USER decision 117(4), on the 1e-12 direction grid); a former
-        # sub-corner 29.999 deg joint is a corner unless an arc absorbs it.
-        for turn, expected in ((0.999, "REGULAR"), (1.001, "CORNER"), (1.0, "REGULAR"), (29.999, "CORNER")):
+        # The geometric joint noise rule (metaledge.hpp kJointNoiseSagittaOverRadius = 0.05,
+        # USER decision 121 (B)): a joint between two unit pieces turning by t is REGULAR iff
+        # (1 / 2) tan(t / 4) < 0.05 R. At R = 1 the threshold turn is 4 atan(0.1) = 22.83 deg:
+        # 22.8 deg is REGULAR, 22.9 deg a CORNER, and so is a 1.001 deg joint at R = 0.0025
+        # (threshold 4 atan(0.00025) = 0.0573 deg) where the former 1 deg angular threshold
+        # read it; a 29.999 deg joint is a corner at R = 1 unless an arc absorbs it.
+        for turn, radius, expected in ((22.8, 1.0, "REGULAR"), (22.9, 1.0, "CORNER"), (1.001, 0.0025, "CORNER"), (1.001, 1.0, "REGULAR"), (29.999, 1.0, "CORNER")):
             angle = np.radians(turn)
             nodes = [(0, 0, 0), (1, 0, 0), (1 + np.cos(angle), np.sin(angle), 0), (0, 1, 0), (1, 1, 0), (1 + np.cos(angle), 1 + np.sin(angle), 0)]
             elements = [(2, 5, (1, 2, 5)), (2, 5, (1, 5, 4)), (2, 5, (2, 3, 6)), (2, 5, (2, 6, 5))]
             path = os.path.join(self.directory.name, "turn.msh2")
             write_msh2(path, nodes, elements, [(2, 5, "metal")], True)
-            perimeter = P.extract_perimeter(read_msh2(path), CONFIG)
+            perimeter = P.extract_perimeter(read_msh2(path), CONFIG, radius=radius)
             vertex = perimeter.vertices[[i for i, v in enumerate(perimeter.vertices) if np.allclose(v.point, (1, 0, 0))][0]]
-            self.assertEqual(vertex.physical_kind, expected, msg=f"turn {turn}")
+            self.assertEqual(vertex.physical_kind, expected, msg=f"turn {turn} R {radius}")
+            self.assertEqual(P.joint_is_noise(angle, 1.0, radius), expected == "REGULAR")
 
     def test_rounded_runs_follow_the_classifier(self):
         # One open chain: arm along -x -> 90 deg fillet (radius 1 = R / 2, 8 chords) -> arm
@@ -482,7 +485,7 @@ class IdentificationGateTest(AuditGateTest):
         return {
             "Version": 2,
             "MatchingRadius": 0.5,
-            "Conventions": {"CornerTurnToleranceDegrees": 30.0},
+            "Conventions": {"JointNoiseSagittaOverR": 0.05, "ArcMaxJointTurnDegrees": 50.0},
             "ReferenceProcessNormal": [0.0, 0.0, 1.0],
             "Features": features,
             "Segments": segments,

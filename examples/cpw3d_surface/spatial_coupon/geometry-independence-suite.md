@@ -2652,6 +2652,7 @@ measured counts on load).
    | p_MS | free |median| within 1%; every free source within 5% |
    | p_SA | >= 2/3 of the free sources within 2% and >= 90% within 5% (the EL4c level 40 / 56 of 60) |
    | p-sequence controls | every control's step to the higher order d_high = (p_high - p_main)/|p_high| within 1% for E and 5% for p_MA / p_MS / p_SA |
+   | LibraryContinuity (Version 3) | every pair / stack model with all consecutive separations >= 2R (1 - 0.01) responds like the isolated-edge model per basis function at matched local positions: per edge the energy-weighted matched offset within 1 % (`MaximumRelativeOffset`) AND every matched basis function within 5 % (`PerBasisFunctionLimit`; USER decision 2026-09-28 on the decision-117 review MAJOR-2); an edge with zero matched basis functions is Failed, never NotApplicable; hats within 0.25 R of an isolated-box corner excluded, unmatched hats reported (`qualify/library_continuity.py`) |
 
    Anchor rule: when a main stage was solved at the reference order, the gates
    evaluate that same-order comparison and the other main orders are recorded as

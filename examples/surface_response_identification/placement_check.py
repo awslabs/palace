@@ -33,7 +33,9 @@ R_mesh / R_library):
 * SameConductorGap / DifferentConductorGap / SameConductorStrip and their Curved* classes:
   origin -+ Separation / 2 u lies on side 0 / 1 (swapped for chirality -1), chords and the
   5 % likewise. A curvature-family runtime model ``<anchor>@<convexity>-kappa<k>-<rule>``
-  resolves to its anchor (same basis, separation and references); a first-order node (a
+  resolves to its anchor (same basis, separation and references); an angle-interpolated
+  corner ``<base>@corner-angle<deg>-<rule>`` to its base coupon at the interpolated angle
+  (the arms checked are the feature's); a first-order node (a
   straight-like bend splits its quadrature between the anchor and the family node at
   kappa = 1 / StraightBendRadiusOverR) is a library model. For every patch of such a curved
   coupon the model's first edge e1 must sit on the side of the coupon's recorded Convexity:
@@ -83,10 +85,14 @@ STRIP_TYPES = ("SameConductorStrip", "CurvedSameConductorStrip")
 
 
 def resolve_model(models, name):
-    """The library model a dry-run patch refers to: the model of that name, or for a
+    """The library model a dry-run patch refers to: the model of that name; for a
     curvature-family runtime model `<anchor>@<convexity>-kappa<k>-<rule>` its straight anchor
     (the blend shares the anchor's basis, separation and conductor references) together with
-    the blend's convexity. Returns (model, convexity or None)."""
+    the blend's convexity; for an angle-interpolated corner `<base>@corner-angle<deg>-<rule>`
+    (USER decision 121 (C)) a copy of its base coupon with `Angle` = the interpolated angle
+    (the blend is placed in the FEATURE's frame at the feature's angle: the arms of the
+    placement check are the interpolated corner's, not the base coupon's). Returns
+    (model, convexity or None)."""
     model = models.get(name)
     if model is not None:
         return model, model.get("Convexity")
@@ -96,6 +102,12 @@ def resolve_model(models, name):
         if model is not None and "-kappa" in tail:
             convexity = tail.split("-kappa", 1)[0]
             return model, convexity.capitalize()
+        if model is not None and tail.startswith("corner-angle"):
+            angle = float(tail[len("corner-angle"):].rsplit("-", 1)[0])
+            interpolated = dict(model)
+            interpolated["Angle"] = angle
+            interpolated["CornerRadius"] = 0.0
+            return interpolated, model.get("Convexity")
     return None, None
 
 
