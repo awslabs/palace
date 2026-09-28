@@ -6853,7 +6853,7 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       // A curved k > 2 stack whose two outer sides are both exactly straight (the bend on
       // an interior side only) cannot be composed by IdentifyMetalPerimeter: a bent side
       // facing a straight partner at separation d < 2R leaves the pair-constancy band (5 %
-      // of d over +-R) exactly where its windowed bend radius r drops below 10R — "curved"
+      // of d over +-R) exactly where its windowed bend radius r drops below 10R: "curved"
       // needs x > x_b + 0.1 r - R/2 and "constant" needs x < x_b + sqrt(0.1 r d) - R, which
       // together require sqrt(0.1 r d) > 0.1 r + R/2, impossible for d <= 2R (equality at
       // r = 5R, d = 2R); concentric bends make an outer side at least as curved as an
