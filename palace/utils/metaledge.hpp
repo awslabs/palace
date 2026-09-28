@@ -180,6 +180,11 @@ struct MetalSurfaceExtraction
 
   // Retain the global deduplicated metal faces (replicated on every rank).
   bool retain_global_faces = false;
+
+  // Turn above which a two-segment vertex is a CORNER (and a chain break): the joint noise
+  // threshold by default; the legacy per-group classifier (comparison only) passes its
+  // former 30 deg corner class.
+  double corner_turn_tolerance_degrees = kCornerTurnToleranceDegrees;
 };
 
 // Automatically extract the geometric perimeter of all PEC-like, conductivity, and

@@ -1479,11 +1479,12 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
 
   // Boundary meshes commonly represent smooth layout curves by short polygonal facets. A
   // vertex turning by at most the joint noise threshold (kCornerTurnToleranceDegrees,
-  // metaledge.hpp) is a regular vertex of its chain; every sharper turn is an explicit
-  // corner vertex, which the identification's arc rule absorbs when it lies on a fitted
-  // arc (a bend merges the chains it separates) and otherwise treats as a corner feature.
+  // metaledge.hpp; surface.corner_turn_tolerance_degrees) is a regular vertex of its
+  // chain; every sharper turn is an explicit corner vertex, which the identification's arc
+  // rule absorbs when it lies on a fitted arc (a bend merges the chains it separates) and
+  // otherwise treats as a corner feature.
   const double straight_dot_tolerance =
-      -std::cos(kCornerTurnToleranceDegrees * std::acos(-1.0) / 180.0);
+      -std::cos(surface.corner_turn_tolerance_degrees * std::acos(-1.0) / 180.0);
   // The turn test compares direction cosines on a fixed 1e-12 grid so that a roundoff-level
   // perturbation of the vertex coordinates cannot flip a vertex between REGULAR and CORNER
   // (the same direction quantum as the classification's parallelism tests).

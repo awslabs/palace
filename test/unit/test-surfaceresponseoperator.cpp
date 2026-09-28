@@ -4357,12 +4357,18 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     const auto &segment = rounded_geometry.segments[segment_index];
     rounded_vertices.insert(segment.vertices.begin(), segment.vertices.end());
   }
-  CHECK(std::none_of(rounded_vertices.begin(), rounded_vertices.end(),
-                     [&](std::size_t vertex)
-                     {
-                       return rounded_geometry.vertices[vertex].physical_type !=
-                              MetalEdgeVertexType::REGULAR;
-                     }));
+  // Under the joint noise threshold (kCornerTurnToleranceDegrees = 1 deg, USER decision
+  // 117(4)) the sampled fillet joints (8-45 deg per chord) are CORNER vertices of the
+  // perimeter extraction; the identification's arc rule absorbs the ones on a fitted arc.
+  // The legacy per-group classifier below (PatchConstruction "Legacy", comparison only)
+  // re-extracts the perimeter at its own 30 deg corner class (kLegacyCornerTurnToleranceDegrees)
+  // so that its rounded-run rule still reads the fillets as REGULAR runs.
+  CHECK(std::count_if(rounded_vertices.begin(), rounded_vertices.end(),
+                      [&](std::size_t vertex)
+                      {
+                        return rounded_geometry.vertices[vertex].physical_type ==
+                               MetalEdgeVertexType::CORNER;
+                      }) >= 8);
 
   std::vector<std::unique_ptr<Mesh>> rounded_island_meshes;
   rounded_island_meshes.push_back(std::make_unique<Mesh>(MakeIslandMesh(true)));
