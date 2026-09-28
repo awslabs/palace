@@ -177,9 +177,12 @@ private:
   void RestrictionMatrixMultTranspose(const ComplexVector &ty, ComplexVector &ly) const;
   ComplexVector &GetTestLVector() const;
 
-  // Apply the essential true dof elimination of the assembled diagonal: the real part takes
-  // the value of the diagonal policy and the imaginary part is always zero.
+  // Essential elimination replaces a constrained complex row by the real scalar selected
+  // by the policy: DIAG_ONE gives 1 + 0i and DIAG_ZERO gives 0 + 0i.
   void EliminateEssentialDiagonal(ComplexVector &diag) const;
+
+  // Assemble the diagonal from the local operator, ignoring a stored diagonal.
+  void AssembleDiagonalFromOperator(ComplexVector &diag) const;
 
   ComplexParOperator(std::unique_ptr<Operator> &&dAr, std::unique_ptr<Operator> &&dAi,
                      const Operator *pAr, const Operator *pAi,
@@ -219,10 +222,6 @@ public:
                      std::unique_ptr<mfem::HypreParMatrix> &&Ai,
                      const FiniteElementSpace &fespace);
 
-  // True if the operator was constructed from the already assembled parallel matrices of
-  // its two parts, and so has no local operator (LocalOperator).
-  bool IsParallelAssembled() const { return assembled_A != nullptr; }
-
   const Operator *Real() const override { return RAPr.get(); }
   const Operator *Imag() const override { return RAPi.get(); }
 
@@ -260,10 +259,6 @@ public:
 
   void AssembleDiagonal(ComplexVector &diag) const override;
 
-  // Assemble the diagonal from the local operator, ignoring any diagonal stored by
-  // SetAssembledDiagonal. This is what AssembleDiagonal does when none is stored.
-  void AssembleDiagonalFromOperator(ComplexVector &diag) const;
-
   // Store a precomputed diagonal of this operator, which AssembleDiagonal returns instead
   // of assembling one from the local operator. Used where the diagonal is known more
   // cheaply than libCEED can assemble it, e.g. as a linear combination of the diagonals of
@@ -271,10 +266,6 @@ public:
   // the essential dofs must already be set (SetEssentialTrueDofs) and the stored vector is
   // the diagonal before elimination.
   void SetAssembledDiagonal(ComplexVector &&diag);
-
-  // True if a precomputed diagonal is stored, and so AssembleDiagonal does not assemble
-  // one. Rank-uniform whenever SetAssembledDiagonal is.
-  bool HasAssembledDiagonal() const { return has_diag_assembled; }
 
   void Mult(const ComplexVector &x, ComplexVector &y) const override;
 

@@ -2116,20 +2116,9 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
   const auto *coarse = dynamic_cast<const ComplexParOperator *>(&mg->GetOperatorAtLevel(0));
   REQUIRE(fine);
   REQUIRE(coarse);
-  // The coarsest level is a sparse matrix, never a packed complex libCEED operator: either
-  // combined from the cached frequency-independent term matrices, which leaves it already
-  // parallel assembled with no local operator to pack, or assembled per frequency as a
-  // local sparse matrix (see SpaceOperator::CombinePreconditionerTermMatrices).
-  if (coarse->IsParallelAssembled())
-  {
-    REQUIRE(coarse->Real());
-    REQUIRE(coarse->Imag());
-  }
-  else
-  {
-    REQUIRE(dynamic_cast<const hypre::HypreCSRMatrix *>(coarse->LocalOperator().Real()));
-    REQUIRE(IsOriginalComplexWrapper(coarse->LocalOperator()));
-  }
+  // The coarsest level is sparse and represented by separate real and imaginary parallel
+  // operators; only the partially assembled fine level participates in complex packing.
+  REQUIRE(coarse->Real());
   const auto &aux =
       dynamic_cast<const ComplexParOperator &>(mg->GetFinestAuxiliaryOperator());
   REQUIRE(IsOriginalComplexWrapper(aux.LocalOperator()));

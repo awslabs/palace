@@ -464,14 +464,16 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
 std::vector<Vector> AssembleLevelDiagonals(const FiniteElementSpaceHierarchy &fespaces,
                                            const MaterialPropertyCoefficient *df,
                                            const MaterialPropertyCoefficient *f,
-                                           const MaterialPropertyCoefficient *fb, bool aux)
+                                           const MaterialPropertyCoefficient *fb,
+                                           const MaterialPropertyCoefficient *fp, bool aux)
 {
   constexpr bool skip_zeros = false;
   MFEM_VERIFY(fespaces.GetNumLevels() > 1,
               "Term diagonals require a multilevel hierarchy!");
   const auto n_levels = fespaces.GetNumLevels();
   std::vector<Vector> diag_vec(n_levels);
-  int empty = (!ActiveCoefficient(df) && !ActiveCoefficient(f) && !ActiveCoefficient(fb));
+  int empty = (!ActiveCoefficient(df) && !ActiveCoefficient(f) && !ActiveCoefficient(fb) &&
+               !ActiveCoefficient(fp));
   Mpi::GlobalMin(1, &empty, fespaces.GetFinestFESpace().GetComm());
   if (empty)
   {
@@ -480,11 +482,13 @@ std::vector<Vector> AssembleLevelDiagonals(const FiniteElementSpaceHierarchy &fe
   BilinearForm a(fespaces.GetFinestFESpace());
   if (aux)
   {
+    MFEM_ASSERT(!ActiveCoefficient(df) && !ActiveCoefficient(fp),
+                "Auxiliary term diagonals support mass coefficients only!");
     AddAuxIntegrators(a, f, fb);
   }
   else
   {
-    AddIntegrators(a, df, f, nullptr, fb, nullptr);
+    AddIntegrators(a, df, f, nullptr, fb, fp);
   }
   auto ops = a.Assemble(fespaces, skip_zeros, 1);
   for (std::size_t l = 1; l < n_levels; l++)
@@ -520,17 +524,19 @@ void AddTermDiagonal(double s, const Vector &term, Vector &diag)
 // is collective.
 std::unique_ptr<mfem::HypreParMatrix> AssembleCoarseTermMatrix(
     const FiniteElementSpace &fespace, const MaterialPropertyCoefficient *df,
-    const MaterialPropertyCoefficient *f, const MaterialPropertyCoefficient *fb)
+    const MaterialPropertyCoefficient *f, const MaterialPropertyCoefficient *fb,
+    const MaterialPropertyCoefficient *fp)
 {
   constexpr bool skip_zeros = false;
-  int empty = (!ActiveCoefficient(df) && !ActiveCoefficient(f) && !ActiveCoefficient(fb));
+  int empty = (!ActiveCoefficient(df) && !ActiveCoefficient(f) && !ActiveCoefficient(fb) &&
+               !ActiveCoefficient(fp));
   Mpi::GlobalMin(1, &empty, fespace.GetComm());
   if (empty)
   {
     return {};
   }
   BilinearForm a(fespace);
-  AddIntegrators(a, df, f, nullptr, fb, nullptr);
+  AddIntegrators(a, df, f, nullptr, fb, fp);
   return ParOperator(a.Assemble(skip_zeros), fespace).StealParallelAssemble(skip_zeros);
 }
 
@@ -1216,8 +1222,8 @@ void SpaceOperator::AssemblePreconditioner(
       dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
       fbi(mat_op.MaxCeedBdrAttribute()), fpi(mat_op.MaxCeedAttribute()),
       fpr(mat_op.MaxCeedAttribute());
-  // The scalings of the four frequency-independent terms, also used to combine their cached
-  // diagonals below.
+  // The scalings of the fixed spatial terms, also used to combine their cached diagonals
+  // and coarse matrices below.
   const auto s = GetPreconditionerScalars(a0, a1, a2);
   AddStiffnessCoefficients(s.real.stiffness, dfr, fr);
   AddStiffnessCoefficients(s.imag.stiffness, dfi, fi);
@@ -1233,22 +1239,11 @@ void SpaceOperator::AssemblePreconditioner(
   AddRealMassBdrCoefficients(s.imag.real_mass, fbi);
   AddImagMassCoefficients(s.imag.imag_mass, fi);
   AddImagMassCoefficients(s.real.imag_mass, fr);
-  AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
-  if (mat_op.HasFloquetFrequencyScaling())
-  {
-    // k₀-based tensors: cross terms scale with a1, mass term with a2.
-    AddImagPeriodicCoefficients(a1.imag(), fpi);
-    AddImagPeriodicCoefficients(a1.real(), fpr);
-    AddRealPeriodicCoefficients(-a2.real(), fr);
-    AddRealPeriodicCoefficients(-a2.imag(), fi);
-  }
-  else
-  {
-    AddRealPeriodicCoefficients(a0.real(), fr);
-    AddRealPeriodicCoefficients(a0.imag(), fi);
-    AddImagPeriodicCoefficients(a0.real(), fpi);
-    AddImagPeriodicCoefficients(-a0.imag(), fpr);
-  }
+  const bool has_extra_terms = AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
+  AddRealPeriodicCoefficients(s.real.floquet_mass, fr);
+  AddRealPeriodicCoefficients(s.imag.floquet_mass, fi);
+  AddImagPeriodicCoefficients(s.real.floquet_curl, fpr);
+  AddImagPeriodicCoefficients(s.imag.floquet_curl, fpi);
   int empty[2] = {
       (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && fpr.empty()),
       (dfi.empty() && fi.empty() && dfbi.empty() && fbi.empty() && fpi.empty())};
@@ -1257,7 +1252,7 @@ void SpaceOperator::AssemblePreconditioner(
   // The Chebyshev smoothers of the levels above the coarsest assemble their diagonal from
   // the level operators with libCEED, and the coarsest level is assembled and RAP'd, at
   // every frequency. Combine both from the cached frequency-independent terms instead.
-  if (CanCombinePreconditionerTerms())
+  if (GetNDSpaces().GetNumLevels() > 1 && !has_extra_terms)
   {
     BuildPreconditionerTerms();
     CombinePreconditionerTermDiagonals(s, diag_vec, diag_aux_vec);
@@ -1294,16 +1289,26 @@ SpaceOperator::GetPreconditionerScalars(std::complex<double> a0, std::complex<do
   // B = a0 K + a1 C + a2 (Mr + i Mi), with the real mass coefficient of a shifted
   // preconditioner replaced by its absolute value.
   const double a2r = pc_mat_shifted ? std::abs(a2.real()) : a2.real();
-  return {{a0.real(), a1.real(), a2r, -a2.imag()},
-          {a0.imag(), a1.imag(), a2.imag(), a2.real()}};
-}
-
-bool SpaceOperator::CanCombinePreconditionerTerms() const
-{
-  return GetNDSpaces().GetNumLevels() > 1 && !mat_op.HasWaveVector() &&
-         farfield_op.GetOrder() <= 1 && surf_sigma_op.Size() == 0 &&
-         surf_rz_op.GetNumBoundaries() == 0 && wave_port_op.Size() == 0 &&
-         floquet_port_op.Size() == 0;
+  PreconditionerScalars s{{a0.real(), a1.real(), a2r, -a2.imag(), 0.0, 0.0},
+                          {a0.imag(), a1.imag(), a2.imag(), a2.real(), 0.0, 0.0}};
+  if (mat_op.HasFloquetFrequencyScaling())
+  {
+    // k₀-based tensors: the periodic curl term scales with a1 and its mass term with -a2.
+    s.real.floquet_curl = a1.real();
+    s.imag.floquet_curl = a1.imag();
+    s.real.floquet_mass = -a2.real();
+    s.imag.floquet_mass = -a2.imag();
+  }
+  else
+  {
+    // A fixed wave vector contributes a real periodic mass term and i times the periodic
+    // curl term, both scaled by a0.
+    s.real.floquet_mass = a0.real();
+    s.imag.floquet_mass = a0.imag();
+    s.real.floquet_curl = -a0.imag();
+    s.imag.floquet_curl = a0.real();
+  }
+  return s;
 }
 
 void SpaceOperator::BuildPreconditionerTerms()
@@ -1319,19 +1324,24 @@ void SpaceOperator::BuildPreconditionerTerms()
         fb(mat_op.MaxCeedBdrAttribute());
     AddStiffnessCoefficients(1.0, df, f);
     AddStiffnessBdrCoefficients(1.0, fb);
-    pc_term_coarse.stiffness = AssembleCoarseTermMatrix(nd_coarse_fespace, &df, &f, &fb);
-    pc_term_diag.stiffness = AssembleLevelDiagonals(GetNDSpaces(), &df, &f, &fb, !aux);
+    pc_term_coarse.stiffness =
+        AssembleCoarseTermMatrix(nd_coarse_fespace, &df, &f, &fb, nullptr);
+    pc_term_diag.stiffness =
+        AssembleLevelDiagonals(GetNDSpaces(), &df, &f, &fb, nullptr, !aux);
     pc_term_diag_aux.stiffness =
-        AssembleLevelDiagonals(GetH1Spaces(), nullptr, &f, &fb, aux);
+        AssembleLevelDiagonals(GetH1Spaces(), nullptr, &f, &fb, nullptr, aux);
   }
   {
     MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute()),
         fb(mat_op.MaxCeedBdrAttribute());
     AddDampingCoefficients(1.0, f);
     AddDampingBdrCoefficients(1.0, fb);
-    pc_term_coarse.damping = AssembleCoarseTermMatrix(nd_coarse_fespace, nullptr, &f, &fb);
-    pc_term_diag.damping = AssembleLevelDiagonals(GetNDSpaces(), nullptr, &f, &fb, !aux);
-    pc_term_diag_aux.damping = AssembleLevelDiagonals(GetH1Spaces(), nullptr, &f, &fb, aux);
+    pc_term_coarse.damping =
+        AssembleCoarseTermMatrix(nd_coarse_fespace, nullptr, &f, &fb, nullptr);
+    pc_term_diag.damping =
+        AssembleLevelDiagonals(GetNDSpaces(), nullptr, &f, &fb, nullptr, !aux);
+    pc_term_diag_aux.damping =
+        AssembleLevelDiagonals(GetH1Spaces(), nullptr, &f, &fb, nullptr, aux);
   }
   {
     MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute()),
@@ -1339,21 +1349,42 @@ void SpaceOperator::BuildPreconditionerTerms()
     AddRealMassCoefficients(1.0, f);
     AddRealMassBdrCoefficients(1.0, fb);
     pc_term_coarse.real_mass =
-        AssembleCoarseTermMatrix(nd_coarse_fespace, nullptr, &f, &fb);
-    pc_term_diag.real_mass = AssembleLevelDiagonals(GetNDSpaces(), nullptr, &f, &fb, !aux);
+        AssembleCoarseTermMatrix(nd_coarse_fespace, nullptr, &f, &fb, nullptr);
+    pc_term_diag.real_mass =
+        AssembleLevelDiagonals(GetNDSpaces(), nullptr, &f, &fb, nullptr, !aux);
     pc_term_diag_aux.real_mass =
-        AssembleLevelDiagonals(GetH1Spaces(), nullptr, &f, &fb, aux);
+        AssembleLevelDiagonals(GetH1Spaces(), nullptr, &f, &fb, nullptr, aux);
   }
   {
     // The imaginary mass term has no boundary counterpart.
     MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute());
     AddImagMassCoefficients(1.0, f);
     pc_term_coarse.imag_mass =
-        AssembleCoarseTermMatrix(nd_coarse_fespace, nullptr, &f, nullptr);
+        AssembleCoarseTermMatrix(nd_coarse_fespace, nullptr, &f, nullptr, nullptr);
     pc_term_diag.imag_mass =
-        AssembleLevelDiagonals(GetNDSpaces(), nullptr, &f, nullptr, !aux);
+        AssembleLevelDiagonals(GetNDSpaces(), nullptr, &f, nullptr, nullptr, !aux);
     pc_term_diag_aux.imag_mass =
-        AssembleLevelDiagonals(GetH1Spaces(), nullptr, &f, nullptr, aux);
+        AssembleLevelDiagonals(GetH1Spaces(), nullptr, &f, nullptr, nullptr, aux);
+  }
+  {
+    MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute());
+    AddRealPeriodicCoefficients(1.0, f);
+    pc_term_coarse.floquet_mass =
+        AssembleCoarseTermMatrix(nd_coarse_fespace, nullptr, &f, nullptr, nullptr);
+    pc_term_diag.floquet_mass =
+        AssembleLevelDiagonals(GetNDSpaces(), nullptr, &f, nullptr, nullptr, !aux);
+    pc_term_diag_aux.floquet_mass =
+        AssembleLevelDiagonals(GetH1Spaces(), nullptr, &f, nullptr, nullptr, aux);
+  }
+  {
+    MaterialPropertyCoefficient fp(mat_op.MaxCeedAttribute());
+    AddImagPeriodicCoefficients(1.0, fp);
+    pc_term_coarse.floquet_curl =
+        AssembleCoarseTermMatrix(nd_coarse_fespace, nullptr, nullptr, nullptr, &fp);
+    pc_term_diag.floquet_curl =
+        AssembleLevelDiagonals(GetNDSpaces(), nullptr, nullptr, nullptr, &fp, !aux);
+    // The periodic curl integrator is absent from the auxiliary H1 hierarchy.
+    pc_term_diag_aux.floquet_curl.resize(GetH1Spaces().GetNumLevels());
   }
   pc_terms_built = true;
 }
@@ -1366,15 +1397,18 @@ void SpaceOperator::CombinePreconditionerTermDiagonals(
   auto Combine = [n_levels](const PreconditionerTermDiagonals &terms,
                             const PreconditionerTermScalars &s, std::size_t l, Vector &diag)
   {
-    MFEM_ASSERT(terms.stiffness.size() == n_levels && terms.damping.size() == n_levels &&
-                    terms.real_mass.size() == n_levels &&
-                    terms.imag_mass.size() == n_levels,
-                "Cached preconditioner term diagonals do not cover every level!");
+    MFEM_ASSERT(
+        terms.stiffness.size() == n_levels && terms.damping.size() == n_levels &&
+            terms.real_mass.size() == n_levels && terms.imag_mass.size() == n_levels &&
+            terms.floquet_mass.size() == n_levels && terms.floquet_curl.size() == n_levels,
+        "Cached preconditioner term diagonals do not cover every level!");
     diag = 0.0;
     AddTermDiagonal(s.stiffness, terms.stiffness[l], diag);
     AddTermDiagonal(s.damping, terms.damping[l], diag);
     AddTermDiagonal(s.real_mass, terms.real_mass[l], diag);
     AddTermDiagonal(s.imag_mass, terms.imag_mass[l], diag);
+    AddTermDiagonal(s.floquet_mass, terms.floquet_mass[l], diag);
+    AddTermDiagonal(s.floquet_curl, terms.floquet_curl[l], diag);
   };
   MFEM_VERIFY(pc_terms_built, "Preconditioner terms have not been assembled!");
   diag_vec.resize(n_levels);
@@ -1407,6 +1441,8 @@ void SpaceOperator::CombinePreconditionerTermMatrices(
     AddTermMatrix(s.damping, pc_term_coarse.damping.get(), sum);
     AddTermMatrix(s.real_mass, pc_term_coarse.real_mass.get(), sum);
     AddTermMatrix(s.imag_mass, pc_term_coarse.imag_mass.get(), sum);
+    AddTermMatrix(s.floquet_mass, pc_term_coarse.floquet_mass.get(), sum);
+    AddTermMatrix(s.floquet_curl, pc_term_coarse.floquet_curl.get(), sum);
     if (sum)
     {
       // Make sure that the first entry in each row is the diagonal one, which the assembly
@@ -1546,10 +1582,21 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
         {
           b_spm = dynamic_cast<const hypre::HypreCSRMatrix *>(bi_l.get());
         }
+        HYPRE_BigInt nnz = -1;
         if (b_spm)
         {
-          HYPRE_BigInt nnz = b_spm->NNZ();
+          nnz = b_spm->NNZ();
           Mpi::GlobalSum(1, &nnz, fespace_l.GetComm());
+        }
+        else if constexpr (std::is_same_v<OperType, ComplexOperator>)
+        {
+          if (l == 0 && !aux && coarse_r)
+          {
+            nnz = coarse_r->NNZ();
+          }
+        }
+        if (nnz >= 0)
+        {
           Mpi::Print(", {:d} NNZ\n", nnz);
         }
         else
@@ -1668,13 +1715,17 @@ void SpaceOperator::AddAbsMassCoefficients(double coeff, MaterialPropertyCoeffic
   f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityAbs(), coeff);
 }
 
-void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
+bool SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
                                                   MaterialPropertyCoefficient &dfbr,
                                                   MaterialPropertyCoefficient &dfbi,
                                                   MaterialPropertyCoefficient &fbr,
                                                   MaterialPropertyCoefficient &fbi,
                                                   bool include_wave_ports)
 {
+  const bool has_extra = farfield_op.GetOrder() > 1 || surf_sigma_op.Size() > 0 ||
+                         surf_rz_op.GetNumBoundaries() > 0 ||
+                         (include_wave_ports && wave_port_op.Size() > 0) ||
+                         floquet_port_op.Size() > 0;
   // Contribution for second-order farfield boundaries and finite conductivity boundaries.
   farfield_op.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi);
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
@@ -1689,14 +1740,17 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
 
   // Contribution for Floquet ports (Robin BC).
   floquet_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+  return has_extra;
 }
 
-void SpaceOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
+bool SpaceOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
                                                   MaterialPropertyCoefficient &dfbr,
                                                   MaterialPropertyCoefficient &dfbi,
                                                   MaterialPropertyCoefficient &fbr,
                                                   MaterialPropertyCoefficient &fbi)
 {
+  const bool has_extra = farfield_op.GetOrder() > 1 || surf_sigma_op.Size() > 0 ||
+                         surf_rz_op.GetNumBoundaries() > 0 || wave_port_op.Size() > 0;
   // Complex-ω overload for the eigenmode nonlinear solve and its matching preconditioner:
   // all frequency-dependent boundary terms (2nd-order farfield ABC, surface conductivity,
   // rational surface impedance, numeric wave ports) are evaluated at the genuinely complex
@@ -1708,6 +1762,7 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
   surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
   wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+  return has_extra;
 }
 
 void SpaceOperator::AddRealPeriodicCoefficients(double coeff,

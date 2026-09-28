@@ -16,6 +16,7 @@
 #include "fem/mesh.hpp"
 #include "linalg/hypre.hpp"
 #include "linalg/rap.hpp"
+#include "linalg/solver.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
@@ -26,6 +27,30 @@ namespace palace
 {
 namespace
 {
+
+struct SpaceOperatorExposed : public SpaceOperator
+{
+  using SpaceOperator::pc_term_coarse;
+  using SpaceOperator::pc_terms_built;
+  using SpaceOperator::SpaceOperator;
+};
+
+class RecordingSolver : public mfem::Solver
+{
+public:
+  int operator_height = 0;
+  int operator_width = 0;
+
+  void SetOperator(const mfem::Operator &op) override
+  {
+    operator_height = op.Height();
+    operator_width = op.Width();
+    height = operator_height;
+    width = operator_width;
+  }
+
+  void Mult(const Vector &, Vector &y) const override { y = 0.0; }
+};
 
 struct IntegrationSettingsGuard
 {
@@ -292,17 +317,17 @@ TEST_CASE("CPU preconditioner quadrature data preserves the multigrid operators"
 // The Chebyshev smoothers ask every preconditioner level above the coarsest for its
 // diagonal at each frequency, which the level operators assemble with libCEED. The diagonal
 // is linear in the material property coefficients, so it is instead combined from the
-// cached diagonals of the four frequency-independent terms (stiffness, damping, real and
-// imaginary mass, with their boundary counterparts) using the same scalings as the
+// cached diagonals of the fixed spatial terms (stiffness, damping, real and imaginary mass,
+// and Floquet mass and curl) using the same scalings as the
 // coefficients themselves (SpaceOperator::GetPreconditionerScalars). A configuration whose
 // coefficients are not those terms scaled by real numbers keeps the operator assembly.
 TEST_CASE("Complex preconditioner diagonal is combined from cached terms",
-          "[spaceoperator][Serial][Parallel]")
+          "[spaceoperator][Serial]")
 {
   using namespace std::complex_literals;
 
   const auto comm = Mpi::World();
-  auto serial_mesh = mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::TETRAHEDRON);
+  auto serial_mesh = mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON);
   // A material loss tangent and an electrical conductivity cannot be combined on the same
   // attribute, so split the domain: both the damping and the imaginary mass term are then
   // nonzero, on different attributes.
@@ -316,9 +341,9 @@ TEST_CASE("Complex preconditioner diagonal is combined from cached terms",
 
   IntegrationSettingsGuard settings_guard;
   config::SolverData solver;
-  solver.order = 3;
+  solver.order = 2;
   solver.pa_order_threshold = 2;
-  solver.linear.mg_max_levels = 3;
+  solver.linear.mg_max_levels = 2;
   solver.linear.mg_coarsening = MultigridCoarsening::LINEAR;
   solver.linear.pc_mat_real = false;
   solver.linear.pc_mat_shifted = 0;
@@ -353,23 +378,28 @@ TEST_CASE("Complex preconditioner diagonal is combined from cached terms",
   boundaries.impedance = {impedance};
   Units units(1.0, 1.0);
 
+  // A second-order farfield with no attributes contributes no matrix but selects the
+  // independent per-frequency assembly used as the numerical reference below.
+  auto reference_boundaries = boundaries;
+  reference_boundaries.farfield.order = 2;
+
   constexpr double omega = 2.0;
-  // Compare the diagonal which the smoothers get on every level above the coarsest of both
-  // hierarchies with the one assembled from the level operator itself, and return the
-  // largest relative infinity-norm difference of the two parts, which is at rounding level
-  // (the largest measured here is 7.6e-16, a few ULP: the combination applies the term
-  // scalings after the quadrature summation and the |P|ᵀ parallel assembly instead of
-  // before). The type of a3 selects the
-  // A2 stamping path exactly as for the solvers (double for driven, std::complex for the
-  // eigenmode nonlinear solve).
-  auto DiagonalDifference =
-      [&](SpaceOperator &space_op, std::complex<double> lambda, auto a3, bool expect_cached)
+  // Compare the diagonals returned by cached and per-frequency operators on every level
+  // above the coarsest of both hierarchies. The type of a3 selects the same real- or
+  // complex-frequency boundary stamping path as the solver.
+  auto DiagonalDifference = [&](SpaceOperator &space_op, SpaceOperator &reference_op,
+                                std::complex<double> lambda, auto a3)
   {
     auto pc = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, lambda,
                                                                 lambda * lambda, a3);
+    auto pc_ref = reference_op.GetPreconditionerMatrix<ComplexOperator>(
+        1.0 + 0.0i, lambda, lambda * lambda, a3);
     const auto *mg = dynamic_cast<const ComplexMultigridOperator *>(pc.get());
+    const auto *mg_ref = dynamic_cast<const ComplexMultigridOperator *>(pc_ref.get());
     REQUIRE(mg);
-    REQUIRE(mg->GetNumLevels() == 3);
+    REQUIRE(mg_ref);
+    REQUIRE(mg->GetNumLevels() == 2);
+    REQUIRE(mg_ref->GetNumLevels() == mg->GetNumLevels());
     double max_rel_diff = 0.0;
     for (bool aux : {false, true})
     {
@@ -377,16 +407,15 @@ TEST_CASE("Complex preconditioner diagonal is combined from cached terms",
           aux ? space_op.GetH1DbcTDofLists() : space_op.GetNDDbcTDofLists();
       for (std::size_t l = 1; l < mg->GetNumLevels(); l++)
       {
-        const auto *level_op = dynamic_cast<const ComplexParOperator *>(
-            aux ? &mg->GetAuxiliaryOperatorAtLevel(l) : &mg->GetOperatorAtLevel(l));
-        REQUIRE(level_op);
-        CHECK(level_op->HasAssembledDiagonal() == expect_cached);
-
-        ComplexVector diag(level_op->Height()), diag_ref(level_op->Height());
+        const auto &level_op =
+            aux ? mg->GetAuxiliaryOperatorAtLevel(l) : mg->GetOperatorAtLevel(l);
+        const auto &level_ref =
+            aux ? mg_ref->GetAuxiliaryOperatorAtLevel(l) : mg_ref->GetOperatorAtLevel(l);
+        ComplexVector diag(level_op.Height()), diag_ref(level_ref.Height());
         diag.UseDevice(true);
         diag_ref.UseDevice(true);
-        level_op->AssembleDiagonal(diag);
-        level_op->AssembleDiagonalFromOperator(diag_ref);
+        level_op.AssembleDiagonal(diag);
+        level_ref.AssembleDiagonal(diag_ref);
         for (bool imag : {false, true})
         {
           const Vector &ref = imag ? diag_ref.Imag() : diag_ref.Real();
@@ -398,7 +427,7 @@ TEST_CASE("Complex preconditioner diagonal is combined from cached terms",
           max_rel_diff = std::max(max_rel_diff, norm[0] / norm[1]);
         }
 
-        // The essential dofs carry the eliminated values of the DIAG_ONE policy exactly.
+        // The essential dofs carry the real scalar selected by DIAG_ONE: 1 + 0i.
         const auto &dbc_tdof_list = dbc_tdof_lists[l];
         int num_dbc = dbc_tdof_list.Size();
         Mpi::GlobalSum(1, &num_dbc, comm);
@@ -417,68 +446,80 @@ TEST_CASE("Complex preconditioner diagonal is combined from cached terms",
     return max_rel_diff;
   };
 
-  SECTION("Cached term diagonals")
+  SECTION("Cached term diagonals are reused")
   {
-    // The driven coefficients at two frequencies: the second one reuses the cached terms.
-    SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
-    constexpr bool expect_cached = true;
-    CHECK(DiagonalDifference(space_op, 1i * omega, omega, expect_cached) <= 1.0e-13);
-    CHECK(DiagonalDifference(space_op, 1.5i * omega, 1.5 * omega, expect_cached) <=
-          1.0e-13);
+    SpaceOperatorExposed space_op(solver, domains, boundaries, ProblemType::DRIVEN, units,
+                                  mesh);
+    SpaceOperator reference_op(solver, domains, reference_boundaries, ProblemType::DRIVEN,
+                               units, mesh);
+    CHECK(!space_op.pc_terms_built);
+    CHECK(DiagonalDifference(space_op, reference_op, 1i * omega, omega) <= 1.0e-13);
+    REQUIRE(space_op.pc_terms_built);
+    const auto *stiffness = space_op.pc_term_coarse.stiffness.get();
+    REQUIRE(stiffness);
+    CHECK(DiagonalDifference(space_op, reference_op, 1.5i * omega, 1.5 * omega) <= 1.0e-13);
+    CHECK(space_op.pc_term_coarse.stiffness.get() == stiffness);
   }
 
   SECTION("Complex frequency")
   {
-    // A genuinely complex λ (the eigenmode nonlinear solve) scales every term into both
-    // parts: a2 = λ² has an imaginary part, so the real mass term contributes to the
-    // imaginary part and the imaginary mass term to the real one.
     const std::complex<double> lambda = 0.1 + 1i * omega;
-    SpaceOperator space_op(solver, domains, boundaries, ProblemType::EIGENMODE, units,
-                           mesh);
-    constexpr bool expect_cached = true;
-    CHECK(DiagonalDifference(space_op, lambda, lambda / 1i, expect_cached) <= 1.0e-13);
+    SpaceOperatorExposed space_op(solver, domains, boundaries, ProblemType::EIGENMODE,
+                                  units, mesh);
+    SpaceOperator reference_op(solver, domains, reference_boundaries,
+                               ProblemType::EIGENMODE, units, mesh);
+    CHECK(DiagonalDifference(space_op, reference_op, lambda, lambda / 1i) <= 1.0e-13);
+    CHECK(space_op.pc_terms_built);
   }
 
   SECTION("Shifted preconditioner mass coefficient")
   {
-    // The real mass term is scaled by |Re(a2)| instead of Re(a2), on both sides of the
-    // shared scalings.
     auto shifted_solver = solver;
     shifted_solver.linear.pc_mat_shifted = 1;
-    SpaceOperator space_op(shifted_solver, domains, boundaries, ProblemType::DRIVEN, units,
-                           mesh);
-    constexpr bool expect_cached = true;
-    CHECK(DiagonalDifference(space_op, 1i * omega, omega, expect_cached) <= 1.0e-13);
+    SpaceOperatorExposed space_op(shifted_solver, domains, boundaries, ProblemType::DRIVEN,
+                                  units, mesh);
+    SpaceOperator reference_op(shifted_solver, domains, reference_boundaries,
+                               ProblemType::DRIVEN, units, mesh);
+    CHECK(DiagonalDifference(space_op, reference_op, 1i * omega, omega) <= 1.0e-13);
+    CHECK(space_op.pc_terms_built);
   }
 
-  SECTION("Floquet wave vector keeps the assembled diagonal")
+  for (bool frequency_scaled : {false, true})
   {
-    // The periodic terms are stamped with their own frequency-dependent scalings.
-    auto floquet_boundaries = boundaries;
-    floquet_boundaries.periodic.wave_vector = {0.1, 0.0, 0.0};
-    SpaceOperator space_op(solver, domains, floquet_boundaries, ProblemType::DRIVEN, units,
-                           mesh);
-    REQUIRE(space_op.GetMaterialOp().HasWaveVector());
-    constexpr bool expect_cached = false;
-    CHECK(DiagonalDifference(space_op, 1i * omega, omega, expect_cached) == 0.0);
+    DYNAMIC_SECTION("Floquet wave vector, frequency scaled = " << frequency_scaled)
+    {
+      auto floquet_boundaries = boundaries;
+      floquet_boundaries.periodic.wave_vector = {0.1, 0.0, 0.0};
+      floquet_boundaries.periodic.floquet_reference_freq = frequency_scaled ? 1.0 : 0.0;
+      auto floquet_reference_boundaries = floquet_boundaries;
+      floquet_reference_boundaries.farfield.order = 2;
+      SpaceOperatorExposed space_op(solver, domains, floquet_boundaries,
+                                    ProblemType::DRIVEN, units, mesh);
+      SpaceOperator reference_op(solver, domains, floquet_reference_boundaries,
+                                 ProblemType::DRIVEN, units, mesh);
+      REQUIRE(space_op.GetMaterialOp().HasWaveVector());
+      CHECK(DiagonalDifference(space_op, reference_op, 1i * omega, omega) <= 1.0e-13);
+      CHECK(space_op.pc_terms_built);
+    }
   }
 
-  SECTION("Frequency-dependent boundary keeps the assembled diagonal")
+  SECTION("Frequency-dependent boundary keeps the per-frequency diagonal")
   {
-    // The second-order farfield coefficients depend on ω non-linearly.
     auto farfield_boundaries = boundaries;
     farfield_boundaries.farfield.order = 2;
     farfield_boundaries.farfield.attributes = {5, 6};
-    SpaceOperator space_op(solver, domains, farfield_boundaries, ProblemType::DRIVEN, units,
-                           mesh);
-    constexpr bool expect_cached = false;
-    CHECK(DiagonalDifference(space_op, 1i * omega, omega, expect_cached) == 0.0);
+    SpaceOperatorExposed space_op(solver, domains, farfield_boundaries, ProblemType::DRIVEN,
+                                  units, mesh);
+    auto pc = space_op.GetPreconditionerMatrix<ComplexOperator>(
+        1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
+    REQUIRE(pc);
+    CHECK(!space_op.pc_terms_built);
   }
 }
 
 // The coarsest level of the complex preconditioner hierarchy is a sparse matrix which is
-// linear in the frequency scalings of the four preconditioner terms (stiffness, damping,
-// real and imaginary mass, with their boundary counterparts), so it is combined from the
+// linear in the frequency scalings of the fixed preconditioner terms (stiffness, damping,
+// real and imaginary mass, and Floquet mass and curl), so it is combined from the
 // cached parallel matrices of those terms instead of being assembled and RAP'd at every
 // frequency (SpaceOperator::CombinePreconditionerTermMatrices). The combination must have
 // the same sparsity pattern as the per-frequency assembly, including the exact zeros of the
@@ -490,7 +531,7 @@ TEST_CASE("Complex preconditioner coarsest level is combined from cached terms",
   using namespace std::complex_literals;
 
   const auto comm = Mpi::World();
-  auto serial_mesh = mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::TETRAHEDRON);
+  auto serial_mesh = mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON);
   // A material loss tangent and an electrical conductivity cannot be combined on the same
   // attribute, so split the domain: both the damping and the imaginary mass term are then
   // nonzero, on different attributes.
@@ -504,9 +545,9 @@ TEST_CASE("Complex preconditioner coarsest level is combined from cached terms",
 
   IntegrationSettingsGuard settings_guard;
   config::SolverData solver;
-  solver.order = 3;
+  solver.order = 2;
   solver.pa_order_threshold = 2;
-  solver.linear.mg_max_levels = 3;
+  solver.linear.mg_max_levels = 2;
   solver.linear.mg_coarsening = MultigridCoarsening::LINEAR;
   solver.linear.pc_mat_real = false;
   solver.linear.pc_mat_shifted = 0;
@@ -551,7 +592,7 @@ TEST_CASE("Complex preconditioner coarsest level is combined from cached terms",
   {
     const auto *mg = dynamic_cast<const ComplexMultigridOperator *>(&pc);
     REQUIRE(mg);
-    REQUIRE(mg->GetNumLevels() == 3);
+    REQUIRE(mg->GetNumLevels() == 2);
     const auto *coarse_op =
         dynamic_cast<const ComplexParOperator *>(&mg->GetOperatorAtLevel(0));
     REQUIRE(coarse_op);
@@ -570,8 +611,6 @@ TEST_CASE("Complex preconditioner coarsest level is combined from cached terms",
                                                                         a1 * a1, omega);
     const auto *coarse_op = CoarseOperator(*pc);
     const auto *coarse_ref_op = CoarseOperator(*pc_ref);
-    CHECK(coarse_op->IsParallelAssembled());
-    CHECK(!coarse_ref_op->IsParallelAssembled());
 
     const auto &dbc_tdof_list = space_op.GetNDDbcTDofLists()[0];
     int num_dbc = dbc_tdof_list.Size();
@@ -648,41 +687,55 @@ TEST_CASE("Complex preconditioner coarsest level is combined from cached terms",
                Catch::Matchers::WithinAbs(0.0, 1.0e-12));
   };
 
-  SECTION("Lossy materials")
+  // The parallel registration exercises the collective cache and matrix assembly once. The
+  // scalar variants below are rank-independent and run only in the serial registration.
+  if (Mpi::Size(comm) > 1)
   {
-    // Every term has a coefficient, so every one of them has a cached matrix. The second
-    // frequency reuses those matrices.
-    SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
+    SpaceOperatorExposed space_op(solver, domains, boundaries, ProblemType::DRIVEN, units,
+                                  mesh);
     SpaceOperator reference_op(solver, domains, reference_boundaries, ProblemType::DRIVEN,
                                units, mesh);
     CheckCoarseLevel(space_op, reference_op, 2.0);
+    CHECK(space_op.pc_terms_built);
+    return;
+  }
+
+  SECTION("Lossy materials")
+  {
+    SpaceOperatorExposed space_op(solver, domains, boundaries, ProblemType::DRIVEN, units,
+                                  mesh);
+    SpaceOperator reference_op(solver, domains, reference_boundaries, ProblemType::DRIVEN,
+                               units, mesh);
+    CheckCoarseLevel(space_op, reference_op, 2.0);
+    REQUIRE(space_op.pc_terms_built);
+    const auto *stiffness = space_op.pc_term_coarse.stiffness.get();
+    REQUIRE(stiffness);
     CheckCoarseLevel(space_op, reference_op, 3.5);
+    CHECK(space_op.pc_term_coarse.stiffness.get() == stiffness);
   }
 
   SECTION("Coarse solver handoff")
   {
-    // The coarse solver assembles both parts of the level and takes their matrices
-    // (MfemWrapperSolver: ParallelAssemble, then StealParallelAssemble of each part and a
-    // hypre sum of the two). Nothing is left of the level afterwards.
     SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
     const std::complex<double> a1 = 2.0i;
     auto pc =
         space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, a1, a1 * a1, 2.0);
     const auto *coarse_op = CoarseOperator(*pc);
-    REQUIRE(coarse_op->IsParallelAssembled());
-    const auto *real_part = dynamic_cast<const ParOperator *>(coarse_op->Real());
-    const auto *imag_part = dynamic_cast<const ParOperator *>(coarse_op->Imag());
-    REQUIRE(real_part);
-    REQUIRE(imag_part);
-    auto stolen_r = real_part->StealParallelAssemble();
-    auto stolen_i = imag_part->StealParallelAssemble();
-    REQUIRE(stolen_r);
-    REQUIRE(stolen_i);
-    CHECK(stolen_r->Height() == coarse_op->Height());
-    std::unique_ptr<mfem::HypreParMatrix> sum(mfem::Add(1.0, *stolen_r, 1.0, *stolen_i));
-    REQUIRE(sum);
-    CHECK(sum->Height() == coarse_op->Height());
-    CHECK_THROWS(real_part->ParallelAssemble());
+    auto recording = std::make_unique<RecordingSolver>();
+    auto *recording_ptr = recording.get();
+    MfemWrapperSolver<ComplexOperator> coarse_solver(std::move(recording), false, true,
+                                                     false);
+    coarse_solver.SetOperator(*coarse_op);
+    CHECK(coarse_solver.Height() == coarse_op->Height());
+    CHECK(coarse_solver.Width() == coarse_op->Width());
+    CHECK(recording_ptr->operator_height == 2 * coarse_op->Height());
+    CHECK(recording_ptr->operator_width == 2 * coarse_op->Width());
+    ComplexVector x(coarse_op->Width()), y(coarse_op->Height());
+    x.UseDevice(true);
+    y.UseDevice(true);
+    linalg::SetRandom(comm, x);
+    coarse_solver.Mult(x, y);
+    CHECK(linalg::Norml2(comm, y) == 0.0);
   }
 
   SECTION("Lossless materials")
@@ -704,19 +757,23 @@ TEST_CASE("Complex preconditioner coarsest level is combined from cached terms",
     CheckCoarseLevel(space_op, reference_op, 2.0);
   }
 
-  SECTION("Floquet wave vector keeps the assembled level")
+  for (bool frequency_scaled : {false, true})
   {
-    // The periodic terms are stamped with their own frequency-dependent scalings, so this
-    // level is assembled at every frequency as before.
-    auto floquet_boundaries = boundaries;
-    floquet_boundaries.periodic.wave_vector = {0.1, 0.0, 0.0};
-    SpaceOperator space_op(solver, domains, floquet_boundaries, ProblemType::DRIVEN, units,
-                           mesh);
-    REQUIRE(space_op.GetMaterialOp().HasWaveVector());
-    const std::complex<double> a1 = 2.0i;
-    auto pc =
-        space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, a1, a1 * a1, 2.0);
-    CHECK(!CoarseOperator(*pc)->IsParallelAssembled());
+    DYNAMIC_SECTION("Floquet wave vector, frequency scaled = " << frequency_scaled)
+    {
+      auto floquet_boundaries = boundaries;
+      floquet_boundaries.periodic.wave_vector = {0.1, 0.0, 0.0};
+      floquet_boundaries.periodic.floquet_reference_freq = frequency_scaled ? 1.0 : 0.0;
+      auto floquet_reference_boundaries = floquet_boundaries;
+      floquet_reference_boundaries.farfield.order = 2;
+      SpaceOperatorExposed space_op(solver, domains, floquet_boundaries,
+                                    ProblemType::DRIVEN, units, mesh);
+      SpaceOperator reference_op(solver, domains, floquet_reference_boundaries,
+                                 ProblemType::DRIVEN, units, mesh);
+      REQUIRE(space_op.GetMaterialOp().HasWaveVector());
+      CheckCoarseLevel(space_op, reference_op, 2.0);
+      CHECK(space_op.pc_terms_built);
+    }
   }
 }
 

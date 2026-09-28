@@ -100,15 +100,17 @@ private:
   void AddRealMassBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
   void AddImagMassCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddAbsMassCoefficients(double coeff, MaterialPropertyCoefficient &f);
-  void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &dfbr,
+  // Add every separately frequency-dependent boundary contribution and report whether any
+  // such operator is configured. The report is conservative when its coefficient happens
+  // to vanish, so it can safely govern reuse of the fixed preconditioner terms.
+  bool AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &dfbr,
                                      MaterialPropertyCoefficient &dfbi,
                                      MaterialPropertyCoefficient &fbr,
                                      MaterialPropertyCoefficient &fbi,
                                      bool include_wave_ports = true);
-  // Complex-ω overload: dispatches to the farfield / surf-σ / wave-port complex
-  // AddExtraSystemBdrCoefficients overloads for the eigenmode nonlinear solve and its
-  // matching preconditioner. Reduces to the double overload for real ω.
-  void AddExtraSystemBdrCoefficients(std::complex<double> omega,
+  // Complex-ω overload for the eigenmode nonlinear solve and its matching preconditioner.
+  // Reduces to the double overload for real ω; Floquet ports are absent from this path.
+  bool AddExtraSystemBdrCoefficients(std::complex<double> omega,
                                      MaterialPropertyCoefficient &dfbr,
                                      MaterialPropertyCoefficient &dfbi,
                                      MaterialPropertyCoefficient &fbr,
@@ -146,63 +148,41 @@ private:
                               std::vector<std::unique_ptr<Operator>> &br_vec,
                               std::vector<std::unique_ptr<Operator>> &br_aux_vec);
 
-  // The scalings of the four frequency-independent terms which the complex preconditioner
-  // matrix is a linear combination of, for one part (real or imaginary) of it.
-  struct PreconditionerTermScalars
+protected:
+  // One named shape for every representation of the frequency-independent preconditioner
+  // terms. The periodic terms use a distinct integrator path but remain fixed spatial
+  // operators whose frequency dependence is entirely in these scalars.
+  template <typename T>
+  struct PreconditionerTerm
   {
-    double stiffness, damping, real_mass, imag_mass;
+    T stiffness, damping, real_mass, imag_mass, floquet_mass, floquet_curl;
   };
+  using PreconditionerTermScalars = PreconditionerTerm<double>;
+  using PreconditionerTermDiagonals = PreconditionerTerm<std::vector<Vector>>;
+  using PreconditionerTermMatrices =
+      PreconditionerTerm<std::unique_ptr<mfem::HypreParMatrix>>;
   struct PreconditionerScalars
   {
     PreconditionerTermScalars real, imag;
   };
 
-  // The scalings of the terms for both parts, read by the material property coefficient
-  // construction of AssemblePreconditioner and by the linear combinations of the cached
-  // term diagonals and matrices (CombinePreconditionerTermDiagonals,
-  // CombinePreconditionerTermMatrices), so that they cannot drift apart.
+  // Cached diagonals on every level above the coarsest, for both hierarchies, and cached
+  // uneliminated matrices on the coarsest ND level. Empty terms have empty storage. These
+  // members are protected only so tests can expose and verify the once-only cache lifetime.
+  PreconditionerTermDiagonals pc_term_diag, pc_term_diag_aux;
+  PreconditionerTermMatrices pc_term_coarse;
+  bool pc_terms_built = false;
+
+private:
+  // The scalings for both complex parts, shared by coefficient construction and cached
+  // combination so their algebra cannot drift apart.
   PreconditionerScalars GetPreconditionerScalars(std::complex<double> a0,
                                                  std::complex<double> a1,
                                                  std::complex<double> a2) const;
 
-  // Diagonals of the four frequency-independent terms of the complex preconditioner matrix
-  // (each with a unit coefficient, including its boundary counterpart), on each level of a
-  // hierarchy and its true dofs. The diagonal is linear in the coefficients, so the
-  // diagonal at any frequency is the same linear combination of these as the coefficients
-  // themselves (see GetPreconditionerScalars). Level 0 is a fully assembled sparse matrix
-  // with a cheap diagonal and is left empty, as is a term whose coefficient is exactly zero
-  // everywhere.
-  struct PreconditionerTermDiagonals
-  {
-    std::vector<Vector> stiffness, damping, real_mass, imag_mass;
-  };
-  PreconditionerTermDiagonals pc_term_diag, pc_term_diag_aux;
-
-  // The same four terms of the coarsest level of the ND hierarchy, as parallel sparse
-  // matrices without essential true dof elimination: that level is a sparse matrix which is
-  // likewise linear in the term scalings, so it is combined from these instead of being
-  // assembled and RAP'd at every frequency. A term whose coefficient is exactly zero
-  // everywhere is left empty. The auxiliary H1 hierarchy keeps its per-frequency assembly:
-  // its coarsest level is only ever used by the auxiliary space smoothers above it.
-  struct PreconditionerTermMatrices
-  {
-    std::unique_ptr<mfem::HypreParMatrix> stiffness, damping, real_mass, imag_mass;
-  };
-  PreconditionerTermMatrices pc_term_coarse;
-
-  bool pc_terms_built = false;
-
   // Assemble and cache the term diagonals and the coarsest level term matrices, once for
   // the lifetime of this object.
   void BuildPreconditionerTerms();
-
-  // True if the complex preconditioner matrix is the linear combination of the cached terms
-  // at every frequency: the Floquet periodic and the frequency-dependent boundary terms
-  // (A2) are excluded, as their coefficients are not the frequency-independent terms scaled
-  // by GetPreconditionerScalars. A single-level hierarchy is excluded as well: its only
-  // level is the coarsest one, which is a sparse matrix with a cheap diagonal and no
-  // smoother above it.
-  bool CanCombinePreconditionerTerms() const;
 
   // The diagonal of each level above the coarsest, before essential true dof elimination,
   // as the linear combination of the cached term diagonals with the given scalings. Level 0
