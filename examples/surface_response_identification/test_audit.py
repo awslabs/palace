@@ -210,9 +210,11 @@ class PerimeterTest(unittest.TestCase):
         self.assertTrue(all(d <= 4.0 + 1e-9 for _, _, d, _ in interactions))
 
     def test_corner_snap_rule_matches_classifier(self):
-        # A polyline vertex turning by 29.999 deg is REGULAR, one turning by 30.001 is a
-        # CORNER (metaledge.cpp: 30 degree tolerance on the 1e-12 direction grid).
-        for turn, expected in ((29.999, "REGULAR"), (30.001, "CORNER"), (30.0, "REGULAR")):
+        # A polyline vertex turning by 0.999 deg is REGULAR, one turning by 1.001 is a
+        # CORNER (metaledge.hpp kCornerTurnToleranceDegrees = 1 deg, the joint noise
+        # threshold of USER decision 117(4), on the 1e-12 direction grid); a former
+        # sub-corner 29.999 deg joint is a corner unless an arc absorbs it.
+        for turn, expected in ((0.999, "REGULAR"), (1.001, "CORNER"), (1.0, "REGULAR"), (29.999, "CORNER")):
             angle = np.radians(turn)
             nodes = [(0, 0, 0), (1, 0, 0), (1 + np.cos(angle), np.sin(angle), 0), (0, 1, 0), (1, 1, 0), (1 + np.cos(angle), 1 + np.sin(angle), 0)]
             elements = [(2, 5, (1, 2, 5)), (2, 5, (1, 5, 4)), (2, 5, (2, 3, 6)), (2, 5, (2, 6, 5))]

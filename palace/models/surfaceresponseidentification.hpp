@@ -165,8 +165,11 @@ struct IdentifiedArc
   std::array<double, 3> center{};
   double radius = 0.0;
   double turn_degrees = 0.0;
-  // RoundedCorner (radius below R, turn above the corner threshold: a vertex feature) or
-  // Bend (exact-radius bend inside its chain).
+  // The largest sagitta of the arc's chords on the fitted circle, over R (below the recorded
+  // Conventions.SagittaOverR by the arc rule).
+  double max_sagitta_over_R = 0.0;
+  // RoundedCorner (radius below R, tangent arms: a vertex feature) or Bend (exact-radius
+  // bend inside its chain).
   std::string kind;
   std::size_t joints = 0;
   std::size_t segments = 0;
@@ -374,6 +377,15 @@ std::pair<std::string, std::string> SignatureKeyAndHash(nlohmann::json signature
 // angles come from straight arm directions and are exact).
 constexpr double kSignatureParameterToleranceOverRadius = 1.0e-3;
 constexpr double kSignatureAngleToleranceDegrees = 1.0e-2;
+// Arc rule (USER decision 117(4), 2026-09-28): a run of joints of the perimeter path is ONE
+// arc iff its vertices lie on one circle within kArcFitToleranceOverRadius x R (the
+// signature parameter tolerance) AND every chord's sagitta rho (1 - cos(central angle / 2))
+// is below kArcSagittaOverRadius x R — the polyline is an arc at the resolution of the
+// correction; no joint-turn threshold enters. Recorded as Conventions.ArcFitToleranceOverR /
+// SagittaOverR; the fillet and arc-cluster chord-count gates hold over the discretisations
+// that meet the cap.
+constexpr double kArcFitToleranceOverRadius = kSignatureParameterToleranceOverRadius;
+constexpr double kArcSagittaOverRadius = 0.05;
 
 struct SignatureParameters
 {

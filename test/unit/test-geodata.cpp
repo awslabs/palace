@@ -1074,10 +1074,17 @@ TEST_CASE("Automatic metal edge extraction samples high-order rounded edges",
 
   CHECK(coarse.physical_components == 1);
   CHECK(fine.physical_components == 1);
-  CHECK(coarse.physical_chains == 1);
-  CHECK(fine.physical_chains == 1);
-  CHECK(CountPhysicalVertexTypes(coarse, MetalEdgeVertexType::CORNER) == 0);
-  CHECK(CountPhysicalVertexTypes(fine, MetalEdgeVertexType::CORNER) == 0);
+  // The perimeter's vertex classification uses the joint noise threshold
+  // (kCornerTurnToleranceDegrees = 1 deg, USER decision 117(4)): every joint of the sampled
+  // rounded corners (tens of degrees per chord) is a CORNER vertex and a chain break — the
+  // identification's arc rule absorbs the ones on a fitted arc and merges the chains; the
+  // extraction itself reports one chain per corner on a closed loop.
+  const auto coarse_corners = CountPhysicalVertexTypes(coarse, MetalEdgeVertexType::CORNER);
+  const auto fine_corners = CountPhysicalVertexTypes(fine, MetalEdgeVertexType::CORNER);
+  CHECK(coarse_corners >= 8);
+  CHECK(fine_corners >= 8);
+  CHECK(coarse.physical_chains == coarse_corners);
+  CHECK(fine.physical_chains == fine_corners);
   CHECK(coarse.segments.size() > fine.segments.size());
 
   const double exact_perimeter =
@@ -1427,6 +1434,11 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
   // port faces are PORT segments (cuts): the feedline centre conductor's perimeter splits
   // into 2 more physical components (the cut pieces), 6 fewer chains, and the 12 port-end
   // vertices are no longer corners.
+  // USER decision 117(4): the vertex classification uses the joint noise threshold (1 deg,
+  // kCornerTurnToleranceDegrees) instead of the 30 deg corner class: the 387 polyline joints
+  // of the CPW bends and rounded features (60 sharp corners before) are CORNER vertices and
+  // chain breaks of the extraction (74 chains -> 461); the identification's arc rule absorbs
+  // the joints of fitted arcs and merges their chains.
   CHECK(geometry.components == 10);
   CHECK(geometry.physical_components == 15);
   CHECK(physical_segments + truncation_segments + fold_segments + nonmanifold_segments +
@@ -1437,10 +1449,10 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
   CHECK(fold_segments == 16);
   CHECK(nonmanifold_segments == 8);
   CHECK(embedded_segments == 40 + 16);  // the feet also touch the ground sheet faces
-  CHECK(geometry.physical_chains == 74);
+  CHECK(geometry.physical_chains == 461);
   CHECK(truncation_segments == 58);
   CHECK(truncation_attributes == std::set<int>{3});
-  CHECK(corners == 60);
+  CHECK(corners == 447);
   CHECK(sa_segments == 3082);
   // Conductors by metal connectivity: ground plane with the airbridge, feedline centre
   // conductor (between the lumped ports), island.

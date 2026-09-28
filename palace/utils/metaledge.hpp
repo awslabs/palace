@@ -36,6 +36,21 @@ struct MetalBoundaryCondition
   int index;
 };
 
+// Turn (degrees) above which a perimeter vertex with two segments is a CORNER; at or below
+// it the vertex is a REGULAR joint of its chain (a straight continuation). USER decision
+// 117(4) (2026-09-28): this is the joint NOISE threshold, not a design-intent threshold —
+// every joint turning more is a corner unless the identification's arc rule absorbs it into
+// a fitted arc (vertices on one circle within the signature tolerance and every chord's
+// sagitta at most SagittaOverR x R), whatever its turn. Was 30 deg (decision 73: "modest
+// local turns are part of a smooth chain"), which read coarse polyline bends as chains and
+// put a knife edge on the 30.000 deg joints of DS-OSC-003. Value from the chips' joint-turn
+// census (user-decisions-117-sagitta): the sub-1 deg joints not on fitted arcs are a
+// smooth continuum of spline steps (no gap between 0.05 and 2 deg on DS-SCT-002 /
+// DS-CTX-003), a 1 deg joint between the chips' longest chords (5.3 R) deviates from a
+// straight continuation by (c / 2) tan(t / 4) = 0.012 R, four times below the arc
+// resolution 0.05 R. Recorded as Identification.Conventions.CornerTurnToleranceDegrees.
+constexpr double kCornerTurnToleranceDegrees = 1.0;
+
 enum class MetalEdgeVertexType : char
 {
   REGULAR,
@@ -165,6 +180,11 @@ struct MetalSurfaceExtraction
 
   // Retain the global deduplicated metal faces (replicated on every rank).
   bool retain_global_faces = false;
+
+  // Turn above which a two-segment vertex is a CORNER (and a chain break): the joint noise
+  // threshold by default; the legacy per-group classifier (comparison only) passes its
+  // former 30 deg corner class.
+  double corner_turn_tolerance_degrees = kCornerTurnToleranceDegrees;
 };
 
 // Automatically extract the geometric perimeter of all PEC-like, conductivity, and

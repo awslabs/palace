@@ -25,8 +25,9 @@ metal faces):
 * the parts of a PHYSICAL edge within 2R of metal off its own plane (a facing layer, a
   wall, a staple) are its CROSS_LAYER portions (excluded, decision 73(3)); a feature vertex
   within 2R of such metal is an excluded vertex;
-* a degree-2 perimeter vertex is a CORNER when the turn exceeds the classifier's
-  30 degree tolerance (metaledge.cpp corner_angle_tolerance_degrees), REGULAR otherwise;
+* a degree-2 perimeter vertex is a CORNER when the turn exceeds the classifier's joint
+  noise threshold (metaledge.hpp kCornerTurnToleranceDegrees = 1 deg; USER decision 117(4):
+  every sharper joint is a corner unless a fitted arc absorbs it), REGULAR otherwise;
   degree 1 is an ENDPOINT, degree >= 3 a JUNCTION; a physical chain is a maximal PHYSICAL
   path through REGULAR vertices;
 * the conductor of an edge is its edge-connected metal component (the geometric identity the
@@ -41,7 +42,11 @@ import numpy as np
 
 from .msh2 import ELEMENT_DIMENSION, QUAD, TETRAHEDRON_TYPES, TRIANGLE_TYPES
 
-CORNER_ANGLE_TOLERANCE_DEGREES = 30.0
+# The joint noise threshold (metaledge.hpp kCornerTurnToleranceDegrees; manifest
+# Identification.Conventions.CornerTurnToleranceDegrees): a two-segment vertex turning more is
+# a CORNER, a fitted arc absorbs it or it is a corner feature; at most this it is a straight
+# continuation of its chain. USER decision 117(4), 2026-09-28 (was 30 deg).
+CORNER_ANGLE_TOLERANCE_DEGREES = 1.0
 DIRECTION_QUANTUM = 1.0e-12
 # Faces whose unit normal deviates from the process normal by more than this are non-planar
 # metal (sidewalls, staples, TSV walls); the classifier's kParallelCosineTolerance.
@@ -905,37 +910,35 @@ def chain_vertex_sequences(perimeter):
     return sequences
 
 
-ARC_FIT_TOLERANCE = 0.05
-# Decision 85(1) amendments of the arc rule (Identification.Conventions): the absolute radial
-# cap of the fit tolerance and the exact-fit tolerance of the long-chord regime.
-ARC_FIT_ABSOLUTE_TOLERANCE_OVER_R = 0.05
+# The arc rule's constants (Identification.Conventions ArcFitToleranceOverR / SagittaOverR,
+# USER decision 117(4)): every joint of an arc lies on its circle within the signature
+# parameter tolerance and every chord's sagitta is below SAGITTA_OVER_R x R.
 SIGNATURE_PARAMETER_TOLERANCE_OVER_R = 1.0e-3
+ARC_FIT_TOLERANCE_OVER_R = SIGNATURE_PARAMETER_TOLERANCE_OVER_R
+SAGITTA_OVER_R = 0.05
 
 
 def arc_groups(perimeter, radius, corner_tolerance_degrees=CORNER_ANGLE_TOLERANCE_DEGREES):
-    """The classifier's arc rule (surfaceresponseidentification.cpp DetectArcs, decision 82(3)
-    with the decision-85(1) amendments): along every path of PHYSICAL edges through vertices
-    with exactly two of them (regular or corner), the joints are the non-collinear vertices;
-    from every unconsumed joint the largest range of at least three following joints turning
-    the same way, totalling at most 180 deg and fitting one circle with the two arm tangents
-    (tangent lengths equal within ARC_FIT_TOLERANCE, every joint within min(ARC_FIT_TOLERANCE x
-    radius, ARC_FIT_ABSOLUTE_TOLERANCE_OVER_R x R) of the circle; antiparallel arms: half their
-    separation) is an arc. The pieces between consecutive joints are shorter than 2R, except
-    that a piece >= 2R is allowed between two sub-corner joints (a chord of a smooth polyline
-    bend): in that long-chord regime every joint must lie on the least-squares circle within
-    the signature parameter tolerance, every interior turn must satisfy the inscribed-angle
-    relation within the fit tolerance, and the scan stops at the first failed fit. A closed
-    path of sub-corner joints on one circle turning 360 deg is one arc. Both traversal
-    directions are scanned and the set absorbing more joints wins (then fewer arcs, then the
-    smaller invariant serialisation). Radius below R with a turn above the corner threshold:
-    one rounded corner; otherwise a bend of that exact radius (the tangent-length circle when
-    every joint lies on it within 10x the parameter tolerance, else the least-squares circle).
-    Corner vertices inside an arc are absorbed (no corner of their own). Returns the arcs with
-    their absorbed corner vertices."""
+    """The classifier's arc rule (surfaceresponseidentification.cpp DetectArcs; the sagitta
+    form of USER decision 117(4)): along every path of PHYSICAL edges through vertices with
+    exactly two of them (regular or corner), the joints are the non-collinear vertices; from
+    every unconsumed joint the largest range of at least three following joints turning the
+    same way and totalling at most 180 deg is an arc iff its joint vertices lie on one circle
+    within ARC_FIT_TOLERANCE_OVER_R x R and every chord's sagitta is below SAGITTA_OVER_R x R.
+    The circle is the one tangent to both arms at the end joints when every joint lies on it
+    (tangent-length radius); otherwise, for a radius >= R over at least four joints, the
+    least-squares circle of the joints, each arm meeting the circle's tangent at its end joint
+    within the joint noise threshold or lying on the circle as a chord. No joint-turn threshold
+    and no piece-length rule enter. A closed path of joints turning one way through 360 deg on
+    one circle (fit tolerance, sagitta cap) is one arc. Both traversal directions are scanned
+    and the set absorbing more joints wins (then fewer arcs, then the smaller invariant
+    serialisation). Radius below R: one rounded corner (any turn); otherwise a bend of that
+    exact radius. Corner vertices inside an arc are absorbed (no corner of their own). Returns
+    the arcs with their absorbed corner vertices."""
     quantum = 1.0e-8 * radius
-    interaction = 2.0 * radius
-    corner_turn = math.radians(corner_tolerance_degrees)
-    parameter_tolerance = SIGNATURE_PARAMETER_TOLERANCE_OVER_R * radius
+    noise_turn = math.radians(corner_tolerance_degrees)
+    fit_tolerance = ARC_FIT_TOLERANCE_OVER_R * radius
+    sagitta_cap = SAGITTA_OVER_R * radius
     incident = defaultdict(list)
     for index, edge in enumerate(perimeter.edges):
         if edge.kind == "PHYSICAL" and edge.chain >= 0:
@@ -1009,15 +1012,15 @@ def arc_groups(perimeter, radius, corner_tolerance_degrees=CORNER_ANGLE_TOLERANC
                 edges_d, vertices_d = path_edges, path_vertices
             else:
                 edges_d, vertices_d = path_edges[::-1], path_vertices[::-1]
-            candidate = _scan_arc_path(perimeter, edges_d, vertices_d, closed, normal, radius, interaction, quantum,
-                                       corner_turn, parameter_tolerance, least_squares_circle)
+            candidate = _scan_arc_path(perimeter, edges_d, vertices_d, closed, normal, radius, quantum, noise_turn,
+                                       fit_tolerance, sagitta_cap, least_squares_circle)
             if found is None or _arc_set_score(candidate, perimeter, path_vertices, path_edges, closed, normal, radius) > \
                     _arc_set_score(found, perimeter, path_vertices, path_edges, closed, normal, radius):
                 found = candidate
         for arc in found:
             arc["Chain"] = chain
             rho, total = arc["Radius"], arc["Turn"]
-            corner = rho < radius - quantum and math.degrees(total) > corner_tolerance_degrees
+            corner = arc["Tangent"] and rho < radius - quantum
             arcs.append({
                 "Joints": arc["Joints"],
                 "AbsorbedCorners": [v for v in arc["Joints"] if perimeter.vertices[v].physical_kind == "CORNER"],
@@ -1025,6 +1028,7 @@ def arc_groups(perimeter, radius, corner_tolerance_degrees=CORNER_ANGLE_TOLERANC
                 "RadiusOverR": rho / radius,
                 "TurnDegrees": math.degrees(total),
                 "AngleDegrees": 180.0 - math.degrees(total),
+                "MaxChordSagittaOverR": arc["Sagitta"] / radius,
                 "Rounded": corner,
                 "Chain": chain,
                 "Vertices": len(arc["Joints"]),
@@ -1073,8 +1077,8 @@ class _Reversed:
         return self.value == other.value
 
 
-def _scan_arc_path(perimeter, path_edges, path_vertices, closed, normal, radius, interaction, quantum, corner_turn,
-                   parameter_tolerance, least_squares_circle):
+def _scan_arc_path(perimeter, path_edges, path_vertices, closed, normal, radius, quantum, noise_turn,
+                   fit_tolerance, sagitta_cap, least_squares_circle):
     """One traversal direction of the classifier's greedy arc scan (DetectArcs ScanPath)."""
     n = len(path_edges)
     points = [perimeter.vertices[x].point for x in path_vertices]
@@ -1108,125 +1112,139 @@ def _scan_arc_path(perimeter, path_edges, path_vertices, closed, normal, radius,
         best = int(np.argmax(gaps))
         joints = joints[best:] + joints[:best]
 
-    def gap(ja, jb):
-        d = position[joints[jb][1]] - position[joints[ja][1]]
-        return d + length if d < 0.0 else d
+    def point(j):
+        return perimeter.vertices[joints[j][0]].point
 
-    def turns_consistent(indices, rho, cyclic):
-        """Inscribed-angle relation at every interior joint (all joints on a loop)."""
+    def on_circle(indices, centre, rho):
+        return all(abs(float(np.linalg.norm(point(j) - centre)) - rho) < fit_tolerance - quantum for j in indices)
+
+    def max_sagitta(indices, rho, cyclic):
+        worst = 0.0
         count = len(indices)
+        for q in range(count if cyclic else count - 1):
+            chord = float(np.linalg.norm(point(indices[q]) - point(indices[(q + 1) % count])))
+            if chord >= 2.0 * rho:
+                return math.inf
+            worst = max(worst, rho - math.sqrt(rho * rho - 0.25 * chord * chord))
+        return worst
 
-        def central(ja, jb):
-            chord = float(np.linalg.norm(perimeter.vertices[joints[ja][0]].point - perimeter.vertices[joints[jb][0]].point))
-            return 2.0 * math.asin(max(0.0, min(1.0, 0.5 * chord / rho)))
+    def sagitta_resolved(sagitta):
+        return math.isfinite(sagitta) and sagitta < sagitta_cap - quantum
 
-        for q in range(0 if cyclic else 1, count if cyclic else count - 1):
-            prev, here, nxt = indices[(q + count - 1) % count], indices[q], indices[(q + 1) % count]
-            expected = 0.5 * (central(prev, here) + central(here, nxt))
-            if abs(joints[here][4] - expected) > ARC_FIT_TOLERANCE * expected:
-                return False
-        return True
+    def end_consistent(j, arm_direction, neighbour, arm_edge, centre, rho, first):
+        """The kink between the arm and the circle's tangent at an end joint of a least-squares
+        bend is below the noise threshold, or the arm's far vertex lies on the circle (a chord
+        arm: an arc starting at a corner on its circle)."""
+        at = point(j)
+        tangent = np.cross(normal, at - centre)
+        tangent = tangent / np.linalg.norm(tangent)
+        along = float(tangent @ (point(neighbour) - at))
+        if first != (along > 0.0):
+            tangent = -tangent
+        kink = math.acos(max(-1.0, min(1.0, float(arm_direction @ tangent))))
+        if kink <= noise_turn:
+            return True
+        far = perimeter.vertices[_other_vertex(perimeter, arm_edge, joints[j][0])].point
+        return abs(float(np.linalg.norm(far - centre)) - rho) < fit_tolerance - quantum
 
     def try_fit(i, count):
-        first, last = joints[i], joints[(i + count - 1) % m]
+        indices = [(i + j) % m for j in range(count)]
+        first, last = joints[i], joints[indices[-1]]
         ta, tb = first[2], last[3]
-        Ta, Tb = perimeter.vertices[first[0]].point, perimeter.vertices[last[0]].point
-        turn = sum(joints[(i + j) % m][4] for j in range(count))
+        Ta, Tb = point(i), point(indices[-1])
+        turn = sum(joints[j][4] for j in indices)
         angle = math.acos(max(-1.0, min(1.0, float(ta @ tb))))
         if abs(angle - turn) > 1.0e-6 and abs(2.0 * math.pi - angle - turn) > 1.0e-6:
             return None
         na = first[5] * np.cross(normal, ta)
         na = na / np.linalg.norm(na)
+        # the circle tangent to both arms at the end joints
+        rho, centre, tangent_circle = 0.0, None, False
         if math.sin(turn) > 1.0e-9 and turn < math.pi - 1.0e-9:
             w = Tb - Ta
             wx, wy = float(w @ ta), float(w @ na)
             tbx, tby = float(tb @ ta), float(tb @ na)
-            if abs(tby) <= 1.0e-12:
-                return None
-            b = wy / tby
-            a = wx - b * tbx
-            if not (a > 0.0 and b > 0.0) or abs(a - b) > ARC_FIT_TOLERANCE * max(a, b):
-                return None
-            rho = 0.5 * (a + b) / math.tan(0.5 * turn)
-            centre = Ta + rho * na
+            if abs(tby) > 1.0e-12:
+                b = wy / tby
+                a = wx - b * tbx
+                if a > 0.0 and b > 0.0:
+                    rho = 0.5 * (a + b) / math.tan(0.5 * turn)
+                    centre = Ta + rho * na
+                    tangent_circle = rho > 0.0
         else:
             w = Tb - Ta
-            along, across = float(w @ ta), float(w @ na)
-            if across <= 0.0 or abs(along) > ARC_FIT_TOLERANCE * across:
-                return None
-            rho = 0.5 * across
-            centre = Ta + rho * na
-        if not rho > 0.0:
+            across = float(w @ na)
+            if across > 0.0:
+                rho = 0.5 * across
+                centre = Ta + rho * na
+                tangent_circle = True
+        if tangent_circle and on_circle(indices, centre, rho):
+            sagitta = max_sagitta(indices, rho, False)
+            if sagitta_resolved(sagitta):
+                return {"Radius": rho, "Turn": turn, "Centre": centre, "Tangent": True, "Sagitta": sagitta}
             return None
-        radial_tolerance = min(ARC_FIT_TOLERANCE * rho, ARC_FIT_ABSOLUTE_TOLERANCE_OVER_R * radius)
-        for j in range(count):
-            p = perimeter.vertices[joints[(i + j) % m][0]].point
-            if abs(float(np.linalg.norm(p - centre)) - rho) > radial_tolerance:
-                return None
-        return rho, turn, centre
+        # least-squares bend (radius >= R) over at least four joints, arms consistent at the ends
+        if count < 4:
+            return None
+        ls = least_squares_circle([point(j) for j in indices], ta)
+        if ls is None:
+            return None
+        centre, rho = ls
+        if rho < radius - quantum or not on_circle(indices, centre, rho):
+            return None
+        if not end_consistent(i, ta, indices[1], path_edges[(first[1] - 1) % n], centre, rho, True):
+            return None
+        if not end_consistent(indices[-1], tb, indices[-2], path_edges[last[1] % n], centre, rho, False):
+            return None
+        sagitta = max_sagitta(indices, rho, False)
+        if not sagitta_resolved(sagitta):
+            return None
+        return {"Radius": rho, "Turn": turn, "Centre": centre, "Tangent": False, "Sagitta": sagitta}
 
     consumed = [False] * m
-    # A closed path of sub-corner joints turning one way through 360 deg on one circle is one
-    # arc (a round pad or hole).
+    # A closed path of joints turning one way through 360 deg on one circle is one arc (a round
+    # pad or hole); the sagitta cap alone tells a circle from a polygon.
     if closed and m >= 3:
         total = sum(j[4] for j in joints)
-        same_sign = all(j[5] == joints[0][5] and j[4] <= corner_turn for j in joints)
-        pieces_ok = all(gap(j, (j + 1) % m) < interaction - quantum or (joints[j][4] <= corner_turn and joints[(j + 1) % m][4] <= corner_turn) for j in range(m))
-        if same_sign and pieces_ok and abs(total - 2.0 * math.pi) < 1.0e-6:
-            fit = least_squares_circle([perimeter.vertices[j[0]].point for j in joints], joints[0][2])
+        same_sign = all(j[5] == joints[0][5] for j in joints)
+        if same_sign and abs(total - 2.0 * math.pi) < 1.0e-6:
+            fit = least_squares_circle([point(j) for j in range(m)], joints[0][2])
             if fit is not None:
                 centre, rho = fit
-                on_circle = all(abs(float(np.linalg.norm(perimeter.vertices[j[0]].point - centre)) - rho) <= ARC_FIT_TOLERANCE * rho for j in joints)
-                if on_circle and turns_consistent(list(range(m)), rho, True):
-                    found.append({"Joints": [j[0] for j in joints], "Radius": rho, "Turn": 2.0 * math.pi, "Centre": centre})
-                    consumed = [True] * m
+                if on_circle(list(range(m)), centre, rho):
+                    sagitta = max_sagitta(list(range(m)), rho, True)
+                    if sagitta_resolved(sagitta):
+                        found.append({"Joints": [j[0] for j in joints], "Radius": rho, "Turn": 2.0 * math.pi, "Centre": centre, "Tangent": False, "Sagitta": sagitta})
+                        consumed = [True] * m
     for i in range(m):
         if consumed[i]:
             continue
         best_count, best = 0, None
         turn = joints[i][4]
-        long_pieces = False
         for count in range(2, m + 1):
-            prev, k = (i + count - 2) % m, (i + count - 1) % m
+            k = (i + count - 1) % m
             if (not closed and i + count - 1 >= m) or k == i or consumed[k] or joints[k][5] != joints[i][5]:
                 break
-            if not gap(prev, k) < interaction - quantum:
-                if joints[prev][4] > corner_turn or joints[k][4] > corner_turn:
-                    break
-                long_pieces = True
             turn += joints[k][4]
             if turn > math.pi + 1.0e-9:
                 break
             if count < 3:
                 continue
             fit = try_fit(i, count)
-            if fit is not None and long_pieces:
-                indices = [(i + j) % m for j in range(count)]
-                ls = least_squares_circle([perimeter.vertices[joints[j][0]].point for j in indices], joints[i][2])
-                ok = ls is not None and all(abs(float(np.linalg.norm(perimeter.vertices[joints[j][0]].point - ls[0])) - ls[1]) <= parameter_tolerance for j in indices) \
-                    and turns_consistent(indices, ls[1], False)
-                fit = fit if ok else None
             if fit is not None:
                 best, best_count = fit, count
-            elif long_pieces:
-                break
         if best_count == 0:
             continue
         members = [joints[(i + j) % m][0] for j in range(best_count)]
         for j in range(best_count):
             consumed[(i + j) % m] = True
-        rho, total, centre = best
-        corner = rho < radius - quantum and math.degrees(total) > math.degrees(corner_turn)
-        if not corner:
-            # A bend keeps the tangent-length circle when every joint lies on it within 10x the
-            # parameter tolerance, else the least-squares circle (non-tangent arms).
-            deviation = max(abs(float(np.linalg.norm(perimeter.vertices[v].point - centre)) - rho) for v in members)
-            if deviation > 10.0 * parameter_tolerance:
-                ls = least_squares_circle([perimeter.vertices[v].point for v in members], joints[i][2])
-                if ls is not None:
-                    centre, rho = ls
-        found.append({"Joints": members, "Radius": rho, "Turn": total, "Centre": centre})
+        found.append(dict(best, Joints=members))
     return found
+
+
+def _other_vertex(perimeter, edge, vertex):
+    a, b = perimeter.edges[edge].vertices
+    return b if a == vertex else a
 
 
 def rounded_runs(perimeter, radius):

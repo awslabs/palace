@@ -2405,6 +2405,11 @@ double Distance(const Point3D &a, const Point3D &b)
 // requirements output under Library.DecisionQuantization.
 constexpr double kDecisionLengthQuantumRelativeToMatchingRadius = 1.0e-8;
 constexpr double kDecisionDirectionQuantum = 1.0e-12;
+// Corner class of the legacy per-group classifier (PatchConstruction "Legacy", comparison
+// only): a two-segment vertex turning more than this is a corner, a smaller turn continues
+// the chain (decision 73). The identification uses the joint noise threshold
+// kCornerTurnToleranceDegrees (metaledge.hpp; USER decision 117(4)) instead.
+constexpr double kLegacyCornerTurnToleranceDegrees = 30.0;
 
 // Axisymmetric (r, z) edge sites: the gap direction of an edge on a curved (revolved) edge
 // is radial; a site whose in-plane gap direction makes a cosine below this with the r axis
@@ -7406,7 +7411,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         std::chrono::duration<double>(std::chrono::steady_clock::now() - geometry_started)
             .count());
   };
-  const auto geometry = ExtractMetalEdgeGeometry(mesh, iodata.boundaries, surface);
+  auto geometry = ExtractMetalEdgeGeometry(mesh, iodata.boundaries, surface);
   MFEM_VERIFY(!geometry.Empty(),
               "Fabrication-process response matching found no metal perimeter!");
   GeometryStageLine("extracted: " + std::to_string(geometry.segments.size()) +
@@ -8467,6 +8472,23 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                 "Fabrication-process response matching produced no usable correction "
                 "patches!");
     return result;
+  }
+  // Legacy per-group classification (comparison only): it reads fillets as runs of REGULAR
+  // sub-corner joints and pairs / neighbourhoods on physical chains broken at corners of the
+  // former 30 deg class, so it re-reads the vertex classes and chains of the same segments at
+  // that class (kLegacyCornerTurnToleranceDegrees; the segments, vertices, faces and their
+  // numbering are those of the extraction above: only the vertex types and chain ids differ;
+  // the face pointers of the plan-view mask index are rebuilt). The identification and its
+  // manifest above use the joint noise threshold (USER decision 117(4)).
+  {
+    MetalSurfaceExtraction legacy_surface = surface;
+    legacy_surface.corner_turn_tolerance_degrees = kLegacyCornerTurnToleranceDegrees;
+    geometry = ExtractMetalEdgeGeometry(mesh, iodata.boundaries, legacy_surface);
+    surface_faces_by_component.clear();
+    for (const auto &face : geometry.surface_faces)
+    {
+      surface_faces_by_component[face.component].push_back(&face);
+    }
   }
   std::set<std::size_t> identification_excluded_segments;
   for (std::size_t i = 0; i < identification.segments.size(); i++)
