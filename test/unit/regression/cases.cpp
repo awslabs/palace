@@ -961,6 +961,35 @@ TEST_CASE("narrow_ring_london_flux", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("narrow_ring", "narrow_ring.json", "", opts);
 }
 
+// Shorted micro-coax driven by a radial SurfaceCurrent, PEC walls: L matches the exact
+// mu0 l/(2 pi) ln(b/a) to 0.09% on the 256-element example mesh.
+TEST_CASE("coaxial_magnetostatic_pec", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("coaxial", "coaxial_magnetostatic_pec.json",
+                                  "magnetostatic_pec", opts);
+}
+
+// The same coax with London walls (lambda = 0.4 um, d = 0.1 um). Current-driven finite
+// lambda: the kinetic energy lives only in the sheet term (domain E_mag stays geometric),
+// and L - L_PEC matches mu0 lambda coth(d/lambda) l/(2 pi) (1/a + 1/b) to 0.002%.
+TEST_CASE("coaxial_magnetostatic_superconductor", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("coaxial", "coaxial_magnetostatic_superconductor.json",
+                                  "magnetostatic_superconductor", opts);
+}
+
 // London flux film under non-conformal AMR. Locks the NC-safe cut generator (a_h = Grad ψ -
 // a_angle): Grad ψ survives the true-DOF round trip exactly, so the fluxoid and
 // curl-free-on-Σ gauge hold on the refined mesh and L converges upward (5.16 -> 5.33 pH
