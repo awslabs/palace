@@ -660,11 +660,12 @@ def hairpin(rho, gap, half_y):
 
 def kinked_hairpin(gap, width, half_y, turns_degrees=(22.0, 27.0, 24.0, 29.0, 23.0, 28.0, 27.0), chords=(0.35, 0.65, 0.45, 0.8, 0.5, 0.7)):
     """A strip whose inner edge folds through 180 deg along a NON-circular polyline (unequal
-    chords and turns, every turn below the corner threshold, the total 180 deg): no arc fits
-    it (the arc rule's 5 % circle test fails), so the fold stays inside the chain and the two
-    inner legs, `gap` apart, are one chain facing itself — the self-pairing case. The outer
-    edge is the exact offset polyline at `width` (> 2R: no strip pair). The fold's chords are
-    scaled so that the polyline closes on the leg separation."""
+    chords and turns of 18-32 deg, the total 180 deg): no arc fits it (no circle within the
+    fit tolerance), so its kinks are corners under the sagitta rule (USER decision 117(4);
+    before it, sub-30 deg joints inside the chain) and the two inner legs, `gap` apart, are
+    one chain facing itself — the self-pairing case. The outer edge is the exact offset
+    polyline at `width` (> 2R: no strip pair). The fold's chords are scaled so that the
+    polyline closes on the leg separation."""
     heading = -0.5 * math.pi
     pts = [np.array([0.0, 0.0])]
     turns = [t * 180.0 / sum(turns_degrees) for t in turns_degrees]
@@ -954,8 +955,8 @@ def stack_suite():
     # (no arc fits: the fold stays in the chain) with the legs 1.5 R apart: the inner chain
     # pairs with itself beyond the pi R neighbourhood (SameConductorGap), the fold a curved
     # edge; the outer edge (offset 2.5 R: no strip pair) isolated legs + a curved fold.
-    layouts.append(layout("hairpin-kinked-g1p5", [sheet(GROUND, kinked_hairpin(1.5 * R, 2.5 * R, 30.0))], half_x=20.0, half_y=30.0, lc_fine=0.3, lc_far=6.0, notes="kinked hairpin: the inner edge folds through 180 deg along a non-circular polyline (turns 18-32 deg, unequal chords) with the legs 1.5 R apart: one chain facing itself -> SameConductorGap beyond pi R of arc length; the fold's end faces the far leg within 2R beyond pi R of arc at a non-constant separation: events, a cluster (decision 82(2) self events point-wise, 2026-09-26); the rest of the fold a CurvedEdge; outer edge 2.5 R away: two isolated legs + a curved fold", expected={
-        "FeaturesSubset": {"SameConductorGap": 1, "SpatialEdgeCluster": 1}, "FacingGates": True}))
+    layouts.append(layout("hairpin-kinked-g1p5", [sheet(GROUND, kinked_hairpin(1.5 * R, 2.5 * R, 30.0))], half_x=20.0, half_y=30.0, lc_fine=0.3, lc_far=6.0, notes="kinked hairpin: the inner edge folds through 180 deg along a non-circular polyline (turns 18-32 deg, unequal chords) with the legs 1.5 R apart: the legs are one chain facing itself -> SameConductorGap beyond pi R of arc length; under the sagitta rule (USER decision 117(4)) the seven kinks of each edge are corners (no circle fits them within 1e-3 R), the inner fold's corners face each other and the far leg within 2R -> one cluster, the outer fold's corners (2.5 R away, beyond 2R of the inner ones) another; before the rule the sub-30 deg kinks stayed inside the chain (one cluster at the fold end, the rest of the fold a CurvedEdge)", expected={
+        "FeaturesSubset": {"SameConductorGap": 1, "SpatialEdgeCluster": 2}, "FacingGates": True}))
     return layouts
 
 
