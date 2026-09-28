@@ -1,0 +1,128 @@
+```@raw html
+<!---
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-License-Identifier: Apache-2.0
+--->
+```
+
+# Substructuring for Region Redesign
+
+When a design iterates on one part of a large device (one qubit on a chip, say), every
+iteration normally solves the whole device again, although most of it never changes.
+*Palace*'s substructuring splits the domain into a **region** (the part being redesigned) and
+an **environment** (everything else). The environment is condensed onto its interface with the
+region, once; each redesign then only solves the region against the condensed environment.
+
+Substructuring is available for [electrostatic](../guide/problem.md#Electrostatic-problems) capacitance
+extraction and [magnetostatic](../guide/problem.md#Magnetostatic-problems) inductance extraction with
+flux-loop excitations.
+
+## How it works
+
+Write the discrete problem on the degrees of freedom of the region interior ``R``, the shared
+interface ``\Gamma``, and the environment interior ``E``. Eliminating ``E`` leaves the region
+problem with one extra term on the interface, the environment's Schur complement
+
+```math
+\bm{S}_E = \bm{A}_{\Gamma\Gamma} - \bm{A}_{\Gamma E}\,\bm{A}_{EE}^{-1}\,\bm{A}_{E\Gamma},
+```
+
+a dense ``|\Gamma| \times |\Gamma|`` matrix (the discrete Dirichlet-to-Neumann map of the
+environment). The condensation is an exact algebraic rearrangement: the region solution, and the
+capacitance or inductance matrix, are those of the full solve. Terminals may lie in the region,
+in the environment, or span both; the environment's coupling to its terminals is condensed
+together with ``\bm{S}_E``, so terminal energies need no environment solve.
+
+The environment model (``\bm{S}_E`` and the terminal couplings) can be saved to a file. A later
+run loads it and solves only the region, possibly after re-meshing the region: its cost then
+follows the size of the region rather than of the device.
+
+## Configuration
+
+Substructuring is enabled with a
+[`config["Solver"]["Substructuring"]`](../config/reference.md#config-solver-substructuring) block. The
+region and the environment are given by domain attributes, which together must cover the mesh:
+
+```json
+"Substructuring":
+{
+  "Region": { "Attributes": [1, 2] },
+  "Environment": { "Attributes": [10, 11] },
+  "Mode": "Offline",
+  "SaveModel": "postpro/environment.model"
+}
+```
+
+  - `"Mode": "Offline"` condenses the environment and, if `"SaveModel"` is set, writes the
+    environment model to that file.
+  - `"Mode": "Online"` loads the model from `"SaveModel"` and solves only the region. The region
+    may be re-meshed between runs, as long as the environment and the interface are unchanged.
+
+The remaining settings (terminals, materials, `"Solver"/"Order"`, ...) are those of the regular
+electrostatic or magnetostatic simulation. Field output follows
+`"Solver"/"Electrostatic"/"Save"` and `"Solver"/"Magnetostatic"/"Save"`; the environment part
+of a saved field is recovered only when fields are written.
+
+### Choosing the region
+
+Most meshes do not come with a region/environment split. Any split into two sets of domain
+attributes works: the interface follows the element faces between them and need not be planar.
+The cost of the condensation grows with the number of interface degrees of freedom, so a region
+boundary in a coarsely meshed part of the domain (substrate or vacuum away from the metal) is
+cheaper than one that cuts through a finely meshed area. The
+[transmon example](@ref substructuring-transmon-example) retags the elements of an existing mesh by
+the position of their centroids.
+
+### Optional approximations
+
+Two optional settings trade a controlled loss of accuracy for resources. Both default to `0`,
+which keeps the condensation exact.
+
+  - `"FactorizationTol"`: relative tolerance of a block low-rank (BLR) approximation of the
+    environment factorization, which reduces the time to condense the environment. It is used
+    when *Palace* is built with MUMPS. The error in the extracted matrices follows the tolerance
+    but is not bounded by it; `1e-12` is a conservative choice.
+  - `"InterfaceOffdiagTol"`: relative tolerance of a hierarchical (HODLR) compression of
+    ``\bm{S}_E``, which reduces its memory for large interfaces. It does not reduce the time to
+    condense the environment.
+
+### Solvers
+
+The environment and the region are factored with a sparse direct solver when they fit, and
+solved iteratively otherwise. With MUMPS, the environment Schur complement comes from a single
+partial factorization. When running MUMPS with MPI, setting `OPENBLAS_NUM_THREADS=1` (or the
+equivalent for the BLAS in use) avoids oversubscribing cores.
+
+## Magnetostatics
+
+Magnetostatic substructuring extracts the inductance matrix from
+[`config["Boundaries"]["FluxLoop"]`](../config/reference.md#config-boundaries-fluxloop)
+excitations. The perfectly conducting boundaries, including the flux-loop films, act as the
+Dirichlet boundaries of the condensation and must be listed as
+[`config["Boundaries"]["Terminal"]`](../config/reference.md#config-boundaries-terminal)
+attributes. A small mass regularization keeps the curl-curl operator definite; the extracted
+energies use the unregularized operator.
+
+!!! note
+
+    `"SurfaceCurrent"` excitations are not supported with substructuring yet: a configuration
+    that combines them is rejected.
+
+## [Example: transmon capacitance](@id substructuring-transmon-example)
+
+The [transmon example](../examples/transmon.md) mesh contains a transmon island, a feedline, and
+a ground plane with a readout resonator, all as a single metal boundary. The script
+[`examples/transmon/transmon_substructuring.py`](https://github.com/awslabs/palace/blob/main/examples/transmon/transmon_substructuring.py)
+splits the metal into its three conductors (the terminals) and assigns the elements in a box
+around the qubit to the region:
+
+```bash
+cd examples/transmon
+python3 transmon_substructuring.py
+palace transmon_substructuring_offline.json   # condense the environment, save the model
+palace transmon_substructuring_online.json    # reuse the model: only the region is solved
+```
+
+Both runs write the ``3 \times 3`` Maxwell capacitance matrix to `terminal-C.csv`; the online
+run solves only the region. The box can be changed with `--box`; the region may then be
+redesigned and re-meshed with the environment kept as is.

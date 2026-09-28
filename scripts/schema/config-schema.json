@@ -2852,12 +2852,13 @@
     "Substructuring": {
       "type": "object",
       "title": "Substructuring",
-      "description": "Domain-decomposition substructuring: condense the environment (rest of the domain) to a Dirichlet-to-Neumann boundary operator on the shared interface and solve the region of interest against it, enabling region redesign without re-solving the environment.",
+      "description": "Substructuring for electrostatic and magnetostatic simulations: the environment (the rest of the domain) is condensed onto its interface with the region of interest, and the region is solved against the condensed environment. The condensation is exact; with a saved model, repeated region redesigns reuse it without solving the environment again. Magnetostatic substructuring supports \"FluxLoop\" excitations.",
       "additionalProperties": false,
       "required": ["Region", "Environment"],
       "properties": {
         "Region": {
           "type": "object",
+          "description": "The region of interest: solved in every run and free to be redesigned or re-meshed.",
           "additionalProperties": false,
           "required": ["Attributes"],
           "properties": {
@@ -2870,6 +2871,7 @@
         },
         "Environment": {
           "type": "object",
+          "description": "The environment: condensed once onto its interface with the region.",
           "additionalProperties": false,
           "required": ["Attributes"],
           "properties": {
@@ -2882,24 +2884,24 @@
         },
         "Mode": {
           "$ref": "#/$defs/SubstructuringMode",
-          "description": "Whether to condense the environment now (Offline) or load a saved model (Online).",
+          "description": "\"Offline\" condenses the environment (and writes \"SaveModel\" if given); \"Online\" loads the model from \"SaveModel\" and solves only the region. The online run may use a re-meshed region, provided the interface is unchanged.",
           "default": "Offline"
         },
         "SaveModel": {
           "type": "string",
-          "description": "Optional path for the serialized environment DtN model, for offline/online reuse."
+          "description": "Path of the environment model file written in \"Offline\" mode and read in \"Online\" mode."
         },
         "InterfaceOffdiagTol": {
           "type": "number",
           "minimum": 0,
           "default": 0,
-          "description": "Relative tolerance for hierarchical (HODLR) off-diagonal low-rank compression of the interface operator S_E; 0 keeps it dense."
+          "description": "Relative tolerance for a hierarchical (HODLR) compression of the condensed interface operator, reducing its memory; 0 keeps it dense (exact)."
         },
         "FactorizationTol": {
           "type": "number",
           "minimum": 0,
           "default": 0,
-          "description": "Relative block low-rank (BLR) tolerance for the MUMPS environment factorization; 0 is exact. Trades a controlled accuracy loss (~the tolerance) for a much faster factorization. Only used with MUMPS."
+          "description": "Relative tolerance for a block low-rank (BLR) approximation of the environment factorization, trading a controlled accuracy loss for a faster factorization; 0 is exact. Only used when Palace is built with MUMPS."
         }
       }
     },

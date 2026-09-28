@@ -96,7 +96,8 @@ makedocs(
         "Features" => Any[
             "features/farfield.md",
             "features/adaptive_driven_solver.md",
-            "features/circuit_extraction.md"
+            "features/circuit_extraction.md",
+            "features/substructuring.md"
         ],
         "Examples" => Any[
             "examples/examples.md",

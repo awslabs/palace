@@ -13,6 +13,15 @@
 namespace palace
 {
 
+//
+// Substructuring building blocks. MarkInterfaceTrueDofs is used by SubstructuringSolver
+// (models/substructuringsolver.hpp). The remaining pieces (signed submesh-to-parent DOF
+// maps, Substructure, DtNBoundaryOperator, RegionDtNOperator) are serial, conforming,
+// order-1 building blocks for composing independently meshed substructures (multi-module
+// assembly, module reuse); they are exercised by the unit tests and are the basis for that
+// future capability rather than part of the current solve path.
+//
+
 // For a conforming submesh finite element space cut from a parent space, build the signed
 // map from each submesh (local) DOF to its parent DOF: par_dof[i] is the parent DOF and
 // sign[i] the ±1 orientation (always +1 for H1; ±1 for H(curl)/H(div)). Read from the

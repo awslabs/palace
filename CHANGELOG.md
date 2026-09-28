@@ -17,6 +17,19 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### New Features
+
+  - Added substructuring for electrostatic and magnetostatic simulations
+    (`config["Solver"]["Substructuring"]`): the environment of a region of interest is
+    condensed exactly onto their shared interface, and the region is solved against it. A
+    saved environment model is reused across runs, including after the region is
+    re-meshed, and the capacitance or inductance matrix of a reused model needs no
+    environment solve. Includes optional block low-rank environment factorization with
+    MUMPS (`"FactorizationTol"`) and hierarchical compression of the interface operator
+    (`"InterfaceOffdiagTol"`). Magnetostatic substructuring supports `"FluxLoop"`
+    excitations. Adds the `examples/transmon` substructuring example.
+    [PR XXX](https://github.com/awslabs/palace/pull/XXX).
+
 #### Performance Improvements
 
   - Accelerated adaptive online sweeps by replacing 2D wave-port EVP solves with a per-port
