@@ -6850,6 +6850,35 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
         const std::string other = ConvexityName(last);
         convexity = other == "Convex" ? "Concave" : other == "Concave" ? "Convex" : other;
       }
+      if (convexity.empty() && lead.sides > 2 && signature.contains("Edges"))
+      {
+        // Neither outer side of a k > 2 stack carries curvature of its own (the bent side
+        // is an interior one): read the first interior side that does, related to the
+        // first edge by the gap sides (concentric sides bend in one geometric sense, so
+        // their convexities agree when their gaps point the same way and are opposite
+        // otherwise — the same relation the far-side rule above uses; review J/C4 m5).
+        const auto &signature_edges = signature["Edges"];
+        const int first_gap = signature_edges.at(0).value("GapSide", 1);
+        for (int k = 1; k + 1 < lead.sides && convexity.empty(); k++)
+        {
+          const int side = lead.chirality < 0 ? lead.sides - 1 - k : k;
+          SignedCurvatureExtremes interior;
+          for (const std::size_t i : members)
+          {
+            if (assigned[i].side == side)
+            {
+              AccumulateSignedCurvature(ChainOf(assigned[i].chain), assigned[i].x0,
+                                        assigned[i].x1, interior);
+            }
+          }
+          const std::string name = ConvexityName(interior);
+          const bool same_gap = signature_edges.at(k).value("GapSide", 1) * first_gap > 0;
+          convexity = same_gap || name == "Mixed" ? name
+                      : name == "Convex"          ? "Concave"
+                      : name == "Concave"         ? "Convex"
+                                                  : name;
+        }
+      }
       MFEM_VERIFY(!convexity.empty(), "A curved pair / stack without signed curvature!");
       signature["Convexity"] = convexity;
     }

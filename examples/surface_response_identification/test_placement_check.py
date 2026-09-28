@@ -253,6 +253,7 @@ class CornerStackPair(unittest.TestCase):
         pairs = next(g for g in gates if g["Gate"] == "A10-placement-pairs")
         self.assertEqual(pairs["Status"], "PASS")
         self.assertEqual(pairs["Detail"]["ConvexityChecks"], 1)
+        self.assertEqual(pairs["Detail"]["ConvexityNotEvaluable"], 0)
         for wrong in ("gap@concave-kappa0.333333333-cubic", "gap-concave-0.1"):
             gates, _ = PC.placement_gates(identification, [patch(3, wrong, origin, outward, segment=0)], library, R)
             pairs = next(g for g in gates if g["Gate"] == "A10-placement-pairs")

@@ -424,6 +424,7 @@ def placement_gates(identification, patches, library, radius):
             ordered = sides if chirality >= 0 else list(reversed(sides))
             strip = kind in STRIP_TYPES
             convexity_checks = 0
+            convexity_not_evaluable = 0
             if len(ordered) != 2:
                 entry["Defects"].append({"Point": "side count", "DeviationOverR": math.inf, "Mapped": None, "Sides": len(ordered)})
                 entry["Checks"] += 1
@@ -445,9 +446,15 @@ def placement_gates(identification, patches, library, radius):
                             entry["Checks"] += 1
                             if placed != expected and len(entry["Defects"]) < 8:
                                 entry["Defects"].append({"Point": f"patch {row['Patch']} convexity", "DeviationOverR": math.inf, "Mapped": [float(x) for x in origin], "Model": row["Model"], "Expected": expected, "Placed": placed})
+                        else:
+                            # e1 is not on a fitted arc within 5 % of the separation (a chorded
+                            # bend without an arc: the straight-like first-order patches of a
+                            # polyline meander): no convexity check there (review J/C4 m6).
+                            convexity_not_evaluable += 1
             entry["Patches"] = len(rows)
             entry["Models"] = model_names
             entry["ConvexityChecks"] = convexity_checks
+            entry["ConvexityNotEvaluable"] = convexity_not_evaluable
             results["Pairs"].append(entry)
         else:
             continue  # isolated / curved edges: the patch is the quadrature point itself
@@ -466,6 +473,7 @@ def placement_gates(identification, patches, library, radius):
             "Models": sorted({m for e in entries for m in e.get("Models", [e["Model"]])}),
             "FeaturesWithDefects": len(defects),
             "ConvexityChecks": sum(e.get("ConvexityChecks", 0) for e in entries),
+            "ConvexityNotEvaluable": sum(e.get("ConvexityNotEvaluable", 0) for e in entries),
             "Examples": [{k: v for k, v in e.items() if k != "Checks"} for e in defects[:6]],
             "Basis": "model geometry (library units x R_mesh / R_library) mapped through the dry-run patch frame lies on the feature's claimed portions (straight segments; arcs on their fitted circle within the claimed range) within the signature parameter tolerance; stack / pair patches on the mesh chords within the chord sagitta and the pair rule's 5 % of the offset (a slow taper wider than 5 % about its mean fails by construction: the coupon at the mean separation)",
         }

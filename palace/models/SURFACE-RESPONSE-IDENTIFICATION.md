@@ -330,6 +330,12 @@ smaller endpoint.
      one section (an S-bend whose two arcs lie within the window of each other: reported
      in the signature and never read as one convexity — such a feature is unmatched with
      the reason; a straight-like wobble of the minority sense is not a bend of the class).
+     Recorded knife edge (review J/C4 m4): a section is `CurvedEdge` on the UNSIGNED
+     windowed curvature while `Mixed` needs BOTH signed senses in the curved regime, so a
+     wobble whose two senses each stay below the threshold while their unsigned sum crosses
+     it (two opposite joints of ~5.3-5.7 deg within one window W = R, or three alternating
+     ~4 deg joints) is read as one convexity at the unsigned kappa and corrected by that
+     family; the band is ~0.5 deg wide and above the ~1 deg noise floor of real polylines.
      The sign convention is the coupons': the curvature family (`Kappa`, `Convexity`
      records) of a disk edge is `Convex`;
    * a fillet at a corner (radius < R; the run-based rounded-corner rule of item 4, computed
@@ -388,7 +394,11 @@ smaller endpoint.
      or, when it carries no curvature of its own, as the opposite of the far side's
      (concentric edges bend in opposite senses relative to their gaps: for a gap the inner
      edge is convex, for a strip the inner edge is concave); curved stacks
-     (`CurvedParallelEdgeCluster`) record it the same way. The cross-chord
+     (`CurvedParallelEdgeCluster`) record it the same way, and when neither outer side of
+     a k > 2 stack carries curvature (the bent side is an interior one) the first interior
+     side that does is read, related to the first edge through the signature's `GapSide`s
+     (same convexity when the gaps point the same way, opposite otherwise; review J/C4 m5 —
+     formerly an abort). The cross-chord
      interactions of a locally constant portion are never events, whether or not it
      interacts, so the concentric chords of a bend never form a spatial cluster and nothing
      is omitted as "nonparallel".
