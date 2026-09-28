@@ -1477,13 +1477,13 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   result.components = LabelComponents(false);
   result.physical_components = LabelComponents(true);
 
-  // Boundary meshes commonly represent smooth layout curves by short polygonal facets.
-  // Treat modest local turns as part of the same smooth chain so that chain topology does
-  // not depend on the curve tessellation. Sharper turns remain explicit corner vertices
-  // for separate corner treatment by a surface-response model.
-  constexpr double corner_angle_tolerance_degrees = 30.0;
+  // Boundary meshes commonly represent smooth layout curves by short polygonal facets. A
+  // vertex turning by at most the joint noise threshold (kCornerTurnToleranceDegrees,
+  // metaledge.hpp) is a regular vertex of its chain; every sharper turn is an explicit
+  // corner vertex, which the identification's arc rule absorbs when it lies on a fitted
+  // arc (a bend merges the chains it separates) and otherwise treats as a corner feature.
   const double straight_dot_tolerance =
-      -std::cos(corner_angle_tolerance_degrees * std::acos(-1.0) / 180.0);
+      -std::cos(kCornerTurnToleranceDegrees * std::acos(-1.0) / 180.0);
   // The turn test compares direction cosines on a fixed 1e-12 grid so that a roundoff-level
   // perturbation of the vertex coordinates cannot flip a vertex between REGULAR and CORNER
   // (the same direction quantum as the classification's parallelism tests).

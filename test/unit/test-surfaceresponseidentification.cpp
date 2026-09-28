@@ -72,7 +72,8 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
   for (const auto &loop : loops)
   {
     const std::size_t n = loop.points.size();
-    // Chains break at corners (turn > 30 deg): every polygon edge here is its own chain.
+    // Chains break at corners (turn > kCornerTurnToleranceDegrees): every polygon edge here
+    // is its own chain.
     for (std::size_t i = 0; i < n; i++)
     {
       const Point2 a = loop.points[i], b = loop.points[(i + 1) % n];
@@ -114,7 +115,8 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
     input.vertices[segment.vertices[1]].segments.push_back(input.segments.size());
     input.segments.push_back(segment);
   }
-  // Vertex types as metaledge.cpp: two segments -> corner iff turn > 30 deg, else regular.
+  // Vertex types as metaledge.cpp: two segments -> corner iff the turn exceeds the joint
+  // noise threshold kCornerTurnToleranceDegrees, else regular.
   for (auto &vertex : input.vertices)
   {
     if (vertex.segments.size() == 1)
@@ -151,9 +153,10 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
       {
         dot += directions[0][d] * directions[1][d];
       }
-      vertex.physical_type = dot <= -std::cos(30.0 * std::acos(-1.0) / 180.0)
-                                 ? MetalEdgeVertexType::REGULAR
-                                 : MetalEdgeVertexType::CORNER;
+      vertex.physical_type =
+          dot <= -std::cos(kCornerTurnToleranceDegrees * std::acos(-1.0) / 180.0)
+              ? MetalEdgeVertexType::REGULAR
+              : MetalEdgeVertexType::CORNER;
     }
   }
   // Chains as metaledge.cpp: maximal paths through regular vertices (a polyline arc with
@@ -233,9 +236,15 @@ std::vector<Point2> Rectangle(double x0, double y0, double x1, double y1)
 // separation, like an offset path).
 // Counter-clockwise loop of a bar of the given width around a centreline polyline that
 // turns left overall (the smaller-offset side forward, the larger back); `offset` shifts
-// the bar sideways.
+// the bar sideways. Interior vertices are offset along `normals` (unit, to the left) when
+// given — the exact radial direction on an arc, so that both sides are concentric polylines
+// of the design circle at the same angles (as a CAD offset of an arc path discretises them);
+// otherwise along the bisector of the adjacent chord normals (a mitred offset, whose
+// vertices lie 1 / cos(turn / 2) off the concentric circle: a different geometry under the
+// exact-parameter arc rule at coarse steps).
 std::vector<Point2> BarAroundCentreline(const std::vector<Point2> &centreline, double width,
-                                        double offset = 0.0)
+                                        double offset = 0.0,
+                                        const std::vector<Point2> &normals = {})
 {
   const double h = 0.5 * width;
   auto Offset = [&](double sign)
@@ -250,7 +259,13 @@ std::vector<Point2> BarAroundCentreline(const std::vector<Point2> &centreline, d
     for (std::size_t i = 0; i < n; i++)
     {
       const Point2 &p = centreline[i];
-      if (i == 0 || i + 1 == n)
+      if (!normals.empty())
+      {
+        const Point2 &nrm = normals[i];
+        result.push_back(
+            {p[0] + (offset + sign * h) * nrm[0], p[1] + (offset + sign * h) * nrm[1]});
+      }
+      else if (i == 0 || i + 1 == n)
       {
         const Point2 d = i == 0 ? Point2{centreline[1][0] - p[0], centreline[1][1] - p[1]}
                                 : Point2{p[0] - centreline[i - 1][0],
@@ -280,38 +295,46 @@ std::vector<Point2> BarAroundCentreline(const std::vector<Point2> &centreline, d
   return points;
 }
 
+// A bar along a left arc of the given radius and sweep (centre (0, radius)), straight leads
+// at both ends; both sides are concentric arcs at the centreline's angles.
 std::vector<Point2> ArcBar(double width, double radius, double sweep_degrees,
                            double step_degrees, double lead = 6.0, double offset = 0.0)
 {
   const int steps =
       std::max(1, static_cast<int>(std::lround(sweep_degrees / step_degrees)));
   const double step = sweep_degrees * std::acos(-1.0) / 180.0 / steps;
-  std::vector<Point2> centreline;
+  std::vector<Point2> centreline, normals;
   for (int k = 0; k <= steps; k++)
   {
     centreline.push_back(
         {radius * std::sin(k * step), radius - radius * std::cos(k * step)});
+    normals.push_back({-std::sin(k * step), std::cos(k * step)});  // toward the centre
   }
   const Point2 d_end = {std::cos(steps * step), std::sin(steps * step)};
   centreline.insert(centreline.begin(), {-lead, 0.0});
+  normals.insert(normals.begin(), {0.0, 1.0});
   centreline.push_back(
       {centreline.back()[0] + lead * d_end[0], centreline.back()[1] + lead * d_end[1]});
-  return BarAroundCentreline(centreline, width, offset);
+  normals.push_back({-d_end[1], d_end[0]});
+  return BarAroundCentreline(centreline, width, offset, normals);
 }
 
 // A bar along an S-bend: a left arc of the given radius and sweep followed by a right arc
-// of the same radius and sweep (the tangent returns to +x), straight leads at both ends.
+// of the same radius and sweep (the tangent returns to +x), straight leads at both ends;
+// both sides concentric with the two design circles (the join vertex is offset along their
+// common normal).
 std::vector<Point2> SBar(double width, double radius, double sweep_degrees,
                          double step_degrees, double lead = 6.0)
 {
   const int steps =
       std::max(1, static_cast<int>(std::lround(sweep_degrees / step_degrees)));
   const double step = sweep_degrees * std::acos(-1.0) / 180.0 / steps;
-  std::vector<Point2> centreline = {{-lead, 0.0}};
+  std::vector<Point2> centreline = {{-lead, 0.0}}, normals = {{0.0, 1.0}};
   for (int k = 0; k <= steps; k++)
   {
     centreline.push_back(
         {radius * std::sin(k * step), radius - radius * std::cos(k * step)});
+    normals.push_back({-std::sin(k * step), std::cos(k * step)});  // toward centre 1
   }
   // Second arc: centre at the reflection of the first centre through the join point, the
   // tangent turning back to +x.
@@ -323,9 +346,11 @@ std::vector<Point2> SBar(double width, double radius, double sweep_degrees,
     const double angle = sweep - k * step;  // tangent angle from +x
     centreline.push_back(
         {centre2[0] - radius * std::sin(angle), centre2[1] + radius * std::cos(angle)});
+    normals.push_back({-std::sin(angle), std::cos(angle)});  // away from centre 2 (left)
   }
   centreline.push_back({centreline.back()[0] + lead, centreline.back()[1]});
-  return BarAroundCentreline(centreline, width);
+  normals.push_back({0.0, 1.0});
+  return BarAroundCentreline(centreline, width, 0.0, normals);
 }
 
 // Every segment is either excluded or covered exactly once; every corner has a feature.
@@ -370,7 +395,13 @@ void CheckPartition(const IdentificationInput &input, const IdentificationResult
     if (vertex.type != "TruncationCut" && vertex.type != "PortCut")
     {
       CHECK(vertex.type != "Excluded");
-      CHECK(vertex.feature >= 0);
+      // A corner vertex absorbed by a bend (BendVertex) belongs to the bend's chain, whose
+      // features it takes no part in: it has no feature of its own (no Feature in the
+      // manifest); every other vertex maps to exactly one feature.
+      if (vertex.type != "BendVertex")
+      {
+        CHECK(vertex.feature >= 0);
+      }
     }
   }
 }
@@ -686,15 +717,34 @@ TEST_CASE("SurfaceResponseIdentificationObtuseCorners",
   CHECK(counts["ConvexCorner"] == 4);
 }
 
+// Whether the concentric offset polylines of ArcBar resolve their design circles under the
+// sagitta arc rule (USER decision 117(4)): every chord's sagitta on the wider (outer) side
+// below kArcSagittaOverRadius x R (the vertices lie on the circles exactly). A coarser
+// polyline is corners: the meshed geometry.
+bool ArcBarResolved(double radius, double width, double sweep_degrees, double step_degrees,
+                    double R)
+{
+  const int steps =
+      std::max(1, static_cast<int>(std::lround(sweep_degrees / step_degrees)));
+  const double step = sweep_degrees * std::acos(-1.0) / 180.0 / steps;
+  const double outer = radius + 0.5 * width;
+  return outer * (1.0 - std::cos(0.5 * step)) < kArcSagittaOverRadius * R;
+}
+
 TEST_CASE("SurfaceResponseIdentificationCurvedEdges",
           "[surfaceresponseidentification][Serial]")
 {
-  // Curved-edge chain rule (decision 73(1)): a 3 um bar (1.5 R) along a polyline arc. The
-  // two sides are a pair along the bend (constant separation), never a cluster; the arc is
-  // a curved pair when the inner bend radius is below 10 R (decision 75) and a straight-like strip with a
-  // curvature annotation otherwise; the leads are a plain strip; the two bar ends are one
-  // two-corner cluster each. The classes do not depend on the discretisation (turn per
-  // vertex) and the features do not change under mesh refinement (A5).
+  // Curved-edge chain rule (decision 73(1)) under the sagitta arc rule (USER decision
+  // 117(4)): a 3 um bar (1.5 R) along a polyline arc. Where the polyline resolves the circle
+  // (sagitta below 0.05 R, vertices on the circle within 1e-3 R) the two sides are a pair
+  // along the bend (constant separation), never a cluster; the arc is a curved pair when the
+  // inner bend radius is below 10 R (decision 75) and a straight-like strip with a curvature
+  // annotation otherwise; the leads are a plain strip; the two bar ends are one two-corner
+  // cluster each. A coarse polyline (5 um radius at 18 deg per vertex: sagitta 0.08 um =
+  // 0.04 R on the outer side is resolved, 50 um at 22.5 deg: 0.5 R, 250 um at 5 deg: 0.12 R)
+  // is the meshed geometry beyond the cap: its joints are corners (within
+  // 2R of the facing side's corners: clusters), no curved pair and no bend annotation. In
+  // both regimes the features do not change under mesh refinement (A5).
   const double R = 2.0;
   struct Case
   {
@@ -708,19 +758,20 @@ TEST_CASE("SurfaceResponseIdentificationCurvedEdges",
     const auto bar = ArcBar(3.0, c.radius, c.sweep, c.step);
     const auto input = MakeInput({{bar, 0, 1.0}}, R);
     const auto result = IdentifyMetalPerimeter(input);
-    INFO("radius " << c.radius << " step " << c.step);
+    const bool resolved = ArcBarResolved(c.radius, 3.0, c.sweep, c.step, R);
+    INFO("radius " << c.radius << " step " << c.step << (resolved ? " (arc)" : " (coarse)"));
     CheckPartition(input, result);
     std::map<std::string, int> counts;
+    int annotated = 0;
     for (const auto &feature : result.features)
     {
       counts[feature.type]++;
+      annotated += feature.bend_radius_over_R.has_value();
       if (feature.type == "CurvedSameConductorStrip")
       {
-        // The inner side's radius (radius - 1.5): the arc rule reads the polyline's own
-        // inscribed circle, which for an offset polyline at 20 deg per vertex differs from
-        // the design radius within the arc-fit tolerance (5 %).
+        // The inner side's radius (radius - 1.5): the concentric polyline's exact circle.
         CHECK_THAT(feature.signature["RadiusOverR"].get<double>(),
-                   WithinRel((c.radius - 1.5) / R, 0.05));
+                   WithinRel((c.radius - 1.5) / R, 1.0e-6));
         CHECK_THAT(feature.signature["SeparationOverR"].get<double>(),
                    WithinRel(1.5, 0.02));
       }
@@ -728,19 +779,41 @@ TEST_CASE("SurfaceResponseIdentificationCurvedEdges",
       {
         CHECK_THAT(feature.signature["SeparationOverR"].get<double>(),
                    WithinRel(1.5, 0.02));
-        if (!c.curved)
+        if (resolved && !c.curved)
         {
           REQUIRE(feature.bend_radius_over_R.has_value());
           CHECK_THAT(*feature.bend_radius_over_R, WithinRel((c.radius - 1.5) / R, 0.03));
         }
       }
     }
-    CHECK(counts["SpatialEdgeCluster"] == 2);
-    CHECK(counts["SameConductorStrip"] >= 1);
-    CHECK(counts["CurvedSameConductorStrip"] == (c.curved ? 1 : 0));
-    CHECK(counts["IsolatedEdge"] == 0);
-    CHECK(counts["CurvedEdge"] == 0);
-    CHECK(counts["ConvexCorner"] == 0);
+    if (resolved)
+    {
+      CHECK(counts["SpatialEdgeCluster"] == 2);
+      CHECK(counts["SameConductorStrip"] >= 1);
+      CHECK(counts["CurvedSameConductorStrip"] == (c.curved ? 1 : 0));
+      CHECK(counts["IsolatedEdge"] == 0);
+      CHECK(counts["CurvedEdge"] == 0);
+      CHECK(counts["ConvexCorner"] == 0);
+    }
+    else
+    {
+      // Corners at the polyline joints (sub-noise joints excepted): the coarse polyline is
+      // not an arc at the resolution of the correction. The joints of the two sides face
+      // each other within 2R (1.5 R apart), so the corner sites form clusters (the 5 um bar
+      // at 18 deg per vertex is ONE cluster of 16 sites); the vertex table lists every joint
+      // as a corner vertex, more than the four bar-end corners, and no bend vertex.
+      CHECK(counts["CurvedSameConductorStrip"] == 0);
+      CHECK(counts["CurvedEdge"] == 0);
+      CHECK(annotated == 0);
+      CHECK(counts["ConvexCorner"] + counts["ConcaveCorner"] + counts["SpatialEdgeCluster"] >=
+            1);
+      CHECK(std::count_if(result.vertices.begin(), result.vertices.end(),
+                          [](const auto &v)
+                          { return v.type == "ConvexCorner" || v.type == "ConcaveCorner"; }) >
+            4);
+      CHECK(std::count_if(result.vertices.begin(), result.vertices.end(),
+                          [](const auto &v) { return v.type == "BendVertex"; }) == 0);
+    }
     // Refinement: every chord bisected twice.
     const auto refined_input = MakeInput({{bar, 0, 0.25}}, R);
     const auto refined = IdentifyMetalPerimeter(refined_input);
@@ -916,17 +989,19 @@ TEST_CASE("SurfaceResponseIdentificationPairsAtTheThreshold",
           "[surfaceresponseidentification][Serial]")
 {
   // A gap of exactly 2R (and 2R +/- 1e-3 R) between two 8 um bars (4 R: the far corners of a
-  // bar end are beyond the 3R vertex-join reach of the near corners) that are offsets of one
-  // centreline along bends of 50 and 250 um at three discretisations: the interaction
-  // decision uses the separation of the underlying curves (rule at kPairSeparationTolerance):
-  // exactly 2R and 2R + 1e-3 R are isolated edges at every discretisation (no cluster, no
-  // pair — the mid-chord dips of the chords below 2R, DS-SCT-001's 4 um gaps at 3.9998 that
-  // became 3 mm clusters, create no events); 2R - 1e-3 R interacts where both readings of the
-  // separation are below 2R, i.e. where the local joint turn satisfies
-  // gap / cos(turn / 2) < 2R (the recorded discretisation ambiguity: an inscribed polyline
-  // pair at this chord separation could be 2R apart): the whole pair at 1 deg per vertex,
-  // the straight leads only at 5 deg (their joint turn is half a step), nothing at 15 deg.
-  // The corner pairs across a 2R - 1e-3 R gap are events (two clusters) in every case.
+  // bar end are beyond the vertex-join reach of the near corners) that are concentric
+  // offsets of one centreline along bends of 50 and 250 um at three discretisations. Where
+  // the polylines resolve their circles (sagitta below 0.05 R: 1 deg per vertex, 5 deg on
+  // the 50 um bend) the interaction decision uses the separation of the fitted arcs — the
+  // radius difference, exact — so exactly 2R and 2R + 1e-3 R are isolated edges at every
+  // such discretisation (no cluster, no pair: the mid-chord dips of the inscribed chords
+  // below 2R, DS-SCT-001's 4 um gaps at 3.9998 that became 3 mm clusters, create no events)
+  // and 2R - 1e-3 R is one DifferentConductorGap along the whole pair (straight-like: the
+  // bends are 21 R and 121 R, with the bend annotation). The corner pairs across a
+  // 2R - 1e-3 R gap are events (two clusters) in every case. A coarse polyline (15 deg per
+  // vertex: sagitta 0.23 R on the 50 um bend; 5 deg on the 250 um bend: 0.12 R) is corners
+  // at its joints under the sagitta rule (USER decision 117(4)): no curved pair, no bend
+  // annotation, corner vertices at every joint.
   const double R = 2.0, width = 8.0;
   for (const double radius : {50.0, 250.0})
   {
@@ -935,38 +1010,50 @@ TEST_CASE("SurfaceResponseIdentificationPairsAtTheThreshold",
     {
       for (const double gap : {2.0 * R, 2.0 * R - 1.0e-3 * R, 2.0 * R + 1.0e-3 * R})
       {
-        // Both bars are offsets of the gap's centreline (radius), so the facing edges are
-        // exactly parallel chords at the design gap along the bend (an offset path).
+        // Both bars are concentric offsets of the gap's centreline (radius), so the facing
+        // edges are inscribed polylines of two circles gap apart at the same angles.
         const auto inner = ArcBar(width, radius, sweep, step, 6.0, 0.5 * gap + 0.5 * width);
         const auto outer = ArcBar(width, radius, sweep, step, 6.0, -0.5 * gap - 0.5 * width);
         const auto input = MakeInput({{inner, 0, 1.0}, {outer, 1, 1.0}}, R);
         const auto result = IdentifyMetalPerimeter(input);
-        INFO("radius " << radius << " step " << step << " gap " << gap);
+        const bool resolved =
+            ArcBarResolved(radius, 2.0 * (0.5 * gap + width), sweep, step, R);
+        INFO("radius " << radius << " step " << step << " gap " << gap
+                       << (resolved ? " (arc)" : " (coarse)"));
         CheckPartition(input, result);
         std::map<std::string, int> counts;
+        int annotated = 0;
         for (const auto &feature : result.features)
         {
           counts[feature.type]++;
-          if (feature.type == "DifferentConductorGap")
+          annotated += feature.bend_radius_over_R.has_value();
+          if (feature.type == "DifferentConductorGap" && resolved)
           {
             // Decision 85(1): the separation along the bends is the radius difference of the
-            // two fitted arcs (exact for polylines inscribed in the design circles); an
-            // OFFSET polyline pair (parallel chords at the design gap, this construction)
-            // reads gap / cos(turn / 2) at its vertices — the recorded discretisation
-            // ambiguity, within the signature parameter tolerance (1e-3 R) at these steps.
+            // two fitted arcs (exact for polylines inscribed in the design circles).
             CHECK_THAT(feature.signature["SeparationOverR"].get<double>(),
                        WithinAbs(gap / R, kSignatureParameterToleranceOverRadius));
           }
         }
         const bool corner_events = gap < 2.0 * R;
-        const double lead_turn = 0.5 * step * std::acos(-1.0) / 180.0;
-        const bool pair = gap / std::cos(0.5 * lead_turn) < 2.0 * R;
-        CHECK(counts["DifferentConductorGap"] == (pair ? 1 : 0));
-        CHECK(counts["SpatialEdgeCluster"] == (corner_events ? 2 : 0));
-        CHECK(counts["ConvexCorner"] == (corner_events ? 4 : 8));
         CHECK(counts["CurvedEdge"] == 0);
         CHECK(counts["CurvedDifferentConductorGap"] == 0);
-        CHECK(counts["IsolatedEdge"] >= (pair ? 2 : 4));
+        if (resolved)
+        {
+          const bool pair = gap < 2.0 * R;
+          CHECK(counts["DifferentConductorGap"] == (pair ? 1 : 0));
+          CHECK(counts["SpatialEdgeCluster"] == (corner_events ? 2 : 0));
+          CHECK(counts["ConvexCorner"] == (corner_events ? 4 : 8));
+          CHECK(counts["IsolatedEdge"] >= (pair ? 2 : 4));
+        }
+        else
+        {
+          CHECK(annotated == 0);
+          CHECK(std::count_if(result.vertices.begin(), result.vertices.end(),
+                              [](const auto &v) {
+                                return v.type == "ConvexCorner" || v.type == "ConcaveCorner";
+                              }) > 8);
+        }
       }
     }
   }
