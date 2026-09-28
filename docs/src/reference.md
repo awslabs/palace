@@ -786,13 +786,19 @@ components. These full-patch operators can be differenced between matched fabric
 thin coupons to obtain a process-local surface-energy defect operator.
 Which column a library model adds to a device follows the model's geometry: a
 translational (two-dimensional cross-section) model spans exactly the matching radius on
-either side of its edges, so its whole-box `Q_total_ij` is the energy within ``R`` of the
-edges; a spatial (three-dimensional box) model — `SpatialEdgeCluster`, corners, endpoints,
-junctions — reads the localized `Q_ij` rows at the device's matching radius (`R (m)` equal
-to the largest target `EdgeDistances`), because the device keeps its own raw energy beyond
-``R`` inside that box (adding `Q_total` counted it twice). A spatial model's surface matrix
-file must therefore carry the `R (m)` and `Q_ij (J)` columns at that radius; a compact
-corner file written by `finalize_corner_response.py` carries both columns.
+either side of its edges in the plan view, so its whole-box `Q_total_ij` is the energy
+within ``R`` of the edges (laterally: the device measures the Euclidean distance to the
+thin edge, so a metal-top point at lateral ``R`` lies at ``sqrt(R^2 + t^2)`` for a metal
+thickness ``t``; the slivers are a ~0.1 % lateral span at weak-field locations); a spatial
+(three-dimensional box) model — `SpatialEdgeCluster`, corners, endpoints, junctions — reads
+the localized `Q_ij` rows at the device's matching radius (`R (m)` equal to the largest
+target `EdgeDistances`), because the device keeps its own raw energy beyond ``R`` inside
+that box (adding `Q_total` counted it twice). The coupon's `Q_ij` is the energy within ``R``
+of every perimeter edge in its box, including the continuations of the claimed portions to
+the box faces; where a translational model claims those continuations the two tubes overlap
+(a residual of the order of 0.5 % of a cluster box). A spatial model's surface matrix file
+must therefore carry the `R (m)` and `Q_ij (J)` columns at that radius; a compact corner
+file written by `finalize_corner_response.py` carries both columns.
 The basis indices are the `Index` values of the `PrescribedPotential` entries.
 Setting `Solver.Electrostatic.AggregateResponseMatrix` sums the physical-edge entries
 for each interface and matching radius before writing, using one synthetic edge index in

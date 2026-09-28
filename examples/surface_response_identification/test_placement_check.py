@@ -265,6 +265,20 @@ class CornerStackPair(unittest.TestCase):
         # A runtime model whose anchor is not in the library is listed, never passed.
         gates, _ = PC.placement_gates(identification, [patch(3, "other@convex-kappa0.3-cubic", origin, outward, segment=0)], library, R)
         self.assertEqual(next(g for g in gates if g["Gate"] == "A10-placement-evaluable")["Status"], "FAIL")
+        # e1 on no fitted arc (a chorded bend without an arc: the straight-like first-order
+        # patches of a polyline meander): the side checks pass, the convexity is counted not
+        # evaluable and never checked (review accuracy-fixes m6).
+        straight_segments = [{"Key": [[0.0, y, 0.0], [10.0, y, 0.0]], "Length": 10.0, "Chain": k} for k, y in enumerate((0.0, 0.5 * R))]
+        straight_feature = {"Id": 4, "Type": "SameConductorGap", "Signature": {"SeparationOverR": 0.5}, "Hash": "n", "Chirality": 1, "Length": 20.0,
+                            "Portions": [[0, 0.0, 10.0], [1, 0.0, 10.0]], "Sides": [0, 1], "Frame": feature["Frame"],
+                            "Match": {"Status": "Matched", "Model": "gap@convex-kappa0.05-cubic"}}
+        straight_identification = {"MatchingRadius": R, "Segments": straight_segments, "Arcs": [], "Features": [straight_feature]}
+        _, up = frame((0.0, 0.0, 0.0), 90.0)
+        gates, _ = PC.placement_gates(straight_identification, [patch(4, "gap@convex-kappa0.05-cubic", np.asarray([5.0, 0.25 * R, 0.0]), up, segment=0)], library, R)
+        pairs = next(g for g in gates if g["Gate"] == "A10-placement-pairs")
+        self.assertEqual(pairs["Status"], "PASS")
+        self.assertEqual(pairs["Detail"]["ConvexityChecks"], 0)
+        self.assertEqual(pairs["Detail"]["ConvexityNotEvaluable"], 1)
 
 
 if __name__ == "__main__":
