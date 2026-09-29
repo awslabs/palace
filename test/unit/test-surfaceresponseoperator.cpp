@@ -312,7 +312,8 @@ MakePolygonIslandMesh(const std::vector<std::array<double, 2>> &polygon, double 
 // test mesh (one mesh read per boundary configuration), the island cases on synthetic
 // hexahedral boxes. The quadratic (high-order) spatial cluster round trips are [Long].
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator explicit patches 2D",
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator explicit patches 2D",
                  "[surfaceresponseoperator][2d][patch][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -553,7 +554,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator explicit p
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator automatic 2D library",
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator automatic 2D library",
                  "[surfaceresponseoperator][2d][automatic][cache][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -751,7 +753,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator automatic 
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator boundary-mode 2D",
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator boundary-mode 2D",
                  "[surfaceresponseoperator][2d][boundarymode][impedance][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -1135,7 +1138,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator boundary-m
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator 2D pairs and clusters",
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator 2D pairs and clusters",
                  "[surfaceresponseoperator][2d][cluster][boundarymode][cache][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -1580,7 +1584,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator 2D pairs a
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator axisymmetric curvature family",
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator axisymmetric curvature family",
                  "[surfaceresponseoperator][2d][axisymmetric][curvature][cache][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -1926,7 +1931,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator axisymmetr
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator 3D CPW legacy electrostatic",
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator 3D CPW legacy electrostatic",
                  "[surfaceresponseoperator][3d][legacy][cpw][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -2167,7 +2173,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator 3D CPW leg
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator 3D CPW Maxwell",
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator 3D CPW Maxwell",
                  "[surfaceresponseoperator][3d][maxwell][cpw][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -2728,7 +2735,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator 3D CPW Max
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator island corners",
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator island corners",
                  "[surfaceresponseoperator][3d][corner][legacy][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -2908,7 +2916,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator island cor
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator cap-interior hats",
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator cap-interior hats",
                  "[surfaceresponseoperator][3d][spatial][cache][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -3055,7 +3064,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator cap-interi
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator features patch construction",
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator features patch construction",
                  "[surfaceresponseoperator][3d][features][placement][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -3305,7 +3315,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator features p
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator rounded islands",
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator rounded islands",
                  "[surfaceresponseoperator][3d][curvature][rounded][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -3438,7 +3449,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator rounded is
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator high-order rounded island",
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator high-order rounded island",
                  "[surfaceresponseoperator][3d][curvature][highorder][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -3474,7 +3486,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator high-order
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator high-order spatial cluster round trips",
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator high-order spatial cluster round trips",
                  "[surfaceresponseoperator][3d][highorder][placement][signature][Long][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -3683,7 +3696,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator high-order
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator spatial cluster contracts on a linear rounded mesh",
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator spatial cluster contracts on a linear rounded mesh",
                  "[surfaceresponseoperator][3d][placement][signature][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -3950,7 +3964,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator spatial cl
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator filleted finger arc portions",
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator filleted finger arc portions",
                  "[surfaceresponseoperator][3d][curvature][placement][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -4156,7 +4171,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator filleted f
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator C4 curvature family rings",
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator C4 curvature family rings",
                  "[surfaceresponseoperator][3d][curvature][features][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -4458,7 +4474,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator C4 curvatu
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator corner angle family",
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator corner angle family",
                  "[surfaceresponseoperator][3d][corner][features][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -4824,7 +4841,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator corner ang
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator Maxwell islands",
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator Maxwell islands",
                  "[surfaceresponseoperator][3d][maxwell][corner][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -5319,7 +5337,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator Maxwell is
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator spatial cluster Maxwell",
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator spatial cluster Maxwell",
                  "[surfaceresponseoperator][3d][maxwell][spatial][placement][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -5761,7 +5780,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator spatial cl
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator paired aperture",
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator paired aperture",
                  "[surfaceresponseoperator][3d][maxwell][aperture][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -6185,7 +6205,8 @@ CornerTraceBasisFixture::CornerEnergies(mfem::ParMesh &mesh, const std::string &
 // coupons); (4) the constructed basis of the interpolated corner (points, slave vertices,
 // triangles) round-trips through the response-geometry cache: a mortar run reloading the
 // cache written by the previous run reproduces every model contribution.
-TEST_CASE_METHOD(CornerTraceBasisFixture, "SurfaceResponseOperatorCornerTraceBasis",
+TEST_CASE_METHOD(CornerTraceBasisFixture,
+                 "SurfaceResponseOperatorCornerTraceBasis",
                  "[surfaceresponseoperator][corner][tracebasis][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -6483,7 +6504,8 @@ TEST_CASE_METHOD(CornerTraceBasisFixture, "SurfaceResponseOperatorCornerTraceBas
 #endif
 }
 
-TEST_CASE_METHOD(CornerTraceBasisFixture, "SurfaceResponseOperatorCornerTraceBasisMortar",
+TEST_CASE_METHOD(CornerTraceBasisFixture,
+                 "SurfaceResponseOperatorCornerTraceBasisMortar",
                  "[surfaceresponseoperator][corner][tracebasis][mortar][cache][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)

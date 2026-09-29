@@ -59,8 +59,8 @@ SurfaceResponseFiles::SurfaceResponseFiles()
     };
     // Coupon surface response files carry the energy within R of the coupon edges
     // (`Q_ij (J)` at `R (m)`, the SI matching radius) and the whole-box `Q_total_ij (J)`.
-    // A spatial (3D box) model adds the within-R energy; the fixtures make both equal unless
-    // a test says otherwise (`box_scale`). Every 3D spatial library below uses
+    // A spatial (3D box) model adds the within-R energy; the fixtures make both equal
+    // unless a test says otherwise (`box_scale`). Every 3D spatial library below uses
     // MatchingRadius 0.2, and these IoData are not nondimensionalized (Units(1, 1): mesh
     // units are metres), so the SI radius is 0.2 m.
     constexpr double spatial_radius_m = 0.2;
@@ -75,9 +75,8 @@ SurfaceResponseFiles::SurfaceResponseFiles()
         {
           for (std::size_t j = i; j < matrix.size(); j++)
           {
-            output << "1," << edge << "," << radius_m << "," << i + 1 << "," << j + 1
-                   << "," << 0.5 * matrix[i][j] << "," << 0.5 * box_scale * matrix[i][j]
-                   << "\n";
+            output << "1," << edge << "," << radius_m << "," << i + 1 << "," << j + 1 << ","
+                   << 0.5 * matrix[i][j] << "," << 0.5 * box_scale * matrix[i][j] << "\n";
           }
         }
       }
@@ -506,9 +505,9 @@ SurfaceResponseFiles::SurfaceResponseFiles()
     convex_library_3d["Models"].push_back(corner_model);
     std::ofstream convex_output_3d(convex_library_3d_path);
     convex_output_3d << convex_library_3d.dump(2) << "\n";
-    auto write_corner_variant_library = [&](const auto &library_path, const std::string &tag,
-                                            double within_scale, double box_scale,
-                                            double radius_m, bool legacy_compact)
+    auto write_corner_variant_library =
+        [&](const auto &library_path, const std::string &tag, double within_scale,
+            double box_scale, double radius_m, bool legacy_compact)
     {
       const auto fabricated_surface =
           temp.temp_dir / ("corner-fabricated-surface-" + tag + ".csv");
@@ -681,8 +680,8 @@ SurfaceResponseFiles::SurfaceResponseFiles()
     };
     write_cap_hat_matrices(0.0, cap_hat_fabricated_path, cap_hat_thin_path,
                            cap_hat_fabricated_surface_path, cap_hat_thin_surface_path);
-    write_cap_hat_matrices(1.0e-12, cap_hat_loaded_fabricated_path, cap_hat_loaded_thin_path,
-                           cap_hat_loaded_fabricated_surface_path,
+    write_cap_hat_matrices(1.0e-12, cap_hat_loaded_fabricated_path,
+                           cap_hat_loaded_thin_path, cap_hat_loaded_fabricated_surface_path,
                            cap_hat_loaded_thin_surface_path);
     auto cap_hat_library_3d = spatial_cluster_library_3d;
     cap_hat_library_3d["Name"] = "unit-test-process-spatial-cluster-cap-hats-3d";
@@ -690,7 +689,7 @@ SurfaceResponseFiles::SurfaceResponseFiles()
     cap_hat_model["Name"] = "offset-corner-pair-cap-hats";
     cap_hat_model["BasisPoints"] = cap_hat_points_path.string();
     cap_hat_model["TraceMesh"] = {{"Vertices", cap_hat_trace_vertices_path.string()},
-                                 {"Triangles", cap_hat_trace_triangles_path.string()}};
+                                  {"Triangles", cap_hat_trace_triangles_path.string()}};
     cap_hat_model["InteriorTraceCount"] = 2;
     cap_hat_model["FabricatedMatrix"] = cap_hat_fabricated_path.string();
     cap_hat_model["ThinMatrix"] = cap_hat_thin_path.string();
@@ -730,7 +729,8 @@ SurfaceResponseFiles::SurfaceResponseFiles()
     cap_hat_without_trace_mesh_output_3d << cap_hat_without_trace_mesh_library_3d.dump(2)
                                          << "\n";
     auto cap_hat_translational_library_3d = library_3d;
-    cap_hat_translational_library_3d["Name"] = "unit-test-process-cap-hats-translational-3d";
+    cap_hat_translational_library_3d["Name"] =
+        "unit-test-process-cap-hats-translational-3d";
     cap_hat_translational_library_3d["Models"][0]["InteriorTraceCount"] = 1;
     std::ofstream cap_hat_translational_output_3d(cap_hat_translational_library_3d_path);
     cap_hat_translational_output_3d << cap_hat_translational_library_3d.dump(2) << "\n";
@@ -745,9 +745,8 @@ SurfaceResponseFiles::SurfaceResponseFiles()
         {
           for (std::size_t j = i; j < matrix.size(); j++)
           {
-            output << interface << ",1," << spatial_radius_m << "," << i + 1 << ","
-                   << j + 1 << "," << 0.5 * matrix[i][j] << "," << 0.5 * matrix[i][j]
-                   << "\n";
+            output << interface << ",1," << spatial_radius_m << "," << i + 1 << "," << j + 1
+                   << "," << 0.5 * matrix[i][j] << "," << 0.5 * matrix[i][j] << "\n";
           }
         }
       }
@@ -1187,8 +1186,8 @@ SurfaceResponseFiles::MakeIslandMesh(bool rounded, bool tetrahedral, bool apertu
   const double in_plane_extent = aperture || neighboring_island ? 2.0 : 1.0;
   const double center = 0.5 * in_plane_extent;
   const double half_width = 0.25;
-  const int in_plane_elements = (rounded && !high_order_rounded ? 16 : 8) *
-                                (aperture || neighboring_island ? 2 : 1);
+  const int in_plane_elements =
+      (rounded && !high_order_rounded ? 16 : 8) * (aperture || neighboring_island ? 2 : 1);
   mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(in_plane_elements, 4, in_plane_elements,
                                                   tetrahedral ? mfem::Element::TETRAHEDRON
                                                               : mfem::Element::HEXAHEDRON,
@@ -1404,10 +1403,8 @@ std::unique_ptr<mfem::ParMesh> SurfaceResponseFiles::MakeOffsetCornerPairMesh()
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
 }
 
-InterfaceEdgeSummary
-SurfaceResponseFiles::SummarizeInterfaceEdges(const mfem::ParMesh &mesh,
-                                              const config::BoundaryData &boundaries,
-                                              int interface)
+InterfaceEdgeSummary SurfaceResponseFiles::SummarizeInterfaceEdges(
+    const mfem::ParMesh &mesh, const config::BoundaryData &boundaries, int interface)
 {
   const auto geometry =
       ExtractMetalEdgeGeometry(mesh, boundaries, JointNoiseExtractionFor(boundaries));
@@ -1446,14 +1443,14 @@ mfem::VectorConstantCoefficient SurfaceResponseFiles::ConstantFieldCoefficient()
   return mfem::VectorConstantCoefficient(constant_field);
 }
 
-  // The library builder's model Edges of a SpatialEdgeCluster Signature (canonical frame,
-  // library units): every straight portion one edge (Point = P0 x R, Interval along
-  // gap x normal), every arc portion chorded into n = max(ceil(sweep / 5 deg),
-  // ceil(arc length / 0.25 R), 1) chords with the radial gap at each chord's middle
-  // (signature_library.cluster_plan_view_edges). Conductor labels 1, 2, ... in order of
-  // first occurrence (the canonical serialisation relabels the same way); InterfaceSlot k =
-  // the k-th distinct portion interface set in sorted order, the slots SignatureInterfaces
-  // maps (every type of slot k to Coupon 1).
+// The library builder's model Edges of a SpatialEdgeCluster Signature (canonical frame,
+// library units): every straight portion one edge (Point = P0 x R, Interval along
+// gap x normal), every arc portion chorded into n = max(ceil(sweep / 5 deg),
+// ceil(arc length / 0.25 R), 1) chords with the radial gap at each chord's middle
+// (signature_library.cluster_plan_view_edges). Conductor labels 1, 2, ... in order of
+// first occurrence (the canonical serialisation relabels the same way); InterfaceSlot k =
+// the k-th distinct portion interface set in sorted order, the slots SignatureInterfaces
+// maps (every type of slot k to Coupon 1).
 std::vector<std::string> SurfaceResponseFiles::SignatureInterfaceSets(const json &signature)
 {
   std::set<std::string> sets;
@@ -1545,8 +1542,9 @@ json SurfaceResponseFiles::ChordedSignatureEdges(const json &signature, double r
   return edges;
 }
 
-  // Rows of the patch dry run (surface-response-patches.csv).
-std::vector<std::vector<std::string>> SurfaceResponseFiles::ReadPatchRows(const fs::path &path)
+// Rows of the patch dry run (surface-response-patches.csv).
+std::vector<std::vector<std::string>>
+SurfaceResponseFiles::ReadPatchRows(const fs::path &path)
 {
   std::vector<std::vector<std::string>> rows;
   std::ifstream input(path);
@@ -1567,10 +1565,10 @@ std::vector<std::vector<std::string>> SurfaceResponseFiles::ReadPatchRows(const 
   return rows;
 }
 
-  // Every endpoint of the model's Edges (library units = mesh units here), mapped through
-  // the feature's dry-run patch frame (Origin 13-15, AxisU / V / W 16-24), lies on the
-  // feature's claimed portions in the mesh: a straight portion endpoint, or a fitted arc
-  // (radially on the circle, within the angular range of the claimed chords).
+// Every endpoint of the model's Edges (library units = mesh units here), mapped through
+// the feature's dry-run patch frame (Origin 13-15, AxisU / V / W 16-24), lies on the
+// feature's claimed portions in the mesh: a straight portion endpoint, or a fitted arc
+// (radially on the circle, within the angular range of the claimed chords).
 std::size_t SurfaceResponseFiles::CheckPlacedModelEdges(
     const json &feature, const json &identification,
     const std::vector<std::vector<std::string>> &patch_rows, const json &model_edges,

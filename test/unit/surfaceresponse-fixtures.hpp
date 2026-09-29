@@ -43,11 +43,11 @@ struct InterfaceEdgeSummary
   int junctions = 0;
 };
 
-// Shared fixture of the SurfaceResponseOperator unit tests (TEST_CASE_METHOD): the temporary
-// directory with every synthetic response matrix, basis-point file and fabrication-process
-// library the cases read (written by the root rank in the constructor; the writes cost
-// nothing measurable), the configuration builders the cases derive their IoData from, the
-// synthetic meshes and the check helpers shared by several cases.
+// Shared fixture of the SurfaceResponseOperator unit tests (TEST_CASE_METHOD): the
+// temporary directory with every synthetic response matrix, basis-point file and
+// fabrication-process library the cases read (written by the root rank in the constructor;
+// the writes cost nothing measurable), the configuration builders the cases derive their
+// IoData from, the synthetic meshes and the check helpers shared by several cases.
 struct SurfaceResponseFiles
 {
   SharedTempDir temp;
@@ -65,7 +65,8 @@ struct SurfaceResponseFiles
       temp.temp_dir / "fabrication-process-missing-layer.json";
   const fs::path invalid_library_path =
       temp.temp_dir / "fabrication-process-invalid-depth.json";
-  const fs::path impedance_library_path = temp.temp_dir / "fabrication-process-impedance.json";
+  const fs::path impedance_library_path =
+      temp.temp_dir / "fabrication-process-impedance.json";
   const fs::path legacy_impedance_library_path =
       temp.temp_dir / "fabrication-process-impedance-legacy.json";
   const fs::path conductivity_library_path =
@@ -127,7 +128,8 @@ struct SurfaceResponseFiles
   const fs::path corner_fabricated_surface_path =
       temp.temp_dir / "corner-fabricated-surface.csv";
   const fs::path corner_thin_surface_path = temp.temp_dir / "corner-thin-surface.csv";
-  const fs::path convex_library_3d_path = temp.temp_dir / "fabrication-process-convex-3d.json";
+  const fs::path convex_library_3d_path =
+      temp.temp_dir / "fabrication-process-convex-3d.json";
   // Corner (3D box) surface files of the within-R regression: whole-box Q_total inflated
   // 3x with the within-R Q_ij unchanged; both scaled 3x; the legacy compact format without
   // the within-R column; the within-R rows at another radius.
@@ -143,7 +145,8 @@ struct SurfaceResponseFiles
       temp.temp_dir / "fabrication-process-convex-finite-impedance-3d.json";
   const fs::path concave_library_3d_path =
       temp.temp_dir / "fabrication-process-concave-3d.json";
-  const fs::path strip_library_3d_path = temp.temp_dir / "fabrication-process-strip-3d.json";
+  const fs::path strip_library_3d_path =
+      temp.temp_dir / "fabrication-process-strip-3d.json";
   const fs::path rounded_library_3d_path =
       temp.temp_dir / "fabrication-process-rounded-3d.json";
   const fs::path constrained_perturbed_rounded_library_3d_path =
@@ -196,13 +199,15 @@ struct SurfaceResponseFiles
       temp.temp_dir / "fabrication-process-cap-hats-translational-3d.json";
   const fs::path cap_hat_points_path = temp.temp_dir / "cap-hat-basis-points.csv";
   const fs::path cap_hat_trace_vertices_path = temp.temp_dir / "cap-hat-trace-vertices.csv";
-  const fs::path cap_hat_trace_triangles_path = temp.temp_dir / "cap-hat-trace-triangles.csv";
+  const fs::path cap_hat_trace_triangles_path =
+      temp.temp_dir / "cap-hat-trace-triangles.csv";
   const fs::path cap_hat_fabricated_path = temp.temp_dir / "cap-hat-fabricated.csv";
   const fs::path cap_hat_thin_path = temp.temp_dir / "cap-hat-thin.csv";
   const fs::path cap_hat_fabricated_surface_path =
       temp.temp_dir / "cap-hat-fabricated-surface.csv";
   const fs::path cap_hat_thin_surface_path = temp.temp_dir / "cap-hat-thin-surface.csv";
-  const fs::path cap_hat_loaded_fabricated_path = temp.temp_dir / "cap-hat-loaded-fabricated.csv";
+  const fs::path cap_hat_loaded_fabricated_path =
+      temp.temp_dir / "cap-hat-loaded-fabricated.csv";
   const fs::path cap_hat_loaded_thin_path = temp.temp_dir / "cap-hat-loaded-thin.csv";
   const fs::path cap_hat_loaded_fabricated_surface_path =
       temp.temp_dir / "cap-hat-loaded-fabricated-surface.csv";
@@ -210,7 +215,8 @@ struct SurfaceResponseFiles
       temp.temp_dir / "cap-hat-loaded-thin-surface.csv";
   const fs::path cross_layer_fabricated_surface_path =
       temp.temp_dir / "cross-layer-fabricated-surface.csv";
-  const fs::path cross_layer_thin_surface_path = temp.temp_dir / "cross-layer-thin-surface.csv";
+  const fs::path cross_layer_thin_surface_path =
+      temp.temp_dir / "cross-layer-thin-surface.csv";
   const json impedance_law = {{"Type", "Impedance"}, {"Ls", 1.0e-13}};
   const json second_impedance_law = {{"Type", "Impedance"}, {"Ls", 2.0e-13}};
   const json conductivity_law = {{"Type", "Conductivity"},
@@ -260,9 +266,9 @@ struct SurfaceResponseFiles
   static std::unique_ptr<mfem::ParMesh> MakeTouchingIslandMesh();
   static std::unique_ptr<mfem::ParMesh> MakeOffsetCornerPairMesh();
   // The SA edge segments of interface `interface` (with their length and vertex types).
-  static InterfaceEdgeSummary SummarizeInterfaceEdges(const mfem::ParMesh &mesh,
-                                                      const config::BoundaryData &boundaries,
-                                                      int interface);
+  static InterfaceEdgeSummary
+  SummarizeInterfaceEdges(const mfem::ParMesh &mesh, const config::BoundaryData &boundaries,
+                          int interface);
 
   // The constant Maxwell probe field (0.7, -0.4, 0.2) of the 3D cases.
   static mfem::VectorConstantCoefficient ConstantFieldCoefficient();
@@ -272,9 +278,10 @@ struct SurfaceResponseFiles
   static json SignatureInterfaces(const json &signature);
   static json ChordedSignatureEdges(const json &signature, double radius);
   static std::vector<std::vector<std::string>> ReadPatchRows(const fs::path &path);
-  static std::size_t CheckPlacedModelEdges(const json &feature, const json &identification,
-                                           const std::vector<std::vector<std::string>> &patch_rows,
-                                           const json &model_edges, double tolerance);
+  static std::size_t
+  CheckPlacedModelEdges(const json &feature, const json &identification,
+                        const std::vector<std::vector<std::string>> &patch_rows,
+                        const json &model_edges, double tolerance);
 };
 
 }  // namespace palace::test
