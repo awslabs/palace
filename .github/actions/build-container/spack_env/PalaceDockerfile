@@ -1,9 +1,9 @@
 {% extends "container/Dockerfile" %}
 {% block build_stage %}
 # FIXME(awslabs/palace#731): swap in Spack v1.2.3 (haampie-llms backports/v1.2.3)
-# with the spack/spack#53111 backport, so that `--only dependencies` does not skip
-# the `compilers` group root when installing or pushing to the buildcache.
-ARG SPACK_FIX_COMMIT=0341360a2b7baa99e777bde1651c8fcf2fce370d
+# with the simplified spack/spack#53111 backport, so that `--only dependencies` does
+# not skip the `compilers` group root when installing or pushing to the buildcache.
+ARG SPACK_FIX_COMMIT=a7d9c2519748cc28683083be7c963c9c8d858b53
 RUN git clone -q --filter=blob:none --no-checkout \
       https://github.com/Sbozzolo/spack.git /tmp/spack-fix && \
     git -C /tmp/spack-fix checkout -q "$SPACK_FIX_COMMIT" && \
@@ -11,7 +11,7 @@ RUN git clone -q --filter=blob:none --no-checkout \
     rm -rf "$spack_root/lib/spack" && \
     cp -a /tmp/spack-fix/lib/spack "$spack_root/lib/spack" && \
     rm -rf /tmp/spack-fix && \
-    grep -q dependencies_only "$spack_root/lib/spack/spack/new_installer.py" && \
+    grep -q _dependency_hashes "$spack_root/lib/spack/spack/new_installer.py" && \
     spack --version
 
 ARG SPACK_PACKAGES_COMMIT
