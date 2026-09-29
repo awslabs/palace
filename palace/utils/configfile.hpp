@@ -1012,6 +1012,15 @@ public:
     // Explicit configuration syntax always uses the default unit weight.
     double weight = 1.0;
 
+    // Internal longitudinal cell of an automatically generated 3D translational patch: the
+    // interval of its feature portion that this quadrature point integrates, as offsets
+    // along AxisW (mesh length units) from the patch origin, so that the cells of one
+    // portion tile it exactly (cell boundaries at the cumulative quadrature weights). The
+    // surface mortar projects the device trace over the strip of this length (not the
+    // dimensionless weight); {0, 0} is a point-in-z patch (2D, spatial models, explicit
+    // configuration syntax), whose trace is the projection in the origin's cross-section.
+    std::array<double, 2> longitudinal_cell = {0.0, 0.0};
+
     // Internal identifier for weighted alternatives that interpolate one automatic 2D
     // placement. Their contours intentionally overlap; unrelated placements remain
     // subject to the overlap check.
