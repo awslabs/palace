@@ -51,6 +51,7 @@ set(PALACE_BUILD_WITH_SANITIZERS OFF CACHE BOOL "Compile Palace with sanitizers 
 set(PALACE_TESTS_NUMPROC 2 CACHE STRING "MPI ranks per [Parallel] unit-test case")
 set(PALACE_REGRESSION_NUMPROC 2 CACHE STRING "MPI ranks per [Regression]/[Long] case")
 set(PALACE_TESTS_OMP_THREADS 1 CACHE STRING "OpenMP threads per test process")
+set(PALACE_GIT_COMMIT_ID "" CACHE STRING "Version string to embed instead of git describe")
 
 # Enable Fortran if required
 if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS OR PALACE_WITH_ARPACK)

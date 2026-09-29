@@ -31,6 +31,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     every estimate after the first (and the imaginary part of complex fields) reused stale
     field data for all geometry types but the first.
     [PR 962](https://github.com/awslabs/palace/pull/962).
+  - Fixed `GitTag` in `palace.json` reporting `"UNKNOWN"` for builds without usable Git
+    metadata. The version can now be supplied with the `PALACE_GIT_COMMIT_ID` CMake option;
+    the Spack package sets it from the resolved commit (`v<version>` for releases, from the
+    next release on), and the containers embed the `git describe` of the built commit.
+    [PR 974](https://github.com/awslabs/palace/pull/974).
 
 #### Performance Improvements
 

@@ -377,9 +377,18 @@ set_property(
 # Generate embedded schema header from JSON schema files
 include(${CMAKE_SOURCE_DIR}/../cmake/EmbedSchema.cmake)
 
-# Add Git revision information (forces reconfigure when Git status changes)
-include(GetGitDescription)
-git_describe(GIT_COMMIT_ID)
+# Add Git revision information (forces reconfigure when Git status changes). Builds without
+# usable Git metadata (e.g. Spack) can supply it via PALACE_GIT_COMMIT_ID, as a CMake variable
+# or, failing that, an environment variable.
+set(PALACE_GIT_COMMIT_ID "" CACHE STRING "Version string to embed instead of git describe")
+if(PALACE_GIT_COMMIT_ID)
+  set(GIT_COMMIT_ID "${PALACE_GIT_COMMIT_ID}")
+elseif(NOT "$ENV{PALACE_GIT_COMMIT_ID}" STREQUAL "")
+  set(GIT_COMMIT_ID "$ENV{PALACE_GIT_COMMIT_ID}")
+else()
+  include(GetGitDescription)
+  git_describe(GIT_COMMIT_ID)
+endif()
 message(STATUS "Git string: ${GIT_COMMIT_ID}")
 if(NOT GIT_COMMIT_ID MATCHES "NOTFOUND")
   set_property(
