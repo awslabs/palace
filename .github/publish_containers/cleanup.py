@@ -152,7 +152,7 @@ def _aws_strings(cmd: list[str]) -> list[str]:
     not an error. Anything else that is not a list of strings is a malformed
     response and must not be silently treated as "nothing to delete".
     """
-    proc = subprocess.run(cmd, check=True, capture_output=True, text=True)
+    proc = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, text=True)
     text = proc.stdout.strip()
     if not text:
         return []
