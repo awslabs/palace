@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <memory>
+#include <numeric>
 #include <random>
 #include <vector>
 #include <mfem.hpp>
@@ -495,6 +496,31 @@ TEST_CASE("Interior boundary sides", "[brokenspace][Serial][Parallel]")
   }
   Mpi::GlobalSum(1, &num_nonzero, comm);
   CHECK(num_nonzero == 0);
+}
+
+TEST_CASE("Hanging entities", "[brokenspace][Serial][Parallel]")
+{
+  const auto comm = MPI_COMM_WORLD;
+  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON,
+                             mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
+  auto smesh = MakeCrackedCubeMesh(4, type);
+  smesh.EnsureNCMesh(true);
+  auto part = Partition(smesh, Mpi::Size(comm));
+  mfem::ParMesh pmesh(comm, smesh, part.data());
+  CHECK(!mesh::HasHangingEntities(pmesh));
+
+  // Uniform refinement leaves no hanging entities, local refinement does.
+  mfem::Array<int> all(pmesh.GetNE());
+  std::iota(all.begin(), all.end(), 0);
+  pmesh.GeneralRefinement(all, 1, 0);
+  CHECK(!mesh::HasHangingEntities(pmesh));
+  mfem::Array<int> first;
+  if (Mpi::Root(comm))
+  {
+    first.Append(0);
+  }
+  pmesh.GeneralRefinement(first, 1, 0);
+  CHECK(mesh::HasHangingEntities(pmesh));
 }
 
 TEST_CASE("Broken space prolongation", "[brokenspace][Serial][Parallel]")
