@@ -148,10 +148,20 @@ void FiniteElementSpace::ResetCeedObjects()
   }
 }
 
-void FiniteElementSpace::MakeBroken(const CrackSides &sides)
+FiniteElementSpace::FiniteElementSpace(FiniteElementSpace &fespace, const CrackSides &sides)
+  : fespace(fespace.Get()), mesh(fespace.GetMesh()), aux_fespace(nullptr)
+{
+  MFEM_VERIFY(!fespace.IsBroken(), "Finite element space is already broken!");
+  ResetCeedObjects();
+  tx.UseDevice(true);
+  lx.UseDevice(true);
+  ly.UseDevice(true);
+  InitBroken(sides);
+}
+
+void FiniteElementSpace::InitBroken(const CrackSides &sides)
 {
   const mfem::ParFiniteElementSpace &fespace = Get();
-  MFEM_VERIFY(!broken, "Finite element space is already broken!");
   MFEM_VERIFY(fespace.GetVDim() == 1,
               "Broken finite element spaces are only supported for vdim = 1!");
   MFEM_VERIFY(!fespace.IsVariableOrder(),
@@ -287,12 +297,6 @@ void FiniteElementSpace::MakeBroken(const CrackSides &sides)
   Mpi::GlobalSum(1, &data->global_tsize, GetParMesh().GetComm());
   data->P = std::make_unique<BrokenProlongation>(*P, copy_ldofs, split_tdofs);
   broken = std::move(data);
-
-  // Discard any restrictions built for the unbroken space, and the objects which depend on
-  // them.
-  ResetCeedObjects();
-  G.reset();
-  aux_fespace = nullptr;
 }
 
 CeedBasis FiniteElementSpace::BuildCeedBasis(const mfem::FiniteElementSpace &fespace,
