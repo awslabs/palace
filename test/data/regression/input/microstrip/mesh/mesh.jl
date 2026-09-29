@@ -20,7 +20,7 @@ using Gmsh: gmsh
         gui::Bool             = false
     )
 
-Generate a mesh for the microstrip example using Gmsh: a superconducting strip over an
+Generate a mesh for the microstrip regression case using Gmsh: a superconducting strip over an
 equal-width ground plane, shorted at both ends into a closed single-turn current loop. A
 short terminal patch on the top strip carries the current excitation. The conductor and
 terminal surfaces are tagged separately so they can be assigned PEC (geometric-inductance

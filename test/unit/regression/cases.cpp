@@ -990,6 +990,32 @@ TEST_CASE("coaxial_magnetostatic_superconductor", "[Serial][Parallel][GPU][Regre
                                   "magnetostatic_superconductor", opts);
 }
 
+// Current-driven microstrip with PEC conductors (lambda -> 0 limit).
+TEST_CASE("microstrip_pec", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("microstrip", "microstrip_pec.json", "pec", opts);
+}
+
+// The same microstrip with London conductors (lambda = 0.4 um, d = 0.1 um): current-driven
+// finite lambda on an open geometry with edge crowding.
+TEST_CASE("microstrip_superconductor", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("microstrip", "microstrip_superconductor.json",
+                                  "superconductor", opts);
+}
+
 // London flux film under non-conformal AMR. Locks the NC-safe cut generator (a_h = Grad ψ -
 // a_angle): Grad ψ survives the true-DOF round trip exactly, so the fluxoid and
 // curl-free-on-Σ gauge hold on the refined mesh and L converges upward (5.16 -> 5.33 pH
