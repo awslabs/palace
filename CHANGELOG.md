@@ -54,6 +54,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed boundary coefficient terms being added to attributes outside their boundary when
+    attributes with equal properties shared one material entry (a term stamped per attribute
+    or per port element was counted once per attribute on all of them). This affects every
+    coefficient combining several boundary terms: the boundary mode (wave port) system
+    matrices and the driven extra-system matrix (surface conductivity, rational impedance,
+    wave ports), whose results change for configurations with several such attributes, and
+    the 3D preconditioner, which now matches the intended matrix.
+    [PR 962](https://github.com/awslabs/palace/pull/962).
+  - Fixed the flux error estimators on meshes with several element geometry types, where
+    every estimate after the first (and the imaginary part of complex fields) reused stale
+    field data for all geometry types but the first.
+    [PR 962](https://github.com/awslabs/palace/pull/962).
   - Corrected the `FluxLoop` hole inductance, which was low in 0.18 (e.g. the `circular_hole`
     PEC limit moves from 2.00 to 2.85 pH): 0.18 pinned the film's tangential field to a
     regularized 2D surface-curl solution, whereas the film is now driven by a curl-free cut
