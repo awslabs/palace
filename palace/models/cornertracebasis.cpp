@@ -581,27 +581,24 @@ std::string CheckCornerBasisCrossings(const std::vector<std::array<double, 3>> &
   {
     bool metal = false;
     double half_width = 0.0;
-    std::array<double, 2> minimum = {points[offset][0], points[offset][1]};
-    std::array<double, 2> maximum = minimum;
     for (int i = 0; i < size; i++)
     {
       metal = metal || zero.count(offset + i) > 0;
       half_width = std::max(half_width, std::max(std::abs(points[offset + i][0]),
                                                  std::abs(points[offset + i][1])));
-      for (int d = 0; d < 2; d++)
-      {
-        minimum[d] = std::min(minimum[d], points[offset + i][d]);
-        maximum[d] = std::max(maximum[d], points[offset + i][d]);
-      }
     }
     // The gate is about the box contour of the coupon frame: a square ring centred on the
-    // apex (|x|, |y| <= R, the generator's matching box). A ring with PEC knots that is not
-    // such a ring is not a corner-coupon box contour and is not judged here.
-    const bool centred_box =
-        std::abs(minimum[0] + half_width) <= tolerance &&
-        std::abs(maximum[0] - half_width) <= tolerance &&
-        std::abs(minimum[1] + half_width) <= tolerance &&
-        std::abs(maximum[1] - half_width) <= tolerance;
+    // apex (every knot on the perimeter of |x|, |y| <= R, the generator's matching box). A
+    // ring with PEC knots that is not such a ring is not a corner-coupon box contour and is
+    // not judged here.
+    bool centred_box = true;
+    for (int i = 0; i < size; i++)
+    {
+      centred_box = centred_box &&
+                    std::abs(std::max(std::abs(points[offset + i][0]),
+                                      std::abs(points[offset + i][1])) -
+                             half_width) <= tolerance;
+    }
     if (metal && centred_box)
     {
       const double z = points[offset][2];
