@@ -223,7 +223,7 @@ def assert_dev_only(plan: Plan) -> None:
 def _run_json(cmd: list[str]) -> dict:
     """Run an `aws --output json` mutating call and return its parsed body.
 
-    Unlike :func:`_run`, the body is inspected by the caller: both delete APIs
+    Unlike a bare exit-status check, the caller inspects the body: both delete APIs
     exit 0 while reporting per-item failures in the body, so the exit status
     alone would let a permission gap look like a successful sweep and leave the
     same orphans for the next run to "delete" again.
