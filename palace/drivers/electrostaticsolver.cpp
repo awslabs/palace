@@ -3,6 +3,7 @@
 
 #include "electrostaticsolver.hpp"
 
+#include <Eigen/Eigenvalues>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "fem/errorindicator.hpp"
@@ -32,6 +33,7 @@
 #include <set>
 #include <sstream>
 #include <string_view>
+#include <tuple>
 
 namespace palace
 {
@@ -84,6 +86,35 @@ std::filesystem::path ArchivePath(const std::filesystem::path &directory, int so
        << std::setw(6) << rank << "-" << (field == ArchivedField::POTENTIAL ? "V" : "D")
        << ".bin";
   return directory / name.str();
+}
+
+// The extreme Ritz values of the preconditioned operator B⁻¹A seen by a CG solve, from the
+// recorded coefficients alpha_k and beta_k / beta_{k-1}: the Lanczos tridiagonal of the m
+// iterations has T_kk = 1 / alpha_k + (beta_k / beta_{k-1}) / alpha_{k-1} and
+// T_{k,k+1} = sqrt(beta_{k+1} / beta_k) / alpha_k, and its eigenvalues are the Ritz values.
+// The tridiagonal is passed to the eigenvalue solve directly (no m x m matrix). NaN when the
+// record is empty or when m exceeds corrected_solve_ritz_max_iterations.
+std::pair<double, double> CgRitzValueRange(const std::vector<double> &alpha,
+                                           const std::vector<double> &beta_ratio)
+{
+  const int m = static_cast<int>(alpha.size());
+  if (m == 0 || m > corrected_solve_ritz_max_iterations)
+  {
+    return {std::numeric_limits<double>::quiet_NaN(),
+            std::numeric_limits<double>::quiet_NaN()};
+  }
+  Eigen::VectorXd diagonal(m), subdiagonal(m - 1);
+  for (int k = 0; k < m; k++)
+  {
+    diagonal(k) = 1.0 / alpha[k] + (k > 0 ? beta_ratio[k] / alpha[k - 1] : 0.0);
+    if (k + 1 < m)
+    {
+      subdiagonal(k) = std::sqrt(std::abs(beta_ratio[k + 1])) / alpha[k];
+    }
+  }
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensystem;
+  eigensystem.computeFromTridiagonal(diagonal, subdiagonal, Eigen::EigenvaluesOnly);
+  return {eigensystem.eigenvalues().minCoeff(), eigensystem.eigenvalues().maxCoeff()};
 }
 
 template <typename T>
@@ -165,6 +196,32 @@ Vector ReadArchivedVector(const std::filesystem::path &directory, int source,
 }
 
 }  // namespace
+
+CorrectedSolveRecord SolveCorrectedField(KspSolver &ksp, const Operator &K,
+                                         const Operator &corrected_K, double solve_tol,
+                                         bool initial_guess, const Vector &rhs, Vector &x)
+{
+  const double raw_tol = ksp.GetRelTol();
+  ksp.SetRelTol(solve_tol);
+  ksp.SetOperator(corrected_K);
+  ksp.SetInitialGuess(true);
+  ksp.EnableCgHistory(true);
+  ksp.Mult(rhs, x);
+  CorrectedSolveRecord record;
+  record.converged = ksp.GetConverged();
+  record.relative_residual = ksp.GetFinalRelativeResidual();
+  record.iterations = static_cast<int>(ksp.GetCgAlphaHistory().size());
+  record.negative_curvature_count = ksp.GetCgNegativeCurvatureCount();
+  record.first_negative_curvature_iteration = ksp.GetCgFirstNegativeCurvatureIteration();
+  std::tie(record.ritz_min, record.ritz_max) =
+      CgRitzValueRange(ksp.GetCgAlphaHistory(), ksp.GetCgBetaRatioHistory());
+  record.accepted = record.converged && record.negative_curvature_count == 0;
+  ksp.EnableCgHistory(false);
+  ksp.SetInitialGuess(initial_guess);
+  ksp.SetOperator(K);
+  ksp.SetRelTol(raw_tol);
+  return record;
+}
 
 void ValidateArchiveEstimateOptions(const IoData &iodata, MPI_Comm comm, bool check_output)
 {
@@ -1147,27 +1204,44 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       {
         Mpi::Print(" Solving fabrication-response corrected field\n");
         V_corrected[step] = V[step];
-        const double solve_tol = ksp.GetRelTol();
-        ksp.SetRelTol(response_config->solve_tol);
-        ksp.SetOperator(*system_K);
-        ksp.SetInitialGuess(true);
         const auto solves_before = ksp.NumTotalMult();
         const auto iterations_before = ksp.NumTotalMultIterations();
-        ksp.Mult(corrected_rhs, V_corrected[step]);
-        const bool corrected_converged = ksp.GetConverged();
-        const double corrected_relative_residual = ksp.GetFinalRelativeResidual();
+        const auto corrected_record = SolveCorrectedField(
+            ksp, *K, *system_K, response_config->solve_tol,
+            iodata.solver.linear.initial_guess, corrected_rhs, V_corrected[step]);
         corrected_linear_solves += ksp.NumTotalMult() - solves_before;
         corrected_linear_iterations += ksp.NumTotalMultIterations() - iterations_before;
-        ksp.SetInitialGuess(iodata.solver.linear.initial_guess);
-        ksp.SetOperator(*K);
-        ksp.SetRelTol(solve_tol);
-        if (!corrected_converged)
+        if (!corrected_record.converged)
         {
           Mpi::Warning(
               "Self-consistent response-corrected solve did not converge (relative "
               "residual = {:.3e}); corrected energies and participations are reported "
               "as unavailable instead of evaluating the unconverged field.\n",
-              corrected_relative_residual);
+              corrected_record.relative_residual);
+        }
+        else if (!corrected_record.accepted)
+        {
+          const std::string ritz_range =
+              corrected_record.iterations > corrected_solve_ritz_max_iterations
+                  ? fmt::format("Ritz values of the preconditioned operator not evaluated: "
+                                "{:d} iterations exceed the {:d}-iteration bound of the "
+                                "Lanczos tridiagonal eigenvalue solve",
+                                corrected_record.iterations,
+                                corrected_solve_ritz_max_iterations)
+                  : fmt::format("Ritz values of the preconditioned operator in [{:.3e}, "
+                                "{:.3e}]",
+                                corrected_record.ritz_min, corrected_record.ritz_max);
+          Mpi::Warning(
+              "Self-consistent response-corrected operator is not positive definite: PCG met "
+              "{:d} search direction(s) with (Ap, p) <= 0 (first at iteration {:d} of {:d}; "
+              "{}). The globally coupled correction K + P^T (Q_fab - Q_thin) P has a "
+              "negative-energy mode on this mesh (the device's own response to a coupon "
+              "trace mode is below the coupon's thin response by more than the fabricated "
+              "defect); corrected energies and participations are reported as unavailable "
+              "instead of evaluating the meaningless field.\n",
+              corrected_record.negative_curvature_count,
+              corrected_record.first_negative_curvature_iteration,
+              corrected_record.iterations, ritz_range);
         }
         else
         {
