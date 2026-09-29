@@ -219,14 +219,16 @@ class TraceBasisRuleTest(unittest.TestCase):
         C++ rule (kKnotCoincidenceFraction, cornertracebasis.cpp) uses the same value."""
         R = RADIUS
         self.assertEqual(GENERATOR.KNOT_COINCIDENCE_FRACTION, 1.0e-6)
+        # The cross-language check is part of the contract (merge review m-b): the C++
+        # source must be present, a missing file fails instead of skipping silently.
         source = (ROOT / "../../../palace/models/cornertracebasis.cpp").resolve()
-        if source.exists():
-            line = [
-                text for text in source.read_text().splitlines()
-                if text.startswith("constexpr double kKnotCoincidenceFraction")
-            ]
-            self.assertEqual(len(line), 1)
-            self.assertEqual(float(line[0].split("=")[1].strip(" ;")), 1.0e-6)
+        self.assertTrue(source.is_file(), f"C++ rule source missing: {source}")
+        line = [
+            text for text in source.read_text().splitlines()
+            if text.startswith("constexpr double kKnotCoincidenceFraction")
+        ]
+        self.assertEqual(len(line), 1)
+        self.assertEqual(float(line[0].split("=")[1].strip(" ;")), 1.0e-6)
         for offset, snapped in ((7.5e-7, True), (3.0e-6, False)):
             angle = np.degrees(np.arctan2(0.5 * R - 8.0 * R * offset, -R))
             layout = GENERATOR.metal_ring_layout(R, angle, "convex", 8)
@@ -253,6 +255,48 @@ class TraceBasisRuleTest(unittest.TestCase):
                 ),
                 [],
             )
+
+    def test_connectivity_angle_fixes_the_band_triangulation_over_a_segment(self):
+        """Corner-qualification block 2026-09-29: with a segment connectivity angle the
+        bands next to the metal rings are merged in the order of the rule's layout at that
+        angle, so the triangulation is the same at every angle of the segment (here across
+        the convex free-1 passage of the side midpoint (-R, 0) at 141.34 deg, where the
+        perimeter-ordered merge flips a quad diagonal), the knots stay at the angle's own
+        positions, and the slave table is unchanged. Without one the surface is byte-identical
+        to the perimeter-ordered merge (the recorded coupons). A connectivity angle across a
+        knot-corner passage (135 deg, the crossing at (-R, R)) is refused: the band triangles
+        would fold."""
+        keyed = {}
+        for angle in (137.0, 141.0, 142.0, 150.0, 153.0):
+            surface = GENERATOR.build_surface(
+                RADIUS, 8, THICKNESS, OVERETCH, angle_degrees=angle, topology="convex",
+                connectivity_angle_degrees=144.2,
+            )
+            plain = GENERATOR.build_surface(
+                RADIUS, 8, THICKNESS, OVERETCH, angle_degrees=angle, topology="convex"
+            )
+            np.testing.assert_array_equal(surface.knot_points, plain.knot_points)
+            self.assertEqual(surface.slaves, plain.slaves)
+            keyed[angle] = set(map(tuple, np.sort(surface.triangles, axis=1).tolist()))
+            self.assertEqual(
+                GENERATOR.free_hat_pec_support(
+                    np.asarray(surface.knot_points), surface.contour_groups,
+                    surface.zero_trace_indices(), pec_mask(angle, "convex"), surface.slaves
+                ),
+                [],
+            )
+            plain_set = set(map(tuple, np.sort(plain.triangles, axis=1).tolist()))
+            # Perimeter order = the keyed order once the knot has passed the midpoint.
+            self.assertEqual(plain_set == keyed[angle], angle > 141.3402)
+        self.assertEqual(len({frozenset(t) for t in keyed.values()}), 1)
+        with self.assertRaises(ValueError):
+            GENERATOR.build_surface(
+                RADIUS, 8, THICKNESS, OVERETCH, angle_degrees=130.0, topology="convex",
+                connectivity_angle_degrees=144.2,
+            )
+        rule = GENERATOR.trace_basis_rule(8, 144.2)
+        self.assertEqual(rule["ConnectivityAngleDegrees"], 144.2)
+        self.assertNotIn("ConnectivityAngleDegrees", GENERATOR.trace_basis_rule(8))
 
     def _surface_arguments(self, angle, topology):
         surface = GENERATOR.build_surface(

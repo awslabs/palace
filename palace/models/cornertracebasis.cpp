@@ -8,6 +8,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <mfem.hpp>
 
@@ -438,7 +439,8 @@ CornerBoxSeed MakeCornerBoxSeed(double radius, double metal_thickness, double ov
 ConstructedCornerTraceBasis BuildCornerTraceBasis(
     const std::vector<std::array<double, 3>> &node_points,
     const std::vector<int> &contour_groups, const std::vector<int> &zero_trace_indices,
-    double angle_radians, bool convex, const CornerTraceBasisRule &rule)
+    double angle_radians, bool convex, const CornerTraceBasisRule &rule,
+    std::optional<double> connectivity_angle_radians)
 {
   const CornerBoxRings box =
       DescribeCornerBoxRings(node_points, contour_groups, zero_trace_indices);
@@ -449,7 +451,9 @@ ConstructedCornerTraceBasis BuildCornerTraceBasis(
   basis.zero.assign(node_points.size(), false);
   basis.contour_groups = contour_groups;
   const int basis_size = static_cast<int>(node_points.size());
-  // Per ring: the vertices in perimeter order (fraction, vertex index).
+  // Per ring: the vertices in MERGE order (key, vertex index); the key is the perimeter
+  // fraction, or with a connectivity angle the role's fraction at that angle (slaves keyed
+  // at their corner).
   std::vector<std::vector<double>> ring_fractions(box.rings.size());
   std::vector<std::vector<int>> ring_vertices(box.rings.size());
   for (std::size_t r = 0; r < box.rings.size(); r++)
@@ -479,22 +483,71 @@ ConstructedCornerTraceBasis BuildCornerTraceBasis(
     MFEM_VERIFY(std::abs(ring.half_width - radius) <= tolerance,
                 "A corner coupon ring that meets the metal is not an outer box ring!");
     const auto layout = CornerMetalRingLayout(radius, angle_radians, convex, rule);
+    // Merge keys (the generator's connectivity_keys).
+    std::vector<double> keys(layout.size());
+    for (std::size_t v = 0; v < layout.size(); v++)
+    {
+      keys[v] = layout[v].fraction;
+    }
+    if (connectivity_angle_radians)
+    {
+      const auto key_layout =
+          CornerMetalRingLayout(radius, *connectivity_angle_radians, convex, rule);
+      for (std::size_t v = 0; v < layout.size(); v++)
+      {
+        if (layout[v].kind == CornerRingVertex::Kind::SLAVE)
+        {
+          continue;
+        }
+        bool found = false;
+        for (const auto &key_vertex : key_layout)
+        {
+          if (key_vertex.kind != CornerRingVertex::Kind::SLAVE &&
+              key_vertex.slot == layout[v].slot)
+          {
+            keys[v] = key_vertex.fraction;
+            found = true;
+          }
+        }
+        MFEM_VERIFY(found, "Corner trace basis rule: a knot role has no key!");
+      }
+      std::vector<std::size_t> by_key(layout.size());
+      for (std::size_t v = 0; v < by_key.size(); v++)
+      {
+        by_key[v] = v;
+      }
+      std::sort(by_key.begin(), by_key.end(),
+                [&](std::size_t a, std::size_t b) { return keys[a] < keys[b]; });
+      int descents = 0;
+      for (std::size_t v = 0; v < by_key.size(); v++)
+      {
+        if (layout[by_key[(v + 1) % by_key.size()]].fraction < layout[by_key[v]].fraction)
+        {
+          descents++;
+        }
+      }
+      MFEM_VERIFY(descents <= 1,
+                  "Corner trace basis: the connectivity angle "
+                      << *connectivity_angle_radians * 180.0 / std::acos(-1.0)
+                      << " deg lies across a knot-corner passage from the angle "
+                      << angle_radians * 180.0 / std::acos(-1.0)
+                      << " deg (the band triangles would fold)!");
+    }
     std::vector<int> knot_positions;
     std::vector<int> pending_slaves;
+    std::vector<int> perimeter_vertices(layout.size(), -1);
     for (std::size_t v = 0; v < layout.size(); v++)
     {
       const auto &vertex = layout[v];
-      ring_fractions[r].push_back(vertex.fraction);
       if (vertex.kind == CornerRingVertex::Kind::SLAVE)
       {
-        ring_vertices[r].push_back(-1);  // resolved below
         pending_slaves.push_back(static_cast<int>(v));
         continue;
       }
       const int index = ring.offset + vertex.slot;
       basis.knots[index] = SquarePerimeterPoint(radius, ring.z, vertex.fraction);
       basis.zero[index] = vertex.kind == CornerRingVertex::Kind::ZERO;
-      ring_vertices[r].push_back(index);
+      perimeter_vertices[v] = index;
       knot_positions.push_back(static_cast<int>(v));
     }
     for (const int position : pending_slaves)
@@ -528,11 +581,24 @@ ConstructedCornerTraceBasis BuildCornerTraceBasis(
       ConstructedCornerTraceBasis::Vertex slave;
       slave.point = SquarePerimeterPoint(radius, ring.z, layout[position].fraction);
       slave.basis = -1;
-      slave.parent_a = ring_vertices[r][previous];
-      slave.parent_b = ring_vertices[r][following];
+      slave.parent_a = perimeter_vertices[previous];
+      slave.parent_b = perimeter_vertices[following];
       slave.weight_a = weight_a;
-      ring_vertices[r][position] = basis_size + static_cast<int>(basis.vertices.size());
+      perimeter_vertices[position] = basis_size + static_cast<int>(basis.vertices.size());
       basis.vertices.push_back(slave);
+    }
+    // The ring in merge order (= the perimeter order without a connectivity angle).
+    std::vector<std::size_t> order(layout.size());
+    for (std::size_t v = 0; v < order.size(); v++)
+    {
+      order[v] = v;
+    }
+    std::stable_sort(order.begin(), order.end(),
+                     [&](std::size_t a, std::size_t b) { return keys[a] < keys[b]; });
+    for (const std::size_t v : order)
+    {
+      ring_fractions[r].push_back(keys[v]);
+      ring_vertices[r].push_back(perimeter_vertices[v]);
     }
   }
   // Vertex list: the knots (basis order), then the slaves.
@@ -657,6 +723,303 @@ std::string CheckCornerBasisCrossings(const std::vector<std::array<double, 3>> &
     offset += size;
   }
   return "";
+}
+
+std::vector<CornerBasisEvent> CornerBasisEvents(bool convex, const CornerTraceBasisRule &rule)
+{
+  // Every knot's perimeter fraction is affine in the second crossing's unwrapped fraction
+  // s2 in (first, first + 1] (first = 0.5, the +x arm): fraction = a s2 + b (see
+  // CornerMetalRingLayout). A knot passes the fixed-layout vertex j / RingSize (+ n) at
+  // s2 = (j / RingSize + n - b) / a; the second arm through that perimeter point gives the
+  // corner angle (in (0, 180] for s2 in (first, first + 0.5]).
+  const double first = 0.5;
+  std::vector<std::pair<std::string, std::pair<double, double>>> roles;  // role, (a, b)
+  roles.push_back({"crossing2", {1.0, 0.0}});
+  for (int m = 1; m <= rule.metal_interior_knots; m++)
+  {
+    const double t = static_cast<double>(m) / (rule.metal_interior_knots + 1);
+    if (convex)
+    {
+      roles.push_back({"metal" + std::to_string(m), {t, first * (1.0 - t)}});
+    }
+    else
+    {
+      roles.push_back({"metal" + std::to_string(m), {1.0 - t, (first + 1.0) * t}});
+    }
+  }
+  for (int k = 1; k <= rule.free_knots; k++)
+  {
+    const double t = static_cast<double>(k) / (rule.free_knots + 1);
+    if (convex)
+    {
+      roles.push_back({"free" + std::to_string(k), {1.0 - t, (first + 1.0) * t}});
+    }
+    else
+    {
+      roles.push_back({"free" + std::to_string(k), {t, first * (1.0 - t)}});
+    }
+  }
+  std::vector<CornerBasisEvent> events;
+  for (const auto &[role, coefficients] : roles)
+  {
+    const auto [a, b] = coefficients;
+    for (int j = 0; j < rule.ring_size; j++)
+    {
+      const double c = static_cast<double>(j) / rule.ring_size;
+      for (int n = 0; n <= 2; n++)
+      {
+        const double s2 = (c + n - b) / a;
+        if (s2 <= first + kKnotCoincidenceFraction || s2 > first + 0.5 + 1.0e-12)
+        {
+          continue;
+        }
+        const auto point = SquarePerimeterPoint(1.0, 0.0, s2);
+        const double angle = std::atan2(point[1], point[0]) * 180.0 / std::acos(-1.0);
+        CornerBasisEvent event;
+        event.angle_degrees = angle <= 0.0 ? angle + 360.0 : angle;
+        event.role = role;
+        event.fraction = c;
+        // The box corners of the fixed layout lie at the odd multiples of 1 / (2 x 4).
+        event.corner = std::abs(std::fmod(c * 4.0 + 0.5, 1.0) - 0.0) <= 1.0e-12 ||
+                       std::abs(std::fmod(c * 4.0 + 0.5, 1.0) - 1.0) <= 1.0e-12;
+        events.push_back(event);
+      }
+    }
+  }
+  std::sort(events.begin(), events.end(),
+            [](const auto &x, const auto &y)
+            {
+              return x.angle_degrees != y.angle_degrees ? x.angle_degrees < y.angle_degrees
+                                                        : x.role < y.role;
+            });
+  return events;
+}
+
+CornerFamilyStencil SelectCornerFamilyStencil(const std::vector<CornerFamilyNode> &nodes,
+                                              double angle_degrees, bool convex,
+                                              const CornerTraceBasisRule &rule,
+                                              double angle_tolerance_degrees)
+{
+  CornerFamilyStencil stencil;
+  MFEM_VERIFY(!nodes.empty(), "A corner family stencil needs nodes!");
+  const double tolerance = angle_tolerance_degrees;
+  stencil.min_angle_degrees = std::numeric_limits<double>::infinity();
+  stencil.max_angle_degrees = -std::numeric_limits<double>::infinity();
+  for (const auto &node : nodes)
+  {
+    stencil.min_angle_degrees = std::min(stencil.min_angle_degrees, node.angle_degrees);
+    stencil.max_angle_degrees = std::max(stencil.max_angle_degrees, node.angle_degrees);
+  }
+  // The corner-passage events: the segment boundaries.
+  std::vector<double> boundaries;
+  for (const auto &event : CornerBasisEvents(convex, rule))
+  {
+    if (event.corner && (boundaries.empty() ||
+                         event.angle_degrees - boundaries.back() > tolerance))
+    {
+      boundaries.push_back(event.angle_degrees);
+    }
+  }
+  auto Interval = [&](double angle)
+  {
+    // The event-free open interval containing `angle` (an angle within the tolerance of an
+    // event belongs to the interval below and above: index of the first boundary above).
+    std::size_t i = 0;
+    while (i < boundaries.size() && boundaries[i] < angle - tolerance)
+    {
+      i++;
+    }
+    return i;
+  };
+  auto OnBoundary = [&](double angle)
+  {
+    for (const double boundary : boundaries)
+    {
+      if (std::abs(angle - boundary) <= tolerance)
+      {
+        return true;
+      }
+    }
+    return false;
+  };
+  auto Weights = [&](const std::vector<const CornerFamilyNode *> &window)
+  {
+    stencil.nodes.clear();
+    double best = std::numeric_limits<double>::infinity();
+    for (std::size_t i = 0; i < window.size(); i++)
+    {
+      double weight = 1.0;
+      for (std::size_t j = 0; j < window.size(); j++)
+      {
+        if (j != i)
+        {
+          weight *= (angle_degrees - window[j]->angle_degrees) /
+                    (window[i]->angle_degrees - window[j]->angle_degrees);
+        }
+      }
+      stencil.nodes.push_back({window[i]->index, weight});
+      const double distance = std::abs(window[i]->angle_degrees - angle_degrees);
+      if (distance < best)
+      {
+        best = distance;
+        stencil.base = window[i]->index;
+      }
+    }
+    stencil.rule = window.size() == 4 ? "cubic" : (window.size() == 3 ? "quadratic" : "linear");
+  };
+
+  // Exact node: the legacy coupon at that angle (its own tie triangulation) if the family
+  // has one, else the coupon of the lower-angle segment (deterministic).
+  {
+    const CornerFamilyNode *exact = nullptr;
+    for (const auto &node : nodes)
+    {
+      if (std::abs(node.angle_degrees - angle_degrees) > tolerance)
+      {
+        continue;
+      }
+      if (!exact || (!node.connectivity_angle_degrees && exact->connectivity_angle_degrees) ||
+          (node.connectivity_angle_degrees && exact->connectivity_angle_degrees &&
+           *node.connectivity_angle_degrees < *exact->connectivity_angle_degrees))
+      {
+        exact = &node;
+      }
+    }
+    if (exact)
+    {
+      stencil.nodes = {{exact->index, 1.0}};
+      stencil.rule = "exact";
+      stencil.base = exact->index;
+      stencil.connectivity_angle_degrees = exact->connectivity_angle_degrees;
+      return stencil;
+    }
+  }
+  if (angle_degrees < stencil.min_angle_degrees - tolerance)
+  {
+    std::ostringstream text;
+    text << "corner angle " << angle_degrees << " deg is sharper than the smallest "
+         << (convex ? "convex" : "concave") << " coupon angle " << stencil.min_angle_degrees
+         << " deg (no extrapolation)";
+    stencil.reason = text.str();
+    return stencil;
+  }
+  if (angle_degrees > stencil.max_angle_degrees + tolerance)
+  {
+    std::ostringstream text;
+    text << "corner angle " << angle_degrees << " deg is wider than the widest "
+         << (convex ? "convex" : "concave") << " coupon angle " << stencil.max_angle_degrees
+         << " deg (no extrapolation; the first-order regime needs the straight anchor)";
+    stencil.reason = text.str();
+    return stencil;
+  }
+  // Segments: the coupons sharing a connectivity angle, each in one event-free interval
+  // with its connectivity angle (fail closed), ordered and overlapping at shared node
+  // angles only.
+  std::map<double, std::vector<const CornerFamilyNode *>> segments;
+  bool legacy = false;
+  for (const auto &node : nodes)
+  {
+    if (!node.connectivity_angle_degrees)
+    {
+      legacy = true;
+      continue;
+    }
+    bool merged = false;
+    for (auto &[key, members] : segments)
+    {
+      if (std::abs(key - *node.connectivity_angle_degrees) <= tolerance)
+      {
+        members.push_back(&node);
+        merged = true;
+        break;
+      }
+    }
+    if (!merged)
+    {
+      segments[*node.connectivity_angle_degrees] = {&node};
+    }
+  }
+  std::vector<std::pair<double, double>> ranges;
+  for (auto &[key, members] : segments)
+  {
+    std::sort(members.begin(), members.end(),
+              [](const auto *a, const auto *b) { return a->angle_degrees < b->angle_degrees; });
+    MFEM_VERIFY(!OnBoundary(key),
+                "Corner family segment connectivity angle " << key
+                                                            << " deg lies on a knot-corner "
+                                                               "passage of the trace basis!");
+    const std::size_t interval = Interval(key);
+    for (const auto *member : members)
+    {
+      MFEM_VERIFY(std::abs(member->angle_degrees - key) <= tolerance ||
+                      Interval(member->angle_degrees) == interval ||
+                      (OnBoundary(member->angle_degrees) &&
+                       (Interval(member->angle_degrees) == interval ||
+                        Interval(member->angle_degrees) + 1 == interval)),
+                  "Corner family segment with connectivity angle "
+                      << key << " deg has a node at " << member->angle_degrees
+                      << " deg across a knot-corner passage of the trace basis (its band "
+                         "triangulation jumps there): the segment must be split!");
+    }
+    for (std::size_t i = 1; i < members.size(); i++)
+    {
+      MFEM_VERIFY(members[i]->angle_degrees - members[i - 1]->angle_degrees > tolerance,
+                  "Corner family segment has two coupons at " << members[i]->angle_degrees
+                                                              << " deg!");
+    }
+    ranges.push_back({members.front()->angle_degrees, members.back()->angle_degrees});
+  }
+  std::sort(ranges.begin(), ranges.end());
+  for (std::size_t i = 1; i < ranges.size(); i++)
+  {
+    MFEM_VERIFY(ranges[i].first >= ranges[i - 1].second - tolerance,
+                "Corner family segments overlap beyond a shared node angle!");
+  }
+  const std::vector<const CornerFamilyNode *> *segment = nullptr;
+  double segment_key = 0.0;
+  for (const auto &[key, members] : segments)
+  {
+    if (angle_degrees > members.front()->angle_degrees + tolerance &&
+        angle_degrees < members.back()->angle_degrees - tolerance)
+    {
+      segment = &members;
+      segment_key = key;
+    }
+  }
+  if (!segment)
+  {
+    std::ostringstream text;
+    if (legacy)
+    {
+      text << "corner angle " << angle_degrees
+           << " deg needs interpolation but the corner family is built without segment "
+              "connectivity records (TraceBasis ConnectivityAngleDegrees): its trace bases "
+              "jump at every knot passage of a box vertex; rebuild the family on segment "
+              "connectivity (corner-qualification block 2026-09-29)";
+    }
+    else
+    {
+      text << "corner angle " << angle_degrees
+           << " deg lies in no segment of the corner family (segments end at the knot-corner "
+              "passages of the trace basis: a node is needed on each side of every passage)";
+    }
+    stencil.reason = text.str();
+    return stencil;
+  }
+  std::size_t interval = 0;
+  while (interval + 1 < segment->size() && (*segment)[interval + 1]->angle_degrees < angle_degrees)
+  {
+    interval++;
+  }
+  std::size_t begin = 0, end = segment->size();
+  if (segment->size() > 4)
+  {
+    begin = std::min(interval > 0 ? interval - 1 : 0, segment->size() - 4);
+    end = begin + 4;
+  }
+  Weights(std::vector<const CornerFamilyNode *>(segment->begin() + begin, segment->begin() + end));
+  stencil.connectivity_angle_degrees = segment_key;
+  return stencil;
 }
 
 }  // namespace palace

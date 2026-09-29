@@ -682,6 +682,13 @@ def model_matches_coupon(model, coupon):
                 return False
         return True
     if coupon["Topology"] in CORNER_TOPOLOGIES:
+        model_connectivity = (model.get("TraceBasis") or {}).get("ConnectivityAngleDegrees")
+        coupon_connectivity = geometry.get("ConnectivityAngleDegrees")
+        if (model_connectivity is None) != (coupon_connectivity is None) or (
+            model_connectivity is not None
+            and not close(model_connectivity, coupon_connectivity)
+        ):
+            return False
         return close(model.get("Angle", math.nan), geometry["AngleDegrees"]) and close(
             model.get("CornerRadius", 0.0), geometry.get("CornerRadius", 0.0)
         )
@@ -1606,6 +1613,17 @@ def build_corner(coupon, args, parameters, cache):
     corner_radius = float(geometry.get("CornerRadius", 0.0))
     if angle == 180.0 and corner_radius > 0.0:
         raise ValueError(f"{coupon['Id']}: the straight anchor (180 deg) has no corner radius")
+    # Corner family segment connectivity (corner-qualification block 2026-09-29): the node's
+    # band triangulation follows the rule's layout at this angle (generate_corner_response.py
+    # --connectivity-angle, record TraceBasis ConnectivityAngleDegrees); part of the coupon
+    # spec and Id (two coupons at one angle, one per side of a knot-corner passage).
+    connectivity_angle = geometry.get("ConnectivityAngleDegrees")
+    if connectivity_angle is not None:
+        connectivity_angle = float(connectivity_angle)
+        if not 0.0 < connectivity_angle < 180.0 or corner_radius > 0.0:
+            raise ValueError(
+                f"{coupon['Id']} ConnectivityAngleDegrees must lie in (0, 180) on a sharp corner"
+            )
     if (
         not math.isfinite(corner_radius)
         or not 0.0 <= corner_radius < args.matching_radius
@@ -1628,6 +1646,7 @@ def build_corner(coupon, args, parameters, cache):
         "Topology": topology,
         "AngleDegrees": angle,
         "CornerRadius": corner_radius,
+        **({"ConnectivityAngleDegrees": connectivity_angle} if connectivity_angle is not None else {}),
         "BoundaryCondition": coupon["BoundaryCondition"],
         "Fabrication": parameters,
         "MatchingRadius": args.matching_radius,
@@ -1709,6 +1728,11 @@ def build_corner(coupon, args, parameters, cache):
             args.matching_radius,
             "--angle",
             angle,
+            *(
+                ["--connectivity-angle", connectivity_angle]
+                if connectivity_angle is not None
+                else []
+            ),
             "--corner-radius",
             corner_radius,
             "--ring-size",

@@ -1082,6 +1082,68 @@ knot next to the second crossing) through (-R, R) and its fabricated MA interpol
 -6.3 %, the linear first-order regime at 172.5 deg to -2.7 / +3.1 % (convex / concave);
 SA / MS interpolate to <= 0.2 % everywhere (participation-referenced).
 
+**Kink-aware interpolation: trace basis EVENTS, segment connectivity, per-side nodes
+(corner-qualification block 2026-09-29, supervisor decisions 134 (c) / 135; `CornerBasisEvents`,
+`SelectCornerFamilyStencil`, `BuildCornerTraceBasis` connectivity, Python mirror
+`corner_family_interpolation.py`).** Measured on the generator's trace surfaces (hats sampled
+on the bands next to both metal rings at theta -/+ 1e-3 deg; a no-event angle gives 4e-5): the
+"kink" above is a JUMP. Every angle at which a knot of a metal ring passes a vertex of the
+fixed layout on the neighbouring rings — a box corner OR a side midpoint — flips the diagonal
+of a band quad in the perimeter-ordered merge (`connect_rings_by_fraction`) and the hats
+change by O(1) (0.42 at 90, 0.50 at 135 / 141.34 / 153.43 / 158.20, 0.63 at 111.80); a box
+corner's slave vertex does not help because the knot swaps its perimeter order with the slave.
+The general rule is therefore: **a stencil never straddles a geometric event of the trace
+basis.** The events of the rule (M = 1, F = 5), computed from the affine relation between
+every knot's fraction and the second crossing's (`CornerBasisEvents`; identical in
+`corner_family_interpolation.basis_events`), in the family range [75, 180]: CONVEX knot-corner
+passages 90 (free 1 / 3 / 5 and metal 1 at the four corners: the fixed layout), 135 (the
+second crossing at (-R, R)), 153.434948822922 = 180 - atan(1/2) (free 2 at (-R, -R));
+side-midpoint passages 141.340191745910 = 180 - atan(4/5) (free 1 at (-R, 0)) and 180 (the
+anchor's crossing at (-R, 0)); CONCAVE corner passages 90 (free 3 at (R, R), metal 1 at
+(-R, -R)), 135 (free 2 at (R, R) and the crossing), 158.198590513648 = 180 - atan(2/5) (free 5
+at (-R, R)); midpoint passage 111.801409486352 = 180 - atan(5/2) (free 5 at (0, R)) and 180.
+(1) **Segment connectivity** (`TraceBasis.ConnectivityAngleDegrees`, generator option
+`--connectivity-angle`, requirement `Geometry.ConnectivityAngleDegrees`, part of the coupon
+Id): the bands next to the metal rings are merged in the perimeter order of the rule's layout
+at the connectivity angle (a knot's key is its ROLE's fraction there, a slave's its corner;
+`connectivity_keys`), while the knots sit at the coupon's own angle. The triangulation is then
+one and the same for every coupon of a SEGMENT (the coupons sharing the connectivity angle),
+which removes the side-midpoint flips inside a segment (hat difference 6e-5 across 141.34 with
+keys 144.2), and it can never fold: every band triangle lies between two consecutive rungs on
+one box side because the corner rungs are ties, and the key order equals the perimeter order
+whenever no knot-corner passage lies between the two angles (refused otherwise, both
+languages). A knot-corner passage cannot be removed: it is a jump between the two
+neighbouring segments' triangulations, and the recorded coupon at such an angle (the
+perimeter-ordered tie merge) equals NEITHER side (checked at 90 / 135 / 180). (2) **Per-side
+nodes**: the family carries one coupon per side at every knot-corner passage (the same knots,
+the segment's connectivity: e.g. `90-` with keys 82.5 for [75, 90] and `90+` with keys 112.5
+for [90, 135]) and the anchor rebuilt with its segment's keys; the connectivity angle of a
+segment is recorded as its midpoint (convex 82.5 / 112.5 / 144.2 / 166.7, concave 82.5 /
+112.5 / 146.6 / 169.1). (3) **Node density** (supervisor): every event-free segment has at
+least four nodes at most 15 deg apart, so the interpolation is cubic everywhere — convex 75,
+80, 85, 90- | 90+, 105, 120, 135- | 135+, 144, 150, 153.435- | 153.435+, 159, 165, 180;
+concave 75, 80, 85, 90- | 90+, 105, 120, 135- | 135+, 143, 150, 158.199- | 158.199+, 165, 172,
+180 (16 coupons per convexity). (4) **Stencil rule** (`SelectCornerFamilyStencil`, used by
+`MatchCornerFamily`): the segment whose node range contains the angle strictly inside gives
+the Lagrange stencil on its nodes nearest to the angle (cubic on four, else the highest order
+the segment supports: quadratic / linear); an angle within `SignatureAngleToleranceDegrees` of a
+node is EXACT — with several coupons at that angle the legacy one (no connectivity record: the
+tie triangulation at its own angle, e.g. the recorded 90 / 135 coupons, the lane-2-identical
+90) is preferred, else the coupon of the lower-angle segment (the Signature index ranks the
+candidates legacy 0 / lower segment 1 / upper segment 2 before the name tie-break, so the
+key-based exact match agrees); the runtime basis of an interpolated corner is constructed
+with the segment's connectivity; outside the node range refused (no extrapolation; the
+first-order regime is the anchor's segment, cubic like every other). FAIL CLOSED: a segment
+whose connectivity angle or nodes lie across a knot-corner passage, two coupons at one angle
+in one segment, or overlapping segments abort the match (`MFEM_VERIFY`); a LEGACY family
+(coupons without connectivity records — the recorded corner-basis-fix libraries, the lane-2
+90-degree coupons of the transmon libraries) is never interpolated (reason: "corner family
+built without segment connectivity records … rebuild") while its exact matches stay valid (a
+coupon at the device angle is self-consistent), so the verified 90-degree-only device
+libraries keep working. The version-1 record `CornerFamily` carries
+`ConnectivityAngleDegrees`. The per-side coupons serve only as stencil nodes; the held-out
+check of the qualified family (`corner-qualification-20260929/`) judges the rule in both forms.
+
 **Library contract.** A model keyed by its `Signature` (the feature's canonical object, `Type`
 included; `Signature.Type` must equal `Topology`) needs no version-1 geometry parameters of its
 own; a model matches every feature of its topology whose parameters lie within the signature
