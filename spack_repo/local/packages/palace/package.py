@@ -486,6 +486,16 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define("PALACE_TESTS_OMP_THREADS", 2 if self.spec.satisfies("+openmp") else 1),
         ]
 
+        # Spack sources carry no usable git metadata for `git describe` (commit
+        # fetches have no tags, mirror archives drop .git), so embed the version
+        # from the spec's resolved commit. Develop specs without one fall back to
+        # `git describe` on the working tree.
+        if "commit" in self.spec.variants:
+            commit = self.spec.variants["commit"].value
+            if commit == self.versions.get(self.spec.version, {}).get("commit"):
+                commit = f"v{self.spec.version}"
+            args.append(self.define("PALACE_GIT_COMMIT_ID", commit))
+
         if self.spec.satisfies("@0.16:"):
             args.append(self.define("MFEM_DIR", self.spec["mfem"].prefix))
             if self.spec.satisfies("+mumps"):

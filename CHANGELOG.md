@@ -37,21 +37,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     must be updated. SchemaVer 2-0-0.
     [PR 929](https://github.com/awslabs/palace/pull/929).
 
-#### Performance Improvements
-
-  - Accelerated adaptive online sweeps by replacing 2D wave-port EVP solves with a per-port
-    PROM trained on the offline modes. Also reusing reduced operators and wave-port state
-    across excitations, evaluating the wave-port modal correction and excitation of the
-    PROM from port-space mode pairings instead of per-frequency assembly of mode vectors on
-    the full mesh, evaluating default domain energies in reduced coordinates, and evaluating
-    port quantities without unnecessary magnetic-field reconstruction when possible.
-    [PR 909](https://github.com/awslabs/palace/pull/909).
-  - Restricted the assembly of wave-port mode vectors (excitation and modal correction) to
-    the port boundary elements instead of looping over all boundary elements of the mesh,
-    and assemble the per-frequency wave-port mode forms (S-parameter projection and modal
-    reactions) in a single sweep over the port elements.
-    [PR 909](https://github.com/awslabs/palace/pull/909).
-
 #### Bug Fixes
 
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
@@ -66,11 +51,31 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     every estimate after the first (and the imaginary part of complex fields) reused stale
     field data for all geometry types but the first.
     [PR 962](https://github.com/awslabs/palace/pull/962).
+  - Fixed `GitTag` in `palace.json` reporting `"UNKNOWN"` for builds without usable Git
+    metadata. The version can now be supplied with the `PALACE_GIT_COMMIT_ID` CMake option;
+    the Spack package sets it from the resolved commit (`v<version>` for releases, from the
+    next release on), and the containers embed the `git describe` of the built commit.
+    [PR 974](https://github.com/awslabs/palace/pull/974).
   - Corrected the `FluxLoop` hole inductance, which was low in 0.18 (e.g. the `circular_hole`
     PEC limit moves from 2.00 to 2.85 pH): 0.18 pinned the film's tangential field to a
     regularized 2D surface-curl solution, whereas the film is now driven by a curl-free cut
     generator and relaxes freely. Re-run existing `FluxLoop` cases; the regression references
     were re-baselined. [PR 929](https://github.com/awslabs/palace/pull/929).
+
+#### Performance Improvements
+
+  - Accelerated adaptive online sweeps by replacing 2D wave-port EVP solves with a per-port
+    PROM trained on the offline modes. Also reusing reduced operators and wave-port state
+    across excitations, evaluating the wave-port modal correction and excitation of the
+    PROM from port-space mode pairings instead of per-frequency assembly of mode vectors on
+    the full mesh, evaluating default domain energies in reduced coordinates, and evaluating
+    port quantities without unnecessary magnetic-field reconstruction when possible.
+    [PR 909](https://github.com/awslabs/palace/pull/909).
+  - Restricted the assembly of wave-port mode vectors (excitation and modal correction) to
+    the port boundary elements instead of looping over all boundary elements of the mesh,
+    and assemble the per-frequency wave-port mode forms (S-parameter projection and modal
+    reactions) in a single sweep over the port elements.
+    [PR 909](https://github.com/awslabs/palace/pull/909).
 
 #### Build system
 
