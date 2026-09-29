@@ -61,6 +61,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     regularized 2D surface-curl solution, whereas the film is now driven by a curl-free cut
     generator and relaxes freely. Re-run existing `FluxLoop` cases; the regression references
     were re-baselined. [PR 929](https://github.com/awslabs/palace/pull/929).
+  - Fixed CG, GMRES, and FGMRES returning NaN when the initial residual is exactly zero
+    (e.g. a zero right-hand side) and no absolute tolerance is set.
+    [PR 941](https://github.com/awslabs/palace/pull/941).
 
 #### Performance Improvements
 
