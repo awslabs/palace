@@ -701,10 +701,11 @@ bool HasHangingEntities(const mfem::ParMesh &mesh)
   int hanging = 0;
   if (mesh.Nonconforming())
   {
-    // The lists include the ghost layer, so it is enough to check them locally.
+    // The lists include the ghost layer, so it is enough to check them locally. In 2D, the
+    // faces are in the edge list (and the face list is empty).
     auto &ncmesh = *mesh.ncmesh;
-    hanging = (ncmesh.GetFaceList().slaves.Size() > 0 ||
-               (mesh.Dimension() == 3 && ncmesh.GetEdgeList().slaves.Size() > 0));
+    hanging = (ncmesh.GetEdgeList().slaves.Size() > 0 ||
+               (mesh.Dimension() == 3 && ncmesh.GetFaceList().slaves.Size() > 0));
   }
   Mpi::GlobalMax(1, &hanging, mesh.GetComm());
   return hanging;
