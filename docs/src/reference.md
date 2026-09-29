@@ -941,7 +941,11 @@ silently disabling translational physics.
 `TraceCoupling` selects the map from the global field into coupon coefficients.
 `Collocated` preserves the historical point evaluation. The experimental
 `SurfaceMortar` option uses a piecewise-linear L2 projection around each translational
-coupon contour and over a finite longitudinal matching-surface strip. Its quadrature is
+coupon contour and over a finite longitudinal matching-surface strip: the patch's
+longitudinal cell, the interval of its edge portion that its quadrature point integrates
+(the cells of a portion tile it), sampled in slices at the contour resolution and averaged,
+so that each patch coefficient is the length-average of the transverse projection over its
+cell rather than the projection in one cross-section. Its quadrature is
 refined with the global mesh resolution, preventing a fixed-weight point functional from
 dominating successively smaller H1 finite-element modes. Fixed-trace and fixed-flux
 postprocessing remain available and use the same selected trace map. The mortar
