@@ -864,6 +864,23 @@ CrackSides InheritCrackSides(const mfem::Mesh &fine_mesh,
   const int ne = fine_mesh.GetNE(), dim = fine_mesh.Dimension();
   MFEM_VERIFY(cf.embeddings.Size() >= ne,
               "Invalid coarse-to-fine transformations for interior boundary sides!");
+
+  // The embeddings give the geometry of the fine element, but the point matrices are those
+  // of the parent geometry, which differ for the tetrahedra of a refined pyramid: a parent
+  // is a pyramid if any of its fine elements is, and otherwise has their geometry.
+  std::vector<mfem::Geometry::Type> coarse_geoms(coarse_sides.copy.size(),
+                                                 mfem::Geometry::INVALID);
+  for (int e = 0; e < ne; e++)
+  {
+    const int parent = cf.embeddings[e].parent;
+    MFEM_VERIFY(parent >= 0 && static_cast<std::size_t>(parent) < coarse_geoms.size(),
+                "Invalid parent element for interior boundary sides!");
+    if (coarse_geoms[parent] != mfem::Geometry::PYRAMID)
+    {
+      coarse_geoms[parent] = fine_mesh.GetElementGeometry(e);
+    }
+  }
+
   CrackSides sides;
   sides.copy.assign(ne, 0);
   sides.split.assign(ne, 0);
@@ -871,22 +888,28 @@ CrackSides InheritCrackSides(const mfem::Mesh &fine_mesh,
   for (int e = 0; e < ne; e++)
   {
     const auto &emb = cf.embeddings[e];
-    MFEM_VERIFY(emb.parent >= 0 &&
-                    static_cast<std::size_t>(emb.parent) < coarse_sides.copy.size(),
-                "Invalid parent element for interior boundary sides!");
     const std::uint32_t coarse_copy = coarse_sides.copy[emb.parent];
     const std::uint32_t coarse_split = coarse_sides.split[emb.parent];
     if (!coarse_copy && !coarse_split)
     {
       continue;
     }
-    const auto coarse_geom = static_cast<mfem::Geometry::Type>(emb.geom);
+    const auto coarse_geom = coarse_geoms[emb.parent];
     const auto &ct = GetReferenceTopology(coarse_geom);
     const int nv_c = static_cast<int>(ct.verts.size());
     const int ne_c = static_cast<int>(ct.edges.size());
+    const auto &ft = GetReferenceTopology(fine_mesh.GetElementGeometry(e));
+    const int nv_f = static_cast<int>(ft.verts.size());
+    const int ne_f = static_cast<int>(ft.edges.size());
+
+    // The vertices of the fine element are the first columns of its point matrix (which
+    // has as many columns as the parent geometry has vertices).
+    MFEM_VERIFY(static_cast<int>(emb.matrix) < cf.point_matrices[coarse_geom].SizeK() &&
+                    cf.point_matrices[coarse_geom].SizeJ() >= nv_f,
+                "Unexpected refinement point matrix for interior boundary sides!");
     const mfem::DenseMatrix &pm = cf.point_matrices[coarse_geom](emb.matrix);
-    pts.resize(pm.Width());
-    for (int i = 0; i < pm.Width(); i++)
+    pts.resize(nv_f);
+    for (int i = 0; i < nv_f; i++)
     {
       pts[i] = {pm(0, i), (pm.Height() > 1) ? pm(1, i) : 0.0,
                 (pm.Height() > 2) ? pm(2, i) : 0.0};
@@ -952,12 +975,6 @@ CrackSides InheritCrackSides(const mfem::Mesh &fine_mesh,
       }
     };
 
-    const auto fine_geom = fine_mesh.GetElementGeometry(e);
-    const auto &ft = GetReferenceTopology(fine_geom);
-    const int nv_f = static_cast<int>(ft.verts.size());
-    const int ne_f = static_cast<int>(ft.edges.size());
-    MFEM_VERIFY(static_cast<int>(pts.size()) == nv_f,
-                "Unexpected refinement point matrix for interior boundary sides!");
     for (int i = 0; i < nv_f; i++)
     {
       sub.assign(1, pts[i]);
