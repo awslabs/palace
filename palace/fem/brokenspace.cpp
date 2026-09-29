@@ -857,11 +857,15 @@ bool OnFacePlane(const Point &p, const std::vector<Point> &face)
 
 }  // namespace
 
-CrackSides InheritCrackSides(const mfem::Mesh &fine_mesh,
+namespace
+{
+
+// See InheritCrackSides, with the geometries of the fine elements.
+CrackSides InheritCrackSides(int dim, const std::vector<mfem::Geometry::Type> &fine_geoms,
                              const mfem::CoarseFineTransformations &cf,
                              const CrackSides &coarse_sides)
 {
-  const int ne = fine_mesh.GetNE(), dim = fine_mesh.Dimension();
+  const int ne = static_cast<int>(fine_geoms.size());
   MFEM_VERIFY(cf.embeddings.Size() >= ne,
               "Invalid coarse-to-fine transformations for interior boundary sides!");
 
@@ -877,7 +881,7 @@ CrackSides InheritCrackSides(const mfem::Mesh &fine_mesh,
                 "Invalid parent element for interior boundary sides!");
     if (coarse_geoms[parent] != mfem::Geometry::PYRAMID)
     {
-      coarse_geoms[parent] = fine_mesh.GetElementGeometry(e);
+      coarse_geoms[parent] = fine_geoms[e];
     }
   }
 
@@ -898,7 +902,7 @@ CrackSides InheritCrackSides(const mfem::Mesh &fine_mesh,
     const auto &ct = GetReferenceTopology(coarse_geom);
     const int nv_c = static_cast<int>(ct.verts.size());
     const int ne_c = static_cast<int>(ct.edges.size());
-    const auto &ft = GetReferenceTopology(fine_mesh.GetElementGeometry(e));
+    const auto &ft = GetReferenceTopology(fine_geoms[e]);
     const int nv_f = static_cast<int>(ft.verts.size());
     const int ne_f = static_cast<int>(ft.edges.size());
 
@@ -1002,6 +1006,151 @@ CrackSides InheritCrackSides(const mfem::Mesh &fine_mesh,
     }
   }
   return sides;
+}
+
+std::vector<mfem::Geometry::Type> GetElementGeometries(const mfem::Mesh &mesh)
+{
+  std::vector<mfem::Geometry::Type> geoms(mesh.GetNE());
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    geoms[e] = mesh.GetElementGeometry(e);
+  }
+  return geoms;
+}
+
+}  // namespace
+
+CrackSides InheritCrackSides(const mfem::Mesh &fine_mesh,
+                             const mfem::CoarseFineTransformations &cf,
+                             const CrackSides &coarse_sides)
+{
+  return InheritCrackSides(fine_mesh.Dimension(), GetElementGeometries(fine_mesh), cf,
+                           coarse_sides);
+}
+
+bool ReconstructCrackSides(const mfem::ParMesh &mesh,
+                           const mfem::Array<int> &bdr_attr_marker, CrackSides &sides)
+{
+  MPI_Comm comm = mesh.GetComm();
+  const int dim = mesh.Dimension(), ne = mesh.GetNE();
+
+  // MFEM does not support the derefinement of anisotropic refinements in 3D, and its
+  // derefinement transformations do not support pyramids (refined into pyramids and
+  // tetrahedra: the point matrices are computed for the geometry of the fine element). An
+  // isotropic refinement reduces the element size by 8 in 3D.
+  int supported = mesh.Nonconforming();
+  for (int e = 0; supported && e < ne; e++)
+  {
+    const int depth = mesh.pncmesh->GetElementDepth(e);
+    supported = (mesh.GetElementGeometry(e) != mfem::Geometry::PYRAMID) &&
+                (dim < 3 || (depth <= 10 && mesh.pncmesh->GetElementSizeReduction(e) ==
+                                                (1 << (3 * depth))));
+  }
+  Mpi::GlobalMin(1, &supported, comm);
+  if (!supported)
+  {
+    return false;
+  }
+
+  // Gather a copy of the mesh on the root process, keeping track of the process and local
+  // index of each element (the element ordering after rebalancing is not specified). The
+  // copy needs its own nodes, which would otherwise be shared with (and modified for) the
+  // original mesh.
+  mfem::ParMesh gmesh(mesh, true);
+  std::vector<int> orig_rank, orig_index;
+  {
+    mfem::L2_FECollection fec(0, dim);
+    mfem::ParFiniteElementSpace fespace(&gmesh, &fec, 2);
+    mfem::ParGridFunction id(&fespace);
+    auto *h_id = id.HostWrite();
+    for (int e = 0; e < ne; e++)
+    {
+      h_id[e] = Mpi::Rank(comm);
+      h_id[ne + e] = e;
+    }
+    mfem::Array<int> partition(ne);
+    partition = 0;
+    gmesh.Rebalance(partition);
+    fespace.Update();
+    id.Update();
+    const int gne = gmesh.GetNE();
+    const auto *h_gid = id.HostRead();
+    orig_rank.resize(gne);
+    orig_index.resize(gne);
+    for (int e = 0; e < gne; e++)
+    {
+      orig_rank[e] = static_cast<int>(std::lround(h_gid[e]));
+      orig_index[e] = static_cast<int>(std::lround(h_gid[gne + e]));
+    }
+  }
+
+  // Derefine until there are no hanging entities, one level of the refinement hierarchy at
+  // a time, keeping the fine element geometries and derefinement transformations.
+  struct Level
+  {
+    std::vector<mfem::Geometry::Type> fine_geoms;
+    mfem::CoarseFineTransformations cf;
+  };
+  std::vector<Level> levels;
+  while (HasHangingEntities(gmesh))
+  {
+    Level level;
+    level.fine_geoms = GetElementGeometries(gmesh);
+    mfem::Vector zero(gmesh.GetNE());
+    zero = 0.0;
+    if (!gmesh.DerefineByError(zero, 1.0))
+    {
+      return false;  // The coarsest mesh of the hierarchy has hanging entities
+    }
+    level.cf = gmesh.pncmesh->GetDerefinementTransforms();
+    levels.push_back(std::move(level));
+  }
+
+  // Discover the sides on the coarsest mesh and inherit them through the refinements.
+  CrackSides gsides = ComputeCrackSides(gmesh, bdr_attr_marker);
+  for (auto it = levels.rbegin(); it != levels.rend(); ++it)
+  {
+    gsides = InheritCrackSides(dim, it->fine_geoms, it->cf, gsides);
+  }
+
+  // Send the sides of each element back to its process.
+  const int num_procs = Mpi::Size(comm), gne = static_cast<int>(orig_rank.size());
+  std::vector<int> counts(num_procs, 0), displs(num_procs, 0);
+  for (int e = 0; e < gne; e++)
+  {
+    counts[orig_rank[e]] += 3;
+  }
+  for (int p = 1; p < num_procs; p++)
+  {
+    displs[p] = displs[p - 1] + counts[p - 1];
+  }
+  std::vector<std::uint32_t> send(3 * static_cast<std::size_t>(gne)), recv(3 * ne);
+  {
+    std::vector<int> pos(displs);
+    for (int e = 0; e < gne; e++)
+    {
+      auto *entry = send.data() + pos[orig_rank[e]];
+      entry[0] = static_cast<std::uint32_t>(orig_index[e]);
+      entry[1] = gsides.copy[e];
+      entry[2] = gsides.split[e];
+      pos[orig_rank[e]] += 3;
+    }
+  }
+  int recv_count = 0;
+  MPI_Scatter(counts.data(), 1, MPI_INT, &recv_count, 1, MPI_INT, 0, comm);
+  MFEM_VERIFY(recv_count == 3 * ne,
+              "Unexpected element count when reconstructing interior boundary sides!");
+  MPI_Scatterv(send.data(), counts.data(), displs.data(), MPI_UINT32_T, recv.data(), 3 * ne,
+               MPI_UINT32_T, 0, comm);
+  sides.copy.assign(ne, 0);
+  sides.split.assign(ne, 0);
+  for (int i = 0; i < ne; i++)
+  {
+    const auto e = recv[3 * i];
+    sides.copy[e] = recv[3 * i + 1];
+    sides.split[e] = recv[3 * i + 2];
+  }
+  return true;
 }
 
 }  // namespace mesh
