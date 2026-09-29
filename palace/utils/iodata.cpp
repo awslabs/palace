@@ -3,6 +3,7 @@
 
 #include "iodata.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <fstream>
 #include <iostream>
@@ -289,6 +290,33 @@ IoData::IoData(const char *filename, bool print) : IoData(ParseAndValidate(filen
 
 void IoData::CheckConfiguration()
 {
+  // Mesh cracking of interior boundaries is no longer required for error estimation, and is
+  // selected per boundary with the "Crack" option of impedance and conductivity boundaries.
+  if (model.crack_bdr_elements.has_value())
+  {
+    Mpi::Warning(
+        "config[\"Model\"][\"CrackInternalBoundaryElements\"] is deprecated and "
+        "will be removed in a future release! By default, the mesh is only cracked "
+        "along interior boundaries with PMC or absorbing boundary conditions, and "
+        "along impedance and conductivity boundaries with \"Crack\": true.\n");
+    // The global option overrides the per-boundary choice.
+    const bool global_crack = *model.crack_bdr_elements;
+    auto Overridden = [global_crack](const auto &data)
+    { return data.crack != global_crack; };
+    if (std::any_of(boundaries.conductivity.begin(), boundaries.conductivity.end(),
+                    Overridden) ||
+        std::any_of(boundaries.impedance.begin(), boundaries.impedance.end(), Overridden) ||
+        std::any_of(boundaries.rational_impedance.begin(),
+                    boundaries.rational_impedance.end(), Overridden))
+    {
+      Mpi::Warning("config[\"Model\"][\"CrackInternalBoundaryElements\"] = {} overrides "
+                   "\"Crack\": {} of impedance and conductivity boundaries, which are "
+                   "then modeled as {}!\n",
+                   global_crack, !global_crack,
+                   global_crack ? "two independent surfaces (cracked)" : "thin sheets");
+    }
+  }
+
   // Mixed current/flux inductance extraction has one complete-matrix contract: every
   // parallel current element supplies its oriented aperture, and every current port remains
   // open during the flux excitations. Reject partial or silently overridden configurations

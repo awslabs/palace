@@ -50,7 +50,11 @@ according to error estimates calculated from the computed solution can also be s
 using the [`config["Model"]["Refinement"]`](../config/reference.md#config-model-refinement)
 object. Nonconformal refinement is supported for all mesh types, and additionally conformal
 refinement is supported for simplex meshes. AMR is available for all problem types apart
-from driven problems in the time domain.
+from driven problems in the time domain. The error estimates account for the
+discontinuity of the fields across [interior boundaries](boundaries.md#Interior-boundaries)
+such as thin metal sheets, without modifying the mesh. For a nonconformal mesh from a
+previous adaptive simulation, used as the input mesh, interior boundaries cannot be
+identified, and the error estimates assume continuous fields across them.
 
 ## Material models
 
