@@ -1133,16 +1133,37 @@ tie triangulation at its own angle, e.g. the recorded 90 / 135 coupons, the lane
 candidates legacy 0 / lower segment 1 / upper segment 2 before the name tie-break, so the
 key-based exact match agrees); the runtime basis of an interpolated corner is constructed
 with the segment's connectivity; outside the node range refused (no extrapolation; the
-first-order regime is the anchor's segment, cubic like every other). FAIL CLOSED: a segment
-whose connectivity angle or nodes lie across a knot-corner passage, two coupons at one angle
-in one segment, or overlapping segments abort the match (`MFEM_VERIFY`); a LEGACY family
-(coupons without connectivity records — the recorded corner-basis-fix libraries, the lane-2
-90-degree coupons of the transmon libraries) is never interpolated (reason: "corner family
-built without segment connectivity records … rebuild") while its exact matches stay valid (a
-coupon at the device angle is self-consistent), so the verified 90-degree-only device
+first-order regime is the anchor's segment, cubic like every other). The node tolerance is
+closed on the exact side and open on the interior side by the SAME floating-point difference
+(|node - angle| <= tol exact, > tol interior; the range refusals follow the exact test), so an
+angle at the tolerance boundary of a node is exact or interior, never "in no segment"
+(qualification review 2026-09-29 m1; identical in the Python mirror). FAIL CLOSED AT LIBRARY
+LOAD (`ReadProcessLibrary`, `CheckCornerFamilySegments`; decision 137 (1), review m3): for every
+corner family of the library (the sharp trace-basis-rule coupons of one topology, interface
+set and boundary law) a segment whose connectivity angle or nodes lie across a knot-corner
+passage, two coupons at one angle in one segment, or overlapping segments refuse the library
+before any corner is matched (`SelectCornerFamilyStencil` asserts the same precondition); the
+per-node check that a segment node's recorded trace triangulation is the rule's for its
+connectivity angle stays at match time (`MatchCornerFamily`, it reads the trace meshes). A
+LEGACY family (coupons without connectivity records — the recorded corner-basis-fix libraries,
+the lane-2 90-degree coupons of the transmon libraries) is never interpolated (reason: "corner
+family built without segment connectivity records … rebuild") while its exact matches stay
+valid (a coupon at the device angle is self-consistent), so the verified 90-degree-only device
 libraries keep working. The version-1 record `CornerFamily` carries
 `ConnectivityAngleDegrees`. The per-side coupons serve only as stencil nodes; the held-out
 check of the qualified family (`corner-qualification-20260929/`) judges the rule in both forms.
+**Production libraries carry the legacy tie coupons at 90 / 135 / 180 beside the per-side
+nodes** (supervisor decision 140 (1), qualification review M1): the exact-node preference then
+keeps the transmon-verified 90-degree model for every exact 90-degree corner, while the
+per-side coupons remain the stencil nodes of their segments. Measured on the held-out trace
+of the recorded matrices, the three convex 90-degree coupons (identical knots, three band
+triangulations) differ by **MA_fab +10.85 % (90-, keys 82.5, vs the verified legacy 90; MA
+defect +14.25 %)** and by at most 0.7 % on every energy for 90+ (keys 112.5; MA_fab -0.00 %):
+this is the **MA representation sensitivity of the coarse box basis** (8-knot rings, R/3 ring
+spacing: the MA response depends at the 10 % level on how the band right above the metal top
+edge is triangulated), recorded as an UNCERTAINTY of the corner family's MA — an open item
+(a finer band basis: an extra ring near the metal top or 16 metal-ring knots, decision 140 (3)),
+not a defect of the rule (every stencil is consistent with one triangulation).
 
 **Library contract.** A model keyed by its `Signature` (the feature's canonical object, `Type`
 included; `Signature.Type` must equal `Topology`) needs no version-1 geometry parameters of its
