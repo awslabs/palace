@@ -229,7 +229,7 @@ class Execute(unittest.TestCase):
         """
         queue = list(responses)
 
-        def run(cmd, check=False, capture_output=False, text=False):
+        def run(cmd, **kwargs):
             body = queue.pop(0)
             return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(body), stderr="")
 
