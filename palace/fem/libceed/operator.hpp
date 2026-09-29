@@ -38,11 +38,6 @@ protected:
   Vector dof_multiplicity;
   mutable Vector temp;
 
-  // Element subset used to assemble each sub-operator, in the order the sub-operators were
-  // added for each thread. This lets p-coarsening recreate the matching finite element
-  // restriction while reusing the fine operator's quadrature data.
-  std::vector<std::vector<CeedElementSubset>> sub_op_subsets;
-
 public:
   Operator(int h, int w);
   ~Operator() override;
@@ -51,11 +46,7 @@ public:
 
   auto Size() const { return op.size(); }
 
-  void AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t = nullptr,
-                      CeedElementSubset subset = CeedElementSubset::Full);
-
-  // Element subsets used to assemble the sub-operators of the given thread.
-  const auto &SubOperatorSubsets(std::size_t i) const { return sub_op_subsets[i]; }
+  void AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t = nullptr);
 
   void Finalize();
 

@@ -122,8 +122,7 @@ void SpaceOperator::SetUpCeedElementSets(const std::vector<std::unique_ptr<Mesh>
   std::sort(lossy_attr.begin(), lossy_attr.end());
   lossy_attr.erase(std::unique(lossy_attr.begin(), lossy_attr.end()), lossy_attr.end());
 
-  // All boundary bilinear-form coefficients are supported on this union. Construct a
-  // coefficient so the active set uses the same exact support extraction as integrators.
+  // All boundary bilinear-form coefficients are supported on this global attribute union.
   std::vector<int> active_bdr_global;
   auto AddAttributes = [&active_bdr_global](const mfem::Array<int> &attr)
   { active_bdr_global.insert(active_bdr_global.end(), attr.begin(), attr.end()); };
@@ -137,13 +136,10 @@ void SpaceOperator::SetUpCeedElementSets(const std::vector<std::unique_ptr<Mesh>
   std::sort(active_bdr_global.begin(), active_bdr_global.end());
   active_bdr_global.erase(std::unique(active_bdr_global.begin(), active_bdr_global.end()),
                           active_bdr_global.end());
-  MaterialPropertyCoefficient active_bdr(mat_op.MaxCeedBdrAttribute());
-  active_bdr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(active_bdr_global), 1.0);
-  std::vector<int> active_bdr_attr;
-  active_bdr.AddNonzeroAttributes(active_bdr_attr);
 
-  // Convert the fine-mesh process-local sets back to global attributes, then into the local
-  // numbering of every h-level mesh. The p-levels share the finest mesh and ordering.
+  // Convert the fine-mesh process-local lossy set back to global attributes. Then map both
+  // global unions directly into the local numbering of every h-level mesh. The p-levels
+  // share the finest mesh and ordering.
   std::vector<int> lossy_global;
   for (const auto &[attr, local_attr] : mat_op.GetMesh().GetCeedAttributes())
   {
@@ -152,42 +148,13 @@ void SpaceOperator::SetUpCeedElementSets(const std::vector<std::unique_ptr<Mesh>
       lossy_global.push_back(attr);
     }
   }
-  active_bdr_global.clear();
-  for (const auto &[attr, local_attr_map] : mat_op.GetMesh().GetCeedBdrAttributes())
-  {
-    for (const auto &[nbr_attr, local_attr] : local_attr_map)
-    {
-      if (std::binary_search(active_bdr_attr.begin(), active_bdr_attr.end(), local_attr))
-      {
-        active_bdr_global.push_back(attr);
-        break;
-      }
-    }
-  }
   for (const auto &mesh_l : mesh)
   {
-    std::vector<int> lossy_attr_l;
-    for (auto attr : lossy_global)
-    {
-      const auto it = mesh_l->GetCeedAttributes().find(attr);
-      if (it != mesh_l->GetCeedAttributes().end())
-      {
-        lossy_attr_l.push_back(it->second);
-      }
-    }
-    std::vector<int> active_bdr_attr_l;
-    for (auto attr : active_bdr_global)
-    {
-      const auto it = mesh_l->GetCeedBdrAttributes().find(attr);
-      if (it != mesh_l->GetCeedBdrAttributes().end())
-      {
-        for (const auto &[nbr_attr, local_attr] : it->second)
-        {
-          active_bdr_attr_l.push_back(local_attr);
-        }
-      }
-    }
-    mesh_l->SetCeedActiveAttributes(std::move(lossy_attr_l), std::move(active_bdr_attr_l));
+    auto lossy_attr_l = mesh_l->GetCeedAttributes(lossy_global);
+    auto active_bdr_attr_l = mesh_l->GetCeedBdrAttributes(active_bdr_global);
+    mesh_l->SetCeedActiveAttributes(
+        std::vector<int>(lossy_attr_l.begin(), lossy_attr_l.end()),
+        std::vector<int>(active_bdr_attr_l.begin(), active_bdr_attr_l.end()));
   }
 }
 

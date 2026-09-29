@@ -47,38 +47,49 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
         std::make_unique<ceed::Operator>(test_fespace.GetVSize(), trial_fespace.GetVSize());
   }
 
+  // Classify each integrator once, before the thread/geometry loops. An integrator outside
+  // the shared lossy-domain or active-boundary support union remains unrestricted; an empty
+  // support creates no sub-operator.
+  auto GetIntegratorSubsets = [&](const auto &integs, bool use_bdr)
+  {
+    std::vector<std::optional<ceed::CeedElementSubset>> subsets;
+    subsets.reserve(integs.size());
+    for (const auto &integ : integs)
+    {
+      if (!skip_zero_coeff_elems)
+      {
+        subsets.emplace_back(ceed::CeedElementSubset::Full);
+        continue;
+      }
+      const auto attr_list = integ->GetNonzeroCoefficientAttributes();
+      if (!attr_list)
+      {
+        subsets.emplace_back(ceed::CeedElementSubset::Full);
+      }
+      else if (attr_list->empty())
+      {
+        subsets.emplace_back(std::nullopt);
+      }
+      else
+      {
+        const auto &active_attr = mesh.GetCeedActiveAttributes(use_bdr);
+        subsets.emplace_back(std::includes(active_attr.begin(), active_attr.end(),
+                                           attr_list->begin(), attr_list->end())
+                                 ? ceed::CeedElementSubset::Active
+                                 : ceed::CeedElementSubset::Full);
+      }
+    }
+    return subsets;
+  };
+  const auto domain_subsets = GetIntegratorSubsets(domain_integs, false);
+  const auto boundary_subsets = GetIntegratorSubsets(boundary_integs, true);
+
   // Assemble the libCEED operator in parallel, each thread builds a composite operator.
   // This should work fine if some threads create an empty operator (no elements or boundary
   // elements).
   PalacePragmaOmp(parallel if (ceed::internal::NumCeeds() > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
-
-    // Select either the full element list or the single shared lossy-domain/active-boundary
-    // subset. An integrator outside that shared set remains unrestricted; this is important
-    // for user-selected postprocessing domains. An empty support creates no sub-operator.
-    auto GetIntegratorSubset = [&](const BilinearFormIntegrator &integ,
-                                   bool use_bdr) -> std::optional<ceed::CeedElementSubset>
-    {
-      if (!skip_zero_coeff_elems)
-      {
-        return ceed::CeedElementSubset::Full;
-      }
-      const auto attr_list = integ.GetNonzeroCoefficientAttributes();
-      if (!attr_list)
-      {
-        return ceed::CeedElementSubset::Full;
-      }
-      if (attr_list->empty())
-      {
-        return std::nullopt;
-      }
-      const auto &active_attr = mesh.GetCeedActiveAttributes(use_bdr);
-      return std::includes(active_attr.begin(), active_attr.end(), attr_list->begin(),
-                           attr_list->end())
-                 ? ceed::CeedElementSubset::Active
-                 : ceed::CeedElementSubset::Full;
-    };
 
     for (const auto &[geom, data] : mesh.GetCeedGeomFactorData(ceed))
     {
@@ -88,6 +99,7 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
           test_fespace.GetFEColl().GetMapType(mfem::Geometry::Dimension[geom]);
       const bool use_bdr = (mfem::Geometry::Dimension[geom] != mesh.Dimension());
       const auto &integs = use_bdr ? boundary_integs : domain_integs;
+      const auto &subsets = use_bdr ? boundary_subsets : domain_subsets;
 
       if (mfem::Geometry::Dimension[geom] >= mesh.Dimension() - 1 && !integs.empty())
       {
@@ -95,9 +107,11 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
         CeedBasis trial_basis = trial_fespace.GetCeedBasis(ceed, geom);
         CeedBasis test_basis = test_fespace.GetCeedBasis(ceed, geom);
 
-        for (const auto &integ : integs)
+        MFEM_ASSERT(subsets.size() == integs.size(), "Missing integrator subset data!");
+        for (std::size_t i = 0; i < integs.size(); i++)
         {
-          const auto subset = GetIntegratorSubset(*integ, use_bdr);
+          const auto &integ = integs[i];
+          const auto subset = subsets[i];
           if (!subset ||
               (*subset == ceed::CeedElementSubset::Active && data.active_indices.empty()))
           {
@@ -112,9 +126,8 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
           integ->SetMapTypes(trial_map_type, test_map_type);
           integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
                           data.geom_data, data.GetGeomDataRestriction(*subset), &sub_op);
-          // Sub-operator owned by ceed::Operator. Record the subset so p-coarsening uses
-          // the same mesh-ordered element list with the cached quadrature data.
-          op->AddSubOperator(sub_op, nullptr, *subset);
+          // Sub-operator owned by ceed::Operator.
+          op->AddSubOperator(sub_op);
         }
       }
     }
