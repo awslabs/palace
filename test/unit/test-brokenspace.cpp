@@ -511,11 +511,17 @@ TEST_CASE("Broken space prolongation", "[brokenspace][Serial][Parallel]")
   for (const mfem::FiniteElementCollection *fec :
        std::vector<const mfem::FiniteElementCollection *>{&nd_fec, &rt_fec, &h1_fec})
   {
-    FiniteElementSpace fespace(mesh, fec);
-    const auto tsize0 = fespace.GlobalTrueVSize();
-    fespace.MakeBroken(mesh.GetCrackSides(attr_list));
+    FiniteElementSpace base_fespace(mesh, fec);
+    const auto tsize0 = base_fespace.GlobalTrueVSize();
+    FiniteElementSpace fespace(base_fespace, mesh.GetCrackSides(attr_list));
     REQUIRE(fespace.IsBroken());
     CHECK(fespace.GlobalTrueVSize() > tsize0);
+
+    // The broken view shares the MFEM space, and leaves the given space unchanged.
+    CHECK(&fespace.Get() == &base_fespace.Get());
+    CHECK(!base_fespace.IsBroken());
+    CHECK(base_fespace.GlobalTrueVSize() == tsize0);
+    CHECK(base_fespace.GetProlongationMatrix() != fespace.GetProlongationMatrix());
 
     // Compare with the global size of the space on the cut mesh.
     auto cut = CutMesh(smesh);

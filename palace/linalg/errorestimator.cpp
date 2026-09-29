@@ -104,7 +104,7 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
   return std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc));
 }
 
-// Construct a single-level copy of the finest space of the hierarchy, which is broken
+// Construct a single-level view of the finest space of the hierarchy, which is broken
 // (discontinuous) across the interior boundaries formed by the given boundary attributes.
 // Returns nullptr when the mesh has no such interior boundaries.
 std::unique_ptr<FiniteElementSpaceHierarchy>
@@ -130,9 +130,8 @@ BuildBrokenRecoverySpace(FiniteElementSpaceHierarchy &fespaces,
                  "Multigrid preconditioning is not available for error estimation with "
                  "flux recovery across interior boundaries, using Jacobi instead!\n");
   }
-  auto broken_fespace = std::make_unique<FiniteElementSpace>(mesh, &fespace.GetFEColl());
-  broken_fespace->MakeBroken(sides);
-  return std::make_unique<FiniteElementSpaceHierarchy>(std::move(broken_fespace));
+  return std::make_unique<FiniteElementSpaceHierarchy>(
+      std::make_unique<FiniteElementSpace>(fespace, sides));
 }
 
 }  // namespace

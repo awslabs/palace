@@ -23,8 +23,9 @@ namespace palace
 class FiniteElementSpace
 {
 private:
-  // Underlying MFEM object.
-  mfem::ParFiniteElementSpace fespace;
+  // Underlying MFEM object, owned unless this is a broken view of another space.
+  std::unique_ptr<mfem::ParFiniteElementSpace> owned_fespace;
+  mfem::ParFiniteElementSpace &fespace;
 
   // Reference to the underlying mesh object (not owned).
   Mesh &mesh;
@@ -54,6 +55,8 @@ private:
   };
   std::unique_ptr<BrokenData> broken;
 
+  void InitBroken(const CrackSides &sides);
+
   bool HasUniqueInterpRestriction(const mfem::FiniteElement &fe) const
   {
     // For interpolation operators and tensor-product elements, we need native (not
@@ -82,13 +85,27 @@ private:
 public:
   template <typename... T>
   FiniteElementSpace(Mesh &mesh, T &&...args)
-    : fespace(&mesh.Get(), std::forward<T>(args)...), mesh(mesh), aux_fespace(nullptr)
+    : owned_fespace(std::make_unique<mfem::ParFiniteElementSpace>(
+          &mesh.Get(), std::forward<T>(args)...)),
+      fespace(*owned_fespace), mesh(mesh), aux_fespace(nullptr)
   {
     ResetCeedObjects();
     tx.UseDevice(true);
     lx.UseDevice(true);
     ly.UseDevice(true);
   }
+
+  // Construct a view of the given space which is broken (discontinuous) across interior
+  // boundaries, given the interior boundary sides of each local element (see
+  // fem/brokenspace.hpp). The L-vector of the view is the L-vector of the given space
+  // extended with a block of copied L-DOFs, read by the elements on non-base sides, and the
+  // true DOF vector is extended with the corresponding copies of the true DOFs. The view
+  // shares the underlying MFEM space, and its prolongation, with the given space, which
+  // must outlive the view and cannot be updated while the view exists. Only element
+  // (domain) restrictions and the prolongation are available for a broken space, and it
+  // cannot be used with MFEM assembly or for MFEM grid functions. Collective.
+  FiniteElementSpace(FiniteElementSpace &fespace, const CrackSides &sides);
+
   virtual ~FiniteElementSpace() { ResetCeedObjects(); }
 
   const auto &Get() const { return fespace; }
@@ -128,13 +145,6 @@ public:
     return Get().GetRestrictionMatrix();
   }
 
-  // Make this space discontinuous across interior boundaries, given the interior boundary
-  // sides of each local element (see fem/brokenspace.hpp). The L-vector of the space is
-  // extended with a block of copied L-DOFs, read by the elements on non-base sides, and the
-  // true DOF vector with the corresponding copies of the true DOFs. Only element (domain)
-  // restrictions and the prolongation are available for a broken space, and it cannot be
-  // used with MFEM assembly. Collective.
-  void MakeBroken(const CrackSides &sides);
   bool IsBroken() const { return broken != nullptr; }
 
   // Return the discrete gradient, curl, or divergence matrix interpolating from the
