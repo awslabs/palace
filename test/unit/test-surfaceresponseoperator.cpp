@@ -7137,13 +7137,18 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
 // layout at 120 / 165 degrees) is refused at library load, the lane-2 layout at 90 / 135 /
 // 180 degrees (arms on knot rays) and the rule's layout at every angle load; (3) the
 // runtime — an island with exact 120-degree (house) and exact 165 / 105-degree corners
-// matched to exact nodes of a rule-built family, whose trace lift on the angle-specific
-// trace meshes (slave vertices) gives corner patches with fabricated surface energies of one
-// order (every 105 / 120 / 165 patch within a factor two of the 90-degree patches on the same
-// synthetic matrices; the physics of the fix — the fabricated MS of a corner patch within
+// matched to exact nodes of a rule-built family and an interpolated angle (112.5 degrees)
+// whose runtime basis is constructed by the rule at the device angle, run with the default
+// Collocated lift (the trace sampled at the knots; the trace mesh is not read) and with the
+// protocol's SurfaceMortar lift (MortarOversampling 2: the angle-specific trace meshes with
+// their slave box-corner vertices enter the mortar mass and the lifts through
+// MortarVertex::ForEachBasis) — under both lifts every 105 / 120 / 165 / 112.5 corner patch
+// has a fabricated surface energy within a factor two of the 90-degree patches on the same
+// synthetic matrices (the physics of the fix — the fabricated MS of a corner patch within
 // 50 % of the isolated 2R scale — is the library gate and the device check on the rebuilt
-// coupons), and an interpolated angle whose runtime basis is constructed by the rule at the
-// device angle (cached and reloaded byte-identically).
+// coupons); (4) the constructed basis of the interpolated corner (points, slave vertices,
+// triangles) round-trips through the response-geometry cache: a mortar run reloading the
+// cache written by the previous run reproduces every model contribution.
 TEST_CASE("SurfaceResponseOperatorCornerTraceBasis",
           "[surfaceresponseoperator][Serial][Parallel]")
 {
@@ -7474,25 +7479,24 @@ TEST_CASE("SurfaceResponseOperatorCornerTraceBasis",
   config["Solver"]["Electrostatic"]["ResponseCorrection"]["UnmatchedPolicy"] = "Error";
 
   // (3) The runtime on the rule-built family: exact nodes on the house (120) and the gable
-  // (165 / 105), an interpolated angle on the gable's 105 replaced by 112.5 below.
-  auto CornerEnergies = [&](mfem::ParMesh &mesh, const std::string &tag)
+  // (165 / 105), an interpolated angle on the gable's 105 replaced by 112.5 below; with the
+  // default Collocated lift and with the protocol's SurfaceMortar lift (MortarOversampling
+  // 2), which reads the trace meshes (slave box-corner vertices).
+  auto FamilyIoData = [&](bool mortar)
   {
-    const json manifest = Requirements(libraries.at("family"), mesh, tag);
-    std::map<std::string, int> matched;  // model name -> corners
-    for (const auto &feature : manifest["Identification"]["Features"])
+    auto family_config = ConfigFor(libraries.at("family"));
+    if (mortar)
     {
-      if (feature["Type"] == "ConvexCorner")
-      {
-        REQUIRE(feature["Match"]["Status"] == "Matched");
-        matched[feature["Match"]["Model"].get<std::string>()]++;
-      }
+      auto &correction = family_config["Solver"]["Electrostatic"]["ResponseCorrection"];
+      correction["TraceCoupling"] = "SurfaceMortar";
+      correction["MortarOversampling"] = 2;
     }
-    IoData iodata(ConfigFor(libraries.at("family")), false);
+    IoData iodata(family_config, false);
     iodata.boundaries.cracked_attributes.insert(9);
-    std::vector<std::unique_ptr<Mesh>> meshes;
-    meshes.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(mesh)));
-    LaplaceOperator laplace(iodata, meshes);
-    SurfaceResponseOperator response(iodata, laplace);
+    return iodata;
+  };
+  auto ProjectedPotential = [](LaplaceOperator &laplace)
+  {
     mfem::ParGridFunction potential(&laplace.GetH1Space().Get());
     mfem::FunctionCoefficient potential_coefficient(
         [](const mfem::Vector &x)
@@ -7500,9 +7504,13 @@ TEST_CASE("SurfaceResponseOperatorCornerTraceBasis",
     potential.ProjectCoefficient(potential_coefficient);
     Vector potential_true;
     potential.GetTrueDofs(potential_true);
-    const auto result = response.GetElectrostaticResponse(potential_true);
-    // Per runtime model: fabricated surface energy per patch (every corner is one patch of
-    // weight one).
+    return potential_true;
+  };
+  // Per runtime model: fabricated surface energy per patch (every corner is one patch of
+  // weight one).
+  auto PerPatchEnergies = [](const SurfaceResponseOperator &response,
+                             const SurfaceResponseOperator::ElectrostaticResponse &result)
+  {
     std::map<std::string, double> per_patch;
     const auto &names = response.GetModelNames();
     for (const auto &contribution : result.model_contributions)
@@ -7516,61 +7524,130 @@ TEST_CASE("SurfaceResponseOperatorCornerTraceBasis",
         CHECK(per_patch[name] > 0.0);
       }
     }
-    return std::make_pair(matched, per_patch);
+    return per_patch;
   };
-  // Exact nodes are the library models themselves (the signature match within the
-  // AngleTolerance; the family is consulted only for angles without a coupon).
+  auto CornerEnergies = [&](mfem::ParMesh &mesh, const std::string &tag, bool mortar)
   {
-    const auto [matched, per_patch] = CornerEnergies(*house_mesh, "house");
-    REQUIRE(matched.size() == 2);
-    CHECK(matched.at("convex-corner-90") == 2);
-    CHECK(matched.at("convex-corner-120") == 3);
-    const double ninety = per_patch.at("convex-corner-90");
-    const double one_twenty = per_patch.at("convex-corner-120");
-    CHECK(one_twenty > 0.5 * ninety);
-    CHECK(one_twenty < 2.0 * ninety);
-  }
-  {
-    auto gable_mesh = MakePolygonIslandMesh(gable, 8.0, 0.1);
-    const auto [matched, per_patch] = CornerEnergies(*gable_mesh, "gable");
-    REQUIRE(matched.size() == 3);
-    CHECK(matched.at("convex-corner-90") == 2);
-    CHECK(matched.at("convex-corner-165") == 2);
-    CHECK(matched.at("convex-corner-105") == 2);
-    const double ninety = per_patch.at("convex-corner-90");
-    for (const auto &name : {"convex-corner-165", "convex-corner-105"})
+    const json manifest = Requirements(libraries.at("family"), mesh, tag);
+    std::map<std::string, int> matched;  // model name -> corners
+    for (const auto &feature : manifest["Identification"]["Features"])
     {
-      CHECK(per_patch.at(name) > 0.5 * ninety);
-      CHECK(per_patch.at(name) < 2.0 * ninety);
+      if (feature["Type"] == "ConvexCorner")
+      {
+        REQUIRE(feature["Match"]["Status"] == "Matched");
+        matched[feature["Match"]["Model"].get<std::string>()]++;
+      }
     }
-  }
+    IoData iodata = FamilyIoData(mortar);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(mesh)));
+    LaplaceOperator laplace(iodata, meshes);
+    SurfaceResponseOperator response(iodata, laplace);
+    const auto result = response.GetElectrostaticResponse(ProjectedPotential(laplace));
+    return std::make_pair(matched, PerPatchEnergies(response, result));
+  };
+  auto gable_mesh = MakePolygonIslandMesh(gable, 8.0, 0.1);
   // An interpolated angle: the house with a 45-degree roof has two 112.5-degree corners
   // (cubic on the 105 / 120 window, the runtime basis constructed by the rule at 112.5
   // degrees, its trace mesh with slave corners) and a 135-degree apex (an exact node).
+  const std::vector<std::array<double, 2>> steep_house = {
+      {-1.0, -1.0}, {1.0, -1.0}, {1.0, 0.2}, {0.0, 0.2 + std::tan(22.5 * M_PI / 180.0)},
+      {-1.0, 0.2}};
+  auto steep_mesh = MakePolygonIslandMesh(steep_house, 8.0, 0.1);
+  for (const bool mortar : {false, true})
   {
-    const std::vector<std::array<double, 2>> steep_house = {
-        {-1.0, -1.0}, {1.0, -1.0}, {1.0, 0.2}, {0.0, 0.2 + std::tan(22.5 * M_PI / 180.0)},
-        {-1.0, 0.2}};
-    auto steep_mesh = MakePolygonIslandMesh(steep_house, 8.0, 0.1);
-    const auto [matched, per_patch] = CornerEnergies(*steep_mesh, "steep-house");
-    REQUIRE(matched.size() == 3);
-    CHECK(matched.at("convex-corner-90") == 2);
-    CHECK(matched.at("convex-corner-135") == 1);
-    std::string interpolated;
-    for (const auto &[name, count] : matched)
+    const std::string lift = mortar ? "-mortar" : "-collocated";
+    // Exact nodes are the library models themselves (the signature match within the
+    // AngleTolerance; the family is consulted only for angles without a coupon).
     {
-      if (name.find("@corner-angle112.5-cubic") != std::string::npos)
+      const auto [matched, per_patch] = CornerEnergies(*house_mesh, "house" + lift, mortar);
+      REQUIRE(matched.size() == 2);
+      CHECK(matched.at("convex-corner-90") == 2);
+      CHECK(matched.at("convex-corner-120") == 3);
+      const double ninety = per_patch.at("convex-corner-90");
+      const double one_twenty = per_patch.at("convex-corner-120");
+      CHECK(one_twenty > 0.5 * ninety);
+      CHECK(one_twenty < 2.0 * ninety);
+    }
+    {
+      const auto [matched, per_patch] = CornerEnergies(*gable_mesh, "gable" + lift, mortar);
+      REQUIRE(matched.size() == 3);
+      CHECK(matched.at("convex-corner-90") == 2);
+      CHECK(matched.at("convex-corner-165") == 2);
+      CHECK(matched.at("convex-corner-105") == 2);
+      const double ninety = per_patch.at("convex-corner-90");
+      for (const auto &name : {"convex-corner-165", "convex-corner-105"})
       {
-        interpolated = name;
-        CHECK(count == 2);
+        CHECK(per_patch.at(name) > 0.5 * ninety);
+        CHECK(per_patch.at(name) < 2.0 * ninety);
       }
     }
-    REQUIRE(!interpolated.empty());
-    // The base is the nearest node (turn 67.5 between 60 and 75: the first, 120 degrees).
-    CHECK(interpolated.rfind("convex-corner-120@", 0) == 0);
-    const double ninety = per_patch.at("convex-corner-90");
-    CHECK(per_patch.at(interpolated) > 0.5 * ninety);
-    CHECK(per_patch.at(interpolated) < 2.0 * ninety);
+    {
+      const auto [matched, per_patch] =
+          CornerEnergies(*steep_mesh, "steep-house" + lift, mortar);
+      REQUIRE(matched.size() == 3);
+      CHECK(matched.at("convex-corner-90") == 2);
+      CHECK(matched.at("convex-corner-135") == 1);
+      std::string interpolated;
+      for (const auto &[name, count] : matched)
+      {
+        if (name.find("@corner-angle112.5-cubic") != std::string::npos)
+        {
+          interpolated = name;
+          CHECK(count == 2);
+        }
+      }
+      REQUIRE(!interpolated.empty());
+      // The base is the nearest node (turn 67.5 between 60 and 75: the first, 120 degrees).
+      CHECK(interpolated.rfind("convex-corner-120@", 0) == 0);
+      const double ninety = per_patch.at("convex-corner-90");
+      CHECK(per_patch.at(interpolated) > 0.5 * ninety);
+      CHECK(per_patch.at(interpolated) < 2.0 * ninety);
+    }
+  }
+
+  // (4) The response-geometry cache carries the constructed basis of the interpolated
+  // 112.5-degree corner (points, slave vertices, triangles): a SurfaceMortar run reloading
+  // the cache written by the previous run has identical model contributions.
+  {
+    IoData iodata = FamilyIoData(true);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(*steep_mesh)));
+    LaplaceOperator laplace(iodata, meshes);
+    const auto cache_path = temp.temp_dir / "response-geometry-steep-house.json";
+    const std::string cache_string = cache_path.string();
+    setenv("PALACE_RESPONSE_GEOMETRY_CACHE", cache_string.c_str(), 1);
+    setenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE", "1", 1);
+    SurfaceResponseOperator written(iodata, laplace);
+    Mpi::Barrier(Mpi::World());
+    unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE");
+    SurfaceResponseOperator loaded(iodata, laplace);
+    unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE");
+    const Vector potential_true = ProjectedPotential(laplace);
+    const auto fresh = written.GetElectrostaticResponse(potential_true);
+    const auto reloaded = loaded.GetElectrostaticResponse(potential_true);
+    CHECK(loaded.GetModelNames() == written.GetModelNames());
+    REQUIRE(reloaded.model_contributions.size() == fresh.model_contributions.size());
+    REQUIRE(fresh.model_contributions.size() >= 3);  // 90, 135 and the constructed 112.5
+    for (std::size_t m = 0; m < fresh.model_contributions.size(); m++)
+    {
+      const auto &a = fresh.model_contributions[m];
+      const auto &b = reloaded.model_contributions[m];
+      CHECK(b.model == a.model);
+      CHECK(b.patch_count == a.patch_count);
+      CHECK(b.patch_weight == a.patch_weight);
+      CHECK(b.domain_correction == a.domain_correction);
+      CHECK(b.domain_correction_fixed_flux == a.domain_correction_fixed_flux);
+      CHECK(b.fabricated_surface_energy == a.fabricated_surface_energy);
+      CHECK(b.fabricated_surface_energy_fixed_flux == a.fabricated_surface_energy_fixed_flux);
+    }
+    const auto per_patch = PerPatchEnergies(loaded, reloaded);
+    bool constructed = false;
+    for (const auto &[name, energy] : per_patch)
+    {
+      constructed = constructed || name.find("@corner-angle112.5-cubic") != std::string::npos;
+    }
+    CHECK(constructed);
   }
 #endif
 }
