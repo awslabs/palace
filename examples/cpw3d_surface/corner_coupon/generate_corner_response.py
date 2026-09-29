@@ -110,7 +110,26 @@ def square_ring(half_width, z, size):
 METAL_INTERIOR_KNOTS = 1
 FREE_KNOTS = 5
 FRACTION_PARAMETRISATION = "PerimeterArcLength"
-KNOT_COINCIDENCE_FRACTION = 1.0e-9
+# Knot coincidence in perimeter fraction (corner-basis-fix review m3, 2026-09-29; the same
+# value as kKnotCoincidenceFraction in palace/models/cornertracebasis.cpp): a free or
+# metal-interior knot within this fraction of a fixed-layout fraction k / RingSize (a box
+# corner or a side midpoint) takes that fraction exactly (snap_fraction), and a box corner
+# within it of any knot gets no slave vertex. The value is set by the surface mortar's
+# degenerate-triangle threshold (surfaceresponseoperator.cpp: area <= 1e-14 max(1, L^2)
+# in mesh units): the nearest a slave corner can come to a knot is 8e-6 R along the
+# perimeter (the perimeter is 8R), so the smallest triangle of a constructed basis has an
+# edge of 8e-6 R and an area >= 4e-6 R h with h the smallest ring spacing (R = 1.9 um,
+# h >= 0.05 um: 3.8e-7 um^2, six orders above the threshold and an aspect ratio <= 1e4),
+# while a snap moves a knot by at most 8e-6 R = 15 pm at R = 1.9 um, below the coupon mesh
+# resolution. The former value 1e-9 was a floating-point identity tolerance only and left
+# slivers of edge 8e-9 .. 8e-6 R (not degenerate, but arbitrarily thin). Crossing knots are
+# never moved (they must lie on the arm: the gate's PEC knot at the crossing); a crossing
+# within the fraction of a corner suppresses that corner's slave instead, so the trace
+# surface cuts the corner by at most 8e-6 R.
+KNOT_COINCIDENCE_FRACTION = 1.0e-6
+# Floating-point identity of a fraction with k / RingSize for the reuse of square_ring's
+# coordinates in ring_points (byte identity of the recorded fixed layout).
+FIXED_FRACTION_IDENTITY = 1.0e-12
 
 
 def trace_basis_rule(ring_size):
@@ -183,11 +202,14 @@ def metal_ring_layout(radius, angle_degrees, topology, ring_size):
         free = (first, second)
     roles = {"crossing1": first, "crossing2": second % 1.0}
     for m in range(1, METAL_INTERIOR_KNOTS + 1):
-        roles[f"metal{m}"] = (
-            metal[0] + (metal[1] - metal[0]) * m / (METAL_INTERIOR_KNOTS + 1)
-        ) % 1.0
+        roles[f"metal{m}"] = snap_fraction(
+            (metal[0] + (metal[1] - metal[0]) * m / (METAL_INTERIOR_KNOTS + 1)) % 1.0,
+            ring_size,
+        )
     for k in range(1, FREE_KNOTS + 1):
-        roles[f"free{k}"] = (free[0] + (free[1] - free[0]) * k / (FREE_KNOTS + 1)) % 1.0
+        roles[f"free{k}"] = snap_fraction(
+            (free[0] + (free[1] - free[0]) * k / (FREE_KNOTS + 1)) % 1.0, ring_size
+        )
     order = ring_role_order(topology)
     knots = []
     for slot, role in enumerate(order):
@@ -231,8 +253,9 @@ def fixed_ring_layout(ring_size):
 
 
 def snap_fraction(fraction, ring_size):
-    """A fraction within the coincidence tolerance of a fixed knot k / ring_size is that
-    fraction exactly (byte identity of the fixed layout)."""
+    """A fraction within KNOT_COINCIDENCE_FRACTION of a fixed knot k / ring_size (a box
+    corner or a side midpoint) is that fraction exactly (the C++ CornerMetalRingLayout
+    applies the same snap; see KNOT_COINCIDENCE_FRACTION)."""
     nearest = round(fraction * ring_size)
     if abs(fraction - nearest / ring_size) <= KNOT_COINCIDENCE_FRACTION:
         return (nearest % ring_size) / ring_size
@@ -240,13 +263,20 @@ def snap_fraction(fraction, ring_size):
 
 
 def ring_points(half_width, z, layout, ring_size):
-    """Points of a ring layout; fixed-fraction knots reuse square_ring's coordinates."""
+    """Points of a ring layout: square_perimeter_point at every fraction, except that a
+    fraction equal to k / ring_size (within FIXED_FRACTION_IDENTITY) reuses square_ring's
+    coordinates so the recorded fixed layout stays byte-identical (the two arithmetics
+    leave different rounding residues of ~1e-15 R). The C++ runtime (SquarePerimeterPoint in
+    cornertracebasis.cpp, the same formula as square_perimeter_point) places every knot by
+    the fraction alone: the two agree to floating-point rounding (~1e-15 R) at the fixed
+    fractions and to FIXED_FRACTION_IDENTITY x 8 R elsewhere; MatchCornerFamily checks the
+    recorded files against the C++ rule at 1e-9 R (test_ring_points_agree_with_
+    square_perimeter_point)."""
     fixed = square_ring(half_width, z, ring_size)
     points = []
     for fraction, _, _ in layout:
-        fraction = snap_fraction(fraction, ring_size)
         index = round(fraction * ring_size)
-        if abs(fraction - index / ring_size) <= KNOT_COINCIDENCE_FRACTION:
+        if abs(fraction - index / ring_size) <= FIXED_FRACTION_IDENTITY:
             points.append(tuple(fixed[index % ring_size]))
         else:
             points.append(square_perimeter_point(half_width, z, fraction))

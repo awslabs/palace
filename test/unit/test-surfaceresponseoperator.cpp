@@ -7239,6 +7239,97 @@ TEST_CASE("SurfaceResponseOperatorCornerTraceBasis",
                                     concave_seed.zero_trace_indices, 120.0 * M_PI / 180.0,
                                     false, 1.0e-9 * R)
               .empty());
+    // The fixed layout's eight points by fraction (SquarePerimeterPoint) are the
+    // generator's square_ring coordinates (review m6: the C++ places every knot by its
+    // fraction, the generator reuses square_ring's coordinates at the fixed fractions; the
+    // Python test_ring_points_agree_with_square_perimeter_point pins the same table).
+    const std::vector<std::array<double, 3>> fixed = {
+        {-R, 0.0, t}, {-R, -R, t}, {0.0, -R, t}, {R, -R, t},
+        {R, 0.0, t},  {R, R, t},   {0.0, R, t},  {-R, R, t}};
+    for (int k = 0; k < 8; k++)
+    {
+      const auto point = SquarePerimeterPoint(R, t, k / 8.0);
+      for (int d = 0; d < 3; d++)
+      {
+        CHECK_THAT(point[d], WithinAbs(fixed[k][d], 1.0e-14 * R));  // rounding residues
+      }
+    }
+    // Knot coincidence (review m3): a free knot within 1e-6 of a box corner's fraction
+    // snaps onto the corner (no slave there, the knot exactly at the corner); one outside
+    // the band keeps its position and the corner its slave, at least 8e-6 R away. Convex
+    // free 2 (slot 0) sits at the corner (-R, -R) (fraction 1/8) when the second arm crosses
+    // the left side at fraction 15/16, i.e. at (-R, R / 2): 153.435 degrees; the arm's
+    // crossing moves by 8 R per unit fraction, free 2 by two thirds of that.
+    for (const double offset : {7.5e-7, 3.0e-6})
+    {
+      const double crossing_y = 0.5 * R - 8.0 * R * offset;
+      const double angle = std::atan2(crossing_y, -R);
+      const auto basis =
+          BuildCornerTraceBasis(seed.points, seed.contour_groups, seed.zero_trace_indices,
+                                angle, true, rule);
+      const bool snapped = offset * 2.0 / 3.0 <= 1.0e-6;
+      int slaves = 0;
+      double nearest_slave = std::numeric_limits<double>::infinity();
+      for (const auto &vertex : basis.vertices)
+      {
+        if (vertex.basis < 0)
+        {
+          slaves++;
+          nearest_slave = std::min(nearest_slave, std::hypot(vertex.point[0] - basis.knots[24][0],
+                                                             vertex.point[1] - basis.knots[24][1]));
+        }
+      }
+      CHECK(slaves == (snapped ? 6 : 8));  // both metal rings
+      for (const int knot : {24, 32})  // free 2 of the z = 0 and z = t rings
+      {
+        // The box radius is read off the seed's points (rounding residues of 1e-16 R).
+        CHECK_THAT(basis.knots[knot][1], WithinAbs(-R, 1.0e-14));
+        if (snapped)
+        {
+          CHECK_THAT(basis.knots[knot][0], WithinAbs(-R, 1.0e-14));
+        }
+        else
+        {
+          // Past the corner on the bottom side, by two thirds of the arm's 8 R offset.
+          CHECK_THAT(basis.knots[knot][0],
+                     WithinAbs(-R + 8.0 * R * offset * 2.0 / 3.0, 1.0e-12));
+        }
+      }
+      if (!snapped)
+      {
+        CHECK(nearest_slave >= 8.0e-6 * R);
+      }
+      CHECK(CheckCornerBasisCrossings(basis.knots, basis.contour_groups,
+                                      seed.zero_trace_indices, angle, true, 1.0e-9 * R)
+                .empty());
+    }
+    // The footprint test of the gate is tolerant on the arms (review m4): a FREE knot of a
+    // concave straight anchor at (R, -4.4e-16) lies on the first arm (the metal boundary),
+    // hence on the closed footprint, and is refused; the same ring with that knot at
+    // (R, R / 2) passes.
+    {
+      const double z = 0.0;
+      for (const double y : {-4.4e-16, 0.5 * R})
+      {
+        const std::vector<std::array<double, 3>> ring = {
+            {R, 0.0, z}, {R, y, z},  {R, R, z}, {0.0, R, z},
+            {-R, R, z},  {-R, 0.0, z}, {0.0, -R, z}, {-R, -R, z}};
+        // PEC: both crossings of the arms with the ring ((R, 0) and (-R, 0)) and the knots on
+        // the lower half-plane (the concave anchor's metal).
+        const std::vector<int> zero = {0, 5, 6, 7};
+        const std::string reason =
+            CheckCornerBasisCrossings(ring, {8}, zero, M_PI, false, 1.0e-9 * R);
+        if (y < 0.0)
+        {
+          CHECK(reason.find("free trace knot 2") != std::string::npos);
+          CHECK(reason.find("metal footprint") != std::string::npos);
+        }
+        else
+        {
+          CHECK(reason.empty());
+        }
+      }
+    }
   }
 
   // Libraries: the isolated edge (a 2D coupon) plus one convex corner coupon at `angle` on

@@ -181,6 +181,91 @@ class TraceBasisRuleTest(unittest.TestCase):
         self.assertAlmostEqual(point[0], -RADIUS)
         self.assertAlmostEqual(point[1], RADIUS * np.tan(np.deg2rad(15.0)))
 
+    def test_ring_points_agree_with_square_perimeter_point(self):
+        """Review m6: the generator places fixed-fraction knots with square_ring's
+        coordinates, the C++ runtime (SquarePerimeterPoint, the square_perimeter_point
+        formula) by the fraction alone; the two agree to floating-point rounding (~1e-15 R
+        of either arithmetic; MatchCornerFamily compares at 1e-9 R) at the fixed fractions
+        and use the same formula elsewhere. The eight fixed points are the table
+        pinned by the C++ unit test SurfaceResponseOperatorCornerTraceBasis."""
+        R = RADIUS
+        table = [(-R, 0.0), (-R, -R), (0.0, -R), (R, -R), (R, 0.0), (R, R), (0.0, R), (-R, R)]
+        fixed = GENERATOR.square_ring(R, THICKNESS, 8)
+        for k, (x, y) in enumerate(table):
+            np.testing.assert_allclose(fixed[k], (x, y, THICKNESS), rtol=0, atol=1.0e-14 * R)
+            np.testing.assert_allclose(
+                GENERATOR.square_perimeter_point(R, THICKNESS, k / 8),
+                (x, y, THICKNESS),
+                rtol=0,
+                atol=1.0e-14 * R,
+            )
+        for topology in ("convex", "concave"):
+            for angle in ANGLES + (153.435, 100.0, 170.0):
+                layout = GENERATOR.metal_ring_layout(R, angle, topology, 8)
+                points = GENERATOR.ring_points(R, 0.0, layout, 8)
+                for (fraction, _, _), point in zip(layout, points):
+                    expected = GENERATOR.square_perimeter_point(R, 0.0, fraction)
+                    self.assertLessEqual(
+                        max(abs(a - b) for a, b in zip(point, expected)),
+                        GENERATOR.FIXED_FRACTION_IDENTITY * 8.0 * R,
+                    )
+
+    def test_knot_coincidence_snaps_a_free_knot_onto_a_box_corner(self):
+        """Review m3: a free knot within KNOT_COINCIDENCE_FRACTION of a box corner's
+        fraction takes it exactly (no slave there); outside the band the corner keeps its
+        slave at least 8e-6 R from the knot. Convex free 2 sits at (-R, -R) (fraction 1/8)
+        when the second arm crosses the left side at fraction 15/16 (153.435 degrees); the
+        arm's crossing moves by 8 R per unit fraction, free 2 by two thirds of that. The
+        C++ rule (kKnotCoincidenceFraction, cornertracebasis.cpp) uses the same value."""
+        R = RADIUS
+        self.assertEqual(GENERATOR.KNOT_COINCIDENCE_FRACTION, 1.0e-6)
+        source = (ROOT / "../../../palace/models/cornertracebasis.cpp").resolve()
+        if source.exists():
+            line = [
+                text for text in source.read_text().splitlines()
+                if text.startswith("constexpr double kKnotCoincidenceFraction")
+            ]
+            self.assertEqual(len(line), 1)
+            self.assertEqual(float(line[0].split("=")[1].strip(" ;")), 1.0e-6)
+        for offset, snapped in ((7.5e-7, True), (3.0e-6, False)):
+            angle = np.degrees(np.arctan2(0.5 * R - 8.0 * R * offset, -R))
+            layout = GENERATOR.metal_ring_layout(R, angle, "convex", 8)
+            slaves = [fraction for fraction, kind, _ in layout if kind == "slave"]
+            free2 = [fraction for fraction, kind, slot in layout if slot == 0]
+            self.assertEqual(len(free2), 1)
+            self.assertEqual(len(slaves), 3 if snapped else 4)
+            points = GENERATOR.ring_points(R, 0.0, layout, 8)
+            (point,) = [
+                tuple(p) for (_, _, slot), p in zip(layout, points) if slot == 0
+            ]
+            if snapped:
+                self.assertEqual(free2[0], 0.125)
+                self.assertNotIn(0.125, slaves)
+                self.assertEqual(point, (-R, -R, 0.0))
+            else:
+                self.assertIn(0.125, slaves)
+                self.assertAlmostEqual(free2[0], 0.125 + offset * 2.0 / 3.0, places=12)
+                self.assertEqual(point[1], -R)
+                self.assertGreaterEqual(point[0] - (-R), 8.0e-6 * R)
+            self.assertEqual(
+                GENERATOR.free_hat_pec_support(
+                    *self._surface_arguments(angle, "convex")
+                ),
+                [],
+            )
+
+    def _surface_arguments(self, angle, topology):
+        surface = GENERATOR.build_surface(
+            RADIUS, 8, THICKNESS, OVERETCH, angle_degrees=angle, topology=topology
+        )
+        return (
+            np.asarray(surface.knot_points),
+            surface.contour_groups,
+            surface.zero_trace_indices(),
+            pec_mask(angle, topology),
+            surface.slaves,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

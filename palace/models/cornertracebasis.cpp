@@ -17,7 +17,14 @@ namespace palace
 namespace
 {
 
-constexpr double kKnotCoincidenceFraction = 1.0e-9;
+// Knot coincidence in perimeter fraction (corner-basis-fix review m3, 2026-09-29; the same
+// value as KNOT_COINCIDENCE_FRACTION in generate_corner_response.py, where the rationale is
+// recorded): a free or metal-interior knot within this fraction of a fixed-layout fraction
+// k / RingSize snaps to it (SnapFraction) and a box corner within it of any knot gets no
+// slave vertex, so the smallest triangle of a constructed basis has an edge of 8e-6 R, six
+// orders above the surface mortar's degenerate-triangle threshold, while a snap moves a knot
+// by at most 8e-6 R (15 pm at R = 1.9 um). Crossing knots are never moved.
+constexpr double kKnotCoincidenceFraction = 1.0e-6;
 
 double WrapFraction(double fraction)
 {
@@ -29,6 +36,18 @@ double WrapFraction(double fraction)
   return fraction == 1.0 ? 0.0 : fraction;
 }
 
+// The generator's snap_fraction: a fraction within kKnotCoincidenceFraction of k / ring_size
+// is that fraction exactly.
+double SnapFraction(double fraction, int ring_size)
+{
+  const double nearest = std::round(fraction * ring_size);
+  if (std::abs(fraction - nearest / ring_size) <= kKnotCoincidenceFraction)
+  {
+    return WrapFraction(nearest / ring_size);
+  }
+  return fraction;
+}
+
 double FractionDistance(double a, double b)
 {
   const double d = std::abs(WrapFraction(a) - WrapFraction(b));
@@ -36,7 +55,12 @@ double FractionDistance(double a, double b)
 }
 
 // Points of the fixed layout (the generator's square_ring): knots at the fractions
-// k / size from (-half_width, 0) counterclockwise.
+// k / size from (-half_width, 0) counterclockwise. SquarePerimeterPoint is the generator's
+// square_perimeter_point formula; at the fixed fractions it reproduces square_ring's
+// coordinates to floating-point rounding (~1e-15 R residues of either arithmetic; the
+// generator's ring_points reuses square_ring's coordinates there for byte identity of the
+// recorded files, MatchCornerFamily compares at 1e-9 R; the unit test
+// SurfaceResponseOperatorCornerTraceBasis and the generator's test pin the eight points).
 std::vector<std::array<double, 3>> FixedRingPoints(double half_width, double z, int size)
 {
   std::vector<std::array<double, 3>> points;
@@ -256,13 +280,16 @@ std::vector<CornerRingVertex> CornerMetalRingLayout(double radius, double angle_
                                          {"crossing2", WrapFraction(second)}};
   for (int m = 1; m <= rule.metal_interior_knots; m++)
   {
-    roles["metal" + std::to_string(m)] = WrapFraction(
-        metal.first + (metal.second - metal.first) * m / (rule.metal_interior_knots + 1));
+    roles["metal" + std::to_string(m)] = SnapFraction(
+        WrapFraction(metal.first +
+                     (metal.second - metal.first) * m / (rule.metal_interior_knots + 1)),
+        rule.ring_size);
   }
   for (int k = 1; k <= rule.free_knots; k++)
   {
-    roles["free" + std::to_string(k)] =
-        WrapFraction(free.first + (free.second - free.first) * k / (rule.free_knots + 1));
+    roles["free" + std::to_string(k)] = SnapFraction(
+        WrapFraction(free.first + (free.second - free.first) * k / (rule.free_knots + 1)),
+        rule.ring_size);
   }
   std::vector<CornerRingVertex> knots;
   const auto order = RingRoleOrder(convex, rule);
