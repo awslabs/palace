@@ -1,5 +1,5 @@
 {
-  "Version": 3,
+  "Version": 4,
   "Copyright": "Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
   "SPDX-License-Identifier": "Apache-2.0",
   "Purpose": "Machine-readable qualification gates of a coupon's response matrices against its graded_v2 reference (supervisor decision 48 and the 2026-09-20 gate confirmation): the class statements of the geometry-independence suite's physics table, evaluated on the free view. Changing a threshold means editing this frozen file; every qualification record carries its SHA-256.",
@@ -66,6 +66,18 @@
       "MatchToleranceOverSpacing": 0.5,
       "CornerExclusionOverR": 0.25,
       "Scope": "runs on the written process-library.json of every qualify run (NotApplicable without a pair / stack at the threshold or without an isolated-edge model); synthetic library data tests in test_library_continuity.py"
+    },
+    "CornerFamilyInterpolation": {
+      "Statement": "every held-out coupon of an angle-interpolated corner family (USER decision 121 (C)) is reproduced by the segment stencil of the family's nodes within MaximumParticipationReferencedResidual on the held-out trace energy of every fabricated interface response matrix SA / MS / MA, the residual referred to the held-out coupon's own fabricated energy of that interface (participation-referenced: USER decision 149 (5), 2026-09-29); the defect-referenced residuals are reported alongside, never gated",
+      "Quantity": "per held-out coupon and interface X in SA / MS / MA: (c^T Q_X,fab,interpolated c - c^T Q_X,fab c) / (c^T Q_X,fab c) with c the held-out coupon's held-out trace coefficients (heldout-coefficients.csv), Q_X,fab its fabricated surface response matrix (surface-response-matrix-aggregate.csv) and the interpolated matrix the Lagrange combination of the segment's node matrices (SelectCornerFamilyStencil / corner_family_interpolation.select_stencil: the stencil never straddles a knot-corner passage); the same residual for the domain matrix is recorded; a held-out angle the stencil rule refuses (outside the node range, legacy family) is a failure of the check, not a pass",
+      "MaximumParticipationReferencedResidual": 0.005,
+      "ReportedAlongside": {
+        "DefectReferenced": "(c^T D_interpolated c - c^T D c) / (c^T D c) for the defects D = Q_fab - Q_thin of the domain and of every interface: the residual relative to the correction itself (the corner-family block's form; 1-10 % of the participation, so its residual is 10-100 x the participation error and sits at the per-angle-mesh noise floor)",
+        "CorrectedParticipation": "(c^T D_interpolated c - c^T D c) / (c^T Q_X,fab c): the error of the corrected participation of interface X in the participation-referenced units",
+        "Frobenius": "|| interpolated - actual ||_F / || actual ||_F per matrix"
+      },
+      "Rule": "USER decision 149 (5): the family is gated on the participation-referenced residual because the device quotes participations, not corrections (the recorded qualified family: worst 0.28 % (convex MA at 127.5 deg) against defect-referenced worst 3.0 %); a family whose nodes carry no segment connectivity records is never interpolated by the runtime and has no held-out verdict",
+      "Scope": "corner_coupon/corner_family_heldout_check.py on the coupon cache directories of one family (nodes = the coupons with TraceBasis.ConnectivityAngleDegrees, or the --nodes ANGLE:CONNECTIVITY list for recorded legacy coupons stamped into a segment; every other coupon is held out); the verdict is recorded next to the family's library (corner-qualification-20260929, user-decisions-149-20260929); synthetic family tests in test_corner_family_heldout_check.py"
     }
   },
   "Verdicts": {
