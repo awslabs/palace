@@ -21,6 +21,16 @@ inputs:
 runs:
   using: composite
   steps:
+    # .git is excluded from the build context, so describe the version here and
+    # pass it to the build. Runs first: later steps edit tracked files (e.g. the
+    # target pin rewrites spack.yaml), which would mark the version -dirty.
+    - name: Describe Palace version
+      shell: bash
+      run: |
+        PALACE_GIT_COMMIT_ID="$(git describe --tags --always --dirty)"
+        echo "Palace version: $PALACE_GIT_COMMIT_ID"
+        echo "PALACE_GIT_COMMIT_ID=$PALACE_GIT_COMMIT_ID" >> "$GITHUB_ENV"
+
     - name: Setup environment
       uses: ./.github/actions/setup-runner
       with:
@@ -161,10 +171,6 @@ runs:
         printf '%s' "$GITHUB_USER" > "$GITHUB_USER_FILE"
         printf '%s' "$GITHUB_TOKEN" > "$GITHUB_TOKEN_FILE"
         trap 'rm -f "$GITHUB_USER_FILE" "$GITHUB_TOKEN_FILE" "$BUILD_LOG"' EXIT
-
-        # .git is excluded from the build context, so describe the version here.
-        PALACE_GIT_COMMIT_ID="$(git describe --tags --always --dirty)"
-        echo "Palace version: $PALACE_GIT_COMMIT_ID"
 
         build_image() {
           sudo podman build --format docker --layers "$@" \
