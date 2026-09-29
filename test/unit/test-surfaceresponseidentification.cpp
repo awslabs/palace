@@ -72,8 +72,8 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
   for (const auto &loop : loops)
   {
     const std::size_t n = loop.points.size();
-    // Chains break at corners (turn > kCornerTurnToleranceDegrees): every polygon edge here
-    // is its own chain.
+    // Chains break at corners (joints that are not noise under the geometric rule): every
+    // polygon edge here is its own chain.
     for (std::size_t i = 0; i < n; i++)
     {
       const Point2 a = loop.points[i], b = loop.points[(i + 1) % n];
@@ -115,10 +115,59 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
     input.vertices[segment.vertices[1]].segments.push_back(input.segments.size());
     input.segments.push_back(segment);
   }
-  // Vertex types as metaledge.cpp: two segments -> corner iff the turn exceeds the joint
-  // noise threshold kCornerTurnToleranceDegrees, else regular.
-  for (auto &vertex : input.vertices)
+  // Vertex types as metaledge.cpp: two segments -> a collinear continuation is regular,
+  // otherwise corner iff the joint is not noise under the geometric rule (the implied
+  // sagitta (c / 2) tan(turn / 4) on the shorter adjacent straight piece reaches
+  // kJointNoiseSagittaOverRadius x R; the pieces merge the collinear subdivisions).
+  auto UnitDirection = [&](std::size_t from, std::size_t to)
   {
+    std::array<double, 3> d{};
+    double norm = 0.0;
+    for (int k = 0; k < 3; k++)
+    {
+      d[k] = input.vertices[to].coordinate[k] - input.vertices[from].coordinate[k];
+      norm += d[k] * d[k];
+    }
+    for (double &value : d)
+    {
+      value /= std::sqrt(norm);
+    }
+    return std::make_pair(d, std::sqrt(norm));
+  };
+  auto OtherEnd = [&](std::size_t segment, std::size_t vertex)
+  {
+    const auto &ends = input.segments[segment].vertices;
+    return ends[0] == vertex ? ends[1] : ends[0];
+  };
+  auto PieceLength = [&](std::size_t vertex, std::size_t segment)
+  {
+    double length = 0.0;
+    std::size_t current = vertex, s = segment;
+    for (std::size_t steps = 0; steps < input.segments.size(); steps++)
+    {
+      const std::size_t other = OtherEnd(s, current);
+      const auto [in, piece] = UnitDirection(current, other);
+      length += piece;
+      const auto &next_segments = input.vertices[other].segments;
+      if (next_segments.size() != 2 || other == vertex)
+      {
+        break;
+      }
+      const std::size_t next = next_segments[0] == s ? next_segments[1] : next_segments[0];
+      const auto [out, ignored] = UnitDirection(other, OtherEnd(next, other));
+      (void)ignored;
+      if (in[0] * out[0] + in[1] * out[1] + in[2] * out[2] < 1.0 - 1.0e-12)
+      {
+        break;
+      }
+      current = other;
+      s = next;
+    }
+    return length;
+  };
+  for (std::size_t v = 0; v < input.vertices.size(); v++)
+  {
+    auto &vertex = input.vertices[v];
     if (vertex.segments.size() == 1)
     {
       vertex.physical_type = MetalEdgeVertexType::ENDPOINT;
@@ -129,32 +178,19 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
     }
     else
     {
-      std::array<std::array<double, 3>, 2> directions;
-      for (int i = 0; i < 2; i++)
+      const auto d0 = UnitDirection(v, OtherEnd(vertex.segments[0], v)).first;
+      const auto d1 = UnitDirection(v, OtherEnd(vertex.segments[1], v)).first;
+      const double dot = d0[0] * d1[0] + d0[1] * d1[1] + d0[2] * d1[2];
+      if (-dot >= 1.0 - 1.0e-12)
       {
-        const auto &segment = input.segments[vertex.segments[i]];
-        const auto &other =
-            input.vertices[segment.vertices[0] == (&vertex - &input.vertices[0])
-                               ? segment.vertices[1]
-                               : segment.vertices[0]];
-        double norm = 0.0;
-        for (int d = 0; d < 3; d++)
-        {
-          directions[i][d] = other.coordinate[d] - vertex.coordinate[d];
-          norm += directions[i][d] * directions[i][d];
-        }
-        for (double &value : directions[i])
-        {
-          value /= std::sqrt(norm);
-        }
+        vertex.physical_type = MetalEdgeVertexType::REGULAR;
+        continue;
       }
-      double dot = 0.0;
-      for (int d = 0; d < 3; d++)
-      {
-        dot += directions[0][d] * directions[1][d];
-      }
+      const double turn = std::acos(std::clamp(-dot, -1.0, 1.0));
+      const double shorter =
+          std::min(PieceLength(v, vertex.segments[0]), PieceLength(v, vertex.segments[1]));
       vertex.physical_type =
-          dot <= -std::cos(kCornerTurnToleranceDegrees * std::acos(-1.0) / 180.0)
+          JointIsNoise(turn, shorter, kJointNoiseSagittaOverRadius * radius)
               ? MetalEdgeVertexType::REGULAR
               : MetalEdgeVertexType::CORNER;
     }
@@ -721,30 +757,44 @@ TEST_CASE("SurfaceResponseIdentificationObtuseCorners",
 // sagitta arc rule (USER decision 117(4)): every chord's sagitta on the wider (outer) side
 // below kArcSagittaOverRadius x R (the vertices lie on the circles exactly). A coarser
 // polyline is corners: the meshed geometry.
-bool ArcBarResolved(double radius, double width, double sweep_degrees, double step_degrees,
-                    double R)
+// The concyclicity arc rule (USER decisions 121 / 122): the polyline bar is an arc iff every
+// joint turns less than kArcMaxJointTurnDegrees (its vertices are concyclic by
+// construction); the chord sagitta is the recorded mesh-coarseness diagnostic.
+bool ArcBarIsArc(double sweep_degrees, double step_degrees)
+{
+  const int steps =
+      std::max(1, static_cast<int>(std::lround(sweep_degrees / step_degrees)));
+  // One chord has two joints: never an arc (a chamfer).
+  return steps >= 2 && sweep_degrees / steps < kArcMaxJointTurnDegrees;
+}
+
+bool ArcBarCoarse(double radius, double width, double sweep_degrees, double step_degrees,
+                  double R)
 {
   const int steps =
       std::max(1, static_cast<int>(std::lround(sweep_degrees / step_degrees)));
   const double step = sweep_degrees * std::acos(-1.0) / 180.0 / steps;
   const double outer = radius + 0.5 * width;
-  return outer * (1.0 - std::cos(0.5 * step)) < kArcSagittaOverRadius * R;
+  return outer * (1.0 - std::cos(0.5 * step)) >= kArcSagittaOverRadius * R;
 }
 
 TEST_CASE("SurfaceResponseIdentificationCurvedEdges",
           "[surfaceresponseidentification][Serial]")
 {
-  // Curved-edge chain rule (decision 73(1)) under the sagitta arc rule (USER decision
-  // 117(4)): a 3 um bar (1.5 R) along a polyline arc. Where the polyline resolves the circle
-  // (sagitta below 0.05 R, vertices on the circle within 1e-3 R) the two sides are a pair
-  // along the bend (constant separation), never a cluster; the arc is a curved pair when the
-  // inner bend radius is below 10 R (decision 75) and a straight-like strip with a curvature
-  // annotation otherwise; the leads are a plain strip; the two bar ends are one two-corner
-  // cluster each. A coarse polyline (5 um radius at 18 deg per vertex: sagitta 0.08 um =
-  // 0.04 R on the outer side is resolved, 50 um at 22.5 deg: 0.5 R, 250 um at 5 deg: 0.12 R)
-  // is the meshed geometry beyond the cap: its joints are corners (within
-  // 2R of the facing side's corners: clusters), no curved pair and no bend annotation. In
-  // both regimes the features do not change under mesh refinement (A5).
+  // Curved-edge chain rule (decision 73(1)) under the concyclicity arc rule (USER decisions
+  // 121 / 122): a 3 um bar (1.5 R) along a polyline arc. Where every joint turns less than
+  // ArcMaxJointTurnDegrees (the vertices are concyclic by construction) the polyline IS the
+  // arc whatever its chord sagitta: the two sides are a pair along the bend (constant
+  // separation), never a cluster; the arc is a curved pair when the inner bend radius is
+  // below 10 R (decision 75) and a straight-like strip with a curvature annotation
+  // otherwise; the leads are a plain strip; the two bar ends are one two-corner cluster
+  // each. Chords coarser than the resolution (50 um at 22.5 deg: sagitta 0.5 R, 250 um at
+  // 5 deg: 0.12 R) are arcs with the mesh-coarseness diagnostic set (MaxChordSagittaOverR
+  // >= SagittaOverR), where the sagitta form of 117(4) read them as strings of corners. A
+  // polygon whose joints turn 50 deg or more (a 180 deg sweep in three 60 deg chords) is
+  // the meshed geometry: its joints are corners (within 2R of the facing side's corners:
+  // clusters), no curved pair and no bend annotation. In both regimes the features do not
+  // change under mesh refinement (A5).
   const double R = 2.0;
   struct Case
   {
@@ -753,13 +803,16 @@ TEST_CASE("SurfaceResponseIdentificationCurvedEdges",
   };
   for (const Case &c : {Case{5.0, 90.0, 20.0, true}, Case{5.0, 90.0, 1.0, true},
                         Case{20.0, 90.0, 5.0, true}, Case{50.0, 45.0, 20.0, false},
-                        Case{50.0, 45.0, 1.0, false}, Case{250.0, 15.0, 5.0, false}})
+                        Case{50.0, 45.0, 1.0, false}, Case{250.0, 15.0, 5.0, false},
+                        Case{50.0, 180.0, 60.0, false}})
   {
     const auto bar = ArcBar(3.0, c.radius, c.sweep, c.step);
     const auto input = MakeInput({{bar, 0, 1.0}}, R);
     const auto result = IdentifyMetalPerimeter(input);
-    const bool resolved = ArcBarResolved(c.radius, 3.0, c.sweep, c.step, R);
-    INFO("radius " << c.radius << " step " << c.step << (resolved ? " (arc)" : " (coarse)"));
+    const bool resolved = ArcBarIsArc(c.sweep, c.step);
+    const bool coarse = ArcBarCoarse(c.radius, 3.0, c.sweep, c.step, R);
+    INFO("radius " << c.radius << " step " << c.step << (resolved ? " (arc)" : " (polygon)")
+                   << (coarse ? " coarse chords" : ""));
     CheckPartition(input, result);
     std::map<std::string, int> counts;
     int annotated = 0;
@@ -775,11 +828,13 @@ TEST_CASE("SurfaceResponseIdentificationCurvedEdges",
         CHECK_THAT(feature.signature["SeparationOverR"].get<double>(),
                    WithinRel(1.5, 0.02));
       }
-      if (feature.type == "SameConductorStrip")
+      if (feature.type == "SameConductorStrip" && resolved)
       {
+        // (A polygon bar's parallel chords are 1.5 cos(step / 2) R apart: the meshed
+        // geometry, not checked.)
         CHECK_THAT(feature.signature["SeparationOverR"].get<double>(),
                    WithinRel(1.5, 0.02));
-        if (resolved && !c.curved)
+        if (!c.curved)
         {
           REQUIRE(feature.bend_radius_over_R.has_value());
           CHECK_THAT(*feature.bend_radius_over_R, WithinRel((c.radius - 1.5) / R, 0.03));
@@ -794,14 +849,23 @@ TEST_CASE("SurfaceResponseIdentificationCurvedEdges",
       CHECK(counts["IsolatedEdge"] == 0);
       CHECK(counts["CurvedEdge"] == 0);
       CHECK(counts["ConvexCorner"] == 0);
+      // The mesh-coarseness diagnostic: the recorded largest chord sagitta of the bar's arcs
+      // reaches SagittaOverR exactly when the chords are coarser than the resolution.
+      REQUIRE(!result.arcs.empty());
+      const double worst = std::max_element(result.arcs.begin(), result.arcs.end(),
+                                            [](const auto &a, const auto &b) {
+                                              return a.max_sagitta_over_R <
+                                                     b.max_sagitta_over_R;
+                                            })
+                               ->max_sagitta_over_R;
+      CHECK((worst >= kArcSagittaOverRadius) == coarse);
     }
     else
     {
-      // Corners at the polyline joints (sub-noise joints excepted): the coarse polyline is
-      // not an arc at the resolution of the correction. The joints of the two sides face
-      // each other within 2R (1.5 R apart), so the corner sites form clusters (the 5 um bar
-      // at 18 deg per vertex is ONE cluster of 16 sites); the vertex table lists every joint
-      // as a corner vertex, more than the four bar-end corners, and no bend vertex.
+      // Corners at the polyline joints (joints of 50 deg or more are never arc joints): the
+      // polygon is the meshed geometry. The joints of the two sides face each other within
+      // 2R (1.5 R apart), so the corner sites form clusters; the vertex table lists every
+      // joint as a corner vertex, more than the four bar-end corners, and no bend vertex.
       CHECK(counts["CurvedSameConductorStrip"] == 0);
       CHECK(counts["CurvedEdge"] == 0);
       CHECK(annotated == 0);
@@ -998,16 +1062,21 @@ TEST_CASE("SurfaceResponseIdentificationPairsAtTheThreshold",
   // below 2R, DS-SCT-001's 4 um gaps at 3.9998 that became 3 mm clusters, create no events)
   // and 2R - 1e-3 R is one DifferentConductorGap along the whole pair (straight-like: the
   // bends are 21 R and 121 R, with the bend annotation). The corner pairs across a
-  // 2R - 1e-3 R gap are events (two clusters) in every case. A coarse polyline (15 deg per
-  // vertex: sagitta 0.23 R on the 50 um bend; 5 deg on the 250 um bend: 0.12 R) is corners
-  // at its joints under the sagitta rule (USER decision 117(4)): no curved pair, no bend
-  // annotation, corner vertices at every joint.
+  // 2R - 1e-3 R gap are events (two clusters) in every case. Under the concyclicity rule
+  // (USER decisions 121 / 122) every discretisation here (1 / 5 / 15 deg per vertex, all
+  // below ArcMaxJointTurnDegrees) is an arc, the coarse ones (15 deg: sagitta 0.23 R on the
+  // 50 um bend; 5 deg on the 250 um bend: 0.12 R) with the mesh-coarseness diagnostic set;
+  // a polygon of 60 deg joints (a 180 deg sweep in three chords) is corners at its joints:
+  // no curved pair, no bend annotation, corner vertices at every joint.
   const double R = 2.0, width = 8.0;
   for (const double radius : {50.0, 250.0})
   {
-    const double sweep = radius < 100.0 ? 45.0 : 15.0;
-    for (const double step : {1.0, 5.0, 15.0})
+    for (const double step : {1.0, 5.0, 15.0, 60.0})
     {
+      // (The 250 um bend sweeps 30 deg so that the 15 deg discretisation has two chords: one
+      // chord's two 7.5 deg end joints on 6 um leads imply 0.049 R and are noise, a
+      // straight-like pair, not an arc test.)
+      const double sweep = step >= 60.0 ? 180.0 : (radius < 100.0 ? 45.0 : 30.0);
       for (const double gap : {2.0 * R, 2.0 * R - 1.0e-3 * R, 2.0 * R + 1.0e-3 * R})
       {
         // Both bars are concentric offsets of the gap's centreline (radius), so the facing
@@ -1016,10 +1085,11 @@ TEST_CASE("SurfaceResponseIdentificationPairsAtTheThreshold",
         const auto outer = ArcBar(width, radius, sweep, step, 6.0, -0.5 * gap - 0.5 * width);
         const auto input = MakeInput({{inner, 0, 1.0}, {outer, 1, 1.0}}, R);
         const auto result = IdentifyMetalPerimeter(input);
-        const bool resolved =
-            ArcBarResolved(radius, 2.0 * (0.5 * gap + width), sweep, step, R);
+        const bool resolved = ArcBarIsArc(sweep, step);
+        const bool coarse = ArcBarCoarse(radius, 2.0 * (0.5 * gap + width), sweep, step, R);
         INFO("radius " << radius << " step " << step << " gap " << gap
-                       << (resolved ? " (arc)" : " (coarse)"));
+                       << (resolved ? " (arc)" : " (polygon)")
+                       << (coarse ? " coarse chords" : ""));
         CheckPartition(input, result);
         std::map<std::string, int> counts;
         int annotated = 0;
@@ -1045,6 +1115,13 @@ TEST_CASE("SurfaceResponseIdentificationPairsAtTheThreshold",
           CHECK(counts["SpatialEdgeCluster"] == (corner_events ? 2 : 0));
           CHECK(counts["ConvexCorner"] == (corner_events ? 4 : 8));
           CHECK(counts["IsolatedEdge"] >= (pair ? 2 : 4));
+          REQUIRE(!result.arcs.empty());
+          const double worst =
+              std::max_element(result.arcs.begin(), result.arcs.end(),
+                               [](const auto &a, const auto &b)
+                               { return a.max_sagitta_over_R < b.max_sagitta_over_R; })
+                  ->max_sagitta_over_R;
+          CHECK((worst >= kArcSagittaOverRadius) == coarse);
         }
         else
         {

@@ -15,9 +15,18 @@ function polygon_surface(occ, points)
     return occ.addPlaneSurface([occ.addCurveLoop(lines)])
 end
 
+# The angle-interpolated corner family's straight anchor (USER decision 121 (C)) is the sharp
+# "corner" of exactly 180 degrees: the straight edge through the corner box on the same basis.
+const STRAIGHT_ANCHOR_TOLERANCE_DEGREES = 1.0e-9
+
+function is_straight_anchor(angle_degrees)
+    return abs(angle_degrees - 180.0) <= STRAIGHT_ANCHOR_TOLERANCE_DEGREES
+end
+
 function corner_frame(angle_degrees)
     angle = deg2rad(angle_degrees)
-    0.0 < angle < pi || error("Corner angle must lie strictly between zero and 180 degrees")
+    0.0 < angle <= pi + deg2rad(STRAIGHT_ANCHOR_TOLERANCE_DEGREES) ||
+        error("Corner angle must lie in (0, 180] degrees")
     first = (1.0, 0.0)
     second = (cos(angle), sin(angle))
     first_normal = (0.0, 1.0)
@@ -37,6 +46,20 @@ function rounded_wedge_wire(occ, extent, angle_degrees, corner_radius, offset, z
     apex_tag = occ.addPoint(apex[1], apex[2], z)
     outer_first_tag = occ.addPoint(outer_first[1], outer_first[2], z)
     outer_second_tag = occ.addPoint(outer_second[1], outer_second[2], z)
+    if is_straight_anchor(angle_degrees)
+        # The straight anchor: the outer boundary is a semicircle, which a single OCC arc
+        # cannot represent unambiguously; two quarter arcs through the point on the bisector.
+        corner_radius == 0.0 || error("The straight anchor (180 deg) has no corner radius")
+        outer_mid = (apex[1] + outer_radius * bisector[1], apex[2] + outer_radius * bisector[2])
+        outer_mid_tag = occ.addPoint(outer_mid[1], outer_mid[2], z)
+        curves = [
+            occ.addLine(apex_tag, outer_first_tag),
+            occ.addCircleArc(outer_first_tag, apex_tag, outer_mid_tag),
+            occ.addCircleArc(outer_mid_tag, apex_tag, outer_second_tag),
+            occ.addLine(outer_second_tag, apex_tag)
+        ]
+        return occ.addWire(curves)
+    end
     outer_arc = occ.addCircleArc(outer_first_tag, apex_tag, outer_second_tag)
 
     if corner_radius == 0.0
@@ -224,8 +247,10 @@ function generate_corner_coupon(;
     radius > 0.0 || error("radius must be positive")
     topology in (:convex, :concave) || error("topology must be :convex or :concave")
     convex = topology == :convex
-    0.0 < angle_degrees < 180.0 ||
-        error("angle_degrees must lie strictly between zero and 180")
+    0.0 < angle_degrees < 180.0 || is_straight_anchor(angle_degrees) ||
+        error("angle_degrees must lie strictly between zero and 180 (180 = the straight anchor)")
+    is_straight_anchor(angle_degrees) && corner_radius > 0.0 &&
+        error("The straight anchor (180 deg) has no corner radius")
     0.0 <= corner_radius < radius || error("corner_radius must lie in [0, radius)")
     if corner_radius > 0.0
         tangent_distance = corner_radius / tan(0.5deg2rad(angle_degrees))

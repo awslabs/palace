@@ -432,7 +432,9 @@ SurfacePostOperator::SurfacePostOperator(
   {
     MFEM_VERIFY(boundaries,
                 "Automatic metal edge extraction requires complete boundary data!");
-    metal_edges = ExtractMetalEdgeGeometry(mesh, *boundaries);
+    // The joint noise rule at the largest edge distance of the automatic-edge interfaces.
+    metal_edges =
+        ExtractMetalEdgeGeometry(mesh, *boundaries, JointNoiseExtractionFor(*boundaries));
   }
   using OwnershipKey = std::tuple<std::string, int, InterfaceDielectric, std::vector<int>,
                                   double, double, bool>;

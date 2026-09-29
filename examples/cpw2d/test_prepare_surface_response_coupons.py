@@ -510,7 +510,7 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             self.assertEqual(
                 PREPARE.preparation(requirement)["Method"], "CornerCoupon"
             )
-        for angle in (0.0, 180.0, float("nan")):
+        for angle in (0.0, float("nan")):
             requirement = {
                 "Topology": "ConvexCorner",
                 "Geometry": {"AngleDegrees": angle, "CornerRadius": 0.0},
@@ -519,6 +519,14 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             self.assertEqual(
                 PREPARE.preparation(requirement)["Method"], "Unsupported"
             )
+        # 180 deg is the corner family's straight anchor (USER decision 121 (C)) — sharp only.
+        for radius, method in ((0.0, "CornerCoupon"), (0.2, "Unsupported")):
+            requirement = {
+                "Topology": "ConvexCorner",
+                "Geometry": {"AngleDegrees": 180.0, "CornerRadius": radius},
+                "BoundaryCondition": pec(),
+            }
+            self.assertEqual(PREPARE.preparation(requirement)["Method"], method)
 
     def test_corner_config_edge_lines_are_the_sa_perimeter(self):
         # The fabricated corner coupon is a 3D metal slab whose every edge is a fold between

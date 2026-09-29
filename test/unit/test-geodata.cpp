@@ -880,7 +880,8 @@ TEST_CASE("Automatic metal edge extraction and classification",
   boundaries.postpro.dielectric.emplace(12, MakeDielectric(InterfaceDielectric::MS));
   boundaries.postpro.dielectric.emplace(13, MakeDielectric(InterfaceDielectric::MA));
 
-  MetalSurfaceExtraction surface;
+  // Unit square sheet: the joint rule at R = 0.1 (the geometry has no joints).
+  MetalSurfaceExtraction surface = JointNoiseExtraction(0.1);
   surface.classify_components = true;
   surface.retain_faces = true;
   auto geometry = ExtractMetalEdgeGeometry(mesh, boundaries, surface);
@@ -996,7 +997,7 @@ TEST_CASE("Automatic metal edge extraction and classification",
   config::ImpedanceData impedance;
   impedance.attributes = {5};
   boundaries.impedance.push_back(std::move(impedance));
-  geometry = ExtractMetalEdgeGeometry(mesh, boundaries);
+  geometry = ExtractMetalEdgeGeometry(mesh, boundaries, JointNoiseExtraction(0.1));
   REQUIRE(geometry.segments.size() == 4);
   for (const auto &segment : geometry.segments)
   {
@@ -1022,10 +1023,15 @@ TEST_CASE("Automatic metal edge extraction samples high-order rounded edges",
   dielectric.attributes = {9};
   boundaries.postpro.dielectric.emplace(1, std::move(dielectric));
 
-  auto Extract = [&](int elements, bool high_order, bool rounded)
+  auto Extract = [&](int elements, bool high_order, bool rounded, double radius = 0.125)
   {
     auto mesh = RoundedIslandSheetHexMesh(elements, high_order, rounded);
-    MetalSurfaceExtraction surface;
+    // The geometric joint rule (kJointNoiseSagittaOverRadius, USER decision 121 (B)) at
+    // R = the fillet radius (0.125) unless given: a fillet joint of tens of degrees on
+    // chords of ~0.2 rho implies a sagitta (c / 2) tan(t / 4) far below 0.05 R and is a
+    // REGULAR joint of the extraction's chain (the identification's arc rule reads the
+    // non-collinear joints regardless of their type).
+    MetalSurfaceExtraction surface = JointNoiseExtraction(radius);
     surface.retain_faces = true;
     auto geometry = ExtractMetalEdgeGeometry(*mesh, boundaries, surface);
     return std::pair{std::move(mesh), std::move(geometry)};
@@ -1074,17 +1080,28 @@ TEST_CASE("Automatic metal edge extraction samples high-order rounded edges",
 
   CHECK(coarse.physical_components == 1);
   CHECK(fine.physical_components == 1);
-  // The perimeter's vertex classification uses the joint noise threshold
-  // (kCornerTurnToleranceDegrees = 1 deg, USER decision 117(4)): every joint of the sampled
-  // rounded corners (tens of degrees per chord) is a CORNER vertex and a chain break — the
-  // identification's arc rule absorbs the ones on a fitted arc and merges the chains; the
-  // extraction itself reports one chain per corner on a closed loop.
+  // The perimeter's vertex classification uses the geometric joint noise rule
+  // (kJointNoiseSagittaOverRadius = 0.05, USER decision 121 (B)): at R = rho every joint of
+  // the sampled rounded corners (2-3 deg per sampled sub-segment of 0.006: implied sagitta
+  // ~3e-5 = 2e-4 rho) is a REGULAR joint, the rounded loop is ONE chain of no corners; at
+  // R = rho / 250 (threshold 2.5e-5) the same joints imply sagittas above 0.05 R and are
+  // CORNER vertices and chain breaks (one chain per corner on a closed loop) — the former
+  // 1 deg angular reading of decision 117(4), which made every sampled fillet joint a corner
+  // whatever its size.
   const auto coarse_corners = CountPhysicalVertexTypes(coarse, MetalEdgeVertexType::CORNER);
   const auto fine_corners = CountPhysicalVertexTypes(fine, MetalEdgeVertexType::CORNER);
-  CHECK(coarse_corners >= 8);
-  CHECK(fine_corners >= 8);
-  CHECK(coarse.physical_chains == coarse_corners);
-  CHECK(fine.physical_chains == fine_corners);
+  CHECK(coarse_corners == 0);
+  CHECK(fine_corners == 0);
+  CHECK(coarse.physical_chains == 1);
+  CHECK(fine.physical_chains == 1);
+  {
+    auto [small_mesh, small_R] = Extract(8, true, true, 0.0005);
+    const auto small_corners =
+        CountPhysicalVertexTypes(small_R, MetalEdgeVertexType::CORNER);
+    CHECK(small_corners >= 8);
+    CHECK(small_R.physical_chains == small_corners);
+    CHECK(small_R.segments.size() == coarse.segments.size());
+  }
   CHECK(coarse.segments.size() > fine.segments.size());
 
   const double exact_perimeter =
@@ -1204,7 +1221,7 @@ TEST_CASE("Automatic metal edge extraction on 3D CPW",
     CHECK_FALSE(dielectric.edge_frame_normal);
   }
 
-  const auto geometry = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries);
+  const auto geometry = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries, JointNoiseExtractionFor(iodata.boundaries));
   REQUIRE(geometry.components == 3);
   REQUIRE(geometry.segments.size() == 92);
   int sa_segments = 0;
@@ -1292,7 +1309,7 @@ TEST_CASE("Automatic metal edge chains survive local refinement",
   iodata.model.refinement.max_it = 1;
   auto mesh = mesh::ReadMesh(iodata, Mpi::World());
 
-  const auto coarse = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries);
+  const auto coarse = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries, JointNoiseExtractionFor(iodata.boundaries));
   REQUIRE(coarse.physical_chains == 4);
 
   std::set<int> adjacent_elements;
@@ -1312,7 +1329,7 @@ TEST_CASE("Automatic metal edge chains survive local refinement",
   std::copy(adjacent_elements.begin(), adjacent_elements.end(), marked_elements.begin());
   mesh->GeneralRefinement(marked_elements);
 
-  const auto refined = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries);
+  const auto refined = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries, JointNoiseExtractionFor(iodata.boundaries));
   CHECK(refined.physical_components == coarse.physical_components);
   CHECK(refined.physical_chains == coarse.physical_chains);
   CHECK(refined.segments.size() > coarse.segments.size());
@@ -1386,7 +1403,7 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
     CHECK_FALSE(dielectric.edge_frame_normal);
   }
 
-  const auto geometry = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries);
+  const auto geometry = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries, JointNoiseExtractionFor(iodata.boundaries));
   REQUIRE_FALSE(geometry.Empty());
   int physical_segments = 0;
   int truncation_segments = 0;
@@ -1434,11 +1451,14 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
   // port faces are PORT segments (cuts): the feedline centre conductor's perimeter splits
   // into 2 more physical components (the cut pieces), 6 fewer chains, and the 12 port-end
   // vertices are no longer corners.
-  // USER decision 117(4): the vertex classification uses the joint noise threshold (1 deg,
-  // kCornerTurnToleranceDegrees) instead of the 30 deg corner class: the 387 polyline joints
-  // of the CPW bends and rounded features (60 sharp corners before) are CORNER vertices and
-  // chain breaks of the extraction (74 chains -> 461); the identification's arc rule absorbs
-  // the joints of fitted arcs and merges their chains.
+  // USER decision 117(4) / 121 (B): the vertex classification uses the geometric joint noise
+  // rule (kJointNoiseSagittaOverRadius at the config's edge distance R = 1.9 um) instead of
+  // the 30 deg corner class: the polyline joints of the CPW bends (11-16 deg on 7 um
+  // chords: implied sagitta 0.1-0.13 R) and rounded features (60 sharp corners before) are
+  // CORNER vertices and chain breaks of the extraction (74 chains -> 460; the 1 deg angular
+  // threshold of 117(4) read 461 chains / 447 corners: one joint whose implied sagitta on
+  // its shorter piece is below 0.05 R is a straight continuation now); the identification's
+  // arc rule absorbs the joints of fitted arcs and merges their chains.
   CHECK(geometry.components == 10);
   CHECK(geometry.physical_components == 15);
   CHECK(physical_segments + truncation_segments + fold_segments + nonmanifold_segments +
@@ -1449,10 +1469,10 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
   CHECK(fold_segments == 16);
   CHECK(nonmanifold_segments == 8);
   CHECK(embedded_segments == 40 + 16);  // the feet also touch the ground sheet faces
-  CHECK(geometry.physical_chains == 461);
+  CHECK(geometry.physical_chains == 460);
   CHECK(truncation_segments == 58);
   CHECK(truncation_attributes == std::set<int>{3});
-  CHECK(corners == 447);
+  CHECK(corners == 446);
   CHECK(sa_segments == 3082);
   // Conductors by metal connectivity: ground plane with the airbridge, feedline centre
   // conductor (between the lumped ports), island.
@@ -1527,7 +1547,7 @@ TEST_CASE("Automatic metal edge classification is partition independent",
     Classification result;
     auto marker = mesh::BdrAttrToMarker(mesh, std::vector<int>{5}, true);
     result.perimeter = mesh::GetBoundaryEdgeSegments(mesh, marker);
-    MetalSurfaceExtraction surface;
+    MetalSurfaceExtraction surface = JointNoiseExtractionFor(iodata.boundaries);
     surface.classify_components = true;
     surface.retain_faces = true;
     result.geometry = ExtractMetalEdgeGeometry(mesh, iodata.boundaries, surface);

@@ -7,11 +7,38 @@ import json
 from pathlib import Path
 
 
+# Defaults of the prototype process; a library with a Fabrication record (the version-2 coupon
+# libraries) overrides the permittivities and thicknesses so that the corrected run passes the
+# library's interface-layer validation (loss tangents are not part of the record).
 INTERFACES = {
-    "SA": (4.0, 2.0e-3),
-    "MS": (11.47, 3.0e-4),
-    "MA": (10.0, 3.0e-2),
+    "SA": (4.0, 2.0e-3, 2.0e-3),
+    "MS": (11.47, 3.0e-4, 2.0e-3),
+    "MA": (10.0, 3.0e-2, 2.0e-3),
 }
+SUBSTRATE_PERMITTIVITY = 11.47
+
+
+def process_from_library(library):
+    """(interfaces, substrate permittivity) of the library's Fabrication record, else the
+    prototype defaults."""
+    fabrication = json.loads(library.read_text()).get("Fabrication") or {}
+    interfaces = dict(INTERFACES)
+    for name, layer in (fabrication.get("InterfaceLayers") or {}).items():
+        if name in interfaces:
+            permittivity, loss_tangent, thickness = interfaces[name]
+            interfaces[name] = (
+                float(layer.get("Permittivity", permittivity)),
+                loss_tangent,
+                float(layer.get("Thickness", thickness)),
+            )
+    substrate = float(fabrication.get("SubstratePermittivity", SUBSTRATE_PERMITTIVITY))
+    return interfaces, substrate
+
+
+# Physical groups of mesh_corner_validation.jl / mesh_polygon_device.jl: 2D 1 outer, 3 SA,
+# 7 outer_truncation (aperture); fabricated 2 MS / 4 MA, thin 2 thin_metal.
+OUTER_ATTRIBUTES = [1, 7]
+SA_ATTRIBUTE = 3
 
 
 def dielectric(
@@ -19,34 +46,38 @@ def dielectric(
     attributes,
     interface_type,
     radius,
-    automatic,
+    fabricated,
     edge_elements_per_radius,
+    interfaces=INTERFACES,
 ):
-    permittivity, loss_tangent = INTERFACES[interface_type]
+    """Interface record with its edge lines at `radius`: the thin sheet's metal edge is the
+    automatic perimeter (the device rule); the fabricated slab has no one-sided metal edge (every
+    edge of MS bottom / MA sidewalls / MA top is a fold between metal faces, so `AutomaticEdges`
+    finds nothing), and its edge lines are named as the perimeter of the SA surface minus the
+    outer box, as the fabricated corner coupon does (generate_corner_response.py)."""
+    permittivity, loss_tangent, thickness = interfaces[interface_type]
     result = {
         "Index": index,
         "Attributes": attributes,
         "Type": interface_type,
-        "Thickness": 2.0e-3,
+        "Thickness": thickness,
         "Permittivity": permittivity,
         "LossTan": loss_tangent,
+        "LocalizeEdgeEnergy": False,
+        "EdgeExcludeAttributes": OUTER_ATTRIBUTES,
+        "EdgeDistances": [radius],
     }
-    if automatic:
-        result.update(
-            {
-                "AutomaticEdges": True,
-                "LocalizeEdgeEnergy": False,
-                "EdgeExcludeAttributes": [1, 7],
-                "EdgeDistances": [radius],
-            }
-        )
-        if edge_elements_per_radius:
-            result["EdgeRefinement"] = {
-                "Radius": radius,
-                "ElementsPerRadius": edge_elements_per_radius,
-                "OuterRadiusFactor": 1.0,
-                "CoreIndicatorWeight": 0.0,
-            }
+    if fabricated:
+        result["EdgeAttributes"] = [SA_ATTRIBUTE]
+    else:
+        result["AutomaticEdges"] = True
+    if edge_elements_per_radius:
+        result["EdgeRefinement"] = {
+            "Radius": radius,
+            "ElementsPerRadius": edge_elements_per_radius,
+            "OuterRadiusFactor": 1.0,
+            "CoreIndicatorWeight": 0.0,
+        }
     return result
 
 
@@ -59,19 +90,21 @@ def config(
     library,
     radius,
     edge_elements_per_radius,
+    process=(INTERFACES, SUBSTRATE_PERMITTIVITY),
 ):
     refinement = 0 if fabricated else edge_elements_per_radius
+    layers, substrate_permittivity = process
     interfaces = (
         [
-            dielectric(1, [3], "SA", radius, True, refinement),
-            dielectric(2, [2], "MS", radius, True, refinement),
-            dielectric(3, [4], "MA", radius, True, refinement),
+            dielectric(1, [SA_ATTRIBUTE], "SA", radius, True, refinement, layers),
+            dielectric(2, [2], "MS", radius, True, refinement, layers),
+            dielectric(3, [4], "MA", radius, True, refinement, layers),
         ]
         if fabricated
         else [
-            dielectric(1, [3], "SA", radius, True, refinement),
-            dielectric(2, [2], "MS", radius, True, refinement),
-            dielectric(3, [2], "MA", radius, True, refinement),
+            dielectric(1, [SA_ATTRIBUTE], "SA", radius, False, refinement, layers),
+            dielectric(2, [2], "MS", radius, False, refinement, layers),
+            dielectric(3, [2], "MA", radius, False, refinement, layers),
         ]
     )
     boundaries = {
@@ -98,10 +131,17 @@ def config(
         },
     }
     if not fabricated:
+        # The verification protocol's trace lift (VERIFICATION-PROTOCOL.md section 3: SurfaceMortar
+        # with MortarOversampling 2, the transmon operating point). The Collocated default samples
+        # the potential at the knots and does not represent the coupons' trace basis (corner-basis
+        # fix 2026-09-29: the square control's MA fixed-trace / self-consistent spread of 55 points
+        # came from the collocated lift of the corner patches).
         solver["Electrostatic"]["ResponseCorrection"] = {
             "Library": str(library),
             "TargetInterfaces": [1, 2, 3],
             "UnmatchedPolicy": "Error",
+            "TraceCoupling": "SurfaceMortar",
+            "MortarOversampling": 2,
         }
     return {
         "Problem": {
@@ -117,7 +157,7 @@ def config(
         },
         "Domains": {
             "Materials": [
-                {"Attributes": [1], "Permittivity": 11.47},
+                {"Attributes": [1], "Permittivity": substrate_permittivity},
                 {"Attributes": [2], "Permittivity": 1.0},
             ],
             "Postprocessing": {
@@ -160,6 +200,7 @@ def main():
     radius = float(json.loads(library.read_text())["MatchingRadius"])
     if radius <= 0.0:
         raise ValueError("The process library MatchingRadius must be positive")
+    process = process_from_library(library)
 
     for name, mesh, fabricated in (
         ("thin-corrected", thin_mesh, False),
@@ -174,6 +215,7 @@ def main():
             library,
             radius,
             args.edge_elements_per_radius,
+            process,
         )
         path = output / f"{name}.json"
         path.write_text(json.dumps(data, indent=2) + "\n")

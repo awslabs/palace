@@ -165,8 +165,9 @@ struct IdentifiedArc
   std::array<double, 3> center{};
   double radius = 0.0;
   double turn_degrees = 0.0;
-  // The largest sagitta of the arc's chords on the fitted circle, over R (below the recorded
-  // Conventions.SagittaOverR by the arc rule).
+  // The largest sagitta of the arc's chords on the fitted circle, over R: the
+  // mesh-coarseness diagnostic (an arc at or above Conventions.SagittaOverR is listed in
+  // the manifest's MeshCoarsenessWarning; membership is by concyclicity).
   double max_sagitta_over_R = 0.0;
   // RoundedCorner (radius below R, tangent arms: a vertex feature) or Bend (exact-radius
   // bend inside its chain).
@@ -377,15 +378,26 @@ std::pair<std::string, std::string> SignatureKeyAndHash(nlohmann::json signature
 // angles come from straight arm directions and are exact).
 constexpr double kSignatureParameterToleranceOverRadius = 1.0e-3;
 constexpr double kSignatureAngleToleranceDegrees = 1.0e-2;
-// Arc rule (USER decision 117(4), 2026-09-28): a run of joints of the perimeter path is ONE
-// arc iff its vertices lie on one circle within kArcFitToleranceOverRadius x R (the
-// signature parameter tolerance) AND every chord's sagitta rho (1 - cos(central angle / 2))
-// is below kArcSagittaOverRadius x R — the polyline is an arc at the resolution of the
-// correction; no joint-turn threshold enters. Recorded as Conventions.ArcFitToleranceOverR /
-// SagittaOverR; the fillet and arc-cluster chord-count gates hold over the discretisations
-// that meet the cap.
+// Arc rule (USER decisions 117(4) and 121 / 122, 2026-09-28 — the CONCYCLICITY form): a run
+// of at least three consecutive joints of the perimeter path turning the same way (at most
+// 180 deg in total) is ONE arc iff its vertices lie on one circle within
+// kArcFitToleranceOverRadius x R (the signature parameter tolerance) AND every joint turns
+// less than kArcMaxJointTurnDegrees, bends (radius >= R) and rounded corners (radius < R)
+// alike, whatever the chord sagitta. The joint-turn cap keeps regular polygons corners (a
+// square turns 90 deg per joint, a hexagon 60; an octagon at 45 deg per joint is a circle at
+// the resolution of the correction) while a coarsely meshed design curve (the transmon's
+// 19.4 R CPW bends at 11-16 deg per chord, sagitta 0.09-0.17 R) is the curve it discretises
+// — "we do not want to artificially classify curves as corners". The largest chord sagitta
+// rho (1 - cos(central angle / 2)) is RECORDED per arc (Arcs[].MaxChordSagittaOverR) and
+// compared with kArcSagittaOverRadius x R = the geometric resolution of the correction
+// (kJointNoiseSagittaOverRadius, metaledge.hpp): arcs above it are listed in the manifest's
+// MeshCoarsenessWarning (count, length, worst) as a mesh-coarseness DIAGNOSTIC, not a
+// membership test (the sagitta form of decision 117(4) made chord sagitta > 0.05 R a
+// non-arc and read those bends as 387 corners of 164-175 deg). Recorded as
+// Conventions.ArcFitToleranceOverR / ArcMaxJointTurnDegrees / SagittaOverR.
 constexpr double kArcFitToleranceOverRadius = kSignatureParameterToleranceOverRadius;
-constexpr double kArcSagittaOverRadius = 0.05;
+constexpr double kArcMaxJointTurnDegrees = 50.0;
+constexpr double kArcSagittaOverRadius = kJointNoiseSagittaOverRadius;
 
 struct SignatureParameters
 {

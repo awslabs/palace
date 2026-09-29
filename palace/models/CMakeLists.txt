@@ -8,6 +8,7 @@
 target_sources(${LIB_TARGET_NAME}
   PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/boundarymodeoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/cornertracebasis.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/curlcurloperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/currentdipoleoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/domainpostoperator.cpp

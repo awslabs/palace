@@ -140,7 +140,7 @@ def main(argv=None):
                         if levels == 0:
                             audit_args = argparse.Namespace(
                                 mesh=args.mesh, config=config_path, manifest=manifest_path, log=log_path if os.path.exists(log_path) else None, compare=None, radius=None,
-                                corner_tolerance=audit.P.CORNER_ANGLE_TOLERANCE_DEGREES, output_prefix=os.path.join(directory, "audit"),
+                                output_prefix=os.path.join(directory, "audit"),
                             )
                             result = audit.run_audit(audit_args)
                             with open(os.path.join(directory, "audit.json"), "w") as target:

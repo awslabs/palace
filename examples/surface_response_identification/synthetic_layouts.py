@@ -56,7 +56,11 @@ RADIUS = 2.0
 GROUND = 4
 SECOND_CONDUCTOR = 5
 SUBSTRATE_AIR = 8
-CORNER_TURN_TOLERANCE_DEGREES = P.CORNER_ANGLE_TOLERANCE_DEGREES
+# The geometric joint noise rule (perimeter.joint_is_noise; metaledge.hpp
+# kJointNoiseSagittaOverRadius, USER decision 121 (B)) and the arc rule's joint-turn cap
+# (P.ARC_MAX_JOINT_TURN_DEGREES, USER decision 122).
+JOINT_NOISE_SAGITTA_OVER_R = P.JOINT_NOISE_SAGITTA_OVER_R
+ARC_MAX_JOINT_TURN_DEGREES = P.ARC_MAX_JOINT_TURN_DEGREES
 # Curved-edge chain rule (SURFACE-RESPONSE-IDENTIFICATION.md (b) 7, Identification.Conventions):
 # a bend whose radius is below STRAIGHT_BEND_RADIUS_OVER_R x R is a curved class; two chains pair
 # along a bend when their closest-point separation is constant within PAIR_SEPARATION_TOLERANCE.
@@ -380,10 +384,20 @@ def fillet_chord_length(radius, turn_degrees, chords):
 
 def arc_sagitta(radius, turn_degrees, chords):
     """Sagitta of one chord of an arc of the given radius and total turn meshed as `chords`
-    chords: rho (1 - cos(turn / (2 chords))). The arc rule (USER decision 117(4)) reads the
-    polyline as an arc only below P.SAGITTA_OVER_R x R; the fillet / arc-cluster chord-count
-    gates hold over the discretisations that meet the cap."""
+    chords: rho (1 - cos(turn / (2 chords))). Under the concyclicity arc rule (USER decisions
+    121 / 122) the sagitta is the recorded mesh-coarseness diagnostic (a chord at or above
+    P.SAGITTA_OVER_R x R is coarse), not a membership test."""
     return radius * (1.0 - math.cos(math.radians(turn_degrees) / (2.0 * chords)))
+
+
+def arc_chords_resolve(turn_degrees, chords):
+    """The concyclicity arc rule reads a polyline arc of the given total turn meshed as
+    `chords` chords as ONE arc iff it has at least two chords (three joints) and every joint
+    turns less than P.ARC_MAX_JOINT_TURN_DEGREES (the interior joints turn turn / chords; the
+    end joints half of that): the fillet / arc-cluster chord-count gates hold over these
+    discretisations. A closed circle needs chords > 360 / cap (an octagon is a circle, a
+    hexagon corners)."""
+    return chords >= 2 and turn_degrees / chords < P.ARC_MAX_JOINT_TURN_DEGREES
 
 
 def fillet_suite(ratios=FILLET_RATIOS, turns=FILLET_TURNS, chords=FILLET_CHORDS, perturbed_chords=8):
@@ -396,9 +410,10 @@ def fillet_suite(ratios=FILLET_RATIOS, turns=FILLET_TURNS, chords=FILLET_CHORDS,
     rho < R -> one rounded corner per fillet (total turn, rho / R), no CurvedEdge; R <= rho <
     10 R -> one CurvedEdge per fillet with RadiusOverR = rho / R exactly; rho >= 10 R ->
     straight-like isolated edges; the isolated / curved features are one per chain group so
-    the counts do not depend on the chords. The gate holds for the chord counts whose sagitta
-    is below SAGITTA_OVER_R x R (USER decision 117(4); a coarser polyline is a different
-    geometry at the resolution of the correction: its kinks are real corners)."""
+    the counts do not depend on the chords. The gate holds for the chord counts whose joints
+    all turn less than ARC_MAX_JOINT_TURN_DEGREES (USER decisions 121 / 122: a 2-chord 135 or
+    180 deg fillet turns 67.5 / 90 deg at its middle joint and is corners — the meshed
+    geometry; the chord sagitta is reported as the mesh-coarseness diagnostic, not gated)."""
     R = RADIUS
     layouts = []
     for q in ratios:
@@ -467,7 +482,7 @@ def fillet_suite(ratios=FILLET_RATIOS, turns=FILLET_TURNS, chords=FILLET_CHORDS,
                     lay = layout(tag, [sheet(GROUND, poly)], half_x=half_x, half_y=half_y, lc_fine=min(1.0, max(0.05, rho)), lc_far=max(6.0, half_x / 5.0), notes=f"strip of width 2 rho = {2 * q:g} R ending in a semicircle of {n} chords (a U-turn)" + (f" (perimeter nodes perturbed radially by <= {perturbation * rho / R:.2e} R, Delaunay interior)" if perturbation else ""), expected=expected)
                 if perturbation:
                     lay["Algorithm"] = FILLET_PERTURBED_ALGORITHM
-                lay["Fillet"] = {"RatioOverR": q, "TurnDegrees": turn, "Chords": n, "Perturbed": bool(perturbation), "PerturbationOverR": (perturbation * rho / R) if perturbation else 0.0, "ChordOverR": fillet_chord_length(rho, turn, n) / R, "SagittaOverR": arc_sagitta(rho, turn, n) / R, "Resolved": arc_sagitta(rho, turn, n) < P.SAGITTA_OVER_R * R}
+                lay["Fillet"] = {"RatioOverR": q, "TurnDegrees": turn, "Chords": n, "Perturbed": bool(perturbation), "PerturbationOverR": (perturbation * rho / R) if perturbation else 0.0, "ChordOverR": fillet_chord_length(rho, turn, n) / R, "SagittaOverR": arc_sagitta(rho, turn, n) / R, "Coarse": arc_sagitta(rho, turn, n) >= P.SAGITTA_OVER_R * R, "Resolved": arc_chords_resolve(turn, n)}
                 layouts.append(lay)
     # DS-SCT-002: a cross of 6 um arms with 1 um fillets meshed as two 45 deg chords.
     cross = cross_shape(12.0, 6.0)["Points"]
@@ -505,10 +520,11 @@ def arc_cluster_suite(corner_ratios=ARC_CLUSTER_CORNER_RATIOS, corner_chords=ARC
     radius, one CurvedEdge chain) as n chords, and a finger of width 1.8 R from the box edge
     ending 1 R before the pad: the finger's end-corner cluster absorbs the pad's edge across
     (decision 85(2)) — a cluster with a bend arc portion; the rest of the pad is a CurvedEdge.
-    Gate: the cluster hash is identical across the chord counts of a design whose sagitta is
-    below SAGITTA_OVER_R x R (run_arc_cluster_gate; the 0.7 R fillet as 2 chords, 0.053 R, and
-    the 6 R pad as 24 chords, 0.051 R, are corners under USER decision 117(4) and are reported,
-    not gated)."""
+    Gate: the cluster hash is identical across EVERY chord count of a design (run_arc_cluster_gate;
+    USER decisions 121 / 122: every joint of the set turns below ARC_MAX_JOINT_TURN_DEGREES — 45 deg
+    for the 2-chord fillets, 15 deg for the 24-chord pads — so the chord sagitta no longer selects
+    the gated subset; the 0.7 R fillet as 2 chords, 0.053 R, and the 6 R pad as 24 chords, 0.051 R,
+    carry the mesh-coarseness diagnostic Coarse and stay in the gate)."""
     R = RADIUS
     layouts = []
     width = 1.8 * R
@@ -524,7 +540,7 @@ def arc_cluster_suite(corner_ratios=ARC_CLUSTER_CORNER_RATIOS, corner_chords=ARC
                 "Exclusions": {},
                 "FacingGates": True,
             }, ))
-            layouts[-1]["ArcCluster"] = {"Family": "finger", "RatioOverR": q, "Chords": n, "SagittaOverR": arc_sagitta(rho, 90.0, n) / R, "Resolved": arc_sagitta(rho, 90.0, n) < P.SAGITTA_OVER_R * R}
+            layouts[-1]["ArcCluster"] = {"Family": "finger", "RatioOverR": q, "Chords": n, "SagittaOverR": arc_sagitta(rho, 90.0, n) / R, "Coarse": arc_sagitta(rho, 90.0, n) >= P.SAGITTA_OVER_R * R, "Resolved": arc_chords_resolve(90.0, n)}
     for q in bend_ratios:
         rho = q * R
         for n in bend_chords:
@@ -539,7 +555,7 @@ def arc_cluster_suite(corner_ratios=ARC_CLUSTER_CORNER_RATIOS, corner_chords=ARC
                 "Exclusions": {},
                 "FacingGates": True,
             }))
-            layouts[-1]["ArcCluster"] = {"Family": "disk", "RatioOverR": q, "Chords": n, "SagittaOverR": arc_sagitta(rho, 360.0, n) / R, "Resolved": arc_sagitta(rho, 360.0, n) < P.SAGITTA_OVER_R * R}
+            layouts[-1]["ArcCluster"] = {"Family": "disk", "RatioOverR": q, "Chords": n, "SagittaOverR": arc_sagitta(rho, 360.0, n) / R, "Coarse": arc_sagitta(rho, 360.0, n) >= P.SAGITTA_OVER_R * R, "Resolved": arc_chords_resolve(360.0, n)}
     return layouts
 
 
@@ -661,8 +677,8 @@ def hairpin(rho, gap, half_y):
 def kinked_hairpin(gap, width, half_y, turns_degrees=(22.0, 27.0, 24.0, 29.0, 23.0, 28.0, 27.0), chords=(0.35, 0.65, 0.45, 0.8, 0.5, 0.7)):
     """A strip whose inner edge folds through 180 deg along a NON-circular polyline (unequal
     chords and turns of 18-32 deg, the total 180 deg): no arc fits it (no circle within the
-    fit tolerance), so its kinks are corners under the sagitta rule (USER decision 117(4);
-    before it, sub-30 deg joints inside the chain) and the two inner legs, `gap` apart, are
+    fit tolerance), so no arc absorbs its kinks (concyclicity rule, USER decisions 121 / 122):
+    the outer edge's kinks are corners, the inner edge's short-chord kinks joint noise (121 (B)) and the two inner legs, `gap` apart, are
     one chain facing itself — the self-pairing case. The outer edge is the exact offset
     polyline at `width` (> 2R: no strip pair). The fold's chords are scaled so that the
     polyline closes on the leg separation."""
@@ -955,7 +971,7 @@ def stack_suite():
     # (no arc fits: the fold stays in the chain) with the legs 1.5 R apart: the inner chain
     # pairs with itself beyond the pi R neighbourhood (SameConductorGap), the fold a curved
     # edge; the outer edge (offset 2.5 R: no strip pair) isolated legs + a curved fold.
-    layouts.append(layout("hairpin-kinked-g1p5", [sheet(GROUND, kinked_hairpin(1.5 * R, 2.5 * R, 30.0))], half_x=20.0, half_y=30.0, lc_fine=0.3, lc_far=6.0, notes="kinked hairpin: the inner edge folds through 180 deg along a non-circular polyline (turns 18-32 deg, unequal chords) with the legs 1.5 R apart: the legs are one chain facing itself -> SameConductorGap beyond pi R of arc length; under the sagitta rule (USER decision 117(4)) the seven kinks of each edge are corners (no circle fits them within 1e-3 R), the inner fold's corners face each other and the far leg within 2R -> one cluster, the outer fold's corners (2.5 R away, beyond 2R of the inner ones) another; before the rule the sub-30 deg kinks stayed inside the chain (one cluster at the fold end, the rest of the fold a CurvedEdge)", expected={
+    layouts.append(layout("hairpin-kinked-g1p5", [sheet(GROUND, kinked_hairpin(1.5 * R, 2.5 * R, 30.0))], half_x=20.0, half_y=30.0, lc_fine=0.3, lc_far=6.0, notes="kinked hairpin: the inner edge folds through 180 deg along a non-circular polyline (turns 18-32 deg, unequal chords) with the legs 1.5 R apart: the legs are one chain facing itself -> SameConductorGap beyond pi R of arc length; no circle fits the kinks within 1e-3 R, so none is an arc (concyclicity rule, USER decisions 121 / 122); the outer edge's seven kinks (chords 1.3-1.6 R, implied sagitta 0.06-0.10 R) are corners, the inner edge's (chords 0.2-0.4 R, implied sagitta 0.010-0.024 R) are joint noise (121 (B): a smooth fold whose legs face each other) -> two clusters and the legs' SameConductorGap (under the 1 deg threshold of 117(4) every kink was a corner; before it the sub-30 deg kinks stayed inside the chain)", expected={
         "FeaturesSubset": {"SameConductorGap": 1, "SpatialEdgeCluster": 2}, "FacingGates": True}))
     return layouts
 
@@ -1465,6 +1481,20 @@ def loop_edges(lp, hole):
     return edges, arcs
 
 
+def _design_joint_is_noise(lp, index, turn_radians, radius):
+    """The geometric joint noise rule at a design polygon vertex: the shorter of its two
+    adjacent straight edges (a vertex adjacent to a design arc is a tangent point, never
+    noise; an arc edge counts with its chord)."""
+    points = lp["Points"]
+    n = len(points)
+    if (index + 1) in lp["Arcs"] or ((index + 1) % n + 1) in lp["Arcs"]:
+        return False
+    p = np.array(points[index], dtype=float)
+    before = float(np.linalg.norm(p - np.array(points[(index - 1) % n], dtype=float)))
+    after = float(np.linalg.norm(np.array(points[(index + 1) % n], dtype=float) - p))
+    return P.joint_is_noise(turn_radians, min(before, after), radius)
+
+
 def _tangent_at_vertex(lp, index, incoming):
     """Unit tangent of the loop at vertex index (0-based) on the incoming or outgoing side."""
     points = lp["Points"]
@@ -1496,22 +1526,21 @@ def _tangent_at_vertex(lp, index, incoming):
 
 
 
-def design_arc_joints(lp, lay, radius=RADIUS, noise_turn_degrees=CORNER_TURN_TOLERANCE_DEGREES):
-    """The vertex indices of a loop that the classifier's arc rule absorbs (USER decision
-    117(4), perimeter.arc_groups on the design polygon instead of the mesh): along every
+def design_arc_joints(lp, lay, radius=RADIUS):
+    """The vertex indices of a loop that the classifier's arc rule absorbs (USER decisions
+    121 / 122, perimeter.arc_groups on the design polygon instead of the mesh): along every
     path of straight polygon edges between vertices on the truncation box (cuts), from every
-    unconsumed joint the largest range of >= 3 following joints turning the same way by at
-    most 180 deg whose vertices lie on one circle within 1e-3 R with every chord's sagitta
-    below SAGITTA_OVER_R x R — the circle tangent to both arms at the end joints, else (>= 4
-    joints, radius >= R) the least-squares circle whose arms meet its tangents within the
-    noise threshold or lie on it as chords; both traversal directions, more joints absorbed
-    wins, then fewer arcs. Vertices adjacent to a true design arc (lp["Arcs"]) are tangent
-    points and never joints."""
+    unconsumed joint the largest range of >= 3 following joints turning the same way, each by
+    less than ARC_MAX_JOINT_TURN_DEGREES, by at most 180 deg in total, whose vertices lie on
+    one circle within 1e-3 R (whatever the chord sagitta) — the circle tangent to both arms
+    at the end joints, else (>= 4 joints, radius >= R) the least-squares circle whose arms
+    meet its tangents within the geometric joint noise rule or lie on it as chords; both
+    traversal directions, more joints absorbed wins, then fewer arcs. Vertices adjacent to a
+    true design arc (lp["Arcs"]) are tangent points and never joints."""
     points = [np.array(q, dtype=float) for q in lp["Points"]]
     n = len(points)
     fit_tolerance = P.ARC_FIT_TOLERANCE_OVER_R * radius
-    sagitta_cap = P.SAGITTA_OVER_R * radius
-    noise = math.radians(noise_turn_degrees)
+    joint_turn_cap = math.radians(P.ARC_MAX_JOINT_TURN_DEGREES)
     arc_vertices = set()
     for key in lp["Arcs"]:
         arc_vertices.update({(key - 2) % n, (key - 1) % n})
@@ -1583,7 +1612,10 @@ def design_arc_joints(lp, lay, radius=RADIUS, noise_turn_degrees=CORNER_TURN_TOL
             along = float(tangent @ (pt(neighbour) - at))
             if first != (along > 0.0):
                 tangent = -tangent
-            if math.acos(float(np.clip(arm @ tangent, -1.0, 1.0))) <= noise:
+            kink = math.acos(float(np.clip(arm @ tangent, -1.0, 1.0)))
+            arm_piece = float(np.linalg.norm(far - at))
+            first_chord = float(np.linalg.norm(pt(neighbour) - at))
+            if P.joint_is_noise(kink, min(arm_piece, first_chord), radius):
                 return True
             return abs(float(np.linalg.norm(far - centre)) - rho) < fit_tolerance
 
@@ -1614,8 +1646,7 @@ def design_arc_joints(lp, lay, radius=RADIUS, noise_turn_degrees=CORNER_TURN_TOL
                 if across > 0.0:
                     rho, centre, tangent_circle = 0.5 * across, Ta + 0.5 * across * na, True
             if tangent_circle and on_circle(idx, centre, rho):
-                sagitta = max_sagitta(idx, rho, False)
-                return (idx, True) if sagitta < sagitta_cap else None
+                return (idx, True) if math.isfinite(max_sagitta(idx, rho, False)) else None
             if count < 4:
                 return None
             fit = circle_fit([pt(j) for j in idx])
@@ -1626,22 +1657,25 @@ def design_arc_joints(lp, lay, radius=RADIUS, noise_turn_degrees=CORNER_TURN_TOL
                 return None
             if not end_ok(i, ta, idx[1], first[5], centre, rho, True) or not end_ok(idx[-1], tb, idx[-2], last[6], centre, rho, False):
                 return None
-            return (idx, False) if max_sagitta(idx, rho, False) < sagitta_cap else None
+            return (idx, False) if math.isfinite(max_sagitta(idx, rho, False)) else None
+
+        def below_cap(j):
+            return joints[j][3] < joint_turn_cap - 1.0e-12
 
         consumed = [False] * m
         if closed:
             total = sum(j[3] for j in joints)
-            if all(j[4] == joints[0][4] for j in joints) and abs(total - 2.0 * math.pi) < 1.0e-6:
+            if all(j[4] == joints[0][4] for j in joints) and all(below_cap(j) for j in range(m)) and abs(total - 2.0 * math.pi) < 1.0e-6:
                 fit = circle_fit([pt(j) for j in range(m)])
-                if fit is not None and on_circle(list(range(m)), *fit) and max_sagitta(list(range(m)), fit[1], True) < sagitta_cap:
+                if fit is not None and on_circle(list(range(m)), *fit) and math.isfinite(max_sagitta(list(range(m)), fit[1], True)):
                     return [[joints[j][0] for j in range(m)]]
         for i in range(m):
-            if consumed[i]:
+            if consumed[i] or not below_cap(i):
                 continue
             best, turn = None, joints[i][3]
             for count in range(2, m + 1):
                 k = (i + count - 1) % m
-                if (not closed and i + count - 1 >= m) or k == i or consumed[k] or joints[k][4] != joints[i][4]:
+                if (not closed and i + count - 1 >= m) or k == i or consumed[k] or joints[k][4] != joints[i][4] or not below_cap(k):
                     break
                 turn += joints[k][3]
                 if turn > math.pi + 1.0e-9:
@@ -1667,7 +1701,7 @@ def design_arc_joints(lp, lay, radius=RADIUS, noise_turn_degrees=CORNER_TURN_TOL
     return absorbed
 
 
-def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGREES):
+def oracle(lay, radius=RADIUS):
     """Exact layout features of the process-plane sheets: perimeter length (physical, i.e.
     not on the truncation box), corner list, parallel edge pairs within 2R with separations
     and the expected translational class, non-parallel interactions, arcs, and the excluded
@@ -1716,10 +1750,11 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
                     }
                 )
             points = lp["Points"]
-            # The arc rule (USER decision 117(4)): a joint absorbed by a fitted arc is no
-            # corner whatever its turn; every other joint turning more than the noise
-            # threshold is a classifier corner.
-            absorbed = design_arc_joints(lp, lay, radius, corner_turn_tolerance)
+            # The arc rule (USER decisions 121 / 122): a joint absorbed by a fitted arc is no
+            # corner whatever its turn; every other joint that is not noise under the
+            # geometric rule (implied sagitta on the shorter adjacent design edge) is a
+            # classifier corner.
+            absorbed = design_arc_joints(lp, lay, radius)
             for index, point in enumerate(points):
                 if _on_box(point, lay):
                     continue
@@ -1733,15 +1768,17 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
                 # Metal on the left for outer loops: a left turn (cross > 0) is convex.
                 convex = (cross > 0) != hole
                 interior = 180.0 - turn if convex else 180.0 + turn
+                noise = _design_joint_is_noise(lp, index, math.radians(turn), radius)
+                corner = not noise and index not in absorbed
                 corners.append(
                     {
                         "Point": [round(float(point[0]), 9), round(float(point[1]), 9)],
                         "TurnDegrees": round(turn, 9),
                         "InteriorAngleDegrees": round(interior, 9),
                         "Convex": bool(convex),
-                        "ClassifierCorner": turn > corner_turn_tolerance + 1.0e-9 and index not in absorbed,
+                        "ClassifierCorner": corner,
                         "OnArc": index in absorbed,
-                        "Expected": ("ConvexCorner" if convex else "ConcaveCorner") if (turn > corner_turn_tolerance + 1.0e-9 and index not in absorbed) else ("joint of a fitted arc (sagitta rule)" if index in absorbed else f"straight (turn <= {corner_turn_tolerance:g} deg noise threshold)"),
+                        "Expected": ("ConvexCorner" if convex else "ConcaveCorner") if corner else ("joint of a fitted arc (concyclicity rule)" if index in absorbed else f"straight (implied sagitta below {JOINT_NOISE_SAGITTA_OVER_R:g} R: joint noise)"),
                     }
                 )
     # Parallel and non-parallel pairs within 2R (non-adjacent straight physical edges).
@@ -1875,17 +1912,17 @@ def oracle(lay, radius=RADIUS, corner_turn_tolerance=CORNER_TURN_TOLERANCE_DEGRE
         for hole_index, lp in enumerate(sh["Loops"]):
             hole = hole_index > 0
             points = lp["Points"]
-            # The arc rule (USER decision 117(4)): a joint absorbed by a fitted arc is no
-            # corner whatever its turn; every other joint turning more than the noise
-            # threshold is a classifier corner.
-            absorbed = design_arc_joints(lp, lay, radius, corner_turn_tolerance)
+            # The arc rule (USER decisions 121 / 122): a joint absorbed by a fitted arc is no
+            # corner whatever its turn; every other joint that is not noise under the
+            # geometric rule is a classifier corner.
+            absorbed = design_arc_joints(lp, lay, radius)
             for index, point in enumerate(points):
                 if _on_box(point, lay):
                     continue
                 t_in = _tangent_at_vertex(lp, index, True)
                 t_out = _tangent_at_vertex(lp, index, False)
                 turn = math.degrees(math.acos(float(np.clip(t_in @ t_out, -1.0, 1.0))))
-                if turn <= corner_turn_tolerance + 1.0e-9:
+                if turn < 1.0e-9 or _design_joint_is_noise(lp, index, math.radians(turn), radius):
                     continue
                 convex = (cross2(t_in, t_out) > 0) != hole
                 off_plane_corners.append({"Point": [round(float(point[0]), 9), round(float(point[1]), 9), float(sh["Z"])], "TurnDegrees": round(turn, 9), "InteriorAngleDegrees": round(180.0 - turn if convex else 180.0 + turn, 9), "Convex": bool(convex), "Expected": "Excluded (facing sheet)"})
@@ -2196,7 +2233,7 @@ def run_suite(args):
                         else:
                             crack_digests[label] = cell["GeometryDigest"] or cell["DigestFull"]
                         if levels == 0:
-                            audit_args = argparse.Namespace(mesh=mesh_path, config=config_path, manifest=manifest_path, log=log_path, compare=None, radius=None, corner_tolerance=CORNER_TURN_TOLERANCE_DEGREES, output_prefix=None)
+                            audit_args = argparse.Namespace(mesh=mesh_path, config=config_path, manifest=manifest_path, log=log_path, compare=None, radius=None, output_prefix=None)
                             result = audit.run_audit(audit_args)
                             with open(os.path.join(directory, "audit.json"), "w") as target:
                                 json.dump(result, target, indent=1, default=str)

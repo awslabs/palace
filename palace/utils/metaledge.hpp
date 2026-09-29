@@ -5,6 +5,7 @@
 #define PALACE_UTILS_METAL_EDGE_HPP
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <functional>
 #include <optional>
@@ -36,20 +37,51 @@ struct MetalBoundaryCondition
   int index;
 };
 
-// Turn (degrees) above which a perimeter vertex with two segments is a CORNER; at or below
-// it the vertex is a REGULAR joint of its chain (a straight continuation). USER decision
-// 117(4) (2026-09-28): this is the joint NOISE threshold, not a design-intent threshold —
-// every joint turning more is a corner unless the identification's arc rule absorbs it into
-// a fitted arc (vertices on one circle within the signature tolerance and every chord's
-// sagitta at most SagittaOverR x R), whatever its turn. Was 30 deg (decision 73: "modest
-// local turns are part of a smooth chain"), which read coarse polyline bends as chains and
-// put a knife edge on the 30.000 deg joints of DS-OSC-003. Value from the chips' joint-turn
-// census (user-decisions-117-sagitta): the sub-1 deg joints not on fitted arcs are a
-// smooth continuum of spline steps (no gap between 0.05 and 2 deg on DS-SCT-002 /
-// DS-CTX-003), a 1 deg joint between the chips' longest chords (5.3 R) deviates from a
-// straight continuation by (c / 2) tan(t / 4) = 0.012 R, four times below the arc
-// resolution 0.05 R. Recorded as Identification.Conventions.CornerTurnToleranceDegrees.
-constexpr double kCornerTurnToleranceDegrees = 1.0;
+// Geometric joint noise threshold (USER decision 121 (B), 2026-09-28; replaces the 1 deg
+// angular threshold of decision 117(4) and the 30 deg corner class of decision 73). A
+// perimeter vertex with two segments, turning by t between two straight PIECES (collinear
+// mesh segments merged: refinement cannot change the pieces), is a straight continuation —
+// a REGULAR joint of its chain — when the deviation from straight it implies at the
+// resolution of the correction is below kJointNoiseSagittaOverRadius x R: the implied
+// sagitta (c / 2) tan(t / 4) of a chord of length c = the SHORTER adjacent piece read as one
+// chord of a circle turning t per chord (sagitta = rho (1 - cos(t / 2)) with c = 2 rho
+// sin(t / 2)). Every other joint is a CORNER unless the identification's arc rule absorbs
+// it (>= 3 concyclic joints, each turning less than ArcMaxJointTurnDegrees). Why this
+// quantity: (i) it is the very quantity the arc rule records per chord
+// (Arcs[].MaxChordSagittaOverR, warning above the same 0.05 R), so a joint below it is a
+// chord joint of a curve the correction cannot resolve — one constant for the noise
+// threshold and the mesh-coarseness diagnostic; (ii) sub-nm mesh slivers (1-2 nm segments
+// on DS-SCT-002's flux lines whose roundoff directions turned by > 1 deg and fragmented
+// the stacks) are bounded by c / 2 whatever their turn, a U-turn included (tan(pi / 4) =
+// 1); (iii) spline steps of 1-6 deg on 1-5 um chords (0.5-2.6 R) imply 2-65 nm =
+// 0.001-0.034 R and read as the smooth curves they discretise (the alternative, the
+// vertex distance from the line through its neighbours c sin(t), is 4x larger at small t
+// and would keep 6 deg spline joints on 1 um chords as 174 deg corners); (iv) a real
+// corner between long arms is never noise: 5 um arms turning 20 deg imply 0.23 R. Taking
+// the SHORTER piece makes a kink next to a short mesh segment on a long straight edge a
+// property of the piece pair, not of the mesh segment (a refinement midpoint is collinear
+// and merges). The knife edge is on the implied sagitta at 0.05 R (Conventions
+// JointNoiseSagittaOverR; knife-edge census JointNoiseSagittaOverR.0.05). Recorded as
+// Identification.Conventions.JointNoiseSagittaOverR; the extraction receives it in mesh
+// units (MetalSurfaceExtraction::joint_noise_sagitta = this constant x R).
+constexpr double kJointNoiseSagittaOverRadius = 0.05;
+
+// The implied sagitta of a joint turning by turn_radians between two straight pieces whose
+// shorter one has length shorter_piece (mesh units): (c / 2) tan(t / 4).
+inline double ImpliedJointSagitta(double turn_radians, double shorter_piece)
+{
+  return 0.5 * shorter_piece * std::tan(0.25 * turn_radians);
+}
+
+// The joint noise rule on a fixed relative grid (1e-9 of the threshold), so that a
+// roundoff-level perturbation of the vertex coordinates cannot flip a joint between REGULAR
+// and CORNER: true when the implied sagitta is below the threshold.
+inline bool JointIsNoise(double turn_radians, double shorter_piece, double noise_sagitta)
+{
+  const double grid = 1.0e-9 * noise_sagitta;
+  return std::round(ImpliedJointSagitta(turn_radians, shorter_piece) / grid) <
+         std::round(noise_sagitta / grid);
+}
 
 enum class MetalEdgeVertexType : char
 {
@@ -181,11 +213,31 @@ struct MetalSurfaceExtraction
   // Retain the global deduplicated metal faces (replicated on every rank).
   bool retain_global_faces = false;
 
-  // Turn above which a two-segment vertex is a CORNER (and a chain break): the joint noise
-  // threshold by default; the legacy per-group classifier (comparison only) passes its
-  // former 30 deg corner class.
-  double corner_turn_tolerance_degrees = kCornerTurnToleranceDegrees;
+  // Joint rule for two-segment vertices (CORNER and chain break, or REGULAR). Geometric
+  // (USER decision 121 (B)): REGULAR iff JointIsNoise(turn, shorter adjacent straight
+  // piece, joint_noise_sagitta), joint_noise_sagitta = kJointNoiseSagittaOverRadius x R in
+  // mesh units (the identification passes the library's matching radius, the
+  // post-processing edge tools their largest edge distance). Angular (the legacy per-group
+  // classifier, comparison only): REGULAR iff turn <= corner_turn_tolerance_degrees.
+  // Exactly one of the two must be set.
+  double joint_noise_sagitta = 0.0;
+  std::optional<double> corner_turn_tolerance_degrees;
 };
+
+// The extraction options with the geometric joint noise rule at matching radius R (mesh
+// units).
+inline MetalSurfaceExtraction JointNoiseExtraction(double radius)
+{
+  MetalSurfaceExtraction surface;
+  surface.joint_noise_sagitta = kJointNoiseSagittaOverRadius * radius;
+  return surface;
+}
+
+// The same at the length scale of the post-processing edge tools: the largest edge distance
+// of the automatic-edge interface dielectrics (the correction path requires the largest
+// EdgeDistances value to equal the library's matching radius). Fails when no automatic-edge
+// interface configures edge distances.
+MetalSurfaceExtraction JointNoiseExtractionFor(const config::BoundaryData &boundaries);
 
 // Automatically extract the geometric perimeter of all PEC-like, conductivity, and
 // impedance metal surfaces in a 3D mesh. The perimeter is derived from the distinct

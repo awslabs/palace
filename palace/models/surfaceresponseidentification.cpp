@@ -34,10 +34,11 @@ using Interval = std::pair<double, double>;
 // grid, every "within" test a strict less-than on the quantized values (design (c)).
 constexpr double kLengthQuantumOverRadius = 1.0e-8;
 constexpr double kDirectionQuantum = 1.0e-12;
-// The corner threshold is the joint noise threshold kCornerTurnToleranceDegrees of
-// metaledge.hpp (USER decision 117(4)): every vertex turning more is a corner unless a
-// fitted arc absorbs it; the constant lives with the perimeter extraction that classifies
-// the vertices, so that the chains, the identification and the audit mirror read one value.
+// The corner threshold is the geometric joint noise rule kJointNoiseSagittaOverRadius of
+// metaledge.hpp (USER decision 121 (B)): every joint whose implied sagitta on its shorter
+// adjacent piece reaches 0.05 R is a corner unless a fitted arc absorbs it; the constant
+// lives with the perimeter extraction that classifies the vertices, so that the chains, the
+// identification (the arc rule's end-joint test) and the audit mirror read one value.
 constexpr double kInteractionDistanceOverRadius = 2.0;
 constexpr double kThroughVertexZoneOverRadius = 2.0;
 constexpr double kClusterBallOverRadius = 1.0;
@@ -50,31 +51,29 @@ constexpr double kClusterBallOverRadius = 1.0;
 constexpr double kVertexJoinsClusterOverRadius = 2.0;
 constexpr double kVertexWindowOverRadius = 1.0;
 constexpr double kParallelCosineTolerance = 1.0e-8;
-// Arc rule (decision 82(3), design (b) 4 / 7; the sagitta form of USER decision 117(4),
-// 2026-09-28): a run of at least three consecutive joints of the perimeter path (through
-// corner vertices) turning the same way by at most 180 deg in total is ONE arc iff its
-// joint vertices lie on one circle within the signature parameter tolerance
-// (kArcFitToleranceOverRadius x R = 1e-3 R: the circle tangent to both arms when the joints
-// lie on it, else — for a bend of radius >= R over at least four joints — the least-squares
-// circle of the joints, the arms meeting it within the noise threshold of its tangents or
-// as chords of it) AND every chord's sagitta
-// rho (1 - cos(central angle / 2)) is below kArcSagittaOverRadius x R: the polyline is an
-// arc at the resolution of the correction (0.05 R = 95 nm at R 1.9 um is 50x the
-// parameter tolerance and below any distance the response resolves). No joint-turn
-// threshold enters the membership: a 45 deg joint of a fine fillet is absorbed, a 1 deg
-// joint of a coarse bend is not. An arc of radius below R is ONE rounded corner (total
-// turn, radius / R in the signature; its arms are tangent to the circle by construction),
-// an arc of radius >= R is a bend of exactly that radius for the curved-edge chain rule
-// (its joints, corner vertices included, are no features and its density is 1 / radius
-// over the arc). Every joint that no arc absorbs and that turns more than the noise
-// threshold kCornerTurnToleranceDegrees is a corner feature: a 4-chord semicircle of
-// radius 20 R (sagitta 1.5 R) is three 135 deg corners — the meshed geometry, which is what
-// both the thin and the thick simulation see — and the 30 deg knife edge of the former
-// corner-class rule is gone. Consequence recorded: a polygon smaller than the resolution
-// (a square hole of side <= 0.24 R, a 3-chord notch of side <= 0.2 R) reads as an arc.
-// The pieces between joints carry no length constraint of their own (the sagitta cap
-// bounds a chord to 2 sqrt(0.1 R rho): 2R on a 10 R bend); the former 2R piece rule with
-// its sub-corner exception is replaced.
+// Arc rule (decision 82(3), design (b) 4 / 7; the CONCYCLICITY form of USER decisions 121 /
+// 122, 2026-09-28, amending the sagitta form of 117(4)): a run of at least three
+// consecutive joints of the perimeter path (through corner vertices) turning the same way
+// by at most 180 deg in total is ONE arc iff its joint vertices lie on one circle within the
+// signature parameter tolerance (kArcFitToleranceOverRadius x R = 1e-3 R: the circle
+// tangent to both arms when the joints lie on it, else — for a bend of radius >= R over at
+// least FOUR joints — the least-squares circle of the joints, the arms meeting it within the
+// joint noise rule of its tangents or as chords of it) AND every joint turns less than
+// kArcMaxJointTurnDegrees (50: regular polygons such as squares and hexagons stay corners).
+// The chord sagitta rho (1 - cos(central angle / 2)) no longer decides membership: it is
+// recorded per arc (max_sagitta -> Arcs[].MaxChordSagittaOverR) and arcs whose largest
+// chord sagitta reaches kArcSagittaOverRadius x R (0.05 R, the resolution of the
+// correction) are listed in the manifest's MeshCoarsenessWarning — a coarsely meshed design
+// curve is the curve (the transmon's 19.4 R CPW bends at 11-16 deg per chord are bends,
+// not 387 corners of 164-175 deg), and its coarseness is reported. An arc of radius below R
+// is ONE rounded corner (total turn, radius / R in the signature; its arms are tangent to
+// the circle by construction), an arc of radius >= R is a bend of exactly that radius for
+// the curved-edge chain rule (its joints, corner vertices included, are no features and its
+// density is 1 / radius over the arc). Every joint that no arc absorbs and that is not
+// noise under the geometric rule is a corner feature: a 4-chord semicircle of radius 20 R
+// (joints of 45 deg on one circle) is a bend, a square hole is four corners, a chamfer (two
+// joints) stays two corners. The pieces between joints carry no length constraint of their
+// own; the former 2R piece rule with its sub-corner exception is replaced.
 // kArcFitToleranceOverRadius / kArcSagittaOverRadius: surfaceresponseidentification.hpp.
 // Cap of the wedge a claimed piece end extends by in the cluster extension's across rule
 // (2R tan(cap) = 1.15 R): formerly the corner threshold itself; kept at 30 deg so that the
@@ -3156,21 +3155,22 @@ void Identifier::ClassifyVertices()
   }
 }
 
-// Arc rule (decision 82(3); sagitta form of USER decision 117(4)): fitted arcs along the
-// perimeter path through corner vertices. A path continues through every vertex with
-// exactly two path segments (regular or corner); it stops at endpoints, junctions and cuts.
-// Its joints are the non-collinear vertices; from every unconsumed joint the largest range
-// of at least three following joints that (i) turn the same way, (ii) total at most 180 deg
-// and (iii) lie on one circle within kArcFitToleranceOverRadius x R with every chord's
-// sagitta below kArcSagittaOverRadius x R is an arc. The corner vertices of an arc make no
-// vertex feature (a 90 deg fillet meshed with two 45 deg chords has one in its middle), the
-// arc's curvature is its exact radius and its curved features are one across those
-// vertices, so that the description does not depend on the number of chords as long as the
-// chords resolve the circle; a coarser polyline is corners.
+// Arc rule (decision 82(3); concyclicity form of USER decisions 121 / 122): fitted arcs
+// along the perimeter path through corner vertices. A path continues through every vertex
+// with exactly two path segments (regular or corner); it stops at endpoints, junctions and
+// cuts. Its joints are the non-collinear vertices; from every unconsumed joint the largest
+// range of at least three following joints that (i) turn the same way, each by less than
+// kArcMaxJointTurnDegrees, (ii) total at most 180 deg and (iii) lie on one circle within
+// kArcFitToleranceOverRadius x R is an arc, whatever its chord sagitta (recorded). The
+// corner vertices of an arc make no vertex feature (a 90 deg fillet meshed with two 45 deg
+// chords has one in its middle), the arc's curvature is its exact radius and its curved
+// features are one across those vertices, so that the description does not depend on the
+// number of chords; a polygon with joints of 50 deg or more is corners.
 void Identifier::DetectArcs()
 {
   const double fit_tolerance = kArcFitToleranceOverRadius * R;
-  const double sagitta_cap = kArcSagittaOverRadius * R;
+  const double joint_turn_cap = kArcMaxJointTurnDegrees * std::acos(-1.0) / 180.0;
+  const double noise_sagitta = kJointNoiseSagittaOverRadius * R;
   arcs.clear();
   vertex_arc.assign(input.vertices.size(), -1);
   segment_arc.assign(input.segments.size(), -1);
@@ -3399,7 +3399,8 @@ void Identifier::DetectArcs()
     };
     // The largest sagitta of the chords between consecutive joints of the range on the
     // fitted circle (rho - sqrt(rho^2 - (c / 2)^2); a chord longer than the diameter has
-    // none: the range is no arc of that circle), and the sagitta rule (strict on the grid).
+    // none: the range is no arc of that circle) — recorded per arc as the mesh-coarseness
+    // diagnostic (Arcs[].MaxChordSagittaOverR), no longer a membership test.
     auto MaxChordSagitta = [&](const std::vector<std::size_t> &joint_vertices, double radius,
                                bool cyclic)
     {
@@ -3418,8 +3419,33 @@ void Identifier::DetectArcs()
       }
       return worst;
     };
-    auto SagittaResolved = [&](double sagitta)
-    { return std::isfinite(sagitta) && quantizer.Less(sagitta, sagitta_cap); };
+    // A joint turns less than the arc rule's joint-turn cap (strict on the direction grid).
+    auto JointTurnBelowCap = [&](const Joint &joint)
+    { return DirectionLess(std::cos(joint_turn_cap), std::cos(joint.turn)); };
+    // The straight pieces on either side of joint j in the scan direction (between it and
+    // the neighbouring joints, or the path ends of an open path).
+    auto PieceBefore = [&](std::size_t j)
+    {
+      const std::size_t idx = joints[j].index;
+      if (j == 0)
+      {
+        return closed ? std::fmod(position[idx] - position[joints[m - 1].index] + path_length,
+                                  path_length)
+                      : position[idx];
+      }
+      return position[idx] - position[joints[j - 1].index];
+    };
+    auto PieceAfter = [&](std::size_t j)
+    {
+      const std::size_t idx = joints[j].index;
+      if (j + 1 == m)
+      {
+        return closed ? std::fmod(position[joints[0].index] - position[idx] + path_length,
+                                  path_length)
+                      : path_length - position[idx];
+      }
+      return position[joints[j + 1].index] - position[idx];
+    };
     // Fit the arc over joints [i, i + count) (cyclic indices on a loop); returns the circle.
     struct Fit
     {
@@ -3501,7 +3527,7 @@ void Identifier::DetectArcs()
       if (tangent_circle && JointsOnCircle(range_vertices, center, radius))
       {
         const double sagitta = MaxChordSagitta(range_vertices, radius, false);
-        if (SagittaResolved(sagitta))
+        if (std::isfinite(sagitta))
         {
           fit.ok = true;
           fit.tangent = true;
@@ -3531,15 +3557,17 @@ void Identifier::DetectArcs()
       // The end joints of a least-squares bend: the kink between the arm and the circle's
       // tangent at the end joint (read from the fitted circle: a 1e-3 R position error moves
       // the tangent by 1e-3 R / rho, far less than a chord-based estimate on short chords)
-      // must be below the joint noise threshold (a spline piece joining the bend
-      // tangent-continuously; a mitred offset polyline) — else the arm is a chord of the same
-      // circle (its far vertex on the circle within the fit tolerance: an arc starting at a
-      // corner that lies on its circle, the sharp end of a rounded slot; the corner stays a
-      // corner, the arc starts at its next joint). A lead meeting a circular arc at a 90 deg
-      // corner is neither and the corner is never absorbed as a bend vertex.
+      // must be noise under the geometric joint rule on the shorter of the arm piece and the
+      // first chord (a spline piece joining the bend tangent-continuously; a mitred offset
+      // polyline) — else the arm is a chord of the same circle (its far vertex on the circle
+      // within the fit tolerance: an arc starting at a corner that lies on its circle, the
+      // sharp end of a rounded slot; the corner stays a corner, the arc starts at its next
+      // joint). A lead meeting a circular arc at a 90 deg corner is neither and the corner
+      // is never absorbed as a bend vertex.
       auto EndJointConsistent = [&](const Joint &end, const Point3D &arm_direction,
                                    std::size_t neighbour_vertex, std::size_t arm_segment,
-                                   const Point3D &center, double radius)
+                                   const Point3D &center, double radius, double arm_piece,
+                                   double first_chord)
       {
         const Point3D at = input.vertices[end.vertex].coordinate;
         Point3D circle_tangent = Normalize(Cross(normal, Sub(at, center)));
@@ -3553,7 +3581,7 @@ void Identifier::DetectArcs()
           circle_tangent = Scale(-1.0, circle_tangent);
         }
         const double kink = std::acos(std::clamp(Dot(arm_direction, circle_tangent), -1.0, 1.0));
-        if (kink <= kCornerTurnToleranceDegrees * std::acos(-1.0) / 180.0)
+        if (JointIsNoise(kink, std::min(arm_piece, first_chord), noise_sagitta))
         {
           return true;
         }
@@ -3563,12 +3591,14 @@ void Identifier::DetectArcs()
       if (LeastSquaresCircle(range_vertices, normal, first.in, center, radius) &&
           !quantizer.Less(radius, R) && JointsOnCircle(range_vertices, center, radius) &&
           EndJointConsistent(first, first.in, range_vertices[1],
-                             path_segments[(first.index + n - 1) % n], center, radius) &&
+                             path_segments[(first.index + n - 1) % n], center, radius,
+                             PieceBefore(i), PieceAfter(i)) &&
           EndJointConsistent(last, last.out, range_vertices[count - 2],
-                             path_segments[last.index % n], center, radius))
+                             path_segments[last.index % n], center, radius,
+                             PieceAfter((i + count - 1) % m), PieceBefore((i + count - 1) % m)))
       {
         const double sagitta = MaxChordSagitta(range_vertices, radius, false);
-        if (SagittaResolved(sagitta))
+        if (std::isfinite(sagitta))
         {
           fit.ok = true;
           fit.tangent = false;
@@ -3587,18 +3617,20 @@ void Identifier::DetectArcs()
     // its radius (the rounded-corner semantics of arms meeting through a fillet do not
     // apply to a closed circle; a circle of radius < R is one CurvedEdge with RadiusOverR <
     // 1 instead of two 180 deg "rounded corners" split at a numbering-dependent joint). The
-    // sagitta rule alone tells a circle from a polygon: a square hole (sagitta 0.29 rho) is
-    // four corners unless its side is below 0.24 R.
+    // joint-turn cap tells a circle from a polygon: a square or hexagonal hole is corners
+    // whatever its size, an octagon (45 deg per joint) is a circle.
     if (closed && m >= 3)
     {
       double total = 0.0;
       bool same_sign = true;
+      bool below_cap = true;
       for (std::size_t j = 0; j < m; j++)
       {
         total += joints[j].turn;
         same_sign = same_sign && joints[j].sign == joints.front().sign;
+        below_cap = below_cap && JointTurnBelowCap(joints[j]);
       }
-      if (same_sign && std::abs(total - 2.0 * std::acos(-1.0)) < 1.0e-6)
+      if (same_sign && below_cap && std::abs(total - 2.0 * std::acos(-1.0)) < 1.0e-6)
       {
         std::vector<std::size_t> all_joints;
         for (const auto &joint : joints)
@@ -3614,7 +3646,7 @@ void Identifier::DetectArcs()
         double sagitta = 0.0;
         if (LeastSquaresCircle(all_joints, normal, joints.front().in, center, radius) &&
             JointsOnCircle(all_joints, center, radius) &&
-            SagittaResolved(sagitta = MaxChordSagitta(all_joints, radius, true)))
+            std::isfinite(sagitta = MaxChordSagitta(all_joints, radius, true)))
         {
           Arc arc;
           arc.joints = all_joints;
@@ -3637,7 +3669,7 @@ void Identifier::DetectArcs()
     const std::size_t first_start = 0;
     for (std::size_t i = first_start; i < m; i++)
     {
-      if (consumed[i])
+      if (consumed[i] || !JointTurnBelowCap(joints[i]))
       {
         continue;
       }
@@ -3654,7 +3686,7 @@ void Identifier::DetectArcs()
       {
         const std::size_t k = (i + count - 1) % m;
         if ((!closed && i + count - 1 >= m) || k == i || consumed[k] ||
-            joints[k].sign != joints[i].sign)
+            joints[k].sign != joints[i].sign || !JointTurnBelowCap(joints[k]))
         {
           break;
         }
@@ -7316,6 +7348,15 @@ void Identifier::BuildClusters()
       {
         continue;
       }
+      // Cores already in one region need no distance: the union-find partition is a set
+      // function of the "< 2R" relation, and a pair already connected cannot change it
+      // (unit-test profile 2026-09-28: the sampled / golden arc-arc PieceDistance of every
+      // grid pair was 98.8 % of the identification's time on the high-order island meshes;
+      // stage counts and manifests are identical with the guard).
+      if (uf.Find(i) == uf.Find(j))
+      {
+        continue;
+      }
       if (quantizer.Less(PieceDistance(cores[i].piece, cores[j].piece), interaction))
       {
         uf.Union(i, j);
@@ -8364,7 +8405,7 @@ nlohmann::json Identifier::KnifeEdgeCensus() const
       return {{"Below", below}, {"Above", above}, {"Total", below + above}};
     }
   };
-  Band at_r, at_2r, at_bend, at_corner, at_sagitta;
+  Band at_r, at_2r, at_bend, at_noise, at_arc_turn, at_sagitta;
   double sampled = 0.0;
   const double reach = 2.0 * R + band + 2.0 * Tol();
   for (std::size_t a = 0; a < runs.size(); a++)
@@ -8434,9 +8475,10 @@ nlohmann::json Identifier::KnifeEdgeCensus() const
       }
     }
   }
-  const double corner = kCornerTurnToleranceDegrees;
+  const double noise_sagitta = kJointNoiseSagittaOverRadius * R;
+  const double arc_turn_cap = kArcMaxJointTurnDegrees;
   const double sagitta_cap = kArcSagittaOverRadius * R;
-  // Threshold keys of the census ("1", "0.05"): the shortest decimal of the constant.
+  // Threshold keys of the census ("50", "0.05"): the shortest decimal of the constant.
   auto ThresholdKey = [](double value)
   {
     std::ostringstream key;
@@ -8453,16 +8495,21 @@ nlohmann::json Identifier::KnifeEdgeCensus() const
     const Point3D ta = ArmDirection(incident[0], v), tb = ArmDirection(incident[1], v);
     const double turn =
         180.0 - std::acos(std::clamp(Dot(ta, tb), -1.0, 1.0)) * 180.0 / std::acos(-1.0);
-    at_corner.Add(turn, corner, kKnifeEdgeBandRelative * corner, 1.0);
-    // The sagitta the joint's turn implies for its two runs as chords of one circle: an
-    // inscribed polyline's chord of central angle t has sagitta (c / 2) tan(t / 4); the
-    // longer run read at the joint's turn is the worst case of the arc rule at this joint
-    // (a fitted arc's chords are its runs between joints).
     if (turn > 0.0)
     {
-      const double chord = std::max(runs[incident[0]].length, runs[incident[1]].length);
-      const double sagitta = 0.5 * chord * std::tan(0.25 * turn * std::acos(-1.0) / 180.0);
-      at_sagitta.Add(sagitta, sagitta_cap, kKnifeEdgeBandRelative * sagitta_cap, 1.0);
+      // The joint noise rule: the sagitta the turn implies on the SHORTER run (the rule's
+      // quantity) against JointNoiseSagittaOverR x R; the arc rule's joint-turn cap; and the
+      // mesh-coarseness diagnostic: the LONGER run read as a chord of one circle at the
+      // joint's turn (an inscribed polyline's chord of central angle t has sagitta
+      // (c / 2) tan(t / 4); a fitted arc's chords are its runs between joints).
+      const double shorter = std::min(runs[incident[0]].length, runs[incident[1]].length);
+      const double longer = std::max(runs[incident[0]].length, runs[incident[1]].length);
+      const double tan_quarter = std::tan(0.25 * turn * std::acos(-1.0) / 180.0);
+      at_noise.Add(0.5 * shorter * tan_quarter, noise_sagitta,
+                   kKnifeEdgeBandRelative * noise_sagitta, 1.0);
+      at_arc_turn.Add(turn, arc_turn_cap, kKnifeEdgeBandRelative * arc_turn_cap, 1.0);
+      at_sagitta.Add(0.5 * longer * tan_quarter, sagitta_cap,
+                     kKnifeEdgeBandRelative * sagitta_cap, 1.0);
     }
   }
   return {{"BandRelative", kKnifeEdgeBandRelative},
@@ -8471,14 +8518,18 @@ nlohmann::json Identifier::KnifeEdgeCensus() const
                    "the self-pair neighbourhood) at a distance within the band of the "
                    "threshold, split into the below / above sides; the chain length "
                    "whose windowed bend radius lies within the band of the straight-bend "
-                   "radius; the vertices whose turn lies within the band of the corner "
-                   "(joint noise) threshold; the vertices whose longer run, read as a chord "
-                   "at the joint's turn, has a sagitta (c / 2) tan(turn / 4) within the "
-                   "band of SagittaOverR x R (counts, not lengths)"},
+                   "radius; the two-run vertices whose implied sagitta (c / 2) tan(turn / 4) "
+                   "on the SHORTER run lies within the band of JointNoiseSagittaOverR x R "
+                   "(the joint noise rule), whose turn lies within the band of "
+                   "ArcMaxJointTurnDegrees (the arc rule's cap), and whose LONGER run read "
+                   "as a chord at the joint's turn has a sagitta within the band of "
+                   "SagittaOverR x R (the mesh-coarseness diagnostic) (counts, not lengths)"},
           {"SampledLength", sampled},
           {"Distance", {{"R", at_r.ToJson()}, {"2R", at_2r.ToJson()}}},
           {"BendRadius", {{"10R", at_bend.ToJson()}}},
-          {"CornerTurnDegrees", {{ThresholdKey(corner), at_corner.ToJson()}}},
+          {"JointNoiseSagittaOverR",
+           {{ThresholdKey(kJointNoiseSagittaOverRadius), at_noise.ToJson()}}},
+          {"ArcMaxJointTurnDegrees", {{ThresholdKey(arc_turn_cap), at_arc_turn.ToJson()}}},
           {"ArcSagittaOverR", {{ThresholdKey(kArcSagittaOverRadius), at_sagitta.ToJson()}}}};
 }
 
@@ -9364,17 +9415,31 @@ IdentificationResult Identifier::Identify()
   stage.Begin("arcs");
   DetectArcs();
   {
-    std::size_t corners = 0, bends = 0, absorbed = 0;
+    std::size_t corners = 0, bends = 0, absorbed = 0, coarse = 0;
+    double worst_sagitta = 0.0;
     for (const auto &arc : arcs)
     {
       (corners += arc.corner ? 1 : 0), (bends += arc.corner ? 0 : 1);
+      if (arc.max_sagitta / R >= kArcSagittaOverRadius)
+      {
+        coarse++;
+        worst_sagitta = std::max(worst_sagitta, arc.max_sagitta / R);
+      }
     }
     for (const int a : vertex_arc)
     {
       absorbed += a >= 0 ? 1 : 0;
     }
-    stage.End(std::to_string(corners) + " rounded corners, " + std::to_string(bends) +
-              " bends of exact radius, " + std::to_string(absorbed) + " joints absorbed");
+    std::ostringstream text;
+    text << corners << " rounded corners, " << bends << " bends of exact radius, " << absorbed
+         << " joints absorbed";
+    if (coarse > 0)
+    {
+      text << "; MESH COARSENESS WARNING: " << coarse << " arcs with chord sagitta >= "
+           << kArcSagittaOverRadius << " R (worst " << std::setprecision(3) << worst_sagitta
+           << " R)";
+    }
+    stage.End(text.str());
   }
   stage.Begin("runs / chains");
   BuildRuns(input, runs, chains, chain_index);
@@ -10075,6 +10140,32 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          {"Joints", arc.joints},
          {"Segments", arc.segments}});
   }
+  // Mesh-coarseness WARNING (USER decision 122): the arcs whose largest chord sagitta
+  // reaches SagittaOverR x R are arcs (the concyclicity rule decides membership) whose
+  // polyline the correction cannot resolve; count, arc length, worst sagitta and the arc
+  // indices are listed so that a coarse mesh is never silent.
+  nlohmann::json coarse_arcs = nlohmann::json::array();
+  double coarse_length = 0.0, worst_sagitta = 0.0;
+  for (std::size_t a = 0; a < arcs.size(); a++)
+  {
+    if (arcs[a].max_sagitta_over_R >= kArcSagittaOverRadius)
+    {
+      coarse_arcs.push_back(a);
+      coarse_length += arcs[a].radius * arcs[a].turn_degrees * std::acos(-1.0) / 180.0;
+      worst_sagitta = std::max(worst_sagitta, arcs[a].max_sagitta_over_R);
+    }
+  }
+  const nlohmann::json mesh_coarseness_warning = {
+      {"SagittaOverR", kArcSagittaOverRadius},
+      {"Rule", "fitted arcs (table Arcs) whose largest chord sagitta rho (1 - cos(central "
+               "angle / 2)) is at least SagittaOverR x R: the polyline chords these arcs "
+               "coarser than the resolution of the correction (a diagnostic of the mesh; "
+               "membership is by concyclicity and the joint-turn cap, ArcRule)"},
+      {"Count", coarse_arcs.size()},
+      {"Length", L(coarse_length)},
+      {"WorstMaxChordSagittaOverR",
+       RoundTo(worst_sagitta, kSignatureLengthQuantumOverRadius)},
+      {"Arcs", coarse_arcs}};
   nlohmann::json vertex_list = nlohmann::json::array();
   for (const auto &vertex : vertices)
   {
@@ -10110,15 +10201,22 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
       {"Version", 2},
       {"MatchingRadius", scaled_radius},
       {"Conventions",
-       {{"CornerTurnToleranceDegrees", kCornerTurnToleranceDegrees},
+       {{"JointNoiseSagittaOverR", kJointNoiseSagittaOverRadius},
         {"CornerRule",
-         "joint NOISE threshold (USER decision 117(4); was the 30 deg corner-class threshold "
-         "of decision 73): a vertex with two path segments turning more than "
-         "CornerTurnToleranceDegrees is a corner feature unless a fitted arc absorbs it "
-         "(ArcRule), whatever its turn; a joint turning at most the threshold is a straight "
-         "continuation of its chain (its turn feeds the windowed curvature). The chains of "
-         "the perimeter extraction (metaledge.cpp) break at the same threshold; a bend arc "
-         "merges the chains its absorbed corners separated"},
+         "geometric joint NOISE threshold (USER decision 121 (B); was the 1 deg angular "
+         "threshold of decision 117(4) and the 30 deg corner class of decision 73): a vertex "
+         "with two path segments turning by t between two straight pieces (collinear mesh "
+         "segments merged) is a straight continuation of its chain (its turn feeds the "
+         "windowed curvature) when the implied sagitta (c / 2) tan(t / 4) of the SHORTER "
+         "adjacent piece c is below JointNoiseSagittaOverR x R — the deviation from straight "
+         "the joint implies at the resolution of the correction, the same quantity the arc "
+         "rule records per chord (sub-nm mesh slivers are noise whatever their turn, spline "
+         "steps of 1-6 deg on 0.5-2.6 R chords imply 0.001-0.034 R, 5 um arms turning 20 "
+         "deg imply 0.23 R); every other joint is a corner feature unless a fitted arc "
+         "absorbs it (ArcRule). The chains of the perimeter extraction (metaledge.cpp) break "
+         "at the same rule (metaledge.hpp kJointNoiseSagittaOverRadius, JointIsNoise, "
+         "compared on a 1e-9 relative grid); a bend arc merges the chains its absorbed "
+         "corners separated"},
         {"InteractionDistanceOverR", kInteractionDistanceOverRadius},
         {"ThroughVertexZoneOverR", kThroughVertexZoneOverRadius},
         {"ClusterBallOverR", kClusterBallOverRadius},
@@ -10126,6 +10224,21 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"VertexWindowOverR", kVertexWindowOverRadius},
         {"ParallelCosineTolerance", kParallelCosineTolerance},
         {"ArcFitToleranceOverR", kArcFitToleranceOverRadius},
+        {"ArcMaxJointTurnDegrees", kArcMaxJointTurnDegrees},
+        {"CornerTraceBasisRule",
+         "corner coupons of an angle-interpolated family are built on the trace basis rule "
+         "(corner-family review 2026-09-29): on every box ring that meets the metal the "
+         "knots are the two metal-arm crossings (PEC), MetalInteriorKnots = 1 knot at equal "
+         "perimeter-arc-length fractions of the metal arc (PEC) and FreeKnots = 5 knots at "
+         "equal fractions of the free arc, ordered by role (one knot semantics, one zero "
+         "set, like-to-like free knots for every node); box corners that are no knot are "
+         "slave trace vertices; the library load refuses a spatial corner coupon whose "
+         "metal arm crosses a box ring at no PEC knot; the runtime basis of an interpolated "
+         "corner is constructed by the rule at the feature's angle (TraceBasis record: "
+         "RingSize 8, MetalInteriorKnots 1, FreeKnots 5, Fractions PerimeterArcLength; "
+         "knot coincidence 1e-6 of the perimeter: a free or metal-interior knot within it "
+         "of a fixed fraction k / RingSize takes that fraction, a box corner within it of "
+         "any knot gets no slave vertex)"},
         {"SagittaOverR", kArcSagittaOverRadius},
         {"ArcSampleSpacingOverR", kArcSampleSpacingOverRadius},
         {"ClusterArcChordStepDegrees", kClusterArcChordStepDegrees},
@@ -10150,35 +10263,38 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "not "
          "depend on the device mesh); two chords keep the former exact formulas"},
         {"ArcRule",
-         "sagitta rule (USER decision 117(4), 2026-09-28): a run of >= 3 consecutive joints "
-         "of a perimeter path (through corner vertices), same turn sign, <= 180 deg in "
-         "total, is ONE arc iff its joint vertices lie on one circle within "
-         "ArcFitToleranceOverR x R AND every chord's sagitta rho (1 - cos(central angle / "
-         "2)) is below SagittaOverR x R; bends and rounded corners alike, no joint-turn "
-         "threshold for the membership and no piece-length rule (the sagitta cap bounds a "
-         "chord to 2 sqrt(0.1 R rho)). The circle is the one tangent to both arms at the "
-         "end joints when every joint lies on it (tangent-length radius); otherwise, for a "
-         "radius >= R over at least four joints only, the least-squares circle of the joints "
-         "(exact for an inscribed polyline; three points are always concyclic), each arm "
-         "meeting the circle's tangent at its end joint within CornerTurnToleranceDegrees or "
-         "lying on the circle as a chord (a bend between non-tangent arms after a spline "
-         "piece; an arc starting at a corner on its circle). Radius < R = one rounded "
-         "corner (own chain, arms meet through it, AngleDegrees = 180 - total turn, "
-         "CornerRadiusOverR from the tangent lengths; a rounded corner of small turn is a "
-         "corner of large angle); radius >= R = a bend inside its chain. A closed path of "
-         "joints turning one way through 360 deg on one circle within the fit tolerance "
-         "with every chord below the sagitta cap is one arc (a round pad or hole; a square "
-         "hole with a side above 0.24 R is four corners). Every joint no arc absorbs and "
-         "turning more than CornerTurnToleranceDegrees is a corner: a coarse polyline bend "
-         "(DS-OSC-003: 4 chords per 180 deg on 8-26 R, sagitta 0.5-3.8 um) is corners, "
-         "which is the meshed geometry. Both traversal directions of a path are scanned and "
-         "the set absorbing more joints wins, then fewer arcs, then the smaller "
-         "serialisation of (radius, turn, joints, centre distance from the path centroid, "
-         "first joint's distance from the nearer path end) on the signature grid (the pair "
-         "of serialisations of the two scans is orientation invariant): a translated, "
-         "rotated or mirrored mesh gives the congruent arcs; a closed path is scanned from "
-         "the joint after its longest piece (ties: the first from the seed vertex): no arc "
-         "is split by the loop start. Every arc records MaxChordSagittaOverR (table Arcs)"},
+         "concyclicity rule (USER decisions 121 / 122, 2026-09-28; amends the sagitta form "
+         "of 117(4)): a run of >= 3 consecutive joints of a perimeter path (through corner "
+         "vertices), same turn sign, <= 180 deg in total, is ONE arc iff its joint vertices "
+         "lie on one circle within ArcFitToleranceOverR x R AND every joint turns less than "
+         "ArcMaxJointTurnDegrees (regular polygons such as squares / hexagons stay corners); "
+         "bends and rounded corners alike, whatever the chord sagitta and with no "
+         "piece-length rule. The chord sagitta rho (1 - cos(central angle / 2)) is recorded "
+         "per arc (Arcs[].MaxChordSagittaOverR) and arcs at or above SagittaOverR x R are "
+         "listed in MeshCoarsenessWarning (count, length, worst): a mesh-coarseness "
+         "diagnostic, not a membership test. The circle is the one tangent to both arms at "
+         "the end joints when every joint lies on it (tangent-length radius); otherwise, "
+         "for a radius >= R over at least FOUR joints only, the least-squares circle of the "
+         "joints (exact for an inscribed polyline; three points are always concyclic, so a "
+         "3-joint least-squares bend would absorb any three same-sign joints — refused), "
+         "each arm meeting the circle's tangent at its end joint within the joint noise "
+         "rule (on the shorter of the arm piece and the first chord) or lying on the circle "
+         "as a chord (a bend between non-tangent arms after a spline piece; an arc starting "
+         "at a corner on its circle). Radius < R = one rounded corner (own chain, arms meet "
+         "through it, AngleDegrees = 180 - total turn, CornerRadiusOverR from the tangent "
+         "lengths; a rounded corner of small turn is a corner of large angle); radius >= R "
+         "= a bend inside its chain. A closed path of joints turning one way through 360 "
+         "deg on one circle within the fit tolerance with every joint below the cap is one "
+         "arc (a round pad or hole; a square or hexagonal hole is corners whatever its "
+         "size, an octagon is a circle). Every joint no arc absorbs and that is not noise "
+         "is a corner: a two-joint chamfer, a square strip end, a 90 deg lead-end corner. "
+         "Both traversal directions of a path are scanned and the set absorbing more joints "
+         "wins, then fewer arcs, then the smaller serialisation of (radius, turn, joints, "
+         "centre distance from the path centroid, first joint's distance from the nearer "
+         "path end) on the signature grid (the pair of serialisations of the two scans is "
+         "orientation invariant): a translated, rotated or mirrored mesh gives the "
+         "congruent arcs; a closed path is scanned from the joint after its longest piece "
+         "(ties: the first from the seed vertex): no arc is split by the loop start"},
         {"LengthQuantumOverR", kLengthQuantumOverRadius},
         {"DirectionQuantum", kDirectionQuantum},
         {"SignatureLengthQuantumOverR", kSignatureLengthQuantumOverRadius},
@@ -10290,6 +10406,7 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
       {"Segments", segment_list},
       {"Vertices", vertex_list},
       {"Arcs", arc_list},
+      {"MeshCoarsenessWarning", mesh_coarseness_warning},
       {"Exclusions", exclusion_list},
       {"Totals",
        {{"PerimeterLength", L(perimeter_length)},

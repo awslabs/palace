@@ -9,11 +9,16 @@ least 2R (1 - band) apart from their neighbours (a pair at the threshold, a stac
 consecutive separations reach 2R) the response of every basis function assigned to an edge is
 compared with the isolated-edge model's basis function at the SAME position relative to the
 edge (matched in the edge's local frame: offset toward the gap, height above the process
-plane, longitudinal offset; within MatchToleranceOverSpacing x the isolated hat spacing). The
-per-edge gate statistic is the energy-weighted per-basis-function offset (sum of the matched
-candidate Q_ii over the sum of their isolated partners' Q_ii, minus one) against the recorded
-tolerance (qualification-gates.json, LibraryContinuity); the per-hat offsets (median, worst)
-are recorded. Basis functions within CornerExclusionOverR x R of a corner of the isolated
+plane, longitudinal offset; within MatchToleranceOverSpacing x the isolated hat spacing). Two
+gates per edge (USER decision 2026-09-28 on the decision-117 review MAJOR-2): (a) the
+energy-weighted per-basis-function offset (sum of the matched candidate Q_ii over the sum of
+their isolated partners' Q_ii, minus one) within MaximumRelativeOffset (1 %), AND (b) every
+matched basis function's own offset within PerBasisFunctionLimit (5 %; a single hat carries
+the mesh noise of two independently meshed coupons, +-1-2 %, so the per-hat limit is looser
+than the aggregate); the verdict fails if any matched hat exceeds (b). An edge with ZERO
+matched basis functions is a FAILURE (a basis that matches nothing cannot pass silently; it
+was NotApplicable before the decision). The per-hat offsets (median, worst) are recorded.
+Basis functions within CornerExclusionOverR x R of a corner of the isolated
 coupon's box (|u| and |v| both above R - c) are not compared: the isolated box's truncation
 changes their support (the hats next to a box corner differ by 10-60 % between an isolated
 and a stack coupon on the same physics), and candidate hats without an isolated partner at
@@ -337,9 +342,11 @@ def evaluate(library_path, gates=None, library=None):
     band = float(table["ThresholdBandOverR"])
     match_tolerance = float(table["MatchToleranceOverSpacing"])
     corner_exclusion = float(table["CornerExclusionOverR"])
+    per_hat_limit = float(table["PerBasisFunctionLimit"])
     record = {"Gate": "LibraryContinuity", "Statement": table["Statement"], "Quantity": table["Quantity"],
               "PreviousQuantity": table["PreviousQuantity"], "MatchingRadius": None,
-              "MaximumRelativeOffset": tolerance, "ThresholdBandOverR": band, "MatchToleranceOverSpacing": match_tolerance,
+              "MaximumRelativeOffset": tolerance, "PerBasisFunctionLimit": per_hat_limit, "ThresholdBandOverR": band,
+              "MatchToleranceOverSpacing": match_tolerance,
               "CornerExclusionOverR": corner_exclusion, "Isolated": None, "Models": [], "Verdict": None}
     try:
         radius = matching_radius(library, library_path)
@@ -381,6 +388,7 @@ def evaluate(library_path, gates=None, library=None):
         record["Candidates"] = [m["Name"] for m, _ in candidates]
         return record
     worst = 0.0
+    worst_hat = 0.0
     for model, separations in candidates:
         basis = model_basis(model, library_path, library, radius)
         entry = {"Model": model["Name"], "Topology": model["Topology"], "SeparationsOverR": [s / radius for s in separations]}
@@ -393,12 +401,20 @@ def evaluate(library_path, gates=None, library=None):
         entry["PerEdge"] = comparison
         offsets = [edge["MatchedEnergyOffset"] for edge in comparison]
         entry["RelativeOffsets"] = offsets
+        entry["WorstPerHatOffsets"] = [edge.get("WorstPerHatOffset") for edge in comparison]
         if any(o is None for o in offsets):
-            entry["Status"] = "NotComparable"
-            entry["Reason"] = "an edge has no basis function matched to an isolated basis function at its position"
+            # An edge with no matched basis function fails: nothing of it was compared.
+            entry["Status"] = "FAIL"
+            entry["Reason"] = "an edge has no basis function matched to an isolated basis function at its position (zero matched hats: Failed, not NotApplicable)"
         else:
-            entry["Status"] = "PASS" if all(abs(o) <= tolerance for o in offsets) else "FAIL"
+            aggregate_pass = all(abs(o) <= tolerance for o in offsets)
+            hats = [h for h in entry["WorstPerHatOffsets"] if h is not None]
+            per_hat_pass = all(abs(h) <= per_hat_limit for h in hats)
+            entry["AggregateStatus"] = "PASS" if aggregate_pass else "FAIL"
+            entry["PerBasisFunctionStatus"] = "PASS" if per_hat_pass else "FAIL"
+            entry["Status"] = "PASS" if aggregate_pass and per_hat_pass else "FAIL"
             worst = max(worst, max(abs(o) for o in offsets))
+            worst_hat = max([worst_hat] + [abs(h) for h in hats])
         response = per_edge_response(model, library_path, library, radius)
         if response is not None and isolated_response:
             former = [(r - isolated_response) / abs(isolated_response) for r in response]
@@ -407,6 +423,7 @@ def evaluate(library_path, gates=None, library=None):
         record["Models"].append(entry)
     statuses = {m["Status"] for m in record["Models"]}
     record["WorstRelativeOffset"] = worst
+    record["WorstPerBasisFunctionOffset"] = worst_hat
     record["Verdict"] = "Failed" if "FAIL" in statuses else ("NotApplicable" if not statuses & {"PASS"} else "Passed")
     return record
 

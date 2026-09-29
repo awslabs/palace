@@ -44,8 +44,8 @@ class RefineTest(unittest.TestCase):
             self.assertAlmostEqual(np.abs(coarse_volume).sum(), fine_volume.sum())
             # Physical tags of the children follow the parents.
             self.assertEqual(sorted(set(fine.physical_tags(2))), sorted(set(coarse.physical_tags(2))))
-            before = P.extract_perimeter(coarse, CONFIG)
-            after = P.extract_perimeter(fine, CONFIG)
+            before = P.extract_perimeter(coarse, CONFIG, radius=0.5)
+            after = P.extract_perimeter(fine, CONFIG, radius=0.5)
             for kind in ("PHYSICAL", "TRUNCATION", "NONPLANAR", "CROSS_LAYER", "NONMANIFOLD"):
                 self.assertAlmostEqual(before.length(kind), after.length(kind), msg=kind)
             self.assertEqual(len([e for e in after.edges if e.kind == "PHYSICAL"]), 2 * len([e for e in before.edges if e.kind == "PHYSICAL"]))

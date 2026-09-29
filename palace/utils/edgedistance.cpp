@@ -615,7 +615,10 @@ BuildEdgeRefinementContexts(const mfem::ParMesh &mesh,
     {
       if (!have_metal_edges)
       {
-        metal_edges = ExtractMetalEdgeGeometry(mesh, boundaries);
+        // The joint noise rule at the largest edge distance of the automatic-edge
+        // interfaces.
+        metal_edges =
+            ExtractMetalEdgeGeometry(mesh, boundaries, JointNoiseExtractionFor(boundaries));
         have_metal_edges = true;
       }
       segment_indices =

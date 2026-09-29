@@ -179,8 +179,10 @@ def convergence_check(name, current, previous, matrix_limit, energy_limit=None):
 
 DOMAIN_DEFECT_DEFINITION = (
     "relative change of the held-out correction energy c^T D c between consecutive "
-    "orders, D = Q_fabricated - Q_thin (domain), c = the held-out trace coefficients "
-    "(USER decision 117(3), 2026-09-28)"
+    "orders, |c^T D c - c^T D_previous c| / |c^T D c|, D = Q_fabricated - Q_thin (domain) "
+    "of each order, c = the CURRENT (higher) order's held-out trace coefficients applied "
+    "to both D and D_previous, so that the statistic isolates the change of D "
+    "(USER decision 117(3), 2026-09-28; decision-117 review m1)"
 )
 DOMAIN_DEFECT_PREVIOUS_DEFINITION = (
     "relative Frobenius change ||D - D_previous||_F / ||D||_F of the free-trace "
