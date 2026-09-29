@@ -131,10 +131,17 @@ def config(
         },
     }
     if not fabricated:
+        # The verification protocol's trace lift (VERIFICATION-PROTOCOL.md section 3: SurfaceMortar
+        # with MortarOversampling 2, the transmon operating point). The Collocated default samples
+        # the potential at the knots and does not represent the coupons' trace basis (corner-basis
+        # fix 2026-09-29: the square control's MA fixed-trace / self-consistent spread of 55 points
+        # came from the collocated lift of the corner patches).
         solver["Electrostatic"]["ResponseCorrection"] = {
             "Library": str(library),
             "TargetInterfaces": [1, 2, 3],
             "UnmatchedPolicy": "Error",
+            "TraceCoupling": "SurfaceMortar",
+            "MortarOversampling": 2,
         }
     return {
         "Problem": {

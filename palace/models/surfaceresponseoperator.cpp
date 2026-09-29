@@ -16215,6 +16215,14 @@ void SurfaceResponseOperator::ApplyTrace(const Vector &x, Vector &values) const
     {
       values(patch.trace_offset + i) = correction(patch.point_offset + i) - reference;
     }
+    // A PEC-constrained knot (ZeroTraceIndices) carries a zero trace by the coupon's
+    // semantics whatever the device potential at its point (a knot on the fabricated slab
+    // top lies in the air of the thin device): the collocated lift enforces it as the
+    // surface mortar does (corner-family review 2026-09-29, m5).
+    for (const int index : model.zero_trace_indices)
+    {
+      values(patch.trace_offset + index) = 0.0;
+    }
     for (int state = 0; state < model.conductor_state_count; state++)
     {
       values(patch.trace_offset + model.contour_size + state) =
@@ -16353,9 +16361,15 @@ void SurfaceResponseOperator::ApplyTraceTranspose(const Vector &values, Vector &
       continue;
     }
     double reference = 0.0;
+    std::vector<bool> constrained(model.contour_size, false);
+    for (const int index : model.zero_trace_indices)
+    {
+      constrained[index] = true;
+    }
     for (int i = 0; i < model.contour_size; i++)
     {
-      const double value = values(patch.trace_offset + i);
+      // The transpose of the collocated lift with its PEC knots zeroed.
+      const double value = constrained[i] ? 0.0 : values(patch.trace_offset + i);
       correction[patch.point_offset + i] = value;
       reference -= value;
     }
