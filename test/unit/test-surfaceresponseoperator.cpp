@@ -710,11 +710,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   SurfaceResponseOperator legacy_response(legacy_iodata, automatic_laplace);
   CHECK(legacy_response.GetPatchCount() == automatic_response.GetPatchCount());
 
-  auto exact_pair_config_2d = automatic_config;
-  exact_pair_config_2d["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
-      exact_pair_library_2d_path.string();
-  exact_pair_config_2d["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeDistances"] = {
-      0.3};
+  json exact_pair_config_2d = ExactPairConfig2D();
   IoData exact_pair_iodata_2d(exact_pair_config_2d, false);
   exact_pair_iodata_2d.boundaries.cracked_attributes.insert(9);
   exact_pair_iodata_2d.boundaries.cracked_attributes.insert(10);
@@ -1521,8 +1517,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         }
       }
     };
-    setenv("PALACE_RESPONSE_GEOMETRY_CACHE", cache_path.c_str(), 1);
-    setenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE", "1", 1);
+    test::GeometryCacheEnvGuard cache_env(cache_path.string(), true);
     // Same-conductor strip pair (two sites) with an explicit model reference.
     auto reference_strip_config_2d = exact_pair_config_2d;
     reference_strip_config_2d["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
@@ -1594,8 +1589,6 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(reference_gap_response_2d.GetPatchCount() == 1);
     Mpi::Barrier(Mpi::World());
     CheckReferences(PatchReferences(cache_path), {{-0.2, 0.0, 0.0}, {0.2, 0.0, 0.0}});
-    unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE");
-    unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE");
   }
 
 #endif
@@ -1714,14 +1707,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     // without the Blend entries is refused (never the anchor's straight matrices).
     {
       const auto cache_path = temp.temp_dir / "response-geometry-curved.json";
-      const std::string cache_string = cache_path.string();
-      setenv("PALACE_RESPONSE_GEOMETRY_CACHE", cache_string.c_str(), 1);
-      setenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE", "1", 1);
+      test::GeometryCacheEnvGuard cache_env(cache_path.string(), true);
       SurfaceResponseOperator written_response(curved_iodata, automatic_laplace);
       Mpi::Barrier(Mpi::World());
-      unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE");
+      cache_env.DisableWrite();
       SurfaceResponseOperator loaded_response(curved_iodata, automatic_laplace);
-      unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE");
       CHECK(loaded_response.GetPatchCount() == curved_response.GetPatchCount());
       CHECK(loaded_response.GetBasisSize() == curved_response.GetBasisSize());
       mfem::FunctionCoefficient curved_trace_coefficient(
@@ -1763,10 +1753,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         stripped << cache.dump(2) << "\n";
       }
       Mpi::Barrier(Mpi::World());
-      const std::string stripped_string = stripped_path.string();
-      setenv("PALACE_RESPONSE_GEOMETRY_CACHE", stripped_string.c_str(), 1);
+      test::GeometryCacheEnvGuard stripped_cache_env(stripped_path.string(), false);
       CHECK_THROWS(SurfaceResponseOperator(curved_iodata, automatic_laplace));
-      unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE");
     }
 
     const auto curved_requirements_path =
@@ -3016,14 +3004,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 
     {
       const auto cache_path = temp.temp_dir / "response-geometry-cap-hats.json";
-      const std::string cache_string = cache_path.string();
-      setenv("PALACE_RESPONSE_GEOMETRY_CACHE", cache_string.c_str(), 1);
-      setenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE", "1", 1);
+      test::GeometryCacheEnvGuard cache_env(cache_path.string(), true);
       SurfaceResponseOperator written_response(cap_hat_loaded_iodata, cap_hat_laplace);
       Mpi::Barrier(Mpi::World());
-      unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE");
+      cache_env.DisableWrite();
       SurfaceResponseOperator reloaded_response(cap_hat_loaded_iodata, cap_hat_laplace);
-      unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE");
       CHECK(reloaded_response.GetPatchCount() == ring_only_patches);
       CHECK(reloaded_response.GetBasisSize() == ring_only_basis + 2);
       const auto reloaded_result =
@@ -3057,11 +3042,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         stale << cache.dump(2) << "\n";
       }
       Mpi::Barrier(Mpi::World());
-      const std::string stale_string = stale_path.string();
-      setenv("PALACE_RESPONSE_GEOMETRY_CACHE", stale_string.c_str(), 1);
+      test::GeometryCacheEnvGuard stale_cache_env(stale_path.string(), false);
       CHECK_THROWS_WITH(SurfaceResponseOperator(cap_hat_loaded_iodata, cap_hat_laplace),
                         Catch::Matchers::ContainsSubstring("do not partition the contour"));
-      unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE");
     }
 
     IoData cap_hat_full_partition_iodata =
@@ -4959,18 +4942,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   constexpr int rounded_corner_count = 4;
   mfem::VectorConstantCoefficient field_coefficient = ConstantFieldCoefficient();
 
-  auto convex_maxwell_island_config = convex_island_config;
-  convex_maxwell_island_config["Problem"]["Type"] = "Eigenmode";
-  convex_maxwell_island_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4,
-                                                                        5, 6, 9};
-  convex_maxwell_island_config["Boundaries"].erase("Terminal");
-  convex_maxwell_island_config["Solver"] = {{"Order", 1},
-                                            {"Eigenmode", {{"Target", 1.0}}},
-                                            {"SurfaceResponseCorrection",
-                                             {{"Library", convex_library_3d_path.string()},
-                                              {"TargetInterfaces", {4}},
-                                              {"UnmatchedPolicy", "Error"},
-                                              {"PatchConstruction", "Legacy"}}}};
+  json convex_maxwell_island_config = ConvexMaxwellIslandConfig();
   IoData convex_maxwell_island_iodata(convex_maxwell_island_config, false);
   convex_maxwell_island_iodata.boundaries.cracked_attributes.insert(9);
   std::vector<std::unique_ptr<Mesh>> convex_maxwell_island_meshes;
@@ -6603,10 +6575,12 @@ TEST_CASE_METHOD(CornerTraceBasisFixture,
       }
       REQUIRE(!interpolated.empty());
       // The base is the nearest node of the segment's stencil; 112.5 is equidistant from
-      // 105 and 120 and the tie falls to 120 (as before the segment rule: the models'
-      // Angle round trip through radians leaves 120 nearer by a rounding residue, the same
-      // on every rank). The exact 90 / 135 corners take the legacy tie coupons.
-      CHECK(interpolated.rfind("convex-corner-120@", 0) == 0);
+      // 105 and 120, so either base is a correct pick (the recorded runs take 120: the
+      // models' Angle round trip through radians leaves 120 nearer by a rounding residue;
+      // the assertion does not depend on that residue). The exact 90 / 135 corners take
+      // the legacy tie coupons.
+      CHECK((interpolated.rfind("convex-corner-120@", 0) == 0 ||
+             interpolated.rfind("convex-corner-105@", 0) == 0));
       const double ninety = per_patch.at("convex-corner-90");
       CHECK(per_patch.at(interpolated) > 0.5 * ninety);
       CHECK(per_patch.at(interpolated) < 2.0 * ninety);
@@ -6669,10 +6643,12 @@ TEST_CASE_METHOD(CornerTraceBasisFixture,
       }
       REQUIRE(!interpolated.empty());
       // The base is the nearest node of the segment's stencil; 112.5 is equidistant from
-      // 105 and 120 and the tie falls to 120 (as before the segment rule: the models'
-      // Angle round trip through radians leaves 120 nearer by a rounding residue, the same
-      // on every rank). The exact 90 / 135 corners take the legacy tie coupons.
-      CHECK(interpolated.rfind("convex-corner-120@", 0) == 0);
+      // 105 and 120, so either base is a correct pick (the recorded runs take 120: the
+      // models' Angle round trip through radians leaves 120 nearer by a rounding residue;
+      // the assertion does not depend on that residue). The exact 90 / 135 corners take
+      // the legacy tie coupons.
+      CHECK((interpolated.rfind("convex-corner-120@", 0) == 0 ||
+             interpolated.rfind("convex-corner-105@", 0) == 0));
       const double ninety = per_patch.at("convex-corner-90");
       CHECK(per_patch.at(interpolated) > 0.5 * ninety);
       CHECK(per_patch.at(interpolated) < 2.0 * ninety);
@@ -6688,14 +6664,11 @@ TEST_CASE_METHOD(CornerTraceBasisFixture,
     meshes.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(*steep_mesh)));
     LaplaceOperator laplace(iodata, meshes);
     const auto cache_path = temp.temp_dir / "response-geometry-steep-house.json";
-    const std::string cache_string = cache_path.string();
-    setenv("PALACE_RESPONSE_GEOMETRY_CACHE", cache_string.c_str(), 1);
-    setenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE", "1", 1);
+    test::GeometryCacheEnvGuard cache_env(cache_path.string(), true);
     SurfaceResponseOperator written(iodata, laplace);
     Mpi::Barrier(Mpi::World());
-    unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE");
+    cache_env.DisableWrite();
     SurfaceResponseOperator loaded(iodata, laplace);
-    unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE");
     const Vector potential_true = ProjectedPotential(laplace);
     const auto fresh = written.GetElectrostaticResponse(potential_true);
     const auto reloaded = loaded.GetElectrostaticResponse(potential_true);

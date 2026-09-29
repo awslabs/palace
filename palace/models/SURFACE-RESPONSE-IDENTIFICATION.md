@@ -1154,8 +1154,11 @@ libraries keep working. The version-1 record `CornerFamily` carries
 check of the qualified family (`corner-qualification-20260929/`) judges the rule in both forms.
 **Production libraries carry the legacy tie coupons at 90 / 135 / 180 beside the per-side
 nodes** (supervisor decision 140 (1), qualification review M1): the exact-node preference then
-keeps the transmon-verified 90-degree model for every exact 90-degree corner, while the
-per-side coupons remain the stencil nodes of their segments. Measured on the held-out trace
+keeps the recorded corner-basis-fix 90-degree coupons for every exact 90-degree corner (the
+convex one = the transmon-verified model, byte-equal matrices; the concave legacy tie 90 is
+the corner-basis-fix rule node with 5 free knots on the free arc, which differs from the
+lane-2 transmon concave 90 by construction), while the per-side coupons remain the stencil
+nodes of their segments. Measured on the held-out trace
 of the recorded matrices, the three convex 90-degree coupons (identical knots, three band
 triangulations) differ by **MA_fab +10.85 % (90-, keys 82.5, vs the verified legacy 90; MA
 defect +14.25 %)** and by at most 0.7 % on every energy for 90+ (keys 112.5; MA_fab -0.00 %):

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -1704,6 +1705,26 @@ std::size_t SurfaceResponseFiles::CheckPlacedModelEdges(
     }
   }
   return claimed_arcs.size();
+}
+
+GeometryCacheEnvGuard::GeometryCacheEnvGuard(const std::string &cache_path, bool write)
+{
+  setenv("PALACE_RESPONSE_GEOMETRY_CACHE", cache_path.c_str(), 1);
+  if (write)
+  {
+    setenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE", "1", 1);
+  }
+}
+
+GeometryCacheEnvGuard::~GeometryCacheEnvGuard()
+{
+  unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE");
+  unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE");
+}
+
+void GeometryCacheEnvGuard::DisableWrite()
+{
+  unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE");
 }
 
 }  // namespace palace::test

@@ -43,6 +43,21 @@ struct InterfaceEdgeSummary
   int junctions = 0;
 };
 
+// Scope of the response-geometry cache environment of a test: the constructor sets
+// PALACE_RESPONSE_GEOMETRY_CACHE to the cache path (and PALACE_RESPONSE_GEOMETRY_CACHE_WRITE
+// when write is true), DisableWrite unsets the WRITE variable before a reload, and the
+// destructor unsets both, so a failing assertion inside the scope cannot leak the cache
+// variables into the following test cases of the same process.
+class GeometryCacheEnvGuard
+{
+public:
+  GeometryCacheEnvGuard(const std::string &cache_path, bool write);
+  GeometryCacheEnvGuard(const GeometryCacheEnvGuard &) = delete;
+  GeometryCacheEnvGuard &operator=(const GeometryCacheEnvGuard &) = delete;
+  ~GeometryCacheEnvGuard();
+  void DisableWrite();
+};
+
 // Shared fixture of the SurfaceResponseOperator unit tests (TEST_CASE_METHOD): the
 // temporary directory with every synthetic response matrix, basis-point file and
 // fabrication-process library the cases read (written by the root rank in the constructor;

@@ -736,12 +736,18 @@ TEST_CASE("CornerFamilyLibraryLoad", "[cornerfamily][Serial][Parallel]")
     REQUIRE(input);
     return json::parse(input);
   };
+  // "Fabrication-process response library ... corner family" pins the LOAD-time check of
+  // ReadProcessLibrary (the match-time precondition of SelectCornerFamilyStencil says
+  // "Corner family segment structure: ..." instead).
   CHECK_THROWS_WITH(Preflight("across-passage"),
-                    ContainsSubstring("corner family") &&
+                    ContainsSubstring("Fabrication-process response library") &&
+                        ContainsSubstring("corner family") &&
                         ContainsSubstring("node at 150") &&
                         ContainsSubstring("across a knot-corner passage"));
-  CHECK_THROWS_WITH(Preflight("two-coupons"), ContainsSubstring("corner family") &&
-                                                  ContainsSubstring("two coupons at 105"));
+  CHECK_THROWS_WITH(Preflight("two-coupons"),
+                    ContainsSubstring("Fabrication-process response library") &&
+                        ContainsSubstring("corner family") &&
+                        ContainsSubstring("two coupons at 105"));
   const json manifest = Preflight("consistent");
   int corners = 0;
   for (const auto &feature : manifest["Identification"]["Features"])
