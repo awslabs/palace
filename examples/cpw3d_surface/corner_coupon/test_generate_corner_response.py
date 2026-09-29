@@ -311,5 +311,117 @@ class TraceBasisRuleTest(unittest.TestCase):
         )
 
 
+class HeldoutPotentialTest(unittest.TestCase):
+    """USER decision 149 (6), option (c): the held-out self-check potential excites the free
+    knots; its cutoff vanishes only on the PEC part of the metal rings."""
+
+    def metal_ring_free_knots(self, surface):
+        points = np.asarray(surface.knot_points)
+        on_metal_ring = np.any(
+            np.abs(points[:, 2][:, None] - np.asarray([0.0, THICKNESS])) <= 1.0e-12, axis=1
+        ) & (np.max(np.abs(points[:, :2]), axis=1) >= RADIUS - 1.0e-12)
+        return on_metal_ring & ~np.asarray(surface.knot_zero)
+
+    def test_perimeter_arc_distance(self):
+        arc = (0.5, 0.75)
+        self.assertEqual(GENERATOR.perimeter_arc_distance(0.6, arc), 0.0)
+        self.assertEqual(GENERATOR.perimeter_arc_distance(0.5, arc), 0.0)
+        self.assertEqual(GENERATOR.perimeter_arc_distance(0.75 + 1.0e-13, arc), 0.0)
+        self.assertEqual(GENERATOR.perimeter_arc_distance(0.5 - 1.0e-13, arc), 0.0)
+        self.assertAlmostEqual(GENERATOR.perimeter_arc_distance(0.85, arc), 0.1)
+        self.assertAlmostEqual(GENERATOR.perimeter_arc_distance(0.4, arc), 0.1)
+        self.assertAlmostEqual(GENERATOR.perimeter_arc_distance(0.125, arc), 0.375)
+        wrapped = (0.9, 1.2)  # the concave metal arc wraps through fraction 0
+        self.assertEqual(GENERATOR.perimeter_arc_distance(0.1, wrapped), 0.0)
+        self.assertAlmostEqual(GENERATOR.perimeter_arc_distance(0.3, wrapped), 0.1)
+
+    def test_heldout_ring_layout_adds_the_crossings_as_pec_vertices(self):
+        for topology in ("convex", "concave"):
+            for angle in ANGLES:
+                layout = GENERATOR.heldout_ring_layout(RADIUS, angle, topology, 32)
+                fractions = [fraction for fraction, _, _ in layout]
+                self.assertEqual(fractions, sorted(fractions))
+                self.assertEqual([slot for _, _, slot in layout], list(range(len(layout))))
+                first, second = GENERATOR.arm_crossing_fractions(RADIUS, angle)
+                for crossing in (first, second % 1.0):
+                    self.assertTrue(any(abs(f - crossing) <= 1.0e-12 for f in fractions))
+                # 90 / 135 / 180 degrees: the arms lie on fixed rays; other angles add
+                # the second crossing.
+                self.assertEqual(len(layout), 32 if angle in (90.0, 135.0, 180.0) else 33)
+                points = GENERATOR.ring_points(RADIUS, 0.0, layout, 32)
+                np.testing.assert_array_equal(
+                    np.asarray([kind == "zero" for _, kind, _ in layout]),
+                    pec_mask(angle, topology)(points),
+                )
+
+    def test_heldout_trace_vanishes_on_the_pec_part_only(self):
+        for topology in ("convex", "concave"):
+            for angle in ANGLES:
+                fine = GENERATOR.build_surface(
+                    RADIUS, 32, THICKNESS, OVERETCH, angle_degrees=angle, topology=topology,
+                    cap_centers=True, crossing_vertices=True,
+                )
+                self.assertEqual(fine.slaves[-2:], [((0.0, 0.0, RADIUS), None, None, None),
+                                                    ((0.0, 0.0, -RADIUS), None, None, None)])
+                points = fine.vertex_points()
+                pec = pec_mask(angle, topology)(points)
+                self.assertGreater(np.count_nonzero(pec), 0)
+                values = GENERATOR.heldout_potential(points, RADIUS, THICKNESS, angle, topology)
+                cutoff = GENERATOR.heldout_cutoff(points, RADIUS, angle, topology, THICKNESS)
+                np.testing.assert_array_equal(values[pec], 0.0)
+                self.assertTrue(np.all(cutoff[~pec] > 0.0), (topology, angle))
+                self.assertTrue(np.all(cutoff <= 1.0))
+                # Far from the metal band (the outer rings at z = -/+ R and the caps) the
+                # potential is the bare polynomial.
+                far = np.abs(np.abs(points[:, 2]) - RADIUS) <= 1.0e-12
+                np.testing.assert_allclose(cutoff[far], 1.0)
+                # Every fine vertex of the metal rings is PEC or free by the same rule as the
+                # coupon's PEC mask, so the piecewise-linear trace is zero on the whole PEC
+                # part of the box (its boundary, the crossings, is a vertex) and nonzero on
+                # every triangle touching a free vertex.
+                on_metal_ring = np.any(
+                    np.abs(points[:, 2][:, None] - np.asarray([0.0, THICKNESS])) <= 1.0e-12,
+                    axis=1,
+                )
+                self.assertEqual(np.count_nonzero(on_metal_ring), 2 * (32 if angle in (90.0, 135.0, 180.0) else 33))
+
+    def test_heldout_coefficients_excite_every_free_knot(self):
+        for topology in ("convex", "concave"):
+            for angle in ANGLES:
+                surface = GENERATOR.build_surface(
+                    RADIUS, 8, THICKNESS, OVERETCH, angle_degrees=angle, topology=topology
+                )
+                points = np.asarray(surface.knot_points)
+                zero = np.asarray(surface.knot_zero)
+                coefficients = GENERATOR.heldout_potential(points, RADIUS, THICKNESS, angle, topology)
+                cutoff = GENERATOR.heldout_cutoff(points, RADIUS, angle, topology, THICKNESS)
+                np.testing.assert_array_equal(coefficients[zero], 0.0)
+                self.assertTrue(np.all(cutoff[~zero] > 0.0), (topology, angle))
+                free_on_metal_rings = self.metal_ring_free_knots(surface)
+                self.assertEqual(np.count_nonzero(free_on_metal_rings), 2 * GENERATOR.FREE_KNOTS)
+                # The blind spot of the former band cutoff: exactly zero on both metal rings.
+                legacy = GENERATOR.metal_band_cutoff(points, RADIUS, THICKNESS)
+                np.testing.assert_array_equal(legacy[free_on_metal_rings], 0.0)
+                # Option (c): every free knot of the metal rings carries a nonzero
+                # coefficient; the knot nearest a crossing (a sixth of the free arc away, at
+                # least 0.21 R here) is at least a third excited.
+                self.assertGreater(np.min(cutoff[free_on_metal_rings]), 1.0 / 3.0, (topology, angle))
+                self.assertTrue(np.all(coefficients[free_on_metal_rings] != 0.0))
+
+    def test_crossing_vertices_need_an_angle_and_no_connectivity(self):
+        with self.assertRaises(ValueError):
+            GENERATOR.build_surface(RADIUS, 32, THICKNESS, OVERETCH, crossing_vertices=True)
+        with self.assertRaises(ValueError):
+            GENERATOR.build_surface(
+                RADIUS, 32, THICKNESS, OVERETCH, angle_degrees=120.0, topology="convex",
+                connectivity_angle_degrees=112.5, crossing_vertices=True,
+            )
+        # The straight-arm form of the 2D generators: the cutoff at a point of the free arc
+        # depends on its distance to the nearest crossing and to the band.
+        points = np.asarray([[RADIUS, -RADIUS / 3.0, 0.0], [RADIUS, 0.0, RADIUS / 3.0]])
+        cutoff = GENERATOR.heldout_cutoff(points, RADIUS, 90.0, "convex", THICKNESS)
+        np.testing.assert_allclose(cutoff, [1.0, (1.0 - 3.0 * THICKNESS / RADIUS) ** 2 * (3.0 - 2.0 * (1.0 - 3.0 * THICKNESS / RADIUS))])
+
+
 if __name__ == "__main__":
     unittest.main()

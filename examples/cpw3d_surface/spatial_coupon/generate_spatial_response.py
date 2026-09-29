@@ -1507,7 +1507,8 @@ def write_library(
 
 
 def spatial_metal_band_cutoff(points, edges, radius, metal_thickness):
-    """Smoothly suppress traces on every thin/fabricated process-plane cut."""
+    """Smoothly suppress traces on every thin/fabricated process-plane cut (the convergence
+    probes: the whole metal band of every process plane, PEC or not)."""
     transition = radius / 3.0
     cutoff = np.ones(len(points))
     layers = {
@@ -1521,6 +1522,22 @@ def spatial_metal_band_cutoff(points, edges, radius, metal_thickness):
         layer_cutoff = normalized * normalized * (3.0 - 2.0 * normalized)
         cutoff = np.minimum(cutoff, layer_cutoff)
     return cutoff
+
+
+def spatial_heldout_cutoff(points, labels, radius):
+    """The held-out trace's cutoff (USER decision 149 (6), option (c), the corner coupon's
+    heldout_cutoff on the spatial basis surface): the smoothstep over R / 3 of the distance
+    to the nearest PEC contact knot (label 1). The PEC part of the trace surface is bounded
+    by PEC knots (library basis gate: no free hat has support on PEC), so the piecewise-linear
+    held-out trace, zero at those knots, vanishes on the whole PEC part and nowhere else; the
+    free knots of the metal-band rings over the gaps are excited (the former band cutoff
+    zeroed them, so the self-check never saw them). Ones without a PEC knot."""
+    pec = points[labels == 1]
+    if not len(pec):
+        return np.ones(len(points))
+    distance = np.min(np.linalg.norm(points[:, None, :] - pec[None, :, :], axis=2), axis=1)
+    coordinate = np.clip(distance / (radius / 3.0), 0.0, 1.0)
+    return coordinate * coordinate * (3.0 - 2.0 * coordinate)
 
 
 def conductor_trace_lifts(points, labels, conductor_count):
@@ -2241,7 +2258,7 @@ def main():
         args.radius,
         args.metal_thickness,
     )
-    heldout_values = cutoff * (
+    heldout_values = spatial_heldout_cutoff(points, labels, args.radius) * (
         0.35
         + 0.20 * normalized[:, 0]
         - 0.15 * normalized[:, 1]

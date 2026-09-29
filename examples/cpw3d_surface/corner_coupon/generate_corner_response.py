@@ -189,6 +189,58 @@ def arm_crossing_fractions(radius, angle_degrees):
     return first, second
 
 
+def metal_arc_fractions(radius, angle_degrees, topology):
+    """The metal and the free arc of a ring that meets the metal as unwrapped perimeter
+    fraction intervals (start, end) with start < end <= start + 1, counterclockwise. The
+    metal arc of a convex corner runs from the first arm crossing to the second (the sector
+    0 .. angle); the concave corner's metal is the complement."""
+    first, second = arm_crossing_fractions(radius, angle_degrees)
+    if topology == "convex":
+        return (first, second), (second, first + 1.0)
+    return (second, first + 1.0), (first, second)
+
+
+def heldout_ring_layout(radius, angle_degrees, topology, ring_size):
+    """Vertices of a ring that meets the metal on the fine held-out surface (USER decision
+    149 (6), option (c)): the fixed layout k / ring_size plus the two metal-arm crossings
+    (a crossing within KNOT_COINCIDENCE_FRACTION of a fixed vertex is that vertex), so the
+    piecewise-linear held-out trace, zero at every vertex of the metal arc, vanishes exactly
+    on the PEC part of the ring and nowhere else. Returns (fraction, kind, slot) triples in
+    perimeter order with kind "zero" on the closed metal arc and "free" elsewhere; slots
+    are sequential; no slave vertices (every box corner is a fixed vertex)."""
+    metal, _ = metal_arc_fractions(radius, angle_degrees, topology)
+    fractions = [k / ring_size for k in range(ring_size)]
+    for crossing in metal:
+        crossing %= 1.0
+        if all(
+            min(abs(crossing - fraction), 1.0 - abs(crossing - fraction))
+            > KNOT_COINCIDENCE_FRACTION
+            for fraction in fractions
+        ):
+            fractions.append(crossing)
+    fractions.sort()
+    layout = []
+    for slot, fraction in enumerate(fractions):
+        kind = "zero" if perimeter_arc_distance(fraction, metal) == 0.0 else "free"
+        layout.append((fraction, kind, slot))
+    return layout
+
+
+def perimeter_arc_distance(fraction, arc):
+    """Perimeter-fraction distance from `fraction` (any real) to the closed arc
+    (start, end), start < end <= start + 1 unwrapped; zero on the arc (a fraction within
+    FIXED_FRACTION_IDENTITY of an end point is on the arc, so a vertex placed at a crossing
+    counts as PEC whatever the rounding of its fraction)."""
+    start, end = arc
+    shifted = start + (fraction - start) % 1.0
+    if (
+        shifted <= end + FIXED_FRACTION_IDENTITY
+        or shifted >= start + 1.0 - FIXED_FRACTION_IDENTITY
+    ):
+        return 0.0
+    return min(shifted - end, start + 1.0 - shifted)
+
+
 def metal_ring_layout(radius, angle_degrees, topology, ring_size):
     """Knots and slave vertices of a ring that meets the metal, by the trace basis rule.
     Returns a list of vertices in perimeter (counterclockwise) order, each (fraction, kind,
@@ -207,14 +259,7 @@ def metal_ring_layout(radius, angle_degrees, topology, ring_size):
             f"FreeKnots = {2 + METAL_INTERIOR_KNOTS + FREE_KNOTS}"
         )
     first, second = arm_crossing_fractions(radius, angle_degrees)
-    # The metal arc of a convex corner runs counterclockwise from the first arm to the
-    # second (the sector 0 .. angle); the concave corner's metal is the complement.
-    if topology == "convex":
-        metal = (first, second)
-        free = (second, first + 1.0)
-    else:
-        metal = (second, first + 1.0)
-        free = (first, second)
+    metal, free = metal_arc_fractions(radius, angle_degrees, topology)
     roles = {"crossing1": first, "crossing2": second % 1.0}
     for m in range(1, METAL_INTERIOR_KNOTS + 1):
         roles[f"metal{m}"] = snap_fraction(
@@ -417,14 +462,22 @@ def build_surface(
     topology="convex",
     cap_centers=False,
     connectivity_angle_degrees=None,
+    crossing_vertices=False,
 ):
     """The trace surface of a corner coupon (TraceSurface). With an angle, the rings at
-    metal_levels follow the trace basis rule (metal_ring_layout); without one (the fine
-    held-out / probe surfaces, whose traces vanish on the metal band) every ring is the fixed
-    layout and the result carries no slave vertices. With a connectivity angle the bands next
-    to the metal rings are triangulated in the merge order of the rule's layout at THAT angle
-    (connectivity_keys; the knot positions stay those of angle_degrees), else in the
-    perimeter order at angle_degrees."""
+    metal_levels follow the trace basis rule (metal_ring_layout); without one (the probe
+    surfaces, whose traces vanish on the metal band) every ring is the fixed layout and the
+    result carries no slave vertices. With an angle and crossing_vertices the rings at
+    metal_levels are the fixed layout plus the two metal-arm crossings (heldout_ring_layout:
+    the fine held-out surface, whose trace vanishes on the PEC part of the rings only). With
+    a connectivity angle the bands next to the metal rings are triangulated in the merge
+    order of the rule's layout at THAT angle (connectivity_keys; the knot positions stay
+    those of angle_degrees), else in the perimeter order at angle_degrees."""
+    if crossing_vertices and (angle_degrees is None or connectivity_angle_degrees is not None):
+        raise ValueError(
+            "crossing vertices need an angle and take no connectivity angle (the held-out "
+            "surface is not a basis)"
+        )
     # Keep the trace triangulation conforming to every fabrication plane that
     # reaches the matching surface. The coupon mesh resolves these intersections
     # so the narrow trace hats across the process zone have active boundary DOFs.
@@ -452,7 +505,11 @@ def build_surface(
             and any(abs(level - metal) <= tolerance for metal in metal_levels(metal_thickness))
         )
         layout = (
-            metal_ring_layout(radius, angle_degrees, topology, ring_size)
+            (
+                heldout_ring_layout(radius, angle_degrees, topology, ring_size)
+                if crossing_vertices
+                else metal_ring_layout(radius, angle_degrees, topology, ring_size)
+            )
             if meets_metal
             else fixed_ring_layout(ring_size)
         )
@@ -692,14 +749,50 @@ def write_surface_trace(path, points, triangles, values):
 
 
 def metal_band_cutoff(points, radius, metal_thickness):
-    """Smoothly suppress a trace on both thin and fabricated PEC cuts."""
+    """Smoothly suppress a trace on both thin and fabricated PEC cuts (the convergence
+    probes: the whole metal band, PEC or not)."""
     transition = radius / 3.0
     distance = np.maximum(-points[:, 2], points[:, 2] - metal_thickness)
     coordinate = np.clip(distance / transition, 0.0, 1.0)
     return coordinate * coordinate * (3.0 - 2.0 * coordinate)
 
 
-def heldout_potential(points, radius, metal_thickness):
+def pec_contour_distance(points, radius, angle_degrees, topology, metal_thickness):
+    """Distance (in length units) from box-surface points to the PEC part of the matching
+    box, the metal band z in [0, MetalThickness] over the metal arc of the perimeter (the
+    swept footprint of both coupons: the thin sheet's cut and the fabricated slab's foot and
+    top edge cross the rings at the same arm crossings; a sloped sidewall lies on the metal
+    side of them): the hypotenuse of the perimeter-arc distance to the metal arc
+    (perimeter_arc_distance x 8 R) and the vertical distance to the band. Points off the
+    perimeter (the cap rings and centres at z = -/+ R) take the vertical distance alone."""
+    metal, _ = metal_arc_fractions(radius, angle_degrees, topology)
+    tolerance = 1.0e-12 * radius
+    lateral = np.zeros(len(points))
+    for index, point in enumerate(points):
+        if max(abs(point[0]), abs(point[1])) >= radius - tolerance:
+            lateral[index] = 8.0 * radius * perimeter_arc_distance(
+                square_perimeter_fraction(radius, point), metal
+            )
+    vertical = np.maximum.reduce(
+        (-points[:, 2], points[:, 2] - metal_thickness, np.zeros(len(points)))
+    )
+    return np.hypot(lateral, vertical)
+
+
+def heldout_cutoff(points, radius, angle_degrees, topology, metal_thickness):
+    """The held-out trace's cutoff (USER decision 149 (6), option (c)): the smoothstep over
+    R / 3 of the distance to the PEC part of the box, so it vanishes exactly on the PEC part
+    of the metal rings and nowhere else — every free knot of the trace basis rule, on the
+    metal rings included, is excited and the self-check judges the basis (the former cutoff
+    suppressed the whole metal band, so the held-out coefficients were exactly zero on both
+    metal rings and the check never saw the free knots next to the metal). The same form as
+    the 2D generators' distance-to-the-cut cutoff (cpw2d/generate_edge_response.py)."""
+    distance = pec_contour_distance(points, radius, angle_degrees, topology, metal_thickness)
+    coordinate = np.clip(distance / (radius / 3.0), 0.0, 1.0)
+    return coordinate * coordinate * (3.0 - 2.0 * coordinate)
+
+
+def heldout_potential(points, radius, metal_thickness, angle_degrees, topology):
     x = points[:, 0] / radius
     y = points[:, 1] / radius
     z = points[:, 2] / radius
@@ -712,11 +805,11 @@ def heldout_potential(points, radius, metal_thickness):
         + 0.06 * z * z
     )
 
-    # Both coupons have conductor cuts in the matching surface at z = 0, while
-    # the fabricated cut extends to z = metal_thickness. Use one smooth trace
-    # which is compatible with both cuts. This avoids an order-dependent
-    # Dirichlet jump where the matching and grounded boundaries meet.
-    return metal_band_cutoff(points, radius, metal_thickness) * potential
+    # Both coupons have conductor cuts in the matching surface at z = 0, while the
+    # fabricated cut extends to z = metal_thickness. One smooth trace compatible with both
+    # cuts (zero on the swept PEC part of the box) avoids an order-dependent Dirichlet jump
+    # where the matching and grounded boundaries meet.
+    return heldout_cutoff(points, radius, angle_degrees, topology, metal_thickness) * potential
 
 
 def convergence_probe_potentials(points, radius, metal_thickness):
@@ -1280,26 +1373,51 @@ def main():
         max(16, 4 * args.ring_size),
         args.metal_thickness,
         args.overetch_depth,
+        angle_degrees=args.angle,
+        topology=args.topology,
         cap_centers=True,
+        crossing_vertices=True,
     )
     fine_points = fine_surface.vertex_points()
     fine_triangles = fine_surface.triangles
-    heldout_trace = output / "heldout-trace.csv"
-    write_surface_trace(
-        heldout_trace,
+    fine_values = heldout_potential(
         fine_points,
-        fine_triangles,
-        heldout_potential(
-            fine_points,
-            args.radius,
-            args.metal_thickness,
-        ),
+        args.radius,
+        args.metal_thickness,
+        args.angle,
+        args.topology,
     )
+    # Option (c) of USER decision 149 (6): the fine trace is zero at every PEC vertex (the
+    # crossings are vertices, so it vanishes on the whole PEC part of the box) and nonzero
+    # at every vertex off the PEC part, the free knots of the metal rings included.
+    fine_pec = pec_mask(fine_points)
+    fine_cutoff = heldout_cutoff(
+        fine_points, args.radius, args.angle, args.topology, args.metal_thickness
+    )
+    if np.any(fine_values[fine_pec] != 0.0) or np.any(fine_cutoff[~fine_pec] <= 0.0):
+        raise ValueError(
+            "held-out trace does not vanish exactly on the PEC part of the box and nowhere "
+            "else"
+        )
+    heldout_trace = output / "heldout-trace.csv"
+    write_surface_trace(heldout_trace, fine_points, fine_triangles, fine_values)
     heldout_coefficients = heldout_potential(
         points,
         args.radius,
         args.metal_thickness,
+        args.angle,
+        args.topology,
     )
+    coarse_cutoff = heldout_cutoff(
+        points, args.radius, args.angle, args.topology, args.metal_thickness
+    )
+    if np.any(heldout_coefficients[pec_knots] != 0.0) or np.any(
+        coarse_cutoff[~pec_knots] <= 0.0
+    ):
+        raise ValueError(
+            "held-out coefficients do not vanish exactly on the zero set and excite every "
+            "free knot"
+        )
     np.savetxt(
         output / "heldout-coefficients.csv",
         heldout_coefficients,

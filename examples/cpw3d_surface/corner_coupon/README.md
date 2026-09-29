@@ -72,11 +72,20 @@ potential is stored as a triangulated `x,y,z,V,triangle` surface trace.
 `finalize_corner_response.py` checks the domain and surface matrices, aggregates
 the per-edge response localized to the union of the physical-edge radius-`R`
 tubes into compact matrices, and evaluates a smooth held-out boundary
-excitation defined on a finer matching-surface triangulation. The held-out
-trace vanishes smoothly throughout the metal-thickness band. It is therefore
-compatible with both the thin and fabricated conductor cuts and does not
-introduce an artificial, order-dependent Dirichlet singularity where the
-matching surface meets the grounded metal.
+excitation defined on a finer matching-surface triangulation (32 vertices per
+ring plus the two metal-arm crossings on the rings that meet the metal). The
+held-out trace is the polynomial times the smoothstep over `R / 3` of the
+distance to the PEC part of the box (the metal band `z` in `[0, MetalThickness]`
+over the metal arc of the perimeter), so it vanishes exactly on the PEC part of
+both the thin and the fabricated conductor cuts and nowhere else: every free knot
+of the trace basis rule, those of the metal rings included, is excited and the
+self-check judges the basis (USER decision 149 (6), option (c), 2026-09-29; the
+former trace vanished throughout the metal-thickness band, so its coefficients
+were exactly zero on both metal rings and the check never saw the free knots next
+to the metal). It does not introduce an artificial, order-dependent Dirichlet
+singularity where the matching surface meets the grounded metal (zero at the
+contact line). Coupons recorded before that decision carry the band-cutoff
+held-out files.
 
 Generated response configs enable `AggregateResponseMatrix`, so Palace performs the
 physical-edge sum before storing `surface-response-matrix.csv`. The finalizer still maps

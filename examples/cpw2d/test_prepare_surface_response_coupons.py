@@ -1125,6 +1125,36 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         self.assertGreater(cutoff[0], 0.0)
         self.assertGreater(cutoff[4], 0.0)
 
+    def test_spatial_heldout_cutoff_vanishes_on_pec_knots_only(self):
+        """USER decision 149 (6), option (c): the held-out trace's cutoff is the smoothstep
+        over R / 3 of the distance to the nearest PEC contact knot, so a free knot of the
+        metal-band rings (here the ring knots at z = 0 and z = 0.1 over the gap, which the
+        band cutoff zeroed) is excited while every PEC knot stays at zero."""
+        points = np.asarray(
+            [
+                [-2.0, 0.0, 0.0],  # PEC contact knot on the z = 0 ring
+                [-2.0, 0.0, 0.1],  # PEC contact knot on the metal-top ring
+                [-2.0, 1.0, 0.0],  # free knot of the z = 0 ring, 1.0 from the contact
+                [-2.0, 1.0, 0.1],
+                [-2.0, 2.0, 0.0],  # a box corner of the z = 0 ring, 2.0 away
+                [-2.0, 0.0, 2.0],  # the top ring
+                [-2.0, 0.0, -0.05],  # the trench ring right below the contact
+            ]
+        )
+        labels = np.asarray([1, 1, 0, 0, 0, 0, 0])
+        edges = [{"Point": [0.0, 0.0, 0.0], "ProcessNormal": [0.0, 0.0, 1.0]}]
+        band = SPATIAL.spatial_metal_band_cutoff(points, edges, 2.0, 0.1)
+        np.testing.assert_array_equal(band[:5], 0.0)
+        cutoff = SPATIAL.spatial_heldout_cutoff(points, labels, 2.0)
+        np.testing.assert_array_equal(cutoff[:2], 0.0)
+        self.assertTrue(np.all(cutoff[2:] > 0.0))
+        np.testing.assert_allclose(cutoff[2:6], 1.0)
+        coordinate = 0.05 / (2.0 / 3.0)
+        self.assertAlmostEqual(cutoff[6], coordinate * coordinate * (3.0 - 2.0 * coordinate))
+        np.testing.assert_array_equal(
+            SPATIAL.spatial_heldout_cutoff(points, np.zeros(len(points), dtype=int), 2.0), 1.0
+        )
+
     def test_spatial_strip_extension_stops_at_finite_intervals(self):
         vertex_arm = {"Interval": [0.0, 2.0], "VertexArm": True}
         continuing = {"Interval": [-2.0, 2.0], "VertexArm": False}
