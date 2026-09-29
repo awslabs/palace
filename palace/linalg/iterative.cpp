@@ -31,6 +31,17 @@ inline void CheckDot(std::complex<T> dot, const char *msg)
               msg << dot << "!");
 }
 
+inline double RealPart(double x)
+{
+  return x;
+}
+
+template <typename T>
+inline double RealPart(std::complex<T> x)
+{
+  return x.real();
+}
+
 template <typename T>
 inline constexpr T SafeMin()
 {
@@ -416,6 +427,10 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   }
   eps = std::max(rel_tol * initial_res, abs_tol);
   converged = (res < eps);
+  cg_alpha.clear();
+  cg_beta_ratio.clear();
+  cg_negative_curvature_count = 0;
+  cg_first_negative_curvature_iteration = -1;
 
   // Begin iterations.
   int it = 0;
@@ -444,6 +459,19 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     denom = linalg::Dot(comm, z, p);
     CheckDot(denom, "PCG operator is not positive definite: (Ap, p) = ");
     alpha = beta / denom;
+    if (record_cg_history)
+    {
+      cg_alpha.push_back(RealPart(alpha));
+      cg_beta_ratio.push_back(it ? RealPart(beta) / RealPart(beta_prev) : 0.0);
+      if (!(RealPart(denom) > 0.0))
+      {
+        if (!cg_negative_curvature_count)
+        {
+          cg_first_negative_curvature_iteration = it;
+        }
+        cg_negative_curvature_count++;
+      }
+    }
 
     x.Add(alpha, p);
     r.Add(-alpha, z);

@@ -57,6 +57,15 @@ protected:
   // Enable timer contribution for Timer::PRECONDITIONER.
   bool use_timer;
 
+  // CG diagnostics (recorded only when enabled): the coefficients alpha_k = (r, z) / (Ap, p)
+  // and beta_k / beta_{k-1} of the last solve define the Lanczos tridiagonal of the
+  // preconditioned operator (its eigenvalues are Ritz values of B⁻¹A), and a search
+  // direction with (Ap, p) <= 0 proves that the operator is not positive definite.
+  bool record_cg_history = false;
+  mutable std::vector<double> cg_alpha, cg_beta_ratio;
+  mutable int cg_negative_curvature_count = 0;
+  mutable int cg_first_negative_curvature_iteration = -1;
+
 public:
   IterativeSolver(MPI_Comm comm, int print);
 
@@ -112,6 +121,16 @@ public:
 
   // Activate preconditioner timing during solves.
   void EnableTimer() { use_timer = true; }
+
+  // Record the CG coefficient history of every solve (CgSolver only).
+  void EnableCgHistory(bool enable) { record_cg_history = enable; }
+  const std::vector<double> &GetCgAlphaHistory() const { return cg_alpha; }
+  const std::vector<double> &GetCgBetaRatioHistory() const { return cg_beta_ratio; }
+  int GetCgNegativeCurvatureCount() const { return cg_negative_curvature_count; }
+  int GetCgFirstNegativeCurvatureIteration() const
+  {
+    return cg_first_negative_curvature_iteration;
+  }
 };
 
 // Preconditioned Conjugate Gradient (CG) method for SPD linear systems.
@@ -139,6 +158,12 @@ protected:
   using IterativeSolver<OperType>::initial_res;
   using IterativeSolver<OperType>::final_res;
   using IterativeSolver<OperType>::final_it;
+
+  using IterativeSolver<OperType>::record_cg_history;
+  using IterativeSolver<OperType>::cg_alpha;
+  using IterativeSolver<OperType>::cg_beta_ratio;
+  using IterativeSolver<OperType>::cg_negative_curvature_count;
+  using IterativeSolver<OperType>::cg_first_negative_curvature_iteration;
 
   // Temporary workspace for solve.
   mutable VecType r, z, p;

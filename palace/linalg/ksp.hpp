@@ -81,6 +81,19 @@ public:
   void SetAbsTol(double tol) { ksp->SetAbsTol(tol); }
   void SetInitialGuess(bool initial_guess) { ksp->SetInitialGuess(initial_guess); }
 
+  // CG coefficient history of the last solve (diagnostics, see IterativeSolver).
+  void EnableCgHistory(bool enable) { ksp->EnableCgHistory(enable); }
+  const std::vector<double> &GetCgAlphaHistory() const { return ksp->GetCgAlphaHistory(); }
+  const std::vector<double> &GetCgBetaRatioHistory() const
+  {
+    return ksp->GetCgBetaRatioHistory();
+  }
+  int GetCgNegativeCurvatureCount() const { return ksp->GetCgNegativeCurvatureCount(); }
+  int GetCgFirstNegativeCurvatureIteration() const
+  {
+    return ksp->GetCgFirstNegativeCurvatureIteration();
+  }
+
   // Update the system operator without rebuilding an unchanged preconditioner.
   void SetOperator(const OperType &op);
   void SetOperators(const OperType &op, const OperType &pc_op);

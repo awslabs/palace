@@ -30,6 +30,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-axisymmetric.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-aaa.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-basesolver.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-cgsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-boundarymodeoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-coefficient.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-communication.cpp
