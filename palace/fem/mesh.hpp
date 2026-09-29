@@ -20,8 +20,7 @@ namespace ceed
 enum class CeedElementSubset
 {
   Full,
-  Active,
-  Complement
+  Active
 };
 
 //
@@ -35,10 +34,8 @@ struct CeedGeomFactorData
   // Domain or boundary indices from the mesh used to construct Ceed objects with these
   // geometry factors, in the original mesh order. active_indices contains positions in
   // indices for the shared lossy-domain or active-boundary subset, in the same order (empty
-  // when no subset is configured, full-sized when every element is active), and
-  // complement_indices the remaining positions (empty unless the subset is a nonempty
-  // strict subset of the full element list).
-  std::vector<int> indices, active_indices, complement_indices;
+  // when no subset is configured, full-sized when every element is active).
+  std::vector<int> indices, active_indices;
 
   // Mesh geometry factor data: {attr, w * |J|, adj(J)^T / |J|}. Jacobian matrix is
   // space_dim x dim, stored column-major by component. The vector uses the libCEED
@@ -54,8 +51,6 @@ struct CeedGeomFactorData
 
   CeedElemRestriction GetGeomDataRestriction(CeedElementSubset subset) const
   {
-    MFEM_ASSERT(subset != CeedElementSubset::Complement,
-                "No geometry factor restriction over the complement element subset!");
     if (subset == CeedElementSubset::Active && active_indices.size() < indices.size())
     {
       MFEM_ASSERT(active_geom_data_restr, "Empty active subset for geometry factor data!");

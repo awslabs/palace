@@ -64,6 +64,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Reduced matrix-free material and boundary operator work by omitting elements outside
+    shared nonzero-coefficient support unions, including compatible complex operator packing.
+    [PR 987](https://github.com/awslabs/palace/pull/987).
   - Accelerated adaptive online sweeps by replacing 2D wave-port EVP solves with a per-port
     PROM trained on the offline modes. Also reusing reduced operators and wave-port state
     across excitations, evaluating the wave-port modal correction and excitation of the

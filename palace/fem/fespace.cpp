@@ -32,14 +32,9 @@ FiniteElementSpace::GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
 {
   const bool use_active = subset == ceed::CeedElementSubset::Active &&
                           data.active_indices.size() < data.indices.size();
-  const bool use_complement = subset == ceed::CeedElementSubset::Complement;
   MFEM_ASSERT(!use_active || !data.active_indices.empty(),
               "Empty active subset in GetCeedElemRestriction!");
-  // The complement list only exists for a nonempty strict active subset. Requesting it
-  // otherwise would silently return a restriction over different elements.
-  MFEM_VERIFY(!use_complement || !data.complement_indices.empty(),
-              "Empty complement subset in GetCeedElemRestriction!");
-  auto &restr_map = use_active ? active_restr : (use_complement ? complement_restr : restr);
+  auto &restr_map = use_active ? active_restr : restr;
   auto it = restr_map.find(ceed);
   MFEM_ASSERT(it != restr_map.end(), "Unknown Ceed context in GetCeedElemRestriction!");
   auto &geom_restr = it->second;
@@ -49,12 +44,11 @@ FiniteElementSpace::GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
     return restr_it->second;
   }
 
-  if (use_active || use_complement)
+  if (use_active)
   {
-    const auto &subset_indices = use_active ? data.active_indices : data.complement_indices;
     std::vector<int> indices;
-    indices.reserve(subset_indices.size());
-    for (auto i : subset_indices)
+    indices.reserve(data.active_indices.size());
+    for (auto i : data.active_indices)
     {
       MFEM_ASSERT(i >= 0 && static_cast<std::size_t>(i) < data.indices.size(),
                   "Invalid element subset index!");
@@ -133,13 +127,11 @@ void FiniteElementSpace::ResetCeedObjects()
   };
   DestroyRestrictions(restr);
   DestroyRestrictions(active_restr);
-  DestroyRestrictions(complement_restr);
   DestroyRestrictions(interp_restr);
   DestroyRestrictions(interp_range_restr);
   basis.clear();
   restr.clear();
   active_restr.clear();
-  complement_restr.clear();
   interp_restr.clear();
   interp_range_restr.clear();
   for (std::size_t i = 0; i < ceed::internal::GetCeedObjects().size(); i++)
@@ -148,7 +140,6 @@ void FiniteElementSpace::ResetCeedObjects()
     basis.emplace(ceed, ceed::GeometryObjectMap<CeedBasis>());
     restr.emplace(ceed, ceed::GeometryObjectMap<CeedElemRestriction>());
     active_restr.emplace(ceed, ceed::GeometryObjectMap<CeedElemRestriction>());
-    complement_restr.emplace(ceed, ceed::GeometryObjectMap<CeedElemRestriction>());
     interp_restr.emplace(ceed, ceed::GeometryObjectMap<CeedElemRestriction>());
     interp_range_restr.emplace(ceed, ceed::GeometryObjectMap<CeedElemRestriction>());
   }

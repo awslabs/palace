@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <utility>
 #include <ceed/backend.h>
 #include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
@@ -208,22 +209,25 @@ std::function<int(int)> GetCeedBdrAttributeMap(
   };
 }
 
-auto GetActiveElementIndices(const std::vector<int> &indices,
-                             const std::function<int(int)> &GetCeedAttribute,
-                             const std::vector<int> &active_attr)
+auto GetElementAttributes(const std::vector<int> &indices,
+                          const std::function<int(int)> &GetCeedAttribute,
+                          const std::vector<int> &active_attr)
 {
-  // Store positions into the original geometry-type element list, preserving mesh order.
+  // Gather each attribute once while recording active positions in the original
+  // geometry-type element list.
+  Vector elem_attr(indices.size());
   std::vector<int> active_indices;
   active_indices.reserve(indices.size());
   for (std::size_t i = 0; i < indices.size(); i++)
   {
-    if (std::binary_search(active_attr.begin(), active_attr.end(),
-                           GetCeedAttribute(indices[i])))
+    const int attr = GetCeedAttribute(indices[i]);
+    elem_attr[i] = attr;
+    if (std::binary_search(active_attr.begin(), active_attr.end(), attr))
     {
       active_indices.push_back(static_cast<int>(i));
     }
   }
-  return active_indices;
+  return std::make_pair(std::move(active_indices), std::move(elem_attr));
 }
 
 auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int> &indices,
@@ -239,26 +243,6 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   data.indices = std::move(indices);
   data.active_indices = std::move(active_indices);
   const std::size_t num_elem = data.indices.size();
-  if (!data.active_indices.empty() && data.active_indices.size() < num_elem)
-  {
-    // The positions the shared subset leaves out, in the same mesh order, for sub-operators
-    // which cover exactly those elements. An empty subset, or one containing every element,
-    // needs no complement since the full element list is used in both cases.
-    data.complement_indices.reserve(num_elem - data.active_indices.size());
-    auto next = data.active_indices.begin();
-    for (std::size_t i = 0; i < num_elem; i++)
-    {
-      if (next != data.active_indices.end() && *next == static_cast<int>(i))
-      {
-        ++next;
-      }
-      else
-      {
-        data.complement_indices.push_back(static_cast<int>(i));
-      }
-    }
-  }
-
   // Construct mesh node element restriction and basis.
   CeedElemRestriction mesh_restr =
       FiniteElementSpace::BuildCeedElemRestriction(mesh_fespace, ceed, geom, data.indices);
@@ -370,12 +354,8 @@ auto BuildCeedGeomFactorData(
     auto element_indices = GetElementIndices(mesh, use_bdr, start, stop);
     for (auto &[geom, indices] : element_indices)
     {
-      auto active_indices = GetActiveElementIndices(indices, GetCeedAttribute, lossy_attr);
-      Vector elem_attr(indices.size());
-      for (std::size_t k = 0; k < indices.size(); k++)
-      {
-        elem_attr[k] = GetCeedAttribute(indices[k]);
-      }
+      auto [active_indices, elem_attr] =
+          GetElementAttributes(indices, GetCeedAttribute, lossy_attr);
       geom_data_map.emplace(geom, AssembleGeometryData(ceed, geom, indices, active_indices,
                                                        *mesh.GetNodes(), elem_attr));
     }
@@ -395,13 +375,8 @@ auto BuildCeedGeomFactorData(
     auto element_indices = GetElementIndices(mesh, use_bdr, start, stop);
     for (auto &[geom, indices] : element_indices)
     {
-      auto active_indices =
-          GetActiveElementIndices(indices, GetCeedAttribute, active_bdr_attr);
-      Vector elem_attr(indices.size());
-      for (std::size_t k = 0; k < indices.size(); k++)
-      {
-        elem_attr[k] = GetCeedAttribute(indices[k]);
-      }
+      auto [active_indices, elem_attr] =
+          GetElementAttributes(indices, GetCeedAttribute, active_bdr_attr);
       geom_data_map.emplace(geom, AssembleGeometryData(ceed, geom, indices, active_indices,
                                                        *mesh.GetNodes(), elem_attr));
     }

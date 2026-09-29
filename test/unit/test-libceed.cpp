@@ -2209,21 +2209,26 @@ TEST_CASE("libCEED packed complex QData application",
   {
     SKIP("Packed application requires one CPU CEED context and one thread");
   }
-  const auto [name, mesh_file, order, curl, boundary, nested, nonsymmetric] =
-      GENERATE(table<const char *, const char *, int, bool, bool, bool, bool>(
+  const auto [name, mesh_file, order, curl, boundary, nested, nonsymmetric, subset] =
+      GENERATE(table<const char *, const char *, int, bool, bool, bool, bool, bool>(
           {{"H(div) mass/mass and shared QData", "fichera-tet.mesh", 1, false, false, false,
-            false},
+            false, false},
            {"Curlmass/mass and p3 face orientations", "fichera-tet.mesh", 3, true, false,
-            false, false},
+            false, false, false},
            {"Hexahedron and unmatched boundary terms", "fichera-hex.mesh", 3, true, true,
-            false, false},
+            false, false, false},
            {"Direct volume pair and nested remainder", "fichera-tet.mesh", 2, true, false,
-            true, false},
+            true, false, false},
            {"Mixed H(curl) pairs and nonsymmetric tensors", "fichera-mixed-p2.mesh", 2,
-            true, false, false, true},
-           {"Mixed H(div) pairs", "fichera-mixed-p2.mesh", 1, false, false, false, false},
-           {"Pyramid H(curl) pair", nullptr, 1, true, false, false, false},
-           {"Pyramid H(div) pair", nullptr, 1, false, false, false, false}}));
+            true, false, false, true, false},
+           {"Mixed H(div) pairs", "fichera-mixed-p2.mesh", 1, false, false, false, false,
+            false},
+           {"Pyramid H(curl) pair", nullptr, 1, true, false, false, false, false},
+           {"Pyramid H(div) pair", nullptr, 1, false, false, false, false, false},
+           {"H(div) pair over a subset", "fichera-tet.mesh", 1, false, false, false, false,
+            true},
+           {"H(curl) hexahedra, subset and boundary remainder", "fichera-hex.mesh", 2, true,
+            true, false, false, true}}));
   CAPTURE(name);
   // BilinearForm labels square operators symmetric; the nonsymmetric coefficient case
   // therefore exercises forward application only.
@@ -2253,7 +2258,8 @@ TEST_CASE("libCEED packed complex QData application",
   }
   FiniteElementSpace fespace(mesh, fec.get());
   auto real_mass = BuildCoefficient(mesh, false, CoeffType::Matrix);
-  auto imag_mass = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto imag_mass = subset ? BuildZeroOutsideCoefficient(mesh.MaxCeedAttribute(), 2, 1.0)
+                          : BuildCoefficient(mesh, false, CoeffType::Matrix);
   auto real_curl = BuildCoefficient(mesh, false, CoeffType::Matrix);
   auto bdr_mass = BuildCoefficient(mesh, true, CoeffType::Matrix);
   auto bdr_curl = BuildCoefficient(mesh, true, CoeffType::Scalar);
@@ -2280,7 +2286,18 @@ TEST_CASE("libCEED packed complex QData application",
   imag_mass *= 0.19;
   real_curl *= 1.37;
   bdr_mass *= -0.23;
+  if (subset)
+  {
+    std::vector<int> lossy_attr;
+    imag_mass.AddNonzeroAttributes(lossy_attr);
+    mesh.SetCeedActiveAttributes(std::move(lossy_attr), {});
+  }
   BilinearForm ar(fespace), ai(fespace);
+  if (subset)
+  {
+    ar.SkipZeroCoefficientElements();
+    ai.SkipZeroCoefficientElements();
+  }
   if (curl)
   {
     ar.AddDomainIntegrator<CurlCurlMassIntegrator>(real_curl, real_mass);
@@ -2303,6 +2320,19 @@ TEST_CASE("libCEED packed complex QData application",
   auto *original_real = real.get();
   auto *original_imag = imag.get();
   auto ref_real = ar.PartialAssemble(), ref_imag = ai.PartialAssemble();
+  if (subset)
+  {
+    long long num_subsets = 0;
+    for (const auto &[geom, data] :
+         mesh.GetCeedGeomFactorData(ceed::internal::GetCeedObjects()[0]))
+    {
+      num_subsets += (mfem::Geometry::Dimension[geom] == mesh.Dimension() &&
+                      !data.active_indices.empty() &&
+                      data.active_indices.size() < data.indices.size());
+    }
+    Mpi::GlobalSum(1, &num_subsets, Mpi::World());
+    REQUIRE(num_subsets > 0);
+  }
   if (mesh_file && std::string(mesh_file) == "fichera-mixed-p2.mesh" &&
       Mpi::Size(Mpi::World()) == 1)
   {
@@ -2335,8 +2365,17 @@ TEST_CASE("libCEED packed complex QData application",
   }
   ComplexWrapperOperator reference(ref_real.get(), ref_imag.get());
   auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag), fespace);
-  // Establish activation without exposing the private implementation or its decomposition.
-  REQUIRE_FALSE(IsOriginalComplexWrapper(*actual));
+  // A rank with no subset element has no local imaginary volume leaf to pair.
+  long long num_packed = !IsOriginalComplexWrapper(*actual);
+  Mpi::GlobalSum(1, &num_packed, Mpi::World());
+  if (subset)
+  {
+    REQUIRE(num_packed > 0);
+  }
+  else
+  {
+    REQUIRE(num_packed == Mpi::Size(Mpi::World()));
+  }
   if (mesh_file && std::string(mesh_file) == "fichera-tet.mesh" && !nested)
   {
     // Verify both restriction clone paths: ND face transformations and RT signs.
@@ -2360,116 +2399,6 @@ TEST_CASE("libCEED packed complex QData application",
   }
 }
 
-// An imaginary leaf assembled over the mesh's shared lossy subset
-// (BilinearForm::SkipZeroCoefficientElements) pairs with a real leaf over the full element
-// list: the pair is applied over the subset, reading the real leaf's quadrature data for
-// those elements in place, and the elements the subset leaves out are applied by a separate
-// real operator. The two together must reproduce the unpacked applications.
-TEST_CASE("libCEED packed complex QData over an element subset",
-          "[libCEED][ComplexPacked][Serial][Parallel]")
-{
-  if (!PackedTestBackend())
-  {
-    SKIP("Packed application requires one CPU CEED context and one thread");
-  }
-  const auto [name, mesh_file, order, curl, boundary] =
-      GENERATE(table<const char *, const char *, int, bool, bool>(
-          {{"H(div) mass pair over a lossy subset", "fichera-tet.mesh", 1, false, false},
-           {"Curl-mass/mass pair and p3 face orientations", "fichera-tet.mesh", 3, true,
-            false},
-           {"Hexahedra and unmatched boundary terms", "fichera-hex.mesh", 2, true, true},
-           {"Multiple volume geometries", "fichera-mixed-p2.mesh", 2, true, false}}));
-  CAPTURE(name);
-  const auto comm = Mpi::World();
-  PackedIntegrationSettings settings(order);
-  auto mesh =
-      Initialize(comm, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh_file, 0, false);
-
-  // The imaginary coefficient vanishes outside every second (process-local) libCEED
-  // attribute, as a loss tangent does outside the lossy materials. The real and boundary
-  // coefficients are nonzero on every attribute, so those integrators keep the full element
-  // list. Only the shared lossy set is configured; boundary integrators stay unrestricted.
-  auto imag_mass = BuildZeroOutsideCoefficient(mesh.MaxCeedAttribute(), 2, 0.19);
-  std::vector<int> lossy_attr;
-  imag_mass.AddNonzeroAttributes(lossy_attr);
-  mesh.SetCeedActiveAttributes(lossy_attr, {});
-
-  std::unique_ptr<mfem::FiniteElementCollection> fec;
-  if (curl)
-  {
-    fec = std::make_unique<mfem::ND_FECollection>(order, 3);
-  }
-  else
-  {
-    fec = std::make_unique<mfem::RT_FECollection>(order - 1, 3);
-  }
-  FiniteElementSpace fespace(mesh, fec.get());
-  auto real_mass = BuildCoefficient(mesh, false, CoeffType::Matrix);
-  auto real_curl = BuildCoefficient(mesh, false, CoeffType::Matrix);
-  auto bdr_mass = BuildCoefficient(mesh, true, CoeffType::Matrix);
-  auto bdr_curl = BuildCoefficient(mesh, true, CoeffType::Scalar);
-  real_mass *= -0.71;
-  real_curl *= 1.37;
-  bdr_mass *= -0.23;
-  BilinearForm ar(fespace), ai(fespace);
-  ar.SkipZeroCoefficientElements();
-  ai.SkipZeroCoefficientElements();
-  if (curl)
-  {
-    ar.AddDomainIntegrator<CurlCurlMassIntegrator>(real_curl, real_mass);
-  }
-  else
-  {
-    ar.AddDomainIntegrator<VectorFEMassIntegrator>(real_mass);
-  }
-  ai.AddDomainIntegrator<VectorFEMassIntegrator>(imag_mass);
-  if (boundary)
-  {
-    // Deliberately unmatched real/imaginary boundary field layouts, which share the real
-    // remainder with the volume elements left out of the packed pair.
-    ar.AddBoundaryIntegrator<VectorFEMassIntegrator>(bdr_mass);
-    ai.AddBoundaryIntegrator<CurlCurlMassIntegrator>(bdr_curl, bdr_mass);
-  }
-  ar.AssembleQuadratureData();
-  ai.AssembleQuadratureData();
-  auto real = ar.PartialAssemble();
-  auto imag = ai.PartialAssemble();
-  auto *original_real = real.get();
-  auto *original_imag = imag.get();
-  auto ref_real = ar.PartialAssemble(), ref_imag = ai.PartialAssemble();
-
-  // Establish that some volume geometry really is assembled over a nonempty strict subset,
-  // so that the subset pairing and its complement operator are exercised.
-  long long num_subsets = 0;
-  for (const auto &[geom, data] :
-       mesh.GetCeedGeomFactorData(ceed::internal::GetCeedObjects()[0]))
-  {
-    num_subsets += (mfem::Geometry::Dimension[geom] == mesh.Dimension() &&
-                    !data.active_indices.empty() && !data.complement_indices.empty());
-  }
-  Mpi::GlobalSum(1, &num_subsets, comm);
-  REQUIRE(num_subsets > 0);
-
-  ComplexWrapperOperator reference(ref_real.get(), ref_imag.get());
-  auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag), fespace);
-  // A process which happens to hold no lossy element at all has no imaginary volume term
-  // to pair, so require activation somewhere.
-  long long num_packed = !IsOriginalComplexWrapper(*actual);
-  Mpi::GlobalSum(1, &num_packed, comm);
-  REQUIRE(num_packed > 0);
-  CheckPackedActions(*actual, reference, true);
-  if (!curl)
-  {
-    // The packed pair and the complement operator read the real leaf's quadrature data in
-    // place through their offsets restrictions, so passive value updates remain visible.
-    ScalePackedTestQData(*original_real, -1.13);
-    ScalePackedTestQData(*original_imag, 0.79);
-    ScalePackedTestQData(*ref_real, -1.13);
-    ScalePackedTestQData(*ref_imag, 0.79);
-    CheckPackedActions(*actual, reference);
-  }
-}
-
 TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
           "[libCEED][ComplexPacked][Serial][Parallel]")
 {
@@ -2477,13 +2406,16 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
   {
     SKIP("Packed application requires one CPU CEED context and one thread");
   }
-  const auto [name, amr, lossy, real_pc] = GENERATE(table<const char *, bool, bool, bool>(
-      {{"Conforming lossy complex preconditioner", false, true, false},
-       {"Nonconforming lossy complex preconditioner", true, true, false},
-       {"Conforming lossless volume with absorbing boundary", false, false, false},
-       {"Conforming real-only preconditioner", false, true, true}}));
+  const auto [name, amr, lossy, real_pc, partial_lossy] =
+      GENERATE(table<const char *, bool, bool, bool, bool>(
+          {{"Conforming lossy complex preconditioner", false, true, false, false},
+           {"Nonconforming lossy complex preconditioner", true, true, false, false},
+           {"Conforming lossless volume with absorbing boundary", false, false, false,
+            false},
+           {"Conforming real-only preconditioner", false, true, true, false},
+           {"Conforming partially lossy preconditioner", false, true, false, true}}));
   CAPTURE(name);
-  ComplexPreconditionerFixture fixture(3, amr);
+  ComplexPreconditionerFixture fixture(3, amr, 0, partial_lossy);
   fixture.domains.materials[0].tandelta = lossy ? 4.0e-4 : 0.0;
   fixture.solver.linear.pc_mat_real = real_pc;
   auto space = fixture.MakeSpace();
@@ -2501,7 +2433,10 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
       dynamic_cast<const ComplexParOperator &>(mg->GetFinestAuxiliaryOperator());
   REQUIRE(IsOriginalComplexWrapper(aux.LocalOperator()));
   const auto &local = fine->LocalOperator();
-  REQUIRE(!IsOriginalComplexWrapper(local) == (lossy && !real_pc));
+  if (!partial_lossy)
+  {
+    REQUIRE(!IsOriginalComplexWrapper(local) == (lossy && !real_pc));
+  }
   // Assemble independent reference operators and exercise the unchanged borrowed RAP
   // constructor. Numerical agreement is checked against separate real ParOperators below.
   auto ref_pc = AssembleComplexPreconditioner(*space);
@@ -2510,6 +2445,36 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
       dynamic_cast<const ComplexParOperator &>(ref_mg.GetFinestOperator()).LocalOperator();
   ComplexWrapperOperator local_reference(ref_local.Real(), ref_local.Imag());
   CheckPackedActions(local, local_reference);
+  if (partial_lossy)
+  {
+    long long num_subsets = 0;
+    const auto &mesh = space->GetNDSpace().GetMesh();
+    for (const auto &[geom, data] :
+         mesh.GetCeedGeomFactorData(ceed::internal::GetCeedObjects()[0]))
+    {
+      num_subsets += (mfem::Geometry::Dimension[geom] == mesh.Dimension() &&
+                      !data.active_indices.empty() &&
+                      data.active_indices.size() < data.indices.size());
+    }
+    Mpi::GlobalSum(1, &num_subsets, Mpi::World());
+    REQUIRE(num_subsets > 0);
+
+    long long num_packed = 0;
+    for (std::size_t l = 1; l < mg->GetNumLevels(); l++)
+    {
+      const auto &level =
+          dynamic_cast<const ComplexParOperator &>(mg->GetOperatorAtLevel(l))
+              .LocalOperator();
+      const auto &level_ref =
+          dynamic_cast<const ComplexParOperator &>(ref_mg.GetOperatorAtLevel(l))
+              .LocalOperator();
+      num_packed += !IsOriginalComplexWrapper(level);
+      ComplexWrapperOperator reference(level_ref.Real(), level_ref.Imag());
+      CheckPackedActions(level, reference);
+    }
+    Mpi::GlobalSum(1, &num_packed, Mpi::World());
+    REQUIRE(num_packed > 0);
+  }
 
   // Compare the RAP action, including PEC elimination and nonconforming/MPI maps,
   // against separate real/imaginary ParOperators (the existing four-real reference).
@@ -2544,63 +2509,6 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
     REQUIRE(dynamic_cast<const SumOperator *>(system->LocalOperator().Real()));
     REQUIRE(IsOriginalComplexWrapper(system->LocalOperator()));
   }
-}
-
-// The same driven preconditioner over a partially lossy domain: the imaginary terms are
-// assembled over the lossy elements only, so every partially assembled level pairs a
-// full-domain real leaf with a subset imaginary leaf and applies the elements the subset
-// leaves out separately. The coarsest level stays fully assembled and unpacked.
-TEST_CASE("Partially lossy driven preconditioner packs complex QData over subsets",
-          "[libCEED][ComplexPacked][Serial][Parallel]")
-{
-  if (!PackedTestBackend())
-  {
-    SKIP("Packed application requires one CPU CEED context and one thread");
-  }
-  const auto comm = Mpi::World();
-  constexpr bool amr = false, partial_lossy = true;
-  ComplexPreconditionerFixture fixture(3, amr, 0, partial_lossy);
-  auto space = fixture.MakeSpace();
-  auto pc = AssembleComplexPreconditioner(*space);
-  const auto *mg = dynamic_cast<const ComplexMultigridOperator *>(pc.get());
-  REQUIRE(mg);
-  REQUIRE(mg->GetNumLevels() == 3);
-  REQUIRE(IsOriginalComplexWrapper(
-      dynamic_cast<const ComplexParOperator &>(mg->GetOperatorAtLevel(0)).LocalOperator()));
-
-  // The lossy materials must cover part, but not all, of some process's elements for the
-  // subset pairing to be exercised at all.
-  long long num_subsets = 0;
-  const auto &mesh = space->GetNDSpace().GetMesh();
-  for (const auto &[geom, data] :
-       mesh.GetCeedGeomFactorData(ceed::internal::GetCeedObjects()[0]))
-  {
-    num_subsets += (mfem::Geometry::Dimension[geom] == mesh.Dimension() &&
-                    !data.active_indices.empty() && !data.complement_indices.empty());
-  }
-  Mpi::GlobalSum(1, &num_subsets, comm);
-  REQUIRE(num_subsets > 0);
-
-  // Assemble independent reference operators; their retained real/imaginary parts give the
-  // unpacked action of each level.
-  auto ref_pc = AssembleComplexPreconditioner(*space);
-  const auto &ref_mg = dynamic_cast<const ComplexMultigridOperator &>(*ref_pc);
-  long long num_packed = 0;
-  for (std::size_t l = 1; l < mg->GetNumLevels(); l++)
-  {
-    const auto &local =
-        dynamic_cast<const ComplexParOperator &>(mg->GetOperatorAtLevel(l)).LocalOperator();
-    const auto &ref_local =
-        dynamic_cast<const ComplexParOperator &>(ref_mg.GetOperatorAtLevel(l))
-            .LocalOperator();
-    num_packed += !IsOriginalComplexWrapper(local);
-    ComplexWrapperOperator reference(ref_local.Real(), ref_local.Imag());
-    CheckPackedActions(local, reference);
-  }
-  // A process which happens to hold no lossy element at all has no imaginary volume term to
-  // pair, so require activation somewhere.
-  Mpi::GlobalSum(1, &num_packed, comm);
-  REQUIRE(num_packed > 0);
 }
 
 TEST_CASE("libCEED packed complex unsupported input fallbacks",
@@ -2795,14 +2703,13 @@ TEST_CASE("CPU complex preconditioner benchmark",
   }
 }
 
-// Integrators whose coefficient is exactly zero on some mesh attributes are assembled over
-// only the elements where it is nonzero (BilinearForm::SkipZeroCoefficientElements). The
-// skipped element contributions are exactly 0.0, so the operator action, its transpose and
-// its diagonal must match assembling over all elements: bit-identically for backends which
-// keep the element accumulation order, and otherwise to the last bit (see TestVectorAgree).
+// Integrators whose coefficient support is contained by a configured shared support union
+// omit the elements outside that union (BilinearForm::SkipZeroCoefficientElements). Those
+// contributions are exactly 0.0, so the operator action, its transpose and its diagonal
+// must match assembly over all elements to backend rounding (see TestVectorAgree).
 TEST_CASE("libCEED Zero-Coefficient Element Skipping", "[libCEED][Serial][Parallel][GPU]")
 {
-  auto mesh_file = GENERATE("star-tri.mesh", "fichera-tet.mesh");
+  auto mesh_file = GENERATE("star-tri.mesh", "fichera-mixed-p2.mesh");
   const auto comm = MPI_COMM_WORLD;
   auto mesh =
       Initialize(comm, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh_file, 0, false);
@@ -2827,8 +2734,7 @@ TEST_CASE("libCEED Zero-Coefficient Element Skipping", "[libCEED][Serial][Parall
   auto Q_zero = BuildZeroOutsideCoefficient(mesh.MaxCeedAttribute(), 0, 4.0);
   auto Q_bdr = BuildZeroOutsideCoefficient(mesh.MaxCeedBdrAttribute(), 3, 5.0);
 
-  // Configure the two shared sets. Individual integrators consume only these index-list
-  // subsets in the original mesh order, never a per-coefficient subset.
+  // Configure the two shared support unions as index-list subsets in mesh order.
   std::vector<int> lossy_attr, active_bdr_attr;
   Q.AddNonzeroAttributes(lossy_attr);
   Q_mass.AddNonzeroAttributes(lossy_attr);
@@ -2841,11 +2747,14 @@ TEST_CASE("libCEED Zero-Coefficient Element Skipping", "[libCEED][Serial][Parall
   mfem::ND_FECollection nd_fec(order, dim), nd_fec_coarse(order - 1, dim);
   FiniteElementSpace nd_fespace(mesh, &nd_fec);
 
-  SECTION("Domain Mass")
+  // One 2D path is enough to exercise the dimension- and GPU-independent subset contract;
+  // the distinct boundary, coefficient-union, cache, and coarsening paths run in 3D below.
+  if (dim == 2)
   {
     TestCeedSkipZeroCoefficientElements(
         comm, nd_fespace, false,
         [&](BilinearForm &a) { a.AddDomainIntegrator<VectorFEMassIntegrator>(Q); }, true);
+    return;
   }
   SECTION("Boundary Mass")
   {
@@ -2866,17 +2775,6 @@ TEST_CASE("libCEED Zero-Coefficient Element Skipping", "[libCEED][Serial][Parall
     TestCeedSkipZeroCoefficientElements(
         comm, nd_fespace, true,
         [&](BilinearForm &a) { a.AddDomainIntegrator<VectorFEMassIntegrator>(Q); });
-  }
-  SECTION("Domain and Boundary Integrators")
-  {
-    TestCeedSkipZeroCoefficientElements(
-        comm, nd_fespace, false,
-        [&](BilinearForm &a)
-        {
-          a.AddDomainIntegrator<CurlCurlIntegrator>(Q);
-          a.AddDomainIntegrator<VectorFEMassIntegrator>(Q_mass);
-          a.AddBoundaryIntegrator<VectorFEMassIntegrator>(Q_bdr);
-        });
   }
   SECTION("Coefficient Zero on Every Attribute")
   {

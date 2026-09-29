@@ -26,7 +26,6 @@ Operator::Operator(int h, int w) : palace::Operator(h, w)
   op_t.resize(nt, nullptr);
   u.resize(nt, nullptr);
   v.resize(nt, nullptr);
-  sub_op_subsets.resize(nt);
   PalacePragmaOmp(parallel if (op.size() > 1))
   {
     const int id = utils::GetThreadNum();
@@ -63,8 +62,7 @@ Operator::~Operator()
   }
 }
 
-void Operator::AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t,
-                              CeedElementSubset subset)
+void Operator::AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t)
 {
   // This should be called from within a OpenMP parallel region.
   const int id = utils::GetThreadNum();
@@ -79,7 +77,6 @@ void Operator::AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t,
               "Dimensions mismatch for CeedOperator!");
   PalaceCeedCall(ceed, CeedOperatorCompositeAddSub(op[id], sub_op));
   PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
-  sub_op_subsets[id].push_back(subset);
   if (sub_op_t)
   {
     Ceed ceed_t;
@@ -508,8 +505,8 @@ void ClonePackedBasis(Ceed ceed, const PackedLeaf &leaf, CeedBasis *packed)
 }
 
 // The active subset of a finite element space's element list, when the imaginary leaf of a
-// pair covers it and the real leaf covers the full list. The geometry data owns both index
-// lists, which position the subset and its complement inside the full list, in mesh order.
+// pair covers it and the real leaf covers the full list. The geometry data positions the
+// subset inside the full list in mesh order.
 struct PackedSubset
 {
   const CeedGeomFactorData *data = nullptr;
@@ -536,8 +533,7 @@ PackedSubset MatchPackedSubset(Ceed ceed, const FiniteElementSpace &fespace,
   const auto &data = it->second;
   if (data.indices.size() != static_cast<std::size_t>(real.elements) ||
       data.active_indices.size() != static_cast<std::size_t>(imag.elements) ||
-      data.complement_indices.size() != data.indices.size() - data.active_indices.size() ||
-      data.active_indices.empty() || data.complement_indices.empty())
+      data.active_indices.empty() || data.active_indices.size() >= data.indices.size())
   {
     return {};
   }
@@ -647,8 +643,7 @@ void AddPackedPair(Ceed ceed, const PackedLeaf &real, const PackedLeaf &imag, in
     }
   }
   PalaceCeedCall(ceed, CeedOperatorCheckReady(op.value));
-  packed.AddSubOperator(std::exchange(op.value, nullptr), nullptr,
-                        subset.data ? CeedElementSubset::Active : CeedElementSubset::Full);
+  packed.AddSubOperator(std::exchange(op.value, nullptr));
 }
 
 // Reproduce a real leaf's action over the elements outside the subset its pair was packed
@@ -658,15 +653,35 @@ void AddPackedPair(Ceed ceed, const PackedLeaf &real, const PackedLeaf &imag, in
 void AddPackedComplement(Ceed ceed, const FiniteElementSpace &fespace,
                          const PackedSubset &subset, CeedOperator leaf, Operator &remainder)
 {
-  ScopedRestriction qdata;
+  // Derive the complement only for this CPU packing path rather than storing it on every
+  // mesh and finite element space.
+  std::vector<int> positions, elements;
+  positions.reserve(subset.data->indices.size() - subset.data->active_indices.size());
+  elements.reserve(positions.capacity());
+  auto active = subset.data->active_indices.begin();
+  for (std::size_t i = 0; i < subset.data->indices.size(); i++)
+  {
+    if (active != subset.data->active_indices.end() && *active == static_cast<int>(i))
+    {
+      ++active;
+    }
+    else
+    {
+      positions.push_back(static_cast<int>(i));
+      elements.push_back(subset.data->indices[i]);
+    }
+  }
+  MFEM_ASSERT(!positions.empty(), "Empty packed-operator complement!");
+
+  ScopedRestriction restriction, qdata;
   ScopedQFunction qf;
   ScopedOperator op;
+  restriction.value =
+      FiniteElementSpace::BuildCeedElemRestriction(fespace, ceed, subset.geom, elements);
   CeedInt ni, no;
   CeedOperatorField *inputs, *outputs;
   PalaceCeedCall(ceed, CeedOperatorGetQFunction(leaf, &qf.value));
   PalaceCeedCall(ceed, CeedOperatorGetFields(leaf, &ni, &inputs, &no, &outputs));
-  CeedElemRestriction restriction = fespace.GetCeedElemRestriction(
-      ceed, subset.geom, *subset.data, CeedElementSubset::Complement);
   PalaceCeedCall(ceed, CeedOperatorCreate(ceed, qf.value, CEED_QFUNCTION_NONE,
                                           CEED_QFUNCTION_NONE, &op.value));
   // InspectPackedLeaf validated the field layout: the QData is the first input, and every
@@ -680,16 +695,14 @@ void AddPackedComplement(Ceed ceed, const FiniteElementSpace &fespace,
     PalaceCeedCall(ceed, CeedOperatorFieldGetName(op_field, &name));
     if (j == 0)
     {
-      CreateSubsetQDataRestriction(ceed, field.restriction.value,
-                                   subset.data->complement_indices, &qdata.value);
+      CreateSubsetQDataRestriction(ceed, field.restriction.value, positions, &qdata.value);
     }
-    PalaceCeedCall(ceed,
-                   CeedOperatorSetField(op.value, name, j == 0 ? qdata.value : restriction,
-                                        field.basis.value, field.vector.value));
+    PalaceCeedCall(ceed, CeedOperatorSetField(op.value, name,
+                                              j == 0 ? qdata.value : restriction.value,
+                                              field.basis.value, field.vector.value));
   }
   PalaceCeedCall(ceed, CeedOperatorCheckReady(op.value));
-  remainder.AddSubOperator(std::exchange(op.value, nullptr), nullptr,
-                           CeedElementSubset::Complement);
+  remainder.AddSubOperator(std::exchange(op.value, nullptr));
 }
 
 // The base owns the finalized originals for diagonal, transpose, full assembly, and
@@ -1226,9 +1239,8 @@ std::unique_ptr<hypre::HypreCSRMatrix> CeedOperatorFullAssemble(const Operator &
 std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
                                               const FiniteElementSpace &fespace_coarse)
 {
-  auto SingleOperatorCoarsen = [&fespace_coarse](Ceed ceed, CeedOperator op_fine,
-                                                 CeedElementSubset subset,
-                                                 CeedOperator *op_coarse)
+  auto SingleOperatorCoarsen =
+      [&fespace_coarse](Ceed ceed, CeedOperator op_fine, CeedOperator *op_coarse)
   {
     CeedBasis basis_fine;
     CeedElemTopology geom;
@@ -1240,6 +1252,17 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
     const auto mfem_geom = GetMfemTopology(geom);
     const auto &geom_data =
         fespace_coarse.GetMesh().GetCeedGeomFactorData(ceed).at(mfem_geom);
+    CeedElemRestriction restr_fine;
+    CeedInt num_elem;
+    PalaceCeedCall(ceed, CeedOperatorGetActiveElemRestriction(op_fine, &restr_fine));
+    PalaceCeedCall(ceed, CeedElemRestrictionGetNumElements(restr_fine, &num_elem));
+    CeedElementSubset subset = CeedElementSubset::Full;
+    if (num_elem != static_cast<CeedInt>(geom_data.indices.size()))
+    {
+      MFEM_VERIFY(num_elem == static_cast<CeedInt>(geom_data.active_indices.size()),
+                  "Fine operator uses an unknown element subset in CeedOperatorCoarsen!");
+      subset = CeedElementSubset::Active;
+    }
     CeedElemRestriction restr_coarse =
         fespace_coarse.GetCeedElemRestriction(ceed, mfem_geom, geom_data, subset);
     CeedBasis basis_coarse = fespace_coarse.GetCeedBasis(ceed, GetMfemTopology(geom));
@@ -1275,15 +1298,12 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
     CeedOperator *sub_ops_fine;
     PalaceCeedCall(ceed, CeedOperatorCompositeGetNumSub(op_fine[id], &nsub_ops_fine));
     PalaceCeedCall(ceed, CeedOperatorCompositeGetSubList(op_fine[id], &sub_ops_fine));
-    const auto &sub_op_subsets_fine = op_fine.SubOperatorSubsets(id);
-    MFEM_ASSERT(sub_op_subsets_fine.size() == static_cast<std::size_t>(nsub_ops_fine),
-                "Mismatch in number of sub-operators for CeedOperatorCoarsen!");
     for (CeedInt k = 0; k < nsub_ops_fine; k++)
     {
       CeedOperator sub_op_coarse;
-      SingleOperatorCoarsen(ceed, sub_ops_fine[k], sub_op_subsets_fine[k], &sub_op_coarse);
+      SingleOperatorCoarsen(ceed, sub_ops_fine[k], &sub_op_coarse);
       // Sub-operator owned by ceed::Operator.
-      op_coarse->AddSubOperator(sub_op_coarse, nullptr, sub_op_subsets_fine[k]);
+      op_coarse->AddSubOperator(sub_op_coarse);
     }
   }
 

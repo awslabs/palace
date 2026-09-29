@@ -31,8 +31,8 @@ protected:
   // List of domain and boundary integrators making up the bilinear form.
   std::vector<std::unique_ptr<BilinearFormIntegrator>> domain_integs, boundary_integs;
 
-  // Assemble each integrator only over the elements on which its coefficients are not
-  // identically zero (see SkipZeroCoefficientElements).
+  // Assemble eligible integrators over shared support unions which omit elements where
+  // their coefficients are identically zero (see SkipZeroCoefficientElements).
   bool skip_zero_coeff_elems = false;
 
   std::unique_ptr<ceed::Operator> PartialAssemble(const FiniteElementSpace &trial_fespace,
@@ -68,12 +68,12 @@ public:
 
   void AssembleQuadratureData();
 
-  // Assemble each integrator only over the elements on which its coefficients are not
-  // identically zero, instead of over all domain or boundary elements. The skipped element
-  // contributions are exactly 0.0, so partially assembled operator application is
-  // unchanged, but a fully assembled matrix would lose the corresponding explicit zeros
-  // from its sparsity pattern. Only enable this for operators which are never fully
-  // assembled (BilinearForm::FullAssemble or ParOperator::ParallelAssemble).
+  // Assemble an integrator over the shared lossy-domain or active-boundary support union
+  // when that union contains its coefficient support. Elements outside the union contribute
+  // exactly 0.0, so partially assembled application is unchanged. A fully assembled matrix
+  // would lose corresponding explicit zeros from its sparsity pattern, so only enable this
+  // for operators which are never fully assembled (BilinearForm::FullAssemble or
+  // ParOperator::ParallelAssemble).
   void SkipZeroCoefficientElements(bool skip = true) { skip_zero_coeff_elems = skip; }
 
   std::unique_ptr<ceed::Operator> PartialAssemble() const
