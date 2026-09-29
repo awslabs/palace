@@ -20,6 +20,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     maintainers("hughcars", "sbozzolo", "simlap")
 
     version("develop", branch="main")
+    version("0.18.1", tag="v0.18.1", commit="0dc74cdf8c36c58b69b21c4a06e816048ec0b83f")
     version("0.18.0", tag="v0.18.0", commit="b92aef83ecfe6d360c4b3d83e2122986297f6778")
     version("0.17.0", tag="v0.17.0", commit="12d8069afb5aa9e169a17e303d735e120968e9f2")
     version("0.16.1", tag="v0.16.1", commit="c13e409f255392b9d78369c386276cf9343c2205")
@@ -403,8 +404,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("libceed+magma", when="@0.14:")
 
     # Umpire 2026.07 requires C++20, while Palace's GPU dependencies use C++17.
-    depends_on("umpire@:2025.12", when="@0.16: +cuda")
-    depends_on("umpire@:2025.12", when="@0.16: +rocm")
+    depends_on("umpire@:2025.12 cxxstd=17", when="@0.16: +cuda")
+    depends_on("umpire@:2025.12 cxxstd=17", when="@0.16: +rocm")
 
     with when("+cuda"):
         # GPU-aware MPI
@@ -484,6 +485,16 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             ),
             self.define("PALACE_TESTS_OMP_THREADS", 2 if self.spec.satisfies("+openmp") else 1),
         ]
+
+        # Spack sources carry no usable git metadata for `git describe` (commit
+        # fetches have no tags, mirror archives drop .git), so embed the version
+        # from the spec's resolved commit. Develop specs without one fall back to
+        # `git describe` on the working tree.
+        if "commit" in self.spec.variants:
+            commit = self.spec.variants["commit"].value
+            if commit == self.versions.get(self.spec.version, {}).get("commit"):
+                commit = f"v{self.spec.version}"
+            args.append(self.define("PALACE_GIT_COMMIT_ID", commit))
 
         if self.spec.satisfies("@0.16:"):
             args.append(self.define("MFEM_DIR", self.spec["mfem"].prefix))

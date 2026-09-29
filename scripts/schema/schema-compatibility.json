@@ -9,6 +9,11 @@
       "schema_version": "1-6-0",
       "first_palace_release": "0.18.0",
       "notes": ""
+    },
+    {
+      "schema_version": "1-7-0",
+      "first_palace_release": "0.18.1",
+      "notes": ""
     }
   ]
 }

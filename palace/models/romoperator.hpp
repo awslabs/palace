@@ -5,6 +5,7 @@
 #define PALACE_MODELS_ROM_OPERATOR_HPP
 
 #include <complex>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -170,7 +171,8 @@ protected:
   // - The non-quadratic in ω operators A2(ω), F(ω), and RHS2(ω) are built on the fly.
   // - A2 stores the sparse part only (for PROM projection); the full frequency-dependent
   //   operator (A2 + F) is built locally in SolveHDM via GetExtraSystemOperator.
-  // - Need to recompute RHS1 when excitation index changes (cf excitation_idx_cache).
+  // - RHS1 is recomputed as the adaptive basis grows, then all final reduced RHS1 vectors
+  //   are cached before frequency-major online evaluation.
   std::unique_ptr<ComplexOperator> K, M, C, A2;
   ComplexVector RHS1, RHS2, r;
 
@@ -201,6 +203,24 @@ protected:
   // the slow per-ω HDM fallback.
   mutable bool other_A2_self_checked = false;
   mutable bool other_A2_factored_ok = true;
+
+  // Port-space evaluation of the wave-port terms of the PROM. The modal correction
+  // Wᵣ(ω) = Σ_k g_k(ω) (Vᵀs_k)(Vᵀs_k)ᵀ and the excitation RHS2ᵣ(ω) = −2iω Vᵀs_full only
+  // need the pairings Vᵀs of the basis with the per-port modal n×H shape vectors. Since s
+  // is supported on the port only, Vᵀs is computed from the basis restricted to the port
+  // submesh (V_wp, kept on the host and extended as the basis grows) and the port-space
+  // mode forms refreshed by WavePortData::Initialize, without any per-frequency assembly
+  // and projection of HDM-size vectors. sV_wp_full caches Vᵀs_full per port at Ar_omega
+  // for the excitation of every excitation index at that frequency. A one-time self-check
+  // (repeated once more at the start of the online sweep with the final basis) compares
+  // against the parent-space assembled vectors; on mismatch we fall back permanently to
+  // the assembled path.
+  std::map<int, std::vector<Vector>> V_wp;
+  std::size_t V_wp_dim = 0;
+  std::unique_ptr<mfem::ParGridFunction> V_wp_gf;
+  std::map<int, Eigen::VectorXcd> sV_wp_full;
+  bool wp_pairing_ok = true;
+  bool wp_pairing_checked = false;
 
   // ω-independent boundary operators for the other frequency-dependent BCs, folded into
   // circuit synthesis the same way as the wave ports (each contributes i·f(ω)·M_proj·v to
@@ -250,7 +270,8 @@ protected:
   // PROM matrices and vectors. Projected matrices are Mr = Vᴴ M V where V is the reduced
   // order basis defined below.
   Eigen::MatrixXcd Kr, Mr, Cr;  // Extend during UpdatePROM as modes are added
-  Eigen::VectorXcd RHS1r;       // Need to recompute drive vector on excitation change.
+  Eigen::VectorXcd RHS1r;       // Active excitation's projected frequency-linear source.
+  std::map<int, Eigen::VectorXcd> RHS1r_online;  // Final-basis cache for online switching.
 
   // Reduced Floquet port projection vectors for F(ω) = Σ g_k(ω) conj(v_k) v_k^T.
   // Each entry stores { v_k^T V, V^H conj(v_k) } for efficient rank-1 PROM updates.
@@ -268,6 +289,8 @@ protected:
   // Frequency dependant PROM matrix Ar and RHSr are assembled and used only during
   // SolvePROM. Define them here so memory allocation can be reused in "online" evaluation.
   Eigen::MatrixXcd Ar;
+  Eigen::FullPivHouseholderQR<Eigen::MatrixXcd> Ar_solver;
+  double Ar_omega = std::numeric_limits<double>::quiet_NaN();
   Eigen::VectorXcd RHSr;
 
   // PROM reduced-order basis (real-valued).
@@ -484,8 +507,10 @@ public:
   // Return the HDM linear solver.
   const ComplexKspSolver &GetLinearSolver() const { return *ksp; }
 
-  // Return PROM dimension.
+  // Return PROM dimension and the current online reduced solution.
   auto GetReducedDimension() const { return V.size(); }
+  const auto &GetBasis() const { return V; }
+  const Eigen::VectorXcd &GetReducedSolution() const { return RHSr; }
 
   // Return set of sampled parameter points for basis construction.
   const auto &GetSamplePoints(int excitation_idx) const
@@ -495,6 +520,19 @@ public:
 
   // Set excitation index to build corresponding RHS vector (linear in frequency part).
   void SetExcitationIndex(int excitation_idx);
+
+  // Extend the port-restricted basis V_wp to the current basis size.
+  void UpdateWavePortBasisRestriction();
+
+  // Add the wave-port modal correction Wᵣ(ω) to Ar and cache the projected excitation
+  // shape vectors at ω. Uses the port-space pairings when available (see wp_pairing_ok),
+  // otherwise the parent-space assembled vectors.
+  void AddWavePortModalCorrection(double omega);
+
+  // Project and cache every frequency-linear excitation vector once after the adaptive
+  // basis is complete. Frequency-major online traversal can then switch excitations without
+  // repeating HDM-scale projections.
+  void PrepareOnlineExcitations();
 
   // Assemble and solve the HDM at the specified frequency.
   void SolveHDM(int excitation_idx, double omega, ComplexVector &u);
