@@ -17,11 +17,25 @@ the defect energy), the corrected participation's error (the defect residual ove
 fabricated energy) and the Frobenius residuals. A held-out angle the stencil rule refuses fails
 the check.
 
+The held-out TRACE the residuals are evaluated on is recorded (review of decision 154, MAJOR-1:
+the verdict depends on it). --trace recorded (default) uses the cache's heldout-coefficients.csv
+and classifies it from basis-points.csv + coupon-spec.json against the generator's two forms —
+TraceForm "band" (the pre-149 (6) metal-band cutoff: exactly zero on both metal rings, blind
+to the free knots next to the metal) or "option-c" (decision 149 (6): zero on the PEC part
+only) — or "recorded-unclassified" when it matches neither or the cache has no basis points.
+--trace option-c recomputes the option-(c) coefficients from basis-points.csv + the coupon
+spec with generate_corner_response.heldout_potential (the committed generator), so the verdict
+is a property of the family and not of the generator version that wrote the cache. Which trace
+GATES a family is a USER decision; the tool records the form it used (TraceForm in the JSON
+record, trace_form in the CSV) and never chooses. Fail closed: a held-out coefficient vector
+whose length differs from the matrix size, or a zero fabricated held-out energy, is an error.
+
     corner_family_heldout_check.py OUT.csv COUPON_DIR... [--nodes 75:82.5 90:82.5 ...]
+                                   [--trace recorded|option-c]
                                    [--gates qualification-gates.json] [--json OUT.json]
 
 COUPON_DIR = a corner coupon cache directory (coupon-spec.json, process-library.json,
-heldout-coefficients.csv, postpro/{fabricated,thin}/{domain-response-matrix,
+heldout-coefficients.csv, basis-points.csv, postpro/{fabricated,thin}/{domain-response-matrix,
 surface-response-matrix-aggregate}.csv). Without --nodes the nodes are the coupons whose model
 carries TraceBasis.ConnectivityAngleDegrees; with it, ANGLE:CONNECTIVITY specs select the nodes
 (a recorded coupon without the record is stamped with the connectivity, the caller's
@@ -38,6 +52,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import corner_family_interpolation as family  # noqa: E402
+import generate_corner_response as generator  # noqa: E402
 
 GATES_FILE = HERE.parent / "spatial_coupon" / "qualify" / "qualification-gates.json"
 GATE = "CornerFamilyInterpolation"
@@ -46,6 +61,9 @@ INTERFACES = {1: "SA", 2: "MS", 3: "MA"}
 DEFECTS = ("domain", "SA", "MS", "MA")
 FABRICATED = ("domain_fab", "SA_fab", "MS_fab", "MA_fab")
 GATED = ("SA_fab", "MS_fab", "MA_fab")
+TRACE_SOURCES = ("recorded", "option-c")
+TRACE_FORM_BAND, TRACE_FORM_OPTION_C, TRACE_FORM_UNCLASSIFIED = "band", "option-c", "recorded-unclassified"
+TRACE_CLASSIFICATION_TOLERANCE = 1.0e-9
 
 
 def read_domain(path):
@@ -82,7 +100,43 @@ def read_surface(path):
     return {k: np.array([[m.get((i, j), 0.0) for j in range(n)] for i in range(n)]) for k, m in out.items()}
 
 
-def coupon(directory):
+def generator_traces(d, spec):
+    """The generator's two held-out traces at the coupon's recorded basis points, or None when
+    the cache carries no basis-points.csv (a synthetic coupon)."""
+    basis_points = d / "basis-points.csv"
+    if not basis_points.is_file():
+        return None
+    points = np.loadtxt(basis_points, delimiter=",", skiprows=1, ndmin=2)
+    radius = float(spec["MatchingRadius"])
+    thickness = float(spec["Fabrication"]["metal_thickness"])
+    angle, topology = float(spec["AngleDegrees"]), spec["Topology"]
+    polynomial = generator.heldout_polynomial(points, radius)
+    return {
+        TRACE_FORM_BAND: generator.metal_band_cutoff(points, radius, thickness) * polynomial,
+        TRACE_FORM_OPTION_C: generator.heldout_potential(points, radius, thickness, angle, topology),
+    }
+
+
+def heldout_trace(d, spec, trace_source):
+    """(trace, TraceForm) for one coupon directory under the requested trace source."""
+    forms = generator_traces(d, spec)
+    if trace_source == "option-c":
+        if forms is None:
+            raise FileNotFoundError(f"{d}: --trace option-c needs basis-points.csv to recompute the held-out trace")
+        return forms[TRACE_FORM_OPTION_C], TRACE_FORM_OPTION_C
+    if trace_source != "recorded":
+        raise ValueError(f"unknown trace source {trace_source!r}; one of {TRACE_SOURCES}")
+    trace = np.loadtxt(d / "heldout-coefficients.csv", delimiter=",", skiprows=1, ndmin=1)
+    form = TRACE_FORM_UNCLASSIFIED
+    if forms is not None:
+        for name, reference in forms.items():
+            if len(reference) == len(trace) and np.allclose(trace, reference, rtol=TRACE_CLASSIFICATION_TOLERANCE,
+                                                            atol=TRACE_CLASSIFICATION_TOLERANCE * np.max(np.abs(reference))):
+                form = name
+    return trace, form
+
+
+def coupon(directory, trace_source="recorded"):
     d = Path(directory)
     spec = json.load(open(d / "coupon-spec.json"))
     fab_dom = read_domain(d / "postpro/fabricated/domain-response-matrix.csv")
@@ -93,7 +147,12 @@ def coupon(directory):
     for k, name in INTERFACES.items():
         quantities[name] = fab[k] - thin[k]
         quantities[name + "_fab"] = fab[k]
-    trace = np.loadtxt(d / "heldout-coefficients.csv", delimiter=",", skiprows=1)
+    trace, trace_form = heldout_trace(d, spec, trace_source)
+    size = fab_dom.shape[0]
+    if any(q.shape != (size, size) for q in quantities.values()):
+        raise ValueError(f"{d}: the domain and surface response matrices differ in size")
+    if len(trace) != size:
+        raise ValueError(f"{d}: {len(trace)} held-out coefficients for {size} basis functions")
     connectivity = spec.get("ConnectivityAngleDegrees")
     library = d / "process-library.json"
     if library.exists():
@@ -105,6 +164,7 @@ def coupon(directory):
         "connectivity": None if connectivity is None else float(connectivity),
         "quantities": quantities,
         "trace": trace,
+        "trace_form": trace_form,
         "dir": str(d),
     }
 
@@ -141,7 +201,8 @@ def evaluate(coupons, node_specs, gate):
     """Rows of the residual table and the per-family verdict record."""
     limit = 100.0 * gate["MaximumParticipationReferencedResidual"]
     table = [("topology", "heldout_angle", "rule", "connectivity_angle", "abscissae_angles", "weights", "quantity",
-              "frobenius_residual_%", "heldout_energy_residual_%", "heldout_energy_residual_over_fabricated_%", "gated")]
+              "frobenius_residual_%", "heldout_energy_residual_%", "heldout_energy_residual_over_fabricated_%", "gated",
+              "trace_form")]
     families = {}
     for topology in sorted({c["topology"] for c in coupons}):
         fam = [c for c in coupons if c["topology"] == topology]
@@ -149,7 +210,8 @@ def evaluate(coupons, node_specs, gate):
         stencil_nodes = [(a, k, i) for a, k, i, _ in nodes]
         record = {"Topology": topology, "Nodes": [{"AngleDegrees": a, "ConnectivityAngleDegrees": k, "Dir": c["dir"]}
                                                    for a, k, _, c in nodes],
-                  "HeldOut": [], "Refused": [], "WorstParticipationReferencedPercent": {},
+                  "HeldOut": [], "Refused": [], "TraceForms": sorted({h["trace_form"] for h in held_out}),
+                  "WorstParticipationReferencedPercent": {},
                   "WorstDefectReferencedPercent": {}, "WorstCorrectedParticipationPercent": {}}
         for h in sorted(held_out, key=lambda c: c["angle"]):
             if not stencil_nodes:
@@ -159,11 +221,12 @@ def evaluate(coupons, node_specs, gate):
                 stencil = family.select_stencil(stencil_nodes, h["angle"], convexity_of(topology))
             if "reason" in stencil:
                 record["Refused"].append({"AngleDegrees": h["angle"], "Reason": stencil["reason"], "Dir": h["dir"]})
-                table.append((topology, f"{h['angle']:g}", "refused: " + stencil["reason"], "", "", "", "", "", "", "", ""))
+                table.append((topology, f"{h['angle']:g}", "refused: " + stencil["reason"], "", "", "", "", "", "", "", "",
+                              h["trace_form"]))
                 continue
             window = [nodes[i][3] for i, _ in stencil["nodes"]]
             weights = [w for _, w in stencil["nodes"]]
-            entry = {"AngleDegrees": h["angle"], "Rule": stencil["rule"], "Dir": h["dir"],
+            entry = {"AngleDegrees": h["angle"], "Rule": stencil["rule"], "Dir": h["dir"], "TraceForm": h["trace_form"],
                      "ConnectivityAngleDegrees": stencil["connectivity_angle_degrees"],
                      "Stencil": [c["angle"] for c in window], "Weights": weights,
                      "ParticipationReferencedPercent": {}, "DefectReferencedPercent": {},
@@ -172,11 +235,15 @@ def evaluate(coupons, node_specs, gate):
                 actual = h["quantities"][quantity]
                 interp = sum(w * c["quantities"][quantity] for w, c in zip(weights, window))
                 frob = 100.0 * np.linalg.norm(interp - actual) / np.linalg.norm(actual)
-                v = h["trace"][: actual.shape[0]]
+                v = h["trace"]
                 e_actual = v @ actual @ v
-                energy = 100.0 * (v @ interp @ v - e_actual) / e_actual
                 fab_quantity = quantity if quantity.endswith("_fab") else quantity + "_fab"
-                over_fab = 100.0 * (v @ interp @ v - e_actual) / (v @ h["quantities"][fab_quantity] @ v)
+                e_fabricated = v @ h["quantities"][fab_quantity] @ v
+                if e_actual == 0.0 or e_fabricated == 0.0:
+                    raise ValueError(f"{h['dir']}: zero held-out energy of {quantity} (trace form {h['trace_form']}): "
+                                     "the residual is undefined")
+                energy = 100.0 * (v @ interp @ v - e_actual) / e_actual
+                over_fab = 100.0 * (v @ interp @ v - e_actual) / e_fabricated
                 entry["FrobeniusPercent"][quantity] = frob
                 if quantity.endswith("_fab"):
                     entry["ParticipationReferencedPercent"][quantity[:-4]] = over_fab
@@ -186,7 +253,8 @@ def evaluate(coupons, node_specs, gate):
                 gated = quantity in GATED
                 table.append((topology, f"{h['angle']:g}", stencil["rule"], f"{stencil['connectivity_angle_degrees']:g}",
                               "/".join(f"{c['angle']:g}" for c in window), "/".join(f"{w:+.4f}" for w in weights),
-                              quantity, f"{frob:.4f}", f"{energy:+.4f}", f"{over_fab:+.4f}", "yes" if gated else "no"))
+                              quantity, f"{frob:.4f}", f"{energy:+.4f}", f"{over_fab:+.4f}", "yes" if gated else "no",
+                              h["trace_form"]))
             entry["Passed"] = all(abs(entry["ParticipationReferencedPercent"][x]) <= limit for x in ("SA", "MS", "MA"))
             record["HeldOut"].append(entry)
             for key, source in (("WorstParticipationReferencedPercent", "ParticipationReferencedPercent"),
@@ -207,6 +275,10 @@ def main():
     parser.add_argument("--nodes", nargs="*", default=None,
                         help="node coupons as ANGLE:CONNECTIVITY or ANGLE (legacy); default: the coupons with a "
                              "TraceBasis.ConnectivityAngleDegrees record")
+    parser.add_argument("--trace", choices=TRACE_SOURCES, default="recorded",
+                        help="the held-out trace: the cache's heldout-coefficients.csv (classified band | option-c | "
+                             "recorded-unclassified) or the option-(c) coefficients recomputed from basis-points.csv + "
+                             "the coupon spec")
     parser.add_argument("--gates", type=Path, default=GATES_FILE)
     parser.add_argument("--json", type=Path, help="the verdict record (the gate file's digest, both forms, the verdict)")
     args = parser.parse_args()
@@ -218,7 +290,7 @@ def main():
         for spec in args.nodes:
             angle, _, connectivity = spec.partition(":")
             node_specs.append((float(angle), float(connectivity) if connectivity else None))
-    table, families = evaluate([coupon(d) for d in args.coupons], node_specs, gate)
+    table, families = evaluate([coupon(d, args.trace) for d in args.coupons], node_specs, gate)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     csv.writer(open(args.out, "w")).writerows(table)
     for row in table:
@@ -234,10 +306,14 @@ def main():
         print(f"{topology}: defect-referenced (reported): {fmt(f['WorstDefectReferencedPercent'])}")
         if f["Refused"]:
             print(f"{topology}: REFUSED held-out angles: {[(r['AngleDegrees'], r['Reason']) for r in f['Refused']]}")
-        print(f"{topology}: {len(f['HeldOut'])} held-out coupons, {len(f['Nodes'])} nodes -> {'PASS' if f['Passed'] else 'FAIL'}")
-    print(f"{GATE} (participation-referenced, {limit:g} %; USER decision 149 (5)): {'PASS' if passed else 'FAIL'} -> {args.out}")
+        print(f"{topology}: {len(f['HeldOut'])} held-out coupons, {len(f['Nodes'])} nodes, held-out trace form "
+              f"{'/'.join(f['TraceForms'])} -> {'PASS' if f['Passed'] else 'FAIL'}")
+    print(f"{GATE} (participation-referenced, {limit:g} %; USER decision 149 (5)) on the {args.trace} held-out trace: "
+          f"{'PASS' if passed else 'FAIL'} -> {args.out}")
     if args.json:
-        record = {"Version": 1, "Gate": GATE, "GatesFile": str(args.gates.resolve()),
+        record = {"Version": 2, "Gate": GATE, "GatesFile": str(args.gates.resolve()),
+                  "TraceSource": args.trace,
+                  "TraceForms": sorted({form for f in families.values() for form in f["TraceForms"]}),
                   "GatesSHA256": hashlib.sha256(args.gates.read_bytes()).hexdigest(),
                   "GatesVersion": gates.get("Version"),
                   "MaximumParticipationReferencedResidual": gate["MaximumParticipationReferencedResidual"],

@@ -85,7 +85,28 @@ were exactly zero on both metal rings and the check never saw the free knots nex
 to the metal). It does not introduce an artificial, order-dependent Dirichlet
 singularity where the matching surface meets the grounded metal (zero at the
 contact line). Coupons recorded before that decision carry the band-cutoff
-held-out files.
+held-out files. Not exercised by any recorded coupon (every recorded corner has
+a 90-degree sidewall and `r = 0`): `pec_contour_distance` assumes the swept PEC
+footprint of a sloped sidewall or a rounded corner crosses the rings at the arm
+crossings; the generator's fail-closed checks (the fine trace vanishes on the PEC
+mask only, the coarse coefficients vanish on the zero set and excite every free
+knot) guard that path, no test does.
+
+`corner_family_heldout_check.py` is the held-out INTERPOLATION gate of an
+angle-interpolated family (`CornerFamilyInterpolation` of
+`spatial_coupon/qualify/qualification-gates.json`, participation-referenced
+0.5 %, USER decision 149 (5)): the runtime's segment stencil applied to the node
+coupons' matrices against the coupon built at every held-out angle. Its verdict
+depends on the held-out trace it is evaluated on, so the tool records the form
+(`TraceForm`: `band`, the pre-149 (6) coefficients, exactly zero on both metal
+rings; `option-c`; or `recorded-unclassified`) and `--trace option-c` recomputes
+the option-(c) coefficients from `basis-points.csv` + `coupon-spec.json` so the
+verdict is a property of the family, not of the generator version that wrote the
+caches. On the recorded qualified family (2026-09-29) the gate PASSES both
+convexities on the recorded band traces and FAILS both under the option-(c)
+traces (SA +0.62 % at convex 176 degrees, +0.76 % at concave 100 degrees; MS / MA
+within 0.5 %). Which trace gates a family is a USER decision; the tool never
+chooses.
 
 Generated response configs enable `AggregateResponseMatrix`, so Palace performs the
 physical-edge sum before storing `surface-response-matrix.csv`. The finalizer still maps

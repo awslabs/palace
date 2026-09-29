@@ -8,7 +8,11 @@ CornerFamilyInterpolation of spatial_coupon/qualify/qualification-gates.json, US
 reported alongside) on synthetic coupon directories whose matrices are polynomials of the
 angle: a cubic segment stencil reproduces a cubic exactly, a perturbed held-out coupon fails
 only when the perturbation exceeds the gate in the participation-referenced form, and a
-held-out angle the stencil rule refuses fails."""
+held-out angle the stencil rule refuses fails. The held-out trace is recorded (TraceForm):
+the cache's coefficients are classified band | option-c against the generator's forms at
+the basis points, --trace option-c recomputes the option-(c) coefficients from
+basis-points.csv + the coupon spec, and the fail-closed guards (a coefficient vector of the
+wrong length, a zero fabricated held-out energy) error out."""
 
 import importlib.util
 import json
@@ -32,26 +36,39 @@ def load(name):
 
 
 CHECK = load("corner_family_heldout_check")
+GENERATOR = load("generate_corner_response")
 SIZE = 4
+RADIUS, THICKNESS = 1.9, 0.1
+# Four basis points on the matching box: two on the metal rings (z = 0 and z = THICKNESS, on the
+# free arc of a 90-degree convex corner) and two on the cap ring at z = -RADIUS.
+BASIS_POINTS = np.array([[-RADIUS, 0.4 * RADIUS, 0.0], [0.5 * RADIUS, -RADIUS, THICKNESS],
+                         [-RADIUS, 0.0, -RADIUS], [RADIUS, RADIUS, -RADIUS]])
 GATES = json.load(open(CHECK.GATES_FILE))["Gates"][CHECK.GATE]
 
 
-def matrices(angle, scale=1.0):
+def matrices(angle, scale=1.0, ring_perturbation=0.0):
     """Cubic-in-angle symmetric positive matrices: thin and fabricated domain and per-interface
-    (fabricated - thin small: a 5 % defect of the SA / MS / MA matrices)."""
+    (fabricated - thin small: a 5 % defect of the SA / MS / MA matrices). ring_perturbation
+    adds that fraction of the base matrix on the block of the two metal-ring basis functions
+    (BASIS_POINTS[:2]) of the fabricated matrices only: invisible to a trace that is zero there."""
     t = (angle - 100.0) / 50.0
     base = np.eye(SIZE) + 0.1 * np.ones((SIZE, SIZE))
     thin = base * (1.0 + 0.3 * t + 0.2 * t**2 + 0.1 * t**3)
-    fab = (1.05 * thin + 0.02 * t**3 * base) * scale
+    ring_block = np.zeros((SIZE, SIZE))
+    ring_block[:2, :2] = base[:2, :2]
+    fab = (1.05 * thin + 0.02 * t**3 * base) * scale + ring_perturbation * ring_block
     interfaces = {k: (thin * factor, fab * factor) for k, factor in ((1, 1e-3), (2, 2e-3), (3, 5e-5))}
     return thin, fab, interfaces
 
 
-def write_coupon(root, topology, angle, connectivity, scale=1.0):
+def write_coupon(root, topology, angle, connectivity, scale=1.0, trace=None, basis_points=None,
+                 ring_perturbation=0.0):
+    """trace = the recorded heldout-coefficients.csv (default a fixed vector); basis_points =
+    basis-points.csv and the spec entries the generator's held-out traces need."""
     d = root / f"{topology}-{angle:g}-{connectivity}"
     for kind in ("thin", "fabricated"):
         (d / "postpro" / kind).mkdir(parents=True)
-    thin, fab, interfaces = matrices(angle, scale)
+    thin, fab, interfaces = matrices(angle, scale, ring_perturbation)
     for kind, domain in (("thin", thin), ("fabricated", fab)):
         rows = ["basis_i,basis_j,Q_ij (J)"]
         agg = ["interface,edge,R (m),basis_i,basis_j,Q_ij (J),Q_total_ij (J)"]
@@ -64,14 +81,18 @@ def write_coupon(root, topology, angle, connectivity, scale=1.0):
         (d / "postpro" / kind / "domain-response-matrix.csv").write_text("\n".join(rows) + "\n")
         (d / "postpro" / kind / "surface-response-matrix-aggregate.csv").write_text("\n".join(agg) + "\n")
     spec = {"Topology": topology, "AngleDegrees": angle}
+    if basis_points is not None:
+        spec["MatchingRadius"] = RADIUS
+        spec["Fabrication"] = {"metal_thickness": THICKNESS}
+        np.savetxt(d / "basis-points.csv", basis_points, delimiter=",", header="x,y,z", comments="", fmt="%.16e")
     model = {"Name": f"{topology}-{angle:g}", "TraceBasis": {}}
     if connectivity is not None:
         spec["ConnectivityAngleDegrees"] = connectivity
         model["TraceBasis"]["ConnectivityAngleDegrees"] = connectivity
     (d / "coupon-spec.json").write_text(json.dumps(spec))
     (d / "process-library.json").write_text(json.dumps({"Models": [model]}))
-    np.savetxt(d / "heldout-coefficients.csv", np.array([0.3, -0.2, 0.5, 0.1]), delimiter=",",
-               header="coefficient_V", comments="")
+    np.savetxt(d / "heldout-coefficients.csv", np.array([0.3, -0.2, 0.5, 0.1]) if trace is None else trace,
+               delimiter=",", header="coefficient_V", comments="", fmt="%.16e")
     return d
 
 
@@ -90,15 +111,31 @@ class CornerFamilyHeldoutCheckTest(unittest.TestCase):
         dirs.append(write_coupon(root, "convex", heldout_angle, heldout_connectivity, scale))
         return dirs
 
-    def run_check(self, dirs, nodes=None):
+    def run_check(self, dirs, nodes=None, trace=None):
         out = self.root / "out.csv"
         record = self.root / "out.json"
+        if record.exists():
+            record.unlink()
         command = [sys.executable, str(ROOT / "corner_family_heldout_check.py"), str(out), *map(str, dirs),
                    "--json", str(record)]
         if nodes is not None:
             command += ["--nodes", *nodes]
+        if trace is not None:
+            command += ["--trace", trace]
         result = subprocess.run(command, capture_output=True, text=True)
+        if not record.exists():
+            return result.returncode, None, result.stdout + result.stderr
         return result.returncode, json.loads(record.read_text()), result.stdout
+
+    def family_with_basis_points(self, heldout_trace, ring_perturbation=0.0, heldout_angle=112.0):
+        # The convex [90, 135] segment with basis points and the generator's spec entries on
+        # every coupon; the held-out coupon's recorded coefficients are heldout_trace and its
+        # fabricated matrices carry ring_perturbation on the metal-ring block.
+        root = Path(tempfile.mkdtemp(dir=self.root))
+        dirs = [write_coupon(root, "convex", a, 112.5, basis_points=BASIS_POINTS) for a in (90.0, 105.0, 120.0, 135.0)]
+        dirs.append(write_coupon(root, "convex", heldout_angle, None, trace=heldout_trace, basis_points=BASIS_POINTS,
+                                 ring_perturbation=ring_perturbation))
+        return dirs
 
     def test_gate_definition(self):
         self.assertEqual(GATES["MaximumParticipationReferencedResidual"], 0.005)
@@ -161,6 +198,77 @@ class CornerFamilyHeldoutCheckTest(unittest.TestCase):
         code, record, _ = self.run_check(dirs)
         self.assertEqual(code, 1)
         self.assertEqual(len(record["Families"]["convex"]["Refused"]), 5)
+
+    def test_recorded_trace_form_is_classified_and_recorded(self):
+        # A recorded coefficient file equal to the generator's band-cutoff trace at the basis
+        # points is stamped "band", the option-(c) trace "option-c", anything else
+        # "recorded-unclassified"; a coupon without basis points is unclassified too.
+        band = GENERATOR.metal_band_cutoff(BASIS_POINTS, RADIUS, THICKNESS) * GENERATOR.heldout_polynomial(BASIS_POINTS, RADIUS)
+        option_c = GENERATOR.heldout_potential(BASIS_POINTS, RADIUS, THICKNESS, 112.0, "convex")
+        self.assertEqual(list(band[:2]), [0.0, 0.0])  # blind on both metal rings
+        self.assertTrue(np.all(option_c[:2] != 0.0))  # the free metal-ring knots excited
+        for trace, form in ((band, "band"), (option_c, "option-c"), (np.array([0.3, -0.2, 0.5, 0.1]), "recorded-unclassified")):
+            code, record, stdout = self.run_check(self.family_with_basis_points(trace))
+            self.assertEqual(code, 0, stdout)
+            family = record["Families"]["convex"]
+            self.assertEqual(record["TraceSource"], "recorded")
+            self.assertEqual(record["TraceForms"], [form])
+            self.assertEqual(family["TraceForms"], [form])
+            self.assertEqual(family["HeldOut"][0]["TraceForm"], form)
+            self.assertIn(f"held-out trace form {form}", stdout)
+            self.assertIn("on the recorded held-out trace", stdout)
+        code, record, _ = self.run_check(self.segment(scale=1.004))
+        self.assertEqual(record["TraceForms"], ["recorded-unclassified"])
+        with open(self.root / "out.csv") as handle:
+            rows = list(CHECK.csv.reader(handle))
+        self.assertEqual(rows[0][-1], "trace_form")
+        self.assertEqual({r[-1] for r in rows[1:]}, {"recorded-unclassified"})
+
+    def test_option_c_trace_is_recomputed_from_the_basis_points(self):
+        # The held-out coupon's fabricated matrices are perturbed on the metal-ring block only
+        # (the review's MAJOR-1 mechanism): on the recorded band trace, zero on both metal
+        # rings, the family reproduces the coupon exactly and PASSES; --trace option-c ignores
+        # the recorded coefficients, recomputes the option-(c) trace from the basis points and
+        # sees the perturbation: FAIL, with the residuals of a cache whose recorded file IS the
+        # option-(c) trace.
+        band = GENERATOR.metal_band_cutoff(BASIS_POINTS, RADIUS, THICKNESS) * GENERATOR.heldout_polynomial(BASIS_POINTS, RADIUS)
+        option_c = GENERATOR.heldout_potential(BASIS_POINTS, RADIUS, THICKNESS, 112.0, "convex")
+        code_band, record_band, _ = self.run_check(self.family_with_basis_points(band, ring_perturbation=0.1))
+        code_c, record_c, stdout = self.run_check(self.family_with_basis_points(band, ring_perturbation=0.1), trace="option-c")
+        code_ref, record_ref, _ = self.run_check(self.family_with_basis_points(option_c, ring_perturbation=0.1))
+        residuals = lambda r: r["Families"]["convex"]["HeldOut"][0]["ParticipationReferencedPercent"]  # noqa: E731
+        self.assertEqual(code_band, 0)
+        self.assertEqual(record_band["TraceForms"], ["band"])
+        for value in residuals(record_band).values():
+            self.assertAlmostEqual(value, 0.0, places=9)
+        self.assertEqual((code_c, code_ref), (1, 1), stdout)
+        self.assertEqual(record_c["TraceSource"], "option-c")
+        self.assertEqual(record_c["TraceForms"], ["option-c"])
+        self.assertIn("on the option-c held-out trace", stdout)
+        self.assertFalse(record_c["Passed"])
+        for quantity, value in residuals(record_c).items():
+            self.assertAlmostEqual(value, residuals(record_ref)[quantity], places=9)
+        self.assertLess(residuals(record_c)["SA"], -0.5)
+        # Without basis points the option-(c) trace cannot be recomputed: fail closed.
+        code, record, stdout = self.run_check(self.segment(), trace="option-c")
+        self.assertNotEqual(code, 0)
+        self.assertIsNone(record)
+        self.assertIn("basis-points.csv", stdout)
+
+    def test_fail_closed_guards(self):
+        # A held-out coefficient vector of the wrong length is an error, not a truncation.
+        code, record, stdout = self.run_check(self.segment() + [write_coupon(
+            self.root, "convex", 118.0, None, trace=np.array([0.3, -0.2, 0.5, 0.1, 0.7]))])
+        self.assertNotEqual(code, 0)
+        self.assertIsNone(record)
+        self.assertIn("5 held-out coefficients for 4 basis functions", stdout)
+        # A zero fabricated held-out energy leaves the residual undefined: an error.
+        dirs = self.segment()
+        np.savetxt(dirs[-1] / "heldout-coefficients.csv", np.zeros(SIZE), delimiter=",", header="coefficient_V", comments="")
+        code, record, stdout = self.run_check(dirs)
+        self.assertNotEqual(code, 0)
+        self.assertIsNone(record)
+        self.assertIn("zero held-out energy", stdout)
 
 
 if __name__ == "__main__":

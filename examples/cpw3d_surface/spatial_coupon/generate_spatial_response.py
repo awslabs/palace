@@ -1531,7 +1531,11 @@ def spatial_heldout_cutoff(points, labels, radius):
     by PEC knots (library basis gate: no free hat has support on PEC), so the piecewise-linear
     held-out trace, zero at those knots, vanishes on the whole PEC part and nowhere else; the
     free knots of the metal-band rings over the gaps are excited (the former band cutoff
-    zeroed them, so the self-check never saw them). Ones without a PEC knot."""
+    zeroed them, so the self-check never saw them). Ones without a PEC knot. Only label-1
+    knots bound the cutoff; the contact knots of conductors with label > 1 are set to their
+    conductor potential afterwards, as before (the jump at those contacts predates this
+    cutoff). Not exercised on a recorded coupon: the recorded spatial clusters carry no
+    held-out self-check gate."""
     pec = points[labels == 1]
     if not len(pec):
         return np.ones(len(points))

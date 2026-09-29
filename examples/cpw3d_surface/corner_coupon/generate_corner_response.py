@@ -792,24 +792,24 @@ def heldout_cutoff(points, radius, angle_degrees, topology, metal_thickness):
     return coordinate * coordinate * (3.0 - 2.0 * coordinate)
 
 
-def heldout_potential(points, radius, metal_thickness, angle_degrees, topology):
+def heldout_polynomial(points, radius):
+    """The held-out trace before its cutoff: a fixed low-order polynomial of the box
+    coordinates over R (the same polynomial under the former band cutoff and option (c),
+    so a recorded coefficient file can be classified by its cutoff alone)."""
     x = points[:, 0] / radius
     y = points[:, 1] / radius
     z = points[:, 2] / radius
-    potential = (
-        0.35
-        + 0.20 * x
-        - 0.15 * y
-        + 0.10 * z
-        + 0.08 * x * y
-        + 0.06 * z * z
-    )
+    return 0.35 + 0.20 * x - 0.15 * y + 0.10 * z + 0.08 * x * y + 0.06 * z * z
 
+
+def heldout_potential(points, radius, metal_thickness, angle_degrees, topology):
     # Both coupons have conductor cuts in the matching surface at z = 0, while the
     # fabricated cut extends to z = metal_thickness. One smooth trace compatible with both
     # cuts (zero on the swept PEC part of the box) avoids an order-dependent Dirichlet jump
     # where the matching and grounded boundaries meet.
-    return heldout_cutoff(points, radius, angle_degrees, topology, metal_thickness) * potential
+    return heldout_cutoff(
+        points, radius, angle_degrees, topology, metal_thickness
+    ) * heldout_polynomial(points, radius)
 
 
 def convergence_probe_potentials(points, radius, metal_thickness):
