@@ -35,15 +35,26 @@ def process_from_library(library):
     return interfaces, substrate
 
 
+# Physical groups of mesh_corner_validation.jl / mesh_polygon_device.jl: 2D 1 outer, 3 SA,
+# 7 outer_truncation (aperture); fabricated 2 MS / 4 MA, thin 2 thin_metal.
+OUTER_ATTRIBUTES = [1, 7]
+SA_ATTRIBUTE = 3
+
+
 def dielectric(
     index,
     attributes,
     interface_type,
     radius,
-    automatic,
+    fabricated,
     edge_elements_per_radius,
     interfaces=INTERFACES,
 ):
+    """Interface record with its edge lines at `radius`: the thin sheet's metal edge is the
+    automatic perimeter (the device rule); the fabricated slab has no one-sided metal edge (every
+    edge of MS bottom / MA sidewalls / MA top is a fold between metal faces, so `AutomaticEdges`
+    finds nothing), and its edge lines are named as the perimeter of the SA surface minus the
+    outer box, as the fabricated corner coupon does (generate_corner_response.py)."""
     permittivity, loss_tangent, thickness = interfaces[interface_type]
     result = {
         "Index": index,
@@ -52,23 +63,21 @@ def dielectric(
         "Thickness": thickness,
         "Permittivity": permittivity,
         "LossTan": loss_tangent,
+        "LocalizeEdgeEnergy": False,
+        "EdgeExcludeAttributes": OUTER_ATTRIBUTES,
+        "EdgeDistances": [radius],
     }
-    if automatic:
-        result.update(
-            {
-                "AutomaticEdges": True,
-                "LocalizeEdgeEnergy": False,
-                "EdgeExcludeAttributes": [1, 7],
-                "EdgeDistances": [radius],
-            }
-        )
-        if edge_elements_per_radius:
-            result["EdgeRefinement"] = {
-                "Radius": radius,
-                "ElementsPerRadius": edge_elements_per_radius,
-                "OuterRadiusFactor": 1.0,
-                "CoreIndicatorWeight": 0.0,
-            }
+    if fabricated:
+        result["EdgeAttributes"] = [SA_ATTRIBUTE]
+    else:
+        result["AutomaticEdges"] = True
+    if edge_elements_per_radius:
+        result["EdgeRefinement"] = {
+            "Radius": radius,
+            "ElementsPerRadius": edge_elements_per_radius,
+            "OuterRadiusFactor": 1.0,
+            "CoreIndicatorWeight": 0.0,
+        }
     return result
 
 
@@ -87,15 +96,15 @@ def config(
     layers, substrate_permittivity = process
     interfaces = (
         [
-            dielectric(1, [3], "SA", radius, True, refinement, layers),
+            dielectric(1, [SA_ATTRIBUTE], "SA", radius, True, refinement, layers),
             dielectric(2, [2], "MS", radius, True, refinement, layers),
             dielectric(3, [4], "MA", radius, True, refinement, layers),
         ]
         if fabricated
         else [
-            dielectric(1, [3], "SA", radius, True, refinement, layers),
-            dielectric(2, [2], "MS", radius, True, refinement, layers),
-            dielectric(3, [2], "MA", radius, True, refinement, layers),
+            dielectric(1, [SA_ATTRIBUTE], "SA", radius, False, refinement, layers),
+            dielectric(2, [2], "MS", radius, False, refinement, layers),
+            dielectric(3, [2], "MA", radius, False, refinement, layers),
         ]
     )
     boundaries = {
