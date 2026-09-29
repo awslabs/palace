@@ -1009,19 +1009,58 @@ largest coupon turn (an angle sharper than the sharpest coupon) -> unmatched wit
 a first-order corner without the anchor -> unmatched with the reason; a rounded corner ->
 refused (per-radius coupons and `CornerRadiusInterpolation` only, no angle family) — never
 silently straight, never the nearest coupon. The runtime model is the BLEND of the nodes'
-matrices on the basis of the NEAREST node (its `ZeroTraceIndices` — the knots inside the
-metal at the nearest coupon angle — and conductor references; Lagrange weights may be
-negative; corner coupons have no coupon depth: the weights apply as they are), named
-`<base>@corner-angle<deg>-<rule>`, patched once with weight one in the FEATURE's frame at the
+matrices, entry by entry (Lagrange weights may be negative; corner coupons have no coupon
+depth: the weights apply as they are), named `<base>@corner-angle<deg>-<rule>` on the NEAREST
+node (its conductor references), patched once with weight one in the FEATURE's frame at the
 feature's angle like an exact coupon; `Match.Note` records the rule, the version-1 record
 `CornerFamily` the base / angle / turn / convexity / rule / nodes and weights, `Status`
 `Interpolated`. The A10 placement audit resolves the runtime model to its base coupon at the
 INTERPOLATED angle (`placement_check.resolve_model`), so the arms checked are the feature's.
-Recorded limitation: the box's trace knots inside the metal change with the angle (the zero
-set is piecewise constant in the angle, jumping at the knot angles 45 / 90 / 135 / 180 deg
-of the 8-knot rings), so the blend is exact in the matrices only where the nodes share a zero
-set; the held-out interpolation residual per node interval and the device-style check
-(corner-family-20260928) record the consequence.
+
+**Corner trace basis rule (corner-family review 2026-09-29, supervisor decision 132;
+`generate_corner_response.py` record `TraceBasis`, `palace/models/cornertracebasis.cpp`).**
+The review's root cause of the non-90-degree MS / MA over-correction: on the lane-2 layout
+(8 knots per box ring at the square's corners and side midpoints, angle-independent) a metal
+arm at 75 / 105 / 120 / 150 / 165 deg crosses a box ring BETWEEN a free knot and a PEC knot,
+so the free hat is nonzero on the PEC part of the box contour — conflicting Dirichlet data
+in the coupon solve and a near-singular field in the 2 nm MS / MA layers (the fabricated
+Q_MS of that knot 6-7 orders above its clean value), added as the absolute fabricated
+surface form at runtime while the domain defect (fab - thin) cancelled it. The rule: on every
+box ring that meets the metal (z = 0: the thin sheet and the slab foot; z = MetalThickness:
+the slab top) the knots are the two crossings of the metal arms with the ring (PEC, zero set),
+`MetalInteriorKnots` = 1 knot at equal perimeter-arc-length fractions of the metal arc between
+them (PEC) and `FreeKnots` = 5 knots at equal fractions of the free arc (free); the knots are
+ordered by ROLE within the ring (convex: free 2 .. 5, first crossing, metal interior, second
+crossing, free 1 — the lane-2 order of the 90-degree node, which the rule reproduces
+byte-identically; concave: first crossing, free 1 .. 5, second crossing, metal interior), so
+every node of a family has the same knot count (72), the same zero set (convex 1-based
+29-31 / 37-39, concave 25 / 31-33 / 39 / 40) and like-to-like free knots whose POSITIONS
+vary smoothly with the angle: the entrywise blend is well posed. Fractions are perimeter arc
+length from (-R, 0) counterclockwise (`Fractions` `PerimeterArcLength`). The box corners that
+are no knot are SLAVE vertices of the trace triangulation (`trace-vertices.csv` columns
+`parent_a` / `parent_b` / `weight_a`: the linear interpolation in the fraction between the
+neighbouring knots; `MortarVertex::ForEachBasis` in the surface mortar; the Maxwell path
+refuses them), so the trace surface stays on the box; rings that do not meet the metal keep
+the fixed layout. No free hat has support on the PEC part of the box contour
+(`free_hat_pec_support`; the library gate `library_basis_gate.py` for every coupon type).
+Runtime: the library load FAILS CLOSED on any spatial corner coupon whose metal arm crosses
+a box ring at no PEC knot (`CheckCornerBasisCrossings`: the lane-2 layout at 120 / 165 deg is
+refused; 90 / 135 / 180 pass); `MatchCornerFamily` requires the rule on every node (a lane-2
+coupon is unmatched with the reason), checks one knot semantics (rule parameters, basis
+size, `ContourGroups`, `ZeroTraceIndices`, the fixed rings, every node's files against the
+rule at its angle) and CONSTRUCTS the runtime basis at the feature's angle
+(`BuildCornerTraceBasis`: the base's fixed rings + the metal rings by the rule + slave
+corners, carried by the runtime model as `constructed_basis_points` / trace vertices /
+triangles and by the geometry cache). `ZeroTraceIndices` semantics on the electrostatic
+path (review m5): a PEC knot's trace is zero whatever the device potential at its point (a
+slab-top knot lies in the thin device's air); the surface mortar and, since this fix, the
+collocated lift enforce it. Recorded limitation of the rule (held-out interpolation,
+corner-basis-fix-20260929): a free knot passes a box corner at some angle (its hat straddles
+the corner on one side only), a kink of the matrix entries in the angle; the cubic stencil
+75 / 90 / 105 / 120 of the convex 82.5-deg held-out angle contains the passing of free 1 (the
+knot next to the second crossing) through (-R, R) and its fabricated MA interpolates to
+-6.3 %, the linear first-order regime at 172.5 deg to -2.7 / +3.1 % (convex / concave);
+SA / MS interpolate to <= 0.2 % everywhere (participation-referenced).
 
 **Library contract.** A model keyed by its `Signature` (the feature's canonical object, `Type`
 included; `Signature.Type` must equal `Topology`) needs no version-1 geometry parameters of its

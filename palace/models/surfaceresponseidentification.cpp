@@ -10225,6 +10225,17 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"ParallelCosineTolerance", kParallelCosineTolerance},
         {"ArcFitToleranceOverR", kArcFitToleranceOverRadius},
         {"ArcMaxJointTurnDegrees", kArcMaxJointTurnDegrees},
+        {"CornerTraceBasisRule",
+         "corner coupons of an angle-interpolated family are built on the trace basis rule "
+         "(corner-family review 2026-09-29): on every box ring that meets the metal the "
+         "knots are the two metal-arm crossings (PEC), MetalInteriorKnots = 1 knot at equal "
+         "perimeter-arc-length fractions of the metal arc (PEC) and FreeKnots = 5 knots at "
+         "equal fractions of the free arc, ordered by role (one knot semantics, one zero "
+         "set, like-to-like free knots for every node); box corners that are no knot are "
+         "slave trace vertices; the library load refuses a spatial corner coupon whose "
+         "metal arm crosses a box ring at no PEC knot; the runtime basis of an interpolated "
+         "corner is constructed by the rule at the feature's angle (TraceBasis record: "
+         "RingSize 8, MetalInteriorKnots 1, FreeKnots 5, Fractions PerimeterArcLength)"},
         {"SagittaOverR", kArcSagittaOverRadius},
         {"ArcSampleSpacingOverR", kArcSampleSpacingOverRadius},
         {"ClusterArcChordStepDegrees", kClusterArcChordStepDegrees},
