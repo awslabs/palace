@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <array>
+#include <cmath>
+#include <fstream>
 #include <memory>
 #include <numbers>
 #include <sstream>
@@ -16,6 +18,7 @@
 
 #include "utils/geodata.hpp"
 #include "utils/geodata_impl.hpp"
+#include "utils/iodata.hpp"
 
 #include "fem/interpolator.hpp"
 #include "models/materialoperator.hpp"
@@ -464,6 +467,112 @@ TEST_CASE("PeriodicGmsh", "[geodata][Serial]")
   REQUIRE(mesh::DeterminePeriodicVertexMapping(
               mesh, boundary_torus.periodic.boundary_pairs.front())
               .empty());
+}
+
+TEST_CASE("Interior boundary mesh cracking", "[geodata][Serial]")
+{
+  // Unit cube hexahedral mesh with interior boundary elements (attribute 7) on z = 0.5,
+  // spanning the domain (exterior boundary attributes 1-6).
+  auto base = mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::HEXAHEDRON);
+  std::vector<int> sheet_faces;
+  mfem::Array<int> fv;
+  for (int f = 0; f < base.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    base.GetFaceElements(f, &e1, &e2);
+    base.GetFaceVertices(f, fv);
+    bool on_sheet = (e2 >= 0);
+    for (auto v : fv)
+    {
+      on_sheet = on_sheet && std::abs(base.GetVertex(v)[2] - 0.5) < 1.0e-12;
+    }
+    if (on_sheet)
+    {
+      sheet_faces.push_back(f);
+    }
+  }
+  REQUIRE(sheet_faces.size() == 4);
+  mfem::Mesh mesh(3, base.GetNV(), base.GetNE(),
+                  base.GetNBE() + static_cast<int>(sheet_faces.size()));
+  for (int v = 0; v < base.GetNV(); v++)
+  {
+    mesh.AddVertex(base.GetVertex(v));
+  }
+  for (int e = 0; e < base.GetNE(); e++)
+  {
+    mesh.AddElement(base.GetElement(e)->Duplicate(&mesh));
+  }
+  for (int be = 0; be < base.GetNBE(); be++)
+  {
+    mesh.AddBdrElement(base.GetBdrElement(be)->Duplicate(&mesh));
+  }
+  for (auto f : sheet_faces)
+  {
+    auto *el = base.GetFace(f)->Duplicate(&mesh);
+    el->SetAttribute(7);
+    mesh.AddBdrElement(el);
+  }
+  mesh.FinalizeTopology();
+  mesh.Finalize();
+  mesh.SetAttributes();
+  const auto mesh_path = fs::temp_directory_path() / "palace-test-interior-sheet.mesh";
+  {
+    std::ofstream fo(mesh_path);
+    mesh.Print(fo);
+  }
+  const int nv = mesh.GetNV(), nv_cut = nv + 9;  // 3 x 3 vertices on the sheet
+
+  auto NumVertices = [&](const json &boundaries, const json &model)
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Verbose", 0}}},
+                   {"Model", {{"Mesh", mesh_path.string()}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", boundaries},
+                   {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+    config["Model"].update(model);
+    IoData iodata(config, false);
+    auto smesh = mesh::Load(iodata, Mpi::World());
+    return smesh->GetNV();
+  };
+  const json none = json::object();
+  const json legacy = {{"CrackInternalBoundaryElements", true}};
+  const json off = {{"CrackInternalBoundaryElements", false}};
+  auto Impedance = [](json crack)
+  {
+    json data = {{"Attributes", {7}}, {"Ls", 1.0e-12}};
+    if (!crack.is_null())
+    {
+      data["Crack"] = crack;
+    }
+    return json{{"Impedance", {data}}};
+  };
+  auto Conductivity = [](json crack)
+  {
+    json data = {{"Attributes", {7}}, {"Conductivity", 1.0e7}};
+    if (!crack.is_null())
+    {
+      data["Crack"] = crack;
+    }
+    return json{{"Conductivity", {data}}};
+  };
+
+  // Sheets with a surface impedance: thin film (not cracked) or thick conductor (cracked).
+  CHECK(NumVertices(Impedance(nullptr), none) == nv);
+  CHECK(NumVertices(Impedance(false), none) == nv);
+  CHECK(NumVertices(Impedance(true), none) == nv_cut);
+  CHECK(NumVertices(Conductivity(nullptr), none) == nv_cut);
+  CHECK(NumVertices(Conductivity(false), none) == nv);
+
+  // Perfect conductors are never cracked, one-sided boundary conditions always are.
+  CHECK(NumVertices({{"PEC", {{"Attributes", {7}}}}}, none) == nv);
+  CHECK(NumVertices({{"PMC", {{"Attributes", {7}}}}}, none) == nv_cut);
+
+  // Deprecated global option.
+  CHECK(NumVertices({{"PEC", {{"Attributes", {7}}}}}, legacy) == nv_cut);
+  CHECK(NumVertices(Impedance(false), legacy) == nv_cut);
+  CHECK(NumVertices(Conductivity(nullptr), off) == nv);
+  CHECK(NumVertices({{"PMC", {{"Attributes", {7}}}}}, off) == nv);
+  fs::remove(mesh_path);
 }
 
 TEST_CASE("Default IOData", "[iodata][Serial]")

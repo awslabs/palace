@@ -3,6 +3,7 @@
 
 #include "surfaceconductivityoperator.hpp"
 
+#include <algorithm>
 #include <set>
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -75,6 +76,21 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(
     }
   }
 
+  // Conductivity boundaries on the interior of the domain (not cracked) are conducting
+  // sheets with a surface on either side. Attributes with both interior and exterior
+  // boundary elements are treated as exterior.
+  mfem::Array<int> int_marker, any_int_marker;
+  if (!conductivity.empty() && bdr_attr_max > 0)
+  {
+    int_marker.SetSize(bdr_attr_max);
+    any_int_marker.SetSize(bdr_attr_max);
+    int_marker = 1;
+    any_int_marker = 1;
+    mesh.UnmarkInternalBoundaries(int_marker, true);
+    mesh.UnmarkInternalBoundaries(any_int_marker, false);
+  }
+  std::set<int> mixed_warn_list, external_warn_list;
+
   // Finite conductivity boundaries are defined using the user provided surface conductivity
   // and optionally conductor thickness.
   boundaries.reserve(conductivity.size());
@@ -102,7 +118,42 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(
         continue;  // Can just ignore if wrong
       }
       bdr.attr_list.Append(attr);
+      if (!int_marker[attr - 1])
+      {
+        bdr.int_attr_list.Append(attr);
+        if (data.external)
+        {
+          external_warn_list.insert(attr);
+        }
+      }
+      else
+      {
+        bdr.ext_attr_list.Append(attr);
+        if (!any_int_marker[attr - 1])
+        {
+          mixed_warn_list.insert(attr);
+        }
+      }
     }
+  }
+  if (!external_warn_list.empty())
+  {
+    Mpi::Print("\n");
+    Mpi::Warning("Conductivity boundary attributes with \"External\": true are interior "
+                 "boundaries (conducting sheets with two surfaces), the thickness "
+                 "correction for exterior surfaces does not apply!");
+    utils::PrettyPrint(external_warn_list, "Boundary attribute list:");
+    Mpi::Print("\n");
+  }
+  if (!mixed_warn_list.empty())
+  {
+    Mpi::Print("\n");
+    Mpi::Warning(
+        "Conductivity boundary attributes with both interior and exterior boundary "
+        "elements are treated as exterior boundaries (one-sided), consider "
+        "separating them into different attributes!");
+    utils::PrettyPrint(mixed_warn_list, "Boundary attribute list:");
+    Mpi::Print("\n");
   }
   MFEM_VERIFY(boundaries.empty() || problem_type == ProblemType::DRIVEN ||
                   problem_type == ProblemType::EIGENMODE ||
@@ -129,7 +180,10 @@ void SurfaceConductivityOperator::PrintBoundaryInfo(const Units &units,
       {
         Mpi::Print(", h = {:.3e} m", units.Dimensionalize<Units::ValueType::LENGTH>(bdr.h));
       }
-      Mpi::Print(", n = ({:+.1f})\n", fmt::join(mesh::GetSurfaceNormal(mesh, attr), ","));
+      Mpi::Print(", n = ({:+.1f})", fmt::join(mesh::GetSurfaceNormal(mesh, attr), ","));
+      const bool two_sided = std::find(bdr.int_attr_list.begin(), bdr.int_attr_list.end(),
+                                       attr) != bdr.int_attr_list.end();
+      Mpi::Print("{}\n", two_sided ? " (interior, two-sided)" : "");
     }
   }
 }
@@ -191,10 +245,8 @@ void SurfaceConductivityOperator::AddExtraSystemBdrCoefficients(
     {
       const std::complex<double> s =
           EvaluateScalarImpl(g, std::complex<double>(omega, 0.0));
-      fbr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(boundaries[g].attr_list),
-                              s.real());
-      fbi.AddMaterialProperty(mat_op.GetCeedBdrAttributes(boundaries[g].attr_list),
-                              s.imag());
+      AddCoefficient(g, s.real(), fbr);
+      AddCoefficient(g, s.imag(), fbi);
     }
   }
 }
@@ -210,10 +262,8 @@ void SurfaceConductivityOperator::AddExtraSystemBdrCoefficients(
     if (std::abs(boundaries[g].sigma) > 0.0)
     {
       const std::complex<double> s = EvaluateScalarImpl(g, omega);
-      fbr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(boundaries[g].attr_list),
-                              s.real());
-      fbi.AddMaterialProperty(mat_op.GetCeedBdrAttributes(boundaries[g].attr_list),
-                              s.imag());
+      AddCoefficient(g, s.real(), fbr);
+      AddCoefficient(g, s.imag(), fbi);
     }
   }
 }
@@ -226,8 +276,17 @@ void SurfaceConductivityOperator::AddBoundaryMassBdrCoefficients(
   // the frequency dependence as a fitted scalar. No contribution for an inactive group.
   if (g < boundaries.size() && std::abs(boundaries[g].sigma) > 0.0)
   {
-    fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(boundaries[g].attr_list), 1.0);
+    AddCoefficient(g, 1.0, fb);
   }
+}
+
+void SurfaceConductivityOperator::AddCoefficient(std::size_t g, double coeff,
+                                                 MaterialPropertyCoefficient &fb) const
+{
+  // Interior conducting sheets have two surfaces, each with surface admittance 1/Z.
+  const auto &bdr = boundaries[g];
+  fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(bdr.ext_attr_list), coeff);
+  fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(bdr.int_attr_list), 2.0 * coeff);
 }
 
 }  // namespace palace
