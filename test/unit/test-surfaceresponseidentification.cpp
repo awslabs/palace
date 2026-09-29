@@ -274,8 +274,8 @@ std::vector<Point2> Rectangle(double x0, double y0, double x1, double y1)
 // turns left overall (the smaller-offset side forward, the larger back); `offset` shifts
 // the bar sideways. Interior vertices are offset along `normals` (unit, to the left) when
 // given — the exact radial direction on an arc, so that both sides are concentric polylines
-// of the design circle at the same angles (as a CAD offset of an arc path discretises them);
-// otherwise along the bisector of the adjacent chord normals (a mitred offset, whose
+// of the design circle at the same angles (as a CAD offset of an arc path discretises
+// them); otherwise along the bisector of the adjacent chord normals (a mitred offset, whose
 // vertices lie 1 / cos(turn / 2) off the concentric circle: a different geometry under the
 // exact-parameter arc rule at coarse steps).
 std::vector<Point2> BarAroundCentreline(const std::vector<Point2> &centreline, double width,
@@ -303,17 +303,19 @@ std::vector<Point2> BarAroundCentreline(const std::vector<Point2> &centreline, d
       }
       else if (i == 0 || i + 1 == n)
       {
-        const Point2 d = i == 0 ? Point2{centreline[1][0] - p[0], centreline[1][1] - p[1]}
-                                : Point2{p[0] - centreline[i - 1][0],
-                                         p[1] - centreline[i - 1][1]};
+        const Point2 d =
+            i == 0 ? Point2{centreline[1][0] - p[0], centreline[1][1] - p[1]}
+                   : Point2{p[0] - centreline[i - 1][0], p[1] - centreline[i - 1][1]};
         const Point2 nrm = Normal(d);
         result.push_back(
             {p[0] + (offset + sign * h) * nrm[0], p[1] + (offset + sign * h) * nrm[1]});
       }
       else
       {
-        const Point2 n0 = Normal({p[0] - centreline[i - 1][0], p[1] - centreline[i - 1][1]});
-        const Point2 n1 = Normal({centreline[i + 1][0] - p[0], centreline[i + 1][1] - p[1]});
+        const Point2 n0 =
+            Normal({p[0] - centreline[i - 1][0], p[1] - centreline[i - 1][1]});
+        const Point2 n1 =
+            Normal({centreline[i + 1][0] - p[0], centreline[i + 1][1] - p[1]});
         Point2 b = {n0[0] + n1[0], n0[1] + n1[1]};
         const double norm = std::hypot(b[0], b[1]);
         b = {b[0] / norm, b[1] / norm};
@@ -757,8 +759,8 @@ TEST_CASE("SurfaceResponseIdentificationObtuseCorners",
 // sagitta arc rule (USER decision 117(4)): every chord's sagitta on the wider (outer) side
 // below kArcSagittaOverRadius x R (the vertices lie on the circles exactly). A coarser
 // polyline is corners: the meshed geometry.
-// The concyclicity arc rule (USER decisions 121 / 122): the polyline bar is an arc iff every
-// joint turns less than kArcMaxJointTurnDegrees (its vertices are concyclic by
+// The concyclicity arc rule (USER decisions 121 / 122): the polyline bar is an arc iff
+// every joint turns less than kArcMaxJointTurnDegrees (its vertices are concyclic by
 // construction); the chord sagitta is the recorded mesh-coarseness diagnostic.
 bool ArcBarIsArc(double sweep_degrees, double step_degrees)
 {
@@ -849,15 +851,14 @@ TEST_CASE("SurfaceResponseIdentificationCurvedEdges",
       CHECK(counts["IsolatedEdge"] == 0);
       CHECK(counts["CurvedEdge"] == 0);
       CHECK(counts["ConvexCorner"] == 0);
-      // The mesh-coarseness diagnostic: the recorded largest chord sagitta of the bar's arcs
-      // reaches SagittaOverR exactly when the chords are coarser than the resolution.
+      // The mesh-coarseness diagnostic: the recorded largest chord sagitta of the bar's
+      // arcs reaches SagittaOverR exactly when the chords are coarser than the resolution.
       REQUIRE(!result.arcs.empty());
-      const double worst = std::max_element(result.arcs.begin(), result.arcs.end(),
-                                            [](const auto &a, const auto &b) {
-                                              return a.max_sagitta_over_R <
-                                                     b.max_sagitta_over_R;
-                                            })
-                               ->max_sagitta_over_R;
+      const double worst =
+          std::max_element(result.arcs.begin(), result.arcs.end(),
+                           [](const auto &a, const auto &b)
+                           { return a.max_sagitta_over_R < b.max_sagitta_over_R; })
+              ->max_sagitta_over_R;
       CHECK((worst >= kArcSagittaOverRadius) == coarse);
     }
     else
@@ -869,12 +870,12 @@ TEST_CASE("SurfaceResponseIdentificationCurvedEdges",
       CHECK(counts["CurvedSameConductorStrip"] == 0);
       CHECK(counts["CurvedEdge"] == 0);
       CHECK(annotated == 0);
-      CHECK(counts["ConvexCorner"] + counts["ConcaveCorner"] + counts["SpatialEdgeCluster"] >=
+      CHECK(counts["ConvexCorner"] + counts["ConcaveCorner"] +
+                counts["SpatialEdgeCluster"] >=
             1);
-      CHECK(std::count_if(result.vertices.begin(), result.vertices.end(),
-                          [](const auto &v)
-                          { return v.type == "ConvexCorner" || v.type == "ConcaveCorner"; }) >
-            4);
+      CHECK(std::count_if(
+                result.vertices.begin(), result.vertices.end(), [](const auto &v)
+                { return v.type == "ConvexCorner" || v.type == "ConcaveCorner"; }) > 4);
       CHECK(std::count_if(result.vertices.begin(), result.vertices.end(),
                           [](const auto &v) { return v.type == "BendVertex"; }) == 0);
     }
@@ -1052,8 +1053,8 @@ TEST_CASE("SurfaceResponseIdentificationConvexity",
 TEST_CASE("SurfaceResponseIdentificationPairsAtTheThreshold",
           "[surfaceresponseidentification][Serial]")
 {
-  // A gap of exactly 2R (and 2R +/- 1e-3 R) between two 8 um bars (4 R: the far corners of a
-  // bar end are beyond the vertex-join reach of the near corners) that are concentric
+  // A gap of exactly 2R (and 2R +/- 1e-3 R) between two 8 um bars (4 R: the far corners of
+  // a bar end are beyond the vertex-join reach of the near corners) that are concentric
   // offsets of one centreline along bends of 50 and 250 um at three discretisations. Where
   // the polylines resolve their circles (sagitta below 0.05 R: 1 deg per vertex, 5 deg on
   // the 50 um bend) the interaction decision uses the separation of the fitted arcs — the
@@ -1073,8 +1074,8 @@ TEST_CASE("SurfaceResponseIdentificationPairsAtTheThreshold",
   {
     for (const double step : {1.0, 5.0, 15.0, 60.0})
     {
-      // (The 250 um bend sweeps 30 deg so that the 15 deg discretisation has two chords: one
-      // chord's two 7.5 deg end joints on 6 um leads imply 0.049 R and are noise, a
+      // (The 250 um bend sweeps 30 deg so that the 15 deg discretisation has two chords:
+      // one chord's two 7.5 deg end joints on 6 um leads imply 0.049 R and are noise, a
       // straight-like pair, not an arc test.)
       const double sweep = step >= 60.0 ? 180.0 : (radius < 100.0 ? 45.0 : 30.0);
       for (const double gap : {2.0 * R, 2.0 * R - 1.0e-3 * R, 2.0 * R + 1.0e-3 * R})
@@ -1082,7 +1083,8 @@ TEST_CASE("SurfaceResponseIdentificationPairsAtTheThreshold",
         // Both bars are concentric offsets of the gap's centreline (radius), so the facing
         // edges are inscribed polylines of two circles gap apart at the same angles.
         const auto inner = ArcBar(width, radius, sweep, step, 6.0, 0.5 * gap + 0.5 * width);
-        const auto outer = ArcBar(width, radius, sweep, step, 6.0, -0.5 * gap - 0.5 * width);
+        const auto outer =
+            ArcBar(width, radius, sweep, step, 6.0, -0.5 * gap - 0.5 * width);
         const auto input = MakeInput({{inner, 0, 1.0}, {outer, 1, 1.0}}, R);
         const auto result = IdentifyMetalPerimeter(input);
         const bool resolved = ArcBarIsArc(sweep, step);
@@ -1099,8 +1101,8 @@ TEST_CASE("SurfaceResponseIdentificationPairsAtTheThreshold",
           annotated += feature.bend_radius_over_R.has_value();
           if (feature.type == "DifferentConductorGap" && resolved)
           {
-            // Decision 85(1): the separation along the bends is the radius difference of the
-            // two fitted arcs (exact for polylines inscribed in the design circles).
+            // Decision 85(1): the separation along the bends is the radius difference of
+            // the two fitted arcs (exact for polylines inscribed in the design circles).
             CHECK_THAT(feature.signature["SeparationOverR"].get<double>(),
                        WithinAbs(gap / R, kSignatureParameterToleranceOverRadius));
           }
@@ -1126,10 +1128,9 @@ TEST_CASE("SurfaceResponseIdentificationPairsAtTheThreshold",
         else
         {
           CHECK(annotated == 0);
-          CHECK(std::count_if(result.vertices.begin(), result.vertices.end(),
-                              [](const auto &v) {
-                                return v.type == "ConvexCorner" || v.type == "ConcaveCorner";
-                              }) > 8);
+          CHECK(std::count_if(
+                    result.vertices.begin(), result.vertices.end(), [](const auto &v)
+                    { return v.type == "ConvexCorner" || v.type == "ConcaveCorner"; }) > 8);
         }
       }
     }
@@ -1289,9 +1290,10 @@ TEST_CASE("SurfaceResponseIdentificationStacks", "[surfaceresponseidentification
 {
   // Decision 82(2): a translation-invariant cross-section of k >= 3 edges whose consecutive
   // separations are below 2R is ONE feature (ParallelEdgeCluster, CurvedParallelEdgeCluster
-  // along a bend), straight and curved; the pairwise candidates inside it are superseded (no
-  // claim of one priority ever overlaps another: Diagnostics); a member taken by a cluster is
-  // recomposed out of the cross-section at the stack ends; sides in the canonical order.
+  // along a bend), straight and curved; the pairwise candidates inside it are superseded
+  // (no claim of one priority ever overlaps another: Diagnostics); a member taken by a
+  // cluster is recomposed out of the cross-section at the stack ends; sides in the
+  // canonical order.
   const double R = 2.0;
   auto Offsets = [](const IdentifiedFeature &f)
   {
@@ -1335,8 +1337,8 @@ TEST_CASE("SurfaceResponseIdentificationStacks", "[surfaceresponseidentification
   {
     // The bars end inside the domain (end corners): one corner cluster per end. Both
     // grounds are cluster material next to the trace's end edge (events within 2R of it)
-    // over a longer reach than the trace edges, exactly R from the cores: the trace strip is
-    // recomposed there (the stack-end rule).
+    // over a longer reach than the trace edges, exactly R from the cores: the trace strip
+    // is recomposed there (the stack-end rule).
     const auto input = MakeInput({{Rectangle(-40.0, -10.0, 40.0, -2.0), 0, 1.0},
                                   {Rectangle(-30.0, 0.0, 30.0, 2.0), 0, 1.0},
                                   {Rectangle(-40.0, 4.0, 40.0, 12.0), 0, 1.0}},
@@ -1379,8 +1381,8 @@ TEST_CASE("SurfaceResponseIdentificationStacks", "[surfaceresponseidentification
   }
   SECTION("asymmetric straight stack: sides in the canonical order")
   {
-    // ground | 1 | trace 1.5 | 3 | ground: offsets 0 / 0.5 / 1.25 / 2.75 R; chirality +1 and
-    // one side index per physical edge over the whole feature.
+    // ground | 1 | trace 1.5 | 3 | ground: offsets 0 / 0.5 / 1.25 / 2.75 R; chirality +1
+    // and one side index per physical edge over the whole feature.
     const auto input = MakeInput({{Rectangle(-40.0, -9.0, 40.0, -1.0), 0, 1.0},
                                   {Rectangle(-30.0, 0.0, 30.0, 1.5), 0, 1.0},
                                   {Rectangle(-40.0, 4.5, 40.0, 12.5), 0, 1.0}},
@@ -1417,8 +1419,9 @@ TEST_CASE("SurfaceResponseIdentificationStacks", "[surfaceresponseidentification
   SECTION("curved 3-edge stack along a 3R bend")
   {
     // A 3 um trace (inner radius 3R) and an 8 um ground band 2 um outside it along a 90 deg
-    // bend of the centreline with 12 um leads: a straight ParallelEdgeCluster on the leads and
-    // a CurvedParallelEdgeCluster along the bend with RadiusOverR = the trace's inner radius.
+    // bend of the centreline with 12 um leads: a straight ParallelEdgeCluster on the leads
+    // and a CurvedParallelEdgeCluster along the bend with RadiusOverR = the trace's inner
+    // radius.
     const double centre = 3.0 * R + 1.5;
     const auto trace = ArcBar(3.0, centre, 90.0, 5.0, 12.0, 0.0);
     const auto ground = ArcBar(8.0, centre, 90.0, 5.0, 12.0, -(1.5 + 2.0 + 4.0));
@@ -1430,7 +1433,8 @@ TEST_CASE("SurfaceResponseIdentificationStacks", "[surfaceresponseidentification
     for (const auto &feature : result.features)
     {
       counts[feature.type]++;
-      if (feature.type == "ParallelEdgeCluster" || feature.type == "CurvedParallelEdgeCluster")
+      if (feature.type == "ParallelEdgeCluster" ||
+          feature.type == "CurvedParallelEdgeCluster")
       {
         CHECK(Matches(Offsets(feature), {0.0, 1.5, 2.5}));
       }
@@ -1448,19 +1452,19 @@ TEST_CASE("SurfaceResponseIdentificationStacks", "[surfaceresponseidentification
   SECTION("curved 3-edge stack: convexity of every side related through the GapSides")
   {
     // The convexity of a curved stack is the signature's first edge's; AssembleStack reads
-    // it from the first side, else from the far side (opposite), else from the first interior
-    // side carrying curvature (review J/C4 m5): concentric sides bend in one geometric sense,
-    // so the convexity of edge k equals the first edge's when their GapSides agree and is the
-    // opposite otherwise. Asserted on every side of the 3-edge stack (the ground band outside
-    // and inside the bend: the first edge Convex in one scene and Concave in the other),
-    // reading each side's own convexity from its portions' signed turns (toward the metal
-    // positive). A stack whose outer sides are exactly straight while an interior one bends
-    // cannot be composed (a bent side against a straight partner leaves the pair constancy
-    // band where its windowed bend radius drops below 10R: the two rules meet at 2R x 5 %),
-    // so the interior-side branch itself is unreachable through IdentifyMetalPerimeter and
-    // the relation it encodes is what this test pins.
-    // Ground band outside the bend (trace centreline radius 3R + 1.5) or inside it (radius
-    // 3R + 1.5 + 2 + 8: the band's far edge at 3R).
+    // it from the first side, else from the far side (opposite), else from the first
+    // interior side carrying curvature (review J/C4 m5): concentric sides bend in one
+    // geometric sense, so the convexity of edge k equals the first edge's when their
+    // GapSides agree and is the opposite otherwise. Asserted on every side of the 3-edge
+    // stack (the ground band outside and inside the bend: the first edge Convex in one
+    // scene and Concave in the other), reading each side's own convexity from its portions'
+    // signed turns (toward the metal positive). A stack whose outer sides are exactly
+    // straight while an interior one bends cannot be composed (a bent side against a
+    // straight partner leaves the pair constancy band where its windowed bend radius drops
+    // below 10R: the two rules meet at 2R x 5 %), so the interior-side branch itself is
+    // unreachable through IdentifyMetalPerimeter and the relation it encodes is what this
+    // test pins. Ground band outside the bend (trace centreline radius 3R + 1.5) or inside
+    // it (radius 3R + 1.5 + 2 + 8: the band's far edge at 3R).
     std::set<std::string> first_edge_convexities;
     for (const double ground_offset : {-(1.5 + 2.0 + 4.0), 1.5 + 2.0 + 4.0})
     {
@@ -1514,19 +1518,19 @@ TEST_CASE("SurfaceResponseIdentificationStacks", "[surfaceresponseidentification
 TEST_CASE("SurfaceResponseIdentificationExactParametersAndExtension",
           "[surfaceresponseidentification][Serial]")
 {
-  // Decision 85 (2026-09-26). (1) Exact signature parameters: the curved 3-edge stack of the
-  // previous test at two discretisations of the bend (5 and 2.5 deg steps) gives IDENTICAL
-  // offsets (0 / 1.5 / 2.5 R exactly: the arc radius differences) and bend radius, hence
-  // one signature key; the tolerance API groups near-identical instances and tells the
-  // mirror orientation apart from a different topology. (2) Cluster extension: the two
-  // 12 x 8 pads of the first test have every single-edge portion within 2R of a cluster's
-  // claimed perimeter absorbed (the gap edges between the end clusters are the pair, the
-  // remainder isolated only where nothing is within 2R across).
+  // Decision 85 (2026-09-26). (1) Exact signature parameters: the curved 3-edge stack of
+  // the previous test at two discretisations of the bend (5 and 2.5 deg steps) gives
+  // IDENTICAL offsets (0 / 1.5 / 2.5 R exactly: the arc radius differences) and bend
+  // radius, hence one signature key; the tolerance API groups near-identical instances and
+  // tells the mirror orientation apart from a different topology. (2) Cluster extension:
+  // the two 12 x 8 pads of the first test have every single-edge portion within 2R of a
+  // cluster's claimed perimeter absorbed (the gap edges between the end clusters are the
+  // pair, the remainder isolated only where nothing is within 2R across).
   const double R = 2.0;
   // A band between two concentric circles (vertices ON the circles: the inscribed
   // construction of a CAD polygonisation) with tangent leads, counter-clockwise.
-  auto InscribedBand = [](double r_in, double r_out, double sweep_degrees, double step_degrees,
-                          double lead)
+  auto InscribedBand =
+      [](double r_in, double r_out, double sweep_degrees, double step_degrees, double lead)
   {
     const int steps = static_cast<int>(std::lround(sweep_degrees / step_degrees));
     const double sweep = sweep_degrees * std::acos(-1.0) / 180.0;
@@ -1558,7 +1562,8 @@ TEST_CASE("SurfaceResponseIdentificationExactParametersAndExtension",
       const double r0 = 3.0 * R;
       const auto trace = InscribedBand(r0, r0 + 3.0, 90.0, step, 12.0);
       const auto ground = InscribedBand(r0 + 5.0, r0 + 13.0, 90.0, step, 12.0);
-      const auto result = IdentifyMetalPerimeter(MakeInput({{trace, 0, 1.0}, {ground, 0, 1.0}}, R));
+      const auto result =
+          IdentifyMetalPerimeter(MakeInput({{trace, 0, 1.0}, {ground, 0, 1.0}}, R));
       int stacks = 0;
       for (const auto &feature : result.features)
       {
@@ -1583,7 +1588,8 @@ TEST_CASE("SurfaceResponseIdentificationExactParametersAndExtension",
           CHECK(feature.exact_parameters);
           if (feature.type == "CurvedParallelEdgeCluster")
           {
-            CHECK_THAT(feature.signature["RadiusOverR"].get<double>(), WithinAbs(3.0, 1.0e-9));
+            CHECK_THAT(feature.signature["RadiusOverR"].get<double>(),
+                       WithinAbs(3.0, 1.0e-9));
           }
           keys.push_back(feature.type + feature.signature_key);
           stacks++;
@@ -1599,14 +1605,16 @@ TEST_CASE("SurfaceResponseIdentificationExactParametersAndExtension",
   SECTION("offset polylines agree within the tolerance")
   {
     // The mitre-offset construction of ArcBar (parallel chords, vertices off the design
-    // circles): no exact arc reading, the chord reading stays within the signature parameter
-    // tolerance of the design offsets at both discretisations (the recorded ambiguity).
+    // circles): no exact arc reading, the chord reading stays within the signature
+    // parameter tolerance of the design offsets at both discretisations (the recorded
+    // ambiguity).
     for (const double step : {5.0, 2.5})
     {
       const double centre = 3.0 * R + 1.5;
       const auto trace = ArcBar(3.0, centre, 90.0, step, 12.0, 0.0);
       const auto ground = ArcBar(8.0, centre, 90.0, step, 12.0, -(1.5 + 2.0 + 4.0));
-      const auto result = IdentifyMetalPerimeter(MakeInput({{trace, 0, 1.0}, {ground, 0, 1.0}}, R));
+      const auto result =
+          IdentifyMetalPerimeter(MakeInput({{trace, 0, 1.0}, {ground, 0, 1.0}}, R));
       for (const auto &feature : result.features)
       {
         if (feature.type == "ParallelEdgeCluster" ||

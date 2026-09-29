@@ -708,8 +708,9 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   CHECK(automatic.response_correction->models.empty());
   CHECK(automatic.response_correction->patches.empty());
   // The Features-driven patch construction is the default; Legacy only by explicit request.
-  CHECK(automatic.response_correction->patch_construction ==
-        config::ElectrostaticSolverData::ResponseCorrectionData::PatchConstruction::FEATURES);
+  CHECK(
+      automatic.response_correction->patch_construction ==
+      config::ElectrostaticSolverData::ResponseCorrectionData::PatchConstruction::FEATURES);
   auto legacy_construction = automatic_correction;
   legacy_construction["PatchConstruction"] = "Legacy";
   CHECK(config::ElectrostaticSolverData(json{{"ResponseCorrection", legacy_construction}})

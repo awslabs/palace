@@ -233,7 +233,8 @@ TEST_CASE("Interface ownership exhaustive surface quadrature",
       for (int i = 0; i < 2; i++)
       {
         matrix_post.EvaluateInterfaceResponseRow(interface_samples, *fields[i], nullptr,
-                                                 rows.data() + i * interface_samples.RowSize());
+                                                 rows.data() +
+                                                     i * interface_samples.RowSize());
       }
       const auto streamed = matrix_post.AssembleInterfaceResponseMatrices(
           interface_samples, rows.data(), 2, Mpi::World());
@@ -258,8 +259,9 @@ TEST_CASE("Interface ownership exhaustive surface quadrature",
             for (int j = 0; j < 2; j++)
             {
               const double scale = std::max(std::abs((*pair[1])(i, j)), 1e-300);
-              CHECK_THAT((*pair[0])(i, j) - (*pair[1])(i, j),
-                         Catch::Matchers::WithinAbs(0.0, 1e-12 * std::max(scale, reference)));
+              CHECK_THAT(
+                  (*pair[0])(i, j) - (*pair[1])(i, j),
+                  Catch::Matchers::WithinAbs(0.0, 1e-12 * std::max(scale, reference)));
               CHECK((*pair[0])(i, j) == (*pair[0])(j, i));
             }
           }

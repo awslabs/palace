@@ -44,13 +44,14 @@ public:
 }  // namespace
 
 // The self-consistent response-corrected electrostatic solve runs PCG on K + Pᵀ D P with
-// AMG(K) as the preconditioner. Palace's CgSolver guards (Ap, p) > 0 by MFEM_ASSERT only, so a
-// Release binary accepts an indefinite operator silently (sc-closure diagnostics 2026-09-29:
-// the 120-degree corner model at p5). The recorded CG coefficient history must expose the
-// negative curvature and the Ritz values of the preconditioned operator.
+// AMG(K) as the preconditioner. Palace's CgSolver guards (Ap, p) > 0 by MFEM_ASSERT only,
+// so a Release binary accepts an indefinite operator silently (sc-closure diagnostics
+// 2026-09-29: the 120-degree corner model at p5). The recorded CG coefficient history must
+// expose the negative curvature and the Ritz values of the preconditioned operator.
 TEST_CASE("CgSolver curvature record", "[cgsolver][Serial]")
 {
-  // Unpreconditioned CG on a diagonal operator: the Ritz values converge to the eigenvalues.
+  // Unpreconditioned CG on a diagonal operator: the Ritz values converge to the
+  // eigenvalues.
   auto Solve = [](std::vector<double> diagonal, bool record)
   {
     DiagonalTestOperator A(std::move(diagonal));
@@ -72,7 +73,8 @@ TEST_CASE("CgSolver curvature record", "[cgsolver][Serial]")
 
   SECTION("Positive definite: no negative curvature, positive alphas")
   {
-    const auto [alpha, beta_ratio, negative, converged, x] = Solve({1.0, 2.0, 4.0, 8.0}, true);
+    const auto [alpha, beta_ratio, negative, converged, x] =
+        Solve({1.0, 2.0, 4.0, 8.0}, true);
     CHECK(converged);
     CHECK(negative == 0);
     REQUIRE(alpha.size() == beta_ratio.size());
@@ -113,7 +115,8 @@ TEST_CASE("CgSolver curvature record", "[cgsolver][Serial]")
 
   SECTION("Recording off: nothing is stored")
   {
-    const auto [alpha, beta_ratio, negative, converged, x] = Solve({1.0, 2.0, -0.5, 8.0}, false);
+    const auto [alpha, beta_ratio, negative, converged, x] =
+        Solve({1.0, 2.0, -0.5, 8.0}, false);
     (void)converged;
     (void)x;
     CHECK(alpha.empty());

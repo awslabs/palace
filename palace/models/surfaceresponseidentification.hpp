@@ -222,9 +222,9 @@ struct IdentificationResult
     bool repeat_detected = false;
   };
   ClusterExtension extension;
-  // Knife-edge census (decision 82(4)): the perimeter length whose interaction distance lies
-  // within a recorded band of every threshold of the rules (R, 2R, the 10R bend radius, the
-  // 30 deg corner turn), in mesh units; serialised as JSON text.
+  // Knife-edge census (decision 82(4)): the perimeter length whose interaction distance
+  // lies within a recorded band of every threshold of the rules (R, 2R, the 10R bend
+  // radius, the 30 deg corner turn), in mesh units; serialised as JSON text.
   std::string knife_edge_census;
 
   // Manifest "Identification" object; the length scale converts mesh units for output.
@@ -384,8 +384,8 @@ constexpr double kSignatureAngleToleranceDegrees = 1.0e-2;
 // kArcFitToleranceOverRadius x R (the signature parameter tolerance) AND every joint turns
 // less than kArcMaxJointTurnDegrees, bends (radius >= R) and rounded corners (radius < R)
 // alike, whatever the chord sagitta. The joint-turn cap keeps regular polygons corners (a
-// square turns 90 deg per joint, a hexagon 60; an octagon at 45 deg per joint is a circle at
-// the resolution of the correction) while a coarsely meshed design curve (the transmon's
+// square turns 90 deg per joint, a hexagon 60; an octagon at 45 deg per joint is a circle
+// at the resolution of the correction) while a coarsely meshed design curve (the transmon's
 // 19.4 R CPW bends at 11-16 deg per chord, sagitta 0.09-0.17 R) is the curve it discretises
 // — "we do not want to artificially classify curves as corners". The largest chord sagitta
 // rho (1 - cos(central angle / 2)) is RECORDED per arc (Arcs[].MaxChordSagittaOverR) and

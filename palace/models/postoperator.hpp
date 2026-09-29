@@ -812,8 +812,9 @@ public:
   }
 
   template <ProblemType U = solver_t>
-  auto EvaluateInterfaceResponseRow(
-      const SurfacePostOperator::InterfaceResponseSamples &samples, double *row) const
+  auto
+  EvaluateInterfaceResponseRow(const SurfacePostOperator::InterfaceResponseSamples &samples,
+                               double *row) const
       -> std::enable_if_t<U == ProblemType::ELECTROSTATIC, void>
   {
     surf_post_op.EvaluateInterfaceResponseRow(samples, *E, D_recovered.get(), row);

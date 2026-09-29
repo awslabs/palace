@@ -1086,8 +1086,8 @@ TEST_CASE("Automatic metal edge extraction samples high-order rounded edges",
   // ~3e-5 = 2e-4 rho) is a REGULAR joint, the rounded loop is ONE chain of no corners; at
   // R = rho / 250 (threshold 2.5e-5) the same joints imply sagittas above 0.05 R and are
   // CORNER vertices and chain breaks (one chain per corner on a closed loop) — the former
-  // 1 deg angular reading of decision 117(4), which made every sampled fillet joint a corner
-  // whatever its size.
+  // 1 deg angular reading of decision 117(4), which made every sampled fillet joint a
+  // corner whatever its size.
   const auto coarse_corners = CountPhysicalVertexTypes(coarse, MetalEdgeVertexType::CORNER);
   const auto fine_corners = CountPhysicalVertexTypes(fine, MetalEdgeVertexType::CORNER);
   CHECK(coarse_corners == 0);
@@ -1221,7 +1221,8 @@ TEST_CASE("Automatic metal edge extraction on 3D CPW",
     CHECK_FALSE(dielectric.edge_frame_normal);
   }
 
-  const auto geometry = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries, JointNoiseExtractionFor(iodata.boundaries));
+  const auto geometry = ExtractMetalEdgeGeometry(
+      *mesh, iodata.boundaries, JointNoiseExtractionFor(iodata.boundaries));
   REQUIRE(geometry.components == 3);
   REQUIRE(geometry.segments.size() == 92);
   int sa_segments = 0;
@@ -1309,7 +1310,8 @@ TEST_CASE("Automatic metal edge chains survive local refinement",
   iodata.model.refinement.max_it = 1;
   auto mesh = mesh::ReadMesh(iodata, Mpi::World());
 
-  const auto coarse = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries, JointNoiseExtractionFor(iodata.boundaries));
+  const auto coarse = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries,
+                                               JointNoiseExtractionFor(iodata.boundaries));
   REQUIRE(coarse.physical_chains == 4);
 
   std::set<int> adjacent_elements;
@@ -1329,7 +1331,8 @@ TEST_CASE("Automatic metal edge chains survive local refinement",
   std::copy(adjacent_elements.begin(), adjacent_elements.end(), marked_elements.begin());
   mesh->GeneralRefinement(marked_elements);
 
-  const auto refined = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries, JointNoiseExtractionFor(iodata.boundaries));
+  const auto refined = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries,
+                                                JointNoiseExtractionFor(iodata.boundaries));
   CHECK(refined.physical_components == coarse.physical_components);
   CHECK(refined.physical_chains == coarse.physical_chains);
   CHECK(refined.segments.size() > coarse.segments.size());
@@ -1403,7 +1406,8 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
     CHECK_FALSE(dielectric.edge_frame_normal);
   }
 
-  const auto geometry = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries, JointNoiseExtractionFor(iodata.boundaries));
+  const auto geometry = ExtractMetalEdgeGeometry(
+      *mesh, iodata.boundaries, JointNoiseExtractionFor(iodata.boundaries));
   REQUIRE_FALSE(geometry.Empty());
   int physical_segments = 0;
   int truncation_segments = 0;
@@ -1451,14 +1455,14 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
   // port faces are PORT segments (cuts): the feedline centre conductor's perimeter splits
   // into 2 more physical components (the cut pieces), 6 fewer chains, and the 12 port-end
   // vertices are no longer corners.
-  // USER decision 117(4) / 121 (B): the vertex classification uses the geometric joint noise
-  // rule (kJointNoiseSagittaOverRadius at the config's edge distance R = 1.9 um) instead of
-  // the 30 deg corner class: the polyline joints of the CPW bends (11-16 deg on 7 um
-  // chords: implied sagitta 0.1-0.13 R) and rounded features (60 sharp corners before) are
-  // CORNER vertices and chain breaks of the extraction (74 chains -> 460; the 1 deg angular
-  // threshold of 117(4) read 461 chains / 447 corners: one joint whose implied sagitta on
-  // its shorter piece is below 0.05 R is a straight continuation now); the identification's
-  // arc rule absorbs the joints of fitted arcs and merges their chains.
+  // USER decision 117(4) / 121 (B): the vertex classification uses the geometric joint
+  // noise rule (kJointNoiseSagittaOverRadius at the config's edge distance R = 1.9 um)
+  // instead of the 30 deg corner class: the polyline joints of the CPW bends (11-16 deg on
+  // 7 um chords: implied sagitta 0.1-0.13 R) and rounded features (60 sharp corners before)
+  // are CORNER vertices and chain breaks of the extraction (74 chains -> 460; the 1 deg
+  // angular threshold of 117(4) read 461 chains / 447 corners: one joint whose implied
+  // sagitta on its shorter piece is below 0.05 R is a straight continuation now); the
+  // identification's arc rule absorbs the joints of fitted arcs and merges their chains.
   CHECK(geometry.components == 10);
   CHECK(geometry.physical_components == 15);
   CHECK(physical_segments + truncation_segments + fold_segments + nonmanifold_segments +
@@ -1494,9 +1498,8 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
   // substrate keeps its material-derived +z normal.
   std::vector<bool> ambiguous;
   const auto process_normals = BuildMetalEdgeProcessNormals(
-      *mesh, geometry, ms_indices,
-      [](int material_attribute) { return material_attribute == 2 ? 1.0 : 0.0; },
-      std::nullopt, &ambiguous);
+      *mesh, geometry, ms_indices, [](int material_attribute)
+      { return material_attribute == 2 ? 1.0 : 0.0; }, std::nullopt, &ambiguous);
   REQUIRE(process_normals.size() == ms_indices.size());
   REQUIRE(ambiguous.size() == ms_indices.size());
   int ambiguous_count = 0;
@@ -1621,7 +1624,8 @@ TEST_CASE("Automatic metal edge classification is partition independent",
     reference = Classify(mesh);
   }
   REQUIRE(reference.geometry.segments.size() > 3000);
-  REQUIRE(reference.process_normals.size() == 3122);  // 3,082 planar + 40 airbridge edges (6 port cuts)
+  REQUIRE(reference.process_normals.size() ==
+          3122);  // 3,082 planar + 40 airbridge edges (6 port cuts)
 
   // Round-robin element distribution: every rank owns crack copies from everywhere.
   std::vector<int> round_robin(ne);

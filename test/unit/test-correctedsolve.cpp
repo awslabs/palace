@@ -95,7 +95,8 @@ public:
 // directions, corrected domain correction 300x the fixed-trace one). A positive definite
 // correction is accepted, its solve is byte-identical to the plain PCG solve, and the raw
 // solver settings are restored.
-TEST_CASE("SolveCorrectedField fail-closed on an indefinite correction", "[cgsolver][Serial]")
+TEST_CASE("SolveCorrectedField fail-closed on an indefinite correction",
+          "[cgsolver][Serial]")
 {
   const std::vector<double> stiffness = {1.0, 2.0, 3.0, 5.0, 8.0, 13.0};
   const int n = static_cast<int>(stiffness.size());
@@ -148,7 +149,8 @@ TEST_CASE("SolveCorrectedField fail-closed on an indefinite correction", "[cgsol
   SECTION("Indefinite correction: PCG converges but the field is rejected")
   {
     auto ksp = MakeKsp();
-    SyntheticCorrection C(n, 3.0);  // K + C = diag(-2, -1, 3, 5, 8, 13): two negative modes.
+    SyntheticCorrection C(n,
+                          3.0);  // K + C = diag(-2, -1, 3, 5, 8, 13): two negative modes.
     SumOperator corrected(K, C);
     Vector x(n);
     x = 0.0;

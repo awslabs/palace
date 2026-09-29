@@ -44,10 +44,11 @@ struct InterfaceEdgeSummary
 };
 
 // Scope of the response-geometry cache environment of a test: the constructor sets
-// PALACE_RESPONSE_GEOMETRY_CACHE to the cache path (and PALACE_RESPONSE_GEOMETRY_CACHE_WRITE
-// when write is true), DisableWrite unsets the WRITE variable before a reload, and the
-// destructor unsets both, so a failing assertion inside the scope cannot leak the cache
-// variables into the following test cases of the same process.
+// PALACE_RESPONSE_GEOMETRY_CACHE to the cache path (and
+// PALACE_RESPONSE_GEOMETRY_CACHE_WRITE when write is true), DisableWrite unsets the WRITE
+// variable before a reload, and the destructor unsets both, so a failing assertion inside
+// the scope cannot leak the cache variables into the following test cases of the same
+// process.
 class GeometryCacheEnvGuard
 {
 public:

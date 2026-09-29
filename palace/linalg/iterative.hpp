@@ -57,8 +57,8 @@ protected:
   // Enable timer contribution for Timer::PRECONDITIONER.
   bool use_timer;
 
-  // CG diagnostics (recorded only when enabled): the coefficients alpha_k = (r, z) / (Ap, p)
-  // and beta_k / beta_{k-1} of the last solve define the Lanczos tridiagonal of the
+  // CG diagnostics (recorded only when enabled): the coefficients alpha_k = (r, z) / (Ap,
+  // p) and beta_k / beta_{k-1} of the last solve define the Lanczos tridiagonal of the
   // preconditioned operator (its eigenvalues are Ritz values of B⁻¹A), and a search
   // direction with (Ap, p) <= 0 proves that the operator is not positive definite.
   bool record_cg_history = false;

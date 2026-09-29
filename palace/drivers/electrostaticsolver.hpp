@@ -42,17 +42,18 @@ using KspSolver = BaseKspSolver<Operator>;
 // The self-consistent response-corrected solve: PCG on K + Pᵀ (Q_fab - Q_thin) P with the
 // thin-metal solver's preconditioner, at the correction's own tolerance, from the raw field
 // as the initial guess. The corrected field is ACCEPTED only when PCG converged AND met no
-// search direction of non-positive curvature (Ap, p) <= 0: a direction of negative curvature
-// proves the corrected operator indefinite, and CG then "converges" to a meaningless field
-// (sc-closure diagnostics 2026-09-29: the 120-degree corner model at p5 gave a corrected
-// domain correction 300x the fixed-trace one with five such directions). The record carries
-// the CG diagnostics; ritz_min / ritz_max are the extreme Ritz values of the preconditioned
-// corrected operator from the CG coefficients (a negative ritz_min is the same proof); they
-// are the eigenvalues of the CG Lanczos tridiagonal of the m iterations (typically 3-30) and
-// are NaN (not evaluated) when m exceeds corrected_solve_ritz_max_iterations.
-// The curvature record exists for CgSolver only: with another Krylov solver (GMRES, FGMRES)
-// the record stays empty (iterations 0, count 0, Ritz values NaN), the curvature check is a
-// no-op and acceptance reduces to convergence, as before this check.
+// search direction of non-positive curvature (Ap, p) <= 0: a direction of negative
+// curvature proves the corrected operator indefinite, and CG then "converges" to a
+// meaningless field (sc-closure diagnostics 2026-09-29: the 120-degree corner model at p5
+// gave a corrected domain correction 300x the fixed-trace one with five such directions).
+// The record carries the CG diagnostics; ritz_min / ritz_max are the extreme Ritz values of
+// the preconditioned corrected operator from the CG coefficients (a negative ritz_min is
+// the same proof); they are the eigenvalues of the CG Lanczos tridiagonal of the m
+// iterations (typically 3-30) and are NaN (not evaluated) when m exceeds
+// corrected_solve_ritz_max_iterations. The curvature record exists for CgSolver only: with
+// another Krylov solver (GMRES, FGMRES) the record stays empty (iterations 0, count 0, Ritz
+// values NaN), the curvature check is a no-op and acceptance reduces to convergence, as
+// before this check.
 constexpr int corrected_solve_ritz_max_iterations = 1000;
 struct CorrectedSolveRecord
 {

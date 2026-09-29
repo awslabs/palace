@@ -674,11 +674,11 @@ struct LibraryModel
   // family (MatchCornerFamily), which checks the coupon's files against the rule at its
   // angle and constructs the runtime basis at the device angle from it.
   std::optional<CornerTraceBasisRule> trace_basis;
-  // The segment connectivity of a corner family coupon (TraceBasis ConnectivityAngleDegrees,
-  // corner-qualification block 2026-09-29): the angle whose rule layout orders the band
-  // triangulation next to the metal rings; coupons sharing it form one interpolation
-  // segment. Absent on a legacy coupon (perimeter order at its own angle): exact matches
-  // only.
+  // The segment connectivity of a corner family coupon (TraceBasis
+  // ConnectivityAngleDegrees, corner-qualification block 2026-09-29): the angle whose rule
+  // layout orders the band triangulation next to the metal rings; coupons sharing it form
+  // one interpolation segment. Absent on a legacy coupon (perimeter order at its own
+  // angle): exact matches only.
   std::optional<double> corner_connectivity_angle_degrees;
 };
 
@@ -1520,7 +1520,8 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
     model.separation_tolerance = entry.value("SeparationTolerance", 0.0) / coordinate_scale;
     // Corner models record Angle (degrees; the corner family's records also carry
     // AngleDegrees, accepted as the same value).
-    model.angle = entry.value("Angle", entry.value("AngleDegrees", 0.0)) * std::acos(-1.0) / 180.0;
+    model.angle =
+        entry.value("Angle", entry.value("AngleDegrees", 0.0)) * std::acos(-1.0) / 180.0;
     model.angle_tolerance = entry.value("AngleTolerance", 0.0) * std::acos(-1.0) / 180.0;
     model.corner_radius = entry.value("CornerRadius", 0.0) / coordinate_scale;
     model.corner_radius_tolerance =
@@ -2146,9 +2147,9 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
           points, model.response.contour_groups, model.response.zero_trace_indices,
           model.angle, model.topology == LibraryTopology::CONVEX_CORNER,
           1.0e-6 * library.matching_radius * coordinate_scale);
-      MFEM_VERIFY(reason.empty(), "Fabrication-process corner response model \""
-                                      << model.name << "\" fails the trace basis gate: "
-                                      << reason << "!");
+      MFEM_VERIFY(reason.empty(),
+                  "Fabrication-process corner response model \""
+                      << model.name << "\" fails the trace basis gate: " << reason << "!");
     }
 
     std::set<std::pair<int, InterfaceDielectric>> interface_slots;
@@ -2259,8 +2260,8 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
           family, first.topology == LibraryTopology::CONVEX_CORNER, *first.trace_basis,
           kSignatureAngleToleranceDegrees);
       MFEM_VERIFY(reason.empty(), "Fabrication-process response library \""
-                                      << library.name << "\" corner family ("
-                                      << first.name << " ...): " << reason << "!");
+                                      << library.name << "\" corner family (" << first.name
+                                      << " ...): " << reason << "!");
     }
   }
   if (auto spans = data.find("CornerRadiusInterpolation"); spans != data.end())
@@ -3656,8 +3657,8 @@ MatchCurvatureFamily(const ProcessLibrary &library, const IdentifiedFeature &fea
 // corner feature (CornerRadiusOverR 0) of one convexity whose angle no library coupon
 // matches within the signature tolerance is modelled by the family of sharp corner coupons
 // of that convexity, interfaces and law, interpolated in the TURN t = 180 - AngleDegrees:
-// the nodes are the coupons' turns (e.g. 90 / 75 / 60 / 45 / 30 / 15 deg for 90 / 105 / 120 /
-// 135 / 150 / 165 deg corners) and the anchor is the straight edge through the corner box
+// the nodes are the coupons' turns (e.g. 90 / 75 / 60 / 45 / 30 / 15 deg for 90 / 105 / 120
+// / 135 / 150 / 165 deg corners) and the anchor is the straight edge through the corner box
 // (Angle 180, t = 0: the family's 180-deg anchor, built on the same basis). Rule: an exact
 // node within kSignatureAngleToleranceDegrees -> that coupon; t at or below the smallest
 // node turn -> linear between the anchor and that node (first order in the turn: the corner
@@ -3698,7 +3699,8 @@ struct TraceMeshData
   }
 };
 
-TraceMeshData ReadTraceMesh(const std::string &vertex_path, const std::string &triangle_path);
+TraceMeshData ReadTraceMesh(const std::string &vertex_path,
+                            const std::string &triangle_path);
 
 struct FeatureCornerMatch
 {
@@ -3771,7 +3773,8 @@ MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &featur
     }
     nodes.emplace_back(180.0 - model.angle * 180.0 / std::acos(-1.0), i);
   }
-  const std::string convexity = topology == LibraryTopology::CONVEX_CORNER ? "convex" : "concave";
+  const std::string convexity =
+      topology == LibraryTopology::CONVEX_CORNER ? "convex" : "concave";
   if (nodes.empty())
   {
     reason = "library has no sharp " + convexity + " corner coupons for the interfaces " +
@@ -3797,10 +3800,11 @@ MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &featur
       // Coupons of the lane-2 angle-independent layout (no TraceBasis record) form no
       // family: their free hats cross the metal at any other angle (the corner-family
       // review's root cause) — unmatched with the reason, never interpolated.
-      reason = "sharp " + convexity + " corner coupon \"" + library.models[index].name +
-               "\" has no TraceBasis rule (lane-2 layout): the angle-interpolated corner "
-               "family requires coupons built on the trace basis rule (corner-family review "
-               "2026-09-29)";
+      reason =
+          "sharp " + convexity + " corner coupon \"" + library.models[index].name +
+          "\" has no TraceBasis rule (lane-2 layout): the angle-interpolated corner "
+          "family requires coupons built on the trace basis rule (corner-family review "
+          "2026-09-29)";
       return std::nullopt;
     }
   }
@@ -3819,15 +3823,17 @@ MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &featur
     MFEM_VERIFY(points.size() == first_points.size() &&
                     model.response.contour_groups == first.response.contour_groups &&
                     model.response.zero_trace_indices == first.response.zero_trace_indices,
-                "Corner family coupons \"" << model.name << "\" and \"" << first.name
-                                           << "\" have different basis sizes, ContourGroups "
-                                              "or ZeroTraceIndices!");
+                "Corner family coupons \""
+                    << model.name << "\" and \"" << first.name
+                    << "\" have different basis sizes, ContourGroups "
+                       "or ZeroTraceIndices!");
     // The coupon's files against the rule at its own angle (its fixed rings and its metal
     // rings; the connectivity of its segment).
     std::optional<double> connectivity_radians;
     if (model.corner_connectivity_angle_degrees)
     {
-      connectivity_radians = *model.corner_connectivity_angle_degrees * std::acos(-1.0) / 180.0;
+      connectivity_radians =
+          *model.corner_connectivity_angle_degrees * std::acos(-1.0) / 180.0;
     }
     const auto rule_basis = BuildCornerTraceBasis(
         points, model.response.contour_groups, model.response.zero_trace_indices,
@@ -3898,14 +3904,15 @@ MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &featur
         std::sort(triangle.begin(), triangle.end());
         rule_triangles.insert(triangle);
       }
-      MFEM_VERIFY(coupon_triangles == rule_triangles,
-                  "Corner family coupon \""
-                      << model.name
-                      << "\" trace triangulation is not the rule's for its segment "
-                         "connectivity angle "
-                      << *model.corner_connectivity_angle_degrees
-                      << " deg (the band triangulation differs: the coupon belongs to another "
-                         "segment)!");
+      MFEM_VERIFY(
+          coupon_triangles == rule_triangles,
+          "Corner family coupon \""
+              << model.name
+              << "\" trace triangulation is not the rule's for its segment "
+                 "connectivity angle "
+              << *model.corner_connectivity_angle_degrees
+              << " deg (the band triangulation differs: the coupon belongs to another "
+                 "segment)!");
     }
     CornerFamilyNode node;
     node.angle_degrees = 180.0 - node_turn;
@@ -6337,10 +6344,10 @@ void VerifySpatialEdgesInSignatureFrame(const LibraryModel &model, double radius
 // signature tolerance (kSignatureParameterToleranceOverRadius /
 // kSignatureAngleToleranceDegrees, both orientations of a translational signature); among
 // several the nearest (the smallest normalised deviation), then the smallest rank (corner
-// family coupons at one angle, corner-qualification block 2026-09-29: the legacy coupon with
-// the tie triangulation at its own angle 0, the coupon of the lower-angle segment 1, of the
-// upper-angle segment 2), ties by model name — a deterministic choice independent of the
-// feature or model order.
+// family coupons at one angle, corner-qualification block 2026-09-29: the legacy coupon
+// with the tie triangulation at its own angle 0, the coupon of the lower-angle segment 1,
+// of the upper-angle segment 2), ties by model name — a deterministic choice independent of
+// the feature or model order.
 class LibrarySignatureIndex
 {
 public:
@@ -6431,9 +6438,10 @@ LibrarySignatureKeys(const ProcessLibrary &library,
     int rank = 0;
     if (model.corner_connectivity_angle_degrees)
     {
-      rank = *model.corner_connectivity_angle_degrees < model.angle * 180.0 / std::acos(-1.0)
-                 ? 1
-                 : 2;
+      rank =
+          *model.corner_connectivity_angle_degrees < model.angle * 180.0 / std::acos(-1.0)
+              ? 1
+              : 2;
     }
     std::optional<std::pair<nlohmann::json, std::string>> key;  // signature, type
     if (model.identification_signature)
@@ -6808,9 +6816,10 @@ IdentificationResult RunGeometryIdentification(
             {"InterpolationRule", match->rule},
             {"MaxTurnDegrees", match->max_turn_degrees},
             {"FirstOrderTurnDegrees", match->first_order_turn_degrees},
-            {"ConnectivityAngleDegrees", match->connectivity_angle_degrees
-                                            ? nlohmann::json(*match->connectivity_angle_degrees)
-                                            : nlohmann::json()},
+            {"ConnectivityAngleDegrees",
+             match->connectivity_angle_degrees
+                 ? nlohmann::json(*match->connectivity_angle_degrees)
+                 : nlohmann::json()},
             {"Nodes", nodes}};
         if (corner_matches)
         {
@@ -7305,8 +7314,7 @@ FeaturePatchSummary BuildFeaturePatches(
             ResponseModelData::ConstructedTraceVertex data;
             data.point = vertex.point;
             data.basis = vertex.basis >= 0 ? vertex.basis + 1 : 0;
-            data.conductor =
-                vertex.basis >= 0 && constructed.zero[vertex.basis] ? 1 : 0;
+            data.conductor = vertex.basis >= 0 && constructed.zero[vertex.basis] ? 1 : 0;
             data.parent_a = vertex.basis < 0 ? vertex.parent_a + 1 : 0;
             data.parent_b = vertex.basis < 0 ? vertex.parent_b + 1 : 0;
             data.weight_a = vertex.basis < 0 ? vertex.weight_a : 0.0;
@@ -7323,12 +7331,17 @@ FeaturePatchSummary BuildFeaturePatches(
   };
   auto CurvatureBlend = [](const FeatureCurvatureMatch &match)
   {
-    return FamilyBlend{match.name, match.topology, match.selection.anchor,
-                       match.selection.nodes, true, "Curvature interpolation"};
+    return FamilyBlend{
+        match.name, match.topology,           match.selection.anchor, match.selection.nodes,
+        true,       "Curvature interpolation"};
   };
   auto CornerBlend = [](const FeatureCornerMatch &match)
   {
-    return FamilyBlend{match.name, match.topology, match.base, match.nodes, false,
+    return FamilyBlend{match.name,
+                       match.topology,
+                       match.base,
+                       match.nodes,
+                       false,
                        "Corner interpolation",
                        match.constructed ? &*match.constructed : nullptr};
   };
@@ -7581,7 +7594,8 @@ FeaturePatchSummary BuildFeaturePatches(
     {
       targets_by_slot.emplace(static_cast<int>(targets_by_slot.size()), targets);
     }
-    const int runtime = RuntimeModel(model_index, targets_by_slot, family ? &*family : nullptr);
+    const int runtime =
+        RuntimeModel(model_index, targets_by_slot, family ? &*family : nullptr);
     const Point3D n = feature.axes[2];
     // First-order curvature term of a straight-like feature with a bend (a straight
     // model on portions with a nonzero turn): the family nodes at the first-order kappa.
@@ -8972,10 +8986,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         }
       }
     }
-    const auto summary = BuildFeaturePatches(
-        library, identification, global_segments, quadrature,
-        requirements ? *requirements : law_describer, diagnostics, result, curved_matches,
-        corner_matches);
+    const auto summary =
+        BuildFeaturePatches(library, identification, global_segments, quadrature,
+                            requirements ? *requirements : law_describer, diagnostics,
+                            result, curved_matches, corner_matches);
     GeometryStageLine("patches built: " + std::to_string(result.patches.size()));
     std::string unmatched;
     for (const auto &[type, entry] : summary.unmatched_by_type)
@@ -9053,12 +9067,13 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     return result;
   }
   // Legacy per-group classification (comparison only): it reads fillets as runs of REGULAR
-  // sub-corner joints and pairs / neighbourhoods on physical chains broken at corners of the
-  // former 30 deg class, so it re-reads the vertex classes and chains of the same segments at
-  // that class (kLegacyCornerTurnToleranceDegrees; the segments, vertices, faces and their
-  // numbering are those of the extraction above: only the vertex types and chain ids differ;
-  // the face pointers of the plan-view mask index are rebuilt). The identification and its
-  // manifest above use the joint noise threshold (USER decision 117(4)).
+  // sub-corner joints and pairs / neighbourhoods on physical chains broken at corners of
+  // the former 30 deg class, so it re-reads the vertex classes and chains of the same
+  // segments at that class (kLegacyCornerTurnToleranceDegrees; the segments, vertices,
+  // faces and their numbering are those of the extraction above: only the vertex types and
+  // chain ids differ; the face pointers of the plan-view mask index are rebuilt). The
+  // identification and its manifest above use the joint noise threshold (USER decision
+  // 117(4)).
   {
     MetalSurfaceExtraction legacy_surface = surface;
     legacy_surface.joint_noise_sagitta = 0.0;
@@ -12431,7 +12446,6 @@ ResponseCorrectionData BuildAutomaticResponseData(const IoData &iodata,
              "electrostatic mesh!");
 }
 
-
 TraceMeshData ReadTraceMesh(const std::string &vertex_path,
                             const std::string &triangle_path)
 {
@@ -12584,8 +12598,8 @@ bool HasExplicitTraceMesh(
          !model_config.constructed_trace_vertices.empty();
 }
 
-// A model's explicit trace mesh: the constructed mesh of an angle-interpolated corner model,
-// else the TraceMesh files.
+// A model's explicit trace mesh: the constructed mesh of an angle-interpolated corner
+// model, else the TraceMesh files.
 TraceMeshData ModelTraceMesh(
     const config::ElectrostaticSolverData::ResponseCorrectionModelData &model_config)
 {
@@ -12595,8 +12609,8 @@ TraceMeshData ModelTraceMesh(
     mesh.vertices.reserve(model_config.constructed_trace_vertices.size());
     for (const auto &vertex : model_config.constructed_trace_vertices)
     {
-      mesh.vertices.push_back({vertex.point, vertex.basis, vertex.conductor, vertex.parent_a,
-                               vertex.parent_b, vertex.weight_a});
+      mesh.vertices.push_back({vertex.point, vertex.basis, vertex.conductor,
+                               vertex.parent_a, vertex.parent_b, vertex.weight_a});
     }
     mesh.triangles = model_config.constructed_trace_triangles;
     return mesh;
@@ -12897,8 +12911,7 @@ ReadSurfaceResponseMatrices(const std::string &path, int expected_size,
                        "localized column (finalize_corner_response.py) or publish the "
                        "coupon's surface-response-matrix.csv!");
   }
-  const auto &q =
-      FindColumn(table, within_radius ? "Q_ij (J)" : "Q_total_ij (J)", path);
+  const auto &q = FindColumn(table, within_radius ? "Q_ij (J)" : "Q_total_ij (J)", path);
   const std::size_t rows = q.n_rows();
   MFEM_VERIFY(interface_col.n_rows() == rows && edge_col.n_rows() == rows &&
                   basis_i.n_rows() == rows && basis_j.n_rows() == rows &&
@@ -12920,7 +12933,7 @@ ReadSurfaceResponseMatrices(const std::string &path, int expected_size,
       const double distance = distance_col->data[row];
       MFEM_VERIFY(std::isfinite(distance) && distance > 0.0,
                   "Invalid matching radius in surface response matrix file \"" << path
-                                                                              << "\"!");
+                                                                               << "\"!");
       if (std::abs(distance - *within_radius) > 1.0e-6 * *within_radius)
       {
         continue;
@@ -13094,7 +13107,8 @@ SurfaceResponseMatrices BuildSurfaceResponseMatrices(
                 "matching radius to select its within-R surface response!");
     within_radius = units.Dimensionalize<Units::ValueType::LENGTH>(matching_radius);
   }
-  auto fabricated = BlendedSurfaceResponseMatrices(config, true, expected_size, within_radius);
+  auto fabricated =
+      BlendedSurfaceResponseMatrices(config, true, expected_size, within_radius);
   auto thin = BlendedSurfaceResponseMatrices(config, false, expected_size, within_radius);
   const double voltage_scale = units.GetScaleFactor<Units::ValueType::VOLTAGE>();
   const double energy_scale = units.GetScaleFactor<Units::ValueType::ENERGY>();
@@ -13369,8 +13383,8 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
     model.basis_points = entry.at("BasisPoints");
     model.trace_vertices = entry.value("TraceVertices", std::string{});
     model.trace_triangles = entry.value("TraceTriangles", std::string{});
-    model.constructed_basis_points = entry.value(
-        "ConstructedBasisPoints", std::vector<std::array<double, 3>>{});
+    model.constructed_basis_points =
+        entry.value("ConstructedBasisPoints", std::vector<std::array<double, 3>>{});
     for (const auto &value :
          entry.value("ConstructedTraceVertices", nlohmann::json::array()))
     {
@@ -13792,10 +13806,11 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           model.mortar_vertices.reserve(trace_mesh.vertices.size());
           for (const auto &vertex : trace_mesh.vertices)
           {
-            MFEM_VERIFY(vertex.basis <= model.contour_size &&
-                            vertex.conductor <= model.conductor_state_count + 1 &&
-                            (vertex.basis > 0 || vertex.conductor > 0 || vertex.parent_a > 0),
-                        "A response trace vertex has invalid basis/conductor ownership!");
+            MFEM_VERIFY(
+                vertex.basis <= model.contour_size &&
+                    vertex.conductor <= model.conductor_state_count + 1 &&
+                    (vertex.basis > 0 || vertex.conductor > 0 || vertex.parent_a > 0),
+                "A response trace vertex has invalid basis/conductor ownership!");
             if (vertex.parent_a > 0)
             {
               // A slave vertex (corner-family trace basis rule): the trace is the linear
@@ -13885,17 +13900,20 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                   for (int local_j = 0; local_j < 3; local_j++)
                   {
                     const auto &vertex_j =
-                        model.mortar_vertices[model.mortar_triangles.back().vertices[local_j]];
+                        model.mortar_vertices[model.mortar_triangles.back()
+                                                  .vertices[local_j]];
                     const double entry =
                         weight_i * area * (local_i == local_j ? diagonal : off_diagonal);
                     if (vertex_j.basis >= 0)
                     {
-                      vertex_j.ForEachBasis([&](int basis_j, double weight_j)
-                                            { mass(basis_i, basis_j) += weight_j * entry; });
+                      vertex_j.ForEachBasis(
+                          [&](int basis_j, double weight_j)
+                          { mass(basis_i, basis_j) += weight_j * entry; });
                     }
                     else if (vertex_j.conductor > 1)
                     {
-                      model.mortar_conductor_loads[vertex_j.conductor - 2][basis_i] += entry;
+                      model.mortar_conductor_loads[vertex_j.conductor - 2][basis_i] +=
+                          entry;
                     }
                   }
                 });
@@ -14025,9 +14043,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     model.domain_defect = std::move(domain_response.defect);
     model.fixed_flux_transform = std::move(domain_response.fixed_flux_transform);
     model.fixed_flux_domain_defect = std::move(domain_response.fixed_flux_defect);
-    auto surface_response =
-        BuildSurfaceResponseMatrices(model_config, model.basis_size, iodata.units,
-                                     target_matching_radius);
+    auto surface_response = BuildSurfaceResponseMatrices(
+        model_config, model.basis_size, iodata.units, target_matching_radius);
     model.fabricated_surfaces = std::move(surface_response.fabricated);
     model.surface_defects = std::move(surface_response.defects);
     model_indices.emplace(model.idx, static_cast<int>(models.size()));
@@ -14758,9 +14775,8 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     model.domain_defect = std::move(domain_response.defect);
     model.fixed_flux_transform = std::move(domain_response.fixed_flux_transform);
     model.fixed_flux_domain_defect = std::move(domain_response.fixed_flux_defect);
-    auto surface_response =
-        BuildSurfaceResponseMatrices(model_config, model.basis_size, iodata.units,
-                                     target_matching_radius);
+    auto surface_response = BuildSurfaceResponseMatrices(
+        model_config, model.basis_size, iodata.units, target_matching_radius);
     model.fabricated_surfaces = std::move(surface_response.fabricated);
     model.surface_defects = std::move(surface_response.defects);
     model_indices.emplace(model.idx, static_cast<int>(models.size()));

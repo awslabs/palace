@@ -54,11 +54,11 @@ constexpr double kParallelCosineTolerance = 1.0e-8;
 // Arc rule (decision 82(3), design (b) 4 / 7; the CONCYCLICITY form of USER decisions 121 /
 // 122, 2026-09-28, amending the sagitta form of 117(4)): a run of at least three
 // consecutive joints of the perimeter path (through corner vertices) turning the same way
-// by at most 180 deg in total is ONE arc iff its joint vertices lie on one circle within the
-// signature parameter tolerance (kArcFitToleranceOverRadius x R = 1e-3 R: the circle
+// by at most 180 deg in total is ONE arc iff its joint vertices lie on one circle within
+// the signature parameter tolerance (kArcFitToleranceOverRadius x R = 1e-3 R: the circle
 // tangent to both arms when the joints lie on it, else — for a bend of radius >= R over at
-// least FOUR joints — the least-squares circle of the joints, the arms meeting it within the
-// joint noise rule of its tangents or as chords of it) AND every joint turns less than
+// least FOUR joints — the least-squares circle of the joints, the arms meeting it within
+// the joint noise rule of its tangents or as chords of it) AND every joint turns less than
 // kArcMaxJointTurnDegrees (50: regular polygons such as squares and hexagons stay corners).
 // The chord sagitta rho (1 - cos(central angle / 2)) no longer decides membership: it is
 // recorded per arc (max_sagitta -> Arcs[].MaxChordSagittaOverR) and arcs whose largest
@@ -115,32 +115,32 @@ constexpr double kClusterArcChordMaxLengthOverRadius = 0.25;
 // kPairSeparationTolerance x their minimum (a polyline of sub-noise turns at constant
 // width varies by less than 1 / cos(0.5 deg) - 1; a bend arc's chords of sagitta <= 0.05 R
 // at constant width vary by up to 0.05 R / separation, 2.5 % at 2R; the pair response
-// sensitivity d dR/dd is O(1)). The constant portions are the pair; the portions that are not (divergence
-// at tees and port ends, fast tapers, acute corner arms) keep the event rule, so a slow
-// taper is a pair and a tee is a cluster. Whether a constant portion interacts is decided
-// on the separation of the underlying curves, so that a discretisation never changes the
-// classification: the chords of a polyline inscribed in a curve lie inside it (two
-// concentric inscribed polylines are w cos(turn / 2) apart mid-chord and exactly w apart at
-// their vertices), while the exact offset polyline of a bent path keeps corresponding
-// chords at the design separation and the outer side's samples near the joints project onto
-// the inner vertices at up to w / cos(turn / 2). In both constructions the sampled
-// closest-point distance from one chain to the other reaches the curve separation w as its
-// maximum on the side whose maximum is smaller: the sample's chord reading C = min over the
-// two chains of the maximum sampled distance within a window of half-width max(R, local
-// chord) where the chain bends and R on straight runs, about the sample on its own chain
-// and about its foot on the other chain (a straight taper is read locally). C is exact for
-// an offset polyline; two polylines inscribed in the curves at aligned angles are C = w
-// cos(turn / 2) apart everywhere (chords and vertex-to-polyline alike) for a curve
-// separation w, and the polyline pair alone cannot tell the two constructions apart (they
-// differ at order turn^2): the inscribed reading is C / cos(turn / 2) with turn = the
-// larger local joint turn of the two chains. A portion interacts iff BOTH readings are
-// below 2R on the quantized grid — the same strict-less decision as a straight parallel
-// pair at that separation, taken on the non-interacting side of the recorded ambiguity w (1
-// / cos(turn / 2) - 1) (below 1e-4 w for joints under 1.6 deg; a CPW gap of exactly 2R
-// along a bend is isolated edges like a straight one; DS-SCT-001's 4 um gaps at R = 2 um
-// read 3.9998 mid-chord and became 3 mm clusters). The pair feature's separation is the
-// mean chord reading over its samples; the cross-chord interactions of a locally constant
-// portion are never event cores, whether or not it interacts.
+// sensitivity d dR/dd is O(1)). The constant portions are the pair; the portions that are
+// not (divergence at tees and port ends, fast tapers, acute corner arms) keep the event
+// rule, so a slow taper is a pair and a tee is a cluster. Whether a constant portion
+// interacts is decided on the separation of the underlying curves, so that a discretisation
+// never changes the classification: the chords of a polyline inscribed in a curve lie
+// inside it (two concentric inscribed polylines are w cos(turn / 2) apart mid-chord and
+// exactly w apart at their vertices), while the exact offset polyline of a bent path keeps
+// corresponding chords at the design separation and the outer side's samples near the
+// joints project onto the inner vertices at up to w / cos(turn / 2). In both constructions
+// the sampled closest-point distance from one chain to the other reaches the curve
+// separation w as its maximum on the side whose maximum is smaller: the sample's chord
+// reading C = min over the two chains of the maximum sampled distance within a window of
+// half-width max(R, local chord) where the chain bends and R on straight runs, about the
+// sample on its own chain and about its foot on the other chain (a straight taper is read
+// locally). C is exact for an offset polyline; two polylines inscribed in the curves at
+// aligned angles are C = w cos(turn / 2) apart everywhere (chords and vertex-to-polyline
+// alike) for a curve separation w, and the polyline pair alone cannot tell the two
+// constructions apart (they differ at order turn^2): the inscribed reading is C / cos(turn
+// / 2) with turn = the larger local joint turn of the two chains. A portion interacts iff
+// BOTH readings are below 2R on the quantized grid — the same strict-less decision as a
+// straight parallel pair at that separation, taken on the non-interacting side of the
+// recorded ambiguity w (1 / cos(turn / 2) - 1) (below 1e-4 w for joints under 1.6 deg; a
+// CPW gap of exactly 2R along a bend is isolated edges like a straight one; DS-SCT-001's 4
+// um gaps at R = 2 um read 3.9998 mid-chord and became 3 mm clusters). The pair feature's
+// separation is the mean chord reading over its samples; the cross-chord interactions of a
+// locally constant portion are never event cores, whether or not it interacts.
 // (kStraightBendRadiusOverRadius = 10 is declared in the header: the curvature families'
 // first-order rule is keyed to it.)
 constexpr double kCurvatureWindowOverRadius = 1.0;
@@ -172,16 +172,16 @@ constexpr double kStackImageToleranceOverRadius = kSignatureParameterToleranceOv
 // slivers at the moved cut images, DS-CTX-003 80 nm / 16 portions in passes 2-5); the last
 // pass is applied without a further recomposition, as for a sub-tolerance pass.
 constexpr std::size_t kClusterExtensionMaxPasses = 12;
-// Knife-edge census (decision 82(4), 2026-09-25): every rule of the identification is a strict
-// comparison with a threshold (the interaction distance 2R, the cluster ball / vertex window
-// R, the straight-bend radius 10R, the corner (joint noise) turn, the arc sagitta 0.05 R); a
-// design whose dimensions sit on a threshold is decided by roundoff. The manifest reports the
-// perimeter length whose distance to the nearest other perimeter point (3D; the same chain
-// beyond the self-pair neighbourhood) lies within the band of R and of 2R, the chain length
-// whose windowed bend radius lies within the band of 10R, the vertex count whose turn lies
-// within the band of the corner threshold and the vertex count whose implied chord sagitta
-// lies within the band of 0.05 R, each split into the below / above sides, sampled every
-// kKnifeEdgeSampleSpacingOverR.
+// Knife-edge census (decision 82(4), 2026-09-25): every rule of the identification is a
+// strict comparison with a threshold (the interaction distance 2R, the cluster ball /
+// vertex window R, the straight-bend radius 10R, the corner (joint noise) turn, the arc
+// sagitta 0.05 R); a design whose dimensions sit on a threshold is decided by roundoff. The
+// manifest reports the perimeter length whose distance to the nearest other perimeter point
+// (3D; the same chain beyond the self-pair neighbourhood) lies within the band of R and of
+// 2R, the chain length whose windowed bend radius lies within the band of 10R, the vertex
+// count whose turn lies within the band of the corner threshold and the vertex count whose
+// implied chord sagitta lies within the band of 0.05 R, each split into the below / above
+// sides, sampled every kKnifeEdgeSampleSpacingOverR.
 constexpr double kKnifeEdgeBandRelative = 0.01;
 constexpr double kKnifeEdgeSampleSpacingOverRadius = 0.5;
 
@@ -1469,8 +1469,8 @@ SignatureParameters SplitSignatureParameters(const nlohmann::json &signature)
 
 nlohmann::json MirrorTranslationalSignature(const nlohmann::json &signature)
 {
-  if (!signature.is_object() || !signature.contains("Edges") || !signature["Edges"].is_array() ||
-      signature["Edges"].empty())
+  if (!signature.is_object() || !signature.contains("Edges") ||
+      !signature["Edges"].is_array() || signature["Edges"].empty())
   {
     return signature;
   }
@@ -1518,7 +1518,8 @@ void SubstituteParameters(nlohmann::json &node, const std::vector<double> &lengt
         {
           for (auto &v : it.value())
           {
-            MFEM_VERIFY(next < list.size(), "Signature parameter substitution out of range!");
+            MFEM_VERIFY(next < list.size(),
+                        "Signature parameter substitution out of range!");
             v = RoundTo(list[next++], quantum);
           }
         }
@@ -1563,7 +1564,8 @@ nlohmann::json SubstituteSignatureParameters(const nlohmann::json &signature,
 
 nlohmann::json RepresentativeSignature(const std::vector<nlohmann::json> &signatures)
 {
-  MFEM_VERIFY(!signatures.empty(), "A representative signature needs at least one instance!");
+  MFEM_VERIFY(!signatures.empty(),
+              "A representative signature needs at least one instance!");
   // The lead: the lexicographically smallest serialisation (a set function).
   const nlohmann::json *lead = &signatures.front();
   std::string lead_key = lead->dump();
@@ -1654,13 +1656,15 @@ std::optional<double> SignatureDeviation(const nlohmann::json &a, const nlohmann
     double deviation = 0.0;
     for (std::size_t i = 0; i < pa.lengths_over_R.size(); i++)
     {
-      deviation = std::max(deviation, std::abs(pa.lengths_over_R[i] - pb.lengths_over_R[i]) /
-                                          kSignatureParameterToleranceOverRadius);
+      deviation =
+          std::max(deviation, std::abs(pa.lengths_over_R[i] - pb.lengths_over_R[i]) /
+                                  kSignatureParameterToleranceOverRadius);
     }
     for (std::size_t i = 0; i < pa.angles_degrees.size(); i++)
     {
-      deviation = std::max(deviation, std::abs(pa.angles_degrees[i] - pb.angles_degrees[i]) /
-                                          kSignatureAngleToleranceDegrees);
+      deviation =
+          std::max(deviation, std::abs(pa.angles_degrees[i] - pb.angles_degrees[i]) /
+                                  kSignatureAngleToleranceDegrees);
     }
     if (!best || deviation < *best)
     {
@@ -2582,7 +2586,7 @@ private:
     int chain_a = -1, chain_b = -1;
     LinkSeparation separation;  // per curvature class
     Point3D lead_point{}, lateral_ab{};
-    std::size_t run_a = 0, run_b = 0;  // the runs at the lead pair of points
+    std::size_t run_a = 0, run_b = 0;              // the runs at the lead pair of points
     std::array<std::vector<LinkPiece>, 2> pieces;  // side 0 on chain a, side 1 on chain b
     bool Self() const { return chain_a == chain_b; }
   };
@@ -3274,481 +3278,493 @@ void Identifier::DetectArcs()
     auto ScanPath = [&](const std::vector<std::size_t> &path_segments,
                         const std::vector<std::size_t> &path_vertices) -> std::vector<Arc>
     {
-    std::vector<Arc> found;
-    // Pieces (maximal collinear runs of segments) and the joints between them.
-    struct Joint
-    {
-      std::size_t vertex;
-      std::size_t index;  // path index of the vertex (segments index-1 | index)
-      Point3D in, out;    // unit directions before / after
-      double turn;        // |turn| in radians
-      int sign;           // about the local process normal
-    };
-    std::vector<Joint> joints;
-    const std::size_t n = path_segments.size();
-    for (std::size_t k = closed ? 0 : 1; k < n; k++)
-    {
-      const std::size_t before = path_segments[(k + n - 1) % n], after = path_segments[k];
-      const std::size_t vertex = path_vertices[k];
-      const Point3D in = Direction(before, Other(before, vertex));
-      const Point3D out = Direction(after, vertex);
-      const double dot = std::clamp(Dot(in, out), -1.0, 1.0);
-      if (!DirectionLess(dot, 1.0 - kDirectionQuantum))
+      std::vector<Arc> found;
+      // Pieces (maximal collinear runs of segments) and the joints between them.
+      struct Joint
       {
-        continue;  // collinear: no joint
-      }
-      const Point3D normal = Normalize(
-          Add(input.segments[before].process_normal, input.segments[after].process_normal));
-      const double sign = Dot(Cross(in, out), normal);
-      joints.push_back({vertex, k, in, out, std::acos(dot), sign >= 0.0 ? 1 : -1});
-    }
-    if (joints.size() < 2)
-    {
-      return found;
-    }
-    // Path position of every vertex.
-    std::vector<double> position(path_vertices.size(), 0.0);
-    for (std::size_t k = 0; k < n; k++)
-    {
-      const auto &segment = input.segments[path_segments[k]];
-      position[k + 1] = position[k] + Distance(segment.p0, segment.p1);
-    }
-    const double path_length = position[n];
-    if (closed)
-    {
-      // Start the cyclic scan at the joint following the longest piece (a straight arm), so
-      // that no arc is split by the arbitrary loop start.
-      std::size_t best = 0;
-      double longest = -1.0;
-      for (std::size_t j = 0; j < joints.size(); j++)
+        std::size_t vertex;
+        std::size_t index;  // path index of the vertex (segments index-1 | index)
+        Point3D in, out;    // unit directions before / after
+        double turn;        // |turn| in radians
+        int sign;           // about the local process normal
+      };
+      std::vector<Joint> joints;
+      const std::size_t n = path_segments.size();
+      for (std::size_t k = closed ? 0 : 1; k < n; k++)
       {
-        const std::size_t prev = (j + joints.size() - 1) % joints.size();
-        double gap = position[joints[j].index] - position[joints[prev].index];
-        if (gap <= 0.0)
+        const std::size_t before = path_segments[(k + n - 1) % n], after = path_segments[k];
+        const std::size_t vertex = path_vertices[k];
+        const Point3D in = Direction(before, Other(before, vertex));
+        const Point3D out = Direction(after, vertex);
+        const double dot = std::clamp(Dot(in, out), -1.0, 1.0);
+        if (!DirectionLess(dot, 1.0 - kDirectionQuantum))
         {
-          gap += path_length;
+          continue;  // collinear: no joint
         }
-        if (gap > longest)
+        const Point3D normal = Normalize(Add(input.segments[before].process_normal,
+                                             input.segments[after].process_normal));
+        const double sign = Dot(Cross(in, out), normal);
+        joints.push_back({vertex, k, in, out, std::acos(dot), sign >= 0.0 ? 1 : -1});
+      }
+      if (joints.size() < 2)
+      {
+        return found;
+      }
+      // Path position of every vertex.
+      std::vector<double> position(path_vertices.size(), 0.0);
+      for (std::size_t k = 0; k < n; k++)
+      {
+        const auto &segment = input.segments[path_segments[k]];
+        position[k + 1] = position[k] + Distance(segment.p0, segment.p1);
+      }
+      const double path_length = position[n];
+      if (closed)
+      {
+        // Start the cyclic scan at the joint following the longest piece (a straight arm),
+        // so that no arc is split by the arbitrary loop start.
+        std::size_t best = 0;
+        double longest = -1.0;
+        for (std::size_t j = 0; j < joints.size(); j++)
         {
-          longest = gap;
-          best = j;
-        }
-      }
-      std::rotate(joints.begin(), joints.begin() + static_cast<std::ptrdiff_t>(best),
-                  joints.end());
-    }
-    const std::size_t m = joints.size();
-    // Algebraic least-squares circle (Kasa fit) through the joint vertices in the process
-    // plane: exact for vertices on one circle, a set function of the joints.
-    auto LeastSquaresCircle = [&](const std::vector<std::size_t> &joint_vertices,
-                                  const Point3D &normal, const Point3D &tangent,
-                                  Point3D &center, double &radius)
-    {
-      const Point3D o = input.vertices[joint_vertices.front()].coordinate;
-      const Point3D u = Normalize(Sub(tangent, Scale(Dot(tangent, normal), normal)));
-      const Point3D v = Normalize(Cross(normal, u));
-      double sxx = 0.0, sxy = 0.0, syy = 0.0, sx = 0.0, sy = 0.0, s1 = 0.0;
-      double sxz = 0.0, syz = 0.0, sz = 0.0;
-      for (const std::size_t jv : joint_vertices)
-      {
-        const Point3D d = Sub(input.vertices[jv].coordinate, o);
-        const double x = Dot(d, u), y = Dot(d, v), z = x * x + y * y;
-        sxx += x * x, sxy += x * y, syy += y * y, sx += x, sy += y, s1 += 1.0;
-        sxz += x * z, syz += y * z, sz += z;
-      }
-      // Normal equations for (D, E, F) of x^2 + y^2 + D x + E y + F = 0 (Cramer's rule).
-      const double a11 = sxx, a12 = sxy, a13 = sx, a22 = syy, a23 = sy, a33 = s1;
-      const double b1 = -sxz, b2 = -syz, b3 = -sz;
-      const double det = a11 * (a22 * a33 - a23 * a23) - a12 * (a12 * a33 - a23 * a13) +
-                         a13 * (a12 * a23 - a22 * a13);
-      if (std::abs(det) <= 1.0e-30)
-      {
-        return false;
-      }
-      const double D = (b1 * (a22 * a33 - a23 * a23) - a12 * (b2 * a33 - a23 * b3) +
-                        a13 * (b2 * a23 - a22 * b3)) /
-                       det;
-      const double E = (a11 * (b2 * a33 - a23 * b3) - b1 * (a12 * a33 - a23 * a13) +
-                        a13 * (a12 * b3 - b2 * a13)) /
-                       det;
-      const double F = (a11 * (a22 * b3 - b2 * a23) - a12 * (a12 * b3 - b2 * a13) +
-                        b1 * (a12 * a23 - a22 * a13)) /
-                       det;
-      const double cx = -0.5 * D, cy = -0.5 * E;
-      const double radius2 = cx * cx + cy * cy - F;
-      if (!(radius2 > 0.0))
-      {
-        return false;
-      }
-      radius = std::sqrt(radius2);
-      center = Add(o, Add(Scale(cx, u), Scale(cy, v)));
-      return true;
-    };
-    // Every joint of the range within the fit tolerance of the circle (strict on the grid).
-    auto JointsOnCircle = [&](const std::vector<std::size_t> &joint_vertices,
-                              const Point3D &center, double radius)
-    {
-      return std::all_of(joint_vertices.begin(), joint_vertices.end(),
-                         [&](std::size_t jv)
-                         {
-                           return quantizer.Less(
-                               std::abs(Distance(input.vertices[jv].coordinate, center) -
-                                        radius),
-                               fit_tolerance);
-                         });
-    };
-    // The largest sagitta of the chords between consecutive joints of the range on the
-    // fitted circle (rho - sqrt(rho^2 - (c / 2)^2); a chord longer than the diameter has
-    // none: the range is no arc of that circle) — recorded per arc as the mesh-coarseness
-    // diagnostic (Arcs[].MaxChordSagittaOverR), no longer a membership test.
-    auto MaxChordSagitta = [&](const std::vector<std::size_t> &joint_vertices, double radius,
-                               bool cyclic)
-    {
-      double worst = 0.0;
-      const std::size_t count = joint_vertices.size();
-      for (std::size_t q = 0; q + (cyclic ? 0 : 1) < count; q++)
-      {
-        const double chord =
-            Distance(input.vertices[joint_vertices[q]].coordinate,
-                     input.vertices[joint_vertices[(q + 1) % count]].coordinate);
-        if (chord >= 2.0 * radius)
-        {
-          return std::numeric_limits<double>::infinity();
-        }
-        worst = std::max(worst, radius - std::sqrt(radius * radius - 0.25 * chord * chord));
-      }
-      return worst;
-    };
-    // A joint turns less than the arc rule's joint-turn cap (strict on the direction grid).
-    auto JointTurnBelowCap = [&](const Joint &joint)
-    { return DirectionLess(std::cos(joint_turn_cap), std::cos(joint.turn)); };
-    // The straight pieces on either side of joint j in the scan direction (between it and
-    // the neighbouring joints, or the path ends of an open path).
-    auto PieceBefore = [&](std::size_t j)
-    {
-      const std::size_t idx = joints[j].index;
-      if (j == 0)
-      {
-        return closed ? std::fmod(position[idx] - position[joints[m - 1].index] + path_length,
-                                  path_length)
-                      : position[idx];
-      }
-      return position[idx] - position[joints[j - 1].index];
-    };
-    auto PieceAfter = [&](std::size_t j)
-    {
-      const std::size_t idx = joints[j].index;
-      if (j + 1 == m)
-      {
-        return closed ? std::fmod(position[joints[0].index] - position[idx] + path_length,
-                                  path_length)
-                      : path_length - position[idx];
-      }
-      return position[joints[j + 1].index] - position[idx];
-    };
-    // Fit the arc over joints [i, i + count) (cyclic indices on a loop); returns the circle.
-    struct Fit
-    {
-      bool ok = false;
-      bool tangent = false;  // the arms are tangent to the circle (a rounded corner may be)
-      Point3D center{}, origin{};
-      double radius = 0.0;
-      double turn = 0.0;
-      double sagitta = 0.0;  // the largest chord sagitta
-    };
-    auto TryFit = [&](std::size_t i, std::size_t count) -> Fit
-    {
-      Fit fit;
-      const Joint &first = joints[i];
-      const Joint &last = joints[(i + count - 1) % m];
-      const Point3D ta = first.in, tb = last.out;
-      const Point3D Ta = input.vertices[first.vertex].coordinate;
-      const Point3D Tb = input.vertices[last.vertex].coordinate;
-      double turn = 0.0;
-      std::vector<std::size_t> range_vertices;
-      for (std::size_t j = 0; j < count; j++)
-      {
-        turn += joints[(i + j) % m].turn;
-        range_vertices.push_back(joints[(i + j) % m].vertex);
-      }
-      const double angle = std::acos(std::clamp(Dot(ta, tb), -1.0, 1.0));
-      // The arm tangents must enclose the accumulated turn (a monotone arc below 180 deg).
-      if (std::abs(angle - turn) > 1.0e-6 &&
-          std::abs((2.0 * std::acos(-1.0) - angle) - turn) > 1.0e-6)
-      {
-        return fit;
-      }
-      const Point3D normal = Normalize(
-          Add(input.segments[path_segments[first.index % n]].process_normal,
-              input.segments[path_segments[(first.index + n - 1) % n]].process_normal));
-      const Point3D na =
-          Scale(static_cast<double>(first.sign), Normalize(Cross(normal, ta)));
-      // The circle tangent to both arms at the end joints (a fillet, a rounded corner, a
-      // bend between tangent arms): centre Ta + radius na, radius from the tangent lengths.
-      // Every joint, the last one included, must lie on it within the fit tolerance (unequal
-      // tangent lengths put Tb off the circle).
-      double radius = 0.0;
-      Point3D center{}, origin{};
-      bool tangent_circle = false;
-      const double sin_turn = std::sin(turn);
-      if (std::abs(sin_turn) > 1.0e-9 && turn < std::acos(-1.0) - 1.0e-9)
-      {
-        // Virtual corner X = Ta + a ta = Tb - b tb, solved in the (ta, na) frame.
-        const Point3D w = Sub(Tb, Ta);
-        const double wx = Dot(w, ta), wy = Dot(w, na);
-        const double tbx = Dot(tb, ta), tby = Dot(tb, na);
-        if (std::abs(tby) > 1.0e-12)
-        {
-          const double b = wy / tby;
-          const double a = wx - b * tbx;
-          if (a > 0.0 && b > 0.0)
+          const std::size_t prev = (j + joints.size() - 1) % joints.size();
+          double gap = position[joints[j].index] - position[joints[prev].index];
+          if (gap <= 0.0)
           {
-            radius = 0.5 * (a + b) / std::tan(0.5 * turn);
-            origin = Add(Ta, Scale(a, ta));
+            gap += path_length;
+          }
+          if (gap > longest)
+          {
+            longest = gap;
+            best = j;
+          }
+        }
+        std::rotate(joints.begin(), joints.begin() + static_cast<std::ptrdiff_t>(best),
+                    joints.end());
+      }
+      const std::size_t m = joints.size();
+      // Algebraic least-squares circle (Kasa fit) through the joint vertices in the process
+      // plane: exact for vertices on one circle, a set function of the joints.
+      auto LeastSquaresCircle = [&](const std::vector<std::size_t> &joint_vertices,
+                                    const Point3D &normal, const Point3D &tangent,
+                                    Point3D &center, double &radius)
+      {
+        const Point3D o = input.vertices[joint_vertices.front()].coordinate;
+        const Point3D u = Normalize(Sub(tangent, Scale(Dot(tangent, normal), normal)));
+        const Point3D v = Normalize(Cross(normal, u));
+        double sxx = 0.0, sxy = 0.0, syy = 0.0, sx = 0.0, sy = 0.0, s1 = 0.0;
+        double sxz = 0.0, syz = 0.0, sz = 0.0;
+        for (const std::size_t jv : joint_vertices)
+        {
+          const Point3D d = Sub(input.vertices[jv].coordinate, o);
+          const double x = Dot(d, u), y = Dot(d, v), z = x * x + y * y;
+          sxx += x * x, sxy += x * y, syy += y * y, sx += x, sy += y, s1 += 1.0;
+          sxz += x * z, syz += y * z, sz += z;
+        }
+        // Normal equations for (D, E, F) of x^2 + y^2 + D x + E y + F = 0 (Cramer's rule).
+        const double a11 = sxx, a12 = sxy, a13 = sx, a22 = syy, a23 = sy, a33 = s1;
+        const double b1 = -sxz, b2 = -syz, b3 = -sz;
+        const double det = a11 * (a22 * a33 - a23 * a23) - a12 * (a12 * a33 - a23 * a13) +
+                           a13 * (a12 * a23 - a22 * a13);
+        if (std::abs(det) <= 1.0e-30)
+        {
+          return false;
+        }
+        const double D = (b1 * (a22 * a33 - a23 * a23) - a12 * (b2 * a33 - a23 * b3) +
+                          a13 * (b2 * a23 - a22 * b3)) /
+                         det;
+        const double E = (a11 * (b2 * a33 - a23 * b3) - b1 * (a12 * a33 - a23 * a13) +
+                          a13 * (a12 * b3 - b2 * a13)) /
+                         det;
+        const double F = (a11 * (a22 * b3 - b2 * a23) - a12 * (a12 * b3 - b2 * a13) +
+                          b1 * (a12 * a23 - a22 * a13)) /
+                         det;
+        const double cx = -0.5 * D, cy = -0.5 * E;
+        const double radius2 = cx * cx + cy * cy - F;
+        if (!(radius2 > 0.0))
+        {
+          return false;
+        }
+        radius = std::sqrt(radius2);
+        center = Add(o, Add(Scale(cx, u), Scale(cy, v)));
+        return true;
+      };
+      // Every joint of the range within the fit tolerance of the circle (strict on the
+      // grid).
+      auto JointsOnCircle = [&](const std::vector<std::size_t> &joint_vertices,
+                                const Point3D &center, double radius)
+      {
+        return std::all_of(
+            joint_vertices.begin(), joint_vertices.end(),
+            [&](std::size_t jv)
+            {
+              return quantizer.Less(
+                  std::abs(Distance(input.vertices[jv].coordinate, center) - radius),
+                  fit_tolerance);
+            });
+      };
+      // The largest sagitta of the chords between consecutive joints of the range on the
+      // fitted circle (rho - sqrt(rho^2 - (c / 2)^2); a chord longer than the diameter has
+      // none: the range is no arc of that circle) — recorded per arc as the mesh-coarseness
+      // diagnostic (Arcs[].MaxChordSagittaOverR), no longer a membership test.
+      auto MaxChordSagitta =
+          [&](const std::vector<std::size_t> &joint_vertices, double radius, bool cyclic)
+      {
+        double worst = 0.0;
+        const std::size_t count = joint_vertices.size();
+        for (std::size_t q = 0; q + (cyclic ? 0 : 1) < count; q++)
+        {
+          const double chord =
+              Distance(input.vertices[joint_vertices[q]].coordinate,
+                       input.vertices[joint_vertices[(q + 1) % count]].coordinate);
+          if (chord >= 2.0 * radius)
+          {
+            return std::numeric_limits<double>::infinity();
+          }
+          worst =
+              std::max(worst, radius - std::sqrt(radius * radius - 0.25 * chord * chord));
+        }
+        return worst;
+      };
+      // A joint turns less than the arc rule's joint-turn cap (strict on the direction
+      // grid).
+      auto JointTurnBelowCap = [&](const Joint &joint)
+      { return DirectionLess(std::cos(joint_turn_cap), std::cos(joint.turn)); };
+      // The straight pieces on either side of joint j in the scan direction (between it and
+      // the neighbouring joints, or the path ends of an open path).
+      auto PieceBefore = [&](std::size_t j)
+      {
+        const std::size_t idx = joints[j].index;
+        if (j == 0)
+        {
+          return closed ? std::fmod(position[idx] - position[joints[m - 1].index] +
+                                        path_length,
+                                    path_length)
+                        : position[idx];
+        }
+        return position[idx] - position[joints[j - 1].index];
+      };
+      auto PieceAfter = [&](std::size_t j)
+      {
+        const std::size_t idx = joints[j].index;
+        if (j + 1 == m)
+        {
+          return closed ? std::fmod(position[joints[0].index] - position[idx] + path_length,
+                                    path_length)
+                        : path_length - position[idx];
+        }
+        return position[joints[j + 1].index] - position[idx];
+      };
+      // Fit the arc over joints [i, i + count) (cyclic indices on a loop); returns the
+      // circle.
+      struct Fit
+      {
+        bool ok = false;
+        bool tangent =
+            false;  // the arms are tangent to the circle (a rounded corner may be)
+        Point3D center{}, origin{};
+        double radius = 0.0;
+        double turn = 0.0;
+        double sagitta = 0.0;  // the largest chord sagitta
+      };
+      auto TryFit = [&](std::size_t i, std::size_t count) -> Fit
+      {
+        Fit fit;
+        const Joint &first = joints[i];
+        const Joint &last = joints[(i + count - 1) % m];
+        const Point3D ta = first.in, tb = last.out;
+        const Point3D Ta = input.vertices[first.vertex].coordinate;
+        const Point3D Tb = input.vertices[last.vertex].coordinate;
+        double turn = 0.0;
+        std::vector<std::size_t> range_vertices;
+        for (std::size_t j = 0; j < count; j++)
+        {
+          turn += joints[(i + j) % m].turn;
+          range_vertices.push_back(joints[(i + j) % m].vertex);
+        }
+        const double angle = std::acos(std::clamp(Dot(ta, tb), -1.0, 1.0));
+        // The arm tangents must enclose the accumulated turn (a monotone arc below 180
+        // deg).
+        if (std::abs(angle - turn) > 1.0e-6 &&
+            std::abs((2.0 * std::acos(-1.0) - angle) - turn) > 1.0e-6)
+        {
+          return fit;
+        }
+        const Point3D normal = Normalize(
+            Add(input.segments[path_segments[first.index % n]].process_normal,
+                input.segments[path_segments[(first.index + n - 1) % n]].process_normal));
+        const Point3D na =
+            Scale(static_cast<double>(first.sign), Normalize(Cross(normal, ta)));
+        // The circle tangent to both arms at the end joints (a fillet, a rounded corner, a
+        // bend between tangent arms): centre Ta + radius na, radius from the tangent
+        // lengths. Every joint, the last one included, must lie on it within the fit
+        // tolerance (unequal tangent lengths put Tb off the circle).
+        double radius = 0.0;
+        Point3D center{}, origin{};
+        bool tangent_circle = false;
+        const double sin_turn = std::sin(turn);
+        if (std::abs(sin_turn) > 1.0e-9 && turn < std::acos(-1.0) - 1.0e-9)
+        {
+          // Virtual corner X = Ta + a ta = Tb - b tb, solved in the (ta, na) frame.
+          const Point3D w = Sub(Tb, Ta);
+          const double wx = Dot(w, ta), wy = Dot(w, na);
+          const double tbx = Dot(tb, ta), tby = Dot(tb, na);
+          if (std::abs(tby) > 1.0e-12)
+          {
+            const double b = wy / tby;
+            const double a = wx - b * tbx;
+            if (a > 0.0 && b > 0.0)
+            {
+              radius = 0.5 * (a + b) / std::tan(0.5 * turn);
+              origin = Add(Ta, Scale(a, ta));
+              center = Add(Ta, Scale(radius, na));
+              tangent_circle = radius > 0.0;
+            }
+          }
+        }
+        else
+        {
+          // Antiparallel arms (a U-turn): the radius is half the arm separation and the
+          // tangent points face each other across it.
+          const Point3D w = Sub(Tb, Ta);
+          const double across = Dot(w, na);
+          if (across > 0.0)
+          {
+            radius = 0.5 * across;
             center = Add(Ta, Scale(radius, na));
-            tangent_circle = radius > 0.0;
+            origin = Add(center, Scale(radius, ta));  // the arc's midpoint
+            tangent_circle = true;
+          }
+        }
+        if (tangent_circle && JointsOnCircle(range_vertices, center, radius))
+        {
+          const double sagitta = MaxChordSagitta(range_vertices, radius, false);
+          if (std::isfinite(sagitta))
+          {
+            fit.ok = true;
+            fit.tangent = true;
+            fit.center = center;
+            fit.origin = origin;
+            fit.radius = radius;
+            fit.turn = turn;
+            fit.sagitta = sagitta;
+          }
+          return fit;
+        }
+        // Arms not tangent to the circle (a route bend preceded by a spline piece,
+        // DS-SCT-001: 0.5 % radius error and a 0.8 um centre offset of the tangent
+        // construction on a 370 um bend): the least-squares circle of the joints, exact for
+        // an inscribed polyline and a set function of the joints, whose radius is at least
+        // R — a bend inside its chain. A rounded corner (radius below R) keeps the tangent
+        // construction: its arms are tangent by construction, and its site (virtual corner,
+        // arm directions) has no meaning otherwise. Without the arms the circle is
+        // constrained by the joints alone: at least FOUR (three points are concyclic
+        // whatever they are, and the inscribed-angle relation tests interior joints only —
+        // a 90 deg lead-end corner, the first joint of an arc and its neighbour passed as a
+        // 3-joint "bend" of radius 350 um whose 6 um lead chord had a sagitta of 0.006 R).
+        if (count < 4)
+        {
+          return fit;
+        }
+        // The end joints of a least-squares bend: the kink between the arm and the circle's
+        // tangent at the end joint (read from the fitted circle: a 1e-3 R position error
+        // moves the tangent by 1e-3 R / rho, far less than a chord-based estimate on short
+        // chords) must be noise under the geometric joint rule on the shorter of the arm
+        // piece and the first chord (a spline piece joining the bend tangent-continuously;
+        // a mitred offset polyline) — else the arm is a chord of the same circle (its far
+        // vertex on the circle within the fit tolerance: an arc starting at a corner that
+        // lies on its circle, the sharp end of a rounded slot; the corner stays a corner,
+        // the arc starts at its next joint). A lead meeting a circular arc at a 90 deg
+        // corner is neither and the corner is never absorbed as a bend vertex.
+        auto EndJointConsistent = [&](const Joint &end, const Point3D &arm_direction,
+                                      std::size_t neighbour_vertex, std::size_t arm_segment,
+                                      const Point3D &center, double radius,
+                                      double arm_piece, double first_chord)
+        {
+          const Point3D at = input.vertices[end.vertex].coordinate;
+          Point3D circle_tangent = Normalize(Cross(normal, Sub(at, center)));
+          const Point3D toward_neighbour =
+              Sub(input.vertices[neighbour_vertex].coordinate, at);
+          const double along = Dot(circle_tangent, toward_neighbour);
+          // Oriented along the path: toward the arc's interior at the first joint, away
+          // from it at the last (the arm direction is the path direction there in both
+          // cases).
+          if ((&end == &first) != (along > 0.0))
+          {
+            circle_tangent = Scale(-1.0, circle_tangent);
+          }
+          const double kink =
+              std::acos(std::clamp(Dot(arm_direction, circle_tangent), -1.0, 1.0));
+          if (JointIsNoise(kink, std::min(arm_piece, first_chord), noise_sagitta))
+          {
+            return true;
+          }
+          const Point3D far = input.vertices[Other(arm_segment, end.vertex)].coordinate;
+          return quantizer.Less(std::abs(Distance(far, center) - radius), fit_tolerance);
+        };
+        if (LeastSquaresCircle(range_vertices, normal, first.in, center, radius) &&
+            !quantizer.Less(radius, R) && JointsOnCircle(range_vertices, center, radius) &&
+            EndJointConsistent(first, first.in, range_vertices[1],
+                               path_segments[(first.index + n - 1) % n], center, radius,
+                               PieceBefore(i), PieceAfter(i)) &&
+            EndJointConsistent(last, last.out, range_vertices[count - 2],
+                               path_segments[last.index % n], center, radius,
+                               PieceAfter((i + count - 1) % m),
+                               PieceBefore((i + count - 1) % m)))
+        {
+          const double sagitta = MaxChordSagitta(range_vertices, radius, false);
+          if (std::isfinite(sagitta))
+          {
+            fit.ok = true;
+            fit.tangent = false;
+            fit.center = center;
+            fit.origin = center;
+            fit.radius = radius;
+            fit.turn = turn;
+            fit.sagitta = sagitta;
+          }
+        }
+        return fit;
+      };
+      std::vector<bool> consumed(m, false);
+      // A closed path whose joints all turn one way through 360 deg and lie on one circle
+      // (a round pad, hole or via) is ONE arc of total turn 2 pi: a bend of exact radius
+      // whatever its radius (the rounded-corner semantics of arms meeting through a fillet
+      // do not apply to a closed circle; a circle of radius < R is one CurvedEdge with
+      // RadiusOverR < 1 instead of two 180 deg "rounded corners" split at a
+      // numbering-dependent joint). The joint-turn cap tells a circle from a polygon: a
+      // square or hexagonal hole is corners whatever its size, an octagon (45 deg per
+      // joint) is a circle.
+      if (closed && m >= 3)
+      {
+        double total = 0.0;
+        bool same_sign = true;
+        bool below_cap = true;
+        for (std::size_t j = 0; j < m; j++)
+        {
+          total += joints[j].turn;
+          same_sign = same_sign && joints[j].sign == joints.front().sign;
+          below_cap = below_cap && JointTurnBelowCap(joints[j]);
+        }
+        if (same_sign && below_cap && std::abs(total - 2.0 * std::acos(-1.0)) < 1.0e-6)
+        {
+          std::vector<std::size_t> all_joints;
+          for (const auto &joint : joints)
+          {
+            all_joints.push_back(joint.vertex);
+          }
+          const Point3D normal = Normalize(
+              Add(input.segments[path_segments[joints.front().index % n]].process_normal,
+                  input.segments[path_segments[(joints.front().index + n - 1) % n]]
+                      .process_normal));
+          Point3D center{};
+          double radius = 0.0;
+          double sagitta = 0.0;
+          if (LeastSquaresCircle(all_joints, normal, joints.front().in, center, radius) &&
+              JointsOnCircle(all_joints, center, radius) &&
+              std::isfinite(sagitta = MaxChordSagitta(all_joints, radius, true)))
+          {
+            Arc arc;
+            arc.joints = all_joints;
+            arc.segments = path_segments;
+            arc.segment_before = path_segments.front();
+            arc.segment_after = path_segments.front();
+            arc.tangent_a = joints.front().in;
+            arc.tangent_b = joints.front().in;
+            arc.center = center;
+            arc.origin = center;
+            arc.radius = radius;
+            arc.turn = 2.0 * std::acos(-1.0);
+            arc.max_sagitta = sagitta;
+            arc.corner = false;
+            found.push_back(std::move(arc));
+            std::fill(consumed.begin(), consumed.end(), true);
           }
         }
       }
-      else
+      const std::size_t first_start = 0;
+      for (std::size_t i = first_start; i < m; i++)
       {
-        // Antiparallel arms (a U-turn): the radius is half the arm separation and the
-        // tangent points face each other across it.
-        const Point3D w = Sub(Tb, Ta);
-        const double across = Dot(w, na);
-        if (across > 0.0)
-        {
-          radius = 0.5 * across;
-          center = Add(Ta, Scale(radius, na));
-          origin = Add(center, Scale(radius, ta));  // the arc's midpoint
-          tangent_circle = true;
-        }
-      }
-      if (tangent_circle && JointsOnCircle(range_vertices, center, radius))
-      {
-        const double sagitta = MaxChordSagitta(range_vertices, radius, false);
-        if (std::isfinite(sagitta))
-        {
-          fit.ok = true;
-          fit.tangent = true;
-          fit.center = center;
-          fit.origin = origin;
-          fit.radius = radius;
-          fit.turn = turn;
-          fit.sagitta = sagitta;
-        }
-        return fit;
-      }
-      // Arms not tangent to the circle (a route bend preceded by a spline piece, DS-SCT-001:
-      // 0.5 % radius error and a 0.8 um centre offset of the tangent construction on a 370
-      // um bend): the least-squares circle of the joints, exact for an inscribed polyline
-      // and a set function of the joints, whose radius is at least R — a bend inside its
-      // chain. A rounded corner (radius below R) keeps the tangent construction: its arms
-      // are tangent by construction, and its site (virtual corner, arm directions) has no
-      // meaning otherwise. Without the arms the circle is constrained by the joints alone:
-      // at least FOUR (three points are concyclic whatever they are, and the inscribed-angle
-      // relation tests interior joints only — a 90 deg lead-end corner, the first joint of an
-      // arc and its neighbour passed as a 3-joint "bend" of radius 350 um whose 6 um lead
-      // chord had a sagitta of 0.006 R).
-      if (count < 4)
-      {
-        return fit;
-      }
-      // The end joints of a least-squares bend: the kink between the arm and the circle's
-      // tangent at the end joint (read from the fitted circle: a 1e-3 R position error moves
-      // the tangent by 1e-3 R / rho, far less than a chord-based estimate on short chords)
-      // must be noise under the geometric joint rule on the shorter of the arm piece and the
-      // first chord (a spline piece joining the bend tangent-continuously; a mitred offset
-      // polyline) — else the arm is a chord of the same circle (its far vertex on the circle
-      // within the fit tolerance: an arc starting at a corner that lies on its circle, the
-      // sharp end of a rounded slot; the corner stays a corner, the arc starts at its next
-      // joint). A lead meeting a circular arc at a 90 deg corner is neither and the corner
-      // is never absorbed as a bend vertex.
-      auto EndJointConsistent = [&](const Joint &end, const Point3D &arm_direction,
-                                   std::size_t neighbour_vertex, std::size_t arm_segment,
-                                   const Point3D &center, double radius, double arm_piece,
-                                   double first_chord)
-      {
-        const Point3D at = input.vertices[end.vertex].coordinate;
-        Point3D circle_tangent = Normalize(Cross(normal, Sub(at, center)));
-        const Point3D toward_neighbour =
-            Sub(input.vertices[neighbour_vertex].coordinate, at);
-        const double along = Dot(circle_tangent, toward_neighbour);
-        // Oriented along the path: toward the arc's interior at the first joint, away from
-        // it at the last (the arm direction is the path direction there in both cases).
-        if ((&end == &first) != (along > 0.0))
-        {
-          circle_tangent = Scale(-1.0, circle_tangent);
-        }
-        const double kink = std::acos(std::clamp(Dot(arm_direction, circle_tangent), -1.0, 1.0));
-        if (JointIsNoise(kink, std::min(arm_piece, first_chord), noise_sagitta))
-        {
-          return true;
-        }
-        const Point3D far = input.vertices[Other(arm_segment, end.vertex)].coordinate;
-        return quantizer.Less(std::abs(Distance(far, center) - radius), fit_tolerance);
-      };
-      if (LeastSquaresCircle(range_vertices, normal, first.in, center, radius) &&
-          !quantizer.Less(radius, R) && JointsOnCircle(range_vertices, center, radius) &&
-          EndJointConsistent(first, first.in, range_vertices[1],
-                             path_segments[(first.index + n - 1) % n], center, radius,
-                             PieceBefore(i), PieceAfter(i)) &&
-          EndJointConsistent(last, last.out, range_vertices[count - 2],
-                             path_segments[last.index % n], center, radius,
-                             PieceAfter((i + count - 1) % m), PieceBefore((i + count - 1) % m)))
-      {
-        const double sagitta = MaxChordSagitta(range_vertices, radius, false);
-        if (std::isfinite(sagitta))
-        {
-          fit.ok = true;
-          fit.tangent = false;
-          fit.center = center;
-          fit.origin = center;
-          fit.radius = radius;
-          fit.turn = turn;
-          fit.sagitta = sagitta;
-        }
-      }
-      return fit;
-    };
-    std::vector<bool> consumed(m, false);
-    // A closed path whose joints all turn one way through 360 deg and lie on one circle (a
-    // round pad, hole or via) is ONE arc of total turn 2 pi: a bend of exact radius whatever
-    // its radius (the rounded-corner semantics of arms meeting through a fillet do not
-    // apply to a closed circle; a circle of radius < R is one CurvedEdge with RadiusOverR <
-    // 1 instead of two 180 deg "rounded corners" split at a numbering-dependent joint). The
-    // joint-turn cap tells a circle from a polygon: a square or hexagonal hole is corners
-    // whatever its size, an octagon (45 deg per joint) is a circle.
-    if (closed && m >= 3)
-    {
-      double total = 0.0;
-      bool same_sign = true;
-      bool below_cap = true;
-      for (std::size_t j = 0; j < m; j++)
-      {
-        total += joints[j].turn;
-        same_sign = same_sign && joints[j].sign == joints.front().sign;
-        below_cap = below_cap && JointTurnBelowCap(joints[j]);
-      }
-      if (same_sign && below_cap && std::abs(total - 2.0 * std::acos(-1.0)) < 1.0e-6)
-      {
-        std::vector<std::size_t> all_joints;
-        for (const auto &joint : joints)
-        {
-          all_joints.push_back(joint.vertex);
-        }
-        const Point3D normal = Normalize(
-            Add(input.segments[path_segments[joints.front().index % n]].process_normal,
-                input.segments[path_segments[(joints.front().index + n - 1) % n]]
-                    .process_normal));
-        Point3D center{};
-        double radius = 0.0;
-        double sagitta = 0.0;
-        if (LeastSquaresCircle(all_joints, normal, joints.front().in, center, radius) &&
-            JointsOnCircle(all_joints, center, radius) &&
-            std::isfinite(sagitta = MaxChordSagitta(all_joints, radius, true)))
-        {
-          Arc arc;
-          arc.joints = all_joints;
-          arc.segments = path_segments;
-          arc.segment_before = path_segments.front();
-          arc.segment_after = path_segments.front();
-          arc.tangent_a = joints.front().in;
-          arc.tangent_b = joints.front().in;
-          arc.center = center;
-          arc.origin = center;
-          arc.radius = radius;
-          arc.turn = 2.0 * std::acos(-1.0);
-          arc.max_sagitta = sagitta;
-          arc.corner = false;
-          found.push_back(std::move(arc));
-          std::fill(consumed.begin(), consumed.end(), true);
-        }
-      }
-    }
-    const std::size_t first_start = 0;
-    for (std::size_t i = first_start; i < m; i++)
-    {
-      if (consumed[i] || !JointTurnBelowCap(joints[i]))
-      {
-        continue;
-      }
-      // Extend while the turn is monotone and at most 180 deg; the largest range that fits
-      // wins (a perturbed joint inside a fillet is absorbed by a larger range whose circle
-      // it lies on; a spline scanned past its exact-fit range simply fails the later fits).
-      std::size_t best_count = 0;
-      Fit best;
-      double turn = joints[i].turn;
-      // At least three joints (two chords): a polyline with two joints is a chamfer or a
-      // square strip end, which no test can tell from a one-chord arc (the diameter chord
-      // of a semicircle is the square end): those stay corners.
-      for (std::size_t count = 2; count <= m; count++)
-      {
-        const std::size_t k = (i + count - 1) % m;
-        if ((!closed && i + count - 1 >= m) || k == i || consumed[k] ||
-            joints[k].sign != joints[i].sign || !JointTurnBelowCap(joints[k]))
-        {
-          break;
-        }
-        turn += joints[k].turn;
-        if (turn > std::acos(-1.0) + 1.0e-9)
-        {
-          break;
-        }
-        if (count < 3)
+        if (consumed[i] || !JointTurnBelowCap(joints[i]))
         {
           continue;
         }
-        const Fit fit = TryFit(i, count);
-        if (fit.ok)
+        // Extend while the turn is monotone and at most 180 deg; the largest range that
+        // fits wins (a perturbed joint inside a fillet is absorbed by a larger range whose
+        // circle it lies on; a spline scanned past its exact-fit range simply fails the
+        // later fits).
+        std::size_t best_count = 0;
+        Fit best;
+        double turn = joints[i].turn;
+        // At least three joints (two chords): a polyline with two joints is a chamfer or a
+        // square strip end, which no test can tell from a one-chord arc (the diameter chord
+        // of a semicircle is the square end): those stay corners.
+        for (std::size_t count = 2; count <= m; count++)
         {
-          best = fit;
-          best_count = count;
+          const std::size_t k = (i + count - 1) % m;
+          if ((!closed && i + count - 1 >= m) || k == i || consumed[k] ||
+              joints[k].sign != joints[i].sign || !JointTurnBelowCap(joints[k]))
+          {
+            break;
+          }
+          turn += joints[k].turn;
+          if (turn > std::acos(-1.0) + 1.0e-9)
+          {
+            break;
+          }
+          if (count < 3)
+          {
+            continue;
+          }
+          const Fit fit = TryFit(i, count);
+          if (fit.ok)
+          {
+            best = fit;
+            best_count = count;
+          }
         }
+        if (best_count == 0)
+        {
+          continue;
+        }
+        Arc arc;
+        for (std::size_t j = 0; j < best_count; j++)
+        {
+          const std::size_t k = (i + j) % m;
+          consumed[k] = true;
+          arc.joints.push_back(joints[k].vertex);
+        }
+        const Joint &first = joints[i];
+        const Joint &last = joints[(i + best_count - 1) % m];
+        for (std::size_t k = first.index; k != last.index; k = (k + 1) % n)
+        {
+          arc.segments.push_back(path_segments[k]);
+        }
+        arc.segment_before = path_segments[(first.index + n - 1) % n];
+        arc.segment_after = path_segments[last.index % n];
+        arc.tangent_a = first.in;
+        arc.tangent_b = last.out;
+        arc.center = best.center;
+        arc.origin = best.origin;
+        arc.radius = best.radius;
+        arc.turn = best.turn;
+        arc.max_sagitta = best.sagitta;
+        // A rounded corner is an arc of radius below R (tangent arms by construction);
+        // every arc of radius >= R is a bend, whatever its turn.
+        arc.corner = best.tangent && quantizer.Less(arc.radius, R);
+        if (std::getenv("PALACE_IDENTIFICATION_DEBUG_ARCS") && input.log)
+        {
+          std::ostringstream line;
+          line << "    arc joints " << arc.joints.size() << " radius " << arc.radius << " ("
+               << arc.radius / R << " R) turn " << arc.turn * 180.0 / std::acos(-1.0)
+               << " deg sagitta " << arc.max_sagitta / R << " R "
+               << (best.tangent ? "tangent" : "least-squares")
+               << (arc.corner ? " rounded corner" : " bend") << "\n";
+          input.log(line.str());
+        }
+        found.push_back(std::move(arc));
       }
-      if (best_count == 0)
-      {
-        continue;
-      }
-      Arc arc;
-      for (std::size_t j = 0; j < best_count; j++)
-      {
-        const std::size_t k = (i + j) % m;
-        consumed[k] = true;
-        arc.joints.push_back(joints[k].vertex);
-      }
-      const Joint &first = joints[i];
-      const Joint &last = joints[(i + best_count - 1) % m];
-      for (std::size_t k = first.index; k != last.index; k = (k + 1) % n)
-      {
-        arc.segments.push_back(path_segments[k]);
-      }
-      arc.segment_before = path_segments[(first.index + n - 1) % n];
-      arc.segment_after = path_segments[last.index % n];
-      arc.tangent_a = first.in;
-      arc.tangent_b = last.out;
-      arc.center = best.center;
-      arc.origin = best.origin;
-      arc.radius = best.radius;
-      arc.turn = best.turn;
-      arc.max_sagitta = best.sagitta;
-      // A rounded corner is an arc of radius below R (tangent arms by construction); every
-      // arc of radius >= R is a bend, whatever its turn.
-      arc.corner = best.tangent && quantizer.Less(arc.radius, R);
-      if (std::getenv("PALACE_IDENTIFICATION_DEBUG_ARCS") && input.log)
-      {
-        std::ostringstream line;
-        line << "    arc joints " << arc.joints.size() << " radius " << arc.radius << " ("
-             << arc.radius / R << " R) turn " << arc.turn * 180.0 / std::acos(-1.0)
-             << " deg sagitta " << arc.max_sagitta / R << " R "
-             << (best.tangent ? "tangent" : "least-squares")
-             << (arc.corner ? " rounded corner" : " bend") << "\n";
-        input.log(line.str());
-      }
-      found.push_back(std::move(arc));
-    }
-    return found;
-  };
+      return found;
+    };
     // Tie-break serialisation of an arc set: per arc the radius, the total turn, the joint
     // count, the distance of its centre from the path's joint centroid and the arc-length
     // position of its FIRST joint in the scan direction measured from the nearer path end,
@@ -3821,16 +3837,20 @@ void Identifier::DetectArcs()
       return std::make_tuple(absorbed, list.size(), serial);
     };
     std::vector<Arc> forward = ScanPath(path_segments, path_vertices);
-    std::vector<std::size_t> reversed_segments(path_segments.rbegin(), path_segments.rend());
-    std::vector<std::size_t> reversed_vertices(path_vertices.rbegin(), path_vertices.rend());
+    std::vector<std::size_t> reversed_segments(path_segments.rbegin(),
+                                               path_segments.rend());
+    std::vector<std::size_t> reversed_vertices(path_vertices.rbegin(),
+                                               path_vertices.rend());
     std::vector<Arc> backward = ScanPath(reversed_segments, reversed_vertices);
     const auto score_forward = Score(forward), score_backward = Score(backward);
-    // More joints absorbed, then FEWER arcs (one arc over a perturbed fillet rather than two
-    // sub-ranges), then the smaller serialisation (a set function).
+    // More joints absorbed, then FEWER arcs (one arc over a perturbed fillet rather than
+    // two sub-ranges), then the smaller serialisation (a set function).
     std::vector<Arc> &chosen =
-        std::make_tuple(std::get<0>(score_backward), -static_cast<long long>(std::get<1>(score_backward)),
+        std::make_tuple(std::get<0>(score_backward),
+                        -static_cast<long long>(std::get<1>(score_backward)),
                         std::get<2>(score_forward)) >
-                std::make_tuple(std::get<0>(score_forward), -static_cast<long long>(std::get<1>(score_forward)),
+                std::make_tuple(std::get<0>(score_forward),
+                                -static_cast<long long>(std::get<1>(score_forward)),
                                 std::get<2>(score_backward))
             ? backward
             : forward;
@@ -4166,7 +4186,8 @@ bool Identifier::IsCurvedAt(const Chain &chain, double x, std::size_t *section) 
   return false;
 }
 
-double Identifier::ChainArcDistance(const Chain &chain, double x0, double x1, double x) const
+double Identifier::ChainArcDistance(const Chain &chain, double x0, double x1,
+                                    double x) const
 {
   double distance = x < x0 ? x0 - x : (x > x1 ? x - x1 : 0.0);
   if (chain.closed && chain.length > 0.0)
@@ -4184,12 +4205,12 @@ double Identifier::ChainArcDistance(const Chain &chain, double x0, double x1, do
 Point3D Identifier::ChainAt(const Chain &chain, double x, std::size_t *run_out,
                             double *s_out) const
 {
-  const std::size_t k = std::min(
-      static_cast<std::size_t>(
-          std::upper_bound(chain.run_offset.begin(), chain.run_offset.end(), x) -
-          chain.run_offset.begin()) -
-          1,
-      chain.runs.size() - 1);
+  const std::size_t k =
+      std::min(static_cast<std::size_t>(
+                   std::upper_bound(chain.run_offset.begin(), chain.run_offset.end(), x) -
+                   chain.run_offset.begin()) -
+                   1,
+               chain.runs.size() - 1);
   const std::size_t r = chain.runs[k];
   const double s = std::clamp(x - chain.run_offset[k], 0.0, runs[r].length);
   if (run_out)
@@ -4203,10 +4224,10 @@ Point3D Identifier::ChainAt(const Chain &chain, double x, std::size_t *run_out,
   return runs[r].At(s);
 }
 
-Identifier::ChainPoint Identifier::ClosestPointOnChain(const Chain &chain,
-                                                       const Point3D &p,
-                                                       std::optional<double> exclude_x,
-                                                       std::optional<double> max_distance) const
+Identifier::ChainPoint
+Identifier::ClosestPointOnChain(const Chain &chain, const Point3D &p,
+                                std::optional<double> exclude_x,
+                                std::optional<double> max_distance) const
 {
   const double neighbourhood = kSelfPairNeighbourhoodOverRadius * R;
   // The part of run k at least the self-pair neighbourhood of arc length from exclude_x
@@ -4221,9 +4242,9 @@ Identifier::ChainPoint Identifier::ClosestPointOnChain(const Chain &chain,
       return allowed;
     }
     std::vector<Interval> near;
-    for (const double shift :
-         chain.closed ? std::vector<double>{-chain.length, 0.0, chain.length}
-                      : std::vector<double>{0.0})
+    for (const double shift : chain.closed
+                                  ? std::vector<double>{-chain.length, 0.0, chain.length}
+                                  : std::vector<double>{0.0})
     {
       const double lo = std::max(x0, *exclude_x + shift - neighbourhood) - x0;
       const double hi = std::min(x1, *exclude_x + shift + neighbourhood) - x0;
@@ -4827,8 +4848,8 @@ void Identifier::BuildBentPairs()
         return std::nullopt;  // a chain facing itself along one arc
       }
       // Concentric within the signature parameter tolerance: the radius difference is then
-      // exact to that tolerance (the centre offset bounds its error); two local circles of a
-      // spline (a spiral fitted piecewise) are not concentric and read off the chords.
+      // exact to that tolerance (the centre offset bounds its error); two local circles of
+      // a spline (a spiral fitted piecewise) are not concentric and read off the chords.
       const Arc &A = arcs[static_cast<std::size_t>(arc_a)];
       const Arc &B = arcs[static_cast<std::size_t>(arc_b)];
       if (Distance(A.center, B.center) <= kSignatureParameterToleranceOverRadius * R)
@@ -4838,7 +4859,8 @@ void Identifier::BuildBentPairs()
       return std::nullopt;
     }
     if (arc_a < 0 && arc_b < 0 && kappa_a <= 0.0 && kappa_b <= 0.0 &&
-        !DirectionLess(std::abs(Dot(ra.tangent, rb.tangent)), 1.0 - kParallelCosineTolerance))
+        !DirectionLess(std::abs(Dot(ra.tangent, rb.tangent)),
+                       1.0 - kParallelCosineTolerance))
     {
       const Point3D delta = Sub(rb.start, ra.start);
       return Norm(Sub(delta, Scale(Dot(delta, ra.tangent), ra.tangent)));
@@ -4964,8 +4986,9 @@ void Identifier::BuildBentPairs()
     // A chain facing itself: a run pair whose points are all within the neighbourhood of
     // each other along the chain (the largest arc distance between the two runs below pi R)
     // never faces; otherwise every point of run ka is a candidate and its partner is the
-    // closest point of the chain OUTSIDE the neighbourhood of that point (the per-sample foot
-    // below), so that the pair starts exactly where the facing point is pi R of arc away.
+    // closest point of the chain OUTSIDE the neighbourhood of that point (the per-sample
+    // foot below), so that the pair starts exactly where the facing point is pi R of arc
+    // away.
     auto SelfAllowed = [&](std::size_t ka, std::size_t kb)
     {
       std::vector<Interval> allowed;
@@ -5150,10 +5173,10 @@ void Identifier::BuildBentPairs()
           const double x0 = A.run_offset[ka] + piece.first;
           const double x1 = A.run_offset[ka] + piece.second;
           const double mid = 0.5 * (x0 + x1);
-          const auto q_mid = ClosestPointOnChain(
-              B, ra.At(0.5 * (piece.first + piece.second)),
-              self ? std::optional<double>(mid) : std::nullopt,
-              self ? std::optional<double>(reach) : std::nullopt);
+          const auto q_mid =
+              ClosestPointOnChain(B, ra.At(0.5 * (piece.first + piece.second)),
+                                  self ? std::optional<double>(mid) : std::nullopt,
+                                  self ? std::optional<double>(reach) : std::nullopt);
           if (!std::isfinite(q_mid.distance))
           {
             continue;  // self: no partner outside the neighbourhood
@@ -5169,9 +5192,9 @@ void Identifier::BuildBentPairs()
           {
             const double s = piece.first + (piece.second - piece.first) * i_s / n_samples;
             const double x = A.run_offset[ka] + s;
-            const auto q = ClosestPointOnChain(B, ra.At(s),
-                                               self ? std::optional<double>(x) : std::nullopt,
-                                               self ? std::optional<double>(reach) : std::nullopt);
+            const auto q = ClosestPointOnChain(
+                B, ra.At(s), self ? std::optional<double>(x) : std::nullopt,
+                self ? std::optional<double>(reach) : std::nullopt);
             if (!std::isfinite(q.distance))
             {
               continue;
@@ -5278,11 +5301,10 @@ void Identifier::BuildBentPairs()
         constant.push_back(is_constant);
         const double w_own =
             WindowMax(own_samples, &own_constant, sample.x, sample.half_own, nullptr);
-        const double w_other =
-            other_samples.empty()
-                ? w_own
-                : WindowMax(other_samples, &other_constant, sample.qx, sample.half_other,
-                            nullptr);
+        const double w_other = other_samples.empty()
+                                   ? w_own
+                                   : WindowMax(other_samples, &other_constant, sample.qx,
+                                               sample.half_other, nullptr);
         // Chord reading C (exact for an offset polyline) and the inscribed-vertex reading
         // C / cos(turn / 2) (exact for two polylines inscribed in the curves at aligned
         // angles): the pair interacts only when both readings are below 2R.
@@ -5531,7 +5553,8 @@ void Identifier::BuildBentPairs()
         groups.emplace_back(i, j);
         i = j;
       }
-      if (std::getenv("PALACE_IDENTIFICATION_DEBUG_GROUPS") && input.log && groups.size() > 1)
+      if (std::getenv("PALACE_IDENTIFICATION_DEBUG_GROUPS") && input.log &&
+          groups.size() > 1)
       {
         std::ostringstream dbg;
         dbg << "  DEBUG groups of chains " << A.id << " - " << B.id << ":\n";
@@ -5551,9 +5574,10 @@ void Identifier::BuildBentPairs()
             {
               const auto &pc = *grouped[i].piece;
               const Run &rr = runs[pc.run];
-              dbg << "      side " << grouped[i].side << " run " << pc.run << " s [" << pc.interval.first
-                  << ", " << pc.interval.second << "] of " << rr.length << " at (" << rr.At(pc.interval.first)[0]
-                  << ", " << rr.At(pc.interval.first)[1] << ") " << (pc.exact ? "exact" : "chord")
+              dbg << "      side " << grouped[i].side << " run " << pc.run << " s ["
+                  << pc.interval.first << ", " << pc.interval.second << "] of " << rr.length
+                  << " at (" << rr.At(pc.interval.first)[0] << ", "
+                  << rr.At(pc.interval.first)[1] << ") " << (pc.exact ? "exact" : "chord")
                   << " mean " << grouped[i].mean_separation << "\n";
             }
           }
@@ -5581,10 +5605,11 @@ void Identifier::BuildBentPairs()
         const Chain &lead_chain = lead_on_a ? A : B;
         const auto qb = ClosestPointOnChain(
             lead_other, pa,
-            self ? std::optional<double>(
-                       lead_chain.run_offset[RunIndexInChain(lead_chain, lead->piece->run)] +
-                       lead_s)
-                 : std::nullopt,
+            self
+                ? std::optional<double>(
+                      lead_chain.run_offset[RunIndexInChain(lead_chain, lead->piece->run)] +
+                      lead_s)
+                : std::nullopt,
             self ? std::optional<double>(reach) : std::nullopt);
         if (!std::isfinite(qb.distance))
         {
@@ -5614,8 +5639,9 @@ void Identifier::BuildBentPairs()
         {
           std::ostringstream dbg;
           dbg << "  DEBUG link " << A.id << " - " << B.id << " separation straight "
-              << link.separation[0].value << (link.separation[0].exact ? " exact" : " chord")
-              << " curved " << link.separation[1].value
+              << link.separation[0].value
+              << (link.separation[0].exact ? " exact" : " chord") << " curved "
+              << link.separation[1].value
               << (link.separation[1].exact ? " exact" : " chord") << "\n";
           for (int side = 0; side < 2; side++)
           {
@@ -5628,13 +5654,14 @@ void Identifier::BuildBentPairs()
               if (RunArc(piece.run) >= 0)
               {
                 const Arc &arc = arcs[static_cast<std::size_t>(RunArc(piece.run))];
-                dbg << " (r " << arc.radius << " c " << arc.center[0] << "," << arc.center[1]
-                    << " joints " << arc.joints.size() << " turn " << arc.turn << ")";
+                dbg << " (r " << arc.radius << " c " << arc.center[0] << ","
+                    << arc.center[1] << " joints " << arc.joints.size() << " turn "
+                    << arc.turn << ")";
               }
               dbg << (piece.curved ? " curved" : " straight")
                   << (piece.exact ? " EXACT " : " chord ") << piece.separation << " at ("
-                  << rr.At(piece.interval.first)[0] << ", " << rr.At(piece.interval.first)[1]
-                  << ")\n";
+                  << rr.At(piece.interval.first)[0] << ", "
+                  << rr.At(piece.interval.first)[1] << ")\n";
             }
           }
           input.log(dbg.str());
@@ -6029,8 +6056,7 @@ void Identifier::BuildPairsAndStacks()
   for (auto &[run, list] : by_run)
   {
     (void)run;
-    std::sort(list.begin(), list.end(),
-              [](const RunInterval &a, const RunInterval &b)
+    std::sort(list.begin(), list.end(), [](const RunInterval &a, const RunInterval &b)
               { return std::tie(a.lo, a.hi, a.item) < std::tie(b.lo, b.hi, b.item); });
     for (std::size_t i = 0; i < list.size(); i++)
     {
@@ -6049,8 +6075,8 @@ void Identifier::BuildPairsAndStacks()
   for (std::size_t item = 0; item < n_items; item++)
   {
     const std::size_t root = uf.Find(item);
-    auto [it, inserted] = components.emplace(root, std::make_pair(std::vector<std::size_t>{},
-                                                                  std::vector<std::size_t>{}));
+    auto [it, inserted] = components.emplace(
+        root, std::make_pair(std::vector<std::size_t>{}, std::vector<std::size_t>{}));
     if (inserted)
     {
       component_order.push_back(root);
@@ -6090,9 +6116,9 @@ void Identifier::BuildPairsAndStacks()
     }
     AssembleStack(links, span_items);
   }
-  stage.End(std::to_string(component_order.size()) + " cross-section components: " +
-            std::to_string(pairs) + " single links, " + std::to_string(spans) +
-            " single spans, " + std::to_string(stacks) +
+  stage.End(std::to_string(component_order.size()) +
+            " cross-section components: " + std::to_string(pairs) + " single links, " +
+            std::to_string(spans) + " single spans, " + std::to_string(stacks) +
             " multi-link (stacks, chains facing themselves, mixed), all assembled per "
             "cross-section, " +
             std::to_string(features.size() - features_before) + " features, " +
@@ -6121,7 +6147,8 @@ void Identifier::BuildPairsAndStacks()
 void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
                                const std::vector<std::size_t> &span_items)
 {
-  const double reach = kInteractionDistanceOverRadius * R * (1.0 + kPairSeparationTolerance);
+  const double reach =
+      kInteractionDistanceOverRadius * R * (1.0 + kPairSeparationTolerance);
   const double neighbourhood = kSelfPairNeighbourhoodOverRadius * R;
   const bool debug_log = std::getenv("PALACE_IDENTIFICATION_DEBUG") && input.log;
   // Phase timing of a component (PALACE_IDENTIFICATION_DEBUG_TIMING), for the chip-scale
@@ -6138,9 +6165,9 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       if (seconds > 0.05)
       {
         std::ostringstream line;
-        line << "    stack component (" << link_items.size() << " links, " << span_items.size()
-             << " spans): " << timer_phase << " " << std::fixed << std::setprecision(2)
-             << seconds << " s\n";
+        line << "    stack component (" << link_items.size() << " links, "
+             << span_items.size() << " spans): " << timer_phase << " " << std::fixed
+             << std::setprecision(2) << seconds << " s\n";
         input.log(line.str());
       }
       timer_started = now;
@@ -6200,7 +6227,8 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     }
   }
   // The interval of the link side holding x within the tolerance (closed), or null.
-  auto IntervalAt = [&](std::size_t e, int side, double x, double tolerance) -> const Interval *
+  auto IntervalAt = [&](std::size_t e, int side, double x,
+                        double tolerance) -> const Interval *
   {
     const auto &list = side_intervals[e][static_cast<std::size_t>(side)];
     auto it = std::upper_bound(list.begin(), list.end(), x,
@@ -6333,7 +6361,8 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     auto iv = std::upper_bound(list.begin(), list.end(), x,
                                [](double value, const Interval &interval)
                                { return value < interval.first; });
-    return iv != list.begin() && x < (iv - 1)->second - Tol() && x > (iv - 1)->first + Tol();
+    return iv != list.begin() && x < (iv - 1)->second - Tol() &&
+           x > (iv - 1)->first + Tol();
   };
   StackTimer("images");
   // Images of the breakpoints through the links, breadth first over the chains (bounded by
@@ -6408,8 +6437,8 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     bool exact = true;    // every consecutive separation entering the offsets is exact
     bool geometric_fallback = false;
     bool cap_reached = false;
-    // Lateral positions of the partner feet that are cluster / window metal (taken): a taken
-    // member between two members of the cross-section interrupts it.
+    // Lateral positions of the partner feet that are cluster / window metal (taken): a
+    // taken member between two members of the cross-section interrupts it.
     std::vector<double> taken_positions;
   };
   std::size_t fallbacks = 0, cap_hits = 0;
@@ -6501,11 +6530,10 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
           hi = t;
         }
       }
-      composition.nodes.erase(std::remove_if(composition.nodes.begin(),
-                                             composition.nodes.end(),
-                                             [&](const Node &n)
-                                             { return n.position < lo || n.position > hi; }),
-                              composition.nodes.end());
+      composition.nodes.erase(
+          std::remove_if(composition.nodes.begin(), composition.nodes.end(),
+                         [&](const Node &n) { return n.position < lo || n.position > hi; }),
+          composition.nodes.end());
     }
     // Provisional orientation (final: the canonical signature's, below): the member with
     // the smallest (chain, position along its chain) on side 0 (the two-edge convention:
@@ -6546,8 +6574,7 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
           }
           if (ActiveAt(e, side, lower.x))
           {
-            const ClassSeparation &of_class =
-                link.separation[composition.curved ? 1 : 0];
+            const ClassSeparation &of_class = link.separation[composition.curved ? 1 : 0];
             separation = of_class.value;
             composition.exact = composition.exact && of_class.exact;
           }
@@ -6579,7 +6606,8 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       const auto &list = side_intervals[e][0];
       for (std::size_t i = 0; i < std::min<std::size_t>(list.size(), 6); i++)
       {
-        line << " [" << std::setprecision(8) << list[i].first << ", " << list[i].second << "]";
+        line << " [" << std::setprecision(8) << list[i].first << ", " << list[i].second
+             << "]";
       }
     }
     input.log(line.str() + "\n");
@@ -6635,7 +6663,8 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       if (debug_log && (composition.nodes.size() < 2 || x1 - x0 > R))
       {
         std::ostringstream line;
-        line << "    interval chain " << chain << " [" << x0 << ", " << x1 << "] nodes " << k;
+        line << "    interval chain " << chain << " [" << x0 << ", " << x1 << "] nodes "
+             << k;
         for (const auto &node : composition.nodes)
         {
           line << " (" << node.chain << " @ " << node.x << ")";
@@ -6663,9 +6692,10 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       Edges();
       auto translational = CanonicalTranslationalSignature(edges, R);
       // Sides in the canonical order: for a cross-section that is not its own mirror image
-      // the lateral axis is oriented so that the signature's first edge is side 0 (chirality
-      // +1 always; the same sides at every cross-section of the feature whatever the chain
-      // numbering), a symmetric one keeps the provisional orientation (chirality 0).
+      // the lateral axis is oriented so that the signature's first edge is side 0
+      // (chirality +1 always; the same sides at every cross-section of the feature whatever
+      // the chain numbering), a symmetric one keeps the provisional orientation (chirality
+      // 0).
       if (translational.chirality < 0)
       {
         std::reverse(composition.nodes.begin(), composition.nodes.end());
@@ -6743,11 +6773,21 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
         key += std::to_string(m) + ",";
       }
       const Node &first = composition.nodes.front();
-      on_chain.push_back({chain, x0, x1, key, own_side, curved, max_kappa, type,
-                          translational.signature, translational.chirality, reason,
+      on_chain.push_back({chain,
+                          x0,
+                          x1,
+                          key,
+                          own_side,
+                          curved,
+                          max_kappa,
+                          type,
+                          translational.signature,
+                          translational.chirality,
+                          reason,
                           first.point,
                           {runs[first.run].tangent, composition.lateral, n_ref},
-                          static_cast<int>(k), composition.exact});
+                          static_cast<int>(k),
+                          composition.exact});
     }
     // Adjacent elementary intervals of one feature and side merge.
     for (auto &entry : on_chain)
@@ -6774,8 +6814,9 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     {
       dbg << "    link " << e.chain_a << " - " << e.chain_b << " sep "
           << e.separation[0].value << (e.separation[0].exact ? " (exact)" : " (chord)")
-          << " / " << e.separation[1].value << (e.separation[1].exact ? " (exact)" : " (chord)")
-          << " pieces " << e.pieces[0].size() << " / " << e.pieces[1].size() << "\n";
+          << " / " << e.separation[1].value
+          << (e.separation[1].exact ? " (exact)" : " (chord)") << " pieces "
+          << e.pieces[0].size() << " / " << e.pieces[1].size() << "\n";
       for (const int c : {e.chain_a, e.chain_b})
       {
         const Chain &C = ChainOf(c);
@@ -6788,14 +6829,15 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
         for (const auto &piece : e.pieces[static_cast<std::size_t>(side)])
         {
           const auto iv = ChainInterval(piece);
-          dbg << "      side " << side << " run " << piece.run << " x [" << iv.first << ", " << iv.second << "] curved " << piece.curved << "\n";
+          dbg << "      side " << side << " run " << piece.run << " x [" << iv.first << ", "
+              << iv.second << "] curved " << piece.curved << "\n";
         }
     }
     for (const auto &a : assigned)
     {
-      dbg << "    assigned chain " << a.chain << " [" << a.x0 << ", " << a.x1 << "] side " << a.side
-          << " k " << a.sides << " curved " << a.curved << " " << a.type << " key "
-          << std::hash<std::string>{}(a.key) % 100000 << "\n";
+      dbg << "    assigned chain " << a.chain << " [" << a.x0 << ", " << a.x1 << "] side "
+          << a.side << " k " << a.sides << " curved " << a.curved << " " << a.type
+          << " key " << std::hash<std::string>{}(a.key) % 100000 << "\n";
     }
     input.log(dbg.str());
   }
@@ -6884,20 +6926,19 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     features[feature].origin = lead.origin;
     features[feature].axes = lead.axes;
     feature_sides[feature] = lead.sides;
-    features[feature].exact_parameters =
-        std::all_of(members.begin(), members.end(),
-                    [&](std::size_t i) { return assigned[i].exact; });
+    features[feature].exact_parameters = std::all_of(
+        members.begin(), members.end(), [&](std::size_t i) { return assigned[i].exact; });
     for (const std::size_t i : members)
     {
       const Assigned &entry = assigned[i];
       const Chain &C = ChainOf(entry.chain);
       // Runs overlapping [x0, x1] (run_offset ascending).
-      std::size_t kr = std::min(
-          static_cast<std::size_t>(
-              std::upper_bound(C.run_offset.begin(), C.run_offset.end(), entry.x0) -
-              C.run_offset.begin()) -
-              1,
-          C.runs.size() - 1);
+      std::size_t kr =
+          std::min(static_cast<std::size_t>(std::upper_bound(C.run_offset.begin(),
+                                                             C.run_offset.end(), entry.x0) -
+                                            C.run_offset.begin()) -
+                       1,
+                   C.runs.size() - 1);
       for (; kr < C.runs.size() && C.run_offset[kr] < entry.x1 - Tol(); kr++)
       {
         const double offset = C.run_offset[kr];
@@ -7037,11 +7078,10 @@ void Identifier::BuildClusters()
   // sub-pieces of at most R / 2 and each faces the partner region of its midpoint (the
   // former run-level zone excluded a whole run within pi R of the other run's nearest end,
   // which hid the fold end of a hairpin facing the far part of a long leg).
-  auto CoresOnRun = [&](std::size_t a, std::size_t b,
-                        const std::vector<std::vector<Interval>> &zones_a,
-                        const std::vector<std::vector<Interval>> &zones_b,
-                        const std::function<std::vector<Interval>(double)> *self_partner =
-                            nullptr)
+  auto CoresOnRun =
+      [&](std::size_t a, std::size_t b, const std::vector<std::vector<Interval>> &zones_a,
+          const std::vector<std::vector<Interval>> &zones_b,
+          const std::function<std::vector<Interval>(double)> *self_partner = nullptr)
   {
     const Run &ra = runs[a];
     const Run &rb = runs[b];
@@ -7173,11 +7213,11 @@ void Identifier::BuildClusters()
       const Chain &ca = chains[chain_index.at(runs[a].chain)];
       const Chain &cb = chains[chain_index.at(runs[b].chain)];
       // Two runs of ONE chain (a chain facing itself, decision 82(2) addition): no events
-      // within the self-pair neighbourhood of pi R along the chain (the local neighbourhood of
-      // a bend); beyond it the runs interact like two chains — a strip flaring into a pad
-      // diverges (not constant) and is a cluster, as it would be for two chains. The zone of
-      // run a is the part within pi R of arc length of run b (its ends), in place of the
-      // shared-vertex zones (every vertex of a chain is shared with itself).
+      // within the self-pair neighbourhood of pi R along the chain (the local neighbourhood
+      // of a bend); beyond it the runs interact like two chains — a strip flaring into a
+      // pad diverges (not constant) and is a cluster, as it would be for two chains. The
+      // zone of run a is the part within pi R of arc length of run b (its ends), in place
+      // of the shared-vertex zones (every vertex of a chain is shared with itself).
       const bool self = runs[a].chain == runs[b].chain;
       std::function<std::vector<Interval>(double)> self_partner_on_b, self_partner_on_a;
       if (self)
@@ -7485,8 +7525,9 @@ void Identifier::BuildClusters()
     {
       for (const auto &core : cluster_cores[c])
       {
-        dbg << "    base core cluster " << c << " run " << core.run << " from (" << core.p0[0]
-            << ", " << core.p0[1] << ") to (" << core.p1[0] << ", " << core.p1[1] << ")\n";
+        dbg << "    base core cluster " << c << " run " << core.run << " from ("
+            << core.p0[0] << ", " << core.p0[1] << ") to (" << core.p1[0] << ", "
+            << core.p1[1] << ")\n";
       }
       for (const auto &[r, interval] : cluster_claimed[c])
       {
@@ -7507,23 +7548,24 @@ void Identifier::BuildClusters()
 // would become an IsolatedEdge / CurvedEdge — whose 3D distance to a cluster's claimed
 // perimeter on another chain (or on its own chain beyond the self-pair neighbourhood) is
 // strictly below 2R, outside the through-vertex zones of the two chains, joins that cluster
-// over the sub-interval within 2R; a single-edge portion within 2R of the window of a vertex
-// feature outside every cluster makes that vertex a cluster together with the portion. A
-// portion within 2R of several clusters (or vertex features) merges them (union-find: the
-// result does not depend on the order). Pairs and stacks are joint descriptions and are
-// never absorbed; the stack-end recomposition then runs again on the enlarged claims, and
-// the extension iterates to closure over the single-edge portions only. Returns the
-// absorbed length of this pass (the caller stops when it is at most the signature
-// parameter tolerance 1e-3 R: that last pass IS applied without a further recomposition —
-// its pieces come from the unclaimed remainder, so no pair / stack claim overlaps them and
-// the partition holds; the stack cut images on the other members are then consistent with
-// the final claims to within the tolerance, below the resolution of every parameter; NOT
-// applying it would leave sub-tolerance unclaimed slivers as isolated features facing the
-// cluster metal, e.g. a 0.24 nm IsolatedEdge on DS-SCT-001 — review fix-3 m8, stated).
-// With measure_joint_claims the SAME across rule is evaluated on the pair / stack claims
-// (priority 2) instead of the single-edge remainder and nothing is absorbed: the returned
-// length is Diagnostics.StackEndThirdBodyLength (decision 85(2)), the one definition the
-// facing gate's StackEndRecomposition / StackEndThirdBody classes sample (review m5).
+// over the sub-interval within 2R; a single-edge portion within 2R of the window of a
+// vertex feature outside every cluster makes that vertex a cluster together with the
+// portion. A portion within 2R of several clusters (or vertex features) merges them
+// (union-find: the result does not depend on the order). Pairs and stacks are joint
+// descriptions and are never absorbed; the stack-end recomposition then runs again on the
+// enlarged claims, and the extension iterates to closure over the single-edge portions
+// only. Returns the absorbed length of this pass (the caller stops when it is at most the
+// signature parameter tolerance 1e-3 R: that last pass IS applied without a further
+// recomposition — its pieces come from the unclaimed remainder, so no pair / stack claim
+// overlaps them and the partition holds; the stack cut images on the other members are then
+// consistent with the final claims to within the tolerance, below the resolution of every
+// parameter; NOT applying it would leave sub-tolerance unclaimed slivers as isolated
+// features facing the cluster metal, e.g. a 0.24 nm IsolatedEdge on DS-SCT-001 — review
+// fix-3 m8, stated). With measure_joint_claims the SAME across rule is evaluated on the
+// pair / stack claims (priority 2) instead of the single-edge remainder and nothing is
+// absorbed: the returned length is Diagnostics.StackEndThirdBodyLength (decision 85(2)),
+// the one definition the facing gate's StackEndRecomposition / StackEndThirdBody classes
+// sample (review m5).
 double Identifier::ExtendClusters(bool measure_joint_claims)
 {
   const double interaction = kInteractionDistanceOverRadius * R;
@@ -7569,7 +7611,7 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
   {
     std::size_t run;
     Interval interval;
-    std::size_t owner;  // cluster c, or cluster_claimed.size() + free site index
+    std::size_t owner;            // cluster c, or cluster_claimed.size() + free site index
     double extend_lo, extend_hi;  // projection-domain extension at the piece ends
   };
   std::vector<Piece> pieces;
@@ -7577,11 +7619,12 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
   // piece falls inside the piece and its distance to the piece is below 2R: the claimed
   // perimeter is faced across, never reached diagonally past its end (a diagonal reach
   // would creep along a sub-2R strip: the partner beyond the claim end pairs with the
-  // free continuation instead). Inside a claimed chain interval the perpendicular domains of
-  // consecutive pieces leave a wedge at every joint; each piece's domain is extended there
-  // by 2R tan(turn) (the wedge's width at 2R; never at the end of a claimed interval).
-  auto AddPieces = [&](std::size_t owner,
-                       const std::vector<std::pair<std::size_t, Interval>> &claimed)
+  // free continuation instead). Inside a claimed chain interval the perpendicular domains
+  // of consecutive pieces leave a wedge at every joint; each piece's domain is extended
+  // there by 2R tan(turn) (the wedge's width at 2R; never at the end of a claimed
+  // interval).
+  auto AddPieces =
+      [&](std::size_t owner, const std::vector<std::pair<std::size_t, Interval>> &claimed)
   {
     std::map<int, std::vector<Interval>> by_chain;
     for (const auto &[r, interval] : claimed)
@@ -7696,7 +7739,8 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
     for (const std::size_t v : SharedVertices(A, B))
     {
       const auto sv = site_of_vertex.find(v);
-      if (cluster >= 0 && sv != site_of_vertex.end() && sites[sv->second].cluster == cluster)
+      if (cluster >= 0 && sv != site_of_vertex.end() &&
+          sites[sv->second].cluster == cluster)
       {
         continue;
       }
@@ -7748,7 +7792,8 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
     {
       continue;
     }
-    stage.Progress(r, runs.size(), measure_joint_claims ? "stack-end third body" : "cluster extension");
+    stage.Progress(r, runs.size(),
+                   measure_joint_claims ? "stack-end third body" : "cluster extension");
     std::vector<Interval> remainder;
     if (measure_joint_claims)
     {
@@ -7799,7 +7844,8 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
         {
           excluded.insert(excluded.end(), zone.begin(), zone.end());
         }
-        piece_parts = SubtractIntervals(piece_parts, MergeIntervals(excluded, Tol()), Tol());
+        piece_parts =
+            SubtractIntervals(piece_parts, MergeIntervals(excluded, Tol()), Tol());
       }
       std::vector<Interval> found;
       for (const auto &part : piece_parts)
@@ -7913,8 +7959,7 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
           const double s_end = at_start ? part.first : part.second;
           const std::size_t k = rp.index_in_chain;
           const bool run_end = at_start ? s_end <= Tol() : s_end >= rp.length - Tol();
-          const bool chain_end =
-              !B.closed && (at_start ? k == 0 : k + 1 == B.runs.size());
+          const bool chain_end = !B.closed && (at_start ? k == 0 : k + 1 == B.runs.size());
           if (run_end && chain_end)
           {
             const Point3D e = RunPoint(piece.run, s_end);
@@ -7952,8 +7997,8 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
         for (const auto &interval : found)
         {
           std::vector<Interval> near;
-          for (const double shift :
-               A.closed ? std::vector<double>{-A.length, 0.0, A.length} : std::vector<double>{0.0})
+          for (const double shift : A.closed ? std::vector<double>{-A.length, 0.0, A.length}
+                                             : std::vector<double>{0.0})
           {
             const double n0 = b0 + shift - neighbourhood - x_a0;
             const double n1 = b1 + shift + neighbourhood - x_a0;
@@ -7962,7 +8007,8 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
               near.emplace_back(n0, n1);
             }
           }
-          const auto far = SubtractIntervals({interval}, MergeIntervals(near, Tol()), Tol());
+          const auto far =
+              SubtractIntervals({interval}, MergeIntervals(near, Tol()), Tol());
           allowed.insert(allowed.end(), far.begin(), far.end());
         }
         found = allowed;
@@ -7997,7 +8043,8 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
       std::vector<std::pair<Interval, std::size_t>> hits;
       for (auto &[owner, list] : within_by_owner)
       {
-        for (const auto &interval : IntersectIntervals({free}, MergeIntervals(list, Tol()), Tol()))
+        for (const auto &interval :
+             IntersectIntervals({free}, MergeIntervals(list, Tol()), Tol()))
         {
           if (interval.second - interval.first > sliver)
           {
@@ -8016,7 +8063,8 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
       {
         if (!merged.empty() && interval.first <= merged.back().interval.second + Tol())
         {
-          merged.back().interval.second = std::max(merged.back().interval.second, interval.second);
+          merged.back().interval.second =
+              std::max(merged.back().interval.second, interval.second);
           merged.back().owners.push_back(owner);
         }
         else
@@ -8126,11 +8174,12 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
     }
   }
   double absorbed = 0.0;
-  const bool debug_extension = std::getenv("PALACE_IDENTIFICATION_DEBUG_EXTENSION") && input.log;
+  const bool debug_extension =
+      std::getenv("PALACE_IDENTIFICATION_DEBUG_EXTENSION") && input.log;
   for (const auto &absorption : absorptions)
   {
     new_claimed[owner_cluster[absorption.owners[0]]].emplace_back(absorption.run,
-                                                                 absorption.interval);
+                                                                  absorption.interval);
     absorbed += absorption.interval.second - absorption.interval.first;
     extension_portions++;
     if (debug_extension)
@@ -8498,8 +8547,8 @@ nlohmann::json Identifier::KnifeEdgeCensus() const
     if (turn > 0.0)
     {
       // The joint noise rule: the sagitta the turn implies on the SHORTER run (the rule's
-      // quantity) against JointNoiseSagittaOverR x R; the arc rule's joint-turn cap; and the
-      // mesh-coarseness diagnostic: the LONGER run read as a chord of one circle at the
+      // quantity) against JointNoiseSagittaOverR x R; the arc rule's joint-turn cap; and
+      // the mesh-coarseness diagnostic: the LONGER run read as a chord of one circle at the
       // joint's turn (an inscribed polyline's chord of central angle t has sagitta
       // (c / 2) tan(t / 4); a fitted arc's chords are its runs between joints).
       const double shorter = std::min(runs[incident[0]].length, runs[incident[1]].length);
@@ -8512,25 +8561,26 @@ nlohmann::json Identifier::KnifeEdgeCensus() const
                      kKnifeEdgeBandRelative * sagitta_cap, 1.0);
     }
   }
-  return {{"BandRelative", kKnifeEdgeBandRelative},
-          {"SampleSpacingOverR", kKnifeEdgeSampleSpacingOverRadius},
-          {"Rule", "perimeter length with another perimeter point (3D; the same chain beyond "
-                   "the self-pair neighbourhood) at a distance within the band of the "
-                   "threshold, split into the below / above sides; the chain length "
-                   "whose windowed bend radius lies within the band of the straight-bend "
-                   "radius; the two-run vertices whose implied sagitta (c / 2) tan(turn / 4) "
-                   "on the SHORTER run lies within the band of JointNoiseSagittaOverR x R "
-                   "(the joint noise rule), whose turn lies within the band of "
-                   "ArcMaxJointTurnDegrees (the arc rule's cap), and whose LONGER run read "
-                   "as a chord at the joint's turn has a sagitta within the band of "
-                   "SagittaOverR x R (the mesh-coarseness diagnostic) (counts, not lengths)"},
-          {"SampledLength", sampled},
-          {"Distance", {{"R", at_r.ToJson()}, {"2R", at_2r.ToJson()}}},
-          {"BendRadius", {{"10R", at_bend.ToJson()}}},
-          {"JointNoiseSagittaOverR",
-           {{ThresholdKey(kJointNoiseSagittaOverRadius), at_noise.ToJson()}}},
-          {"ArcMaxJointTurnDegrees", {{ThresholdKey(arc_turn_cap), at_arc_turn.ToJson()}}},
-          {"ArcSagittaOverR", {{ThresholdKey(kArcSagittaOverRadius), at_sagitta.ToJson()}}}};
+  return {
+      {"BandRelative", kKnifeEdgeBandRelative},
+      {"SampleSpacingOverR", kKnifeEdgeSampleSpacingOverRadius},
+      {"Rule", "perimeter length with another perimeter point (3D; the same chain beyond "
+               "the self-pair neighbourhood) at a distance within the band of the "
+               "threshold, split into the below / above sides; the chain length "
+               "whose windowed bend radius lies within the band of the straight-bend "
+               "radius; the two-run vertices whose implied sagitta (c / 2) tan(turn / 4) "
+               "on the SHORTER run lies within the band of JointNoiseSagittaOverR x R "
+               "(the joint noise rule), whose turn lies within the band of "
+               "ArcMaxJointTurnDegrees (the arc rule's cap), and whose LONGER run read "
+               "as a chord at the joint's turn has a sagitta within the band of "
+               "SagittaOverR x R (the mesh-coarseness diagnostic) (counts, not lengths)"},
+      {"SampledLength", sampled},
+      {"Distance", {{"R", at_r.ToJson()}, {"2R", at_2r.ToJson()}}},
+      {"BendRadius", {{"10R", at_bend.ToJson()}}},
+      {"JointNoiseSagittaOverR",
+       {{ThresholdKey(kJointNoiseSagittaOverRadius), at_noise.ToJson()}}},
+      {"ArcMaxJointTurnDegrees", {{ThresholdKey(arc_turn_cap), at_arc_turn.ToJson()}}},
+      {"ArcSagittaOverR", {{ThresholdKey(kArcSagittaOverRadius), at_sagitta.ToJson()}}}};
 }
 
 void Identifier::Assign(IdentificationResult &result)
@@ -8671,9 +8721,9 @@ void Identifier::Assign(IdentificationResult &result)
                              [&](const RunSegment &rs) { return rs.segment == wanted; }))
       {
         std::ostringstream dbg;
-        dbg << "  DEBUG run " << r << " (segment " << wanted << ") length " << runs[r].length
-            << " from (" << runs[r].start[0] << ", " << runs[r].start[1] << ") to ("
-            << runs[r].end[0] << ", " << runs[r].end[1] << ") claims:\n";
+        dbg << "  DEBUG run " << r << " (segment " << wanted << ") length "
+            << runs[r].length << " from (" << runs[r].start[0] << ", " << runs[r].start[1]
+            << ") to (" << runs[r].end[0] << ", " << runs[r].end[1] << ") claims:\n";
         for (const auto &claim : run_claims)
         {
           dbg << "    feature " << claim.feature << " priority " << claim.priority << " ["
@@ -9431,13 +9481,13 @@ IdentificationResult Identifier::Identify()
       absorbed += a >= 0 ? 1 : 0;
     }
     std::ostringstream text;
-    text << corners << " rounded corners, " << bends << " bends of exact radius, " << absorbed
-         << " joints absorbed";
+    text << corners << " rounded corners, " << bends << " bends of exact radius, "
+         << absorbed << " joints absorbed";
     if (coarse > 0)
     {
-      text << "; MESH COARSENESS WARNING: " << coarse << " arcs with chord sagitta >= "
-           << kArcSagittaOverRadius << " R (worst " << std::setprecision(3) << worst_sagitta
-           << " R)";
+      text << "; MESH COARSENESS WARNING: " << coarse
+           << " arcs with chord sagitta >= " << kArcSagittaOverRadius << " R (worst "
+           << std::setprecision(3) << worst_sagitta << " R)";
     }
     stage.End(text.str());
   }
@@ -9489,10 +9539,10 @@ IdentificationResult Identifier::Identify()
         for (const auto &chain : chains)
         {
           const Run &first = runs[chain.runs.front()], &last = runs[chain.runs.back()];
-          dbg << "  DEBUG chain " << chain.id << (chain.closed ? " closed" : " open") << " runs "
-              << chain.runs.size() << " length " << chain.length << " from (" << first.start[0]
-              << ", " << first.start[1] << ") to (" << last.end[0] << ", " << last.end[1]
-              << ") curved";
+          dbg << "  DEBUG chain " << chain.id << (chain.closed ? " closed" : " open")
+              << " runs " << chain.runs.size() << " length " << chain.length << " from ("
+              << first.start[0] << ", " << first.start[1] << ") to (" << last.end[0] << ", "
+              << last.end[1] << ") curved";
           for (const auto &c : chain.curved)
           {
             dbg << " [" << c.first << ", " << c.second << "]";
@@ -9510,7 +9560,8 @@ IdentificationResult Identifier::Identify()
           dbg << " arcs";
           for (const auto &[arc, x0, x1] : chain.arc_spans)
           {
-            dbg << " (" << arc << " [" << x0 << ", " << x1 << "] r " << arcs[arc].radius << ")";
+            dbg << " (" << arc << " [" << x0 << ", " << x1 << "] r " << arcs[arc].radius
+                << ")";
           }
           input.log(dbg.str() + "\n");
           dbg.str("");
@@ -9550,20 +9601,20 @@ IdentificationResult Identifier::Identify()
       // Closure: a pass absorbing at most the signature parameter tolerance (1e-3 R) in
       // total moves no parameter and no gate (DS-SCT-002 at R 2.1: pass 1 absorbed the
       // neighbours, passes 3-15 re-cut 1 nm slivers at the new breakpoints for 8 s each).
-      // Its absorptions are applied (they come from the unclaimed remainder: no pair / stack
-      // claim overlaps them) and the pairs / stacks are not recomposed again: their cut
-      // images differ from the final claims by less than the tolerance (review m8, stated
-      // in the design doc; not applying them left sub-tolerance isolated slivers).
+      // Its absorptions are applied (they come from the unclaimed remainder: no pair /
+      // stack claim overlaps them) and the pairs / stacks are not recomposed again: their
+      // cut images differ from the final claims by less than the tolerance (review m8,
+      // stated in the design doc; not applying them left sub-tolerance isolated slivers).
       if (absorbed <= kSignatureParameterToleranceOverRadius * R)
       {
         break;
       }
       // Decision 93 (DS-CTX-003 defect 2): a pass that repeats the previous one (the same
-      // absorbed length within the signature parameter tolerance and the same portion count:
-      // the recomposed stacks re-cut the same slivers at the moved cut images; DS-CTX-003
-      // absorbed 80 nm in 9 portions on every pass from the 3rd, each pass's total differing
-      // from the last by picometres) or the pass cap ends the loop the same way (applied,
-      // not recomposed; reported under Diagnostics).
+      // absorbed length within the signature parameter tolerance and the same portion
+      // count: the recomposed stacks re-cut the same slivers at the moved cut images;
+      // DS-CTX-003 absorbed 80 nm in 9 portions on every pass from the 3rd, each pass's
+      // total differing from the last by picometres) or the pass cap ends the loop the same
+      // way (applied, not recomposed; reported under Diagnostics).
       if (previous_absorbed >= 0.0 &&
           std::abs(absorbed - previous_absorbed) <=
               kSignatureParameterToleranceOverRadius * R &&
@@ -10204,16 +10255,20 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
        {{"JointNoiseSagittaOverR", kJointNoiseSagittaOverRadius},
         {"CornerRule",
          "geometric joint NOISE threshold (USER decision 121 (B); was the 1 deg angular "
-         "threshold of decision 117(4) and the 30 deg corner class of decision 73): a vertex "
+         "threshold of decision 117(4) and the 30 deg corner class of decision 73): a "
+         "vertex "
          "with two path segments turning by t between two straight pieces (collinear mesh "
          "segments merged) is a straight continuation of its chain (its turn feeds the "
          "windowed curvature) when the implied sagitta (c / 2) tan(t / 4) of the SHORTER "
-         "adjacent piece c is below JointNoiseSagittaOverR x R — the deviation from straight "
+         "adjacent piece c is below JointNoiseSagittaOverR x R — the deviation from "
+         "straight "
          "the joint implies at the resolution of the correction, the same quantity the arc "
-         "rule records per chord (sub-nm mesh slivers are noise whatever their turn, spline "
+         "rule records per chord (sub-nm mesh slivers are noise whatever their turn, "
+         "spline "
          "steps of 1-6 deg on 0.5-2.6 R chords imply 0.001-0.034 R, 5 um arms turning 20 "
          "deg imply 0.23 R); every other joint is a corner feature unless a fitted arc "
-         "absorbs it (ArcRule). The chains of the perimeter extraction (metaledge.cpp) break "
+         "absorbs it (ArcRule). The chains of the perimeter extraction (metaledge.cpp) "
+         "break "
          "at the same rule (metaledge.hpp kJointNoiseSagittaOverRadius, JointIsNoise, "
          "compared on a 1e-9 relative grid); a bend arc merges the chains its absorbed "
          "corners separated"},
@@ -10228,19 +10283,23 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"CornerTraceBasisRule",
          "corner coupons of an angle-interpolated family are built on the trace basis rule "
          "(corner-family review 2026-09-29): on every box ring that meets the metal the "
-         "knots are the two metal-arm crossings (PEC), MetalInteriorKnots = 1 knot at equal "
+         "knots are the two metal-arm crossings (PEC), MetalInteriorKnots = 1 knot at "
+         "equal "
          "perimeter-arc-length fractions of the metal arc (PEC) and FreeKnots = 5 knots at "
          "equal fractions of the free arc, ordered by role (one knot semantics, one zero "
          "set, like-to-like free knots for every node); box corners that are no knot are "
          "slave trace vertices; the library load refuses a spatial corner coupon whose "
-         "metal arm crosses a box ring at no PEC knot; the runtime basis of an interpolated "
+         "metal arm crosses a box ring at no PEC knot; the runtime basis of an "
+         "interpolated "
          "corner is constructed by the rule at the feature's angle (TraceBasis record: "
          "RingSize 8, MetalInteriorKnots 1, FreeKnots 5, Fractions PerimeterArcLength; "
          "knot coincidence 1e-6 of the perimeter: a free or metal-interior knot within it "
          "of a fixed fraction k / RingSize takes that fraction, a box corner within it of "
          "any knot gets no slave vertex). Kink-aware interpolation (corner-qualification "
-         "block 2026-09-29): a stencil never straddles a geometric EVENT of the trace basis "
-         "(a knot of a metal ring passing a fixed-layout vertex: the perimeter-ordered band "
+         "block 2026-09-29): a stencil never straddles a geometric EVENT of the trace "
+         "basis "
+         "(a knot of a metal ring passing a fixed-layout vertex: the perimeter-ordered "
+         "band "
          "triangulation flips a quad diagonal and the hats jump; convex knot-corner "
          "passages 90 / 135 / 153.434948822922 deg, concave 90 / 135 / 158.198590513648 "
          "deg; side-midpoint passages convex 141.340191745910, concave 111.801409486352 "
@@ -10283,22 +10342,30 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"ArcRule",
          "concyclicity rule (USER decisions 121 / 122, 2026-09-28; amends the sagitta form "
          "of 117(4)): a run of >= 3 consecutive joints of a perimeter path (through corner "
-         "vertices), same turn sign, <= 180 deg in total, is ONE arc iff its joint vertices "
-         "lie on one circle within ArcFitToleranceOverR x R AND every joint turns less than "
-         "ArcMaxJointTurnDegrees (regular polygons such as squares / hexagons stay corners); "
+         "vertices), same turn sign, <= 180 deg in total, is ONE arc iff its joint "
+         "vertices "
+         "lie on one circle within ArcFitToleranceOverR x R AND every joint turns less "
+         "than "
+         "ArcMaxJointTurnDegrees (regular polygons such as squares / hexagons stay "
+         "corners); "
          "bends and rounded corners alike, whatever the chord sagitta and with no "
-         "piece-length rule. The chord sagitta rho (1 - cos(central angle / 2)) is recorded "
+         "piece-length rule. The chord sagitta rho (1 - cos(central angle / 2)) is "
+         "recorded "
          "per arc (Arcs[].MaxChordSagittaOverR) and arcs at or above SagittaOverR x R are "
          "listed in MeshCoarsenessWarning (count, length, worst): a mesh-coarseness "
          "diagnostic, not a membership test. The circle is the one tangent to both arms at "
          "the end joints when every joint lies on it (tangent-length radius); otherwise, "
-         "for a radius >= R over at least FOUR joints only, the least-squares circle of the "
+         "for a radius >= R over at least FOUR joints only, the least-squares circle of "
+         "the "
          "joints (exact for an inscribed polyline; three points are always concyclic, so a "
          "3-joint least-squares bend would absorb any three same-sign joints — refused), "
          "each arm meeting the circle's tangent at its end joint within the joint noise "
-         "rule (on the shorter of the arm piece and the first chord) or lying on the circle "
-         "as a chord (a bend between non-tangent arms after a spline piece; an arc starting "
-         "at a corner on its circle). Radius < R = one rounded corner (own chain, arms meet "
+         "rule (on the shorter of the arm piece and the first chord) or lying on the "
+         "circle "
+         "as a chord (a bend between non-tangent arms after a spline piece; an arc "
+         "starting "
+         "at a corner on its circle). Radius < R = one rounded corner (own chain, arms "
+         "meet "
          "through it, AngleDegrees = 180 - total turn, CornerRadiusOverR from the tangent "
          "lengths; a rounded corner of small turn is a corner of large angle); radius >= R "
          "= a bend inside its chain. A closed path of joints turning one way through 360 "
@@ -10306,7 +10373,8 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "arc (a round pad or hole; a square or hexagonal hole is corners whatever its "
          "size, an octagon is a circle). Every joint no arc absorbs and that is not noise "
          "is a corner: a two-joint chamfer, a square strip end, a 90 deg lead-end corner. "
-         "Both traversal directions of a path are scanned and the set absorbing more joints "
+         "Both traversal directions of a path are scanned and the set absorbing more "
+         "joints "
          "wins, then fewer arcs, then the smaller serialisation of (radius, turn, joints, "
          "centre distance from the path centroid, first joint's distance from the nearer "
          "path end) on the signature grid (the pair of serialisations of the two scans is "

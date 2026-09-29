@@ -92,8 +92,8 @@ std::filesystem::path ArchivePath(const std::filesystem::path &directory, int so
 // recorded coefficients alpha_k and beta_k / beta_{k-1}: the Lanczos tridiagonal of the m
 // iterations has T_kk = 1 / alpha_k + (beta_k / beta_{k-1}) / alpha_{k-1} and
 // T_{k,k+1} = sqrt(beta_{k+1} / beta_k) / alpha_k, and its eigenvalues are the Ritz values.
-// The tridiagonal is passed to the eigenvalue solve directly (no m x m matrix). NaN when the
-// record is empty or when m exceeds corrected_solve_ritz_max_iterations.
+// The tridiagonal is passed to the eigenvalue solve directly (no m x m matrix). NaN when
+// the record is empty or when m exceeds corrected_solve_ritz_max_iterations.
 std::pair<double, double> CgRitzValueRange(const std::vector<double> &alpha,
                                            const std::vector<double> &beta_ratio)
 {
@@ -839,9 +839,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   if (EnvironmentFlag("PALACE_RESPONSE_ESTIMATE_ONLY"))
   {
-    MFEM_VERIFY(!archive_reduce_only,
-                "PALACE_RESPONSE_ESTIMATE_ONLY and PALACE_RESPONSE_REDUCE_ONLY exclude each "
-                "other!");
+    MFEM_VERIFY(
+        !archive_reduce_only,
+        "PALACE_RESPONSE_ESTIMATE_ONLY and PALACE_RESPONSE_REDUCE_ONLY exclude each "
+        "other!");
     ValidateArchiveEstimateOptions(iodata, laplace_op.GetComm(), false);
     SaveMetadata(laplace_op.GetH1Spaces());
     auto indicator = EstimateArchivedFields(laplace_op, *K, *ResponseArchiveDirectory());
@@ -1232,8 +1233,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                 "{:.3e}]",
                                 corrected_record.ritz_min, corrected_record.ritz_max);
           Mpi::Warning(
-              "Self-consistent response-corrected operator is not positive definite: PCG met "
-              "{:d} search direction(s) with (Ap, p) <= 0 (first at iteration {:d} of {:d}; "
+              "Self-consistent response-corrected operator is not positive definite: PCG "
+              "met "
+              "{:d} search direction(s) with (Ap, p) <= 0 (first at iteration {:d} of "
+              "{:d}; "
               "{}). The globally coupled correction K + P^T (Q_fab - Q_thin) P has a "
               "negative-energy mode on this mesh (the device's own response to a coupon "
               "trace mode is below the coupon's thin response by more than the fabricated "
@@ -1648,11 +1651,12 @@ void ElectrostaticSolver::PostprocessArchivedResponseMatrix(
     Mpi::GlobalMin(1, &counts[0], post_op.GetComm());
     Mpi::GlobalMax(1, &counts[1], post_op.GetComm());
     Mpi::GlobalSum(1, &counts[2], post_op.GetComm());
-    Mpi::Print(" Archived response reduction: {:d} sources, {:d} interfaces, quadrature "
-               "samples per rank min {:d}, max {:d}, total {:d} (streaming; block size {:d} "
-               "recorded)\n",
-               static_cast<int>(basis_size), static_cast<int>(samples.size()), counts[0],
-               counts[1], counts[2], block_size);
+    Mpi::Print(
+        " Archived response reduction: {:d} sources, {:d} interfaces, quadrature "
+        "samples per rank min {:d}, max {:d}, total {:d} (streaming; block size {:d} "
+        "recorded)\n",
+        static_cast<int>(basis_size), static_cast<int>(samples.size()), counts[0],
+        counts[1], counts[2], block_size);
     for (const auto &interface_samples : samples)
     {
       long long per_interface[3] = {static_cast<long long>(interface_samples.Count()),
@@ -1699,7 +1703,8 @@ void ElectrostaticSolver::PostprocessArchivedResponseMatrix(
       post_op.SetInterfaceResponseField(E_basis, archive_has_flux ? &D_source : nullptr);
       for (std::size_t k = 0; k < samples.size(); k++)
       {
-        post_op.EvaluateInterfaceResponseRow(samples[k], rows[k].data() + i * samples[k].RowSize());
+        post_op.EvaluateInterfaceResponseRow(samples[k],
+                                             rows[k].data() + i * samples[k].RowSize());
       }
     }
     {
@@ -1722,9 +1727,10 @@ void ElectrostaticSolver::PostprocessArchivedResponseMatrix(
     BlockTimer bt_gram(Timer::POSTPRO_REDUCTION_GRAM);
     for (std::size_t k = 0; k < samples.size(); k++)
     {
-      surface_matrices.emplace(samples[k].interface_index,
-                               post_op.AssembleInterfaceResponseMatrices(
-                                   samples[k], rows[k].data(), static_cast<int>(basis_size)));
+      surface_matrices.emplace(
+          samples[k].interface_index,
+          post_op.AssembleInterfaceResponseMatrices(samples[k], rows[k].data(),
+                                                    static_cast<int>(basis_size)));
       std::vector<double>().swap(rows[k]);
     }
   }

@@ -71,7 +71,8 @@ WriteCornerBasisFiles(const fs::path &directory, const std::string &tag,
                       std::optional<double> connectivity_degrees = std::nullopt)
 {
   const CornerTraceBasisRule rule;
-  const auto seed = MakeCornerBoxSeed(radius, metal_thickness, overetch_depth, convex, rule);
+  const auto seed =
+      MakeCornerBoxSeed(radius, metal_thickness, overetch_depth, convex, rule);
   const double angle = angle_degrees * M_PI / 180.0;
   MFEM_VERIFY(rule_layout || !connectivity_degrees,
               "A segment connectivity angle needs the rule layout!");
@@ -167,7 +168,8 @@ WriteCornerBasisFiles(const fs::path &directory, const std::string &tag,
     Connect((outer + 1) * ring_size, 0);
     for (int i = 1; i + 1 < ring_size; i++)
     {
-      triangles.push_back({outer * ring_size, outer * ring_size + i, outer * ring_size + i + 1});
+      triangles.push_back(
+          {outer * ring_size, outer * ring_size + i, outer * ring_size + i + 1});
       triangles.push_back({(outer + 1) * ring_size + i + 1, (outer + 1) * ring_size + i,
                            (outer + 1) * ring_size});
     }
@@ -219,10 +221,10 @@ WriteCornerBasisFiles(const fs::path &directory, const std::string &tag,
 }
 
 // Synthetic N x N response matrices (domain and one-interface surface, with the within-R
-// column) of a unit-test corner coupon: diagonal `diagonal`, off-diagonal couplings decaying
-// with the index distance.
-void WriteCornerMatrices(const fs::path &domain_path, const fs::path &surface_path, int size,
-                         double diagonal, double coupling_scale, double radius_m)
+// column) of a unit-test corner coupon: diagonal `diagonal`, off-diagonal couplings
+// decaying with the index distance.
+void WriteCornerMatrices(const fs::path &domain_path, const fs::path &surface_path,
+                         int size, double diagonal, double coupling_scale, double radius_m)
 {
   std::ofstream domain(domain_path);
   domain << "basis_i,basis_j,Q_ij (J)\n";
@@ -246,16 +248,16 @@ void WriteCornerMatrices(const fs::path &domain_path, const fs::path &surface_pa
 
 // A hexahedral box mesh whose metal island (cracked boundary attribute 9 on the plane
 // y = 0.5) is an exact star-shaped polygon: the radial map of every concentric square of
-// the (x, z) grid onto the polygon (its vertices must lie on grid rays so the outline is the
-// exact polygon at every level), blended to the identity between the levels 2 and 3 so the
-// PEC box walls stay on the bounding box.
+// the (x, z) grid onto the polygon (its vertices must lie on grid rays so the outline is
+// the exact polygon at every level), blended to the identity between the levels 2 and 3 so
+// the PEC box walls stay on the bounding box.
 std::unique_ptr<mfem::ParMesh>
 MakePolygonIslandMesh(const std::vector<std::array<double, 2>> &polygon, double extent,
                       double h)
 {
   const int n = static_cast<int>(std::lround(extent / h));
-  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(n, 4, n, mfem::Element::HEXAHEDRON, extent,
-                                                  1.0, extent);
+  mfem::Mesh serial =
+      mfem::Mesh::MakeCartesian3D(n, 4, n, mfem::Element::HEXAHEDRON, extent, 1.0, extent);
   const double c = 0.5 * extent;
   auto Level = [&](const double *point)
   { return std::max(std::abs(point[0] - c), std::abs(point[2] - c)); };
@@ -322,15 +324,13 @@ MakePolygonIslandMesh(const std::vector<std::array<double, 2>> &polygon, double 
 
 }  // namespace
 
-
 // The SurfaceResponseOperator cases (TEST_CASE_METHOD on test::SurfaceResponseFiles; every
 // case writes the fixture files it reads and builds its own meshes and operators). The 2D
 // cases run on 4 x 4 .. 10 x 4 triangle meshes, the 3D CPW cases on the cpw3d-surface-nc
 // test mesh (one mesh read per boundary configuration), the island cases on synthetic
 // hexahedral boxes. The quadratic (high-order) spatial cluster round trips are [Long].
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles,
-                 "SurfaceResponseOperator explicit patches 2D",
+TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator explicit patches 2D",
                  "[surfaceresponseoperator][2d][patch][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -571,8 +571,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles,
-                 "SurfaceResponseOperator automatic 2D library",
+TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator automatic 2D library",
                  "[surfaceresponseoperator][2d][automatic][cache][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -766,8 +765,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles,
-                 "SurfaceResponseOperator boundary-mode 2D",
+TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator boundary-mode 2D",
                  "[surfaceresponseoperator][2d][boundarymode][impedance][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -1151,9 +1149,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles,
-                 "SurfaceResponseOperator 2D pairs and clusters",
-                 "[surfaceresponseoperator][2d][cluster][boundarymode][cache][Serial][Parallel]")
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles, "SurfaceResponseOperator 2D pairs and clusters",
+    "[surfaceresponseoperator][2d][cluster][boundarymode][cache][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
@@ -1472,7 +1470,6 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       WithinRel(parallel_cluster_electrostatic_result_2d.fabricated_surface_energy.at(4),
                 1.0e-10));
 
-
   json exact_pair_config_2d = ExactPairConfig2D();
   // Regression (2D pair conductor references, 2026-09-26): the 1- / 2-site patches of
   // BuildAutomaticResponseData2D carry the selected model's conductor references — the
@@ -1594,9 +1591,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles,
-                 "SurfaceResponseOperator axisymmetric curvature family",
-                 "[surfaceresponseoperator][2d][axisymmetric][curvature][cache][Serial][Parallel]")
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles, "SurfaceResponseOperator axisymmetric curvature family",
+    "[surfaceresponseoperator][2d][axisymmetric][curvature][cache][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
@@ -1946,7 +1943,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   json config_3d = Cpw3dLegacyConfig();
   IoData iodata_3d(config_3d, false);
   auto mesh_3d = mesh::ReadMesh(iodata_3d, Mpi::World());
-  const auto geometry_3d = ExtractMetalEdgeGeometry(*mesh_3d, iodata_3d.boundaries, JointNoiseExtractionFor(iodata_3d.boundaries));
+  const auto geometry_3d = ExtractMetalEdgeGeometry(
+      *mesh_3d, iodata_3d.boundaries, JointNoiseExtractionFor(iodata_3d.boundaries));
   const auto segment_indices =
       GetInterfaceMetalEdgeSegmentIndices(geometry_3d, 1, InterfaceDielectric::SA);
   double physical_edge_length = 0.0;
@@ -2178,8 +2176,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles,
-                 "SurfaceResponseOperator 3D CPW Maxwell",
+TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator 3D CPW Maxwell",
                  "[surfaceresponseoperator][3d][maxwell][cpw][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -2190,7 +2187,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   json config_3d = Cpw3dLegacyConfig();
   IoData iodata_3d(config_3d, false);
   auto mesh_3d = mesh::ReadMesh(iodata_3d, Mpi::World());
-  const auto geometry_3d = ExtractMetalEdgeGeometry(*mesh_3d, iodata_3d.boundaries, JointNoiseExtractionFor(iodata_3d.boundaries));
+  const auto geometry_3d = ExtractMetalEdgeGeometry(
+      *mesh_3d, iodata_3d.boundaries, JointNoiseExtractionFor(iodata_3d.boundaries));
   const auto segment_indices =
       GetInterfaceMetalEdgeSegmentIndices(geometry_3d, 1, InterfaceDielectric::SA);
   std::vector<std::unique_ptr<Mesh>> meshes_3d;
@@ -2740,8 +2738,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles,
-                 "SurfaceResponseOperator island corners",
+TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator island corners",
                  "[surfaceresponseoperator][3d][corner][legacy][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -2752,7 +2749,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   concave_island_iodata.boundaries.cracked_attributes.insert(9);
   auto island_geometry_mesh = MakeIslandMesh();
   const auto island_geometry =
-      ExtractMetalEdgeGeometry(*island_geometry_mesh, concave_island_iodata.boundaries, JointNoiseExtractionFor(concave_island_iodata.boundaries));
+      ExtractMetalEdgeGeometry(*island_geometry_mesh, concave_island_iodata.boundaries,
+                               JointNoiseExtractionFor(concave_island_iodata.boundaries));
   const auto island_segments =
       GetInterfaceMetalEdgeSegmentIndices(island_geometry, 4, InterfaceDielectric::SA);
   std::set<std::size_t> island_vertices;
@@ -2872,10 +2870,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
   }
 
-
   auto touching_geometry_mesh = MakeTouchingIslandMesh();
   const auto touching_geometry =
-      ExtractMetalEdgeGeometry(*touching_geometry_mesh, convex_island_iodata.boundaries, JointNoiseExtractionFor(convex_island_iodata.boundaries));
+      ExtractMetalEdgeGeometry(*touching_geometry_mesh, convex_island_iodata.boundaries,
+                               JointNoiseExtractionFor(convex_island_iodata.boundaries));
   const auto touching_segments =
       GetInterfaceMetalEdgeSegmentIndices(touching_geometry, 4, InterfaceDielectric::SA);
   std::set<std::size_t> touching_vertices;
@@ -2921,8 +2919,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles,
-                 "SurfaceResponseOperator cap-interior hats",
+TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator cap-interior hats",
                  "[surfaceresponseoperator][3d][spatial][cache][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -2932,11 +2929,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // Cap-interior hats (decision 112(b), library key InteriorTraceCount): the trailing basis
   // points of a spatial model lie on no contour and are ordinary trace coefficients. On the
   // offset corner pair (electrostatic, Collocated): the cap-hat library whose open paths
-  // partition BasisPoints - InteriorTraceCount loads and, with zero hat rows, reproduces the
-  // ring-only model's response exactly; a hat energy enters the fabricated surface energy
-  // (and not the domain defect, equal in both coupons); the geometry cache carries the key
-  // (round trip exact) and a cache without it fails the partition check; refused: open paths
-  // summing to BasisPoints, the key without a TraceMesh, the key on a translational model.
+  // partition BasisPoints - InteriorTraceCount loads and, with zero hat rows, reproduces
+  // the ring-only model's response exactly; a hat energy enters the fabricated surface
+  // energy (and not the domain defect, equal in both coupons); the geometry cache carries
+  // the key (round trip exact) and a cache without it fails the partition check; refused:
+  // open paths summing to BasisPoints, the key without a TraceMesh, the key on a
+  // translational model.
   {
     auto cap_hat_config = island_config;
     cap_hat_config["Boundaries"]["Terminal"] = {{{"Index", 1}, {"Attributes", {9}}},
@@ -2985,9 +2983,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                WithinRel(ring_only_result.domain_correction_fixed_flux, 1.0e-9));
     CHECK_THAT(cap_hat_result.fabricated_surface_energy.at(4),
                WithinRel(ring_only_result.fabricated_surface_energy.at(4), 1.0e-12));
-    CHECK_THAT(cap_hat_result.fabricated_surface_energy_fixed_flux.at(4),
-               WithinRel(ring_only_result.fabricated_surface_energy_fixed_flux.at(4),
-                         1.0e-9));
+    CHECK_THAT(
+        cap_hat_result.fabricated_surface_energy_fixed_flux.at(4),
+        WithinRel(ring_only_result.fabricated_surface_energy_fixed_flux.at(4), 1.0e-9));
 
     IoData cap_hat_loaded_iodata =
         CapHatIoData(cap_hat_loaded_spatial_cluster_library_3d_path);
@@ -3049,16 +3047,19 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 
     IoData cap_hat_full_partition_iodata =
         CapHatIoData(cap_hat_full_partition_library_3d_path);
-    CHECK_THROWS_WITH(SurfaceResponseOperator(cap_hat_full_partition_iodata, cap_hat_laplace),
-                      Catch::Matchers::ContainsSubstring("OpenContourPaths contain an invalid"));
+    CHECK_THROWS_WITH(
+        SurfaceResponseOperator(cap_hat_full_partition_iodata, cap_hat_laplace),
+        Catch::Matchers::ContainsSubstring("OpenContourPaths contain an invalid"));
     IoData cap_hat_without_trace_mesh_iodata =
         CapHatIoData(cap_hat_without_trace_mesh_library_3d_path);
     CHECK_THROWS_WITH(
         SurfaceResponseOperator(cap_hat_without_trace_mesh_iodata, cap_hat_laplace),
         Catch::Matchers::ContainsSubstring("InteriorTraceCount requires"));
-    IoData cap_hat_translational_iodata = CapHatIoData(cap_hat_translational_library_3d_path);
-    CHECK_THROWS_WITH(SurfaceResponseOperator(cap_hat_translational_iodata, cap_hat_laplace),
-                      Catch::Matchers::ContainsSubstring("InteriorTraceCount requires"));
+    IoData cap_hat_translational_iodata =
+        CapHatIoData(cap_hat_translational_library_3d_path);
+    CHECK_THROWS_WITH(
+        SurfaceResponseOperator(cap_hat_translational_iodata, cap_hat_laplace),
+        Catch::Matchers::ContainsSubstring("InteriorTraceCount requires"));
   }
 
 #endif
@@ -3315,8 +3316,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles,
-                 "SurfaceResponseOperator rounded islands",
+TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator rounded islands",
                  "[surfaceresponseoperator][3d][curvature][rounded][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -3329,7 +3329,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   rounded_island_iodata.boundaries.cracked_attributes.insert(9);
   auto rounded_geometry_mesh = MakeIslandMesh(true);
   const auto rounded_geometry =
-      ExtractMetalEdgeGeometry(*rounded_geometry_mesh, rounded_island_iodata.boundaries, JointNoiseExtractionFor(rounded_island_iodata.boundaries));
+      ExtractMetalEdgeGeometry(*rounded_geometry_mesh, rounded_island_iodata.boundaries,
+                               JointNoiseExtractionFor(rounded_island_iodata.boundaries));
   const auto rounded_segments =
       GetInterfaceMetalEdgeSegmentIndices(rounded_geometry, 4, InterfaceDielectric::SA);
   std::set<std::size_t> rounded_vertices;
@@ -3338,14 +3339,15 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     const auto &segment = rounded_geometry.segments[segment_index];
     rounded_vertices.insert(segment.vertices.begin(), segment.vertices.end());
   }
-  // Under the geometric joint noise rule (kJointNoiseSagittaOverRadius = 0.05, USER decision
-  // 121 (B)) the sampled fillet joints (8-45 deg per chord on chords far below R: implied
-  // sagitta (c / 2) tan(t / 4) below 0.05 R) are REGULAR joints of the perimeter extraction
-  // (the 1 deg angular threshold of 117(4) made them corners); the identification reads the
-  // non-collinear joints regardless and its arc rule fits the fillets. The legacy per-group
-  // classifier below (PatchConstruction "Legacy", comparison only) re-extracts the
-  // perimeter at its own 30 deg corner class (kLegacyCornerTurnToleranceDegrees) so that its
-  // rounded-run rule reads the fillets as REGULAR runs.
+  // Under the geometric joint noise rule (kJointNoiseSagittaOverRadius = 0.05, USER
+  // decision 121 (B)) the sampled fillet joints (8-45 deg per chord on chords far below R:
+  // implied sagitta (c / 2) tan(t / 4) below 0.05 R) are REGULAR joints of the perimeter
+  // extraction (the 1 deg angular threshold of 117(4) made them corners); the
+  // identification reads the non-collinear joints regardless and its arc rule fits the
+  // fillets. The legacy per-group classifier below (PatchConstruction "Legacy", comparison
+  // only) re-extracts the perimeter at its own 30 deg corner class
+  // (kLegacyCornerTurnToleranceDegrees) so that its rounded-run rule reads the fillets as
+  // REGULAR runs.
   CHECK(std::count_if(rounded_vertices.begin(), rounded_vertices.end(),
                       [&](std::size_t vertex)
                       {
@@ -3367,7 +3369,6 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         4 * remaining_straight_intervals * island_line_rule.GetNPoints() +
             12 * rounded_corner_count);
   CHECK_THAT(rounded_island_response.GetPatchWeight(), WithinRel(6.0, 1.0e-12));
-
 
   auto rounded_concave_island_config = island_config;
   rounded_concave_island_config["Solver"]["Electrostatic"]["ResponseCorrection"]
@@ -3488,7 +3489,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 
 TEST_CASE_METHOD(test::SurfaceResponseFiles,
                  "SurfaceResponseOperator high-order spatial cluster round trips",
-                 "[surfaceresponseoperator][3d][highorder][placement][signature][Long][Serial][Parallel]")
+                 "[surfaceresponseoperator][3d][highorder][placement][signature][Long]["
+                 "Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
@@ -3581,7 +3583,6 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK(matched_high_order_spatial !=
         exact_high_order_spatial_requirements["LegacyRequirements"].end());
 
-
   // Version-2 round trip: a model carrying a feature's canonical Signature matches that
   // feature by key (and only that feature), independent of the mesh ordering.
   {
@@ -3660,7 +3661,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       edges_library_output << edges_library.dump(2) << "\n";
       edges_library_output.close();
       auto edges_config = high_order_spatial_config;
-      auto &edges_correction = edges_config["Solver"]["Electrostatic"]["ResponseCorrection"];
+      auto &edges_correction =
+          edges_config["Solver"]["Electrostatic"]["ResponseCorrection"];
       edges_correction["Library"] = edges_library_path.string();
       edges_correction.erase("PatchConstruction");  // Features (the default)
       IoData edges_iodata(edges_config, false);
@@ -3696,9 +3698,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles,
-                 "SurfaceResponseOperator spatial cluster contracts on a linear rounded mesh",
-                 "[surfaceresponseoperator][3d][placement][signature][Serial][Parallel]")
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "SurfaceResponseOperator spatial cluster contracts on a linear rounded mesh",
+    "[surfaceresponseoperator][3d][placement][signature][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
@@ -3718,8 +3721,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                                    linear_spatial_requirements_path.string());
   std::ifstream linear_spatial_requirements_input(linear_spatial_requirements_path);
   REQUIRE(linear_spatial_requirements_input);
-  const auto linear_spatial_requirements =
-      json::parse(linear_spatial_requirements_input);
+  const auto linear_spatial_requirements = json::parse(linear_spatial_requirements_input);
   // The plan-view mask round trip is a legacy-classifier contract: the version-2
   // Requirements are derived from the identification features (matched by signature), so
   // the mask lives in the LegacyRequirements comparison table.
@@ -3736,12 +3738,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
           linear_spatial_requirements["LegacyRequirements"].end());
   std::ifstream exact_linear_spatial_library_input(spatial_cluster_library_3d_path);
   REQUIRE(exact_linear_spatial_library_input);
-  auto exact_linear_spatial_library =
-      json::parse(exact_linear_spatial_library_input);
+  auto exact_linear_spatial_library = json::parse(exact_linear_spatial_library_input);
   auto &exact_linear_spatial_model = exact_linear_spatial_library["Models"].back();
   exact_linear_spatial_model["Name"] = "linear-curved-spatial-exact-mask";
-  exact_linear_spatial_model["Edges"] =
-      (*linear_spatial_requirement)["Geometry"]["Edges"];
+  exact_linear_spatial_model["Edges"] = (*linear_spatial_requirement)["Geometry"]["Edges"];
   for (auto &edge : exact_linear_spatial_model["Edges"])
   {
     edge["BoundaryCondition"] = "PEC";
@@ -3750,10 +3750,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       (*linear_spatial_requirement)["Geometry"]["PlanViewBoundary"];
   const auto exact_linear_spatial_library_path =
       temp.temp_dir / "fabrication-process-linear-spatial-exact-mask-3d.json";
-  std::ofstream exact_linear_spatial_library_output(
-      exact_linear_spatial_library_path);
-  exact_linear_spatial_library_output << exact_linear_spatial_library.dump(2)
-                                          << "\n";
+  std::ofstream exact_linear_spatial_library_output(exact_linear_spatial_library_path);
+  exact_linear_spatial_library_output << exact_linear_spatial_library.dump(2) << "\n";
   exact_linear_spatial_library_output.close();
 
   // Version-2 round trip: a model carrying a feature's canonical Signature matches that
@@ -3928,7 +3926,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       edges_library_output << edges_library.dump(2) << "\n";
       edges_library_output.close();
       auto edges_config = linear_spatial_config;
-      auto &edges_correction = edges_config["Solver"]["Electrostatic"]["ResponseCorrection"];
+      auto &edges_correction =
+          edges_config["Solver"]["Electrostatic"]["ResponseCorrection"];
       edges_correction["Library"] = edges_library_path.string();
       edges_correction.erase("PatchConstruction");  // Features (the default)
       IoData edges_iodata(edges_config, false);
@@ -4474,8 +4473,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles,
-                 "SurfaceResponseOperator corner angle family",
+TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator corner angle family",
                  "[surfaceresponseoperator][3d][corner][features][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -4542,8 +4540,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       // vertices (+-1, 0), (+-g, +-1) at the same level: the square's boundary points land
       // on the hexagon's sides (collinear between its vertices, which are grid points), so
       // the island outline is the exact hexagon at every level.
-      const std::vector<std::array<double, 2>> hexagon = {
-          {1.0, 0.0}, {hex_g, 1.0}, {-hex_g, 1.0}, {-1.0, 0.0}, {-hex_g, -1.0}, {hex_g, -1.0}};
+      const std::vector<std::array<double, 2>> hexagon = {{1.0, 0.0},     {hex_g, 1.0},
+                                                          {-hex_g, 1.0},  {-1.0, 0.0},
+                                                          {-hex_g, -1.0}, {hex_g, -1.0}};
       auto PolygonRadius = [&](double ux, double uz)
       {
         double r = mfem::infinity();
@@ -4573,8 +4572,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
           const double ux = lx / norm, uz = lz / norm;
           const double square = 1.0 / std::max(std::abs(ux), std::abs(uz));
           const double hexagon_scale = PolygonRadius(ux, uz) / square;
-          const double blend =
-              level <= 2.0 * hex_L ? 1.0 : (3.0 * hex_L - level) / hex_L;
+          const double blend = level <= 2.0 * hex_L ? 1.0 : (3.0 * hex_L - level) / hex_L;
           const double scale = 1.0 + blend * (hexagon_scale - 1.0);
           point[0] = c + scale * lx;
           point[2] = c + scale * lz;
@@ -4586,7 +4584,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     };
     // Extent 8: the hexagon (level 1) stays more than 2 R from the PEC box walls.
     auto hexagon_mesh = MakeHexagonMesh(8.0, 0.1);
-    const auto corner_family_path = temp.temp_dir / "fabrication-process-corner-family.json";
+    const auto corner_family_path =
+        temp.temp_dir / "fabrication-process-corner-family.json";
     const auto corner_family_no90_path =
         temp.temp_dir / "fabrication-process-corner-family-no90.json";
     const auto corner_family_no_anchor_path =
@@ -4620,13 +4619,14 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       const auto family_thin_path = temp.temp_dir / "corner-family-thin.csv";
       const auto family_fabricated_surface_path =
           temp.temp_dir / "corner-family-fabricated-surface.csv";
-      const auto family_thin_surface_path = temp.temp_dir / "corner-family-thin-surface.csv";
+      const auto family_thin_surface_path =
+          temp.temp_dir / "corner-family-thin-surface.csv";
       WriteCornerMatrices(family_fabricated_path, family_fabricated_surface_path, 72, 3.0,
                           0.05, hex_R);
       WriteCornerMatrices(family_thin_path, family_thin_surface_path, 72, 1.0, 0.01, hex_R);
       const std::vector<std::pair<double, double>> family_nodes = {
-          {90.0, 112.5},          {105.0, 112.5}, {120.0, 112.5}, {135.0, 112.5},
-          {hex_passage, 166.7},   {160.0, 166.7}, {165.0, 166.7}, {180.0, 166.7}};
+          {90.0, 112.5},        {105.0, 112.5}, {120.0, 112.5}, {135.0, 112.5},
+          {hex_passage, 166.7}, {160.0, 166.7}, {165.0, 166.7}, {180.0, 166.7}};
       for (const auto &[angle, connectivity] : family_nodes)
       {
         std::ostringstream tag;
@@ -4677,7 +4677,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
     Mpi::Barrier(Mpi::World());
     auto hexagon_config = island_config;
-    auto &hexagon_correction = hexagon_config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    auto &hexagon_correction =
+        hexagon_config["Solver"]["Electrostatic"]["ResponseCorrection"];
     hexagon_correction.erase("PatchConstruction");
     hexagon_correction["UnmatchedPolicy"] = "Warn";
     const auto hexagon_manifest_path =
@@ -4696,8 +4697,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       REQUIRE(input);
       return json::parse(input);
     };
-    const double wide_angle = 180.0 - 2.0 * std::atan(1.0 - hex_g) * 180.0 / M_PI;  // 157.38
-    const double narrow_angle = 90.0 + std::atan(1.0 - hex_g) * 180.0 / M_PI;        // 101.31
+    const double wide_angle =
+        180.0 - 2.0 * std::atan(1.0 - hex_g) * 180.0 / M_PI;                   // 157.38
+    const double narrow_angle = 90.0 + std::atan(1.0 - hex_g) * 180.0 / M_PI;  // 101.31
     {
       const json manifest = RunHexagon(corner_family_path);
       int wide = 0, narrow = 0;
@@ -4906,8 +4908,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles,
-                 "SurfaceResponseOperator Maxwell islands",
+TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator Maxwell islands",
                  "[surfaceresponseoperator][3d][maxwell][corner][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -5072,7 +5073,6 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   const auto impedance_junction_result =
       impedance_junction_response.GetMaxwellResponse(impedance_junction_field, 0.0);
   CHECK(impedance_junction_result.loop_residual < 1.0e-10);
-
 
   // Separated fabrication planes are independent placements of the same local process.
   // They should both match unless their radius-R neighborhoods actually interact.
@@ -5373,7 +5373,6 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK(local_interaction_result.matched_length_fraction < 1.0);
   CHECK(local_interaction_result.fabricated_surface_energy.count(4) == 1);
 
-
   auto strict_mixed_signature_config = mixed_signature_config;
   strict_mixed_signature_config["Solver"]["SurfaceResponseCorrection"]["UnmatchedPolicy"] =
       "Error";
@@ -5391,9 +5390,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles,
-                 "SurfaceResponseOperator spatial cluster Maxwell",
-                 "[surfaceresponseoperator][3d][maxwell][spatial][placement][Serial][Parallel]")
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles, "SurfaceResponseOperator spatial cluster Maxwell",
+    "[surfaceresponseoperator][3d][maxwell][spatial][placement][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
@@ -5432,8 +5431,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK_THAT(spatial_cluster_result.matched_length_fraction, WithinAbs(1.0, 1.0e-12));
   CHECK(spatial_cluster_result.corner_neighborhood_fraction == 0.0);
 
-  // Maxwell response correction refuses cap-interior trace coefficients (InteriorTraceCount):
-  // every Maxwell coefficient must lie on a contour.
+  // Maxwell response correction refuses cap-interior trace coefficients
+  // (InteriorTraceCount): every Maxwell coefficient must lie on a contour.
   {
     auto cap_hat_maxwell_config = spatial_cluster_config;
     cap_hat_maxwell_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
@@ -5441,9 +5440,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     IoData cap_hat_maxwell_iodata(cap_hat_maxwell_config, false);
     cap_hat_maxwell_iodata.boundaries.cracked_attributes.insert(9);
     cap_hat_maxwell_iodata.boundaries.cracked_attributes.insert(10);
-    CHECK_THROWS_WITH(SurfaceResponseOperator(cap_hat_maxwell_iodata, spatial_cluster_space),
-                      Catch::Matchers::ContainsSubstring(
-                          "Maxwell response correction does not support cap-interior"));
+    CHECK_THROWS_WITH(
+        SurfaceResponseOperator(cap_hat_maxwell_iodata, spatial_cluster_space),
+        Catch::Matchers::ContainsSubstring(
+            "Maxwell response correction does not support cap-interior"));
   }
 
   auto missing_spatial_cluster_config = spatial_cluster_config;
@@ -5834,8 +5834,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
-TEST_CASE_METHOD(test::SurfaceResponseFiles,
-                 "SurfaceResponseOperator paired aperture",
+TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator paired aperture",
                  "[surfaceresponseoperator][3d][maxwell][aperture][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -5900,7 +5899,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   strip_aperture_iodata.boundaries.cracked_attributes.insert(9);
   auto strip_geometry_mesh = MakePairedApertureMesh();
   const auto strip_geometry =
-      ExtractMetalEdgeGeometry(*strip_geometry_mesh, strip_aperture_iodata.boundaries, JointNoiseExtractionFor(strip_aperture_iodata.boundaries));
+      ExtractMetalEdgeGeometry(*strip_geometry_mesh, strip_aperture_iodata.boundaries,
+                               JointNoiseExtractionFor(strip_aperture_iodata.boundaries));
   auto strip_segments =
       GetInterfaceMetalEdgeSegmentIndices(strip_geometry, 4, InterfaceDielectric::SA);
   ExcludeMetalEdgeSegmentIndices(*strip_geometry_mesh, strip_geometry, {1, 2, 3, 4, 5, 6},
@@ -5971,7 +5971,8 @@ struct CornerTraceBasisFixture
   const fs::path isolated_surface_path = temp.temp_dir / "isolated-surface.csv";
   const fs::path corner_fabricated_path = temp.temp_dir / "corner-fabricated.csv";
   const fs::path corner_thin_path = temp.temp_dir / "corner-thin.csv";
-  const fs::path corner_fabricated_surface_path = temp.temp_dir / "corner-fabricated-surface.csv";
+  const fs::path corner_fabricated_surface_path =
+      temp.temp_dir / "corner-fabricated-surface.csv";
   const fs::path corner_thin_surface_path = temp.temp_dir / "corner-thin-surface.csv";
   json base_library;
   std::map<std::string, fs::path> libraries;
@@ -5983,35 +5984,44 @@ struct CornerTraceBasisFixture
     std::optional<double> connectivity;
     std::string name;
   };
-  const std::vector<FamilyNode> family_nodes = {
-      {90.0, std::nullopt, "convex-corner-90"},
-      {90.0, 112.5, "convex-corner-90-c112.5"},
-      {105.0, 112.5, "convex-corner-105"},
-      {120.0, 112.5, "convex-corner-120"},
-      {135.0, 112.5, "convex-corner-135-c112.5"},
-      {135.0, std::nullopt, "convex-corner-135"},
-      {150.0, std::nullopt, "convex-corner-150"},
-      {165.0, std::nullopt, "convex-corner-165"},
-      {180.0, std::nullopt, "convex-corner-180"}};
+  const std::vector<FamilyNode> family_nodes = {{90.0, std::nullopt, "convex-corner-90"},
+                                                {90.0, 112.5, "convex-corner-90-c112.5"},
+                                                {105.0, 112.5, "convex-corner-105"},
+                                                {120.0, 112.5, "convex-corner-120"},
+                                                {135.0, 112.5, "convex-corner-135-c112.5"},
+                                                {135.0, std::nullopt, "convex-corner-135"},
+                                                {150.0, std::nullopt, "convex-corner-150"},
+                                                {165.0, std::nullopt, "convex-corner-165"},
+                                                {180.0, std::nullopt, "convex-corner-180"}};
   const std::vector<std::array<double, 2>> house = {
-      {-1.0, -1.0}, {1.0, -1.0}, {1.0, 0.2}, {0.0, 0.2 + std::tan(30.0 * M_PI / 180.0)},
+      {-1.0, -1.0},
+      {1.0, -1.0},
+      {1.0, 0.2},
+      {0.0, 0.2 + std::tan(30.0 * M_PI / 180.0)},
       {-1.0, 0.2}};
   const double s15 = std::sin(15.0 * M_PI / 180.0), c15 = std::cos(15.0 * M_PI / 180.0);
   const double gable_s = (1.25 - 0.2) / (c15 + s15 / 0.8);
   const double gable_r = (1.0 - gable_s * s15) / 0.8;
-  const std::vector<std::array<double, 2>> gable = {
-      {-1.0, -1.0}, {1.0, -1.0}, {1.0, 0.2}, {0.8 * gable_r, gable_r}, {-0.8 * gable_r, gable_r},
-      {-1.0, 0.2}};
+  const std::vector<std::array<double, 2>> gable = {{-1.0, -1.0},
+                                                    {1.0, -1.0},
+                                                    {1.0, 0.2},
+                                                    {0.8 * gable_r, gable_r},
+                                                    {-0.8 * gable_r, gable_r},
+                                                    {-1.0, 0.2}};
   json config;
   std::unique_ptr<mfem::ParMesh> house_mesh, gable_mesh, steep_mesh;
   const std::vector<std::array<double, 2>> steep_house = {
-      {-1.0, -1.0}, {1.0, -1.0}, {1.0, 0.2}, {0.0, 0.2 + std::tan(22.5 * M_PI / 180.0)},
+      {-1.0, -1.0},
+      {1.0, -1.0},
+      {1.0, 0.2},
+      {0.0, 0.2 + std::tan(22.5 * M_PI / 180.0)},
       {-1.0, 0.2}};
 
   CornerTraceBasisFixture();
   json CornerModel(double angle, const CornerBasisFiles &files, bool with_rule) const;
   json ConfigFor(const fs::path &library) const;
-  json Requirements(const fs::path &library, mfem::ParMesh &mesh, const std::string &tag) const;
+  json Requirements(const fs::path &library, mfem::ParMesh &mesh,
+                    const std::string &tag) const;
   IoData FamilyIoData(bool mortar) const;
   static Vector ProjectedPotential(LaplaceOperator &laplace);
   // Per runtime model: fabricated surface energy per patch (every corner is one patch of
@@ -6064,8 +6074,8 @@ CornerTraceBasisFixture::CornerTraceBasisFixture()
         }
       }
     }
-    WriteCornerMatrices(corner_fabricated_path, corner_fabricated_surface_path, 72, 3.0, 0.05,
-                        R);
+    WriteCornerMatrices(corner_fabricated_path, corner_fabricated_surface_path, 72, 3.0,
+                        0.05, R);
     WriteCornerMatrices(corner_thin_path, corner_thin_surface_path, 72, 1.0, 0.01, R);
     for (const bool rule_layout : {false, true})
     {
@@ -6087,9 +6097,9 @@ CornerTraceBasisFixture::CornerTraceBasisFixture()
     family["Name"] = "unit-test-corner-trace-basis-family";
     for (const auto &node : family_nodes)
     {
-      const auto files = WriteCornerBasisFiles(temp.temp_dir, "family-" + node.name,
-                                               node.angle, true, R, t, oe, true,
-                                               node.connectivity);
+      const auto files =
+          WriteCornerBasisFiles(temp.temp_dir, "family-" + node.name, node.angle, true, R,
+                                t, oe, true, node.connectivity);
       json model = CornerModel(node.angle, files, true);
       model["Name"] = node.name;
       family["Models"].push_back(model);
@@ -6143,25 +6153,25 @@ CornerTraceBasisFixture::CornerTraceBasisFixture()
 json CornerTraceBasisFixture::CornerModel(double angle, const CornerBasisFiles &files,
                                           bool with_rule) const
 {
-  json model = {{"Name", "convex-corner-" + std::to_string(static_cast<int>(angle))},
-                {"Topology", "ConvexCorner"},
-                {"Angle", angle},
-                {"AngleDegrees", angle},
-                {"Convexity", "Convex"},
-                {"AngleTolerance", 1.0e-6},
-                {"CornerRadius", 0.0},
-                {"CornerRadiusTolerance", 0.0},
-                {"FabricatedMatrix", corner_fabricated_path.string()},
-                {"ThinMatrix", corner_thin_path.string()},
-                {"FabricatedSurfaceMatrix", corner_fabricated_surface_path.string()},
-                {"ThinSurfaceMatrix", corner_thin_surface_path.string()},
-                {"BasisPoints", files.points.string()},
-                {"TraceMesh",
-                 {{"Vertices", files.vertices.string()},
-                  {"Triangles", files.triangles.string()}}},
-                {"ContourGroups", files.contour_groups},
-                {"ZeroTraceIndices", files.zero_trace_indices},
-                {"Interfaces", {{{"Type", "SA"}, {"Coupon", 1}}}}};
+  json model = {
+      {"Name", "convex-corner-" + std::to_string(static_cast<int>(angle))},
+      {"Topology", "ConvexCorner"},
+      {"Angle", angle},
+      {"AngleDegrees", angle},
+      {"Convexity", "Convex"},
+      {"AngleTolerance", 1.0e-6},
+      {"CornerRadius", 0.0},
+      {"CornerRadiusTolerance", 0.0},
+      {"FabricatedMatrix", corner_fabricated_path.string()},
+      {"ThinMatrix", corner_thin_path.string()},
+      {"FabricatedSurfaceMatrix", corner_fabricated_surface_path.string()},
+      {"ThinSurfaceMatrix", corner_thin_surface_path.string()},
+      {"BasisPoints", files.points.string()},
+      {"TraceMesh",
+       {{"Vertices", files.vertices.string()}, {"Triangles", files.triangles.string()}}},
+      {"ContourGroups", files.contour_groups},
+      {"ZeroTraceIndices", files.zero_trace_indices},
+      {"Interfaces", {{{"Type", "SA"}, {"Coupon", 1}}}}};
   if (with_rule)
   {
     model["TraceBasis"] = files.trace_basis;
@@ -6227,7 +6237,8 @@ std::map<std::string, double> CornerTraceBasisFixture::PerPatchEnergies(
     if (name.find("corner") != std::string::npos)
     {
       REQUIRE(contribution.patch_count > 0.0);
-      per_patch[name] = contribution.fabricated_surface_energy.at(4) / contribution.patch_count;
+      per_patch[name] =
+          contribution.fabricated_surface_energy.at(4) / contribution.patch_count;
       CHECK(std::isfinite(per_patch[name]));
       CHECK(per_patch[name] > 0.0);
     }
@@ -6261,8 +6272,8 @@ CornerTraceBasisFixture::CornerEnergies(mfem::ParMesh &mesh, const std::string &
 }  // namespace
 
 // The corner family's trace basis (corner-family review 2026-09-29, root cause of the
-// non-90-degree MS / MA over-correction, and the supervisor's rule): (1) the rule's layout —
-// the 90-degree convex node is the lane-2 fixed layout, every node has the same zero set
+// non-90-degree MS / MA over-correction, and the supervisor's rule): (1) the rule's layout
+// — the 90-degree convex node is the lane-2 fixed layout, every node has the same zero set
 // and 72 knots, the second arm's crossing is a PEC knot, the box corners are slave vertices
 // with a partition of unity; (2) the fail-closed library gate — a corner coupon whose metal
 // arm crosses a box ring between a free knot and a PEC knot (the lane-2 angle-independent
@@ -6284,8 +6295,7 @@ CornerTraceBasisFixture::CornerEnergies(mfem::ParMesh &mesh, const std::string &
 // coupons); (4) the constructed basis of the interpolated corner (points, slave vertices,
 // triangles) round-trips through the response-geometry cache: a mortar run reloading the
 // cache written by the previous run reproduces every model contribution.
-TEST_CASE_METHOD(CornerTraceBasisFixture,
-                 "SurfaceResponseOperatorCornerTraceBasis",
+TEST_CASE_METHOD(CornerTraceBasisFixture, "SurfaceResponseOperatorCornerTraceBasis",
                  "[surfaceresponseoperator][corner][tracebasis][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
@@ -6297,8 +6307,8 @@ TEST_CASE_METHOD(CornerTraceBasisFixture,
     REQUIRE(seed.points.size() == 72);
     REQUIRE(seed.contour_groups == std::vector<int>(9, 8));
     CHECK(seed.zero_trace_indices == std::vector<int>{28, 29, 30, 36, 37, 38});
-    const auto ninety = BuildCornerTraceBasis(seed.points, seed.contour_groups,
-                                              seed.zero_trace_indices, M_PI / 2.0, true, rule);
+    const auto ninety = BuildCornerTraceBasis(
+        seed.points, seed.contour_groups, seed.zero_trace_indices, M_PI / 2.0, true, rule);
     for (std::size_t k = 0; k < seed.points.size(); k++)
     {
       for (int d = 0; d < 3; d++)
@@ -6353,8 +6363,10 @@ TEST_CASE_METHOD(CornerTraceBasisFixture,
       {
         for (int i = 0; i < 8; i++)
         {
-          CHECK_THAT(basis.knots[8 * r + i][0], WithinAbs(seed.points[8 * r + i][0], 1.0e-14));
-          CHECK_THAT(basis.knots[8 * r + i][1], WithinAbs(seed.points[8 * r + i][1], 1.0e-14));
+          CHECK_THAT(basis.knots[8 * r + i][0],
+                     WithinAbs(seed.points[8 * r + i][0], 1.0e-14));
+          CHECK_THAT(basis.knots[8 * r + i][1],
+                     WithinAbs(seed.points[8 * r + i][1], 1.0e-14));
         }
       }
       CHECK(CheckCornerBasisCrossings(basis.knots, basis.contour_groups, zero,
@@ -6364,9 +6376,9 @@ TEST_CASE_METHOD(CornerTraceBasisFixture,
     // The concave family: crossings and metal interior at the slots 0 / 6 / 7.
     const auto concave_seed = MakeCornerBoxSeed(R, t, oe, false, rule);
     CHECK(concave_seed.zero_trace_indices == std::vector<int>{24, 30, 31, 32, 38, 39});
-    const auto concave = BuildCornerTraceBasis(concave_seed.points, concave_seed.contour_groups,
-                                               concave_seed.zero_trace_indices,
-                                               120.0 * M_PI / 180.0, false, rule);
+    const auto concave = BuildCornerTraceBasis(
+        concave_seed.points, concave_seed.contour_groups, concave_seed.zero_trace_indices,
+        120.0 * M_PI / 180.0, false, rule);
     CHECK(CheckCornerBasisCrossings(concave.knots, concave.contour_groups,
                                     concave_seed.zero_trace_indices, 120.0 * M_PI / 180.0,
                                     false, 1.0e-9 * R)
@@ -6389,16 +6401,15 @@ TEST_CASE_METHOD(CornerTraceBasisFixture,
     // Knot coincidence (review m3): a free knot within 1e-6 of a box corner's fraction
     // snaps onto the corner (no slave there, the knot exactly at the corner); one outside
     // the band keeps its position and the corner its slave, at least 8e-6 R away. Convex
-    // free 2 (slot 0) sits at the corner (-R, -R) (fraction 1/8) when the second arm crosses
-    // the left side at fraction 15/16, i.e. at (-R, R / 2): 153.435 degrees; the arm's
-    // crossing moves by 8 R per unit fraction, free 2 by two thirds of that.
+    // free 2 (slot 0) sits at the corner (-R, -R) (fraction 1/8) when the second arm
+    // crosses the left side at fraction 15/16, i.e. at (-R, R / 2): 153.435 degrees; the
+    // arm's crossing moves by 8 R per unit fraction, free 2 by two thirds of that.
     for (const double offset : {7.5e-7, 3.0e-6})
     {
       const double crossing_y = 0.5 * R - 8.0 * R * offset;
       const double angle = std::atan2(crossing_y, -R);
-      const auto basis =
-          BuildCornerTraceBasis(seed.points, seed.contour_groups, seed.zero_trace_indices,
-                                angle, true, rule);
+      const auto basis = BuildCornerTraceBasis(seed.points, seed.contour_groups,
+                                               seed.zero_trace_indices, angle, true, rule);
       const bool snapped = offset * 2.0 / 3.0 <= 1.0e-6;
       int slaves = 0;
       double nearest_slave = std::numeric_limits<double>::infinity();
@@ -6407,12 +6418,13 @@ TEST_CASE_METHOD(CornerTraceBasisFixture,
         if (vertex.basis < 0)
         {
           slaves++;
-          nearest_slave = std::min(nearest_slave, std::hypot(vertex.point[0] - basis.knots[24][0],
-                                                             vertex.point[1] - basis.knots[24][1]));
+          nearest_slave =
+              std::min(nearest_slave, std::hypot(vertex.point[0] - basis.knots[24][0],
+                                                 vertex.point[1] - basis.knots[24][1]));
         }
       }
       CHECK(slaves == (snapped ? 6 : 8));  // both metal rings
-      for (const int knot : {24, 32})  // free 2 of the z = 0 and z = t rings
+      for (const int knot : {24, 32})      // free 2 of the z = 0 and z = t rings
       {
         // The box radius is read off the seed's points (rounding residues of 1e-16 R).
         CHECK_THAT(basis.knots[knot][1], WithinAbs(-R, 1.0e-14));
@@ -6444,10 +6456,10 @@ TEST_CASE_METHOD(CornerTraceBasisFixture,
       for (const double y : {-4.4e-16, 0.5 * R})
       {
         const std::vector<std::array<double, 3>> ring = {
-            {R, 0.0, z}, {R, y, z},  {R, R, z}, {0.0, R, z},
+            {R, 0.0, z}, {R, y, z},    {R, R, z},    {0.0, R, z},
             {-R, R, z},  {-R, 0.0, z}, {0.0, -R, z}, {-R, -R, z}};
-        // PEC: both crossings of the arms with the ring ((R, 0) and (-R, 0)) and the knots on
-        // the lower half-plane (the concave anchor's metal).
+        // PEC: both crossings of the arms with the ring ((R, 0) and (-R, 0)) and the knots
+        // on the lower half-plane (the concave anchor's metal).
         const std::vector<int> zero = {0, 5, 6, 7};
         const std::string reason =
             CheckCornerBasisCrossings(ring, {8}, zero, M_PI, false, 1.0e-9 * R);
@@ -6469,13 +6481,14 @@ TEST_CASE_METHOD(CornerTraceBasisFixture,
   // it loads (arms on knot rays); the rule's layout loads at every angle.
   for (const double angle : {120.0, 165.0})
   {
-    IoData iodata(ConfigFor(libraries.at("lane2-" + std::to_string(static_cast<int>(angle)))),
-                  false);
+    IoData iodata(
+        ConfigFor(libraries.at("lane2-" + std::to_string(static_cast<int>(angle)))), false);
     iodata.boundaries.cracked_attributes.insert(9);
     const auto manifest_path = temp.temp_dir / "requirements-refused.json";
-    CHECK_THROWS_WITH(WriteSurfaceResponseRequirements(iodata, *house_mesh, manifest_path.string()),
-                      ContainsSubstring("trace basis gate") &&
-                          ContainsSubstring("no PEC (ZeroTraceIndices) knot"));
+    CHECK_THROWS_WITH(
+        WriteSurfaceResponseRequirements(iodata, *house_mesh, manifest_path.string()),
+        ContainsSubstring("trace basis gate") &&
+            ContainsSubstring("no PEC (ZeroTraceIndices) knot"));
   }
   // A single-coupon library leaves the house's other corners unmatched (Warn): a lane-2
   // coupon forms no family (its free hats would cross the metal at another angle: the
@@ -6484,9 +6497,9 @@ TEST_CASE_METHOD(CornerTraceBasisFixture,
   config["Solver"]["Electrostatic"]["ResponseCorrection"]["UnmatchedPolicy"] = "Warn";
   for (const double angle : {90.0, 135.0, 180.0})
   {
-    const json manifest = Requirements(
-        libraries.at("lane2-" + std::to_string(static_cast<int>(angle))), *house_mesh,
-        "lane2-" + std::to_string(static_cast<int>(angle)));
+    const json manifest =
+        Requirements(libraries.at("lane2-" + std::to_string(static_cast<int>(angle))),
+                     *house_mesh, "lane2-" + std::to_string(static_cast<int>(angle)));
     int matched = 0, missing = 0;
     for (const auto &feature : manifest["Identification"]["Features"])
     {
@@ -6510,9 +6523,9 @@ TEST_CASE_METHOD(CornerTraceBasisFixture,
   }
   for (const double angle : {90.0, 120.0, 135.0, 165.0, 180.0})
   {
-    const json manifest = Requirements(
-        libraries.at("rule-" + std::to_string(static_cast<int>(angle))), *house_mesh,
-        "rule-" + std::to_string(static_cast<int>(angle)));
+    const json manifest =
+        Requirements(libraries.at("rule-" + std::to_string(static_cast<int>(angle))),
+                     *house_mesh, "rule-" + std::to_string(static_cast<int>(angle)));
     int matched = 0;
     for (const auto &feature : manifest["Identification"]["Features"])
     {
@@ -6589,9 +6602,9 @@ TEST_CASE_METHOD(CornerTraceBasisFixture,
 #endif
 }
 
-TEST_CASE_METHOD(CornerTraceBasisFixture,
-                 "SurfaceResponseOperatorCornerTraceBasisMortar",
-                 "[surfaceresponseoperator][corner][tracebasis][mortar][cache][Serial][Parallel]")
+TEST_CASE_METHOD(
+    CornerTraceBasisFixture, "SurfaceResponseOperatorCornerTraceBasisMortar",
+    "[surfaceresponseoperator][corner][tracebasis][mortar][cache][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
@@ -6685,13 +6698,15 @@ TEST_CASE_METHOD(CornerTraceBasisFixture,
       CHECK(b.domain_correction == a.domain_correction);
       CHECK(b.domain_correction_fixed_flux == a.domain_correction_fixed_flux);
       CHECK(b.fabricated_surface_energy == a.fabricated_surface_energy);
-      CHECK(b.fabricated_surface_energy_fixed_flux == a.fabricated_surface_energy_fixed_flux);
+      CHECK(b.fabricated_surface_energy_fixed_flux ==
+            a.fabricated_surface_energy_fixed_flux);
     }
     const auto per_patch = PerPatchEnergies(loaded, reloaded);
     bool constructed = false;
     for (const auto &[name, energy] : per_patch)
     {
-      constructed = constructed || name.find("@corner-angle112.5-cubic") != std::string::npos;
+      constructed =
+          constructed || name.find("@corner-angle112.5-cubic") != std::string::npos;
     }
     CHECK(constructed);
   }

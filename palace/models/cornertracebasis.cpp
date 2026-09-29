@@ -23,8 +23,8 @@ namespace
 // recorded): a free or metal-interior knot within this fraction of a fixed-layout fraction
 // k / RingSize snaps to it (SnapFraction) and a box corner within it of any knot gets no
 // slave vertex, so the smallest triangle of a constructed basis has an edge of 8e-6 R, six
-// orders above the surface mortar's degenerate-triangle threshold, while a snap moves a knot
-// by at most 8e-6 R (15 pm at R = 1.9 um). Crossing knots are never moved.
+// orders above the surface mortar's degenerate-triangle threshold, while a snap moves a
+// knot by at most 8e-6 R (15 pm at R = 1.9 um). Crossing knots are never moved.
 constexpr double kKnotCoincidenceFraction = 1.0e-6;
 
 double WrapFraction(double fraction)
@@ -37,8 +37,8 @@ double WrapFraction(double fraction)
   return fraction == 1.0 ? 0.0 : fraction;
 }
 
-// The generator's snap_fraction: a fraction within kKnotCoincidenceFraction of k / ring_size
-// is that fraction exactly.
+// The generator's snap_fraction: a fraction within kKnotCoincidenceFraction of k /
+// ring_size is that fraction exactly.
 double SnapFraction(double fraction, int ring_size)
 {
   const double nearest = std::round(fraction * ring_size);
@@ -121,9 +121,9 @@ void ConnectRingsByFraction(std::vector<std::array<int, 3>> &triangles,
   {
     const double next_first =
         i < first_count ? (i + 1 < first_count ? first_fractions[i + 1] : 1.0) : infinity;
-    const double next_second =
-        j < second_count ? (j + 1 < second_count ? second_fractions[j + 1] : 1.0)
-                         : infinity;
+    const double next_second = j < second_count
+                                   ? (j + 1 < second_count ? second_fractions[j + 1] : 1.0)
+                                   : infinity;
     const int first_vertex = first_vertices[i % first_count];
     const int second_vertex = second_vertices[j % second_count];
     if (next_first < next_second - tolerance)
@@ -159,8 +159,7 @@ bool OnMetalFootprint(const std::array<double, 3> &point, double angle_radians, 
   const double first_distance = point[1];
   const double second_distance =
       point[0] * std::sin(angle_radians) - point[1] * std::cos(angle_radians);
-  const bool in_wedge =
-      first_distance >= -tolerance && second_distance >= -tolerance;
+  const bool in_wedge = first_distance >= -tolerance && second_distance >= -tolerance;
   if (convex)
   {
     return in_wedge;
@@ -235,8 +234,7 @@ std::pair<double, double> ArmCrossingFractions(double radius, double angle_radia
   for (int arm = 0; arm < 2; arm++)
   {
     const auto &direction = directions[arm];
-    const double scale =
-        radius / std::max(std::abs(direction[0]), std::abs(direction[1]));
+    const double scale = radius / std::max(std::abs(direction[0]), std::abs(direction[1]));
     std::array<double, 3> point = {scale * direction[0], scale * direction[1], 0.0};
     for (int d = 0; d < 2; d++)
     {
@@ -264,7 +262,7 @@ std::vector<CornerRingVertex> CornerMetalRingLayout(double radius, double angle_
               "MetalInteriorKnots + FreeKnots!");
   MFEM_VERIFY(rule.fractions == "PerimeterArcLength",
               "Unsupported corner trace basis fraction parametrisation \"" << rule.fractions
-                                                                          << "\"!");
+                                                                           << "\"!");
   const auto [first, second] = ArmCrossingFractions(radius, angle_radians);
   std::pair<double, double> metal, free;
   if (convex)
@@ -281,10 +279,10 @@ std::vector<CornerRingVertex> CornerMetalRingLayout(double radius, double angle_
                                          {"crossing2", WrapFraction(second)}};
   for (int m = 1; m <= rule.metal_interior_knots; m++)
   {
-    roles["metal" + std::to_string(m)] = SnapFraction(
-        WrapFraction(metal.first +
-                     (metal.second - metal.first) * m / (rule.metal_interior_knots + 1)),
-        rule.ring_size);
+    roles["metal" + std::to_string(m)] =
+        SnapFraction(WrapFraction(metal.first + (metal.second - metal.first) * m /
+                                                    (rule.metal_interior_knots + 1)),
+                     rule.ring_size);
   }
   for (int k = 1; k <= rule.free_knots; k++)
   {
@@ -297,8 +295,9 @@ std::vector<CornerRingVertex> CornerMetalRingLayout(double radius, double angle_
   for (int slot = 0; slot < static_cast<int>(order.size()); slot++)
   {
     const auto &role = order[slot];
-    knots.push_back({roles.at(role), role.rfind("free", 0) == 0 ? CornerRingVertex::Kind::FREE
-                                                                 : CornerRingVertex::Kind::ZERO,
+    knots.push_back({roles.at(role),
+                     role.rfind("free", 0) == 0 ? CornerRingVertex::Kind::FREE
+                                                : CornerRingVertex::Kind::ZERO,
                      slot});
   }
   std::sort(knots.begin(), knots.end(),
@@ -376,8 +375,8 @@ CornerBoxRings DescribeCornerBoxRings(const std::vector<std::array<double, 3>> &
   {
     box.radius = std::max(box.radius, ring.half_width);
   }
-  // The generator's ring order: the outer rings (half width R) by ascending height, then the
-  // top inner cap ring (z = +R) and the bottom inner cap ring (z = -R).
+  // The generator's ring order: the outer rings (half width R) by ascending height, then
+  // the top inner cap ring (z = +R) and the bottom inner cap ring (z = -R).
   const double tolerance = 1.0e-9 * box.radius;
   box.outer_count = 0;
   while (box.outer_count < static_cast<int>(box.rings.size()) &&
@@ -385,13 +384,13 @@ CornerBoxRings DescribeCornerBoxRings(const std::vector<std::array<double, 3>> &
   {
     box.outer_count++;
   }
-  MFEM_VERIFY(box.outer_count >= 2 &&
-                  box.outer_count + 2 == static_cast<int>(box.rings.size()) &&
-                  std::abs(box.rings[box.outer_count].z - box.radius) <= tolerance &&
-                  std::abs(box.rings[box.outer_count + 1].z + box.radius) <= tolerance &&
-                  !box.rings[box.outer_count].metal && !box.rings[box.outer_count + 1].metal,
-              "A corner coupon's box rings are not the generator's (outer rings, then the "
-              "top and bottom inner cap rings)!");
+  MFEM_VERIFY(
+      box.outer_count >= 2 && box.outer_count + 2 == static_cast<int>(box.rings.size()) &&
+          std::abs(box.rings[box.outer_count].z - box.radius) <= tolerance &&
+          std::abs(box.rings[box.outer_count + 1].z + box.radius) <= tolerance &&
+          !box.rings[box.outer_count].metal && !box.rings[box.outer_count + 1].metal,
+      "A corner coupon's box rings are not the generator's (outer rings, then the "
+      "top and bottom inner cap rings)!");
   for (int r = 1; r < box.outer_count; r++)
   {
     MFEM_VERIFY(box.rings[r].z > box.rings[r - 1].z,
@@ -400,15 +399,16 @@ CornerBoxRings DescribeCornerBoxRings(const std::vector<std::array<double, 3>> &
   return box;
 }
 
-CornerBoxSeed MakeCornerBoxSeed(double radius, double metal_thickness, double overetch_depth,
-                                bool convex, const CornerTraceBasisRule &rule)
+CornerBoxSeed MakeCornerBoxSeed(double radius, double metal_thickness,
+                                double overetch_depth, bool convex,
+                                const CornerTraceBasisRule &rule)
 {
   MFEM_VERIFY(radius > 0.0 && metal_thickness > 0.0 && metal_thickness < radius / 3.0 &&
                   overetch_depth >= 0.0 && overetch_depth < radius / 3.0 &&
                   overetch_depth != metal_thickness,
               "Invalid corner box seed dimensions!");
-  std::set<double> level_set = {-radius,         -radius / 3.0,   -overetch_depth, 0.0,
-                                metal_thickness, radius / 3.0,    radius};
+  std::set<double> level_set = {-radius,         -radius / 3.0, -overetch_depth, 0.0,
+                                metal_thickness, radius / 3.0,  radius};
   std::vector<double> levels(level_set.begin(), level_set.end());
   CornerBoxSeed seed;
   const auto zero_slots = CornerZeroSlots(convex, rule);
@@ -436,11 +436,12 @@ CornerBoxSeed MakeCornerBoxSeed(double radius, double metal_thickness, double ov
   return seed;
 }
 
-ConstructedCornerTraceBasis BuildCornerTraceBasis(
-    const std::vector<std::array<double, 3>> &node_points,
-    const std::vector<int> &contour_groups, const std::vector<int> &zero_trace_indices,
-    double angle_radians, bool convex, const CornerTraceBasisRule &rule,
-    std::optional<double> connectivity_angle_radians)
+ConstructedCornerTraceBasis
+BuildCornerTraceBasis(const std::vector<std::array<double, 3>> &node_points,
+                      const std::vector<int> &contour_groups,
+                      const std::vector<int> &zero_trace_indices, double angle_radians,
+                      bool convex, const CornerTraceBasisRule &rule,
+                      std::optional<double> connectivity_angle_radians)
 {
   const CornerBoxRings box =
       DescribeCornerBoxRings(node_points, contour_groups, zero_trace_indices);
@@ -459,10 +460,10 @@ ConstructedCornerTraceBasis BuildCornerTraceBasis(
   for (std::size_t r = 0; r < box.rings.size(); r++)
   {
     const auto &ring = box.rings[r];
-    MFEM_VERIFY(ring.size == rule.ring_size,
-                "A corner coupon box ring has " << ring.size
-                                                << " knots; the trace basis rule needs "
-                                                << rule.ring_size << "!");
+    MFEM_VERIFY(ring.size == rule.ring_size, "A corner coupon box ring has "
+                                                 << ring.size
+                                                 << " knots; the trace basis rule needs "
+                                                 << rule.ring_size << "!");
     if (!ring.metal)
     {
       // The fixed layout: the node's own points, at the fractions k / RingSize.
@@ -683,10 +684,9 @@ std::string CheckCornerBasisCrossings(const std::vector<std::array<double, 3>> &
     bool centred_box = true;
     for (int i = 0; i < size; i++)
     {
-      centred_box = centred_box &&
-                    std::abs(std::max(std::abs(points[offset + i][0]),
-                                      std::abs(points[offset + i][1])) -
-                             half_width) <= tolerance;
+      centred_box = centred_box && std::abs(std::max(std::abs(points[offset + i][0]),
+                                                     std::abs(points[offset + i][1])) -
+                                            half_width) <= tolerance;
     }
     if (metal && centred_box)
     {
@@ -699,7 +699,8 @@ std::string CheckCornerBasisCrossings(const std::vector<std::array<double, 3>> &
         for (int i = 0; i < size && !found; i++)
         {
           const auto &point = points[offset + i];
-          const double distance = std::hypot(point[0] - crossing[0], point[1] - crossing[1]);
+          const double distance =
+              std::hypot(point[0] - crossing[0], point[1] - crossing[1]);
           found = distance <= tolerance && zero.count(offset + i) > 0;
         }
         if (!found)
@@ -725,7 +726,8 @@ std::string CheckCornerBasisCrossings(const std::vector<std::array<double, 3>> &
   return "";
 }
 
-std::vector<CornerBasisEvent> CornerBasisEvents(bool convex, const CornerTraceBasisRule &rule)
+std::vector<CornerBasisEvent> CornerBasisEvents(bool convex,
+                                                const CornerTraceBasisRule &rule)
 {
   // Every knot's perimeter fraction is affine in the second crossing's unwrapped fraction
   // s2 in (first, first + 1] (first = 0.5, the +x arm): fraction = a s2 + b (see
@@ -986,7 +988,8 @@ CornerFamilyStencil SelectCornerFamilyStencil(const std::vector<CornerFamilyNode
         stencil.base = window[i]->index;
       }
     }
-    stencil.rule = window.size() == 4 ? "cubic" : (window.size() == 3 ? "quadratic" : "linear");
+    stencil.rule =
+        window.size() == 4 ? "cubic" : (window.size() == 3 ? "quadratic" : "linear");
   };
 
   // Exact node: the legacy coupon at that angle (its own tie triangulation) if the family
@@ -999,7 +1002,8 @@ CornerFamilyStencil SelectCornerFamilyStencil(const std::vector<CornerFamilyNode
       {
         continue;
       }
-      if (!exact || (!node.connectivity_angle_degrees && exact->connectivity_angle_degrees) ||
+      if (!exact ||
+          (!node.connectivity_angle_degrees && exact->connectivity_angle_degrees) ||
           (node.connectivity_angle_degrees && exact->connectivity_angle_degrees &&
            *node.connectivity_angle_degrees < *exact->connectivity_angle_degrees))
       {
@@ -1068,15 +1072,18 @@ CornerFamilyStencil SelectCornerFamilyStencil(const std::vector<CornerFamilyNode
     }
     else
     {
-      text << "corner angle " << angle_degrees
-           << " deg lies in no segment of the corner family (segments end at the knot-corner "
-              "passages of the trace basis: a node is needed on each side of every passage)";
+      text
+          << "corner angle " << angle_degrees
+          << " deg lies in no segment of the corner family (segments end at the "
+             "knot-corner "
+             "passages of the trace basis: a node is needed on each side of every passage)";
     }
     stencil.reason = text.str();
     return stencil;
   }
   std::size_t interval = 0;
-  while (interval + 1 < segment->size() && (*segment)[interval + 1]->angle_degrees < angle_degrees)
+  while (interval + 1 < segment->size() &&
+         (*segment)[interval + 1]->angle_degrees < angle_degrees)
   {
     interval++;
   }
@@ -1086,7 +1093,8 @@ CornerFamilyStencil SelectCornerFamilyStencil(const std::vector<CornerFamilyNode
     begin = std::min(interval > 0 ? interval - 1 : 0, segment->size() - 4);
     end = begin + 4;
   }
-  Weights(std::vector<const CornerFamilyNode *>(segment->begin() + begin, segment->begin() + end));
+  Weights(std::vector<const CornerFamilyNode *>(segment->begin() + begin,
+                                                segment->begin() + end));
   stencil.connectivity_angle_degrees = segment_key;
   return stencil;
 }

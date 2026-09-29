@@ -124,8 +124,8 @@ private:
 
   // A vertex of a spatial model's trace triangulation: a basis knot (basis >= 0, weight 1),
   // a conductor vertex (basis < 0, conductor > 0) or a SLAVE vertex (corner-family trace
-  // basis rule): a geometric vertex of the box (a box corner that is no knot) whose trace is
-  // the linear interpolation between two knots, `weight` on `basis` and 1 - weight on
+  // basis rule): a geometric vertex of the box (a box corner that is no knot) whose trace
+  // is the linear interpolation between two knots, `weight` on `basis` and 1 - weight on
   // `second_basis`; its hat contributions are those of its parents.
   struct MortarVertex
   {

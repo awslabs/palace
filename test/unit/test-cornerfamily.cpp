@@ -3,11 +3,11 @@
 
 // The corner family's angle-interpolation rule (corner-qualification block 2026-09-29;
 // design doc SURFACE-RESPONSE-IDENTIFICATION.md, Conventions CornerTraceBasisRule): the
-// geometric events of the trace basis (a knot of a metal ring passing a fixed-layout vertex:
-// the hats jump there), the segment connectivity that fixes the band triangulation over a
-// segment, and the stencil rule that never straddles a knot-corner passage (legacy coupons
-// exact only, per-side coupons at the passages, fail closed on a segment across a passage).
-// Pinned to the same numbers as the Python mirror corner_family_interpolation.py
+// geometric events of the trace basis (a knot of a metal ring passing a fixed-layout
+// vertex: the hats jump there), the segment connectivity that fixes the band triangulation
+// over a segment, and the stencil rule that never straddles a knot-corner passage (legacy
+// coupons exact only, per-side coupons at the passages, fail closed on a segment across a
+// passage). Pinned to the same numbers as the Python mirror corner_family_interpolation.py
 // (test_corner_family_interpolation.py).
 
 #include "fixtures.hpp"
@@ -26,9 +26,9 @@
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
-#include <nlohmann/json.hpp>
 #include "fem/mesh.hpp"
 #include "models/cornertracebasis.hpp"
 #include "models/surfaceresponseoperator.hpp"
@@ -94,16 +94,20 @@ std::vector<double> CornerEvents(bool convex, double min_angle)
   return angles;
 }
 
-// The qualified family's node set of one convexity: (angle, connectivity angle) per segment.
+// The qualified family's node set of one convexity: (angle, connectivity angle) per
+// segment.
 std::vector<CornerFamilyNode> QualifiedFamily(bool convex)
 {
   const double passage = convex ? 153.434948822922 : 158.198590513648;
   const std::vector<std::pair<double, double>> nodes =
-      convex ? std::vector<std::pair<double, double>>{
-                   {75.0, 82.5},     {80.0, 82.5},   {85.0, 82.5},   {90.0, 82.5},
-                   {90.0, 112.5},    {105.0, 112.5}, {120.0, 112.5}, {135.0, 112.5},
-                   {135.0, 144.2},   {144.0, 144.2}, {150.0, 144.2}, {passage, 144.2},
-                   {passage, 166.7}, {159.0, 166.7}, {165.0, 166.7}, {180.0, 166.7}}
+      convex ? std::vector<std::pair<double, double>>{{75.0, 82.5},     {80.0, 82.5},
+                                                      {85.0, 82.5},     {90.0, 82.5},
+                                                      {90.0, 112.5},    {105.0, 112.5},
+                                                      {120.0, 112.5},   {135.0, 112.5},
+                                                      {135.0, 144.2},   {144.0, 144.2},
+                                                      {150.0, 144.2},   {passage, 144.2},
+                                                      {passage, 166.7}, {159.0, 166.7},
+                                                      {165.0, 166.7},   {180.0, 166.7}}
              : std::vector<std::pair<double, double>>{
                    {75.0, 82.5},     {80.0, 82.5},   {85.0, 82.5},   {90.0, 82.5},
                    {90.0, 112.5},    {105.0, 112.5}, {120.0, 112.5}, {135.0, 112.5},
@@ -257,7 +261,8 @@ TEST_CASE("CornerFamilyStencil", "[cornerfamily][Serial][Parallel]")
       for (const auto &[index, weight] : stencil.nodes)
       {
         sum += weight;
-        CHECK(family[index].connectivity_angle_degrees == stencil.connectivity_angle_degrees);
+        CHECK(family[index].connectivity_angle_degrees ==
+              stencil.connectivity_angle_degrees);
         for (const double passage : passages)
         {
           const bool straddles =
@@ -336,12 +341,12 @@ TEST_CASE("CornerFamilyStencil", "[cornerfamily][Serial][Parallel]")
   }
   // Fail closed: a segment across a knot-corner passage, a connectivity angle on one, two
   // coupons at one angle in a segment, overlapping segments.
-  CHECK_THROWS(SelectCornerFamilyStencil({{120.0, 112.5, 0}, {150.0, 112.5, 1}}, 130.0, true,
-                                         rule, tol));
-  CHECK_THROWS(SelectCornerFamilyStencil({{120.0, 135.0, 0}, {130.0, 135.0, 1}}, 125.0, true,
-                                         rule, tol));
-  CHECK_THROWS(SelectCornerFamilyStencil({{105.0, 112.5, 0}, {105.0, 112.5, 1}, {120.0, 112.5, 2}},
-                                         110.0, true, rule, tol));
+  CHECK_THROWS(SelectCornerFamilyStencil({{120.0, 112.5, 0}, {150.0, 112.5, 1}}, 130.0,
+                                         true, rule, tol));
+  CHECK_THROWS(SelectCornerFamilyStencil({{120.0, 135.0, 0}, {130.0, 135.0, 1}}, 125.0,
+                                         true, rule, tol));
+  CHECK_THROWS(SelectCornerFamilyStencil(
+      {{105.0, 112.5, 0}, {105.0, 112.5, 1}, {120.0, 112.5, 2}}, 110.0, true, rule, tol));
   CHECK_THROWS(SelectCornerFamilyStencil(
       {{95.0, 100.0, 0}, {125.0, 100.0, 1}, {110.0, 115.0, 2}, {130.0, 115.0, 3}}, 120.0,
       true, rule, tol));
@@ -349,8 +354,8 @@ TEST_CASE("CornerFamilyStencil", "[cornerfamily][Serial][Parallel]")
   const std::vector<CornerFamilyNode> shortened = {
       {135.0, 144.2, 0}, {150.0, 144.2, 1}, {153.434948822922, 144.2, 2}};
   CHECK(SelectCornerFamilyStencil(shortened, 142.5, true, rule, tol).rule == "quadratic");
-  CHECK(SelectCornerFamilyStencil({shortened[0], shortened[1]}, 142.5, true, rule, tol).rule ==
-        "linear");
+  CHECK(SelectCornerFamilyStencil({shortened[0], shortened[1]}, 142.5, true, rule, tol)
+            .rule == "linear");
 }
 
 TEST_CASE("CornerFamilyNodeToleranceBoundary", "[cornerfamily][Serial][Parallel]")
@@ -442,28 +447,27 @@ TEST_CASE("CornerFamilySegmentStructure", "[cornerfamily][Serial][Parallel]")
     CHECK(CheckCornerFamilySegments(family, convex, rule, tol).empty());
     CHECK(CheckCornerFamilySegments(ties, convex, rule, tol).empty());
   }
-  CHECK_THAT(CheckCornerFamilySegments({{120.0, 112.5, 0}, {150.0, 112.5, 1}}, true, rule,
-                                       tol),
-             ContainsSubstring("node at 150") &&
-                 ContainsSubstring("across a knot-corner passage"));
-  CHECK_THAT(CheckCornerFamilySegments({{120.0, 135.0, 0}, {130.0, 135.0, 1}}, true, rule,
-                                       tol),
-             ContainsSubstring("lies on a knot-corner passage"));
-  CHECK_THAT(CheckCornerFamilySegments(
-                 {{105.0, 112.5, 0}, {105.0, 112.5, 1}, {120.0, 112.5, 2}}, true, rule,
-                 tol),
-             ContainsSubstring("two coupons at 105"));
+  CHECK_THAT(
+      CheckCornerFamilySegments({{120.0, 112.5, 0}, {150.0, 112.5, 1}}, true, rule, tol),
+      ContainsSubstring("node at 150") &&
+          ContainsSubstring("across a knot-corner passage"));
+  CHECK_THAT(
+      CheckCornerFamilySegments({{120.0, 135.0, 0}, {130.0, 135.0, 1}}, true, rule, tol),
+      ContainsSubstring("lies on a knot-corner passage"));
+  CHECK_THAT(
+      CheckCornerFamilySegments({{105.0, 112.5, 0}, {105.0, 112.5, 1}, {120.0, 112.5, 2}},
+                                true, rule, tol),
+      ContainsSubstring("two coupons at 105"));
   CHECK_THAT(
       CheckCornerFamilySegments(
           {{95.0, 100.0, 0}, {125.0, 100.0, 1}, {110.0, 115.0, 2}, {130.0, 115.0, 3}}, true,
           rule, tol),
       ContainsSubstring("overlap beyond a shared node angle"));
-  CHECK(CheckCornerFamilySegments({{90.0, 82.5, 0},
-                                   {90.0, 112.5, 1},
-                                   {105.0, 112.5, 2},
-                                   {105.0, std::nullopt, 3}},
-                                  true, rule, tol)
-            .empty());
+  CHECK(
+      CheckCornerFamilySegments(
+          {{90.0, 82.5, 0}, {90.0, 112.5, 1}, {105.0, 112.5, 2}, {105.0, std::nullopt, 3}},
+          true, rule, tol)
+          .empty());
 }
 
 namespace
@@ -557,25 +561,25 @@ json WriteCornerCoupon(const fs::path &directory, const std::string &tag, double
   {
     trace_basis["ConnectivityAngleDegrees"] = *connectivity;
   }
-  return {{"Name", "convex-corner-" + tag},
-          {"Topology", "ConvexCorner"},
-          {"Angle", angle},
-          {"AngleDegrees", angle},
-          {"Convexity", "Convex"},
-          {"AngleTolerance", 1.0e-6},
-          {"CornerRadius", 0.0},
-          {"CornerRadiusTolerance", 0.0},
-          {"FabricatedMatrix", domain.string()},
-          {"ThinMatrix", domain.string()},
-          {"FabricatedSurfaceMatrix", surface.string()},
-          {"ThinSurfaceMatrix", surface.string()},
-          {"BasisPoints", points.string()},
-          {"TraceMesh",
-           {{"Vertices", vertices.string()}, {"Triangles", triangles.string()}}},
-          {"ContourGroups", seed.contour_groups},
-          {"ZeroTraceIndices", zero},
-          {"Interfaces", {{{"Type", "SA"}, {"Coupon", 1}}}},
-          {"TraceBasis", trace_basis}};
+  return {
+      {"Name", "convex-corner-" + tag},
+      {"Topology", "ConvexCorner"},
+      {"Angle", angle},
+      {"AngleDegrees", angle},
+      {"Convexity", "Convex"},
+      {"AngleTolerance", 1.0e-6},
+      {"CornerRadius", 0.0},
+      {"CornerRadiusTolerance", 0.0},
+      {"FabricatedMatrix", domain.string()},
+      {"ThinMatrix", domain.string()},
+      {"FabricatedSurfaceMatrix", surface.string()},
+      {"ThinSurfaceMatrix", surface.string()},
+      {"BasisPoints", points.string()},
+      {"TraceMesh", {{"Vertices", vertices.string()}, {"Triangles", triangles.string()}}},
+      {"ContourGroups", seed.contour_groups},
+      {"ZeroTraceIndices", zero},
+      {"Interfaces", {{{"Type", "SA"}, {"Coupon", 1}}}},
+      {"TraceBasis", trace_basis}};
 }
 
 // A hexahedral box with a square metal island (cracked boundary attribute 9 on the plane

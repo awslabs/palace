@@ -43,8 +43,8 @@ struct MetalBoundaryCondition
 // mesh segments merged: refinement cannot change the pieces), is a straight continuation —
 // a REGULAR joint of its chain — when the deviation from straight it implies at the
 // resolution of the correction is below kJointNoiseSagittaOverRadius x R: the implied
-// sagitta (c / 2) tan(t / 4) of a chord of length c = the SHORTER adjacent piece read as one
-// chord of a circle turning t per chord (sagitta = rho (1 - cos(t / 2)) with c = 2 rho
+// sagitta (c / 2) tan(t / 4) of a chord of length c = the SHORTER adjacent piece read as
+// one chord of a circle turning t per chord (sagitta = rho (1 - cos(t / 2)) with c = 2 rho
 // sin(t / 2)). Every other joint is a CORNER unless the identification's arc rule absorbs
 // it (>= 3 concyclic joints, each turning less than ArcMaxJointTurnDegrees). Why this
 // quantity: (i) it is the very quantity the arc rule records per chord

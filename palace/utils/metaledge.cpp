@@ -333,10 +333,11 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
 {
   MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3,
               "Automatic metal edge extraction requires a three-dimensional mesh!");
-  MFEM_VERIFY((surface.joint_noise_sagitta > 0.0) !=
-                  surface.corner_turn_tolerance_degrees.has_value(),
-              "Metal edge extraction requires exactly one joint rule: a positive "
-              "joint_noise_sagitta (geometric) or corner_turn_tolerance_degrees (angular)!");
+  MFEM_VERIFY(
+      (surface.joint_noise_sagitta > 0.0) !=
+          surface.corner_turn_tolerance_degrees.has_value(),
+      "Metal edge extraction requires exactly one joint rule: a positive "
+      "joint_noise_sagitta (geometric) or corner_turn_tolerance_degrees (angular)!");
 
   std::map<int, std::vector<MetalBoundaryCondition>> attribute_conditions;
   auto AddCondition =
@@ -557,8 +558,9 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
     total += counts[rank];
   }
   std::vector<double> face_data(root ? total : 0);
-  MPI_Gatherv(local_face_data.data(), local_count, mpi::DataType<double>(), face_data.data(),
-              counts.data(), offsets.data(), mpi::DataType<double>(), 0, comm);
+  MPI_Gatherv(local_face_data.data(), local_count, mpi::DataType<double>(),
+              face_data.data(), counts.data(), offsets.data(), mpi::DataType<double>(), 0,
+              comm);
   local_face_data.clear();
   local_face_data.shrink_to_fit();
   if (total == 0)
@@ -718,7 +720,6 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
     }
   }
 
-
   // Global face of every gathered face (root only): the per-rank retained facets below.
   std::vector<std::size_t> gathered_face;
   // Per-rank retained facets (root only), packed for the scatter; this rank's share.
@@ -726,970 +727,993 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   GeometryBuffers local_faces;
   if (root)
   {
-  // (3) Canonical points: coordinates within coordinate_tolerance of an already registered
-  // point (the 27 neighbouring grid cells are searched so a crack copy straddling a cell
-  // boundary still merges) map to that point. The representative is the lexicographically
-  // smallest copy; the numbering is fixed afterwards by sorting the distinct points.
-  std::vector<Point> canonical_points;
-  std::map<PointKey, std::vector<std::size_t>> point_cells;
-  auto GetPointKey = [&](const Point &point)
-  {
-    PointKey key;
-    for (int d = 0; d < 3; d++)
+    // (3) Canonical points: coordinates within coordinate_tolerance of an already
+    // registered point (the 27 neighbouring grid cells are searched so a crack copy
+    // straddling a cell boundary still merges) map to that point. The representative is the
+    // lexicographically smallest copy; the numbering is fixed afterwards by sorting the
+    // distinct points.
+    std::vector<Point> canonical_points;
+    std::map<PointKey, std::vector<std::size_t>> point_cells;
+    auto GetPointKey = [&](const Point &point)
     {
-      key[d] = std::llround((point[d] - bbmin[d]) / coordinate_tolerance);
-    }
-    return key;
-  };
-  auto CanonicalPoint = [&](const Point &point) -> std::size_t
-  {
-    const PointKey key = GetPointKey(point);
-    for (long long int dx = -1; dx <= 1; dx++)
-    {
-      for (long long int dy = -1; dy <= 1; dy++)
+      PointKey key;
+      for (int d = 0; d < 3; d++)
       {
-        for (long long int dz = -1; dz <= 1; dz++)
+        key[d] = std::llround((point[d] - bbmin[d]) / coordinate_tolerance);
+      }
+      return key;
+    };
+    auto CanonicalPoint = [&](const Point &point) -> std::size_t
+    {
+      const PointKey key = GetPointKey(point);
+      for (long long int dx = -1; dx <= 1; dx++)
+      {
+        for (long long int dy = -1; dy <= 1; dy++)
         {
-          const auto cell = point_cells.find({key[0] + dx, key[1] + dy, key[2] + dz});
-          if (cell == point_cells.end())
+          for (long long int dz = -1; dz <= 1; dz++)
+          {
+            const auto cell = point_cells.find({key[0] + dx, key[1] + dy, key[2] + dz});
+            if (cell == point_cells.end())
+            {
+              continue;
+            }
+            for (const std::size_t candidate : cell->second)
+            {
+              double distance_squared = 0.0;
+              for (int d = 0; d < 3; d++)
+              {
+                const double delta = canonical_points[candidate][d] - point[d];
+                distance_squared += delta * delta;
+              }
+              if (distance_squared <= coordinate_tolerance * coordinate_tolerance)
+              {
+                // Representative = the lexicographically smallest copy merged into the
+                // point (a function of the set of copies, not of their gathered order; the
+                // cell of the representative moves by at most one, within the search).
+                if (point < canonical_points[candidate])
+                {
+                  canonical_points[candidate] = point;
+                }
+                return candidate;
+              }
+            }
+          }
+        }
+      }
+      canonical_points.push_back(point);
+      point_cells[key].push_back(canonical_points.size() - 1);
+      return canonical_points.size() - 1;
+    };
+
+    // Deduplicate coincident faces (crack copies, duplicate boundary elements of one
+    // attribute): a face is identified by the set of its canonical vertices.
+    struct GlobalFace
+    {
+      int attribute = -1;
+      std::set<int> sides;
+      std::vector<std::size_t> loop;  // canonical point indices, ordered
+      Point normal{};
+      Point centroid{};
+      double area = 0.0;
+      bool on_bounding_box = false;
+    };
+    std::vector<GlobalFace> faces;
+    std::map<std::vector<std::size_t>, std::size_t> face_by_vertices;
+    {
+      // Register every point (first pass, in the gathered order), then renumber the
+      // canonical points by their sorted quantized coordinates: the point, segment and
+      // vertex numbering of the perimeter (and hence of the manifest) is a function of the
+      // set of distinct points only, not of the partition or of the order in which the
+      // crack copies of a face were gathered (the first-encounter numbering permuted 2,647
+      // segment-table entries between np8 and np192 on DS-SCT-002). Ties on the quantized
+      // key (distinct points closer than sqrt(3) tolerance in one cell) are broken by the
+      // raw coordinates.
+      std::vector<std::vector<std::size_t>> gathered_loops(gathered.size());
+      for (std::size_t g = 0; g < gathered.size(); g++)
+      {
+        auto &loop = gathered_loops[g];
+        loop.resize(gathered[g].loop.size());
+        for (std::size_t i = 0; i < loop.size(); i++)
+        {
+          loop[i] = CanonicalPoint(gathered[g].loop[i]);
+        }
+      }
+      std::vector<std::size_t> order(canonical_points.size());
+      std::iota(order.begin(), order.end(), 0);
+      std::vector<PointKey> keys(canonical_points.size());
+      for (std::size_t p = 0; p < canonical_points.size(); p++)
+      {
+        keys[p] = GetPointKey(canonical_points[p]);
+      }
+      std::sort(order.begin(), order.end(),
+                [&](std::size_t a, std::size_t b)
+                {
+                  return std::tie(keys[a], canonical_points[a]) <
+                         std::tie(keys[b], canonical_points[b]);
+                });
+      std::vector<std::size_t> new_index(canonical_points.size());
+      std::vector<Point> sorted_points(canonical_points.size());
+      for (std::size_t rank_of_point = 0; rank_of_point < order.size(); rank_of_point++)
+      {
+        new_index[order[rank_of_point]] = rank_of_point;
+        sorted_points[rank_of_point] = canonical_points[order[rank_of_point]];
+      }
+      canonical_points = std::move(sorted_points);
+      for (auto &[cell, members] : point_cells)
+      {
+        (void)cell;
+        for (auto &member : members)
+        {
+          member = new_index[member];
+        }
+        std::sort(members.begin(), members.end());
+      }
+      // Faces in the order of their sorted canonical vertex sets (then loop, attribute,
+      // sides): the face numbering, the metal components and the face incidence order of
+      // every segment follow the point numbering.
+      std::vector<std::vector<std::size_t>> face_keys(gathered.size());
+      for (std::size_t g = 0; g < gathered.size(); g++)
+      {
+        for (auto &p : gathered_loops[g])
+        {
+          p = new_index[p];
+        }
+        face_keys[g] = gathered_loops[g];
+        std::sort(face_keys[g].begin(), face_keys[g].end());
+        face_keys[g].erase(std::unique(face_keys[g].begin(), face_keys[g].end()),
+                           face_keys[g].end());
+        MFEM_VERIFY(face_keys[g].size() >= 3, "A metal boundary face degenerates to fewer "
+                                              "than three distinct vertices!");
+      }
+      std::vector<std::size_t> face_order(gathered.size());
+      std::iota(face_order.begin(), face_order.end(), 0);
+      std::sort(face_order.begin(), face_order.end(),
+                [&](std::size_t a, std::size_t b)
+                {
+                  return std::tie(face_keys[a], gathered_loops[a], gathered[a].attribute,
+                                  gathered[a].sides) <
+                         std::tie(face_keys[b], gathered_loops[b], gathered[b].attribute,
+                                  gathered[b].sides);
+                });
+      gathered_face.resize(gathered.size());
+      for (const std::size_t g : face_order)
+      {
+        const auto &source = gathered[g];
+        auto [entry, inserted] = face_by_vertices.try_emplace(face_keys[g], faces.size());
+        gathered_face[g] = entry->second;
+        if (inserted)
+        {
+          GlobalFace face;
+          face.attribute = source.attribute;
+          face.loop = std::move(gathered_loops[g]);
+          faces.push_back(std::move(face));
+        }
+        else
+        {
+          auto &face = faces[entry->second];
+          if (face.attribute != source.attribute)
+          {
+            const auto &p = source.loop.front();
+            MFEM_ABORT(
+                "Coincident metal boundary elements carry different metal attributes "
+                << face.attribute << " and " << source.attribute << " (face at (" << p[0]
+                << ", " << p[1] << ", " << p[2]
+                << ")); drop or merge the duplicate boundary elements!");
+          }
+        }
+        auto &face = faces[entry->second];
+        for (const int side : source.sides)
+        {
+          if (side > 0)
+          {
+            face.sides.insert(side);
+          }
+        }
+      }
+    }
+    StageLine(std::to_string(faces.size()) + " distinct faces, " +
+              std::to_string(canonical_points.size()) + " canonical points");
+
+    // Face normals (Newell), centroids and areas on the canonical loops; the layer normal
+    // is the area-weighted principal direction of the face normals. Metal faces lying on
+    // the bounding box of the mesh (a PEC simulation box) are not process metal and do not
+    // vote.
+    auto OnBoundingBox = [&](const GlobalFace &face)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        for (const double bound : {bbmin[d], bbmax[d]})
+        {
+          if (std::all_of(face.loop.begin(), face.loop.end(),
+                          [&](std::size_t p)
+                          {
+                            return std::abs(canonical_points[p][d] - bound) <=
+                                   coordinate_tolerance;
+                          }))
+          {
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+    std::array<double, 6> normal_tensor{};  // xx, yy, zz, xy, xz, yz
+    std::array<double, 6> box_normal_tensor{};
+    for (auto &face : faces)
+    {
+      Point normal{};
+      Point centroid{};
+      for (std::size_t i = 0; i < face.loop.size(); i++)
+      {
+        const auto &a = canonical_points[face.loop[i]];
+        const auto &b = canonical_points[face.loop[(i + 1) % face.loop.size()]];
+        normal[0] += (a[1] - b[1]) * (a[2] + b[2]);
+        normal[1] += (a[2] - b[2]) * (a[0] + b[0]);
+        normal[2] += (a[0] - b[0]) * (a[1] + b[1]);
+        for (int d = 0; d < 3; d++)
+        {
+          centroid[d] += a[d] / static_cast<double>(face.loop.size());
+        }
+      }
+      double norm_squared = 0.0;
+      for (const double value : normal)
+      {
+        norm_squared += value * value;
+      }
+      MFEM_VERIFY(norm_squared > 0.0, "Degenerate metal boundary face!");
+      const double norm = std::sqrt(norm_squared);
+      face.area = 0.5 * norm;
+      for (double &value : normal)
+      {
+        value /= norm;
+      }
+      // Sign-canonical: the largest-magnitude component positive.
+      int dominant = 0;
+      for (int d = 1; d < 3; d++)
+      {
+        if (std::abs(normal[d]) > std::abs(normal[dominant]) + 1.0e-12)
+        {
+          dominant = d;
+        }
+      }
+      if (normal[dominant] < 0.0)
+      {
+        for (double &value : normal)
+        {
+          value = -value;
+        }
+      }
+      face.normal = normal;
+      face.centroid = centroid;
+      face.on_bounding_box = OnBoundingBox(face);
+      auto &tensor = face.on_bounding_box ? box_normal_tensor : normal_tensor;
+      tensor[0] += face.area * normal[0] * normal[0];
+      tensor[1] += face.area * normal[1] * normal[1];
+      tensor[2] += face.area * normal[2] * normal[2];
+      tensor[3] += face.area * normal[0] * normal[1];
+      tensor[4] += face.area * normal[0] * normal[2];
+      tensor[5] += face.area * normal[1] * normal[2];
+    }
+    if (normal_tensor[0] + normal_tensor[1] + normal_tensor[2] <= 0.0)
+    {
+      normal_tensor = box_normal_tensor;  // only box metal: nothing better to vote
+    }
+    {
+      // Power iteration for the dominant eigenvector of the symmetric 3 x 3 tensor.
+      const double trace = normal_tensor[0] + normal_tensor[1] + normal_tensor[2];
+      Point v{};
+      int start = 0;
+      for (int d = 1; d < 3; d++)
+      {
+        if (normal_tensor[d] > normal_tensor[start])
+        {
+          start = d;
+        }
+      }
+      v[start] = 1.0;
+      for (int iteration = 0; iteration < 200; iteration++)
+      {
+        Point w = {
+            normal_tensor[0] * v[0] + normal_tensor[3] * v[1] + normal_tensor[4] * v[2],
+            normal_tensor[3] * v[0] + normal_tensor[1] * v[1] + normal_tensor[5] * v[2],
+            normal_tensor[4] * v[0] + normal_tensor[5] * v[1] + normal_tensor[2] * v[2]};
+        // Shift keeps the iteration well conditioned for a rank-one tensor.
+        for (int d = 0; d < 3; d++)
+        {
+          w[d] += 1.0e-3 * trace * v[d];
+        }
+        double norm = 0.0;
+        for (const double value : w)
+        {
+          norm += value * value;
+        }
+        norm = std::sqrt(norm);
+        MFEM_VERIFY(norm > 0.0, "Degenerate metal face normal tensor!");
+        for (int d = 0; d < 3; d++)
+        {
+          v[d] = w[d] / norm;
+        }
+      }
+      int dominant = 0;
+      for (int d = 1; d < 3; d++)
+      {
+        if (std::abs(v[d]) > std::abs(v[dominant]) + 1.0e-12)
+        {
+          dominant = d;
+        }
+      }
+      if (v[dominant] < 0.0)
+      {
+        for (double &value : v)
+        {
+          value = -value;
+        }
+      }
+      result.layer_normal = v;
+    }
+
+    // (4) Atomic edge segments of the faces, split at canonical points lying on them when
+    // the mesh is nonconforming (crack sides with different hanging-node subdivisions), and
+    // the metal faces supporting each of them with their in-plane inward directions.
+    using SegmentKey = std::pair<std::size_t, std::size_t>;
+    struct FaceIncidence
+    {
+      std::size_t face;
+      Point inward;
+    };
+    std::map<SegmentKey, std::vector<FaceIncidence>> incidence;
+    {
+      std::map<PointKey, std::vector<std::size_t>> cells;  // for the nonconforming split
+      if (mesh.Nonconforming())
+      {
+        for (std::size_t p = 0; p < canonical_points.size(); p++)
+        {
+          cells[GetPointKey(canonical_points[p])].push_back(p);
+        }
+      }
+      auto PointsOnSegment = [&](std::size_t a, std::size_t b)
+      {
+        std::vector<std::pair<double, std::size_t>> found;
+        const auto &p0 = canonical_points[a];
+        const auto &p1 = canonical_points[b];
+        Point direction{};
+        double length_squared = 0.0;
+        PointKey lo, hi;
+        for (int d = 0; d < 3; d++)
+        {
+          direction[d] = p1[d] - p0[d];
+          length_squared += direction[d] * direction[d];
+          lo[d] =
+              std::llround((std::min(p0[d], p1[d]) - bbmin[d]) / coordinate_tolerance) - 1;
+          hi[d] =
+              std::llround((std::max(p0[d], p1[d]) - bbmin[d]) / coordinate_tolerance) + 1;
+        }
+        MFEM_VERIFY(length_squared > 0.0, "Degenerate metal face edge!");
+        for (auto it = cells.lower_bound({lo[0], lo[1], lo[2]});
+             it != cells.end() && it->first[0] <= hi[0]; ++it)
+        {
+          if (it->first[1] < lo[1] || it->first[1] > hi[1] || it->first[2] < lo[2] ||
+              it->first[2] > hi[2])
           {
             continue;
           }
-          for (const std::size_t candidate : cell->second)
+          for (const std::size_t candidate : it->second)
           {
+            if (candidate == a || candidate == b)
+            {
+              continue;
+            }
+            const auto &point = canonical_points[candidate];
+            double projection = 0.0;
+            for (int d = 0; d < 3; d++)
+            {
+              projection += (point[d] - p0[d]) * direction[d];
+            }
+            const double t = projection / length_squared;
+            if (t <= 0.0 || t >= 1.0)
+            {
+              continue;
+            }
             double distance_squared = 0.0;
             for (int d = 0; d < 3; d++)
             {
-              const double delta = canonical_points[candidate][d] - point[d];
+              const double delta = point[d] - p0[d] - t * direction[d];
               distance_squared += delta * delta;
             }
             if (distance_squared <= coordinate_tolerance * coordinate_tolerance)
             {
-              // Representative = the lexicographically smallest copy merged into the
-              // point (a function of the set of copies, not of their gathered order; the
-              // cell of the representative moves by at most one, within the search).
-              if (point < canonical_points[candidate])
-              {
-                canonical_points[candidate] = point;
-              }
-              return candidate;
+              found.emplace_back(t, candidate);
             }
           }
         }
+        std::sort(found.begin(), found.end());
+        return found;
+      };
+      for (std::size_t f = 0; f < faces.size(); f++)
+      {
+        const auto &face = faces[f];
+        for (std::size_t i = 0; i < face.loop.size(); i++)
+        {
+          const std::size_t a = face.loop[i];
+          const std::size_t b = face.loop[(i + 1) % face.loop.size()];
+          if (a == b)
+          {
+            continue;
+          }
+          std::vector<std::size_t> chain = {a};
+          if (mesh.Nonconforming())
+          {
+            for (const auto &[t, p] : PointsOnSegment(a, b))
+            {
+              (void)t;
+              chain.push_back(p);
+            }
+          }
+          chain.push_back(b);
+          for (std::size_t k = 0; k + 1 < chain.size(); k++)
+          {
+            const std::size_t u = chain[k];
+            const std::size_t v = chain[k + 1];
+            const auto &p0 = canonical_points[u];
+            const auto &p1 = canonical_points[v];
+            Point tangent{}, inward{};
+            double tangent_norm_squared = 0.0;
+            for (int d = 0; d < 3; d++)
+            {
+              tangent[d] = p1[d] - p0[d];
+              tangent_norm_squared += tangent[d] * tangent[d];
+              inward[d] = face.centroid[d] - 0.5 * (p0[d] + p1[d]);
+            }
+            double inward_tangent = 0.0;
+            for (int d = 0; d < 3; d++)
+            {
+              inward_tangent += inward[d] * tangent[d];
+            }
+            double inward_norm_squared = 0.0;
+            for (int d = 0; d < 3; d++)
+            {
+              inward[d] -= inward_tangent * tangent[d] / tangent_norm_squared;
+              inward_norm_squared += inward[d] * inward[d];
+            }
+            MFEM_VERIFY(inward_norm_squared > 0.0,
+                        "Degenerate metal boundary face (centroid on an edge)!");
+            const double inverse_norm = 1.0 / std::sqrt(inward_norm_squared);
+            for (double &value : inward)
+            {
+              value *= inverse_norm;
+            }
+            incidence[{std::min(u, v), std::max(u, v)}].push_back({f, inward});
+          }
+        }
       }
     }
-    canonical_points.push_back(point);
-    point_cells[key].push_back(canonical_points.size() - 1);
-    return canonical_points.size() - 1;
-  };
 
-  // Deduplicate coincident faces (crack copies, duplicate boundary elements of one
-  // attribute): a face is identified by the set of its canonical vertices.
-  struct GlobalFace
-  {
-    int attribute = -1;
-    std::set<int> sides;
-    std::vector<std::size_t> loop;  // canonical point indices, ordered
-    Point normal{};
-    Point centroid{};
-    double area = 0.0;
-    bool on_bounding_box = false;
-  };
-  std::vector<GlobalFace> faces;
-  std::map<std::vector<std::size_t>, std::size_t> face_by_vertices;
-  {
-    // Register every point (first pass, in the gathered order), then renumber the
-    // canonical points by their sorted quantized coordinates: the point, segment and vertex
-    // numbering of the perimeter (and hence of the manifest) is a function of the set of
-    // distinct points only, not of the partition or of the order in which the crack copies
-    // of a face were gathered (the first-encounter numbering permuted 2,647 segment-table
-    // entries between np8 and np192 on DS-SCT-002). Ties on the quantized key (distinct
-    // points closer than sqrt(3) tolerance in one cell) are broken by the raw coordinates.
-    std::vector<std::vector<std::size_t>> gathered_loops(gathered.size());
-    for (std::size_t g = 0; g < gathered.size(); g++)
+    StageLine(std::to_string(incidence.size()) + " face edges");
+
+    // (5) Metal components through shared face edges.
+    std::vector<std::size_t> face_parent(faces.size());
+    std::iota(face_parent.begin(), face_parent.end(), 0);
+    auto FindFace = [&](std::size_t item)
     {
-      auto &loop = gathered_loops[g];
-      loop.resize(gathered[g].loop.size());
-      for (std::size_t i = 0; i < loop.size(); i++)
+      std::size_t root = item;
+      while (face_parent[root] != root)
       {
-        loop[i] = CanonicalPoint(gathered[g].loop[i]);
+        root = face_parent[root];
+      }
+      while (face_parent[item] != item)
+      {
+        const std::size_t next = face_parent[item];
+        face_parent[item] = root;
+        item = next;
+      }
+      return root;
+    };
+    for (const auto &[key, supports] : incidence)
+    {
+      (void)key;
+      for (std::size_t i = 1; i < supports.size(); i++)
+      {
+        const std::size_t first = FindFace(supports[0].face);
+        const std::size_t second = FindFace(supports[i].face);
+        if (first != second)
+        {
+          face_parent[std::max(first, second)] = std::min(first, second);
+        }
       }
     }
-    std::vector<std::size_t> order(canonical_points.size());
-    std::iota(order.begin(), order.end(), 0);
-    std::vector<PointKey> keys(canonical_points.size());
-    for (std::size_t p = 0; p < canonical_points.size(); p++)
+    std::map<std::size_t, int> component_by_root;
+    std::vector<int> face_component(faces.size());
+    for (std::size_t f = 0; f < faces.size(); f++)
     {
-      keys[p] = GetPointKey(canonical_points[p]);
+      auto [entry, inserted] =
+          component_by_root.try_emplace(FindFace(f), component_by_root.size());
+      (void)inserted;
+      face_component[f] = entry->second;
     }
-    std::sort(order.begin(), order.end(),
-              [&](std::size_t a, std::size_t b)
-              {
-                return std::tie(keys[a], canonical_points[a]) <
-                       std::tie(keys[b], canonical_points[b]);
-              });
-    std::vector<std::size_t> new_index(canonical_points.size());
-    std::vector<Point> sorted_points(canonical_points.size());
-    for (std::size_t rank_of_point = 0; rank_of_point < order.size(); rank_of_point++)
+    result.metal_components = static_cast<int>(component_by_root.size());
+
+    // (6) Perimeter classification. Faces whose inward directions coincide (crack copies
+    // with different subdivisions, coarse and fine sides) form one direction class; a
+    // segment with an opposite pair of classes and nothing else is interior to the metal.
+    // The direction grid is the classification's 1e-12 direction quantum.
+    constexpr double direction_quantum = 1.0e-12;
+    auto QuantizeCosine = [](double cosine)
+    { return std::round(cosine / direction_quantum); };
+    const double same_cosine = QuantizeCosine(1.0 - 1.0e-8);
+    const double opposite_cosine = QuantizeCosine(-1.0 + 1.0e-8);
+    std::map<std::size_t, std::size_t> vertex_by_point;
+    auto GetVertex = [&](std::size_t point)
     {
-      new_index[order[rank_of_point]] = rank_of_point;
-      sorted_points[rank_of_point] = canonical_points[order[rank_of_point]];
-    }
-    canonical_points = std::move(sorted_points);
-    for (auto &[cell, members] : point_cells)
-    {
-      (void)cell;
-      for (auto &member : members)
-      {
-        member = new_index[member];
-      }
-      std::sort(members.begin(), members.end());
-    }
-    // Faces in the order of their sorted canonical vertex sets (then loop, attribute,
-    // sides): the face numbering, the metal components and the face incidence order of
-    // every segment follow the point numbering.
-    std::vector<std::vector<std::size_t>> face_keys(gathered.size());
-    for (std::size_t g = 0; g < gathered.size(); g++)
-    {
-      for (auto &p : gathered_loops[g])
-      {
-        p = new_index[p];
-      }
-      face_keys[g] = gathered_loops[g];
-      std::sort(face_keys[g].begin(), face_keys[g].end());
-      face_keys[g].erase(std::unique(face_keys[g].begin(), face_keys[g].end()),
-                         face_keys[g].end());
-      MFEM_VERIFY(face_keys[g].size() >= 3, "A metal boundary face degenerates to fewer "
-                                            "than three distinct vertices!");
-    }
-    std::vector<std::size_t> face_order(gathered.size());
-    std::iota(face_order.begin(), face_order.end(), 0);
-    std::sort(face_order.begin(), face_order.end(),
-              [&](std::size_t a, std::size_t b)
-              {
-                return std::tie(face_keys[a], gathered_loops[a], gathered[a].attribute,
-                                gathered[a].sides) <
-                       std::tie(face_keys[b], gathered_loops[b], gathered[b].attribute,
-                                gathered[b].sides);
-              });
-    gathered_face.resize(gathered.size());
-    for (const std::size_t g : face_order)
-    {
-      const auto &source = gathered[g];
-      auto [entry, inserted] = face_by_vertices.try_emplace(face_keys[g], faces.size());
-      gathered_face[g] = entry->second;
+      auto [it, inserted] = vertex_by_point.try_emplace(point, result.vertices.size());
       if (inserted)
       {
-        GlobalFace face;
-        face.attribute = source.attribute;
-        face.loop = std::move(gathered_loops[g]);
-        faces.push_back(std::move(face));
+        result.vertices.push_back(
+            {canonical_points[point], {}, MetalEdgeVertexType::REGULAR});
+      }
+      return it->second;
+    };
+    for (const auto &[key, supports] : incidence)
+    {
+      // Direction classes.
+      std::vector<Point> classes;
+      std::vector<std::size_t> class_faces;
+      for (const auto &support : supports)
+      {
+        bool known = false;
+        for (const auto &direction : classes)
+        {
+          double dot = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            dot += direction[d] * support.inward[d];
+          }
+          if (QuantizeCosine(dot) >= same_cosine)
+          {
+            known = true;
+            break;
+          }
+        }
+        if (!known)
+        {
+          classes.push_back(support.inward);
+        }
+      }
+      bool opposite_pair = false;
+      for (std::size_t i = 0; i < classes.size() && !opposite_pair; i++)
+      {
+        for (std::size_t j = i + 1; j < classes.size(); j++)
+        {
+          double dot = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            dot += classes[i][d] * classes[j][d];
+          }
+          if (QuantizeCosine(dot) <= opposite_cosine)
+          {
+            opposite_pair = true;
+            break;
+          }
+        }
+      }
+      MetalEdgeSegmentType type;
+      if (classes.size() == 1)
+      {
+        type = MetalEdgeSegmentType::PHYSICAL;
+      }
+      else if (classes.size() == 2)
+      {
+        if (opposite_pair)
+        {
+          continue;  // metal continues on both sides: interior edge
+        }
+        type = MetalEdgeSegmentType::FOLD;
       }
       else
       {
-        auto &face = faces[entry->second];
-        if (face.attribute != source.attribute)
-        {
-          const auto &p = source.loop.front();
-          MFEM_ABORT("Coincident metal boundary elements carry different metal attributes "
-                     << face.attribute << " and " << source.attribute << " (face at ("
-                     << p[0] << ", " << p[1] << ", " << p[2]
-                     << ")); drop or merge the duplicate boundary elements!");
-        }
+        type = MetalEdgeSegmentType::NONMANIFOLD;
       }
-      auto &face = faces[entry->second];
-      for (const int side : source.sides)
-      {
-        if (side > 0)
-        {
-          face.sides.insert(side);
-        }
-      }
-    }
-  }
-  StageLine(std::to_string(faces.size()) + " distinct faces, " +
-            std::to_string(canonical_points.size()) + " canonical points");
 
-  // Face normals (Newell), centroids and areas on the canonical loops; the layer normal is
-  // the area-weighted principal direction of the face normals. Metal faces lying on the
-  // bounding box of the mesh (a PEC simulation box) are not process metal and do not vote.
-  auto OnBoundingBox = [&](const GlobalFace &face)
-  {
-    for (int d = 0; d < 3; d++)
-    {
-      for (const double bound : {bbmin[d], bbmax[d]})
+      MetalEdgeSegment segment;
+      segment.type = type;
+      segment.vertices = {GetVertex(key.first), GetVertex(key.second)};
+      std::set<std::size_t> distinct_faces;
+      std::set<int> side_attributes;
+      for (const auto &support : supports)
       {
-        if (std::all_of(face.loop.begin(), face.loop.end(), [&](std::size_t p)
-                        { return std::abs(canonical_points[p][d] - bound) <= coordinate_tolerance; }))
-        {
-          return true;
-        }
+        distinct_faces.insert(support.face);
       }
-    }
-    return false;
-  };
-  std::array<double, 6> normal_tensor{};  // xx, yy, zz, xy, xz, yz
-  std::array<double, 6> box_normal_tensor{};
-  for (auto &face : faces)
-  {
-    Point normal{};
-    Point centroid{};
-    for (std::size_t i = 0; i < face.loop.size(); i++)
-    {
-      const auto &a = canonical_points[face.loop[i]];
-      const auto &b = canonical_points[face.loop[(i + 1) % face.loop.size()]];
-      normal[0] += (a[1] - b[1]) * (a[2] + b[2]);
-      normal[1] += (a[2] - b[2]) * (a[0] + b[0]);
-      normal[2] += (a[0] - b[0]) * (a[1] + b[1]);
-      for (int d = 0; d < 3; d++)
+      segment.face_count = static_cast<int>(distinct_faces.size());
+      segment.on_bounding_box =
+          std::all_of(distinct_faces.begin(), distinct_faces.end(),
+                      [&](std::size_t f) { return faces[f].on_bounding_box; });
+      std::set<int> attributes;
+      for (const std::size_t f : distinct_faces)
       {
-        centroid[d] += a[d] / static_cast<double>(face.loop.size());
+        attributes.insert(faces[f].attribute);
+        side_attributes.insert(faces[f].sides.begin(), faces[f].sides.end());
+        segment.face_normals.push_back(faces[f].normal);
       }
-    }
-    double norm_squared = 0.0;
-    for (const double value : normal)
-    {
-      norm_squared += value * value;
-    }
-    MFEM_VERIFY(norm_squared > 0.0, "Degenerate metal boundary face!");
-    const double norm = std::sqrt(norm_squared);
-    face.area = 0.5 * norm;
-    for (double &value : normal)
-    {
-      value /= norm;
-    }
-    // Sign-canonical: the largest-magnitude component positive.
-    int dominant = 0;
-    for (int d = 1; d < 3; d++)
-    {
-      if (std::abs(normal[d]) > std::abs(normal[dominant]) + 1.0e-12)
+      std::sort(segment.face_normals.begin(), segment.face_normals.end());
+      segment.face_normals.erase(
+          std::unique(segment.face_normals.begin(), segment.face_normals.end()),
+          segment.face_normals.end());
+      segment.metal_attributes.assign(attributes.begin(), attributes.end());
+      segment.side_attributes.assign(side_attributes.begin(), side_attributes.end());
+      for (const int attribute : segment.metal_attributes)
       {
-        dominant = d;
+        const auto &conditions = attribute_conditions.at(attribute);
+        segment.conditions.insert(segment.conditions.end(), conditions.begin(),
+                                  conditions.end());
       }
-    }
-    if (normal[dominant] < 0.0)
-    {
-      for (double &value : normal)
-      {
-        value = -value;
-      }
-    }
-    face.normal = normal;
-    face.centroid = centroid;
-    face.on_bounding_box = OnBoundingBox(face);
-    auto &tensor = face.on_bounding_box ? box_normal_tensor : normal_tensor;
-    tensor[0] += face.area * normal[0] * normal[0];
-    tensor[1] += face.area * normal[1] * normal[1];
-    tensor[2] += face.area * normal[2] * normal[2];
-    tensor[3] += face.area * normal[0] * normal[1];
-    tensor[4] += face.area * normal[0] * normal[2];
-    tensor[5] += face.area * normal[1] * normal[2];
-  }
-  if (normal_tensor[0] + normal_tensor[1] + normal_tensor[2] <= 0.0)
-  {
-    normal_tensor = box_normal_tensor;  // only box metal: nothing better to vote
-  }
-  {
-    // Power iteration for the dominant eigenvector of the symmetric 3 x 3 tensor.
-    const double trace = normal_tensor[0] + normal_tensor[1] + normal_tensor[2];
-    Point v{};
-    int start = 0;
-    for (int d = 1; d < 3; d++)
-    {
-      if (normal_tensor[d] > normal_tensor[start])
-      {
-        start = d;
-      }
-    }
-    v[start] = 1.0;
-    for (int iteration = 0; iteration < 200; iteration++)
-    {
-      Point w = {normal_tensor[0] * v[0] + normal_tensor[3] * v[1] + normal_tensor[4] * v[2],
-                 normal_tensor[3] * v[0] + normal_tensor[1] * v[1] + normal_tensor[5] * v[2],
-                 normal_tensor[4] * v[0] + normal_tensor[5] * v[1] + normal_tensor[2] * v[2]};
-      // Shift keeps the iteration well conditioned for a rank-one tensor.
-      for (int d = 0; d < 3; d++)
-      {
-        w[d] += 1.0e-3 * trace * v[d];
-      }
-      double norm = 0.0;
-      for (const double value : w)
-      {
-        norm += value * value;
-      }
-      norm = std::sqrt(norm);
-      MFEM_VERIFY(norm > 0.0, "Degenerate metal face normal tensor!");
-      for (int d = 0; d < 3; d++)
-      {
-        v[d] = w[d] / norm;
-      }
-    }
-    int dominant = 0;
-    for (int d = 1; d < 3; d++)
-    {
-      if (std::abs(v[d]) > std::abs(v[dominant]) + 1.0e-12)
-      {
-        dominant = d;
-      }
-    }
-    if (v[dominant] < 0.0)
-    {
-      for (double &value : v)
-      {
-        value = -value;
-      }
-    }
-    result.layer_normal = v;
-  }
+      SortAndUnique(segment.conditions);
+      segment.metal_component = face_component[*distinct_faces.begin()];
 
-  // (4) Atomic edge segments of the faces, split at canonical points lying on them when
-  // the mesh is nonconforming (crack sides with different hanging-node subdivisions), and
-  // the metal faces supporting each of them with their in-plane inward directions.
-  using SegmentKey = std::pair<std::size_t, std::size_t>;
-  struct FaceIncidence
-  {
-    std::size_t face;
-    Point inward;
-  };
-  std::map<SegmentKey, std::vector<FaceIncidence>> incidence;
-  {
-    std::map<PointKey, std::vector<std::size_t>> cells;  // for the nonconforming split
-    if (mesh.Nonconforming())
-    {
-      for (std::size_t p = 0; p < canonical_points.size(); p++)
+      const mesh::BoundaryEdgeSegment perimeter{canonical_points[key.first],
+                                                canonical_points[key.second]};
+      for (const auto &support : interface_support)
       {
-        cells[GetPointKey(canonical_points[p])].push_back(p);
-      }
-    }
-    auto PointsOnSegment = [&](std::size_t a, std::size_t b)
-    {
-      std::vector<std::pair<double, std::size_t>> found;
-      const auto &p0 = canonical_points[a];
-      const auto &p1 = canonical_points[b];
-      Point direction{};
-      double length_squared = 0.0;
-      PointKey lo, hi;
-      for (int d = 0; d < 3; d++)
-      {
-        direction[d] = p1[d] - p0[d];
-        length_squared += direction[d] * direction[d];
-        lo[d] = std::llround((std::min(p0[d], p1[d]) - bbmin[d]) / coordinate_tolerance) - 1;
-        hi[d] = std::llround((std::max(p0[d], p1[d]) - bbmin[d]) / coordinate_tolerance) + 1;
-      }
-      MFEM_VERIFY(length_squared > 0.0, "Degenerate metal face edge!");
-      for (auto it = cells.lower_bound({lo[0], lo[1], lo[2]});
-           it != cells.end() && it->first[0] <= hi[0]; ++it)
-      {
-        if (it->first[1] < lo[1] || it->first[1] > hi[1] || it->first[2] < lo[2] ||
-            it->first[2] > hi[2])
+        const bool by_attribute =
+            std::any_of(segment.metal_attributes.begin(), segment.metal_attributes.end(),
+                        [&](int attribute)
+                        {
+                          return support.metal_attributes.find(attribute) !=
+                                 support.metal_attributes.end();
+                        });
+        if (!by_attribute &&
+            !(support.tree && IsCoincident(perimeter, *support.tree, tolerance_squared)))
         {
           continue;
         }
-        for (const std::size_t candidate : it->second)
+        switch (support.type)
         {
-          if (candidate == a || candidate == b)
-          {
-            continue;
-          }
-          const auto &point = canonical_points[candidate];
-          double projection = 0.0;
-          for (int d = 0; d < 3; d++)
-          {
-            projection += (point[d] - p0[d]) * direction[d];
-          }
-          const double t = projection / length_squared;
-          if (t <= 0.0 || t >= 1.0)
-          {
-            continue;
-          }
-          double distance_squared = 0.0;
-          for (int d = 0; d < 3; d++)
-          {
-            const double delta = point[d] - p0[d] - t * direction[d];
-            distance_squared += delta * delta;
-          }
-          if (distance_squared <= coordinate_tolerance * coordinate_tolerance)
-          {
-            found.emplace_back(t, candidate);
-          }
+          case InterfaceDielectric::SA:
+            segment.sa_interfaces.push_back(support.index);
+            break;
+          case InterfaceDielectric::MS:
+            segment.ms_interfaces.push_back(support.index);
+            break;
+          case InterfaceDielectric::MA:
+            segment.ma_interfaces.push_back(support.index);
+            break;
+          case InterfaceDielectric::DEFAULT:
+            break;
         }
       }
-      std::sort(found.begin(), found.end());
-      return found;
+      if (type == MetalEdgeSegmentType::PHYSICAL)
+      {
+        for (const auto &[attribute, tree] : port_support)
+        {
+          if (IsCoincident(perimeter, *tree, tolerance_squared))
+          {
+            segment.port_attributes.push_back(attribute);
+          }
+        }
+        for (const auto &[attribute, tree] : truncation_support)
+        {
+          if (IsCoincident(perimeter, *tree, tolerance_squared))
+          {
+            segment.truncation_attributes.push_back(attribute);
+          }
+        }
+        // A port face on the simulation boundary (a wave port) is a port cut.
+        if (!segment.port_attributes.empty())
+        {
+          segment.type = MetalEdgeSegmentType::PORT;
+        }
+        else if (!segment.truncation_attributes.empty())
+        {
+          segment.type = MetalEdgeSegmentType::TRUNCATION;
+        }
+      }
+
+      const std::size_t index = result.segments.size();
+      result.vertices[segment.vertices[0]].segments.push_back(index);
+      result.vertices[segment.vertices[1]].segments.push_back(index);
+      result.segments.push_back(std::move(segment));
+    }
+    StageLine(std::to_string(result.segments.size()) + " perimeter segments, " +
+              std::to_string(result.vertices.size()) + " vertices, " +
+              std::to_string(result.metal_components) + " metal components");
+
+    // (7) Retained faces: the rank-local facets (with their global component) and the
+    // global deduplicated faces. A rank retains every distinct geometric face it owns once,
+    // with the canonical (global) vertex coordinates, so that the crack copies and
+    // duplicate boundary elements of one face — whose own vertex coordinates differ by
+    // roundoff — are one facet with identical coordinates on every rank (the plan-view
+    // canonicalisation deduplicates facets on a 1e-9 R grid).
+    if (surface.retain_faces && !result.segments.empty())
+    {
+      // The gathered faces of every rank in their local order (the rank's boundary element
+      // order), each distinct global face once per rank, with the loop's canonical points.
+      std::vector<std::set<std::size_t>> retained(counts.size());
+      for (std::size_t g = 0; g < gathered.size(); g++)
+      {
+        const std::size_t f = gathered_face[g];
+        const auto rank = static_cast<std::size_t>(gathered_rank[g]);
+        if (!retained[rank].insert(f).second)
+        {
+          continue;
+        }
+        MetalSurfaceFace face;
+        face.component = face_component[f];
+        face.attribute = faces[f].attribute;
+        face.normal = faces[f].normal;
+        face.on_bounding_box = faces[f].on_bounding_box;
+        face.vertices.reserve(gathered[g].loop.size());
+        for (const auto &p : gathered[g].loop)
+        {
+          face.vertices.push_back(canonical_points[CanonicalPoint(p)]);
+        }
+        PackFace(face, rank_faces[rank]);
+      }
+    }
+    gathered.clear();
+    gathered.shrink_to_fit();
+    if (surface.retain_global_faces && !result.segments.empty())
+    {
+      result.global_faces.reserve(faces.size());
+      for (std::size_t f = 0; f < faces.size(); f++)
+      {
+        MetalSurfaceFace face;
+        face.component = face_component[f];
+        face.attribute = faces[f].attribute;
+        face.normal = faces[f].normal;
+        face.on_bounding_box = faces[f].on_bounding_box;
+        face.vertices.reserve(faces[f].loop.size());
+        for (const std::size_t p : faces[f].loop)
+        {
+          face.vertices.push_back(canonical_points[p]);
+        }
+        result.global_faces.push_back(std::move(face));
+      }
+    }
+
+    auto LabelComponents = [&](bool physical)
+    {
+      std::vector<bool> visited(result.segments.size(), false);
+      int components = 0;
+      for (std::size_t seed = 0; seed < result.segments.size(); seed++)
+      {
+        if (visited[seed] ||
+            (physical && result.segments[seed].type != MetalEdgeSegmentType::PHYSICAL))
+        {
+          continue;
+        }
+        std::queue<std::size_t> queue;
+        queue.push(seed);
+        visited[seed] = true;
+        while (!queue.empty())
+        {
+          const std::size_t current = queue.front();
+          queue.pop();
+          if (physical)
+          {
+            result.segments[current].physical_component = components;
+          }
+          else
+          {
+            result.segments[current].component = components;
+          }
+          for (const std::size_t vertex : result.segments[current].vertices)
+          {
+            for (const std::size_t neighbor : result.vertices[vertex].segments)
+            {
+              if (!visited[neighbor] && (!physical || result.segments[neighbor].type ==
+                                                          MetalEdgeSegmentType::PHYSICAL))
+              {
+                visited[neighbor] = true;
+                queue.push(neighbor);
+              }
+            }
+          }
+        }
+        components++;
+      }
+      return components;
     };
-    for (std::size_t f = 0; f < faces.size(); f++)
+    result.components = LabelComponents(false);
+    result.physical_components = LabelComponents(true);
+
+    // Boundary meshes commonly represent smooth layout curves by short polygonal facets. A
+    // two-segment vertex is a regular vertex of its chain (a straight continuation) under
+    // the joint noise rule (kJointNoiseSagittaOverRadius, metaledge.hpp; USER decision 121
+    // (B)): the sagitta (c / 2) tan(turn / 4) implied by its turn on the shorter of its two
+    // adjacent straight pieces (collinear mesh segments merged) is below
+    // surface.joint_noise_sagitta. Every other joint is an explicit corner vertex, which
+    // the identification's arc rule absorbs when it lies on a fitted arc (a bend merges the
+    // chains it separates) and otherwise treats as a corner feature. The legacy per-group
+    // classifier (comparison only) passes its angular corner class instead
+    // (surface.corner_turn_tolerance_degrees).
+    const double straight_dot_tolerance =
+        surface.corner_turn_tolerance_degrees
+            ? -std::cos(*surface.corner_turn_tolerance_degrees * std::acos(-1.0) / 180.0)
+            : -1.0;
+    // The turn tests compare direction cosines on a fixed 1e-12 grid so that a
+    // roundoff-level perturbation of the vertex coordinates cannot flip a vertex between
+    // REGULAR and CORNER (the same direction quantum as the classification's parallelism
+    // tests); a collinear continuation (no joint) is a cosine within the direction quantum
+    // of -1 between the two outward directions, as the identification reads its joints.
+    auto QuantizeDirection = QuantizeCosine;
+    const double quantized_straight_dot_tolerance =
+        QuantizeDirection(straight_dot_tolerance);
+    const double quantized_collinear = QuantizeDirection(1.0 - direction_quantum);
+    auto SegmentsAt = [&](std::size_t vertex_index, bool physical)
     {
-      const auto &face = faces[f];
-      for (std::size_t i = 0; i < face.loop.size(); i++)
+      std::vector<std::size_t> segments;
+      const auto &vertex = result.vertices[vertex_index];
+      segments.reserve(vertex.segments.size());
+      for (const std::size_t segment : vertex.segments)
       {
-        const std::size_t a = face.loop[i];
-        const std::size_t b = face.loop[(i + 1) % face.loop.size()];
-        if (a == b)
+        if (!physical || result.segments[segment].type == MetalEdgeSegmentType::PHYSICAL)
         {
-          continue;
-        }
-        std::vector<std::size_t> chain = {a};
-        if (mesh.Nonconforming())
-        {
-          for (const auto &[t, p] : PointsOnSegment(a, b))
-          {
-            (void)t;
-            chain.push_back(p);
-          }
-        }
-        chain.push_back(b);
-        for (std::size_t k = 0; k + 1 < chain.size(); k++)
-        {
-          const std::size_t u = chain[k];
-          const std::size_t v = chain[k + 1];
-          const auto &p0 = canonical_points[u];
-          const auto &p1 = canonical_points[v];
-          Point tangent{}, inward{};
-          double tangent_norm_squared = 0.0;
-          for (int d = 0; d < 3; d++)
-          {
-            tangent[d] = p1[d] - p0[d];
-            tangent_norm_squared += tangent[d] * tangent[d];
-            inward[d] = face.centroid[d] - 0.5 * (p0[d] + p1[d]);
-          }
-          double inward_tangent = 0.0;
-          for (int d = 0; d < 3; d++)
-          {
-            inward_tangent += inward[d] * tangent[d];
-          }
-          double inward_norm_squared = 0.0;
-          for (int d = 0; d < 3; d++)
-          {
-            inward[d] -= inward_tangent * tangent[d] / tangent_norm_squared;
-            inward_norm_squared += inward[d] * inward[d];
-          }
-          MFEM_VERIFY(inward_norm_squared > 0.0,
-                      "Degenerate metal boundary face (centroid on an edge)!");
-          const double inverse_norm = 1.0 / std::sqrt(inward_norm_squared);
-          for (double &value : inward)
-          {
-            value *= inverse_norm;
-          }
-          incidence[{std::min(u, v), std::max(u, v)}].push_back({f, inward});
+          segments.push_back(segment);
         }
       }
-    }
-  }
-
-  StageLine(std::to_string(incidence.size()) + " face edges");
-
-  // (5) Metal components through shared face edges.
-  std::vector<std::size_t> face_parent(faces.size());
-  std::iota(face_parent.begin(), face_parent.end(), 0);
-  auto FindFace = [&](std::size_t item)
-  {
-    std::size_t root = item;
-    while (face_parent[root] != root)
+      return segments;
+    };
+    auto UnitDirection = [&](std::size_t from, std::size_t to)
     {
-      root = face_parent[root];
-    }
-    while (face_parent[item] != item)
-    {
-      const std::size_t next = face_parent[item];
-      face_parent[item] = root;
-      item = next;
-    }
-    return root;
-  };
-  for (const auto &[key, supports] : incidence)
-  {
-    (void)key;
-    for (std::size_t i = 1; i < supports.size(); i++)
-    {
-      const std::size_t first = FindFace(supports[0].face);
-      const std::size_t second = FindFace(supports[i].face);
-      if (first != second)
+      std::array<double, 3> d{};
+      double norm_squared = 0.0;
+      for (int k = 0; k < 3; k++)
       {
-        face_parent[std::max(first, second)] = std::min(first, second);
+        d[k] = result.vertices[to].coordinate[k] - result.vertices[from].coordinate[k];
+        norm_squared += d[k] * d[k];
       }
-    }
-  }
-  std::map<std::size_t, int> component_by_root;
-  std::vector<int> face_component(faces.size());
-  for (std::size_t f = 0; f < faces.size(); f++)
-  {
-    auto [entry, inserted] = component_by_root.try_emplace(FindFace(f), component_by_root.size());
-    (void)inserted;
-    face_component[f] = entry->second;
-  }
-  result.metal_components = static_cast<int>(component_by_root.size());
-
-  // (6) Perimeter classification. Faces whose inward directions coincide (crack copies with
-  // different subdivisions, coarse and fine sides) form one direction class; a segment with
-  // an opposite pair of classes and nothing else is interior to the metal.
-  // The direction grid is the classification's 1e-12 direction quantum.
-  constexpr double direction_quantum = 1.0e-12;
-  auto QuantizeCosine = [](double cosine) { return std::round(cosine / direction_quantum); };
-  const double same_cosine = QuantizeCosine(1.0 - 1.0e-8);
-  const double opposite_cosine = QuantizeCosine(-1.0 + 1.0e-8);
-  std::map<std::size_t, std::size_t> vertex_by_point;
-  auto GetVertex = [&](std::size_t point)
-  {
-    auto [it, inserted] = vertex_by_point.try_emplace(point, result.vertices.size());
-    if (inserted)
-    {
-      result.vertices.push_back(
-          {canonical_points[point], {}, MetalEdgeVertexType::REGULAR});
-    }
-    return it->second;
-  };
-  for (const auto &[key, supports] : incidence)
-  {
-    // Direction classes.
-    std::vector<Point> classes;
-    std::vector<std::size_t> class_faces;
-    for (const auto &support : supports)
-    {
-      bool known = false;
-      for (const auto &direction : classes)
+      MFEM_VERIFY(norm_squared > 0.0, "Metal edge graph contains a zero-length segment!");
+      const double inverse_norm = 1.0 / std::sqrt(norm_squared);
+      for (double &value : d)
       {
+        value *= inverse_norm;
+      }
+      return std::make_pair(d, std::sqrt(norm_squared));
+    };
+    // Length of the straight piece leaving vertex_index along segment: the segment and
+    // every following segment reached through a two-segment vertex whose turn is within the
+    // direction quantum of collinear (a refinement midpoint, a second-order mid-edge node),
+    // stopping at a joint, an endpoint, a junction or on return to the vertex.
+    auto PieceLength = [&](std::size_t vertex_index, std::size_t segment, bool physical)
+    {
+      double length = 0.0;
+      std::size_t current = vertex_index, s = segment;
+      for (std::size_t steps = 0; steps < result.segments.size(); steps++)
+      {
+        const auto &edge = result.segments[s];
+        const std::size_t other =
+            edge.vertices[0] == current ? edge.vertices[1] : edge.vertices[0];
+        const auto [in, piece] = UnitDirection(current, other);
+        length += piece;
+        const auto next_segments = SegmentsAt(other, physical);
+        if (next_segments.size() != 2 || other == vertex_index)
+        {
+          break;
+        }
+        const std::size_t next =
+            next_segments[0] == s ? next_segments[1] : next_segments[0];
+        const auto &next_edge = result.segments[next];
+        const std::size_t beyond =
+            next_edge.vertices[0] == other ? next_edge.vertices[1] : next_edge.vertices[0];
+        const auto [out, ignored] = UnitDirection(other, beyond);
+        (void)ignored;
         double dot = 0.0;
-        for (int d = 0; d < 3; d++)
+        for (int k = 0; k < 3; k++)
         {
-          dot += direction[d] * support.inward[d];
+          dot += in[k] * out[k];
         }
-        if (QuantizeCosine(dot) >= same_cosine)
+        if (QuantizeDirection(dot) < quantized_collinear)
         {
-          known = true;
-          break;
+          break;  // a joint
         }
+        current = other;
+        s = next;
       }
-      if (!known)
+      return length;
+    };
+    auto ClassifyVertex = [&](std::size_t vertex_index,
+                              bool physical) -> std::optional<MetalEdgeVertexType>
+    {
+      const std::vector<std::size_t> segments = SegmentsAt(vertex_index, physical);
+      if (segments.empty())
       {
-        classes.push_back(support.inward);
+        return std::nullopt;
       }
-    }
-    bool opposite_pair = false;
-    for (std::size_t i = 0; i < classes.size() && !opposite_pair; i++)
-    {
-      for (std::size_t j = i + 1; j < classes.size(); j++)
+      if (segments.size() == 1)
       {
-        double dot = 0.0;
-        for (int d = 0; d < 3; d++)
-        {
-          dot += classes[i][d] * classes[j][d];
-        }
-        if (QuantizeCosine(dot) <= opposite_cosine)
-        {
-          opposite_pair = true;
-          break;
-        }
+        return MetalEdgeVertexType::ENDPOINT;
       }
-    }
-    MetalEdgeSegmentType type;
-    if (classes.size() == 1)
-    {
-      type = MetalEdgeSegmentType::PHYSICAL;
-    }
-    else if (classes.size() == 2)
-    {
-      if (opposite_pair)
+      if (segments.size() > 2)
       {
-        continue;  // metal continues on both sides: interior edge
+        return MetalEdgeVertexType::JUNCTION;
       }
-      type = MetalEdgeSegmentType::FOLD;
-    }
-    else
+
+      std::array<std::array<double, 3>, 2> directions{};
+      for (int i = 0; i < 2; i++)
+      {
+        const auto &edge = result.segments[segments[i]];
+        const std::size_t other =
+            edge.vertices[0] == vertex_index ? edge.vertices[1] : edge.vertices[0];
+        directions[i] = UnitDirection(vertex_index, other).first;
+      }
+      double dot = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        dot += directions[0][d] * directions[1][d];
+      }
+      if (surface.corner_turn_tolerance_degrees)
+      {
+        return QuantizeDirection(dot) <= quantized_straight_dot_tolerance
+                   ? MetalEdgeVertexType::REGULAR
+                   : MetalEdgeVertexType::CORNER;
+      }
+      // Geometric joint noise rule: a collinear continuation is no joint; otherwise the
+      // implied sagitta of the turn on the shorter adjacent straight piece decides.
+      if (QuantizeDirection(-dot) >= quantized_collinear)
+      {
+        return MetalEdgeVertexType::REGULAR;
+      }
+      const double turn = std::acos(std::clamp(-dot, -1.0, 1.0));
+      const double shorter_piece =
+          std::min(PieceLength(vertex_index, segments[0], physical),
+                   PieceLength(vertex_index, segments[1], physical));
+      return JointIsNoise(turn, shorter_piece, surface.joint_noise_sagitta)
+                 ? MetalEdgeVertexType::REGULAR
+                 : MetalEdgeVertexType::CORNER;
+    };
+    for (std::size_t vertex_index = 0; vertex_index < result.vertices.size();
+         vertex_index++)
     {
-      type = MetalEdgeSegmentType::NONMANIFOLD;
+      auto &vertex = result.vertices[vertex_index];
+      vertex.type = *ClassifyVertex(vertex_index, false);
+      vertex.physical_type = ClassifyVertex(vertex_index, true);
+      vertex.on_truncation_boundary = std::any_of(
+          vertex.segments.begin(), vertex.segments.end(), [&](std::size_t segment)
+          { return result.segments[segment].type == MetalEdgeSegmentType::TRUNCATION; });
+      vertex.on_port_boundary = std::any_of(
+          vertex.segments.begin(), vertex.segments.end(), [&](std::size_t segment)
+          { return result.segments[segment].type == MetalEdgeSegmentType::PORT; });
     }
 
-    MetalEdgeSegment segment;
-    segment.type = type;
-    segment.vertices = {GetVertex(key.first), GetVertex(key.second)};
-    std::set<std::size_t> distinct_faces;
-    std::set<int> side_attributes;
-    for (const auto &support : supports)
-    {
-      distinct_faces.insert(support.face);
-    }
-    segment.face_count = static_cast<int>(distinct_faces.size());
-    segment.on_bounding_box =
-        std::all_of(distinct_faces.begin(), distinct_faces.end(),
-                    [&](std::size_t f) { return faces[f].on_bounding_box; });
-    std::set<int> attributes;
-    for (const std::size_t f : distinct_faces)
-    {
-      attributes.insert(faces[f].attribute);
-      side_attributes.insert(faces[f].sides.begin(), faces[f].sides.end());
-      segment.face_normals.push_back(faces[f].normal);
-    }
-    std::sort(segment.face_normals.begin(), segment.face_normals.end());
-    segment.face_normals.erase(
-        std::unique(segment.face_normals.begin(), segment.face_normals.end()),
-        segment.face_normals.end());
-    segment.metal_attributes.assign(attributes.begin(), attributes.end());
-    segment.side_attributes.assign(side_attributes.begin(), side_attributes.end());
-    for (const int attribute : segment.metal_attributes)
-    {
-      const auto &conditions = attribute_conditions.at(attribute);
-      segment.conditions.insert(segment.conditions.end(), conditions.begin(),
-                                conditions.end());
-    }
-    SortAndUnique(segment.conditions);
-    segment.metal_component = face_component[*distinct_faces.begin()];
-
-    const mesh::BoundaryEdgeSegment perimeter{canonical_points[key.first],
-                                              canonical_points[key.second]};
-    for (const auto &support : interface_support)
-    {
-      const bool by_attribute = std::any_of(
-          segment.metal_attributes.begin(), segment.metal_attributes.end(),
-          [&](int attribute)
-          { return support.metal_attributes.find(attribute) != support.metal_attributes.end(); });
-      if (!by_attribute &&
-          !(support.tree && IsCoincident(perimeter, *support.tree, tolerance_squared)))
-      {
-        continue;
-      }
-      switch (support.type)
-      {
-        case InterfaceDielectric::SA:
-          segment.sa_interfaces.push_back(support.index);
-          break;
-        case InterfaceDielectric::MS:
-          segment.ms_interfaces.push_back(support.index);
-          break;
-        case InterfaceDielectric::MA:
-          segment.ma_interfaces.push_back(support.index);
-          break;
-        case InterfaceDielectric::DEFAULT:
-          break;
-      }
-    }
-    if (type == MetalEdgeSegmentType::PHYSICAL)
-    {
-      for (const auto &[attribute, tree] : port_support)
-      {
-        if (IsCoincident(perimeter, *tree, tolerance_squared))
-        {
-          segment.port_attributes.push_back(attribute);
-        }
-      }
-      for (const auto &[attribute, tree] : truncation_support)
-      {
-        if (IsCoincident(perimeter, *tree, tolerance_squared))
-        {
-          segment.truncation_attributes.push_back(attribute);
-        }
-      }
-      // A port face on the simulation boundary (a wave port) is a port cut.
-      if (!segment.port_attributes.empty())
-      {
-        segment.type = MetalEdgeSegmentType::PORT;
-      }
-      else if (!segment.truncation_attributes.empty())
-      {
-        segment.type = MetalEdgeSegmentType::TRUNCATION;
-      }
-    }
-
-    const std::size_t index = result.segments.size();
-    result.vertices[segment.vertices[0]].segments.push_back(index);
-    result.vertices[segment.vertices[1]].segments.push_back(index);
-    result.segments.push_back(std::move(segment));
-  }
-  StageLine(std::to_string(result.segments.size()) + " perimeter segments, " +
-            std::to_string(result.vertices.size()) + " vertices, " +
-            std::to_string(result.metal_components) + " metal components");
-
-  // (7) Retained faces: the rank-local facets (with their global component) and the
-  // global deduplicated faces. A rank retains every distinct geometric face it owns once,
-  // with the canonical (global) vertex coordinates, so that the crack copies and duplicate
-  // boundary elements of one face — whose own vertex coordinates differ by roundoff — are
-  // one facet with identical coordinates on every rank (the plan-view canonicalisation
-  // deduplicates facets on a 1e-9 R grid).
-  if (surface.retain_faces && !result.segments.empty())
-  {
-    // The gathered faces of every rank in their local order (the rank's boundary element
-    // order), each distinct global face once per rank, with the loop's canonical points.
-    std::vector<std::set<std::size_t>> retained(counts.size());
-    for (std::size_t g = 0; g < gathered.size(); g++)
-    {
-      const std::size_t f = gathered_face[g];
-      const auto rank = static_cast<std::size_t>(gathered_rank[g]);
-      if (!retained[rank].insert(f).second)
-      {
-        continue;
-      }
-      MetalSurfaceFace face;
-      face.component = face_component[f];
-      face.attribute = faces[f].attribute;
-      face.normal = faces[f].normal;
-      face.on_bounding_box = faces[f].on_bounding_box;
-      face.vertices.reserve(gathered[g].loop.size());
-      for (const auto &p : gathered[g].loop)
-      {
-        face.vertices.push_back(canonical_points[CanonicalPoint(p)]);
-      }
-      PackFace(face, rank_faces[rank]);
-    }
-  }
-  gathered.clear();
-  gathered.shrink_to_fit();
-  if (surface.retain_global_faces && !result.segments.empty())
-  {
-    result.global_faces.reserve(faces.size());
-    for (std::size_t f = 0; f < faces.size(); f++)
-    {
-      MetalSurfaceFace face;
-      face.component = face_component[f];
-      face.attribute = faces[f].attribute;
-      face.normal = faces[f].normal;
-      face.on_bounding_box = faces[f].on_bounding_box;
-      face.vertices.reserve(faces[f].loop.size());
-      for (const std::size_t p : faces[f].loop)
-      {
-        face.vertices.push_back(canonical_points[p]);
-      }
-      result.global_faces.push_back(std::move(face));
-    }
-  }
-
-  auto LabelComponents = [&](bool physical)
-  {
-    std::vector<bool> visited(result.segments.size(), false);
-    int components = 0;
+    // A physical chain is a maximal path which can pass through regular (locally straight)
+    // vertices but stops at corners, endpoints, and junctions. This grouping is independent
+    // of the finite-element subdivision along a straight fabricated edge.
+    std::vector<bool> chain_visited(result.segments.size(), false);
     for (std::size_t seed = 0; seed < result.segments.size(); seed++)
     {
-      if (visited[seed] ||
-          (physical && result.segments[seed].type != MetalEdgeSegmentType::PHYSICAL))
+      if (chain_visited[seed] ||
+          result.segments[seed].type != MetalEdgeSegmentType::PHYSICAL)
       {
         continue;
       }
       std::queue<std::size_t> queue;
       queue.push(seed);
-      visited[seed] = true;
+      chain_visited[seed] = true;
       while (!queue.empty())
       {
         const std::size_t current = queue.front();
         queue.pop();
-        if (physical)
+        result.segments[current].physical_chain = result.physical_chains;
+        for (const std::size_t vertex_index : result.segments[current].vertices)
         {
-          result.segments[current].physical_component = components;
-        }
-        else
-        {
-          result.segments[current].component = components;
-        }
-        for (const std::size_t vertex : result.segments[current].vertices)
-        {
-          for (const std::size_t neighbor : result.vertices[vertex].segments)
+          const auto &vertex = result.vertices[vertex_index];
+          if (vertex.physical_type != MetalEdgeVertexType::REGULAR)
           {
-            if (!visited[neighbor] && (!physical || result.segments[neighbor].type ==
-                                                        MetalEdgeSegmentType::PHYSICAL))
+            continue;
+          }
+          for (const std::size_t neighbor : vertex.segments)
+          {
+            if (!chain_visited[neighbor] &&
+                result.segments[neighbor].type == MetalEdgeSegmentType::PHYSICAL)
             {
-              visited[neighbor] = true;
+              chain_visited[neighbor] = true;
               queue.push(neighbor);
             }
           }
         }
       }
-      components++;
+      result.physical_chains++;
     }
-    return components;
-  };
-  result.components = LabelComponents(false);
-  result.physical_components = LabelComponents(true);
-
-  // Boundary meshes commonly represent smooth layout curves by short polygonal facets. A
-  // two-segment vertex is a regular vertex of its chain (a straight continuation) under the
-  // joint noise rule (kJointNoiseSagittaOverRadius, metaledge.hpp; USER decision 121 (B)):
-  // the sagitta (c / 2) tan(turn / 4) implied by its turn on the shorter of its two adjacent
-  // straight pieces (collinear mesh segments merged) is below surface.joint_noise_sagitta.
-  // Every other joint is an explicit corner vertex, which the identification's arc rule
-  // absorbs when it lies on a fitted arc (a bend merges the chains it separates) and
-  // otherwise treats as a corner feature. The legacy per-group classifier (comparison only)
-  // passes its angular corner class instead (surface.corner_turn_tolerance_degrees).
-  const double straight_dot_tolerance =
-      surface.corner_turn_tolerance_degrees
-          ? -std::cos(*surface.corner_turn_tolerance_degrees * std::acos(-1.0) / 180.0)
-          : -1.0;
-  // The turn tests compare direction cosines on a fixed 1e-12 grid so that a roundoff-level
-  // perturbation of the vertex coordinates cannot flip a vertex between REGULAR and CORNER
-  // (the same direction quantum as the classification's parallelism tests); a collinear
-  // continuation (no joint) is a cosine within the direction quantum of -1 between the two
-  // outward directions, as the identification reads its joints.
-  auto QuantizeDirection = QuantizeCosine;
-  const double quantized_straight_dot_tolerance = QuantizeDirection(straight_dot_tolerance);
-  const double quantized_collinear = QuantizeDirection(1.0 - direction_quantum);
-  auto SegmentsAt = [&](std::size_t vertex_index, bool physical)
-  {
-    std::vector<std::size_t> segments;
-    const auto &vertex = result.vertices[vertex_index];
-    segments.reserve(vertex.segments.size());
-    for (const std::size_t segment : vertex.segments)
-    {
-      if (!physical || result.segments[segment].type == MetalEdgeSegmentType::PHYSICAL)
-      {
-        segments.push_back(segment);
-      }
-    }
-    return segments;
-  };
-  auto UnitDirection = [&](std::size_t from, std::size_t to)
-  {
-    std::array<double, 3> d{};
-    double norm_squared = 0.0;
-    for (int k = 0; k < 3; k++)
-    {
-      d[k] = result.vertices[to].coordinate[k] - result.vertices[from].coordinate[k];
-      norm_squared += d[k] * d[k];
-    }
-    MFEM_VERIFY(norm_squared > 0.0, "Metal edge graph contains a zero-length segment!");
-    const double inverse_norm = 1.0 / std::sqrt(norm_squared);
-    for (double &value : d)
-    {
-      value *= inverse_norm;
-    }
-    return std::make_pair(d, std::sqrt(norm_squared));
-  };
-  // Length of the straight piece leaving vertex_index along segment: the segment and every
-  // following segment reached through a two-segment vertex whose turn is within the
-  // direction quantum of collinear (a refinement midpoint, a second-order mid-edge node),
-  // stopping at a joint, an endpoint, a junction or on return to the vertex.
-  auto PieceLength = [&](std::size_t vertex_index, std::size_t segment, bool physical)
-  {
-    double length = 0.0;
-    std::size_t current = vertex_index, s = segment;
-    for (std::size_t steps = 0; steps < result.segments.size(); steps++)
-    {
-      const auto &edge = result.segments[s];
-      const std::size_t other = edge.vertices[0] == current ? edge.vertices[1] : edge.vertices[0];
-      const auto [in, piece] = UnitDirection(current, other);
-      length += piece;
-      const auto next_segments = SegmentsAt(other, physical);
-      if (next_segments.size() != 2 || other == vertex_index)
-      {
-        break;
-      }
-      const std::size_t next = next_segments[0] == s ? next_segments[1] : next_segments[0];
-      const auto &next_edge = result.segments[next];
-      const std::size_t beyond =
-          next_edge.vertices[0] == other ? next_edge.vertices[1] : next_edge.vertices[0];
-      const auto [out, ignored] = UnitDirection(other, beyond);
-      (void)ignored;
-      double dot = 0.0;
-      for (int k = 0; k < 3; k++)
-      {
-        dot += in[k] * out[k];
-      }
-      if (QuantizeDirection(dot) < quantized_collinear)
-      {
-        break;  // a joint
-      }
-      current = other;
-      s = next;
-    }
-    return length;
-  };
-  auto ClassifyVertex = [&](std::size_t vertex_index,
-                            bool physical) -> std::optional<MetalEdgeVertexType>
-  {
-    const std::vector<std::size_t> segments = SegmentsAt(vertex_index, physical);
-    if (segments.empty())
-    {
-      return std::nullopt;
-    }
-    if (segments.size() == 1)
-    {
-      return MetalEdgeVertexType::ENDPOINT;
-    }
-    if (segments.size() > 2)
-    {
-      return MetalEdgeVertexType::JUNCTION;
-    }
-
-    std::array<std::array<double, 3>, 2> directions{};
-    for (int i = 0; i < 2; i++)
-    {
-      const auto &edge = result.segments[segments[i]];
-      const std::size_t other =
-          edge.vertices[0] == vertex_index ? edge.vertices[1] : edge.vertices[0];
-      directions[i] = UnitDirection(vertex_index, other).first;
-    }
-    double dot = 0.0;
-    for (int d = 0; d < 3; d++)
-    {
-      dot += directions[0][d] * directions[1][d];
-    }
-    if (surface.corner_turn_tolerance_degrees)
-    {
-      return QuantizeDirection(dot) <= quantized_straight_dot_tolerance
-                 ? MetalEdgeVertexType::REGULAR
-                 : MetalEdgeVertexType::CORNER;
-    }
-    // Geometric joint noise rule: a collinear continuation is no joint; otherwise the
-    // implied sagitta of the turn on the shorter adjacent straight piece decides.
-    if (QuantizeDirection(-dot) >= quantized_collinear)
-    {
-      return MetalEdgeVertexType::REGULAR;
-    }
-    const double turn = std::acos(std::clamp(-dot, -1.0, 1.0));
-    const double shorter_piece = std::min(PieceLength(vertex_index, segments[0], physical),
-                                          PieceLength(vertex_index, segments[1], physical));
-    return JointIsNoise(turn, shorter_piece, surface.joint_noise_sagitta)
-               ? MetalEdgeVertexType::REGULAR
-               : MetalEdgeVertexType::CORNER;
-  };
-  for (std::size_t vertex_index = 0; vertex_index < result.vertices.size(); vertex_index++)
-  {
-    auto &vertex = result.vertices[vertex_index];
-    vertex.type = *ClassifyVertex(vertex_index, false);
-    vertex.physical_type = ClassifyVertex(vertex_index, true);
-    vertex.on_truncation_boundary = std::any_of(
-        vertex.segments.begin(), vertex.segments.end(), [&](std::size_t segment)
-        { return result.segments[segment].type == MetalEdgeSegmentType::TRUNCATION; });
-    vertex.on_port_boundary = std::any_of(
-        vertex.segments.begin(), vertex.segments.end(), [&](std::size_t segment)
-        { return result.segments[segment].type == MetalEdgeSegmentType::PORT; });
-  }
-
-  // A physical chain is a maximal path which can pass through regular (locally straight)
-  // vertices but stops at corners, endpoints, and junctions. This grouping is independent
-  // of the finite-element subdivision along a straight fabricated edge.
-  std::vector<bool> chain_visited(result.segments.size(), false);
-  for (std::size_t seed = 0; seed < result.segments.size(); seed++)
-  {
-    if (chain_visited[seed] || result.segments[seed].type != MetalEdgeSegmentType::PHYSICAL)
-    {
-      continue;
-    }
-    std::queue<std::size_t> queue;
-    queue.push(seed);
-    chain_visited[seed] = true;
-    while (!queue.empty())
-    {
-      const std::size_t current = queue.front();
-      queue.pop();
-      result.segments[current].physical_chain = result.physical_chains;
-      for (const std::size_t vertex_index : result.segments[current].vertices)
-      {
-        const auto &vertex = result.vertices[vertex_index];
-        if (vertex.physical_type != MetalEdgeVertexType::REGULAR)
-        {
-          continue;
-        }
-        for (const std::size_t neighbor : vertex.segments)
-        {
-          if (!chain_visited[neighbor] &&
-              result.segments[neighbor].type == MetalEdgeSegmentType::PHYSICAL)
-          {
-            chain_visited[neighbor] = true;
-            queue.push(neighbor);
-          }
-        }
-      }
-    }
-    result.physical_chains++;
-  }
-  StageLine(std::to_string(result.physical_chains) + " physical chains, " +
-            std::to_string(result.global_faces.size()) + " global faces retained");
+    StageLine(std::to_string(result.physical_chains) + " physical chains, " +
+              std::to_string(result.global_faces.size()) + " global faces retained");
   }  // root
 
   // Broadcast the compact perimeter (segments, vertices, scalars; no faces) and scatter
