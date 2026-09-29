@@ -2,6 +2,10 @@ build*/
 examples/**/postpro*/
 examples/**/log*/
 examples/transmon/mesh/transmon_substructuring.msh2
+examples/transmon/mesh/transmon_redesign*.msh2
+examples/transmon/mesh/transmon_substructuring_redesign.msh2
+examples/transmon/transmon_redesign.json
+examples/**/__pycache__/
 test/data/regression/input/**/postpro/
 test/data/regression/input/**/log/
 spack_repo/local/packages/palace/__pycache__/

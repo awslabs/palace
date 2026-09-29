@@ -124,5 +124,33 @@ palace transmon_substructuring_online.json    # reuse the model: only the region
 ```
 
 Both runs write the ``3 \times 3`` Maxwell capacitance matrix to `terminal-C.csv`; the online
-run solves only the region. The box can be changed with `--box`; the region may then be
-redesigned and re-meshed with the environment kept as is.
+run solves only the region. The box can be changed with `--box`.
+
+### Redesigning the region
+
+A new design of the region needs a mesh with the same environment and interface as the
+offline run. The script
+[`examples/substructuring/remesh_region.py`](https://github.com/awslabs/palace/blob/main/examples/substructuring/remesh_region.py)
+builds one from the split mesh of the offline run and a full mesh of the new design, as produced
+by the layout tool: it keeps the environment and the interface, takes the layout inside the
+region from the new design, and re-meshes the region with [Gmsh](https://gmsh.info), following the
+element sizes of the new design's mesh. It checks that the new design matches the saved one
+outside the region and at the interface. For the transmon, with a wider island:
+
+```bash
+julia --project -e 'include("transmon.jl"); using DeviceLayout: μm;
+    generate_transmon(cap_width=30μm, mesh_filename="transmon_redesign.msh2",
+                      config_filename="transmon_redesign.json")'
+python3 transmon_substructuring.py --input mesh/transmon_redesign.msh2 \
+    --output mesh/transmon_redesign_labeled.msh2
+python3 ../substructuring/remesh_region.py --model mesh/transmon_substructuring.msh2 \
+    --design mesh/transmon_redesign_labeled.msh2 \
+    --output mesh/transmon_substructuring_redesign.msh2
+palace transmon_substructuring_redesign.json  # reuses the saved model
+```
+
+The script assumes a region made of two materials separated by a layout plane (substrate and
+vacuum) with planar features (metal and other boundaries) on that plane, and needs the `gmsh`
+and `numpy` Python packages. The online run on the redesigned mesh matches a full simulation
+on the same mesh. It differs from a simulation on the layout tool's own mesh of the new design
+only by the change of mesh, as any two meshes of the same geometry do.

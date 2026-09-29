@@ -19,7 +19,10 @@ Usage (from this directory):
     python3 transmon_substructuring.py [--box XMIN XMAX YMIN YMAX ZMIN ZMAX]
 
 writes mesh/transmon_substructuring.msh2. Any conforming split works: the interface between
-the region and the environment follows the element faces.
+the region and the environment follows the element faces. To redesign the region after the
+offline run, label the conductors of the new design's mesh with --input/--output and build the
+redesigned mesh with ../substructuring/remesh_region.py (see transmon_substructuring_redesign.json
+and the substructuring documentation).
 """
 
 import argparse
