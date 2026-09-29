@@ -37,14 +37,64 @@ namespace
 constexpr int crack_attr = 7;
 constexpr double x_crack = 0.5;
 
+// Unit cube mesh of hexahedra for x < x_crack and pyramids for x > x_crack (each hexahedron
+// split into six pyramids with their apex at its center).
+mfem::Mesh MakeHexPyramidMesh(int n)
+{
+  auto hex = mfem::Mesh::MakeCartesian3D(n, n, n, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0);
+  int num_pyr_hex = 0;
+  for (int e = 0; e < hex.GetNE(); e++)
+  {
+    mfem::Vector c(3);
+    hex.GetElementCenter(e, c);
+    num_pyr_hex += (c(0) > x_crack);
+  }
+  mfem::Mesh mesh(3, hex.GetNV() + num_pyr_hex, hex.GetNE() + 5 * num_pyr_hex,
+                  hex.GetNBE());
+  for (int v = 0; v < hex.GetNV(); v++)
+  {
+    mesh.AddVertex(hex.GetVertex(v));
+  }
+  for (int e = 0; e < hex.GetNE(); e++)
+  {
+    mfem::Vector c(3);
+    hex.GetElementCenter(e, c);
+    const auto &el = *hex.GetElement(e);
+    if (c(0) < x_crack)
+    {
+      mesh.AddElement(el.Duplicate(&mesh));
+      continue;
+    }
+    const int apex = mesh.AddVertex(c.GetData());
+    const int *v = el.GetVertices();
+    for (int f = 0; f < 6; f++)
+    {
+      // The hexahedron faces are oriented outward, the pyramid bases toward the apex.
+      const int *fv = mfem::Geometry::Constants<mfem::Geometry::CUBE>::FaceVert[f];
+      const int pv[5] = {v[fv[0]], v[fv[3]], v[fv[2]], v[fv[1]], apex};
+      mesh.AddElement(new mfem::Pyramid(pv, 1));
+    }
+  }
+  for (int be = 0; be < hex.GetNBE(); be++)
+  {
+    mesh.AddBdrElement(hex.GetBdrElement(be)->Duplicate(&mesh));
+  }
+  mesh.FinalizeTopology();
+  mesh.Finalize(false, true);
+  return mesh;
+}
+
 // Unit cube (or square) mesh with interior boundary elements (attribute crack_attr) on the
 // plane x = x_crack, for y <= y_max (the interior boundary has a free edge for y_max < 1).
+// For type mfem::Element::PYRAMID, the mesh is that of MakeHexPyramidMesh.
 mfem::Mesh MakeCrackedCubeMesh(int n, mfem::Element::Type type, double y_max = 1.0)
 {
   const bool is_2d =
       (type == mfem::Element::TRIANGLE || type == mfem::Element::QUADRILATERAL);
   auto base = is_2d ? mfem::Mesh::MakeCartesian2D(n, n, type, false, 1.0, 1.0)
-                    : mfem::Mesh::MakeCartesian3D(n, n, n, type, 1.0, 1.0, 1.0);
+              : (type == mfem::Element::PYRAMID)
+                  ? MakeHexPyramidMesh(n)
+                  : mfem::Mesh::MakeCartesian3D(n, n, n, type, 1.0, 1.0, 1.0);
   const int dim = base.Dimension();
   std::vector<int> crack_faces;
   mfem::Array<int> fv;
@@ -408,9 +458,9 @@ double GlobalMax(MPI_Comm comm, const Vector &v)
 TEST_CASE("Interior boundary sides", "[brokenspace][Serial][Parallel]")
 {
   const auto comm = MPI_COMM_WORLD;
-  const auto type =
-      GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON, mfem::Element::WEDGE,
-               mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
+  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON,
+                             mfem::Element::WEDGE, mfem::Element::PYRAMID,
+                             mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
   auto smesh = MakeCrackedCubeMesh(4, type);
   auto part = Partition(smesh, Mpi::Size(comm));
   auto mesh = MakeParMesh(comm, smesh, part);
@@ -523,6 +573,62 @@ TEST_CASE("Hanging entities", "[brokenspace][Serial][Parallel]")
   CHECK(mesh::HasHangingEntities(pmesh));
 }
 
+TEST_CASE("Interior boundary sides through refinement", "[brokenspace][Serial][Parallel]")
+{
+  // After a uniform nonconforming refinement, which leaves no hanging entities, the sides
+  // inherited through the refinement are those computed on the refined mesh (up to the
+  // choice of the base side). The mesh has no nodes, since MFEM does not support the
+  // refinement of the nodes of a mesh with pyramids.
+  const auto comm = MPI_COMM_WORLD;
+  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON,
+                             mfem::Element::WEDGE, mfem::Element::PYRAMID,
+                             mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
+  const double y_max = GENERATE(1.0, 0.5);
+  auto smesh = MakeCrackedCubeMesh(4, type, y_max);
+  smesh.EnsureNCMesh(true);
+  auto part = Partition(smesh, Mpi::Size(comm));
+  mfem::ParMesh pmesh(comm, smesh, part.data());
+  mfem::Array<int> marker(crack_attr);
+  marker = 0;
+  marker[crack_attr - 1] = 1;
+  const auto coarse_sides = mesh::ComputeCrackSides(pmesh, marker);
+  mfem::Array<int> all(pmesh.GetNE());
+  std::iota(all.begin(), all.end(), 0);
+  pmesh.GeneralRefinement(all, 1, 0);
+  REQUIRE(!mesh::HasHangingEntities(pmesh));
+  const auto inherited =
+      mesh::InheritCrackSides(pmesh, pmesh.GetRefinementTransforms(), coarse_sides);
+  const auto computed = mesh::ComputeCrackSides(pmesh, marker);
+
+  // The split entities agree, and so do the copies of split entities, on every element or
+  // on none (the base side is the other one). The inherited sides may also read copies of
+  // entities which are not split in the closure of split entities of the parent, which has
+  // no effect when they are not constrained (there are no hanging entities).
+  int num_split = 0, num_diff_split = 0, num_same_copy = 0, num_flipped_copy = 0;
+  for (int e = 0; e < pmesh.GetNE(); e++)
+  {
+    const auto split = computed.split[e];
+    num_split += (split != 0);
+    num_diff_split += (inherited.split[e] != split);
+    if (split)
+    {
+      const auto copy = inherited.copy[e] & split;
+      num_same_copy += (copy == computed.copy[e]);
+      num_flipped_copy += (copy == (split & ~computed.copy[e]));
+    }
+  }
+  Mpi::GlobalSum(1, &num_split, comm);
+  Mpi::GlobalSum(1, &num_diff_split, comm);
+  Mpi::GlobalSum(1, &num_same_copy, comm);
+  Mpi::GlobalSum(1, &num_flipped_copy, comm);
+  INFO("type " << type << ", y_max " << y_max << ": split " << num_split << ", diff. split "
+               << num_diff_split << ", same copy " << num_same_copy << ", flipped copy "
+               << num_flipped_copy);
+  CHECK(num_split > 0);
+  CHECK(num_diff_split == 0);
+  CHECK((num_same_copy == num_split || num_flipped_copy == num_split));
+}
+
 TEST_CASE("Broken space prolongation", "[brokenspace][Serial][Parallel]")
 {
   const auto comm = MPI_COMM_WORLD;
@@ -583,7 +689,8 @@ TEST_CASE("Broken space error estimators",
 {
   const auto comm = MPI_COMM_WORLD;
   const int order = GENERATE(1, 2);
-  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON,
+                             mfem::Element::PYRAMID);
   fem::DefaultIntegrationOrder::p_trial = order;
 
   config::MaterialData material;
@@ -627,7 +734,13 @@ TEST_CASE("Broken space error estimators",
   SECTION("Exact recovery of a jump")
   {
     // A piecewise constant flux with a jump across the interior boundary is recovered
-    // exactly by the broken spaces, but not by the continuous ones.
+    // exactly by the broken spaces, but not by the continuous ones. (The recovery on the
+    // mesh with pyramids is not exact for piecewise constant fields at higher orders, also
+    // without interior boundaries.)
+    if (type == mfem::Element::PYRAMID && order > 1)
+    {
+      return;
+    }
     const auto [grad_broken, curl_broken] = uncut_setup.Estimate(JumpE, JumpB, attr_list);
     const auto [grad_cont, curl_cont] = uncut_setup.Estimate(JumpE, JumpB, no_attr_list);
     const double grad_max = GlobalMax(comm, grad_cont),
