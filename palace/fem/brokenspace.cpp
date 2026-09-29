@@ -1043,6 +1043,45 @@ void GetElementDofEntities(const mfem::FiniteElementSpace &fespace, int e,
 
 }  // namespace fem
 
+namespace
+{
+
+// Device kernels are in free functions: CUDA does not allow extended device lambdas in
+// private member functions.
+
+// y[idx[i]] = x[i], i = 0, ..., n - 1.
+void Scatter(bool use_dev, const mfem::Array<int> &idx, const double *x, double *y)
+{
+  const auto *I = idx.Read(use_dev);
+  mfem::forall_switch(use_dev, idx.Size(), [=] MFEM_HOST_DEVICE(int i) { y[I[i]] = x[i]; });
+}
+
+// y[i] = a x[idx[i]] + b y[i], i = 0, ..., n - 1 (y is not read for b = 0).
+void Gather(bool use_dev, const mfem::Array<int> &idx, const double *x, double a, double b,
+            double *y)
+{
+  const auto *I = idx.Read(use_dev);
+  if (b == 0.0)
+  {
+    mfem::forall_switch(use_dev, idx.Size(),
+                        [=] MFEM_HOST_DEVICE(int i) { y[i] = a * x[I[i]]; });
+  }
+  else
+  {
+    mfem::forall_switch(use_dev, idx.Size(),
+                        [=] MFEM_HOST_DEVICE(int i) { y[i] = a * x[I[i]] + b * y[i]; });
+  }
+}
+
+// x[idx[i]] = 0, i = 0, ..., n - 1.
+void ZeroIndexed(bool use_dev, const mfem::Array<int> &idx, double *x)
+{
+  const auto *I = idx.Read(use_dev);
+  mfem::forall_switch(use_dev, idx.Size(), [=] MFEM_HOST_DEVICE(int i) { x[I[i]] = 0.0; });
+}
+
+}  // namespace
+
 BrokenProlongation::BrokenProlongation(const Operator &P,
                                        const mfem::Array<int> &copy_ldofs_,
                                        const mfem::Array<int> &split_tdofs_)
@@ -1068,34 +1107,19 @@ void BrokenProlongation::Mult(const Vector &x, Vector &y) const
   // Copies: y_c = (P z)[copy], with z = x with the split true DOFs replaced by their
   // copies. The second application of P is collective, so it is done on every process even
   // when there are no local copies.
-  const int ns = split_tdofs.Size(), nc = copy_ldofs.Size(), ts = tsize, vs = vsize;
+  const bool use_dev = x.UseDevice() || y.UseDevice();
   tx = xt;
-  {
-    const auto *d_split = split_tdofs.Read();
-    const auto *d_x = x.Read();
-    auto *d_tx = tx.ReadWrite();
-    mfem::forall(ns, [=] MFEM_HOST_DEVICE(int s) { d_tx[d_split[s]] = d_x[ts + s]; });
-  }
+  Scatter(use_dev, split_tdofs, x.Read(use_dev) + tsize, tx.ReadWrite(use_dev));
   P.Mult(tx, lx);
-  {
-    const auto *d_copy = copy_ldofs.Read();
-    const auto *d_lx = lx.Read();
-    auto *d_y = y.ReadWrite();
-    mfem::forall(nc, [=] MFEM_HOST_DEVICE(int c) { d_y[vs + c] = d_lx[d_copy[c]]; });
-  }
+  Gather(use_dev, copy_ldofs, lx.Read(use_dev), 1.0, 0.0, y.ReadWrite(use_dev) + vsize);
 }
 
 void BrokenProlongation::AddCopyTranspose(const Vector &x, double a, double b, Vector &y,
                                           bool abs) const
 {
-  const int ns = split_tdofs.Size(), nc = copy_ldofs.Size(), ts = tsize, vs = vsize;
+  const bool use_dev = x.UseDevice() || y.UseDevice();
   lx = 0.0;
-  {
-    const auto *d_copy = copy_ldofs.Read();
-    const auto *d_x = x.Read();
-    auto *d_lx = lx.ReadWrite();
-    mfem::forall(nc, [=] MFEM_HOST_DEVICE(int c) { d_lx[d_copy[c]] = d_x[vs + c]; });
-  }
+  Scatter(use_dev, copy_ldofs, x.Read(use_dev) + vsize, lx.ReadWrite(use_dev));
   if (abs && hP)
   {
     hP->AbsMultTranspose(1.0, lx, 0.0, tx);
@@ -1106,22 +1130,10 @@ void BrokenProlongation::AddCopyTranspose(const Vector &x, double a, double b, V
     // entries.
     P.MultTranspose(lx, tx);
   }
-  {
-    // Split true DOFs: to the copies; unsplit ones (from constrained copy rows): to y_t.
-    const auto *d_split = split_tdofs.Read();
-    auto *d_tx = tx.ReadWrite();
-    auto *d_y = y.ReadWrite();
-    if (b == 0.0)
-    {
-      mfem::forall(ns, [=] MFEM_HOST_DEVICE(int s) { d_y[ts + s] = a * d_tx[d_split[s]]; });
-    }
-    else
-    {
-      mfem::forall(ns, [=] MFEM_HOST_DEVICE(int s)
-                   { d_y[ts + s] = a * d_tx[d_split[s]] + b * d_y[ts + s]; });
-    }
-    mfem::forall(ns, [=] MFEM_HOST_DEVICE(int s) { d_tx[d_split[s]] = 0.0; });
-  }
+
+  // Split true DOFs: to the copies; unsplit ones (from constrained copy rows): to y_t.
+  Gather(use_dev, split_tdofs, tx.Read(use_dev), a, b, y.ReadWrite(use_dev) + tsize);
+  ZeroIndexed(use_dev, split_tdofs, tx.ReadWrite(use_dev));
   Vector yt(y, 0, tsize);
   yt.Add(a, tx);
 }
