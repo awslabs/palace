@@ -1087,6 +1087,25 @@ public:
     std::string trace_vertices;
     std::string trace_triangles;
 
+    // Internal (automatic matching, corner family): the basis and trace mesh of an
+    // angle-interpolated corner model, CONSTRUCTED at the device's corner angle by the
+    // family's trace basis rule (the nodes' knot semantics do not depend on the angle; the
+    // knot positions do). When nonempty they replace the BasisPoints / TraceMesh files.
+    // Vertices: a basis knot (basis = 1-based BasisPoints index) or a slave vertex (basis
+    // 0, parents parent_a / parent_b 1-based, weight_a on parent_a).
+    struct ConstructedTraceVertex
+    {
+      std::array<double, 3> point{};
+      int basis = 0;
+      int conductor = 0;
+      int parent_a = 0;
+      int parent_b = 0;
+      double weight_a = 0.0;
+    };
+    std::vector<std::array<double, 3>> constructed_basis_points;
+    std::vector<ConstructedTraceVertex> constructed_trace_vertices;
+    std::vector<std::array<int, 3>> constructed_trace_triangles;
+
     // Internal metadata for a three-dimensional vertex coupon. ContourGroups partitions
     // the basis points into independent closed Maxwell voltage contours.
     bool spatial_basis = false;

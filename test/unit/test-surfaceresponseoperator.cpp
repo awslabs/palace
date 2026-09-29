@@ -25,6 +25,7 @@
 #include "fem/mesh.hpp"
 #include "linalg/vector.hpp"
 #include "models/boundarymodeoperator.hpp"
+#include "models/cornertracebasis.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfaceresponseoperator.hpp"
@@ -40,6 +41,268 @@ namespace fs = std::filesystem;
 
 using json = nlohmann::json;
 using namespace Catch::Matchers;
+
+namespace
+{
+
+// Corner-coupon basis files of a unit-test corner family. The rule layout (the corner
+// family's trace basis rule, MakeCornerBoxSeed + BuildCornerTraceBasis) or the lane-2
+// angle-independent 8-knot layout (every ring the fixed knots; the zero set = the knots on
+// the metal footprint, the corner-family review's defective basis) at one angle; written by
+// the calling rank. Returns {basis-points, trace-vertices, trace-triangles, zero set
+// (1-based), contour groups}.
+struct CornerBasisFiles
+{
+  fs::path points, vertices, triangles;
+  std::vector<int> zero_trace_indices;
+  std::vector<int> contour_groups;
+  json trace_basis;
+};
+
+CornerBasisFiles WriteCornerBasisFiles(const fs::path &directory, const std::string &tag,
+                                       double angle_degrees, bool convex, double radius,
+                                       double metal_thickness, double overetch_depth,
+                                       bool rule_layout)
+{
+  const CornerTraceBasisRule rule;
+  const auto seed = MakeCornerBoxSeed(radius, metal_thickness, overetch_depth, convex, rule);
+  const double angle = angle_degrees * M_PI / 180.0;
+  CornerBasisFiles files;
+  files.points = directory / ("corner-basis-" + tag + "-points.csv");
+  files.vertices = directory / ("corner-basis-" + tag + "-vertices.csv");
+  files.triangles = directory / ("corner-basis-" + tag + "-triangles.csv");
+  files.contour_groups = seed.contour_groups;
+  std::vector<std::array<double, 3>> knots;
+  std::vector<int> zero;
+  std::vector<ConstructedCornerTraceBasis::Vertex> vertices;
+  std::vector<std::array<int, 3>> triangles;
+  if (rule_layout)
+  {
+    const auto basis = BuildCornerTraceBasis(seed.points, seed.contour_groups,
+                                             seed.zero_trace_indices, angle, convex, rule);
+    knots = basis.knots;
+    for (int k = 0; k < static_cast<int>(knots.size()); k++)
+    {
+      if (basis.zero[k])
+      {
+        zero.push_back(k);
+      }
+    }
+    vertices = basis.vertices;
+    triangles = basis.triangles;
+    files.trace_basis = {{"RingSize", rule.ring_size},
+                         {"MetalInteriorKnots", rule.metal_interior_knots},
+                         {"FreeKnots", rule.free_knots},
+                         {"Fractions", rule.fractions}};
+  }
+  else
+  {
+    // The lane-2 layout: the seed's fixed rings at every level; PEC = the knots on the
+    // closed metal footprint (the sector 0 .. angle for a convex corner) at z = 0 and
+    // z = metal_thickness.
+    knots = seed.points;
+    int offset = 0;
+    for (const int size : seed.contour_groups)
+    {
+      const double z = knots[offset][2];
+      if (std::abs(z) <= 1.0e-12 || std::abs(z - metal_thickness) <= 1.0e-12)
+      {
+        for (int i = 0; i < size; i++)
+        {
+          const auto &point = knots[offset + i];
+          const double first = point[1];
+          const double second = point[0] * std::sin(angle) - point[1] * std::cos(angle);
+          const bool in_wedge = first >= -1.0e-12 && second >= -1.0e-12;
+          if (convex ? in_wedge : !in_wedge)
+          {
+            zero.push_back(offset + i);
+          }
+        }
+      }
+      offset += size;
+    }
+    for (int k = 0; k < static_cast<int>(knots.size()); k++)
+    {
+      ConstructedCornerTraceBasis::Vertex vertex;
+      vertex.point = knots[k];
+      vertex.basis = k;
+      vertices.push_back(vertex);
+    }
+    // The lane-2 connect_rings / cap fans (equal rings).
+    const int ring_size = seed.contour_groups.front();
+    const int ring_count = static_cast<int>(seed.contour_groups.size());
+    const int outer = ring_count - 2;
+    auto Connect = [&](int first, int second)
+    {
+      for (int i = 0; i < ring_size; i++)
+      {
+        const int next = (i + 1) % ring_size;
+        triangles.push_back({first + i, first + next, second + next});
+        triangles.push_back({first + i, second + next, second + i});
+      }
+    };
+    for (int r = 0; r + 1 < outer; r++)
+    {
+      Connect(r * ring_size, (r + 1) * ring_size);
+    }
+    Connect((outer - 1) * ring_size, outer * ring_size);
+    Connect((outer + 1) * ring_size, 0);
+    for (int i = 1; i + 1 < ring_size; i++)
+    {
+      triangles.push_back({outer * ring_size, outer * ring_size + i, outer * ring_size + i + 1});
+      triangles.push_back({(outer + 1) * ring_size + i + 1, (outer + 1) * ring_size + i,
+                           (outer + 1) * ring_size});
+    }
+  }
+  const std::set<int> zero_set(zero.begin(), zero.end());
+  for (const int index : zero)
+  {
+    files.zero_trace_indices.push_back(index + 1);
+  }
+  {
+    std::ofstream output(files.points);
+    output << std::setprecision(17) << "x,y,z\n";
+    for (const auto &knot : knots)
+    {
+      output << knot[0] << "," << knot[1] << "," << knot[2] << "\n";
+    }
+  }
+  {
+    std::ofstream output(files.vertices);
+    output << std::setprecision(17)
+           << "vertex,x,y,z,basis,conductor,parent_a,parent_b,weight_a\n";
+    for (std::size_t v = 0; v < vertices.size(); v++)
+    {
+      const auto &vertex = vertices[v];
+      output << v + 1 << "," << vertex.point[0] << "," << vertex.point[1] << ","
+             << vertex.point[2] << ",";
+      if (vertex.basis >= 0)
+      {
+        output << vertex.basis + 1 << "," << (zero_set.count(vertex.basis) ? 1 : 0)
+               << ",0,0,0\n";
+      }
+      else
+      {
+        output << "0,0," << vertex.parent_a + 1 << "," << vertex.parent_b + 1 << ","
+               << vertex.weight_a << "\n";
+      }
+    }
+  }
+  {
+    std::ofstream output(files.triangles);
+    output << "triangle,vertex_i,vertex_j,vertex_k\n";
+    for (std::size_t t = 0; t < triangles.size(); t++)
+    {
+      output << t + 1 << "," << triangles[t][0] + 1 << "," << triangles[t][1] + 1 << ","
+             << triangles[t][2] + 1 << "\n";
+    }
+  }
+  return files;
+}
+
+// Synthetic N x N response matrices (domain and one-interface surface, with the within-R
+// column) of a unit-test corner coupon: diagonal `diagonal`, off-diagonal couplings decaying
+// with the index distance.
+void WriteCornerMatrices(const fs::path &domain_path, const fs::path &surface_path, int size,
+                         double diagonal, double coupling_scale, double radius_m)
+{
+  std::ofstream domain(domain_path);
+  domain << "basis_i,basis_j,Q_ij (J)\n";
+  std::ofstream surface(surface_path);
+  surface << "interface,edge,R (m),basis_i,basis_j,Q_ij (J),Q_total_ij (J)\n";
+  for (int i = 0; i < size; i++)
+  {
+    for (int j = 0; j < size; j++)
+    {
+      const double coupling = 1.0 / (1.0 + std::abs(i - j));
+      const double value = (i == j ? diagonal : coupling_scale * coupling) * 1.0e-12;
+      if (j >= i)
+      {
+        domain << i + 1 << "," << j + 1 << "," << value << "\n";
+        surface << "1,1," << radius_m << "," << i + 1 << "," << j + 1 << "," << value << ","
+                << value << "\n";
+      }
+    }
+  }
+}
+
+// A hexahedral box mesh whose metal island (cracked boundary attribute 9 on the plane
+// y = 0.5) is an exact star-shaped polygon: the radial map of every concentric square of
+// the (x, z) grid onto the polygon (its vertices must lie on grid rays so the outline is the
+// exact polygon at every level), blended to the identity between the levels 2 and 3 so the
+// PEC box walls stay on the bounding box.
+std::unique_ptr<mfem::ParMesh>
+MakePolygonIslandMesh(const std::vector<std::array<double, 2>> &polygon, double extent,
+                      double h)
+{
+  const int n = static_cast<int>(std::lround(extent / h));
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(n, 4, n, mfem::Element::HEXAHEDRON, extent,
+                                                  1.0, extent);
+  const double c = 0.5 * extent;
+  auto Level = [&](const double *point)
+  { return std::max(std::abs(point[0] - c), std::abs(point[2] - c)); };
+  for (int face = 0; face < serial.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    serial.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial.GetFaceVertices(face, vertices);
+    bool on_plane = true;
+    double level_max = 0.0;
+    for (const int vertex : vertices)
+    {
+      const double *point = serial.GetVertex(vertex);
+      on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
+      level_max = std::max(level_max, Level(point));
+    }
+    if (on_plane && level_max <= 1.0 + 1.0e-9)
+    {
+      serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+      serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+    }
+  }
+  auto PolygonRadius = [&](double ux, double uz)
+  {
+    double r = mfem::infinity();
+    for (std::size_t k = 0; k < polygon.size(); k++)
+    {
+      const auto &a = polygon[k], &b = polygon[(k + 1) % polygon.size()];
+      const double nx = b[1] - a[1], nz = a[0] - b[0];  // outward normal of side a -> b
+      const double denominator = nx * ux + nz * uz;
+      if (denominator > 1.0e-14)
+      {
+        r = std::min(r, (nx * a[0] + nz * a[1]) / denominator);
+      }
+    }
+    return r;
+  };
+  for (int vertex = 0; vertex < serial.GetNV(); vertex++)
+  {
+    double *point = serial.GetVertex(vertex);
+    const double lx = point[0] - c, lz = point[2] - c;
+    const double norm = std::hypot(lx, lz);
+    const double level = std::max(std::abs(lx), std::abs(lz));
+    if (norm > 1.0e-12 && level < 3.0 - 1.0e-9)
+    {
+      const double ux = lx / norm, uz = lz / norm;
+      const double square = 1.0 / std::max(std::abs(ux), std::abs(uz));
+      const double polygon_scale = PolygonRadius(ux, uz) / square;
+      const double blend = level <= 2.0 ? 1.0 : (3.0 - level);
+      const double scale = 1.0 + blend * (polygon_scale - 1.0);
+      point[0] = c + scale * lx;
+      point[2] = c + scale * lz;
+    }
+  }
+  serial.FinalizeTopology();
+  serial.Finalize();
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
+}  // namespace
 
 TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel]")
 {
@@ -5566,8 +5829,21 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                        {"BasisPoints", points_path.string()},
                        {"Interfaces", {{{"Type", "SA"}, {"Coupon", 1}}}}};
       family_library["Models"].push_back(isolated);
+      // The family's coupons are built on the trace basis rule (corner-family review
+      // 2026-09-29): one knot semantics for every node, 72 knots, the same zero set.
+      const auto family_fabricated_path = temp.temp_dir / "corner-family-fabricated.csv";
+      const auto family_thin_path = temp.temp_dir / "corner-family-thin.csv";
+      const auto family_fabricated_surface_path =
+          temp.temp_dir / "corner-family-fabricated-surface.csv";
+      const auto family_thin_surface_path = temp.temp_dir / "corner-family-thin-surface.csv";
+      WriteCornerMatrices(family_fabricated_path, family_fabricated_surface_path, 72, 3.0,
+                          0.05, hex_R);
+      WriteCornerMatrices(family_thin_path, family_thin_surface_path, 72, 1.0, 0.01, hex_R);
       for (const double angle : {90.0, 120.0, 150.0, 180.0})
       {
+        const auto files = WriteCornerBasisFiles(
+            temp.temp_dir, "family-" + std::to_string(static_cast<int>(angle)), angle, true,
+            hex_R, 0.05 * hex_R, 0.025 * hex_R, true);
         json model = {{"Name", "convex-corner-" + std::to_string(static_cast<int>(angle))},
                       {"Topology", "ConvexCorner"},
                       {"Angle", angle},
@@ -5576,12 +5852,17 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                       {"AngleTolerance", 1.0e-6},
                       {"CornerRadius", 0.0},
                       {"CornerRadiusTolerance", 0.0},
-                      {"FabricatedMatrix", corner_fabricated_path.string()},
-                      {"ThinMatrix", corner_thin_path.string()},
-                      {"FabricatedSurfaceMatrix", corner_fabricated_surface_path.string()},
-                      {"ThinSurfaceMatrix", corner_thin_surface_path.string()},
-                      {"BasisPoints", corner_points_path.string()},
-                      {"ContourGroups", {4, 4, 4}},
+                      {"FabricatedMatrix", family_fabricated_path.string()},
+                      {"ThinMatrix", family_thin_path.string()},
+                      {"FabricatedSurfaceMatrix", family_fabricated_surface_path.string()},
+                      {"ThinSurfaceMatrix", family_thin_surface_path.string()},
+                      {"BasisPoints", files.points.string()},
+                      {"TraceMesh",
+                       {{"Vertices", files.vertices.string()},
+                        {"Triangles", files.triangles.string()}}},
+                      {"ContourGroups", files.contour_groups},
+                      {"ZeroTraceIndices", files.zero_trace_indices},
+                      {"TraceBasis", files.trace_basis},
                       {"Interfaces", {{{"Type", "SA"}, {"Coupon", 1}}}}};
         family_library["Models"].push_back(model);
       }
@@ -6844,6 +7125,453 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK_THROWS_WITH(
       SurfaceResponseOperator(strict_mixed_signature_iodata, strict_mixed_signature_space),
       Catch::Matchers::ContainsSubstring("different interface mapping"));
+#endif
+}
+
+// The corner family's trace basis (corner-family review 2026-09-29, root cause of the
+// non-90-degree MS / MA over-correction, and the supervisor's rule): (1) the rule's layout —
+// the 90-degree convex node is the lane-2 fixed layout, every node has the same zero set
+// and 72 knots, the second arm's crossing is a PEC knot, the box corners are slave vertices
+// with a partition of unity; (2) the fail-closed library gate — a corner coupon whose metal
+// arm crosses a box ring between a free knot and a PEC knot (the lane-2 angle-independent
+// layout at 120 / 165 degrees) is refused at library load, the lane-2 layout at 90 / 135 /
+// 180 degrees (arms on knot rays) and the rule's layout at every angle load; (3) the
+// runtime — an island with exact 120-degree (house) and exact 165 / 105-degree corners
+// matched to exact nodes of a rule-built family, whose trace lift on the angle-specific
+// trace meshes (slave vertices) gives corner patches with fabricated surface energies of one
+// order (every 105 / 120 / 165 patch within a factor two of the 90-degree patches on the same
+// synthetic matrices; the physics of the fix — the fabricated MS of a corner patch within
+// 50 % of the isolated 2R scale — is the library gate and the device check on the rebuilt
+// coupons), and an interpolated angle whose runtime basis is constructed by the rule at the
+// device angle (cached and reloaded byte-identically).
+TEST_CASE("SurfaceResponseOperatorCornerTraceBasis",
+          "[surfaceresponseoperator][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  test::SharedTempDir temp;
+  constexpr double R = 0.2, t = 0.01, oe = 0.005;
+  const CornerTraceBasisRule rule;
+
+  // (1) The rule's layout.
+  {
+    const auto seed = MakeCornerBoxSeed(R, t, oe, true, rule);
+    REQUIRE(seed.points.size() == 72);
+    REQUIRE(seed.contour_groups == std::vector<int>(9, 8));
+    CHECK(seed.zero_trace_indices == std::vector<int>{28, 29, 30, 36, 37, 38});
+    const auto ninety = BuildCornerTraceBasis(seed.points, seed.contour_groups,
+                                              seed.zero_trace_indices, M_PI / 2.0, true, rule);
+    for (std::size_t k = 0; k < seed.points.size(); k++)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        CHECK_THAT(ninety.knots[k][d], WithinAbs(seed.points[k][d], 1.0e-14));
+      }
+    }
+    CHECK(ninety.vertices.size() == 72);  // no slave: every corner is a knot
+    CHECK(ninety.triangles.size() == 140);
+    for (const double angle : {75.0, 105.0, 120.0, 135.0, 150.0, 165.0, 180.0})
+    {
+      const auto basis =
+          BuildCornerTraceBasis(seed.points, seed.contour_groups, seed.zero_trace_indices,
+                                angle * M_PI / 180.0, true, rule);
+      std::vector<int> zero;
+      for (int k = 0; k < 72; k++)
+      {
+        if (basis.zero[k])
+        {
+          zero.push_back(k);
+        }
+      }
+      CHECK(zero == seed.zero_trace_indices);
+      // The second arm's crossing of the z = 0 ring is the PEC knot at slot 6 (1-based 31).
+      const auto crossing = SquarePerimeterPoint(
+          R, 0.0, ArmCrossingFractions(R, angle * M_PI / 180.0).second);
+      CHECK_THAT(basis.knots[30][0], WithinAbs(crossing[0], 1.0e-12));
+      CHECK_THAT(basis.knots[30][1], WithinAbs(crossing[1], 1.0e-12));
+      if (angle == 165.0)
+      {
+        CHECK_THAT(crossing[0], WithinAbs(-R, 1.0e-12));
+        CHECK_THAT(crossing[1], WithinAbs(R * std::tan(15.0 * M_PI / 180.0), 1.0e-12));
+      }
+      // Slave vertices: the box corners that are no knot, with a partition of unity.
+      int slaves = 0;
+      for (const auto &vertex : basis.vertices)
+      {
+        if (vertex.basis < 0)
+        {
+          slaves++;
+          CHECK(std::abs(std::abs(vertex.point[0]) - R) < 1.0e-12);
+          CHECK(std::abs(std::abs(vertex.point[1]) - R) < 1.0e-12);
+          CHECK(vertex.weight_a >= 0.0);
+          CHECK(vertex.weight_a <= 1.0);
+        }
+      }
+      CHECK(slaves == (angle == 135.0 ? 6 : 8));
+      CHECK(basis.triangles.size() == 140 + 2 * slaves);
+      // Every free knot is outside the metal footprint and every ring of the fixed
+      // layout is untouched.
+      for (int r : {0, 1, 2, 5, 6, 7, 8})
+      {
+        for (int i = 0; i < 8; i++)
+        {
+          CHECK_THAT(basis.knots[8 * r + i][0], WithinAbs(seed.points[8 * r + i][0], 1.0e-14));
+          CHECK_THAT(basis.knots[8 * r + i][1], WithinAbs(seed.points[8 * r + i][1], 1.0e-14));
+        }
+      }
+      CHECK(CheckCornerBasisCrossings(basis.knots, basis.contour_groups, zero,
+                                      angle * M_PI / 180.0, true, 1.0e-9 * R)
+                .empty());
+    }
+    // The concave family: crossings and metal interior at the slots 0 / 6 / 7.
+    const auto concave_seed = MakeCornerBoxSeed(R, t, oe, false, rule);
+    CHECK(concave_seed.zero_trace_indices == std::vector<int>{24, 30, 31, 32, 38, 39});
+    const auto concave = BuildCornerTraceBasis(concave_seed.points, concave_seed.contour_groups,
+                                               concave_seed.zero_trace_indices,
+                                               120.0 * M_PI / 180.0, false, rule);
+    CHECK(CheckCornerBasisCrossings(concave.knots, concave.contour_groups,
+                                    concave_seed.zero_trace_indices, 120.0 * M_PI / 180.0,
+                                    false, 1.0e-9 * R)
+              .empty());
+  }
+
+  // Libraries: the isolated edge (a 2D coupon) plus one convex corner coupon at `angle` on
+  // the lane-2 layout or the rule's layout; the family library with the rule's nodes.
+  const auto points_path = temp.temp_dir / "isolated-points.csv";
+  const auto isolated_domain_path = temp.temp_dir / "isolated-domain.csv";
+  const auto isolated_surface_path = temp.temp_dir / "isolated-surface.csv";
+  const auto corner_fabricated_path = temp.temp_dir / "corner-fabricated.csv";
+  const auto corner_thin_path = temp.temp_dir / "corner-thin.csv";
+  const auto corner_fabricated_surface_path = temp.temp_dir / "corner-fabricated-surface.csv";
+  const auto corner_thin_surface_path = temp.temp_dir / "corner-thin-surface.csv";
+  auto CornerModel = [&](double angle, const CornerBasisFiles &files, bool with_rule)
+  {
+    json model = {{"Name", "convex-corner-" + std::to_string(static_cast<int>(angle))},
+                  {"Topology", "ConvexCorner"},
+                  {"Angle", angle},
+                  {"AngleDegrees", angle},
+                  {"Convexity", "Convex"},
+                  {"AngleTolerance", 1.0e-6},
+                  {"CornerRadius", 0.0},
+                  {"CornerRadiusTolerance", 0.0},
+                  {"FabricatedMatrix", corner_fabricated_path.string()},
+                  {"ThinMatrix", corner_thin_path.string()},
+                  {"FabricatedSurfaceMatrix", corner_fabricated_surface_path.string()},
+                  {"ThinSurfaceMatrix", corner_thin_surface_path.string()},
+                  {"BasisPoints", files.points.string()},
+                  {"TraceMesh",
+                   {{"Vertices", files.vertices.string()},
+                    {"Triangles", files.triangles.string()}}},
+                  {"ContourGroups", files.contour_groups},
+                  {"ZeroTraceIndices", files.zero_trace_indices},
+                  {"Interfaces", {{{"Type", "SA"}, {"Coupon", 1}}}}};
+    if (with_rule)
+    {
+      model["TraceBasis"] = files.trace_basis;
+    }
+    return model;
+  };
+  json base_library = {
+      {"Version", 3},
+      {"TraceLiftVersion", 2},
+      {"Name", "unit-test-corner-trace-basis"},
+      {"MatchingRadius", R},
+      {"Fabrication",
+       {{"InterfaceLayers", {{"SA", {{"Thickness", 0.002}, {"Permittivity", 4.0}}}}}}},
+      {"Models",
+       {{{"Name", "isolated"},
+         {"Topology", "IsolatedEdge"},
+         {"CouponDepth", R},
+         {"FabricatedMatrix", isolated_domain_path.string()},
+         {"ThinMatrix", isolated_domain_path.string()},
+         {"FabricatedSurfaceMatrix", isolated_surface_path.string()},
+         {"ThinSurfaceMatrix", isolated_surface_path.string()},
+         {"BasisPoints", points_path.string()},
+         {"Interfaces", {{{"Type", "SA"}, {"Coupon", 1}}}}}}}};
+  std::map<std::string, fs::path> libraries;
+  const std::vector<double> family_angles = {90.0, 105.0, 120.0, 135.0, 150.0, 165.0, 180.0};
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      std::ofstream output(points_path);
+      output << "x,y,z\n-0.16,-0.12,0.0\n0.16,-0.12,0.0\n0.16,0.12,0.0\n-0.16,0.12,0.0\n";
+      std::ofstream domain(isolated_domain_path);
+      domain << "basis_i,basis_j,Q_ij (J)\n";
+      std::ofstream surface(isolated_surface_path);
+      surface << "interface,edge,basis_i,basis_j,Q_total_ij (J)\n";
+      for (int i = 1; i <= 4; i++)
+      {
+        for (int j = 1; j <= 4; j++)
+        {
+          const double value = (i == j ? 2.0 : 0.2) * 1.0e-12;
+          if (j >= i)
+          {
+            domain << i << "," << j << "," << value << "\n";
+            surface << "1,1," << i << "," << j << "," << value << "\n";
+          }
+        }
+      }
+    }
+    WriteCornerMatrices(corner_fabricated_path, corner_fabricated_surface_path, 72, 3.0, 0.05,
+                        R);
+    WriteCornerMatrices(corner_thin_path, corner_thin_surface_path, 72, 1.0, 0.01, R);
+    for (const bool rule_layout : {false, true})
+    {
+      for (const double angle : {90.0, 120.0, 135.0, 165.0, 180.0})
+      {
+        const std::string tag =
+            (rule_layout ? "rule-" : "lane2-") + std::to_string(static_cast<int>(angle));
+        const auto files =
+            WriteCornerBasisFiles(temp.temp_dir, tag, angle, true, R, t, oe, rule_layout);
+        auto library = base_library;
+        library["Name"] = "unit-test-corner-trace-basis-" + tag;
+        library["Models"].push_back(CornerModel(angle, files, rule_layout));
+        libraries[tag] = temp.temp_dir / ("library-" + tag + ".json");
+        std::ofstream output(libraries[tag]);
+        output << library.dump(2) << "\n";
+      }
+    }
+    auto family = base_library;
+    family["Name"] = "unit-test-corner-trace-basis-family";
+    for (const double angle : family_angles)
+    {
+      const auto files = WriteCornerBasisFiles(
+          temp.temp_dir, "family-" + std::to_string(static_cast<int>(angle)), angle, true, R,
+          t, oe, true);
+      family["Models"].push_back(CornerModel(angle, files, true));
+    }
+    libraries["family"] = temp.temp_dir / "library-family.json";
+    std::ofstream output(libraries["family"]);
+    output << family.dump(2) << "\n";
+  }
+  else
+  {
+    for (const bool rule_layout : {false, true})
+    {
+      for (const double angle : {90.0, 120.0, 135.0, 165.0, 180.0})
+      {
+        const std::string tag =
+            (rule_layout ? "rule-" : "lane2-") + std::to_string(static_cast<int>(angle));
+        libraries[tag] = temp.temp_dir / ("library-" + tag + ".json");
+      }
+    }
+    libraries["family"] = temp.temp_dir / "library-family.json";
+  }
+  Mpi::Barrier(Mpi::World());
+
+  // The device: a house island (90, 90, 120, 120, 120 degrees) and a "gable" island (90, 90,
+  // 165, 105, 105, 165 degrees) on the plane y = 0.5 of a box; vertices on grid rays.
+  const std::vector<std::array<double, 2>> house = {
+      {-1.0, -1.0}, {1.0, -1.0}, {1.0, 0.2}, {0.0, 0.2 + std::tan(30.0 * M_PI / 180.0)},
+      {-1.0, 0.2}};
+  const double s15 = std::sin(15.0 * M_PI / 180.0), c15 = std::cos(15.0 * M_PI / 180.0);
+  const double gable_s = (1.25 - 0.2) / (c15 + s15 / 0.8);
+  const double gable_r = (1.0 - gable_s * s15) / 0.8;
+  const std::vector<std::array<double, 2>> gable = {
+      {-1.0, -1.0}, {1.0, -1.0}, {1.0, 0.2}, {0.8 * gable_r, gable_r}, {-0.8 * gable_r, gable_r},
+      {-1.0, 0.2}};
+  json config = {
+      {"Problem", {{"Type", "Electrostatic"}, {"Output", temp.temp_dir.string()}}},
+      {"Model", {{"Mesh", "unused.msh"}}},
+      {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+      {"Boundaries",
+       {{"Ground", {{"Attributes", {1, 2, 3, 4, 5, 6}}}},
+        {"Terminal", {{{"Index", 1}, {"Attributes", {9}}}}},
+        {"Postprocessing",
+         {{"Dielectric",
+           {{{"Index", 4},
+             {"Attributes", {9}},
+             {"Type", "SA"},
+             {"Thickness", 0.002},
+             {"Permittivity", 4.0},
+             {"AutomaticEdges", true},
+             {"EdgeDistances", {R}},
+             {"EdgeFrameNormal", {0.0, 1.0, 0.0}}}}}}}}},
+      {"Solver",
+       {{"Order", 1},
+        {"Electrostatic",
+         {{"ResponseCorrection",
+           {{"Library", ""}, {"TargetInterfaces", {4}}, {"UnmatchedPolicy", "Error"}}}}}}}};
+  auto house_mesh = MakePolygonIslandMesh(house, 8.0, 0.1);
+  auto ConfigFor = [&](const fs::path &library)
+  {
+    auto result = config;
+    result["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] = library.string();
+    return result;
+  };
+  auto Requirements = [&](const fs::path &library, mfem::ParMesh &mesh, const std::string &tag)
+  {
+    IoData iodata(ConfigFor(library), false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    const auto manifest_path = temp.temp_dir / ("requirements-" + tag + ".json");
+    WriteSurfaceResponseRequirements(iodata, mesh, manifest_path.string());
+    Mpi::Barrier(Mpi::World());
+    std::ifstream input(manifest_path);
+    REQUIRE(input);
+    return json::parse(input);
+  };
+
+  // (2) The library gate, fail closed: the lane-2 layout at 120 / 165 degrees is refused
+  // (the second arm crosses the ring between a free knot and a PEC knot), at 90 / 135 / 180
+  // it loads (arms on knot rays); the rule's layout loads at every angle.
+  for (const double angle : {120.0, 165.0})
+  {
+    IoData iodata(ConfigFor(libraries.at("lane2-" + std::to_string(static_cast<int>(angle)))),
+                  false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    const auto manifest_path = temp.temp_dir / "requirements-refused.json";
+    CHECK_THROWS_WITH(WriteSurfaceResponseRequirements(iodata, *house_mesh, manifest_path.string()),
+                      ContainsSubstring("trace basis gate") &&
+                          ContainsSubstring("no PEC (ZeroTraceIndices) knot"));
+  }
+  // A single-coupon library leaves the house's other corners unmatched (Warn): a lane-2
+  // coupon forms no family (its free hats would cross the metal at another angle: the
+  // reason names the missing TraceBasis rule), a rule-built 120-degree coupon is an exact
+  // node of the house's 120-degree corners and refuses the sharper 90-degree ones.
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["UnmatchedPolicy"] = "Warn";
+  for (const double angle : {90.0, 135.0, 180.0})
+  {
+    const json manifest = Requirements(
+        libraries.at("lane2-" + std::to_string(static_cast<int>(angle))), *house_mesh,
+        "lane2-" + std::to_string(static_cast<int>(angle)));
+    int matched = 0, missing = 0;
+    for (const auto &feature : manifest["Identification"]["Features"])
+    {
+      if (feature["Type"] != "ConvexCorner")
+      {
+        continue;
+      }
+      if (feature["Match"]["Status"] == "Matched")
+      {
+        matched++;
+      }
+      else
+      {
+        CHECK(feature["Match"]["Note"].get<std::string>().find("TraceBasis") !=
+              std::string::npos);
+        missing++;
+      }
+    }
+    CHECK(matched == (angle == 90.0 ? 2 : 0));
+    CHECK(missing == (angle == 90.0 ? 3 : 5));
+  }
+  for (const double angle : {90.0, 120.0, 135.0, 165.0, 180.0})
+  {
+    const json manifest = Requirements(
+        libraries.at("rule-" + std::to_string(static_cast<int>(angle))), *house_mesh,
+        "rule-" + std::to_string(static_cast<int>(angle)));
+    int matched = 0;
+    for (const auto &feature : manifest["Identification"]["Features"])
+    {
+      if (feature["Type"] == "ConvexCorner" && feature["Match"]["Status"] == "Matched")
+      {
+        matched++;
+      }
+    }
+    CHECK(matched == (angle == 90.0 ? 2 : (angle == 120.0 ? 3 : 0)));
+  }
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["UnmatchedPolicy"] = "Error";
+
+  // (3) The runtime on the rule-built family: exact nodes on the house (120) and the gable
+  // (165 / 105), an interpolated angle on the gable's 105 replaced by 112.5 below.
+  auto CornerEnergies = [&](mfem::ParMesh &mesh, const std::string &tag)
+  {
+    const json manifest = Requirements(libraries.at("family"), mesh, tag);
+    std::map<std::string, int> matched;  // model name -> corners
+    for (const auto &feature : manifest["Identification"]["Features"])
+    {
+      if (feature["Type"] == "ConvexCorner")
+      {
+        REQUIRE(feature["Match"]["Status"] == "Matched");
+        matched[feature["Match"]["Model"].get<std::string>()]++;
+      }
+    }
+    IoData iodata(ConfigFor(libraries.at("family")), false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(mesh)));
+    LaplaceOperator laplace(iodata, meshes);
+    SurfaceResponseOperator response(iodata, laplace);
+    mfem::ParGridFunction potential(&laplace.GetH1Space().Get());
+    mfem::FunctionCoefficient potential_coefficient(
+        [](const mfem::Vector &x)
+        { return (x[1] - 0.5) * (1.0 + 0.1 * (x[0] - 4.0) - 0.05 * (x[2] - 4.0)); });
+    potential.ProjectCoefficient(potential_coefficient);
+    Vector potential_true;
+    potential.GetTrueDofs(potential_true);
+    const auto result = response.GetElectrostaticResponse(potential_true);
+    // Per runtime model: fabricated surface energy per patch (every corner is one patch of
+    // weight one).
+    std::map<std::string, double> per_patch;
+    const auto &names = response.GetModelNames();
+    for (const auto &contribution : result.model_contributions)
+    {
+      const auto &name = names.at(contribution.model);
+      if (name.find("corner") != std::string::npos)
+      {
+        REQUIRE(contribution.patch_count > 0.0);
+        per_patch[name] = contribution.fabricated_surface_energy.at(4) / contribution.patch_count;
+        CHECK(std::isfinite(per_patch[name]));
+        CHECK(per_patch[name] > 0.0);
+      }
+    }
+    return std::make_pair(matched, per_patch);
+  };
+  // Exact nodes are the library models themselves (the signature match within the
+  // AngleTolerance; the family is consulted only for angles without a coupon).
+  {
+    const auto [matched, per_patch] = CornerEnergies(*house_mesh, "house");
+    REQUIRE(matched.size() == 2);
+    CHECK(matched.at("convex-corner-90") == 2);
+    CHECK(matched.at("convex-corner-120") == 3);
+    const double ninety = per_patch.at("convex-corner-90");
+    const double one_twenty = per_patch.at("convex-corner-120");
+    CHECK(one_twenty > 0.5 * ninety);
+    CHECK(one_twenty < 2.0 * ninety);
+  }
+  {
+    auto gable_mesh = MakePolygonIslandMesh(gable, 8.0, 0.1);
+    const auto [matched, per_patch] = CornerEnergies(*gable_mesh, "gable");
+    REQUIRE(matched.size() == 3);
+    CHECK(matched.at("convex-corner-90") == 2);
+    CHECK(matched.at("convex-corner-165") == 2);
+    CHECK(matched.at("convex-corner-105") == 2);
+    const double ninety = per_patch.at("convex-corner-90");
+    for (const auto &name : {"convex-corner-165", "convex-corner-105"})
+    {
+      CHECK(per_patch.at(name) > 0.5 * ninety);
+      CHECK(per_patch.at(name) < 2.0 * ninety);
+    }
+  }
+  // An interpolated angle: the house with a 45-degree roof has two 112.5-degree corners
+  // (cubic on the 105 / 120 window, the runtime basis constructed by the rule at 112.5
+  // degrees, its trace mesh with slave corners) and a 135-degree apex (an exact node).
+  {
+    const std::vector<std::array<double, 2>> steep_house = {
+        {-1.0, -1.0}, {1.0, -1.0}, {1.0, 0.2}, {0.0, 0.2 + std::tan(22.5 * M_PI / 180.0)},
+        {-1.0, 0.2}};
+    auto steep_mesh = MakePolygonIslandMesh(steep_house, 8.0, 0.1);
+    const auto [matched, per_patch] = CornerEnergies(*steep_mesh, "steep-house");
+    REQUIRE(matched.size() == 3);
+    CHECK(matched.at("convex-corner-90") == 2);
+    CHECK(matched.at("convex-corner-135") == 1);
+    std::string interpolated;
+    for (const auto &[name, count] : matched)
+    {
+      if (name.find("@corner-angle112.5-cubic") != std::string::npos)
+      {
+        interpolated = name;
+        CHECK(count == 2);
+      }
+    }
+    REQUIRE(!interpolated.empty());
+    // The base is the nearest node (turn 67.5 between 60 and 75: the first, 120 degrees).
+    CHECK(interpolated.rfind("convex-corner-120@", 0) == 0);
+    const double ninety = per_patch.at("convex-corner-90");
+    CHECK(per_patch.at(interpolated) > 0.5 * ninety);
+    CHECK(per_patch.at(interpolated) < 2.0 * ninety);
+  }
 #endif
 }
 

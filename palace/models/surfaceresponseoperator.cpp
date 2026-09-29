@@ -29,6 +29,7 @@
 #include "fem/gridfunction.hpp"
 #include "fem/interpolator.hpp"
 #include "models/boundarymodeoperator.hpp"
+#include "models/cornertracebasis.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
@@ -667,6 +668,12 @@ struct LibraryModel
   // the kappa = 0 anchor of both convexities.
   std::optional<double> kappa;
   std::optional<bool> convex;
+
+  // Corner coupon built on the angle-independent trace basis rule (record TraceBasis of
+  // generate_corner_response.py): required of every node of an angle-interpolated corner
+  // family (MatchCornerFamily), which checks the coupon's files against the rule at its
+  // angle and constructs the runtime basis at the device angle from it.
+  std::optional<CornerTraceBasisRule> trace_basis;
 };
 
 struct ProcessLibrary
@@ -1412,6 +1419,8 @@ bool IsBoundaryLawVerified(const LibraryModel &model)
 std::string TopologyIdentifier(LibraryTopology topology);
 void VerifySpatialEdgesInSignatureFrame(const LibraryModel &model, double radius);
 
+std::vector<std::array<double, 3>> ReadBasisPoints(const std::string &path);
+
 ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                                   bool nondimensionalize, bool allow_empty_models = false,
                                   bool geometry_only = false)
@@ -1920,6 +1929,26 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
       model.response.trace_triangles =
           ResolveLibraryPath(directory, trace_mesh->at("Triangles").get<std::string>());
     }
+    if (auto trace_basis = entry.find("TraceBasis"); trace_basis != entry.end())
+    {
+      MFEM_VERIFY(corner && spatial_response && trace_basis->is_object(),
+                  "TraceBasis (the corner family's trace basis rule) is supported only by "
+                  "spatial corner response models!");
+      CornerTraceBasisRule rule;
+      rule.ring_size = trace_basis->at("RingSize").get<int>();
+      rule.metal_interior_knots = trace_basis->at("MetalInteriorKnots").get<int>();
+      rule.free_knots = trace_basis->at("FreeKnots").get<int>();
+      rule.fractions = trace_basis->at("Fractions").get<std::string>();
+      MFEM_VERIFY(rule.ring_size >= 3 && rule.metal_interior_knots >= 0 &&
+                      rule.free_knots >= 1 &&
+                      rule.ring_size == 2 + rule.metal_interior_knots + rule.free_knots &&
+                      rule.fractions == "PerimeterArcLength",
+                  "Fabrication-process response model \""
+                      << model.name
+                      << "\" has an invalid TraceBasis rule (RingSize = 2 + "
+                         "MetalInteriorKnots + FreeKnots, Fractions PerimeterArcLength)!");
+      model.trace_basis = rule;
+    }
     if (auto interior = entry.find("InteriorTraceCount"); interior != entry.end())
     {
       MFEM_VERIFY(interior->is_number_integer() && interior->get<int>() >= 0 &&
@@ -2085,6 +2114,24 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                                           MetalBoundaryConditionType::PEC;
                                  })),
                 "Finite-impedance spatial response models cannot use ZeroTraceIndices!");
+    if (corner && spatial_response && !model.response.zero_trace_indices.empty() &&
+        !model.response.contour_groups.empty())
+    {
+      // The basis gate of a corner coupon (corner-family review 2026-09-29; fail closed):
+      // every crossing of a metal arm with a box ring that meets the metal is a PEC knot
+      // and no free knot lies on the metal, so that no free trace hat has support on the
+      // PEC part of the box contour (the review's root cause: such a hat imposes
+      // conflicting Dirichlet data on the coupon and puts a near-singular field into the
+      // MS / MA layers, 6-7 orders in the fabricated Q_MS of that knot).
+      const auto points = ReadBasisPoints(model.response.basis_points);
+      const std::string reason = CheckCornerBasisCrossings(
+          points, model.response.contour_groups, model.response.zero_trace_indices,
+          model.angle, model.topology == LibraryTopology::CONVEX_CORNER,
+          1.0e-6 * library.matching_radius * coordinate_scale);
+      MFEM_VERIFY(reason.empty(), "Fabrication-process corner response model \""
+                                      << model.name << "\" fails the trace basis gate: "
+                                      << reason << "!");
+    }
 
     std::set<std::pair<int, InterfaceDielectric>> interface_slots;
     if (auto interfaces = entry.find("Interfaces"); interfaces != entry.end())
@@ -3564,8 +3611,6 @@ MatchCurvatureFamily(const ProcessLibrary &library, const IdentifiedFeature &fea
 // nearest node (its ZeroTraceIndices: the knots inside the metal at the nearest coupon
 // angle; the corner coupons have no coupon depth, the weights apply as they are). Rounded
 // corners keep their per-radius coupons (CornerRadiusInterpolation): no angle family.
-std::vector<std::array<double, 3>> ReadBasisPoints(const std::string &path);
-
 struct FeatureCornerMatch
 {
   std::size_t base = 0;  // the nearest node: basis, zero trace indices, references
@@ -3577,6 +3622,9 @@ struct FeatureCornerMatch
   double turn_degrees = 0.0;
   double max_turn_degrees = 0.0;
   double first_order_turn_degrees = 0.0;
+  // The runtime basis of an interpolated corner: the family's trace basis rule at the
+  // feature's angle (empty for an exact node, which uses the node's own files).
+  std::optional<ConstructedCornerTraceBasis> constructed;
 };
 
 std::string CornerRuntimeModelName(const std::string &base, double angle_degrees,
@@ -3644,24 +3692,73 @@ MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &featur
                 "Corner family has two sharp " << convexity
                                                << " coupons at the same angle!");
   }
-  // One box basis for the whole family (the blend combines matrices coefficient by
-  // coefficient): every coupon's BasisPoints equal the first's.
+  // One knot SEMANTICS for the whole family (the blend combines matrices entry by entry):
+  // every coupon is built on the trace basis rule with the same parameters, the same basis
+  // size, ContourGroups and ZeroTraceIndices, its rings that do not meet the metal at the
+  // same points, and its rings that meet the metal at the rule's positions for its own
+  // angle (checked against the coupon's files). Like-to-like free knots then sit at the same
+  // indices with positions that vary smoothly with the angle.
+  const bool convex = topology == LibraryTopology::CONVEX_CORNER;
+  const auto &first = library.models[nodes.front().second];
+  for (const auto &[node_turn, index] : nodes)
   {
-    const auto &first = library.models[nodes.front().second];
-    const auto first_points = ReadBasisPoints(first.response.basis_points);
-    for (const auto &[node_turn, index] : nodes)
+    (void)node_turn;
+    if (!library.models[index].trace_basis)
     {
-      (void)node_turn;
-      const auto &model = library.models[index];
-      const auto points = ReadBasisPoints(model.response.basis_points);
-      MFEM_VERIFY(points.size() == first_points.size(),
-                  "Corner family coupons \"" << model.name << "\" and \"" << first.name
-                                             << "\" have different basis sizes!");
-      for (std::size_t k = 0; k < points.size(); k++)
+      // Coupons of the lane-2 angle-independent layout (no TraceBasis record) form no
+      // family: their free hats cross the metal at any other angle (the corner-family
+      // review's root cause) — unmatched with the reason, never interpolated.
+      reason = "sharp " + convexity + " corner coupon \"" + library.models[index].name +
+               "\" has no TraceBasis rule (lane-2 layout): the angle-interpolated corner "
+               "family requires coupons built on the trace basis rule (corner-family review "
+               "2026-09-29)";
+      return std::nullopt;
+    }
+  }
+  const auto first_points = ReadBasisPoints(first.response.basis_points);
+  const CornerBoxRings first_rings = DescribeCornerBoxRings(
+      first_points, first.response.contour_groups, first.response.zero_trace_indices);
+  const double position_tolerance = 1.0e-9 * first_rings.radius;
+  for (const auto &[node_turn, index] : nodes)
+  {
+    (void)node_turn;
+    const auto &model = library.models[index];
+    MFEM_VERIFY(model.trace_basis && *model.trace_basis == *first.trace_basis,
+                "Corner family coupons \"" << model.name << "\" and \"" << first.name
+                                           << "\" are not built on one TraceBasis rule!");
+    const auto points = ReadBasisPoints(model.response.basis_points);
+    MFEM_VERIFY(points.size() == first_points.size() &&
+                    model.response.contour_groups == first.response.contour_groups &&
+                    model.response.zero_trace_indices == first.response.zero_trace_indices,
+                "Corner family coupons \"" << model.name << "\" and \"" << first.name
+                                           << "\" have different basis sizes, ContourGroups "
+                                              "or ZeroTraceIndices!");
+    // The coupon's files against the rule at its own angle (its fixed rings and its metal
+    // rings).
+    const auto rule_basis =
+        BuildCornerTraceBasis(points, model.response.contour_groups,
+                              model.response.zero_trace_indices, model.angle, convex,
+                              *model.trace_basis);
+    for (std::size_t k = 0; k < points.size(); k++)
+    {
+      MFEM_VERIFY(Distance(points[k], rule_basis.knots[k]) <= position_tolerance,
+                  "Corner family coupon \"" << model.name << "\" basis point " << k + 1
+                                            << " is not at the trace basis rule's position "
+                                               "for its angle!");
+    }
+    for (const auto &ring : first_rings.rings)
+    {
+      if (ring.metal)
       {
-        MFEM_VERIFY(Distance(points[k], first_points[k]) <= 1.0e-9 * library.matching_radius,
+        continue;
+      }
+      for (int i = 0; i < ring.size; i++)
+      {
+        MFEM_VERIFY(Distance(points[ring.offset + i], first_points[ring.offset + i]) <=
+                        position_tolerance,
                     "Corner family coupons \"" << model.name << "\" and \"" << first.name
-                                               << "\" have different basis points!");
+                                               << "\" differ on a ring that does not meet "
+                                                  "the metal!");
       }
     }
   }
@@ -3748,6 +3845,15 @@ MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &featur
     match.nodes.push_back({abscissae[i].second, weight});
   }
   match.name = CornerRuntimeModelName(library.models[match.base].name, angle, match.rule);
+  // The runtime basis at the feature's angle: the base's fixed rings, the metal rings by
+  // the rule (positions), the same zero set and contour groups as every node.
+  {
+    const auto &base = library.models[match.base];
+    match.constructed = BuildCornerTraceBasis(
+        ReadBasisPoints(base.response.basis_points), base.response.contour_groups,
+        base.response.zero_trace_indices, angle * std::acos(-1.0) / 180.0, convex,
+        *base.trace_basis);
+  }
   return match;
 }
 
@@ -7015,6 +7121,8 @@ FeaturePatchSummary BuildFeaturePatches(
     std::vector<LibrarySelection::WeightedModel> nodes;
     bool per_unit_length = true;
     std::string label;
+    // A corner blend's basis constructed at the feature's angle (the trace basis rule).
+    const ConstructedCornerTraceBasis *constructed = nullptr;
   };
   std::map<std::pair<std::string, std::string>, int> runtime_models;
   int next_model_index = 1;
@@ -7067,6 +7175,25 @@ FeaturePatchSummary BuildFeaturePatches(
                 << std::setprecision(6) << node.weight;
         }
         Mpi::Print(" {} {}: {}\n", blend->label, blend->name, nodes.str());
+        if (blend->constructed)
+        {
+          const auto &constructed = *blend->constructed;
+          model.constructed_basis_points = constructed.knots;
+          model.constructed_trace_vertices.clear();
+          for (const auto &vertex : constructed.vertices)
+          {
+            ResponseModelData::ConstructedTraceVertex data;
+            data.point = vertex.point;
+            data.basis = vertex.basis >= 0 ? vertex.basis + 1 : 0;
+            data.conductor =
+                vertex.basis >= 0 && constructed.zero[vertex.basis] ? 1 : 0;
+            data.parent_a = vertex.basis < 0 ? vertex.parent_a + 1 : 0;
+            data.parent_b = vertex.basis < 0 ? vertex.parent_b + 1 : 0;
+            data.weight_a = vertex.basis < 0 ? vertex.weight_a : 0.0;
+            model.constructed_trace_vertices.push_back(data);
+          }
+          model.constructed_trace_triangles = constructed.triangles;
+        }
       }
       MapLibraryInterfaces(source, targets_by_slot, model);
       result.models.push_back(std::move(model));
@@ -7082,7 +7209,8 @@ FeaturePatchSummary BuildFeaturePatches(
   auto CornerBlend = [](const FeatureCornerMatch &match)
   {
     return FamilyBlend{match.name, match.topology, match.base, match.nodes, false,
-                       "Corner interpolation"};
+                       "Corner interpolation",
+                       match.constructed ? &*match.constructed : nullptr};
   };
 
   auto Emit = [&](ResponsePatchData patch, std::size_t model_index, int runtime,
@@ -12183,6 +12311,11 @@ ResponseCorrectionData BuildAutomaticResponseData(const IoData &iodata,
              "electrostatic mesh!");
 }
 
+// A spatial model's explicit trace triangulation (TraceMesh files, or constructed by the
+// corner family's trace basis rule at the device angle). A vertex is a basis knot (basis =
+// its 1-based BasisPoints index), a conductor vertex (basis 0, conductor > 0) or a slave
+// vertex (basis 0, conductor 0, parents parent_a / parent_b 1-based with weight_a on
+// parent_a: a box corner between two knots whose trace is the linear interpolation).
 struct TraceMeshData
 {
   struct Vertex
@@ -12190,9 +12323,18 @@ struct TraceMeshData
     Point3D point{};
     int basis = 0;
     int conductor = 0;
+    int parent_a = 0;
+    int parent_b = 0;
+    double weight_a = 0.0;
   };
   std::vector<Vertex> vertices;
   std::vector<std::array<int, 3>> triangles;
+
+  bool HasSlaveVertices() const
+  {
+    return std::any_of(vertices.begin(), vertices.end(),
+                       [](const Vertex &vertex) { return vertex.parent_a > 0; });
+  }
 };
 
 TraceMeshData ReadTraceMesh(const std::string &vertex_path,
@@ -12221,15 +12363,39 @@ TraceMeshData ReadTraceMesh(const std::string &vertex_path,
                   "Could not parse response trace vertex file \"" << vertex_path << "\"!");
       continue;
     }
+    // Optional slave-vertex columns (parent_a, parent_b, weight_a); a knot row carries
+    // zeros there or nothing.
+    if (!(row >> vertex.parent_a >> vertex.parent_b >> vertex.weight_a))
+    {
+      vertex.parent_a = vertex.parent_b = 0;
+      vertex.weight_a = 0.0;
+    }
     MFEM_VERIFY(index == static_cast<int>(mesh.vertices.size()) + 1 && vertex.basis >= 0 &&
                     vertex.conductor >= 0 &&
                     std::all_of(vertex.point.begin(), vertex.point.end(),
                                 [](double value) { return std::isfinite(value); }),
                 "Invalid response trace vertex in \"" << vertex_path << "\"!");
+    MFEM_VERIFY((vertex.parent_a == 0 && vertex.parent_b == 0) ||
+                    (vertex.parent_a > 0 && vertex.parent_b > 0 &&
+                     vertex.parent_a != vertex.parent_b && vertex.basis == 0 &&
+                     vertex.conductor == 0 && std::isfinite(vertex.weight_a) &&
+                     vertex.weight_a >= 0.0 && vertex.weight_a <= 1.0),
+                "Invalid slave response trace vertex (parents / weight) in \""
+                    << vertex_path << "\"!");
     mesh.vertices.push_back(vertex);
   }
   MFEM_VERIFY(!mesh.vertices.empty(),
               "Response trace vertex file \"" << vertex_path << "\" is empty!");
+  for (const auto &vertex : mesh.vertices)
+  {
+    for (const int parent : {vertex.parent_a, vertex.parent_b})
+    {
+      MFEM_VERIFY(parent == 0 || (parent <= static_cast<int>(mesh.vertices.size()) &&
+                                  mesh.vertices[parent - 1].basis == parent),
+                  "A slave response trace vertex must name two basis knots as parents (\""
+                      << vertex_path << "\")!");
+    }
+  }
 
   std::ifstream triangles(triangle_path);
   MFEM_VERIFY(triangles,
@@ -12302,6 +12468,47 @@ std::vector<std::array<double, 3>> ReadBasisPoints(const std::string &path)
   MFEM_VERIFY(!points.empty(),
               "Response-correction basis point file \"" << path << "\" is empty!");
   return points;
+}
+
+// A model's basis points: the constructed basis of an angle-interpolated corner model, else
+// the BasisPoints file.
+std::vector<std::array<double, 3>> ModelBasisPoints(
+    const config::ElectrostaticSolverData::ResponseCorrectionModelData &model_config)
+{
+  if (!model_config.constructed_basis_points.empty())
+  {
+    return model_config.constructed_basis_points;
+  }
+  return ReadBasisPoints(model_config.basis_points);
+}
+
+bool HasExplicitTraceMesh(
+    const config::ElectrostaticSolverData::ResponseCorrectionModelData &model_config)
+{
+  return !model_config.trace_vertices.empty() ||
+         !model_config.constructed_trace_vertices.empty();
+}
+
+// A model's explicit trace mesh: the constructed mesh of an angle-interpolated corner model,
+// else the TraceMesh files.
+TraceMeshData ModelTraceMesh(
+    const config::ElectrostaticSolverData::ResponseCorrectionModelData &model_config)
+{
+  if (!model_config.constructed_trace_vertices.empty())
+  {
+    TraceMeshData mesh;
+    mesh.vertices.reserve(model_config.constructed_trace_vertices.size());
+    for (const auto &vertex : model_config.constructed_trace_vertices)
+    {
+      mesh.vertices.push_back({vertex.point, vertex.basis, vertex.conductor, vertex.parent_a,
+                               vertex.parent_b, vertex.weight_a});
+    }
+    mesh.triangles = model_config.constructed_trace_triangles;
+    return mesh;
+  }
+  MFEM_VERIFY(!model_config.trace_triangles.empty(),
+              "A response TraceMesh requires both vertex and triangle files!");
+  return ReadTraceMesh(model_config.trace_vertices, model_config.trace_triangles);
 }
 
 Table ReadTable(const std::string &path)
@@ -12976,6 +13183,18 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                        {"FabricatedSurfaceMatrix", source.fabricated_surface_matrix},
                        {"ThinSurfaceMatrix", source.thin_surface_matrix}});
     }
+    // A corner-family runtime model interpolated between nodes carries its basis and trace
+    // mesh constructed at the device angle (nothing on disk describes them).
+    nlohmann::json constructed_vertices = nlohmann::json::array();
+    for (const auto &vertex : model.constructed_trace_vertices)
+    {
+      constructed_vertices.push_back({{"Point", vertex.point},
+                                      {"Basis", vertex.basis},
+                                      {"Conductor", vertex.conductor},
+                                      {"ParentA", vertex.parent_a},
+                                      {"ParentB", vertex.parent_b},
+                                      {"WeightA", vertex.weight_a}});
+    }
     models.push_back({{"Index", model.idx},
                       {"Name", model.name},
                       {"Topology", model.topology},
@@ -12983,6 +13202,9 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                       {"ThinMatrix", model.thin_matrix},
                       {"FabricatedSurfaceMatrix", model.fabricated_surface_matrix},
                       {"ThinSurfaceMatrix", model.thin_surface_matrix},
+                      {"ConstructedBasisPoints", model.constructed_basis_points},
+                      {"ConstructedTraceVertices", constructed_vertices},
+                      {"ConstructedTraceTriangles", model.constructed_trace_triangles},
                       {"BasisPoints", model.basis_points},
                       {"TraceVertices", model.trace_vertices},
                       {"TraceTriangles", model.trace_triangles},
@@ -13052,6 +13274,22 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
     model.basis_points = entry.at("BasisPoints");
     model.trace_vertices = entry.value("TraceVertices", std::string{});
     model.trace_triangles = entry.value("TraceTriangles", std::string{});
+    model.constructed_basis_points = entry.value(
+        "ConstructedBasisPoints", std::vector<std::array<double, 3>>{});
+    for (const auto &value :
+         entry.value("ConstructedTraceVertices", nlohmann::json::array()))
+    {
+      ResponseModelData::ConstructedTraceVertex vertex;
+      vertex.point = value.at("Point");
+      vertex.basis = value.at("Basis");
+      vertex.conductor = value.at("Conductor");
+      vertex.parent_a = value.at("ParentA");
+      vertex.parent_b = value.at("ParentB");
+      vertex.weight_a = value.at("WeightA");
+      model.constructed_trace_vertices.push_back(vertex);
+    }
+    model.constructed_trace_triangles =
+        entry.value("ConstructedTraceTriangles", std::vector<std::array<int, 3>>{});
     model.spatial_basis = entry.value("SpatialBasis", false);
     model.contour_groups = entry.value("ContourGroups", std::vector<int>{});
     model.zero_trace_indices = entry.value("ZeroTraceIndices", std::vector<int>{});
@@ -13348,7 +13586,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     MFEM_VERIFY(model_config.idx > 0 &&
                     model_indices.find(model_config.idx) == model_indices.end(),
                 "Response-correction model indices must be positive and unique!");
-    auto points = ReadBasisPoints(model_config.basis_points);
+    auto points = ModelBasisPoints(model_config);
     ResponseModel model;
     model.idx = model_config.idx;
     model.name =
@@ -13385,7 +13623,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     MFEM_VERIFY(model.interior_trace_count >= 0 &&
                     model.interior_trace_count < model.contour_size &&
                     (model.interior_trace_count == 0 ||
-                     (model.spatial_basis && !model_config.trace_vertices.empty())),
+                     (model.spatial_basis && HasExplicitTraceMesh(model_config))),
                 "InteriorTraceCount requires a spatial response model with an explicit "
                 "TraceMesh and fewer interior points than BasisPoints!");
     const int contour_point_count = model.contour_size - model.interior_trace_count;
@@ -13426,12 +13664,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     MFEM_VERIFY(config->trace_coupling !=
                         ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR ||
                     !model.spatial_basis || model.open_contour_paths.empty() ||
-                    !model_config.trace_vertices.empty(),
+                    HasExplicitTraceMesh(model_config),
                 "SurfaceMortar requires an explicit TraceMesh for a spatial model with "
                 "OpenContourPaths; regenerate or augment the process library!");
     if (config->trace_coupling == ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR &&
         model.spatial_basis &&
-        (model.open_contour_paths.empty() || !model_config.trace_vertices.empty()))
+        (model.open_contour_paths.empty() || HasExplicitTraceMesh(model_config)))
     {
       model.surface_mortar = true;
       model.spatial_mortar = true;
@@ -13451,21 +13689,30 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           load = 0.0;
         }
         std::vector<bool> represented_basis(model.contour_size, false);
-        const bool explicit_trace_mesh = !model_config.trace_vertices.empty();
+        const bool explicit_trace_mesh = HasExplicitTraceMesh(model_config);
         TraceMeshData trace_mesh;
         if (explicit_trace_mesh)
         {
-          MFEM_VERIFY(!model_config.trace_triangles.empty(),
-                      "A response TraceMesh requires both vertex and triangle files!");
-          trace_mesh =
-              ReadTraceMesh(model_config.trace_vertices, model_config.trace_triangles);
+          trace_mesh = ModelTraceMesh(model_config);
           model.mortar_vertices.reserve(trace_mesh.vertices.size());
           for (const auto &vertex : trace_mesh.vertices)
           {
             MFEM_VERIFY(vertex.basis <= model.contour_size &&
                             vertex.conductor <= model.conductor_state_count + 1 &&
-                            (vertex.basis > 0 || vertex.conductor > 0),
+                            (vertex.basis > 0 || vertex.conductor > 0 || vertex.parent_a > 0),
                         "A response trace vertex has invalid basis/conductor ownership!");
+            if (vertex.parent_a > 0)
+            {
+              // A slave vertex (corner-family trace basis rule): the trace is the linear
+              // interpolation between its two parent knots.
+              MFEM_VERIFY(vertex.parent_a <= model.contour_size &&
+                              vertex.parent_b <= model.contour_size,
+                          "A slave response trace vertex names a parent outside the "
+                          "contour basis!");
+              model.mortar_vertices.push_back({vertex.point, vertex.parent_a - 1, 0,
+                                               vertex.parent_b - 1, vertex.weight_a});
+              continue;
+            }
             const int basis = vertex.basis - 1;
             if (basis >= 0)
             {
@@ -13527,40 +13774,36 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           }
           model.mortar_triangles.push_back(
               {{first, second, third}, area, std::sqrt(maximum_edge_squared)});
+          // P1 mass on the triangle: the hat of knot k takes the value w_k(p) at vertex p
+          // (1 at its own knot, the interpolation weight at a slave vertex, 0 elsewhere),
+          // so int phi_i phi_j = area sum_{p, q} w_i(p) w_j(q) (p == q ? 1/6 : 1/12).
           constexpr double diagonal = 1.0 / 6.0;
           constexpr double off_diagonal = 1.0 / 12.0;
           for (int local_i = 0; local_i < 3; local_i++)
           {
-            const int basis_i =
-                model.mortar_vertices[model.mortar_triangles.back().vertices[local_i]]
-                    .basis;
-            if (basis_i < 0)
-            {
-              continue;
-            }
-            model.mortar_constant_load[basis_i] += area / 3.0;
-            for (int local_j = 0; local_j < 3; local_j++)
-            {
-              const int basis_j =
-                  model.mortar_vertices[model.mortar_triangles.back().vertices[local_j]]
-                      .basis;
-              if (basis_j >= 0)
-              {
-                mass(basis_i, basis_j) +=
-                    area * (local_i == local_j ? diagonal : off_diagonal);
-              }
-              else
-              {
-                const int conductor =
-                    model.mortar_vertices[model.mortar_triangles.back().vertices[local_j]]
-                        .conductor;
-                if (conductor > 1)
+            const auto &vertex_i =
+                model.mortar_vertices[model.mortar_triangles.back().vertices[local_i]];
+            vertex_i.ForEachBasis(
+                [&](int basis_i, double weight_i)
                 {
-                  model.mortar_conductor_loads[conductor - 2][basis_i] +=
-                      area * (local_i == local_j ? diagonal : off_diagonal);
-                }
-              }
-            }
+                  model.mortar_constant_load[basis_i] += weight_i * area / 3.0;
+                  for (int local_j = 0; local_j < 3; local_j++)
+                  {
+                    const auto &vertex_j =
+                        model.mortar_vertices[model.mortar_triangles.back().vertices[local_j]];
+                    const double entry =
+                        weight_i * area * (local_i == local_j ? diagonal : off_diagonal);
+                    if (vertex_j.basis >= 0)
+                    {
+                      vertex_j.ForEachBasis([&](int basis_j, double weight_j)
+                                            { mass(basis_i, basis_j) += weight_j * entry; });
+                    }
+                    else if (vertex_j.conductor > 1)
+                    {
+                      model.mortar_conductor_loads[vertex_j.conductor - 2][basis_i] += entry;
+                    }
+                  }
+                });
           }
         };
         if (explicit_trace_mesh)
@@ -14328,9 +14571,18 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     MFEM_VERIFY(model_config.idx > 0 &&
                     model_indices.find(model_config.idx) == model_indices.end(),
                 "Response-correction model indices must be positive and unique!");
-    auto points = ReadBasisPoints(model_config.basis_points);
+    auto points = ModelBasisPoints(model_config);
     MFEM_VERIFY(points.size() >= 3,
                 "Maxwell response-correction contours require at least three points!");
+    // The corner family's trace basis rule (slave trace vertices at the box corners, or a
+    // basis constructed at the device angle) is electrostatic only: the Maxwell contour
+    // lines run between basis knots and would cut the box corners.
+    MFEM_VERIFY(model_config.constructed_basis_points.empty() &&
+                    (model_config.trace_vertices.empty() ||
+                     !ModelTraceMesh(model_config).HasSlaveVertices()),
+                "Maxwell surface response correction does not support trace meshes with "
+                "slave vertices (the corner family's trace basis rule is electrostatic "
+                "only)!");
     ResponseModel model;
     model.idx = model_config.idx;
     model.name =
@@ -15881,11 +16133,12 @@ void SurfaceResponseOperator::ApplyTrace(const Vector &x, Vector &values) const
                   const double value = correction(point++);
                   for (int q = 0; q < 3; q++)
                   {
-                    const int basis = model.mortar_vertices[triangle.vertices[q]].basis;
-                    if (basis >= 0)
-                    {
-                      mortar_load[basis] += quadrature_weight * barycentric[q] * value;
-                    }
+                    model.mortar_vertices[triangle.vertices[q]].ForEachBasis(
+                        [&](int basis, double weight)
+                        {
+                          mortar_load[basis] +=
+                              weight * quadrature_weight * barycentric[q] * value;
+                        });
                   }
                 }
               }
@@ -16049,11 +16302,9 @@ void SurfaceResponseOperator::ApplyTraceTranspose(const Vector &values, Vector &
                   double value = 0.0;
                   for (int q = 0; q < 3; q++)
                   {
-                    const int basis = model.mortar_vertices[triangle.vertices[q]].basis;
-                    if (basis >= 0)
-                    {
-                      value += barycentric[q] * mortar_load[basis];
-                    }
+                    model.mortar_vertices[triangle.vertices[q]].ForEachBasis(
+                        [&](int basis, double weight)
+                        { value += weight * barycentric[q] * mortar_load[basis]; });
                   }
                   correction[point++] = quadrature_weight * value;
                 }

@@ -122,11 +122,32 @@ private:
     int subdivisions = 1;
   };
 
+  // A vertex of a spatial model's trace triangulation: a basis knot (basis >= 0, weight 1),
+  // a conductor vertex (basis < 0, conductor > 0) or a SLAVE vertex (corner-family trace
+  // basis rule): a geometric vertex of the box (a box corner that is no knot) whose trace is
+  // the linear interpolation between two knots, `weight` on `basis` and 1 - weight on
+  // `second_basis`; its hat contributions are those of its parents.
   struct MortarVertex
   {
     std::array<double, 3> point{};
     int basis = -1;
     int conductor = 0;
+    int second_basis = -1;
+    double weight = 1.0;
+
+    // The (basis, hat value) pairs the vertex carries.
+    template <typename F>
+    void ForEachBasis(F &&f) const
+    {
+      if (basis >= 0)
+      {
+        f(basis, weight);
+      }
+      if (second_basis >= 0)
+      {
+        f(second_basis, 1.0 - weight);
+      }
+    }
   };
 
   struct MortarTriangle
@@ -387,6 +408,16 @@ public:
     return patch_assignments;
   }
   int GetEdgeCount() const { return GetPatchCount(); }
+  // Runtime model index (ModelContribution::model) -> model name.
+  std::map<int, std::string> GetModelNames() const
+  {
+    std::map<int, std::string> names;
+    for (const auto &model : models)
+    {
+      names[model.idx] = model.name;
+    }
+    return names;
+  }
   double GetPatchWeight() const;
   double GetMatchingRadius() const { return matching_radius; }
 
