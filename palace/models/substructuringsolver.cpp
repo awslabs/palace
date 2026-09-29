@@ -935,11 +935,73 @@ struct SubstructuringSolver::Impl
                  MPI_DOUBLE, rows.data(), gamma_nloc * w, MPI_DOUBLE, 0, comm);
   }
 
-  // Model-file sections following S_E: [kSKenMagic][S^K nG x nG] (magnetostatics) and
+  // Model-file sections following S_E: [kEnvFpMagic][environment fingerprint, 3 doubles],
+  // [kSKenMagic][S^K nG x nG] (magnetostatics) and
   // [kModesMagic][K][ids][fingerprints 2K][has_GK][G nG x K][G^K nG x K if has_GK][Cmode
   // KxK].
   static constexpr int kSKenMagic = 0x4e454b53;   // "SKEN"
   static constexpr int kModesMagic = 0x32444f4d;  // "MOD2"
+  static constexpr int kEnvFpMagic = 0x46564e45;  // "ENVF"
+  // Fingerprint of the environment operator: global environment-closure DOF count, trace
+  // and Frobenius norm of A_env. Independent of the region (A_env has no region
+  // contribution), of the partition and of the DOF numbering (and of H(curl) orientation
+  // signs), but it changes with the environment mesh, materials, order or physics.
+  // Collective.
+  std::array<double, 3> EnvironmentFingerprint() const
+  {
+    mfem::SparseMatrix diag;
+    A_env->GetDiag(diag);
+    double trace = 0.0;
+    for (int i = 0; i < diag.Height(); i++)
+    {
+      trace += diag.Elem(i, i);
+    }
+    double loc[2] = {trace, 0.0};
+    for (int i = 0; i < nt; i++)
+    {
+      loc[1] += (is_env_int[i] || is_gamma[i]) ? 1.0 : 0.0;
+    }
+    double glob[2];
+    MPI_Allreduce(loc, glob, 2, MPI_DOUBLE, MPI_SUM, parent_fes.GetComm());
+    return {glob[1], glob[0], A_env->FNorm()};
+  }
+
+  // Saved-model environment fingerprint (valid when have_env_fp).
+  std::array<double, 3> saved_env_fp = {0.0, 0.0, 0.0};
+  bool have_env_fp = false;
+
+  void AppendEnvFingerprint(const std::string &path) const
+  {
+    const std::array<double, 3> fp = EnvironmentFingerprint();  // collective
+    if (Mpi::Root(parent_fes.GetComm()))
+    {
+      std::ofstream f(path, std::ios::binary | std::ios::app);
+      f.write(reinterpret_cast<const char *>(&kEnvFpMagic), sizeof(int));
+      f.write(reinterpret_cast<const char *>(fp.data()), sizeof(double) * fp.size());
+    }
+  }
+
+  // Abort if a loaded model was condensed from a different environment than the current
+  // one.
+  void CheckEnvFingerprint() const
+  {
+    const std::array<double, 3> fp = EnvironmentFingerprint();  // collective
+    if (!have_env_fp)
+    {
+      return;  // model written before the fingerprint existed
+    }
+    bool ok = (fp[0] == saved_env_fp[0]);
+    for (int q = 1; q < 3; q++)
+    {
+      ok = ok && std::abs(fp[q] - saved_env_fp[q]) <=
+                     1.0e-10 * std::max(std::abs(fp[q]), std::abs(saved_env_fp[q]));
+    }
+    MFEM_VERIFY(ok,
+                "The environment differs from the one the saved substructuring model was "
+                "condensed from (environment mesh, materials, order or problem type "
+                "changed): rerun in \"Offline\" mode to condense it again!");
+  }
+
   void AppendSK(const std::string &path) const
   {
     const std::vector<double> full = GatherRows(SK_rows, nG_global);
@@ -999,7 +1061,17 @@ struct SubstructuringSolver::Impl
         magic = 0;
       }
       MPI_Bcast(&magic, 1, MPI_INT, 0, comm);
-      if (magic == kSKenMagic)
+      if (magic == kEnvFpMagic)
+      {
+        if (root)
+        {
+          f.read(reinterpret_cast<char *>(saved_env_fp.data()),
+                 sizeof(double) * saved_env_fp.size());
+        }
+        MPI_Bcast(saved_env_fp.data(), 3, MPI_DOUBLE, 0, comm);
+        have_env_fp = true;
+      }
+      else if (magic == kSKenMagic)
       {
         std::vector<double> full;
         if (root)
@@ -2075,6 +2147,7 @@ void SubstructuringSolver::CondenseEnvironment()
         static_cast<std::streamoff>(sizeof(double)) * nG * file_w +
         static_cast<std::streamoff>(sizeof(double)) * nG * nG;
     impl->LoadSections(model_path, sections_pos, perm, sgn);
+    impl->CheckEnvFingerprint();
   }
   // MUMPS Schur materialization (one partial factorization, no |Gamma| back-solves) when
   // available and the environment fits a direct factorization. Not used when the
@@ -2276,6 +2349,7 @@ void SubstructuringSolver::CondenseEnvironment()
         f.write(reinterpret_cast<const char *>(sig.data()), sizeof(double) * nG * sig_w);
         f.write(reinterpret_cast<const char *>(S_full.data()), sizeof(double) * nG * nG);
       }
+      impl->AppendEnvFingerprint(model_path);  // collective
       if (impl->have_sk)
       {
         impl->AppendSK(model_path);  // collective

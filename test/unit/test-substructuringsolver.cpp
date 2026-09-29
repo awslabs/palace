@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -13,6 +14,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/mesh.hpp"
 #include "fem/substructure.hpp"
 #include "models/substructuringsolver.hpp"
@@ -85,12 +87,23 @@ std::unique_ptr<mfem::ParMesh> MakeWavyTetSplit(int nx)
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
 }
 
+// Optional design features inside the region of MakeGradedSplit: a conductor patch (the
+// region terminal, boundary attribute 1, covers only the x = 0 faces with center y <
+// patch_y; the rest of that face gets the natural attribute 3) and a dielectric block
+// (region hexes with center (x, y, z) < block get element attribute 3).
+struct RegionDesign
+{
+  double patch_y = 1.0;
+  std::array<double, 3> block = {0.0, 0.0, 0.0};
+};
+
 // A hex cube whose region (x<0.5, attr 1) and environment (x>0.5, attr 2) have independent
 // x-resolutions (a and b cells) but share the same y-z grid (n cells), so the interface at
 // x=0.5 has identical nodes regardless of a. Re-meshing the region (varying a, fixing b and
 // n) keeps Gamma and the environment fixed -- exactly the offline/online region-redesign
-// workflow.
-std::unique_ptr<mfem::ParMesh> MakeGradedSplit(int a, int b, int n)
+// workflow. `design` adds features inside the region (see RegionDesign).
+std::unique_ptr<mfem::ParMesh> MakeGradedSplit(int a, int b, int n,
+                                               const RegionDesign &design = {})
 {
   std::vector<double> xs;
   for (int i = 0; i <= a; i++)
@@ -129,7 +142,10 @@ std::unique_ptr<mfem::ParMesh> MakeGradedSplit(int a, int b, int n)
                     vid(i + 1, j, k + 1),
                     vid(i + 1, j + 1, k + 1),
                     vid(i, j + 1, k + 1)};
-        serial.AddHex(v, (0.5 * (xs[i] + xs[i + 1]) < 0.5) ? 1 : 2);
+        const double cx = 0.5 * (xs[i] + xs[i + 1]), cy = (j + 0.5) / n, cz = (k + 0.5) / n;
+        const bool in_block =
+            cx < design.block[0] && cy < design.block[1] && cz < design.block[2];
+        serial.AddHex(v, (cx < 0.5) ? (in_block ? 3 : 1) : 2);
       }
     }
   }
@@ -138,7 +154,7 @@ std::unique_ptr<mfem::ParMesh> MakeGradedSplit(int a, int b, int n)
     for (int k = 0; k < n; k++)
     {
       int q0[4] = {vid(0, j, k), vid(0, j + 1, k), vid(0, j + 1, k + 1), vid(0, j, k + 1)};
-      serial.AddBdrQuad(q0, 1);
+      serial.AddBdrQuad(q0, ((j + 0.5) / n < design.patch_y) ? 1 : 3);
       int q1[4] = {vid(nx - 1, j, k), vid(nx - 1, j, k + 1), vid(nx - 1, j + 1, k + 1),
                    vid(nx - 1, j + 1, k)};
       serial.AddBdrQuad(q1, 2);
@@ -621,6 +637,54 @@ TEST_CASE("SubstructuringSolver offline/online model reuse",
   d -= u_off;
   CHECK(d.Norml2() <= 1.0e-12 * (u_off.Norml2() + 1.0e-30));
 }
+
+#if defined(MFEM_USE_EXCEPTIONS)
+TEST_CASE("SubstructuringSolver saved model rejects a changed environment",
+          "[substructure][Serial][Parallel]")
+{
+  // The model records a fingerprint of the environment operator: loading it with a changed
+  // environment (material or mesh) must fail instead of silently reusing a stale S_E, while
+  // changes confined to the region are accepted.
+  const std::string model_path = "substruct_env_fingerprint.bin";
+  auto make_config =
+      [&model_path](const std::string &mode, double eps_region, double eps_env)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", eps_region}},
+            {{"Attributes", {2}}, {"Permittivity", eps_env}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", 1},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"Mode", mode},
+            {"SaveModel", model_path}}}}}};
+    return IoData(config, false);
+  };
+  auto condense = [](const IoData &iodata, int a, int b)
+  {
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(MakeGradedSplit(a, b, 4)));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+  };
+  condense(make_config("Offline", 1.0, 10.0), 3, 4);
+  // Region-only changes (material, re-meshed region) are accepted.
+  CHECK_NOTHROW(condense(make_config("Online", 2.5, 10.0), 5, 4));
+  // A changed environment material or environment mesh is rejected.
+  CHECK_THROWS_WITH(condense(make_config("Online", 1.0, 12.0), 3, 4),
+                    Catch::Matchers::ContainsSubstring("The environment differs"));
+  CHECK_THROWS_WITH(condense(make_config("Online", 1.0, 10.0), 3, 5),
+                    Catch::Matchers::ContainsSubstring("The environment differs"));
+}
+#endif
 
 TEST_CASE("SubstructuringSolver environment-free capacitance matrix",
           "[substructure][Serial][Parallel]")
@@ -1280,6 +1344,129 @@ TEST_CASE("SubstructuringSolver cross-run region re-meshing",
 
   CHECK(e_sub > 1.0e-8);
   CHECK(std::abs(e_sub - e_mono) <= 1.0e-6 * std::abs(e_mono));
+}
+
+TEST_CASE("SubstructuringSolver geometric redesign of the region",
+          "[substructure][Serial][Parallel]")
+{
+  // A real design change inside the region between the offline and online runs: the region
+  // conductor (terminal 1) changes shape, a dielectric block inside the region changes
+  // shape and material, and the region is re-meshed at a different resolution, while the
+  // environment and the interface Gamma are unchanged. The online run reuses the saved
+  // model (without factoring the environment) and must reproduce a monolithic solve on the
+  // redesigned mesh.
+  const int order = GENERATE(1, 2);
+  CAPTURE(order);
+  const std::string model_path = "substruct_redesign_model.bin";
+  auto make_config = [order, &model_path](const std::string &mode, double eps_block)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+            {{"Attributes", {3}}, {"Permittivity", eps_block}},
+            {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", order},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1, 3}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"Mode", mode},
+            {"SaveModel", model_path}}}}}};
+    return IoData(config, false);
+  };
+  const std::vector<int> terms = {1, 2};
+  const int b = 5, n = 6;  // environment and interface: fixed across designs
+  // Design A (offline) and design B (online): different conductor, dielectric and mesh.
+  const RegionDesign design_a{0.5, {0.25, 0.5, 0.5}}, design_b{0.84, {0.34, 0.34, 0.67}};
+  const double eps_a = 4.0, eps_b = 6.0;
+
+  IoData iodata_off = make_config("Offline", eps_a);
+  std::vector<std::unique_ptr<Mesh>> mesh_off;
+  mesh_off.push_back(std::make_unique<Mesh>(MakeGradedSplit(4, b, n, design_a)));
+  SubstructuringSolver off(iodata_off, mesh_off);
+  off.CondenseEnvironment();
+  const mfem::DenseMatrix C_a = off.CapacitanceMatrix(terms);
+
+  IoData iodata_on = make_config("Online", eps_b);
+  std::vector<std::unique_ptr<Mesh>> mesh_on;
+  mesh_on.push_back(std::make_unique<Mesh>(MakeGradedSplit(6, b, n, design_b)));
+  SubstructuringSolver on(iodata_on, mesh_on);
+  on.CondenseEnvironment();
+  const mfem::DenseMatrix C_b = on.CapacitanceMatrix(terms);
+  CHECK_FALSE(on.EnvironmentFactored());
+
+  // Monolithic reference on the redesigned mesh: C_ij = u_i^T K u_j, terminal i at 1 V.
+  auto &pmesh = mesh_on.back()->Get();
+  mfem::H1_FECollection fec(order, 3);
+  mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
+  mfem::Vector eps_by_attr(pmesh.attributes.Max());
+  eps_by_attr = 1.0;
+  eps_by_attr(1) = 10.0;   // environment (attr 2)
+  eps_by_attr(2) = eps_b;  // dielectric block (attr 3)
+  mfem::PWConstCoefficient eps(eps_by_attr);
+  mfem::ParBilinearForm a(&pfes);
+  a.AddDomainIntegrator(new mfem::DiffusionIntegrator(eps));
+  a.Assemble();
+  a.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> K(a.ParallelAssemble());
+  const int maxb = pmesh.bdr_attributes.Max();
+  std::vector<mfem::Vector> u(2);
+  for (int i = 0; i < 2; i++)
+  {
+    mfem::ParGridFunction x(&pfes);
+    x = 0.0;
+    mfem::Array<int> drive(maxb), ess_bdr(maxb), ess_tdofs;
+    drive = 0;
+    drive[i] = 1;  // terminal i+1 is boundary attribute i+1
+    ess_bdr = 0;
+    ess_bdr[0] = ess_bdr[1] = 1;
+    mfem::ConstantCoefficient one(1.0);
+    x.ProjectBdrCoefficient(one, drive);
+    pfes.GetEssentialTrueDofs(ess_bdr, ess_tdofs);
+    mfem::ParLinearForm rhs(&pfes);
+    rhs = 0.0;
+    mfem::OperatorPtr A;
+    mfem::Vector B, X;
+    a.FormLinearSystem(ess_tdofs, x, rhs, A, X, B);
+    mfem::HypreBoomerAMG amg(*A.As<mfem::HypreParMatrix>());
+    amg.SetPrintLevel(0);
+    mfem::HyprePCG pcg(*A.As<mfem::HypreParMatrix>());
+    pcg.SetTol(1.0e-14);
+    pcg.SetMaxIter(1000);
+    pcg.SetPrintLevel(0);
+    pcg.SetPreconditioner(amg);
+    pcg.Mult(B, X);
+    a.RecoverFEMSolution(X, rhs, x);
+    x.GetTrueDofs(u[i]);
+  }
+  mfem::DenseMatrix C_mono(2);
+  mfem::Vector Ku(pfes.GetTrueVSize());
+  for (int j = 0; j < 2; j++)
+  {
+    K->Mult(u[j], Ku);
+    for (int i = 0; i < 2; i++)
+    {
+      C_mono(i, j) = mfem::InnerProduct(Mpi::World(), u[i], Ku);
+    }
+  }
+  double d = 0.0, m = 0.0, change = 0.0;
+  for (int i = 0; i < 2; i++)
+  {
+    for (int j = 0; j < 2; j++)
+    {
+      d = std::max(d, std::abs(C_b(i, j) - C_mono(i, j)));
+      m = std::max(m, std::abs(C_mono(i, j)));
+      change = std::max(change, std::abs(C_b(i, j) - C_a(i, j)));
+    }
+  }
+  CHECK(d <= 1.0e-9 * m);
+  CHECK(change >= 1.0e-2 * m);  // the redesign really changed the capacitance
 }
 
 TEST_CASE("SubstructuringSolver magnetostatic cross-run re-meshing",
