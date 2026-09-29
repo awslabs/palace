@@ -12,6 +12,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string_view>
@@ -47,7 +48,10 @@ namespace
 {
 
 // Corner-coupon basis files of a unit-test corner family. The rule layout (the corner
-// family's trace basis rule, MakeCornerBoxSeed + BuildCornerTraceBasis) or the lane-2
+// family's trace basis rule, MakeCornerBoxSeed + BuildCornerTraceBasis; with a segment
+// connectivity angle in degrees the band merge is keyed by the rule's layout at that angle
+// and the TraceBasis record carries ConnectivityAngleDegrees, corner-qualification block
+// 2026-09-29; without one a legacy node, exact matches only) or the lane-2
 // angle-independent 8-knot layout (every ring the fixed knots; the zero set = the knots on
 // the metal footprint, the corner-family review's defective basis) at one angle; written by
 // the calling rank. Returns {basis-points, trace-vertices, trace-triangles, zero set
@@ -60,14 +64,22 @@ struct CornerBasisFiles
   json trace_basis;
 };
 
-CornerBasisFiles WriteCornerBasisFiles(const fs::path &directory, const std::string &tag,
-                                       double angle_degrees, bool convex, double radius,
-                                       double metal_thickness, double overetch_depth,
-                                       bool rule_layout)
+CornerBasisFiles
+WriteCornerBasisFiles(const fs::path &directory, const std::string &tag,
+                      double angle_degrees, bool convex, double radius,
+                      double metal_thickness, double overetch_depth, bool rule_layout,
+                      std::optional<double> connectivity_degrees = std::nullopt)
 {
   const CornerTraceBasisRule rule;
   const auto seed = MakeCornerBoxSeed(radius, metal_thickness, overetch_depth, convex, rule);
   const double angle = angle_degrees * M_PI / 180.0;
+  MFEM_VERIFY(rule_layout || !connectivity_degrees,
+              "A segment connectivity angle needs the rule layout!");
+  std::optional<double> connectivity;
+  if (connectivity_degrees)
+  {
+    connectivity = *connectivity_degrees * M_PI / 180.0;
+  }
   CornerBasisFiles files;
   files.points = directory / ("corner-basis-" + tag + "-points.csv");
   files.vertices = directory / ("corner-basis-" + tag + "-vertices.csv");
@@ -79,8 +91,9 @@ CornerBasisFiles WriteCornerBasisFiles(const fs::path &directory, const std::str
   std::vector<std::array<int, 3>> triangles;
   if (rule_layout)
   {
-    const auto basis = BuildCornerTraceBasis(seed.points, seed.contour_groups,
-                                             seed.zero_trace_indices, angle, convex, rule);
+    const auto basis =
+        BuildCornerTraceBasis(seed.points, seed.contour_groups, seed.zero_trace_indices,
+                              angle, convex, rule, connectivity);
     knots = basis.knots;
     for (int k = 0; k < static_cast<int>(knots.size()); k++)
     {
@@ -95,6 +108,10 @@ CornerBasisFiles WriteCornerBasisFiles(const fs::path &directory, const std::str
                          {"MetalInteriorKnots", rule.metal_interior_knots},
                          {"FreeKnots", rule.free_knots},
                          {"Fractions", rule.fractions}};
+    if (connectivity_degrees)
+    {
+      files.trace_basis["ConnectivityAngleDegrees"] = *connectivity_degrees;
+    }
   }
   else
   {
@@ -4482,22 +4499,30 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
   json island_config = IslandConfig();
-  // Angle-interpolated corner family on the FEATURES path (USER decision 121 (C)): a
-  // hexagonal island with vertices (+-L, 0), (+-0.8 L, +-L) on one plane (L = 1 = 5 R) has
-  // two convex corners of 157.38 deg (turn 22.62 deg, at (+-L, 0)) and four of 101.31 deg
-  // (turn 78.69 deg). With sharp convex coupons at 90 / 120 / 150 deg and the straight
-  // anchor (Angle 180) on one box basis, the 157 deg corners are in the first-order regime
-  // (turn below the smallest coupon turn 30 deg: linear anchor / 150 deg node with weights
-  // 1 - 22.62 / 30 and 22.62 / 30) and the 101 deg corners are cubic Lagrange on the four
-  // abscissae (turns 0 / 30 / 60 / 90), weights summing to one; the runtime models are
-  // named <base>@corner-angle<deg>-<rule> on the nearest node; every corner is patched once
-  // (weight one) in its frame. Without the 90 deg coupon the 101 deg corners are sharper than
-  // the sharpest coupon: unmatched with the reason (never the nearest node); without the
-  // anchor the 157 deg corners are unmatched (no first-order anchor).
+  // Angle-interpolated corner family on the FEATURES path (USER decision 121 (C), the
+  // kink-aware stencils of the corner-qualification block 2026-09-29, decisions 136 / 137):
+  // a hexagonal island with vertices (+-L, 0), (+-0.8 L, +-L) on one plane (L = 1 = 5 R)
+  // has two convex corners of 157.38 deg (turn 22.62 deg, at (+-L, 0)) and four of
+  // 101.31 deg (turn 78.69 deg). The synthetic family is built on one box basis with
+  // SEGMENT connectivity records (TraceBasis ConnectivityAngleDegrees): the segment
+  // [90, 135] keyed 112.5 (nodes 90 / 105 / 120 / 135) and the segment [153.435, 180] keyed
+  // 166.7 (nodes 153.434948822922 = the knot-corner passage / 160 / 165 / the straight
+  // anchor 180), so both corner classes are cubic Lagrange on the four nodes of their
+  // segment (weights summing to one, never across a knot-corner passage of the trace
+  // basis); the runtime models are named <base>@corner-angle<deg>-cubic on the nearest
+  // node of the stencil (105 for 101.31, 160 for 157.38); every corner is patched once
+  // (weight one) in its frame.
+  // Without the 90 deg coupon the 101 deg corners are sharper than the sharpest coupon:
+  // unmatched with the reason (never the nearest node); without the anchor the 157 deg
+  // corners are quadratic on the three remaining nodes of their segment (the highest order
+  // the segment supports, never across the passage); without the 160 / 165 / 180 nodes they
+  // are wider than the widest coupon: unmatched with the reason (no extrapolation) while
+  // the 101 deg corners keep their segment.
   {
     constexpr double hex_R = 0.2;
     constexpr double hex_L = 1.0;
     constexpr double hex_g = 0.8;
+    constexpr double hex_passage = 153.434948822922;  // convex knot-corner passage (free 2)
     auto MakeHexagonMesh = [&](double extent, double h)
     {
       const int n = static_cast<int>(std::lround(extent / h));
@@ -4583,6 +4608,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         temp.temp_dir / "fabrication-process-corner-family-no90.json";
     const auto corner_family_no_anchor_path =
         temp.temp_dir / "fabrication-process-corner-family-no-anchor.json";
+    const auto corner_family_no_wide_path =
+        temp.temp_dir / "fabrication-process-corner-family-no-wide.json";
     if (Mpi::Root(Mpi::World()))
     {
       json family_library = {
@@ -4604,7 +4631,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                        {"Interfaces", {{{"Type", "SA"}, {"Coupon", 1}}}}};
       family_library["Models"].push_back(isolated);
       // The family's coupons are built on the trace basis rule (corner-family review
-      // 2026-09-29): one knot semantics for every node, 72 knots, the same zero set.
+      // 2026-09-29): one knot semantics for every node, 72 knots, the same zero set; each
+      // with its segment's connectivity (one triangulation per segment).
       const auto family_fabricated_path = temp.temp_dir / "corner-family-fabricated.csv";
       const auto family_thin_path = temp.temp_dir / "corner-family-thin.csv";
       const auto family_fabricated_surface_path =
@@ -4613,12 +4641,17 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       WriteCornerMatrices(family_fabricated_path, family_fabricated_surface_path, 72, 3.0,
                           0.05, hex_R);
       WriteCornerMatrices(family_thin_path, family_thin_surface_path, 72, 1.0, 0.01, hex_R);
-      for (const double angle : {90.0, 120.0, 150.0, 180.0})
+      const std::vector<std::pair<double, double>> family_nodes = {
+          {90.0, 112.5},          {105.0, 112.5}, {120.0, 112.5}, {135.0, 112.5},
+          {hex_passage, 166.7},   {160.0, 166.7}, {165.0, 166.7}, {180.0, 166.7}};
+      for (const auto &[angle, connectivity] : family_nodes)
       {
-        const auto files = WriteCornerBasisFiles(
-            temp.temp_dir, "family-" + std::to_string(static_cast<int>(angle)), angle, true,
-            hex_R, 0.05 * hex_R, 0.025 * hex_R, true);
-        json model = {{"Name", "convex-corner-" + std::to_string(static_cast<int>(angle))},
+        std::ostringstream tag;
+        tag << std::setprecision(12) << angle;
+        const auto files =
+            WriteCornerBasisFiles(temp.temp_dir, "family-" + tag.str(), angle, true, hex_R,
+                                  0.05 * hex_R, 0.025 * hex_R, true, connectivity);
+        json model = {{"Name", "convex-corner-" + tag.str()},
                       {"Topology", "ConvexCorner"},
                       {"Angle", angle},
                       {"AngleDegrees", angle},
@@ -4652,6 +4685,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       no_anchor["Models"].erase(no_anchor["Models"].end() - 1);
       std::ofstream no_anchor_output(corner_family_no_anchor_path);
       no_anchor_output << no_anchor.dump(2) << "\n";
+      // Without the 160 / 165 / 180 nodes the wide segment is the passage node alone.
+      auto no_wide = family_library;
+      no_wide["Name"] = "unit-test-corner-family-no-wide-3d";
+      no_wide["Models"].erase(no_wide["Models"].end() - 3, no_wide["Models"].end());
+      std::ofstream no_wide_output(corner_family_no_wide_path);
+      no_wide_output << no_wide.dump(2) << "\n";
     }
     Mpi::Barrier(Mpi::World());
     auto hexagon_config = island_config;
@@ -4691,14 +4730,17 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         const std::string model = feature["Match"]["Model"].get<std::string>();
         if (std::abs(angle - wide_angle) < 1.0e-6)
         {
-          CHECK(model.find("convex-corner-150@corner-angle") != std::string::npos);
-          CHECK(model.find("-linear") != std::string::npos);
+          // Cubic on the segment [153.435, 180] keyed 166.7; the base is the nearest node
+          // (160: 2.62 deg away, the passage node 3.95).
+          CHECK(model.find("convex-corner-160@corner-angle") != std::string::npos);
+          CHECK(model.find("-cubic") != std::string::npos);
           wide++;
         }
         else
         {
+          // Cubic on the segment [90, 135] keyed 112.5; the base is the nearest node (105).
           CHECK_THAT(angle, WithinAbs(narrow_angle, 1.0e-6));
-          CHECK(model.find("convex-corner-90@corner-angle") != std::string::npos);
+          CHECK(model.find("convex-corner-105@corner-angle") != std::string::npos);
           CHECK(model.find("-cubic") != std::string::npos);
           narrow++;
         }
@@ -4731,7 +4773,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         const double angle = family["AngleDegrees"].get<double>();
         CHECK(family["Convexity"] == "Convex");
         CHECK_THAT(family["MaxTurnDegrees"].get<double>(), WithinAbs(90.0, 1.0e-9));
-        CHECK_THAT(family["FirstOrderTurnDegrees"].get<double>(), WithinAbs(30.0, 1.0e-9));
+        // The smallest node turn is the 165 deg node's (the first-order record field; the
+        // stencil itself is the segment's cubic).
+        CHECK_THAT(family["FirstOrderTurnDegrees"].get<double>(), WithinAbs(15.0, 1.0e-9));
         // (The node angles are the models' Angle in radians back in degrees, the group's
         // AngleDegrees the representative on the 1e-6 deg signature grid: keys rounded,
         // weights compared at 1e-6.)
@@ -4748,19 +4792,23 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
           sum += weight;
         }
         CHECK_THAT(sum, WithinAbs(1.0, 1.0e-9));
-        if (std::abs(angle - wide_angle) < 1.0e-6)
+        // Both classes: cubic Lagrange on the four nodes of the angle's segment (the
+        // segment's connectivity angle recorded), weights the Lagrange polynomials in the
+        // turn.
+        CHECK(family["InterpolationRule"] == "cubic");
+        REQUIRE(weights.size() == 4);
+        const bool wide_record = std::abs(angle - wide_angle) < 1.0e-6;
+        CHECK_THAT(family["ConnectivityAngleDegrees"].get<double>(),
+                   WithinAbs(wide_record ? 166.7 : 112.5, 1.0e-9));
+        const std::vector<double> expected_nodes =
+            wide_record ? std::vector<double>{hex_passage, 160.0, 165.0, 180.0}
+                        : std::vector<double>{90.0, 105.0, 120.0, 135.0};
+        for (const double node_angle : expected_nodes)
         {
-          CHECK(family["InterpolationRule"] == "linear");
-          REQUIRE(weights.size() == 2);
-          const double t = 180.0 - wide_angle;
-          CHECK_THAT(weights.at(180.0), WithinAbs(1.0 - t / 30.0, 1.0e-6));
-          CHECK_THAT(weights.at(150.0), WithinAbs(t / 30.0, 1.0e-6));
+          CHECK(weights.count(std::round(node_angle * 1.0e6) * 1.0e-6) == 1);
         }
-        else
         {
-          CHECK(family["InterpolationRule"] == "cubic");
-          REQUIRE(weights.size() == 4);
-          const double t = 180.0 - narrow_angle;
+          const double t = 180.0 - (wide_record ? wide_angle : narrow_angle);
           for (const auto &[node_angle, weight] : weights)
           {
             double expected = 1.0;
@@ -4783,9 +4831,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
     {
       // Without the 90 deg coupon the 101 deg corners are sharper than the sharpest coupon
-      // (120 deg): unmatched with the reason; the 157 deg corners keep their linear blend.
+      // (105 deg): unmatched with the reason; the 157 deg corners keep their cubic segment.
       const json manifest = RunHexagon(corner_family_no90_path);
-      int refused = 0, linear = 0;
+      int refused = 0, cubic = 0;
       for (const auto &feature : manifest["Identification"]["Features"])
       {
         if (feature["Type"] != "ConvexCorner")
@@ -4800,20 +4848,52 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         }
         else
         {
-          CHECK(feature["Match"]["Model"].get<std::string>().find("-linear") !=
+          CHECK(feature["Match"]["Model"].get<std::string>().find(
+                    "convex-corner-160@corner-angle") != std::string::npos);
+          CHECK(feature["Match"]["Model"].get<std::string>().find("-cubic") !=
                 std::string::npos);
-          linear++;
+          cubic++;
         }
       }
       CHECK(refused == 4);
-      CHECK(linear == 2);
+      CHECK(cubic == 2);
     }
     {
-      // Without the straight anchor the 157 deg corners (first-order regime) are unmatched
-      // with the reason; the 101 deg corners are cubic on the three remaining nodes'
-      // window (quadratic: 90 / 120 / 150).
+      // Without the straight anchor the 157 deg corners are quadratic on the three
+      // remaining nodes of their segment (153.435 / 160 / 165 keyed 166.7, base 160: the
+      // highest order the segment supports); the 101 deg corners keep their cubic segment
+      // [90, 135].
       const json manifest = RunHexagon(corner_family_no_anchor_path);
-      int refused = 0, quadratic = 0;
+      int quadratic = 0, cubic = 0;
+      for (const auto &feature : manifest["Identification"]["Features"])
+      {
+        if (feature["Type"] != "ConvexCorner")
+        {
+          continue;
+        }
+        REQUIRE(feature["Match"]["Status"] == "Matched");
+        const std::string model = feature["Match"]["Model"].get<std::string>();
+        if (model.find("-quadratic") != std::string::npos)
+        {
+          CHECK(model.find("convex-corner-160@corner-angle") != std::string::npos);
+          quadratic++;
+        }
+        else
+        {
+          CHECK(model.find("convex-corner-105@corner-angle") != std::string::npos);
+          CHECK(model.find("-cubic") != std::string::npos);
+          cubic++;
+        }
+      }
+      CHECK(quadratic == 2);
+      CHECK(cubic == 4);
+    }
+    {
+      // Without the 160 / 165 / 180 nodes the 157 deg corners are wider than the widest
+      // coupon (the passage node 153.435): unmatched with the reason (no extrapolation);
+      // the 101 deg corners keep their cubic segment [90, 135].
+      const json manifest = RunHexagon(corner_family_no_wide_path);
+      int refused = 0, cubic = 0;
       for (const auto &feature : manifest["Identification"]["Features"])
       {
         if (feature["Type"] != "ConvexCorner")
@@ -4822,19 +4902,21 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         }
         if (feature["Match"]["Status"] == "Missing")
         {
-          CHECK(feature["Match"]["Note"].get<std::string>().find("no straight anchor") !=
+          CHECK(feature["Match"]["Note"].get<std::string>().find("wider than") !=
                 std::string::npos);
           refused++;
         }
         else
         {
-          CHECK(feature["Match"]["Model"].get<std::string>().find("-quadratic") !=
+          CHECK(feature["Match"]["Model"].get<std::string>().find(
+                    "convex-corner-105@corner-angle") != std::string::npos);
+          CHECK(feature["Match"]["Model"].get<std::string>().find("-cubic") !=
                 std::string::npos);
-          quadratic++;
+          cubic++;
         }
       }
       CHECK(refused == 2);
-      CHECK(quadratic == 4);
+      CHECK(cubic == 4);
     }
   }
 
@@ -5898,7 +5980,10 @@ namespace
 // Shared setup of the SurfaceResponseOperatorCornerTraceBasis cases (the corner family's
 // trace basis rule, corner-family review 2026-09-29): the libraries (the isolated edge plus
 // one convex corner coupon at 90 / 120 / 135 / 165 / 180 degrees on the lane-2 layout or
-// the rule's layout, and the family library with the rule's nodes), the device islands (a
+// the rule's layout, and the family library with the rule's nodes: the legacy tie coupons
+// 90 / 135 / 150 / 165 / 180 (exact matches only) and the segment [90, 135] keyed 112.5
+// with the per-side 90+ / 135- coupons and the 105 / 120 nodes carrying TraceBasis
+// ConnectivityAngleDegrees, corner-qualification block 2026-09-29), the device islands (a
 // house (90, 90, 120, 120, 120 degrees), a gable (90, 90, 165, 105, 105, 165) and a steep
 // house with two 112.5-degree corners and a 135-degree apex, vertices on grid rays) and
 // the runtime helpers: the family IoData with the default Collocated lift or the protocol's
@@ -5918,7 +6003,24 @@ struct CornerTraceBasisFixture
   const fs::path corner_thin_surface_path = temp.temp_dir / "corner-thin-surface.csv";
   json base_library;
   std::map<std::string, fs::path> libraries;
-  const std::vector<double> family_angles = {90.0, 105.0, 120.0, 135.0, 150.0, 165.0, 180.0};
+  // The family's nodes: angle, segment connectivity (legacy when absent) and model name
+  // (the per-side coupons beside a legacy tie coupon carry the -c<connectivity> suffix).
+  struct FamilyNode
+  {
+    double angle;
+    std::optional<double> connectivity;
+    std::string name;
+  };
+  const std::vector<FamilyNode> family_nodes = {
+      {90.0, std::nullopt, "convex-corner-90"},
+      {90.0, 112.5, "convex-corner-90-c112.5"},
+      {105.0, 112.5, "convex-corner-105"},
+      {120.0, 112.5, "convex-corner-120"},
+      {135.0, 112.5, "convex-corner-135-c112.5"},
+      {135.0, std::nullopt, "convex-corner-135"},
+      {150.0, std::nullopt, "convex-corner-150"},
+      {165.0, std::nullopt, "convex-corner-165"},
+      {180.0, std::nullopt, "convex-corner-180"}};
   const std::vector<std::array<double, 2>> house = {
       {-1.0, -1.0}, {1.0, -1.0}, {1.0, 0.2}, {0.0, 0.2 + std::tan(30.0 * M_PI / 180.0)},
       {-1.0, 0.2}};
@@ -6011,12 +6113,14 @@ CornerTraceBasisFixture::CornerTraceBasisFixture()
     }
     auto family = base_library;
     family["Name"] = "unit-test-corner-trace-basis-family";
-    for (const double angle : family_angles)
+    for (const auto &node : family_nodes)
     {
-      const auto files = WriteCornerBasisFiles(
-          temp.temp_dir, "family-" + std::to_string(static_cast<int>(angle)), angle, true, R,
-          t, oe, true);
-      family["Models"].push_back(CornerModel(angle, files, true));
+      const auto files = WriteCornerBasisFiles(temp.temp_dir, "family-" + node.name,
+                                               node.angle, true, R, t, oe, true,
+                                               node.connectivity);
+      json model = CornerModel(node.angle, files, true);
+      model["Name"] = node.name;
+      family["Models"].push_back(model);
     }
     libraries["family"] = temp.temp_dir / "library-family.json";
     std::ofstream output(libraries["family"]);
@@ -6193,8 +6297,11 @@ CornerTraceBasisFixture::CornerEnergies(mfem::ParMesh &mesh, const std::string &
 // layout at 120 / 165 degrees) is refused at library load, the lane-2 layout at 90 / 135 /
 // 180 degrees (arms on knot rays) and the rule's layout at every angle load; (3) the
 // runtime — an island with exact 120-degree (house) and exact 165 / 105-degree corners
-// matched to exact nodes of a rule-built family and an interpolated angle (112.5 degrees)
-// whose runtime basis is constructed by the rule at the device angle, run with the default
+// matched to exact nodes of a rule-built family (the legacy tie coupons ahead of the
+// per-side 90+ / 135- coupons) and an interpolated angle (112.5 degrees: cubic on the
+// segment [90, 135] keyed 112.5, corner-qualification block 2026-09-29) whose runtime
+// basis is constructed by the rule at the device angle with the segment's connectivity,
+// run with the default
 // Collocated lift (the trace sampled at the knots; the trace mesh is not read) and with the
 // protocol's SurfaceMortar lift (MortarOversampling 2: the angle-specific trace meshes with
 // their slave box-corner vertices enter the mortar mass and the lifts through
@@ -6449,7 +6556,8 @@ TEST_CASE_METHOD(CornerTraceBasisFixture,
   // (3) The runtime on the rule-built family with the default Collocated lift (the
   // trace sampled at the knots; the trace mesh is not read): exact nodes on the house
   // (120) and the gable (165 / 105), the interpolated 112.5-degree angle of the steep
-  // house (cubic on the 105 / 120 window, the runtime basis constructed by the rule).
+  // house (cubic on the segment [90, 135] keyed 112.5, the runtime basis constructed by the
+  // rule with the segment's connectivity).
   {
     const bool mortar = false;
     const std::string lift = "-collocated";
@@ -6494,7 +6602,10 @@ TEST_CASE_METHOD(CornerTraceBasisFixture,
         }
       }
       REQUIRE(!interpolated.empty());
-      // The base is the nearest node (turn 67.5 between 60 and 75: the first, 120 degrees).
+      // The base is the nearest node of the segment's stencil; 112.5 is equidistant from
+      // 105 and 120 and the tie falls to 120 (as before the segment rule: the models'
+      // Angle round trip through radians leaves 120 nearer by a rounding residue, the same
+      // on every rank). The exact 90 / 135 corners take the legacy tie coupons.
       CHECK(interpolated.rfind("convex-corner-120@", 0) == 0);
       const double ninety = per_patch.at("convex-corner-90");
       CHECK(per_patch.at(interpolated) > 0.5 * ninety);
@@ -6557,7 +6668,10 @@ TEST_CASE_METHOD(CornerTraceBasisFixture,
         }
       }
       REQUIRE(!interpolated.empty());
-      // The base is the nearest node (turn 67.5 between 60 and 75: the first, 120 degrees).
+      // The base is the nearest node of the segment's stencil; 112.5 is equidistant from
+      // 105 and 120 and the tie falls to 120 (as before the segment rule: the models'
+      // Angle round trip through radians leaves 120 nearer by a rounding residue, the same
+      // on every rank). The exact 90 / 135 corners take the legacy tie coupons.
       CHECK(interpolated.rfind("convex-corner-120@", 0) == 0);
       const double ninety = per_patch.at("convex-corner-90");
       CHECK(per_patch.at(interpolated) > 0.5 * ninety);
