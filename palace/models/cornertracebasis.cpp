@@ -140,8 +140,9 @@ bool OnMetalFootprint(const std::array<double, 3> &point, double angle_radians, 
   {
     return in_wedge;
   }
-  const bool on_arm = (std::abs(first_distance) <= tolerance && second_distance >= 0.0) ||
-                      (std::abs(second_distance) <= tolerance && first_distance >= 0.0);
+  const bool on_arm =
+      (std::abs(first_distance) <= tolerance && second_distance >= -tolerance) ||
+      (std::abs(second_distance) <= tolerance && first_distance >= -tolerance);
   return !in_wedge || on_arm;
 }
 
@@ -567,11 +568,6 @@ std::string CheckCornerBasisCrossings(const std::vector<std::array<double, 3>> &
 {
   const std::set<int> zero(zero_trace_indices.begin(), zero_trace_indices.end());
   int offset = 0;
-  double radius = 0.0;
-  for (const auto &point : points)
-  {
-    radius = std::max(radius, std::max(std::abs(point[0]), std::abs(point[1])));
-  }
   auto Describe = [](const std::array<double, 3> &point)
   {
     return "(" + std::to_string(point[0]) + ", " + std::to_string(point[1]) + ", " +
@@ -633,7 +629,6 @@ std::string CheckCornerBasisCrossings(const std::vector<std::array<double, 3>> &
     }
     offset += size;
   }
-  (void)radius;
   return "";
 }
 
