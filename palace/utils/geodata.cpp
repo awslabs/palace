@@ -247,7 +247,7 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
   if (smesh->Conforming())
   {
     auto face_to_be = CheckMesh(*smesh, iodata.boundaries);
-    if (iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements)
+    if (iodata.model.crack_bdr_elements.value_or(true) || iodata.model.add_bdr_elements)
     {
       while (AddInterfaceBdrElements(iodata, smesh, face_to_be, comm) != 1)
       {
@@ -290,7 +290,7 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
   }
 
   // Broadcast cracked boundary attributes from root to all ranks.
-  if (iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements)
+  if (iodata.model.crack_bdr_elements.value_or(true) || iodata.model.add_bdr_elements)
   {
     int size = iodata.boundaries.cracked_attributes.size();
     Mpi::Broadcast(1, &size, 0, comm);
@@ -3169,23 +3169,12 @@ struct UnorderedPairHasher
 int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_mesh,
                             std::unordered_map<int, int> &face_to_be, MPI_Comm comm)
 {
-  // Exclude some internal boundary conditions for which cracking would give invalid
-  // results: lumpedports in particular.
-  const auto crack_boundary_attributes = [&iodata]()
-  {
-    auto cba = iodata.boundaries.attributes;
-    // Remove lumped port attributes.
-    for (const auto &[idx, data] : iodata.boundaries.lumpedport)
-    {
-      for (const auto &e : data.elements)
-      {
-        auto attr_in_elem = [&](auto x)
-        { return std::ranges::find(e.attributes, x) != e.attributes.end(); };
-        std::erase_if(cba, attr_in_elem);
-      }
-    }
-    return cba;
-  }();
+  // By default, interior boundaries with boundary conditions applying to either side
+  // separately are cracked, as well as impedance and conductivity sheets modeled as two
+  // independent surfaces ("Crack"). Lumped ports are never cracked, which would give
+  // invalid results.
+  const auto crack_boundary_attributes =
+      iodata.boundaries.GetMeshCrackAttributes(iodata.model.crack_bdr_elements);
 
   // Return if nothing to do. Otherwise, count vertices and boundary elements to add.
   if (crack_boundary_attributes.empty() && !iodata.model.add_bdr_elements)
@@ -3208,7 +3197,7 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
   std::unordered_map<int, std::vector<std::pair<int, std::unordered_set<int>>>>
       crack_vert_duplicates;
   std::unique_ptr<mfem::Table> vert_to_elem;
-  if (!crack_boundary_attributes.empty() && iodata.model.crack_bdr_elements)
+  if (!crack_boundary_attributes.empty() && iodata.model.crack_bdr_elements.value_or(true))
   {
     auto crack_bdr_marker = mesh::AttrToMarker(
         orig_mesh->bdr_attributes.Size() ? orig_mesh->bdr_attributes.Max() : 0,

@@ -35,11 +35,14 @@ private:
   const MaterialOperator &mat_op;
 
   // Surface properties for finite conductivity boundary attributes: conductor conductivity
-  // and permeability, and (optionally) thickness.
+  // and permeability, and (optionally) thickness. The attributes are split into those on
+  // the exterior of the domain (or on a cracked interior boundary), where the boundary
+  // condition applies to one side, and those on an interior boundary (a conducting sheet
+  // with two surfaces), where the surface admittance of both surfaces is applied.
   struct ConductivityData
   {
     double sigma, mu, h;
-    mfem::Array<int> attr_list;
+    mfem::Array<int> attr_list, ext_attr_list, int_attr_list;
   };
   std::vector<ConductivityData> boundaries;
 
@@ -55,6 +58,10 @@ private:
   // here so both AddExtraSystemBdrCoefficients overloads share it.
   std::complex<double> EvaluateScalarImpl(std::size_t group_idx,
                                           std::complex<double> omega) const;
+
+  // Add the coefficient for group g to the boundary coefficient, accounting for the two
+  // surfaces of interior conducting sheets.
+  void AddCoefficient(std::size_t g, double coeff, MaterialPropertyCoefficient &fb) const;
 
 public:
   SurfaceConductivityOperator(const std::vector<config::ConductivityData> &conductivity,

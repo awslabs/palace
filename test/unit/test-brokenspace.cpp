@@ -12,10 +12,13 @@
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "fem/brokenspace.hpp"
+#include "fem/coefficient.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/fespace.hpp"
+#include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
+#include "fem/output_functionals.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
@@ -720,9 +723,9 @@ TEST_CASE("Broken space error estimators (nonconforming)",
     {
       const auto sa = SortByCenter(uncut_setup.mesh, a);
       const auto sb = SortByCenter(cut_setup.mesh, b);
-      REQUIRE(sa.size() == sb.size());
+      CHECK(sa.size() == sb.size());  // Not REQUIRE: the reductions below are collective
       double max_diff = 0.0, max_ref = 0.0;
-      for (std::size_t i = 0; i < sa.size(); i++)
+      for (std::size_t i = 0; i < std::min(sa.size(), sb.size()); i++)
       {
         max_diff = std::max(max_diff, std::abs(sa[i] - sb[i]));
         max_ref = std::max(max_ref, std::abs(sb[i]));
@@ -915,6 +918,128 @@ TEST_CASE("Broken space error estimators (2D)",
     CHECK(curl_max > 1.0e-4);
     CHECK(GlobalMax(comm, grad_broken) < 1.0e-6 * grad_max);
     CHECK(GlobalMax(comm, curl_broken) < 1.0e-6 * curl_max);
+  }
+}
+
+TEST_CASE("Interface dielectric energy on interior boundaries separating fields",
+          "[brokenspace][surfacefunctional][Serial][Parallel]")
+{
+  // On an interior boundary which separates the fields on its two sides (such as a thin
+  // metal sheet), the interface energy sums the energies of both sides, as for a mesh cut
+  // along the boundary.
+  const auto comm = MPI_COMM_WORLD;
+  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  const int order = GENERATE(1, 2);
+  const bool dielectric = GENERATE(false, true);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  config::MaterialData material;
+  material.attributes = {1};
+  if (dielectric)
+  {
+    material.epsilon_r.s = {11.7, 11.7, 11.7};
+  }
+  config::PeriodicBoundaryData periodic;
+
+  auto smesh = MakeCrackedCubeMesh(4, type);
+  auto cut = CutMesh(smesh);
+  auto part = Partition(smesh, Mpi::Size(comm));
+  auto cut_part = Partition(cut, Mpi::Size(comm));
+  auto mesh = MakeParMesh(comm, smesh, part);
+  auto cut_mesh = MakeParMesh(comm, cut, cut_part);
+  MaterialOperator mat_op({material}, periodic, ProblemType::EIGENMODE, mesh);
+  MaterialOperator cut_mat_op({material}, periodic, ProblemType::EIGENMODE, cut_mesh);
+  mfem::ND_FECollection nd_fec(order, 3);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), cut_nd_fespace(cut_mesh, &nd_fec);
+  auto Project = [](FiniteElementSpace &fespace)
+  {
+    auto E = std::make_unique<GridFunction>(fespace, true);
+    mfem::VectorFunctionCoefficient fr(3, SmoothE), fi(3, JumpE);
+    E->Real().ProjectCoefficient(fr);
+    E->Imag().ProjectCoefficient(fi);
+    E->Real().ExchangeFaceNbrData();  // For the legacy coefficient evaluation
+    E->Imag().ExchangeFaceNbrData();
+    return E;
+  };
+  auto E = Project(nd_fespace);
+  auto cut_E = Project(cut_nd_fespace);
+
+  const int bdr_attr_max = mesh.Get().bdr_attributes.Max();
+  mfem::Array<int> marker(bdr_attr_max), none(bdr_attr_max);
+  marker = 0;
+  none = 0;
+  marker[crack_attr - 1] = 1;
+  const double t_i = 2.0e-3, epsilon_i = 10.0;
+
+  // Legacy coefficient integral over the marked boundary elements.
+  auto LegacyIntegral = [&](mfem::Coefficient &f, const mfem::ParMesh &pmesh)
+  {
+    double sum = 0.0;
+    for (int be = 0; be < pmesh.GetNBE(); be++)
+    {
+      if (pmesh.GetBdrAttribute(be) != crack_attr)
+      {
+        continue;
+      }
+      auto &T = *const_cast<mfem::ParMesh &>(pmesh).GetBdrElementTransformation(be);
+      const auto &ir = mfem::IntRules.Get(T.GetGeometryType(), 2 * order + 2);
+      for (int q = 0; q < ir.GetNPoints(); q++)
+      {
+        const auto &ip = ir.IntPoint(q);
+        T.SetIntPoint(&ip);
+        sum += ip.weight * T.Weight() * f.Eval(T, ip);
+      }
+    }
+    Mpi::GlobalSum(1, &sum, comm);
+    return sum;
+  };
+
+  for (auto epr_type :
+       {InterfaceDielectric::DEFAULT, InterfaceDielectric::MA, InterfaceDielectric::MS})
+  {
+    CAPTURE(static_cast<int>(epr_type), dielectric);
+    SurfaceFunctional sum_sides(mesh, marker, nd_fespace.Get(), mat_op, epr_type, t_i,
+                                epsilon_i, &marker);
+    SurfaceFunctional average(mesh, marker, nd_fespace.Get(), mat_op, epr_type, t_i,
+                              epsilon_i, &none);
+    SurfaceFunctional cut_ref(cut_mesh, marker, cut_nd_fespace.Get(), cut_mat_op, epr_type,
+                              t_i, epsilon_i);
+    REQUIRE(sum_sides.IsValid());
+    REQUIRE(cut_ref.IsValid());
+    const double val = sum_sides.Eval(*E), ref = cut_ref.Eval(*cut_E),
+                 avg = average.Eval(*E);
+    const bool qualifies = (epr_type == InterfaceDielectric::DEFAULT) ||
+                           ((epr_type == InterfaceDielectric::MA) != dielectric);
+    CAPTURE(val, ref, avg);
+    if (qualifies)
+    {
+      CHECK_THAT(val, WithinRel(ref, 1.0e-10));
+      CHECK(std::abs(val - avg) > 1.0e-3 * std::abs(val));
+    }
+    else
+    {
+      CHECK(std::abs(val) < 1.0e-14);
+      CHECK(std::abs(ref) < 1.0e-14);
+    }
+
+    // The legacy coefficient path agrees.
+    auto Legacy = [&]() -> std::unique_ptr<mfem::Coefficient>
+    {
+      switch (epr_type)
+      {
+        case InterfaceDielectric::DEFAULT:
+          return std::make_unique<
+              InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>>(
+              *E, mat_op, t_i, epsilon_i, &marker);
+        case InterfaceDielectric::MA:
+          return std::make_unique<InterfaceDielectricCoefficient<InterfaceDielectric::MA>>(
+              *E, mat_op, t_i, epsilon_i, &marker);
+        default:
+          return std::make_unique<InterfaceDielectricCoefficient<InterfaceDielectric::MS>>(
+              *E, mat_op, t_i, epsilon_i, &marker);
+      }
+    }();
+    const double legacy = LegacyIntegral(*Legacy, mesh.Get());
+    CHECK_THAT(legacy, WithinRel(val, 1.0e-8) || WithinAbs(val, 1.0e-14));
   }
 }
 

@@ -273,7 +273,10 @@ ModelData::ModelData(const json &model)
   make_hex = model.value("MakeHexahedral", make_hex);
   reorder_elements = model.value("ReorderElements", reorder_elements);
   clean_unused_elements = model.value("CleanUnusedElements", clean_unused_elements);
-  crack_bdr_elements = model.value("CrackInternalBoundaryElements", crack_bdr_elements);
+  if (auto it = model.find("CrackInternalBoundaryElements"); it != model.end())
+  {
+    crack_bdr_elements = it->get<bool>();
+  }
   refine_crack_elements = model.value("RefineCrackElements", refine_crack_elements);
   crack_displ_factor = model.value("CrackDisplacementFactor", crack_displ_factor);
   add_bdr_elements = model.value("AddInterfaceBoundaryElements", add_bdr_elements);
@@ -403,6 +406,7 @@ ConductivityData::ConductivityData(const json &boundary)
   mu_r = boundary.value("Permeability", mu_r);
   h = boundary.value("Thickness", h);
   external = boundary.value("External", external);
+  crack = boundary.value("Crack", crack);
 }
 
 ImpedanceData::ImpedanceData(const json &boundary)
@@ -412,6 +416,7 @@ ImpedanceData::ImpedanceData(const json &boundary)
   Rs = boundary.value("Rs", Rs);
   Ls = boundary.value("Ls", Ls);
   Cs = boundary.value("Cs", Cs);
+  crack = boundary.value("Crack", crack);
 }
 
 int ParsePortExcitation(const json &port, int index)
@@ -454,6 +459,7 @@ RationalImpedanceData::RationalImpedanceData(const json &boundary)
               "Rational impedance \"Denominator\" must have a nonzero coefficient!");
   MFEM_VERIFY(std::ranges::any_of(num, [](double c) { return c != 0.0; }),
               "Rational impedance \"Numerator\" must have a nonzero coefficient!");
+  crack = boundary.value("Crack", crack);
 }
 
 SuperconductorData::SuperconductorData(const json &boundary)
@@ -1132,6 +1138,114 @@ BoundaryData::BoundaryData(const json &boundaries)
   std::ranges::sort(attributes);
   attributes.erase(std::ranges::unique(attributes).begin(), attributes.end());
   attributes.shrink_to_fit();
+}
+
+std::vector<int> BoundaryData::GetSheetAttributes(bool conductors_only) const
+{
+  std::vector<int> attr_list;
+  auto Append = [&attr_list](const std::vector<int> &attrs)
+  { attr_list.insert(attr_list.end(), attrs.begin(), attrs.end()); };
+  Append(pec.attributes);
+  for (const auto &data : conductivity)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &data : impedance)
+  {
+    if (!conductors_only || data.Rs != 0.0 || data.Ls != 0.0)
+    {
+      Append(data.attributes);
+    }
+  }
+  for (const auto &data : rational_impedance)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &[idx, data] : lumpedport)
+  {
+    for (const auto &elem : data.elements)
+    {
+      Append(elem.attributes);
+    }
+  }
+  for (const auto &[idx, data] : terminal)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &[idx, data] : current)
+  {
+    for (const auto &elem : data.elements)
+    {
+      Append(elem.attributes);
+    }
+  }
+  for (const auto &[idx, data] : fluxloop)
+  {
+    Append(data.film_attributes);
+  }
+  std::sort(attr_list.begin(), attr_list.end());
+  attr_list.erase(std::unique(attr_list.begin(), attr_list.end()), attr_list.end());
+  return attr_list;
+}
+
+std::vector<int>
+BoundaryData::GetMeshCrackAttributes(std::optional<bool> crack_bdr_elements) const
+{
+  std::vector<int> attr_list;
+  if (crack_bdr_elements.has_value() && !*crack_bdr_elements)
+  {
+    return attr_list;
+  }
+  if (crack_bdr_elements.has_value())
+  {
+    // Legacy behavior: all boundary condition attributes except for lumped ports.
+    attr_list = attributes;
+    for (const auto &[idx, data] : lumpedport)
+    {
+      for (const auto &elem : data.elements)
+      {
+        for (auto attr : elem.attributes)
+        {
+          attr_list.erase(std::remove(attr_list.begin(), attr_list.end(), attr),
+                          attr_list.end());
+        }
+      }
+    }
+    return attr_list;
+  }
+
+  // Default: boundary conditions which apply to either side of an interior boundary
+  // separately, and would otherwise have no effect there (wave and Floquet ports are
+  // always exterior boundaries), and sheets with a surface impedance which are modeled as
+  // two independent surfaces (a conductor much thicker than the penetration depth).
+  auto Append = [&attr_list](const std::vector<int> &attrs)
+  { attr_list.insert(attr_list.end(), attrs.begin(), attrs.end()); };
+  Append(pmc.attributes);
+  Append(farfield.attributes);
+  for (const auto &data : conductivity)
+  {
+    if (data.crack)
+    {
+      Append(data.attributes);
+    }
+  }
+  for (const auto &data : impedance)
+  {
+    if (data.crack)
+    {
+      Append(data.attributes);
+    }
+  }
+  for (const auto &data : rational_impedance)
+  {
+    if (data.crack)
+    {
+      Append(data.attributes);
+    }
+  }
+  std::sort(attr_list.begin(), attr_list.end());
+  attr_list.erase(std::unique(attr_list.begin(), attr_list.end()), attr_list.end());
+  return attr_list;
 }
 
 std::vector<double> ConstructLinearRange(double start, double end, double delta)

@@ -131,7 +131,8 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
           }
         }())),
     surf_post_op(boundaries.postpro, solver_t, fem_op->GetMaterialOp(),
-                 fem_op->GetH1Space(), fem_op->GetNDSpace()),
+                 fem_op->GetH1Space(), fem_op->GetNDSpace(),
+                 boundaries.GetSheetAttributes(true)),
     interp_op(domains.postpro.probe, units_, fem_op->GetNDSpace())
 {
   // Define primary grid-functions.
