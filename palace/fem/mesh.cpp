@@ -3,9 +3,13 @@
 
 #include "mesh.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include "fem/brokenspace.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
 #include "fem/libceed/integrator.hpp"
+#include "utils/communication.hpp"
 
 namespace palace
 {
@@ -361,6 +365,98 @@ void Mesh::Update()
   loc_attr = BuildCeedAttributes(parent_mesh);
   loc_bdr_attr = BuildCeedBdrAttributes(parent_mesh);
   ResetCeedObjects();
+
+  // Complete the transfer of interior boundary sides through a rebalance.
+  if (crack_gf)
+  {
+    if (crack_mesh == mesh.get() && mesh->GetSequence() == crack_sequence + 1 &&
+        mesh->GetLastOperation() == mfem::Mesh::REBALANCE)
+    {
+      crack_fespace->Update();
+      crack_gf->Update();
+      const int ne = mesh->GetNE();
+      const auto *h_gf = crack_gf->HostRead();
+      crack_sides.copy.resize(ne);
+      crack_sides.split.resize(ne);
+      for (int e = 0; e < ne; e++)
+      {
+        crack_sides.copy[e] = static_cast<std::uint32_t>(std::lround(h_gf[e]));
+        crack_sides.split[e] = static_cast<std::uint32_t>(std::lround(h_gf[ne + e]));
+      }
+      crack_sequence = mesh->GetSequence();
+    }
+    crack_gf.reset();
+    crack_fespace.reset();
+    crack_fec.reset();
+  }
+}
+
+const CrackSides &Mesh::GetCrackSides(const std::vector<int> &attr_list) const
+{
+  std::vector<int> key(attr_list);
+  std::sort(key.begin(), key.end());
+  key.erase(std::unique(key.begin(), key.end()), key.end());
+  if (key == crack_attr_list && crack_mesh == mesh.get() &&
+      crack_sequence == mesh->GetSequence())
+  {
+    return crack_sides;
+  }
+  if (mesh::HasHangingEntities(*mesh))
+  {
+    // For example a nonconforming mesh from a previous adaptive simulation.
+    Mpi::Warning(mesh->GetComm(),
+                 "Interior boundaries cannot be identified on a nonconforming mesh which "
+                 "was not refined in this simulation, error estimation will assume "
+                 "continuous fluxes across interior boundaries!\n");
+    crack_sides.copy.assign(mesh->GetNE(), 0);
+    crack_sides.split.assign(mesh->GetNE(), 0);
+  }
+  else
+  {
+    const int bdr_attr_max = mesh->bdr_attributes.Size() ? mesh->bdr_attributes.Max() : 0;
+    mfem::Array<int> marker(bdr_attr_max);
+    marker = 0;
+    for (auto attr : key)
+    {
+      if (attr > 0 && attr <= bdr_attr_max)
+      {
+        marker[attr - 1] = 1;
+      }
+    }
+    crack_sides = mesh::ComputeCrackSides(*mesh, marker);
+  }
+  crack_attr_list = std::move(key);
+  crack_mesh = mesh.get();
+  crack_sequence = mesh->GetSequence();
+  return crack_sides;
+}
+
+void Mesh::RefineCrackSides()
+{
+  // Only a single refinement since the sides were computed can be followed.
+  if (crack_mesh != mesh.get() || mesh->GetSequence() != crack_sequence + 1 ||
+      mesh->GetLastOperation() != mfem::Mesh::REFINE || !mesh->Nonconforming())
+  {
+    crack_mesh = nullptr;
+    return;
+  }
+  crack_sides =
+      mesh::InheritCrackSides(*mesh, mesh->GetRefinementTransforms(), crack_sides);
+  crack_sequence = mesh->GetSequence();
+
+  // Prepare the transfer of the sides through a possible rebalance, which keeps the mesh
+  // object for a nonconforming mesh.
+  crack_fec = std::make_unique<mfem::L2_FECollection>(0, mesh->Dimension());
+  crack_fespace =
+      std::make_unique<mfem::ParFiniteElementSpace>(mesh.get(), crack_fec.get(), 2);
+  crack_gf = std::make_unique<mfem::ParGridFunction>(crack_fespace.get());
+  const int ne = mesh->GetNE();
+  auto *h_gf = crack_gf->HostWrite();
+  for (int e = 0; e < ne; e++)
+  {
+    h_gf[e] = static_cast<double>(crack_sides.copy[e]);
+    h_gf[ne + e] = static_cast<double>(crack_sides.split[e]);
+  }
 }
 
 void Mesh::RebuildCeedAttributes()
