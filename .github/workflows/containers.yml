@@ -103,6 +103,9 @@ jobs:
       # filter.)
       - uses: actions/checkout@v6
         if: needs.filter.outputs.test == 'true' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+        with:
+          # Full history and tags, so `git describe` can stamp the version.
+          fetch-depth: 0
       - uses: ./.github/actions/build-container
         if: needs.filter.outputs.test == 'true' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
         with:

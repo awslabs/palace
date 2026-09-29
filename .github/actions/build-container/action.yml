@@ -162,7 +162,9 @@ runs:
         printf '%s' "$GITHUB_TOKEN" > "$GITHUB_TOKEN_FILE"
         trap 'rm -f "$GITHUB_USER_FILE" "$GITHUB_TOKEN_FILE" "$BUILD_LOG"' EXIT
 
-        PALACE_GIT_COMMIT="$(git rev-parse HEAD)"
+        # .git is excluded from the build context, so describe the version here.
+        PALACE_GIT_COMMIT_ID="$(git describe --tags --always --dirty)"
+        echo "Palace version: $PALACE_GIT_COMMIT_ID"
 
         build_image() {
           sudo podman build --format docker --layers "$@" \
@@ -170,7 +172,7 @@ runs:
             --secret "id=github_token,src=$GITHUB_TOKEN_FILE" \
             --build-arg "PALACE_CUDA=$PALACE_CUDA" \
             --build-arg "SPACK_PACKAGES_COMMIT=$SPACK_PACKAGES_COMMIT" \
-            --build-arg "PALACE_GIT_COMMIT=$PALACE_GIT_COMMIT" \
+            --build-arg "PALACE_GIT_COMMIT_ID=$PALACE_GIT_COMMIT_ID" \
             -t "$IMAGE_NAME" .
         }
 
