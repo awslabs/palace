@@ -3628,6 +3628,34 @@ MatchCurvatureFamily(const ProcessLibrary &library, const IdentifiedFeature &fea
 // nearest node (its ZeroTraceIndices: the knots inside the metal at the nearest coupon
 // angle; the corner coupons have no coupon depth, the weights apply as they are). Rounded
 // corners keep their per-radius coupons (CornerRadiusInterpolation): no angle family.
+// A spatial model's explicit trace triangulation (TraceMesh files, or constructed by the
+// corner family's trace basis rule at the device angle). A vertex is a basis knot (basis =
+// its 1-based BasisPoints index), a conductor vertex (basis 0, conductor > 0) or a slave
+// vertex (basis 0, conductor 0, parents parent_a / parent_b 1-based with weight_a on
+// parent_a: a box corner between two knots whose trace is the linear interpolation).
+struct TraceMeshData
+{
+  struct Vertex
+  {
+    Point3D point{};
+    int basis = 0;
+    int conductor = 0;
+    int parent_a = 0;
+    int parent_b = 0;
+    double weight_a = 0.0;
+  };
+  std::vector<Vertex> vertices;
+  std::vector<std::array<int, 3>> triangles;
+
+  bool HasSlaveVertices() const
+  {
+    return std::any_of(vertices.begin(), vertices.end(),
+                       [](const Vertex &vertex) { return vertex.parent_a > 0; });
+  }
+};
+
+TraceMeshData ReadTraceMesh(const std::string &vertex_path, const std::string &triangle_path);
+
 struct FeatureCornerMatch
 {
   std::size_t base = 0;  // the nearest node: basis, zero trace indices, references
@@ -3781,6 +3809,59 @@ MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &featur
                                                << "\" differ on a ring that does not meet "
                                                   "the metal!");
       }
+    }
+    // The coupon's trace triangulation against the rule's (the segment's connectivity): a
+    // segment node whose bands are triangulated otherwise would blend across a jump of the
+    // hats (fail closed; the recorded perimeter-ordered coupons stamped with a connectivity
+    // angle pass exactly when no event lies between their angle and it).
+    if (model.corner_connectivity_angle_degrees)
+    {
+      MFEM_VERIFY(!model.response.trace_vertices.empty() &&
+                      !model.response.trace_triangles.empty(),
+                  "Corner family coupon \"" << model.name
+                                            << "\" has a segment connectivity but no "
+                                               "TraceMesh!");
+      const auto mesh =
+          ReadTraceMesh(model.response.trace_vertices, model.response.trace_triangles);
+      MFEM_VERIFY(mesh.vertices.size() == rule_basis.vertices.size() &&
+                      mesh.triangles.size() == rule_basis.triangles.size(),
+                  "Corner family coupon \""
+                      << model.name
+                      << "\" trace mesh does not have the rule's vertex / triangle counts "
+                         "for its segment connectivity!");
+      for (std::size_t v = 0; v < mesh.vertices.size(); v++)
+      {
+        const auto &vertex = mesh.vertices[v];
+        const auto &rule_vertex = rule_basis.vertices[v];
+        const std::array<double, 3> point = {vertex.point[0], vertex.point[1],
+                                             vertex.point[2]};
+        MFEM_VERIFY(Distance(point, rule_vertex.point) <= position_tolerance &&
+                        vertex.basis - 1 == rule_vertex.basis &&
+                        vertex.parent_a - 1 == rule_vertex.parent_a &&
+                        vertex.parent_b - 1 == rule_vertex.parent_b,
+                    "Corner family coupon \"" << model.name << "\" trace vertex " << v + 1
+                                              << " differs from the rule's for its segment "
+                                                 "connectivity!");
+      }
+      std::set<std::array<int, 3>> coupon_triangles, rule_triangles;
+      for (auto triangle : mesh.triangles)
+      {
+        std::sort(triangle.begin(), triangle.end());
+        coupon_triangles.insert(triangle);
+      }
+      for (auto triangle : rule_basis.triangles)
+      {
+        std::sort(triangle.begin(), triangle.end());
+        rule_triangles.insert(triangle);
+      }
+      MFEM_VERIFY(coupon_triangles == rule_triangles,
+                  "Corner family coupon \""
+                      << model.name
+                      << "\" trace triangulation is not the rule's for its segment "
+                         "connectivity angle "
+                      << *model.corner_connectivity_angle_degrees
+                      << " deg (the band triangulation differs: the coupon belongs to another "
+                         "segment)!");
     }
     CornerFamilyNode node;
     node.angle_degrees = 180.0 - node_turn;
@@ -6299,11 +6380,22 @@ LibrarySignatureKeys(const ProcessLibrary &library,
     std::sort(interfaces.begin(), interfaces.end());
     interfaces.erase(std::unique(interfaces.begin(), interfaces.end()), interfaces.end());
     const std::string law = Law(model.boundary_condition);
+    // Corner family coupons at one angle (one per side of a knot-corner passage beside a
+    // legacy tie coupon): the exact match prefers the legacy coupon, then the lower-angle
+    // segment's (SelectCornerFamilyStencil's rule; corner-qualification block 2026-09-29).
+    int rank = 0;
+    if (model.corner_connectivity_angle_degrees)
+    {
+      rank = *model.corner_connectivity_angle_degrees < model.angle * 180.0 / std::acos(-1.0)
+                 ? 1
+                 : 2;
+    }
     std::optional<std::pair<nlohmann::json, std::string>> key;  // signature, type
     if (model.identification_signature)
     {
       index.Add(*model.identification_signature,
-                model.identification_signature->at("Type").get<std::string>(), model.name);
+                model.identification_signature->at("Type").get<std::string>(), model.name,
+                rank);
       continue;
     }
     switch (model.topology)
@@ -6388,13 +6480,6 @@ LibrarySignatureKeys(const ProcessLibrary &library,
     }
     if (key)
     {
-      int rank = 0;
-      if (model.corner_connectivity_angle_degrees)
-      {
-        rank = *model.corner_connectivity_angle_degrees < model.angle * 180.0 / std::acos(-1.0)
-                   ? 1
-                   : 2;
-      }
       index.Add(key->first, key->second, model.name, rank);
     }
   }
@@ -12301,31 +12386,6 @@ ResponseCorrectionData BuildAutomaticResponseData(const IoData &iodata,
              "electrostatic mesh!");
 }
 
-// A spatial model's explicit trace triangulation (TraceMesh files, or constructed by the
-// corner family's trace basis rule at the device angle). A vertex is a basis knot (basis =
-// its 1-based BasisPoints index), a conductor vertex (basis 0, conductor > 0) or a slave
-// vertex (basis 0, conductor 0, parents parent_a / parent_b 1-based with weight_a on
-// parent_a: a box corner between two knots whose trace is the linear interpolation).
-struct TraceMeshData
-{
-  struct Vertex
-  {
-    Point3D point{};
-    int basis = 0;
-    int conductor = 0;
-    int parent_a = 0;
-    int parent_b = 0;
-    double weight_a = 0.0;
-  };
-  std::vector<Vertex> vertices;
-  std::vector<std::array<int, 3>> triangles;
-
-  bool HasSlaveVertices() const
-  {
-    return std::any_of(vertices.begin(), vertices.end(),
-                       [](const Vertex &vertex) { return vertex.parent_a > 0; });
-  }
-};
 
 TraceMeshData ReadTraceMesh(const std::string &vertex_path,
                             const std::string &triangle_path)
