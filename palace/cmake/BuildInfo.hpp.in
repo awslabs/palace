@@ -1,0 +1,17 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+#ifndef PALACE_BUILD_INFO_HPP
+#define PALACE_BUILD_INFO_HPP
+
+namespace palace::buildinfo
+{
+struct Dependency { const char *name, *version; };
+inline constexpr char version[] = "@PROJECT_VERSION@";
+inline constexpr char git_sha[] = "@PALACE_GIT_SHA@";
+inline constexpr char build_system[] = "@PALACE_BUILD_SYSTEM@";
+inline constexpr char build_id[] = "@PALACE_BUILD_ID@";
+inline constexpr Dependency dependencies[] = {@PALACE_BUILD_INFO_DEPENDENCIES@};
+}  // namespace palace::buildinfo
+
+#endif  // PALACE_BUILD_INFO_HPP

@@ -18,8 +18,7 @@
       "**/CMakeLists.txt"
     ],
     "exclude": [
-      ".git/**",
-      "palace/cmake/GetGitDescription.cmake"
+      ".git/**"
     ],
     "license": "./.github/license-check/hash.txt"
   },
