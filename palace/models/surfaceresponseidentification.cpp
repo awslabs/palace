@@ -10235,7 +10235,10 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "slave trace vertices; the library load refuses a spatial corner coupon whose "
          "metal arm crosses a box ring at no PEC knot; the runtime basis of an interpolated "
          "corner is constructed by the rule at the feature's angle (TraceBasis record: "
-         "RingSize 8, MetalInteriorKnots 1, FreeKnots 5, Fractions PerimeterArcLength)"},
+         "RingSize 8, MetalInteriorKnots 1, FreeKnots 5, Fractions PerimeterArcLength; "
+         "knot coincidence 1e-6 of the perimeter: a free or metal-interior knot within it "
+         "of a fixed fraction k / RingSize takes that fraction, a box corner within it of "
+         "any knot gets no slave vertex)"},
         {"SagittaOverR", kArcSagittaOverRadius},
         {"ArcSampleSpacingOverR", kArcSampleSpacingOverRadius},
         {"ClusterArcChordStepDegrees", kClusterArcChordStepDegrees},

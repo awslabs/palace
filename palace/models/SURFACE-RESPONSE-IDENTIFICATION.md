@@ -1031,8 +1031,10 @@ the slab top) the knots are the two crossings of the metal arms with the ring (P
 `MetalInteriorKnots` = 1 knot at equal perimeter-arc-length fractions of the metal arc between
 them (PEC) and `FreeKnots` = 5 knots at equal fractions of the free arc (free); the knots are
 ordered by ROLE within the ring (convex: free 2 .. 5, first crossing, metal interior, second
-crossing, free 1 — the lane-2 order of the 90-degree node, which the rule reproduces
-byte-identically; concave: first crossing, free 1 .. 5, second crossing, metal interior), so
+crossing, free 1 — the lane-2 order of the 90-degree CONVEX node, which the rule reproduces
+byte-identically; concave: first crossing, free 1 .. 5, second crossing, metal interior — the
+concave 90-degree node differs from lane 2's by construction, 5 free knots on the free
+quadrant arc instead of 1), so
 every node of a family has the same knot count (72), the same zero set (convex 1-based
 29-31 / 37-39, concave 25 / 31-33 / 39 / 40) and like-to-like free knots whose POSITIONS
 vary smoothly with the angle: the entrywise blend is well posed. Fractions are perimeter arc
@@ -1054,7 +1056,25 @@ corners, carried by the runtime model as `constructed_basis_points` / trace vert
 triangles and by the geometry cache). `ZeroTraceIndices` semantics on the electrostatic
 path (review m5): a PEC knot's trace is zero whatever the device potential at its point (a
 slab-top knot lies in the thin device's air); the surface mortar and, since this fix, the
-collocated lift enforce it. Recorded limitation of the rule (held-out interpolation,
+collocated lift enforce it (RATIFIED, supervisor decision 134 (a), 2026-09-29: physically
+right and consistent with the mortar; quoted device numbers use `TraceCoupling`
+`SurfaceMortar` with `MortarOversampling` 2 — the protocol's lift — and none of the
+corner-basis-fix block's quoted numbers was produced with the collocated lift). Knot
+coincidence (review m3): `KNOT_COINCIDENCE_FRACTION` / `kKnotCoincidenceFraction` = 1e-6 of
+the perimeter — a free or metal-interior knot within it of a fixed-layout fraction
+k / RingSize (a box corner or side midpoint) takes that fraction exactly and a corner within
+it of any knot gets no slave vertex, so the smallest triangle a constructed basis can
+contain has an edge of 8e-6 R (area >= 4e-6 R h, six orders above the mortar's
+degenerate-triangle threshold `area <= 1e-14 max(1, L^2)`), while a snap moves a knot by at
+most 8e-6 R (15 pm at R = 1.9 um); crossing knots are never moved (they stay on the arm for
+the gates; a crossing within the band suppresses the corner's slave). The former 1e-9 was a
+floating-point identity tolerance and left arbitrarily thin (non-degenerate) slivers. The
+ring selection of `CheckCornerBasisCrossings` (commit 5bd5089a7): a ring is judged when it
+has PEC knots AND every knot lies on the perimeter of the centred square |x|, |y| <= its
+half width (a corner-coupon box ring); the commit message's motivation ("the concave family's
+metal rings reach neither the left nor the bottom side") does not describe the test — the
+code is right, the message is not, recorded here rather than rewritten. Recorded limitation
+of the rule (held-out interpolation,
 corner-basis-fix-20260929): a free knot passes a box corner at some angle (its hat straddles
 the corner on one side only), a kink of the matrix entries in the angle; the cubic stencil
 75 / 90 / 105 / 120 of the convex 82.5-deg held-out angle contains the passing of free 1 (the
