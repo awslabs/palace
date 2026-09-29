@@ -229,7 +229,7 @@ def _run_json(cmd: list[str]) -> dict:
     same orphans for the next run to "delete" again.
     """
     print("+ " + " ".join(cmd))
-    proc = subprocess.run(cmd, check=True, capture_output=True, text=True)
+    proc = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, text=True)
     text = proc.stdout.strip()
     if not text:
         return {}
