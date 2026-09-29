@@ -671,6 +671,27 @@ void IoData::CheckConfiguration()
                 "problem types!");
     MFEM_VERIFY(!sub.region_attributes.empty() && !sub.environment_attributes.empty(),
                 "Substructuring requires nonempty Region and Environment attribute sets!");
+    // Adaptive refinement refines the region only, in an online run: the environment was
+    // condensed on its final mesh, so it must not change. Refine the full model before
+    // condensing it instead (adaptive run with "SaveAdaptMesh", then an offline run on the
+    // saved mesh). Nonconforming refinement without a level constraint keeps the refinement
+    // from spreading into the environment; the interface DOFs then stay those of the
+    // environment side.
+    if (model.refinement.max_it > 0)
+    {
+      MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC,
+                  "Adaptive mesh refinement with substructuring is only supported for "
+                  "electrostatic problems!");
+      MFEM_VERIFY(sub.mode == SubstructuringMode::ONLINE,
+                  "Adaptive mesh refinement with substructuring refines the region of an "
+                  "\"Online\" run; to refine the full model, run the adaptation without "
+                  "\"Solver.Substructuring\" (with \"SaveAdaptMesh\") and condense the "
+                  "saved mesh offline!");
+      MFEM_VERIFY(model.refinement.nonconformal && model.refinement.max_nc_levels == 0,
+                  "Adaptive mesh refinement with substructuring requires nonconforming "
+                  "refinement (\"Nonconformal\": true) without a level constraint "
+                  "(\"MaxNCLevels\": 0), so it does not spread into the environment!");
+    }
     if (problem.type == ProblemType::MAGNETOSTATIC)
     {
       // Magnetostatic substructuring condenses Dirichlet-lift (flux-loop) excitations;

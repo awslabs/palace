@@ -15,6 +15,7 @@
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
 #include "fem/substructure.hpp"
 #include "models/substructuringsolver.hpp"
@@ -103,7 +104,8 @@ struct RegionDesign
 // n) keeps Gamma and the environment fixed -- exactly the offline/online region-redesign
 // workflow. `design` adds features inside the region (see RegionDesign).
 std::unique_ptr<mfem::ParMesh> MakeGradedSplit(int a, int b, int n,
-                                               const RegionDesign &design = {})
+                                               const RegionDesign &design = {},
+                                               bool nonconforming = false)
 {
   std::vector<double> xs;
   for (int i = 0; i <= a; i++)
@@ -182,6 +184,10 @@ std::unique_ptr<mfem::ParMesh> MakeGradedSplit(int a, int b, int n,
   }
   serial.FinalizeHexMesh(1, 0, true);
   serial.SetAttributes();
+  if (nonconforming)
+  {
+    serial.EnsureNCMesh();  // a ParMesh cannot be made nonconforming afterwards
+  }
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
 }
 
@@ -1346,6 +1352,427 @@ TEST_CASE("SubstructuringSolver cross-run region re-meshing",
 
   CHECK(e_sub > 1.0e-8);
   CHECK(std::abs(e_sub - e_mono) <= 1.0e-6 * std::abs(e_mono));
+}
+
+// Monolithic reference capacitance C_ij = u_i^T K u_j (terminal i at 1 V on boundary
+// attribute i + 1, the others at 0 V), with MFEM directly (independent of substructuring).
+// eps_by_attr: permittivity by element attribute.
+mfem::DenseMatrix MonolithCapacitance(mfem::ParMesh &pmesh, int order,
+                                      const mfem::Vector &eps_by_attr, int n_terminals)
+{
+  mfem::H1_FECollection fec(order, pmesh.Dimension());
+  mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
+  mfem::PWConstCoefficient eps(eps_by_attr);
+  mfem::ParBilinearForm a(&pfes);
+  a.AddDomainIntegrator(new mfem::DiffusionIntegrator(eps));
+  a.Assemble();
+  a.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> K(a.ParallelAssemble());
+  const int maxb = pmesh.bdr_attributes.Max();
+  std::vector<mfem::Vector> u(n_terminals);
+  for (int i = 0; i < n_terminals; i++)
+  {
+    mfem::ParGridFunction x(&pfes);
+    x = 0.0;
+    mfem::Array<int> drive(maxb), ess_bdr(maxb), ess_tdofs;
+    drive = 0;
+    drive[i] = 1;
+    ess_bdr = 0;
+    for (int t = 0; t < n_terminals; t++)
+    {
+      ess_bdr[t] = 1;
+    }
+    mfem::ConstantCoefficient one(1.0);
+    x.ProjectBdrCoefficient(one, drive);
+    pfes.GetEssentialTrueDofs(ess_bdr, ess_tdofs);
+    mfem::ParLinearForm rhs(&pfes);
+    rhs = 0.0;
+    mfem::OperatorPtr A;
+    mfem::Vector B, X;
+    a.FormLinearSystem(ess_tdofs, x, rhs, A, X, B);
+    mfem::HypreBoomerAMG amg(*A.As<mfem::HypreParMatrix>());
+    amg.SetPrintLevel(0);
+    mfem::HyprePCG pcg(*A.As<mfem::HypreParMatrix>());
+    pcg.SetTol(1.0e-14);
+    pcg.SetMaxIter(2000);
+    pcg.SetPrintLevel(0);
+    pcg.SetPreconditioner(amg);
+    pcg.Mult(B, X);
+    a.RecoverFEMSolution(X, rhs, x);
+    x.GetTrueDofs(u[i]);
+  }
+  mfem::DenseMatrix C(n_terminals);
+  mfem::Vector Ku(pfes.GetTrueVSize());
+  for (int j = 0; j < n_terminals; j++)
+  {
+    K->Mult(u[j], Ku);
+    for (int i = 0; i < n_terminals; i++)
+    {
+      C(i, j) = mfem::InnerProduct(pmesh.GetComm(), u[i], Ku);
+    }
+  }
+  return C;
+}
+
+// Nonconforming refinement of the graded split (as produced by AMR): refined elements on
+// both sides of the interface x = 0.5 (so Gamma has hanging nodes from either side) and
+// away from it.
+std::unique_ptr<mfem::ParMesh> MakeRefinedGradedSplit(int a, int b, int n,
+                                                      const RegionDesign &design = {})
+{
+  auto pmesh = MakeGradedSplit(a, b, n, design, true);
+  mfem::Array<int> marked;
+  mfem::Vector c;
+  for (int e = 0; e < pmesh->GetNE(); e++)
+  {
+    pmesh->GetElementCenter(e, c);
+    if ((c(0) > 0.37 && c(0) < 0.5 && c(1) < 0.5) ||  // region side of Gamma
+        (c(0) > 0.5 && c(0) < 0.62 && c(1) > 0.5) ||  // environment side of Gamma
+        (c(0) < 0.2 && c(2) < 0.3) || (c(0) > 0.85 && c(2) > 0.7))
+    {
+      marked.Append(e);
+    }
+  }
+  pmesh->GeneralRefinement(marked, 1);
+  return pmesh;
+}
+
+TEST_CASE("SubstructuringSolver on a nonconforming mesh",
+          "[substructure][Serial][Parallel]")
+{
+  // Offline condensation on an adapted (nonconforming) mesh must reproduce the monolith on
+  // the same mesh, including hanging nodes on the interface from either side. A partial
+  // conductor and a dielectric block in the region make the field vary across the hanging
+  // faces (a field linear in x would satisfy the constraints trivially).
+  const int order = GENERATE(1, 2);
+  CAPTURE(order);
+  const std::string model_path = "substruct_nc_model.bin";
+  auto make_config = [order, &model_path](const std::string &mode)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+            {{"Attributes", {3}}, {"Permittivity", 4.0}},
+            {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", order},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1, 3}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"Mode", mode},
+            {"SaveModel", model_path}}}}}};
+    return IoData(config, false);
+  };
+  const RegionDesign design{0.5, {0.25, 0.5, 0.5}};
+  IoData iodata = make_config("Offline");
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(MakeRefinedGradedSplit(4, 5, 6, design)));
+  REQUIRE(mesh.back()->Get().Nonconforming());
+  SubstructuringSolver ss(iodata, mesh);
+  ss.CondenseEnvironment();
+  const mfem::DenseMatrix C = ss.CapacitanceMatrix({1, 2});
+  mfem::Vector eps_by_attr(3);
+  eps_by_attr(0) = 1.0;
+  eps_by_attr(1) = 10.0;
+  eps_by_attr(2) = 4.0;
+  const mfem::DenseMatrix C_mono =
+      MonolithCapacitance(mesh.back()->Get(), order, eps_by_attr, 2);
+  double d = 0.0, m = 0.0;
+  for (int i = 0; i < 2; i++)
+  {
+    for (int j = 0; j < 2; j++)
+    {
+      d = std::max(d, std::abs(C(i, j) - C_mono(i, j)));
+      m = std::max(m, std::abs(C_mono(i, j)));
+    }
+  }
+  CAPTURE(C(0, 0), C_mono(0, 0), C(0, 1), C_mono(0, 1));
+  CHECK(d <= 1.0e-9 * m);
+
+  // The refinement changes the capacitance, so matching the refined monolith is meaningful.
+  const auto coarse = MakeGradedSplit(4, 5, 6, design);
+  const mfem::DenseMatrix C_coarse = MonolithCapacitance(*coarse, order, eps_by_attr, 2);
+  CHECK(std::abs(C_coarse(0, 0) - C_mono(0, 0)) >= 1.0e-4 * m);
+
+  // Online reuse of the model on the same nonconforming mesh (interface matched through the
+  // master DOFs of the hanging faces) is exact and needs no environment factorization.
+  IoData iodata_on = make_config("Online");
+  std::vector<std::unique_ptr<Mesh>> mesh_on;
+  mesh_on.push_back(std::make_unique<Mesh>(MakeRefinedGradedSplit(4, 5, 6, design)));
+  SubstructuringSolver on(iodata_on, mesh_on);
+  on.CondenseEnvironment();
+  const mfem::DenseMatrix C_on = on.CapacitanceMatrix({1, 2});
+  CHECK_FALSE(on.EnvironmentFactored());
+  double don = 0.0;
+  for (int i = 0; i < 2; i++)
+  {
+    for (int j = 0; j < 2; j++)
+    {
+      don = std::max(don, std::abs(C_on(i, j) - C(i, j)));
+    }
+  }
+  CHECK(don <= 1.0e-12 * m);
+}
+
+TEST_CASE("SubstructuringSolver magnetostatic energy on a nonconforming mesh",
+          "[substructure][Serial][Parallel]")
+{
+  // H(curl) on an adapted (nonconforming) mesh with hanging edges on the interface: the
+  // condensed magnetic energy of a divergence-free current source must match a monolith of
+  // the same operator on the same mesh.
+  const int order = GENERATE(1, 2);
+  CAPTURE(order);
+  const double mu_r = 1.0, mu_e = 4.0;
+  const std::string model_path = "substruct_nc_mag_model.bin";
+  auto make_config = [order, mu_r, mu_e, &model_path](const std::string &mode)
+  {
+    json config = {
+        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permeability", mu_r}, {"Permittivity", 1.0}},
+            {{"Attributes", {2}}, {"Permeability", mu_e}, {"Permittivity", 1.0}}}}}},
+        {"Boundaries", {}},
+        {"Solver",
+         {{"Order", order},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"Mode", mode},
+            {"SaveModel", model_path}}}}}};
+    return IoData(config, false);
+  };
+  IoData iodata = make_config("Offline");
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(MakeRefinedGradedSplit(4, 5, 6)));
+  REQUIRE(mesh.back()->Get().Nonconforming());
+  SubstructuringSolver ss(iodata, mesh);
+  ss.CondenseEnvironment();
+
+  auto &pmesh = mesh.back()->Get();
+  mfem::ND_FECollection fec(order, 3);
+  mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
+  auto jfun = [](const mfem::Vector &x, mfem::Vector &j)
+  {
+    j.SetSize(3);
+    j(0) = -(x(1) - 0.5);
+    j(1) = (x(0) - 0.5);
+    j(2) = 0.0;
+  };
+  mfem::VectorFunctionCoefficient jc(3, jfun);
+  mfem::ParLinearForm lf(&pfes);
+  lf.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(jc));
+  lf.Assemble();
+  Vector f(pfes.GetTrueVSize());
+  lf.ParallelAssemble(f);
+  const double e_sub = ss.ElectrostaticEnergy(ss.SolveSource(f));
+
+  mfem::Vector nu_by_attr(2), mass_by_attr(2);
+  nu_by_attr(0) = 1.0 / mu_r;
+  nu_by_attr(1) = 1.0 / mu_e;
+  mass_by_attr = 1.0e-3;  // SubstructuringSolver's regularization
+  mfem::PWConstCoefficient nu(nu_by_attr), massc(mass_by_attr);
+  mfem::ParBilinearForm asolve(&pfes), aenergy(&pfes);
+  asolve.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
+  asolve.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(massc));
+  aenergy.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
+  asolve.Assemble();
+  asolve.Finalize();
+  aenergy.Assemble();
+  aenergy.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> Ksolve(asolve.ParallelAssemble());
+  std::unique_ptr<mfem::HypreParMatrix> Kpure(aenergy.ParallelAssemble());
+  mfem::HypreAMS ams(*Ksolve, &pfes);
+  ams.SetPrintLevel(0);
+  mfem::HyprePCG pcg(*Ksolve);
+  pcg.SetTol(1.0e-13);
+  pcg.SetMaxIter(4000);
+  pcg.SetPrintLevel(0);
+  pcg.SetPreconditioner(ams);
+  Vector u(pfes.GetTrueVSize()), t(pfes.GetTrueVSize());
+  u = 0.0;
+  pcg.Mult(f, u);
+  Kpure->Mult(u, t);
+  const double e_mono = 0.5 * mfem::InnerProduct(pmesh.GetComm(), u, t);
+  CAPTURE(e_sub, e_mono);
+  CHECK(e_sub > 1.0e-6);
+  CHECK(std::abs(e_sub - e_mono) <= 1.0e-6 * std::abs(e_mono));
+
+  // The refinement changes the energy by far more than the mismatch above, so the match is
+  // meaningful.
+  {
+    auto coarse = MakeGradedSplit(4, 5, 6);
+    mfem::ParFiniteElementSpace cfes(coarse.get(), &fec);
+    mfem::ParLinearForm clf(&cfes);
+    clf.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(jc));
+    clf.Assemble();
+    Vector cf(cfes.GetTrueVSize());
+    clf.ParallelAssemble(cf);
+    mfem::ParBilinearForm cs(&cfes), ce(&cfes);
+    cs.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
+    cs.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(massc));
+    ce.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
+    cs.Assemble();
+    cs.Finalize();
+    ce.Assemble();
+    ce.Finalize();
+    std::unique_ptr<mfem::HypreParMatrix> CS(cs.ParallelAssemble()),
+        CE(ce.ParallelAssemble());
+    mfem::HypreAMS cams(*CS, &cfes);
+    cams.SetPrintLevel(0);
+    mfem::HyprePCG cpcg(*CS);
+    cpcg.SetTol(1.0e-13);
+    cpcg.SetMaxIter(4000);
+    cpcg.SetPrintLevel(0);
+    cpcg.SetPreconditioner(cams);
+    Vector cu(cfes.GetTrueVSize()), ct(cfes.GetTrueVSize());
+    cu = 0.0;
+    cpcg.Mult(cf, cu);
+    CE->Mult(cu, ct);
+    const double e_coarse = 0.5 * mfem::InnerProduct(coarse->GetComm(), cu, ct);
+    CHECK(std::abs(e_coarse - e_mono) >= 100.0 * std::abs(e_sub - e_mono));
+  }
+
+  // Online reuse on the same nonconforming mesh: the saved S_E is matched onto the
+  // interface edge DOFs, which include the master edges of hanging faces.
+  IoData iodata_on = make_config("Online");
+  std::vector<std::unique_ptr<Mesh>> mesh_on;
+  mesh_on.push_back(std::make_unique<Mesh>(MakeRefinedGradedSplit(4, 5, 6)));
+  SubstructuringSolver on(iodata_on, mesh_on);
+  on.CondenseEnvironment();
+  const double e_on = on.ElectrostaticEnergy(on.SolveSource(f));
+  CAPTURE(e_on);
+  CHECK(std::abs(e_on - e_sub) <= 1.0e-7 * std::abs(e_sub));  // iterative region solves
+}
+
+TEST_CASE("SubstructuringSolver online region adaptation",
+          "[substructure][Serial][Parallel]")
+{
+  // One step of online adaptive refinement of the region only: the region error indicators
+  // are zero on the environment; nonconforming refinement of the marked region elements
+  // leaves the environment and the interface DOFs as condensed, so the saved model still
+  // applies without factoring the environment, matches a monolith on the refined mesh, and
+  // the estimated region error decreases.
+  const int order = GENERATE(1, 2);
+  CAPTURE(order);
+  const std::string model_path = "substruct_amr_model.bin";
+  auto make_config = [order, &model_path](const std::string &mode)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+            {{"Attributes", {3}}, {"Permittivity", 4.0}},
+            {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", order},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1, 3}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"Mode", mode},
+            {"SaveModel", model_path}}}}}};
+    return IoData(config, false);
+  };
+  const RegionDesign design{0.5, {0.25, 0.5, 0.5}};
+  const std::vector<int> terms = {1, 2};
+  {
+    IoData iodata = make_config("Offline");
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(MakeGradedSplit(4, 5, 6, design, true)));
+    SubstructuringSolver off(iodata, mesh);
+    off.CondenseEnvironment();
+    (void)off.CapacitanceMatrix(terms);
+  }
+  IoData iodata_on = make_config("Online");
+  auto count_env = [](const mfem::ParMesh &m)
+  {
+    long c = 0;
+    for (int e = 0; e < m.GetNE(); e++)
+    {
+      c += (m.GetAttribute(e) == 2);
+    }
+    MPI_Allreduce(MPI_IN_PLACE, &c, 1, MPI_LONG, MPI_SUM, m.GetComm());
+    return c;
+  };
+
+  // Online solve and region indicators on the initial mesh.
+  std::vector<std::unique_ptr<Mesh>> mesh0;
+  mesh0.push_back(std::make_unique<Mesh>(MakeGradedSplit(4, 5, 6, design, true)));
+  auto &pm0 = mesh0.back()->Get();
+  SubstructuringSolver on0(iodata_on, mesh0);
+  on0.CondenseEnvironment();
+  std::vector<Vector> region_fields;
+  const mfem::DenseMatrix C0 = on0.CapacitanceMatrix(terms, nullptr, 0, &region_fields);
+  const ErrorIndicator ind0 = on0.RegionErrorIndicator(region_fields, C0);
+  CHECK_FALSE(on0.EnvironmentFactored());
+  REQUIRE(ind0.Local().Size() == pm0.GetNE());
+  double env_max = 0.0, reg_max = 0.0;
+  for (int e = 0; e < pm0.GetNE(); e++)
+  {
+    (pm0.GetAttribute(e) == 2 ? env_max : reg_max) =
+        std::max(pm0.GetAttribute(e) == 2 ? env_max : reg_max, ind0.Local()(e));
+  }
+  MPI_Allreduce(MPI_IN_PLACE, &env_max, 1, MPI_DOUBLE, MPI_MAX, pm0.GetComm());
+  MPI_Allreduce(MPI_IN_PLACE, &reg_max, 1, MPI_DOUBLE, MPI_MAX, pm0.GetComm());
+  CHECK(env_max == 0.0);
+  CHECK(reg_max > 0.0);
+
+  // Refine the region elements with the largest indicators (nonconforming, no level
+  // constraint), on an identical copy of the mesh.
+  auto pm1 = MakeGradedSplit(4, 5, 6, design, true);
+  mfem::Array<int> marked;
+  for (int e = 0; e < pm0.GetNE(); e++)
+  {
+    if (ind0.Local()(e) >= 0.3 * reg_max)
+    {
+      marked.Append(e);
+    }
+  }
+  const long n_env = count_env(*pm1);
+  pm1->GeneralRefinement(marked, 1, 0);
+  CHECK(count_env(*pm1) == n_env);  // the environment is not refined
+
+  std::vector<std::unique_ptr<Mesh>> mesh1;
+  mesh1.push_back(std::make_unique<Mesh>(std::move(pm1)));
+  SubstructuringSolver on1(iodata_on, mesh1);
+  on1.CondenseEnvironment();
+  const mfem::DenseMatrix C1 = on1.CapacitanceMatrix(terms, nullptr, 0, &region_fields);
+  const ErrorIndicator ind1 = on1.RegionErrorIndicator(region_fields, C1);
+  CHECK_FALSE(on1.EnvironmentFactored());
+  mfem::Vector eps_by_attr(3);
+  eps_by_attr(0) = 1.0;
+  eps_by_attr(1) = 10.0;
+  eps_by_attr(2) = 4.0;
+  const mfem::DenseMatrix C_mono =
+      MonolithCapacitance(mesh1.back()->Get(), order, eps_by_attr, 2);
+  double d = 0.0, m = 0.0, change = 0.0;
+  for (int i = 0; i < 2; i++)
+  {
+    for (int j = 0; j < 2; j++)
+    {
+      d = std::max(d, std::abs(C1(i, j) - C_mono(i, j)));
+      m = std::max(m, std::abs(C_mono(i, j)));
+      change = std::max(change, std::abs(C1(i, j) - C0(i, j)));
+    }
+  }
+  CAPTURE(C0(0, 0), C1(0, 0), C_mono(0, 0));
+  CHECK(d <= 1.0e-9 * m);
+  CHECK(change >= 1.0e3 * d);  // the refinement matters at the tolerance of the check
+  const MPI_Comm comm = mesh1.back()->GetComm();
+  CAPTURE(ind0.Norml2(pm0.GetComm()), ind1.Norml2(comm));
+  CHECK(ind1.Norml2(comm) < ind0.Norml2(pm0.GetComm()));
 }
 
 TEST_CASE("SubstructuringSolver geometric redesign of the region",

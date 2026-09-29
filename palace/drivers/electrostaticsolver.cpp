@@ -42,8 +42,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Mpi::Print("\nSubstructuring capacitance sweep: {:d} terminal excitation{}\n", n,
                (n > 1) ? "s" : "");
     const int n_save = std::min(iodata.solver.electrostatic.n_post, n);
-    std::vector<Vector> fields;
-    const mfem::DenseMatrix C = sub.CapacitanceMatrix(terminals, &fields, n_save);
+    const bool adapt = (iodata.model.refinement.max_it > 0);
+    std::vector<Vector> fields, region_fields;
+    const mfem::DenseMatrix C =
+        sub.CapacitanceMatrix(terminals, &fields, n_save, adapt ? &region_fields : nullptr);
     if (root)
     {
       const double F = iodata.units.Dimensionalize<Units::ValueType::CAPACITANCE>(1.0);
@@ -76,7 +78,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     Mpi::Print("\nSubstructuring capacitance sweep complete ({:d} terminal{})\n", n,
                (n > 1) ? "s" : "");
-    return {ErrorIndicator(), sub.RegionGlobalTrueVSize()};
+    // Adaptive refinement of the region only (online): indicators from the region fields,
+    // zero on the environment, which stays as condensed.
+    ErrorIndicator indicator =
+        adapt ? sub.RegionErrorIndicator(region_fields, C) : ErrorIndicator();
+    return {indicator, sub.RegionGlobalTrueVSize()};
   }
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding

@@ -86,6 +86,28 @@ which keeps the condensation exact.
     ``\bm{S}_E``, which reduces its memory for large interfaces. It does not reduce the time to
     condense the environment.
 
+### Adaptive mesh refinement
+
+The environment is condensed once, so its mesh resolution is fixed in the saved model. Meshes
+from layout tools are often coarse and meant to be refined by
+[adaptive mesh refinement](../reference.md#Error-estimation-and-adaptive-mesh-refinement-(AMR))
+(AMR), so the refinement is done in two steps:
+
+ 1. Refine the full model before condensing it: run the electrostatic simulation without
+    `"Substructuring"`, with AMR and
+    [`config["Model"]["Refinement"]["SaveAdaptMesh"]`](../config/reference.md#config-model-refinement)
+    set to `true`, then run the `"Offline"` condensation with the saved mesh as
+    `config["Model"]["Mesh"]`. The refined elements keep the region and environment
+    attributes.
+ 2. Refine the region only in `"Online"` runs, for example after a redesign: with
+    `config["Model"]["Refinement"]["MaxIts"]` greater than zero, the error indicators are
+    computed in the region and the environment is left as condensed. This requires
+    nonconforming refinement without a level constraint (`"Nonconformal": true`,
+    `"MaxNCLevels": 0`), so that the refinement does not spread into the environment.
+
+Adaptive refinement in an `"Offline"` run is rejected (use step 1), and adaptive refinement with
+substructuring is only available for electrostatics.
+
 ### Solvers
 
 The environment and the region are factored with a sparse direct solver when they fit, and

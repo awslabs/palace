@@ -21,6 +21,7 @@
 #include "fem/multigrid.hpp"
 #include "fem/substructure.hpp"
 #include "linalg/amg.hpp"
+#include "linalg/errorestimator.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/hodlr.hpp"
 #include "linalg/iterative.hpp"
@@ -2805,7 +2806,8 @@ Vector SubstructuringSolver::SolveSource(const Vector &f)
 mfem::DenseMatrix SubstructuringSolver::EnergyMatrix(const std::vector<int> &ids,
                                                      const std::vector<Vector> &lifts,
                                                      std::vector<Vector> *fields,
-                                                     int n_fields)
+                                                     int n_fields,
+                                                     std::vector<Vector> *region_fields)
 {
   MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
   MFEM_VERIFY(ids.size() == lifts.size(), "EnergyMatrix: one id per lift!");
@@ -2841,6 +2843,10 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrix(const std::vector<int> &ids
     if (fields)
     {
       fields->assign(u.begin(), u.begin() + nf);
+    }
+    if (region_fields)
+    {
+      *region_fields = u;
     }
     return E;
   }
@@ -2930,6 +2936,10 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrix(const std::vector<int> &ids
     }
   }
 
+  if (region_fields)
+  {
+    *region_fields = u;
+  }
   // Optional full fields (environment interior recovered on demand).
   if (fields)
   {
@@ -2944,7 +2954,8 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrix(const std::vector<int> &ids
 
 mfem::DenseMatrix
 SubstructuringSolver::CapacitanceMatrix(const std::vector<int> &terminal_indices,
-                                        std::vector<Vector> *fields, int n_fields)
+                                        std::vector<Vector> *fields, int n_fields,
+                                        std::vector<Vector> *region_fields)
 {
   MFEM_VERIFY(!impl->magnetostatic,
               "CapacitanceMatrix is for electrostatic substructuring problems!");
@@ -2953,7 +2964,69 @@ SubstructuringSolver::CapacitanceMatrix(const std::vector<int> &terminal_indices
   {
     lifts.push_back(TerminalLift(idx));
   }
-  return EnergyMatrix(terminal_indices, lifts, fields, n_fields);
+  return EnergyMatrix(terminal_indices, lifts, fields, n_fields, region_fields);
+}
+
+ErrorIndicator
+SubstructuringSolver::RegionErrorIndicator(const std::vector<Vector> &region_fields,
+                                           const mfem::DenseMatrix &E) const
+{
+  MFEM_VERIFY(!impl->magnetostatic,
+              "Region error indicators are only available for electrostatics!");
+  MFEM_VERIFY(E.Height() == static_cast<int>(region_fields.size()),
+              "RegionErrorIndicator: one energy per field!");
+  const auto &iodata = impl->iodata;
+  const int order = iodata.solver.order, dim = impl->parent.Dimension();
+
+  // Palace's gradient-flux estimator on the region submesh: its flux recovery sees only the
+  // region, so the unknown environment field does not pollute the indicators near the
+  // interface.
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParSubMesh>(
+      mfem::ParSubMesh::CreateFromDomain(impl->parent, impl->ra_arr))));
+  mesh[0]->RebuildCeedAttributes();
+  auto &submesh = static_cast<mfem::ParSubMesh &>(mesh[0]->Get());
+  MaterialOperator mat_op(iodata, *mesh[0]);
+  mfem::H1_FECollection h1_fec(order, dim);
+  mfem::ND_FECollection nd_fec(order, dim);
+  FiniteElementSpace h1_fespace(*mesh[0], &h1_fec), nd_fespace(*mesh[0], &nd_fec);
+  auto rt_fecs = fem::ConstructFECollections<mfem::RT_FECollection>(
+      order - 1, dim, 1, iodata.solver.linear.mg_coarsening, false);
+  auto rt_fespaces =
+      fem::ConstructFiniteElementSpaceHierarchy<mfem::RT_FECollection>(1, mesh, rt_fecs);
+  GradFluxErrorEstimator<Vector> estimator(mat_op, nd_fespace, rt_fespaces,
+                                           iodata.solver.linear.estimator_tol,
+                                           iodata.solver.linear.estimator_max_it, 0, false);
+  const auto &grad = nd_fespace.GetDiscreteInterpolator(h1_fespace);
+
+  ErrorIndicator region;
+  mfem::ParGridFunction pgf(&impl->parent_fes), sgf(&h1_fespace.Get());
+  Vector v(h1_fespace.GetTrueVSize()), e(nd_fespace.GetTrueVSize());
+  for (std::size_t k = 0; k < region_fields.size(); k++)
+  {
+    pgf.SetFromTrueDofs(region_fields[k]);
+    sgf = 0.0;
+    submesh.Transfer(pgf, sgf);
+    sgf.GetTrueDofs(v);
+    e = 0.0;
+    grad.AddMult(v, e, -1.0);  // E = -grad(V)
+    const double energy = 0.5 * E(static_cast<int>(k), static_cast<int>(k));
+    estimator.AddErrorIndicator(e, energy, region);
+  }
+
+  // Region element indicators onto the parent mesh (zero on the environment).
+  Vector local(impl->parent.GetNE());
+  local = 0.0;
+  if (region.Local().Size() > 0)
+  {
+    const auto &parent_id = submesh.GetParentElementIDMap();
+    const double *r = region.Local().HostRead();
+    for (int i = 0; i < parent_id.Size(); i++)
+    {
+      local(parent_id[i]) = r[i];
+    }
+  }
+  return ErrorIndicator(std::move(local));
 }
 
 Vector SubstructuringSolver::TerminalLift(int terminal_index) const

@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "fem/errorindicator.hpp"
 #include "linalg/vector.hpp"
 
 namespace palace
@@ -61,16 +62,26 @@ public:
   // (and appended to the model in an offline run that saves one). Magnetostatic runs
   // without a materialized S^K (a model is not being saved/loaded) use the environment
   // path. If fields is non-null, the full fields of the first n_fields lifts are also
-  // recovered (this needs the environment interior).
+  // recovered (this needs the environment interior). If region_fields is non-null, it
+  // receives the solutions of all lifts in the region and on the interface, with the
+  // environment interior left at zero (no environment solve).
   mfem::DenseMatrix EnergyMatrix(const std::vector<int> &ids,
                                  const std::vector<Vector> &lifts,
-                                 std::vector<Vector> *fields = nullptr, int n_fields = 0);
+                                 std::vector<Vector> *fields = nullptr, int n_fields = 0,
+                                 std::vector<Vector> *region_fields = nullptr);
 
   // Electrostatic Maxwell capacitance matrix over the given terminals: EnergyMatrix of the
   // terminal unit potentials.
   mfem::DenseMatrix CapacitanceMatrix(const std::vector<int> &terminal_indices,
                                       std::vector<Vector> *fields = nullptr,
-                                      int n_fields = 0);
+                                      int n_fields = 0,
+                                      std::vector<Vector> *region_fields = nullptr);
+
+  // Electrostatic error indicators for adaptive refinement of the region only: Palace's
+  // gradient-flux estimator on the region, from the region solutions of EnergyMatrix /
+  // CapacitanceMatrix (normalized by the energies E_kk / 2), and zero on the environment.
+  ErrorIndicator RegionErrorIndicator(const std::vector<Vector> &region_fields,
+                                      const mfem::DenseMatrix &E) const;
 
   // Unit Dirichlet lift of a terminal (1 on its true DOFs, 0 elsewhere).
   Vector TerminalLift(int terminal_index) const;

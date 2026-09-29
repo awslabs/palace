@@ -179,6 +179,31 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
                       Catch::Matchers::ContainsSubstring("must be disjoint"));
   }
 
+  SECTION("Adaptive mesh refinement refines the region of an online run")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}, {"Refinement", {{"MaxIts", 2}}}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver",
+                    {{"Substructuring",
+                      {{"Region", {{"Attributes", {1}}}},
+                       {"Environment", {{"Attributes", {2}}}},
+                       {"Mode", "Offline"}}}}}};
+    CHECK_THROWS_WITH(IoData(config, false),
+                      Catch::Matchers::ContainsSubstring("\"SaveAdaptMesh\""));
+    config["Solver"]["Substructuring"]["Mode"] = "Online";
+    CHECK_THROWS_WITH(IoData(config, false),
+                      Catch::Matchers::ContainsSubstring("\"MaxNCLevels\": 0"));
+    config["Model"]["Refinement"]["MaxNCLevels"] = 0;
+    CHECK_NOTHROW(IoData(config, false));
+    config["Model"]["Refinement"]["Nonconformal"] = false;
+    CHECK_THROWS_WITH(IoData(config, false),
+                      Catch::Matchers::ContainsSubstring("nonconforming"));
+    config["Model"]["Refinement"]["MaxIts"] = 0;
+    CHECK_NOTHROW(IoData(config, false));
+  }
+
   SECTION("Magnetostatic substructuring rejects surface currents")
   {
     const json surface_current = {{{"Attributes", {4}}, {"Index", 1}, {"Direction", "+X"}}};
