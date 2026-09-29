@@ -37,8 +37,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     boundary conditions modeling sheets (PEC, ground, terminal, flux loop, impedance,
     conductivity, lumped port, and surface current boundaries), giving the same error
     estimates as a mesh cut along them without modifying the mesh, on conformal and
-    nonconformal meshes. See the new section on interior boundaries in the boundary
-    condition guide. [Issue 975](https://github.com/awslabs/palace/issues/975).
+    nonconformal meshes (including adapted meshes saved by a previous simulation). See the
+    new section on interior boundaries in the boundary condition guide.
+    [Issue 975](https://github.com/awslabs/palace/issues/975).
   - Added the `"Crack"` option to `"Impedance"`, `"RationalImpedance"`, and
     `"Conductivity"` boundaries, which selects the physical model of an interior sheet: a
     thin film coupling the fields on its two sides (`false`, the mesh is not modified) or a
