@@ -3225,7 +3225,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     const auto rows = ReadPatches(features_patches_path);
     // Columns: Patch, Feature, Topology, Model, ModelIndex, Weight, ModelWeight,
     // QuadratureWeight, SideFactor, CouponDepth, Segment, S0, S1, Origin(3), AxisU(3),
-    // AxisV(3), AxisW(3).
+    // AxisV(3), AxisW(3), StripBegin, StripEnd.
     std::set<int> patched_features;
     std::map<int, std::set<std::tuple<int, double, double>>> intervals_by_feature;
     std::map<std::tuple<int, int, double, double>, double> quadrature_sums;
@@ -3234,7 +3234,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     std::set<std::array<double, 3>> corner_origins;
     for (const auto &row : rows)
     {
-      REQUIRE(row.size() == 25);
+      REQUIRE(row.size() == 27);
       const int feature = std::stoi(row[1]);
       patched_features.insert(feature);
       const double weight = std::stod(row[5]);
