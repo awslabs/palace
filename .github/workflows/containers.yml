@@ -95,9 +95,10 @@ jobs:
       #   publisher with nothing to publish — and worse, it would move `main` off
       #   the SHA a real container build is still publishing, so that build's
       #   re-verify would fail and the rolling channel would stay stale until the
-      #   next container change landed. The cost is three cached builds on
-      #   docs-only pushes; the benefit is that a genuine build failure on main
-      #   also shows up as a red `Containers` run.
+      #   next container change landed. The cost is three builds on docs-only
+      #   pushes (dependencies cached, Palace rebuilt to stamp the new version);
+      #   the benefit is that a genuine build failure on main also shows up as a
+      #   red `Containers` run.
       #
       # (Release tags are handled by build-containers-release, which has no
       # filter.)
