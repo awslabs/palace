@@ -4,10 +4,12 @@
 #include "fespace.hpp"
 
 #include "fem/bilinearform.hpp"
+#include "fem/brokenspace.hpp"
 #include "fem/integrator.hpp"
 #include "fem/libceed/basis.hpp"
 #include "fem/libceed/restriction.hpp"
 #include "linalg/rap.hpp"
+#include "utils/communication.hpp"
 
 namespace palace
 {
@@ -37,6 +39,19 @@ FiniteElementSpace::GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
   {
     return restr_it->second;
   }
+  if (broken)
+  {
+    CeedElemRestriction val;
+    MFEM_VERIFY(mfem::Geometry::Dimension[geom] == GetParMesh().Dimension(),
+                "Only domain element restrictions are available for a broken space!");
+    ceed::ElementDofRemap remap;
+    remap.offsets = broken->override_offsets.data();
+    remap.local = broken->override_local.data();
+    remap.ldof = broken->override_ldof.data();
+    remap.l_size = broken->vsize;
+    ceed::InitRestriction(Get(), indices, false, false, false, ceed, &val, &remap);
+    return restr_map.emplace(geom, val).first->second;
+  }
   return restr_map.emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, indices))
       .first->second;
 }
@@ -50,6 +65,7 @@ FiniteElementSpace::GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type
   {
     return GetCeedElemRestriction(ceed, geom, indices);
   }
+  MFEM_VERIFY(!broken, "Interpolation restrictions are not available for a broken space!");
   auto it = interp_restr.find(ceed);
   MFEM_ASSERT(it != interp_restr.end(),
               "Unknown Ceed context in GetInterpCeedElemRestriction!");
@@ -73,6 +89,7 @@ FiniteElementSpace::GetInterpRangeCeedElemRestriction(Ceed ceed, mfem::Geometry:
   {
     return GetInterpCeedElemRestriction(ceed, geom, indices);
   }
+  MFEM_VERIFY(!broken, "Interpolation restrictions are not available for a broken space!");
   auto it = interp_range_restr.find(ceed);
   MFEM_ASSERT(it != interp_range_restr.end(),
               "Unknown Ceed context in GetInterpRangeCeedElemRestriction!");
@@ -129,6 +146,153 @@ void FiniteElementSpace::ResetCeedObjects()
     interp_restr.emplace(ceed, ceed::GeometryObjectMap<CeedElemRestriction>());
     interp_range_restr.emplace(ceed, ceed::GeometryObjectMap<CeedElemRestriction>());
   }
+}
+
+void FiniteElementSpace::MakeBroken(const CrackSides &sides)
+{
+  const mfem::ParFiniteElementSpace &fespace = Get();
+  MFEM_VERIFY(!broken, "Finite element space is already broken!");
+  MFEM_VERIFY(fespace.GetVDim() == 1,
+              "Broken finite element spaces are only supported for vdim = 1!");
+  MFEM_VERIFY(!fespace.IsVariableOrder(),
+              "Broken finite element spaces are not supported for variable order spaces!");
+  const int ne = GetParMesh().GetNE();
+  MFEM_VERIFY(sides.copy.size() == static_cast<std::size_t>(ne) &&
+                  sides.split.size() == static_cast<std::size_t>(ne),
+              "Invalid interior boundary sides for broken finite element space!");
+  auto data = std::make_unique<BrokenData>();
+  const int vsize = fespace.GetVSize(), tsize = fespace.GetTrueVSize();
+  const Operator *P = fespace.GetProlongationMatrix();
+  const auto *hP = dynamic_cast<const mfem::HypreParMatrix *>(P);
+
+  // Rows of the prolongation which are unit vectors (L-DOFs of unconstrained entities).
+  // Without a HypreParMatrix prolongation (conforming mesh), all rows are.
+  std::vector<char> unit_row;
+  if (hP)
+  {
+    hP->HostRead();
+    mfem::SparseMatrix diag, offd;
+    HYPRE_BigInt *cmap;
+    hP->GetDiag(diag);
+    hP->GetOffd(offd, cmap);
+    unit_row.assign(vsize, 0);
+    for (int i = 0; i < vsize; i++)
+    {
+      int nnz = 0;
+      double val = 0.0;
+      for (const mfem::SparseMatrix *A : {&diag, &offd})
+      {
+        if (A->Height() == 0)
+        {
+          continue;
+        }
+        const int *I = A->GetI();
+        const double *V = A->GetData();
+        for (int k = I[i]; k < I[i + 1]; k++)
+        {
+          if (V[k] != 0.0)
+          {
+            nnz++;
+            val = V[k];
+          }
+        }
+      }
+      unit_row[i] = (nnz == 1 && std::abs(val) == 1.0);
+    }
+    hP->HypreRead();
+  }
+
+  // Each L-DOF read by elements on a non-base side of an interior boundary is copied once.
+  // Elements reading a copy use it in place of the original L-DOF, with the same
+  // orientation.
+  std::vector<int> copy_index(vsize, -1);
+  std::vector<char> split_ldof(vsize, 0);
+  mfem::Array<int> copy_ldofs, dofs, entities;
+  mfem::DofTransformation dof_trans;
+  data->override_offsets.resize(ne + 1, 0);
+  for (int e = 0; e < ne; e++)
+  {
+    data->override_offsets[e] = static_cast<int>(data->override_local.size());
+    const auto copy_bits = sides.copy[e], split_bits = sides.split[e];
+    if (!copy_bits && !split_bits)
+    {
+      continue;
+    }
+    fespace.GetElementDofs(e, dofs, dof_trans);
+    fem::GetElementDofEntities(fespace, e, entities);
+    MFEM_VERIFY(entities.Size() == dofs.Size(),
+                "Unexpected element DOF layout for broken finite element space!");
+    for (int j = 0; j < dofs.Size(); j++)
+    {
+      const int b = entities[j];
+      if (b < 0)
+      {
+        continue;
+      }
+      const int ldof = (dofs[j] >= 0) ? dofs[j] : -1 - dofs[j];
+      if ((split_bits >> b) & 1u)
+      {
+        split_ldof[ldof] = 1;
+      }
+      if (!((copy_bits >> b) & 1u))
+      {
+        continue;
+      }
+      if (copy_index[ldof] < 0)
+      {
+        copy_index[ldof] = copy_ldofs.Size();
+        copy_ldofs.Append(ldof);
+      }
+      data->override_local.push_back(j);
+      data->override_ldof.push_back(vsize + copy_index[ldof]);
+    }
+  }
+  data->override_offsets[ne] = static_cast<int>(data->override_local.size());
+
+  // The true DOFs of split entities are split: the broken space holds one additional true
+  // DOF for each of them, owned by the same process. They are identified through the
+  // L-DOFs of unconstrained split entities (the prolongation has only nonnegative entries
+  // when it is not a HypreParMatrix).
+  mfem::Array<int> split_tdofs;
+  {
+    Vector lmark(vsize), tmark(tsize);
+    lmark = 0.0;
+    auto *h_lmark = lmark.HostWrite();
+    for (int i = 0; i < vsize; i++)
+    {
+      h_lmark[i] = (split_ldof[i] && (!hP || unit_row[i])) ? 1.0 : 0.0;
+    }
+    if (hP)
+    {
+      hP->AbsMultTranspose(1.0, lmark, 0.0, tmark);
+    }
+    else
+    {
+      P->MultTranspose(lmark, tmark);
+    }
+    const auto *h_tmark = tmark.HostRead();
+    for (int i = 0; i < tsize; i++)
+    {
+      if (h_tmark[i] > 0.0)
+      {
+        split_tdofs.Append(i);
+      }
+    }
+  }
+  data->vsize = vsize + copy_ldofs.Size();
+  data->tsize = tsize + split_tdofs.Size();
+  data->global_vsize = data->vsize;
+  data->global_tsize = data->tsize;
+  Mpi::GlobalSum(1, &data->global_vsize, GetParMesh().GetComm());
+  Mpi::GlobalSum(1, &data->global_tsize, GetParMesh().GetComm());
+  data->P = std::make_unique<BrokenProlongation>(*P, copy_ldofs, split_tdofs);
+  broken = std::move(data);
+
+  // Discard any restrictions built for the unbroken space, and the objects which depend on
+  // them.
+  ResetCeedObjects();
+  G.reset();
+  aux_fespace = nullptr;
 }
 
 CeedBasis FiniteElementSpace::BuildCeedBasis(const mfem::FiniteElementSpace &fespace,

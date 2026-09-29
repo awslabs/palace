@@ -6,6 +6,7 @@
 #include <array>
 
 #include "fem/bilinearform.hpp"
+#include "fem/brokenspace.hpp"
 #include "linalg/hypre.hpp"
 
 namespace palace
@@ -174,6 +175,10 @@ void ParOperator::AssembleDiagonal(Vector &diag) const
   if (const auto *hP = dynamic_cast<const mfem::HypreParMatrix *>(P))
   {
     hP->AbsMultTranspose(1.0, lx, 0.0, diag);
+  }
+  else if (const auto *bP = dynamic_cast<const BrokenProlongation *>(P))
+  {
+    bP->AbsMultTranspose(1.0, lx, 0.0, diag);
   }
   else
   {
