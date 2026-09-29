@@ -19,17 +19,19 @@ end
 
 function node_coordinates()
     tags, coordinates, _ = gmsh.model.mesh.getNodes()
-    return Dict(tag => ntuple(d -> coordinates[3i - 3 + d], 3) for (i, tag) in enumerate(tags))
+    return Dict(
+        tag => ntuple(d -> coordinates[3i - 3 + d], 3) for (i, tag) in enumerate(tags)
+    )
 end
 
 function dimension_elements(dimension)
-    result = Dict{UInt64,Tuple{Int,Vector{UInt64}}}()
+    result = Dict{UInt64, Tuple{Int, Vector{UInt64}}}()
     types, tags, connectivity = gmsh.model.mesh.getElements(dimension)
     for (type, elements, nodes) in zip(types, tags, connectivity)
         _, _, _, nnode, _, _ = gmsh.model.mesh.getElementProperties(type)
         for (i, element) in enumerate(elements)
             haskey(result, element) && error("Duplicate element tag")
-            result[element] = (Int(type), collect(nodes[(i - 1) * nnode + 1:i * nnode]))
+            result[element] = (Int(type), collect(nodes[((i - 1) * nnode + 1):(i * nnode)]))
         end
     end
     return result
@@ -41,13 +43,14 @@ end
 
 function canonical_elements(dimension)
     coordinates = node_coordinates()
-    records = Tuple{Int,Tuple}[]
+    records = Tuple{Int, Tuple}[]
     types, _, connectivity = gmsh.model.mesh.getElements(dimension)
     for (type, nodes) in zip(types, connectivity)
         _, _, order, nnode, _, primary = gmsh.model.mesh.getElementProperties(type)
-        order == 1 && nnode == primary || error("Frozen relabeling requires linear elements")
-        for i in 1:nnode:length(nodes)
-            points = Tuple(sort!([coordinates[node] for node in nodes[i:i + nnode - 1]]))
+        order == 1 && nnode == primary ||
+            error("Frozen relabeling requires linear elements")
+        for i = 1:nnode:length(nodes)
+            points = Tuple(sort!([coordinates[node] for node in nodes[i:(i + nnode - 1)]]))
             push!(records, (Int(type), points))
         end
     end
@@ -55,16 +58,20 @@ function canonical_elements(dimension)
 end
 
 function surface_elements()
-    result = Dict{UInt64,Tuple{Int,Vector{UInt64}}}()
+    result = Dict{UInt64, Tuple{Int, Vector{UInt64}}}()
     for (_, attribute) in gmsh.model.getPhysicalGroups(2)
         for entity in gmsh.model.getEntitiesForPhysicalGroup(2, attribute)
             types, tags, connectivity = gmsh.model.mesh.getElements(2, entity)
             for (type, elements, nodes) in zip(types, tags, connectivity)
                 _, _, _, nnode, _, primary = gmsh.model.mesh.getElementProperties(type)
-                primary in (3, 4) || error("Physical surface contains an element that is neither a triangle nor a quadrangle")
+                primary in (3, 4) || error(
+                    "Physical surface contains an element that is neither a triangle nor a quadrangle"
+                )
                 for (i, element) in enumerate(elements)
-                    haskey(result, element) && error("A surface element has multiple physical assignments")
-                    result[element] = (Int(type), collect(nodes[(i - 1) * nnode + 1:i * nnode]))
+                    haskey(result, element) &&
+                        error("A surface element has multiple physical assignments")
+                    result[element] =
+                        (Int(type), collect(nodes[((i - 1) * nnode + 1):(i * nnode)]))
                 end
             end
         end
@@ -81,7 +88,7 @@ function physical_family(attribute)
 end
 
 function grouped_surface_measures()
-    result = Dict{Int,Float64}()
+    result = Dict{Int, Float64}()
     for (_, attribute) in gmsh.model.getPhysicalGroups(2)
         for entity in gmsh.model.getEntitiesForPhysicalGroup(2, attribute)
             types, tags, _ = gmsh.model.mesh.getElements(2, entity)
@@ -89,9 +96,10 @@ function grouped_surface_measures()
                 points, weights = gmsh.model.mesh.getIntegrationPoints(type, "Gauss8")
                 _, determinants, _ = gmsh.model.mesh.getJacobians(type, points, entity)
                 nq = length(weights)
-                length(determinants) == nq * length(elements) || error("Unexpected surface Jacobian data")
+                length(determinants) == nq * length(elements) ||
+                    error("Unexpected surface Jacobian data")
                 for i in eachindex(elements)
-                    measure = sum(weights[q] * determinants[(i - 1) * nq + q] for q in 1:nq)
+                    measure = sum(weights[q] * determinants[(i - 1) * nq + q] for q = 1:nq)
                     key = physical_family(Int(attribute))
                     result[key] = get(result, key, 0.0) + measure
                 end
@@ -102,15 +110,19 @@ function grouped_surface_measures()
 end
 
 function check_measures(before, after)
-    keys(before) == keys(after) || error("Grouped physical-family measures have different keys")
-    worst = maximum(abs(after[key] - value) / max(abs(value), 1e-300) for (key, value) in before)
+    keys(before) == keys(after) ||
+        error("Grouped physical-family measures have different keys")
+    worst = maximum(
+        abs(after[key] - value) / max(abs(value), 1e-300) for (key, value) in before
+    )
     worst <= 1e-11 || error("Grouped physical-family area changed by $worst")
     return worst
 end
 
 function main()
-    length(ARGS) >= 4 && iseven(length(ARGS)) ||
-        error("signature_directory thin|fabricated input.msh output.msh [--expected-measures measures.csv] [--rigid-transform MATRIX] [--process process.toml] [--signature mesh-signature.csv] [--boundary plan-view-boundary.csv]")
+    length(ARGS) >= 4 && iseven(length(ARGS)) || error(
+        "signature_directory thin|fabricated input.msh output.msh [--expected-measures measures.csv] [--rigid-transform MATRIX] [--process process.toml] [--signature mesh-signature.csv] [--boundary plan-view-boundary.csv]"
+    )
     root, input, output = abspath.((ARGS[1], ARGS[3], ARGS[4]))
     kind = ARGS[2]
     kind in ("thin", "fabricated") || error("Kind must be thin or fabricated")
@@ -120,9 +132,11 @@ function main()
     transform = copy(IDENTITY_RIGID_TRANSFORM)
     # Explicit source options bind the consumed files; the directory layout is only
     # a fallback for unstaged callers.
-    sources = Dict("--process" => joinpath(root, "process.toml"),
-                   "--signature" => joinpath(root, "mesh-signature.csv"),
-                   "--boundary" => joinpath(root, "plan-view-boundary.csv"))
+    sources = Dict(
+        "--process" => joinpath(root, "process.toml"),
+        "--signature" => joinpath(root, "mesh-signature.csv"),
+        "--boundary" => joinpath(root, "plan-view-boundary.csv")
+    )
     explicit = Set{String}()
     index = 5
     while index <= length(ARGS)
@@ -132,7 +146,8 @@ function main()
             expected_path = abspath(value)
             isfile(expected_path) || error("Expected-measures file does not exist")
         elseif option == "--rigid-transform"
-            transform == IDENTITY_RIGID_TRANSFORM || error("Duplicate --rigid-transform option")
+            transform == IDENTITY_RIGID_TRANSFORM ||
+                error("Duplicate --rigid-transform option")
             transform = parse_rigid_transform(value)
         elseif haskey(sources, option)
             option in explicit && error("Duplicate $option option")
@@ -154,9 +169,11 @@ function main()
     loops = read_boundary(sources["--boundary"])
     expected = nothing
     if expected_path !== nothing
-        data, _ = readdlm(expected_path, ',', header = true)
-        expected = Set(Int(data[i, 2]) for i in axes(data, 1)
-                       if Int(data[i, 1]) == 2 && Int(data[i, 2]) != 1)
+        data, _ = readdlm(expected_path, ',', header=true)
+        expected = Set(
+            Int(data[i, 2]) for
+            i in axes(data, 1) if Int(data[i, 1]) == 2 && Int(data[i, 2]) != 1
+        )
         isempty(expected) && error("Expected interface-attribute set is empty")
     end
 
@@ -171,28 +188,36 @@ function main()
         canonical_surface_geometry = canonical_elements(2)
         before_measures = grouped_surface_measures()
         volume_tags = collect(keys(before_volume))
-        before_quality = minimum(gmsh.model.mesh.getElementQualities(volume_tags, "minSICN"))
-        before_quality > 1e-10 || error("Input has a nonpositive or near-singular volume element")
+        before_quality =
+            minimum(gmsh.model.mesh.getElementQualities(volume_tags, "minSICN"))
+        before_quality > 1e-10 ||
+            error("Input has a nonpositive or near-singular volume element")
         report = output * ".interface-partition.csv"
         label_interface_patches(
             edges,
             loops,
             radius,
             report;
-            minimum_size = 0.0,
-            fabricated = kind == "fabricated",
-            metal_thickness = thickness,
-            overetch = overetch,
-            ownership_coordinates = point -> inverse_transform_point(transform, point)
+            minimum_size=0.0,
+            fabricated=kind == "fabricated",
+            metal_thickness=thickness,
+            overetch=overetch,
+            ownership_coordinates=point -> inverse_transform_point(transform, point)
         )
         before_nodes == node_coordinates() || error("Node coordinates or IDs changed")
         before_volume == dimension_elements(3) || error("Volume connectivity changed")
-        before_surface == surface_elements() || error("Surface element IDs or connectivity changed")
+        before_surface == surface_elements() ||
+            error("Surface element IDs or connectivity changed")
         measure_difference = check_measures(before_measures, grouped_surface_measures())
-        actual = Set(Int(attribute) for (_, attribute) in gmsh.model.getPhysicalGroups(2)
-                     if attribute != 1)
-        expected === nothing || actual == expected ||
-            error("Interface coverage differs: missing=$(setdiff(expected, actual)) extra=$(setdiff(actual, expected))")
+        actual = Set(
+            Int(attribute) for
+            (_, attribute) in gmsh.model.getPhysicalGroups(2) if attribute != 1
+        )
+        expected === nothing ||
+            actual == expected ||
+            error(
+                "Interface coverage differs: missing=$(setdiff(expected, actual)) extra=$(setdiff(actual, expected))"
+            )
         gmsh.option.setNumber("Mesh.Renumber", 0)
         # Palace/MFEM consumes MSH 2.2. Gmsh can renumber discrete entities while
         # writing that format, so the round-trip check below binds geometry and
@@ -204,20 +229,27 @@ function main()
         certificate = output * ".interface-partition.csv.elements.csv"
         gmsh.clear()
         gmsh.open(output)
-        canonical_node_geometry == canonical_nodes() || error("Serialized node geometry changed")
-        canonical_volume_geometry == canonical_elements(3) || error("Serialized volume geometry/connectivity changed")
-        canonical_surface_geometry == canonical_elements(2) || error("Serialized surface geometry/connectivity changed")
+        canonical_node_geometry == canonical_nodes() ||
+            error("Serialized node geometry changed")
+        canonical_volume_geometry == canonical_elements(3) ||
+            error("Serialized volume geometry/connectivity changed")
+        canonical_surface_geometry == canonical_elements(2) ||
+            error("Serialized surface geometry/connectivity changed")
         check_measures(before_measures, grouped_surface_measures())
         serialized_volume_tags = collect(keys(dimension_elements(3)))
-        after_quality = minimum(gmsh.model.mesh.getElementQualities(serialized_volume_tags, "minSICN"))
-        abs(after_quality - before_quality) <= 1e-14 || error("Serialized volume quality changed")
+        after_quality =
+            minimum(gmsh.model.mesh.getElementQualities(serialized_volume_tags, "minSICN"))
+        abs(after_quality - before_quality) <= 1e-14 ||
+            error("Serialized volume quality changed")
         # MSH 2.2 renumbering also affects the diagnostic certificate: bind it to
         # actual serialized element/node IDs, not the pre-write in-memory IDs.
         serialized_coordinates = node_coordinates()
         coordinate_to_node = Dict(point => node for (node, point) in serialized_coordinates)
-        length(coordinate_to_node) == length(serialized_coordinates) || error("Duplicate coordinates")
-        serialized_faces = Dict(Tuple(sort(nodes)) => element
-                                for (element, (_, nodes)) in surface_elements())
+        length(coordinate_to_node) == length(serialized_coordinates) ||
+            error("Duplicate coordinates")
+        serialized_faces = Dict(
+            Tuple(sort(nodes)) => element for (element, (_, nodes)) in surface_elements()
+        )
         temporary_certificate = certificate * ".tmp"
         open(certificate) do source
             open(temporary_certificate, "w") do target
@@ -226,28 +258,45 @@ function main()
                     fields = split(line, ',')
                     length(fields) == 7 || error("Invalid partition certificate row")
                     # node_d is 0 for a triangle.
-                    nodes = [coordinate_to_node[before_nodes[parse(UInt64, field)]]
-                             for field in fields[4:7] if field != "0"]
+                    nodes = [
+                        coordinate_to_node[before_nodes[parse(UInt64, field)]] for
+                        field in fields[4:7] if field != "0"
+                    ]
                     element = serialized_faces[Tuple(sort(nodes))]
-                    println(target, join((element, fields[2], fields[3], nodes...,
-                                          fill(0, 4 - length(nodes))...), ','))
+                    println(
+                        target,
+                        join(
+                            (
+                                element,
+                                fields[2],
+                                fields[3],
+                                nodes...,
+                                fill(0, 4 - length(nodes))...
+                            ),
+                            ','
+                        )
+                    )
                 end
             end
         end
-        mv(temporary_certificate, certificate; force = true)
+        mv(temporary_certificate, certificate; force=true)
         open(output * ".partition-certificate.toml", "w") do stream
-            TOML.print(stream, Dict(
-                "Version" => 1,
-                "Method" => "Whole-element Lipschitz ambiguity diagnostic; non-authoritative for response ownership",
-                "MeshSHA256" => output_sha256,
-                "ElementCertificateSHA256" => file_sha256(certificate),
-                "ParentMeshSHA256" => file_sha256(input),
-                "SignatureSHA256" => file_sha256(sources["--signature"]),
-                "BoundarySHA256" => file_sha256(sources["--boundary"]),
-                "Radius" => radius,
-                "Fabricated" => kind == "fabricated",
-                "RigidTransform" => vec(transform')
-            ); sorted = true)
+            return TOML.print(
+                stream,
+                Dict(
+                    "Version" => 1,
+                    "Method" => "Whole-element Lipschitz ambiguity diagnostic; non-authoritative for response ownership",
+                    "MeshSHA256" => output_sha256,
+                    "ElementCertificateSHA256" => file_sha256(certificate),
+                    "ParentMeshSHA256" => file_sha256(input),
+                    "SignatureSHA256" => file_sha256(sources["--signature"]),
+                    "BoundarySHA256" => file_sha256(sources["--boundary"]),
+                    "Radius" => radius,
+                    "Fabricated" => kind == "fabricated",
+                    "RigidTransform" => vec(transform')
+                );
+                sorted=true
+            )
         end
         metadata = Dict(
             "Version" => 2,
@@ -265,12 +314,13 @@ function main()
             "SerializedRoundTripVerified" => true,
             "MinimumSignedInverseCondition" => after_quality,
             "MaximumGroupedPhysicalFamilyAreaDifference" => measure_difference,
-            "ExpectedInterfaceAttributes" => expected === nothing ? Int[] : sort!(collect(expected)),
+            "ExpectedInterfaceAttributes" =>
+                expected === nothing ? Int[] : sort!(collect(expected)),
             "ActualInterfaceAttributes" => sort!(collect(actual)),
             "RigidTransform" => vec(transform')
         )
         open(output * ".relabel.toml", "w") do stream
-            TOML.print(stream, metadata; sorted = true)
+            return TOML.print(stream, metadata; sorted=true)
         end
     finally
         gmsh.isInitialized() != 0 && gmsh.finalize()

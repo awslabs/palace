@@ -1,4 +1,5 @@
 <!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. -->
+
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # Matched volume-growth mesh benchmark
@@ -55,14 +56,14 @@ p5 solution order in Palace.
 
 Two issues were handled before comparing solves:
 
-- Unused prism vertices inside excluded metal cells are no longer registered.
-  They were not FEM unknowns and were dropped during serialization, invalidating
-  the old linear-geometry node-count check.
-- The legacy prism mesh's finite-distance etch collar left small unetched corner
-  regions in this closed-strip geometry, unlike the CAD candidate. The control
-  explicitly uses `--full-gap-etch`, a new **opt-in** process choice. The legacy
-  default and retained library meshes are unchanged. Integrated material volumes
-  and interface-family areas then agreed to about 1e-13 relative.
+  - Unused prism vertices inside excluded metal cells are no longer registered.
+    They were not FEM unknowns and were dropped during serialization, invalidating
+    the old linear-geometry node-count check.
+  - The legacy prism mesh's finite-distance etch collar left small unetched corner
+    regions in this closed-strip geometry, unlike the CAD candidate. The control
+    explicitly uses `--full-gap-etch`, a new **opt-in** process choice. The legacy
+    default and retained library meshes are unchanged. Integrated material volumes
+    and interface-family areas then agreed to about 1e-13 relative.
 
 The tested strip uses 100 nm metal, 50 nm overetch, 90-degree walls, zero rounding,
 substrate permittivity 11.47, and a 0.5 um coupon radius.
@@ -73,11 +74,11 @@ substrate permittivity 11.47, and a 0.5 um coupon radius.
 configs, mesh/input hashes and audit results. `run_matched_mesh_benchmark.py` runs
 it on a dedicated host/allocation, one solve at a time. It fixes:
 
-- one executable hash and host;
-- one MPI rank count and binding policy;
-- p5, PCG, p-multigrid/BoomerAMG, relative tolerance 1e-8;
-- identical source definitions and interface parameters;
-- exact streaming workers and reducers, with initial-guess recycling disabled.
+  - one executable hash and host;
+  - one MPI rank count and binding policy;
+  - p5, PCG, p-multigrid/BoomerAMG, relative tolerance 1e-8;
+  - identical source definitions and interface parameters;
+  - exact streaming workers and reducers, with initial-guess recycling disabled.
 
 `PALACE_RESPONSE_SOURCE_TIMING=1` adds maximum-over-ranks per-source solve and
 source-total timings to streaming workers. Source-total includes RHS preparation,

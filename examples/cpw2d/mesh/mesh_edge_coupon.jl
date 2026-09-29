@@ -36,20 +36,22 @@ function fillet(c, p, n, radius)
     point_in = (c[1] - tangent * d1[1], c[2] - tangent * d1[2])
     point_out = (c[1] + tangent * d2[1], c[2] + tangent * d2[2])
     normal = (-d1[2], d1[1])
-    center = (point_in[1] + radius * normal[1],
-              point_in[2] + radius * normal[2])
+    center = (point_in[1] + radius * normal[1], point_in[2] + radius * normal[2])
     return (point_in, center, point_out)
 end
 
 function shape(occ, corners)
     count = length(corners)
     data = [
-        fillet(corners[i][1], corners[mod1(i - 1, count)][1],
-               corners[mod1(i + 1, count)][1], corners[i][2])
-        for i in 1:count
+        fillet(
+            corners[i][1],
+            corners[mod1(i - 1, count)][1],
+            corners[mod1(i + 1, count)][1],
+            corners[i][2]
+        ) for i = 1:count
     ]
     curves = Int32[]
-    for i in 1:count
+    for i = 1:count
         j = mod1(i + 1, count)
         p1 = occ.addPoint(data[i][3][1], data[i][3][2], 0.0)
         p2 = occ.addPoint(data[j][1][1], data[j][1][2], 0.0)
@@ -64,24 +66,27 @@ function shape(occ, corners)
 end
 
 function generate_edge_coupon(;
-    radius::Float64 = 2.0,
-    fabricated::Bool = false,
-    t_metal::Float64 = 0.1,
-    overetch::Float64 = 0.05,
-    sidewall_angle::Float64 = 80.0,
-    r_top::Float64 = 0.01,
-    r_bottom::Float64 = 0.01,
-    lc_fine::Float64 = 0.002,
-    lc_far::Float64 = 0.05,
-    mesh_order::Int = 2,
-    axisymmetric_radius::Float64 = 0.0,
-    convexity::Symbol = :convex,
-    filename::String,
+    radius::Float64=2.0,
+    fabricated::Bool=false,
+    t_metal::Float64=0.1,
+    overetch::Float64=0.05,
+    sidewall_angle::Float64=80.0,
+    r_top::Float64=0.01,
+    r_bottom::Float64=0.01,
+    lc_fine::Float64=0.002,
+    lc_far::Float64=0.05,
+    mesh_order::Int=2,
+    axisymmetric_radius::Float64=0.0,
+    convexity::Symbol=:convex,
+    filename::String
 )
     radius > 0 || error("radius must be positive")
     axisymmetric_radius >= 0 || error("axisymmetric_radius must be nonnegative")
-    axisymmetric_radius == 0 || axisymmetric_radius > radius ||
-        error("axisymmetric_radius must exceed the coupon radius (the contour must not cross the axis)")
+    axisymmetric_radius == 0 ||
+        axisymmetric_radius > radius ||
+        error(
+            "axisymmetric_radius must exceed the coupon radius (the contour must not cross the axis)"
+        )
     convexity in (:convex, :concave) || error("convexity must be :convex or :concave")
     # The geometry and mesh are canonical (edge at x = 0, metal at x < 0); the
     # placement x -> rho + sign x is applied to the mesh nodes at the end.
@@ -91,8 +96,7 @@ function generate_edge_coupon(;
     polygon(corners) = shape(occ, corners)
     t_metal > 0 || error("t_metal must be positive")
     overetch > 0 || error("overetch must be positive")
-    0 < sidewall_angle <= 90 ||
-        error("sidewall_angle must be in (0, 90] degrees")
+    0 < sidewall_angle <= 90 || error("sidewall_angle must be in (0, 90] degrees")
     r_top >= 0 || error("r_top must be nonnegative")
     r_bottom >= 0 || error("r_bottom must be nonnegative")
     lc_fine > 0 || error("lc_fine must be positive")
@@ -115,14 +119,14 @@ function generate_edge_coupon(;
             ((-radius - extension, 0.0), 0.0),
             ((0.0, 0.0), 0.0),
             ((-metal_pullback, t_metal), r_top),
-            ((-radius - extension, t_metal), 0.0),
+            ((-radius - extension, t_metal), 0.0)
         ])
         substrate_base = rect(-radius, -radius, 2radius, radius)
         trench = polygon([
             ((0.0, 0.0), 0.0),
             ((trench_pullback, -overetch), r_bottom),
             ((radius + extension, -overetch), 0.0),
-            ((radius + extension, 0.0), 0.0),
+            ((radius + extension, 0.0), 0.0)
         ])
         occ.synchronize()
         substrate, _ = occ.cut([(2, substrate_base)], [(2, trench)])
@@ -134,7 +138,7 @@ function generate_edge_coupon(;
             rect(-radius, -radius, radius, radius),
             rect(0.0, -radius, radius, radius),
             rect(-radius, 0.0, radius, radius),
-            rect(0.0, 0.0, radius, radius),
+            rect(0.0, 0.0, radius, radius)
         ]
         occ.fragment([(2, surface) for surface in surfaces], [])
     end
@@ -144,8 +148,10 @@ function generate_edge_coupon(;
     vacuum_surfaces = Int32[]
     for (dim, tag) in gmsh.model.getEntities(2)
         _, y, _ = occ.getCenterOfMass(dim, tag)
-        push!(y < (fabricated ? -0.1 * overetch : 0.0) ?
-              substrate_surfaces : vacuum_surfaces, tag)
+        push!(
+            y < (fabricated ? -0.1 * overetch : 0.0) ? substrate_surfaces : vacuum_surfaces,
+            tag
+        )
     end
 
     outer_curves = Int32[]
@@ -164,10 +170,13 @@ function generate_edge_coupon(;
         horizontal = ymax - ymin < tolerance
         vertical = xmax - xmin < tolerance
         on_outer =
-            (vertical && (abs(xmid + radius) < tolerance ||
-                          abs(xmid - radius) < tolerance)) ||
-            (horizontal && (abs(ymid + radius) < tolerance ||
-                            abs(ymid - radius) < tolerance))
+            (
+                vertical &&
+                (abs(xmid + radius) < tolerance || abs(xmid - radius) < tolerance)
+            ) || (
+                horizontal &&
+                (abs(ymid + radius) < tolerance || abs(ymid - radius) < tolerance)
+            )
         if on_outer
             push!(outer_curves, tag)
         elseif !fabricated && horizontal && abs(ymid) < tolerance
@@ -176,14 +185,17 @@ function generate_edge_coupon(;
             push!(ms_curves, tag)
         elseif fabricated && horizontal && abs(ymid - t_metal) < tolerance
             push!(ma_horizontal, tag)
-        elseif fabricated && ymin >= -tolerance &&
-               ymax <= t_metal + tolerance && !horizontal
+        elseif fabricated &&
+               ymin >= -tolerance &&
+               ymax <= t_metal + tolerance &&
+               !horizontal
             push!(ma_side, tag)
-        elseif fabricated && ymin >= -overetch - tolerance &&
-               ymax <= tolerance && !horizontal
+        elseif fabricated &&
+               ymin >= -overetch - tolerance &&
+               ymax <= tolerance &&
+               !horizontal
             push!(sa_side, tag)
-        elseif fabricated && horizontal && abs(ymid + overetch) < tolerance &&
-               xmid > 0.0
+        elseif fabricated && horizontal && abs(ymid + overetch) < tolerance && xmid > 0.0
             push!(sa_floor, tag)
         end
     end
@@ -193,22 +205,25 @@ function generate_edge_coupon(;
         (2, vacuum_surfaces, 2, "vacuum"),
         (1, outer_curves, 1, "matching_contour"),
         (1, ms_curves, 2, fabricated ? "MS" : "thin_metal"),
-        (1, sa_floor, fabricated ? 6 : 3, fabricated ? "SA_floor" : "SA"),
+        (1, sa_floor, fabricated ? 6 : 3, fabricated ? "SA_floor" : "SA")
     ]
     if fabricated
-        append!(groups, [
-            (1, ma_horizontal, 3, "MA_horizontal"),
-            (1, ma_side, 4, "MA_side"),
-            (1, sa_side, 5, "SA_side"),
-        ])
+        append!(
+            groups,
+            [
+                (1, ma_horizontal, 3, "MA_horizontal"),
+                (1, ma_side, 4, "MA_side"),
+                (1, sa_side, 5, "SA_side")
+            ]
+        )
     end
     for (dim, entities, tag, name) in groups
         isempty(entities) && error("Empty physical group: $name")
         gmsh.model.addPhysicalGroup(dim, entities, tag, name)
     end
 
-    features = fabricated ?
-        vcat(ms_curves, ma_horizontal, ma_side, sa_side, sa_floor) :
+    features =
+        fabricated ? vcat(ms_curves, ma_horizontal, ma_side, sa_side, sa_floor) :
         vcat(ms_curves, sa_floor)
     gmsh.model.mesh.field.add("Distance", 1)
     gmsh.model.mesh.field.setNumbers(1, "CurvesList", Float64.(features))
@@ -224,7 +239,7 @@ function generate_edge_coupon(;
         ("Mesh.MeshSizeMax", lc_far),
         ("Mesh.MeshSizeExtendFromBoundary", 0),
         ("Mesh.MeshSizeFromPoints", 0),
-        ("Mesh.MeshSizeFromCurvature", 0),
+        ("Mesh.MeshSizeFromCurvature", 0)
     ]
         gmsh.option.setNumber(name, value)
     end
@@ -236,15 +251,29 @@ function generate_edge_coupon(;
     if rho > 0
         # Place the canonical mesh: x -> rho + sign x (a mirror for the concave
         # coupon; MFEM restores the element orientation on load).
-        gmsh.model.mesh.affineTransform(
-            [sign, 0.0, 0.0, rho, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0])
+        gmsh.model.mesh.affineTransform([
+            sign,
+            0.0,
+            0.0,
+            rho,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0
+        ])
     end
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
     gmsh.option.setNumber("Mesh.Binary", 1)
     gmsh.write(filename)
 
-    println("Edge coupon: R=$(radius) um, fabricated=$(fabricated)" *
-            (rho > 0 ? ", axisymmetric rho=$(rho) um ($(convexity))" : ""))
+    println(
+        "Edge coupon: R=$(radius) um, fabricated=$(fabricated)" *
+        (rho > 0 ? ", axisymmetric rho=$(rho) um ($(convexity))" : "")
+    )
     for (dim, tag) in gmsh.model.getPhysicalGroups()
         name = gmsh.model.getPhysicalName(dim, tag)
         entities = gmsh.model.getEntitiesForPhysicalGroup(dim, tag)
@@ -252,19 +281,20 @@ function generate_edge_coupon(;
     end
     println("  nodes=$(length(gmsh.model.mesh.getNodes()[1]))")
     println("  file=$filename")
-    gmsh.finalize()
+    return gmsh.finalize()
 end
 
 function main(args)
-    length(args) >= 2 ||
-        error("Usage: mesh_edge_coupon.jl thin|fabricated OUTPUT.msh " *
-              "[--radius R] [--metal-thickness T] [--overetch D] " *
-              "[--sidewall-angle A] [--top-radius R] [--bottom-radius R] " *
-              "[--lc-fine H] [--lc-far H] [--mesh-order P] " *
-              "[--axisymmetric-radius RHO] [--convexity convex|concave]")
+    length(args) >= 2 || error(
+        "Usage: mesh_edge_coupon.jl thin|fabricated OUTPUT.msh " *
+        "[--radius R] [--metal-thickness T] [--overetch D] " *
+        "[--sidewall-angle A] [--top-radius R] [--bottom-radius R] " *
+        "[--lc-fine H] [--lc-far H] [--mesh-order P] " *
+        "[--axisymmetric-radius RHO] [--convexity convex|concave]"
+    )
     kind = args[1]
     kind in ("thin", "fabricated") || error("Unknown coupon kind: $kind")
-    options = Dict{String,String}()
+    options = Dict{String, String}()
     index = 3
     while index <= length(args)
         name = args[index]
@@ -285,29 +315,28 @@ function main(args)
         "--lc-far",
         "--mesh-order",
         "--axisymmetric-radius",
-        "--convexity",
+        "--convexity"
     ])
     unknown = setdiff(Set(keys(options)), allowed)
     isempty(unknown) || error("Unknown option(s): $(join(sort(collect(unknown)), ", "))")
     float_option(name, default) =
         haskey(options, name) ? parse(Float64, options[name]) : default
-    int_option(name, default) =
-        haskey(options, name) ? parse(Int, options[name]) : default
+    int_option(name, default) = haskey(options, name) ? parse(Int, options[name]) : default
 
-    generate_edge_coupon(
-        radius = float_option("--radius", 2.0),
-        fabricated = kind == "fabricated",
-        t_metal = float_option("--metal-thickness", 0.1),
-        overetch = float_option("--overetch", 0.05),
-        sidewall_angle = float_option("--sidewall-angle", 80.0),
-        r_top = float_option("--top-radius", 0.01),
-        r_bottom = float_option("--bottom-radius", 0.01),
-        lc_fine = float_option("--lc-fine", 0.002),
-        lc_far = float_option("--lc-far", 0.05),
-        mesh_order = int_option("--mesh-order", 2),
-        axisymmetric_radius = float_option("--axisymmetric-radius", 0.0),
-        convexity = Symbol(get(options, "--convexity", "convex")),
-        filename = abspath(args[2]),
+    return generate_edge_coupon(
+        radius=float_option("--radius", 2.0),
+        fabricated=kind == "fabricated",
+        t_metal=float_option("--metal-thickness", 0.1),
+        overetch=float_option("--overetch", 0.05),
+        sidewall_angle=float_option("--sidewall-angle", 80.0),
+        r_top=float_option("--top-radius", 0.01),
+        r_bottom=float_option("--bottom-radius", 0.01),
+        lc_fine=float_option("--lc-fine", 0.002),
+        lc_far=float_option("--lc-far", 0.05),
+        mesh_order=int_option("--mesh-order", 2),
+        axisymmetric_radius=float_option("--axisymmetric-radius", 0.0),
+        convexity=Symbol(get(options, "--convexity", "convex")),
+        filename=abspath(args[2])
     )
 end
 

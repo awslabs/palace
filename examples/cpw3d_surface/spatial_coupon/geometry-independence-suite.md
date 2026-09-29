@@ -1,4 +1,5 @@
 <!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. -->
+
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # Mesh-only geometry-independence suite
@@ -60,9 +61,7 @@ footprint bands, the decision-39 volume laws growing with FarGrowth 0.5, the
 trace-basis cut-surface / volume law at **TraceBasisSizeRatio 0.5** (decision 42:
 size <= 0.5 x the minimum altitude of the nearest bound-basis triangle + FarGrowth x
 the distance to it; dimensionless, contract-derived, 1.0 before; the measure was the
-shortest edge until decision 43, below) and the far field by size fields. `ProductionRecipe.BuildCommandOptions` = `--lc-tangent 0.05
---edge-size 0.00025 --edge-growth-ratio 2.0 --corner-size 0.00025 --far-growth 0.5
---trace-basis-size-ratio 0.5`; `validate_production_recipe_commands` requires the
+shortest edge until decision 43, below) and the far field by size fields. `ProductionRecipe.BuildCommandOptions` = `--lc-tangent 0.05 --edge-size 0.00025 --edge-growth-ratio 2.0 --corner-size 0.00025 --far-growth 0.5 --trace-basis-size-ratio 0.5`; `validate_production_recipe_commands` requires the
 recorded `gmsh-build` command of every production case to execute each option
 exactly once at its value - the ratio exactly once at 0.5 when the case binds a
 trace basis and never otherwise -, `run_gmsh_only_case.py` takes the ratio from the
@@ -82,14 +81,14 @@ Physics evidence of the recipe on the four-edge coupon (graded_v2 reference, p4,
 sources / 60 free-view; the assessment directory
 `coupon-accuracy-assessment-20260913`):
 
-| run | mesh (identity SHA-256, elements, H1 p4) | recipe state | E at 74 / 10 | E within 1% (worst) | p_SA 48 / 47 / 35 | p_SA within 1 / 2 / 5% | p_MS median; worst | p_MA median / weighted / strongest-20 (within 2%) | node-h per coupon |
-|---|---|---|---|---|---|---|---|---|---|
-| physics-08 (PBS 44988, decision 37 spike) | 7c17487f..., 1,588,715, 21.5M | prism tubes, ratio 1.0, no volume grading | +10.2 / +9.4% | 48 | -13.1 / +6.9 / +8.3% | - | -1.06%; +/-6-10% at 8 sources | +0.47 / +0.52 / +0.76% (49) | 0.55 |
-| physics-09 (PBS 45076, decision 38 DAG) | e57ce087..., 1,680,422, 22.2M | production DAG, 50 nm junction layer | +10.3 / +9.8% | 48 | -13.1 / +7 / +7% | - | +/-6-10% | +0.58 / +0.70 / +0.86% (54) | 0.516 |
-| physics-10 (PBS 45085, decisions 39-40) | 647b2079..., 1,742,434, 23.0M | volume laws, variable tube layers, ratio 1.0 | +6.5 / +7.3% | 54 (+7.3%) | -6.1 / +2.8 / +2.1% | 29 / 39 / 54 | -0.69%; +7.2% (30) | +0.67 / +0.72 / +0.80% (56) | 0.520 |
-| **physics-11 (PBS 45145, V-a = decision 42 production)** | **80966c7d..., 1,869,209, 24.8M** | **ratio 0.5, surface layer** | **+0.03 / +0.15%** | **60 (+0.43%)** | **-5.2 / +1.8 / +1.9%** | **35 / 44 / 58** | **-0.60%; -1.70% (47)** | **+0.76 / +0.76 / +0.76% (55; 20/20 strongest)** | **0.508** |
-| physics-12 (PBS 45146, V-b, rejected) | 7db360be..., 2,119,019, 31.4M | TangentialSize 25 nm, ratio 1.0 | +7.1 / +7.2% | 54 (+7.2%) | -6.1 / +2.9 / +2.1% | 29 / 39 / 54 | -0.75%; +8.1% (30) | +0.61 / +0.71 / +0.82% (55) | 0.593 |
-| EL4c (physics-06, PBS 44717; retired MMG production) | 3,471,507 tets | legacy MMG recipe | +0.5 / -0.2% | 60 (+0.81%) | -8.6 / +0.4 / +0.7% | 35 / 40 / 56 | -0.75%; -9.3% (26) | -6.63 / -5.00 / -5.05% (6) | 0.752 |
+| run                                                      | mesh (identity SHA-256, elements, H1 p4) | recipe state                                 | E at 74 / 10       | E within 1% (worst) | p_SA 48 / 47 / 35       | p_SA within 1 / 2 / 5% | p_MS median; worst            | p_MA median / weighted / strongest-20 (within 2%) | node-h per coupon |
+|:-------------------------------------------------------- |:---------------------------------------- |:-------------------------------------------- |:------------------ |:------------------- |:----------------------- |:---------------------- |:----------------------------- |:------------------------------------------------- |:----------------- |
+| physics-08 (PBS 44988, decision 37 spike)                | 7c17487f..., 1,588,715, 21.5M            | prism tubes, ratio 1.0, no volume grading    | +10.2 / +9.4%      | 48                  | -13.1 / +6.9 / +8.3%    | -                      | -1.06%; +/-6-10% at 8 sources | +0.47 / +0.52 / +0.76% (49)                       | 0.55              |
+| physics-09 (PBS 45076, decision 38 DAG)                  | e57ce087..., 1,680,422, 22.2M            | production DAG, 50 nm junction layer         | +10.3 / +9.8%      | 48                  | -13.1 / +7 / +7%        | -                      | +/-6-10%                      | +0.58 / +0.70 / +0.86% (54)                       | 0.516             |
+| physics-10 (PBS 45085, decisions 39-40)                  | 647b2079..., 1,742,434, 23.0M            | volume laws, variable tube layers, ratio 1.0 | +6.5 / +7.3%       | 54 (+7.3%)          | -6.1 / +2.8 / +2.1%     | 29 / 39 / 54           | -0.69%; +7.2% (30)            | +0.67 / +0.72 / +0.80% (56)                       | 0.520             |
+| **physics-11 (PBS 45145, V-a = decision 42 production)** | **80966c7d..., 1,869,209, 24.8M**        | **ratio 0.5, surface layer**                 | **+0.03 / +0.15%** | **60 (+0.43%)**     | **-5.2 / +1.8 / +1.9%** | **35 / 44 / 58**       | **-0.60%; -1.70% (47)**       | **+0.76 / +0.76 / +0.76% (55; 20/20 strongest)**  | **0.508**         |
+| physics-12 (PBS 45146, V-b, rejected)                    | 7db360be..., 2,119,019, 31.4M            | TangentialSize 25 nm, ratio 1.0              | +7.1 / +7.2%       | 54 (+7.2%)          | -6.1 / +2.9 / +2.1%     | 29 / 39 / 54           | -0.75%; +8.1% (30)            | +0.61 / +0.71 / +0.82% (55)                       | 0.593             |
+| EL4c (physics-06, PBS 44717; retired MMG production)     | 3,471,507 tets                           | legacy MMG recipe                            | +0.5 / -0.2%       | 60 (+0.81%)         | -8.6 / +0.4 / +0.7%     | 35 / 40 / 56           | -0.75%; -9.3% (26)            | -6.63 / -5.00 / -5.05% (6)                        | 0.752             |
 
 V-a reaches the EL4c level or better on E, SA and MS while MA stays converged, at
 0.98x the physics-10 cost and 0.68x EL4c's; V-b moves nothing (<= 0.53 points) at
@@ -133,62 +132,62 @@ altitude = shortest edge, and are accurate).
 
 Decision 43 (no new parameter; the recorded rules change):
 
-- **Trace rule measure = the basis triangle's minimum altitude** (2 x area /
-  longest edge = 1 / the largest gradient of its three vertex hats), ratio 0.5
-  unchanged: the quantity the mesh must resolve is the Dirichlet datum's variation,
-  and the shortest edge is a proxy that coincides with the altitude for right
-  slivers (where 0.5 was calibrated) and overstates it for needles. The census
-  `TraceBasisSizing` records `SizeMeasure`, `MinimumBasisAltitude`,
-  `MinimumRequestedSize` = Ratio x it, and the report-only needle counts
-  `NeedleTriangles` / `NeedleTrianglesBelowFarSize` (altitude < 0.6 x shortest edge,
-  `NeedleRule`; the threshold `trace_basis.NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE` is
-  defined once in Python - the stage contract and the fixture producer import it, the
-  Julia census constant mirrors it and the contract requires the recorded value to
-  equal it - and is a report-only classification threshold that never enters a size:
-  altitude / shortest edge = (b / c) sin C is 1 for the right slivers the ratio was
-  calibrated on, 0.866 equilateral, 0.707 right isosceles, so 0.6 lies below every
-  well-shaped triangle and counts exactly the triangles whose shortest-edge proxy
-  overstated the hat scale by more than 1.67x - case 06's needles are at 0.23);
-  `mesh_stage_contract.validate_trace_basis_size_measure` (called by
-  `validate_gmsh_build_census`) recomputes all of them from the recorded mesh-frame
-  triangles. The Python metric rule (`trace_basis.requested_sizes`,
-  `basis_statistics`, `cut_surface_size_report` - now measured across the minimum
-  altitude, `MaximumExtentAcrossMinimumAltitude`) and the Julia seed rule are the
-  same measure (`test_trace_basis.py`). Needle basis triangles are a property of
-  the reference basis triangulation, not of the coupon mesh: avoiding them in the
-  library's own basis construction is a future design item, not part of this
-  change. Basis statistics under the altitude measure: four-edge minimum altitude
-  15.3 nm (shortest edge 21.7 nm; 4 needles, none below the far size), ten-edge
-  5.5 nm (49.2 nm; 50 needles, 34 below the far size, the worst a 19.4 um needle),
-  three-edge 06 11.3 nm (32.7 nm; 18 / 6), two-edge 10 48.2 nm (50.0 nm; 12 / 2).
-- **Every explicitly 1D-meshed curve follows the composed size field** (the
-  decision-40 principle applied to the curves, `CURVE_SPACING_RULE`): the band
-  curves (NormalSize) and the un-tubed metal ridge parts (TangentialSize) take
-  min(their explicit spacing, the composed field on the curve: corner law of the
-  graded points, trace rule, band rule, corner exterior rule), sampled along the
-  curve and gradient-limited to (GrowthRatio - 1) / GrowthRatio exactly as the tube
-  axes are (`graded_tube_stations`); the spacing grid is kept on every grid interval
-  where the limited law equals the spacing (ridge alignment across faces), the
-  remaining gaps are equidistributed in the arclength integral of the reciprocal
-  law with ceil(integral) intervals (every node interval <= the size it spans). The
-  census `CurveSpacing` records the rule, the growth cap and one row per curve
-  (kind junction / band / metal, segment, length, spacing, graded flag, grid
-  intervals kept, interior nodes, node spacing min / P50 / max, prescribed minimum,
-  achieved-over-prescribed min / P50 / max); `validate_curve_spacing` binds the rows
-  (spacing = NormalSize on band / junction rows and TangentialSize on metal rows,
-  statistics ordered and within the spacing, achieved-over-prescribed within the
-  growth cap - an interval is bounded by the law over its span, which steps down by
-  at most GrowthRatio inside it at a corner-ball shell -, kept grid within the grid,
-  the band curves covered). A law marginally below the spacing on one grid interval
-  splits it in two (ceil), so a band curve can show a 12.5 nm minimum interval. Before this the
-  band curves ignored the trace rule along their length (a basis sliver crossing a
-  junction line saw 25 nm curve nodes at a 11 nm request; the surface mesher cannot
-  refine a curve's nodes), the most plausible remaining cause of the junction-source
-  SA residual of physics-11 (47 / 35 / 31 at +1.8 / +1.9 / +0.8%, 0.6-1.4 points
-  above EL4c) - recorded as such, to be adjudicated by the next physics run.
-  `corner_isotropic_curve_nodes` (the corner-law-only placement of the prism-tube
-  spike and the face-census tests) is now the composed rule without the trace and
-  band laws.
+  - **Trace rule measure = the basis triangle's minimum altitude** (2 x area /
+    longest edge = 1 / the largest gradient of its three vertex hats), ratio 0.5
+    unchanged: the quantity the mesh must resolve is the Dirichlet datum's variation,
+    and the shortest edge is a proxy that coincides with the altitude for right
+    slivers (where 0.5 was calibrated) and overstates it for needles. The census
+    `TraceBasisSizing` records `SizeMeasure`, `MinimumBasisAltitude`,
+    `MinimumRequestedSize` = Ratio x it, and the report-only needle counts
+    `NeedleTriangles` / `NeedleTrianglesBelowFarSize` (altitude < 0.6 x shortest edge,
+    `NeedleRule`; the threshold `trace_basis.NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE` is
+    defined once in Python - the stage contract and the fixture producer import it, the
+    Julia census constant mirrors it and the contract requires the recorded value to
+    equal it - and is a report-only classification threshold that never enters a size:
+    altitude / shortest edge = (b / c) sin C is 1 for the right slivers the ratio was
+    calibrated on, 0.866 equilateral, 0.707 right isosceles, so 0.6 lies below every
+    well-shaped triangle and counts exactly the triangles whose shortest-edge proxy
+    overstated the hat scale by more than 1.67x - case 06's needles are at 0.23);
+    `mesh_stage_contract.validate_trace_basis_size_measure` (called by
+    `validate_gmsh_build_census`) recomputes all of them from the recorded mesh-frame
+    triangles. The Python metric rule (`trace_basis.requested_sizes`,
+    `basis_statistics`, `cut_surface_size_report` - now measured across the minimum
+    altitude, `MaximumExtentAcrossMinimumAltitude`) and the Julia seed rule are the
+    same measure (`test_trace_basis.py`). Needle basis triangles are a property of
+    the reference basis triangulation, not of the coupon mesh: avoiding them in the
+    library's own basis construction is a future design item, not part of this
+    change. Basis statistics under the altitude measure: four-edge minimum altitude
+    15.3 nm (shortest edge 21.7 nm; 4 needles, none below the far size), ten-edge
+    5.5 nm (49.2 nm; 50 needles, 34 below the far size, the worst a 19.4 um needle),
+    three-edge 06 11.3 nm (32.7 nm; 18 / 6), two-edge 10 48.2 nm (50.0 nm; 12 / 2).
+  - **Every explicitly 1D-meshed curve follows the composed size field** (the
+    decision-40 principle applied to the curves, `CURVE_SPACING_RULE`): the band
+    curves (NormalSize) and the un-tubed metal ridge parts (TangentialSize) take
+    min(their explicit spacing, the composed field on the curve: corner law of the
+    graded points, trace rule, band rule, corner exterior rule), sampled along the
+    curve and gradient-limited to (GrowthRatio - 1) / GrowthRatio exactly as the tube
+    axes are (`graded_tube_stations`); the spacing grid is kept on every grid interval
+    where the limited law equals the spacing (ridge alignment across faces), the
+    remaining gaps are equidistributed in the arclength integral of the reciprocal
+    law with ceil(integral) intervals (every node interval <= the size it spans). The
+    census `CurveSpacing` records the rule, the growth cap and one row per curve
+    (kind junction / band / metal, segment, length, spacing, graded flag, grid
+    intervals kept, interior nodes, node spacing min / P50 / max, prescribed minimum,
+    achieved-over-prescribed min / P50 / max); `validate_curve_spacing` binds the rows
+    (spacing = NormalSize on band / junction rows and TangentialSize on metal rows,
+    statistics ordered and within the spacing, achieved-over-prescribed within the
+    growth cap - an interval is bounded by the law over its span, which steps down by
+    at most GrowthRatio inside it at a corner-ball shell -, kept grid within the grid,
+    the band curves covered). A law marginally below the spacing on one grid interval
+    splits it in two (ceil), so a band curve can show a 12.5 nm minimum interval. Before this the
+    band curves ignored the trace rule along their length (a basis sliver crossing a
+    junction line saw 25 nm curve nodes at a 11 nm request; the surface mesher cannot
+    refine a curve's nodes), the most plausible remaining cause of the junction-source
+    SA residual of physics-11 (47 / 35 / 31 at +1.8 / +1.9 / +0.8%, 0.6-1.4 points
+    above EL4c) - recorded as such, to be adjudicated by the next physics run.
+    `corner_isotropic_curve_nodes` (the corner-law-only placement of the prism-tube
+    spike and the face-census tests) is now the composed rule without the trace and
+    band laws.
 
 Cost of the altitude measure (probe builds before adoption, identical otherwise):
 case 06 1,693,002 -> 1,843,365 elements (+8.9%; the bottom-face needle at source 25
@@ -219,8 +218,7 @@ the calibration entry proving the adoption, the production four-edge root reprod
 its identity mesh SHA-256 `80966c7d...`) and `four-edge-calib-sizing-lct-0.025` (V-b,
 `--lc-tangent 0.025`, rejected by physics-12). `validate_manifest`
 (`validate_calibration_case_options`) requires the label, non-empty options and
-finite baseline values differing from the declared ones; `verify_canonical_case_entries.
-validate_calibration_commands` is pipeline-aware (`PIPELINE_CALIBRATION_STAGE_OPTIONS`:
+finite baseline values differing from the declared ones; `verify_canonical_case_entries. validate_calibration_commands` is pipeline-aware (`PIPELINE_CALIBRATION_STAGE_OPTIONS`:
 the legacy seed / metric / adaptation / restoration blocks against
 `ProductionValuesBefore34B`, the Gmsh-only `gmsh-build` block against
 `ProductionValues`) and requires the recorded build command to execute every declared
@@ -251,25 +249,26 @@ decision-33 element-cap precedent (`Production` 1000 recorded, `Cases` naming it
 `ProductionUse FORBIDDEN`; `general_mesh_manifest.validate_case_jacobian_condition`,
 applied by `case_gates` in the mesher command of `run_gmsh_only_case.py` - the manifest
 `Gates` stay the canonical cache key, the judged gates are written to `case-gates.json`
-- and in the verification). The pre-build estimate gate now judges calibration cases
-too (`estimate_build_cost.build_options_and_model`: the case's own labeled options with
-the production manifest's model), and `run_gmsh_only_matrix.py` accepts a labeled
-Gmsh-only calibration manifest (records `Calibration` per case and
-`Library.Manifest.Kind calibration`). Build (2026-09-20): estimate 574,787 (0.144 of
-the cap; production two-edge 560,105), actual 537,069 elements (427,629 tets + 102,600
-prisms + 6,840 pyramids; production 521,676 = 425,916 + 88,920 + 6,840: +15,393 = +2.95%,
-the prisms +15.4% = the eighth ring), H1 p4 8,445,107 (production 7,973,827, +5.9%), 760
-tube layers on 35.17 um of tube (unchanged), spacing 15.8-49.7 nm (unchanged), maximum
-prism edge aspect 759.7 (production 379.9), prism Jacobian condition max 1172.56 (11,772
-cells above 1000, 0 nonpositive, min scaled Jacobian 0.0305), tetrahedra max condition
-124.4 / min scaled Jacobian 0.0200, pyramids 8.69 / 0.292, cap regions 124.4 / 0.0200 -
-every gate but the labeled prism bound at its production value; gmsh-build 41 s /
-2.45 GiB; identity + rotate-z verified (Passed). The record for `qualify` is the
-calibration root's `library-build.json` (`Library.Manifest.Kind calibration`;
-`qualify` reads the run parameters from `Calibration.ProductionManifest`); the physics
-run of this case must report PCG iteration counts and kappa next to the production
-two-edge run (supervisor: a material PCG degradation bounds the ring lever by
-conditioning - itself a finding).
+
+  - and in the verification). The pre-build estimate gate now judges calibration cases
+    too (`estimate_build_cost.build_options_and_model`: the case's own labeled options with
+    the production manifest's model), and `run_gmsh_only_matrix.py` accepts a labeled
+    Gmsh-only calibration manifest (records `Calibration` per case and
+    `Library.Manifest.Kind calibration`). Build (2026-09-20): estimate 574,787 (0.144 of
+    the cap; production two-edge 560,105), actual 537,069 elements (427,629 tets + 102,600
+    prisms + 6,840 pyramids; production 521,676 = 425,916 + 88,920 + 6,840: +15,393 = +2.95%,
+    the prisms +15.4% = the eighth ring), H1 p4 8,445,107 (production 7,973,827, +5.9%), 760
+    tube layers on 35.17 um of tube (unchanged), spacing 15.8-49.7 nm (unchanged), maximum
+    prism edge aspect 759.7 (production 379.9), prism Jacobian condition max 1172.56 (11,772
+    cells above 1000, 0 nonpositive, min scaled Jacobian 0.0305), tetrahedra max condition
+    124.4 / min scaled Jacobian 0.0200, pyramids 8.69 / 0.292, cap regions 124.4 / 0.0200 -
+    every gate but the labeled prism bound at its production value; gmsh-build 41 s /
+    2.45 GiB; identity + rotate-z verified (Passed). The record for `qualify` is the
+    calibration root's `library-build.json` (`Library.Manifest.Kind calibration`;
+    `qualify` reads the run parameters from `Calibration.ProductionManifest`); the physics
+    run of this case must report PCG iteration counts and kappa next to the production
+    two-edge run (supervisor: a material PCG degradation bounds the ring lever by
+    conditioning - itself a finding).
 
 **Outcome of decision 53 (2026-09-21, PBS 46094, `qualify` at f46d34324 unchanged; record
 `qualify/he-check-20260921/HE-CHECK.md`, root `/tmp/library-he-check-01`).** The ring-refined
@@ -475,8 +474,7 @@ rings 2-4. Per source the record keeps alpha of the top edge fitted over rings 2
 standard error, the ring-1 factor, MA_raw / MA_tail / MA_sharp and the estimator spread (the
 Fit2-4 and Theory@2 deficits next to `Consistent`: the honest uncertainty of the tail;
 `comparison/ma-tail.{json,md}`, `ma-sharp-<stage>.csv`, the library record's `MATail` and
-`Qualification.MASharp`, the process-library model's `MA {MA_raw, MA_sharp, p_MA_raw,
-p_MA_sharp}` per source). The reference is extrapolated by the same rule only when its ring /
+`Qualification.MASharp`, the process-library model's `MA {MA_raw, MA_sharp, p_MA_raw, p_MA_sharp}` per source). The reference is extrapolated by the same rule only when its ring /
 edge sizing is recorded (a shelled run: its own shells); the graded_v2 tet references record
 none, so they are 'reference unextrapolated' and their sharp-edge deficit is MODELLED per
 source from the edge size given as `--reference-edge-size-nm` (0.5 for graded_v2) via the
@@ -535,8 +533,7 @@ label-restoration stages, the adapter/MMG tool roles, the required-region
 optimizer and the tetrahedral edge layer are retired from production; the code and
 the calibration manifest keep them (labeled `legacy-mmg`) as history.
 
-The production canonical DAG is `canonical-source-validation -> gmsh-build ->
-canonical-gmsh-publication` (one reusable source-local canonical build, cache key
+The production canonical DAG is `canonical-source-validation -> gmsh-build -> canonical-gmsh-publication` (one reusable source-local canonical build, cache key
 from the immutable sources, gates and the three stages' tool roles), followed by
 the mandatory `proper-rigid-publication` per placement, the consolidated audits,
 normalization and verification. `mesh_stage_contract.pipeline_of` identifies a
@@ -550,123 +547,119 @@ binary mesh (`gmsh-mesh`: materials 1/2, matching surface, the semantic interfac
 labels; multi-slot coupons through the mesher's ownership postprocessor) and the
 build census (`build-census`, the bound build report):
 
-- prism edge tubes on the top and bottom edge of every straight metal segment
-  (every `Physical` side of the plan-view loops, excluding box sides): ring k has
-  size EdgeSize x GrowthRatio^(k-1), the ring count is the largest K with r_K + h_K
-  <= min(Overetch, MetalThickness / 2, CornerIsotropyRadius) (7 rings, radius
-  31.75 nm on the four/ten-edge process), 30-degree sectors on the dielectric side
-  (vacuum above the top edge; substrate / vacuum split at the trench wall below the
-  bottom edge; the etch footprint must carry the metal edge), extruded in layers
-  whose thickness follows the composed size field on the tube axis (supervisor
-  decision 40, below; every layer <= TangentialSize; the largest layer is the
-  recorded per-tube Spacing), lateral quadrangles closed by explicit pyramids of
-  height 0.5 x the outermost ring size; tubes end at the outer box and
-  R / tan(phi / 2) + h_K before a semantic corner (phi the in-plane angle of the
-  metal edges meeting there; recorded);
-- isotropic corner balls graded to the tube inner size: CornerSize == EdgeSize is
-  required (one graded law; shells 0.25/0.5/1/2/4/8/16 nm to NormalSize inside the
-  0.1 um ball), and every tube cap centre before a corner is a graded point of the
-  same law, so the un-tubed edge part and the cap region are tetrahedra graded from
-  EdgeSize - the spike's cap slivers (702 tets < SJ 0.01) are gone: the census
-  `CapRegions` (tetrahedra with a vertex within the tube radius of a cap centre)
-  measure min SJ 0.043 / max condition 40 on the four-edge build; the corner balls
-  keep the seed-side bounded descent with the production gates (corner aspect <=
-  4.0, target 3.8) with every tube node fixed;
-- explicit volume size laws in the Gmsh size callback (recorded under
-  `PrismTubes.SizeLaws`): tube band `size = min(FarSize, NormalSize + FarGrowth x
-  max(d_axis - (R + pyramid height), 0))`; feature-curve band (junction lines,
-  footprint edges, un-tubed edge parts) `size = min(FarSize, NormalSize +
-  RadialGrowth x min(r, 2 NormalSize) + FarGrowth x max(r - 2 NormalSize, 0))`
-  (the metric stage's band law; RadialGrowth 1 and ProtectedDistance 2 x
-  NormalSize are mesher constants bound by the census validator); the trace-basis
-  cut-surface rule (TraceBasisSizeRatio x local basis edge) composed by `min` with
-  the background attractor / graded-point fields; the far field FarSize with the
-  fail-closed element cap (no far-budget pressure: the requested far size is used
-  as is and the build fails above `--max-elements`);
-- volume size laws of supervisor decision 39 (physics-09 localized the E/SA/MS
-  regressions of the Gmsh-only mesh to volume sizing next to the narrow-hat apexes,
-  the corner balls and the junction lines): (a) the trace rule is a volume law,
-  size <= TraceBasisSizeRatio x the local basis edge + FarGrowth x the distance to
-  the basis triangle (`TraceBasisSizing.GradingSlope` = FarGrowth; before: the
-  process-band slope 0.675); (b) the corner-ball exterior, size = NormalSize +
-  FarGrowth x the distance beyond CornerIsotropyRadius from the nearest graded
-  point (`SizeLaws.CornerExteriorRule`); (c) the junction lines carry the band law
-  throughout the volume (`SizeLaws.JunctionVolumeRule`, the BandRule) and are
-  1D-meshed at NormalSize (below). All three compose by `min` in the size callback
-  and are measured in NormalSize shells (`SizeLaws.Achieved`: mean / longest edge
-  percentiles and achieved-over-prescribed around the trace apexes within
-  CornerIsotropyRadius, outside the corner balls, around the junction lines;
-  report, not gate);
-- tube layers following the size field (supervisor decision 40, 2026-09-19; the E
-  +10% at the narrow-hat sources 74/10 sits where a tube terminates on the cut
-  surface at (2,8), its extrusion normal to the Dirichlet surface, and the 50 nm
-  prism layers under-resolved the 20-50 nm decay of the hats into the volume): the
-  layer boundaries of every tube equidistribute the arclength integral of the
-  reciprocal of the composed size field evaluated on the tube axis - `min(
-  TangentialSize, the corner-ball law of the semantic corners along the edge, the
-  trace-basis volume rule, the band rule, the corner-exterior rule)`
-  (`PrismTubes.TubeAxisSizeLaw`) - gradient-limited along the axis to
-  (GrowthRatio - 1) / GrowthRatio, with ceil(integral) layers, so a layer is the
-  size at its midpoint, never above TangentialSize, and consecutive layers differ
-  by at most GrowthRatio (`PrismTubes.LayerRule`; `LayerGrowthCap` = GrowthRatio;
-  the mesher fails closed above it). No new parameter: the same laws as everywhere
-  else; the cross-section rings, the pyramids and the tetrahedral interface are
-  unchanged. Excluded from the axis law: the tube rule (the tube's exterior, which
-  reads NormalSize on the axis) and the tube cap centres as ball-law points -
-  grading the layers to CornerSize at a cap makes the lateral pyramid faces
-  CornerSize x outer-arc slivers by construction, and the corner-ball tetrahedra
-  against them fail the scaled-Jacobian gate (four-edge probe: 38 cells below 0.01,
-  minimum 0.0060); the cap centres act on the axis through the corner-exterior rule
-  only (NormalSize within CornerIsotropyRadius of a cap). The census records per
-  tube (`PrismTubes.Tubes[].LayerThickness`) the layer count, thickness minimum /
-  P50 / maximum, the thickness and the prescribed size at both ends, the
-  achieved-over-prescribed range (layer over the gradient-limited size at its
-  midpoint) and the neighbour ratio, the tube end points with `EndsOnBox`, and over
-  all tubes `PrismTubes.LayerThickness` (with
-  `LayersBelowTangentialSizeOverGrowthRatio`, the layers the axis field refines
-  below TangentialSize / GrowthRatio); `validate_gmsh_build_census` requires the
-  rule strings, `LayerGrowthCap` = `--edge-growth-ratio`, every neighbour ratio
-  within it, the thickness order Minimum <= P50 <= Maximum <= TangentialSize with
-  `SpacingMinimum` / `SpacingMaximum` equal to the extremes, the below-count within
-  the layer count, and every row's record with its Maximum equal to the row's
-  Spacing and, at an end on the box, the end layer within the prescribed size.
-  Decision 41 (surface layer): at a tube end on the outer box the end layer is the
-  field evaluated at the surface (at most the gradient-limited field over the layer
-  span, iterated from the surface value), not the size at the layer midpoint, so
-  that a field growing away from the cut surface (the trace rule at FarGrowth) is
-  resolved from the surface; the rest of the tube is equidistributed as before. No
-  new parameter. Four-edge (probe, 083874fee): layers at the
-  (2,8) box end 28.2 nm (prescribed 21.7 nm by the trace rule, growing at
-  FarGrowth; 21.7 nm under decision 41), 25 nm at the corner ends, 16 nm at the bottom-tube ends 16 nm before
-  the on-box corners (10,0) / (0,8), 49.9 nm mid-tube; 1436 -> 1466 layers;
-- band curves 1D-meshed at the band law (review P1 of the phase-3 evidence): the
-  non-metal longitudinal feature curves - the cut-surface / material-interface
-  junction lines and the footprint edges parallel to a metal edge - are placed at
-  NormalSize spacing (the band law on the line, composed with the corner law), so
-  the first cell layer against a junction is NormalSize transversally; on the
-  lc_tangent ridge grid it was TangentialSize (four-edge cut surface near junctions
-  P50 49.8 nm under commit 1a0289994), because the surface mesher cannot refine a
-  curve's nodes. The metal ridges keep the tangential grid (they carry the tubes).
-  The census records the band curves (`PrismTubes.BandCurves`: count, length,
-  Spacing = NormalSize, segments) and the achieved first-layer transverse size
-  against the junction lines (`PrismTubes.Bands.JunctionFirstLayer`: P10/P50/P90/
-  maximum and achieved-over-prescribed for the matching-surface elements and the
-  tetrahedra with a node on a line; report, not gate);
-- the census computed by the mesher itself (Gmsh's `minSJ` is the high-order
-  mapping Jacobian, identically 1 for order-1 elements): per element type the
-  corner-frame scaled Jacobian, Jacobian condition and orientation (tetrahedra,
-  prisms, pyramids; gated fail closed: positive orientation and condition <= 1000
-  for every type, SJ >= 0.01 for tetrahedra), tube rings / prisms / pyramids /
-  layers / spacing / prism edge aspect, cap-region quality, cut-surface edge
-  statistics (all, near junctions, achieved over requested against the trace rule:
-  measured only on the narrow basis triangles that contain a matching-element
-  centroid, the unmeasured count reported), junction / footprint band tetrahedron
-  sizes (the footprint statistic over the footprint sides not on the outer box -
-  the feature curves - with the box sides reported separately as
-  `FootprintOnBox`, a far-field sample), the junction first-layer sizes, size
-  laws, corner shells, interface areas with quadrangles, footprint simplification,
-  straight junction segments, element counts per type and the element-budget
-  record.
+  - prism edge tubes on the top and bottom edge of every straight metal segment
+    (every `Physical` side of the plan-view loops, excluding box sides): ring k has
+    size EdgeSize x GrowthRatio^(k-1), the ring count is the largest K with r_K + h_K
+    <= min(Overetch, MetalThickness / 2, CornerIsotropyRadius) (7 rings, radius
+    31.75 nm on the four/ten-edge process), 30-degree sectors on the dielectric side
+    (vacuum above the top edge; substrate / vacuum split at the trench wall below the
+    bottom edge; the etch footprint must carry the metal edge), extruded in layers
+    whose thickness follows the composed size field on the tube axis (supervisor
+    decision 40, below; every layer <= TangentialSize; the largest layer is the
+    recorded per-tube Spacing), lateral quadrangles closed by explicit pyramids of
+    height 0.5 x the outermost ring size; tubes end at the outer box and
+    R / tan(phi / 2) + h_K before a semantic corner (phi the in-plane angle of the
+    metal edges meeting there; recorded);
+  - isotropic corner balls graded to the tube inner size: CornerSize == EdgeSize is
+    required (one graded law; shells 0.25/0.5/1/2/4/8/16 nm to NormalSize inside the
+    0.1 um ball), and every tube cap centre before a corner is a graded point of the
+    same law, so the un-tubed edge part and the cap region are tetrahedra graded from
+    EdgeSize - the spike's cap slivers (702 tets < SJ 0.01) are gone: the census
+    `CapRegions` (tetrahedra with a vertex within the tube radius of a cap centre)
+    measure min SJ 0.043 / max condition 40 on the four-edge build; the corner balls
+    keep the seed-side bounded descent with the production gates (corner aspect <=
+    4.0, target 3.8) with every tube node fixed;
+  - explicit volume size laws in the Gmsh size callback (recorded under
+    `PrismTubes.SizeLaws`): tube band `size = min(FarSize, NormalSize + FarGrowth x max(d_axis - (R + pyramid height), 0))`; feature-curve band (junction lines,
+    footprint edges, un-tubed edge parts) `size = min(FarSize, NormalSize + RadialGrowth x min(r, 2 NormalSize) + FarGrowth x max(r - 2 NormalSize, 0))`
+    (the metric stage's band law; RadialGrowth 1 and ProtectedDistance 2 x
+    NormalSize are mesher constants bound by the census validator); the trace-basis
+    cut-surface rule (TraceBasisSizeRatio x local basis edge) composed by `min` with
+    the background attractor / graded-point fields; the far field FarSize with the
+    fail-closed element cap (no far-budget pressure: the requested far size is used
+    as is and the build fails above `--max-elements`);
+  - volume size laws of supervisor decision 39 (physics-09 localized the E/SA/MS
+    regressions of the Gmsh-only mesh to volume sizing next to the narrow-hat apexes,
+    the corner balls and the junction lines): (a) the trace rule is a volume law,
+    size <= TraceBasisSizeRatio x the local basis edge + FarGrowth x the distance to
+    the basis triangle (`TraceBasisSizing.GradingSlope` = FarGrowth; before: the
+    process-band slope 0.675); (b) the corner-ball exterior, size = NormalSize +
+    FarGrowth x the distance beyond CornerIsotropyRadius from the nearest graded
+    point (`SizeLaws.CornerExteriorRule`); (c) the junction lines carry the band law
+    throughout the volume (`SizeLaws.JunctionVolumeRule`, the BandRule) and are
+    1D-meshed at NormalSize (below). All three compose by `min` in the size callback
+    and are measured in NormalSize shells (`SizeLaws.Achieved`: mean / longest edge
+    percentiles and achieved-over-prescribed around the trace apexes within
+    CornerIsotropyRadius, outside the corner balls, around the junction lines;
+    report, not gate);
+  - tube layers following the size field (supervisor decision 40, 2026-09-19; the E
+    +10% at the narrow-hat sources 74/10 sits where a tube terminates on the cut
+    surface at (2,8), its extrusion normal to the Dirichlet surface, and the 50 nm
+    prism layers under-resolved the 20-50 nm decay of the hats into the volume): the
+    layer boundaries of every tube equidistribute the arclength integral of the
+    reciprocal of the composed size field evaluated on the tube axis - `min( TangentialSize, the corner-ball law of the semantic corners along the edge, the trace-basis volume rule, the band rule, the corner-exterior rule)`
+    (`PrismTubes.TubeAxisSizeLaw`) - gradient-limited along the axis to
+    (GrowthRatio - 1) / GrowthRatio, with ceil(integral) layers, so a layer is the
+    size at its midpoint, never above TangentialSize, and consecutive layers differ
+    by at most GrowthRatio (`PrismTubes.LayerRule`; `LayerGrowthCap` = GrowthRatio;
+    the mesher fails closed above it). No new parameter: the same laws as everywhere
+    else; the cross-section rings, the pyramids and the tetrahedral interface are
+    unchanged. Excluded from the axis law: the tube rule (the tube's exterior, which
+    reads NormalSize on the axis) and the tube cap centres as ball-law points -
+    grading the layers to CornerSize at a cap makes the lateral pyramid faces
+    CornerSize x outer-arc slivers by construction, and the corner-ball tetrahedra
+    against them fail the scaled-Jacobian gate (four-edge probe: 38 cells below 0.01,
+    minimum 0.0060); the cap centres act on the axis through the corner-exterior rule
+    only (NormalSize within CornerIsotropyRadius of a cap). The census records per
+    tube (`PrismTubes.Tubes[].LayerThickness`) the layer count, thickness minimum /
+    P50 / maximum, the thickness and the prescribed size at both ends, the
+    achieved-over-prescribed range (layer over the gradient-limited size at its
+    midpoint) and the neighbour ratio, the tube end points with `EndsOnBox`, and over
+    all tubes `PrismTubes.LayerThickness` (with
+    `LayersBelowTangentialSizeOverGrowthRatio`, the layers the axis field refines
+    below TangentialSize / GrowthRatio); `validate_gmsh_build_census` requires the
+    rule strings, `LayerGrowthCap` = `--edge-growth-ratio`, every neighbour ratio
+    within it, the thickness order Minimum <= P50 <= Maximum <= TangentialSize with
+    `SpacingMinimum` / `SpacingMaximum` equal to the extremes, the below-count within
+    the layer count, and every row's record with its Maximum equal to the row's
+    Spacing and, at an end on the box, the end layer within the prescribed size.
+    Decision 41 (surface layer): at a tube end on the outer box the end layer is the
+    field evaluated at the surface (at most the gradient-limited field over the layer
+    span, iterated from the surface value), not the size at the layer midpoint, so
+    that a field growing away from the cut surface (the trace rule at FarGrowth) is
+    resolved from the surface; the rest of the tube is equidistributed as before. No
+    new parameter. Four-edge (probe, 083874fee): layers at the
+    (2,8) box end 28.2 nm (prescribed 21.7 nm by the trace rule, growing at
+    FarGrowth; 21.7 nm under decision 41), 25 nm at the corner ends, 16 nm at the bottom-tube ends 16 nm before
+    the on-box corners (10,0) / (0,8), 49.9 nm mid-tube; 1436 -> 1466 layers;
+  - band curves 1D-meshed at the band law (review P1 of the phase-3 evidence): the
+    non-metal longitudinal feature curves - the cut-surface / material-interface
+    junction lines and the footprint edges parallel to a metal edge - are placed at
+    NormalSize spacing (the band law on the line, composed with the corner law), so
+    the first cell layer against a junction is NormalSize transversally; on the
+    lc_tangent ridge grid it was TangentialSize (four-edge cut surface near junctions
+    P50 49.8 nm under commit 1a0289994), because the surface mesher cannot refine a
+    curve's nodes. The metal ridges keep the tangential grid (they carry the tubes).
+    The census records the band curves (`PrismTubes.BandCurves`: count, length,
+    Spacing = NormalSize, segments) and the achieved first-layer transverse size
+    against the junction lines (`PrismTubes.Bands.JunctionFirstLayer`: P10/P50/P90/
+    maximum and achieved-over-prescribed for the matching-surface elements and the
+    tetrahedra with a node on a line; report, not gate);
+  - the census computed by the mesher itself (Gmsh's `minSJ` is the high-order
+    mapping Jacobian, identically 1 for order-1 elements): per element type the
+    corner-frame scaled Jacobian, Jacobian condition and orientation (tetrahedra,
+    prisms, pyramids; gated fail closed: positive orientation and condition <= 1000
+    for every type, SJ >= 0.01 for tetrahedra), tube rings / prisms / pyramids /
+    layers / spacing / prism edge aspect, cap-region quality, cut-surface edge
+    statistics (all, near junctions, achieved over requested against the trace rule:
+    measured only on the narrow basis triangles that contain a matching-element
+    centroid, the unmeasured count reported), junction / footprint band tetrahedron
+    sizes (the footprint statistic over the footprint sides not on the outer box -
+    the feature curves - with the box sides reported separately as
+    `FootprintOnBox`, a far-field sample), the junction first-layer sizes, size
+    laws, corner shells, interface areas with quadrangles, footprint simplification,
+    straight junction segments, element counts per type and the element-budget
+    record.
 
 `mesh_stage_contract.validate_gmsh_build_census` binds the census to the build
 command and the canonical semantic contract (InnerSize = `--edge-size` =
@@ -697,8 +690,7 @@ cells); element quality is measured on the native cells per type
 (`MeshQuality.ByType`; top level: orientation and condition over every type, scaled
 Jacobian over the tetrahedra; the gate `mesh-quality-jacobian` judges both); H1
 counts and element counts are native. The achieved-anisotropy design gate is
-replaced by the prism tube design statement (`AchievedAnisotropy.Gate =
-"not-applicable: prism edge tubes"`: the recorded rings / extrusion / prisms /
+replaced by the prism tube design statement (`AchievedAnisotropy.Gate = "not-applicable: prism edge tubes"`: the recorded rings / extrusion / prisms /
 pyramids / spacing / cap and cut-surface statistics, the mesh's prism and pyramid
 counts required to equal the census; informational). The trace-diagonal detector
 judges a band on a trace-basis edge within the band's own direction resolvability
@@ -726,36 +718,37 @@ and verified identity + rotate-z with empty failure lists
 (`per-entry-verification.json`: `Passed true`, `Failures []`,
 `TransformComparisonFailures []`, one shared CanonicalBuildId per case).
 
-| case | elements (tets + prisms + pyramids) | nodes = H1 p1 (H1 p4) | tubes / layers / layer thickness min-P50-max | rings | cap regions (min SJ / max cond) | tets min SJ / max cond | prisms max cond | pyramids max cond | corners (10 / 4) | protected | closure | diagonal bands | stage s / GiB (build; publication) | audits s / GiB | verification s / GiB |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| four-edge-9d2cb9bbb3fe | **1,742,434** = 1,557,718 + 171,522 + 13,194 (+0.43% vs f85c30932's 1,734,992; +3.7% vs 1a0289994's 1,680,422; 0.50x the 34B production 3,471,480) | 383,805 (23.0M) | 8 / 1,466 / 15.9 - 49.86 - 49.99 nm (f85c30932: 1,436 uniform layers of 49.70-49.93 nm) | 7 (0.25 ... 16 nm, R 31.75 nm) | 12: 0.0548 / 20.7 | 0.0442 / 42.6 (f85c30932: 0.0270 / 86.0) | 589.4 | 8.74 | 2.74 / 3.59 / 2.84 / 3.25 | 0 (support vertices 1e-15) | 8.4e-14 (Gauss4, 633,714 points) | 0 (8 signature-, 30 footprint-, 8 junction-aligned; 0 on trace-basis edges: ShortEdgeThreshold 0.032, below the narrow-hat band width) | 137.4 / 4.13 (gmsh-build), 31.7 / 3.20 (publication); 122-129 / 3.9 per placement | 291-298 / 4.1 | 877 / 2.8 |
-| ten-edge-6791f1c84123 | **2,465,185** = 2,175,133 + 269,334 + 20,718 (+0.89% vs 2,443,456; 0.69x the 34B production 3,570,533) | 556,661 (33.2M) | 20 / 2,302 / 15.9 - 49.82 - 49.94 nm (before 2,224 uniform layers of 47.6-49.9 nm) | 7 | 36: 0.0401 / 43.4 | 0.0217 / 101.2 (before 0.0218 / 93.4) | 588.8 | 8.73 | 3.34-3.78 (10 corners) | 0 (1.8e-15) | 7.8e-14 (970,074 points; 10 owner labels: 3100/3101, 5001/5002, 5101/5102, 6001/6002, 6101/6102) | 0 (10 signature-, 10 footprint-, 6 junction-aligned) | 230.5 / 4.53 (gmsh-build), 50.6 / 4.26 (publication); 175-180 / 5.0 per placement | 457-461 / 5.0 | 1,111 / 3.8 |
+| case                   | elements (tets + prisms + pyramids)                                                                                                                | nodes = H1 p1 (H1 p4) | tubes / layers / layer thickness min-P50-max                                            | rings                          | cap regions (min SJ / max cond) | tets min SJ / max cond                   | prisms max cond | pyramids max cond | corners (10 / 4)          | protected                  | closure                                                                                          | diagonal bands                                                                                                                         | stage s / GiB (build; publication)                                                | audits s / GiB | verification s / GiB |
+|:---------------------- |:-------------------------------------------------------------------------------------------------------------------------------------------------- |:--------------------- |:--------------------------------------------------------------------------------------- |:------------------------------ |:------------------------------- |:---------------------------------------- |:--------------- |:----------------- |:------------------------- |:-------------------------- |:------------------------------------------------------------------------------------------------ |:-------------------------------------------------------------------------------------------------------------------------------------- |:--------------------------------------------------------------------------------- |:-------------- |:-------------------- |
+| four-edge-9d2cb9bbb3fe | **1,742,434** = 1,557,718 + 171,522 + 13,194 (+0.43% vs f85c30932's 1,734,992; +3.7% vs 1a0289994's 1,680,422; 0.50x the 34B production 3,471,480) | 383,805 (23.0M)       | 8 / 1,466 / 15.9 - 49.86 - 49.99 nm (f85c30932: 1,436 uniform layers of 49.70-49.93 nm) | 7 (0.25 ... 16 nm, R 31.75 nm) | 12: 0.0548 / 20.7               | 0.0442 / 42.6 (f85c30932: 0.0270 / 86.0) | 589.4           | 8.74              | 2.74 / 3.59 / 2.84 / 3.25 | 0 (support vertices 1e-15) | 8.4e-14 (Gauss4, 633,714 points)                                                                 | 0 (8 signature-, 30 footprint-, 8 junction-aligned; 0 on trace-basis edges: ShortEdgeThreshold 0.032, below the narrow-hat band width) | 137.4 / 4.13 (gmsh-build), 31.7 / 3.20 (publication); 122-129 / 3.9 per placement | 291-298 / 4.1  | 877 / 2.8            |
+| ten-edge-6791f1c84123  | **2,465,185** = 2,175,133 + 269,334 + 20,718 (+0.89% vs 2,443,456; 0.69x the 34B production 3,570,533)                                             | 556,661 (33.2M)       | 20 / 2,302 / 15.9 - 49.82 - 49.94 nm (before 2,224 uniform layers of 47.6-49.9 nm)      | 7                              | 36: 0.0401 / 43.4               | 0.0217 / 101.2 (before 0.0218 / 93.4)    | 588.8           | 8.73              | 3.34-3.78 (10 corners)    | 0 (1.8e-15)                | 7.8e-14 (970,074 points; 10 owner labels: 3100/3101, 5001/5002, 5101/5102, 6001/6002, 6101/6102) | 0 (10 signature-, 10 footprint-, 6 junction-aligned)                                                                                   | 230.5 / 4.53 (gmsh-build), 50.6 / 4.26 (publication); 175-180 / 5.0 per placement | 457-461 / 5.0  | 1,111 / 3.8          |
 
 Decision-40 tube layers (census `PrismTubes.LayerThickness`, per tube
 `Tubes[].LayerThickness`; the layer is the gradient-limited axis size at its
 midpoint, achieved-over-prescribed P50 0.994-1.000 on every tube; the largest
 neighbour ratio 1.59 (four) / 1.53 (ten) against the cap GrowthRatio 2): four-edge
-- the two tubes ending on the cut surface at (2,8) where the narrow-hat sources
-74/10 live: first layer 28.2 nm against the trace rule's 21.7 nm on the surface
-(the layer grows at FarGrowth 0.5 from the surface: 21.7 + 0.5 x 14 nm at its
-midpoint), then 25 nm inside the corner ball at the (2,0) end; the two tubes ending
-on the box at (10,-2): 49.9 nm there (no narrow hat; the far size), 25 nm at the
-(0,-2) corner end; the (2,0)->(10,0) and (0,-2)->(0,8) tubes: 25 nm at the
-corner-clearance ends, 15.9 nm at the bottom-tube ends 16 nm before the on-box
-corners (10,0) / (0,8) (the corner-ball shell size there; the top tubes are
-sqrt(16^2 + 100^2) nm from those corners, 25 nm); 49.9 nm mid-tube; per tube 162-205
-layers (before 159-200). Ten-edge: 40 tube ends - 4 on the box at 49.8 nm (50 nm
-prescribed), 34 corner ends at 24.9-25.0 nm, 2 at 15.9 nm (16 nm); per tube 23-165
-layers. (The census field `LayersBelowTangentialSize` of these builds counted every
-layer - every layer is strictly below the cap by construction - and was replaced by
-`LayersBelowTangentialSizeOverGrowthRatio`, the field-refined layers.)
-Trace-apex shells (below) tightened: four-edge 25-50 / 50-100 nm longest edge P50
-38.6 -> 32.6 nm / 49.3 -> 42.7 nm, ten-edge 49.0 -> 35.8 nm / 62.9 -> 54.0 nm; the
-four-edge tetrahedra minimum scaled Jacobian rose from 0.027 to 0.044 (25 nm layers
-against the cap-graded tetrahedra instead of 50 nm). Not viable (probe under the
-same commit's tools, recorded here): grading the layers to CornerSize at the cap
-centres - 38 corner-ball tetrahedra below the SJ gate (minimum 0.0060) after the
-seed optimization; hence the axis law excludes the cap centres as ball-law points.
+
+  - the two tubes ending on the cut surface at (2,8) where the narrow-hat sources
+    74/10 live: first layer 28.2 nm against the trace rule's 21.7 nm on the surface
+    (the layer grows at FarGrowth 0.5 from the surface: 21.7 + 0.5 x 14 nm at its
+    midpoint), then 25 nm inside the corner ball at the (2,0) end; the two tubes ending
+    on the box at (10,-2): 49.9 nm there (no narrow hat; the far size), 25 nm at the
+    (0,-2) corner end; the (2,0)->(10,0) and (0,-2)->(0,8) tubes: 25 nm at the
+    corner-clearance ends, 15.9 nm at the bottom-tube ends 16 nm before the on-box
+    corners (10,0) / (0,8) (the corner-ball shell size there; the top tubes are
+    sqrt(16^2 + 100^2) nm from those corners, 25 nm); 49.9 nm mid-tube; per tube 162-205
+    layers (before 159-200). Ten-edge: 40 tube ends - 4 on the box at 49.8 nm (50 nm
+    prescribed), 34 corner ends at 24.9-25.0 nm, 2 at 15.9 nm (16 nm); per tube 23-165
+    layers. (The census field `LayersBelowTangentialSize` of these builds counted every
+    layer - every layer is strictly below the cap by construction - and was replaced by
+    `LayersBelowTangentialSizeOverGrowthRatio`, the field-refined layers.)
+    Trace-apex shells (below) tightened: four-edge 25-50 / 50-100 nm longest edge P50
+    38.6 -> 32.6 nm / 49.3 -> 42.7 nm, ten-edge 49.0 -> 35.8 nm / 62.9 -> 54.0 nm; the
+    four-edge tetrahedra minimum scaled Jacobian rose from 0.027 to 0.044 (25 nm layers
+    against the cap-graded tetrahedra instead of 50 nm). Not viable (probe under the
+    same commit's tools, recorded here): grading the layers to CornerSize at the cap
+    centres - 38 corner-ball tetrahedra below the SJ gate (minimum 0.0060) after the
+    seed optimization; hence the axis law excludes the cap centres as ball-law points.
 
 H1 p1 is `Measurements.Complexity.H1DOFs` of the identity `mesh-complexity`
 record (= the node count); H1 p4 is `mixed_mesh.h1_dofs(mesh, 4)` on `identity.msh`
@@ -834,8 +827,7 @@ left E +6.5/+7.3% at the narrow-hat sources 74/10 (cells within 0.1 um of the ap
 prism layer at the (2,8) cut 28.2 nm against 21.7 nm prescribed), junction p_SA
 +2..+3% and the z = 0 junction ring p_MS +5..+7%. Decision 41 calibrates the two
 recorded recipe parameters that control these volumes, each together with the
-surface layer at on-box tube ends (f7c23957b, above): V-a `--trace-basis-size-ratio
-0.5` and V-b `--lc-tangent 0.025`, as the labeled cases of
+surface layer at on-box tube ends (f7c23957b, above): V-a `--trace-basis-size-ratio 0.5` and V-b `--lc-tangent 0.025`, as the labeled cases of
 `geometry-independence-calibration-sizing.json`. Mesher-only probes (f7c23957b) first
 bounded the element counts under the 4M cap (V-a 1,869,209, 121 s / 3.9 GB; V-b
 2,119,019, 126 s / 4.2 GB), then both cases were built through
@@ -844,10 +836,10 @@ audits, per-entry verification: `Passed true`, `Failures []`,
 `TransformComparisonFailures []`, `CanonicalReuseFailures []`; every physical gate at
 its production value). The production manifest was unchanged at efd393f38 (ratio 1.0 / 50 nm); decision 42 adopted the V-a ratio afterwards (above).
 
-| case | elements (tets + prisms + pyramids) | nodes = H1 p1 (H1 p3 / p4 / p5, exact hybrid entity sums) | tubes / layers / thickness min-P50-max (nm) / max neighbour ratio / below TangentialSize / 2 | first layer at the (2,8) cut (top, bottom) | trace-apex cells within 0.1 um of 74 / 10 (median longest edge) | junction first layer cut-surface P50 / P90 (nm) | tets min SJ / max cond | prisms / pyramids max cond | caps (12) min SJ / max cond | corners (4) | protected / closure / diagonal bands | stage s / GiB (build; publication; placement) | audits s / GiB (identity; rotate-z) | verification s / GiB |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| four-edge-calib-sizing-tbr-0.5 (V-a) | **1,869,209** = 1,683,863 + 172,107 + 13,239 (+7.3% vs 083874fee's 1,742,434) | 414,758 (10.55M / 24.83M / 48.29M; p4 +6.5%) | 8 / 1,471 / 10.85 - 49.75 - 50.0 / 1.93 (cap 2) / 52 | **10.85 nm** = the trace rule at ratio 0.5 on the surface (prescribed 10.85) | **575 / 533 at 29.5 / 31.6 nm** (r < 0.05: 170 / 161 at 25.0 / 26.2; r < 0.25: 1,918 / 1,824 at 36.2 / 35.8); cut-surface triangles within 0.1 um 257 / 249 at 12.7 / 13.5 nm | 21.6 / 27.9 (A/P 0.87: the trace rule refines the cut under the junctions too) | 0.0296 / 118.1 | 668.6 / 8.74 | 0.0305 / 67.6 | 3.13 / 3.44 / 3.47 / 3.54 | 0 (9.9e-16) / 2.5e-13 (653,577 points) / 0 | 115.1 / 4.27; 27.8 / 3.18; 104-106 / 3.82 | 265 / 2.82; 322 / 2.86 | 972 / 2.92 |
-| four-edge-calib-sizing-lct-0.025 (V-b) | **2,119,019** = 1,757,651 + 335,556 + 25,812 (+21.6%) | 514,194 (13.31M / 31.43M / 61.25M; p4 +34.8%) | 8 / 2,868 / 16.0 - 24.94 - 25.0 / 1.34 / 0 | **21.7 nm** = the trace rule at ratio 1.0 on the surface (prescribed 21.7; 28.2 before f7c23957b) | 146 / 134 at 52.1 / 56.8 nm (= the 083874fee mesh: the apexes at z = +/-2.1 are not on a tube); source 26 (z = -0.05, on the tube): 907 at 24.9 nm (before 613 at 44 nm) | 25.1 / 28.8 | 0.0267 / 87.8 | 299.4 / 4.48 | 0.0318 / 41.7 | 3.11 / 3.76 / 2.89 / 3.58 | 0 (9.9e-16) / 1.4e-13 (922,506 points) / 0 | 122.3 / 4.76; 29.6 / 3.74; 117-123 / 4.47 | 289 / 3.22; 378 / 3.20 | 1,085 / 3.25 |
+| case                                   | elements (tets + prisms + pyramids)                                           | nodes = H1 p1 (H1 p3 / p4 / p5, exact hybrid entity sums) | tubes / layers / thickness min-P50-max (nm) / max neighbour ratio / below TangentialSize / 2 | first layer at the (2,8) cut (top, bottom)                                                        | trace-apex cells within 0.1 um of 74 / 10 (median longest edge)                                                                                                               | junction first layer cut-surface P50 / P90 (nm)                                | tets min SJ / max cond | prisms / pyramids max cond | caps (12) min SJ / max cond | corners (4)               | protected / closure / diagonal bands       | stage s / GiB (build; publication; placement) | audits s / GiB (identity; rotate-z) | verification s / GiB |
+|:-------------------------------------- |:----------------------------------------------------------------------------- |:--------------------------------------------------------- |:-------------------------------------------------------------------------------------------- |:------------------------------------------------------------------------------------------------- |:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |:------------------------------------------------------------------------------ |:---------------------- |:-------------------------- |:--------------------------- |:------------------------- |:------------------------------------------ |:--------------------------------------------- |:----------------------------------- |:-------------------- |
+| four-edge-calib-sizing-tbr-0.5 (V-a)   | **1,869,209** = 1,683,863 + 172,107 + 13,239 (+7.3% vs 083874fee's 1,742,434) | 414,758 (10.55M / 24.83M / 48.29M; p4 +6.5%)              | 8 / 1,471 / 10.85 - 49.75 - 50.0 / 1.93 (cap 2) / 52                                         | **10.85 nm** = the trace rule at ratio 0.5 on the surface (prescribed 10.85)                      | **575 / 533 at 29.5 / 31.6 nm** (r < 0.05: 170 / 161 at 25.0 / 26.2; r < 0.25: 1,918 / 1,824 at 36.2 / 35.8); cut-surface triangles within 0.1 um 257 / 249 at 12.7 / 13.5 nm | 21.6 / 27.9 (A/P 0.87: the trace rule refines the cut under the junctions too) | 0.0296 / 118.1         | 668.6 / 8.74               | 0.0305 / 67.6               | 3.13 / 3.44 / 3.47 / 3.54 | 0 (9.9e-16) / 2.5e-13 (653,577 points) / 0 | 115.1 / 4.27; 27.8 / 3.18; 104-106 / 3.82     | 265 / 2.82; 322 / 2.86              | 972 / 2.92           |
+| four-edge-calib-sizing-lct-0.025 (V-b) | **2,119,019** = 1,757,651 + 335,556 + 25,812 (+21.6%)                         | 514,194 (13.31M / 31.43M / 61.25M; p4 +34.8%)             | 8 / 2,868 / 16.0 - 24.94 - 25.0 / 1.34 / 0                                                   | **21.7 nm** = the trace rule at ratio 1.0 on the surface (prescribed 21.7; 28.2 before f7c23957b) | 146 / 134 at 52.1 / 56.8 nm (= the 083874fee mesh: the apexes at z = +/-2.1 are not on a tube); source 26 (z = -0.05, on the tube): 907 at 24.9 nm (before 613 at 44 nm)      | 25.1 / 28.8                                                                    | 0.0267 / 87.8          | 299.4 / 4.48               | 0.0318 / 41.7               | 3.11 / 3.76 / 2.89 / 3.58 | 0 (9.9e-16) / 1.4e-13 (922,506 points) / 0 | 122.3 / 4.76; 29.6 / 3.74; 117-123 / 4.47     | 289 / 3.22; 378 / 3.20              | 1,085 / 3.25         |
 
 Trace-apex census (the physics-10 statistic: volume cells with centroid within r of
 the source apex, `matching_surface_local_sizing.py` of the assessment on the identity
@@ -884,8 +876,7 @@ identity + rotate-z-0.63 with empty failure lists (`per-entry-verification.json`
 `CanonicalReuseFailures []`). The roots were launched from the f6efe6367 working
 tree before that commit was recorded, so their directory names carry the parent
 21cf534ff; the evidence is bound to f6efe6367 by content: the verification
-reports record the manifest SHA-256 `04f8df72434eb08c5089805510918c504a7f5a74
-32762bae240cd19f958c00b5` (= `geometry-independence-suite.json` at f6efe6367) and
+reports record the manifest SHA-256 `04f8df72434eb08c5089805510918c504a7f5a74 32762bae240cd19f958c00b5` (= `geometry-independence-suite.json` at f6efe6367) and
 the refrozen tool digests (`general_mesh_manifest.py` `212bcf44...`). The
 four-edge identity mesh is byte-identical to the V-a calibration mesh
 (SHA-256 `80966c7db44dabc49ac7bb068bbaee0e0828e413b115cee8c066c886866b6108`,
@@ -893,10 +884,10 @@ the mesh physics-11 ran on; rotate-z `97bfb753...` identical too, CanonicalBuild
 `41e4f243...` shared with the calibration roots because the cache key does not
 encode recipe options), so physics-11 binds to the production root.
 
-| case | elements (tets + prisms + pyramids) | nodes = H1 p1 (H1 p4) | tubes / layers / thickness min-P50-max (nm) / max neighbour ratio | caps min SJ / max cond | tets min SJ / max cond | prisms / pyramids max cond | corners | protected (measure / vertex) | closure (points) | diagonal bands | trace-apex shells 0-25 / 25-50 / 50-100 nm (cells; longest edge P50 nm) | junction first layer cut P50 / tets P50 (nm) | stage s / GiB (build; publication; placement) | audits s / GiB (identity; rotate-z) | verification s / GiB |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| four-edge-9d2cb9bbb3fe | **1,869,209** = 1,683,863 + 172,107 + 13,239 (= V-a; +7.3% vs 083874fee's 1,742,434; 0.54x the 34B production 3,471,480) | 414,758 (24,827,674) | 8 / 1,471 / 10.85 - 49.75 - 50.0 / 1.93 | 12: 0.0305 / 67.6 | 0.0296 / 118.1 | 668.6 / 8.74 | 3.13 / 3.44 / 3.47 / 3.54 | 0 / 9.9e-16 | 2.5e-13 (653,577; owners 3000/3100/5001/6001) | 0 | 54 apexes: 2,802 / 2,260 / 5,949 cells at 6.4 / 32.1 / 41.3 (083874fee 4.9 / 32.6 / 42.7) | 21.6 / 25.5 | 115.6 / 4.25; 29.7 / 3.34; 96.9-111.8 / 3.8 | 284.6 / 2.88; 346.1 / 2.85 | 991 / 2.95 |
-| ten-edge-6791f1c84123 | **2,673,691** = 2,383,387 + 269,568 + 20,736 (+8.5% vs 083874fee's 2,465,185; 0.75x the 34B production 3,570,533) | 611,846 (35,774,961) | 20 / 2,304 / 15.9 - 49.82 - 50.0 / 1.83 | 36: 0.0274 / 82.8 | 0.0200 / 173.9 | 589.5 / 8.74 | 3.34-3.80 (10 corners) | 0 / 1.3e-15 | 1.1e-13 (1,031,142; 10 owner labels 3100/3101, 5001/5002, 5101/5102, 6001/6002, 6101/6102) | 0 | 204 apexes (180 at ratio 1.0: more basis triangles fall below FarSize at 0.5): 3,155 / 3,788 / 10,360 cells at 8.9 / 46.1 / 56.2 | 21.7 / 25.3 | 194.3 / 5.04; 36.4 / 4.34; 148.7-151.8 / 5.26 | 344.0 / 3.85; 496.1 / 3.83 | 1,396 / 4.35 |
+| case                   | elements (tets + prisms + pyramids)                                                                                      | nodes = H1 p1 (H1 p4) | tubes / layers / thickness min-P50-max (nm) / max neighbour ratio | caps min SJ / max cond | tets min SJ / max cond | prisms / pyramids max cond | corners                   | protected (measure / vertex) | closure (points)                                                                           | diagonal bands | trace-apex shells 0-25 / 25-50 / 50-100 nm (cells; longest edge P50 nm)                                                          | junction first layer cut P50 / tets P50 (nm) | stage s / GiB (build; publication; placement) | audits s / GiB (identity; rotate-z) | verification s / GiB |
+|:---------------------- |:------------------------------------------------------------------------------------------------------------------------ |:--------------------- |:----------------------------------------------------------------- |:---------------------- |:---------------------- |:-------------------------- |:------------------------- |:---------------------------- |:------------------------------------------------------------------------------------------ |:-------------- |:-------------------------------------------------------------------------------------------------------------------------------- |:-------------------------------------------- |:--------------------------------------------- |:----------------------------------- |:-------------------- |
+| four-edge-9d2cb9bbb3fe | **1,869,209** = 1,683,863 + 172,107 + 13,239 (= V-a; +7.3% vs 083874fee's 1,742,434; 0.54x the 34B production 3,471,480) | 414,758 (24,827,674)  | 8 / 1,471 / 10.85 - 49.75 - 50.0 / 1.93                           | 12: 0.0305 / 67.6      | 0.0296 / 118.1         | 668.6 / 8.74               | 3.13 / 3.44 / 3.47 / 3.54 | 0 / 9.9e-16                  | 2.5e-13 (653,577; owners 3000/3100/5001/6001)                                              | 0              | 54 apexes: 2,802 / 2,260 / 5,949 cells at 6.4 / 32.1 / 41.3 (083874fee 4.9 / 32.6 / 42.7)                                        | 21.6 / 25.5                                  | 115.6 / 4.25; 29.7 / 3.34; 96.9-111.8 / 3.8   | 284.6 / 2.88; 346.1 / 2.85          | 991 / 2.95           |
+| ten-edge-6791f1c84123  | **2,673,691** = 2,383,387 + 269,568 + 20,736 (+8.5% vs 083874fee's 2,465,185; 0.75x the 34B production 3,570,533)        | 611,846 (35,774,961)  | 20 / 2,304 / 15.9 - 49.82 - 50.0 / 1.83                           | 36: 0.0274 / 82.8      | 0.0200 / 173.9         | 589.5 / 8.74               | 3.34-3.80 (10 corners)    | 0 / 1.3e-15                  | 1.1e-13 (1,031,142; 10 owner labels 3100/3101, 5001/5002, 5101/5102, 6001/6002, 6101/6102) | 0              | 204 apexes (180 at ratio 1.0: more basis triangles fall below FarSize at 0.5): 3,155 / 3,788 / 10,360 cells at 8.9 / 46.1 / 56.2 | 21.7 / 25.3                                  | 194.3 / 5.04; 36.4 / 4.34; 148.7-151.8 / 5.26 | 344.0 / 3.85; 496.1 / 3.83          | 1,396 / 4.35         |
 
 Every physical gate passed at its production value (positive orientation and
 condition <= 1000 for every element type; tetrahedra SJ >= 0.01; corner aspect <=
@@ -936,10 +927,10 @@ the probe meshes were byte-identical to the production builds' `gmsh-build.msh`
 (same inputs, options and corners; the contract enters the build through its
 SemanticCorners only).
 
-| case | elements (tets + prisms + pyramids) | nodes = H1 p1 (H1 p4) | tubes / layers / thickness min-P50-max (nm) / max neighbour ratio | caps min SJ / max cond | tets min SJ / max cond | prisms / pyramids max cond | corners | protected (measure / vertex) | closure (points; owners) | diagonal bands | interface areas um^2 | trace-apex shells 0-25 / 25-50 / 50-100 nm (cells; longest edge P50 nm) | trace rule achieved/requested P50 / max (narrow triangles) | junction first layer cut / tets P50 (nm) | stage s / GiB (build; publication; placement) | audits s / GiB | verification s / GiB |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| three-edge-419576fdab24 (input 06, 135 traces) | **1,693,002** = 1,507,026 + 172,692 + 13,284 | 390,906 (22,737,354) | 10 / 1,476 / 15.65 - 49.85 - 50.0 / 1.94 | 14: 0.0412 / 27.7 | 0.0259 / 71.5 | 589.5 / 8.74 | 3.56 / 2.71 / 3.44 / 3.41 / 3.56 (5 corners, two on the box at the island loop) | 0 / 1.3e-15 | 2.7e-13 (637,170; 3100 / 5001 / 6001) | 0 | 1: 694.6, 3100: 125.8, 5001: 100.0, 6001: 103.6 | 97 apexes: 4,084 / 3,106 / 8,439 at 5.8 / 35.6 / 45.8 | 0.98 / 1.15 (132) | 21.7 / 25.2 | 108.0 / 4.32; 26.4 / 3.15; 102.5-107.5 / 3.7 | 223 / 2.67; 289 / 2.69 | 775 / 2.70 |
-| two-edge-8dd4bc70f183 (input 10, 77 traces) | **516,662** = 420,902 + 88,920 + 6,840 | 133,763 (7,764,541) | 12 / 760 / 15.82 - 49.43 - 50.0 / 1.82 | 20: 0.0483 / 19.6 | 0.0276 / 70.5 | 589.5 / 8.74 | 3.70 / 3.49 / 3.39 / 3.04 / 3.04 / 3.64 (6 corners, two at the strip ends inside the box) | 0 / 4.9e-16 | 4.7e-14 (277,578; 3100 / 5001 / 5002 / 6001 / 6002) | 0 | 1: 206.0, 3100: 37.9, 5001: 4.0, 5002: 4.0, 6001: 4.9, 6002: 4.9 | 75 apexes: 3,147 / 2,026 / 5,797 at 4.3 / 36.9 / 45.5 | 0.86 / 1.08 (112) | 21.7 / 25.6 | 45.5 / 2.37; 14.3 / 1.39; 34.6-35.5 / 1.6 | 65 / 1.00; 85 / 0.92 | 265 / 0.92 |
+| case                                           | elements (tets + prisms + pyramids)          | nodes = H1 p1 (H1 p4) | tubes / layers / thickness min-P50-max (nm) / max neighbour ratio | caps min SJ / max cond | tets min SJ / max cond | prisms / pyramids max cond | corners                                                                                   | protected (measure / vertex) | closure (points; owners)                            | diagonal bands | interface areas um^2                                             | trace-apex shells 0-25 / 25-50 / 50-100 nm (cells; longest edge P50 nm) | trace rule achieved/requested P50 / max (narrow triangles) | junction first layer cut / tets P50 (nm) | stage s / GiB (build; publication; placement) | audits s / GiB         | verification s / GiB |
+|:---------------------------------------------- |:-------------------------------------------- |:--------------------- |:----------------------------------------------------------------- |:---------------------- |:---------------------- |:-------------------------- |:----------------------------------------------------------------------------------------- |:---------------------------- |:--------------------------------------------------- |:-------------- |:---------------------------------------------------------------- |:----------------------------------------------------------------------- |:---------------------------------------------------------- |:---------------------------------------- |:--------------------------------------------- |:---------------------- |:-------------------- |
+| three-edge-419576fdab24 (input 06, 135 traces) | **1,693,002** = 1,507,026 + 172,692 + 13,284 | 390,906 (22,737,354)  | 10 / 1,476 / 15.65 - 49.85 - 50.0 / 1.94                          | 14: 0.0412 / 27.7      | 0.0259 / 71.5          | 589.5 / 8.74               | 3.56 / 2.71 / 3.44 / 3.41 / 3.56 (5 corners, two on the box at the island loop)           | 0 / 1.3e-15                  | 2.7e-13 (637,170; 3100 / 5001 / 6001)               | 0              | 1: 694.6, 3100: 125.8, 5001: 100.0, 6001: 103.6                  | 97 apexes: 4,084 / 3,106 / 8,439 at 5.8 / 35.6 / 45.8                   | 0.98 / 1.15 (132)                                          | 21.7 / 25.2                              | 108.0 / 4.32; 26.4 / 3.15; 102.5-107.5 / 3.7  | 223 / 2.67; 289 / 2.69 | 775 / 2.70           |
+| two-edge-8dd4bc70f183 (input 10, 77 traces)    | **516,662** = 420,902 + 88,920 + 6,840       | 133,763 (7,764,541)   | 12 / 760 / 15.82 - 49.43 - 50.0 / 1.82                            | 20: 0.0483 / 19.6      | 0.0276 / 70.5          | 589.5 / 8.74               | 3.70 / 3.49 / 3.39 / 3.04 / 3.04 / 3.64 (6 corners, two at the strip ends inside the box) | 0 / 4.9e-16                  | 4.7e-14 (277,578; 3100 / 5001 / 5002 / 6001 / 6002) | 0              | 1: 206.0, 3100: 37.9, 5001: 4.0, 5002: 4.0, 6001: 4.9, 6002: 4.9 | 75 apexes: 3,147 / 2,026 / 5,797 at 4.3 / 36.9 / 45.5                   | 0.86 / 1.08 (112)                                          | 21.7 / 25.6                              | 45.5 / 2.37; 14.3 / 1.39; 34.6-35.5 / 1.6     | 65 / 1.00; 85 / 0.92   | 265 / 0.92           |
 
 Both are far under the caps (4M elements, 1800 s, 8 GiB) and pass every physical
 gate at its production value; no gate, option or rule was changed or tuned for
@@ -979,12 +970,12 @@ validator bound; the mesher is identical in both commits) - their first audit
 attempts, rejected by the too-strict bound, are kept under
 `superseded-audit-attempts/` / `failed-audits-b6378f173-validator/` in the roots.
 
-| case | elements (tets + prisms + pyramids); delta vs decision 42 | nodes (H1 p4) | tets min SJ / max cond | prisms / pyramids max cond | caps min SJ / max cond | corners | protected (measure / vertex) | closure | diagonal | trace-apex shells 0-25 / 25-50 / 50-100 nm (cells; longest edge P50 nm) | trace rule achieved/requested P50 / max (narrow) | curves (graded) / min node spacing nm | build s / GiB | verification s / GiB |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| three-edge-419576fdab24 (06) | **1,845,349** = 1,659,373 + 172,692 + 13,284; **+152,347 tets (+9.0%)**, prisms / pyramids unchanged | 428,366 (24,551,802) | 0.0201 / 79.2 | 589.4 / 8.74 | 14: 0.0201 / 79.2 | 3.45 / 3.42 / 3.72 / 3.10 / 3.62 | 0 / 3.5e-18 | 3.9e-13 | 0 | 103 apexes: 4,844 / 3,706 / 9,685 at 6.7 / 33.6 / 43.2 | 0.97 / 1.06 (136) | 24 (24) / 0.23 (metal ridge parts at the corners; band curves 10.5, junction 17.7) | 117 / 4.6 | 926 / 2.9 |
-| four-edge-9d2cb9bbb3fe | **1,916,486** = 1,731,140 + 172,107 + 13,239; **+47,277 tets (+2.5%)**, prisms / pyramids unchanged | 426,520 (25,100,892) | 0.0213 / 97.7 | 588.1 / 8.72 | 12: 0.0213 / 97.7 | 3.10 / 3.78 / 3.71 / 3.43 | 0 / 9.9e-16 | 1.5e-13 | 0 | 58 apexes: 3,244 / 2,488 / 6,342 at 5.6 / 29.4 / 40.1 | 0.92 / 1.15 (78) | 36 (28) / 0.23 (band 11.0, junction 12.9) | 123 / 4.6 | 1,040 / 2.9 |
-| ten-edge-6791f1c84123 | **3,498,453** = 3,208,149 + 269,568 + 20,736; **+824,762 tets (+30.8%)**, prisms / pyramids unchanged; **87.5% of the 4M cap (501,547 headroom; the cap fails closed)** | 814,867 (45,596,995) | 0.0358 / 89.3 | 588.8 / 8.73 | 36: 0.0369 / 20.1 | 2.87 - 3.77 (10) | 0 / 1.3e-15 | 7.7e-14 (10 owner labels) | 0 | 224 apexes: 5,877 / 6,694 / 16,648 at 8.2 / 33.5 / 43.4 | 0.98 / 1.09 (302) | 48 (42) / 0.23 (band 12.5, junction 21.6) | 311 / **7.66 of 8** | 1,607 of 1,800 / 5.3 (concurrent with another audit) |
-| two-edge-8dd4bc70f183 (10) | **521,676** = 425,916 + 88,920 + 6,840; **+5,014 tets (+1.2%)**, prisms / pyramids unchanged | 134,927 (7,823,347) | 0.0202 / 99.3 | 586.3 / 8.69 | 20: 0.0319 / 55.7 | 3.30 / 3.54 / 3.73 / 3.25 / 3.74 / 3.38 | 0 / 0 | 1.2e-13 | 0 | 75 apexes: 3,185 / 2,063 / 6,075 at 4.7 / 37.2 / 45.5 | 0.86 / 1.08 (112) | 14 (12) / 0.23 (junction 21.6, band 25.0) | 48 / 2.4 | 261 / 0.9 |
+| case                         | elements (tets + prisms + pyramids); delta vs decision 42                                                                                                               | nodes (H1 p4)        | tets min SJ / max cond | prisms / pyramids max cond | caps min SJ / max cond | corners                                 | protected (measure / vertex) | closure                   | diagonal | trace-apex shells 0-25 / 25-50 / 50-100 nm (cells; longest edge P50 nm) | trace rule achieved/requested P50 / max (narrow) | curves (graded) / min node spacing nm                                              | build s / GiB       | verification s / GiB                                 |
+|:---------------------------- |:----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |:-------------------- |:---------------------- |:-------------------------- |:---------------------- |:--------------------------------------- |:---------------------------- |:------------------------- |:-------- |:----------------------------------------------------------------------- |:------------------------------------------------ |:---------------------------------------------------------------------------------- |:------------------- |:---------------------------------------------------- |
+| three-edge-419576fdab24 (06) | **1,845,349** = 1,659,373 + 172,692 + 13,284; **+152,347 tets (+9.0%)**, prisms / pyramids unchanged                                                                    | 428,366 (24,551,802) | 0.0201 / 79.2          | 589.4 / 8.74               | 14: 0.0201 / 79.2      | 3.45 / 3.42 / 3.72 / 3.10 / 3.62        | 0 / 3.5e-18                  | 3.9e-13                   | 0        | 103 apexes: 4,844 / 3,706 / 9,685 at 6.7 / 33.6 / 43.2                  | 0.97 / 1.06 (136)                                | 24 (24) / 0.23 (metal ridge parts at the corners; band curves 10.5, junction 17.7) | 117 / 4.6           | 926 / 2.9                                            |
+| four-edge-9d2cb9bbb3fe       | **1,916,486** = 1,731,140 + 172,107 + 13,239; **+47,277 tets (+2.5%)**, prisms / pyramids unchanged                                                                     | 426,520 (25,100,892) | 0.0213 / 97.7          | 588.1 / 8.72               | 12: 0.0213 / 97.7      | 3.10 / 3.78 / 3.71 / 3.43               | 0 / 9.9e-16                  | 1.5e-13                   | 0        | 58 apexes: 3,244 / 2,488 / 6,342 at 5.6 / 29.4 / 40.1                   | 0.92 / 1.15 (78)                                 | 36 (28) / 0.23 (band 11.0, junction 12.9)                                          | 123 / 4.6           | 1,040 / 2.9                                          |
+| ten-edge-6791f1c84123        | **3,498,453** = 3,208,149 + 269,568 + 20,736; **+824,762 tets (+30.8%)**, prisms / pyramids unchanged; **87.5% of the 4M cap (501,547 headroom; the cap fails closed)** | 814,867 (45,596,995) | 0.0358 / 89.3          | 588.8 / 8.73               | 36: 0.0369 / 20.1      | 2.87 - 3.77 (10)                        | 0 / 1.3e-15                  | 7.7e-14 (10 owner labels) | 0        | 224 apexes: 5,877 / 6,694 / 16,648 at 8.2 / 33.5 / 43.4                 | 0.98 / 1.09 (302)                                | 48 (42) / 0.23 (band 12.5, junction 21.6)                                          | 311 / **7.66 of 8** | 1,607 of 1,800 / 5.3 (concurrent with another audit) |
+| two-edge-8dd4bc70f183 (10)   | **521,676** = 425,916 + 88,920 + 6,840; **+5,014 tets (+1.2%)**, prisms / pyramids unchanged                                                                            | 134,927 (7,823,347)  | 0.0202 / 99.3          | 586.3 / 8.69               | 20: 0.0319 / 55.7      | 3.30 / 3.54 / 3.73 / 3.25 / 3.74 / 3.38 | 0 / 0                        | 1.2e-13                   | 0        | 75 apexes: 3,185 / 2,063 / 6,075 at 4.7 / 37.2 / 45.5                   | 0.86 / 1.08 (112)                                | 14 (12) / 0.23 (junction 21.6, band 25.0)                                          | 48 / 2.4            | 261 / 0.9                                            |
 
 Roots and digests (binaries kept for the physics preflight; the decision-42 roots'
 mesh binaries were deleted, their censuses and reports kept):
@@ -1029,8 +1020,7 @@ lines, and the basis rows lower the footprint band curves locally); the un-tubed
 metal ridge parts inside the corner clearance grade to CornerSize (0.23-0.25 nm) as
 before. Physics on the new 06 root (gallery-physics-06b) closes the class.
 
-Validation of the decision-43 state (b6378f173, 72185ce89): `python3 -m unittest
-discover -s . -p "test_*.py"` ran 251 tests, OK (33 skipped);
+Validation of the decision-43 state (b6378f173, 72185ce89): `python3 -m unittest discover -s . -p "test_*.py"` ran 251 tests, OK (33 skipped);
 `run_general_mesh_suite.py --preflight-only` passes for the production manifest
 (14 cases), the MA calibration manifest (6) and the sizing calibration manifest (2);
 `refreeze_manifest_tools.py --check` current. Disk hygiene: the 19 superseded mesh
@@ -1040,8 +1030,7 @@ in `/tmp/coupon-sliver-fix-20260919/deleted-binaries.txt`.
 ### Coupon-scale size bound (decision 45(b), 2026-09-19): TangentialSize = min(--lc-tangent, FarSize)
 
 The recipe fixes the tangential spacing in absolute units (`--lc-tangent` 0.05 um:
-the tube extrusion spacing and the metal ridge grid) while `FarSize =
-FarSizeOverRadius x Radius` scales with the coupon. On the Radius-0.5 synthetic
+the tube extrusion spacing and the metal ridge grid) while `FarSize = FarSizeOverRadius x Radius` scales with the coupon. On the Radius-0.5 synthetic
 coupons FarSize is 0.04 um and the mesher used to fail closed ("tangential mesh
 size must lie between fine and far sizes"). The rule, implemented in
 `mesh_spatial_coupon.jl` (`SIZE_BOUND_RULE`) and nowhere else: **every coarsening
@@ -1049,8 +1038,7 @@ size prescription that exceeds the coupon-scale FarSize is bounded by it** -
 `TangentialSize = min(--lc-tangent, FarSize)`. Rationale: FarSize is the coarsest
 size the coupon admits (the size prescribed at its matching surface), so the
 along-edge spacing of the metal-edge tubes can never legitimately exceed it; the
-bound is dimensionless (it acts exactly when `Radius < --lc-tangent /
-FarSizeOverRadius` = 0.625 um at the production values) and is the identity for
+bound is dimensionless (it acts exactly when `Radius < --lc-tangent / FarSizeOverRadius` = 0.625 um at the production values) and is the identity for
 every production coupon (Radius 2, FarSize 0.16). The resolution sizes - NormalSize
 (0.25 x MetalThickness) and EdgeSize = CornerSize - are never bounded: a fine size
 above FarSize is a contradictory recipe and still fails closed. No new parameter and
@@ -1060,9 +1048,7 @@ no case constant. Recorded: census `SizeBounds` (`Rule`, `FarSize`,
 (called by `validate_gmsh_build_census`) requires the record to follow the command
 exactly and the tube record's TangentialSize to equal the bound value; the recipe
 binding still requires the command to execute `--lc-tangent` at 0.05 (the request is
-the recipe, the bound is the coupon's). Manifest `ProductionRecipe.Parameters.
-TangentialSize` states the rule. Tests: `GmshOnlyPipelineTest.
-test_gmsh_build_census_contract_negatives` (record present, flag, request, bound value,
+the recipe, the bound is the coupon's). Manifest `ProductionRecipe.Parameters. TangentialSize` states the rule. Tests: `GmshOnlyPipelineTest. test_gmsh_build_census_contract_negatives` (record present, flag, request, bound value,
 tube TangentialSize; a bounded command accepted); the fixture producer records the same
 rule.
 
@@ -1097,15 +1083,15 @@ the per-root ratios in `ProductionRecipe.BuildCostEstimate` and validated by
 of case 05 was evaluated on its inputs; its build had already run when the gate was
 added, so the comparison is post hoc for 05 as for the others):
 
-| case | estimated elements | actual | ratio | tets est / actual (ratio) | prisms est / actual; pyramids | integral shares far / tube / corners / junction / trace | estimate / cap |
-|---|---|---|---|---|---|---|---|
-| 05 | 1,486,171 | 1,485,070 | 1.001 | 1,324,891 / 1,322,026 (1.002) | 149,760 / 151,398; 11,520 / 11,646 | 0.57 / 0.13 / 0.00 / 0.02 / 0.29 | 0.372 |
-| 06 | 1,886,489 | 1,845,349 | 1.022 | 1,705,049 / 1,659,373 (1.028) | 168,480 / 172,692; 12,960 / 13,284 | 0.62 / 0.11 / 0.02 / 0.02 / 0.23 | 0.472 |
-| four-edge | 1,966,879 | 1,916,486 | 1.026 | 1,785,439 / 1,731,140 (1.031) | 168,480 / 172,107; 12,960 / 13,239 | 0.67 / 0.10 / 0.02 / 0.02 / 0.19 | 0.492 |
-| ten-edge | 3,561,695 | 3,498,453 | 1.018 | 3,278,951 / 3,208,149 (1.022) | 262,548 / 269,568; 20,196 / 20,736 | 0.52 / 0.09 / 0.04 / 0.02 / 0.33 | 0.890 |
-| 10 | 560,105 | 521,676 | 1.074 | 469,385 / 425,916 (1.102) | 84,240 / 88,920; 6,480 / 6,840 | 0.45 / 0.20 / 0.13 / 0.03 / 0.19 | 0.140 |
-| three-edge-current-calibration | 1,496,561 | 1,496,998 | 1.000 | 1,315,121 / 1,311,526 (1.003) | 168,480 / 172,224; 12,960 / 13,248 | 0.80 / 0.14 / 0.03 / 0.03 / 0.00 | 0.374 |
-| concave-multislot | 1,448,136 | 1,454,056 | 0.996 | 1,423,944 / 1,423,816 (1.000) | 22,176 / 27,720; 2,016 / 2,520 | 0.95 / 0.01 / 0.04 / 0.00 / 0.00 | 0.362 |
+| case                           | estimated elements | actual    | ratio | tets est / actual (ratio)     | prisms est / actual; pyramids      | integral shares far / tube / corners / junction / trace | estimate / cap |
+|:------------------------------ |:------------------ |:--------- |:----- |:----------------------------- |:---------------------------------- |:------------------------------------------------------- |:-------------- |
+| 05                             | 1,486,171          | 1,485,070 | 1.001 | 1,324,891 / 1,322,026 (1.002) | 149,760 / 151,398; 11,520 / 11,646 | 0.57 / 0.13 / 0.00 / 0.02 / 0.29                        | 0.372          |
+| 06                             | 1,886,489          | 1,845,349 | 1.022 | 1,705,049 / 1,659,373 (1.028) | 168,480 / 172,692; 12,960 / 13,284 | 0.62 / 0.11 / 0.02 / 0.02 / 0.23                        | 0.472          |
+| four-edge                      | 1,966,879          | 1,916,486 | 1.026 | 1,785,439 / 1,731,140 (1.031) | 168,480 / 172,107; 12,960 / 13,239 | 0.67 / 0.10 / 0.02 / 0.02 / 0.19                        | 0.492          |
+| ten-edge                       | 3,561,695          | 3,498,453 | 1.018 | 3,278,951 / 3,208,149 (1.022) | 262,548 / 269,568; 20,196 / 20,736 | 0.52 / 0.09 / 0.04 / 0.02 / 0.33                        | 0.890          |
+| 10                             | 560,105            | 521,676   | 1.074 | 469,385 / 425,916 (1.102)     | 84,240 / 88,920; 6,480 / 6,840     | 0.45 / 0.20 / 0.13 / 0.03 / 0.19                        | 0.140          |
+| three-edge-current-calibration | 1,496,561          | 1,496,998 | 1.000 | 1,315,121 / 1,311,526 (1.003) | 168,480 / 172,224; 12,960 / 13,248 | 0.80 / 0.14 / 0.03 / 0.03 / 0.00                        | 0.374          |
+| concave-multislot              | 1,448,136          | 1,454,056 | 0.996 | 1,423,944 / 1,423,816 (1.000) | 22,176 / 27,720; 2,016 / 2,520     | 0.95 / 0.01 / 0.04 / 0.00 / 0.00                        | 0.362          |
 
 The needle-heavy ten-edge basis is where the gate matters: its trace-basis integral
 (232k, min requested size 2.7 nm) is 63% of its far field and the estimate 3.56M is
@@ -1214,33 +1200,33 @@ verified `Passed true` with empty `Failures` / `TransformComparisonFailures`; ev
 root passed the headroom gate first and its `build-summary.json` records
 `Status built`. Roots `/tmp/coupon-gmsh-only-<case>-<commit>-*`:
 
-| case | elements = tets + prisms + pyramids | H1 DOFs | estimate (ratio) | tets SJ / cond | prisms / pyramids cond | corners (n) | protected err / vertex | closure (points) | diag | interface areas (um^2) | build s / GiB | verification s |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| hole (v2; bdfe87890, identity `6ab22454...`, CanonicalBuildId `a16919cb...`) | **1,852,882** = 1,795,858 + 52,272 + 4,752 | 345,684 | 1,854,486 (1.001) | 0.0245 / 45.9 | 465.2 / 13.7 | 3.42 - 3.76 (8) | 0 / 0 | 1.6e-13 (364,020) | 0 | 1: 62.744, 3100: 19.224, 5001: 2.200, 6001: 2.904 | 114 / 4.00 | 600 |
-| opposed-layers (v2; 97ed84952, identity `cc6e04f7...`, CanonicalBuildId `cc4e4c44...`) | **2,289,512** = 2,240,552 + 44,064 + 4,896 | 414,330 | 2,252,546 (0.984) | 0.0130 / 142.2 | 464.4 / 27.4 | 2.77 - 3.70 (8) | 0 / 2.2e-16 | 1.8e-13 (551,952) | 0 | 1: 62.832, 3000 / 3001: 1.680 / 1.680, 3100 / 3101: 15.248 / 15.248, 5001 / 5101: 0.961 / 0.959, 6001 / 6101: 1.202 / 1.198 | 185 / 4.33 | 871 |
-| concave-multislot (v2; 97ed84952, identity `3c86b72a...`, CanonicalBuildId `d255af28...`) | **1,454,056** = 1,423,816 + 27,720 + 2,520 | 265,608 | 1,448,136 (0.996) | 0.0207 / 139.4 | 469.7 / 13.9 | 3.23 - 3.73 (6) | 0 / 2.2e-16 | 2.6e-13 (252,990) | 0 | 1: 51.804, 3000 / 3001: 0.4533 / 0.1767, 3100 / 3101: 8.950 / 6.830, 5001 / 5101: 0.325 / 0.245, 6001 / 6101: 0.517 / 0.405 | 113 / 3.47 | - |
+| case                                                                                      | elements = tets + prisms + pyramids        | H1 DOFs | estimate (ratio)  | tets SJ / cond | prisms / pyramids cond | corners (n)     | protected err / vertex | closure (points)  | diag | interface areas (um^2)                                                                                                      | build s / GiB | verification s |
+|:----------------------------------------------------------------------------------------- |:------------------------------------------ |:------- |:----------------- |:-------------- |:---------------------- |:--------------- |:---------------------- |:----------------- |:---- |:--------------------------------------------------------------------------------------------------------------------------- |:------------- |:-------------- |
+| hole (v2; bdfe87890, identity `6ab22454...`, CanonicalBuildId `a16919cb...`)              | **1,852,882** = 1,795,858 + 52,272 + 4,752 | 345,684 | 1,854,486 (1.001) | 0.0245 / 45.9  | 465.2 / 13.7           | 3.42 - 3.76 (8) | 0 / 0                  | 1.6e-13 (364,020) | 0    | 1: 62.744, 3100: 19.224, 5001: 2.200, 6001: 2.904                                                                           | 114 / 4.00    | 600            |
+| opposed-layers (v2; 97ed84952, identity `cc6e04f7...`, CanonicalBuildId `cc4e4c44...`)    | **2,289,512** = 2,240,552 + 44,064 + 4,896 | 414,330 | 2,252,546 (0.984) | 0.0130 / 142.2 | 464.4 / 27.4           | 2.77 - 3.70 (8) | 0 / 2.2e-16            | 1.8e-13 (551,952) | 0    | 1: 62.832, 3000 / 3001: 1.680 / 1.680, 3100 / 3101: 15.248 / 15.248, 5001 / 5101: 0.961 / 0.959, 6001 / 6101: 1.202 / 1.198 | 185 / 4.33    | 871            |
+| concave-multislot (v2; 97ed84952, identity `3c86b72a...`, CanonicalBuildId `d255af28...`) | **1,454,056** = 1,423,816 + 27,720 + 2,520 | 265,608 | 1,448,136 (0.996) | 0.0207 / 139.4 | 469.7 / 13.9           | 3.23 - 3.73 (6) | 0 / 2.2e-16            | 2.6e-13 (252,990) | 0    | 1: 51.804, 3000 / 3001: 0.4533 / 0.1767, 3100 / 3101: 8.950 / 6.830, 5001 / 5101: 0.325 / 0.245, 6001 / 6101: 0.517 / 0.405 | 113 / 3.47    | -              |
 
-- hole: the hole's four sides carry tubes pointing into it (16 tubes = 2 x 8 sides of
-  both loops); the metal areas are exact (5001 = 1.6^2 - 0.6^2 = 2.2; 6001 = 2.2 +
-  8.8 x 0.08 = 2.904; 3100 = trench floor 18.96 + walls 8.8 x 0.03 = 19.224); the
-  producer-default collars etch the whole Radius-0.5 coupon (no 3000 plane). The
-  first hole root (42f997c62 + the extension-1 mesher) and the rebuild under the final
-  mesher of bdfe87890 give byte-identical `gmsh-build.msh` (`49258267...`) and
-  `identity.msh` (`6ab22454...`): the extension-2 labeling change is inert on it. The
-  earlier root's binaries were deleted (evidence kept).
-- opposed-layers: upward layer at z = 0 and downward layer at z = 0.6, two slots on
-  both; box z in [-0.52, 1.12] (per-sign padding); vacuum gap 0.48 um against the
-  facing reach 2 x 0.03975; the un-etched strips of both planes (3000 / 3001 = 2 x 4.2
-  x 0.2 = 1.68 each) and the trenches (floor 15.0 + walls 0.08 + collar walls 0.168 =
-  15.248 each) are exact; the multi-slot ownership postprocessor certified both facing
-  layers (closure 1.8e-13 over 551,952 points). The tetrahedral minimum scaled
-  Jacobian 0.0130 is the smallest margin of the matrix over the 0.01 gate.
-- concave-multislot: element count identical to the decision-45(b) build (1,454,056;
-  the mesh differs only by the un-etched labels 3000 / 3001 = 0.4533 / 0.1767 um^2 the
-  fixed labeling restores); the superseded 869465f32 root's binaries were deleted.
-- Probe roots (`/tmp/coupon-scope-20260920/probe-root-*`, the mirror-covariance strips
-  and the mislabeled opposed-layers probe) keep their censuses / logs; their meshes are
-  listed in `/tmp/coupon-scope-20260920/deleted-binaries.txt`.
+  - hole: the hole's four sides carry tubes pointing into it (16 tubes = 2 x 8 sides of
+    both loops); the metal areas are exact (5001 = 1.6^2 - 0.6^2 = 2.2; 6001 = 2.2 +
+    8.8 x 0.08 = 2.904; 3100 = trench floor 18.96 + walls 8.8 x 0.03 = 19.224); the
+    producer-default collars etch the whole Radius-0.5 coupon (no 3000 plane). The
+    first hole root (42f997c62 + the extension-1 mesher) and the rebuild under the final
+    mesher of bdfe87890 give byte-identical `gmsh-build.msh` (`49258267...`) and
+    `identity.msh` (`6ab22454...`): the extension-2 labeling change is inert on it. The
+    earlier root's binaries were deleted (evidence kept).
+  - opposed-layers: upward layer at z = 0 and downward layer at z = 0.6, two slots on
+    both; box z in [-0.52, 1.12] (per-sign padding); vacuum gap 0.48 um against the
+    facing reach 2 x 0.03975; the un-etched strips of both planes (3000 / 3001 = 2 x 4.2
+    x 0.2 = 1.68 each) and the trenches (floor 15.0 + walls 0.08 + collar walls 0.168 =
+    15.248 each) are exact; the multi-slot ownership postprocessor certified both facing
+    layers (closure 1.8e-13 over 551,952 points). The tetrahedral minimum scaled
+    Jacobian 0.0130 is the smallest margin of the matrix over the 0.01 gate.
+  - concave-multislot: element count identical to the decision-45(b) build (1,454,056;
+    the mesh differs only by the un-etched labels 3000 / 3001 = 0.4533 / 0.1767 um^2 the
+    fixed labeling restores); the superseded 869465f32 root's binaries were deleted.
+  - Probe roots (`/tmp/coupon-scope-20260920/probe-root-*`, the mirror-covariance strips
+    and the mislabeled opposed-layers probe) keep their censuses / logs; their meshes are
+    listed in `/tmp/coupon-scope-20260920/deleted-binaries.txt`.
 
 **Matrix status after decision 48 (15 cases): built and verified 14** (the twelve of
 decisions 46 / 47 with concave-multislot rebuilt at version 2, plus hole and
@@ -1259,14 +1245,14 @@ with empty failure lists; the verification reports bind the manifest SHA-256
 `7120d18c...` (commit 8b0057dbd). Every root passed the headroom gate first
 (`build-cost-estimate.json`).
 
-| case (fixture v2) | elements (tets + prisms + pyramids) | nodes | estimate (ratio) | tets min SJ / max cond | prisms / pyramids max cond | tubes / layers | corners | protected | closure (points; owners) | interface areas um^2 | box; chains | build s / GiB | verification s |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| one-edge-straight | **796,062** = 714,666 + 75,582 + 5,814 | 176,133 | 794,118 (0.998) | 0.0396 / 23.8 | 589.5 / 8.74 | 2 / 646 | 3.67 | 0 / 3.5e-18 | 3.1e-13 (287,781; 3100 / 5001 / 6001) | 1: 452.8, 3100: 64.8, 5001: 64.0, 6001: 65.6 | [-4, 4] x [-8, 8]; 0 | 44.4 / 2.5 | 331 |
-| one-edge-cad-subdivided | **796,062** (identical) | 176,133 | 794,118 (0.998) | 0.0396 / 23.8 | 589.5 / 8.74 | 2 / 646 | 3.67 | 0 / 3.5e-18 | 3.1e-13 (287,781) | identical | [-4, 4] x [-8, 8]; **1 chain (rows 1-2, union 4.0, extended)** | 44.5 / 2.5 | 333 |
-| two-edge-transition | **1,496,338** = 1,310,866 + 172,224 + 13,248 | 339,728 | 1,496,561 (1.000) | 0.0257 / 63.1 | 589.5 / 8.74 | 10 / 1,472 | 3.05 - 3.50 (5) | 0 / 3.5e-18 | 5.9e-13 (593,391) | 1: 694.6, 3100: 125.8, 5001: 100.0, 6001: 103.6 | [-8, 6] x [-8, 8]; 0 | 76.8 / 3.9 | 675 |
-| two-edge-multislot | **1,117,402** = 1,029,328 + 81,783 + 6,291 | 236,752 | 1,136,205 (1.017) | 0.0351 / 100.8 | 589.5 / 8.74 | 6 / 699 | 3.30 / 3.52 / 3.20 | 0 / 3.5e-18 | 3.3e-13 (377,358; 3100 / 3101 / 5001 / 5101 / 6001 / 6101) | 1: 613.6, 3100: 29.53, 3101: 57.32, 5001: 31.84, 5101: 74.16, 6001: 32.62, 6101: 75.08 | [-8, 8] x [-4, 8]; 0 | 60.9 / 3.3 | 457 |
-| six-edge-cluster | **1,329,382** = 1,119,970 + 194,454 + 14,958 | 318,937 | 1,371,715 (1.032) | 0.0201 / 126.4 | 589.5 / 8.74 | 20 / 1,662 | 3.23 - 3.79 (10) | 0 / 1.4e-17 | 5.2e-13 (626,208; 10 owners) | 1: 566.85, 3100: 8.97, 3101: 90.03, 5001 / 5002: 0.254 / 0.255, 5101 / 5102: 36.00 / 36.00, 6001 / 6002: 0.351 / 0.356, 6101 / 6102: 37.90 / 37.89 | [-9.917, 8.917] x [-4.5, 4.5]; 0 | 82.7 / 3.7 | 548 |
-| two-edge-8dd4bc70f183 (10, inertness rebuild) | **521,676** = 425,916 + 88,920 + 6,840 | 134,927 | 560,105 (1.074) | 0.0202 / 99.3 | 586.3 / 8.69 | 12 / 760 | 3.25 - 3.74 (6) | 0 / 0 | 1.2e-13 (279,090) | 1: 206.0, 3100: 37.9, 5001 / 5002: 4.0, 6001 / 6002: 4.9 | [-5, 4] x [-2, 3]; 0 | 43.9 / 2.4 | 238 |
+| case (fixture v2)                             | elements (tets + prisms + pyramids)          | nodes   | estimate (ratio)  | tets min SJ / max cond | prisms / pyramids max cond | tubes / layers | corners            | protected   | closure (points; owners)                                   | interface areas um^2                                                                                                                               | box; chains                                                    | build s / GiB | verification s |
+|:--------------------------------------------- |:-------------------------------------------- |:------- |:----------------- |:---------------------- |:-------------------------- |:-------------- |:------------------ |:----------- |:---------------------------------------------------------- |:-------------------------------------------------------------------------------------------------------------------------------------------------- |:-------------------------------------------------------------- |:------------- |:-------------- |
+| one-edge-straight                             | **796,062** = 714,666 + 75,582 + 5,814       | 176,133 | 794,118 (0.998)   | 0.0396 / 23.8          | 589.5 / 8.74               | 2 / 646        | 3.67               | 0 / 3.5e-18 | 3.1e-13 (287,781; 3100 / 5001 / 6001)                      | 1: 452.8, 3100: 64.8, 5001: 64.0, 6001: 65.6                                                                                                       | [-4, 4] x [-8, 8]; 0                                           | 44.4 / 2.5    | 331            |
+| one-edge-cad-subdivided                       | **796,062** (identical)                      | 176,133 | 794,118 (0.998)   | 0.0396 / 23.8          | 589.5 / 8.74               | 2 / 646        | 3.67               | 0 / 3.5e-18 | 3.1e-13 (287,781)                                          | identical                                                                                                                                          | [-4, 4] x [-8, 8]; **1 chain (rows 1-2, union 4.0, extended)** | 44.5 / 2.5    | 333            |
+| two-edge-transition                           | **1,496,338** = 1,310,866 + 172,224 + 13,248 | 339,728 | 1,496,561 (1.000) | 0.0257 / 63.1          | 589.5 / 8.74               | 10 / 1,472     | 3.05 - 3.50 (5)    | 0 / 3.5e-18 | 5.9e-13 (593,391)                                          | 1: 694.6, 3100: 125.8, 5001: 100.0, 6001: 103.6                                                                                                    | [-8, 6] x [-8, 8]; 0                                           | 76.8 / 3.9    | 675            |
+| two-edge-multislot                            | **1,117,402** = 1,029,328 + 81,783 + 6,291   | 236,752 | 1,136,205 (1.017) | 0.0351 / 100.8         | 589.5 / 8.74               | 6 / 699        | 3.30 / 3.52 / 3.20 | 0 / 3.5e-18 | 3.3e-13 (377,358; 3100 / 3101 / 5001 / 5101 / 6001 / 6101) | 1: 613.6, 3100: 29.53, 3101: 57.32, 5001: 31.84, 5101: 74.16, 6001: 32.62, 6101: 75.08                                                             | [-8, 8] x [-4, 8]; 0                                           | 60.9 / 3.3    | 457            |
+| six-edge-cluster                              | **1,329,382** = 1,119,970 + 194,454 + 14,958 | 318,937 | 1,371,715 (1.032) | 0.0201 / 126.4         | 589.5 / 8.74               | 20 / 1,662     | 3.23 - 3.79 (10)   | 0 / 1.4e-17 | 5.2e-13 (626,208; 10 owners)                               | 1: 566.85, 3100: 8.97, 3101: 90.03, 5001 / 5002: 0.254 / 0.255, 5101 / 5102: 36.00 / 36.00, 6001 / 6002: 0.351 / 0.356, 6101 / 6102: 37.90 / 37.89 | [-9.917, 8.917] x [-4.5, 4.5]; 0                               | 82.7 / 3.7    | 548            |
+| two-edge-8dd4bc70f183 (10, inertness rebuild) | **521,676** = 425,916 + 88,920 + 6,840       | 134,927 | 560,105 (1.074)   | 0.0202 / 99.3          | 586.3 / 8.69               | 12 / 760       | 3.25 - 3.74 (6)    | 0 / 0       | 1.2e-13 (279,090)                                          | 1: 206.0, 3100: 37.9, 5001 / 5002: 4.0, 6001 / 6002: 4.9                                                                                           | [-5, 4] x [-2, 3]; 0                                           | 43.9 / 2.4    | 238            |
 
 The decision-47 rule is inert on the real cases as the probe predicted: the two-edge
 10 rebuild under the new mesher gives `gmsh-build.msh` `10afee1f...` and identity.msh
@@ -1301,47 +1287,46 @@ decision, not a repair.
 Every fail-closed guard of the prism-tube recipe is now a recorded, machine-readable
 statement, so that a library run distinguishes "unsupported class" from a bug:
 
-- **Classes.** `mesh_spatial_coupon.jl` `RECIPE_SCOPE_SUPPORTED_CLASSES` are the input
-  classes the recipe builds (`ContinuationVertices`, `DeviceFootprint`, `ExteriorLoops`,
-  `MultipleConductors`, `MultipleLayers`, `MultipleSlots`, `TraceBasis`);
-  `RECIPE_SCOPE_GUARDS` are the classes it fails closed on, each with a stable id, a
-  statement and its detection origin: visible in the frozen inputs (`HoleLoops`,
-  `DownwardLayers`, `TopRounding`, `TrenchRounding`, `SlopedSidewalls`, `ThinMetal`,
-  `NoTrench`) or only in a derived quantity during the build (`ShallowTrench` - the
-  pyramids would reach the trench floor; `NarrowTransverseBound` - no ring fits
-  min(Overetch, MetalThickness / 2, CornerIsotropyRadius); `FreeEdgeEnds` - an edge end
-  neither a semantic corner nor on the box; `ShortEdges` - no tube interval remains
-  after the corner clearances; `FootprintWithoutEdge` - an explicit footprint without
-  the metal edge; `FootprintTopology` - a producer-default collar whose region is not one
-  simple polygon, decision 54a below). `mesh_stage_contract.py` spells the same two lists
-  (`RECIPE_SCOPE_SUPPORTED_CLASSES`, `RECIPE_SCOPE_GUARDS`).
-- **Guard messages.** A guard fails with `ScopeGuard[<id>]: <statement>; <detail>`
-  (`scope_error`), replacing the former prose messages ("Prism edge tubes support
-  exterior conductor loops only", "Prism tubes require sharp vertical fabricated
-  geometry", "upward process layers only", "The tube pyramids would reach the trench
-  floor", "neither a semantic corner nor on the box", ...).
-- **Census.** The build census records a `Scope` block: `Recipe`, `SupportedClasses`,
-  `GuardedClasses`, `Guards[]` (id, origin, statement), `ExhibitedClasses` (the classes
-  this input exhibits, from the loops, the signature layers and the process options)
-  and `MetalLoops[]` (per plan-view loop: conductor, plane, hole flag, vertices and the
-  straight sides not on the outer box). The former descriptive `Scope` string is now
-  `Purpose`. `validate_gmsh_build_census` -> `validate_recipe_scope` binds the block: the
-  lists equal the contract's, the exhibited classes equal the classification recomputed
-  from the bound signature / boundary inputs and the command's process options (none of
-  them guarded - a guarded class never reaches a census), the loop sides equal the
-  recount from the bound boundary against the census `CouponBox`, and
-  `PrismTubes.TubeCount = 2 x` the sides of all loops (negatives in
-  `test_general_mesh_manifest.py`; Julia `test_prism_tube_build.jl`).
-- **Drivers.** `run_gmsh_only_case.py` writes `build-summary.json` in the root with
-  `Status` `built` / `unsupported-class` / `failed`: a mesher stop whose log carries
-  `ScopeGuard[<id>]` is recorded with the id (`UNSUPPORTED_CLASS <id>` on stderr),
-  distinctly from any other failure. The manifest preflight (`run_general_mesh_suite.py
-  --preflight-only`) classifies every Gmsh-only case from its frozen inputs
-  (`Cases[].Scope.ExhibitedClasses / UnsupportedClasses`), records a case outside the
-  scope as `UnsupportedClass` with the error `unsupported class <id>` (summary
-  `UnsupportedClassCases`), and does not count it as a preflight failure of the matrix:
-  the case is never built or judged, so a full matrix run reports it as not passed with
-  its class, not as a bug.
+  - **Classes.** `mesh_spatial_coupon.jl` `RECIPE_SCOPE_SUPPORTED_CLASSES` are the input
+    classes the recipe builds (`ContinuationVertices`, `DeviceFootprint`, `ExteriorLoops`,
+    `MultipleConductors`, `MultipleLayers`, `MultipleSlots`, `TraceBasis`);
+    `RECIPE_SCOPE_GUARDS` are the classes it fails closed on, each with a stable id, a
+    statement and its detection origin: visible in the frozen inputs (`HoleLoops`,
+    `DownwardLayers`, `TopRounding`, `TrenchRounding`, `SlopedSidewalls`, `ThinMetal`,
+    `NoTrench`) or only in a derived quantity during the build (`ShallowTrench` - the
+    pyramids would reach the trench floor; `NarrowTransverseBound` - no ring fits
+    min(Overetch, MetalThickness / 2, CornerIsotropyRadius); `FreeEdgeEnds` - an edge end
+    neither a semantic corner nor on the box; `ShortEdges` - no tube interval remains
+    after the corner clearances; `FootprintWithoutEdge` - an explicit footprint without
+    the metal edge; `FootprintTopology` - a producer-default collar whose region is not one
+    simple polygon, decision 54a below). `mesh_stage_contract.py` spells the same two lists
+    (`RECIPE_SCOPE_SUPPORTED_CLASSES`, `RECIPE_SCOPE_GUARDS`).
+  - **Guard messages.** A guard fails with `ScopeGuard[<id>]: <statement>; <detail>`
+    (`scope_error`), replacing the former prose messages ("Prism edge tubes support
+    exterior conductor loops only", "Prism tubes require sharp vertical fabricated
+    geometry", "upward process layers only", "The tube pyramids would reach the trench
+    floor", "neither a semantic corner nor on the box", ...).
+  - **Census.** The build census records a `Scope` block: `Recipe`, `SupportedClasses`,
+    `GuardedClasses`, `Guards[]` (id, origin, statement), `ExhibitedClasses` (the classes
+    this input exhibits, from the loops, the signature layers and the process options)
+    and `MetalLoops[]` (per plan-view loop: conductor, plane, hole flag, vertices and the
+    straight sides not on the outer box). The former descriptive `Scope` string is now
+    `Purpose`. `validate_gmsh_build_census` -> `validate_recipe_scope` binds the block: the
+    lists equal the contract's, the exhibited classes equal the classification recomputed
+    from the bound signature / boundary inputs and the command's process options (none of
+    them guarded - a guarded class never reaches a census), the loop sides equal the
+    recount from the bound boundary against the census `CouponBox`, and
+    `PrismTubes.TubeCount = 2 x` the sides of all loops (negatives in
+    `test_general_mesh_manifest.py`; Julia `test_prism_tube_build.jl`).
+  - **Drivers.** `run_gmsh_only_case.py` writes `build-summary.json` in the root with
+    `Status` `built` / `unsupported-class` / `failed`: a mesher stop whose log carries
+    `ScopeGuard[<id>]` is recorded with the id (`UNSUPPORTED_CLASS <id>` on stderr),
+    distinctly from any other failure. The manifest preflight (`run_general_mesh_suite.py --preflight-only`) classifies every Gmsh-only case from its frozen inputs
+    (`Cases[].Scope.ExhibitedClasses / UnsupportedClasses`), records a case outside the
+    scope as `UnsupportedClass` with the error `unsupported class <id>` (summary
+    `UnsupportedClassCases`), and does not count it as a preflight failure of the matrix:
+    the case is never built or judged, so a full matrix run reports it as not passed with
+    its class, not as a bug.
 
 #### Interior conductor loops (holes) in scope (decision 48, extension 1)
 
@@ -1354,25 +1339,25 @@ angle between the two tube edges, hole corners = contract corners from the bound
 `Physical` vertices, producer-default collars via `offset_hole_points`, junction and
 band curves from the fragmented CAD, ownership by conductor and z-band). Added:
 
-- `NarrowHoles` guard (build-detected): a hole must be wider than twice the tube reach
-  `Radius + PyramidHeight + ProtectedDistance` (2 x NormalSize, the band law's protected
-  distance) between any two of its non-adjacent sides (`hole_facing_width`), so the
-  tubes facing each other across it keep disjoint bands; recorded as
-  `PrismTubes.Section.FacingReach / FacingRule` (hole fixture: 0.6 um against 2 x 0.05975).
-- The etch-footprint check `assert_etch_carries_edge` now runs over the hole sides too
-  (a device footprint must carry them; negative in `test_prism_tube_build.jl`).
-- Census tube rows carry `Hole`; `validate_recipe_scope` requires `TubeCount = 2 x` the
-  straight sides of ALL loops and the hole flags of `MetalLoops` to agree with the
-  exhibited `HoleLoops` class.
-- Julia tests: hole tube normals point towards the hole centre, a hole coupon has 2 x
-  sides of all loops tubes (16 for the square-with-square-hole), right-angle hole
-  corners take the exterior right-angle clearance, facing width / segment distance.
-- Fixture `hole` re-frozen as `FixtureVersion 2`: the version-1 contract listed 2 of the
-  8 `Physical` vertices as corners (retired in `RetiredFixtures` with the
-  `ScopeGuard[FreeEdgeEnds]` evidence); the contract is re-derived by
-  `derive_semantic_contract.py` with the probe census (labels 1 / 3100 / 5001 / 6001:
-  the Radius-0.5 coupon is fully etched under the producer-default collars, no 3000
-  plane). The production build's `gmsh-build.msh` equals the probe's byte for byte.
+  - `NarrowHoles` guard (build-detected): a hole must be wider than twice the tube reach
+    `Radius + PyramidHeight + ProtectedDistance` (2 x NormalSize, the band law's protected
+    distance) between any two of its non-adjacent sides (`hole_facing_width`), so the
+    tubes facing each other across it keep disjoint bands; recorded as
+    `PrismTubes.Section.FacingReach / FacingRule` (hole fixture: 0.6 um against 2 x 0.05975).
+  - The etch-footprint check `assert_etch_carries_edge` now runs over the hole sides too
+    (a device footprint must carry them; negative in `test_prism_tube_build.jl`).
+  - Census tube rows carry `Hole`; `validate_recipe_scope` requires `TubeCount = 2 x` the
+    straight sides of ALL loops and the hole flags of `MetalLoops` to agree with the
+    exhibited `HoleLoops` class.
+  - Julia tests: hole tube normals point towards the hole centre, a hole coupon has 2 x
+    sides of all loops tubes (16 for the square-with-square-hole), right-angle hole
+    corners take the exterior right-angle clearance, facing width / segment distance.
+  - Fixture `hole` re-frozen as `FixtureVersion 2`: the version-1 contract listed 2 of the
+    8 `Physical` vertices as corners (retired in `RetiredFixtures` with the
+    `ScopeGuard[FreeEdgeEnds]` evidence); the contract is re-derived by
+    `derive_semantic_contract.py` with the probe census (labels 1 / 3100 / 5001 / 6001:
+    the Radius-0.5 coupon is fully etched under the producer-default collars, no 3000
+    plane). The production build's `gmsh-build.msh` equals the probe's byte for byte.
 
 #### Downward process layers (Nz = -1, flip-chip) in scope (decision 48, extension 2)
 
@@ -1383,63 +1368,62 @@ lies on the metal top face at `plane + Nz x MetalThickness`, the bottom tube on 
 plane; the sections are defined in the (n, b) frame, so "vacuum above / substrate
 below" mirrors with b (`TubeFrameRule` in the census Section). Added:
 
-- `NarrowLayerGap` guard (build-detected): the vacuum gap between the metal top faces
-  of an upward layer and the downward layer above it (`layer_groups` admits no other
-  two-layer configuration) must exceed twice the tube reach `Radius + PyramidHeight +
-  ProtectedDistance`, the same rule as `NarrowHoles` (opposed-layers fixture: gap
-  0.48 um against 2 x 0.03975).
-- Per-layer-sign vertical box padding in `coupon_bounds` and
-  `estimate_build_cost.coupon_box`: Overetch on the substrate side (-Nz),
-  MetalThickness on the metal side (+Nz) of every row's plane (`COUPON_BOX_RULE`);
-  identity for upward-only coupons, opposed-layers box z in [-0.52, 1.12].
-- Census tube rows carry `Layer` (Nz); `validate_tube_layers` binds every row to the
-  signature's Nz on its plane and to `Origin[3] = Plane + Layer x --metal-thickness`
-  (top) / `Plane` (bottom).
-- **Interface labeling by the surface's own layer (generic defect fixed; supervisor
-  decision 49, 2026-09-20: layer-band selection of the interface label + the box
-  tolerance, the mislabeling condition Radius < 1 um, concave-multislot FixtureVersion
-  2).** The CAD
-  interface classification took the nearest signature edge over ALL layers to decide
-  the un-etched plane (3000 + s) vs the etched trench (3100 + s) and the metal
-  surface's slot, and compared the surface's z-range with that edge's plane at the
-  source tolerance 1e-7 x Radius - below the 1e-7 padding of the OCC bounding box, so
-  for Radius < 1 um every un-etched plane was labeled 3100 + s (Radius-2 cases: 2e-7 >
-  1e-7, unaffected). Now `surface_process_layer` selects the layer whose band
-  `[plane - Nz x Overetch, plane + Nz x MetalThickness]` contains the surface (fail
-  closed otherwise), its edges own the surface, and the flat-plane test uses the box
-  tolerance like every other bounding-box comparison. Effect: opposed-layers records
-  3000 / 3001 (1.68 um^2 each) and 3100 / 3101 (15.248 each) instead of 3100 / 3101
-  (16.928 each) with an identical mesh; concave-multislot (Radius 0.5) gains 3000 /
-  3001 (0.4533 / 0.1767 um^2) and is re-frozen as `FixtureVersion 2` with its version-1
-  contract retired; hole (fully etched) is unchanged. Inertness on production: all five
-  gallery cases (four-edge 07, ten-edge 09, three-edge 06, two-edge 10, two-edge 05)
-  and the six Radius-2 fixtures bind Radius 2 um, where the source tolerance 2e-7
-  exceeds the 1e-7 CAD padding, so the old rule already labeled their planes correctly
-  by construction; the cheapest real case, two-edge 10 (`two-edge-8dd4bc70f183`), was
-  rebuilt under the fixed mesher (bdfe87890): `gmsh-build.msh` `10afee1f...` and
-  `identity.msh` `5d01204e...` byte-identical to the kept decision-43 root
-  (`/tmp/coupon-gmsh-only-two-edge-8dd4bc70f183-72185ce89-20260919-170018`; the
-  rebuild's binaries were deleted, its logs kept under
-  `/tmp/coupon-scope-20260920/two-edge-10-inertness`). Regression guard: the Julia
-  testset "un-etched plane of a Radius-0.5 coupon is labeled 3000" builds a
-  single-slot L-shaped Radius-0.5 coupon whose producer-default collar leaves the
-  0.63 um^2 notch un-etched and requires label 3000 with that area (and 3100 = 15.90);
-  under the old rule it fails (3000 absent, 3100 = 16.53 - verified on a patched copy).
-- Julia tests (`test_prism_tube_build.jl`): per-sign box padding; downward tube frames
-  are the mirror of the upward ones (b, origin z, e; same intervals, sections and
-  materials); the `NarrowLayerGap` guard at the threshold; mirror covariance of a
-  downward-only strip coupon against the upward one through the full mesher: the
-  interface areas, tube rows, prism / pyramid counts and the tube end cross-sections
-  mirror to roundoff, every gate passes on both, the tube node sets mirror within one
-  axial sampling step (`TangentialSize / TUBE_LAYER_SAMPLES_PER_SIZE`: the layer
-  stations follow the axis field sampled from `s_start`, so reversing the extrusion
-  sense moves a station by < 1.5e-3 um here - the direction dependence two oppositely
-  traversed exterior edges already have) and the tetrahedra are reported, not asserted
-  equal (Gmsh's Delaunay kernel is not reflection-covariant: 27,699 vs 27,732 tets on
-  the probe).
-- Fixture `opposed-layers` re-frozen as `FixtureVersion 2` (contract re-derived: 8
-  corners, 9 labels); the multi-slot ownership postprocessor runs on two facing
-  layers (first production case with two slots on different planes).
+  - `NarrowLayerGap` guard (build-detected): the vacuum gap between the metal top faces
+    of an upward layer and the downward layer above it (`layer_groups` admits no other
+    two-layer configuration) must exceed twice the tube reach `Radius + PyramidHeight + ProtectedDistance`, the same rule as `NarrowHoles` (opposed-layers fixture: gap
+    0.48 um against 2 x 0.03975).
+  - Per-layer-sign vertical box padding in `coupon_bounds` and
+    `estimate_build_cost.coupon_box`: Overetch on the substrate side (-Nz),
+    MetalThickness on the metal side (+Nz) of every row's plane (`COUPON_BOX_RULE`);
+    identity for upward-only coupons, opposed-layers box z in [-0.52, 1.12].
+  - Census tube rows carry `Layer` (Nz); `validate_tube_layers` binds every row to the
+    signature's Nz on its plane and to `Origin[3] = Plane + Layer x --metal-thickness`
+    (top) / `Plane` (bottom).
+  - **Interface labeling by the surface's own layer (generic defect fixed; supervisor
+    decision 49, 2026-09-20: layer-band selection of the interface label + the box
+    tolerance, the mislabeling condition Radius < 1 um, concave-multislot FixtureVersion
+    2).** The CAD
+    interface classification took the nearest signature edge over ALL layers to decide
+    the un-etched plane (3000 + s) vs the etched trench (3100 + s) and the metal
+    surface's slot, and compared the surface's z-range with that edge's plane at the
+    source tolerance 1e-7 x Radius - below the 1e-7 padding of the OCC bounding box, so
+    for Radius < 1 um every un-etched plane was labeled 3100 + s (Radius-2 cases: 2e-7 >
+    1e-7, unaffected). Now `surface_process_layer` selects the layer whose band
+    `[plane - Nz x Overetch, plane + Nz x MetalThickness]` contains the surface (fail
+    closed otherwise), its edges own the surface, and the flat-plane test uses the box
+    tolerance like every other bounding-box comparison. Effect: opposed-layers records
+    3000 / 3001 (1.68 um^2 each) and 3100 / 3101 (15.248 each) instead of 3100 / 3101
+    (16.928 each) with an identical mesh; concave-multislot (Radius 0.5) gains 3000 /
+    3001 (0.4533 / 0.1767 um^2) and is re-frozen as `FixtureVersion 2` with its version-1
+    contract retired; hole (fully etched) is unchanged. Inertness on production: all five
+    gallery cases (four-edge 07, ten-edge 09, three-edge 06, two-edge 10, two-edge 05)
+    and the six Radius-2 fixtures bind Radius 2 um, where the source tolerance 2e-7
+    exceeds the 1e-7 CAD padding, so the old rule already labeled their planes correctly
+    by construction; the cheapest real case, two-edge 10 (`two-edge-8dd4bc70f183`), was
+    rebuilt under the fixed mesher (bdfe87890): `gmsh-build.msh` `10afee1f...` and
+    `identity.msh` `5d01204e...` byte-identical to the kept decision-43 root
+    (`/tmp/coupon-gmsh-only-two-edge-8dd4bc70f183-72185ce89-20260919-170018`; the
+    rebuild's binaries were deleted, its logs kept under
+    `/tmp/coupon-scope-20260920/two-edge-10-inertness`). Regression guard: the Julia
+    testset "un-etched plane of a Radius-0.5 coupon is labeled 3000" builds a
+    single-slot L-shaped Radius-0.5 coupon whose producer-default collar leaves the
+    0.63 um^2 notch un-etched and requires label 3000 with that area (and 3100 = 15.90);
+    under the old rule it fails (3000 absent, 3100 = 16.53 - verified on a patched copy).
+  - Julia tests (`test_prism_tube_build.jl`): per-sign box padding; downward tube frames
+    are the mirror of the upward ones (b, origin z, e; same intervals, sections and
+    materials); the `NarrowLayerGap` guard at the threshold; mirror covariance of a
+    downward-only strip coupon against the upward one through the full mesher: the
+    interface areas, tube rows, prism / pyramid counts and the tube end cross-sections
+    mirror to roundoff, every gate passes on both, the tube node sets mirror within one
+    axial sampling step (`TangentialSize / TUBE_LAYER_SAMPLES_PER_SIZE`: the layer
+    stations follow the axis field sampled from `s_start`, so reversing the extrusion
+    sense moves a station by < 1.5e-3 um here - the direction dependence two oppositely
+    traversed exterior edges already have) and the tetrahedra are reported, not asserted
+    equal (Gmsh's Delaunay kernel is not reflection-covariant: 27,699 vs 27,732 tets on
+    the probe).
+  - Fixture `opposed-layers` re-frozen as `FixtureVersion 2` (contract re-derived: 8
+    corners, 9 labels); the multi-slot ownership postprocessor runs on two facing
+    layers (first production case with two slots on different planes).
 
 ### Synthetic matrix under the Gmsh-only recipe (decision 45(b), 2026-09-19)
 
@@ -1447,64 +1431,63 @@ The 2026-09-17 record (below, under the retired recipe) found ten of the twelve
 then-registered cases unbuildable. Under the Gmsh-only production recipe every one
 was re-examined; contracts are now derived, never authored:
 
-- **Contracts regenerated with `derive_semantic_contract.py`** (no hand-edited
-  number): `one-edge-semantic.json`, `one-edge-subdivided-semantic.json`,
-  `two-edge-transition-semantic.json`, `two-edge-multislot-semantic.json`,
-  `six-edge-semantic.json`, `three-edge-semantic.json` (the six whose corners
-  contradicted their boundaries) and `concave-multislot/semantic-contract.json`.
-  The tool now accepts the case's bound file names (`--signature`, `--boundary`,
-  `--process-library`) and, when no process library is bound (every synthetic
-  fixture), takes the slot / conductor pairs from the signature and records
-  `Derivation.SlotConductorSource`. Semantic corners are now exactly the boundary's
-  `Physical` vertices (1 / 1 / 5 / 3 / 10 / 5 / 6), so the canonical-source
-  validation ("Transformed physical boundary differs from semantic corners") passes
-  for all; label families are the producer's (`etched-substrate-vacuum-slot-s`,
-  `conductor-c-slot-s-ms/-ma`; the un-etched 3000 + s plane only where a build
-  census shows it). `three-edge-semantic.json` and `concave-multislot` are bound to
-  the gmsh-build census of a production-option probe build (`Derivation.
-  BuildCensusSHA256`); the five Radius-12.5 fixtures cannot be built (below), so
-  their contracts carry `Derivation.Provisional` (un-etched plane unconfirmed) and
-  their required label set. Preflight passes for all 15 cases; the six-edge
-  fixture's contract still drives the rigid-transform and multislot-census tests.
-- **The two "seed-gate failures" (two-edge-transition, six-edge-cluster)** were
-  MMG-era seed-side failures (required-region optimization gates); under the
-  Gmsh-only builder those gates do not exist as a separate stage, and both cases
-  fail earlier, for the same frozen-input reason as the other Radius-12.5 fixtures
-  (next item). No generic mesher bug was found: the mesher's fail-closed message is
-  correct for the inputs.
-- **Five Radius-12.5 fixtures are unbuildable with their frozen inputs**
-  (`one-edge-straight`, `one-edge-cad-subdivided`, `two-edge-transition`,
-  `two-edge-multislot`, `six-edge-cluster`): gmsh-build stops at "Metal edge end
-  (x, y) is neither a semantic corner nor on the box". Their plan-view boundary
-  loops were authored on the Radius-2 coupon box - every `Continuation` vertex lies
-  exactly on the box the signature spans at Radius 2 (one-edge: box x +-4 / y +-8,
-  loop vertices (-4, +-8), (0, 8); two-edge-transition: box [-8, 6] x [-8, 8];
-  two-edge-multislot: [-8, 8] x [-4, 8]; six-edge: [-9.9167, 8.9167] x [-4.5, 4.5];
-  one-edge-cad-subdivided binds the same loop to a signature whose Radius-2 box is
-  only +-4, so it is inconsistent at either radius) - but the cases bind
-  `generality-sharp-process.toml` (Radius 12.5: boxes +-25 x +-14.5 and larger), so
-  the metal loops close in the coupon interior without a Physical edge. A
-  Continuation vertex means "the metal continues past the box"; a loop vertex inside
-  the coupon that is not a semantic corner is a contradiction between two frozen
-  inputs (process vs boundary), not a contract or mesher defect. Repairing it means
-  re-binding those cases to a Radius-2 process (or re-authoring the loops): a
-  frozen-input rewrite, left as a decision. Evidence: the probe roots
-  `/tmp/coupon-matrix-case05-20260919/probe-root-<case>/gmsh-build.log` and the
-  box / loop numbers above.
-- **Three Radius-0.5 fixtures are outside the production recipe's stated scope**:
-  `hole` ("Prism edge tubes support exterior conductor loops only" - its loop is a
-  hole), `rounded-strip` ("Prism tubes require sharp vertical fabricated geometry" -
-  TopRounding 0.005), `opposed-layers` ("Prism tubes support upward process layers
-  only" - four of its eight edges have Nz = -1). Each is the prism-tube recipe's
-  own fail-closed scope statement (decision 38); extending the tubes to hole loops,
-  rounded edges or downward layers is producer feature work, not a repair. The size
-  bound above did act on all three before they stopped (their probe logs show no
-  tangential-size error), so nothing else hides behind these messages. Their
-  contracts were not in the contradictory six and are unchanged.
-- **Built**: `three-edge-current-calibration` (Radius 2, the 06 inputs without a
-  trace basis) and `concave-multislot` (Radius 0.5, the first production build
-  with `TangentialSizeBoundByFarSize true`: TangentialSize 0.05 -> 0.04), plus the
-  new gallery case `two-edge-3f8992613e95` (input 05): evidence below.
+  - **Contracts regenerated with `derive_semantic_contract.py`** (no hand-edited
+    number): `one-edge-semantic.json`, `one-edge-subdivided-semantic.json`,
+    `two-edge-transition-semantic.json`, `two-edge-multislot-semantic.json`,
+    `six-edge-semantic.json`, `three-edge-semantic.json` (the six whose corners
+    contradicted their boundaries) and `concave-multislot/semantic-contract.json`.
+    The tool now accepts the case's bound file names (`--signature`, `--boundary`,
+    `--process-library`) and, when no process library is bound (every synthetic
+    fixture), takes the slot / conductor pairs from the signature and records
+    `Derivation.SlotConductorSource`. Semantic corners are now exactly the boundary's
+    `Physical` vertices (1 / 1 / 5 / 3 / 10 / 5 / 6), so the canonical-source
+    validation ("Transformed physical boundary differs from semantic corners") passes
+    for all; label families are the producer's (`etched-substrate-vacuum-slot-s`,
+    `conductor-c-slot-s-ms/-ma`; the un-etched 3000 + s plane only where a build
+    census shows it). `three-edge-semantic.json` and `concave-multislot` are bound to
+    the gmsh-build census of a production-option probe build (`Derivation. BuildCensusSHA256`); the five Radius-12.5 fixtures cannot be built (below), so
+    their contracts carry `Derivation.Provisional` (un-etched plane unconfirmed) and
+    their required label set. Preflight passes for all 15 cases; the six-edge
+    fixture's contract still drives the rigid-transform and multislot-census tests.
+  - **The two "seed-gate failures" (two-edge-transition, six-edge-cluster)** were
+    MMG-era seed-side failures (required-region optimization gates); under the
+    Gmsh-only builder those gates do not exist as a separate stage, and both cases
+    fail earlier, for the same frozen-input reason as the other Radius-12.5 fixtures
+    (next item). No generic mesher bug was found: the mesher's fail-closed message is
+    correct for the inputs.
+  - **Five Radius-12.5 fixtures are unbuildable with their frozen inputs**
+    (`one-edge-straight`, `one-edge-cad-subdivided`, `two-edge-transition`,
+    `two-edge-multislot`, `six-edge-cluster`): gmsh-build stops at "Metal edge end
+    (x, y) is neither a semantic corner nor on the box". Their plan-view boundary
+    loops were authored on the Radius-2 coupon box - every `Continuation` vertex lies
+    exactly on the box the signature spans at Radius 2 (one-edge: box x +-4 / y +-8,
+    loop vertices (-4, +-8), (0, 8); two-edge-transition: box [-8, 6] x [-8, 8];
+    two-edge-multislot: [-8, 8] x [-4, 8]; six-edge: [-9.9167, 8.9167] x [-4.5, 4.5];
+    one-edge-cad-subdivided binds the same loop to a signature whose Radius-2 box is
+    only +-4, so it is inconsistent at either radius) - but the cases bind
+    `generality-sharp-process.toml` (Radius 12.5: boxes +-25 x +-14.5 and larger), so
+    the metal loops close in the coupon interior without a Physical edge. A
+    Continuation vertex means "the metal continues past the box"; a loop vertex inside
+    the coupon that is not a semantic corner is a contradiction between two frozen
+    inputs (process vs boundary), not a contract or mesher defect. Repairing it means
+    re-binding those cases to a Radius-2 process (or re-authoring the loops): a
+    frozen-input rewrite, left as a decision. Evidence: the probe roots
+    `/tmp/coupon-matrix-case05-20260919/probe-root-<case>/gmsh-build.log` and the
+    box / loop numbers above.
+  - **Three Radius-0.5 fixtures are outside the production recipe's stated scope**:
+    `hole` ("Prism edge tubes support exterior conductor loops only" - its loop is a
+    hole), `rounded-strip` ("Prism tubes require sharp vertical fabricated geometry" -
+    TopRounding 0.005), `opposed-layers` ("Prism tubes support upward process layers
+    only" - four of its eight edges have Nz = -1). Each is the prism-tube recipe's
+    own fail-closed scope statement (decision 38); extending the tubes to hole loops,
+    rounded edges or downward layers is producer feature work, not a repair. The size
+    bound above did act on all three before they stopped (their probe logs show no
+    tangential-size error), so nothing else hides behind these messages. Their
+    contracts were not in the contradictory six and are unchanged.
+  - **Built**: `three-edge-current-calibration` (Radius 2, the 06 inputs without a
+    trace basis) and `concave-multislot` (Radius 0.5, the first production build
+    with `TangentialSizeBoundByFarSize true`: TangentialSize 0.05 -> 0.04), plus the
+    new gallery case `two-edge-3f8992613e95` (input 05): evidence below.
 
 ### Evidence (decision 45(b): gallery case 05, three-edge-current-calibration, concave-multislot; commit 869465f32, 2026-09-19)
 
@@ -1518,11 +1501,11 @@ gate at its production value; audits at 8 GiB), identity + rotate-z-0.63, verifi
 build with the pre-size-bound mesher bcb9e18af: the bound is the identity at Radius
 2), so the contract enters the build through its SemanticCorners only.
 
-| case | elements (tets + prisms + pyramids) | nodes | tubes / layers / thickness min-P50-max (nm) / max neighbour ratio | caps min SJ / max cond | tets min SJ / max cond | prisms / pyramids max cond | corners | protected (measure / vertex) | closure (points; owners) | diagonal | interface areas um^2 | SizeBounds | build s / GiB | audits s (identity / rotate) | verification s / GiB |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| two-edge-3f8992613e95 (input 05, 125 traces; trace ratio 0.5, 246 basis triangles, min altitude 14.9 nm, 18 needles / 10 below FarSize) | **1,485,070** = 1,322,026 + 151,398 + 11,646 | 351,848 | 4 / 1,294 / 15.98 - 49.88 - 49.91 / 1.93 | 4: 0.0714 / 18.7 | 0.0485 / 28.0 | 588.5 / 8.72 | 3.58 / 3.39 (both on the box) | 0 / 3.5e-18 (rot. 8.5e-16) | 1.38e-13 (488,406; 3100 / 5001 / 6001) | 0 | 1: 535.4, 3100: 129.6, 5001: 32.0, 6001: 35.2 | FarSize 0.16, request 0.05 -> 0.05, bound false | 89.8 / 4.25 | 176 / 239 | 705 / 2.5 |
-| three-edge-current-calibration (the 06 inputs without a trace basis) | **1,496,998** = 1,311,526 + 172,224 + 13,248 | 339,844 | 10 / 1,472 / 15.65 - 49.85 - 50.0 / 1.55 | 14: 0.0276 / 72.7 | 0.0276 / 72.7 | 589.5 / 8.74 | 3.14 / 3.27 / 3.52 / 3.80 / 3.57 | 0 / 3.5e-18 (rot. 8.9e-16) | 6.57e-13 (593,385; 3100 / 5001 / 6001) | 0 | 1: 694.6, 3100: 125.8, 5001: 100.0, 6001: 103.6 (= case 06) | FarSize 0.16, 0.05 -> 0.05, false | 79.7 / 3.8 | 172 / 239 | 694 / 2.5 |
-| concave-multislot (Radius 0.5) | **1,454,056** = 1,423,816 + 27,720 + 2,520 | 265,608 | 12 / 280 / 16.56 - 29.58 - 39.83 / 1.28 | 24: 0.0572 / 22.7 | 0.0207 / 139.4 | 469.7 / 13.9 | 3.23 / 3.67 / 3.73 / 3.49 / 3.26 / 3.31 | 0 / 2.2e-16 (rot. 4.4e-16) | 2.66e-13 (252,990; 3100 / 3101 / 5001 / 5101 / 6001 / 6101) | 0 | 1: 51.80, 3100: 9.403, 3101: 7.007, 5001: 0.325, 5101: 0.245, 6001: 0.517, 6101: 0.405 | **FarSize 0.04, request 0.05 -> 0.04, bound true** (tube spacing max 39.8 nm) | 75.8 / 3.4 | 137 / 140 | 515 / 2.2 |
+| case                                                                                                                                    | elements (tets + prisms + pyramids)          | nodes   | tubes / layers / thickness min-P50-max (nm) / max neighbour ratio | caps min SJ / max cond | tets min SJ / max cond | prisms / pyramids max cond | corners                                 | protected (measure / vertex) | closure (points; owners)                                    | diagonal | interface areas um^2                                                                   | SizeBounds                                                                    | build s / GiB | audits s (identity / rotate) | verification s / GiB |
+|:--------------------------------------------------------------------------------------------------------------------------------------- |:-------------------------------------------- |:------- |:----------------------------------------------------------------- |:---------------------- |:---------------------- |:-------------------------- |:--------------------------------------- |:---------------------------- |:----------------------------------------------------------- |:-------- |:-------------------------------------------------------------------------------------- |:----------------------------------------------------------------------------- |:------------- |:---------------------------- |:-------------------- |
+| two-edge-3f8992613e95 (input 05, 125 traces; trace ratio 0.5, 246 basis triangles, min altitude 14.9 nm, 18 needles / 10 below FarSize) | **1,485,070** = 1,322,026 + 151,398 + 11,646 | 351,848 | 4 / 1,294 / 15.98 - 49.88 - 49.91 / 1.93                          | 4: 0.0714 / 18.7       | 0.0485 / 28.0          | 588.5 / 8.72               | 3.58 / 3.39 (both on the box)           | 0 / 3.5e-18 (rot. 8.5e-16)   | 1.38e-13 (488,406; 3100 / 5001 / 6001)                      | 0        | 1: 535.4, 3100: 129.6, 5001: 32.0, 6001: 35.2                                          | FarSize 0.16, request 0.05 -> 0.05, bound false                               | 89.8 / 4.25   | 176 / 239                    | 705 / 2.5            |
+| three-edge-current-calibration (the 06 inputs without a trace basis)                                                                    | **1,496,998** = 1,311,526 + 172,224 + 13,248 | 339,844 | 10 / 1,472 / 15.65 - 49.85 - 50.0 / 1.55                          | 14: 0.0276 / 72.7      | 0.0276 / 72.7          | 589.5 / 8.74               | 3.14 / 3.27 / 3.52 / 3.80 / 3.57        | 0 / 3.5e-18 (rot. 8.9e-16)   | 6.57e-13 (593,385; 3100 / 5001 / 6001)                      | 0        | 1: 694.6, 3100: 125.8, 5001: 100.0, 6001: 103.6 (= case 06)                            | FarSize 0.16, 0.05 -> 0.05, false                                             | 79.7 / 3.8    | 172 / 239                    | 694 / 2.5            |
+| concave-multislot (Radius 0.5)                                                                                                          | **1,454,056** = 1,423,816 + 27,720 + 2,520   | 265,608 | 12 / 280 / 16.56 - 29.58 - 39.83 / 1.28                           | 24: 0.0572 / 22.7      | 0.0207 / 139.4         | 469.7 / 13.9               | 3.23 / 3.67 / 3.73 / 3.49 / 3.26 / 3.31 | 0 / 2.2e-16 (rot. 4.4e-16)   | 2.66e-13 (252,990; 3100 / 3101 / 5001 / 5101 / 6001 / 6101) | 0        | 1: 51.80, 3100: 9.403, 3101: 7.007, 5001: 0.325, 5101: 0.245, 6001: 0.517, 6101: 0.405 | **FarSize 0.04, request 0.05 -> 0.04, bound true** (tube spacing max 39.8 nm) | 75.8 / 3.4    | 137 / 140                    | 515 / 2.2            |
 
 Case 06's mesh (1,845,349) exceeds the same inputs without a trace basis by 348,351
 tetrahedra: the trace-basis rule's cost on that geometry. The concave-multislot
@@ -1557,8 +1540,7 @@ now build (three-edge-current-calibration: its contract contradicted its labels 
 corners; concave-multislot: FarSize below TangentialSize) and eight remain so for
 the two reasons above, none of them a contract or size-rule question any more.
 
-Validation of the decision-45(b) state (6e4700cec, 869465f32): `python3 -m unittest
-discover -s . -p "test_*.py"` ran 252 tests, OK (33 skipped);
+Validation of the decision-45(b) state (6e4700cec, 869465f32): `python3 -m unittest discover -s . -p "test_*.py"` ran 252 tests, OK (33 skipped);
 `run_general_mesh_suite.py --preflight-only` passes for the production manifest (15
 cases), the MA calibration manifest (6) and the sizing calibration manifest (2);
 `refreeze_manifest_tools.py --check` current.
@@ -1568,8 +1550,7 @@ same sweep ran 260 tests, OK (33 skipped); preflights 15 (every case with its
 `refreeze_manifest_tools.py --check` current. The 869465f32 roots stay bound to their
 commit's manifest (`cef6ba51...`); nothing was rebuilt.
 After decisions 46 / 47 (8b0057dbd) the sweep ran 261 tests, OK (33 skipped);
-preflights 15 / 6 / 2 pass (maximum estimate 0.89 of the cap); `refreeze_manifest_tools.py
---check` current; the Julia `test_edge_chains.jl` testsets pass (17 assertions).
+preflights 15 / 6 / 2 pass (maximum estimate 0.89 of the cap); `refreeze_manifest_tools.py --check` current; the Julia `test_edge_chains.jl` testsets pass (17 assertions).
 
 ## Retired production recipe (supervisor decision 34B, 2026-09-17; legacy MMG pipeline)
 
@@ -1588,9 +1569,7 @@ metric (rows 4/12/28 nm below NormalSize 0.025 with nested tangential rows
 metric (shells 4/8/16 nm at 4/12/28 nm inside every 0.1 um corner ball, rows to
 the ball boundary, 0.1 um of un-layered edge per corner), the corner balls and
 the layer as MMG required tetrahedra (decision 30) with the seed-side
-required-region gates (`--maximum-corner-aspect 4 --minimum-scaled-jacobian .01
---maximum-jacobian-condition 1000 --maximum-quality-displacement-over-normal
-.75`, equal on seed and restorer). Every other parameter is unchanged (NormalSize
+required-region gates (`--maximum-corner-aspect 4 --minimum-scaled-jacobian .01 --maximum-jacobian-condition 1000 --maximum-quality-displacement-over-normal .75`, equal on seed and restorer). Every other parameter is unchanged (NormalSize
 0.25 x thickness, TangentialSize / CornerIsotropyRadius 4 x NormalSize, FarSize
 0.08 x radius, protected distance and surface radius 2 x NormalSize,
 TraceBasisSizeRatio 1, `--hgrad 1.15 --hausd 1e-8`, restoration bounds 0.25 /
@@ -1847,8 +1826,7 @@ hat of a basis vertex varies linearly over the whole incident triangle, so its
 support is resolved where the hat varies only when the whole triangle is
 discretized at that scale (the per-edge alternative resolves only the edges).
 The seed applies it through the Gmsh size callback on top of the scalar
-corner-isotropy background (`min(background, ratio x minimum altitude + slope x
-distance to the triangle)` with the process-band grading slope, capped by
+corner-isotropy background (`min(background, ratio x minimum altitude + slope x distance to the triangle)` with the process-band grading slope, capped by
 `lc_far`; `Mesh.MeshSizeMin` follows the smallest requested size, the only
 sub-`lc_fine` request any field can make) and records `TraceBasisSizing` in the
 census (ratio, rule, frame, input digests, box, counts, basis edges below the
@@ -1945,331 +1923,332 @@ curve, row nodes). The metric stage binds the census layer (`--edge-size`,
 `SurfaceProtectionRadius`, so the frozen band covers the layer; every span on
 a band segment) and prescribes the continuous form of the same layers along
 the spans: hn(r) = EdgeSize + (GrowthRatio - 1) r up to the reach (NormalSize
-- EdgeSize) / (GrowthRatio - 1), then the ordinary band law; tangential size
-capped at Aspect x hn blending into the band's; spans intersected after the
-band segments; seed cells within the protection radius of a span are excluded
-from the far-field budget policy's seed load (recorded) so the far field is
-not coarsened by the transient layer seed; the adapter hmin is EdgeSize. The
-restoration's CAD-correction, repair-displacement and corner-collapse bounds
-are relative to the local prescribed size at each vertex capped at NormalSize
-(`local_bound_size`: production bounds unchanged, EdgeSize-based inside the
-layer; per-vertex bound statistics in the report) and the layer's frozen
-surface vertices never move. `mesh_stage_contract.validate_edge_layer` binds
-the seed command, the metric command, the census, the recipe and the adapter
-hmin to one layer or none (`validate_canonical_dag`). Measured on four-edge
-(V2 + layer, `edge_layer_census.py`): at EdgeSize 1 nm / Aspect 4 the layer
-is surface-driven (rows 3.125/6.25/12.5/25/50 nm) and costs ~1.3M tets
-(4.70M total, over the cap) with 1,955 cells below 0.02 in 1,522 repair
-components; at 4 nm (rows 12.5/25/50 nm at 4/12/28 nm) 3.57M tets, layer
-285k, 4 cells below 0.01 / 135 below 0.02, the metric law followed
-(transverse P50 4.0/4.2/8.0/17/29 nm by shell); the 4 nm build failed the
-label-restoration corner gate at (0, 8, 0) (aspect 5.39 after MMG, the
-collapse rolled back and the bounded move repair cannot fix a corner cell with
-three constrained vertices; identical with the previous restorer), so no
-edge-layer case was qualified by that build.
-Supervisor decision 30 (required tetrahedra, 2026-09-16): MMG's corner output
-had blocked four campaigns, so the near-corner/near-edge region is now
-deterministic - the seed defines it and MMG must not touch it. The metric
-stage emits the bound artifact `required-tetrahedra.txt` (1-based seed
-tetrahedron indices; `edge_volume_metric.required_tetrahedra`): every seed
-cell whose centroid lies within `CornerIsotropyRadius` of a semantic corner
-(also without an edge layer) and, with a layer, every seed cell with a vertex
-within LayerThickness x (1 + RowZigzag) + EdgeSize of a recorded span (the
-rows and the cells touching them, so the layer is kept without holes); the
-recipe `RequiredTetrahedra` record carries the rule, the radius, the reach and
-one count per corner and per span. The reviewed adapter takes the list as the
-flag `--required-tetrahedra FILE` (removed from the positional arguments, so
-every existing command shape is unchanged) and calls
-`MMG3D_Set_requiredTetrahedron` plus `MMG3D_Set_requiredVertex` for each
-listed cell (MMG 5.6 also tags the vertices itself, `MMG3D_set_reqBoundaries`),
-failing closed on out-of-range or malformed indices; the wrapper requires the
-list, checks it against the recipe record and binds it by SHA-256 in the
-receipt (`RequiredTetrahedraSHA256`, count); the stage contract binds it as a
-metric output and an adaptation input (`--required-tetrahedra`) and
-`validate_required_region` checks the record, the list and the seed gates
-below. MMG keeps the listed cells verbatim (vertex order included: the
-corner-incident aspects after adaptation equal the seed census's); MMG writes
-them under the binary Medit `RequiredTetrahedra` keyword (libMeshb code 12),
-which meshio mis-parses, so `mesh_array_io.read_medit_binary` reads the native
-output by keyword positions and flags the kept cells (`medit:required`); the
-restorer freezes their vertices (no collapse, no repair move; `RequiredTetrahedra`,
-`RequiredVertices`, `MaximumRequiredVertexCorrectionUm` in the report). Because
-the required region's quality after adaptation is the seed's, the seed stage
-satisfies the gates itself: `--maximum-corner-aspect`, `--minimum-scaled-jacobian`
-and `--maximum-quality-displacement-over-normal` (the restorer's values, bound
-equal by the contract) turn on `optimize_required_seed_region!` - the
-restorer's bounded rule on the seed (surface vertices in the null space of
-their triangle normals, three planes fix a vertex, ratio x the local
-prescribed size, touched cells keep min(original, 2 x gate) scaled Jacobian),
-as greedy coordinate descent (26 directions for a free vertex, 8 in a plane,
-2 on a line; halving steps down to 1/128 of the bound) on the corner-incident
-aspects through their 32-norm (a smooth proxy of the maximum that keeps
-descending where several cells tie for the worst; target 0.95 x the gate on
-the true maximum) and on components of required cells below 2 x the gate; the
-census records `SeedQualityOptimization` (before/after per corner, required
-minimum scaled Jacobian, moved vertices, bound usage) and the seed fails closed
-when a corner exceeds the gate or a required cell stays below it. Measured on
-the four-edge 4 nm seed: corners 3.41/4.63/3.42/8.69 -> 3.41/3.70/3.42/3.50,
-the 88 required cells below 0.02 (needles: 4-6 nm surface triangles joined to
-an interior vertex 48 nm away, minimum 0.0092) all lifted to >= 0.02 with 358
-vertices moved by at most 18.75 nm (the bound), +10 s of seed time; on the
-production seeds the corner balls alone are required (four-edge 2,882 cells,
-corners 3.27/4.89/6.25/8.16 -> 3.27/3.39/3.67/3.56; ten-edge 8,562 cells, worst
-corner 8.45 -> 3.75, all ten <= 3.86). MMG kept every required cell verbatim
-(the preserved 4 nm seed: 199,572 of 199,572, 3,450,791 tets in 46 s, every
-cell below 0.02 a seed cell) and the label restoration passes with 0 collapses
-and no corner repair (four-edge 222 s, ten-edge 181 s, 4 nm 35 s). The adapter
-build is recorded in `testdata/adapter-build.json` (command, compiler, flags,
-rpath, source/executable/dylib SHA-256); its manifest digest is refrozen only
-through `refreeze_manifest_tools.py --adapter-mmg PATH`, which accepts an
-executable only when the record names its digest and the repository's
-`adapt_edge_metric.cpp` digest. The machine's Julia launcher is refrozen the
-same way (`--julia-runtime PATH`, the three Julia runtime roles together).
-Supervisor decision 31 (2026-09-17): the achieved-anisotropy design gate
-(TangentialP50 >= MinimumAchievedAspect x transverse P90 over the band cells)
-is a statement about the metric-driven band, which a seeded edge layer
-contradicts by construction (decision 28 caps the layer's tangential size at
-Aspect x hn: 12.5 nm at the 4 nm rows against a 35 nm transverse P90 of the
-band sample). The audit producer therefore computes the band statistics over
-band cells outside a recorded edge layer (`directional_widths`: cells whose
-centroid lies within LayerThickness + EdgeSize of a restoration-recipe
-`EdgeLayer` span are excluded, counted as `ExcludedEdgeLayerCells`, and
-reported as `AchievedAnisotropy.EdgeLayer` with their own percentiles); the
-rule is keyed on the recipe's EdgeLayer record, never on a case, gate values
-are unchanged (production 1.5, calibration 0.9), and the layer's design
-statement remains the bound EdgeLayer aspect rule.
-Decision 35 (above, "Production recipe") completes this: with the production
-layer covering the whole one-NormalSize band the gate is not applicable by
-construction and the layer-adjacent band is recorded, never gated.
-Review of 836a1c19f (P1/P2, 2026-09-17): the seed optimizer gated the required
-set computed before its vertex moves (4 nm root: 199,572 gated, 199,992 listed
-by the metric stage on the moved seed), so `optimize_required_region!` now
-recomputes the set on the moved positions, runs one more scaled-Jacobian pass
-when the membership changed and judges the gates on the final set (census
-`RequiredTetrahedra`, with `RequiredTetrahedraBeforeMoves` and
-`RequiredSetRecomputations` reported); `validate_required_region` requires
-census count == recipe `Count` == the label restorer's `RequiredTetrahedra`
-(its `.projection.json` report; the restorer itself fails closed when the
-adapted mesh carries a different count). There is one recorded layer reach,
-`EdgeLayer.RequiredReach` = LayerThickness x (1 + RowZigzag) + EdgeSize
-(`edge_volume_metric.EDGE_LAYER_CELL_RULE`: a tetrahedron with a vertex within
-it is a layer cell), used by the required region, the restorer's frozen surface
-vertices and the audits' layer exclusion alike (the audit previously used the
-centroid within LayerThickness + EdgeSize). `read_medit_binary` rejects Medit
-version 4 (64-bit counts) instead of mis-parsing it.
-Supervisor decision 32 (2026-09-17, user directive): the 1 nm x 50 nm layer
-(EdgeSize 0.001, growth 2, rows 1/3/7/15/31 nm, tangential = lc_tangent 0.05
-with no nested subdivision, EdgeLayerAspect = lc_tangent / EdgeSize = 50) has
-layer cells whose scaled Jacobian is (EdgeSize / lc_tangent)^2 ~ 4e-4 by
-construction, so MinimumScaledJacobian 0.01 cannot judge it. The calibration
-manifest, and only it, carries the layer-local quality rule
-`Gates.EdgeLayerQualityRule` (`edge_volume_metric.EDGE_LAYER_QUALITY_RULE`):
-inside the recorded edge layer (`EDGE_LAYER_CELL_RULE`) a cell passes when its
-scaled Jacobian exceeds the roundoff floor 1e-12 (positive orientation) and its
-longest edge over its shortest height (`tetrahedron_edge_aspect`) is at most
-`MaximumEdgeAspect` = 2 x lc_tangent / EdgeSize = 100 (design aspect: the
-ridge-grid diagonal sqrt(2) x 50 nm over the 1 nm first slab = 70.7; factor 2
-for the row zigzag and the Delaunay slab split); the layer minimum scaled
-Jacobian and its cells per decade are reported as diagnostics; every other gate
-(MinimumScaledJacobian, MaximumJacobianCondition, corners, protected surfaces,
-ownership, diagonal, resources) judges every cell outside the layer at its
-production value. The rule is applied consistently: the seed optimizer
-(`--edge-layer-maximum-aspect`, bounded descent on the edge aspect of layer
-components above 0.95 x the bound, scaled-Jacobian passes on the other
-required cells, fails closed), the label restorer (same option: layer cells are
-never repair targets, gated by `edge_layer_quality`, and every layer cell must
-be an MMG required cell), the audit producer (`MeshQuality.EdgeLayer` /
-`MeshQuality.OutsideEdgeLayer`), `general_mesh_manifest.audit_manifest_evidence`
-(`edge-layer-quality`; `mesh-quality-jacobian` on the outside statistics when
-the manifest carries the rule, on the whole mesh otherwise) and the verifier
-(`validate_edge_layer_quality_rule_binding`: the seed and restorer of a case
-declaring `Calibration.EdgeLayerQualityRule` execute exactly the manifest bound;
-every other case neither). Production is protected structurally:
-`validate_manifest` refuses `Gates.EdgeLayerQualityRule` in a manifest without a
-`Calibration` block and refuses any production case with a `Calibration` or
-`EdgeLayer` block (preflight fails closed); `test_general_mesh_manifest` asserts
-both and the gate negatives (a layer cell with negative orientation or an
-aspect above the bound fails; a non-layer cell below 0.01 still fails).
-Measured on the four-edge 1 nm seed (`four-edge-calib-ma-el1nm-50`, root
-`/tmp/coupon-calibration-ma-el1nm-50-dd9f57120-20260917-110949`): 81,821 layer
-cells with edge aspects P50 10.6 / P90 70.7 (the design value) / P99 104.5 /
-maximum 1,154 before repair; the tail is Gmsh's volume split (interior vertices
-0.3 nm from a row node under the face plane, 13 cells at 1,150 that no bounded
-move can fix), so the seed optimizer first collapses free interior layer
-vertices with an incident edge below EdgeSize onto the neighbour whose cavity
-has the best worst edge aspect (9 vertices, 44 cells removed, 56 remapped;
-`collapse_short_layer_edges!`) and then descends on the remaining components
-with the layer cells' scaled-Jacobian floors replaced by the orientation floor
-(their vertex-0 scaled Jacobian is not a quality measure and was measured to
-block every aspect repair): maximum 1,154 -> 827 -> 95.0, 0 cells above 100,
-layer minimum scaled Jacobian 3.0e-4 (diagnostic), +12 s of seed time. MMG kept
-all 84,653 required cells (census == recipe == restoration), adaptation
-3,137,539 tets in 49 s, restoration 0 components / 0 collapses in 29 s, corners
-3.71/3.80/3.42/3.84, outside-layer minimum scaled Jacobian 0.0428, protected
-1.0e-10, ownership closed, 0 diagonal bands, identity and rotate-z covariant;
-transverse tet-edge P50 per shell 0-2/2-5/5-10/10-25 nm = 1.05/2.1/4.2/16.8 nm
-at 50 nm tangential. Every physical gate passes on both variants; the
-calibration design gate `achieved-anisotropy` fails on the band next to the
-layer (TangentialP50 55.8 nm vs transverse P90 46/77 nm), the EL4 outcome that
-decision 31 leaves to physics.
-The rule is case-keyed (`general_mesh_manifest.case_gates`, used by the verifier
-and the suite runner alike): a case that does not declare
-`Calibration.EdgeLayerQualityRule` is never judged by it, since its seed and
-restorer never executed the bound. The 4 nm layer case
-(`four-edge-calib-ma-edge-layer-4nm`, 3,450,085 tets, identity SHA 22d6d926...)
-therefore stays under its scaled-Jacobian-gated record ("physical gates pass
-under the SJ gate", design gate pending physics, decision 31/32 rulings): it is
-judged by MinimumScaledJacobian 0.01 on its whole mesh, exactly as when it was
-verified, and it is not re-verified under the layer rule (its layer set has
-slivers at edge aspect 761 with vertex-0 scaled Jacobian >= 0.02 that the rule
-would fail and a rebuild with the seed collapse/descent would be needed to
-pass). The manifest Gates, rule included, remain the canonical cache key of
-every build of the manifest. The restorer computes the adapter's required flags
-before the corner-ball collapse and compacts them with the cells, so the layer
-rule's "every layer cell is a required cell" check stays aligned when a collapse
-removes cells; the seed's Gmsh connectivity mutation
-(`apply_seed_cell_collapse!`) is pinned by a tiny-box round-trip test (written
-points == used points, written cells == census).
-Supervisor decision 33 (2026-09-17, user directive): physics-05's per-segment MA
-located the residual of control 1 (63% of its MA within 0.5 um of the outer
-corner (0, -2)) and of control 23 (77% within 0.5 um of the termination
-(10, 0)) in the un-layered corner regions - the 25 nm isotropic balls plus the
-0.137-0.187 um taper before the layer rows. Corner grading (`CornerGrading`,
-seed and metric option `--corner-size`, `mesh_stage_contract.validate_corner_grading`):
-inside every frozen corner ball (CornerIsotropyRadius 0.1 around each semantic
-corner) the uniform NormalSize is replaced by a geometric isotropic grading from
-CornerSize at the corner point growing by the edge-layer ratio to NormalSize -
-shells of size CornerSize x GrowthRatio^(k-1) ending at the cumulative radii
-CornerSize (GrowthRatio^k - 1) / (GrowthRatio - 1) (4 nm: sizes 4/8/16 nm to
-4/12/28 nm, NormalSize from the reach 0.021 to the radius), the edge layer's
-rows with CornerSize for EdgeSize. The seed carries the shells (Gmsh MathEval
-step field; the ridge nodes through a ball fall on the shell radii and a node
-sits on the ball boundary; the required-region optimizer's bounds are 0.75 x
-the shell size), the metric prescribes the continuous form min(NormalSize,
-CornerSize + (GrowthRatio - 1) d) (`edge_volume_metric.corner_ball_size`,
-which the shells never exceed) and the restorer's local size follows it; the
-corner-ball cells are MMG required tetrahedra, so the adapted corners are the
-seed's, gated by the seed (corner aspect <= 4, scaled Jacobian >= 0.01). With
-a layer the rows start at the ridge node on the ball boundary with no taper
-(census `EdgeLayer.LayerReachesCornerBall`, `UnlayeredEdgeLengthPerCorner`: per
-corner the distance to the nearest span end of each layered edge, 0.1 here
-against 0.187 before); a ball-boundary crossing within half NormalSize of a
-CAD vertex is not a node (a vertical corner edge of the metal thickness 0.1
-ends exactly on the radius; measured: a node at 0.9 nm from the top corner
-made six flat cells). `--corner-size 0` (absent) is the production ball
-(uniform NormalSize), which the EL4 and EL1 records keep. Seed census per
-corner: `Shells` (edges by midpoint distance, P50/P90 against the shell size,
-cells by centroid); `edge_layer_census.py` reports the same on the final mesh
-(`CornerBalls`). Case `four-edge-calib-ma-el4c` = EL4 + CornerSize 0.004:
-seed 1,507,725 tets (EL4 1,508,461), 200,354 required (EL4 199,992), shell
-edge P50 per corner 3.8-5.8 / 6.0-7.8 / 12.1-17.7 / 27.2-29.5 nm against
-4/8/16/25 nm, corners 3.76/3.29/3.72/3.23, un-layered length 0.1 at every
-layered edge. Case `four-edge-calib-ma-el1c` = EL4c with EdgeSize 0.001
-(rows 1/3/7/15/31 nm, aspect-4 nested rows 3.125-50 nm) at EL4c's corner
-shells (CornerSize 0.004, unchanged, so EL4c -> EL1c changes exactly the edge
-layer; CornerSize 0.001 failed the seed's gates: corner aspect 4.81 from a
-0.41 nm Gmsh surface edge next to the 1 nm shell node, one layer/ball-junction
-cell at scaled Jacobian 0.0073 - the recorded P2 test cases for a corner-ball
-collapse) declares the labeled
-calibration-only element cap `Calibration.MaximumElements` 5,000,000
-(supervisor decision 33): `general_mesh_manifest.validate_case_element_cap`
-requires the manifest's `Calibration.GateDeviations.MaximumElements` to name
-exactly the declaring cases with the production value 4,000,000, and
-`case_gates` judges only those cases by the cap; `Gates.MaximumElements` stays
-4,000,000 in both manifests (the build cache key, and the gate of every other
-case), no production case may declare a cap, and the stage bounds are unchanged.
-(Decision 61c, 2026-09-21: the cap deviation is RETIRED - `Gates.MaximumElements` is
-6,000,000 in every manifest and the EL1c case declares no cap; the record is kept under
-`Calibration.RetiredGateDeviations.MaximumElements`.)
-Measured outcomes of decision 33 (roots
-`/tmp/coupon-calibration-ma-el4c-4f9946870-20260917-155730` and
-`/tmp/coupon-calibration-ma-el1c-cb3f64d81-20260917-160517`, adapter 72f741e3...,
-MMG 5.6 a97d9580...): EL4c PASSES every physical gate on identity and
-rotate-z-0.63 - 3,471,507 tets (EL4 3,450,085), minimum scaled Jacobian 0.0200,
-maximum Jacobian condition 898.6, corners 3.76/3.29/3.72/3.23 == seed, 0
-restoration repairs, protected 1.0e-10, ownership closed, identity SHA256
-5fb3a5c8..., CanonicalBuildSHA256 819f50cf... - and fails only the calibration
-design gate `achieved-anisotropy` on the band next to the layer (TangentialP50
-50.0 nm vs transverse P90 40.5/66.5 nm; decision 31: physics adjudicates;
-physics-06 ran on it). EL1c as built at cb3f64d81 FAILED the physical gate
-`mesh-quality-jacobian`: MaximumJacobianCondition 5115.5 > 1000 on 56
-edge-interior layer cells on the metal faces (209 > 500), each with a 0.02-0.24 nm
-edge between a face vertex and a 1 nm row node (minimum scaled Jacobian 0.01696
-passes; 4,479,207 tets < the 5,000,000 cap; corners 3.55/3.24/3.42/3.41 == seed;
-identity SHA256 9e9e1567...); its identity variant was audited, normalized and
-verified, its rotate-z-0.63 variant audit producer exceeded the 1800 s audit
-bound twice (once alone: the rotated topology/protected-surface pass takes
-20 min on 4.48 M tets) - recorded as "identity verified; rotate-z audit exceeded
-the audit bound", no bound change; not run in physics. Both cases share
-`CanonicalBuildId` 40d6db94... (the cache key is source + process + contract +
-recipe + manifest `Gates` + tools; neither the case `Calibration` options nor
-the case-level element cap enter it), so `run_general_mesh_suite` over the whole
-calibration manifest would refuse the second case ("shared canonical stages
-require exact cache key and hashes"): calibration cases are verified per case
-only (`verify_canonical_case_entries.py`), a documented limitation.
-Decision 34 (2026-09-17) located the EL1c failure on the seed itself: the 56
-cells (and the CornerSize 1 nm probe's 0.41 nm corner edge) are made by the
-seed's bounded descent, which moved face vertices to 0.013-0.24 nm of a row or
-ridge node while repairing scaled Jacobians and corners - the Gmsh seed has no
-edge below half EdgeSize (the sub-size collapse finds 0 candidates below the
-threshold). The seed now (a) collapses sub-size edges (`collapse_short_edges!`,
-threshold `SEED_COLLAPSE_SIZE_FRACTION` 0.5 x the smallest prescribed size:
-EdgeSize or CornerSize; a threshold at the size collapsed 14,667 legitimate layer
-face vertices between the 1 and 3 nm rows and 2,677 row nodes) for interior and
-surface vertices alike, a surface vertex only along its own surface (onto a
-surface neighbour in every plane of the vertex carrying every line/triangle
-support of the vertex: a face vertex within its face, a row or ridge node along
-its curve, CAD points never; remapped triangles keep their normal; the cavity is
-no worse in maximum edge aspect and Jacobian condition and better in one, and
-no cell falls below the scaled-Jacobian gate where none was; census
-`SubSizeEdgeCollapse` with every collapse's position and quality), with and
-without the layer quality rule; (b) guards the descent so that every touched
-cell keeps max(original, 0.95 x MaximumJacobianCondition) Jacobian condition and
-a moved vertex in the collapse region keeps its edges at or above min(original,
-threshold); (c) gates the scaled-Jacobian-gated required cells by
-`--maximum-jacobian-condition` (the manifest MaximumJacobianCondition 1000,
-carried equally by the seed and the restorer, `REQUIRED_REGION_GATE_OPTIONS`;
-census `RequiredMaximumJacobianCondition{Before,After}`,
-`RequiredCellsAboveConditionAfter`; restorer `RequiredMaximumJacobianCondition`),
-failing closed at the seed instead of after the hour-long build. EL1c seed under
-(a)-(c): 2,147,264 tets (unchanged connectivity), 834,434 required, corners
-3.55/3.24/3.42/3.41, required maximum condition 221.7 before the moves and 924.2
-after (0 above 1000; without the guards 8,525 on 43 cells), minimum scaled
-Jacobian 0.0163, 188 s. Required region of the seed, old -> new build: maximum
-condition 5115.5 -> 924.2, cells above 1000/500/200: 56/209/983 -> 0/106/741,
-shortest edge 0.024 nm -> 0.500 nm (1,228 -> 0 edges below 0.5 nm), minimum
-scaled Jacobian 0.01696 -> 0.01630 (one cell in [0.01, 0.02) in both, the
-layer/ball-junction cell of the amendment).
-EL1c rebuilt under decision 34 (root
-`/tmp/coupon-calibration-ma-el1c-cb3f64d81-20260917-205035`, tools of commit
-3c6b4c7fe, adapter 72f741e3..., MMG a97d9580...): 4,483,816 tets (< the
-5,000,000 cap; 890,977 H1 DOFs), MMG kept all 834,434 required tetrahedra
-(recipe == receipt == restorer), restoration 1 repair component rejected (the
-frozen junction cell, 0.0163 >= 0.01), 0 corner-ball collapses. Identity
-variant: every PHYSICAL gate passes - minimum scaled Jacobian 0.01630, maximum
-Jacobian condition 924.2 (outside the layer 221.7), corners 3.55/3.24/3.42/3.41
-== seed, protected surfaces 1.04e-10, ownership closure 3.1e-13 (0 unmatched, 0
-overlapping), 0 diagonal bands, canonical build 444.8 s / 7.47 GiB and
-placement 201.1 s / 7.39 GiB within 1800 s / 8 GiB (the publication stages now
-peak at 7.4-7.5 GiB, 0.5 GiB under the bound) - and the calibration design gate
-`achieved-anisotropy` fails on the layer-adjacent band (TangentialP50 41.2 nm vs
-transverse P90 35.4/60.6 nm), as for EL4/EL4c (decision 31). Layer census:
-transverse tet-edge P50 per shell 0-2/2-5/5-10/10-25/25-50 nm =
-1.05/3.5/13.4/20.0/31.2 nm at tangential 3.1/3.5/7.7/15.4/32.8 nm; corner balls
-779/1156/773/1522 cells, 0 below 0.02. The rotate-z-0.63 variant audit producer
-again exceeded the 1800 s audit bound alone (bounded-run, topology/quality,
-complexity and invariants written at +24 min, the variant-transform record not
-reached; its written records equal the identity's: scaled Jacobian 0.01630,
-condition 924.2, corners, protected 1.04e-10, ownership closed), so EL1c is
-recorded as "identity verified on every physical gate; rotate-z audit exceeded
-the 1800 s audit bound" - no bound change (`per-entry-verification.json`:
-identity failures = [achieved-anisotropy] only; rotate-z evidence missing).
-identity.msh == canonical.msh SHA256 2a3de0d9..., rotate-z-0.63.msh 64bd3c3b...,
-CanonicalBuildId 1742cc0c... (new tool digests), CanonicalBuildSHA256 30854ab8....
-Every case has identity and `rotate-z-0.63` variants with explicit transforms
-and a fixed comparison pair. Concave/multislot, hole, rounded/filleted, and
-opposed-layer controls are ordinary required cases. Feature-scaling and
-CAD-subdivision-sensitivity comparisons are declared in the manifest.
+
+  - EdgeSize) / (GrowthRatio - 1), then the ordinary band law; tangential size
+    capped at Aspect x hn blending into the band's; spans intersected after the
+    band segments; seed cells within the protection radius of a span are excluded
+    from the far-field budget policy's seed load (recorded) so the far field is
+    not coarsened by the transient layer seed; the adapter hmin is EdgeSize. The
+    restoration's CAD-correction, repair-displacement and corner-collapse bounds
+    are relative to the local prescribed size at each vertex capped at NormalSize
+    (`local_bound_size`: production bounds unchanged, EdgeSize-based inside the
+    layer; per-vertex bound statistics in the report) and the layer's frozen
+    surface vertices never move. `mesh_stage_contract.validate_edge_layer` binds
+    the seed command, the metric command, the census, the recipe and the adapter
+    hmin to one layer or none (`validate_canonical_dag`). Measured on four-edge
+    (V2 + layer, `edge_layer_census.py`): at EdgeSize 1 nm / Aspect 4 the layer
+    is surface-driven (rows 3.125/6.25/12.5/25/50 nm) and costs ~1.3M tets
+    (4.70M total, over the cap) with 1,955 cells below 0.02 in 1,522 repair
+    components; at 4 nm (rows 12.5/25/50 nm at 4/12/28 nm) 3.57M tets, layer
+    285k, 4 cells below 0.01 / 135 below 0.02, the metric law followed
+    (transverse P50 4.0/4.2/8.0/17/29 nm by shell); the 4 nm build failed the
+    label-restoration corner gate at (0, 8, 0) (aspect 5.39 after MMG, the
+    collapse rolled back and the bounded move repair cannot fix a corner cell with
+    three constrained vertices; identical with the previous restorer), so no
+    edge-layer case was qualified by that build.
+    Supervisor decision 30 (required tetrahedra, 2026-09-16): MMG's corner output
+    had blocked four campaigns, so the near-corner/near-edge region is now
+    deterministic - the seed defines it and MMG must not touch it. The metric
+    stage emits the bound artifact `required-tetrahedra.txt` (1-based seed
+    tetrahedron indices; `edge_volume_metric.required_tetrahedra`): every seed
+    cell whose centroid lies within `CornerIsotropyRadius` of a semantic corner
+    (also without an edge layer) and, with a layer, every seed cell with a vertex
+    within LayerThickness x (1 + RowZigzag) + EdgeSize of a recorded span (the
+    rows and the cells touching them, so the layer is kept without holes); the
+    recipe `RequiredTetrahedra` record carries the rule, the radius, the reach and
+    one count per corner and per span. The reviewed adapter takes the list as the
+    flag `--required-tetrahedra FILE` (removed from the positional arguments, so
+    every existing command shape is unchanged) and calls
+    `MMG3D_Set_requiredTetrahedron` plus `MMG3D_Set_requiredVertex` for each
+    listed cell (MMG 5.6 also tags the vertices itself, `MMG3D_set_reqBoundaries`),
+    failing closed on out-of-range or malformed indices; the wrapper requires the
+    list, checks it against the recipe record and binds it by SHA-256 in the
+    receipt (`RequiredTetrahedraSHA256`, count); the stage contract binds it as a
+    metric output and an adaptation input (`--required-tetrahedra`) and
+    `validate_required_region` checks the record, the list and the seed gates
+    below. MMG keeps the listed cells verbatim (vertex order included: the
+    corner-incident aspects after adaptation equal the seed census's); MMG writes
+    them under the binary Medit `RequiredTetrahedra` keyword (libMeshb code 12),
+    which meshio mis-parses, so `mesh_array_io.read_medit_binary` reads the native
+    output by keyword positions and flags the kept cells (`medit:required`); the
+    restorer freezes their vertices (no collapse, no repair move; `RequiredTetrahedra`,
+    `RequiredVertices`, `MaximumRequiredVertexCorrectionUm` in the report). Because
+    the required region's quality after adaptation is the seed's, the seed stage
+    satisfies the gates itself: `--maximum-corner-aspect`, `--minimum-scaled-jacobian`
+    and `--maximum-quality-displacement-over-normal` (the restorer's values, bound
+    equal by the contract) turn on `optimize_required_seed_region!` - the
+    restorer's bounded rule on the seed (surface vertices in the null space of
+    their triangle normals, three planes fix a vertex, ratio x the local
+    prescribed size, touched cells keep min(original, 2 x gate) scaled Jacobian),
+    as greedy coordinate descent (26 directions for a free vertex, 8 in a plane,
+    2 on a line; halving steps down to 1/128 of the bound) on the corner-incident
+    aspects through their 32-norm (a smooth proxy of the maximum that keeps
+    descending where several cells tie for the worst; target 0.95 x the gate on
+    the true maximum) and on components of required cells below 2 x the gate; the
+    census records `SeedQualityOptimization` (before/after per corner, required
+    minimum scaled Jacobian, moved vertices, bound usage) and the seed fails closed
+    when a corner exceeds the gate or a required cell stays below it. Measured on
+    the four-edge 4 nm seed: corners 3.41/4.63/3.42/8.69 -> 3.41/3.70/3.42/3.50,
+    the 88 required cells below 0.02 (needles: 4-6 nm surface triangles joined to
+    an interior vertex 48 nm away, minimum 0.0092) all lifted to >= 0.02 with 358
+    vertices moved by at most 18.75 nm (the bound), +10 s of seed time; on the
+    production seeds the corner balls alone are required (four-edge 2,882 cells,
+    corners 3.27/4.89/6.25/8.16 -> 3.27/3.39/3.67/3.56; ten-edge 8,562 cells, worst
+    corner 8.45 -> 3.75, all ten <= 3.86). MMG kept every required cell verbatim
+    (the preserved 4 nm seed: 199,572 of 199,572, 3,450,791 tets in 46 s, every
+    cell below 0.02 a seed cell) and the label restoration passes with 0 collapses
+    and no corner repair (four-edge 222 s, ten-edge 181 s, 4 nm 35 s). The adapter
+    build is recorded in `testdata/adapter-build.json` (command, compiler, flags,
+    rpath, source/executable/dylib SHA-256); its manifest digest is refrozen only
+    through `refreeze_manifest_tools.py --adapter-mmg PATH`, which accepts an
+    executable only when the record names its digest and the repository's
+    `adapt_edge_metric.cpp` digest. The machine's Julia launcher is refrozen the
+    same way (`--julia-runtime PATH`, the three Julia runtime roles together).
+    Supervisor decision 31 (2026-09-17): the achieved-anisotropy design gate
+    (TangentialP50 >= MinimumAchievedAspect x transverse P90 over the band cells)
+    is a statement about the metric-driven band, which a seeded edge layer
+    contradicts by construction (decision 28 caps the layer's tangential size at
+    Aspect x hn: 12.5 nm at the 4 nm rows against a 35 nm transverse P90 of the
+    band sample). The audit producer therefore computes the band statistics over
+    band cells outside a recorded edge layer (`directional_widths`: cells whose
+    centroid lies within LayerThickness + EdgeSize of a restoration-recipe
+    `EdgeLayer` span are excluded, counted as `ExcludedEdgeLayerCells`, and
+    reported as `AchievedAnisotropy.EdgeLayer` with their own percentiles); the
+    rule is keyed on the recipe's EdgeLayer record, never on a case, gate values
+    are unchanged (production 1.5, calibration 0.9), and the layer's design
+    statement remains the bound EdgeLayer aspect rule.
+    Decision 35 (above, "Production recipe") completes this: with the production
+    layer covering the whole one-NormalSize band the gate is not applicable by
+    construction and the layer-adjacent band is recorded, never gated.
+    Review of 836a1c19f (P1/P2, 2026-09-17): the seed optimizer gated the required
+    set computed before its vertex moves (4 nm root: 199,572 gated, 199,992 listed
+    by the metric stage on the moved seed), so `optimize_required_region!` now
+    recomputes the set on the moved positions, runs one more scaled-Jacobian pass
+    when the membership changed and judges the gates on the final set (census
+    `RequiredTetrahedra`, with `RequiredTetrahedraBeforeMoves` and
+    `RequiredSetRecomputations` reported); `validate_required_region` requires
+    census count == recipe `Count` == the label restorer's `RequiredTetrahedra`
+    (its `.projection.json` report; the restorer itself fails closed when the
+    adapted mesh carries a different count). There is one recorded layer reach,
+    `EdgeLayer.RequiredReach` = LayerThickness x (1 + RowZigzag) + EdgeSize
+    (`edge_volume_metric.EDGE_LAYER_CELL_RULE`: a tetrahedron with a vertex within
+    it is a layer cell), used by the required region, the restorer's frozen surface
+    vertices and the audits' layer exclusion alike (the audit previously used the
+    centroid within LayerThickness + EdgeSize). `read_medit_binary` rejects Medit
+    version 4 (64-bit counts) instead of mis-parsing it.
+    Supervisor decision 32 (2026-09-17, user directive): the 1 nm x 50 nm layer
+    (EdgeSize 0.001, growth 2, rows 1/3/7/15/31 nm, tangential = lc_tangent 0.05
+    with no nested subdivision, EdgeLayerAspect = lc_tangent / EdgeSize = 50) has
+    layer cells whose scaled Jacobian is (EdgeSize / lc_tangent)^2 ~ 4e-4 by
+    construction, so MinimumScaledJacobian 0.01 cannot judge it. The calibration
+    manifest, and only it, carries the layer-local quality rule
+    `Gates.EdgeLayerQualityRule` (`edge_volume_metric.EDGE_LAYER_QUALITY_RULE`):
+    inside the recorded edge layer (`EDGE_LAYER_CELL_RULE`) a cell passes when its
+    scaled Jacobian exceeds the roundoff floor 1e-12 (positive orientation) and its
+    longest edge over its shortest height (`tetrahedron_edge_aspect`) is at most
+    `MaximumEdgeAspect` = 2 x lc_tangent / EdgeSize = 100 (design aspect: the
+    ridge-grid diagonal sqrt(2) x 50 nm over the 1 nm first slab = 70.7; factor 2
+    for the row zigzag and the Delaunay slab split); the layer minimum scaled
+    Jacobian and its cells per decade are reported as diagnostics; every other gate
+    (MinimumScaledJacobian, MaximumJacobianCondition, corners, protected surfaces,
+    ownership, diagonal, resources) judges every cell outside the layer at its
+    production value. The rule is applied consistently: the seed optimizer
+    (`--edge-layer-maximum-aspect`, bounded descent on the edge aspect of layer
+    components above 0.95 x the bound, scaled-Jacobian passes on the other
+    required cells, fails closed), the label restorer (same option: layer cells are
+    never repair targets, gated by `edge_layer_quality`, and every layer cell must
+    be an MMG required cell), the audit producer (`MeshQuality.EdgeLayer` /
+    `MeshQuality.OutsideEdgeLayer`), `general_mesh_manifest.audit_manifest_evidence`
+    (`edge-layer-quality`; `mesh-quality-jacobian` on the outside statistics when
+    the manifest carries the rule, on the whole mesh otherwise) and the verifier
+    (`validate_edge_layer_quality_rule_binding`: the seed and restorer of a case
+    declaring `Calibration.EdgeLayerQualityRule` execute exactly the manifest bound;
+    every other case neither). Production is protected structurally:
+    `validate_manifest` refuses `Gates.EdgeLayerQualityRule` in a manifest without a
+    `Calibration` block and refuses any production case with a `Calibration` or
+    `EdgeLayer` block (preflight fails closed); `test_general_mesh_manifest` asserts
+    both and the gate negatives (a layer cell with negative orientation or an
+    aspect above the bound fails; a non-layer cell below 0.01 still fails).
+    Measured on the four-edge 1 nm seed (`four-edge-calib-ma-el1nm-50`, root
+    `/tmp/coupon-calibration-ma-el1nm-50-dd9f57120-20260917-110949`): 81,821 layer
+    cells with edge aspects P50 10.6 / P90 70.7 (the design value) / P99 104.5 /
+    maximum 1,154 before repair; the tail is Gmsh's volume split (interior vertices
+    0.3 nm from a row node under the face plane, 13 cells at 1,150 that no bounded
+    move can fix), so the seed optimizer first collapses free interior layer
+    vertices with an incident edge below EdgeSize onto the neighbour whose cavity
+    has the best worst edge aspect (9 vertices, 44 cells removed, 56 remapped;
+    `collapse_short_layer_edges!`) and then descends on the remaining components
+    with the layer cells' scaled-Jacobian floors replaced by the orientation floor
+    (their vertex-0 scaled Jacobian is not a quality measure and was measured to
+    block every aspect repair): maximum 1,154 -> 827 -> 95.0, 0 cells above 100,
+    layer minimum scaled Jacobian 3.0e-4 (diagnostic), +12 s of seed time. MMG kept
+    all 84,653 required cells (census == recipe == restoration), adaptation
+    3,137,539 tets in 49 s, restoration 0 components / 0 collapses in 29 s, corners
+    3.71/3.80/3.42/3.84, outside-layer minimum scaled Jacobian 0.0428, protected
+    1.0e-10, ownership closed, 0 diagonal bands, identity and rotate-z covariant;
+    transverse tet-edge P50 per shell 0-2/2-5/5-10/10-25 nm = 1.05/2.1/4.2/16.8 nm
+    at 50 nm tangential. Every physical gate passes on both variants; the
+    calibration design gate `achieved-anisotropy` fails on the band next to the
+    layer (TangentialP50 55.8 nm vs transverse P90 46/77 nm), the EL4 outcome that
+    decision 31 leaves to physics.
+    The rule is case-keyed (`general_mesh_manifest.case_gates`, used by the verifier
+    and the suite runner alike): a case that does not declare
+    `Calibration.EdgeLayerQualityRule` is never judged by it, since its seed and
+    restorer never executed the bound. The 4 nm layer case
+    (`four-edge-calib-ma-edge-layer-4nm`, 3,450,085 tets, identity SHA 22d6d926...)
+    therefore stays under its scaled-Jacobian-gated record ("physical gates pass
+    under the SJ gate", design gate pending physics, decision 31/32 rulings): it is
+    judged by MinimumScaledJacobian 0.01 on its whole mesh, exactly as when it was
+    verified, and it is not re-verified under the layer rule (its layer set has
+    slivers at edge aspect 761 with vertex-0 scaled Jacobian >= 0.02 that the rule
+    would fail and a rebuild with the seed collapse/descent would be needed to
+    pass). The manifest Gates, rule included, remain the canonical cache key of
+    every build of the manifest. The restorer computes the adapter's required flags
+    before the corner-ball collapse and compacts them with the cells, so the layer
+    rule's "every layer cell is a required cell" check stays aligned when a collapse
+    removes cells; the seed's Gmsh connectivity mutation
+    (`apply_seed_cell_collapse!`) is pinned by a tiny-box round-trip test (written
+    points == used points, written cells == census).
+    Supervisor decision 33 (2026-09-17, user directive): physics-05's per-segment MA
+    located the residual of control 1 (63% of its MA within 0.5 um of the outer
+    corner (0, -2)) and of control 23 (77% within 0.5 um of the termination
+    (10, 0)) in the un-layered corner regions - the 25 nm isotropic balls plus the
+    0.137-0.187 um taper before the layer rows. Corner grading (`CornerGrading`,
+    seed and metric option `--corner-size`, `mesh_stage_contract.validate_corner_grading`):
+    inside every frozen corner ball (CornerIsotropyRadius 0.1 around each semantic
+    corner) the uniform NormalSize is replaced by a geometric isotropic grading from
+    CornerSize at the corner point growing by the edge-layer ratio to NormalSize -
+    shells of size CornerSize x GrowthRatio^(k-1) ending at the cumulative radii
+    CornerSize (GrowthRatio^k - 1) / (GrowthRatio - 1) (4 nm: sizes 4/8/16 nm to
+    4/12/28 nm, NormalSize from the reach 0.021 to the radius), the edge layer's
+    rows with CornerSize for EdgeSize. The seed carries the shells (Gmsh MathEval
+    step field; the ridge nodes through a ball fall on the shell radii and a node
+    sits on the ball boundary; the required-region optimizer's bounds are 0.75 x
+    the shell size), the metric prescribes the continuous form min(NormalSize,
+    CornerSize + (GrowthRatio - 1) d) (`edge_volume_metric.corner_ball_size`,
+    which the shells never exceed) and the restorer's local size follows it; the
+    corner-ball cells are MMG required tetrahedra, so the adapted corners are the
+    seed's, gated by the seed (corner aspect <= 4, scaled Jacobian >= 0.01). With
+    a layer the rows start at the ridge node on the ball boundary with no taper
+    (census `EdgeLayer.LayerReachesCornerBall`, `UnlayeredEdgeLengthPerCorner`: per
+    corner the distance to the nearest span end of each layered edge, 0.1 here
+    against 0.187 before); a ball-boundary crossing within half NormalSize of a
+    CAD vertex is not a node (a vertical corner edge of the metal thickness 0.1
+    ends exactly on the radius; measured: a node at 0.9 nm from the top corner
+    made six flat cells). `--corner-size 0` (absent) is the production ball
+    (uniform NormalSize), which the EL4 and EL1 records keep. Seed census per
+    corner: `Shells` (edges by midpoint distance, P50/P90 against the shell size,
+    cells by centroid); `edge_layer_census.py` reports the same on the final mesh
+    (`CornerBalls`). Case `four-edge-calib-ma-el4c` = EL4 + CornerSize 0.004:
+    seed 1,507,725 tets (EL4 1,508,461), 200,354 required (EL4 199,992), shell
+    edge P50 per corner 3.8-5.8 / 6.0-7.8 / 12.1-17.7 / 27.2-29.5 nm against
+    4/8/16/25 nm, corners 3.76/3.29/3.72/3.23, un-layered length 0.1 at every
+    layered edge. Case `four-edge-calib-ma-el1c` = EL4c with EdgeSize 0.001
+    (rows 1/3/7/15/31 nm, aspect-4 nested rows 3.125-50 nm) at EL4c's corner
+    shells (CornerSize 0.004, unchanged, so EL4c -> EL1c changes exactly the edge
+    layer; CornerSize 0.001 failed the seed's gates: corner aspect 4.81 from a
+    0.41 nm Gmsh surface edge next to the 1 nm shell node, one layer/ball-junction
+    cell at scaled Jacobian 0.0073 - the recorded P2 test cases for a corner-ball
+    collapse) declares the labeled
+    calibration-only element cap `Calibration.MaximumElements` 5,000,000
+    (supervisor decision 33): `general_mesh_manifest.validate_case_element_cap`
+    requires the manifest's `Calibration.GateDeviations.MaximumElements` to name
+    exactly the declaring cases with the production value 4,000,000, and
+    `case_gates` judges only those cases by the cap; `Gates.MaximumElements` stays
+    4,000,000 in both manifests (the build cache key, and the gate of every other
+    case), no production case may declare a cap, and the stage bounds are unchanged.
+    (Decision 61c, 2026-09-21: the cap deviation is RETIRED - `Gates.MaximumElements` is
+    6,000,000 in every manifest and the EL1c case declares no cap; the record is kept under
+    `Calibration.RetiredGateDeviations.MaximumElements`.)
+    Measured outcomes of decision 33 (roots
+    `/tmp/coupon-calibration-ma-el4c-4f9946870-20260917-155730` and
+    `/tmp/coupon-calibration-ma-el1c-cb3f64d81-20260917-160517`, adapter 72f741e3...,
+    MMG 5.6 a97d9580...): EL4c PASSES every physical gate on identity and
+    rotate-z-0.63 - 3,471,507 tets (EL4 3,450,085), minimum scaled Jacobian 0.0200,
+    maximum Jacobian condition 898.6, corners 3.76/3.29/3.72/3.23 == seed, 0
+    restoration repairs, protected 1.0e-10, ownership closed, identity SHA256
+    5fb3a5c8..., CanonicalBuildSHA256 819f50cf... - and fails only the calibration
+    design gate `achieved-anisotropy` on the band next to the layer (TangentialP50
+    50.0 nm vs transverse P90 40.5/66.5 nm; decision 31: physics adjudicates;
+    physics-06 ran on it). EL1c as built at cb3f64d81 FAILED the physical gate
+    `mesh-quality-jacobian`: MaximumJacobianCondition 5115.5 > 1000 on 56
+    edge-interior layer cells on the metal faces (209 > 500), each with a 0.02-0.24 nm
+    edge between a face vertex and a 1 nm row node (minimum scaled Jacobian 0.01696
+    passes; 4,479,207 tets < the 5,000,000 cap; corners 3.55/3.24/3.42/3.41 == seed;
+    identity SHA256 9e9e1567...); its identity variant was audited, normalized and
+    verified, its rotate-z-0.63 variant audit producer exceeded the 1800 s audit
+    bound twice (once alone: the rotated topology/protected-surface pass takes
+    20 min on 4.48 M tets) - recorded as "identity verified; rotate-z audit exceeded
+    the audit bound", no bound change; not run in physics. Both cases share
+    `CanonicalBuildId` 40d6db94... (the cache key is source + process + contract +
+    recipe + manifest `Gates` + tools; neither the case `Calibration` options nor
+    the case-level element cap enter it), so `run_general_mesh_suite` over the whole
+    calibration manifest would refuse the second case ("shared canonical stages
+    require exact cache key and hashes"): calibration cases are verified per case
+    only (`verify_canonical_case_entries.py`), a documented limitation.
+    Decision 34 (2026-09-17) located the EL1c failure on the seed itself: the 56
+    cells (and the CornerSize 1 nm probe's 0.41 nm corner edge) are made by the
+    seed's bounded descent, which moved face vertices to 0.013-0.24 nm of a row or
+    ridge node while repairing scaled Jacobians and corners - the Gmsh seed has no
+    edge below half EdgeSize (the sub-size collapse finds 0 candidates below the
+    threshold). The seed now (a) collapses sub-size edges (`collapse_short_edges!`,
+    threshold `SEED_COLLAPSE_SIZE_FRACTION` 0.5 x the smallest prescribed size:
+    EdgeSize or CornerSize; a threshold at the size collapsed 14,667 legitimate layer
+    face vertices between the 1 and 3 nm rows and 2,677 row nodes) for interior and
+    surface vertices alike, a surface vertex only along its own surface (onto a
+    surface neighbour in every plane of the vertex carrying every line/triangle
+    support of the vertex: a face vertex within its face, a row or ridge node along
+    its curve, CAD points never; remapped triangles keep their normal; the cavity is
+    no worse in maximum edge aspect and Jacobian condition and better in one, and
+    no cell falls below the scaled-Jacobian gate where none was; census
+    `SubSizeEdgeCollapse` with every collapse's position and quality), with and
+    without the layer quality rule; (b) guards the descent so that every touched
+    cell keeps max(original, 0.95 x MaximumJacobianCondition) Jacobian condition and
+    a moved vertex in the collapse region keeps its edges at or above min(original,
+    threshold); (c) gates the scaled-Jacobian-gated required cells by
+    `--maximum-jacobian-condition` (the manifest MaximumJacobianCondition 1000,
+    carried equally by the seed and the restorer, `REQUIRED_REGION_GATE_OPTIONS`;
+    census `RequiredMaximumJacobianCondition{Before,After}`,
+    `RequiredCellsAboveConditionAfter`; restorer `RequiredMaximumJacobianCondition`),
+    failing closed at the seed instead of after the hour-long build. EL1c seed under
+    (a)-(c): 2,147,264 tets (unchanged connectivity), 834,434 required, corners
+    3.55/3.24/3.42/3.41, required maximum condition 221.7 before the moves and 924.2
+    after (0 above 1000; without the guards 8,525 on 43 cells), minimum scaled
+    Jacobian 0.0163, 188 s. Required region of the seed, old -> new build: maximum
+    condition 5115.5 -> 924.2, cells above 1000/500/200: 56/209/983 -> 0/106/741,
+    shortest edge 0.024 nm -> 0.500 nm (1,228 -> 0 edges below 0.5 nm), minimum
+    scaled Jacobian 0.01696 -> 0.01630 (one cell in [0.01, 0.02) in both, the
+    layer/ball-junction cell of the amendment).
+    EL1c rebuilt under decision 34 (root
+    `/tmp/coupon-calibration-ma-el1c-cb3f64d81-20260917-205035`, tools of commit
+    3c6b4c7fe, adapter 72f741e3..., MMG a97d9580...): 4,483,816 tets (< the
+    5,000,000 cap; 890,977 H1 DOFs), MMG kept all 834,434 required tetrahedra
+    (recipe == receipt == restorer), restoration 1 repair component rejected (the
+    frozen junction cell, 0.0163 >= 0.01), 0 corner-ball collapses. Identity
+    variant: every PHYSICAL gate passes - minimum scaled Jacobian 0.01630, maximum
+    Jacobian condition 924.2 (outside the layer 221.7), corners 3.55/3.24/3.42/3.41
+    == seed, protected surfaces 1.04e-10, ownership closure 3.1e-13 (0 unmatched, 0
+    overlapping), 0 diagonal bands, canonical build 444.8 s / 7.47 GiB and
+    placement 201.1 s / 7.39 GiB within 1800 s / 8 GiB (the publication stages now
+    peak at 7.4-7.5 GiB, 0.5 GiB under the bound) - and the calibration design gate
+    `achieved-anisotropy` fails on the layer-adjacent band (TangentialP50 41.2 nm vs
+    transverse P90 35.4/60.6 nm), as for EL4/EL4c (decision 31). Layer census:
+    transverse tet-edge P50 per shell 0-2/2-5/5-10/10-25/25-50 nm =
+    1.05/3.5/13.4/20.0/31.2 nm at tangential 3.1/3.5/7.7/15.4/32.8 nm; corner balls
+    779/1156/773/1522 cells, 0 below 0.02. The rotate-z-0.63 variant audit producer
+    again exceeded the 1800 s audit bound alone (bounded-run, topology/quality,
+    complexity and invariants written at +24 min, the variant-transform record not
+    reached; its written records equal the identity's: scaled Jacobian 0.01630,
+    condition 924.2, corners, protected 1.04e-10, ownership closed), so EL1c is
+    recorded as "identity verified on every physical gate; rotate-z audit exceeded
+    the 1800 s audit bound" - no bound change (`per-entry-verification.json`:
+    identity failures = [achieved-anisotropy] only; rotate-z evidence missing).
+    identity.msh == canonical.msh SHA256 2a3de0d9..., rotate-z-0.63.msh 64bd3c3b...,
+    CanonicalBuildId 1742cc0c... (new tool digests), CanonicalBuildSHA256 30854ab8....
+    Every case has identity and `rotate-z-0.63` variants with explicit transforms
+    and a fixed comparison pair. Concave/multislot, hole, rounded/filleted, and
+    opposed-layer controls are ordinary required cases. Feature-scaling and
+    CAD-subdivision-sensitivity comparisons are declared in the manifest.
 
 The matrix contains 15 cases and 30 required case/variant entries. All 15 cases
 have hash-frozen local source contracts. A bounded read-only assessment on
@@ -2298,14 +2277,12 @@ values (remote `sha256sum` = local for every copied file, recorded in each
 `provenance.json` with the copied `basis-points.csv`, `zero-trace.csv` and
 `spatial_fabricated.json`), trace mesh references, slots, conductors, topology,
 and target-repository Apache-2.0 license were reviewed. Neither `06` nor `10`
-carries a `retained-etch.csv`, so both declare `EtchFootprint:
-"producer-default"` - recorded as a risk: the producer-default collars are a
+carries a `retained-etch.csv`, so both declare `EtchFootprint: "producer-default"` - recorded as a risk: the producer-default collars are a
 producer outcome, not a bound device footprint, and the physics preflight must
 check the interface-area invariants against the reference mesh before any
 accuracy comparison.
 
-Semantic contracts are derived, never authored: `derive_semantic_contract.py
-SOURCE_DIR OUTPUT [--build-census CENSUS]` derives label families and
+Semantic contracts are derived, never authored: `derive_semantic_contract.py SOURCE_DIR OUTPUT [--build-census CENSUS]` derives label families and
 slot/conductor coverage from `Models[0].Edges` (checked against the signature),
 semantic corners from the plan-view vertices classified `Physical`, and
 `FeatureTopology` from the finite signature segments. Whether a slot's un-etched
@@ -2354,101 +2331,102 @@ python3 coupon_library.py build \
   [--case ID ...] [--jobs 2] [--root /tmp/coupon-library-build-<commit>-<ts>]
 ```
 
-1. **Registration** (`register_case.py`, one call per `--register`): a source
-   directory (`mesh-signature.csv`, `plan-view-boundary.csv`, `plan-view-mask.csv`,
-   `process.toml`; optionally `process-library.json` with the trace basis
-   `basis-contract.json` / `trace-vertices.csv` / `trace-triangles.csv` - all four or
-   none -, `provenance.json`, `retained-etch.csv`; its own `mesh-recipe.json` or
-   `--mesh-recipe`) becomes a manifest case: SHA-256 of every source file, the recipe
-   scope classes of the inputs (a guarded class stops the registration as
-   `unsupported-class` with the guard id, no probe built), the two-pass contract
-   derivation orchestrated automatically (provisional contract -> census-only probe
-   build of a staging copy under the production recipe, headroom gate included ->
-   `derive_semantic_contract.py --build-census`), the production `Variants` (identity
-   and rotate-z) / `TransformComparison` / `SignatureColumns` shared by every existing
-   case (fail closed when they differ), `InventoryStatus`, `Features` (default: the
-   exhibited scope classes), `FixtureVersion` and a `Provenance` statement (commit,
-   footprint declaration, probe root), then `refreeze_manifest_tools.py`. The etch
-   footprint is an explicit declaration - `--footprint bound` freezes the directory's
-   `retained-etch.csv`, `--footprint producer-default` requires its absence - and the
-   command fails closed without it. Idempotent by content: recorded source digests
-   equal to the directory's reuse the case (nothing written); any changed source
-   becomes the next `FixtureVersion` and the previous entry's changed bindings go to
-   `RetiredFixtures.Entries` (`Reason`, `Evidence`), never a silent edit. The outcome
-   is `WORK/register-case.json` (`Status` registered / reused / unsupported-class /
-   failed, `StoppedBy`, `Scope`, `SourceSHA256`, `ContractSHA256`, `ProbeRoot`).
-2. **Build** (`run_gmsh_only_matrix.py`): the selected cases (default: every case,
-   the registered ones included) run as a pool of `--jobs` drivers (default 2), each
-   the unchanged `run_gmsh_only_case.py` under the manifest bounds for every stage
-   (`--audit-memory-gib` = `Gates.MaximumRSSGiB`, so audits and verification share
-   the stage bounds - 3600 s / 12 GiB since decision 61c, 1800 s / 8 GiB before):
-   headroom gate -> canonical DAG -> rigid
-   placements -> audits -> `verify_canonical_case_entries.py`. A case fails closed on
-   its own and the others continue; the exit status is nonzero unless every case
-   passed.
-3. **Record** `ROOT/library-build.json`: per case `Scope` (exhibited / unsupported
-   classes), `Status` (built / unsupported-class / failed) and `StoppedBy` (the exact
-   `ScopeGuard` id, `HeadroomGate` MaximumElements, the stopped `Stage` with its
-   `StopReason`, or `Verification` with the failure list), `CanonicalBuildId`,
-   identity / rotate-z mesh SHA-256 and paths, elements by type, `H1` DOFs at
-   `--h1-order` (default 4), `Estimate` (estimated vs actual elements,
-   `EstimateOverActual`, `EstimateOverCap`), every bounded stage's wall seconds / peak
-   GiB / limits, the verification verdict and `HeadroomFlags` (any measure at or above
-   0.9 of its bound: elements or estimate vs the cap, a stage's seconds or peak RSS vs
-   its limit - the margin rule the throughput plan lacked); library totals: cases
-   attempted / built / passed / unsupported / failed, `FlaggedCases`, wall clock,
-   jobs, bounds, commit and manifest digest. Nothing in the record is measured by the
-   command itself: every number is read from the per-case root's stage reports,
-   census, estimate, audits and verification report.
+ 1. **Registration** (`register_case.py`, one call per `--register`): a source
+    directory (`mesh-signature.csv`, `plan-view-boundary.csv`, `plan-view-mask.csv`,
+    `process.toml`; optionally `process-library.json` with the trace basis
+    `basis-contract.json` / `trace-vertices.csv` / `trace-triangles.csv` - all four or
+    none -, `provenance.json`, `retained-etch.csv`; its own `mesh-recipe.json` or
+    `--mesh-recipe`) becomes a manifest case: SHA-256 of every source file, the recipe
+    scope classes of the inputs (a guarded class stops the registration as
+    `unsupported-class` with the guard id, no probe built), the two-pass contract
+    derivation orchestrated automatically (provisional contract -> census-only probe
+    build of a staging copy under the production recipe, headroom gate included ->
+    `derive_semantic_contract.py --build-census`), the production `Variants` (identity
+    and rotate-z) / `TransformComparison` / `SignatureColumns` shared by every existing
+    case (fail closed when they differ), `InventoryStatus`, `Features` (default: the
+    exhibited scope classes), `FixtureVersion` and a `Provenance` statement (commit,
+    footprint declaration, probe root), then `refreeze_manifest_tools.py`. The etch
+    footprint is an explicit declaration - `--footprint bound` freezes the directory's
+    `retained-etch.csv`, `--footprint producer-default` requires its absence - and the
+    command fails closed without it. Idempotent by content: recorded source digests
+    equal to the directory's reuse the case (nothing written); any changed source
+    becomes the next `FixtureVersion` and the previous entry's changed bindings go to
+    `RetiredFixtures.Entries` (`Reason`, `Evidence`), never a silent edit. The outcome
+    is `WORK/register-case.json` (`Status` registered / reused / unsupported-class /
+    failed, `StoppedBy`, `Scope`, `SourceSHA256`, `ContractSHA256`, `ProbeRoot`).
 
-4. **`build --device` (supervisor decision 52; `device_coupons.py`).** A device layout
-   is the only input: `--device <Palace config> --palace <executable>` runs the
-   discovery closure (`examples/cpw2d/discover_surface_response_requirements.py`:
-   geometry preflights against the config's process seed - the version-3 `Fabrication`
-   metadata of `Solver.*ResponseCorrection.Library` -, never a mesh or a solve), routes
-   every requirement with the planner (`prepare_surface_response_coupons.plan_from_manifest`)
-   and turns every `SpatialCoupon` requirement into a source directory:
-   `generate_spatial_response.py --basis-only` with the planner's canonical plan-view
-   boundary / mask regularization and the seed's fabrication writes the signature
-   files, the trace basis (`basis-contract.json` with the geometry report,
-   `FrameFitResidual` and the digests of every source trace, `trace-vertices.csv`,
-   `trace-triangles.csv`, `basis-points.csv`, `zero-trace.csv`, `conductor-N.csv`) and
-   the model's `process-library.json`; `process.toml` from the fabrication; a
-   `provenance.json` naming the device config, the seed, the closure manifest, the
-   requirement, the generator command, the ring size (the planner's default 16 - the
-   basis every gallery case was produced with) and the cap triangulation. **The device
-   basis triangulates the two matching-box caps with Delaunay flips by default**
-   (`--cap-triangulation delaunay`, supervisor decision 57: the ear-clipped caps
-   produced the needle triangles that drove 20-40% of the mesh cost and the only
-   remaining device fail-closed cases, decision 54b below; recorded in
-   `basis-contract.json` `CapTriangulation`, the device record's `TraceBasis` and the
-   provenance, so every device case id / hat set changed with the default - they are
-   new cases; `--cap-triangulation ear-clipping` selects the gallery producer's caps
-   explicitly and the gallery reference cases keep their producer's basis for
-   comparability). The directory is named by the content
-   hash of its bound source files (`spatial-<edges>-edge-<hash12>`), so the same device
-   geometry maps to the same case and `register_case.py` reuses it by content; every
-   directory is registered (footprint `producer-default` - the device path binds no
-   `retained-etch.csv` -, `InventoryStatus DeviceDerived`, the mesh recipe every
-   trace-basis case of the manifest binds or `--mesh-recipe`). Corner and straight-edge
-   requirements are recorded `OutOfScope` with their builder (their own families), never
-   dropped. `--build-limit N` builds the N smallest registered cases by the pre-build
-   estimate and records the others `registered-unbuilt` with their estimates
-   (`Library.BuildLimit.Ranked`). On the transmon example (`examples/transmon/
-   transmon_surface_coarse.json` with the benchmark process seed) the closure yields six
-   spatial coupons - the four-edge `9d2cb9bbb3fe`, three-edge `419576fdab24`, two-edge
-   `3f8992613e95` and ten-edge `6791f1c84123` gallery models among them, whose
-   `mesh-signature.csv` / `plan-view-boundary.csv` / `process.toml` the device path
-   reproduces BYTE FOR BYTE from the device config (the `plan-view-mask.csv` facet
-   tessellation follows the device mesh: byte-identical for the four-edge and
-   three-edge, the same footprint area per conductor to 1e-14 for the two-edge and
-   ten-edge) - plus three out-of-scope families (`test_device_coupons.py`; the checked-in seed's MS
-   permittivity 11.45 differs from the config's 11.47 and Palace refuses the mismatch,
-   so the test binds the config's interface layers into a copy of the seed). The device
-   trace basis is the producer's own (`build_matching_surface`: 120 vertices on the
-   four-edge box against the gallery's 80 retained ones), so device coupons are new
-   cases with their own sources, not the gallery references' basis (decision 44's open
-   design item stands).
+ 2. **Build** (`run_gmsh_only_matrix.py`): the selected cases (default: every case,
+    the registered ones included) run as a pool of `--jobs` drivers (default 2), each
+    the unchanged `run_gmsh_only_case.py` under the manifest bounds for every stage
+    (`--audit-memory-gib` = `Gates.MaximumRSSGiB`, so audits and verification share
+    the stage bounds - 3600 s / 12 GiB since decision 61c, 1800 s / 8 GiB before):
+    headroom gate -> canonical DAG -> rigid
+    placements -> audits -> `verify_canonical_case_entries.py`. A case fails closed on
+    its own and the others continue; the exit status is nonzero unless every case
+    passed.
+
+ 3. **Record** `ROOT/library-build.json`: per case `Scope` (exhibited / unsupported
+    classes), `Status` (built / unsupported-class / failed) and `StoppedBy` (the exact
+    `ScopeGuard` id, `HeadroomGate` MaximumElements, the stopped `Stage` with its
+    `StopReason`, or `Verification` with the failure list), `CanonicalBuildId`,
+    identity / rotate-z mesh SHA-256 and paths, elements by type, `H1` DOFs at
+    `--h1-order` (default 4), `Estimate` (estimated vs actual elements,
+    `EstimateOverActual`, `EstimateOverCap`), every bounded stage's wall seconds / peak
+    GiB / limits, the verification verdict and `HeadroomFlags` (any measure at or above
+    0.9 of its bound: elements or estimate vs the cap, a stage's seconds or peak RSS vs
+    its limit - the margin rule the throughput plan lacked); library totals: cases
+    attempted / built / passed / unsupported / failed, `FlaggedCases`, wall clock,
+    jobs, bounds, commit and manifest digest. Nothing in the record is measured by the
+    command itself: every number is read from the per-case root's stage reports,
+    census, estimate, audits and verification report.
+
+ 4. **`build --device` (supervisor decision 52; `device_coupons.py`).** A device layout
+    is the only input: `--device <Palace config> --palace <executable>` runs the
+    discovery closure (`examples/cpw2d/discover_surface_response_requirements.py`:
+    geometry preflights against the config's process seed - the version-3 `Fabrication`
+    metadata of `Solver.*ResponseCorrection.Library` -, never a mesh or a solve), routes
+    every requirement with the planner (`prepare_surface_response_coupons.plan_from_manifest`)
+    and turns every `SpatialCoupon` requirement into a source directory:
+    `generate_spatial_response.py --basis-only` with the planner's canonical plan-view
+    boundary / mask regularization and the seed's fabrication writes the signature
+    files, the trace basis (`basis-contract.json` with the geometry report,
+    `FrameFitResidual` and the digests of every source trace, `trace-vertices.csv`,
+    `trace-triangles.csv`, `basis-points.csv`, `zero-trace.csv`, `conductor-N.csv`) and
+    the model's `process-library.json`; `process.toml` from the fabrication; a
+    `provenance.json` naming the device config, the seed, the closure manifest, the
+    requirement, the generator command, the ring size (the planner's default 16 - the
+    basis every gallery case was produced with) and the cap triangulation. **The device
+    basis triangulates the two matching-box caps with Delaunay flips by default**
+    (`--cap-triangulation delaunay`, supervisor decision 57: the ear-clipped caps
+    produced the needle triangles that drove 20-40% of the mesh cost and the only
+    remaining device fail-closed cases, decision 54b below; recorded in
+    `basis-contract.json` `CapTriangulation`, the device record's `TraceBasis` and the
+    provenance, so every device case id / hat set changed with the default - they are
+    new cases; `--cap-triangulation ear-clipping` selects the gallery producer's caps
+    explicitly and the gallery reference cases keep their producer's basis for
+    comparability). The directory is named by the content
+    hash of its bound source files (`spatial-<edges>-edge-<hash12>`), so the same device
+    geometry maps to the same case and `register_case.py` reuses it by content; every
+    directory is registered (footprint `producer-default` - the device path binds no
+    `retained-etch.csv` -, `InventoryStatus DeviceDerived`, the mesh recipe every
+    trace-basis case of the manifest binds or `--mesh-recipe`). Corner and straight-edge
+    requirements are recorded `OutOfScope` with their builder (their own families), never
+    dropped. `--build-limit N` builds the N smallest registered cases by the pre-build
+    estimate and records the others `registered-unbuilt` with their estimates
+    (`Library.BuildLimit.Ranked`). On the transmon example (`examples/transmon/ transmon_surface_coarse.json` with the benchmark process seed) the closure yields six
+    spatial coupons - the four-edge `9d2cb9bbb3fe`, three-edge `419576fdab24`, two-edge
+    `3f8992613e95` and ten-edge `6791f1c84123` gallery models among them, whose
+    `mesh-signature.csv` / `plan-view-boundary.csv` / `process.toml` the device path
+    reproduces BYTE FOR BYTE from the device config (the `plan-view-mask.csv` facet
+    tessellation follows the device mesh: byte-identical for the four-edge and
+    three-edge, the same footprint area per conductor to 1e-14 for the two-edge and
+    ten-edge) - plus three out-of-scope families (`test_device_coupons.py`; the checked-in seed's MS
+    permittivity 11.45 differs from the config's 11.47 and Palace refuses the mismatch,
+    so the test binds the config's interface layers into a copy of the seed). The device
+    trace basis is the producer's own (`build_matching_surface`: 120 vertices on the
+    four-edge box against the gallery's 80 retained ones), so device coupons are new
+    cases with their own sources, not the gallery references' basis (decision 44's open
+    design item stands).
 
 Nothing case-specific is hard-coded: the shared case fields, the recipe, the gates,
 the bounds and the scope vocabulary come from the manifest and the stage contract.
@@ -2496,210 +2474,213 @@ measured cost rates (`qualify/cost-model.json`: the physics-11 V-a worker / redu
 local-edge rates with the V-a entity counts, whose closed-form H1 must reproduce the
 measured counts on load).
 
-1. **Run inputs from the case itself (supervisor decision 52).** The Palace config, the
-   source traces and the zero-trace set are derived from the manifest case's own frozen
-   sources by `qualify/case_inputs.py`: `process-library.json` (substrate permittivity,
-   interface layer thickness / permittivity, matching radius, the model's edges - slot,
-   conductor, process normal placed in the mesh frame by the bound process frame - and
-   its `Interfaces[].Coupon` index -> type map), the trace basis (`basis-contract.json`,
-   `trace-vertices.csv`, `trace-triangles.csv`) regenerated as the producer wrote it
-   (`generate_spatial_response.write_surface_trace`: `basis-NNNN.csv` = the hat of basis
-   vertex NNNN, `conductor-N.csv` = the lift of every conductor but the first,
-   `zero-trace.csv`; the coordinates are within the contract's `FrameFitResidual` of the
-   producer's files - the canonical-frame round trip -, V and triangle columns
-   identical, digests recorded under `Inputs.Sources`), the identity mesh's
-   `$PhysicalNames` (the attribute candidates are filtered by them exactly as the
-   producer's `make_config` did on the reference mesh; every attribute the config names
-   must exist - `AttributeCheck`, before any submission) and the recipe's
-   `ProductionRecipe.PhysicsRun` (`Order` 4, `LinearTol` 1e-10 with their calibration
-   provenance: the four-edge reference and every recorded qualification ran them; bound
-   by `general_mesh_manifest.validate_physics_run`, used by every case). The five
-   gallery cases' derived configs equal the configs their graded_v2 references ran apart
-   from `Model.Mesh`, `Problem.Output`, the DataFile directory and - for the p5 / Tol 1e-8
-   references (gallery 10, ten-edge) - `Solver.Order` / `Linear.Tol` only
-   (`test_qualify_dry_run.test_run_config_derived_from_the_case_equals_every_gallery_reference`).
-   A case whose signature has a downward layer (`Nz = -1`) or more than one layer stops
-   with `StoppedBy ScopeGuard` (`DownwardLayers` / `MultipleLayers`,
-   `locate_sources.check_layers`: the z-level role assignment covers one upward layer)
-   until the roles are assigned per layer band.
-   **Reference by content.** `--reference DIR` has the layout of the physics runs'
-   `reference/` trees: `inputs-<key>/` (`basis-contract.json`, the producer's
-   `spatial_fabricated.json`) and `case-<key>-fabricated/` (`worker.json` = the config
-   the reference ran, preferred over the producer's;
-   `reducer/{domain,surface}-response-matrix.csv`). A coupon is bound to `inputs-<key>`
-   whose `basis-contract.json` digest equals the manifest's `BasisContract` digest
-   (`qualify/reference_campaign.py`); the reference's config must equal the derived one
-   apart from the path fields and Order / Tol (`StoppedBy Reference` with the
-   differences otherwise); no match = `StoppedBy Reference` (skipped: pass
-   `--reference none` to run on the case's own inputs); inputs without reducer matrices
-   = the coupon runs and is `PendingQualification`. `--reference none` (mandatory
-   spelling: `--reference` is required) runs every coupon on its own inputs: the
-   p-sequence controls alone are evaluated - `PendingQualification` when they pass,
-   `Failed` when one fails, never `Passed`.
-2. **Sources and controls.** `locate_sources.py` (box from the trace vertices, z levels
-   from the apex heights, metal loops and junctions from the plan-view boundary, the
-   3000 / 3100 adjacency from a bound `retained-etch.csv`) and `classify_sources.py`
-   (ZeroTrace; junction rings; junction columns; narrow hats next to a junction;
-   near-junction hats; isolated narrow hats; box 3D corners; wide hats bottom / top,
-   metal-top ring, substrate / trench rings; conductor terminals = `TerminalAttributes`
-   sources). The 8 controls (`--control-count`) are one source per class in that
-   priority order, cycling, lowest index first (`choose_controls`), unless
-   `--control-source` names them (the recorded campaigns' supervisor-specified sets).
-3. **Configs and plan.** The main orders of a coupon are the recipe's `PhysicsRun`
-   order, then `--orders`, then the reference's own `Solver.Order` when it differs
-   (gallery case 10: reference p5 -> main stages p4 and p5, the recorded gallery-10
-   layout; the recipe order
-   stays the library order: cost coupon, local-edge stage, p-sequence main; recorded
-   per coupon as `Orders`). `build_configs.py` derives worker / reducer at every main
-   order on all sources, at every `--controls` order (highest first) on the controls,
-   and the ordinary-path local-edge `config.json` at the main order on the controls
-   (`SaveLocalEdgeEnergy` true); only `Model.Mesh`, `Problem.Output`, the trace
-   directory, the source subset and `Solver.Order` differ from the reference config.
-   `estimate_stages.py` scales the cost model by the exact H1 ratio
-   (`mixed_mesh.h1_dofs_from_counts` on the build record's `H1.EntityCounts`) at 1 /
-   1.5 / 2x the measured PCG counts; a coupon whose 2x total with the 35% + 300 s
-   preflight margin exceeds the walltime is not one job; whose Palace peak exceeds
-   0.75 of the node is `StoppedBy Estimate` before any plan. **Job policy - the
-   per-coupon source split (supervisor decision 61b, user decision 60(2)):**
-   `qualify/job_split.py` partitions the coupon's main-order source set into N
-   contiguous blocks run as N independent worker jobs (the same mesh and configs apart
-   from the `PrescribedPotential` subset, `worker-block<k>.json` per block with its own
-   `Problem.Output`), every block archiving into the stage's ONE archive directory
-   (Palace archives one file per source, rank and field - `source-NNNNNN-rank-NNNNNN-
-   {V,D}.bin`, header-checked -, so the union of the N archives is that directory), and
-   the main-order reducer runs once, in its own job, on the union after every worker
-   job completed (the reduction is linear in the archive union: the matrices equal a
-   single job's to roundoff - acceptance below). The p3 / p5 controls and the
-   local-edge stage stay in the first worker job (`ControlsJob worker-1`), whose block
-   is shortened by their estimated share so every worker job ends together; when they
-   leave no room for a block the first job carries them alone (`separate`, recorded).
-   Policy `{Mode: speed | frugal | fixed, MaxJobs, WalltimeSeconds, FixedJobs}`, every
-   job estimated from the cost model at 2x the measured PCG counts with the 35% +
-   300 s preflight margin: `frugal` = the smallest N whose every job fits the
-   walltime; `speed` = the N minimizing the estimated critical path (the longest
-   worker job, then the reducer job), the smallest such N on a tie; `fixed` = N given.
-   N <= `--max-jobs` (the run's concurrency), the user job cap and the source count; a
-   coupon fails closed only when even the maximal split does not fit (`StoppedBy
-   Estimate` with the candidates table). N = 1 is the single job of the recorded
-   campaigns, byte-identical (`main/plan.json`, `job.pbs`); a split coupon has
-   `main/jobs/<worker-k | reducer>/{plan.json, job.pbs}` (the runner's status and logs
-   per job directory). `--job-policy` / `--fixed-jobs` select it; the manifest's
-   `ProductionRecipe.PhysicsRun.JobPolicy` is the recorded default (`frugal` until the
-   user chooses speed vs frugality); the policy used, the candidates (N, longest job,
-   critical path, node seconds), the blocks and per-job estimates are recorded per
-   coupon (`JobPolicy`, `Split`, `Jobs`). `build_plan.py`: pinned SHA-256 of
-   the mesh, every config and every trace; `CapSeconds` = 2 x the stage's 2x-PCG
-   estimate rounded up to 300 s and bounded by the deadline, `MinimumSeconds` = the
-   1x estimate rounded up (a block worker at its block's source count); `job.pbs` from
-   the cluster profile; `run_stages.py` (the unchanged bounded runner, executable /
-   hash / MPI wrapper read from the plan).
-4. **Submission and results** (`qualify/remote.py`; not under `--dry-run`): up to
-   `--max-jobs` of the run's jobs are queued / running at once (the library run's
-   concurrency; the 40-job user cap is checked at every `qsub`): a coupon's worker
-   jobs, then - once every worker job's `status.json` is complete and the archive
-   union holds sources x ranks potential files (`archive-union.json`, fail closed) -
-   its reducer job; a single-job coupon is one job. Per coupon: rsync of mesh / traces /
-   `main/` to `<root>/<run>/<case>/`, `qsub` after a read-only `qstat` count of the
-   user's jobs against the cap (`submission.json`, `submission-<job>.json`); every
-   active job is polled read-only once per interval (job state and the runner's
-   `status.json`; a job is in the queue while `qstat` reports Q / R / E / H / W / T / S / B -
-   `remote.IN_QUEUE_STATES` -, a held job (H: the SOCA dispatcher holds a job whose
-   compute-node stack failed, `error_message CF:ROLLBACK_COMPLETE:retry=N`, and releases
-   it itself at `retry_eligible_after`) stays active with its reason logged); a worker
-   job that left the queue incomplete stops the coupon (its
-   other jobs finish on their own, never qdel'd, recorded `JobsLeftRunning`); a coupon
-   whose last job left the queue is
-   fetched while the others run - rsync of `main/` without the archives, `sha256sum`
-   of every fetched CSV against the remote (`result-csv-sha256.json`),
-   `run_graded_library_case.validate_matrix` on every reducer matrix (complete,
-   symmetric, nonnegative), then `du` + `rm -rf` of the response archives
-   (`remote-archive-deletion.json`) - and analyzed, and the next pending coupon takes
-   the freed slot. Any stage not `complete`, a PCG non-convergence, a digest mismatch
-   or an invalid matrix is a recorded stop. The library's `CriticalPathSeconds` is
-   measured from the first submission to the last fetch; a coupon's own
-   `Cost.CriticalPathSeconds` from its first submission to its fetch (the reducer
-   job's queue wait included), its `Cost.Jobs` every job's estimate, actual seconds and
-   node-h, its `Cost.JobNodeHours` the sum over its jobs (the merged main stage reads
-   the blocks' per-source timings in block order: `summarize_cost.merge_split_statuses`);
-   the library totals keep their meaning (node-h summed over every job, jobs counted at
-   every `qsub`, `Splits` per coupon). `--resume` on the same
-   `--root` adopts the job ids a previous driver recorded (`<case>/submission*.json`;
-   the re-derived plans must be byte-identical - both sides read in path order -, else a
-   recorded `Resume` stop) and
-   monitors / fetches / analyzes from there, so a lost driver (VPN drop, a stalled
-   process) never causes a second submission; the monitor wait is sliced against
-   the wall clock (a single 90 s sleep of the idle driver was observed not to return
-   on macOS during the acceptance run). A poll whose ssh round trip fails (no
-   `POLL_MARKER` back: login host unreachable, banner timeout) is a recorded
-   `Monitor.TransportFailures` count that keeps the job active and spends one poll of
-   the budget - never "the job left the queue" -, and a fetch whose rsync fails is a
-   recorded `Fetch` stop (`--resume` fetches later), not a crash of the driver (the
-   2026-09-21 device run lost its login host for 30+ min with two jobs running).
-5. **Qualification.** `compare_matrices.py` (main vs reference, controls vs reference,
-   main vs the higher control, the lower control vs main), `classify_sources.py`
-   class statistics, `ma_ms_offsets.py` (distributions, reference-p_MA-weighted view,
-   strongest-20), `p_sequence.py` (d_low / d_high / r / Aitken limit at the controls),
-   `key_sources.py`, `summarize_cost.py` (per-source PCG and seconds, node-h = wall x
-   nodes, the full-coupon extrapolation) and `gates.py` on the frozen
-   `qualify/qualification-gates.json` (its SHA-256 in every record; free view = the
-   reference's sources minus the ZeroTrace knots and zero-energy sources; anchor
-   "vs p<reference order>"):
+ 1. **Run inputs from the case itself (supervisor decision 52).** The Palace config, the
+    source traces and the zero-trace set are derived from the manifest case's own frozen
+    sources by `qualify/case_inputs.py`: `process-library.json` (substrate permittivity,
+    interface layer thickness / permittivity, matching radius, the model's edges - slot,
+    conductor, process normal placed in the mesh frame by the bound process frame - and
+    its `Interfaces[].Coupon` index -> type map), the trace basis (`basis-contract.json`,
+    `trace-vertices.csv`, `trace-triangles.csv`) regenerated as the producer wrote it
+    (`generate_spatial_response.write_surface_trace`: `basis-NNNN.csv` = the hat of basis
+    vertex NNNN, `conductor-N.csv` = the lift of every conductor but the first,
+    `zero-trace.csv`; the coordinates are within the contract's `FrameFitResidual` of the
+    producer's files - the canonical-frame round trip -, V and triangle columns
+    identical, digests recorded under `Inputs.Sources`), the identity mesh's
+    `$PhysicalNames` (the attribute candidates are filtered by them exactly as the
+    producer's `make_config` did on the reference mesh; every attribute the config names
+    must exist - `AttributeCheck`, before any submission) and the recipe's
+    `ProductionRecipe.PhysicsRun` (`Order` 4, `LinearTol` 1e-10 with their calibration
+    provenance: the four-edge reference and every recorded qualification ran them; bound
+    by `general_mesh_manifest.validate_physics_run`, used by every case). The five
+    gallery cases' derived configs equal the configs their graded_v2 references ran apart
+    from `Model.Mesh`, `Problem.Output`, the DataFile directory and - for the p5 / Tol 1e-8
+    references (gallery 10, ten-edge) - `Solver.Order` / `Linear.Tol` only
+    (`test_qualify_dry_run.test_run_config_derived_from_the_case_equals_every_gallery_reference`).
+    A case whose signature has a downward layer (`Nz = -1`) or more than one layer stops
+    with `StoppedBy ScopeGuard` (`DownwardLayers` / `MultipleLayers`,
+    `locate_sources.check_layers`: the z-level role assignment covers one upward layer)
+    until the roles are assigned per layer band.
+    **Reference by content.** `--reference DIR` has the layout of the physics runs'
+    `reference/` trees: `inputs-<key>/` (`basis-contract.json`, the producer's
+    `spatial_fabricated.json`) and `case-<key>-fabricated/` (`worker.json` = the config
+    the reference ran, preferred over the producer's;
+    `reducer/{domain,surface}-response-matrix.csv`). A coupon is bound to `inputs-<key>`
+    whose `basis-contract.json` digest equals the manifest's `BasisContract` digest
+    (`qualify/reference_campaign.py`); the reference's config must equal the derived one
+    apart from the path fields and Order / Tol (`StoppedBy Reference` with the
+    differences otherwise); no match = `StoppedBy Reference` (skipped: pass
+    `--reference none` to run on the case's own inputs); inputs without reducer matrices
+    = the coupon runs and is `PendingQualification`. `--reference none` (mandatory
+    spelling: `--reference` is required) runs every coupon on its own inputs: the
+    p-sequence controls alone are evaluated - `PendingQualification` when they pass,
+    `Failed` when one fails, never `Passed`.
 
-   | gate | statement |
-   |---|---|
-   | E | every source of the four wide classes within 1% (the all-free count and the worst source reported) |
-   | p_MA | free signed median within 1%; reference-p_MA-weighted mean within 1%; every one of the 20 strongest reference-MA sources (all free sources when fewer) within 2%; every free source within 5% |
-   | p_MS | free |median| within 1%; every free source within 5% |
-   | p_SA | >= 2/3 of the free sources within 2% and >= 90% within 5% (the EL4c level 40 / 56 of 60) |
-   | p-sequence controls | every control's step to the higher order d_high = (p_high - p_main)/|p_high| within 1% for E and 5% for p_MA / p_MS / p_SA |
-   | LibraryContinuity (Version 3) | every pair / stack model with all consecutive separations >= 2R (1 - 0.01) responds like the isolated-edge model per basis function at matched local positions: per edge the energy-weighted matched offset within 1 % (`MaximumRelativeOffset`) AND every matched basis function within 5 % (`PerBasisFunctionLimit`; USER decision 2026-09-28 on the decision-117 review MAJOR-2); an edge with zero matched basis functions is Failed, never NotApplicable; hats within 0.25 R of an isolated-box corner excluded, unmatched hats reported (`qualify/library_continuity.py`) |
+ 2. **Sources and controls.** `locate_sources.py` (box from the trace vertices, z levels
+    from the apex heights, metal loops and junctions from the plan-view boundary, the
+    3000 / 3100 adjacency from a bound `retained-etch.csv`) and `classify_sources.py`
+    (ZeroTrace; junction rings; junction columns; narrow hats next to a junction;
+    near-junction hats; isolated narrow hats; box 3D corners; wide hats bottom / top,
+    metal-top ring, substrate / trench rings; conductor terminals = `TerminalAttributes`
+    sources). The 8 controls (`--control-count`) are one source per class in that
+    priority order, cycling, lowest index first (`choose_controls`), unless
+    `--control-source` names them (the recorded campaigns' supervisor-specified sets).
 
-   Anchor rule: when a main stage was solved at the reference order, the gates
-   evaluate that same-order comparison and the other main orders are recorded as
-   `Informational`; otherwise the first main order is gated against the named anchor
-   (`GatedOrder`, `GatedComparison`). A participation whose interface the reference
-   config does not postprocess (no `Postprocessing.Dielectric` entry of that type;
-   case 10 declares MA and MS only) is `NotApplicable` for its gate and its p-sequence
-   observable - recorded with the declared interfaces, never a failure.
-   The interface index -> type map of the response matrices is read from the run
-   config's `Postprocessing.Dielectric` entries (never `{1 MA, 2 MS, 3 SA}`); a
-   participation p_X sums every postprocessed interface of type X (the ten-edge
-   postprocesses MA / MS per slot). The class thresholds (narrow hat width 0.1 um,
-   junction reach 0.6 um) are the frozen gate table's `SourceClasses` block, covered by
-   its digest. Verdict `Passed` only when every gate passes; `Failed` otherwise, a
-   failed p-sequence control included; `PendingQualification` only when there are no
-   reference matrices AND every p-sequence control passed (never `Passed`). On the stored CSVs: physics-11 passes with
-   E 60 / 60, p_SA 35 / 44 / 58, p_MS 51 / 60 / 60, p_MA 32 / 55 / 60 (strongest-20 15
-   / 20 within 1%, 20 / 20 within 2%), 0.508 node-h (0.14x the reference's 3.64);
-   gallery-06b passes with E 93 / 95 (both misses in the narrow class), p_SA 47 / 69 /
-   95, p_MS 77 / 94 / 95, p_MA 68 / 91 / 95 (19 / 20, 20 / 20), 0.974 node-h;
-   gallery-06 (before decision 44) fails p_MA (25 / 133 beyond 5%) - the table
-   reproduces the RESULTS.md class counts (tests); gallery-10 (reference p5, gated at
-   its p5 main stage, p_SA not applicable) reproduces its RESULTS.md p5 row - E 78 / 78,
-   p_MA 33 / 59 / 78 (median +1.28%), p_MS 75 / 78 / 78 - and FAILS the p_MA
-   strongest-20 statement at the two z = 0.1 near-junction hats 53 / 58 (+2.8 / +3.5%),
-   the finding RESULTS.md reports as the systematic far-surface MA offset at equal p.
-6. **Records.** `ROOT/library-qualification.json`: per coupon `Status` (qualified /
-   pending-qualification / failed / planned / skipped) and `StoppedBy` (Build, Manifest,
-   Reference, Mesh, Estimate, JobBudget, Monitor, Fetch, Stages, Verification,
-   MatrixValidation), the reference binding, sources / classes / controls, stage layout,
-   estimate (H1 by order, job seconds by PCG factor, peak GB, node-h of the main stage),
-   plan (pins, caps), remote layout, submission / monitor / fetch / digest / matrix /
-   deletion records, `Qualification` (verdict, gates passed, not-applicable gates, anchor,
-   gated stage / order / comparison, class statistics, offsets, weighted p_MA, the other
-   main orders as `Informational`), `Cost` (library-order main-stage H1 / PCG / seconds /
-   node-h, every main stage under `MainStages`, job node-h, the reference's node-h from
-   its `status.json`, the ratio); library totals: coupons by status, stopped coupons with
-   the reason, node-h, critical-path seconds from the first submission to the last fetch
-   (jobs overlap up to `--max-jobs`), per-job wall seconds, jobs submitted vs `--max-jobs`
-   and the cap (every qsub counted at submission, a stop after it included), orders,
-   binary hash, profile. `ROOT/qualification-gates.json` (the table used),
-   `ROOT/process-library.json` (each coupon's model from its own `process-library.json`
-   with the fetched matrices, `CouponMesh`, `Qualification` and `LibraryQualified` only
-   when Passed; `--merge-into PATH` = a previous run's `process-library.json`, read only:
-   its models this run did not qualify are kept ahead of this run's, a model of the same
-   `Name` is replaced, `MergedFrom {Path, SHA256, Root, Kept, Replaced}` recorded - a
-   coupon qualified later joins its device library without re-running the others).
+ 3. **Configs and plan.** The main orders of a coupon are the recipe's `PhysicsRun`
+    order, then `--orders`, then the reference's own `Solver.Order` when it differs
+    (gallery case 10: reference p5 -> main stages p4 and p5, the recorded gallery-10
+    layout; the recipe order
+    stays the library order: cost coupon, local-edge stage, p-sequence main; recorded
+    per coupon as `Orders`). `build_configs.py` derives worker / reducer at every main
+    order on all sources, at every `--controls` order (highest first) on the controls,
+    and the ordinary-path local-edge `config.json` at the main order on the controls
+    (`SaveLocalEdgeEnergy` true); only `Model.Mesh`, `Problem.Output`, the trace
+    directory, the source subset and `Solver.Order` differ from the reference config.
+    `estimate_stages.py` scales the cost model by the exact H1 ratio
+    (`mixed_mesh.h1_dofs_from_counts` on the build record's `H1.EntityCounts`) at 1 /
+    1.5 / 2x the measured PCG counts; a coupon whose 2x total with the 35% + 300 s
+    preflight margin exceeds the walltime is not one job; whose Palace peak exceeds
+    0.75 of the node is `StoppedBy Estimate` before any plan. **Job policy - the
+    per-coupon source split (supervisor decision 61b, user decision 60(2)):**
+    `qualify/job_split.py` partitions the coupon's main-order source set into N
+    contiguous blocks run as N independent worker jobs (the same mesh and configs apart
+    from the `PrescribedPotential` subset, `worker-block<k>.json` per block with its own
+    `Problem.Output`), every block archiving into the stage's ONE archive directory
+    (Palace archives one file per source, rank and field - `source-NNNNNN-rank-NNNNNN- {V,D}.bin`, header-checked -, so the union of the N archives is that directory), and
+    the main-order reducer runs once, in its own job, on the union after every worker
+    job completed (the reduction is linear in the archive union: the matrices equal a
+    single job's to roundoff - acceptance below). The p3 / p5 controls and the
+    local-edge stage stay in the first worker job (`ControlsJob worker-1`), whose block
+    is shortened by their estimated share so every worker job ends together; when they
+    leave no room for a block the first job carries them alone (`separate`, recorded).
+    Policy `{Mode: speed | frugal | fixed, MaxJobs, WalltimeSeconds, FixedJobs}`, every
+    job estimated from the cost model at 2x the measured PCG counts with the 35% +
+    300 s preflight margin: `frugal` = the smallest N whose every job fits the
+    walltime; `speed` = the N minimizing the estimated critical path (the longest
+    worker job, then the reducer job), the smallest such N on a tie; `fixed` = N given.
+    N <= `--max-jobs` (the run's concurrency), the user job cap and the source count; a
+    coupon fails closed only when even the maximal split does not fit (`StoppedBy Estimate` with the candidates table). N = 1 is the single job of the recorded
+    campaigns, byte-identical (`main/plan.json`, `job.pbs`); a split coupon has
+    `main/jobs/<worker-k | reducer>/{plan.json, job.pbs}` (the runner's status and logs
+    per job directory). `--job-policy` / `--fixed-jobs` select it; the manifest's
+    `ProductionRecipe.PhysicsRun.JobPolicy` is the recorded default (`frugal` until the
+    user chooses speed vs frugality); the policy used, the candidates (N, longest job,
+    critical path, node seconds), the blocks and per-job estimates are recorded per
+    coupon (`JobPolicy`, `Split`, `Jobs`). `build_plan.py`: pinned SHA-256 of
+    the mesh, every config and every trace; `CapSeconds` = 2 x the stage's 2x-PCG
+    estimate rounded up to 300 s and bounded by the deadline, `MinimumSeconds` = the
+    1x estimate rounded up (a block worker at its block's source count); `job.pbs` from
+    the cluster profile; `run_stages.py` (the unchanged bounded runner, executable /
+    hash / MPI wrapper read from the plan).
+
+ 4. **Submission and results** (`qualify/remote.py`; not under `--dry-run`): up to
+    `--max-jobs` of the run's jobs are queued / running at once (the library run's
+    concurrency; the 40-job user cap is checked at every `qsub`): a coupon's worker
+    jobs, then - once every worker job's `status.json` is complete and the archive
+    union holds sources x ranks potential files (`archive-union.json`, fail closed) -
+    its reducer job; a single-job coupon is one job. Per coupon: rsync of mesh / traces /
+    `main/` to `<root>/<run>/<case>/`, `qsub` after a read-only `qstat` count of the
+    user's jobs against the cap (`submission.json`, `submission-<job>.json`); every
+    active job is polled read-only once per interval (job state and the runner's
+    `status.json`; a job is in the queue while `qstat` reports Q / R / E / H / W / T / S / B -
+    `remote.IN_QUEUE_STATES` -, a held job (H: the SOCA dispatcher holds a job whose
+    compute-node stack failed, `error_message CF:ROLLBACK_COMPLETE:retry=N`, and releases
+    it itself at `retry_eligible_after`) stays active with its reason logged); a worker
+    job that left the queue incomplete stops the coupon (its
+    other jobs finish on their own, never qdel'd, recorded `JobsLeftRunning`); a coupon
+    whose last job left the queue is
+    fetched while the others run - rsync of `main/` without the archives, `sha256sum`
+    of every fetched CSV against the remote (`result-csv-sha256.json`),
+    `run_graded_library_case.validate_matrix` on every reducer matrix (complete,
+    symmetric, nonnegative), then `du` + `rm -rf` of the response archives
+    (`remote-archive-deletion.json`) - and analyzed, and the next pending coupon takes
+    the freed slot. Any stage not `complete`, a PCG non-convergence, a digest mismatch
+    or an invalid matrix is a recorded stop. The library's `CriticalPathSeconds` is
+    measured from the first submission to the last fetch; a coupon's own
+    `Cost.CriticalPathSeconds` from its first submission to its fetch (the reducer
+    job's queue wait included), its `Cost.Jobs` every job's estimate, actual seconds and
+    node-h, its `Cost.JobNodeHours` the sum over its jobs (the merged main stage reads
+    the blocks' per-source timings in block order: `summarize_cost.merge_split_statuses`);
+    the library totals keep their meaning (node-h summed over every job, jobs counted at
+    every `qsub`, `Splits` per coupon). `--resume` on the same
+    `--root` adopts the job ids a previous driver recorded (`<case>/submission*.json`;
+    the re-derived plans must be byte-identical - both sides read in path order -, else a
+    recorded `Resume` stop) and
+    monitors / fetches / analyzes from there, so a lost driver (VPN drop, a stalled
+    process) never causes a second submission; the monitor wait is sliced against
+    the wall clock (a single 90 s sleep of the idle driver was observed not to return
+    on macOS during the acceptance run). A poll whose ssh round trip fails (no
+    `POLL_MARKER` back: login host unreachable, banner timeout) is a recorded
+    `Monitor.TransportFailures` count that keeps the job active and spends one poll of
+    the budget - never "the job left the queue" -, and a fetch whose rsync fails is a
+    recorded `Fetch` stop (`--resume` fetches later), not a crash of the driver (the
+    2026-09-21 device run lost its login host for 30+ min with two jobs running).
+
+ 5. **Qualification.** `compare_matrices.py` (main vs reference, controls vs reference,
+    main vs the higher control, the lower control vs main), `classify_sources.py`
+    class statistics, `ma_ms_offsets.py` (distributions, reference-p_MA-weighted view,
+    strongest-20), `p_sequence.py` (d_low / d_high / r / Aitken limit at the controls),
+    `key_sources.py`, `summarize_cost.py` (per-source PCG and seconds, node-h = wall x
+    nodes, the full-coupon extrapolation) and `gates.py` on the frozen
+    `qualify/qualification-gates.json` (its SHA-256 in every record; free view = the
+    reference's sources minus the ZeroTrace knots and zero-energy sources; anchor
+    "vs p<reference order>"):
+
+    | gate                          | statement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+    |:----------------------------- |:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | E                             | every source of the four wide classes within 1% (the all-free count and the worst source reported)                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+    | p_MA                          | free signed median within 1%; reference-p_MA-weighted mean within 1%; every one of the 20 strongest reference-MA sources (all free sources when fewer) within 2%; every free source within 5%                                                                                                                                                                                                                                                                                                                                                                                   |
+    | p_MS                          | free \|median\| within 1%; every free source within 5%                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+    | p_SA                          | >= 2/3 of the free sources within 2% and >= 90% within 5% (the EL4c level 40 / 56 of 60)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+    | p-sequence controls           | every control's step to the higher order d_high = (p_high - p_main)/\|p_high\| within 1% for E and 5% for p_MA / p_MS / p_SA                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+    | LibraryContinuity (Version 3) | every pair / stack model with all consecutive separations >= 2R (1 - 0.01) responds like the isolated-edge model per basis function at matched local positions: per edge the energy-weighted matched offset within 1 % (`MaximumRelativeOffset`) AND every matched basis function within 5 % (`PerBasisFunctionLimit`; USER decision 2026-09-28 on the decision-117 review MAJOR-2); an edge with zero matched basis functions is Failed, never NotApplicable; hats within 0.25 R of an isolated-box corner excluded, unmatched hats reported (`qualify/library_continuity.py`) |
+
+    Anchor rule: when a main stage was solved at the reference order, the gates
+    evaluate that same-order comparison and the other main orders are recorded as
+    `Informational`; otherwise the first main order is gated against the named anchor
+    (`GatedOrder`, `GatedComparison`). A participation whose interface the reference
+    config does not postprocess (no `Postprocessing.Dielectric` entry of that type;
+    case 10 declares MA and MS only) is `NotApplicable` for its gate and its p-sequence
+    observable - recorded with the declared interfaces, never a failure.
+    The interface index -> type map of the response matrices is read from the run
+    config's `Postprocessing.Dielectric` entries (never `{1 MA, 2 MS, 3 SA}`); a
+    participation p_X sums every postprocessed interface of type X (the ten-edge
+    postprocesses MA / MS per slot). The class thresholds (narrow hat width 0.1 um,
+    junction reach 0.6 um) are the frozen gate table's `SourceClasses` block, covered by
+    its digest. Verdict `Passed` only when every gate passes; `Failed` otherwise, a
+    failed p-sequence control included; `PendingQualification` only when there are no
+    reference matrices AND every p-sequence control passed (never `Passed`). On the stored CSVs: physics-11 passes with
+    E 60 / 60, p_SA 35 / 44 / 58, p_MS 51 / 60 / 60, p_MA 32 / 55 / 60 (strongest-20 15
+    / 20 within 1%, 20 / 20 within 2%), 0.508 node-h (0.14x the reference's 3.64);
+    gallery-06b passes with E 93 / 95 (both misses in the narrow class), p_SA 47 / 69 /
+    95, p_MS 77 / 94 / 95, p_MA 68 / 91 / 95 (19 / 20, 20 / 20), 0.974 node-h;
+    gallery-06 (before decision 44) fails p_MA (25 / 133 beyond 5%) - the table
+    reproduces the RESULTS.md class counts (tests); gallery-10 (reference p5, gated at
+    its p5 main stage, p_SA not applicable) reproduces its RESULTS.md p5 row - E 78 / 78,
+    p_MA 33 / 59 / 78 (median +1.28%), p_MS 75 / 78 / 78 - and FAILS the p_MA
+    strongest-20 statement at the two z = 0.1 near-junction hats 53 / 58 (+2.8 / +3.5%),
+    the finding RESULTS.md reports as the systematic far-surface MA offset at equal p.
+
+ 6. **Records.** `ROOT/library-qualification.json`: per coupon `Status` (qualified /
+    pending-qualification / failed / planned / skipped) and `StoppedBy` (Build, Manifest,
+    Reference, Mesh, Estimate, JobBudget, Monitor, Fetch, Stages, Verification,
+    MatrixValidation), the reference binding, sources / classes / controls, stage layout,
+    estimate (H1 by order, job seconds by PCG factor, peak GB, node-h of the main stage),
+    plan (pins, caps), remote layout, submission / monitor / fetch / digest / matrix /
+    deletion records, `Qualification` (verdict, gates passed, not-applicable gates, anchor,
+    gated stage / order / comparison, class statistics, offsets, weighted p_MA, the other
+    main orders as `Informational`), `Cost` (library-order main-stage H1 / PCG / seconds /
+    node-h, every main stage under `MainStages`, job node-h, the reference's node-h from
+    its `status.json`, the ratio); library totals: coupons by status, stopped coupons with
+    the reason, node-h, critical-path seconds from the first submission to the last fetch
+    (jobs overlap up to `--max-jobs`), per-job wall seconds, jobs submitted vs `--max-jobs`
+    and the cap (every qsub counted at submission, a stop after it included), orders,
+    binary hash, profile. `ROOT/qualification-gates.json` (the table used),
+    `ROOT/process-library.json` (each coupon's model from its own `process-library.json`
+    with the fetched matrices, `CouponMesh`, `Qualification` and `LibraryQualified` only
+    when Passed; `--merge-into PATH` = a previous run's `process-library.json`, read only:
+    its models this run did not qualify are kept ahead of this run's, a model of the same
+    `Name` is replaced, `MergedFrom {Path, SHA256, Root, Kept, Replaced}` recorded - a
+    coupon qualified later joins its device library without re-running the others).
 
 `--dry-run` writes steps 1-3 and the gate table without contacting anything; the
 recorded campaigns are its fixtures: on the four-edge case with `--stage-prefix va`
@@ -2756,8 +2737,7 @@ plans in two orders (commit 415ed0428); the third driver resumed and finished th
 
 **2. 7f03 under `--job-policy speed --max-jobs 4` (decision 61d) - RUNNING at the time of this
 commit.** `spatial-3-edge-5d3b5e644745` (225 sources, 3.04M elements, the coupon that did not fit
-one 6 h job in the decision-58 run), `--reference none --orders p4 --controls p3,p5 --merge-into
-/tmp/library-device-transmon-01/process-library.json`, root `/tmp/library-device-transmon-02`. Dry
+one 6 h job in the decision-58 run), `--reference none --orders p4 --controls p3,p5 --merge-into /tmp/library-device-transmon-01/process-library.json`, root `/tmp/library-device-transmon-02`. Dry
 run (identical to the recorded one): N = 4 of 4, blocks [17, 70, 69, 69], controls + local-edge in
 worker-1, per-job 2x-PCG estimates 91 / 92 / 91 / 91 min and the reducer 149 min (the longest job),
 critical path 241 min, node time 8.55 h (N = 1 does not fit at 29,272 s; N = 2 fits at 10,551 s
@@ -2795,8 +2775,7 @@ without `--resume`.
 
 **54a - the 5-edge mesher defect.** The transmon 5-edge coupon (`spatial-5-edge-ea1fbd054c1e`,
 7 physical sides: two 6 um wide notches x in (-6, 0) and (10, 16) below y = 2.5 flanking a
-10 um tooth) stopped its registration probe at `tube tool (3, 10) has 3 volume
-descendants` (prism_edge_tubes.jl `tube_volume_after_fragment`). Reproduced on the source
+10 um tooth) stopped its registration probe at `tube tool (3, 10) has 3 volume descendants` (prism_edge_tubes.jl `tube_volume_after_fragment`). Reproduced on the source
 directory (17 s, geometry only) and localized: tool (3, 10) is the bottom tube's vacuum
 sectors of the side (-6, 2.5) -> (-6, -8) (the left notch wall, y from 2.452 to -7.984).
 The cause is not a tube interaction but the producer-default etch footprint:
@@ -2852,8 +2831,7 @@ polygon self-intersecting, union = the half-plane y >= -6 of the box; pieces cou
 inside the box; the 16 um notch keeps `MiterOffset` with the identical polygon; zero offset
 is the loop; inward self-intersection and a missing box fail closed; a keyhole stops at
 `ScopeGuard[FootprintTopology]`), and a Radius-0.5 coupon build whose notch is exactly one
-collar (1.5 um) wide - the device failure mode: verified to stop with `tube tool (3, 5) has
-2 volume descendants` under the old construction on a scratch copy - now builds with
+collar (1.5 um) wide - the device failure mode: verified to stop with `tube tool (3, 5) has 2 volume descendants` under the old construction on a scratch copy - now builds with
 `CollarUnion`, the box as footprint, 16 tubes / 21 matched tube volumes, no 3000 plane.
 
 Device 5-edge under the production recipe (`/tmp/coupon-five-edge-54a-20260921/device`, a
@@ -2904,14 +2882,14 @@ away at 5.6 deg: altitude 56 nm x sin 5.6 deg = 5.5 nm), and the trace rule then
 2.7 nm over a 39 um perimeter. The side strips (56 nm x 2 um) are right slivers (altitude =
 the ring spacing), the class TraceBasisSizeRatio 0.5 was calibrated on.
 
-| case | sources | estimate (cap 4M) | needles / right slivers / wide | min altitude needle / sliver | needle tets (share) | right-sliver tets | far / tube band / prisms+pyramids / balls / junction |
-|---|---|---|---|---|---|---|---|
-| three-edge 7f03 (`spatial-3-edge-d96d52b95001`) | 225 | 5,025,593 (1.256) | 38 / 224 / 184 | 1.0 nm / 15.1 nm | 1,977,952 (**39.4%**) | 310,611 (6.2%) | 1,814,861 / 409,725 / 397,908 / 36,732 / 77,804 |
-| ten-edge gallery (`ten-edge-6791f1c84123`) | 260 | 3,561,695 (0.890) | 34 / 268 / 214 | 5.5 nm / 35.1 nm | 744,253 (**20.9%**) | 330,017 (9.3%) | 1,721,083 / 290,773 / 282,744 / 118,673 / 74,151 |
-| ten-edge production root `8a871f22...` (actual, by governing law) | 260 | 3,498,453 built | - | - | 921,337 (**26.3%**) | 225,603 (6.4%) | far 1,620,702 / tube band 363,132 / prisms+pyramids 290,304 / balls 77,317 / junction 58 |
-| device ten-edge (`spatial-10-edge-1ce0c327a734`, 8.03 GiB probe) | 300 | 3,625,496 (0.906) | 40 / 304 / 252 | 5.5 nm / - | 794,975 (21.9%) | 343,097 | - |
-| device 5-edge | 185 | 3,452,743 (0.863) | 14 / 182 / 170 | 11.8 nm / - | 538,214 (15.6%) | 255,192 | 1,951,317 / 275,196 / 267,120 / 87,592 / 78,113 |
-| four-edge gallery | 80 | 1,966,879 | 0 / 78 / 78 | - / 15.3 nm | 0 | - | - |
+| case                                                              | sources | estimate (cap 4M) | needles / right slivers / wide | min altitude needle / sliver | needle tets (share)   | right-sliver tets | far / tube band / prisms+pyramids / balls / junction                                     |
+|:----------------------------------------------------------------- |:------- |:----------------- |:------------------------------ |:---------------------------- |:--------------------- |:----------------- |:---------------------------------------------------------------------------------------- |
+| three-edge 7f03 (`spatial-3-edge-d96d52b95001`)                   | 225     | 5,025,593 (1.256) | 38 / 224 / 184                 | 1.0 nm / 15.1 nm             | 1,977,952 (**39.4%**) | 310,611 (6.2%)    | 1,814,861 / 409,725 / 397,908 / 36,732 / 77,804                                          |
+| ten-edge gallery (`ten-edge-6791f1c84123`)                        | 260     | 3,561,695 (0.890) | 34 / 268 / 214                 | 5.5 nm / 35.1 nm             | 744,253 (**20.9%**)   | 330,017 (9.3%)    | 1,721,083 / 290,773 / 282,744 / 118,673 / 74,151                                         |
+| ten-edge production root `8a871f22...` (actual, by governing law) | 260     | 3,498,453 built   | -                              | -                            | 921,337 (**26.3%**)   | 225,603 (6.4%)    | far 1,620,702 / tube band 363,132 / prisms+pyramids 290,304 / balls 77,317 / junction 58 |
+| device ten-edge (`spatial-10-edge-1ce0c327a734`, 8.03 GiB probe)  | 300     | 3,625,496 (0.906) | 40 / 304 / 252                 | 5.5 nm / -                   | 794,975 (21.9%)       | 343,097           | -                                                                                        |
+| device 5-edge                                                     | 185     | 3,452,743 (0.863) | 14 / 182 / 170                 | 11.8 nm / -                  | 538,214 (15.6%)       | 255,192           | 1,951,317 / 275,196 / 267,120 / 87,592 / 78,113                                          |
+| four-edge gallery                                                 | 80      | 1,966,879         | 0 / 78 / 78                    | - / 15.3 nm                  | 0                     | -                 | -                                                                                        |
 
 The needle share of the estimate is 39.4% on 7f03 and 20.9% on the ten-edge (26.3% of the
 built ten-edge by governing law; the estimator charges the needles' Steiner shells at
@@ -2949,10 +2927,10 @@ interior sources 2 / (sqrt 3 h^2) per area, trace cost the volume-law shell with
 of clustered ring vertices vary over that spacing whatever the interior), it only shortens
 the narrow hats' supports, and every added vertex is a Palace solve:
 
-| case | BasisGrowth | sources | estimate | elements x | sources x | physics cost (sources x elements) |
-|---|---|---|---|---|---|---|
-| 7f03 | 0.5 / 1.0 / 2.0 | 3,092 / 1,308 / 625 | 2,763,814 / 2,745,369 / 2,739,686 | 0.550 / 0.546 / 0.545 | 13.7 / 5.8 / 2.8 | **7.6 / 3.2 / 1.5 x** |
-| ten-edge | 0.5 / 1.0 / 2.0 | 3,281 / 1,444 / 711 | 2,515,615 / 2,496,585 / 2,490,453 | 0.706 / 0.701 / 0.699 | 12.6 / 5.6 / 2.7 | **8.9 / 3.9 / 1.9 x** |
+| case     | BasisGrowth     | sources             | estimate                          | elements x            | sources x        | physics cost (sources x elements) |
+|:-------- |:--------------- |:------------------- |:--------------------------------- |:--------------------- |:---------------- |:--------------------------------- |
+| 7f03     | 0.5 / 1.0 / 2.0 | 3,092 / 1,308 / 625 | 2,763,814 / 2,745,369 / 2,739,686 | 0.550 / 0.546 / 0.545 | 13.7 / 5.8 / 2.8 | **7.6 / 3.2 / 1.5 x**             |
+| ten-edge | 0.5 / 1.0 / 2.0 | 3,281 / 1,444 / 711 | 2,515,615 / 2,496,585 / 2,490,453 | 0.706 / 0.701 / 0.699 | 12.6 / 5.6 / 2.7 | **8.9 / 3.9 / 1.9 x**             |
 
 Against Delaunay caps (0.624 / 0.785 x at 1.0 x sources) the refinement buys a further
 0.08-0.09 x of elements for 2.7-14 x the sources: the trade is lost at every slope.
@@ -2986,7 +2964,6 @@ full unit-test sweep and a second verification ran concurrently
 (`spatial-3-edge-5d3b5e644745/build-summary.first-attempt-timeout.json`, meshes deleted after
 hashing): the bound is a machine resource guard (decision 54c) and a 3M-element coupon's
 verification sits within 15% of it - the ten-edge's 1,607 s again.
-
 
 ### First complete device library run (supervisor decision 58, 2026-09-21)
 
@@ -3057,8 +3034,7 @@ differentiates and evaluates every archived source once per block pair its block
 `ProductionRecipe.PhysicsRun.ReducerBlockSize {Value 48, PreviousValue 6, Rule, Provenance}` (the
 memory rationale: 2b resident fields x ~14 MB per rank at p4, b = 48 -> est. 350-450 GB of 1,485 GiB;
 the `MinimumMemAvailableBytes` admission guard unchanged), `build_plan.DEFAULT_REDUCER_BLOCK_SIZE`
-/ `reducer_environment(b)`, the plan's `ReducerBlockSize` (PLAN_VERSION 3), `qualify
---reducer-block-size` (the origin recorded per coupon: command line / manifest / built-in default);
+/ `reducer_environment(b)`, the plan's `ReducerBlockSize` (PLAN_VERSION 3), `qualify --reducer-block-size` (the origin recorded per coupon: command line / manifest / built-in default);
 `estimate_stages` takes the block size (cost model `MeasuredBlockSize 6`, the block-pair part split
 into the evaluation part N x ceil(N / b) and the pair-scaled Gram by `ReducerEvaluationFraction`;
 the reducer peak grows by `ReducerResidentFieldGBPerMillionH1` per resident field); `summarize_cost`
@@ -3152,8 +3128,7 @@ floor of the source split (`job_split`): a coupon's job is the worker.
 **Integration (decision 63, 2026-09-22; merge commit 4fb1f26d7 of simlapointe/perf-reducer
 af52cb0d8..79a2500b9 into the MA-shell tree 4ef0a21ac).** (1) The frozen executable of every
 `qualify` stage is now `170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b`:
-recorded as `ProductionRecipe.PhysicsRun.FrozenExecutable {SHA256, PreviousSHA256
-b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27, Rule, Provenance}` (validated by
+recorded as `ProductionRecipe.PhysicsRun.FrozenExecutable {SHA256, PreviousSHA256 b28f089ae12c25863493566b2b8ca11af2c8ffb0e273e7aa67a2b42046eacf27, Rule, Provenance}` (validated by
 `general_mesh_manifest.validate_physics_run` and `case_inputs.physics_run_parameters`),
 `build_plan.DEFAULT_FROZEN_BINARY_SHA256` / `PREVIOUS_FROZEN_BINARY_SHA256` / `FROZEN_BINARY_RULE`;
 `--frozen-binary-sha256` is optional and overrides (origin recorded per coupon and in the library
@@ -3193,16 +3168,16 @@ after, compared with `compare_case_records.py` (41 records field by field, 18 me
 for byte; only timings, resources, tool digests and the ids derived from them, paths, commands and
 environments are skipped): **0 differences**.
 
-| two-edge 10 stage | before (s) | after (s) | peak GiB before -> after |
-|---|---|---|---|
-| gmsh-build | 44.4 | 41.6 | 2.51 -> 2.33 |
-| canonical-publish | 14.3 | 13.6 | 1.49 -> 1.55 |
-| identity publication | 54.7 | 16.5 | 1.73 -> 1.56 |
-| rotate-z publication | 52.5 | 16.4 | 1.70 -> 1.56 |
-| identity variant audits | 55.6 | 12.3 | 1.02 -> 0.86 |
-| rotate-z variant audits | 70.6 | 12.2 | 0.92 -> 0.86 |
-| per-entry verification | 213.8 | 21.7 | 0.95 -> 0.88 |
-| **build wall** | **523** | **138** | |
+| two-edge 10 stage       | before (s) | after (s) | peak GiB before -> after |
+|:----------------------- |:---------- |:--------- |:------------------------ |
+| gmsh-build              | 44.4       | 41.6      | 2.51 -> 2.33             |
+| canonical-publish       | 14.3       | 13.6      | 1.49 -> 1.55             |
+| identity publication    | 54.7       | 16.5      | 1.73 -> 1.56             |
+| rotate-z publication    | 52.5       | 16.4      | 1.70 -> 1.56             |
+| identity variant audits | 55.6       | 12.3      | 1.02 -> 0.86             |
+| rotate-z variant audits | 70.6       | 12.2      | 0.92 -> 0.86             |
+| per-entry verification  | 213.8      | 21.7      | 0.95 -> 0.88             |
+| **build wall**          | **523**    | **138**   |                          |
 
 **Integrated before / after and the projected device library.** Registration: 990 -> 32.9 s (step
 2, measured on the six transmon coupons). Build: applying the measured two-edge ratios
@@ -3253,15 +3228,15 @@ element apart from the MA elements' (physical, elementary) pair (the ring shells
 counts, PCG counts and every p-sequence maximum (same values, same sources) are those of 2026-09-21 - the
 worker path is unchanged, the reducer's values were bit-identical / 1e-12-identical in the decision-63 acceptance.
 
-| quantity | 2026-09-21 (decision 58) | 2026-09-22 (decision 64a) |
-|---|---|---|
-| registration of the six coupons | 990 s | 33 s |
-| build pool wall / end to end (6 cores) | 7,338 / 8,493 s (pool of 2) | 1,462 / 1,527 s (pool of 3) |
-| serial sum of the case walls (publications / audits / verification) | 13,175 s (1,483 / 4,137 / 6,500) | 3,591 s (584 / 921 / 771) |
-| qualify node-h | 8.257 (5 coupons; 7f03 fail-closed as one job) | 7.203 (6 coupons; the same five 5.21; 7f03 2.00 as 6 + 1 jobs) |
-| reducer seconds / share of the job seconds | 11,964 s / 40.3% | 626 s / 2.4% |
-| jobs / concurrency | 5 / 2 | 35 / 6 |
-| critical path (first submission -> last fetch) | 24,313 s (17,155 without the outage dead time) | 28,167 s (119,824 job-s of r8g capacity holds) |
+| quantity                                                            | 2026-09-21 (decision 58)                       | 2026-09-22 (decision 64a)                                      |
+|:------------------------------------------------------------------- |:---------------------------------------------- |:-------------------------------------------------------------- |
+| registration of the six coupons                                     | 990 s                                          | 33 s                                                           |
+| build pool wall / end to end (6 cores)                              | 7,338 / 8,493 s (pool of 2)                    | 1,462 / 1,527 s (pool of 3)                                    |
+| serial sum of the case walls (publications / audits / verification) | 13,175 s (1,483 / 4,137 / 6,500)               | 3,591 s (584 / 921 / 771)                                      |
+| qualify node-h                                                      | 8.257 (5 coupons; 7f03 fail-closed as one job) | 7.203 (6 coupons; the same five 5.21; 7f03 2.00 as 6 + 1 jobs) |
+| reducer seconds / share of the job seconds                          | 11,964 s / 40.3%                               | 626 s / 2.4%                                                   |
+| jobs / concurrency                                                  | 5 / 2                                          | 35 / 6                                                         |
+| critical path (first submission -> last fetch)                      | 24,313 s (17,155 without the outage dead time) | 28,167 s (119,824 job-s of r8g capacity holds)                 |
 
 Per coupon (node-h, jobs): 10-edge 1.37 (5+1), 5-edge 1.34 (5+1), 7f03 2.00 (6+1), 3-edge 9cd9 0.94 (5+1),
 4-edge 0.86 (4+1), 2-edge 0.69 (4+1); reducers 133 / 135 / 158 / 78 / 71 / 52 s (3,972 / 3,958 / - / 2,022 /
@@ -3313,19 +3288,19 @@ preflight failure.
 
 A version-3 normalized record is assembled from five separate records:
 
-1. `bounded-run`: `run_bounded_mesher.py` records the exact command, its
-   absolute working directory (so relative argv paths resolve unambiguously),
-   constrained environment, launcher digest, resource measurements, and output
-   mesh digest.
-2. `mesh-topology-quality`: the real Gmsh mesh is parsed and audited for
-   topology, labels/material adjacency, corners, protected labels, achieved
-   directional widths, diagonal bands, and Jacobian quality.
-3. `mesh-complexity`: H1 DOFs are counted from mesh topology/order and semantic
-   feature/CAD-subdivision counts are derived from the signature.
-4. `mesh-invariants`: material volumes and labeled surface areas are integrated
-   from the mesh.
-5. `variant-transform`: candidate points, connectivity, and labels are checked
-   against the exact 4x4 transform of the independently audited identity mesh.
+ 1. `bounded-run`: `run_bounded_mesher.py` records the exact command, its
+    absolute working directory (so relative argv paths resolve unambiguously),
+    constrained environment, launcher digest, resource measurements, and output
+    mesh digest.
+ 2. `mesh-topology-quality`: the real Gmsh mesh is parsed and audited for
+    topology, labels/material adjacency, corners, protected labels, achieved
+    directional widths, diagonal bands, and Jacobian quality.
+ 3. `mesh-complexity`: H1 DOFs are counted from mesh topology/order and semantic
+    feature/CAD-subdivision counts are derived from the signature.
+ 4. `mesh-invariants`: material volumes and labeled surface areas are integrated
+    from the mesh.
+ 5. `variant-transform`: candidate points, connectivity, and labels are checked
+    against the exact 4x4 transform of the independently audited identity mesh.
 
 Every record binds the same mesh digest, every manifest source digest, exact
 transform and digest, case/variant, command/environment, and frozen producer

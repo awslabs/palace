@@ -41,7 +41,7 @@ function geometric_interval(first, last, spacing, ratio; refine=:left)
         right = geometric_interval(middle, last, spacing, ratio; refine=:right)
         return sort!(unique(vcat(left, right)))
     end
-    error("Unknown geometric refinement side: $refine")
+    return error("Unknown geometric refinement side: $refine")
 end
 
 function merge_coordinate_blocks(blocks)
@@ -81,18 +81,13 @@ function clip_segment_to_box(first, second, lower, upper, tolerance)
     end
     clipped_first = (x0 + begin_parameter * dx, y0 + begin_parameter * dy)
     clipped_second = (x0 + end_parameter * dx, y0 + end_parameter * dy)
-    hypot(
-        clipped_second[1] - clipped_first[1],
-        clipped_second[2] - clipped_first[2]
-    ) > tolerance || return nothing
+    hypot(clipped_second[1] - clipped_first[1], clipped_second[2] - clipped_first[2]) >
+    tolerance || return nothing
     return clipped_first, clipped_second
 end
 
 function segment_key(first, second, tolerance)
-    quantize(point) = (
-        round(Int, point[1] / tolerance),
-        round(Int, point[2] / tolerance)
-    )
+    quantize(point) = (round(Int, point[1] / tolerance), round(Int, point[2] / tolerance))
     a = quantize(first)
     b = quantize(second)
     return a < b ? (a, b) : (b, a)
@@ -101,14 +96,11 @@ end
 function point_segment_projection(point, first, second)
     direction = (second[1] - first[1], second[2] - first[2])
     length_squared = direction[1]^2 + direction[2]^2
-    length_squared > 0.0 || return (
-        distance=hypot(point[1] - first[1], point[2] - first[2]),
-        coordinate=0.0
-    )
-    coordinate = (
-        (point[1] - first[1]) * direction[1] +
-        (point[2] - first[2]) * direction[2]
-    ) / length_squared
+    length_squared > 0.0 ||
+        return (distance=hypot(point[1] - first[1], point[2] - first[2]), coordinate=0.0)
+    coordinate =
+        ((point[1] - first[1]) * direction[1] + (point[2] - first[2]) * direction[2]) /
+        length_squared
     closest = (
         first[1] + clamp(coordinate, 0.0, 1.0) * direction[1],
         first[2] + clamp(coordinate, 0.0, 1.0) * direction[2]
@@ -147,13 +139,7 @@ function nearest_active_segment(segments, point)
 end
 
 function plan_point_in_mask(facets, point, conductor, plane, tolerance)
-    return point_in_mask(
-        facets,
-        (point[1], point[2], plane),
-        conductor,
-        plane,
-        tolerance
-    )
+    return point_in_mask(facets, (point[1], point[2], plane), conductor, plane, tolerance)
 end
 
 function plan_conductor(facets, point, plane, tolerance)
@@ -161,9 +147,8 @@ function plan_conductor(facets, point, plane, tolerance)
         conductor for conductor in sort!(unique(facet.conductor for facet in facets)) if
         plan_point_in_mask(facets, point, conductor, plane, tolerance)
     ]
-    length(conductors) <= 1 || error(
-        "Plan-view masks for conductors $(join(conductors, ", ")) overlap"
-    )
+    length(conductors) <= 1 ||
+        error("Plan-view masks for conductors $(join(conductors, ", ")) overlap")
     return isempty(conductors) ? 0 : only(conductors)
 end
 
@@ -251,11 +236,8 @@ function planar_mesh_with_transition_rows(
         curve_length = gmsh.model.occ.getMass(1, curve)
         near_active = any(
             begin
-                projection = point_segment_projection(
-                    midpoint,
-                    segment.first,
-                    segment.second
-                )
+                projection =
+                    point_segment_projection(midpoint, segment.first, segment.second)
                 projection.distance <= core_width + tolerance &&
                     -tolerance <= projection.coordinate <= 1.0 + tolerance
             end for segment in segments
@@ -284,10 +266,7 @@ function planar_mesh_with_transition_rows(
     node_tags, coordinates, _ = gmsh.model.mesh.getNodes(-1, -1, false, false)
     coordinate_map = Dict{UInt64, NTuple{2, Float64}}()
     for (index, tag) in enumerate(node_tags)
-        coordinate_map[tag] = (
-            coordinates[3index - 2],
-            coordinates[3index - 1]
-        )
+        coordinate_map[tag] = (coordinates[3index - 2], coordinates[3index - 1])
     end
     types, element_tags, connectivity = gmsh.model.mesh.getElements(2)
     triangles = NTuple{3, UInt64}[]
@@ -341,8 +320,7 @@ function planar_mesh_with_transition_rows(
         active_segments=segments,
         fabrication_primitives=classified_fabrication_primitives(loops, tolerance),
         normal_distances=distances,
-        maximum_tangent_spacing=isempty(active_tangent_spacings) ?
-                                0.0 :
+        maximum_tangent_spacing=isempty(active_tangent_spacings) ? 0.0 :
                                 maximum(active_tangent_spacings),
         maximum_far_spacing=isempty(tangent_spacings) ? 0.0 : maximum(tangent_spacings),
         embedded_curve_count=length(constrained_curves),
@@ -426,8 +404,7 @@ function triangle_phase(
     ]
     nearest = argmin(distances)
     return etch_full_gap || distances[nearest] <= 3radius + tolerance ?
-           (:trench, fabrication_primitives[nearest].conductor) :
-           (:ordinary, 0)
+           (:trench, fabrication_primitives[nearest].conductor) : (:ordinary, 0)
 end
 
 function audit_source_plan_phases(
@@ -455,22 +432,41 @@ function audit_source_plan_phases(
         initialized = true
         gmsh.option.setNumber("General.Verbosity", 0)
         plan = planar_mesh_with_transition_rows(
-            edges, facets, loops, lower, upper, radius, lc_normal, lc_tangent,
-            lc_far, process_core_width, normal_growth_ratio,
-            "source_plan_phase_audit")
+            edges,
+            facets,
+            loops,
+            lower,
+            upper,
+            radius,
+            lc_normal,
+            lc_tangent,
+            lc_far,
+            process_core_width,
+            normal_growth_ratio,
+            "source_plan_phase_audit"
+        )
         plane = edges[1].point[3]
         tolerance = 1.0e-8 * radius
-        phases = [triangle_phase(
-            triangle, plan.coordinates, facets, plan.fabrication_primitives,
-            plane, radius, tolerance; etch_full_gap=false)
-                  for triangle in plan.triangles]
-        return Dict(phase => count(record -> record[1] == phase, phases)
-                    for phase in (:metal, :trench, :ordinary))
+        phases = [
+            triangle_phase(
+                triangle,
+                plan.coordinates,
+                facets,
+                plan.fabrication_primitives,
+                plane,
+                radius,
+                tolerance;
+                etch_full_gap=false
+            ) for triangle in plan.triangles
+        ]
+        return Dict(
+            phase => count(record -> record[1] == phase, phases) for
+            phase in (:metal, :trench, :ordinary)
+        )
     finally
         initialized && gmsh.finalize()
     end
 end
-
 
 function interval_material(fabricated, phase, zmid, plane, metal_thickness, overetch)
     if !fabricated
@@ -487,7 +483,7 @@ end
 
 function add_surface_elements!(surface_data, attribute, kind, connectivity)
     entry = get!(surface_data, attribute) do
-        Dict(:triangles => UInt64[], :quads => UInt64[])
+        return Dict(:triangles => UInt64[], :quads => UInt64[])
     end
     append!(entry[kind], connectivity)
     return
@@ -500,11 +496,7 @@ function edge_cluster_owner(edges, segments, point, conductor=0)
     ]
     isempty(candidates) && error("Unable to assign edge-cluster surface owner")
     index = argmin(
-        point_segment_projection(
-            point,
-            candidate.segment.first,
-            candidate.segment.second
-        ).distance for candidate in candidates
+        point_segment_projection(point, candidate.segment.first, candidate.segment.second).distance for candidate in candidates
     )
     return candidates[index].edge
 end
@@ -656,16 +648,16 @@ function add_discrete_edge_cluster_mesh!(
     # Do not register nodes inside removed metal cells. They belong to no field
     # element and Gmsh drops them on serialization, which otherwise changes the
     # linear-mesh node count (and wastes memory before writing).
-    used_nodes=Set(substrate_connectivity)
-    union!(used_nodes,vacuum_connectivity)
-    keep=findall(tag->tag in used_nodes,node_tags)
-    node_tags=node_tags[keep]
-    used_coordinates=Float64[]
-    sizehint!(used_coordinates,3length(keep))
-    for i in keep, d in 1:3
-        push!(used_coordinates,coordinates[3i-3+d])
+    used_nodes = Set(substrate_connectivity)
+    union!(used_nodes, vacuum_connectivity)
+    keep = findall(tag -> tag in used_nodes, node_tags)
+    node_tags = node_tags[keep]
+    used_coordinates = Float64[]
+    sizehint!(used_coordinates, 3length(keep))
+    for i in keep, d = 1:3
+        push!(used_coordinates, coordinates[3i - 3 + d])
     end
-    coordinates=used_coordinates
+    coordinates = used_coordinates
 
     substrate_entity = gmsh.model.addDiscreteEntity(3, 1)
     vacuum_entity = gmsh.model.addDiscreteEntity(3, 2)
@@ -700,9 +692,7 @@ function add_discrete_edge_cluster_mesh!(
     for (layer, z) in ((1, z_coordinates[1]), (layer_count, z_coordinates[end]))
         for (triangle, phase_record) in zip(plan.triangles, phases)
             adjacent_layer = layer == 1 ? 1 : layer_count - 1
-            zmid = 0.5 * (
-                z_coordinates[adjacent_layer] + z_coordinates[adjacent_layer + 1]
-            )
+            zmid = 0.5 * (z_coordinates[adjacent_layer] + z_coordinates[adjacent_layer + 1])
             material = interval_material(
                 fabricated,
                 phase_record[1],
@@ -783,14 +773,22 @@ function add_discrete_edge_cluster_mesh!(
         )
         boundary_edge = length(neighbors) == 1
         on_outer_box = (
-            (abs(plan.coordinates[first_tag][1] - lower[1]) <= tolerance &&
-             abs(plan.coordinates[second_tag][1] - lower[1]) <= tolerance) ||
-            (abs(plan.coordinates[first_tag][1] - upper[1]) <= tolerance &&
-             abs(plan.coordinates[second_tag][1] - upper[1]) <= tolerance) ||
-            (abs(plan.coordinates[first_tag][2] - lower[2]) <= tolerance &&
-             abs(plan.coordinates[second_tag][2] - lower[2]) <= tolerance) ||
-            (abs(plan.coordinates[first_tag][2] - upper[2]) <= tolerance &&
-             abs(plan.coordinates[second_tag][2] - upper[2]) <= tolerance)
+            (
+                abs(plan.coordinates[first_tag][1] - lower[1]) <= tolerance &&
+                abs(plan.coordinates[second_tag][1] - lower[1]) <= tolerance
+            ) ||
+            (
+                abs(plan.coordinates[first_tag][1] - upper[1]) <= tolerance &&
+                abs(plan.coordinates[second_tag][1] - upper[1]) <= tolerance
+            ) ||
+            (
+                abs(plan.coordinates[first_tag][2] - lower[2]) <= tolerance &&
+                abs(plan.coordinates[second_tag][2] - lower[2]) <= tolerance
+            ) ||
+            (
+                abs(plan.coordinates[first_tag][2] - upper[2]) <= tolerance &&
+                abs(plan.coordinates[second_tag][2] - upper[2]) <= tolerance
+            )
         )
         for layer = 1:(layer_count - 1)
             zmid = 0.5 * (z_coordinates[layer] + z_coordinates[layer + 1])
@@ -887,9 +885,8 @@ function add_discrete_edge_cluster_mesh!(
         error("Edge-cluster coupon exceeds node budget: $node_count > $max_nodes")
     volume_types, volume_element_tags, _ = gmsh.model.mesh.getElements(3)
     volume_count = sum(length(tags) for tags in volume_element_tags)
-    volume_count <= max_elements || error(
-        "Edge-cluster coupon exceeds element budget: $volume_count > $max_elements"
-    )
+    volume_count <= max_elements ||
+        error("Edge-cluster coupon exceeds element budget: $volume_count > $max_elements")
     all_tags = reduce(vcat, volume_element_tags; init=UInt64[])
     minimum_jacobian = minimum(gmsh.model.mesh.getElementQualities(all_tags, "minSJ"))
     minimum_jacobian > 0.0 || error("Edge-cluster coupon contains a nonpositive Jacobian")
@@ -935,7 +932,10 @@ function write_edge_cluster_metadata(
         println(stream, "  \"SweptVolumeElementCount\": $(evidence.volume_count),")
         println(stream, "  \"TransitionVolumeElementCount\": $(evidence.volume_count),")
         println(stream, "  \"InputEdgeCount\": $edge_count,")
-        println(stream, "  \"EtchFullGap\": $(hasproperty(evidence,:etch_full_gap) && evidence.etch_full_gap),")
+        println(
+            stream,
+            "  \"EtchFullGap\": $(hasproperty(evidence,:etch_full_gap) && evidence.etch_full_gap),"
+        )
         println(stream, "  \"FineSize\": $lc_normal,")
         println(stream, "  \"NormalSize\": $lc_normal,")
         println(stream, "  \"TangentialSize\": $lc_tangent,")
@@ -943,20 +943,14 @@ function write_edge_cluster_metadata(
         println(stream, "  \"ProcessCoreWidth\": $core_width,")
         println(stream, "  \"NormalGrowthRatio\": $growth_ratio,")
         println(stream, "  \"NormalCoordinates\": $(json_array(plan.normal_distances)),")
-        println(
-            stream,
-            "  \"MeasuredFirstNormalSpacing\": $(plan.normal_distances[2]),"
-        )
+        println(stream, "  \"MeasuredFirstNormalSpacing\": $(plan.normal_distances[2]),")
         println(stream, "  \"NormalCoordinateCount\": $(length(plan.normal_distances)),")
         println(
             stream,
             "  \"MeasuredMaximumLongitudinalSpacing\": " *
             "$(plan.maximum_tangent_spacing),"
         )
-        println(
-            stream,
-            "  \"MeasuredMaximumFarSpacing\": $(plan.maximum_far_spacing),"
-        )
+        println(stream, "  \"MeasuredMaximumFarSpacing\": $(plan.maximum_far_spacing),")
         println(stream, "  \"FabricationNormalCoordinates\": $(json_array(z_coordinates)),")
         println(stream, "  \"PlanTriangleCount\": $(evidence.plan_triangle_count),")
         println(stream, "  \"EmbeddedCurveCount\": $(plan.embedded_curve_count),")
@@ -970,8 +964,7 @@ function write_edge_cluster_metadata(
         println(stream, "  \"NonmanifoldFaceCount\": $(evidence.face_counts.nonmanifold),")
         println(
             stream,
-            "  \"SurfaceAttributes\": " *
-            "$(json_array(evidence.surface_attributes)),"
+            "  \"SurfaceAttributes\": " * "$(json_array(evidence.surface_attributes)),"
         )
         println(stream, "  \"VolumeAttributes\": [1, 2],")
         println(
@@ -982,7 +975,7 @@ function write_edge_cluster_metadata(
         )
         println(stream, "  \"MinimumScaledJacobian\": $(evidence.minimum_jacobian),")
         println(stream, "  \"MeshOrder\": $mesh_order")
-        println(stream, "}")
+        return println(stream, "}")
     end
     return
 end
@@ -1010,20 +1003,16 @@ function generate_masked_edge_cluster_coupon(;
     filename::String,
     etch_full_gap::Bool=false
 )
-    abs(sidewall_angle - 90.0) <= 1.0e-12 || error(
-        "Masked edge-cluster transition meshing requires 90 degree sidewalls"
-    )
-    top_rounding == 0.0 || error(
-        "Masked edge-cluster transition meshing requires zero top rounding"
-    )
-    trench_rounding == 0.0 || error(
-        "Masked edge-cluster transition meshing requires zero trench rounding"
-    )
+    abs(sidewall_angle - 90.0) <= 1.0e-12 ||
+        error("Masked edge-cluster transition meshing requires 90 degree sidewalls")
+    top_rounding == 0.0 ||
+        error("Masked edge-cluster transition meshing requires zero top rounding")
+    trench_rounding == 0.0 ||
+        error("Masked edge-cluster transition meshing requires zero trench rounding")
     normal_growth_ratio > 1.0 || error("normal growth ratio must exceed one")
     edges = read_edges(signature)
-    !isempty(edges) || error(
-        "Masked edge-cluster transition meshing requires at least one edge"
-    )
+    !isempty(edges) ||
+        error("Masked edge-cluster transition meshing requires at least one edge")
     facets = read_mask(mask)
     loops = read_boundary(boundary)
     isempty(facets) && error("Masked edge-cluster meshing requires mask facets")
@@ -1033,9 +1022,8 @@ function generate_masked_edge_cluster_coupon(;
     edge_conductors = Set(edge.conductor for edge in edges)
     facet_conductors = Set(facet.conductor for facet in facets)
     loop_conductors = Set(loop.conductor for loop in loops)
-    edge_conductors == facet_conductors == loop_conductors || error(
-        "Edge, mask, and classified-boundary conductor sets do not agree"
-    )
+    edge_conductors == facet_conductors == loop_conductors ||
+        error("Edge, mask, and classified-boundary conductor sets do not agree")
     all(abs(edge.point[3] - edges[1].point[3]) <= 1.0e-10radius for edge in edges) ||
         error("Masked edge-cluster edges must share one fabrication plane")
     all(abs(facet.plane - edges[1].point[3]) <= 1.0e-10radius for facet in facets) ||
@@ -1044,17 +1032,15 @@ function generate_masked_edge_cluster_coupon(;
         error("Classified boundaries do not lie on the fabrication plane")
     all(edge.normal_sign == edges[1].normal_sign for edge in edges) ||
         error("Masked edge-cluster edges must share one fabrication normal")
-    edges[1].normal_sign > 0.0 || error(
-        "Masked edge-cluster transition meshing requires positive process normal"
-    )
+    edges[1].normal_sign > 0.0 ||
+        error("Masked edge-cluster transition meshing requires positive process normal")
 
     lower, upper = coupon_bounds(edges, radius, metal_thickness, overetch)
-    core_width = process_core_width > 0.0 ?
-                 process_core_width :
-                 max(2metal_thickness, 4overetch, 8lc_normal)
-    core_width >= 8lc_normal || error(
-        "Edge-cluster collar width must contain at least eight first-layer spacings"
-    )
+    core_width =
+        process_core_width > 0.0 ? process_core_width :
+        max(2metal_thickness, 4overetch, 8lc_normal)
+    core_width >= 8lc_normal ||
+        error("Edge-cluster collar width must contain at least eight first-layer spacings")
     initialized = false
     try
         gmsh.initialize()
@@ -1088,9 +1074,7 @@ function generate_masked_edge_cluster_coupon(;
 
         # Replace the temporary OCC plan model with one discrete 3D model.
         gmsh.clear()
-        gmsh.model.add(
-            "spatial_coupon_edge_cluster_$(fabricated ? "fabricated" : "thin")"
-        )
+        gmsh.model.add("spatial_coupon_edge_cluster_$(fabricated ? "fabricated" : "thin")")
         evidence = add_discrete_edge_cluster_mesh!(
             plan,
             edges,
@@ -1126,20 +1110,17 @@ function generate_masked_edge_cluster_coupon(;
             "$written_elements != $(evidence.volume_count)"
         )
         all_written_tags = reduce(vcat, written_tags; init=UInt64[])
-        written_jacobian = minimum(
-            gmsh.model.mesh.getElementQualities(all_written_tags, "minSJ")
-        )
+        written_jacobian =
+            minimum(gmsh.model.mesh.getElementQualities(all_written_tags, "minSJ"))
         written_jacobian > 0.0 ||
             error("Serialized edge-cluster mesh contains a nonpositive Jacobian")
         written_faces = prism_face_counts()
         written_faces == evidence.face_counts ||
             error("Serialized edge-cluster face topology changed after writing")
-        written_attributes = sort!([
-            Int(tag) for (_, tag) in gmsh.model.getPhysicalGroups(2)
-        ])
-        written_attributes == evidence.surface_attributes || error(
-            "Serialized edge-cluster physical attributes changed after writing"
-        )
+        written_attributes =
+            sort!([Int(tag) for (_, tag) in gmsh.model.getPhysicalGroups(2)])
+        written_attributes == evidence.surface_attributes ||
+            error("Serialized edge-cluster physical attributes changed after writing")
         serialized_evidence = merge(
             evidence,
             (

@@ -9,27 +9,54 @@ include(joinpath(@__DIR__, "mesh_spatial_coupon.jl"))
 # coordinate descent and its floors.
 
 @testset "required region rule matches the metric stage" begin
-    points = hcat([0.01, 0.01, 0.01], [0.05, 0.0, 0.0], [0.0, 0.05, 0.0], [0.0, 0.0, 0.05],
-                  [0.2, 0.0, 0.0], [0.3, 0.0, 0.0], [0.2, 0.1, 0.0], [0.2, 0.0, 0.1],
-                  [5.0, 0.03, 0.0], [5.2, 0.03, 0.0], [5.1, 0.5, 0.0], [5.1, 0.03, 0.5],
-                  [5.0, 0.04, 0.0], [5.2, 0.04, 0.0], [5.1, 0.5, 0.0], [5.1, 0.04, 0.5])
+    points = hcat(
+        [0.01, 0.01, 0.01],
+        [0.05, 0.0, 0.0],
+        [0.0, 0.05, 0.0],
+        [0.0, 0.0, 0.05],
+        [0.2, 0.0, 0.0],
+        [0.3, 0.0, 0.0],
+        [0.2, 0.1, 0.0],
+        [0.2, 0.0, 0.1],
+        [5.0, 0.03, 0.0],
+        [5.2, 0.03, 0.0],
+        [5.1, 0.5, 0.0],
+        [5.1, 0.03, 0.5],
+        [5.0, 0.04, 0.0],
+        [5.2, 0.04, 0.0],
+        [5.1, 0.5, 0.0],
+        [5.1, 0.04, 0.5]
+    )
     tetrahedra = [(1, 2, 3, 4), (5, 6, 7, 8), (9, 10, 11, 12), (13, 14, 15, 16)]
     spans = [([1.0, 0.0, 0.0], [9.0, 0.0, 0.0])]
     reach = 0.028 * 1.05 + 0.004
-    required, distance = required_region_cells(points, tetrahedra, [(0.0, 0.0, 0.0)], 0.1,
-                                               spans, reach)
+    required, distance =
+        required_region_cells(points, tetrahedra, [(0.0, 0.0, 0.0)], 0.1, spans, reach)
     @test collect(required) == [true, false, true, false]
     @test distance[9] ≈ 0.03 && distance[13] ≈ 0.04
     @test span_point_distance([5.0, -2.0, 0.05], [9.9, -2.0, 0.0], [0.2, -2.0, 0.0]) ≈ 0.05
     @test span_point_distance([12.0, -2.0, 0.0], [9.9, -2.0, 0.0], [0.2, -2.0, 0.0]) ≈ 2.1
-    none, _ = required_region_cells(points, tetrahedra, [(0.0, 0.0, 0.0)], 0.1,
-                                    Tuple{Vector{Float64}, Vector{Float64}}[], 0.0)
+    none, _ = required_region_cells(
+        points,
+        tetrahedra,
+        [(0.0, 0.0, 0.0)],
+        0.1,
+        Tuple{Vector{Float64}, Vector{Float64}}[],
+        0.0
+    )
     @test collect(none) == [true, false, false, false]
 end
 
 @testset "surface movement bases: plane, line, fixed" begin
-    points = hcat([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
-                  [1.0, 1.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 1.0])
+    points = hcat(
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [1.0, 1.0, 0.0],
+        [1.0, 0.0, 1.0],
+        [0.0, 1.0, 1.0]
+    )
     # Node 1 lies on z = 0, y = 0 and x = 0 (three planes): fixed. Node 2 lies on
     # z = 0 and y = 0: moves along x. Node 5 lies on z = 0 only: moves in the plane.
     triangles = [(1, 2, 5), (1, 5, 3), (1, 2, 6), (1, 6, 4), (1, 3, 7), (1, 7, 4)]
@@ -45,13 +72,13 @@ end
 # quality (the corner's three edges become coplanar as the height vanishes).
 function corner_fan(apex_height; ring=6, radius=0.025)
     points = zeros(3, ring + 2)
-    for i in 1:ring
+    for i = 1:ring
         angle = 2pi * (i - 1) / ring
         points[:, 1 + i] = [radius * cos(angle), radius * sin(angle), 0.0]
     end
     points[:, ring + 2] = [0.5 * radius, 0.0, apex_height]
-    tetrahedra = [(1, 1 + i, 1 + mod(i, ring) + 1, ring + 2) for i in 1:ring]
-    triangles = [(1, 1 + i, 1 + mod(i, ring) + 1) for i in 1:ring]
+    tetrahedra = [(1, 1 + i, 1 + mod(i, ring) + 1, ring + 2) for i = 1:ring]
+    triangles = [(1, 1 + i, 1 + mod(i, ring) + 1) for i = 1:ring]
     return points, tetrahedra, triangles
 end
 
@@ -66,13 +93,24 @@ end
     # The corner (1) and the ring lie on z = 0; the corner is additionally pinned by
     # making it fixed (three planes are not present here, so fix it explicitly).
     bases[1] = zeros(3, 0)
-    scaled = [tetrahedron_scaled_jacobian([points[:, i] for i in cell]) for cell in tetrahedra]
+    scaled =
+        [tetrahedron_scaled_jacobian([points[:, i] for i in cell]) for cell in tetrahedra]
     @test all(<(0.02), scaled)
     floors = min.(scaled, 0.02)
     bounds = fill(0.75 * 0.025, size(points, 2))
     targets = collect(eachindex(tetrahedra))
-    value, moves = optimize_seed_cells!(points, original, tetrahedra, incident, bases, floors,
-                                        bounds, targets, :scaled, 0.02)
+    value, moves = optimize_seed_cells!(
+        points,
+        original,
+        tetrahedra,
+        incident,
+        bases,
+        floors,
+        bounds,
+        targets,
+        :scaled,
+        0.02
+    )
     @test moves > 0
     @test value >= 0.02
     displacement = [norm(points[:, i] .- original[:, i]) for i in axes(points, 2)]
@@ -80,15 +118,30 @@ end
     # Only the apex (interior) moved; the ring stayed on z = 0 and the corner is fixed.
     @test displacement[1] == 0.0
     @test all(abs.(points[3, 2:7]) .< 1e-15)
-    @test all(tetrahedron_scaled_jacobian([points[:, i] for i in cell]) > 0 for cell in tetrahedra)
+    @test all(
+        tetrahedron_scaled_jacobian([points[:, i] for i in cell]) > 0 for cell in tetrahedra
+    )
     # The aspect objective on the same fan: the maximum incident aspect decreases.
     points2, tetrahedra2, triangles2 = corner_fan(0.002)
     original2 = copy(points2)
-    bases2 = surface_movement_bases(points2, triangles2); bases2[1] = zeros(3, 0)
-    scaled2 = [tetrahedron_scaled_jacobian([points2[:, i] for i in cell]) for cell in tetrahedra2]
-    before = maximum(tetrahedron_aspect([points2[:, i] for i in cell]) for cell in tetrahedra2)
-    aspect, _ = optimize_seed_cells!(points2, original2, tetrahedra2, incident, bases2,
-                                     min.(scaled2, 0.02), bounds, targets, :aspect, 3.8)
+    bases2 = surface_movement_bases(points2, triangles2);
+    bases2[1] = zeros(3, 0)
+    scaled2 =
+        [tetrahedron_scaled_jacobian([points2[:, i] for i in cell]) for cell in tetrahedra2]
+    before =
+        maximum(tetrahedron_aspect([points2[:, i] for i in cell]) for cell in tetrahedra2)
+    aspect, _ = optimize_seed_cells!(
+        points2,
+        original2,
+        tetrahedra2,
+        incident,
+        bases2,
+        min.(scaled2, 0.02),
+        bounds,
+        targets,
+        :aspect,
+        3.8
+    )
     @test aspect < before
     @test aspect <= 3.8 + 1e-6
     # The guards of decision 34: with an edge floor above every edge of the apex
@@ -97,26 +150,51 @@ end
     # with a higher Jacobian condition; the scaled objective is still reached.
     points3, tetrahedra3, triangles3 = corner_fan(0.0002)
     original3 = copy(points3)
-    bases3 = surface_movement_bases(points3, triangles3); bases3[1] = zeros(3, 0)
-    scaled3 = [tetrahedron_scaled_jacobian([points3[:, i] for i in cell]) for cell in tetrahedra3]
+    bases3 = surface_movement_bases(points3, triangles3);
+    bases3[1] = zeros(3, 0)
+    scaled3 =
+        [tetrahedron_scaled_jacobian([points3[:, i] for i in cell]) for cell in tetrahedra3]
     condition3 = [tetrahedron_aspect([points3[:, i] for i in cell]) for cell in tetrahedra3]
     apex = size(points3, 2)
-    lengths_before = [norm(points3[:, j] .- points3[:, apex]) for j in 1:(apex - 1)]
-    value3, moves3 = optimize_seed_cells!(points3, original3, tetrahedra3, incident, bases3,
-                                          min.(scaled3, 0.02), bounds, targets, :scaled, 0.02;
-                                          condition_ceilings=condition3,
-                                          edge_floors=fill(1.0, size(points3, 2)))
+    lengths_before = [norm(points3[:, j] .- points3[:, apex]) for j = 1:(apex - 1)]
+    value3, moves3 = optimize_seed_cells!(
+        points3,
+        original3,
+        tetrahedra3,
+        incident,
+        bases3,
+        min.(scaled3, 0.02),
+        bounds,
+        targets,
+        :scaled,
+        0.02;
+        condition_ceilings=condition3,
+        edge_floors=fill(1.0, size(points3, 2))
+    )
     @test moves3 > 0 && value3 >= 0.02
-    lengths_after = [norm(points3[:, j] .- points3[:, apex]) for j in 1:(apex - 1)]
+    lengths_after = [norm(points3[:, j] .- points3[:, apex]) for j = 1:(apex - 1)]
     @test all(lengths_after .>= lengths_before .* (1 - 1e-9))
-    @test all(tetrahedron_aspect([points3[:, i] for i in cell]) <= ceiling * (1 + 1e-9)
-              for (cell, ceiling) in zip(tetrahedra3, condition3))
+    @test all(
+        tetrahedron_aspect([points3[:, i] for i in cell]) <= ceiling * (1 + 1e-9) for
+        (cell, ceiling) in zip(tetrahedra3, condition3)
+    )
     # A floor below every edge never binds: the unguarded result is reproduced.
     points4, tetrahedra4, triangles4 = corner_fan(0.0002)
-    bases4 = surface_movement_bases(points4, triangles4); bases4[1] = zeros(3, 0)
-    optimize_seed_cells!(points4, copy(points4), tetrahedra4, incident, bases4,
-                         min.(scaled3, 0.02), bounds, targets, :scaled, 0.02;
-                         edge_floors=fill(1.0e-6, size(points4, 2)))
+    bases4 = surface_movement_bases(points4, triangles4);
+    bases4[1] = zeros(3, 0)
+    optimize_seed_cells!(
+        points4,
+        copy(points4),
+        tetrahedra4,
+        incident,
+        bases4,
+        min.(scaled3, 0.02),
+        bounds,
+        targets,
+        :scaled,
+        0.02;
+        edge_floors=fill(1.0e-6, size(points4, 2))
+    )
     @test points4 == points
 end
 
@@ -124,7 +202,9 @@ end
     @test length(descent_directions(Matrix{Float64}(I, 3, 3))) == 26
     @test length(descent_directions(Matrix{Float64}(I, 3, 3)[:, 1:2])) == 8
     @test length(descent_directions(Matrix{Float64}(I, 3, 3)[:, 1:1])) == 2
-    @test all(abs(norm(d) - 1.0) < 1e-12 for d in descent_directions(Matrix{Float64}(I, 3, 3)))
+    @test all(
+        abs(norm(d) - 1.0) < 1e-12 for d in descent_directions(Matrix{Float64}(I, 3, 3))
+    )
 end
 
 # A corner fan plus a layer needle whose repair carries its free apex across the
@@ -132,9 +212,15 @@ end
 function fan_with_layer_needle()
     points, tetrahedra, triangles = corner_fan(0.0125)
     n = size(points, 2)
-    layer = hcat([1.5, 0.0, 0.030], [1.55, 0.0, 0.030], [1.5, 0.02, 0.030],
-                 [1.525, 0.007, 0.0302],
-                 [1.5, 0.0, 0.06], [1.55, 0.0, 0.06], [1.5, 0.02, 0.06])
+    layer = hcat(
+        [1.5, 0.0, 0.030],
+        [1.55, 0.0, 0.030],
+        [1.5, 0.02, 0.030],
+        [1.525, 0.007, 0.0302],
+        [1.5, 0.0, 0.06],
+        [1.55, 0.0, 0.06],
+        [1.5, 0.02, 0.06]
+    )
     points = hcat(points, layer)
     needle = (n + 1, n + 2, n + 3, n + 4)
     neighbor = (n + 5, n + 7, n + 6, n + 4)
@@ -152,9 +238,24 @@ end
     # required before any move; the neighbor's other vertices are beyond reach.
     @test before[length(tetrahedra) - 1] && before[length(tetrahedra)]
     @test tetrahedron_scaled_jacobian([points[:, i] for i in needle]) < 0.02
-    record, moved = optimize_required_region!(points, tetrahedra, triangles, corners, 0.1,
-                                              0.025, spans, edge_size, 2.0, thickness, zigzag,
-                                              4.0, 0.01, 1000.0, 0.75, 1e-9)
+    record, moved = optimize_required_region!(
+        points,
+        tetrahedra,
+        triangles,
+        corners,
+        0.1,
+        0.025,
+        spans,
+        edge_size,
+        2.0,
+        thickness,
+        zigzag,
+        4.0,
+        0.01,
+        1000.0,
+        0.75,
+        1e-9
+    )
     after, _ = required_region_cells(points, tetrahedra, corners, 0.1, spans, reach)
     @test record["RequiredTetrahedra"] == count(after)
     @test record["RequiredTetrahedraBeforeMoves"] == count(before)
@@ -170,13 +271,32 @@ end
     else
         @test record["RequiredSetRecomputations"] == 1
     end
-    @test all(tetrahedron_scaled_jacobian([points[:, i] for i in cell]) > 0 for cell in tetrahedra)
+    @test all(
+        tetrahedron_scaled_jacobian([points[:, i] for i in cell]) > 0 for cell in tetrahedra
+    )
     # Without any layer the set is the corner ball only and never changes.
     points0, tetrahedra0, triangles0 = corner_fan(0.0125)
-    record0, _ = optimize_required_region!(points0, tetrahedra0, triangles0, corners, 0.1, 0.025,
-                                           Tuple{Vector{Float64}, Vector{Float64}}[], 0.0, 2.0,
-                                           0.0, zigzag, 4.0, 0.01, 1000.0, 0.75, 1e-9)
-    @test record0["RequiredTetrahedra"] == length(tetrahedra0) == record0["RequiredTetrahedraBeforeMoves"]
+    record0, _ = optimize_required_region!(
+        points0,
+        tetrahedra0,
+        triangles0,
+        corners,
+        0.1,
+        0.025,
+        Tuple{Vector{Float64}, Vector{Float64}}[],
+        0.0,
+        2.0,
+        0.0,
+        zigzag,
+        4.0,
+        0.01,
+        1000.0,
+        0.75,
+        1e-9
+    )
+    @test record0["RequiredTetrahedra"] ==
+          length(tetrahedra0) ==
+          record0["RequiredTetrahedraBeforeMoves"]
     @test record0["LayerRequiredReach"] === nothing
     @test record0["RequiredSetRecomputations"] == 1
 end
@@ -188,7 +308,8 @@ end
 function fan_with_layer_slab(height)
     points, tetrahedra, triangles = corner_fan(0.0125)
     n = size(points, 2)
-    slab = hcat([1.5, 0.0, 0.0], [1.75, 0.0, 0.0], [1.75, 0.002, 0.0], [1.75, 0.002, height])
+    slab =
+        hcat([1.5, 0.0, 0.0], [1.75, 0.0, 0.0], [1.75, 0.002, 0.0], [1.75, 0.002, height])
     return hcat(points, slab), vcat(tetrahedra, [(n + 1, n + 2, n + 3, n + 4)]), triangles
 end
 
@@ -208,17 +329,50 @@ end
     # Without the rule the slab is a scaled-Jacobian-gated required cell and the
     # bounded repair (0.75 x ~2 nm) cannot lift it to the gate: fails closed.
     @test_throws ErrorException optimize_required_region!(
-        copy(points), copy(tetrahedra), triangles, corners, 0.1, 0.025, spans, edge_size, 2.0,
-        thickness, zigzag, 4.0, 0.01, 1000.0, 0.75, 1e-9)
+        copy(points),
+        copy(tetrahedra),
+        triangles,
+        corners,
+        0.1,
+        0.025,
+        spans,
+        edge_size,
+        2.0,
+        thickness,
+        zigzag,
+        4.0,
+        0.01,
+        1000.0,
+        0.75,
+        1e-9
+    )
     # With the rule the slab is gated by orientation and edge aspect: the aspect
     # repair lifts the apex within the bound and the scaled Jacobian is a diagnostic.
-    moved_points = copy(points); moved_cells = copy(tetrahedra)
+    moved_points = copy(points);
+    moved_cells = copy(tetrahedra)
     record, moved, collapse = optimize_required_region!(
-        moved_points, moved_cells, triangles, corners, 0.1, 0.025, spans, edge_size, 2.0,
-        thickness, zigzag, 4.0, 0.01, 1000.0, 0.75, 1e-9; edge_layer_maximum_aspect=200.0)
+        moved_points,
+        moved_cells,
+        triangles,
+        corners,
+        0.1,
+        0.025,
+        spans,
+        edge_size,
+        2.0,
+        thickness,
+        zigzag,
+        4.0,
+        0.01,
+        1000.0,
+        0.75,
+        1e-9;
+        edge_layer_maximum_aspect=200.0
+    )
     rule = record["EdgeLayerQualityRule"]
     @test rule["LayerCells"] == 1 && record["SubSizeEdgeCollapse"]["CollapsedVertices"] == 0
-    @test isempty(collapse.cells_removed) && isempty(collapse.cells_remapped) &&
+    @test isempty(collapse.cells_removed) &&
+          isempty(collapse.cells_remapped) &&
           moved_cells == tetrahedra
     @test rule["MaximumEdgeAspect"] == 200.0 && rule["EdgeAspectTarget"] == 190.0
     @test rule["MaximumEdgeAspectBefore"] > 200.0
@@ -232,18 +386,52 @@ end
     @test !isempty(moved)
     # A bound the bounded repair cannot reach fails closed.
     @test_throws ErrorException optimize_required_region!(
-        copy(points), copy(tetrahedra), triangles, corners, 0.1, 0.025, spans, edge_size, 2.0,
-        thickness, zigzag, 4.0, 0.01, 1000.0, 0.75, 1e-9; edge_layer_maximum_aspect=1.5)
+        copy(points),
+        copy(tetrahedra),
+        triangles,
+        corners,
+        0.1,
+        0.025,
+        spans,
+        edge_size,
+        2.0,
+        thickness,
+        zigzag,
+        4.0,
+        0.01,
+        1000.0,
+        0.75,
+        1e-9;
+        edge_layer_maximum_aspect=1.5
+    )
     # The rule needs a seeded layer.
     points0, tetrahedra0, triangles0 = corner_fan(0.0125)
     @test_throws ErrorException optimize_required_region!(
-        points0, tetrahedra0, triangles0, corners, 0.1, 0.025,
-        Tuple{Vector{Float64}, Vector{Float64}}[], 0.0, 2.0, 0.0, zigzag, 4.0, 0.01, 1000.0, 0.75, 1e-9;
-        edge_layer_maximum_aspect=100.0)
+        points0,
+        tetrahedra0,
+        triangles0,
+        corners,
+        0.1,
+        0.025,
+        Tuple{Vector{Float64}, Vector{Float64}}[],
+        0.0,
+        2.0,
+        0.0,
+        zigzag,
+        4.0,
+        0.01,
+        1000.0,
+        0.75,
+        1e-9;
+        edge_layer_maximum_aspect=100.0
+    )
     # Edge aspect: unit right tetrahedron sqrt(6); a 50 x 50 x 1 slab ~ 70.7.
-    @test tetrahedron_edge_aspect([[0.0, 0, 0], [1.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]]) ≈ sqrt(6)
-    @test tetrahedron_edge_aspect([[0.0, 0, 0], [50.0, 0, 0], [0, 50.0, 0], [0, 0, 1.0]]) ≈ 70.7389567 atol=1e-6
-    @test tetrahedron_edge_aspect([[0.0, 0, 0], [1.0, 0, 0], [0, 1.0, 0], [1.0, 1.0, 0]]) == Inf
+    @test tetrahedron_edge_aspect([[0.0, 0, 0], [1.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]]) ≈
+          sqrt(6)
+    @test tetrahedron_edge_aspect([[0.0, 0, 0], [50.0, 0, 0], [0, 50.0, 0], [0, 0, 1.0]]) ≈
+          70.7389567 atol=1e-6
+    @test tetrahedron_edge_aspect([[0.0, 0, 0], [1.0, 0, 0], [0, 1.0, 0], [1.0, 1.0, 0]]) ==
+          Inf
 end
 
 # A seed volume vertex 0.28 nm from a row node (below EdgeSize = the adapter hmin)
@@ -258,8 +446,13 @@ end
     edge_size, thickness, zigzag = 0.001, 0.031, 0.05
     points, tetrahedra, triangles = corner_fan(0.0125)
     n = size(points, 2)
-    extra = hcat([1.5, 0.0, 0.0], [1.55, 0.0, 0.0], [1.55, 0.002, 0.0], [1.5, 0.0002, 0.0002],
-                 [1.55, 0.002, 0.003])
+    extra = hcat(
+        [1.5, 0.0, 0.0],
+        [1.55, 0.0, 0.0],
+        [1.55, 0.002, 0.0],
+        [1.5, 0.0002, 0.0002],
+        [1.55, 0.002, 0.003]
+    )
     points = hcat(points, extra)
     w, p2, p3, v, q = n + 1, n + 2, n + 3, n + 4, n + 5
     flat = positively_oriented(points, (w, p2, p3, v))
@@ -270,14 +463,33 @@ end
     cells_before = length(tetrahedra)
     @test tetrahedron_edge_aspect([points[:, i] for i in flat]) > 200.0
     record, moved, collapse = optimize_required_region!(
-        points, tetrahedra, triangles, corners, 0.1, 0.025, spans, edge_size, 2.0,
-        thickness, zigzag, 4.0, 0.01, 1000.0, 0.75, 1e-9; edge_layer_maximum_aspect=200.0)
+        points,
+        tetrahedra,
+        triangles,
+        corners,
+        0.1,
+        0.025,
+        spans,
+        edge_size,
+        2.0,
+        thickness,
+        zigzag,
+        4.0,
+        0.01,
+        1000.0,
+        0.75,
+        1e-9;
+        edge_layer_maximum_aspect=200.0
+    )
     rule = record["EdgeLayerQualityRule"]
     collapsed = record["SubSizeEdgeCollapse"]
-    @test collapsed["CollapseSize"] == edge_size && collapsed["CollapseThreshold"] == 0.5 * edge_size
+    @test collapsed["CollapseSize"] == edge_size &&
+          collapsed["CollapseThreshold"] == 0.5 * edge_size
     @test collapsed["ScaledJacobianGate"] == 0.0
-    @test collapsed["CollapsedVertices"] == 1 && collapsed["CollapsedCells"] == 1 &&
-          collapsed["RemappedCells"] == 1 && collapsed["CollapsedInteriorVertices"] == 1
+    @test collapsed["CollapsedVertices"] == 1 &&
+          collapsed["CollapsedCells"] == 1 &&
+          collapsed["RemappedCells"] == 1 &&
+          collapsed["CollapsedInteriorVertices"] == 1
     @test collapsed["CollapsedTriangles"] == 0 && collapsed["RemappedTriangles"] == 0
     @test collapsed["ShortestCollapsedEdge"] ≈ norm(extra[:, 4] .- extra[:, 1])
     @test collapsed["Collapses"][1]["Position"] == extra[:, 4]
@@ -288,21 +500,40 @@ end
     @test !(v in Iterators.flatten(tetrahedra))   # the collapsed vertex is orphaned
     @test rule["LayerCells"] == 1 && rule["CellsAboveBoundAfter"] == 0
     @test rule["MaximumEdgeAspectBeforeCollapse"] > 200.0
-    @test all(tetrahedron_scaled_jacobian([points[:, i] for i in cell]) > 0 for cell in tetrahedra)
+    @test all(
+        tetrahedron_scaled_jacobian([points[:, i] for i in cell]) > 0 for cell in tetrahedra
+    )
     # The remapped cell is the other cell with v replaced by w.
     @test tetrahedra[end] == ntuple(i -> other[i] == v ? w : other[i], 4)
     # Without the rule the same collapse happens under the scaled-Jacobian gate
     # guard (the other cell is below the gate before and after) and no rule record
     # is written.
     points2, tetrahedra2, _ = corner_fan(0.0125)
-    points2 = hcat(points2, extra); tetrahedra2 = vcat(tetrahedra2, [flat, other])
+    points2 = hcat(points2, extra);
+    tetrahedra2 = vcat(tetrahedra2, [flat, other])
     record2, _, collapse2 = optimize_required_region!(
-        points2, tetrahedra2, triangles, corners, 0.1, 0.025, spans, edge_size, 2.0,
-        thickness, zigzag, 4.0, 0.01, 1000.0, 0.75, 1e-9)
+        points2,
+        tetrahedra2,
+        triangles,
+        corners,
+        0.1,
+        0.025,
+        spans,
+        edge_size,
+        2.0,
+        thickness,
+        zigzag,
+        4.0,
+        0.01,
+        1000.0,
+        0.75,
+        1e-9
+    )
     @test record2["EdgeLayerQualityRule"] === nothing
     @test record2["SubSizeEdgeCollapse"]["ScaledJacobianGate"] == 0.01
     @test record2["SubSizeEdgeCollapse"]["CollapsedVertices"] == 1
-    @test collapse2.cells_removed == [cells_before - 1] && length(tetrahedra2) == cells_before - 1
+    @test collapse2.cells_removed == [cells_before - 1] &&
+          length(tetrahedra2) == cells_before - 1
     @test record2["SubSizeEdgeCollapse"]["Collapses"][1]["CavityMaximumJacobianCondition"] <
           record2["SubSizeEdgeCollapse"]["Collapses"][1]["ReplacedMaximumJacobianCondition"]
     @test record2["RequiredCellsAboveConditionAfter"] == 0
@@ -318,17 +549,33 @@ end
 function layer_face_with_sliver()
     points, tetrahedra, triangles = corner_fan(0.0125)
     n = size(points, 2)
-    face = hcat([5.0, 0.001, 0.1], [5.00004, 0.00102, 0.1], [5.012, 0.0, 0.1], [4.988, 0.0, 0.1],
-                [5.0, 0.003, 0.1], [5.012, 0.003, 0.1], [4.988, 0.003, 0.1],
-                [5.0, 0.0015, 0.1025], [5.0, 0.0015, 0.099])
+    face = hcat(
+        [5.0, 0.001, 0.1],
+        [5.00004, 0.00102, 0.1],
+        [5.012, 0.0, 0.1],
+        [4.988, 0.0, 0.1],
+        [5.0, 0.003, 0.1],
+        [5.012, 0.003, 0.1],
+        [4.988, 0.003, 0.1],
+        [5.0, 0.0015, 0.1025],
+        [5.0, 0.0015, 0.099]
+    )
     points = hcat(points, face)
     w, v, a, b, c, d, e, q, p = n .+ (1:9)
-    face_triangles = [(b, a, w), (a, v, w), (a, d, v), (d, c, v), (c, w, v), (c, e, w), (e, b, w)]
-    cells = vcat([positively_oriented(points, (t..., q)) for t in face_triangles],
-                 [positively_oriented(points, (t..., p)) for t in face_triangles])
+    face_triangles =
+        [(b, a, w), (a, v, w), (a, d, v), (d, c, v), (c, w, v), (c, e, w), (e, b, w)]
+    cells = vcat(
+        [positively_oriented(points, (t..., q)) for t in face_triangles],
+        [positively_oriented(points, (t..., p)) for t in face_triangles]
+    )
     entities = vcat(fill(1, length(triangles)), fill(7, length(face_triangles)))
-    return (points, vcat(tetrahedra, cells), vcat(triangles, face_triangles), entities,
-            (w=w, v=v, a=a, b=b, c=c, d=d, e=e, q=q, p=p))
+    return (
+        points,
+        vcat(tetrahedra, cells),
+        vcat(triangles, face_triangles),
+        entities,
+        (w=w, v=v, a=a, b=b, c=c, d=d, e=e, q=q, p=p)
+    )
 end
 
 @testset "layer-surface sub-EdgeSize vertices are collapsed along their face (EL1c cells)" begin
@@ -336,41 +583,72 @@ end
     corners = [(0.0, 0.0, 0.0)]
     edge_size, thickness, zigzag = 0.001, 0.031, 0.05
     points, tetrahedra, triangles, entities, node = layer_face_with_sliver()
-    cells_before = length(tetrahedra); triangles_before = length(triangles)
+    cells_before = length(tetrahedra);
+    triangles_before = length(triangles)
     sliver = [k for (k, cell) in enumerate(tetrahedra) if node.v in cell && node.w in cell]
     @test length(sliver) == 4
-    @test maximum(tetrahedron_aspect([points[:, i] for i in tetrahedra[k]]) for k in sliver) > 1000.0
+    @test maximum(
+        tetrahedron_aspect([points[:, i] for i in tetrahedra[k]]) for k in sliver
+    ) > 1000.0
     # The first row is a seeded line (1D support) on the face; the ridge nodes lie
     # on the ridge line and would carry the sidewall too.
-    lines = [(node.w, node.c)]; line_entities = [11]
+    lines = [(node.w, node.c)];
+    line_entities = [11]
     # Without the collapse the required region fails the condition gate (the
     # slivers are scaled-Jacobian-gated required cells no bounded move repairs).
     record, moved, collapse = optimize_required_region!(
-        points, tetrahedra, triangles, corners, 0.1, 0.025, spans, edge_size, 2.0,
-        thickness, zigzag, 4.0, 0.01, 1000.0, 0.75, 1e-9;
-        triangle_entities=entities, lines=lines, line_entities=line_entities)
+        points,
+        tetrahedra,
+        triangles,
+        corners,
+        0.1,
+        0.025,
+        spans,
+        edge_size,
+        2.0,
+        thickness,
+        zigzag,
+        4.0,
+        0.01,
+        1000.0,
+        0.75,
+        1e-9;
+        triangle_entities=entities,
+        lines=lines,
+        line_entities=line_entities
+    )
     collapsed = record["SubSizeEdgeCollapse"]
     @test collapsed["CollapsedVertices"] == 1 && collapsed["CollapsedSurfaceVertices"] == 1
     row = collapsed["Collapses"][1]
     @test row["Surface"] == true
-    @test row["Position"] ≈ [5.00004, 0.00102, 0.1] && row["TargetPosition"] ≈ [5.0, 0.001, 0.1]
+    @test row["Position"] ≈ [5.00004, 0.00102, 0.1] &&
+          row["TargetPosition"] ≈ [5.0, 0.001, 0.1]
     @test row["EdgeLength"] ≈ norm([0.00004, 0.00002, 0.0])
-    @test row["ReplacedMaximumJacobianCondition"] > 1000.0 && row["CavityMaximumJacobianCondition"] < 1000.0
-    @test row["CavityMinimumScaledJacobian"] >= min(row["ReplacedMinimumScaledJacobian"], 0.01)
+    @test row["ReplacedMaximumJacobianCondition"] > 1000.0 &&
+          row["CavityMaximumJacobianCondition"] < 1000.0
+    @test row["CavityMinimumScaledJacobian"] >=
+          min(row["ReplacedMinimumScaledJacobian"], 0.01)
     @test row["CavityMaximumEdgeAspect"] < row["ReplacedMaximumEdgeAspect"]
     # Four cells (both sides of the two triangles on the v-w edge) vanished, the
     # other four cells of v were remapped onto w; two face triangles vanished and
     # two were remapped, keeping their normals; the row line is untouched.
     @test length(collapse.cells_removed) == 4 && length(collapse.cells_remapped) == 4
     @test length(tetrahedra) == cells_before - 4
-    @test length(collapse.triangles_removed) == 2 && length(collapse.triangles_remapped) == 2
+    @test length(collapse.triangles_removed) == 2 &&
+          length(collapse.triangles_remapped) == 2
     @test length(triangles) == triangles_before - 2
-    @test isempty(collapse.lines_removed) && isempty(collapse.lines_remapped) && lines == [(node.w, node.c)]
-    @test !(node.v in Iterators.flatten(tetrahedra)) && !(node.v in Iterators.flatten(triangles))
-    @test all(tetrahedron_scaled_jacobian([points[:, i] for i in cell]) > 0 for cell in tetrahedra)
+    @test isempty(collapse.lines_removed) &&
+          isempty(collapse.lines_remapped) &&
+          lines == [(node.w, node.c)]
+    @test !(node.v in Iterators.flatten(tetrahedra)) &&
+          !(node.v in Iterators.flatten(triangles))
+    @test all(
+        tetrahedron_scaled_jacobian([points[:, i] for i in cell]) > 0 for cell in tetrahedra
+    )
     @test all(abs(points[3, i] - 0.1) < 1e-15 for t in triangles[(end - 4):end] for i in t)
     for t in triangles[(end - 4):end]
-        normal = cross(points[:, t[2]] .- points[:, t[1]], points[:, t[3]] .- points[:, t[1]])
+        normal =
+            cross(points[:, t[2]] .- points[:, t[1]], points[:, t[3]] .- points[:, t[1]])
         @test normal[3] > 0.0
     end
     @test record["RequiredCellsAboveConditionAfter"] == 0
@@ -380,30 +658,59 @@ end
     # v's) nor onto another face vertex: with v excluded from the candidates, w
     # keeps its sub-size edge and nothing is collapsed.
     points3, tetrahedra3, triangles3, entities3, node3 = layer_face_with_sliver()
-    candidate = trues(size(points3, 2)); candidate[node3.v] = false
-    supports = vertex_supports(size(points3, 2), triangles3, entities3, lines, line_entities)
-    result = collapse_short_edges!(points3, tetrahedra3, triangles3, [(node3.w, node3.c)],
-                                   candidate, falses(size(points3, 2)), supports, 0.5 * edge_size;
-                                   scaled_jacobian_gate=0.01)
+    candidate = trues(size(points3, 2));
+    candidate[node3.v] = false
+    supports =
+        vertex_supports(size(points3, 2), triangles3, entities3, lines, line_entities)
+    result = collapse_short_edges!(
+        points3,
+        tetrahedra3,
+        triangles3,
+        [(node3.w, node3.c)],
+        candidate,
+        falses(size(points3, 2)),
+        supports,
+        0.5 * edge_size;
+        scaled_jacobian_gate=0.01
+    )
     @test isempty(result.records) && length(tetrahedra3) == cells_before
     # A fixed (CAD point) vertex is never collapsed either (with the row line kept,
     # the row node has no admissible target and nothing is collapsed).
     points4, tetrahedra4, triangles4, entities4, node4 = layer_face_with_sliver()
-    fixed = falses(size(points4, 2)); fixed[node4.v] = true
-    result4 = collapse_short_edges!(points4, tetrahedra4, triangles4, [(node4.w, node4.c)],
-                                    trues(size(points4, 2)), fixed,
-                                    vertex_supports(size(points4, 2), triangles4, entities4,
-                                                    [(node4.w, node4.c)], line_entities),
-                                    0.5 * edge_size; scaled_jacobian_gate=0.01)
+    fixed = falses(size(points4, 2));
+    fixed[node4.v] = true
+    result4 = collapse_short_edges!(
+        points4,
+        tetrahedra4,
+        triangles4,
+        [(node4.w, node4.c)],
+        trues(size(points4, 2)),
+        fixed,
+        vertex_supports(
+            size(points4, 2),
+            triangles4,
+            entities4,
+            [(node4.w, node4.c)],
+            line_entities
+        ),
+        0.5 * edge_size;
+        scaled_jacobian_gate=0.01
+    )
     @test isempty(result4.records)
     # Without the row line the row node itself may move along the face onto a
     # face neighbour (its face support is preserved), never onto the fixed vertex.
     points6, tetrahedra6, triangles6, entities6, node6 = layer_face_with_sliver()
-    result6 = collapse_short_edges!(points6, tetrahedra6, triangles6, NTuple{2, Int}[],
-                                    trues(size(points6, 2)), fixed,
-                                    vertex_supports(size(points6, 2), triangles6, entities6,
-                                                    NTuple{2, Int}[], Int[]),
-                                    0.5 * edge_size; scaled_jacobian_gate=0.01)
+    result6 = collapse_short_edges!(
+        points6,
+        tetrahedra6,
+        triangles6,
+        NTuple{2, Int}[],
+        trues(size(points6, 2)),
+        fixed,
+        vertex_supports(size(points6, 2), triangles6, entities6, NTuple{2, Int}[], Int[]),
+        0.5 * edge_size;
+        scaled_jacobian_gate=0.01
+    )
     @test length(result6.records) == 1 && result6.records[1]["Vertex"] == node6.w
     @test result6.records[1]["Target"] != node6.v
     @test abs(result6.records[1]["TargetPosition"][3] - 0.1) < 1e-15
@@ -411,18 +718,46 @@ end
     # says so.
     points0, tetrahedra0, triangles0 = corner_fan(0.0125)
     record0, _, collapse0 = optimize_required_region!(
-        points0, tetrahedra0, triangles0, corners, 0.1, 0.025,
-        Tuple{Vector{Float64}, Vector{Float64}}[], 0.0, 2.0, 0.0, zigzag, 4.0, 0.01, 1000.0, 0.75,
-        1e-9)
+        points0,
+        tetrahedra0,
+        triangles0,
+        corners,
+        0.1,
+        0.025,
+        Tuple{Vector{Float64}, Vector{Float64}}[],
+        0.0,
+        2.0,
+        0.0,
+        zigzag,
+        4.0,
+        0.01,
+        1000.0,
+        0.75,
+        1e-9
+    )
     @test record0["SubSizeEdgeCollapse"]["CollapseSize"] === nothing
     @test record0["SubSizeEdgeCollapse"]["CandidateVertices"] == 0
     @test record0["SubSizeEdgeCollapse"]["CollapsedVertices"] == 0
     # The condition gate fails closed (a bound below the fan's own condition).
     points5, tetrahedra5, triangles5 = corner_fan(0.0125)
     @test_throws ErrorException optimize_required_region!(
-        points5, tetrahedra5, triangles5, corners, 0.1, 0.025,
-        Tuple{Vector{Float64}, Vector{Float64}}[], 0.0, 2.0, 0.0, zigzag, 4.0, 0.01, 1.5, 0.75,
-        1e-9)
+        points5,
+        tetrahedra5,
+        triangles5,
+        corners,
+        0.1,
+        0.025,
+        Tuple{Vector{Float64}, Vector{Float64}}[],
+        0.0,
+        2.0,
+        0.0,
+        zigzag,
+        4.0,
+        0.01,
+        1.5,
+        0.75,
+        1e-9
+    )
 end
 
 # The CornerSize 1 nm probe (decision 33 amendment): at the semantic corner
@@ -434,26 +769,63 @@ end
 # the ridge nodes are never moved.
 @testset "corner-ball sub-CornerSize surface vertices are collapsed along their plane" begin
     corner = (2.0, 0.0, 0.0)
-    xyz = hcat([2.0, 0.0, 0.0], [2.0, 0.00079, 0.0], [2.0, 0.00057, -0.00034], [2.0, 0.0, -0.00075],
-               [2.0, 0.0008, -0.0008], [2.00078, 0.0, 0.0], [2.0008, 0.0008, 0.0],
-               [2.0008, 0.0, -0.0008], [2.0004, 0.0004, -0.0004])
+    xyz = hcat(
+        [2.0, 0.0, 0.0],
+        [2.0, 0.00079, 0.0],
+        [2.0, 0.00057, -0.00034],
+        [2.0, 0.0, -0.00075],
+        [2.0, 0.0008, -0.0008],
+        [2.00078, 0.0, 0.0],
+        [2.0008, 0.0008, 0.0],
+        [2.0008, 0.0, -0.0008],
+        [2.0004, 0.0004, -0.0004]
+    )
     o, w, v, b, e, a, f, g, q = 1:9
     # Surface triangles per plane with their entity: x = 2 (1), z = 0 (2), y = 0 (3).
-    faces = [((o, w, v), 1), ((o, v, b), 1), ((w, e, v), 1), ((v, e, b), 1),
-             ((o, a, w), 2), ((a, f, w), 2), ((o, a, b), 3), ((a, g, b), 3)]
-    triangles = [t for (t, _) in faces]; entities = [entity for (_, entity) in faces]
+    faces = [
+        ((o, w, v), 1),
+        ((o, v, b), 1),
+        ((w, e, v), 1),
+        ((v, e, b), 1),
+        ((o, a, w), 2),
+        ((a, f, w), 2),
+        ((o, a, b), 3),
+        ((a, g, b), 3)
+    ]
+    triangles = [t for (t, _) in faces];
+    entities = [entity for (_, entity) in faces]
     tetrahedra = [positively_oriented(xyz, (t..., q)) for t in triangles]
     points = copy(xyz)
-    fixed = falses(9); fixed[o] = true
+    fixed = falses(9);
+    fixed[o] = true
     grading = CornerGrading(0.001, 2.0, 0.025, 0.1)
     corner_cells(cells) = [k for (k, cell) in enumerate(cells) if o in cell]
-    aspect_before = maximum(tetrahedron_aspect([points[:, i] for i in tetrahedra[k]])
-                            for k in corner_cells(tetrahedra))
+    aspect_before = maximum(
+        tetrahedron_aspect([points[:, i] for i in tetrahedra[k]]) for
+        k in corner_cells(tetrahedra)
+    )
     @test norm(xyz[:, v] .- xyz[:, w]) < 0.001
     record, moved, collapse = optimize_required_region!(
-        points, tetrahedra, triangles, [corner], 0.1, 0.025,
-        Tuple{Vector{Float64}, Vector{Float64}}[], 0.0, 2.0, 0.0, 0.05, 4.0, 0.01, 1000.0, 0.75,
-        1e-9; corner_grading=grading, triangle_entities=entities, fixed=fixed)
+        points,
+        tetrahedra,
+        triangles,
+        [corner],
+        0.1,
+        0.025,
+        Tuple{Vector{Float64}, Vector{Float64}}[],
+        0.0,
+        2.0,
+        0.0,
+        0.05,
+        4.0,
+        0.01,
+        1000.0,
+        0.75,
+        1e-9;
+        corner_grading=grading,
+        triangle_entities=entities,
+        fixed=fixed
+    )
     collapsed = record["SubSizeEdgeCollapse"]
     @test collapsed["CollapseSize"] == 0.001 && collapsed["CollapseThreshold"] == 0.0005
     @test collapsed["CandidateVertices"] == 9
@@ -468,19 +840,32 @@ end
     @test points[:, o] == xyz[:, o] && !(o in moved)
     @test all(points[:, i] == xyz[:, i] for i in (w, a, b))
     @test !(v in Iterators.flatten(tetrahedra)) && !(v in Iterators.flatten(triangles))
-    @test all(tetrahedron_scaled_jacobian([points[:, i] for i in cell]) > 0 for cell in tetrahedra)
+    @test all(
+        tetrahedron_scaled_jacobian([points[:, i] for i in cell]) > 0 for cell in tetrahedra
+    )
     @test record["CornerAspectsAfter"][1] <= 4.0
     @test record["CornerAspectsAfter"][1] <= aspect_before
     @test record["RequiredCellsAboveConditionAfter"] == 0
     # The same vertex without its plane's supports on the target (the ridge node
     # labeled as another face) is not collapsed onto it: supports must include.
-    points2 = copy(xyz); tetrahedra2 = [positively_oriented(xyz, (t..., q)) for t in triangles]
+    points2 = copy(xyz);
+    tetrahedra2 = [positively_oriented(xyz, (t..., q)) for t in triangles]
     triangles2 = copy(triangles)
     supports = vertex_supports(9, triangles2, entities, NTuple{2, Int}[], Int[])
     delete!(supports[w], (2, 1))
-    candidate = falses(9); candidate[v] = true
-    result = collapse_short_edges!(points2, tetrahedra2, triangles2, NTuple{2, Int}[], candidate,
-                                   fixed, supports, 0.0005; scaled_jacobian_gate=0.01)
+    candidate = falses(9);
+    candidate[v] = true
+    result = collapse_short_edges!(
+        points2,
+        tetrahedra2,
+        triangles2,
+        NTuple{2, Int}[],
+        candidate,
+        fixed,
+        supports,
+        0.0005;
+        scaled_jacobian_gate=0.01
+    )
     @test all(row["TargetPosition"] != xyz[:, w] for row in result.records)
 end
 
@@ -497,7 +882,12 @@ end
         box = gmsh.model.occ.addBox(0.0, 0.0, 0.0, 1.0, 1.0, 1.0)
         gmsh.model.occ.synchronize()
         gmsh.model.addPhysicalGroup(3, [box], 1, "volume")
-        gmsh.model.addPhysicalGroup(2, [tag for (_, tag) in gmsh.model.getEntities(2)], 2, "wall")
+        gmsh.model.addPhysicalGroup(
+            2,
+            [tag for (_, tag) in gmsh.model.getEntities(2)],
+            2,
+            "wall"
+        )
         gmsh.option.setNumber("Mesh.MeshSizeMin", 0.2)
         gmsh.option.setNumber("Mesh.MeshSizeMax", 0.2)
         gmsh.option.setNumber("Mesh.Algorithm3D", 1)
@@ -521,12 +911,15 @@ end
         # free-free edge, as collapse_short_layer_edges! produces): cells with both
         # vertices vanish, the other cells of v are remapped onto w.
         v = interior[1]
-        neighbours = unique(j for k in incident[v] for j in tetrahedra[k] if j != v && !surface[j])
+        neighbours =
+            unique(j for k in incident[v] for j in tetrahedra[k] if j != v && !surface[j])
         @test !isempty(neighbours)
         w = neighbours[argmin([norm(points[:, j] .- points[:, v]) for j in neighbours])]
         removed = sort!([k for k in incident[v] if w in tetrahedra[k]])
-        remapped = Dict(k => ntuple(i -> tetrahedra[k][i] == v ? w : tetrahedra[k][i], 4)
-                        for k in incident[v] if !(w in tetrahedra[k]))
+        remapped = Dict(
+            k => ntuple(i -> tetrahedra[k][i] == v ? w : tetrahedra[k][i], 4) for
+            k in incident[v] if !(w in tetrahedra[k])
+        )
         @test !isempty(removed) && !isempty(remapped)
         expected_cells = length(tetrahedra) - length(removed)
         for (k, cell) in remapped
@@ -536,8 +929,11 @@ end
         @test length(tetrahedra) == expected_cells
         @test !(v in Iterators.flatten(tetrahedra))
         used = Set(i for cell in tetrahedra for i in cell)
-        expected_keys = Set(sort!([round.(points[:, i]; digits=9) for i in cell]) for cell in tetrahedra)
-        model_count = apply_seed_cell_collapse!(node_tags, tags, entities, removed, remapped)
+        expected_keys = Set(
+            sort!([round.(points[:, i]; digits=9) for i in cell]) for cell in tetrahedra
+        )
+        model_count =
+            apply_seed_cell_collapse!(node_tags, tags, entities, removed, remapped)
         @test model_count == expected_cells
         path = joinpath(mktempdir(), "collapse-round-trip.msh")
         gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
@@ -551,7 +947,7 @@ end
         _, written_element_tags, written_nodes = gmsh.model.mesh.getElements(3)
         written_cells = Vector{NTuple{4, Int}}()
         for (block_tags, block) in zip(written_element_tags, written_nodes)
-            for start in 1:4:length(block)
+            for start = 1:4:length(block)
                 push!(written_cells, ntuple(i -> written_index[block[start + i - 1]], 4))
             end
         end
@@ -561,8 +957,10 @@ end
         written_used = Set(i for cell in written_cells for i in cell)
         @test length(written_used) == size(written, 2) == length(used)
         @test all(norm(written[:, i] .- points[:, v]) > 1e-9 for i in axes(written, 2))
-        written_keys = Set(sort!([round.(written[:, i]; digits=9) for i in cell])
-                           for cell in written_cells)
+        written_keys = Set(
+            sort!([round.(written[:, i]; digits=9) for i in cell]) for
+            cell in written_cells
+        )
         @test written_keys == expected_keys
     finally
         gmsh.finalize()
@@ -583,7 +981,12 @@ end
         box = gmsh.model.occ.addBox(0.0, 0.0, 0.0, 1.0, 1.0, 1.0)
         gmsh.model.occ.synchronize()
         gmsh.model.addPhysicalGroup(3, [box], 1, "volume")
-        gmsh.model.addPhysicalGroup(2, [tag for (_, tag) in gmsh.model.getEntities(2)], 2, "wall")
+        gmsh.model.addPhysicalGroup(
+            2,
+            [tag for (_, tag) in gmsh.model.getEntities(2)],
+            2,
+            "wall"
+        )
         gmsh.option.setNumber("Mesh.MeshSizeMin", 0.25)
         gmsh.option.setNumber("Mesh.MeshSizeMax", 0.25)
         gmsh.option.setNumber("Mesh.Algorithm3D", 1)
@@ -596,25 +999,48 @@ end
         lines, line_tags, line_entities = gmsh_entity_cells(index, 1, Val(2))
         fixed = gmsh_point_nodes(index, size(points, 2))
         @test count(fixed) == 8
-        supports = vertex_supports(size(points, 2), triangles, triangle_entities, lines,
-                                   line_entities)
+        supports = vertex_supports(
+            size(points, 2),
+            triangles,
+            triangle_entities,
+            lines,
+            line_entities
+        )
         # A face-interior vertex: one face support, no line, not a CAD point.
-        interior = [i for i in axes(points, 2)
-                    if length(supports[i]) == 1 && first(supports[i])[1] == 2 && !fixed[i]]
+        interior = [
+            i for i in axes(points, 2) if
+            length(supports[i]) == 1 && first(supports[i])[1] == 2 && !fixed[i]
+        ]
         @test !isempty(interior)
-        candidate = falses(size(points, 2)); candidate[interior[1]] = true
+        candidate = falses(size(points, 2));
+        candidate[interior[1]] = true
         v = interior[1]
         face = first(supports[v])[2]
         # Make the vertex a sub-size insertion: slide it along its face halfway to
         # its nearest face neighbour (the model node follows).
-        neighbours = unique(j for t in triangles for j in t if v in t && j != v && (2, face) in supports[j])
+        neighbours = unique(
+            j for t in triangles for j in t if v in t && j != v && (2, face) in supports[j]
+        )
         w = neighbours[argmin([norm(points[:, j] .- points[:, v]) for j in neighbours])]
         points[:, v] = points[:, w] .+ 0.5 .* (points[:, v] .- points[:, w])
         gmsh.model.mesh.setNode(node_tags[v], points[:, v], Float64[])
-        @test all(tetrahedron_scaled_jacobian([points[:, i] for i in cell]) > 0 for cell in tetrahedra)
-        cells_before = length(tetrahedra); triangles_before = length(triangles)
-        result = collapse_short_edges!(points, tetrahedra, triangles, lines, candidate, fixed,
-                                       supports, 0.2; scaled_jacobian_gate=0.01)
+        @test all(
+            tetrahedron_scaled_jacobian([points[:, i] for i in cell]) > 0 for
+            cell in tetrahedra
+        )
+        cells_before = length(tetrahedra);
+        triangles_before = length(triangles)
+        result = collapse_short_edges!(
+            points,
+            tetrahedra,
+            triangles,
+            lines,
+            candidate,
+            fixed,
+            supports,
+            0.2;
+            scaled_jacobian_gate=0.01
+        )
         @test length(result.records) == 1
         row = result.records[1]
         @test row["Surface"] && row["Vertex"] == v
@@ -623,14 +1049,31 @@ end
         @test length(triangles) == triangles_before - length(result.triangles_removed)
         @test length(result.triangles_removed) == 2 && !isempty(result.triangles_remapped)
         @test !(v in Iterators.flatten(tetrahedra)) && !(v in Iterators.flatten(triangles))
-        expected_cells = length(tetrahedra); expected_triangles = length(triangles)
-        @test apply_seed_cell_collapse!(node_tags, tags, entities, result.cells_removed,
-                                        result.cells_remapped) == expected_cells
-        @test apply_seed_cell_collapse!(node_tags, triangle_tags, triangle_entities,
-                                        result.triangles_removed, result.triangles_remapped;
-                                        dimension=2) == expected_triangles
-        @test apply_seed_cell_collapse!(node_tags, line_tags, line_entities, result.lines_removed,
-                                        result.lines_remapped; dimension=1) == length(lines)
+        expected_cells = length(tetrahedra);
+        expected_triangles = length(triangles)
+        @test apply_seed_cell_collapse!(
+            node_tags,
+            tags,
+            entities,
+            result.cells_removed,
+            result.cells_remapped
+        ) == expected_cells
+        @test apply_seed_cell_collapse!(
+            node_tags,
+            triangle_tags,
+            triangle_entities,
+            result.triangles_removed,
+            result.triangles_remapped;
+            dimension=2
+        ) == expected_triangles
+        @test apply_seed_cell_collapse!(
+            node_tags,
+            line_tags,
+            line_entities,
+            result.lines_removed,
+            result.lines_remapped;
+            dimension=1
+        ) == length(lines)
         path = joinpath(mktempdir(), "surface-collapse-round-trip.msh")
         gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
         gmsh.option.setNumber("Mesh.Binary", 1)
@@ -645,8 +1088,8 @@ end
         @test sum(length(block) for block in cell_tags) == expected_cells
         @test sum(length(block) for block in face_tags) == expected_triangles
         area = 0.0
-        for block in face_nodes, start in 1:3:length(block)
-            a, b, c = (written[:, written_index[block[start + i]]] for i in 0:2)
+        for block in face_nodes, start = 1:3:length(block)
+            a, b, c = (written[:, written_index[block[start + i]]] for i = 0:2)
             area += 0.5 * norm(cross(b .- a, c .- a))
         end
         @test area ≈ 6.0 atol=1e-12
@@ -665,17 +1108,21 @@ end
     grading = CornerGrading(0.004, 2.0, 0.025, 0.1)
     @test corner_shell_radii(grading) ≈ [0.004, 0.012, 0.028, 0.1]
     @test corner_grading_reach(grading) ≈ 0.021
-    @test [corner_ball_size(grading, d) for d in (0.0, 0.0039, 0.004, 0.0119, 0.012, 0.0279, 0.028, 0.09)] ≈
-          [0.004, 0.004, 0.008, 0.008, 0.016, 0.016, 0.025, 0.025]
+    @test [
+        corner_ball_size(grading, d) for
+        d in (0.0, 0.0039, 0.004, 0.0119, 0.012, 0.0279, 0.028, 0.09)
+    ] ≈ [0.004, 0.004, 0.008, 0.008, 0.016, 0.016, 0.025, 0.025]
     plain = CornerGrading(0.0, 2.0, 0.025, 0.1)
     @test corner_shell_radii(plain) == [0.1] && corner_grading_reach(plain) == 0.0
     @test all(corner_ball_size(plain, d) == 0.025 for d in (0.0, 0.05, 0.1))
     # The field expression is the staircase inside the ball (step(x) = 1 for x >= 0)
     # and the band grading slope beyond the radius; without grading it is lc_fine.
     expression = corner_size_expression("F2", grading, 0.16, 0.2)
-    @test expression == "min(0.16,min(0.025,0.004+0.004*step(F2-0.004)+0.008*step(F2-0.012)+" *
-                        "0.009000000000000001*step(F2-0.028))+(0.16-0.025)*max(F2-0.1,0)/0.2)"
-    @test corner_size_expression("F2", plain, 0.16, 0.2) == "min(0.16,0.025+(0.16-0.025)*max(F2-0.1,0)/0.2)"
+    @test expression ==
+          "min(0.16,min(0.025,0.004+0.004*step(F2-0.004)+0.008*step(F2-0.012)+" *
+          "0.009000000000000001*step(F2-0.028))+(0.16-0.025)*max(F2-0.1,0)/0.2)"
+    @test corner_size_expression("F2", plain, 0.16, 0.2) ==
+          "min(0.16,0.025+(0.16-0.025)*max(F2-0.1,0)/0.2)"
     # Ridge size through the ball: the shells inside, lc_fine at the radius, the
     # band slope to lc_tangent outside.
     corners = [(0.0, 0.0, 0.0)]
@@ -689,9 +1136,24 @@ end
     # 0.75 x lc_fine; the census records the CornerSize.
     points, tetrahedra, triangles = corner_fan(0.0002)
     record, moved, _ = optimize_required_region!(
-        points, tetrahedra, triangles, corners, 0.1, 0.025,
-        Tuple{Vector{Float64}, Vector{Float64}}[], 0.0, 2.0, 0.0, 0.05, 4.0, 0.01, 1000.0, 0.75, 1e-9;
-        corner_grading=grading)
+        points,
+        tetrahedra,
+        triangles,
+        corners,
+        0.1,
+        0.025,
+        Tuple{Vector{Float64}, Vector{Float64}}[],
+        0.0,
+        2.0,
+        0.0,
+        0.05,
+        4.0,
+        0.01,
+        1000.0,
+        0.75,
+        1e-9;
+        corner_grading=grading
+    )
     @test record["CornerSize"] == 0.004
     @test record["MaximumDisplacement"] > 0.0
     @test record["MaximumDisplacement"] <= 0.75 * 0.016 * (1 + 1e-9)
@@ -699,18 +1161,44 @@ end
     graded_displacement = record["MaximumDisplacement"]
     points2, tetrahedra2, triangles2 = corner_fan(0.0002)
     record2, _, _ = optimize_required_region!(
-        points2, tetrahedra2, triangles2, corners, 0.1, 0.025,
-        Tuple{Vector{Float64}, Vector{Float64}}[], 0.0, 2.0, 0.0, 0.05, 4.0, 0.01, 1000.0, 0.75, 1e-9)
+        points2,
+        tetrahedra2,
+        triangles2,
+        corners,
+        0.1,
+        0.025,
+        Tuple{Vector{Float64}, Vector{Float64}}[],
+        0.0,
+        2.0,
+        0.0,
+        0.05,
+        4.0,
+        0.01,
+        1000.0,
+        0.75,
+        1e-9
+    )
     @test record2["CornerSize"] == 0.0
     @test record2["MaximumDisplacement"] >= graded_displacement
     # Un-layered edge length per corner: the distance from a corner to the nearest
     # span end of each layered curve ending at it (curves not ending there ignored).
-    curves = [Dict{String, Any}("Start" => [0.1, 0.0, 0.0], "End" => [9.9, 0.0, 0.0],
-                                "CurveEnds" => [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]]),
-              Dict{String, Any}("Start" => [0.0, 0.12, 0.0], "End" => [0.0, 7.9, 0.0],
-                                "CurveEnds" => [[0.0, 0.0, 0.0], [0.0, 8.0, 0.0]])]
-    rows = unlayered_edge_length_per_corner([(0.0, 0.0, 0.0), (10.0, 0.0, 0.0), (5.0, 5.0, 0.0)],
-                                            curves, 0.1)
+    curves = [
+        Dict{String, Any}(
+            "Start" => [0.1, 0.0, 0.0],
+            "End" => [9.9, 0.0, 0.0],
+            "CurveEnds" => [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]]
+        ),
+        Dict{String, Any}(
+            "Start" => [0.0, 0.12, 0.0],
+            "End" => [0.0, 7.9, 0.0],
+            "CurveEnds" => [[0.0, 0.0, 0.0], [0.0, 8.0, 0.0]]
+        )
+    ]
+    rows = unlayered_edge_length_per_corner(
+        [(0.0, 0.0, 0.0), (10.0, 0.0, 0.0), (5.0, 5.0, 0.0)],
+        curves,
+        0.1
+    )
     @test rows[1]["LayeredEdges"] == 2 && rows[1]["UnlayeredLengths"] ≈ [0.1, 0.12]
     @test rows[1]["Maximum"] ≈ 0.12 && rows[1]["Minimum"] ≈ 0.1
     @test rows[2]["LayeredEdges"] == 1 && rows[2]["Maximum"] ≈ 0.1

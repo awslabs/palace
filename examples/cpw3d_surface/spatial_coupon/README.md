@@ -1,4 +1,5 @@
 <!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. -->
+
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # Spatial coupon meshers
@@ -161,12 +162,12 @@ is represented exactly by the resulting FEM trace space.
 without extra trace-driven scalar refinement. A positive size is rejected unless both
 scope and `TET_TRACE_CONSTRAINT_MODE` are explicitly selected. Lengths are in micrometres.
 
-| `TET_TRACE_SIZE_SCOPE` | Where the extra scalar trace size applies |
-| --- | --- |
-| `off` | Nowhere; requires size zero and relative size zero. |
-| `matching` | Only dim=2 queries whose CAD entity tags are in the matching-surface set. |
-| `matching-and-volume` | Those matching surfaces plus dim=3 queries, explicitly opting into volume grading. |
-| `legacy-global` | Historical replay only: all dimensions/entities, including physical surfaces, from **every** triangle edge regardless of CAD mode. |
+| `TET_TRACE_SIZE_SCOPE` | Where the extra scalar trace size applies                                                                                          |
+|:---------------------- |:---------------------------------------------------------------------------------------------------------------------------------- |
+| `off`                  | Nowhere; requires size zero and relative size zero.                                                                                |
+| `matching`             | Only dim=2 queries whose CAD entity tags are in the matching-surface set.                                                          |
+| `matching-and-volume`  | Those matching surfaces plus dim=3 queries, explicitly opting into volume grading.                                                 |
+| `legacy-global`        | Historical replay only: all dimensions/entities, including physical surfaces, from **every** triangle edge regardless of CAD mode. |
 
 In the two scoped modes, dim=1 curves (including matching curves), dim=0 points,
 unknown-dimension queries, and physical-interface surfaces receive no trace sizing.
@@ -232,16 +233,16 @@ No new PDE accuracy result is claimed here.
 The straight-edge branch accepts one continuing edge without a plan-view mask.
 It:
 
-- constructs explicit graded coordinates in the edge-normal cross-section;
-- constructs longitudinal stations independently from `--lc-tangent`;
-- triangulates the conforming substrate/vacuum cross-section and sweeps it into
-  quadratic prism elements;
-- represents fabricated sidewalls and top/trench fillets in the cross-section;
-- preserves the Palace domain, matching-surface, SA, thin-metal, MS, and MA
-  physical attributes;
-- rejects non-prism, nonmanifold, over-budget, or nonpositive-Jacobian meshes;
-- reopens the serialized MSH file and records independently checked evidence in
-  `<mesh>.metadata.json`.
+  - constructs explicit graded coordinates in the edge-normal cross-section;
+  - constructs longitudinal stations independently from `--lc-tangent`;
+  - triangulates the conforming substrate/vacuum cross-section and sweeps it into
+    quadratic prism elements;
+  - represents fabricated sidewalls and top/trench fillets in the cross-section;
+  - preserves the Palace domain, matching-surface, SA, thin-metal, MS, and MA
+    physical attributes;
+  - rejects non-prism, nonmanifold, over-budget, or nonpositive-Jacobian meshes;
+  - reopens the serialized MSH file and records independently checked evidence in
+    `<mesh>.metadata.json`.
 
 Generate a test coupon from the repository root with an instantiated Julia
 Gmsh environment:
@@ -296,11 +297,11 @@ thin and fabricated meshes with positive scaled Jacobians and the expected
 multi-slot and multi-conductor attributes. At 20 nm normal and 300 nm tangent
 spacing, the remaining fabricated transmon families contain:
 
-| Edge count | Quadratic nodes | Prisms |
-| ---------: | --------------: | -----: |
-| 3          |       1,030,114 | 248,064 |
-| 4          |       1,365,159 | 331,034 |
-| 6          |         967,387 | 232,692 |
+| Edge count | Quadratic nodes | Prisms  |
+| ----------:| ---------------:| -------:|
+| 3          | 1,030,114       | 248,064 |
+| 4          | 1,365,159       | 331,034 |
+| 6          | 967,387         | 232,692 |
 
 The six-edge, two-conductor/two-slot mesh passes a Palace held-out solve at p=1
 and exposes distinct conductor/slot MS and MA attributes.
@@ -310,12 +311,12 @@ The representative orthogonal two-edge coupon scales as follows with fixed
 quadratic geometry:
 
 | First normal spacing | Thin nodes | Fabricated nodes | Fabricated prisms |
-| -------------------: | ---------: | ---------------: | -----------------:|
-| 20 nm                |    734,461 |          959,804 |            230,892 |
-| 10 nm                |    918,213 |        1,259,570 |            304,544 |
-| 5 nm                 |  1,120,405 |        1,591,768 |            386,300 |
-| 2 nm                 |  1,371,889 |        2,156,767 |            525,360 |
-| 1 nm                 |  1,643,151 |        2,672,949 |            652,676 |
+| --------------------:| ----------:| ----------------:| -----------------:|
+| 20 nm                | 734,461    | 959,804          | 230,892           |
+| 10 nm                | 918,213    | 1,259,570        | 304,544           |
+| 5 nm                 | 1,120,405  | 1,591,768        | 386,300           |
+| 2 nm                 | 1,371,889  | 2,156,767        | 525,360           |
+| 1 nm                 | 1,643,151  | 2,672,949        | 652,676           |
 
 Thus a 20-fold reduction in first spacing increases fabricated quadratic nodes
 by 2.8 times, rather than by a quadratic or cubic factor. Mesh generation for
@@ -327,12 +328,12 @@ the grounded-metal/matching-surface intersection. At fixed p=1, the representati
 fabricated response changed from 2 nm to 1 nm by:
 
 | Quantity      | Matrix norm change | Worst probe-energy change |
-|:--------------| -----------------:| ------------------------:|
-| Domain        |             0.001% |                     0.41% |
-| Domain defect |             0.099% |                         - |
-| MA            |             1.424% |                     2.46% |
-| MS            |             0.068% |                     1.27% |
-| SA            |             0.427% |                     0.54% |
+|:------------- | ------------------:| -------------------------:|
+| Domain        | 0.001%             | 0.41%                     |
+| Domain defect | 0.099%             | -                         |
+| MA            | 1.424%             | 2.46%                     |
+| MS            | 0.068%             | 1.27%                     |
+| SA            | 0.427%             | 0.54%                     |
 
 At p=2, the 5 nm to 2 nm transition changed the fabricated domain matrix by
 `0.0004%` and the fabricated MA/MS/SA matrices by
@@ -362,11 +363,11 @@ terminal/matching intersection compatible. Multiconductor libraries use
 With the corrected lift, the six-edge family passes p3 to p4 at 2 nm:
 
 | Quantity | Fabricated matrix change | Worst probe-energy change |
-|:---------| ------------------------:| ------------------------:|
-| Domain   |                    0.295% |                    0.866% |
-| MA       |                    2.404% |                    8.467% |
-| MS       |                    1.459% |                    2.140% |
-| SA       |                    0.884% |                    2.396% |
+|:-------- | ------------------------:| -------------------------:|
+| Domain   | 0.295%                   | 0.866%                    |
+| MA       | 2.404%                   | 8.467%                    |
+| MS       | 1.459%                   | 2.140%                    |
+| SA       | 0.884%                   | 2.396%                    |
 
 Its 2 nm to 1 nm p3 transition also passes, with a `2.46%` domain-defect change
 and fabricated domain/MA/MS/SA matrix changes of

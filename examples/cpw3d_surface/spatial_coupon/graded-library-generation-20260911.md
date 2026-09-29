@@ -1,4 +1,5 @@
 <!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. -->
+
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # Corrected graded-library generation campaign — 2026-09-11
@@ -12,27 +13,27 @@ isolated candidate build, not automatic production-library promotion.
 
 ## Corrections
 
-- Box corners are explicit at every trace level. No source triangle cuts across
-  a corner of the actual matching boundary.
-- Cap triangulation preserves every collinear boundary node. Source functions
-  are continuous across the complete closed matching surface.
-- All retained nodal degrees of freedom survive. New corner nodes are added;
-  `basis-contract.json` records old-to-new indices, bounded coordinate snapping,
-  source hashes, conductor states, and the deliberate source-definition change.
-- Per-kind conductor `TerminalAttributes`, original p-order/linear settings,
-  materials, interface settings, and process dimensions are retained.
-- The legacy finite etch footprint is preserved explicitly where required.
-- Every Palace-consumed mesh is **MSH 2.2 binary**. Relabeling has serialized
-  geometry/connectivity checks and remapped partition certificates.
+  - Box corners are explicit at every trace level. No source triangle cuts across
+    a corner of the actual matching boundary.
+  - Cap triangulation preserves every collinear boundary node. Source functions
+    are continuous across the complete closed matching surface.
+  - All retained nodal degrees of freedom survive. New corner nodes are added;
+    `basis-contract.json` records old-to-new indices, bounded coordinate snapping,
+    source hashes, conductor states, and the deliberate source-definition change.
+  - Per-kind conductor `TerminalAttributes`, original p-order/linear settings,
+    materials, interface settings, and process dimensions are retained.
+  - The legacy finite etch footprint is preserved explicitly where required.
+  - Every Palace-consumed mesh is **MSH 2.2 binary**. Relabeling has serialized
+    geometry/connectivity checks and remapped partition certificates.
 
-| Spatial case | Original sources per kind | Corrected sources per kind | Order |
-|---|---:|---:|---:|
-| Two-edge `3f8992613e95` | 115 | 125 | 4 |
-| Three-edge `419576fdab24` | 130 | 135 | 4 |
-| Four-edge `9d2cb9bbb3fe` | 80 | 80 | 4 |
-| Three-edge `7f03270dca8e` | 180 | 185 | 5 |
-| Ten-edge `6791f1c84123` | 161 | 161 | 5 |
-| Two-edge `8dd4bc70f183` | 68 | 78 | 5 |
+| Spatial case              | Original sources per kind | Corrected sources per kind | Order |
+|:------------------------- | -------------------------:| --------------------------:| -----:|
+| Two-edge `3f8992613e95`   | 115                       | 125                        | 4     |
+| Three-edge `419576fdab24` | 130                       | 135                        | 4     |
+| Four-edge `9d2cb9bbb3fe`  | 80                        | 80                         | 4     |
+| Three-edge `7f03270dca8e` | 180                       | 185                        | 5     |
+| Ten-edge `6791f1c84123`   | 161                       | 161                        | 5     |
+| Two-edge `8dd4bc70f183`   | 68                        | 78                         | 5     |
 
 Including the eight unchanged non-spatial thin/fabricated cases, the complete
 campaign has **20 cases and 2,198 sources**, compared with 2,138 previously.
@@ -52,11 +53,11 @@ additional long-running Netgen optimization.
 
 The corrected three-edge nine-source thin diagnostic showed:
 
-- full CAD trace constraints: 3,489,692 tets, maximum kappa 1743;
-- level constraints with local trace grading: 3,357,707 tets, maximum kappa 53.9;
-- p4 pilot time 605.4 s versus 311.3 s; p5 1880.3 s versus 815.6 s;
-- p4-to-p5 matrix-norm change on the level mesh about 0.0191%; the sharpest
-  sampled direction still changed by about 0.914%.
+  - full CAD trace constraints: 3,489,692 tets, maximum kappa 1743;
+  - level constraints with local trace grading: 3,357,707 tets, maximum kappa 53.9;
+  - p4 pilot time 605.4 s versus 311.3 s; p5 1880.3 s versus 815.6 s;
+  - p4-to-p5 matrix-norm change on the level mesh about 0.0191%; the sharpest
+    sampled direction still changed by about 0.914%.
 
 These are diagnostics, not a full-basis or continuum qualification. Full
 matrices, fabricated MA/MS/SA response, slot ownership, domain defects, and
@@ -98,14 +99,14 @@ The manifest is published last, only after every numerical case completes, as
 
 ## Execution
 
-- Mesh jobs: one c8g.48xlarge each, bounded single-threaded meshing.
-- Response jobs: original per-case r8g.48xlarge node/rank allocations.
-- Project `DS-EM-FEM`; subnet `subnet-0c98d793bbcebb39a`.
-- `submit_graded_library_campaign.py` enforces fewer than or equal to 40 user
-  jobs and binds response jobs to successful mesh jobs with `afterok`.
-- The eight unchanged control cases completed successfully before the full
-  spatial launch. Spatial mesh jobs are 41679–41690; their response jobs are
-  41691–41702.
+  - Mesh jobs: one c8g.48xlarge each, bounded single-threaded meshing.
+  - Response jobs: original per-case r8g.48xlarge node/rank allocations.
+  - Project `DS-EM-FEM`; subnet `subnet-0c98d793bbcebb39a`.
+  - `submit_graded_library_campaign.py` enforces fewer than or equal to 40 user
+    jobs and binds response jobs to successful mesh jobs with `afterok`.
+  - The eight unchanged control cases completed successfully before the full
+    spatial launch. Spatial mesh jobs are 41679–41690; their response jobs are
+    41691–41702.
 
 Inspect `submissions.json`, per-case `status.json`, per-mesh `mesh-state.json`,
 `archive-storage.json`, and `summary.json` under the campaign directory.

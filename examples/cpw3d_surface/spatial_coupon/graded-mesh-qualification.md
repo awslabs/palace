@@ -1,4 +1,5 @@
 <!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. -->
+
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # Graded coupon meshes: generality and acceptance
@@ -11,10 +12,10 @@ or qualify a response library.
 
 `compare_coupon_probe.py` now has two explicit profiles:
 
-| Profile | Domain energy | Fabricated interface energies |
-|---|---:|---:|
-| `engineering` (default, provisional) | 0.05% | 0.5% |
-| `strict` (diagnostic) | 0.01% | 0.1% |
+| Profile                              | Domain energy | Fabricated interface energies |
+|:------------------------------------ | -------------:| -----------------------------:|
+| `engineering` (default, provisional) | 0.05%         | 0.5%                          |
+| `strict` (diagnostic)                | 0.01%         | 0.1%                          |
 
 `--domain-tol` and `--surface-tol` override those values (relative fractions, so
 `--surface-tol 0.01` means 1%). Reports store the actual tolerances and always
@@ -26,11 +27,11 @@ interface quantities; it is not an established 0.1%-accurate continuum reference
 The engineering targets are starting points, not an accumulated device-error
 bound. Required checks remain:
 
-- thin domain response, **not edge-inclusive raw thin-metal SPR**;
-- fabricated interface response for several independent excitations;
-- original basis and conductor-state probes, including difficult localized modes;
-- the domain defect `F-T`, its global embedding/stability, and final observables;
-- independent mesh/order checks when reference uncertainty is appreciable.
+  - thin domain response, **not edge-inclusive raw thin-metal SPR**;
+  - fabricated interface response for several independent excitations;
+  - original basis and conductor-state probes, including difficult localized modes;
+  - the domain defect `F-T`, its global embedding/stability, and final observables;
+  - independent mesh/order checks when reference uncertainty is appreciable.
 
 A cancellation-sensitive defect may require a different absolute/relative scale
 than either domain matrix. Tolerance relaxation does not justify dropping modes,
@@ -47,12 +48,12 @@ these dimensions.
 
 The supported implementation is not based on model names or edge counts:
 
-- polygonal masks, concave boundaries, multiple conductors and slots;
-- arbitrary **in-plane** orientations and translations;
-- holes, with material-side-aware offsets independent of input winding;
-- parallel/opposed process planes, including repeated conductor labels;
-- straight CAD curves even when OCC represents them as Bezier curves;
-- exact circle distance sizing and validated conic models for generated fillets.
+  - polygonal masks, concave boundaries, multiple conductors and slots;
+  - arbitrary **in-plane** orientations and translations;
+  - holes, with material-side-aware offsets independent of input winding;
+  - parallel/opposed process planes, including repeated conductor labels;
+  - straight CAD curves even when OCC represents them as Bezier curves;
+  - exact circle distance sizing and validated conic models for generated fillets.
 
 For a conic size model, the polygonal distance approximation is biased toward
 refinement using its interpolation-error bound (at most 1% of the requested
@@ -62,40 +63,40 @@ B-spline certification algorithm.
 
 ### Explicit limits
 
-- Substrate half-spaces and fabricated layer bands must not overlap.
-- General tilted/nonparallel planes are not supported by this coupon generator.
-- Nonconic nonlinear curves fail rather than being replaced with straight chords.
-- Nonzero offsets of curved plan-view boundaries and shrinking nonconvex holes
-  require additional topology-aware support and fail explicitly.
-- A hole that disappears between loft levels is rejected. A convex hole that
-  fully disappears at both offset levels is handled as a collapsed void, not a
-  reflected polygon.
-- Current attribute encoding permits slots 0–9 and conductor IDs 1–99; these are
-  label-format limits, not a limit on the number of edges.
-- General multi-slot surface partitions still need energy-weighted convergence
-  checks. Centroid ownership is exclusive, but its sampled ambiguity is only a
-  diagnostic. Do not confuse a valid label set with an accurate partition. The
-  opt-in quadrature partition pilot is described in
-  [quadrature ownership results](quadrature-ownership-results-20260910.md); it
-  resolves polygonal ownership at integration points without further PDE solves.
+  - Substrate half-spaces and fabricated layer bands must not overlap.
+  - General tilted/nonparallel planes are not supported by this coupon generator.
+  - Nonconic nonlinear curves fail rather than being replaced with straight chords.
+  - Nonzero offsets of curved plan-view boundaries and shrinking nonconvex holes
+    require additional topology-aware support and fail explicitly.
+  - A hole that disappears between loft levels is rejected. A convex hole that
+    fully disappears at both offset levels is handled as a collapsed void, not a
+    reflected polygon.
+  - Current attribute encoding permits slots 0–9 and conductor IDs 1–99; these are
+    label-format limits, not a limit on the number of edges.
+  - General multi-slot surface partitions still need energy-weighted convergence
+    checks. Centroid ownership is exclusive, but its sampled ambiguity is only a
+    diagnostic. Do not confuse a valid label set with an accurate partition. The
+    opt-in quadrature partition pilot is described in
+    [quadrature ownership results](quadrature-ownership-results-20260910.md); it
+    resolves polygonal ownership at integration points without further PDE solves.
 
 ## Bugs exposed by the broader cases
 
-- A CAD bounding box's padding could cause a requested submicron fillet to be
-  silently skipped. Curve coordinates are now used to select process-plane edges;
-  a nonzero requested fillet with no eligible edges fails explicitly. Tests also
-  verify that rounding actually changes the solid, rather than only trusting the
-  request metadata.
-- Hole offset direction depended on point winding, and an over-eroded hole could
-  reopen as a reflected polygon. Material-side orientation and convex half-plane
-  clipping now handle those cases. An independent trench-volume test verifies
-  that etching reaches the hole while retaining the metal footprint.
-- Whole CAD-face labels cannot provide the expected multi-slot partition. The
-  scout suite uses a separately derived expected-label contract and checks every
-  expected label after element-wise assignment.
-- Nearest-edge ties now prefer stable physical labels instead of CSV row order.
-- Layer ownership is selected before edge/slot ownership, preventing a nearby
-  edge on the opposing layer from capturing a surface patch.
+  - A CAD bounding box's padding could cause a requested submicron fillet to be
+    silently skipped. Curve coordinates are now used to select process-plane edges;
+    a nonzero requested fillet with no eligible edges fails explicitly. Tests also
+    verify that rounding actually changes the solid, rather than only trusting the
+    request metadata.
+  - Hole offset direction depended on point winding, and an over-eroded hole could
+    reopen as a reflected polygon. Material-side orientation and convex half-plane
+    clipping now handle those cases. An independent trench-volume test verifies
+    that etching reaches the hole while retaining the metal footprint.
+  - Whole CAD-face labels cannot provide the expected multi-slot partition. The
+    scout suite uses a separately derived expected-label contract and checks every
+    expected label after element-wise assignment.
+  - Nearest-edge ties now prefer stable physical labels instead of CSV row order.
+  - Layer ownership is selected before edge/slot ownership, preventing a nearby
+    edge on the opposing layer from capturing a surface patch.
 
 ## Repeatable generality scouts
 

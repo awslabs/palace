@@ -21,13 +21,13 @@ function sorted_by_tag(elements, connectivity, nnode)
 end
 
 function surface_assignment()
-    by_type = Dict{Int,Tuple{Vector{UInt64},Vector{Int},Vector{UInt64}}}()
+    by_type = Dict{Int, Tuple{Vector{UInt64}, Vector{Int}, Vector{UInt64}}}()
     for (_, attribute) in gmsh.model.getPhysicalGroups(2)
         for entity in gmsh.model.getEntitiesForPhysicalGroup(2, attribute)
             types, tags, nodes = gmsh.model.mesh.getElements(2, entity)
             for (type, elements, connectivity) in zip(types, tags, nodes)
                 record = get!(by_type, Int(type)) do
-                    (UInt64[], Int[], UInt64[])
+                    return (UInt64[], Int[], UInt64[])
                 end
                 append!(record[1], elements)
                 append!(record[2], fill(Int(attribute), length(elements)))
@@ -35,24 +35,33 @@ function surface_assignment()
             end
         end
     end
-    result = Tuple{Int,Vector{UInt64},Vector{Int},Vector{UInt64}}[]
+    result = Tuple{Int, Vector{UInt64}, Vector{Int}, Vector{UInt64}}[]
     for type in sort!(collect(keys(by_type)))
         elements, attributes, connectivity = by_type[type]
         _, _, _, nnode, _, _ = gmsh.model.mesh.getElementProperties(type)
         order = sortperm(elements)
         sorted = elements[order]
-        any(sorted[i] == sorted[i + 1] for i in 1:(length(sorted) - 1)) &&
+        any(sorted[i] == sorted[i + 1] for i = 1:(length(sorted) - 1)) &&
             error("Surface element has multiple owners")
-        push!(result, (type, sorted, attributes[order], vec(reshape(connectivity, Int(nnode), :)[:, order])))
+        push!(
+            result,
+            (
+                type,
+                sorted,
+                attributes[order],
+                vec(reshape(connectivity, Int(nnode), :)[:, order])
+            )
+        )
     end
     all_tags = reduce(vcat, (r[2] for r in result); init=UInt64[])
-    length(unique(all_tags)) == length(all_tags) || error("Surface element has multiple owners")
+    length(unique(all_tags)) == length(all_tags) ||
+        error("Surface element has multiple owners")
     return result
 end
 
 function all_elements(dimension)
     types, tags, nodes = gmsh.model.mesh.getElements(dimension)
-    result = Tuple{Int,Vector{UInt64},Vector{UInt64}}[]
+    result = Tuple{Int, Vector{UInt64}, Vector{UInt64}}[]
     for (type, elements, connectivity) in zip(types, tags, nodes)
         _, _, _, nnode, _, _ = gmsh.model.mesh.getElementProperties(type)
         sorted, sorted_nodes = sorted_by_tag(elements, connectivity, nnode)
@@ -70,7 +79,7 @@ function parse_arguments(args)
     kind = args[1]
     kind in ("thin", "fabricated") || error("Kind must be thin or fabricated")
     mesh, transform_path, report = abspath.((args[2], args[3], args[4]))
-    sources = Dict{String,String}()
+    sources = Dict{String, String}()
     index = 5
     while index <= length(args)
         option = args[index]
@@ -90,7 +99,8 @@ end
 function main()
     kind, mesh, transform_path, report, sources = parse_arguments(ARGS)
     all(isfile, (mesh, transform_path)) || error("Mesh or transform is missing")
-    any(isfile, (report, report * ".quadrature.csv")) && error("Ownership outputs must be fresh")
+    any(isfile, (report, report * ".quadrature.csv")) &&
+        error("Ownership outputs must be fresh")
     transform_values = only(readlines(transform_path))
     transform = parse_rigid_transform(transform_values)
     process = TOML.parsefile(sources["--process"])
@@ -104,13 +114,20 @@ function main()
         before_surface = surface_assignment()
         before_volume = all_elements(3)
         label_interface_patches(
-            edges, loops, Float64(process["Radius"]), report;
-            minimum_size = 0.0, fabricated = kind == "fabricated",
-            metal_thickness = Float64(process["MetalThickness"]),
-            overetch = Float64(process["Overetch"]),
-            ownership_coordinates = point -> inverse_transform_point(transform, point))
-        before_nodes == gmsh.model.mesh.getNodes()[1:2] || error("Ownership audit changed nodes")
-        before_volume == all_elements(3) || error("Ownership audit changed volume connectivity")
+            edges,
+            loops,
+            Float64(process["Radius"]),
+            report;
+            minimum_size=0.0,
+            fabricated=kind == "fabricated",
+            metal_thickness=Float64(process["MetalThickness"]),
+            overetch=Float64(process["Overetch"]),
+            ownership_coordinates=point -> inverse_transform_point(transform, point)
+        )
+        before_nodes == gmsh.model.mesh.getNodes()[1:2] ||
+            error("Ownership audit changed nodes")
+        before_volume == all_elements(3) ||
+            error("Ownership audit changed volume connectivity")
         before_surface == surface_assignment() ||
             error("Final surface owner labels differ from inverse-local reconstruction")
     finally

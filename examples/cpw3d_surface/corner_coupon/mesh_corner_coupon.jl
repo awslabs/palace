@@ -50,7 +50,8 @@ function rounded_wedge_wire(occ, extent, angle_degrees, corner_radius, offset, z
         # The straight anchor: the outer boundary is a semicircle, which a single OCC arc
         # cannot represent unambiguously; two quarter arcs through the point on the bisector.
         corner_radius == 0.0 || error("The straight anchor (180 deg) has no corner radius")
-        outer_mid = (apex[1] + outer_radius * bisector[1], apex[2] + outer_radius * bisector[2])
+        outer_mid =
+            (apex[1] + outer_radius * bisector[1], apex[2] + outer_radius * bisector[2])
         outer_mid_tag = occ.addPoint(outer_mid[1], outer_mid[2], z)
         curves = [
             occ.addLine(apex_tag, outer_first_tag),
@@ -247,9 +248,13 @@ function generate_corner_coupon(;
     radius > 0.0 || error("radius must be positive")
     topology in (:convex, :concave) || error("topology must be :convex or :concave")
     convex = topology == :convex
-    0.0 < angle_degrees < 180.0 || is_straight_anchor(angle_degrees) ||
-        error("angle_degrees must lie strictly between zero and 180 (180 = the straight anchor)")
-    is_straight_anchor(angle_degrees) && corner_radius > 0.0 &&
+    0.0 < angle_degrees < 180.0 ||
+        is_straight_anchor(angle_degrees) ||
+        error(
+            "angle_degrees must lie strictly between zero and 180 (180 = the straight anchor)"
+        )
+    is_straight_anchor(angle_degrees) &&
+        corner_radius > 0.0 &&
         error("The straight anchor (180 deg) has no corner radius")
     0.0 <= corner_radius < radius || error("corner_radius must lie in [0, radius)")
     if corner_radius > 0.0

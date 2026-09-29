@@ -4,17 +4,16 @@ MA_sharp = MA_raw + MA_tail per source; MA_raw = the sum of the per-ring MA shel
 
 ## p4 (four-edge-9d2cb9bbb3fe-p4; 60 sources)
 
-- alpha (top edge, rings 2-4): median -0.655 (quartiles -0.661 / -0.639), se median 0.003; strongest-20 median -0.660; theory -0.667
-- ring-1 factor (resolved / -2/3 anchored on ring 2, top edge): median 0.666, range 0.644-0.668
+  - alpha (top edge, rings 2-4): median -0.655 (quartiles -0.661 / -0.639), se median 0.003; strongest-20 median -0.660; theory -0.667
+  - ring-1 factor (resolved / -2/3 anchored on ring 2, top edge): median 0.666, range 0.644-0.668
 
-| deficit estimator | median (quartiles) | strongest median | at 53 | at 58 |
-|---|---|---:|---:|---:|
-| Fit2-4 | +2.27% (+1.33% / +2.69%) | +1.99% | +0.00% | +1.48% |
-| Theory@2 | +4.68% (+3.21% / +5.45%) | +2.44% | +0.01% | +4.39% |
-| Consistent (tail) | +2.86% (+2.40% / +3.21%) | +2.14% | +0.01% | +4.39% |
+| deficit estimator | median (quartiles)       | strongest median | at 53  | at 58  |
+|:----------------- |:------------------------ | ----------------:| ------:| ------:|
+| Fit2-4            | +2.27% (+1.33% / +2.69%) | +1.99%           | +0.00% | +1.48% |
+| Theory@2          | +4.68% (+3.21% / +5.45%) | +2.44%           | +0.01% | +4.39% |
+| Consistent (tail) | +2.86% (+2.40% / +3.21%) | +2.14%           | +0.01% | +4.39% |
 
 ## Reference
 
-- reference unextrapolated (no ring / edge sizing recorded): its sharp-edge deficit is modelled per source as deficit_run(Consistent) x (eps_ref / eps_run)^(1/3) from its edge size eps_ref and the run's innermost ring radius eps_run (the eps^(1/3) law of the edge MA inside a cutoff, decision 55)
-- reference unextrapolated; sharp-edge deficit modelled at 3.64% (median) from its 0.5 nm edge size via the eps^(1/3) law
-
+  - reference unextrapolated (no ring / edge sizing recorded): its sharp-edge deficit is modelled per source as deficit_run(Consistent) x (eps_ref / eps_run)^(1/3) from its edge size eps_ref and the run's innermost ring radius eps_run (the eps^(1/3) law of the edge MA inside a cutoff, decision 55)
+  - reference unextrapolated; sharp-edge deficit modelled at 3.64% (median) from its 0.5 nm edge size via the eps^(1/3) law

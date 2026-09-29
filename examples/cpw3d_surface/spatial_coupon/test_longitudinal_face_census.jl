@@ -24,21 +24,30 @@ function sidewall_face(length, height)
     for (_, curve) in gmsh.model.getBoundary([(2, surface)], false, false, false)
         lower, upper = gmsh.model.getParametrizationBounds(1, curve)
         derivative = gmsh.model.getDerivative(1, curve, [0.5 * (lower[1] + upper[1])])
-        abs(derivative[1]) / norm(derivative[1:3]) > 1.0 - 1.0e-9 && push!(longitudinal, curve)
+        abs(derivative[1]) / norm(derivative[1:3]) > 1.0 - 1.0e-9 &&
+            push!(longitudinal, curve)
     end
     field = gmsh.model.mesh.field
     field.add("AttractorAnisoCurve", 1)
     field.setNumbers(1, "CurvesList", Float64.(longitudinal))
-    field.setNumber(1, "DistMin", 0.0); field.setNumber(1, "DistMax", 0.2)
-    field.setNumber(1, "SizeMinNormal", LC_FINE); field.setNumber(1, "SizeMaxNormal", LC_FAR)
-    field.setNumber(1, "SizeMinTangent", LC_TANGENT); field.setNumber(1, "SizeMaxTangent", LC_FAR)
+    field.setNumber(1, "DistMin", 0.0);
+    field.setNumber(1, "DistMax", 0.2)
+    field.setNumber(1, "SizeMinNormal", LC_FINE);
+    field.setNumber(1, "SizeMaxNormal", LC_FAR)
+    field.setNumber(1, "SizeMinTangent", LC_TANGENT);
+    field.setNumber(1, "SizeMaxTangent", LC_FAR)
     field.setNumber(1, "Sampling", 100)
     field.add("MathEval", 2)
     field.setString(2, "F", "min(F1,$(LC_FAR))")
     field.setAsBackgroundMesh(2)
-    for (name, value) in [("Mesh.MeshSizeMin", LC_FINE), ("Mesh.MeshSizeMax", LC_FAR),
-                          ("Mesh.MeshSizeExtendFromBoundary", 0), ("Mesh.MeshSizeFromPoints", 0),
-                          ("Mesh.MeshSizeFromCurvature", 0), ("Mesh.MinimumCurvePoints", 3)]
+    for (name, value) in [
+        ("Mesh.MeshSizeMin", LC_FINE),
+        ("Mesh.MeshSizeMax", LC_FAR),
+        ("Mesh.MeshSizeExtendFromBoundary", 0),
+        ("Mesh.MeshSizeFromPoints", 0),
+        ("Mesh.MeshSizeFromCurvature", 0),
+        ("Mesh.MinimumCurvePoints", 3)
+    ]
         gmsh.option.setNumber(name, value)
     end
     return sort!(longitudinal)
@@ -61,8 +70,13 @@ end
     for (curve, intervals) in zip(longitudinal, (80, 83))
         lower, upper = gmsh.model.getParametrizationBounds(1, curve)
         parameters = collect(range(lower[1], upper[1]; length=intervals + 1))[2:(end - 1)]
-        add_explicit_curve_mesh!(curve, parameters, gmsh.model.getValue(1, curve, parameters),
-                                 next_node, point_nodes)
+        add_explicit_curve_mesh!(
+            curve,
+            parameters,
+            gmsh.model.getValue(1, curve, parameters),
+            next_node,
+            point_nodes
+        )
     end
     rows = census_after_generation(longitudinal)
     @test length(rows) == 1
@@ -81,8 +95,13 @@ end
     point_nodes = Dict{Int32, Int}()
     reach = corner_law_reach(RADIUS, LC_FINE, LC_TANGENT, SLOPE)
     for curve in longitudinal
-        placed = corner_isotropic_curve_nodes(curve, [CORNER], CornerGrading(0.0, 2.0, LC_FINE, RADIUS),
-                                              LC_TANGENT, SLOPE)
+        placed = corner_isotropic_curve_nodes(
+            curve,
+            [CORNER],
+            CornerGrading(0.0, 2.0, LC_FINE, RADIUS),
+            LC_TANGENT,
+            SLOPE
+        )
         @test placed !== nothing
         parameters, coordinates = placed
         xyz = reshape(coordinates, 3, :)
@@ -97,7 +116,8 @@ end
         end
         # Inside the ball the spacing is the isotropic size, never above it (the gap
         # is equidistributed with ceil(integral) intervals, decision 43).
-        inside = sort!([xyz[1, i] for i in axes(xyz, 2) if norm(xyz[:, i] .- CORNER) <= RADIUS])
+        inside =
+            sort!([xyz[1, i] for i in axes(xyz, 2) if norm(xyz[:, i] .- CORNER) <= RADIUS])
         if length(inside) >= 2
             @test all(0.8 * LC_FINE .<= diff(inside) .<= LC_FINE * (1.0 + 1.0e-9))
         end
@@ -127,7 +147,14 @@ end
     law(point) = min(LC_TANGENT, 0.02 + 4.0 * abs(point[1] - dip))
     grading = CornerGrading(0.0, 2.0, LC_FINE, RADIUS)
     far_corner = [(100.0, 0.0, 0.0)]
-    @test composed_curve_nodes(curve, LC_TANGENT, p -> LC_TANGENT, 2.0, far_corner, grading) === nothing
+    @test composed_curve_nodes(
+        curve,
+        LC_TANGENT,
+        p -> LC_TANGENT,
+        2.0,
+        far_corner,
+        grading
+    ) === nothing
     placed = composed_curve_nodes(curve, LC_TANGENT, law, 2.0, far_corner, grading)
     @test placed !== nothing
     parameters, coordinates, record = placed
@@ -151,10 +178,15 @@ end
     # Each interval is no longer than the (unlimited) law at its midpoint, and the
     # neighbour ratio stays within the growth cap along the whole curve.
     midpoints = 0.5 .* (nodes[1:(end - 1)] .+ nodes[2:end])
-    @test all(spacings[i] <= law((midpoints[i], 0.0, 0.0)) * (1.0 + 1.0e-9) for i in eachindex(spacings))
+    @test all(
+        spacings[i] <= law((midpoints[i], 0.0, 0.0)) * (1.0 + 1.0e-9) for
+        i in eachindex(spacings)
+    )
     ratios = spacings[2:end] ./ spacings[1:(end - 1)]
     @test max(maximum(ratios), 1.0 / minimum(ratios)) <= 2.0 * (1.0 + 1.0e-9)
-    @test record["Graded"] && record["Spacing"] == LC_TANGENT && record["GridIntervals"] == intervals
+    @test record["Graded"] &&
+          record["Spacing"] == LC_TANGENT &&
+          record["GridIntervals"] == intervals
     @test record["NodeSpacing"]["Minimum"] == minimum(spacings)
     @test record["NodeSpacing"]["Maximum"] <= LC_TANGENT * (1.0 + 1.0e-9)
     @test record["AchievedOverPrescribed"]["Maximum"] <= 1.0 + 1.0e-8
@@ -166,9 +198,13 @@ end
     sidewall_face(8.0, 0.1)
     far_corner = (100.0, 0.0, 0.0)
     for (_, curve) in gmsh.model.getEntities(1)
-        @test corner_isotropic_curve_nodes(curve, [far_corner],
-                                           CornerGrading(0.0, 2.0, LC_FINE, RADIUS), LC_TANGENT,
-                                           SLOPE) === nothing
+        @test corner_isotropic_curve_nodes(
+            curve,
+            [far_corner],
+            CornerGrading(0.0, 2.0, LC_FINE, RADIUS),
+            LC_TANGENT,
+            SLOPE
+        ) === nothing
     end
     gmsh.finalize()
 end

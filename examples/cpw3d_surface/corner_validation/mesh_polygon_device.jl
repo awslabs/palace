@@ -33,17 +33,18 @@ function heptagon_points()
     headings = cumsum(vcat(0.0, turns[1:(end - 1)]))
     directions = [(cos(h), sin(h)) for h in headings]
     # Closure: sum_i L_i d_i = 0 with L_6, L_7 unknown.
-    rx = -sum(chosen[i] * directions[i][1] for i in 1:5)
-    ry = -sum(chosen[i] * directions[i][2] for i in 1:5)
+    rx = -sum(chosen[i] * directions[i][1] for i = 1:5)
+    ry = -sum(chosen[i] * directions[i][2] for i = 1:5)
     a, b = directions[6], directions[7]
     det = a[1] * b[2] - a[2] * b[1]
     l6 = (rx * b[2] - ry * b[1]) / det
     l7 = (a[1] * ry - a[2] * rx) / det
     lengths = vcat(chosen, [l6, l7])
-    all(lengths .> 0.0) || error("heptagon closure gives a non-positive edge length: $lengths")
+    all(lengths .> 0.0) ||
+        error("heptagon closure gives a non-positive edge length: $lengths")
     points = Tuple{Float64, Float64}[]
     x, y = 0.0, 0.0
-    for i in 1:7
+    for i = 1:7
         push!(points, (x, y))
         x += lengths[i] * directions[i][1]
         y += lengths[i] * directions[i][2]
@@ -57,7 +58,7 @@ end
 function interior_angles_degrees(points)
     n = length(points)
     angles = Float64[]
-    for i in 1:n
+    for i = 1:n
         p0, p1, p2 = points[mod1(i - 1, n)], points[i], points[mod1(i + 1, n)]
         u = (p0[1] - p1[1], p0[2] - p1[2])
         v = (p2[1] - p1[1], p2[2] - p1[2])
@@ -73,8 +74,8 @@ end
 function signed_area(points)
     n = length(points)
     return 0.5 * sum(
-        points[i][1] * points[mod1(i + 1, n)][2] - points[mod1(i + 1, n)][1] * points[i][2] for
-        i in 1:n
+        points[i][1] * points[mod1(i + 1, n)][2] - points[mod1(i + 1, n)][1] * points[i][2]
+        for i = 1:n
     )
 end
 
@@ -84,7 +85,7 @@ end
 function offset_polygon(points, distance)
     n = length(points)
     out = Tuple{Float64, Float64}[]
-    for i in 1:n
+    for i = 1:n
         p0, p1, p2 = points[mod1(i - 1, n)], points[i], points[mod1(i + 1, n)]
         d0 = (p1[1] - p0[1], p1[2] - p0[2])
         d1 = (p2[1] - p1[1], p2[2] - p1[2])
@@ -115,7 +116,9 @@ end
 # z0 + height (a loft; a straight extrusion when both pullbacks agree).
 function tapered_polygon(occ, points, z0, height, pullback_bottom, pullback_top)
     if pullback_bottom == pullback_top
-        surface = occ.addPlaneSurface([polygon_wire(occ, offset_polygon(points, pullback_bottom), z0)])
+        surface = occ.addPlaneSurface([
+            polygon_wire(occ, offset_polygon(points, pullback_bottom), z0)
+        ])
         extruded = occ.extrude([(2, surface)], 0.0, 0.0, height)
         return [entity for entity in extruded if entity[1] == 3]
     end
@@ -147,7 +150,8 @@ function generate_polygon_device(;
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
     gmsh.model.add(
-        "polygon_device_" * (aperture ? "aperture_" : "island_") *
+        "polygon_device_" *
+        (aperture ? "aperture_" : "island_") *
         (fabricated ? "fabricated" : "thin")
     )
     occ = gmsh.model.occ
@@ -160,7 +164,14 @@ function generate_polygon_device(;
         trench_pullback = overetch_depth / tan(angle)
         substrate_box = [(
             3,
-            occ.addBox(-half_box, -half_box, -substrate_depth, 2half_box, 2half_box, substrate_depth)
+            occ.addBox(
+                -half_box,
+                -half_box,
+                -substrate_depth,
+                2half_box,
+                2half_box,
+                substrate_depth
+            )
         )]
         # Overetch: the substrate is removed by overetch_depth wherever there is no metal (the
         # metal footprint protects a pedestal under the island; the aperture is the notch).
@@ -169,19 +180,40 @@ function generate_polygon_device(;
         else
             trench_slab = [(
                 3,
-                occ.addBox(-half_box, -half_box, -overetch_depth, 2half_box, 2half_box, overetch_depth)
+                occ.addBox(
+                    -half_box,
+                    -half_box,
+                    -overetch_depth,
+                    2half_box,
+                    2half_box,
+                    overetch_depth
+                )
             )]
-            pedestal =
-                tapered_polygon(occ, points, -overetch_depth, overetch_depth, -trench_pullback, 0.0)
+            pedestal = tapered_polygon(
+                occ,
+                points,
+                -overetch_depth,
+                overetch_depth,
+                -trench_pullback,
+                0.0
+            )
             occ.cut(trench_slab, pedestal)[1]
         end
         substrate, _ = occ.cut(substrate_box, notch)
         metal = if aperture
             sheet = [(
                 3,
-                occ.addBox(-half_box, -half_box, 0.0, 2half_box, 2half_box, metal_thickness)
+                occ.addBox(
+                    -half_box,
+                    -half_box,
+                    0.0,
+                    2half_box,
+                    2half_box,
+                    metal_thickness
+                )
             )]
-            opening = tapered_polygon(occ, points, 0.0, metal_thickness, 0.0, -metal_pullback)
+            opening =
+                tapered_polygon(occ, points, 0.0, metal_thickness, 0.0, -metal_pullback)
             occ.cut(sheet, opening)[1]
         else
             tapered_polygon(occ, points, 0.0, metal_thickness, 0.0, metal_pullback)
@@ -201,10 +233,20 @@ function generate_polygon_device(;
         vacuum, _ = occ.cut(field, substrate, -1, true, false)
         domains, domain_map = occ.fragment(vcat(substrate, vacuum), [])
         substrate_seed = domain_map[1:length(substrate)] |> Iterators.flatten |> collect
-        vacuum_seed = domain_map[(length(substrate) + 1):end] |> Iterators.flatten |> collect
+        vacuum_seed =
+            domain_map[(length(substrate) + 1):end] |> Iterators.flatten |> collect
     else
-        substrate_box =
-            (3, occ.addBox(-half_box, -half_box, -substrate_depth, 2half_box, 2half_box, substrate_depth))
+        substrate_box = (
+            3,
+            occ.addBox(
+                -half_box,
+                -half_box,
+                -substrate_depth,
+                2half_box,
+                2half_box,
+                substrate_depth
+            )
+        )
         vacuum_box =
             (3, occ.addBox(-half_box, -half_box, 0.0, 2half_box, 2half_box, vacuum_height))
         footprint = occ.addPlaneSurface([polygon_wire(occ, points, 0.0)])
@@ -218,8 +260,9 @@ function generate_polygon_device(;
     occ.synchronize()
 
     domain_tags = Set(tag for (dim, tag) in domains if dim == 3)
-    substrate_tags =
-        sort!(unique(tag for (dim, tag) in substrate_seed if dim == 3 && tag in domain_tags))
+    substrate_tags = sort!(
+        unique(tag for (dim, tag) in substrate_seed if dim == 3 && tag in domain_tags)
+    )
     vacuum_tags =
         sort!(unique(tag for (dim, tag) in vacuum_seed if dim == 3 && tag in domain_tags))
     substrate_set = Set(substrate_tags)
@@ -227,11 +270,14 @@ function generate_polygon_device(;
     on_outer_box(bounds) = begin
         xmin, ymin, zmin, xmax, ymax, zmax = bounds
         (abs(xmin + half_box) < tolerance && abs(xmax + half_box) < tolerance) ||
-        (abs(xmin - half_box) < tolerance && abs(xmax - half_box) < tolerance) ||
-        (abs(ymin + half_box) < tolerance && abs(ymax + half_box) < tolerance) ||
-        (abs(ymin - half_box) < tolerance && abs(ymax - half_box) < tolerance) ||
-        (abs(zmin + substrate_depth) < tolerance && abs(zmax + substrate_depth) < tolerance) ||
-        (abs(zmin - vacuum_height) < tolerance && abs(zmax - vacuum_height) < tolerance)
+            (abs(xmin - half_box) < tolerance && abs(xmax - half_box) < tolerance) ||
+            (abs(ymin + half_box) < tolerance && abs(ymax + half_box) < tolerance) ||
+            (abs(ymin - half_box) < tolerance && abs(ymax - half_box) < tolerance) ||
+            (
+                abs(zmin + substrate_depth) < tolerance &&
+                abs(zmax + substrate_depth) < tolerance
+            ) ||
+            (abs(zmin - vacuum_height) < tolerance && abs(zmax - vacuum_height) < tolerance)
     end
     outer = Int32[]
     outer_truncation = Int32[]
@@ -248,8 +294,13 @@ function generate_polygon_device(;
         isempty(adjacent_substrate) && isempty(adjacent_vacuum) && continue
         if on_outer_box(bounds)
             on_horizontal_outer =
-                (abs(zmin + substrate_depth) < tolerance && abs(zmax + substrate_depth) < tolerance) ||
-                (abs(zmin - vacuum_height) < tolerance && abs(zmax - vacuum_height) < tolerance)
+                (
+                    abs(zmin + substrate_depth) < tolerance &&
+                    abs(zmax + substrate_depth) < tolerance
+                ) || (
+                    abs(zmin - vacuum_height) < tolerance &&
+                    abs(zmax - vacuum_height) < tolerance
+                )
             if aperture && !on_horizontal_outer
                 push!(outer_truncation, tag)
             else
@@ -268,7 +319,8 @@ function generate_polygon_device(;
             on_interface || continue
             # The footprint surface is the one interface surface with the polygon's area (the
             # complement's centroid may lie inside the polygon, so the area decides).
-            inside_footprint = abs(gmsh.model.occ.getMass(dim, tag) - polygon_area) < 1e-6 * polygon_area
+            inside_footprint =
+                abs(gmsh.model.occ.getMass(dim, tag) - polygon_area) < 1e-6 * polygon_area
             if aperture ? !inside_footprint : inside_footprint
                 push!(thin_metal, tag)
             elseif !isempty(adjacent_substrate) && !isempty(adjacent_vacuum)
@@ -277,7 +329,11 @@ function generate_polygon_device(;
         end
     end
 
-    groups = [(3, substrate_tags, 1, "substrate"), (3, vacuum_tags, 2, "vacuum"), (2, outer, 1, "outer")]
+    groups = [
+        (3, substrate_tags, 1, "substrate"),
+        (3, vacuum_tags, 2, "vacuum"),
+        (2, outer, 1, "outer")
+    ]
     aperture && push!(groups, (2, outer_truncation, 7, "outer_truncation"))
     if fabricated
         append!(groups, [(2, ms, 2, "MS"), (2, sa, 3, "SA"), (2, ma, 4, "MA")])
@@ -296,7 +352,8 @@ function generate_polygon_device(;
     for surface in feature_surfaces
         for (dim, curve) in gmsh.model.getBoundary([(2, surface)], false, false, false)
             dim == 1 || continue
-            on_outer_box(gmsh.model.getBoundingBox(dim, curve)) || push!(feature_curves, curve)
+            on_outer_box(gmsh.model.getBoundingBox(dim, curve)) ||
+                push!(feature_curves, curve)
         end
     end
     unique!(feature_curves)

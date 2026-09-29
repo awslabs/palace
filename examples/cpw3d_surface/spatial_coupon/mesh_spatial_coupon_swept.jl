@@ -80,11 +80,12 @@ end
 
 function add_triangle!(builder, first, second, third, material)
     points = (first, second, third)
-    area = 0.5 * (
-        first[1] * (second[2] - third[2]) +
-        second[1] * (third[2] - first[2]) +
-        third[1] * (first[2] - second[2])
-    )
+    area =
+        0.5 * (
+            first[1] * (second[2] - third[2]) +
+            second[1] * (third[2] - first[2]) +
+            third[1] * (first[2] - second[2])
+        )
     abs(area) > 1.0e-15 || error("Swept cross-section contains a degenerate triangle")
     if area < 0.0
         points = (first, third, second)
@@ -131,40 +132,18 @@ function graded_distances(width, lc_normal, lc_far, power, grading_width)
     return unique(coordinates)
 end
 
-function graded_interval(
-    first,
-    last,
-    lc_normal,
-    lc_far,
-    power,
-    grading_width;
-    refine=:left
-)
+function graded_interval(first, last, lc_normal, lc_far, power, grading_width; refine=:left)
     last > first || error("Graded interval must have positive width")
-    distances = graded_distances(
-        last - first,
-        lc_normal,
-        lc_far,
-        power,
-        grading_width
-    )
+    distances = graded_distances(last - first, lc_normal, lc_far, power, grading_width)
     if refine == :left
         return first .+ distances
     elseif refine == :right
         return last .- reverse(distances)
     end
-    error("Unknown graded interval refinement side: $refine")
+    return error("Unknown graded interval refinement side: $refine")
 end
 
-function anchored_interval(
-    first,
-    anchor,
-    last,
-    lc_normal,
-    lc_far,
-    power,
-    grading_width
-)
+function anchored_interval(first, anchor, last, lc_normal, lc_far, power, grading_width)
     first < anchor < last || error("Anchor must lie inside its interval")
     left = graded_interval(
         first,
@@ -175,23 +154,17 @@ function anchored_interval(
         grading_width;
         refine=:right
     )
-    right = graded_interval(
-        anchor,
-        last,
-        lc_normal,
-        lc_far,
-        power,
-        grading_width;
-        refine=:left
-    )
+    right =
+        graded_interval(anchor, last, lc_normal, lc_far, power, grading_width; refine=:left)
     return vcat(left[1:(end - 1)], right)
 end
 
 function record_near_spacing!(builder, coordinates, side)
     length(coordinates) >= 2 || return
-    spacing = side == :left ? coordinates[2] - coordinates[1] :
-              coordinates[end] - coordinates[end - 1]
-    push!(builder.near_feature_spacings, spacing)
+    spacing =
+        side == :left ? coordinates[2] - coordinates[1] :
+        coordinates[end] - coordinates[end - 1]
+    return push!(builder.near_feature_spacings, spacing)
 end
 
 function row_from_left!(builder, left, right, lc_normal, lc_far, power)
@@ -262,22 +235,10 @@ function zipper_strip!(builder, lower, upper, material)
             next0 = (x0[i + 1] - x0[1]) / scale0
             next1 = (x1[j + 1] - x1[1]) / scale1
             if next0 <= next1
-                add_triangle!(
-                    builder,
-                    (x0[i], z0),
-                    (x0[i + 1], z0),
-                    (x1[j], z1),
-                    material
-                )
+                add_triangle!(builder, (x0[i], z0), (x0[i + 1], z0), (x1[j], z1), material)
                 i += 1
             else
-                add_triangle!(
-                    builder,
-                    (x0[i], z0),
-                    (x1[j + 1], z1),
-                    (x1[j], z1),
-                    material
-                )
+                add_triangle!(builder, (x0[i], z0), (x1[j + 1], z1), (x1[j], z1), material)
                 j += 1
             end
         end
@@ -372,10 +333,7 @@ function fabricated_boundaries!(
     edge = (0.0, 0.0)
 
     trench_vertex = (overetch * slope, -overetch)
-    trench_side_direction = (
-        edge[1] - trench_vertex[1],
-        edge[2] - trench_vertex[2]
-    )
+    trench_side_direction = (edge[1] - trench_vertex[1], edge[2] - trench_vertex[2])
     trench_fillet = fillet_data(
         trench_vertex,
         (1.0, 0.0),
@@ -394,10 +352,7 @@ function fabricated_boundaries!(
     append!(trench_path, side_points[2:end])
 
     metal_vertex = (-metal_thickness * slope, metal_thickness)
-    metal_side_direction = (
-        edge[1] - metal_vertex[1],
-        edge[2] - metal_vertex[2]
-    )
+    metal_side_direction = (edge[1] - metal_vertex[1], edge[2] - metal_vertex[2])
     metal_fillet = fillet_data(
         metal_vertex,
         metal_side_direction,
@@ -501,41 +456,24 @@ function build_fabricated_cross_section!(
         refine=:right
     )
     lower_rows = [
-        (
-            w,
-            row_from_anchor!(
-                builder,
-                umin,
-                trench_anchor,
-                umax,
-                lc_normal,
-                lc_far,
-                power
-            )
-        ) for w in lower_w
+        (w, row_from_anchor!(builder, umin, trench_anchor, umax, lc_normal, lc_far, power)) for w in lower_w
     ]
     add_region!(builder, lower_rows, :substrate)
 
     substrate_trench_rows = [
-        (
-            point[2],
-            row_from_right!(builder, umin, point[1], lc_normal, lc_far, power)
-        ) for point in trench
+        (point[2], row_from_right!(builder, umin, point[1], lc_normal, lc_far, power))
+        for point in trench
     ]
     vacuum_trench_rows = [
-        (
-            point[2],
-            row_from_left!(builder, point[1], umax, lc_normal, lc_far, power)
-        ) for point in trench
+        (point[2], row_from_left!(builder, point[1], umax, lc_normal, lc_far, power))
+        for point in trench
     ]
     add_region!(builder, substrate_trench_rows, :substrate)
     add_region!(builder, vacuum_trench_rows, :vacuum)
 
     vacuum_metal_rows = [
-        (
-            point[2],
-            row_from_left!(builder, point[1], umax, lc_normal, lc_far, power)
-        ) for point in metal
+        (point[2], row_from_left!(builder, point[1], umax, lc_normal, lc_far, power))
+        for point in metal
     ]
     add_region!(builder, vacuum_metal_rows, :vacuum)
 
@@ -549,29 +487,14 @@ function build_fabricated_cross_section!(
         refine=:left
     )
     upper_rows = [
-        (
-            w,
-            row_from_anchor!(
-                builder,
-                umin,
-                metal_anchor,
-                umax,
-                lc_normal,
-                lc_far,
-                power
-            )
-        ) for w in upper_w
+        (w, row_from_anchor!(builder, umin, metal_anchor, umax, lc_normal, lc_far, power)) for w in upper_w
     ]
     add_region!(builder, upper_rows, :vacuum)
     return
 end
 
 function local_coordinates(edge, point)
-    delta = (
-        point[1] - edge.point[1],
-        point[2] - edge.point[2],
-        point[3] - edge.point[3]
-    )
+    delta = (point[1] - edge.point[1], point[2] - edge.point[2], point[3] - edge.point[3])
     return (
         delta[1] * edge.gap[1] + delta[2] * edge.gap[2],
         delta[1] * edge.tangent[1] + delta[2] * edge.tangent[2],
@@ -585,24 +508,18 @@ function surface_local_nodes(edge, tag)
     return [
         local_coordinates(
             edge,
-            (
-                coordinates[index],
-                coordinates[index + 1],
-                coordinates[index + 2]
-            )
+            (coordinates[index], coordinates[index + 1], coordinates[index + 2])
         ) for index = 1:3:length(coordinates)
     ]
 end
 
 function on_outer_surface(points, umin, umax, smin, smax, wmin, wmax, tolerance)
-    for (coordinate, lower, upper) in (
-        (1, umin, umax),
-        (2, smin, smax),
-        (3, wmin, wmax)
-    )
+    for (coordinate, lower, upper) in ((1, umin, umax), (2, smin, smax), (3, wmin, wmax))
         values = [point[coordinate] for point in points]
-        (all(abs(value - lower) <= tolerance for value in values) ||
-         all(abs(value - upper) <= tolerance for value in values)) && return true
+        (
+            all(abs(value - lower) <= tolerance for value in values) ||
+            all(abs(value - upper) <= tolerance for value in values)
+        ) && return true
     end
     return false
 end
@@ -704,8 +621,7 @@ function write_swept_metadata(
         println(stream, "  \"MeasuredMaximumLongitudinalSpacing\": $maximum_tangent,")
         println(
             stream,
-            "  \"MeasuredNearFeatureNormalSpacings\": " *
-            "$(json_array(normal_spacings)),"
+            "  \"MeasuredNearFeatureNormalSpacings\": " * "$(json_array(normal_spacings)),"
         )
         println(
             stream,
@@ -718,7 +634,7 @@ function write_swept_metadata(
         println(stream, "  \"NonmanifoldFaceCount\": $(face_counts.nonmanifold),")
         println(stream, "  \"MinimumScaledJacobian\": $minimum_jacobian,")
         println(stream, "  \"MeshOrder\": $mesh_order")
-        println(stream, "}")
+        return println(stream, "}")
     end
     return
 end
@@ -750,8 +666,7 @@ function generate_spatial_coupon_swept(;
     0.0 < sidewall_angle <= 90.0 || error("sidewall angle must lie in (0, 90]")
     0.0 <= top_rounding < metal_thickness ||
         error("top rounding must be smaller than metal thickness")
-    0.0 <= trench_rounding <= overetch ||
-        error("trench rounding must not exceed overetch")
+    0.0 <= trench_rounding <= overetch || error("trench rounding must not exceed overetch")
     lc_normal > 0.0 || error("normal mesh size must be positive")
     lc_tangent > 0.0 || error("tangential mesh size must be positive")
     lc_far >= lc_normal || error("far mesh size must not be smaller than normal size")
@@ -783,13 +698,11 @@ function generate_spatial_coupon_swept(;
     umax = 2radius
     wmin = -radius - overetch
     wmax = radius + metal_thickness
-    process_core_width = process_core_width > 0.0 ?
-                         process_core_width :
-                         max(2metal_thickness, 4overetch, 8lc_normal)
-    minimum_process_dimension = min(
-        metal_thickness,
-        overetch > 0.0 ? overetch : metal_thickness
-    )
+    process_core_width =
+        process_core_width > 0.0 ? process_core_width :
+        max(2metal_thickness, 4overetch, 8lc_normal)
+    minimum_process_dimension =
+        min(metal_thickness, overetch > 0.0 ? overetch : metal_thickness)
     if fabricated && lc_normal > minimum_process_dimension
         @warn(
             "Normal spacing exceeds at least one fabrication dimension",
@@ -915,8 +828,9 @@ function generate_spatial_coupon_swept(;
             if fabricated
                 if !isempty(adjacent_substrate) && !isempty(adjacent_vacuum)
                     w_values = [point[3] for point in points]
-                    attribute = all(abs(value) <= tolerance for value in w_values) ?
-                                3000 + edge.slot : 3100 + edge.slot
+                    attribute =
+                        all(abs(value) <= tolerance for value in w_values) ?
+                        3000 + edge.slot : 3100 + edge.slot
                 elseif length(unique(up)) == 1 && !isempty(adjacent_substrate)
                     attribute = metal_surface_attribute(5000, edge.slot, edge.conductor)
                 elseif length(unique(up)) == 1 && !isempty(adjacent_vacuum)
@@ -924,9 +838,10 @@ function generate_spatial_coupon_swept(;
                 end
             elseif !isempty(adjacent_substrate) && !isempty(adjacent_vacuum)
                 u = sum(point[1] for point in points) / length(points)
-                attribute = u <= tolerance ?
-                            metal_surface_attribute(4000, edge.slot, edge.conductor) :
-                            3000 + edge.slot
+                attribute =
+                    u <= tolerance ?
+                    metal_surface_attribute(4000, edge.slot, edge.conductor) :
+                    3000 + edge.slot
             end
             attribute > 0 && push!(get!(boundary_groups, attribute, Int32[]), tag)
         end
@@ -961,17 +876,15 @@ function generate_spatial_coupon_swept(;
         minimum_jacobian > 0.0 || error("Swept mesh contains a nonpositive Jacobian")
         face_counts = prism_face_counts()
 
-        normal_spacings = [
-            value for value in builder.near_feature_spacings if value > tolerance
-        ]
+        normal_spacings =
+            [value for value in builder.near_feature_spacings if value > tolerance]
         isempty(normal_spacings) && error("No near-feature normal spacing was measured")
         maximum(normal_spacings) <= 1.05 * lc_normal || error(
             "Measured normal spacing $(maximum(normal_spacings)) exceeds " *
             "requested value $lc_normal"
         )
-        maximum(diff(longitudinal_coordinates)) <= 1.05 * lc_tangent || error(
-            "Measured longitudinal spacing exceeds requested value $lc_tangent"
-        )
+        maximum(diff(longitudinal_coordinates)) <= 1.05 * lc_tangent ||
+            error("Measured longitudinal spacing exceeds requested value $lc_tangent")
 
         mkpath(dirname(filename))
         gmsh.write(filename)
@@ -988,9 +901,8 @@ function generate_spatial_coupon_swept(;
         # Circle-center construction points are CAD helpers, not mesh nodes attached to
         # physical elements, and MSH 2.2 intentionally omits them. The serialized count
         # is authoritative for budgets and metadata.
-        written_node_count <= node_count || error(
-            "Written swept mesh gained nodes: $written_node_count > $node_count"
-        )
+        written_node_count <= node_count ||
+            error("Written swept mesh gained nodes: $written_node_count > $node_count")
         written_node_count <= max_nodes || error(
             "Written swept spatial coupon exceeds node budget: " *
             "$written_node_count > $max_nodes"
@@ -1009,12 +921,10 @@ function generate_spatial_coupon_swept(;
         written_face_counts = prism_face_counts()
         written_face_counts == face_counts ||
             error("Serialized swept mesh face topology changed after writing")
-        surface_attributes = sort!([
-            Int(tag) for (dimension, tag) in gmsh.model.getPhysicalGroups(2)
-        ])
-        volume_attributes = sort!([
-            Int(tag) for (dimension, tag) in gmsh.model.getPhysicalGroups(3)
-        ])
+        surface_attributes =
+            sort!([Int(tag) for (dimension, tag) in gmsh.model.getPhysicalGroups(2)])
+        volume_attributes =
+            sort!([Int(tag) for (dimension, tag) in gmsh.model.getPhysicalGroups(3)])
         volume_element_types = sort!([
             gmsh.model.mesh.getElementProperties(element_type)[1] for
             element_type in written_types
@@ -1096,16 +1006,16 @@ function parse_swept_options(args)
         name, type = names[flag]
         value = type === String ? abspath(args[index + 1]) : parse(type, args[index + 1])
         if flag in ("--lc-normal", "--lc-fine")
-            seen_normal === nothing || seen_normal == value ||
+            seen_normal === nothing ||
+                seen_normal == value ||
                 error("--lc-normal and --lc-fine specify different values")
             seen_normal = value
         end
         options[name] = value
         index += 2
     end
-    get(options, "ignored_process_fine_width", 0.0) == 0.0 || error(
-        "--process-fine-width is not part of the explicit swept-coordinate model"
-    )
+    get(options, "ignored_process_fine_width", 0.0) == 0.0 ||
+        error("--process-fine-width is not part of the explicit swept-coordinate model")
     return options
 end
 
@@ -1145,11 +1055,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
             normal_growth_ratio=get(options, "normal_growth_ratio", 1.4)
         )
     elseif edge_count == 1
-        generate_spatial_coupon_swept(;
-            common...,
-            mask=nothing,
-            boundary=nothing
-        )
+        generate_spatial_coupon_swept(; common..., mask=nothing, boundary=nothing)
     else
         error("Spatial edge clusters with multiple edges require --mask and --boundary")
     end

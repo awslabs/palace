@@ -7,18 +7,18 @@ preflights (`palace --surface-response-preflight`), the audit, layout oracles an
 layouts. No field solves, no library builds. The classifier (`palace/`) is not modified by
 this block: every disagreement below is a recorded defect for the fix block.
 
-| Module | Purpose |
-|---|---|
-| `msh2.py` | binary / ASCII MSH 2.2 reader (first- and second-order simplices) |
-| `perimeter.py` | metal perimeter E recomputed from the mesh with the classifier's definitions (metal attribute union, face-direction classes on the distinct geometric faces, truncation, 30 deg corner rule on the 1e-12 direction grid, physical chains, edge-connected components) plus the excluded classes of decision 73(3): NONPLANAR / FOLD, CROSS_LAYER zones within 2R of off-plane metal, NONMANIFOLD, EMBEDDED, BOX; `rounded_runs` reads fillet arcs with the classifier's rounded-corner rule |
-| `manifest.py` | canonical digest / set diff / aggregate summary of `surface-response-requirements.json` (drops Status, SelectedModels, NormalizedLibraryDistance, Reason, Library.Path, Statistics); preflight log parser |
-| `audit.py` | gates A1 (perimeter agreement, length and count partition, multiplicity proxy, weights, vertex census, recorded exclusions) and A2 (cluster balls), B1 gap bound; JSON + Markdown; exit 1 on any failure; `--compare` for A3 / A5 set identity |
-| `preflight_config.py` | generic geometry-only preflight configuration (Electrostatic; Ground + Terminal metal for conductor identity; typed SA / MS / MA interfaces with the library radius) |
-| `preflight_matrix.py` | ranks x libraries x UniformLevels x CrackInternalBoundaryElements cells with the audit and cross-cell digests (A3 / A4 / A5) |
-| `synthetic_layouts.py` + `synthetic_layouts.jl` | 62 synthetic stress layouts with exact oracles (Gmsh / OCC via Julia), runner and oracle comparison (A6) |
-| `tag_metal_components.py` | N-island conductor tagger for production meshes; repairs: drop metal triangles duplicating port faces, drop attributes, add a material-interface (substrate_air) group |
-| `refine_msh2.py` | uniform 1 -> 8 / 1 -> 4 refinement of a first-order MSH 2.2 mesh outside Palace, so the refined mesh exists for the audit (real A5 test) |
-| `signature_library.py` | signature-only process library from a version-2 manifest (one model per feature hash, for the fully matched patch dry run; never for a solve) |
+| Module                                          | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+|:----------------------------------------------- |:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `msh2.py`                                       | binary / ASCII MSH 2.2 reader (first- and second-order simplices)                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `perimeter.py`                                  | metal perimeter E recomputed from the mesh with the classifier's definitions (metal attribute union, face-direction classes on the distinct geometric faces, truncation, 30 deg corner rule on the 1e-12 direction grid, physical chains, edge-connected components) plus the excluded classes of decision 73(3): NONPLANAR / FOLD, CROSS_LAYER zones within 2R of off-plane metal, NONMANIFOLD, EMBEDDED, BOX; `rounded_runs` reads fillet arcs with the classifier's rounded-corner rule |
+| `manifest.py`                                   | canonical digest / set diff / aggregate summary of `surface-response-requirements.json` (drops Status, SelectedModels, NormalizedLibraryDistance, Reason, Library.Path, Statistics); preflight log parser                                                                                                                                                                                                                                                                                  |
+| `audit.py`                                      | gates A1 (perimeter agreement, length and count partition, multiplicity proxy, weights, vertex census, recorded exclusions) and A2 (cluster balls), B1 gap bound; JSON + Markdown; exit 1 on any failure; `--compare` for A3 / A5 set identity                                                                                                                                                                                                                                             |
+| `preflight_config.py`                           | generic geometry-only preflight configuration (Electrostatic; Ground + Terminal metal for conductor identity; typed SA / MS / MA interfaces with the library radius)                                                                                                                                                                                                                                                                                                                       |
+| `preflight_matrix.py`                           | ranks x libraries x UniformLevels x CrackInternalBoundaryElements cells with the audit and cross-cell digests (A3 / A4 / A5)                                                                                                                                                                                                                                                                                                                                                               |
+| `synthetic_layouts.py` + `synthetic_layouts.jl` | 62 synthetic stress layouts with exact oracles (Gmsh / OCC via Julia), runner and oracle comparison (A6)                                                                                                                                                                                                                                                                                                                                                                                   |
+| `tag_metal_components.py`                       | N-island conductor tagger for production meshes; repairs: drop metal triangles duplicating port faces, drop attributes, add a material-interface (substrate_air) group                                                                                                                                                                                                                                                                                                                     |
+| `refine_msh2.py`                                | uniform 1 -> 8 / 1 -> 4 refinement of a first-order MSH 2.2 mesh outside Palace, so the refined mesh exists for the audit (real A5 test)                                                                                                                                                                                                                                                                                                                                                   |
+| `signature_library.py`                          | signature-only process library from a version-2 manifest (one model per feature hash, for the fully matched patch dry run; never for a solve)                                                                                                                                                                                                                                                                                                                                              |
 
 Tests (`python3 -m unittest discover -s examples/surface_response_identification -p 'test_*.py' -t examples` from the repository
 root, or per module): `test_audit.py` (22, incl. 3 version-2 gate tests, 2 patch-gate tests and the signature-library test), `test_preflight_config.py` (3),
@@ -71,171 +71,169 @@ Phase-2 results: `coupon-accuracy-assessment-20260913/geometry-identification-fi
 Phase 3 (decision 74 step 4: conductor identity, crack-independence, decision-73(3) exclusions,
 embedded sheets, mesh preparation):
 
-* **Perimeter from the distinct geometric metal faces** (`palace/utils/metaledge.cpp`): a face
-  edge is classified by the in-plane inward directions of the distinct faces owning it — one
-  direction = one-sided perimeter (PHYSICAL / TRUNCATION), two opposite = interior, two
-  non-coplanar = FOLD, three or more = NONMANIFOLD. Coincident crack copies count once, so
-  `CrackInternalBoundaryElements` true and false give the same perimeter and identification
-  (same `GeometryDigest` and lengths), and sheets with one material on both sides (airbridge
-  spans, embedded metal) are no longer cancelled. `perimeter.py` applies the same rule
-  (kinds PHYSICAL, TRUNCATION, EMBEDDED, NONPLANAR, FOLD, NONMANIFOLD, BOX).
-* **Conductor identity = edge-connected metal component**, independent of the attribute
-  numbering and of the problem type (electrostatic Terminal / Ground labels and Maxwell PEC
-  attributes alike); the labels only produce a warning when one component carries distinct
-  labels. Consequences: two ground planes cut by the simulation box are two conductors (a CPW
-  cross-section is a three-conductor four-edge cluster); two sheets touching at a single vertex
-  are two conductors (no galvanic connection) and the vertex is a `PointContact` record + warning;
-  the `Junction` signature carries `ArmConductors`. The audit's `perimeter.py` reports the
-  edge-connected component of every edge; `tag_metal_components.py` is no longer needed for
-  conductor identity (it remains a mesh-repair tool).
-* **Exclusions reported, never silent** (`Identification.Exclusions`, each with count and
-  length; the segment table carries `Exclusion` for whole segments and `ExcludedPortions`
-  `[s0, s1, exclusion index]` for analytic zones): `SimulationBoundary` (metal faces on the
-  mesh bounding box, a PEC box), `NonPlanar` (folds; one-sided faces not parallel to the layer
-  normal: walls, staple legs, vias), `NonManifold` (a wall standing on a sheet),
-  `UndeterminedProcessSide` (same material on both sides and no `EdgeFrameNormal` on the target
-  interface — the configured process layers decide the side, else the record), `CrossLayer`
-  (the parts of a planar run within 2R of metal off its own plane — a facing layer across a
-  gap, a wall, a staple — solved analytically on the distance to every such face, so the zones
-  are refinement invariant; `Conventions.CrossLayerReachOverR` = 2), `Untargeted`,
-  `TruncationCut`. Vertices: `Excluded` (every incident run excluded or within 2R of off-plane
-  metal), `ExclusionCut` (a chain cut by an excluded segment; no endpoint feature), `PointContact`
-  flag. Every other metal plane is identified in its own right (a second chip is not excluded
-  unless it faces metal within 2R). The legacy classification omits exactly the segments the
-  identification excludes.
-* **Layer normal** = area-weighted principal direction of the metal face normals (faces on the
-  mesh bounding box do not vote); planarity tolerance = the parallelism tolerance 1e-8.
-* **Mesh preparation**: coincident metal boundary elements of one attribute are tolerated
-  (deduplicated); coincident boundary elements of different metal attributes abort naming both
-  attributes and the face location; Palace already refuses a face with two boundary elements at
-  load (`geodata.cpp GetFaceToBdrElementMap`, attributes named) — `tag_metal_components.py
-  --drop-metal-duplicates` is the deterministic repair. A missing `substrate_air` group is not a
-  blocker (MS / MA targets only).
-* **Audit**: split-tolerant perimeter agreement (cracking bisects elements next to under-resolved
-  sheets, second-order edges are sampled), partition with `ExcludedPortions`, vertex census with
-  excluded vertices and point contacts, exclusion lengths per class compared with the mesh
-  (incl. the analytic CrossLayer zones); `synthetic_layouts.py --crack-false` adds a
-  `CrackInternalBoundaryElements=false` cell per library and compares its digest; the oracle's
-  conductor is the sheet (connectivity), `gap-same-*` are slots in one U-shaped sheet, and the
-  off-plane exclusions (facing sheets, walls) are computed analytically (`A6-excluded-classes`).
-* `StraightBendRadiusOverR` = 10 (decision 75; phase 2 used 20).
-* **Pairs along bends by local constancy, decided on the curve separation**
-  (`PairConstancyWindowOverR` = 1, `PairSampleSpacingOverR` = 0.5, `PairCandidateReachOverR` = 2.1,
-  `PairSeparationEstimate`): a chain's facing region is sampled (<= R / 2 apart); a sample is
-  constant when the distances within R of it vary by <= 5 %; its curve separation is the
-  smaller of the two directional window maxima (half-width max(R, chord) where the chain bends,
-  R on straight runs) — the chord reading C, exact for an offset polyline; two polylines
-  inscribed in the curves at aligned angles read C = w cos(turn / 2) and cannot be told apart
-  from an offset pair of separation C, so the inscribed reading C / cos(turn / 2) (larger local
-  joint turn) is the other bound; it interacts iff both readings are below 2R on the quantized
-  grid — the straight-pair answer up to the recorded discretisation ambiguity
-  w (1 / cos(turn / 2) - 1) (4e-5 w at 1 deg per vertex; a 2R - 1e-3 R gap interacts only where
-  the joint turn is below 3.6 deg). The
-  constant portions are the pair (mean separation), the non-constant portions (tees, port ends,
-  fast tapers, acute arms) keep the event rule; the cross-chord interactions of a constant
-  portion are never event cores whether or not it interacts. Found on DS-SCT-001: its 4 um CPW
-  gaps (= 2R) dipped to 3.9999 mid-chord along the 250 um bends and formed three clusters of
-  874-1,184 edges (1.5-3.2 mm) claiming every strip; a global constancy test then failed on the
-  tee / port ends (3.999-4.200 over the facing region). Synthetic (26 layouts):
-  `gap-bend-r{50,250}-{2R,2Rminus,2Rplus}-step{1,5,15}` (two 8 um bars, offsets of one
-  centreline, gap 2R and 2R +/- 1e-3 R: 2R and 2R + 1e-3 R -> isolated edges, no cluster, no
-  pair; 2R - 1e-3 R -> the two corner pairs as clusters and one `DifferentConductorGap` where
-  the joint turn allows: the whole pair at 1 deg per vertex, the leads at 5 deg, nothing at 15),
-  `cpw-tee-r50-step{5,15}` (gap pairs up to the T, two clusters per side), `cpw-port-r50-step{5,15}`
-  (pairs up to the truncation cut), `taper-slow` (3.0 -> 3.15 um over 20 R: one pair),
-  `taper-fast` (80 deg: one cluster). The oracle mirrors the rule (`design_bent_pairs`: chain
-  order, local windows, constant portions excluded from the event cores; corner pairs strictly
-  within 2R; `arc_bar(..., offset=, lead_end=, tee=)`).
-* **Legacy pair construction** (`surfaceresponseoperator.cpp` `VerifyParallelOverlap`): the
-  parallel-overlap verification tolerance follows the parallel class (cosine deficit 1e-8 =
-  sqrt(2e-8) rad times the projected lengths) instead of 1e-10 relative; DS-SCT-001 aborted on
-  190 CPW chord pairs 3e-5 to 1e-4 rad apart.
-* **Mesh preparation, DS-SCT-001**: `tag_metal_components.py --drop-metal-duplicates` (16 port
-  triangles duplicating metal faces; ground attr 4 + island attr 9), then `preflight_matrix
-  --frame-normal 0 0 1` because the L1 metal has the substrate volume (attr 1, z in [-525, 5] um)
-  on both sides (without it every sheet segment is an `UndeterminedProcessSide` record).
-* **Slivers between claim boundaries**: a claimed or unclaimed piece of a run shorter than
-  `SignatureLengthQuantumOverR` x R joins the adjacent portion on its run (a cluster ball cutting
-  a pair piece next to a run end leaves roundoff pieces of ~1e-8 um); DS-SCT-001 carried three
-  `CurvedSameConductorStrip` features of 1.6e-7 um in total (six portions of 2.66e-8 um).
-* **Audit `rounded_runs` follows the classifier's fillet rule**: runs are maximal collinear chord
-  sequences (a collinear spline / refinement vertex does not split an arc), a run shorter than R
-  with turns at both ends is an arc chord, longer runs are arms, and the tangent test applies to a
-  maximal arc sequence between two arms. The former reading split arcs at collinear vertices and
-  accepted one-chord arms: DS-SCT-001 read 29 rounded runs against the classifier's 18 fillets
-  (six 90 deg, 1 um = R / 2 fillets on 32 chords per CPW termination, one split 79.84 + 10.16 deg
-  by a collinear spline vertex; the other 11 were sub-arcs of 5 um = 2.5 R bends with 0.05-0.2 um
-  "arms"); it now reads 18 / 18 (`A1-vertex-census` PASS on every DS-SCT-001 cell).
-* **Survey findings recorded (PENDING)**: `CanonicalClusterSignature` serialises a cluster once
-  per distinct portion direction (~290 s on the 1,184-edge DS-SCT-001 cluster before the local
-  constancy rule; 49 s per DS-SCT-001 cell with 606 / 564 / 564-edge clusters; chip-scale
-  clusters need a bounded frame rule).
-Phase-3 final gate matrix (executable of the final phase-3 commit): 5,742 / 5,742 PASS — transmon 96 + 23
-cross (digest 625b52700400), externally refined r1 64 + 7, two-transmon chain 64 + 7 (50034198aff5; both
-cells identical hashes), 86 synthetic layouts 4,128 gates + 344 cross-cell comparisons (A3 / A4 / A5 /
-crack) + 930 oracle checks, DS-SCT-001 64 + 7 (+ 8 without a frame normal: 27,081 um
-`UndeterminedProcessSide`, nothing silent). Unit tests: the serial suite `[Serial]~[Regression]~[Long]`
-and `mpirun -n 2 "[Parallel]~[Regression]~[Long]"` (the `[Long]` regression solves are not part of the
-identification gate).
-Phase-3 results: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/phase3/REPORT.md`;
-block summary: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/SUMMARY.md`.
+  - **Perimeter from the distinct geometric metal faces** (`palace/utils/metaledge.cpp`): a face
+    edge is classified by the in-plane inward directions of the distinct faces owning it — one
+    direction = one-sided perimeter (PHYSICAL / TRUNCATION), two opposite = interior, two
+    non-coplanar = FOLD, three or more = NONMANIFOLD. Coincident crack copies count once, so
+    `CrackInternalBoundaryElements` true and false give the same perimeter and identification
+    (same `GeometryDigest` and lengths), and sheets with one material on both sides (airbridge
+    spans, embedded metal) are no longer cancelled. `perimeter.py` applies the same rule
+    (kinds PHYSICAL, TRUNCATION, EMBEDDED, NONPLANAR, FOLD, NONMANIFOLD, BOX).
+  - **Conductor identity = edge-connected metal component**, independent of the attribute
+    numbering and of the problem type (electrostatic Terminal / Ground labels and Maxwell PEC
+    attributes alike); the labels only produce a warning when one component carries distinct
+    labels. Consequences: two ground planes cut by the simulation box are two conductors (a CPW
+    cross-section is a three-conductor four-edge cluster); two sheets touching at a single vertex
+    are two conductors (no galvanic connection) and the vertex is a `PointContact` record + warning;
+    the `Junction` signature carries `ArmConductors`. The audit's `perimeter.py` reports the
+    edge-connected component of every edge; `tag_metal_components.py` is no longer needed for
+    conductor identity (it remains a mesh-repair tool).
+  - **Exclusions reported, never silent** (`Identification.Exclusions`, each with count and
+    length; the segment table carries `Exclusion` for whole segments and `ExcludedPortions`
+    `[s0, s1, exclusion index]` for analytic zones): `SimulationBoundary` (metal faces on the
+    mesh bounding box, a PEC box), `NonPlanar` (folds; one-sided faces not parallel to the layer
+    normal: walls, staple legs, vias), `NonManifold` (a wall standing on a sheet),
+    `UndeterminedProcessSide` (same material on both sides and no `EdgeFrameNormal` on the target
+    interface — the configured process layers decide the side, else the record), `CrossLayer`
+    (the parts of a planar run within 2R of metal off its own plane — a facing layer across a
+    gap, a wall, a staple — solved analytically on the distance to every such face, so the zones
+    are refinement invariant; `Conventions.CrossLayerReachOverR` = 2), `Untargeted`,
+    `TruncationCut`. Vertices: `Excluded` (every incident run excluded or within 2R of off-plane
+    metal), `ExclusionCut` (a chain cut by an excluded segment; no endpoint feature), `PointContact`
+    flag. Every other metal plane is identified in its own right (a second chip is not excluded
+    unless it faces metal within 2R). The legacy classification omits exactly the segments the
+    identification excludes.
+  - **Layer normal** = area-weighted principal direction of the metal face normals (faces on the
+    mesh bounding box do not vote); planarity tolerance = the parallelism tolerance 1e-8.
+  - **Mesh preparation**: coincident metal boundary elements of one attribute are tolerated
+    (deduplicated); coincident boundary elements of different metal attributes abort naming both
+    attributes and the face location; Palace already refuses a face with two boundary elements at
+    load (`geodata.cpp GetFaceToBdrElementMap`, attributes named) — `tag_metal_components.py --drop-metal-duplicates` is the deterministic repair. A missing `substrate_air` group is not a
+    blocker (MS / MA targets only).
+  - **Audit**: split-tolerant perimeter agreement (cracking bisects elements next to under-resolved
+    sheets, second-order edges are sampled), partition with `ExcludedPortions`, vertex census with
+    excluded vertices and point contacts, exclusion lengths per class compared with the mesh
+    (incl. the analytic CrossLayer zones); `synthetic_layouts.py --crack-false` adds a
+    `CrackInternalBoundaryElements=false` cell per library and compares its digest; the oracle's
+    conductor is the sheet (connectivity), `gap-same-*` are slots in one U-shaped sheet, and the
+    off-plane exclusions (facing sheets, walls) are computed analytically (`A6-excluded-classes`).
+  - `StraightBendRadiusOverR` = 10 (decision 75; phase 2 used 20).
+  - **Pairs along bends by local constancy, decided on the curve separation**
+    (`PairConstancyWindowOverR` = 1, `PairSampleSpacingOverR` = 0.5, `PairCandidateReachOverR` = 2.1,
+    `PairSeparationEstimate`): a chain's facing region is sampled (<= R / 2 apart); a sample is
+    constant when the distances within R of it vary by <= 5 %; its curve separation is the
+    smaller of the two directional window maxima (half-width max(R, chord) where the chain bends,
+    R on straight runs) — the chord reading C, exact for an offset polyline; two polylines
+    inscribed in the curves at aligned angles read C = w cos(turn / 2) and cannot be told apart
+    from an offset pair of separation C, so the inscribed reading C / cos(turn / 2) (larger local
+    joint turn) is the other bound; it interacts iff both readings are below 2R on the quantized
+    grid — the straight-pair answer up to the recorded discretisation ambiguity
+    w (1 / cos(turn / 2) - 1) (4e-5 w at 1 deg per vertex; a 2R - 1e-3 R gap interacts only where
+    the joint turn is below 3.6 deg). The
+    constant portions are the pair (mean separation), the non-constant portions (tees, port ends,
+    fast tapers, acute arms) keep the event rule; the cross-chord interactions of a constant
+    portion are never event cores whether or not it interacts. Found on DS-SCT-001: its 4 um CPW
+    gaps (= 2R) dipped to 3.9999 mid-chord along the 250 um bends and formed three clusters of
+    874-1,184 edges (1.5-3.2 mm) claiming every strip; a global constancy test then failed on the
+    tee / port ends (3.999-4.200 over the facing region). Synthetic (26 layouts):
+    `gap-bend-r{50,250}-{2R,2Rminus,2Rplus}-step{1,5,15}` (two 8 um bars, offsets of one
+    centreline, gap 2R and 2R +/- 1e-3 R: 2R and 2R + 1e-3 R -> isolated edges, no cluster, no
+    pair; 2R - 1e-3 R -> the two corner pairs as clusters and one `DifferentConductorGap` where
+    the joint turn allows: the whole pair at 1 deg per vertex, the leads at 5 deg, nothing at 15),
+    `cpw-tee-r50-step{5,15}` (gap pairs up to the T, two clusters per side), `cpw-port-r50-step{5,15}`
+    (pairs up to the truncation cut), `taper-slow` (3.0 -> 3.15 um over 20 R: one pair),
+    `taper-fast` (80 deg: one cluster). The oracle mirrors the rule (`design_bent_pairs`: chain
+    order, local windows, constant portions excluded from the event cores; corner pairs strictly
+    within 2R; `arc_bar(..., offset=, lead_end=, tee=)`).
+  - **Legacy pair construction** (`surfaceresponseoperator.cpp` `VerifyParallelOverlap`): the
+    parallel-overlap verification tolerance follows the parallel class (cosine deficit 1e-8 =
+    sqrt(2e-8) rad times the projected lengths) instead of 1e-10 relative; DS-SCT-001 aborted on
+    190 CPW chord pairs 3e-5 to 1e-4 rad apart.
+  - **Mesh preparation, DS-SCT-001**: `tag_metal_components.py --drop-metal-duplicates` (16 port
+    triangles duplicating metal faces; ground attr 4 + island attr 9), then `preflight_matrix --frame-normal 0 0 1` because the L1 metal has the substrate volume (attr 1, z in [-525, 5] um)
+    on both sides (without it every sheet segment is an `UndeterminedProcessSide` record).
+  - **Slivers between claim boundaries**: a claimed or unclaimed piece of a run shorter than
+    `SignatureLengthQuantumOverR` x R joins the adjacent portion on its run (a cluster ball cutting
+    a pair piece next to a run end leaves roundoff pieces of ~1e-8 um); DS-SCT-001 carried three
+    `CurvedSameConductorStrip` features of 1.6e-7 um in total (six portions of 2.66e-8 um).
+  - **Audit `rounded_runs` follows the classifier's fillet rule**: runs are maximal collinear chord
+    sequences (a collinear spline / refinement vertex does not split an arc), a run shorter than R
+    with turns at both ends is an arc chord, longer runs are arms, and the tangent test applies to a
+    maximal arc sequence between two arms. The former reading split arcs at collinear vertices and
+    accepted one-chord arms: DS-SCT-001 read 29 rounded runs against the classifier's 18 fillets
+    (six 90 deg, 1 um = R / 2 fillets on 32 chords per CPW termination, one split 79.84 + 10.16 deg
+    by a collinear spline vertex; the other 11 were sub-arcs of 5 um = 2.5 R bends with 0.05-0.2 um
+    "arms"); it now reads 18 / 18 (`A1-vertex-census` PASS on every DS-SCT-001 cell).
+  - **Survey findings recorded (PENDING)**: `CanonicalClusterSignature` serialises a cluster once
+    per distinct portion direction (~290 s on the 1,184-edge DS-SCT-001 cluster before the local
+    constancy rule; 49 s per DS-SCT-001 cell with 606 / 564 / 564-edge clusters; chip-scale
+    clusters need a bounded frame rule).
+    Phase-3 final gate matrix (executable of the final phase-3 commit): 5,742 / 5,742 PASS — transmon 96 + 23
+    cross (digest 625b52700400), externally refined r1 64 + 7, two-transmon chain 64 + 7 (50034198aff5; both
+    cells identical hashes), 86 synthetic layouts 4,128 gates + 344 cross-cell comparisons (A3 / A4 / A5 /
+    crack) + 930 oracle checks, DS-SCT-001 64 + 7 (+ 8 without a frame normal: 27,081 um
+    `UndeterminedProcessSide`, nothing silent). Unit tests: the serial suite `[Serial]~[Regression]~[Long]`
+    and `mpirun -n 2 "[Parallel]~[Regression]~[Long]"` (the `[Long]` regression solves are not part of the
+    identification gate).
+    Phase-3 results: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/phase3/REPORT.md`;
+    block summary: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/SUMMARY.md`.
 
 Phase 4 (decision 74, the Features-driven patch construction; design doc section (e)):
 
-* **The solve path consumes `Identification.Features`** (`ResponseCorrection.PatchConstruction`
-  = `Features`, the default; `Legacy` keeps the former per-interface-group classification for
-  comparison only): every feature matched by signature becomes its patches (isolated / curved
-  edges: one quadrature per portion in the segment frame; pairs: quadrature on both sides with
-  side factor 1 / 2, origin at the midpoint of a sample and its foot on the partner, the model's
-  first edge = the lower side along the feature's lateral axis, mirrored for chirality -1;
-  parallel clusters: side factor 1 / n, origin on the canonical first edge; corners / endpoints /
-  junctions: one patch in the feature frame `Frame`; spatial clusters: the model's canonical
-  frame composed with the feature's), an unmatched feature is omitted alone, excluded segments
-  are never corrected. The manifest's `Frame` of a vertex feature is now its patch frame (corner:
-  x = first arm, second arm counterclockwise; endpoint: y toward the gap; junction: canonical
-  first arm and orientation).
-* **Patch dry run**: the preflight writes `surface-response-patches.csv` next to the manifest
-  (feature id, topology, model, weight, model / quadrature weights, side factor, coupon depth,
-  segment portion `[S0, S1)`, origin, axes) without a field solve; `audit.py` reads it
-  automatically (or `--patches`) and gates **A7**: patched features = matched features, every
-  portion of a matched feature covered exactly once, weights (quadrature x model = 1 per interval,
-  `Weight = ModelWeight x QuadratureWeight x (S1 - S0) x SideFactor / CouponDepth`), no patch on
-  an unmatched feature or an excluded segment / portion.
-* `signature_library.py MANIFEST OUT.json` builds the **signature-only library** (one model per
-  distinct feature hash, `Signature` + version-1 parameters derived from it, placeholder matrix
-  paths; the library keys clusters by signature without `Edges`, curved classes `CurvedEdge` /
-  `CurvedSameConductorGap` / `CurvedDifferentConductorGap` / `CurvedSameConductorStrip` are
-  signature-keyed topologies): its dry run must cover `Totals.AssignedLength` exactly.
-  `preflight_matrix --signature-library` and `synthetic_layouts --signature-library` add a
-  `signature` library per geometry / layout built from the first cell's manifest.
-* **Identification refinements found by the patch construction** (the A1 partition cannot see a
-  pair described on one side only): the bent-pair "beyond either end" exclusion is local (past the
-  partner's end plane AND within the reach of that end — the global half-plane of a bent route had
-  removed the whole facing region of DS-SCT-001's ground edges); the constant interacting pieces of
-  a chain pair are grouped by separation (5 % pair tolerance; a closed trace loop faces one ground
-  chain at the gap and across the strip), one feature per group with its own frame and class; a
-  pair that lost a whole side in claim resolution is demoted to the isolated / curved edge; the two
-  sides of a pair are mutual (the part of one side facing beyond the other side's surviving pieces
-  returns to the run). `Features[].Sides` (parallel to `Portions`) labels the side of every pair /
-  parallel-cluster portion in the signature's edge order (reversed for chirality -1). The patch
-  construction refuses a pair whose sides do not face each other at its separation (10 %) with a
-  warning; DS-SCT-001 now has none (digest 058b18dae5e5, 23 s per cell). PENDING: a bent CPW
-  narrower than 2R (ground - gap - trace - gap - ground within 2R) is a multi-chain neighbourhood the
-  pairwise bent rule cannot express (knife-edge pieces at exactly 2R across the trace with unequal
-  chords on the two sides).
-* A model's interface types are part of its key: the legacy libraries' models mapping MA + MS + SA
-  never match an SA-only feature (island unit test); the transmon's full library matches its
-  isolated edges and corners (97.9 % of the assigned perimeter patched; the 2 um strips and the
-  clusters Missing: decisions 70 / 71).
-Phase-4 final gate matrix (executable 088f94573): 11,914 / 11,914 PASS — transmon 144 + 23 cross (digest
-26760e1a72eb; signature dry run 6,175 patches = 100 % of 35,296.81 um, full library 5,828 patches = 97.909 %),
-externally refined r1 144 + 11, two-transmon chain 144 + 11 (b838d5e02c10; 23,958 patches = 100 %),
-DS-SCT-001 144 + 11 (058b18dae5e5; 13,390 patches = 100 %, two-sided gaps 562 / 560, 314 / 311, 801 / 799 um,
-23 s per cell), 86 synthetic layouts 9,288 gates + 344 cross-cell comparisons + 1,395 oracle checks + 255
-signature cells at 100 % coverage (seed 0 patches; the `isolated` library 0 - 90.6 %). Unit tests: serial suite
-173 passed / 1 skipped, MPI-2 59 passed; Python identification 48 OK; `spatial_coupon` 370 / 371 (the
-pre-existing device-closure error).
-Phase-4 results: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/phase4/REPORT.md`.
+  - **The solve path consumes `Identification.Features`** (`ResponseCorrection.PatchConstruction`
+    = `Features`, the default; `Legacy` keeps the former per-interface-group classification for
+    comparison only): every feature matched by signature becomes its patches (isolated / curved
+    edges: one quadrature per portion in the segment frame; pairs: quadrature on both sides with
+    side factor 1 / 2, origin at the midpoint of a sample and its foot on the partner, the model's
+    first edge = the lower side along the feature's lateral axis, mirrored for chirality -1;
+    parallel clusters: side factor 1 / n, origin on the canonical first edge; corners / endpoints /
+    junctions: one patch in the feature frame `Frame`; spatial clusters: the model's canonical
+    frame composed with the feature's), an unmatched feature is omitted alone, excluded segments
+    are never corrected. The manifest's `Frame` of a vertex feature is now its patch frame (corner:
+    x = first arm, second arm counterclockwise; endpoint: y toward the gap; junction: canonical
+    first arm and orientation).
+  - **Patch dry run**: the preflight writes `surface-response-patches.csv` next to the manifest
+    (feature id, topology, model, weight, model / quadrature weights, side factor, coupon depth,
+    segment portion `[S0, S1)`, origin, axes) without a field solve; `audit.py` reads it
+    automatically (or `--patches`) and gates **A7**: patched features = matched features, every
+    portion of a matched feature covered exactly once, weights (quadrature x model = 1 per interval,
+    `Weight = ModelWeight x QuadratureWeight x (S1 - S0) x SideFactor / CouponDepth`), no patch on
+    an unmatched feature or an excluded segment / portion.
+  - `signature_library.py MANIFEST OUT.json` builds the **signature-only library** (one model per
+    distinct feature hash, `Signature` + version-1 parameters derived from it, placeholder matrix
+    paths; the library keys clusters by signature without `Edges`, curved classes `CurvedEdge` /
+    `CurvedSameConductorGap` / `CurvedDifferentConductorGap` / `CurvedSameConductorStrip` are
+    signature-keyed topologies): its dry run must cover `Totals.AssignedLength` exactly.
+    `preflight_matrix --signature-library` and `synthetic_layouts --signature-library` add a
+    `signature` library per geometry / layout built from the first cell's manifest.
+  - **Identification refinements found by the patch construction** (the A1 partition cannot see a
+    pair described on one side only): the bent-pair "beyond either end" exclusion is local (past the
+    partner's end plane AND within the reach of that end — the global half-plane of a bent route had
+    removed the whole facing region of DS-SCT-001's ground edges); the constant interacting pieces of
+    a chain pair are grouped by separation (5 % pair tolerance; a closed trace loop faces one ground
+    chain at the gap and across the strip), one feature per group with its own frame and class; a
+    pair that lost a whole side in claim resolution is demoted to the isolated / curved edge; the two
+    sides of a pair are mutual (the part of one side facing beyond the other side's surviving pieces
+    returns to the run). `Features[].Sides` (parallel to `Portions`) labels the side of every pair /
+    parallel-cluster portion in the signature's edge order (reversed for chirality -1). The patch
+    construction refuses a pair whose sides do not face each other at its separation (10 %) with a
+    warning; DS-SCT-001 now has none (digest 058b18dae5e5, 23 s per cell). PENDING: a bent CPW
+    narrower than 2R (ground - gap - trace - gap - ground within 2R) is a multi-chain neighbourhood the
+    pairwise bent rule cannot express (knife-edge pieces at exactly 2R across the trace with unequal
+    chords on the two sides).
+  - A model's interface types are part of its key: the legacy libraries' models mapping MA + MS + SA
+    never match an SA-only feature (island unit test); the transmon's full library matches its
+    isolated edges and corners (97.9 % of the assigned perimeter patched; the 2 um strips and the
+    clusters Missing: decisions 70 / 71).
+    Phase-4 final gate matrix (executable 088f94573): 11,914 / 11,914 PASS — transmon 144 + 23 cross (digest
+    26760e1a72eb; signature dry run 6,175 patches = 100 % of 35,296.81 um, full library 5,828 patches = 97.909 %),
+    externally refined r1 144 + 11, two-transmon chain 144 + 11 (b838d5e02c10; 23,958 patches = 100 %),
+    DS-SCT-001 144 + 11 (058b18dae5e5; 13,390 patches = 100 %, two-sided gaps 562 / 560, 314 / 311, 801 / 799 um,
+    23 s per cell), 86 synthetic layouts 9,288 gates + 344 cross-cell comparisons + 1,395 oracle checks + 255
+    signature cells at 100 % coverage (seed 0 patches; the `isolated` library 0 - 90.6 %). Unit tests: serial suite
+    173 passed / 1 skipped, MPI-2 59 passed; Python identification 48 OK; `spatial_coupon` 370 / 371 (the
+    pre-existing device-closure error).
+    Phase-4 results: `coupon-accuracy-assessment-20260913/geometry-identification-fix-20260924/phase4/REPORT.md`.
 
 ## Geometry identification: baseline audit (2026-09-24, executable 9ef5256b / v0.17.0-572-g5876402f7)
 
@@ -248,19 +246,19 @@ classification-fix block (preflight-only: no matrices are read by the preflight)
 
 ### Transmon (island-tagged coarse mesh, 3,146 perimeter segments, 35.30 mm targeted length)
 
-| Invariant | Result |
-|---|---|
-| A4 rank determinism (1, 2, 4, 6) | PASS for every library and level: identical canonical digests |
-| A3 library independence (seed vs full, set diff) | FAIL, two components. (i) Manifest-format artefact: IsolatedEdge 1 record / 6 um (seed: "No compatible isolated-edge model ... correction is disabled", one representative segment) vs 3,007 / 34,853 um (full, Exact) — the geometry is the same, the record is not. (ii) Genuine library dependence: SameConductorStrip (2 um) 170 segments / 668 um (seed) vs 64 / 250 um (full); nonparallel omissions 12 vs 2; clusters: seed has 3-edge (12 um), 4-edge (16 um), 4-edge (16 um) records, full has 3-edge (8 um) and 4-edge (12 um) — the 2 cluster models matched by the full library absorb 106 strip segments (418 um), 10 nonparallel pairs and one 4-edge cluster that the no-model run reports separately. The 64 strips at exactly R are common to both. |
-| A5 refinement, Palace UniformLevels 1 (digest only) | FAIL: seed 6 cluster records replaced by 7 (+1 strip record at separation 1.0 um); full: ConvexCorner 12 -> 13, 7 clusters replaced by 5, the IsolatedEdge record removed |
+| Invariant                                                                                                                | Result                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+|:------------------------------------------------------------------------------------------------------------------------ |:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A4 rank determinism (1, 2, 4, 6)                                                                                         | PASS for every library and level: identical canonical digests                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| A3 library independence (seed vs full, set diff)                                                                         | FAIL, two components. (i) Manifest-format artefact: IsolatedEdge 1 record / 6 um (seed: "No compatible isolated-edge model ... correction is disabled", one representative segment) vs 3,007 / 34,853 um (full, Exact) — the geometry is the same, the record is not. (ii) Genuine library dependence: SameConductorStrip (2 um) 170 segments / 668 um (seed) vs 64 / 250 um (full); nonparallel omissions 12 vs 2; clusters: seed has 3-edge (12 um), 4-edge (16 um), 4-edge (16 um) records, full has 3-edge (8 um) and 4-edge (12 um) — the 2 cluster models matched by the full library absorb 106 strip segments (418 um), 10 nonparallel pairs and one 4-edge cluster that the no-model run reports separately. The 64 strips at exactly R are common to both.                          |
+| A5 refinement, Palace UniformLevels 1 (digest only)                                                                      | FAIL: seed 6 cluster records replaced by 7 (+1 strip record at separation 1.0 um); full: ConvexCorner 12 -> 13, 7 clusters replaced by 5, the IsolatedEdge record removed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | A5 refinement, external 1 -> 8 split (`refine_msh2.py`, 36.8 MB, audited against the refined mesh; `transmon/matrix-r1`) | FAIL, and the digest-only reading hid the meaning: with the full library the refined mesh logs `Nearby three-dimensional metal edges are not parallel; correction is disabled for this interface group!` — Exact 37 (corners + 2 clusters, 160 um) / Missing 131, Matched physical edge segments 0, i.e. the whole 34.9 mm isolated-edge correction is switched off by one refinement level (coarse: 3,043 Exact). Perimeter agreement is exact (6,292 = 6,292 segments, 48 = 48 chains, no bisection); nonparallel omissions 2 -> 18, cross-interface 14 -> 24; ConvexCorner 12 -> 13 (a corner freed from a vanished 4-edge cluster). External and Palace-internal refinement agree on every non-cluster record; their cluster records differ (mesh-order-dependent representative events). |
-| A1 length partition | FAIL: full library assigns 35,103 of 35,297 um (deficit 193.6 um = 0.55 %); seed 674 um only (correction disabled: no isolated-edge model) |
-| A1 count partition | FAIL: 3,071 assigned + 17 omitted (2 + 12 cross-interface, 2 nonparallel) = 3,088 reconciled; omitted != 0 |
-| A1 vertex census | NOT-EVALUABLE: 48 audit corners, 34 manifest corners; 14 absorbed by 5-6 spatial clusters or dropped (the manifest does not enumerate them) |
-| A1 exclusions recorded | FAIL: 160 um non-planar + 256 um cross-layer (plane z = 10 um, 1,280 um^2) + 80 um non-manifold metal in attribute 5 are silently absent (classifier: 0 incompatible-process-normal / 0 process-normal-offset omissions) |
-| A2 cluster balls | PASS (audit-side vertex clusters; minimum centre distance 6.0 >= 2R) |
-| CrackInternalBoundaryElements false | ABORT (exit 134) in all 16 transmon cells, all 4 chain2 cells and all 4 DS-SCT-001 cells: `Verification failed: (norm_squared > 1.0e-20) is false: --> Unable to infer the metal-to-gap direction for an automatic edge segment! ... in function: BuildMetalEdgeGapDirections ... palace/utils/metaledge.cpp:1208` — the uncracked mesh has both materials' faces on one boundary element, so the metal-side face sum cancels; the classifier only works on cracked meshes |
-| Knife edges in the layout | 180 parallel pairs at exactly R = 2 um, 4 at exactly 2R (mesh census); the 64 same-conductor-strip segments at exactly R (250 um) have no model in the full library |
+| A1 length partition                                                                                                      | FAIL: full library assigns 35,103 of 35,297 um (deficit 193.6 um = 0.55 %); seed 674 um only (correction disabled: no isolated-edge model)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| A1 count partition                                                                                                       | FAIL: 3,071 assigned + 17 omitted (2 + 12 cross-interface, 2 nonparallel) = 3,088 reconciled; omitted != 0                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| A1 vertex census                                                                                                         | NOT-EVALUABLE: 48 audit corners, 34 manifest corners; 14 absorbed by 5-6 spatial clusters or dropped (the manifest does not enumerate them)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| A1 exclusions recorded                                                                                                   | FAIL: 160 um non-planar + 256 um cross-layer (plane z = 10 um, 1,280 um^2) + 80 um non-manifold metal in attribute 5 are silently absent (classifier: 0 incompatible-process-normal / 0 process-normal-offset omissions)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| A2 cluster balls                                                                                                         | PASS (audit-side vertex clusters; minimum centre distance 6.0 >= 2R)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| CrackInternalBoundaryElements false                                                                                      | ABORT (exit 134) in all 16 transmon cells, all 4 chain2 cells and all 4 DS-SCT-001 cells: `Verification failed: (norm_squared > 1.0e-20) is false: --> Unable to infer the metal-to-gap direction for an automatic edge segment! ... in function: BuildMetalEdgeGapDirections ... palace/utils/metaledge.cpp:1208` — the uncracked mesh has both materials' faces on one boundary element, so the metal-side face sum cancels; the classifier only works on cracked meshes                                                                                                                                                                                                                                                                                                                    |
+| Knife edges in the layout                                                                                                | 180 parallel pairs at exactly R = 2 um, 4 at exactly 2R (mesh census); the 64 same-conductor-strip segments at exactly R (250 um) have no model in the full library                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 ### Synthetic stress layouts (62 layouts, ranks 1 / 2 / 4, UniformLevels 0 / 1, seed and isolated libraries)
 
@@ -268,96 +266,95 @@ A4 holds on all 62 layouts (identical digests over ranks). Oracle agreement (A6)
 length and corner list agree with the polygon oracle on all 62; the manifest agrees with the
 oracle's expected classes on 60 (exceptions below). Observed classifier rules:
 
-* Corner rule: a vertex is a corner iff its turn exceeds 30 deg (interior angle < 150 deg);
-  `corner-150` (turn exactly 30 deg) is straight: 4 corners, `corner-135` 6. Concave corners
-  report the gap-side angle (`ConcaveCorner@30` for the 30 deg bent bar).
-* Interaction threshold: pairs at 3.9 um are SameConductorGap / DifferentConductorGap /
-  SameConductorStrip; pairs at exactly 2R = 4.0 um and at 4.1 um are isolated (quantized
-  decision: exactly 2R is not within). Same/different conductor gaps are distinguished only
-  through Terminal attributes.
-* Separation exactly R = 2 um (`strip-2`): the strip's four 90 deg corners are reported as
-  ConvexCorner (4) while at 1.95 and 2.05 um they are absorbed into the spatial cluster; the
-  transmon's 64 strips at exactly R are the same knife edge.
-* Every corner within 2R of another feature becomes a spatial cluster: gaps <= 3.9 um make one
-  6-edge cluster spanning the whole gap and omit 16-24 um (15-23 % of the perimeter) as
-  "nonparallel"; T with a 3 um stem: 4-edge cluster, 20 % omitted; X with 3 um arms: 2 clusters,
-  44 % omitted; 3 x 3 um island and 1 / 3 um apertures: one 4-edge cluster, 50 % of the length
-  not assigned; 10 um aperture: 4 concave corners, complete.
-* Acute corners: at 30 and 45 deg the arms' segments near the corner are within 2R of each
-  other and form a cluster in addition to the corner record (double description: corner-30 has
-  1 concave + 3 convex corners + clusters of 2 and 4 edges, 36 % omitted); at 60 deg and above
-  none. Taper 80 deg corners become 2-edge clusters (the 100 deg ones stay corners).
-* Curved edges: a fillet run (consecutive sub-tolerance turns) is a rounded corner iff its
-  tangent distances from the virtual corner are < R and equal within 5 % and the fillet radius
-  is in (0, R): the 0.5 um fillets of the 8 x 6 um island / aperture are
-  `ConvexCorner@90 radius 0.5` / `ConcaveCorner@90 radius 0.5`. Polyline arcs of radius 5-250
-  um (1-20 deg per vertex) never produce corners; the two edges of a 3 um wide arc bar are
-  strips per parallel chord pair and the adjacent non-parallel chords within 2R are omitted:
-  7-39 % of the perimeter (r5: 27 / 30 / 16 %, r20: 39 / 38 / 8 %, r50: 39 / 12 / 6 %,
-  r250: 17 / 8 % for 1 / 5 / 20 deg per vertex) — the omission grows as the discretisation
-  gets finer, so the "straight edge" reading of decision 73(1)(b) is not what the classifier
-  does today for bend radii up to 125 R.
-* A5 (one uniform refinement) holds only on layouts without clusters and without fillets:
-  every spatial-cluster record changes under refinement (Edges intervals / points follow the
-  mesh segments), and the rounded corners of the 8 x 6 um island DISAPPEAR after refinement
-  (the collinear midpoints inserted on the chords split the curved run: `MatchRoundedRun`
-  requires consecutive curved vertices).
-* A3 (seed vs isolated): the requirement set differs on every layout with an isolated edge:
-  without an isolated-edge model the classifier records one representative segment (Count 1,
-  the segment's length) and disables the group.
-* Excluded classes: the facing sheet 3 um above the process plane and the vertical wall leave
-  the manifest identical to the bare rectangle (no omission counter, no record): silent.
-* Pair records carry one edge length (TotalEdgeLength = Count x segment length): in
-  `gap-same-2` 12 pairs / 12 um plus 72 um isolated of 104 um with 20 um omitted, so the
-  partner side of a pair is counted as isolated (or double-counted); without a per-segment
-  assignment in the manifest the audit cannot tell (A1-multiplicity NOT-EVALUABLE).
+  - Corner rule: a vertex is a corner iff its turn exceeds 30 deg (interior angle < 150 deg);
+    `corner-150` (turn exactly 30 deg) is straight: 4 corners, `corner-135` 6. Concave corners
+    report the gap-side angle (`ConcaveCorner@30` for the 30 deg bent bar).
+  - Interaction threshold: pairs at 3.9 um are SameConductorGap / DifferentConductorGap /
+    SameConductorStrip; pairs at exactly 2R = 4.0 um and at 4.1 um are isolated (quantized
+    decision: exactly 2R is not within). Same/different conductor gaps are distinguished only
+    through Terminal attributes.
+  - Separation exactly R = 2 um (`strip-2`): the strip's four 90 deg corners are reported as
+    ConvexCorner (4) while at 1.95 and 2.05 um they are absorbed into the spatial cluster; the
+    transmon's 64 strips at exactly R are the same knife edge.
+  - Every corner within 2R of another feature becomes a spatial cluster: gaps <= 3.9 um make one
+    6-edge cluster spanning the whole gap and omit 16-24 um (15-23 % of the perimeter) as
+    "nonparallel"; T with a 3 um stem: 4-edge cluster, 20 % omitted; X with 3 um arms: 2 clusters,
+    44 % omitted; 3 x 3 um island and 1 / 3 um apertures: one 4-edge cluster, 50 % of the length
+    not assigned; 10 um aperture: 4 concave corners, complete.
+  - Acute corners: at 30 and 45 deg the arms' segments near the corner are within 2R of each
+    other and form a cluster in addition to the corner record (double description: corner-30 has
+    1 concave + 3 convex corners + clusters of 2 and 4 edges, 36 % omitted); at 60 deg and above
+    none. Taper 80 deg corners become 2-edge clusters (the 100 deg ones stay corners).
+  - Curved edges: a fillet run (consecutive sub-tolerance turns) is a rounded corner iff its
+    tangent distances from the virtual corner are < R and equal within 5 % and the fillet radius
+    is in (0, R): the 0.5 um fillets of the 8 x 6 um island / aperture are
+    `ConvexCorner@90 radius 0.5` / `ConcaveCorner@90 radius 0.5`. Polyline arcs of radius 5-250
+    um (1-20 deg per vertex) never produce corners; the two edges of a 3 um wide arc bar are
+    strips per parallel chord pair and the adjacent non-parallel chords within 2R are omitted:
+    7-39 % of the perimeter (r5: 27 / 30 / 16 %, r20: 39 / 38 / 8 %, r50: 39 / 12 / 6 %,
+    r250: 17 / 8 % for 1 / 5 / 20 deg per vertex) — the omission grows as the discretisation
+    gets finer, so the "straight edge" reading of decision 73(1)(b) is not what the classifier
+    does today for bend radii up to 125 R.
+  - A5 (one uniform refinement) holds only on layouts without clusters and without fillets:
+    every spatial-cluster record changes under refinement (Edges intervals / points follow the
+    mesh segments), and the rounded corners of the 8 x 6 um island DISAPPEAR after refinement
+    (the collinear midpoints inserted on the chords split the curved run: `MatchRoundedRun`
+    requires consecutive curved vertices).
+  - A3 (seed vs isolated): the requirement set differs on every layout with an isolated edge:
+    without an isolated-edge model the classifier records one representative segment (Count 1,
+    the segment's length) and disables the group.
+  - Excluded classes: the facing sheet 3 um above the process plane and the vertical wall leave
+    the manifest identical to the bare rectangle (no omission counter, no record): silent.
+  - Pair records carry one edge length (TotalEdgeLength = Count x segment length): in
+    `gap-same-2` 12 pairs / 12 um plus 72 um isolated of 104 um with 20 um omitted, so the
+    partner side of a pair is counted as isolated (or double-counted); without a per-segment
+    assignment in the manifest the audit cannot tell (A1-multiplicity NOT-EVALUABLE).
 
 ### Survey geometries (local)
 
-* Two-transmon chain (`DeviceLayout.jl/examples/SingleTransmon/transmon_chain_2.msh2`, 413k
-  nodes, second order): N-island tagger finds 2 islands (139 triangles each); 588 MB RSS at 1
-  rank, 12-17 s; A4 holds at 1 vs 6 ranks; crack=false aborts; strip set depends on the
-  library (340 / 1,337 um seed vs 308 / 613 um isolated); 44 omitted segments (80 nonparallel
-  + missing models); 88 audit vertices vs 52 manifest corners; DifferentConductorGap at 1.0 um
-  (2 segments) appears with the two Terminal islands. No substrate_air group: MS / MA only.
-* DS-SCT-001 bump-Q subgraph (`mre_port_bug_fixed.msh2`): Palace rejects the mesh (16 port
-  triangles duplicate metal faces: `geodata.cpp:3707 A non-periodic face cannot have multiple
-  boundary elements`); after `--drop-metal-duplicates` the metal splits into ground + 1 island
-  (313 triangles). The classifier then finds 207 segments (the island) of the audit's 7,679:
-  the whole ground perimeter (27.1 mm, 48 corners, 939 parallel pairs at exactly 2.0 um and
-  768 at exactly 4.0 um) is invisible; with the ground alone it aborts "found no metal
-  perimeter". Root cause in the mesh: every L1 metal face has material attribute 1 on both
-  sides (the volume attributes put the sheet inside one material), so the cracked sheet's two
-  copies fall in one side component and cancel in the odd-incidence perimeter — the same
-  mechanism silently drops the transmon's airbridge (80 faces with vacuum on both sides).
-  Adding a substrate_air group (`--add-interface-group`) does not help (the interface is not
-  adjacent to the metal); crack=false gives the same abort.
-* Blockers hit: conductor identity (single PEC attribute -> conductor 0; N-island tagging
-  works when islands touch no ground-adjacent attribute), duplicate boundary elements,
-  metal embedded in one material, missing SA group (harmless for MS / MA targets: the
-  `synthetic-nosa/` cells reproduce the SA cells' requirement sets), second-order meshes
-  (classifier bisects: 12,113 segments vs 7,143 corner-edge segments).
+  - Two-transmon chain (`DeviceLayout.jl/examples/SingleTransmon/transmon_chain_2.msh2`, 413k
+    nodes, second order): N-island tagger finds 2 islands (139 triangles each); 588 MB RSS at 1
+    rank, 12-17 s; A4 holds at 1 vs 6 ranks; crack=false aborts; strip set depends on the
+    library (340 / 1,337 um seed vs 308 / 613 um isolated); 44 omitted segments (80 nonparallel
+      + missing models); 88 audit vertices vs 52 manifest corners; DifferentConductorGap at 1.0 um
+        (2 segments) appears with the two Terminal islands. No substrate_air group: MS / MA only.
+  - DS-SCT-001 bump-Q subgraph (`mre_port_bug_fixed.msh2`): Palace rejects the mesh (16 port
+    triangles duplicate metal faces: `geodata.cpp:3707 A non-periodic face cannot have multiple boundary elements`); after `--drop-metal-duplicates` the metal splits into ground + 1 island
+    (313 triangles). The classifier then finds 207 segments (the island) of the audit's 7,679:
+    the whole ground perimeter (27.1 mm, 48 corners, 939 parallel pairs at exactly 2.0 um and
+    768 at exactly 4.0 um) is invisible; with the ground alone it aborts "found no metal
+    perimeter". Root cause in the mesh: every L1 metal face has material attribute 1 on both
+    sides (the volume attributes put the sheet inside one material), so the cracked sheet's two
+    copies fall in one side component and cancel in the odd-incidence perimeter — the same
+    mechanism silently drops the transmon's airbridge (80 faces with vacuum on both sides).
+    Adding a substrate_air group (`--add-interface-group`) does not help (the interface is not
+    adjacent to the metal); crack=false gives the same abort.
+  - Blockers hit: conductor identity (single PEC attribute -> conductor 0; N-island tagging
+    works when islands touch no ground-adjacent attribute), duplicate boundary elements,
+    metal embedded in one material, missing SA group (harmless for MS / MA targets: the
+    `synthetic-nosa/` cells reproduce the SA cells' requirement sets), second-order meshes
+    (classifier bisects: 12,113 segments vs 7,143 corner-edge segments).
 
 ### Consolidated findings for the fix block (ranked)
 
-1. Canonical contract: the manifest aggregates by geometry and carries no per-segment
-   assignment, no feature positions, no cluster membership, no excluded-class record; the
-   requirement set depends on the library (isolated-edge representative, strip records with
-   / without a strip model); cluster records depend on the mesh (representative event / tie
-   break); pair records cover one side. Gates A1-multiplicity / vertex census are therefore
-   NOT-EVALUABLE by construction (decision 73(4) asks for gates).
-2. Whole-geometry sites: clusters absorb every corner within 2R and omit the neighbouring
-   segments as "nonparallel" (15-50 % of small features); acute corners are described twice
-   (corner + cluster); knife-edge behaviour at exactly R (strip-2 corners kept, 1.95 / 2.05
-   absorbed).
-3. Curved-edge rule: fillets with radius < R are rounded corners but vanish under uniform
-   refinement (run continuity); arcs with bend radius >= R are chords whose non-parallel
-   neighbours are omitted (7-39 %): decision 73(1)(b) needs a chain-level (accumulated turn)
-   rule and a recorded bend-radius threshold.
-4. Conductor identity: PEC -> conductor 0 for every attribute; the tagger is a workaround;
-   `pec_attribute_conductors` plumbing or component labelling in the classifier.
-5. Perimeter extraction on sheets with one material on both sides (airbridges, embedded
-   metal, TSV walls) cancels silently; excluded classes (non-planar, cross-layer,
-   non-manifold) are dropped without a record (decision 73(3) requires a reported gap).
-6. CrackInternalBoundaryElements=false aborts on every real mesh (`metaledge.cpp:1208` gap direction inference); one uniform refinement disables the whole isolated-edge correction on the transmon ("not parallel ... correction is disabled for this interface group").
-7. Duplicate boundary elements / missing SA group are mesh-preparation blockers (tools here).
+ 1. Canonical contract: the manifest aggregates by geometry and carries no per-segment
+    assignment, no feature positions, no cluster membership, no excluded-class record; the
+    requirement set depends on the library (isolated-edge representative, strip records with
+    / without a strip model); cluster records depend on the mesh (representative event / tie
+    break); pair records cover one side. Gates A1-multiplicity / vertex census are therefore
+    NOT-EVALUABLE by construction (decision 73(4) asks for gates).
+ 2. Whole-geometry sites: clusters absorb every corner within 2R and omit the neighbouring
+    segments as "nonparallel" (15-50 % of small features); acute corners are described twice
+    (corner + cluster); knife-edge behaviour at exactly R (strip-2 corners kept, 1.95 / 2.05
+    absorbed).
+ 3. Curved-edge rule: fillets with radius < R are rounded corners but vanish under uniform
+    refinement (run continuity); arcs with bend radius >= R are chords whose non-parallel
+    neighbours are omitted (7-39 %): decision 73(1)(b) needs a chain-level (accumulated turn)
+    rule and a recorded bend-radius threshold.
+ 4. Conductor identity: PEC -> conductor 0 for every attribute; the tagger is a workaround;
+    `pec_attribute_conductors` plumbing or component labelling in the classifier.
+ 5. Perimeter extraction on sheets with one material on both sides (airbridges, embedded
+    metal, TSV walls) cancels silently; excluded classes (non-planar, cross-layer,
+    non-manifold) are dropped without a record (decision 73(3) requires a reported gap).
+ 6. CrackInternalBoundaryElements=false aborts on every real mesh (`metaledge.cpp:1208` gap direction inference); one uniform refinement disables the whole isolated-edge correction on the transmon ("not parallel ... correction is disabled for this interface group").
+ 7. Duplicate boundary elements / missing SA group are mesh-preparation blockers (tools here).

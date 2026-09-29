@@ -1,4 +1,5 @@
 <!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. -->
+
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # Local all-tet mesher debugging (2026-09-09)
@@ -8,16 +9,16 @@ Gmsh version on the local machine: `4.15.0-git`; SOCA had used `4.13.1`.
 
 ## Geometry corrections
 
-- Thin exact-mask geometry now uses the full mask, not the intersection of finite edge
-  strips with the mask. The three-edge thin coupon's metal area changed from the
-  incorrect 63.63636 um^2 to 122.54545 um^2, matching the retained prism reference.
-- Etch collars subtract the union of **all** retained conductor masks. This prevents one
-  conductor's collar etching underneath another. The ten-edge fabricated coupon's
-  substrate-volume deficit of 0.5 um^3 disappeared.
-- Three-edge thin/fabricated CAD areas and volumes match their references to roughly
-  3e-11 relative. Ten-edge total physical family areas/volumes also match, but per-slot
-  surface assignment is still incorrect: assigning a whole CAD face from one sample
-  point cannot represent the reference's multiple slots on that face.
+  - Thin exact-mask geometry now uses the full mask, not the intersection of finite edge
+    strips with the mask. The three-edge thin coupon's metal area changed from the
+    incorrect 63.63636 um^2 to 122.54545 um^2, matching the retained prism reference.
+  - Etch collars subtract the union of **all** retained conductor masks. This prevents one
+    conductor's collar etching underneath another. The ten-edge fabricated coupon's
+    substrate-volume deficit of 0.5 um^3 disappeared.
+  - Three-edge thin/fabricated CAD areas and volumes match their references to roughly
+    3e-11 relative. Ten-edge total physical family areas/volumes also match, but per-slot
+    surface assignment is still incorrect: assigning a whole CAD face from one sample
+    point cannot represent the reference's multiple slots on that face.
 
 The experiment requires `--reference-measures CSV` before full meshing. Missing physical
 attributes or area/volume differences >1e-5 fail **before** mesh generation. A geometry-only
@@ -29,13 +30,13 @@ fails this strict gate and is not meshed for physics comparison.
 
 Outputs: `/tmp/local-tet-debug`.
 
-| Trial | Elements | Runtime | Peak process-tree RSS | Max kappa |
-|---|---:|---:|---:|---:|
-| Fully isotropic, 2 nm target, thin | No mesh | stopped at 180 s | 0.75 GiB | — |
-| Fully isotropic, 20 nm scout, thin | 277,724 | 37.2 s | 1.83 GiB | not audited |
-| 2 nm face/volume target, 100 nm edge-tangent cap, growth 1, thin | 140,416 | 24.5 s | 1.31 GiB | 13.67 |
-| Same, fabricated | 138,761 | 29.0 s | 2.54 GiB | 18.84 |
-| Same, growth 0.5, thin | 490,799 | 100.9 s | 3.22 GiB | 10.48 |
+| Trial                                                            | Elements | Runtime          | Peak process-tree RSS | Max kappa   |
+|:---------------------------------------------------------------- | --------:| ----------------:| ---------------------:| -----------:|
+| Fully isotropic, 2 nm target, thin                               | No mesh  | stopped at 180 s | 0.75 GiB              | —           |
+| Fully isotropic, 20 nm scout, thin                               | 277,724  | 37.2 s           | 1.83 GiB              | not audited |
+| 2 nm face/volume target, 100 nm edge-tangent cap, growth 1, thin | 140,416  | 24.5 s           | 1.31 GiB              | 13.67       |
+| Same, fabricated                                                 | 138,761  | 29.0 s           | 2.54 GiB              | 18.84       |
+| Same, growth 0.5, thin                                           | 490,799  | 100.9 s          | 3.22 GiB              | 10.48       |
 
 The isotropic 2 nm run was active in Gmsh's initial 2D surface triangulation at timeout,
 not out of memory. The 20 nm scout only tests the meshing pipeline; it is not an accuracy

@@ -8,12 +8,12 @@ SPDX-License-Identifier: Apache-2.0
 This benchmark exercises the complete Maxwell surface-response path on the checked-in
 coarse single-transmon mesh:
 
-- automatic geometry matching;
-- distributed response patches and Maxwell contour traces;
-- fixed-trace and fixed-flux postprocessing;
-- self-consistent corrected eigenmodes;
-- corrected divergence-free projection;
-- mode pairing and confidence output.
+  - automatic geometry matching;
+  - distributed response patches and Maxwell contour traces;
+  - fixed-trace and fixed-flux postprocessing;
+  - self-consistent corrected eigenmodes;
+  - corrected divergence-free projection;
+  - mode pairing and confidence output.
 
 The device and coupon FEM order is `p=1`. AMR, uniform refinement, `EdgeRefinement`, field
 export, and localized per-segment output are disabled. The run requests one mode, although
@@ -23,10 +23,10 @@ the eigensolver may converge and report an additional mode from its invariant su
 
 `library/` contains an unqualified, intentionally coarse software benchmark library with:
 
-- 12 requested isolated-edge knots, with one PEC-constrained knot removed to leave an
-  effective 11-function trace basis;
-- a 12-function same-conductor-strip basis at 2 um separation;
-- p=1 coupon solves on quadratic coupon meshes.
+  - 12 requested isolated-edge knots, with one PEC-constrained knot removed to leave an
+    effective 11-function trace basis;
+  - a 12-function same-conductor-strip basis at 2 um separation;
+  - p=1 coupon solves on quadratic coupon meshes.
 
 The exact generation settings and command are recorded in `generation.json`. Each model
 is explicitly marked `BoundaryLawQualification.Status: Unqualified`; this library is
@@ -53,12 +53,12 @@ pass/fail limits.
 
 The harness verifies:
 
-- exact fixture hashes;
-- p=1 and fixed-mesh safety invariants;
-- the requested MPI size;
-- exact patch/trace/line/point/stencil workload counts;
-- raw, fixed-trace, fixed-flux, and self-consistent CSV values against rank-specific
-  numerical baselines.
+  - exact fixture hashes;
+  - p=1 and fixed-mesh safety invariants;
+  - the requested MPI size;
+  - exact patch/trace/line/point/stencil workload counts;
+  - raw, fixed-trace, fixed-flux, and self-consistent CSV values against rank-specific
+    numerical baselines.
 
 To create a reviewed candidate after an intentional numerical or fixture change:
 

@@ -1,4 +1,5 @@
 <!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. -->
+
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # Interface-slot ownership: certificates, energy bounds, and refinement
@@ -19,18 +20,18 @@ uncertainty from field/PDE discretization error.
 including conductor and process-layer selection. It adds sufficient tests for
 constant ownership over the **complete** boundary element:
 
-1. Distance to a fixed segment/arc and minimum distance to a label's feature set
-   are 1-Lipschitz. A competing-label margin greater than twice an enclosing
-   radius certifies constant ownership.
-2. For segment sets, `ownership_bernstein.jl` uses a sharper squared-distance
-   test. Linear/quadratic geometric maps yield degree-2/4 polynomials. Bernstein
-   coefficients bound those polynomials over the entire triangle. Clamped
-   segment regimes are handled by safe point upper bounds for the selected
-   segment and infinite-line lower bounds for competitors when necessary.
-3. Curved quadratic faces use their Bernstein control hull, not merely their
-   corner or mid-edge nodes. Unsupported geometric orders remain unresolved.
-4. Layer and, for SA, conductor selection must also be certified. A small slot
-   distance alone is insufficient when another conductor/layer can win.
+ 1. Distance to a fixed segment/arc and minimum distance to a label's feature set
+    are 1-Lipschitz. A competing-label margin greater than twice an enclosing
+    radius certifies constant ownership.
+ 2. For segment sets, `ownership_bernstein.jl` uses a sharper squared-distance
+    test. Linear/quadratic geometric maps yield degree-2/4 polynomials. Bernstein
+    coefficients bound those polynomials over the entire triangle. Clamped
+    segment regimes are handled by safe point upper bounds for the selected
+    segment and infinite-line lower bounds for competitors when necessary.
+ 3. Curved quadratic faces use their Bernstein control hull, not merely their
+    corner or mid-edge nodes. Unsupported geometric orders remain unresolved.
+ 4. Layer and, for SA, conductor selection must also be certified. A small slot
+    distance alone is insufficient when another conductor/layer can win.
 
 These are sufficient tests: an unresolved triangle may still have one label.
 Conversely, interior samples can all agree while a corner region has another
@@ -75,19 +76,19 @@ reported separately and are not substituted for a bound.
 on generic meshes. It retains physical sizing, process geometry, and solver
 tolerance while adding cumulative refinement hints on unresolved regions.
 
-- `TET_SLOT_MINIMUM_SIZE` is independent of physical-edge sizing.
-- `graded_size_points.jl` evaluates the exact weighted point-size envelope using
-  bounding-tree pruning; it does not replace variable-size sources by an
-  unweighted nearest point.
-- Every mesher, tagger, worker, and reducer has a time/process-tree RSS limit.
-- Tools, inputs, artifacts, and the Palace binary hash are retained.
-- `--archive-states` uses prescribed one-volt conductor states with zero matching
-  trace, exact streaming archives, and reduction. This avoids unused estimator
-  construction without lowering FEM order or tolerance.
-- The response-matrix API currently requires localization metadata. The study
-  explicitly reads `Q_total_ij`, not the optional localized `Q_ij` term.
-- A completed level-zero baseline can be reused only with matching geometry and
-  solve mode. Failed or incomplete stages are not promoted to successful data.
+  - `TET_SLOT_MINIMUM_SIZE` is independent of physical-edge sizing.
+  - `graded_size_points.jl` evaluates the exact weighted point-size envelope using
+    bounding-tree pruning; it does not replace variable-size sources by an
+    unweighted nearest point.
+  - Every mesher, tagger, worker, and reducer has a time/process-tree RSS limit.
+  - Tools, inputs, artifacts, and the Palace binary hash are retained.
+  - `--archive-states` uses prescribed one-volt conductor states with zero matching
+    trace, exact streaming archives, and reduction. This avoids unused estimator
+    construction without lowering FEM order or tolerance.
+  - The response-matrix API currently requires localization metadata. The study
+    explicitly reads `Q_total_ij`, not the optional localized `Q_ij` term.
+  - A completed level-zero baseline can be reused only with matching geometry and
+    solve mode. Failed or incomplete stages are not promoted to successful data.
 
 Example (each case is a directory prepared by the general-mesh suite):
 

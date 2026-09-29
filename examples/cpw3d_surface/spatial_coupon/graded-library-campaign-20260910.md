@@ -1,4 +1,5 @@
 <!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. -->
+
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # Graded-library campaign: preparation and source-contract gate
@@ -36,21 +37,21 @@ reported separately: the original numerical campaign reused existing meshes.
 
 Three-edge model `419576fdab24`:
 
-- Thin, physical-feature grading alone: 722,093 tetrahedra, maximum kappa 15.6.
-  Its material volumes and physical-family areas match the retained prism mesh
-  within approximately 7e-13 relative.
-- Thin with explicit side-trace constraints and 50 nm cap sizing: 1,655,754
-  tetrahedra, 20,396,628 p4 H1 DOFs, maximum kappa 193.5.
-- Fabricated, 0.5 nm surface / 2 nm volume minimum: 2,330,406 surface triangles.
-  Surface generation on Gmsh 4.13.1 took 3428.9 seconds. The first volume attempt
-  exceeded the deliberately conservative 4-million-element/1.2-million-node cap.
-- Resuming the saved surface, without changing resolution or geometry, produced
-  5,017,186 tetrahedra and 1,270,847 nodes. Additional Netgen optimization exceeded
-  a 600-second guard. A separate HXT-only candidate completed the volume stage
-  in 126 seconds, had maximum kappa 82.3, and passed full physical-boundary
-  coverage and material/area checks (about 1e-12 relative to the retained mesh).
-  This is explicitly a different optimization variant, not a hidden replacement
-  of the timed attempt. All frozen surfaces and failed-attempt evidence remain.
+  - Thin, physical-feature grading alone: 722,093 tetrahedra, maximum kappa 15.6.
+    Its material volumes and physical-family areas match the retained prism mesh
+    within approximately 7e-13 relative.
+  - Thin with explicit side-trace constraints and 50 nm cap sizing: 1,655,754
+    tetrahedra, 20,396,628 p4 H1 DOFs, maximum kappa 193.5.
+  - Fabricated, 0.5 nm surface / 2 nm volume minimum: 2,330,406 surface triangles.
+    Surface generation on Gmsh 4.13.1 took 3428.9 seconds. The first volume attempt
+    exceeded the deliberately conservative 4-million-element/1.2-million-node cap.
+  - Resuming the saved surface, without changing resolution or geometry, produced
+    5,017,186 tetrahedra and 1,270,847 nodes. Additional Netgen optimization exceeded
+    a 600-second guard. A separate HXT-only candidate completed the volume stage
+    in 126 seconds, had maximum kappa 82.3, and passed full physical-boundary
+    coverage and material/area checks (about 1e-12 relative to the retained mesh).
+    This is explicitly a different optimization variant, not a hidden replacement
+    of the timed attempt. All frozen surfaces and failed-attempt evidence remain.
 
 No full 20-case response build has been launched on these candidates.
 
@@ -81,11 +82,11 @@ remaining boundary vertex and fails rather than dropping a chain.
 
 A separate corrected trace set:
 
-- retains all 130 original nodes, nodal values and source indices;
-- retains all original side triangles;
-- increases total matching triangles from 244 to 256;
-- passes continuity auditing for every source;
-- changes the cap functions and explicitly records `SourceDefinitionChanged`.
+  - retains all 130 original nodes, nodal values and source indices;
+  - retains all original side triangles;
+  - increases total matching triangles from 244 to 256;
+  - passes continuity auditing for every source;
+  - changes the cap functions and explicitly records `SourceDefinitionChanged`.
 
 Original trace files and the old library are not edited. This is **not** a
 byte-identical source migration and must not be described as a pure mesh-only
@@ -97,10 +98,10 @@ Job 41610 completed a same-allocation, same-binary, same-p4/tolerance comparison
 of the retained prism and graded tet meshes using the **same corrected cap
 traces**, for active indices 1, 19, 26, 32, 123, 128 and 130:
 
-| Case | H1 DOFs | Iterations | Seven-source pilot time |
-|---|---:|---|---:|
-| Retained prism | 12,808,312 | 47/83/87/135/78/108/90 | 210.21 s |
-| Graded tet, side constraints + 50 nm cap | 20,396,628 | 18/15/16/20/13/17/13 | 139.77 s |
+| Case                                     | H1 DOFs    | Iterations             | Seven-source pilot time |
+|:---------------------------------------- | ----------:|:---------------------- | -----------------------:|
+| Retained prism                           | 12,808,312 | 47/83/87/135/78/108/90 | 210.21 s                |
+| Graded tet, side constraints + 50 nm cap | 20,396,628 | 18/15/16/20/13/17/13   | 139.77 s                |
 
 That is 1.50x for this pilot only, despite the larger tet DOF count and memory
 use. It is **not** a full-library speedup or an accuracy pass. The domain

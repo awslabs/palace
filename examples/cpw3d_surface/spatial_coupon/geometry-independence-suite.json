@@ -245,7 +245,7 @@
     {
       "Name": "audit_rigid_coupon_ownership.jl",
       "Path": "examples/cpw3d_surface/spatial_coupon/audit_rigid_coupon_ownership.jl",
-      "SHA256": "a60922642ad8470e1702d01adfb76683df0e98aecf319909a5483e7af04e1840"
+      "SHA256": "aceb9e760e888ca1d08d56910a880d1e44f1e5522747376bbfbbadefe18333ac"
     },
     {
       "Name": "transform_coupon_source_contract.py",
@@ -255,17 +255,17 @@
     {
       "Name": "label_interface_patches.jl",
       "Path": "examples/cpw3d_surface/spatial_coupon/label_interface_patches.jl",
-      "SHA256": "56d3e1b690b940a89e5bcd7df6240f007e578db7e5f63f22863510628f3a53a7"
+      "SHA256": "8b494d4f84e8922cfa319b3acfb628ecb949dda8fb24b0b9b58fd8fde1f38e63"
     },
     {
       "Name": "mesh_spatial_coupon_edge_cluster.jl",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_spatial_coupon_edge_cluster.jl",
-      "SHA256": "b43a7d2b25239c46196173be08b14d32bde1238a33a9f239144d05ce8f9b3b76"
+      "SHA256": "c60bd0f29f77e0d9ce6442349a0523e95f59eb045b0da44d077e062c04b4552d"
     },
     {
       "Name": "interface_ownership.jl",
       "Path": "examples/cpw3d_surface/spatial_coupon/interface_ownership.jl",
-      "SHA256": "c5e1e4b5d5ea83957d48aaa14b548c5cfca5c0f22e62cd5899d6de23c5bc43be"
+      "SHA256": "ea5fc8784af686c7acc5ea01403ca2fc6837af92792ca6f0ae9f0f7de505a6b1"
     },
     {
       "Name": "relabel_radial_ma_shells.py",
@@ -2371,13 +2371,13 @@
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "publisher": "1b69b295ed48fe1b93c3727a9ab59c5228def43a66a88c9d265cb02df3f577c2"
+      "publisher": "b9a84a9a3c9ac3ebc5a9ebe1dcf33431f23f104c40e0d62af40141568d9d5b5d"
     },
     "proper-rigid-publication": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",
       "rigid-publisher": "87e9e17ea6edfeac2c81a83418b3968faa260517e2816fb8d89b56dcc7016731",
       "ownership-runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "ownership-auditor": "a60922642ad8470e1702d01adfb76683df0e98aecf319909a5483e7af04e1840"
+      "ownership-auditor": "aceb9e760e888ca1d08d56910a880d1e44f1e5522747376bbfbbadefe18333ac"
     }
   },
   "PhysicalCovarianceToleranceBasis": "Frozen before rerun: exact CAD supports use 1e-8 um/relative; material volume and boundary measure use 5e-4 relative (sub-percent mesh discretization); quality and local anisotropy distribution changes use 0.35 relative; complexity uses a 1.10 ratio. Solver QoI is excluded.",

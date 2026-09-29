@@ -37,20 +37,22 @@ function fillet(c, p, n, radius)
     point_in = (c[1] - tangent * d1[1], c[2] - tangent * d1[2])
     point_out = (c[1] + tangent * d2[1], c[2] + tangent * d2[2])
     normal = (-d1[2], d1[1])
-    center = (point_in[1] + radius * normal[1],
-              point_in[2] + radius * normal[2])
+    center = (point_in[1] + radius * normal[1], point_in[2] + radius * normal[2])
     return (point_in, center, point_out)
 end
 
 function shape(occ, corners)
     count = length(corners)
     data = [
-        fillet(corners[i][1], corners[mod1(i - 1, count)][1],
-               corners[mod1(i + 1, count)][1], corners[i][2])
-        for i in 1:count
+        fillet(
+            corners[i][1],
+            corners[mod1(i - 1, count)][1],
+            corners[mod1(i + 1, count)][1],
+            corners[i][2]
+        ) for i = 1:count
     ]
     curves = Int32[]
-    for i in 1:count
+    for i = 1:count
         j = mod1(i + 1, count)
         p1 = occ.addPoint(data[i][3][1], data[i][3][2], 0.0)
         p2 = occ.addPoint(data[j][1][1], data[j][1][2], 0.0)
@@ -66,29 +68,32 @@ end
 
 function generate_edge_pair_coupon(;
     cutout_width::Float64,
-    radius::Float64 = 2.0,
-    fabricated::Bool = false,
-    different_conductors::Bool = false,
-    strip::Bool = false,
-    t_metal::Float64 = 0.1,
-    overetch::Float64 = 0.05,
-    sidewall_angle::Float64 = 80.0,
-    r_top::Float64 = 0.01,
-    r_bottom::Float64 = 0.01,
-    lc_fine::Float64 = 0.002,
-    lc_far::Float64 = 0.05,
-    mesh_order::Int = 2,
-    axisymmetric_radius::Float64 = 0.0,
-    convexity::Symbol = :convex,
-    filename::String,
+    radius::Float64=2.0,
+    fabricated::Bool=false,
+    different_conductors::Bool=false,
+    strip::Bool=false,
+    t_metal::Float64=0.1,
+    overetch::Float64=0.05,
+    sidewall_angle::Float64=80.0,
+    r_top::Float64=0.01,
+    r_bottom::Float64=0.01,
+    lc_fine::Float64=0.002,
+    lc_far::Float64=0.05,
+    mesh_order::Int=2,
+    axisymmetric_radius::Float64=0.0,
+    convexity::Symbol=:convex,
+    filename::String
 )
     cutout_width > 0 || error("cutout_width must be positive")
     radius > 0 || error("radius must be positive")
     !(strip && different_conductors) ||
         error("A physical metal strip cannot use different conductors")
     axisymmetric_radius >= 0 || error("axisymmetric_radius must be nonnegative")
-    axisymmetric_radius == 0 || axisymmetric_radius > radius ||
-        error("axisymmetric_radius must exceed the coupon radius (the contour must not cross the axis)")
+    axisymmetric_radius == 0 ||
+        axisymmetric_radius > radius ||
+        error(
+            "axisymmetric_radius must exceed the coupon radius (the contour must not cross the axis)"
+        )
     convexity in (:convex, :concave) || error("convexity must be :convex or :concave")
     # e1's gap points toward +x (inner -> outward) for a gap, toward -x for a strip.
     e1_inner = (convexity == :convex) != strip
@@ -109,54 +114,71 @@ function generate_edge_pair_coupon(;
         trench_pullback = overetch / tan(angle)
         extension = 0.2
 
-        outer = occ.addRectangle(-half_width, -radius, 0.0,
-                                 2half_width, 2radius)
+        outer = occ.addRectangle(-half_width, -radius, 0.0, 2half_width, 2radius)
         if strip
-            metal = shape(occ, [
-                ((-half_gap, 0.0), 0.0),
-                ((half_gap, 0.0), 0.0),
-                ((half_gap - metal_pullback, t_metal), r_top),
-                ((-half_gap + metal_pullback, t_metal), r_top),
-            ])
+            metal = shape(
+                occ,
+                [
+                    ((-half_gap, 0.0), 0.0),
+                    ((half_gap, 0.0), 0.0),
+                    ((half_gap - metal_pullback, t_metal), r_top),
+                    ((-half_gap + metal_pullback, t_metal), r_top)
+                ]
+            )
             substrate_base =
                 occ.addRectangle(-half_width, -radius, 0.0, 2half_width, radius)
-            left_trench = shape(occ, [
-                ((-half_width - extension, 0.0), 0.0),
-                ((-half_width - extension, -overetch), 0.0),
-                ((-half_gap - trench_pullback, -overetch), r_bottom),
-                ((-half_gap, 0.0), 0.0),
-            ])
-            right_trench = shape(occ, [
-                ((half_gap, 0.0), 0.0),
-                ((half_gap + trench_pullback, -overetch), r_bottom),
-                ((half_width + extension, -overetch), 0.0),
-                ((half_width + extension, 0.0), 0.0),
-            ])
+            left_trench = shape(
+                occ,
+                [
+                    ((-half_width - extension, 0.0), 0.0),
+                    ((-half_width - extension, -overetch), 0.0),
+                    ((-half_gap - trench_pullback, -overetch), r_bottom),
+                    ((-half_gap, 0.0), 0.0)
+                ]
+            )
+            right_trench = shape(
+                occ,
+                [
+                    ((half_gap, 0.0), 0.0),
+                    ((half_gap + trench_pullback, -overetch), r_bottom),
+                    ((half_width + extension, -overetch), 0.0),
+                    ((half_width + extension, 0.0), 0.0)
+                ]
+            )
             occ.synchronize()
             substrate, _ =
                 occ.cut([(2, substrate_base)], [(2, left_trench), (2, right_trench)])
             field, _ = occ.cut([(2, outer)], [(2, metal)])
         else
-            left_metal = shape(occ, [
-                ((-half_width - extension, 0.0), 0.0),
-                ((-half_gap, 0.0), 0.0),
-                ((-half_gap - metal_pullback, t_metal), r_top),
-                ((-half_width - extension, t_metal), 0.0),
-            ])
-            right_metal = shape(occ, [
-                ((half_gap, 0.0), 0.0),
-                ((half_width + extension, 0.0), 0.0),
-                ((half_width + extension, t_metal), 0.0),
-                ((half_gap + metal_pullback, t_metal), r_top),
-            ])
+            left_metal = shape(
+                occ,
+                [
+                    ((-half_width - extension, 0.0), 0.0),
+                    ((-half_gap, 0.0), 0.0),
+                    ((-half_gap - metal_pullback, t_metal), r_top),
+                    ((-half_width - extension, t_metal), 0.0)
+                ]
+            )
+            right_metal = shape(
+                occ,
+                [
+                    ((half_gap, 0.0), 0.0),
+                    ((half_width + extension, 0.0), 0.0),
+                    ((half_width + extension, t_metal), 0.0),
+                    ((half_gap + metal_pullback, t_metal), r_top)
+                ]
+            )
             substrate_base =
                 occ.addRectangle(-half_width, -radius, 0.0, 2half_width, radius)
-            trench = shape(occ, [
-                ((-half_gap, 0.0), 0.0),
-                ((-half_gap + trench_pullback, -overetch), r_bottom),
-                ((half_gap - trench_pullback, -overetch), r_bottom),
-                ((half_gap, 0.0), 0.0),
-            ])
+            trench = shape(
+                occ,
+                [
+                    ((-half_gap, 0.0), 0.0),
+                    ((-half_gap + trench_pullback, -overetch), r_bottom),
+                    ((half_gap - trench_pullback, -overetch), r_bottom),
+                    ((half_gap, 0.0), 0.0)
+                ]
+            )
             occ.synchronize()
             substrate, _ = occ.cut([(2, substrate_base)], [(2, trench)])
             field, _ = occ.cut([(2, outer)], [(2, left_metal), (2, right_metal)])
@@ -165,15 +187,17 @@ function generate_edge_pair_coupon(;
         occ.fragment(vcat(vacuum, substrate), [])
     else
         x_coordinates = (-half_width, -half_gap, half_gap, half_width)
-        surfaces = Tuple{Int32,Int32}[]
-        for i in 1:3
+        surfaces = Tuple{Int32, Int32}[]
+        for i = 1:3
             width = x_coordinates[i + 1] - x_coordinates[i]
-            push!(surfaces,
-                  (2, occ.addRectangle(x_coordinates[i], -radius, 0.0,
-                                       width, radius)))
-            push!(surfaces,
-                  (2, occ.addRectangle(x_coordinates[i], 0.0, 0.0,
-                                       width, radius)))
+            push!(
+                surfaces,
+                (2, occ.addRectangle(x_coordinates[i], -radius, 0.0, width, radius))
+            )
+            push!(
+                surfaces,
+                (2, occ.addRectangle(x_coordinates[i], 0.0, 0.0, width, radius))
+            )
         end
         occ.fragment(surfaces, [])
     end
@@ -183,8 +207,10 @@ function generate_edge_pair_coupon(;
     vacuum_surfaces = Int32[]
     for (dim, tag) in gmsh.model.getEntities(2)
         _, y, _ = occ.getCenterOfMass(dim, tag)
-        push!(y < (fabricated ? -0.1 * overetch : 0.0) ?
-              substrate_surfaces : vacuum_surfaces, tag)
+        push!(
+            y < (fabricated ? -0.1 * overetch : 0.0) ? substrate_surfaces : vacuum_surfaces,
+            tag
+        )
     end
 
     outer_curves = Int32[]
@@ -203,15 +229,18 @@ function generate_edge_pair_coupon(;
         horizontal = ymax - ymin < tolerance
         vertical = xmax - xmin < tolerance
         on_outer =
-            (vertical && (abs(xmid + half_width) < tolerance ||
-                          abs(xmid - half_width) < tolerance)) ||
-            (horizontal && (abs(ymid + radius) < tolerance ||
-                            abs(ymid - radius) < tolerance))
+            (
+                vertical &&
+                (abs(xmid + half_width) < tolerance || abs(xmid - half_width) < tolerance)
+            ) || (
+                horizontal &&
+                (abs(ymid + radius) < tolerance || abs(ymid - radius) < tolerance)
+            )
         if on_outer
             push!(outer_curves, tag)
         elseif !fabricated && horizontal && abs(ymid) < tolerance
-            on_metal = strip ?
-                xmin >= -half_gap - tolerance && xmax <= half_gap + tolerance :
+            on_metal =
+                strip ? xmin >= -half_gap - tolerance && xmax <= half_gap + tolerance :
                 xmax <= -half_gap + tolerance || xmin >= half_gap - tolerance
             if on_metal
                 push!(ms_curves, tag)
@@ -219,21 +248,25 @@ function generate_edge_pair_coupon(;
                 push!(sa_floor, tag)
             end
         elseif fabricated && horizontal && abs(ymid) < tolerance
-            on_metal = strip ?
-                xmin >= -half_gap - tolerance && xmax <= half_gap + tolerance :
+            on_metal =
+                strip ? xmin >= -half_gap - tolerance && xmax <= half_gap + tolerance :
                 xmax <= -half_gap + tolerance || xmin >= half_gap - tolerance
             on_metal && push!(ms_curves, tag)
         elseif fabricated && horizontal && abs(ymid - t_metal) < tolerance
             push!(ma_horizontal, tag)
-        elseif fabricated && ymin >= -tolerance &&
-               ymax <= t_metal + tolerance && !horizontal
+        elseif fabricated &&
+               ymin >= -tolerance &&
+               ymax <= t_metal + tolerance &&
+               !horizontal
             push!(ma_side, tag)
-        elseif fabricated && ymin >= -overetch - tolerance &&
-               ymax <= tolerance && !horizontal
+        elseif fabricated &&
+               ymin >= -overetch - tolerance &&
+               ymax <= tolerance &&
+               !horizontal
             push!(sa_side, tag)
         elseif fabricated && horizontal && abs(ymid + overetch) < tolerance
-            on_exposed = strip ?
-                xmax <= -half_gap + tolerance || xmin >= half_gap - tolerance :
+            on_exposed =
+                strip ? xmax <= -half_gap + tolerance || xmin >= half_gap - tolerance :
                 xmin >= -half_gap - tolerance && xmax <= half_gap + tolerance
             on_exposed && push!(sa_floor, tag)
         end
@@ -242,45 +275,55 @@ function generate_edge_pair_coupon(;
     groups = [
         (2, substrate_surfaces, 1, "substrate"),
         (2, vacuum_surfaces, 2, "vacuum"),
-        (1, outer_curves, 1, "matching_contour"),
+        (1, outer_curves, 1, "matching_contour")
     ]
     if different_conductors
         split_sides(curves) = (
-            [tag for tag in curves
-             if occ.getCenterOfMass(1, tag)[1] < 0.0],
-            [tag for tag in curves
-             if occ.getCenterOfMass(1, tag)[1] > 0.0],
+            [tag for tag in curves if occ.getCenterOfMass(1, tag)[1] < 0.0],
+            [tag for tag in curves if occ.getCenterOfMass(1, tag)[1] > 0.0]
         )
         left_ms, right_ms = split_sides(ms_curves)
-        append!(groups, [
-            (1, left_ms, 2, fabricated ? "left_MS" : "left_thin_metal"),
-            (1, sa_floor, 3, fabricated ? "SA_floor" : "SA"),
-        ])
+        append!(
+            groups,
+            [
+                (1, left_ms, 2, fabricated ? "left_MS" : "left_thin_metal"),
+                (1, sa_floor, 3, fabricated ? "SA_floor" : "SA")
+            ]
+        )
         if fabricated
             left_ma_horizontal, right_ma_horizontal = split_sides(ma_horizontal)
             left_ma_side, right_ma_side = split_sides(ma_side)
-            append!(groups, [
-                (1, left_ma_horizontal, 4, "left_MA_horizontal"),
-                (1, left_ma_side, 5, "left_MA_side"),
-                (1, sa_side, 6, "SA_side"),
-                (1, right_ms, 7, "right_MS"),
-                (1, right_ma_horizontal, 8, "right_MA_horizontal"),
-                (1, right_ma_side, 9, "right_MA_side"),
-            ])
+            append!(
+                groups,
+                [
+                    (1, left_ma_horizontal, 4, "left_MA_horizontal"),
+                    (1, left_ma_side, 5, "left_MA_side"),
+                    (1, sa_side, 6, "SA_side"),
+                    (1, right_ms, 7, "right_MS"),
+                    (1, right_ma_horizontal, 8, "right_MA_horizontal"),
+                    (1, right_ma_side, 9, "right_MA_side")
+                ]
+            )
         else
             push!(groups, (1, right_ms, 7, "right_thin_metal"))
         end
     else
-        append!(groups, [
-            (1, ms_curves, 2, fabricated ? "MS" : "thin_metal"),
-            (1, sa_floor, 3, fabricated ? "SA_floor" : "SA"),
-        ])
+        append!(
+            groups,
+            [
+                (1, ms_curves, 2, fabricated ? "MS" : "thin_metal"),
+                (1, sa_floor, 3, fabricated ? "SA_floor" : "SA")
+            ]
+        )
         if fabricated
-            append!(groups, [
-                (1, ma_horizontal, 4, "MA_horizontal"),
-                (1, ma_side, 5, "MA_side"),
-                (1, sa_side, 6, "SA_side"),
-            ])
+            append!(
+                groups,
+                [
+                    (1, ma_horizontal, 4, "MA_horizontal"),
+                    (1, ma_side, 5, "MA_side"),
+                    (1, sa_side, 6, "SA_side")
+                ]
+            )
         end
     end
     for (dim, entities, tag, name) in groups
@@ -288,8 +331,8 @@ function generate_edge_pair_coupon(;
         gmsh.model.addPhysicalGroup(dim, entities, tag, name)
     end
 
-    features = fabricated ?
-        vcat(ms_curves, ma_horizontal, ma_side, sa_side, sa_floor) :
+    features =
+        fabricated ? vcat(ms_curves, ma_horizontal, ma_side, sa_side, sa_floor) :
         vcat(ms_curves, sa_floor)
     gmsh.model.mesh.field.add("Distance", 1)
     gmsh.model.mesh.field.setNumbers(1, "CurvesList", Float64.(features))
@@ -305,7 +348,7 @@ function generate_edge_pair_coupon(;
         ("Mesh.MeshSizeMax", lc_far),
         ("Mesh.MeshSizeExtendFromBoundary", 0),
         ("Mesh.MeshSizeFromPoints", 0),
-        ("Mesh.MeshSizeFromCurvature", 0),
+        ("Mesh.MeshSizeFromCurvature", 0)
     ]
         gmsh.option.setNumber(name, value)
     end
@@ -317,17 +360,31 @@ function generate_edge_pair_coupon(;
     if rho > 0
         # Place the canonical mesh: x -> rho + half_gap + sign x (a mirror when e1 is
         # the outer edge; MFEM restores the element orientation on load).
-        gmsh.model.mesh.affineTransform(
-            [sign, 0.0, 0.0, rho + half_gap, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0])
+        gmsh.model.mesh.affineTransform([
+            sign,
+            0.0,
+            0.0,
+            rho + half_gap,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0
+        ])
     end
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
     gmsh.option.setNumber("Mesh.Binary", 1)
     gmsh.write(filename)
 
-    println("Pair coupon: separation=$(cutout_width) um, R=$(radius) um, " *
-            "fabricated=$(fabricated), different_conductors=$(different_conductors), " *
-            "strip=$(strip)" *
-            (rho > 0 ? ", axisymmetric inner radius rho=$(rho) um ($(convexity))" : ""))
+    println(
+        "Pair coupon: separation=$(cutout_width) um, R=$(radius) um, " *
+        "fabricated=$(fabricated), different_conductors=$(different_conductors), " *
+        "strip=$(strip)" *
+        (rho > 0 ? ", axisymmetric inner radius rho=$(rho) um ($(convexity))" : "")
+    )
     for (dim, tag) in gmsh.model.getPhysicalGroups()
         name = gmsh.model.getPhysicalName(dim, tag)
         entities = gmsh.model.getEntitiesForPhysicalGroup(dim, tag)
@@ -335,26 +392,26 @@ function generate_edge_pair_coupon(;
     end
     println("  nodes=$(length(gmsh.model.mesh.getNodes()[1]))")
     println("  file=$filename")
-    gmsh.finalize()
+    return gmsh.finalize()
 end
 
 function main(args)
-    length(args) >= 3 ||
-        error("Usage: mesh_edge_pair_coupon.jl thin|fabricated SEPARATION " *
-              "OUTPUT.msh [same|different|strip] [--radius R] " *
-              "[--metal-thickness T] [--overetch D] [--sidewall-angle A] " *
-              "[--top-radius R] [--bottom-radius R] [--lc-fine H] " *
-              "[--lc-far H] [--mesh-order P] [--axisymmetric-radius RHO] " *
-              "[--convexity convex|concave]")
+    length(args) >= 3 || error(
+        "Usage: mesh_edge_pair_coupon.jl thin|fabricated SEPARATION " *
+        "OUTPUT.msh [same|different|strip] [--radius R] " *
+        "[--metal-thickness T] [--overetch D] [--sidewall-angle A] " *
+        "[--top-radius R] [--bottom-radius R] [--lc-fine H] " *
+        "[--lc-far H] [--mesh-order P] [--axisymmetric-radius RHO] " *
+        "[--convexity convex|concave]"
+    )
     kind = args[1]
     kind in ("thin", "fabricated") || error("Unknown coupon kind: $kind")
     has_mode = length(args) >= 4 && !startswith(args[4], "--")
     mode = has_mode ? args[4] : "same"
     option_begin = has_mode ? 5 : 4
-    mode in ("same", "different", "strip") ||
-        error("Unknown conductor mode: $mode")
+    mode in ("same", "different", "strip") || error("Unknown conductor mode: $mode")
 
-    options = Dict{String,String}()
+    options = Dict{String, String}()
     index = option_begin
     while index <= length(args)
         name = args[index]
@@ -375,32 +432,31 @@ function main(args)
         "--lc-far",
         "--mesh-order",
         "--axisymmetric-radius",
-        "--convexity",
+        "--convexity"
     ])
     unknown = setdiff(Set(keys(options)), allowed)
     isempty(unknown) || error("Unknown option(s): $(join(sort(collect(unknown)), ", "))")
     float_option(name, default) =
         haskey(options, name) ? parse(Float64, options[name]) : default
-    int_option(name, default) =
-        haskey(options, name) ? parse(Int, options[name]) : default
+    int_option(name, default) = haskey(options, name) ? parse(Int, options[name]) : default
 
-    generate_edge_pair_coupon(
-        cutout_width = parse(Float64, args[2]),
-        radius = float_option("--radius", 2.0),
-        fabricated = kind == "fabricated",
-        different_conductors = mode == "different",
-        strip = mode == "strip",
-        t_metal = float_option("--metal-thickness", 0.1),
-        overetch = float_option("--overetch", 0.05),
-        sidewall_angle = float_option("--sidewall-angle", 80.0),
-        r_top = float_option("--top-radius", 0.01),
-        r_bottom = float_option("--bottom-radius", 0.01),
-        lc_fine = float_option("--lc-fine", 0.002),
-        lc_far = float_option("--lc-far", 0.05),
-        mesh_order = int_option("--mesh-order", 2),
-        axisymmetric_radius = float_option("--axisymmetric-radius", 0.0),
-        convexity = Symbol(get(options, "--convexity", "convex")),
-        filename = abspath(args[3]),
+    return generate_edge_pair_coupon(
+        cutout_width=parse(Float64, args[2]),
+        radius=float_option("--radius", 2.0),
+        fabricated=kind == "fabricated",
+        different_conductors=mode == "different",
+        strip=mode == "strip",
+        t_metal=float_option("--metal-thickness", 0.1),
+        overetch=float_option("--overetch", 0.05),
+        sidewall_angle=float_option("--sidewall-angle", 80.0),
+        r_top=float_option("--top-radius", 0.01),
+        r_bottom=float_option("--bottom-radius", 0.01),
+        lc_fine=float_option("--lc-fine", 0.002),
+        lc_far=float_option("--lc-far", 0.05),
+        mesh_order=int_option("--mesh-order", 2),
+        axisymmetric_radius=float_option("--axisymmetric-radius", 0.0),
+        convexity=Symbol(get(options, "--convexity", "convex")),
+        filename=abspath(args[3])
     )
 end
 

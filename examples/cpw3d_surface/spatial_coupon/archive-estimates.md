@@ -1,5 +1,7 @@
 <!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. -->
+
 <!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Experimental read-only archive estimates
 
 `estimate_archived_fields.py` launches Palace with
@@ -94,19 +96,19 @@ Use immutable archive storage and one writer for the output area.
 
 For **each nonzero constituent** and then each final linear combination:
 
-- Reproject the actual source definition using `LaplaceOperator::GetExcitationVector`.
-- Compare archived essential true DOFs to these **imposed discrete Dirichlet values**
-  using a global maximum in volts and in internal units. This is not the ideal-P1
-  boundary representation error; retain the separate trace-projection audit.
-  `BoundaryCategories` counts owned matching-only true DOFs, physical-ground true
-  DOFs (including intersections), and trace/ground intersections. Separate maxima
-  are reported for these categories, with null maxima if a category is absent.
-  Physical ground takes precedence at intersections, as in the unchanged projection.
-- Assemble and apply the original eliminated operator and test
-  `||K V - RHS||_2 <= AbsResidualTol + RelResidualTol * ||RHS||_2`.
-  Absolute numerator, RHS denominator, threshold, near-zero-RHS flag and pass/fail
-  are recorded. Relative residual is null for an exactly zero denominator.
-  Failed checks save their measured values then abort; later samples stay uncomputed.
+  - Reproject the actual source definition using `LaplaceOperator::GetExcitationVector`.
+  - Compare archived essential true DOFs to these **imposed discrete Dirichlet values**
+    using a global maximum in volts and in internal units. This is not the ideal-P1
+    boundary representation error; retain the separate trace-projection audit.
+    `BoundaryCategories` counts owned matching-only true DOFs, physical-ground true
+    DOFs (including intersections), and trace/ground intersections. Separate maxima
+    are reported for these categories, with null maxima if a category is absent.
+    Physical ground takes precedence at intersections, as in the unchanged projection.
+  - Assemble and apply the original eliminated operator and test
+    `||K V - RHS||_2 <= AbsResidualTol + RelResidualTol * ||RHS||_2`.
+    Absolute numerator, RHS denominator, threshold, near-zero-RHS flag and pass/fail
+    are recorded. Relative residual is null for an exactly zero denominator.
+    Failed checks save their measured values then abort; later samples stay uncomputed.
 
 The PDE KSP/preconditioner is **not constructed**. H1 operator/space hierarchy is
 retained for residual reconstruction, and ND/RT operators are retained for flux
@@ -183,22 +185,22 @@ baseline binary can additionally be bound with `ARCHIVE_DIAGNOSTIC_BASELINE_EXE`
 
 ## Outputs and provenance
 
-- `postpro/archive-estimates.json`: request, units, global FES counts, controls,
-  checks, per-excitation indicators and energies, sample count and completion status.
-- `postpro/archive-layout-rank-NNNNNN.json`: local H1/ND/RT widths, element count and
-  native-endian FNV-1a64 fingerprints of local geometry/ordered FE dof maps. These are
-  diagnostic fingerprints of the **reconstructed** spaces, not historical ordering
-  hashes and not cryptographic proof of archive interpretation.
-- Optional `archive-elements-case-NNNN-rank-NNNNNN.csv`: local element index,
-  attribute, element-center coordinates in m, and raw squared indicator in J. Its sum across ranks equals raw eta
-  squared. No replicated mesh is written. Element indices refer to the reconstructed
-  rank-local mesh; keep mesh, partition configuration and layout records to localize.
-- Launcher provenance hashes original config, request, basis contract, mesh, every
-  source, executable, used archive payloads, run config, and all output records.
-  `solver.log.json` records bounded process-tree RSS/time and exit status.
-- Existing `palace.json` and resolved config provide normal executable/run metadata.
-  Binary hash/source-build provenance takes precedence over a stale generated git
-  banner from an existing dependency build.
+  - `postpro/archive-estimates.json`: request, units, global FES counts, controls,
+    checks, per-excitation indicators and energies, sample count and completion status.
+  - `postpro/archive-layout-rank-NNNNNN.json`: local H1/ND/RT widths, element count and
+    native-endian FNV-1a64 fingerprints of local geometry/ordered FE dof maps. These are
+    diagnostic fingerprints of the **reconstructed** spaces, not historical ordering
+    hashes and not cryptographic proof of archive interpretation.
+  - Optional `archive-elements-case-NNNN-rank-NNNNNN.csv`: local element index,
+    attribute, element-center coordinates in m, and raw squared indicator in J. Its sum across ranks equals raw eta
+    squared. No replicated mesh is written. Element indices refer to the reconstructed
+    rank-local mesh; keep mesh, partition configuration and layout records to localize.
+  - Launcher provenance hashes original config, request, basis contract, mesh, every
+    source, executable, used archive payloads, run config, and all output records.
+    `solver.log.json` records bounded process-tree RSS/time and exit status.
+  - Existing `palace.json` and resolved config provide normal executable/run metadata.
+    Binary hash/source-build provenance takes precedence over a stale generated git
+    banner from an existing dependency build.
 
 Headers and hashes of reconstructed layouts cannot prove old DOF ordering. The
 independent BC, assembled residual and old quadratic-energy checks are all necessary.

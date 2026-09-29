@@ -1,6 +1,7 @@
 # Decision 56 — radial MA profile of two-edge 10 (label-only shell relabel of the production mesh), 2026-09-21
 
 <!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. -->
+
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 Question (decisions 55 / 56): measure the sharp-edge MA tail directly instead of modelling it — MA per tube-ring shell per
@@ -19,15 +20,14 @@ vs +0.54% / +0.96% measured; Fit2-4 predicts 0.39%) — the one independent cros
 (`radial-ma-profile.md` next to this file, regenerated 2026-09-21 with the named `Consistent` estimator).
 
 ## Run (one job, `coupon_library.py qualify`, root `/tmp/library-radial-ma-01`)
+
 Mesh: the production identity mesh `5d01204e…` (PBS 46023's) relabeled by `relabel_radial_ma_shells.py` into 30 MA labels
 (15 per conductor: far, top rings 1–7, bottom rings 1–7; label 10000 × ordinal + parent), SHA256 `179a405d…`, 28,360,844
 bytes: $Nodes byte-identical, 602,862 elements identical apart from the (physical, elementary) pair of the 14,575 MA
 elements (29,150 integers), shells sum to the parent areas 4.9 um² at 1.9e-14, parent ownership certificate reproduced
-element by element, radial quadrature straddling 0.11% (corner-ball / cap triangles; the recorded closure 0 was tautological, see Records). Case `two-edge-calib-
-radial-ma-shells` (sizing calibration manifest; `Calibration.Relabel`, labeled `PhysicsRun {LinearTol 1e-8}` =
+element by element, radial quadrature straddling 0.11% (corner-ball / cap triangles; the recorded closure 0 was tautological, see Records). Case `two-edge-calib- radial-ma-shells` (sizing calibration manifest; `Calibration.Relabel`, labeled `PhysicsRun {LinearTol 1e-8}` =
 PBS 46023's Tol so the reproduction is at the deterministic-solve level; supervisor option A), build record
-`/tmp/coupon-calibration-radial-ma-20260921/library-build.json`. `qualify --reference /tmp/library-acceptance-01-reference
---orders p4,p5 --controls p3,p5 --control-source 1 2 3 5 6 20 25 49 53 58 --max-jobs 1`, binary `b28f089a…`, dry run first
+`/tmp/coupon-calibration-radial-ma-20260921/library-build.json`. `qualify --reference /tmp/library-acceptance-01-reference --orders p4,p5 --controls p3,p5 --control-source 1 2 3 5 6 20 25 49 53 58 --max-jobs 1`, binary `b28f089a…`, dry run first
 (base config == the acceptance p5 worker config apart from paths / Order; 15 MA Dielectric entries 3–17 next to MS 2).
 PBS 46164: qsub 07:20:55Z, R 07:23:26Z (r8g.48xlarge, 192 ranks, normal-g, DS-EM-FEM), `job_state F`, `Exit_status 0`,
 walltime 00:39:27; 0 non-convergences; CSVs hash-verified; matrices validated (every shell PSD); archives deleted after
@@ -37,6 +37,7 @@ identical (322 / 1092 s vs 325 / 1095 s, PCG 11.90 / 10.82 = the acceptance's), 
 surface integrals.
 
 ## Label-only proof at the physics level (shells summed per source vs PBS 46023, same mesh geometry, same Tol)
+
 p4: 78 sources, max |rel| E 1.1e-13, Q_MA 4.4e-13, Q_MS 1.1e-13; p5: E 0, Q_MA 3.6e-13, Q_MS 2.8e-13 — the run reproduces
 the production acceptance run at 1e-10 per source (1e-12, in fact); the gated p5 verdict is the acceptance's to the digit
 (Failed on p_MA: median +1.25%, weighted +1.12%, 34/60/78 within 1/2/5%, strongest-20 18/20, worst 53 +3.50%; E 78/78,
@@ -45,6 +46,7 @@ construction (the surface integral is additive over the partition); the Tol effe
 is immaterial for the per-shell profile (ring ratios of 1.5–2) and for the equal-p comparison with the ring run (0.5–1%).
 
 ## MA per shell (top edge = the sharp 90° edge at z = 0.1; bottom edge = metal / trench at z = 0; 78 free sources)
+
 Shares (median, p5): top-edge rings 41.9%, bottom-edge rings 28.0%, far shell (> 31.75 nm from every edge line) 26.9%;
 top ring 1 (0–0.25 nm) alone 5.7% of the MA (53 / 58: 10.9%), bottom ring 1 1.0%. Top-edge Q_k / Q_MA at 53, rings 1..7
 (p5): 0.109 0.068 0.072 0.084 0.100 0.120 0.136 — ring 1 exceeds ring 2 (as a −2/3 law demands: Q_1 / Q_2 = 2.26 for
@@ -52,13 +54,13 @@ the law, 1.60 resolved). Local slopes d log(Q_k / h_k) / d log r (median over so
 −0.68, −0.64, −0.67, −0.62, −0.57; bottom −0.33, −0.28, −0.34, −0.37, −0.38, −0.42. The p4 profiles are the same to
 < 0.01 in every slope but the first.
 
-| estimator (top edge unless noted) | alpha median (quartiles) | se | strongest-20 | 53 / 58 | deficit median (q) p5 | strongest-20 | 53 / 58 | p4 median / 53 |
-|---|---|---:|---:|---:|---|---:|---:|---|
-| Fit2-4 (rings 2–4, 0.25–3.75 nm) | −0.648 (−0.657 / −0.613) | 0.006 | −0.645 | −0.672 | top part +1.01%; total +1.89% (+0.96 / +2.85%) | +1.76% | +4.75% | +2.21% / +5.40% |
-| Fit2-K (rings 2–7) | −0.622 (−0.654 / −0.593) | 0.012 | −0.615 | −0.704 ± 0.011 | total +1.97% (+1.35 / +3.04%) | +1.80% | +7.26% | +2.31% / +7.95% |
-| Theory@2 (−2/3 anchored on ring 2) | −2/3 | – | – | – | top part +2.41%; total (−2/3 on both edges) +4.44% | +4.44% | +4.52% | +2.76% / +5.20% |
-| bottom edge Fit2-4 (45 sources with bottom share > 20%) | −0.332 (−0.392 / −0.301) | 0.013 | | 53 / 58: no power law (3% share) | bottom part (own law) +0.10% median | | | |
-| **`Consistent` (tool estimator: top Theory@2 + bottom Fit2-4)** | | | | | **+2.68% (+2.22 / +3.21%)** | **+2.65%** | **+4.44%** | **+3.07% / +5.11%** |
+| estimator (top edge unless noted)                               | alpha median (quartiles) | se    | strongest-20 | 53 / 58                          | deficit median (q) p5                              | strongest-20 | 53 / 58    | p4 median / 53      |
+|:--------------------------------------------------------------- |:------------------------ | -----:| ------------:| --------------------------------:|:-------------------------------------------------- | ------------:| ----------:|:------------------- |
+| Fit2-4 (rings 2–4, 0.25–3.75 nm)                                | −0.648 (−0.657 / −0.613) | 0.006 | −0.645       | −0.672                           | top part +1.01%; total +1.89% (+0.96 / +2.85%)     | +1.76%       | +4.75%     | +2.21% / +5.40%     |
+| Fit2-K (rings 2–7)                                              | −0.622 (−0.654 / −0.593) | 0.012 | −0.615       | −0.704 ± 0.011                   | total +1.97% (+1.35 / +3.04%)                      | +1.80%       | +7.26%     | +2.31% / +7.95%     |
+| Theory@2 (−2/3 anchored on ring 2)                              | −2/3                     | –     | –            | –                                | top part +2.41%; total (−2/3 on both edges) +4.44% | +4.44%       | +4.52%     | +2.76% / +5.20%     |
+| bottom edge Fit2-4 (45 sources with bottom share > 20%)         | −0.332 (−0.392 / −0.301) | 0.013 |              | 53 / 58: no power law (3% share) | bottom part (own law) +0.10% median                |              |            |                     |
+| **`Consistent` (tool estimator: top Theory@2 + bottom Fit2-4)** |                          |       |              |                                  | **+2.68% (+2.22 / +3.21%)**                        | **+2.65%**   | **+4.44%** | **+3.07% / +5.11%** |
 
 The estimator spread is the honest uncertainty of the deficit: 1.9–2.7% at the median (Fit2-4 vs `Consistent`; Fit2-K
 2.0%), 4.4–4.8% at 53 / 58 (`Consistent` / Theory@2 4.4–4.5%, Fit2-4 4.75%, Fit2-K 7.3% — the rings-2..7 fit mixes the
@@ -99,31 +101,33 @@ mixture of the edge exponent and the outer bend and gives the least stable extra
 sources with the same inner profile); Fit2-4 and Theory@2 agree on the inner law.
 
 ## What the data says (evidence only, no decision)
-1. **The sharp-edge tail is real and near-universal**: the ring 2–3 slope (0.25–1.75 nm) is within 0.05 of −2/3 at every
-   source including 53 / 58 and the junction-ring sources; the 3–4 slope (1.75–3.75 nm) is within 0.10 of −2/3 at 56 / 78
-   (the others bend flatter at the cut-face hats); the resolved ring-1 energy is 0.71 of the ring-2-anchored law at p5
-   (0.67 at p4) at every source. The production MA (0.25 nm inner ring, p5) is therefore 1.9–2.7% (median; estimator
-   spread) and 4.4–4.8% (53 / 58) below its sharp-edge limit, 2.68% / 4.44% with the preferred `Consistent` estimator
-   (top edge ~2.4%, bottom edge's own law +0.3%). One independent check, not two: the HE-CHECK model's 2.7% / 4.7% were
-   derived from the ring-halving step (I = 0.206 x D), so "the model is confirmed" and "0.206 x the measured deficit
-   (0.50% / 0.91%) matches the ring-refined run's +0.54% / +0.96%" are the same comparison — between two different meshes
-   (the production ring set and the halved one), and it is what selects the ring-2-anchored −2/3 over Fit2-4.
-2. **(i) Analytic extrapolation** is supported: the per-ring MA labels make the remainder computable per source from the
-   run itself (Theory@2: −2/3 anchored on the nearest resolved ring; no fit needed), the correction factor is
-   source-independent (0.706 ± 0.01 at p5) so a per-ring rule would be one number per (ring set, order), and the outer
-   rings are p-converged. Caveats the data shows: the far shell carries 20–46% of the remaining p-step (corner balls /
-   junction / top-face interior, outside the tube), so the edge extrapolation removes the ring-1 deficit but not the
-   whole p-dependence; the extrapolation is only as good as the −2/3 assumption inside 0.25 nm (the fitted inner exponent
-   −0.648 ± 0.006 vs −0.667 changes the ring-1 model by ~5%, the deficit by ~0.5 points); the reference (0.5 nm tets)
-   would carry its own, larger deficit (~5.6% at 53 / 58 under the same law), so extrapolating both sides is required
-   before any 2% statement.
-3. **(ii) Rounded edges**: the measured profile says where a rounding radius rho acts — 5.7% (median) / 10.9% (53 / 58)
-   of the MA sits inside 0.25 nm and 9.3% / 17.6% inside 0.75 nm, so any rho of nm order changes the MA by several
-   percent and the value becomes a process quantity; the −2/3 law would then be cut off physically rather than
-   numerically, and the far-shell p-dependence remains either way. The data does not favour one option; it quantifies
-   both: the tail below 0.25 nm is 2.4–4.4% of the MA and its shape is known.
+
+ 1. **The sharp-edge tail is real and near-universal**: the ring 2–3 slope (0.25–1.75 nm) is within 0.05 of −2/3 at every
+    source including 53 / 58 and the junction-ring sources; the 3–4 slope (1.75–3.75 nm) is within 0.10 of −2/3 at 56 / 78
+    (the others bend flatter at the cut-face hats); the resolved ring-1 energy is 0.71 of the ring-2-anchored law at p5
+    (0.67 at p4) at every source. The production MA (0.25 nm inner ring, p5) is therefore 1.9–2.7% (median; estimator
+    spread) and 4.4–4.8% (53 / 58) below its sharp-edge limit, 2.68% / 4.44% with the preferred `Consistent` estimator
+    (top edge ~2.4%, bottom edge's own law +0.3%). One independent check, not two: the HE-CHECK model's 2.7% / 4.7% were
+    derived from the ring-halving step (I = 0.206 x D), so "the model is confirmed" and "0.206 x the measured deficit
+    (0.50% / 0.91%) matches the ring-refined run's +0.54% / +0.96%" are the same comparison — between two different meshes
+    (the production ring set and the halved one), and it is what selects the ring-2-anchored −2/3 over Fit2-4.
+ 2. **(i) Analytic extrapolation** is supported: the per-ring MA labels make the remainder computable per source from the
+    run itself (Theory@2: −2/3 anchored on the nearest resolved ring; no fit needed), the correction factor is
+    source-independent (0.706 ± 0.01 at p5) so a per-ring rule would be one number per (ring set, order), and the outer
+    rings are p-converged. Caveats the data shows: the far shell carries 20–46% of the remaining p-step (corner balls /
+    junction / top-face interior, outside the tube), so the edge extrapolation removes the ring-1 deficit but not the
+    whole p-dependence; the extrapolation is only as good as the −2/3 assumption inside 0.25 nm (the fitted inner exponent
+    −0.648 ± 0.006 vs −0.667 changes the ring-1 model by ~5%, the deficit by ~0.5 points); the reference (0.5 nm tets)
+    would carry its own, larger deficit (~5.6% at 53 / 58 under the same law), so extrapolating both sides is required
+    before any 2% statement.
+ 3. **(ii) Rounded edges**: the measured profile says where a rounding radius rho acts — 5.7% (median) / 10.9% (53 / 58)
+    of the MA sits inside 0.25 nm and 9.3% / 17.6% inside 0.75 nm, so any rho of nm order changes the MA by several
+    percent and the value becomes a process quantity; the −2/3 law would then be cut off physically rather than
+    numerically, and the far-shell p-dependence remains either way. The data does not favour one option; it quantifies
+    both: the tail below 0.25 nm is 2.4–4.4% of the MA and its shape is known.
 
 ## Records
+
 `/tmp/library-radial-ma-01`: `library-qualification.json`, `qualification-gates.json`, `process-library.json`, per-case
 records (submission / result-csv-sha256 / matrix-validation / remote-archive-deletion JSON, `comparison/`, `results/main/`
 CSVs incl. the per-shell `surface-response-matrix.csv` of every stage, logs, `qstat -xf`), `radial-ma-profile.{json,md}`

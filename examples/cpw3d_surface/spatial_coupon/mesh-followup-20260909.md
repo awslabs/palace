@@ -1,4 +1,5 @@
 <!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. -->
+
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # Mesh follow-up: finer fabricated surface resolution
@@ -14,14 +15,14 @@ The geometric mesh is linear because all CAD faces/edges in this experiment are
 planar/straight (90-degree walls, zero rounding). This is exact geometric
 representation, **not a reduction of the p5 solution order**.
 
-- Local meshing: 110.99 s, 3,250,864,128 bytes peak process-tree RSS.
-- 1,110,638 tetrahedra, 270,911 geometric vertices.
-- Maximum kappa 17.17; median 3.47; p99 7.03.
-- Median first surface-element altitudes: SA 5.68 nm, MS 6.13 nm, MA 5.73 nm.
-  These are actual corner-geometry altitudes, not h/p. A 2 nm normal layer is
-  still NOT enforced; most incident length does not meet a 2 nm altitude gate.
-- Physical CAD area/volume gate passed against the reference.
-- Candidate and results are separate from all reference libraries.
+  - Local meshing: 110.99 s, 3,250,864,128 bytes peak process-tree RSS.
+  - 1,110,638 tetrahedra, 270,911 geometric vertices.
+  - Maximum kappa 17.17; median 3.47; p99 7.03.
+  - Median first surface-element altitudes: SA 5.68 nm, MS 6.13 nm, MA 5.73 nm.
+    These are actual corner-geometry altitudes, not h/p. A 2 nm normal layer is
+    still NOT enforced; most incident length does not meet a 2 nm altitude gate.
+  - Physical CAD area/volume gate passed against the reference.
+  - Candidate and results are separate from all reference libraries.
 
 This is a mesh-resolution/quality improvement, not an accuracy certificate.
 The dedicated-host p5 worker/reducer comparison uses original material data,
@@ -32,12 +33,12 @@ P5 held-out result: 24,860,845 H1 DOFs (versus about 147.9 million in the refere
 7 PCG iterations. On 32 dedicated-host ranks: worker 117.95 s, reducer 80.59 s,
 peak process-tree RSS 69,210,783,744 bytes. Differences against retained reference:
 
-| Quantity | Signed difference |
-|---|---:|
-| Domain energy | -0.011702% |
-| MA energy | +3.633553% |
-| MS energy | +0.117823% |
-| SA energy | +2.625582% |
+| Quantity      | Signed difference |
+|:------------- | -----------------:|
+| Domain energy | -0.011702%        |
+| MA energy     | +3.633553%        |
+| MS energy     | +0.117823%        |
+| SA energy     | +2.625582%        |
 
 The configured comparison gate failed. This mesh is **not installed as a replacement**.
 
@@ -63,7 +64,6 @@ also lies above the old reference in MA (+3.35%) and SA (+2.59%). This is suppor
 convergence evidence across two discretization choices, not proof of an exact
 continuum limit or full-operator qualification. Thin raw SPR remains excluded.
 
-
 ## Fixed-boundary hybrid-bulk investigation
 
 Added `mesh_discrete_tet_region.jl` and nine smoke-test assertions. The helper checks
@@ -78,14 +78,14 @@ It is unsuitable as a replacement for the reference bulk without further work.
 
 Negative outcomes retained:
 
-- Original plan: HXT inserted a boundary point and replaced two triangles; the
-  fixed-boundary check rejected it instead of silently allowing a nonconforming join.
-- Aggressive isotropic HXT quality targets repeatedly spent the bounded run in
-  optimization of a strongly anisotropic fixed boundary.
-- No optimization: near-degenerate slivers with kappa about 1.46 billion.
-- Centroid-based cap point layers increased cost and introduced near-singular
-  elements; no resulting mesh is approved for a solve.
-- Netgen optimization on this discrete-shell construction crashed natively.
+  - Original plan: HXT inserted a boundary point and replaced two triangles; the
+    fixed-boundary check rejected it instead of silently allowing a nonconforming join.
+  - Aggressive isotropic HXT quality targets repeatedly spent the bounded run in
+    optimization of a strongly anisotropic fixed boundary.
+  - No optimization: near-degenerate slivers with kappa about 1.46 billion.
+  - Centroid-based cap point layers increased cost and introduced near-singular
+    elements; no resulting mesh is approved for a solve.
+  - Netgen optimization on this discrete-shell construction crashed natively.
 
 Side quads are triangulated by the helper. Their p5 trace space is not identical
 to the reference tensor-product trace space. This is documented rather than

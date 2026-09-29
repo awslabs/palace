@@ -21,7 +21,9 @@ end
 
 @testset "CAD subdivision of a straight edge keeps the coupon box" begin
     straight = read_edges(signature(["0,1,0,0,0,1,0,0,0,1,0,1,-2,2,0"]))
-    halves = read_edges(signature(["0,1,0,-1,0,1,0,0,0,1,0,1,-1,1,0", "0,1,0,1,0,1,0,0,0,1,0,1,-1,1,0"]))
+    halves = read_edges(
+        signature(["0,1,0,-1,0,1,0,0,0,1,0,1,-1,1,0", "0,1,0,1,0,1,0,0,0,1,0,1,-1,1,0"])
+    )
     @test isempty(EDGE_CHAIN_RECORDS) == false
     @test length(EDGE_CHAIN_RECORDS) == 1 && EDGE_CHAIN_RECORDS[1]["Rows"] == [1, 2]
     @test EDGE_CHAIN_RECORDS[1]["UnionLength"] ≈ 4.0
@@ -34,20 +36,35 @@ end
     straight_box = coupon_bounds(straight, 2.0, 0.1, 0.05)
     @test all(collect(subdivided_box[1]) .≈ collect(straight_box[1]))
     @test all(collect(subdivided_box[2]) .≈ collect(straight_box[2]))
-    @test collect(straight_box[1]) ≈ [-4.0, -8.0, -2.05] && collect(straight_box[2]) ≈ [4.0, 8.0, 2.1]
+    @test collect(straight_box[1]) ≈ [-4.0, -8.0, -2.05] &&
+          collect(straight_box[2]) ≈ [4.0, 8.0, 2.1]
     # A chain shorter than 2 R is not extended (the single-row rule on the union).
-    short = read_edges(signature(["0,1,0,-0.5,0,1,0,0,0,1,0,1,-0.5,0.5,0", "0,1,0,0.5,0,1,0,0,0,1,0,1,-0.5,0.5,0"]))
+    short = read_edges(
+        signature([
+            "0,1,0,-0.5,0,1,0,0,0,1,0,1,-0.5,0.5,0",
+            "0,1,0,0.5,0,1,0,0,0,1,0,1,-0.5,0.5,0"
+        ])
+    )
     @test length(EDGE_CHAIN_RECORDS) == 1
     @test collect(extended_interval(short[1], 2.0)) ≈ [-0.5, 0.5]
 end
 
 @testset "collinear rows separated by a gap or differing in conductor do not chain" begin
-    gapped = read_edges(signature(["0,1,-6.5,-0.6,0,1,0,0,0,-1,0,1,0,2,0", "0,1,-6.5,0.4,0,1,0,0,0,-1,0,1,-2,0,0"]))
+    gapped = read_edges(
+        signature([
+            "0,1,-6.5,-0.6,0,1,0,0,0,-1,0,1,0,2,0",
+            "0,1,-6.5,0.4,0,1,0,0,0,-1,0,1,-2,0,0"
+        ])
+    )
     @test isempty(EDGE_CHAIN_RECORDS)
     @test collect(extended_interval(gapped[1], 2.0)) ≈ [0.0, 6.0]
-    other_conductor = read_edges(signature(["0,1,0,-1,0,1,0,0,0,1,0,1,-1,1,0", "0,2,0,1,0,1,0,0,0,1,0,1,-1,1,0"]))
+    other_conductor = read_edges(
+        signature(["0,1,0,-1,0,1,0,0,0,1,0,1,-1,1,0", "0,2,0,1,0,1,0,0,0,1,0,1,-1,1,0"])
+    )
     @test isempty(EDGE_CHAIN_RECORDS)
-    vertex_arm = read_edges(signature(["0,1,0,-1,0,1,0,0,0,1,0,1,-1,1,0", "0,1,0,0,0,1,0,0,0,1,0,1,0,2,1"]))
+    vertex_arm = read_edges(
+        signature(["0,1,0,-1,0,1,0,0,0,1,0,1,-1,1,0", "0,1,0,0,0,1,0,0,0,1,0,1,0,2,1"])
+    )
     @test isempty(EDGE_CHAIN_RECORDS)
     @test collect(extended_interval(vertex_arm[2], 2.0)) ≈ [0.0, 6.0]
 end

@@ -80,7 +80,8 @@ function parse_specification(path)
         isempty(line) && continue
         fields = split(line)
         keyword = fields[1]
-        numbers = [parse(Float64, f) for f in fields[2:end] if tryparse(Float64, f) !== nothing]
+        numbers =
+            [parse(Float64, f) for f in fields[2:end] if tryparse(Float64, f) !== nothing]
         if keyword == "layout"
             current = Layout(String(fields[2]))
             push!(layouts, current)
@@ -125,7 +126,7 @@ function add_loop(occ, loop, z)
         push!(tags, occ.addPoint(x, y, z))
     end
     curves = Int32[]
-    for i in 1:n
+    for i = 1:n
         a = tags[i]
         b = tags[i == n ? 1 : i + 1]
         j = i == n ? 1 : i + 1
@@ -152,16 +153,28 @@ function add_wall(occ, wall)
         occ.addPoint(wall.x1, wall.y1, wall.height),
         occ.addPoint(wall.x0, wall.y0, wall.height)
     ]
-    curves = [occ.addLine(p[i], p[i == 4 ? 1 : i + 1]) for i in 1:4]
+    curves = [occ.addLine(p[i], p[i == 4 ? 1 : i + 1]) for i = 1:4]
     return occ.addPlaneSurface([occ.addCurveLoop(curves)])
 end
 
 function on_outer_box(bounds, layout, tolerance)
     xmin, ymin, zmin, xmax, ymax, zmax = bounds
-    return (abs(xmin + layout.half_x) < tolerance && abs(xmax + layout.half_x) < tolerance) ||
-           (abs(xmin - layout.half_x) < tolerance && abs(xmax - layout.half_x) < tolerance) ||
-           (abs(ymin + layout.half_y) < tolerance && abs(ymax + layout.half_y) < tolerance) ||
-           (abs(ymin - layout.half_y) < tolerance && abs(ymax - layout.half_y) < tolerance) ||
+    return (
+               abs(xmin + layout.half_x) < tolerance &&
+               abs(xmax + layout.half_x) < tolerance
+           ) ||
+           (
+               abs(xmin - layout.half_x) < tolerance &&
+               abs(xmax - layout.half_x) < tolerance
+           ) ||
+           (
+               abs(ymin + layout.half_y) < tolerance &&
+               abs(ymax + layout.half_y) < tolerance
+           ) ||
+           (
+               abs(ymin - layout.half_y) < tolerance &&
+               abs(ymax - layout.half_y) < tolerance
+           ) ||
            (abs(zmin + layout.depth) < tolerance && abs(zmax + layout.depth) < tolerance) ||
            (abs(zmin - layout.height) < tolerance && abs(zmax - layout.height) < tolerance)
 end
@@ -171,8 +184,22 @@ function generate(layout, output_directory)
     gmsh.option.setNumber("General.Terminal", 0)
     gmsh.model.add(layout.name)
     occ = gmsh.model.occ
-    substrate = occ.addBox(-layout.half_x, -layout.half_y, -layout.depth, 2layout.half_x, 2layout.half_y, layout.depth)
-    vacuum = occ.addBox(-layout.half_x, -layout.half_y, 0.0, 2layout.half_x, 2layout.half_y, layout.height)
+    substrate = occ.addBox(
+        -layout.half_x,
+        -layout.half_y,
+        -layout.depth,
+        2layout.half_x,
+        2layout.half_y,
+        layout.depth
+    )
+    vacuum = occ.addBox(
+        -layout.half_x,
+        -layout.half_y,
+        0.0,
+        2layout.half_x,
+        2layout.half_y,
+        layout.height
+    )
     tools = Tuple{Int32, Int32}[]
     for sheet in layout.sheets
         push!(tools, (2, add_sheet(occ, sheet)))
@@ -192,7 +219,10 @@ function generate(layout, output_directory)
     # The metal faces are the fragment images of the tool sheets (domain_map entries after
     # the two boxes); every other face on the process plane is substrate_air.
     metal = Dict{Int, Vector{Int32}}()
-    tool_attributes = vcat([sheet.attribute for sheet in layout.sheets], [wall.attribute for wall in layout.walls])
+    tool_attributes = vcat(
+        [sheet.attribute for sheet in layout.sheets],
+        [wall.attribute for wall in layout.walls]
+    )
     metal_faces = Set{Int32}()
     for (k, attribute) in enumerate(tool_attributes)
         for (dim, tag) in domain_map[2 + k]
@@ -226,14 +256,16 @@ function generate(layout, output_directory)
     gmsh.model.addPhysicalGroup(3, substrate_tags, 1, "substrate")
     gmsh.model.addPhysicalGroup(3, vacuum_tags, 2, "vacuum")
     gmsh.model.addPhysicalGroup(2, outer, 3, "outer")
-    isempty(substrate_air) || gmsh.model.addPhysicalGroup(2, substrate_air, 8, "substrate_air")
+    isempty(substrate_air) ||
+        gmsh.model.addPhysicalGroup(2, substrate_air, 8, "substrate_air")
     for (attribute, tags) in sort!(collect(port_groups); by=first)
         gmsh.model.addPhysicalGroup(2, tags, attribute, "port_$(attribute)")
     end
     metal_curves = Int32[]
     for (attribute, tags) in sort!(collect(metal); by=first)
         gmsh.model.addPhysicalGroup(2, tags, attribute, "metal_$(attribute)")
-        for (dim, curve) in gmsh.model.getBoundary([(2, tag) for tag in tags], false, false, false)
+        for (dim, curve) in
+            gmsh.model.getBoundary([(2, tag) for tag in tags], false, false, false)
             dim == 1 || continue
             bounds = gmsh.model.getBoundingBox(dim, curve)
             on_outer_box(bounds, layout, tolerance) || push!(metal_curves, abs(curve))
@@ -268,12 +300,15 @@ function generate(layout, output_directory)
     gmsh.write(path)
     nodes = length(gmsh.model.mesh.getNodes()[1])
     gmsh.finalize()
-    println("$(layout.name) $(path) nodes=$(nodes) metal=$(join(sort(collect(keys(metal))), ",")) substrate_air=$(length(substrate_air))")
+    println(
+        "$(layout.name) $(path) nodes=$(nodes) metal=$(join(sort(collect(keys(metal))), ",")) substrate_air=$(length(substrate_air))"
+    )
     return path
 end
 
 function main(args)
-    length(args) >= 2 || error("usage: julia synthetic_layouts.jl SPEC OUTPUT_DIRECTORY [NAME ...]")
+    length(args) >= 2 ||
+        error("usage: julia synthetic_layouts.jl SPEC OUTPUT_DIRECTORY [NAME ...]")
     layouts = parse_specification(args[1])
     mkpath(args[2])
     selected = Set(args[3:end])

@@ -4,12 +4,11 @@ MA_sharp = MA_raw + MA_tail per source; MA_raw = the sum of the per-ring MA shel
 
 ## p4 (spatial-5-edge-9bfa8265e2e7-p4; 119 sources)
 
-- alpha (top edge, rings 2-4): median -0.656 (quartiles -0.659 / -0.645), se median 0.004; strongest-0 median n/a; theory -0.667
-- ring-1 factor (resolved / -2/3 anchored on ring 2, top edge): median 0.666, range 0.642-0.668
+  - alpha (top edge, rings 2-4): median -0.656 (quartiles -0.659 / -0.645), se median 0.004; strongest-0 median n/a; theory -0.667
+  - ring-1 factor (resolved / -2/3 anchored on ring 2, top edge): median 0.666, range 0.642-0.668
 
-| deficit estimator | median (quartiles) | strongest median | at 53 | at 58 |
-|---|---|---:|---:|---:|
-| Fit2-4 | +0.01% (+0.00% / +0.32%) | n/a | +0.00% | -0.00% |
-| Theory@2 | +0.01% (+0.00% / +0.61%) | n/a | +0.00% | +0.00% |
-| Consistent (tail) | +0.01% (+0.00% / +0.40%) | n/a | +0.00% | +0.00% |
-
+| deficit estimator | median (quartiles)       | strongest median | at 53  | at 58  |
+|:----------------- |:------------------------ | ----------------:| ------:| ------:|
+| Fit2-4            | +0.01% (+0.00% / +0.32%) | n/a              | +0.00% | -0.00% |
+| Theory@2          | +0.01% (+0.00% / +0.61%) | n/a              | +0.00% | +0.00% |
+| Consistent (tail) | +0.01% (+0.00% / +0.40%) | n/a              | +0.00% | +0.00% |

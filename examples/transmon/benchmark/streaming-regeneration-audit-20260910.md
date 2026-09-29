@@ -1,4 +1,5 @@
 <!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. -->
+
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # Original-mesh streaming regeneration audit — 2026-09-10
@@ -40,18 +41,18 @@ Submission-to-publication duration: **9 h 19 min 31 s**.
 The table lists worker plus reducer wall time for each job; jobs ran concurrently.
 Meshing and prior qualification were reused and are not included as fresh work.
 
-| Model | Coupon order | Sources per thin/fab case | Thin | Fabricated |
-|---|---:|---:|---:|---:|
-| Isolated edge | 5 | 95 | 00:01:00 | 00:01:02 |
-| Same-conductor strip, 2 um | 5 | 96 | 00:01:28 | 00:01:30 |
-| Convex 90-degree corner | 4 | 72 | 00:02:25 | 00:02:39 |
-| Concave 90-degree corner | 4 | 72 | 00:02:24 | 00:02:43 |
-| Two-edge cluster `3f8992613e95` | 4 | 115 | 00:53:19 | 01:28:32 |
-| Three-edge cluster `419576fdab24` | 4 | 130 | 01:11:33 | 02:00:24 |
-| Four-edge cluster `9d2cb9bbb3fe` | 4 | 80 | 01:17:45 | 02:11:02 |
-| Large three-edge cluster `7f03270dca8e` | 5 | 180 | 09:10:35 | 08:37:21 |
-| Ten-edge cluster `6791f1c84123` | 5 | 161 | 08:35:43 | 08:00:52 |
-| Two-edge cluster `8dd4bc70f183` | 5 | 68 | 00:23:20 | 00:30:59 |
+| Model                                   | Coupon order | Sources per thin/fab case | Thin     | Fabricated |
+|:--------------------------------------- | ------------:| -------------------------:| --------:| ----------:|
+| Isolated edge                           | 5            | 95                        | 00:01:00 | 00:01:02   |
+| Same-conductor strip, 2 um              | 5            | 96                        | 00:01:28 | 00:01:30   |
+| Convex 90-degree corner                 | 4            | 72                        | 00:02:25 | 00:02:39   |
+| Concave 90-degree corner                | 4            | 72                        | 00:02:24 | 00:02:43   |
+| Two-edge cluster `3f8992613e95`         | 4            | 115                       | 00:53:19 | 01:28:32   |
+| Three-edge cluster `419576fdab24`       | 4            | 130                       | 01:11:33 | 02:00:24   |
+| Four-edge cluster `9d2cb9bbb3fe`        | 4            | 80                        | 01:17:45 | 02:11:02   |
+| Large three-edge cluster `7f03270dca8e` | 5            | 180                       | 09:10:35 | 08:37:21   |
+| Ten-edge cluster `6791f1c84123`         | 5            | 161                       | 08:35:43 | 08:00:52   |
+| Two-edge cluster `8dd4bc70f183`         | 5            | 68                        | 00:23:20 | 00:30:59   |
 
 All jobs used r8g.48xlarge nodes. Most used one node; the large three-edge thin/fab
 cases used 2/4 nodes, and the ten-edge cases used 4/8 nodes. Peak concurrent node
@@ -96,16 +97,16 @@ No dummy numerical response files were invented or added.
 
 Validation with the campaign's frozen executable:
 
-- Fresh, uncached strict preflight: **Complete=true; 3,120 exact matches, zero
-  interpolated and zero missing**. Requirements and statistics match the old library.
-- Coarse p5 device smoke, 3,071,387 H1 DOFs and 32 ranks: **13 raw iterations and
-  four corrected iterations**, matching the reference run.
-- Identical nine runtime model instances, identical patch data, no active placeholders.
-- Raw domain energy, raw surface participation and capacitance CSVs byte-identical.
-- Fixed-trace, fixed-flux and self-consistent participation differences below roughly
-  **9.6e-8 relative** (0.0000096%). All corrected observables were finite.
-- All 73 files of the original reference-library snapshot still match the original
-  retained library. It was not modified.
+  - Fresh, uncached strict preflight: **Complete=true; 3,120 exact matches, zero
+    interpolated and zero missing**. Requirements and statistics match the old library.
+  - Coarse p5 device smoke, 3,071,387 H1 DOFs and 32 ranks: **13 raw iterations and
+    four corrected iterations**, matching the reference run.
+  - Identical nine runtime model instances, identical patch data, no active placeholders.
+  - Raw domain energy, raw surface participation and capacitance CSVs byte-identical.
+  - Fixed-trace, fixed-flux and self-consistent participation differences below roughly
+    **9.6e-8 relative** (0.0000096%). All corrected observables were finite.
+  - All 73 files of the original reference-library snapshot still match the original
+    retained library. It was not modified.
 
 The coarse runs both retain the known fixed-trace/fixed-flux closure-confidence
 warning; the self-consistent solves converged. This validates replacement-library

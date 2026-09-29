@@ -13,9 +13,19 @@
 include(joinpath(@__DIR__, "..", "prism_edge_tubes.jl"))
 include(joinpath(@__DIR__, "hybrid_census.jl"))
 
-function tiny_hybrid_mesh(kind, filename; inner_size=0.00025, ratio=2.0, rings=7,
-                          spacing=0.05, sector_degrees=30.0, lc_edge=0.025, lc_far=0.15,
-                          pyramid_height=0.008, census_path=nothing)
+function tiny_hybrid_mesh(
+    kind,
+    filename;
+    inner_size=0.00025,
+    ratio=2.0,
+    rings=7,
+    spacing=0.05,
+    sector_degrees=30.0,
+    lc_edge=0.025,
+    lc_far=0.15,
+    pyramid_height=0.008,
+    census_path=nothing
+)
     kind in ("hybrid", "tets") || error("kind must be hybrid or tets")
     gmsh.initialize()
     gmsh.option.setNumber("General.Verbosity", 2)
@@ -30,19 +40,52 @@ function tiny_hybrid_mesh(kind, filename; inner_size=0.00025, ratio=2.0, rings=7
     vacuum, _ = occ.cut(field, substrate, -1, true, false)
     objects = vcat(substrate, vacuum)
     sectors = round(Int, 270.0 / sector_degrees)
-    top_section = TubeSection(inner_size, ratio, rings,
-                              [-90.0 + sector_degrees * j for j in 0:sectors], fill(2, sectors))
+    top_section = TubeSection(
+        inner_size,
+        ratio,
+        rings,
+        [-90.0 + sector_degrees * j for j = 0:sectors],
+        fill(2, sectors)
+    )
     per_quadrant = round(Int, 90.0 / sector_degrees)
-    bottom_section = TubeSection(inner_size, ratio, rings,
-                                 [180.0 + sector_degrees * j for j in 0:sectors],
-                                 vcat(fill(1, per_quadrant), fill(2, sectors - per_quadrant)))
+    bottom_section = TubeSection(
+        inner_size,
+        ratio,
+        rings,
+        [180.0 + sector_degrees * j for j = 0:sectors],
+        vcat(fill(1, per_quadrant), fill(2, sectors - per_quadrant))
+    )
     tubes = Tuple{EdgeTube, TubeSection}[]
     records = TubeRecord[]
     if kind == "hybrid"
-        push!(tubes, (EdgeTube([0.0, 1.0, 0.1], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0], 0.0, 2.0, spacing),
-                      top_section))
-        push!(tubes, (EdgeTube([0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0], 0.0, 2.0, spacing),
-                      bottom_section))
+        push!(
+            tubes,
+            (
+                EdgeTube(
+                    [0.0, 1.0, 0.1],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                    0.0,
+                    2.0,
+                    spacing
+                ),
+                top_section
+            )
+        )
+        push!(
+            tubes,
+            (
+                EdgeTube(
+                    [0.0, 1.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                    0.0,
+                    2.0,
+                    spacing
+                ),
+                bottom_section
+            )
+        )
         for (tube, section) in tubes
             for (tool, group) in add_tube_volumes!(occ, tube, section)
                 push!(records, TubeRecord(tube, section, group, tool))
@@ -62,15 +105,21 @@ function tiny_hybrid_mesh(kind, filename; inner_size=0.00025, ratio=2.0, rings=7
     unique!(vacuum_tags)
     tube_volumes = Int32[]
     for (index, record) in enumerate(records)
-        push!(tube_volumes, tube_volume_after_fragment(record, index, fragment_map, length(objects)))
+        push!(
+            tube_volumes,
+            tube_volume_after_fragment(record, index, fragment_map, length(objects))
+        )
     end
     lower = (-1.0, -1.0, -0.55)
     upper = (1.0, 1.0, 0.6)
     # OCC bounding boxes carry a gap of ~1e-7; classify with a looser tolerance.
     tolerance = 1.0e-5
-    on_box(bounds) = any(abs(bounds[d] - lower[d]) < tolerance && abs(bounds[d + 3] - lower[d]) < tolerance ||
-                         abs(bounds[d] - upper[d]) < tolerance && abs(bounds[d + 3] - upper[d]) < tolerance
-                         for d in 1:3)
+    on_box(bounds) = any(
+        abs(bounds[d] - lower[d]) < tolerance &&
+        abs(bounds[d + 3] - lower[d]) < tolerance ||
+            abs(bounds[d] - upper[d]) < tolerance &&
+            abs(bounds[d + 3] - upper[d]) < tolerance for d = 1:3
+    )
     substrate_set = Set(substrate_tags)
     vacuum_set = Set(vacuum_tags)
     groups = Dict{Int, Vector{Int32}}()
@@ -100,9 +149,13 @@ function tiny_hybrid_mesh(kind, filename; inner_size=0.00025, ratio=2.0, rings=7
         attribute > 0 && push!(get!(groups, attribute, Int32[]), tag)
     end
     for (attribute, surfaces) in sort(collect(groups))
-        gmsh.model.addPhysicalGroup(2, surfaces, attribute,
-                                    attribute == 1 ? "matching_surface" :
-                                    attribute == 7 ? "terminal" : "surface_$attribute")
+        gmsh.model.addPhysicalGroup(
+            2,
+            surfaces,
+            attribute,
+            attribute == 1 ? "matching_surface" :
+            attribute == 7 ? "terminal" : "surface_$attribute"
+        )
     end
     # Explicit tube meshes, phase 1 (points and curves).
     next_node = Ref(0)
@@ -113,8 +166,14 @@ function tiny_hybrid_mesh(kind, filename; inner_size=0.00025, ratio=2.0, rings=7
         for (index, record) in enumerate(records)
             record.tube === tube || continue
             volume = tube_volumes[index]
-            push!(volumes, (volume, record.group,
-                            match_tube_entities(volume, tube, section, record.group, 1.0e-6)))
+            push!(
+                volumes,
+                (
+                    volume,
+                    record.group,
+                    match_tube_entities(volume, tube, section, record.group, 1.0e-6)
+                )
+            )
         end
         state = TubeMesh(tube, section, volumes; pyramid_height=pyramid_height)
         install_tube_curves!(state, next_node, point_nodes)
@@ -130,9 +189,10 @@ function tiny_hybrid_mesh(kind, filename; inner_size=0.00025, ratio=2.0, rings=7
     edge_curves = Int32[]
     for (dim, tag) in gmsh.model.getEntities(1)
         bounds = gmsh.model.getBoundingBox(dim, tag)
-        abs(bounds[1]) < tolerance && abs(bounds[4]) < tolerance &&
-            (abs(bounds[3] - bounds[6]) < tolerance) && (abs(bounds[3]) < tolerance ||
-                                                         abs(bounds[3] - 0.1) < tolerance) &&
+        abs(bounds[1]) < tolerance &&
+            abs(bounds[4]) < tolerance &&
+            (abs(bounds[3] - bounds[6]) < tolerance) &&
+            (abs(bounds[3]) < tolerance || abs(bounds[3] - 0.1) < tolerance) &&
             push!(edge_curves, tag)
     end
     isempty(edge_curves) && error("no metal edge curves found")
@@ -140,12 +200,22 @@ function tiny_hybrid_mesh(kind, filename; inner_size=0.00025, ratio=2.0, rings=7
     gmsh.model.mesh.field.setNumbers(1, "CurvesList", Float64.(edge_curves))
     gmsh.model.mesh.field.setNumber(1, "Sampling", 200)
     gmsh.model.mesh.field.add("MathEval", 2)
-    gmsh.model.mesh.field.setString(2, "F", "min($lc_far,$lc_edge+($lc_far-$lc_edge)*F1/0.4)")
+    gmsh.model.mesh.field.setString(
+        2,
+        "F",
+        "min($lc_far,$lc_edge+($lc_far-$lc_edge)*F1/0.4)"
+    )
     gmsh.model.mesh.field.setAsBackgroundMesh(2)
-    for (name, value) in [("Mesh.MeshSizeMin", min(lc_edge, inner_size)), ("Mesh.MeshSizeMax", lc_far),
-                          ("Mesh.Algorithm3D", 1), ("Mesh.MeshSizeExtendFromBoundary", 0),
-                          ("Mesh.MeshSizeFromPoints", 0), ("Mesh.MeshSizeFromCurvature", 0),
-                          ("Mesh.MshFileVersion", 2.2), ("Mesh.Binary", 1)]
+    for (name, value) in [
+        ("Mesh.MeshSizeMin", min(lc_edge, inner_size)),
+        ("Mesh.MeshSizeMax", lc_far),
+        ("Mesh.Algorithm3D", 1),
+        ("Mesh.MeshSizeExtendFromBoundary", 0),
+        ("Mesh.MeshSizeFromPoints", 0),
+        ("Mesh.MeshSizeFromCurvature", 0),
+        ("Mesh.MshFileVersion", 2.2),
+        ("Mesh.Binary", 1)
+    ]
         gmsh.option.setNumber(name, value)
     end
     elapsed = @elapsed begin
@@ -158,10 +228,18 @@ function tiny_hybrid_mesh(kind, filename; inner_size=0.00025, ratio=2.0, rings=7
     tube_discrete, tube_census = finalize_tube_volumes!(states)
     outside_substrate = setdiff(substrate_tags, tube_volumes)
     outside_vacuum = setdiff(vacuum_tags, tube_volumes)
-    gmsh.model.addPhysicalGroup(3, vcat(outside_substrate, get(tube_discrete, 1, Int32[])), 1,
-                                "substrate")
-    gmsh.model.addPhysicalGroup(3, vcat(outside_vacuum, get(tube_discrete, 2, Int32[])), 2,
-                                "vacuum")
+    gmsh.model.addPhysicalGroup(
+        3,
+        vcat(outside_substrate, get(tube_discrete, 1, Int32[])),
+        1,
+        "substrate"
+    )
+    gmsh.model.addPhysicalGroup(
+        3,
+        vcat(outside_vacuum, get(tube_discrete, 2, Int32[])),
+        2,
+        "vacuum"
+    )
     census = hybrid_volume_census()
     census["Areas"] = physical_surface_areas()
     census["Tubes"] = tube_census
@@ -175,7 +253,7 @@ function tiny_hybrid_mesh(kind, filename; inner_size=0.00025, ratio=2.0, rings=7
     gmsh.finalize()
     if census_path !== nothing
         open(census_path, "w") do io
-            write_census_json(io, census)
+            return write_census_json(io, census)
         end
     end
     return census
@@ -204,7 +282,9 @@ function parse_tiny_options(args)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
-    length(ARGS) >= 2 || error("usage: mesh_tiny_hybrid.jl hybrid|tets output.msh [--inner-size um] [--spacing um] [--lc-edge um] [--pyramid-height um] [--census json]")
+    length(ARGS) >= 2 || error(
+        "usage: mesh_tiny_hybrid.jl hybrid|tets output.msh [--inner-size um] [--spacing um] [--lc-edge um] [--pyramid-height um] [--census json]"
+    )
     census = tiny_hybrid_mesh(ARGS[1], abspath(ARGS[2]); parse_tiny_options(ARGS)...)
     for (name, value) in sort(collect(census); by=first)
         name in ("Areas", "Tubes") && continue

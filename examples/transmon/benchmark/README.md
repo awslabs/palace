@@ -73,8 +73,7 @@ SA / MS / MA / C at p4-p5 land within -3 / -1 / +0.5 (MA raw-cutoff) / +0.1 % of
 finite-metal reference for ~0.5-0.65 node-h (the reference: 50 node-h). Use a rank count whose
 partition keeps the full edge matching (768 ranks match 3,071 segments; 192 ranks drop 52 and
 shift the corrected values by 4-7 points; 384 ranks abort in ExtractMetalEdgeGeometry with the
-frozen 170439c4 executable). Record: `examples/cpw3d_surface/spatial_coupon/qualify/
-device-verification-20260923/amr/DEVICE-AMR-VERIFICATION.md`. `../amr_edge_resolution.py`
+frozen 170439c4 executable). Record: `examples/cpw3d_surface/spatial_coupon/qualify/ device-verification-20260923/amr/DEVICE-AMR-VERIFICATION.md`. `../amr_edge_resolution.py`
 reports the near-edge element sizes of an adapted mesh written with `--save-adapt-mesh`
 (only the final mesh survives a run: Palace writes through the iteration symlink).
 

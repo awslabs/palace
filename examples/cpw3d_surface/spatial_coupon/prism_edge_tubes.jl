@@ -39,9 +39,13 @@ function TubeSection(inner_size, ratio, rings, angles, materials)
     all(diff(angles) .> 0.0) || error("rays must increase")
     span = angles[end] - angles[1]
     span <= 360.0 + 1.0e-9 || error("tube rays span more than a full turn")
-    radii = [inner_size * (ratio^k - 1.0) / (ratio - 1.0) for k in 1:rings]
-    return TubeSection(radii, collect(Float64, angles), collect(Int, materials),
-                       abs(span - 360.0) <= 1.0e-9)
+    radii = [inner_size * (ratio^k - 1.0) / (ratio - 1.0) for k = 1:rings]
+    return TubeSection(
+        radii,
+        collect(Float64, angles),
+        collect(Int, materials),
+        abs(span - 360.0) <= 1.0e-9
+    )
 end
 
 ring_sizes(section::TubeSection) = diff(vcat(0.0, section.ring_radii))
@@ -59,14 +63,16 @@ function section_node(section::TubeSection, k, j)
     j = section.closed ? mod(j, distinct_ray_count(section)) : j
     return 1 + (k - 1) * distinct_ray_count(section) + j + 1
 end
-section_node_count(section::TubeSection) = 1 + ring_count(section) * distinct_ray_count(section)
+section_node_count(section::TubeSection) =
+    1 + ring_count(section) * distinct_ray_count(section)
 
 # Local (u, w) coordinates of every cross-section node, u along n, w along b.
 function section_coordinates(section::TubeSection)
     uw = zeros(2, section_node_count(section))
-    for k in 1:ring_count(section), j in 0:(distinct_ray_count(section) - 1)
+    for k = 1:ring_count(section), j = 0:(distinct_ray_count(section) - 1)
         theta = deg2rad(section.angles[j + 1])
-        uw[:, section_node(section, k, j)] .= section.ring_radii[k] .* (cos(theta), sin(theta))
+        uw[:, section_node(section, k, j)] .=
+            section.ring_radii[k] .* (cos(theta), sin(theta))
     end
     return uw
 end
@@ -75,9 +81,15 @@ end
 # the fan of ring 1 and two triangles per annulus quad.
 function sector_triangles(section::TubeSection, j)
     triangles = NTuple{3, Int}[]
-    push!(triangles, (section_node(section, 0, 0), section_node(section, 1, j),
-                      section_node(section, 1, j + 1)))
-    for k in 2:ring_count(section)
+    push!(
+        triangles,
+        (
+            section_node(section, 0, 0),
+            section_node(section, 1, j),
+            section_node(section, 1, j + 1)
+        )
+    )
+    for k = 2:ring_count(section)
         a = section_node(section, k - 1, j)
         b = section_node(section, k, j)
         c = section_node(section, k, j + 1)
@@ -92,7 +104,7 @@ end
 function material_groups(section::TubeSection)
     groups = Tuple{Int, Int, Int}[]
     start = 0
-    for j in 1:(length(section.materials) - 1)
+    for j = 1:(length(section.materials) - 1)
         if section.materials[j + 1] != section.materials[j]
             push!(groups, (start, j - 1, section.materials[j]))
             start = j
@@ -138,7 +150,7 @@ function EdgeTube(origin, n, b, s_start, s_end, spacing)
     spacing > 0.0 || error("tube spacing must be positive")
     extent = s_end - s_start
     layers = max(1, ceil(Int, extent / spacing * (1.0 - 1.0e-9)))
-    stations = [s_start + extent * i / layers for i in 0:layers]
+    stations = [s_start + extent * i / layers for i = 0:layers]
     return EdgeTube(collect(Float64, origin), n, b, e, s_start, s_end, layers, stations)
 end
 
@@ -148,8 +160,16 @@ function EdgeTube(tube::EdgeTube, stations::AbstractVector)
     length(stations) >= 2 && stations[1] == tube.s_start && stations[end] == tube.s_end ||
         error("tube stations must run from s_start to s_end")
     all(diff(stations) .> 0.0) || error("tube stations must increase")
-    return EdgeTube(tube.origin, tube.n, tube.b, tube.e, tube.s_start, tube.s_end,
-                    length(stations) - 1, stations)
+    return EdgeTube(
+        tube.origin,
+        tube.n,
+        tube.b,
+        tube.e,
+        tube.s_start,
+        tube.s_end,
+        length(stations) - 1,
+        stations
+    )
 end
 
 tube_layer_thicknesses(tube::EdgeTube) = diff(tube.stations)
@@ -180,7 +200,7 @@ function sampled_size_minimum(positions, sizes, a, b)
         return sizes[i] + fraction * (sizes[i + 1] - sizes[i])
     end
     lowest = min(size_at(a), size_at(b))
-    for i in searchsortedfirst(positions, a):searchsortedlast(positions, b)
+    for i = searchsortedfirst(positions, a):searchsortedlast(positions, b)
         lowest = min(lowest, sizes[i])
     end
     return lowest
@@ -207,8 +227,15 @@ end
 # factor (1.30 at growth 2) above its predecessor of the same law, and at most
 # (1 + k) x that factor (1.95 at growth 2) above a surface layer.
 # Returns the stations and the sampled (s, limited size) pairs for the census.
-function graded_tube_stations(s_start, s_end, size_at, spacing, growth;
-                              surface_start::Bool=false, surface_end::Bool=false)
+function graded_tube_stations(
+    s_start,
+    s_end,
+    size_at,
+    spacing,
+    growth;
+    surface_start::Bool=false,
+    surface_end::Bool=false
+)
     s_end > s_start || error("tube interval must be increasing")
     spacing > 0.0 || error("tube spacing must be positive")
     growth > 1.0 || error("tube layer growth must exceed 1")
@@ -229,11 +256,13 @@ function graded_tube_stations(s_start, s_end, size_at, spacing, growth;
     end
     slope = (growth - 1.0) / growth
     function limit!()
-        for i in 2:length(sizes)
-            sizes[i] = min(sizes[i], sizes[i - 1] + slope * (positions[i] - positions[i - 1]))
+        for i = 2:length(sizes)
+            sizes[i] =
+                min(sizes[i], sizes[i - 1] + slope * (positions[i] - positions[i - 1]))
         end
-        for i in (length(sizes) - 1):-1:1
-            sizes[i] = min(sizes[i], sizes[i + 1] + slope * (positions[i + 1] - positions[i]))
+        for i = (length(sizes) - 1):-1:1
+            sizes[i] =
+                min(sizes[i], sizes[i + 1] + slope * (positions[i + 1] - positions[i]))
         end
     end
     limit!()
@@ -241,20 +270,24 @@ function graded_tube_stations(s_start, s_end, size_at, spacing, growth;
     # refine the coarse intervals (midpoints at the prescribed size, then the
     # limiter again) until every interval is resolved.
     while true
-        coarse = [i for i in 1:(length(positions) - 1)
-                  if positions[i + 1] - positions[i] >
-                     min(sizes[i], sizes[i + 1]) / TUBE_LAYER_SAMPLES_PER_SIZE * (1.0 + 1.0e-9)]
+        coarse = [
+            i for i = 1:(length(positions) - 1) if positions[i + 1] - positions[i] >
+            min(sizes[i], sizes[i + 1]) / TUBE_LAYER_SAMPLES_PER_SIZE * (1.0 + 1.0e-9)
+        ]
         isempty(coarse) && break
         refined_positions = Float64[]
         refined_sizes = Float64[]
         coarse_set = Set(coarse)
-        for i in 1:(length(positions) - 1)
-            push!(refined_positions, positions[i]); push!(refined_sizes, sizes[i])
+        for i = 1:(length(positions) - 1)
+            push!(refined_positions, positions[i]);
+            push!(refined_sizes, sizes[i])
             i in coarse_set || continue
             mid = 0.5 * (positions[i] + positions[i + 1])
-            push!(refined_positions, mid); push!(refined_sizes, prescribed(mid))
+            push!(refined_positions, mid);
+            push!(refined_sizes, prescribed(mid))
         end
-        push!(refined_positions, positions[end]); push!(refined_sizes, sizes[end])
+        push!(refined_positions, positions[end]);
+        push!(refined_sizes, sizes[end])
         positions = refined_positions
         sizes = refined_sizes
         limit!()
@@ -263,13 +296,13 @@ function graded_tube_stations(s_start, s_end, size_at, spacing, growth;
     # surface value until stationary (non-increasing, bounded below by the field).
     function surface_layer(s, direction)
         thickness = sampled_size_minimum(positions, sizes, s, s)
-        for _ in 1:1000
+        for _ = 1:1000
             span = sort([s, s + direction * thickness])
             lowest = sampled_size_minimum(positions, sizes, span[1], span[2])
             lowest >= thickness * (1.0 - 1.0e-9) && return thickness
             thickness = lowest
         end
-        error("tube surface layer at $s did not converge")
+        return error("tube surface layer at $s did not converge")
     end
     start_layer = surface_start ? surface_layer(Float64(s_start), 1.0) : 0.0
     end_layer = surface_end ? surface_layer(Float64(s_end), -1.0) : 0.0
@@ -278,9 +311,10 @@ function graded_tube_stations(s_start, s_end, size_at, spacing, growth;
     interior_end > interior_start ||
         error("tube of length $(s_end - s_start) is shorter than its surface layers")
     cumulative = zeros(length(positions))
-    for i in 2:length(positions)
-        cumulative[i] = cumulative[i - 1] + (positions[i] - positions[i - 1]) *
-                                            0.5 * (1.0 / sizes[i - 1] + 1.0 / sizes[i])
+    for i = 2:length(positions)
+        cumulative[i] =
+            cumulative[i - 1] +
+            (positions[i] - positions[i - 1]) * 0.5 * (1.0 / sizes[i - 1] + 1.0 / sizes[i])
     end
     function cumulative_at(s)
         i = clamp(searchsortedlast(positions, s), 1, length(positions) - 1)
@@ -291,7 +325,7 @@ function graded_tube_stations(s_start, s_end, size_at, spacing, growth;
     layers = max(1, ceil(Int, interior_integral))
     stations = [Float64(s_start)]
     surface_start && push!(stations, interior_start)
-    for k in 1:(layers - 1)
+    for k = 1:(layers - 1)
         target = cumulative_at(interior_start) + k * interior_integral / layers
         i = clamp(searchsortedlast(cumulative, target), 1, length(positions) - 1)
         fraction = (target - cumulative[i]) / (cumulative[i + 1] - cumulative[i])
@@ -324,15 +358,21 @@ function tube_layer_statistics(tube::EdgeTube, positions, sizes)
     ratios = thicknesses[2:end] ./ thicknesses[1:(end - 1)]
     median(values) = sort(values)[cld(length(values), 2)]
     return Dict{String, Any}(
-        "Minimum" => minimum(thicknesses), "P50" => median(thicknesses),
+        "Minimum" => minimum(thicknesses),
+        "P50" => median(thicknesses),
         "Maximum" => maximum(thicknesses),
-        "AtStart" => thicknesses[1], "AtEnd" => thicknesses[end],
-        "PrescribedAtStart" => sizes[1], "PrescribedAtEnd" => sizes[end],
+        "AtStart" => thicknesses[1],
+        "AtEnd" => thicknesses[end],
+        "PrescribedAtStart" => sizes[1],
+        "PrescribedAtEnd" => sizes[end],
         "AchievedOverPrescribed" => Dict{String, Any}(
-            "Minimum" => minimum(achieved), "P50" => median(achieved),
-            "Maximum" => maximum(achieved)),
-        "MaximumNeighbourRatio" => isempty(ratios) ? 1.0 :
-                                   max(maximum(ratios), 1.0 / minimum(ratios)))
+            "Minimum" => minimum(achieved),
+            "P50" => median(achieved),
+            "Maximum" => maximum(achieved)
+        ),
+        "MaximumNeighbourRatio" =>
+            isempty(ratios) ? 1.0 : max(maximum(ratios), 1.0 / minimum(ratios))
+    )
 end
 
 # OCC tube volumes (one polygon-sector prism per material group), returned as
@@ -345,17 +385,19 @@ function add_tube_volumes!(occ, tube::EdgeTube, section::TubeSection)
     for group in material_groups(section)
         first, last, _ = group
         corners = [tube_point(tube, 0.0, 0.0, tube.s_start)]
-        for j in first:(last + 1)
+        for j = first:(last + 1)
             uwj = uw[:, section_node(section, K, j)]
             push!(corners, tube_point(tube, uwj[1], uwj[2], tube.s_start))
         end
         points = [occ.addPoint(c[1], c[2], c[3]) for c in corners]
-        lines = [occ.addLine(points[i], points[i % length(points) + 1])
-                 for i in eachindex(points)]
+        lines = [
+            occ.addLine(points[i], points[i % length(points) + 1]) for
+            i in eachindex(points)
+        ]
         loop = occ.addCurveLoop(lines)
         face = occ.addPlaneSurface([loop])
-        extruded = occ.extrude([(2, face)], span * tube.e[1], span * tube.e[2],
-                               span * tube.e[3])
+        extruded =
+            occ.extrude([(2, face)], span * tube.e[1], span * tube.e[2], span * tube.e[3])
         volume = [(dim, tag) for (dim, tag) in extruded if dim == 3]
         length(volume) == 1 || error("tube extrusion produced $(length(volume)) volumes")
         push!(volumes, (volume[1], group))
@@ -377,7 +419,7 @@ function polygon_centroid(points)
     cx = 0.0
     cy = 0.0
     m = length(points)
-    for i in 1:m
+    for i = 1:m
         x1, y1 = points[i]
         x2, y2 = points[i % m + 1]
         w = x1 * y2 - x2 * y1
@@ -400,43 +442,91 @@ function tube_entities(tube::EdgeTube, section::TubeSection, group)
     # Points: edge ends and outer polygon vertices at both caps (end index 0 the
     # start cap, 1 the end cap).
     for (end_index, s) in ((0, tube.s_start), (1, tube.s_end))
-        push!(entities, TubeEntity(0, :edge_point, (0, end_index), tube_point(tube, 0.0, 0.0, s)))
+        push!(
+            entities,
+            TubeEntity(0, :edge_point, (0, end_index), tube_point(tube, 0.0, 0.0, s))
+        )
         for j in rays
-            push!(entities, TubeEntity(0, :outer_point, (j, end_index),
-                                       tube_point(tube, outer(j)[1], outer(j)[2], s)))
+            push!(
+                entities,
+                TubeEntity(
+                    0,
+                    :outer_point,
+                    (j, end_index),
+                    tube_point(tube, outer(j)[1], outer(j)[2], s)
+                )
+            )
         end
         # Cap curves: polygon edges and the two bounding rays.
-        for j in first:last
+        for j = first:last
             a = outer(j)
             b = outer(j + 1)
-            push!(entities, TubeEntity(1, :cap_polygon, (j, end_index),
-                                       tube_point(tube, 0.5 * (a[1] + b[1]), 0.5 * (a[2] + b[2]), s)))
+            push!(
+                entities,
+                TubeEntity(
+                    1,
+                    :cap_polygon,
+                    (j, end_index),
+                    tube_point(tube, 0.5 * (a[1] + b[1]), 0.5 * (a[2] + b[2]), s)
+                )
+            )
         end
         for j in (first, last + 1)
-            push!(entities, TubeEntity(1, :cap_ray, (j, end_index),
-                                       tube_point(tube, 0.5 * outer(j)[1], 0.5 * outer(j)[2], s)))
+            push!(
+                entities,
+                TubeEntity(
+                    1,
+                    :cap_ray,
+                    (j, end_index),
+                    tube_point(tube, 0.5 * outer(j)[1], 0.5 * outer(j)[2], s)
+                )
+            )
         end
         # Cap face.
         polygon = vcat([(0.0, 0.0)], [(outer(j)[1], outer(j)[2]) for j in rays])
         c = polygon_centroid(polygon)
-        push!(entities, TubeEntity(2, :cap, (0, end_index), tube_point(tube, c[1], c[2], s)))
+        push!(
+            entities,
+            TubeEntity(2, :cap, (0, end_index), tube_point(tube, c[1], c[2], s))
+        )
     end
     # Longitudinal curves: the edge and the outer polygon vertices.
     push!(entities, TubeEntity(1, :edge_line, (0, 0), tube_point(tube, 0.0, 0.0, mid)))
     for j in rays
-        push!(entities, TubeEntity(1, :outer_line, (j, 0),
-                                   tube_point(tube, outer(j)[1], outer(j)[2], mid)))
+        push!(
+            entities,
+            TubeEntity(
+                1,
+                :outer_line,
+                (j, 0),
+                tube_point(tube, outer(j)[1], outer(j)[2], mid)
+            )
+        )
     end
     # Lateral faces and the two radial faces.
-    for j in first:last
+    for j = first:last
         a = outer(j)
         b = outer(j + 1)
-        push!(entities, TubeEntity(2, :lateral, (j, 0),
-                                   tube_point(tube, 0.5 * (a[1] + b[1]), 0.5 * (a[2] + b[2]), mid)))
+        push!(
+            entities,
+            TubeEntity(
+                2,
+                :lateral,
+                (j, 0),
+                tube_point(tube, 0.5 * (a[1] + b[1]), 0.5 * (a[2] + b[2]), mid)
+            )
+        )
     end
     for j in (first, last + 1)
-        push!(entities, TubeEntity(2, :radial, (j, 0),
-                                   tube_point(tube, 0.5 * outer(j)[1], 0.5 * outer(j)[2], mid)))
+        push!(
+            entities,
+            TubeEntity(
+                2,
+                :radial,
+                (j, 0),
+                tube_point(tube, 0.5 * outer(j)[1], 0.5 * outer(j)[2], mid)
+            )
+        )
     end
     return entities
 end
@@ -447,7 +537,8 @@ end
 function match_tube_entities(volume, tube::EdgeTube, section::TubeSection, group, tolerance)
     entities = tube_entities(tube, section, group)
     cad = Dict{Int, Vector{Int32}}(0 => Int32[], 1 => Int32[], 2 => Int32[])
-    faces = [tag for (dim, tag) in gmsh.model.getBoundary([(3, volume)], false, false, false)]
+    faces =
+        [tag for (dim, tag) in gmsh.model.getBoundary([(3, volume)], false, false, false)]
     cad[2] = unique(abs.(faces))
     for face in cad[2]
         for (dim, curve) in gmsh.model.getBoundary([(2, face)], false, false, false)
@@ -464,21 +555,29 @@ function match_tube_entities(volume, tube::EdgeTube, section::TubeSection, group
     used = Set{Tuple{Int, Int32}}()
     for entity in entities
         candidates = cad[entity.dim]
-        distances = [norm(collect(entity.dim == 0 ? gmsh.model.getValue(0, tag, Float64[]) :
-                                  gmsh.model.occ.getCenterOfMass(entity.dim, tag)) .-
-                          entity.centroid) for tag in candidates]
-        isempty(distances) && error("tube volume $volume has no dimension-$(entity.dim) entities")
+        distances = [
+            norm(
+                collect(
+                    entity.dim == 0 ? gmsh.model.getValue(0, tag, Float64[]) :
+                    gmsh.model.occ.getCenterOfMass(entity.dim, tag)
+                ) .- entity.centroid
+            ) for tag in candidates
+        ]
+        isempty(distances) &&
+            error("tube volume $volume has no dimension-$(entity.dim) entities")
         best = argmin(distances)
-        distances[best] <= tolerance ||
-            error("tube $(entity.kind) $(entity.id) not found among the CAD entities of " *
-                  "volume $volume (nearest $(distances[best]))")
+        distances[best] <= tolerance || error(
+            "tube $(entity.kind) $(entity.id) not found among the CAD entities of " *
+            "volume $volume (nearest $(distances[best]))"
+        )
         matched[(entity.kind, entity.id)] = candidates[best]
         push!(used, (entity.dim, candidates[best]))
     end
-    for dim in 0:2, tag in cad[dim]
-        (dim, tag) in used ||
-            error("CAD entity ($dim, $tag) of tube volume $volume is not a tube entity: " *
-                  "the fragment split the tube")
+    for dim = 0:2, tag in cad[dim]
+        (dim, tag) in used || error(
+            "CAD entity ($dim, $tag) of tube volume $volume is not a tube entity: " *
+            "the fragment split the tube"
+        )
     end
     length(used) == length(entities) || error("tube entity matching is not one-to-one")
     return matched
@@ -516,25 +615,39 @@ function TubeMesh(tube::EdgeTube, section::TubeSection, volumes; pyramid_height)
     pyramid_height > 0.0 || error("pyramid height must be positive")
     faces = Dict{Int32, Vector{Int32}}()
     for (volume, _, _) in volumes
-        faces[volume] = unique(abs(tag) for (dim, tag) in
-                               gmsh.model.getBoundary([(3, volume)], false, false, false))
+        faces[volume] = unique(
+            abs(tag) for
+            (dim, tag) in gmsh.model.getBoundary([(3, volume)], false, false, false)
+        )
     end
-    return TubeMesh(tube, section, volumes, pyramid_height, Dict{Tuple{Int, Int}, Int}(),
-                    Dict{Int, Vector{Float64}}(), Dict{Tuple{Int, Int}, Int}(), faces,
-                    Dict{Int32, Int32}())
+    return TubeMesh(
+        tube,
+        section,
+        volumes,
+        pyramid_height,
+        Dict{Tuple{Int, Int}, Int}(),
+        Dict{Int, Vector{Float64}}(),
+        Dict{Tuple{Int, Int}, Int}(),
+        faces,
+        Dict{Int32, Int32}()
+    )
 end
 
 function apex_node!(state::TubeMesh, next_node, j, i)
     get!(state.apex, (j, i)) do
         theta = deg2rad(0.5 * (state.section.angles[j + 1] + state.section.angles[j + 2]))
-        radius = tube_radius(state.section) * cos(0.5 * deg2rad(state.section.angles[j + 2] -
-                                                                state.section.angles[j + 1])) +
-                 state.pyramid_height
+        radius =
+            tube_radius(state.section) *
+            cos(0.5 * deg2rad(state.section.angles[j + 2] - state.section.angles[j + 1])) +
+            state.pyramid_height
         next_node[] += 1
-        state.coordinates[next_node[]] = tube_point(state.tube, radius * cos(theta),
-                                                    radius * sin(theta),
-                                                    tube_station(state.tube, i + 0.5))
-        next_node[]
+        state.coordinates[next_node[]] = tube_point(
+            state.tube,
+            radius * cos(theta),
+            radius * sin(theta),
+            tube_station(state.tube, i + 0.5)
+        )
+        return next_node[]
     end
 end
 
@@ -542,10 +655,13 @@ function tube_node!(state::TubeMesh, next_node, local_index, i)
     get!(state.tags, (local_index, i)) do
         uw = section_coordinates(state.section)
         next_node[] += 1
-        state.coordinates[next_node[]] = tube_point(state.tube, uw[1, local_index],
-                                                    uw[2, local_index],
-                                                    tube_station(state.tube, i))
-        next_node[]
+        state.coordinates[next_node[]] = tube_point(
+            state.tube,
+            uw[1, local_index],
+            uw[2, local_index],
+            tube_station(state.tube, i)
+        )
+        return next_node[]
     end
 end
 
@@ -570,58 +686,83 @@ function install_tube_curves!(state::TubeMesh, next_node, point_nodes)
         rays = first:(last + 1)
         for (end_index, i) in ((0, 0), (1, L))
             for (kind, id, local_index) in vcat(
-                    [(:edge_point, (0, end_index), section_node(section, 0, 0))],
-                    [(:outer_point, (j, end_index), section_node(section, K, j)) for j in rays])
+                [(:edge_point, (0, end_index), section_node(section, 0, 0))],
+                [(:outer_point, (j, end_index), section_node(section, K, j)) for j in rays]
+            )
                 point = matched[(kind, id)]
                 tag = get!(point_nodes, point) do
                     t = tube_node!(state, next_node, local_index, i)
                     gmsh.model.mesh.addNodes(0, point, [t], state.coordinates[t])
-                    t
+                    return t
                 end
                 state.tags[(local_index, i)] = tag
             end
         end
         for (kind, id, local_index) in vcat(
-                [(:edge_line, (0, 0), section_node(section, 0, 0))],
-                [(:outer_line, (j, 0), section_node(section, K, j)) for j in rays])
+            [(:edge_line, (0, 0), section_node(section, 0, 0))],
+            [(:outer_line, (j, 0), section_node(section, K, j)) for j in rays]
+        )
             curve = matched[(kind, id)]
             curve in meshed && continue
             push!(meshed, curve)
-            for i in 0:(L - 1)
-                append!(get!(lines, curve, Int[]),
-                        (curve_node!(curve, local_index, i), curve_node!(curve, local_index, i + 1)))
+            for i = 0:(L - 1)
+                append!(
+                    get!(lines, curve, Int[]),
+                    (
+                        curve_node!(curve, local_index, i),
+                        curve_node!(curve, local_index, i + 1)
+                    )
+                )
             end
         end
         for (end_index, i) in ((0, 0), (1, L))
-            for j in first:last
+            for j = first:last
                 curve = matched[(:cap_polygon, (j, end_index))]
                 curve in meshed && continue
                 push!(meshed, curve)
-                append!(get!(lines, curve, Int[]), (state.tags[(section_node(section, K, j), i)],
-                                                    state.tags[(section_node(section, K, j + 1), i)]))
+                append!(
+                    get!(lines, curve, Int[]),
+                    (
+                        state.tags[(section_node(section, K, j), i)],
+                        state.tags[(section_node(section, K, j + 1), i)]
+                    )
+                )
             end
             for j in (first, last + 1)
                 curve = matched[(:cap_ray, (j, end_index))]
                 curve in meshed && continue
                 push!(meshed, curve)
-                for k in 1:K
-                    append!(get!(lines, curve, Int[]),
-                            (curve_node!(curve, section_node(section, k - 1, j), i),
-                             curve_node!(curve, section_node(section, k, j), i)))
+                for k = 1:K
+                    append!(
+                        get!(lines, curve, Int[]),
+                        (
+                            curve_node!(curve, section_node(section, k - 1, j), i),
+                            curve_node!(curve, section_node(section, k, j), i)
+                        )
+                    )
                 end
             end
         end
     end
     for (curve, nodes) in curve_nodes
-        parameters = [gmsh.model.getParametrization(1, curve, state.coordinates[t])[1] for t in nodes]
-        gmsh.model.mesh.addNodes(1, curve, nodes, reduce(vcat, state.coordinates[t] for t in nodes),
-                                 parameters)
+        parameters = [
+            gmsh.model.getParametrization(1, curve, state.coordinates[t])[1] for t in nodes
+        ]
+        gmsh.model.mesh.addNodes(
+            1,
+            curve,
+            nodes,
+            reduce(vcat, state.coordinates[t] for t in nodes),
+            parameters
+        )
     end
     for (curve, connectivity) in lines
         gmsh.model.mesh.addElementsByType(curve, 1, Int[], connectivity)
     end
-    return Dict{String, Any}("Curves" => length(lines),
-                             "Lines" => sum(length(v) ÷ 2 for v in values(lines); init=0))
+    return Dict{String, Any}(
+        "Curves" => length(lines),
+        "Lines" => sum(length(v) ÷ 2 for v in values(lines); init=0)
+    )
 end
 
 # Phase 2 (after generate(2)): replace Gmsh's triangulation of the tube faces by
@@ -649,41 +790,62 @@ function install_tube_faces!(state::TubeMesh, next_node)
         for (end_index, i) in ((0, 0), (1, L))
             face = matched[(:cap, (0, end_index))]
             push!(meshed, face)
-            for j in first:last, (a, b, c) in sector_triangles(section, j)
-                append!(get!(triangles, face, Int[]),
-                        (face_node!(face, a, i), face_node!(face, b, i), face_node!(face, c, i)))
+            for j = first:last, (a, b, c) in sector_triangles(section, j)
+                append!(
+                    get!(triangles, face, Int[]),
+                    (
+                        face_node!(face, a, i),
+                        face_node!(face, b, i),
+                        face_node!(face, c, i)
+                    )
+                )
             end
         end
-        for j in first:last
+        for j = first:last
             face = matched[(:lateral, (j, 0))]
             push!(meshed, face)
             a = section_node(section, K, j)
             b = section_node(section, K, j + 1)
-            for i in 0:(L - 1)
+            for i = 0:(L - 1)
                 apex = apex_node!(state, next_node, j, i)
                 push!(get!(face_nodes, face, Int[]), apex)
-                a0, b0, b1, a1 = state.tags[(a, i)], state.tags[(b, i)], state.tags[(b, i + 1)],
-                                 state.tags[(a, i + 1)]
-                append!(get!(triangles, face, Int[]),
-                        (a0, b0, apex, b0, b1, apex, b1, a1, apex, a1, a0, apex))
+                a0, b0, b1, a1 = state.tags[(a, i)],
+                state.tags[(b, i)],
+                state.tags[(b, i + 1)],
+                state.tags[(a, i + 1)]
+                append!(
+                    get!(triangles, face, Int[]),
+                    (a0, b0, apex, b0, b1, apex, b1, a1, apex, a1, a0, apex)
+                )
             end
         end
         for j in (first, last + 1)
             face = matched[(:radial, (j, 0))]
             face in meshed && continue
             push!(meshed, face)
-            for k in 1:K, i in 0:(L - 1)
+            for k = 1:K, i = 0:(L - 1)
                 a = section_node(section, k - 1, j)
                 b = section_node(section, k, j)
-                append!(get!(quads, face, Int[]),
-                        (face_node!(face, a, i), face_node!(face, b, i), face_node!(face, b, i + 1),
-                         face_node!(face, a, i + 1)))
+                append!(
+                    get!(quads, face, Int[]),
+                    (
+                        face_node!(face, a, i),
+                        face_node!(face, b, i),
+                        face_node!(face, b, i + 1),
+                        face_node!(face, a, i + 1)
+                    )
+                )
             end
         end
     end
     Set(all_faces) == meshed || error("tube faces and matched faces differ")
     for (face, nodes) in face_nodes
-        gmsh.model.mesh.addNodes(2, face, nodes, reduce(vcat, state.coordinates[t] for t in nodes))
+        gmsh.model.mesh.addNodes(
+            2,
+            face,
+            nodes,
+            reduce(vcat, state.coordinates[t] for t in nodes)
+        )
     end
     for (face, connectivity) in triangles
         gmsh.model.mesh.addElementsByType(face, 2, Int[], connectivity)
@@ -692,16 +854,20 @@ function install_tube_faces!(state::TubeMesh, next_node)
         gmsh.model.mesh.addElementsByType(face, 3, Int[], connectivity)
     end
     return Dict{String, Any}(
-        "Faces" => length(all_faces), "PyramidApexes" => length(state.apex),
+        "Faces" => length(all_faces),
+        "PyramidApexes" => length(state.apex),
         "Triangles" => sum(length(v) ÷ 3 for v in values(triangles); init=0),
-        "Quads" => sum(length(v) ÷ 4 for v in values(quads); init=0))
+        "Quads" => sum(length(v) ÷ 4 for v in values(quads); init=0)
+    )
 end
 
 # Remove the OCC tube volumes (non-recursively: faces, curves, points and their
 # meshes stay) so that the remaining volumes can be meshed with pyramids.
 function remove_tube_volumes!(states::Vector{TubeMesh})
-    gmsh.model.removeEntities([(3, volume) for state in states for (volume, _, _) in state.volumes],
-                              false)
+    return gmsh.model.removeEntities(
+        [(3, volume) for state in states for (volume, _, _) in state.volumes],
+        false
+    )
 end
 
 # Phase 3 (after generate(3)): discrete volumes with the interior nodes and the
@@ -720,33 +886,66 @@ function finalize_tube_volumes!(states::Vector{TubeMesh})
             discrete = gmsh.model.addDiscreteEntity(3, -1, state.faces[volume])
             state.discrete[volume] = discrete
             interior = Int[]
-            for i in 1:(L - 1), local_index in vcat([section_node(section, 0, 0)],
-                                                     [section_node(section, k, j) for k in 1:K for j in rays])
+            for i = 1:(L - 1),
+                local_index in vcat(
+                    [section_node(section, 0, 0)],
+                    [section_node(section, k, j) for k = 1:K for j in rays]
+                )
+
                 haskey(state.tags, (local_index, i)) && continue
                 push!(interior, tube_node!(state, next_node, local_index, i))
             end
-            isempty(interior) ||
-                gmsh.model.mesh.addNodes(3, discrete, interior,
-                                         reduce(vcat, state.coordinates[t] for t in interior))
+            isempty(interior) || gmsh.model.mesh.addNodes(
+                3,
+                discrete,
+                interior,
+                reduce(vcat, state.coordinates[t] for t in interior)
+            )
             prisms = Int[]
-            for i in 0:(L - 1), j in first:last, (a, b, c) in sector_triangles(section, j)
-                append!(prisms, (state.tags[(a, i)], state.tags[(b, i)], state.tags[(c, i)],
-                                 state.tags[(a, i + 1)], state.tags[(b, i + 1)], state.tags[(c, i + 1)]))
+            for i = 0:(L - 1), j = first:last, (a, b, c) in sector_triangles(section, j)
+                append!(
+                    prisms,
+                    (
+                        state.tags[(a, i)],
+                        state.tags[(b, i)],
+                        state.tags[(c, i)],
+                        state.tags[(a, i + 1)],
+                        state.tags[(b, i + 1)],
+                        state.tags[(c, i + 1)]
+                    )
+                )
             end
             gmsh.model.mesh.addElementsByType(discrete, 6, Int[], prisms)
             pyramids = Int[]
-            for i in 0:(L - 1), j in first:last
+            for i = 0:(L - 1), j = first:last
                 a = section_node(section, K, j)
                 b = section_node(section, K, j + 1)
-                append!(pyramids, (state.tags[(a, i)], state.tags[(b, i)], state.tags[(b, i + 1)],
-                                   state.tags[(a, i + 1)], state.apex[(j, i)]))
+                append!(
+                    pyramids,
+                    (
+                        state.tags[(a, i)],
+                        state.tags[(b, i)],
+                        state.tags[(b, i + 1)],
+                        state.tags[(a, i + 1)],
+                        state.apex[(j, i)]
+                    )
+                )
             end
             gmsh.model.mesh.addElementsByType(discrete, 7, Int[], pyramids)
             push!(get!(volumes, material, Int32[]), discrete)
-            push!(census, Dict{String, Any}(
-                "Volume" => Int(volume), "DiscreteVolume" => Int(discrete), "Material" => material,
-                "Sectors" => last - first + 1, "Layers" => L, "Prisms" => length(prisms) ÷ 6,
-                "Pyramids" => length(pyramids) ÷ 5, "InteriorNodes" => length(interior)))
+            push!(
+                census,
+                Dict{String, Any}(
+                    "Volume" => Int(volume),
+                    "DiscreteVolume" => Int(discrete),
+                    "Material" => material,
+                    "Sectors" => last - first + 1,
+                    "Layers" => L,
+                    "Prisms" => length(prisms) ÷ 6,
+                    "Pyramids" => length(pyramids) ÷ 5,
+                    "InteriorNodes" => length(interior)
+                )
+            )
         end
     end
     return volumes, census
@@ -762,8 +961,14 @@ struct TubeRecord
 end
 
 # Fragment map lookup: the single volume descendant of a tube tool.
-function tube_volume_after_fragment(record::TubeRecord, tool_index, fragment_map, object_count)
-    descendants = [tag for (dim, tag) in fragment_map[object_count + tool_index] if dim == 3]
+function tube_volume_after_fragment(
+    record::TubeRecord,
+    tool_index,
+    fragment_map,
+    object_count
+)
+    descendants =
+        [tag for (dim, tag) in fragment_map[object_count + tool_index] if dim == 3]
     length(descendants) == 1 ||
         error("tube tool $(record.tool) has $(length(descendants)) volume descendants")
     return descendants[1]
@@ -774,11 +979,16 @@ end
 function tube_anisotropy(tube::EdgeTube, section::TubeSection, pyramid_height)
     spacing = tube_spacing(tube)
     inner_arc = section.ring_radii[1] * deg2rad(minimum(diff(section.angles)))
-    outer_arc = 2.0 * tube_radius(section) * sin(0.5 * deg2rad(maximum(diff(section.angles))))
+    outer_arc =
+        2.0 * tube_radius(section) * sin(0.5 * deg2rad(maximum(diff(section.angles))))
     return Dict{String, Any}(
-        "LongitudinalSpacing" => spacing, "RingSizes" => ring_sizes(section),
-        "OuterArc" => outer_arc, "PyramidHeight" => pyramid_height,
+        "LongitudinalSpacing" => spacing,
+        "RingSizes" => ring_sizes(section),
+        "OuterArc" => outer_arc,
+        "PyramidHeight" => pyramid_height,
         "SectorDegrees" => diff(section.angles),
-        "RingRadii" => copy(section.ring_radii), "InnermostArc" => inner_arc,
-        "MaximumEdgeAspect" => spacing / min(inner_arc, ring_sizes(section)[1]))
+        "RingRadii" => copy(section.ring_radii),
+        "InnermostArc" => inner_arc,
+        "MaximumEdgeAspect" => spacing / min(inner_arc, ring_sizes(section)[1])
+    )
 end
