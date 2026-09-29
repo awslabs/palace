@@ -7,6 +7,8 @@
 #include <memory>
 #include <numeric>
 #include <random>
+#include <sstream>
+#include <string>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -941,6 +943,93 @@ TEST_CASE("Broken space error estimators (nonconforming)",
   }
 }
 
+TEST_CASE("Broken space error estimators (saved nonconforming mesh)",
+          "[brokenspace][errorestimator][Serial][Parallel]")
+{
+  // A nonconforming mesh refined in a previous simulation, saved and loaded as for a
+  // restart: the interior boundary sides are reconstructed from the refinement hierarchy.
+  const auto comm = MPI_COMM_WORLD;
+  const int order = GENERATE(1, 2);
+  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  config::MaterialData material;
+  material.attributes = {1};
+  material.epsilon_r.s = {2.0, 3.0, 4.0};
+  material.mu_r.s = {1.0, 1.5, 2.0};
+  config::PeriodicBoundaryData periodic;
+
+  auto smesh = MakeCrackedCubeMesh(4, type);
+  smesh.EnsureNCMesh(true);
+  auto part = Partition(smesh, Mpi::Size(comm));
+  EstimatorSetup setup(comm, smesh, part, order, material, periodic);
+  const std::vector<int> attr_list = {crack_attr}, no_attr_list = {};
+  setup.mesh.GetCrackSides(attr_list);
+
+  // Two levels of refinement: of one side, then across the interior boundary.
+  RefineWhere(setup.mesh, [](const mfem::Vector &c)
+              { return c(0) < x_crack && c(0) > 0.25 && c(2) < 0.75; });
+  UpdateSetup(setup.mesh, setup.nd_fespaces, setup.rt_fespaces);
+  setup.mesh.GetCrackSides(attr_list);
+  RefineWhere(setup.mesh, [](const mfem::Vector &c)
+              { return std::abs(c(0) - x_crack) < 0.2 && c(1) < 0.4; });
+  UpdateSetup(setup.mesh, setup.nd_fespaces, setup.rt_fespaces);
+  REQUIRE(mesh::HasHangingEntities(setup.mesh.Get()));
+
+  // Save the mesh as for config["Model"]["Refinement"]["SaveAdaptMesh"], and load it on all
+  // processes.
+  std::string saved;
+  {
+    mfem::ParMesh gmesh(setup.mesh.Get());
+    mfem::Array<int> serial_partition(gmesh.GetNE());
+    serial_partition = 0;
+    gmesh.Rebalance(serial_partition);
+    if (Mpi::Root(comm))
+    {
+      std::ostringstream fo;
+      fo.precision(17);
+      gmesh.Mesh::Print(fo);
+      saved = fo.str();
+    }
+    int len = static_cast<int>(saved.size());
+    Mpi::Broadcast(1, &len, 0, comm);
+    saved.resize(len);
+    Mpi::Broadcast(len, saved.data(), 0, comm);
+  }
+  std::istringstream fi(saved);
+  mfem::Mesh loaded(fi, 0, 1, false);
+  REQUIRE(loaded.Nonconforming());
+  auto loaded_part = Partition(loaded, Mpi::Size(comm));
+  EstimatorSetup loaded_setup(comm, loaded, loaded_part, order, material, periodic);
+  REQUIRE(mesh::HasHangingEntities(loaded_setup.mesh.Get()));
+
+  // The partitioning keeps the elements of the loaded mesh on the processes of the refined
+  // one, so that the estimates can be compared locally.
+  const auto [grad_ref, curl_ref] = setup.Estimate(SmoothE, SmoothB, attr_list);
+  const auto [grad_loaded, curl_loaded] =
+      loaded_setup.Estimate(SmoothE, SmoothB, attr_list);
+  const auto [grad_cont, curl_cont] = loaded_setup.Estimate(SmoothE, SmoothB, no_attr_list);
+  auto Compare = [&](const Vector &a, const Vector &b, const char *what)
+  {
+    const auto sa = SortByCenter(loaded_setup.mesh, a);
+    const auto sb = SortByCenter(setup.mesh, b);
+    CHECK(sa.size() == sb.size());  // Not REQUIRE: the reductions below are collective
+    double max_diff = 0.0, max_ref = 0.0;
+    for (std::size_t i = 0; i < std::min(sa.size(), sb.size()); i++)
+    {
+      max_diff = std::max(max_diff, std::abs(sa[i] - sb[i]));
+      max_ref = std::max(max_ref, std::abs(sb[i]));
+    }
+    Mpi::GlobalMax(1, &max_diff, comm);
+    Mpi::GlobalMax(1, &max_ref, comm);
+    INFO(what << ": max. difference " << max_diff << " (max. estimate " << max_ref << ")");
+    CHECK(max_diff <= 1.0e-8 * max_ref + 1.0e-14);
+  };
+  Compare(grad_loaded, grad_ref, "gradient flux (loaded vs. refined)");
+  Compare(curl_loaded, curl_ref, "curl flux (loaded vs. refined)");
+  CHECK(std::abs(GlobalSumSquares(comm, grad_cont) - GlobalSumSquares(comm, grad_ref)) >
+        1.0e-3 * GlobalSumSquares(comm, grad_ref));
+}
+
 TEST_CASE("Broken space error estimators (partial interior boundary)",
           "[brokenspace][errorestimator][Serial][Parallel]")
 {
@@ -1064,6 +1153,77 @@ TEST_CASE("Broken space error estimators (2D)",
     CHECK(GlobalMax(comm, grad_broken) < 1.0e-6 * grad_max);
     CHECK(GlobalMax(comm, curl_broken) < 1.0e-6 * curl_max);
   }
+}
+
+TEST_CASE("Broken space error estimators (2D nonconforming mesh without history)",
+          "[brokenspace][errorestimator][Serial][Parallel]")
+{
+  // A mesh refined before its interior boundary sides are computed, as one loaded from a
+  // previous simulation: the sides are reconstructed from the refinement hierarchy. The
+  // refinement is the same on both sides of the interior boundary, for the equivalence with
+  // a cut mesh (the limits in y are on element boundaries, so that the triangles on both
+  // sides of an interior boundary edge are refined alike).
+  const auto comm = MPI_COMM_WORLD;
+  const int order = GENERATE(1, 2);
+  const auto type = GENERATE(mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  config::MaterialData material;
+  material.attributes = {1};
+  material.epsilon_r.s = {2.0, 3.0, 4.0};
+  material.mu_r.s = {1.0, 1.5, 2.0};
+  config::PeriodicBoundaryData periodic;
+
+  auto smesh = MakeCrackedCubeMesh(6, type);
+  auto cut = CutMesh(smesh);
+  for (auto *m : {&smesh, &cut})
+  {
+    m->EnsureNCMesh(true);
+    for (const auto &[dx, y_max] : {std::pair{0.3, 0.5}, std::pair{0.15, 0.25}})
+    {
+      mfem::Array<int> marked;
+      mfem::Vector c(2);
+      for (int e = 0; e < m->GetNE(); e++)
+      {
+        m->GetElementCenter(e, c);
+        if (std::abs(c(0) - x_crack) < dx && c(1) < y_max)
+        {
+          marked.Append(e);
+        }
+      }
+      m->GeneralRefinement(marked, 1, 0);
+    }
+  }
+  auto part = Partition(smesh, Mpi::Size(comm));
+  auto cut_part = Partition(cut, Mpi::Size(comm));
+  EstimatorSetup2D uncut_setup(comm, smesh, part, order, material, periodic);
+  EstimatorSetup2D cut_setup(comm, cut, cut_part, order, material, periodic);
+  REQUIRE(mesh::HasHangingEntities(uncut_setup.mesh.Get()));
+  const std::vector<int> attr_list = {crack_attr}, no_attr_list = {};
+  const auto [grad_broken, curl_broken] =
+      uncut_setup.Estimate(SmoothE2D, SmoothB2D, attr_list);
+  const auto [grad_cut, curl_cut] = cut_setup.Estimate(SmoothE2D, SmoothB2D, no_attr_list);
+  const auto [grad_cont, curl_cont] =
+      uncut_setup.Estimate(SmoothE2D, SmoothB2D, no_attr_list);
+  auto Compare = [&](const Vector &a, const Vector &b, const char *what)
+  {
+    const auto sa = SortByCenter(uncut_setup.mesh, a);
+    const auto sb = SortByCenter(cut_setup.mesh, b);
+    CHECK(sa.size() == sb.size());  // Not REQUIRE: the reductions below are collective
+    double max_diff = 0.0, max_ref = 0.0;
+    for (std::size_t i = 0; i < std::min(sa.size(), sb.size()); i++)
+    {
+      max_diff = std::max(max_diff, std::abs(sa[i] - sb[i]));
+      max_ref = std::max(max_ref, std::abs(sb[i]));
+    }
+    Mpi::GlobalMax(1, &max_diff, comm);
+    Mpi::GlobalMax(1, &max_ref, comm);
+    INFO(what << ": max. difference " << max_diff << " (max. estimate " << max_ref << ")");
+    CHECK(max_diff <= 1.0e-8 * max_ref + 1.0e-14);
+  };
+  Compare(grad_broken, grad_cut, "gradient flux (broken vs. cut)");
+  Compare(curl_broken, curl_cut, "curl flux (broken vs. cut)");
+  CHECK(std::abs(GlobalSumSquares(comm, grad_cont) - GlobalSumSquares(comm, grad_broken)) >
+        1.0e-3 * GlobalSumSquares(comm, grad_broken));
 }
 
 TEST_CASE("Interface dielectric energy on interior boundaries separating fields",

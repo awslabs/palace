@@ -73,6 +73,16 @@ CrackSides InheritCrackSides(const mfem::Mesh &fine_mesh,
                              const mfem::CoarseFineTransformations &cf,
                              const CrackSides &coarse_sides);
 
+// Compute the interior boundary sides for a nonconforming mesh with hanging entities, for
+// example one refined in a previous simulation, from those of the coarsest mesh without
+// hanging entities in its refinement hierarchy: a copy of the mesh is gathered on the root
+// process and derefined until it has no hanging entities, and the sides discovered there
+// are inherited back through the refinements. Returns false, leaving the sides unchanged,
+// when this is not possible: for 3D meshes with anisotropic refinements or with pyramids,
+// or when the coarsest mesh of the hierarchy has hanging entities. Collective.
+bool ReconstructCrackSides(const mfem::ParMesh &mesh,
+                           const mfem::Array<int> &bdr_attr_marker, CrackSides &sides);
+
 }  // namespace mesh
 
 namespace fem
