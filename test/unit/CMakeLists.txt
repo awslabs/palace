@@ -25,6 +25,7 @@ endif()
 add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/fixtures.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/surfaceresponse-fixtures.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-2d-submesh.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-axisymmetric.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-aaa.cpp
