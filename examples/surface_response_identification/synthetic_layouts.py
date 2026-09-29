@@ -520,10 +520,11 @@ def arc_cluster_suite(corner_ratios=ARC_CLUSTER_CORNER_RATIOS, corner_chords=ARC
     radius, one CurvedEdge chain) as n chords, and a finger of width 1.8 R from the box edge
     ending 1 R before the pad: the finger's end-corner cluster absorbs the pad's edge across
     (decision 85(2)) — a cluster with a bend arc portion; the rest of the pad is a CurvedEdge.
-    Gate: the cluster hash is identical across the chord counts of a design whose sagitta is
-    below SAGITTA_OVER_R x R (run_arc_cluster_gate; the 0.7 R fillet as 2 chords, 0.053 R, and
-    the 6 R pad as 24 chords, 0.051 R, are corners under USER decision 117(4) and are reported,
-    not gated)."""
+    Gate: the cluster hash is identical across EVERY chord count of a design (run_arc_cluster_gate;
+    USER decisions 121 / 122: every joint of the set turns below ARC_MAX_JOINT_TURN_DEGREES — 45 deg
+    for the 2-chord fillets, 15 deg for the 24-chord pads — so the chord sagitta no longer selects
+    the gated subset; the 0.7 R fillet as 2 chords, 0.053 R, and the 6 R pad as 24 chords, 0.051 R,
+    carry the mesh-coarseness diagnostic Coarse and stay in the gate)."""
     R = RADIUS
     layouts = []
     width = 1.8 * R
@@ -676,8 +677,8 @@ def hairpin(rho, gap, half_y):
 def kinked_hairpin(gap, width, half_y, turns_degrees=(22.0, 27.0, 24.0, 29.0, 23.0, 28.0, 27.0), chords=(0.35, 0.65, 0.45, 0.8, 0.5, 0.7)):
     """A strip whose inner edge folds through 180 deg along a NON-circular polyline (unequal
     chords and turns of 18-32 deg, the total 180 deg): no arc fits it (no circle within the
-    fit tolerance), so its kinks are corners under the sagitta rule (USER decision 117(4);
-    before it, sub-30 deg joints inside the chain) and the two inner legs, `gap` apart, are
+    fit tolerance), so no arc absorbs its kinks (concyclicity rule, USER decisions 121 / 122):
+    the outer edge's kinks are corners, the inner edge's short-chord kinks joint noise (121 (B)) and the two inner legs, `gap` apart, are
     one chain facing itself — the self-pairing case. The outer edge is the exact offset
     polyline at `width` (> 2R: no strip pair). The fold's chords are scaled so that the
     polyline closes on the leg separation."""
@@ -970,7 +971,7 @@ def stack_suite():
     # (no arc fits: the fold stays in the chain) with the legs 1.5 R apart: the inner chain
     # pairs with itself beyond the pi R neighbourhood (SameConductorGap), the fold a curved
     # edge; the outer edge (offset 2.5 R: no strip pair) isolated legs + a curved fold.
-    layouts.append(layout("hairpin-kinked-g1p5", [sheet(GROUND, kinked_hairpin(1.5 * R, 2.5 * R, 30.0))], half_x=20.0, half_y=30.0, lc_fine=0.3, lc_far=6.0, notes="kinked hairpin: the inner edge folds through 180 deg along a non-circular polyline (turns 18-32 deg, unequal chords) with the legs 1.5 R apart: the legs are one chain facing itself -> SameConductorGap beyond pi R of arc length; under the sagitta rule (USER decision 117(4)) the seven kinks of each edge are corners (no circle fits them within 1e-3 R), the inner fold's corners face each other and the far leg within 2R -> one cluster, the outer fold's corners (2.5 R away, beyond 2R of the inner ones) another; before the rule the sub-30 deg kinks stayed inside the chain (one cluster at the fold end, the rest of the fold a CurvedEdge)", expected={
+    layouts.append(layout("hairpin-kinked-g1p5", [sheet(GROUND, kinked_hairpin(1.5 * R, 2.5 * R, 30.0))], half_x=20.0, half_y=30.0, lc_fine=0.3, lc_far=6.0, notes="kinked hairpin: the inner edge folds through 180 deg along a non-circular polyline (turns 18-32 deg, unequal chords) with the legs 1.5 R apart: the legs are one chain facing itself -> SameConductorGap beyond pi R of arc length; no circle fits the kinks within 1e-3 R, so none is an arc (concyclicity rule, USER decisions 121 / 122); the outer edge's seven kinks (chords 1.3-1.6 R, implied sagitta 0.06-0.10 R) are corners, the inner edge's (chords 0.2-0.4 R, implied sagitta 0.010-0.024 R) are joint noise (121 (B): a smooth fold whose legs face each other) -> two clusters and the legs' SameConductorGap (under the 1 deg threshold of 117(4) every kink was a corner; before it the sub-30 deg kinks stayed inside the chain)", expected={
         "FeaturesSubset": {"SameConductorGap": 1, "SpatialEdgeCluster": 2}, "FacingGates": True}))
     return layouts
 

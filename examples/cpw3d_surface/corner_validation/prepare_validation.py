@@ -7,11 +7,32 @@ import json
 from pathlib import Path
 
 
+# Defaults of the prototype process; a library with a Fabrication record (the version-2 coupon
+# libraries) overrides the permittivities and thicknesses so that the corrected run passes the
+# library's interface-layer validation (loss tangents are not part of the record).
 INTERFACES = {
-    "SA": (4.0, 2.0e-3),
-    "MS": (11.47, 3.0e-4),
-    "MA": (10.0, 3.0e-2),
+    "SA": (4.0, 2.0e-3, 2.0e-3),
+    "MS": (11.47, 3.0e-4, 2.0e-3),
+    "MA": (10.0, 3.0e-2, 2.0e-3),
 }
+SUBSTRATE_PERMITTIVITY = 11.47
+
+
+def process_from_library(library):
+    """(interfaces, substrate permittivity) of the library's Fabrication record, else the
+    prototype defaults."""
+    fabrication = json.loads(library.read_text()).get("Fabrication") or {}
+    interfaces = dict(INTERFACES)
+    for name, layer in (fabrication.get("InterfaceLayers") or {}).items():
+        if name in interfaces:
+            permittivity, loss_tangent, thickness = interfaces[name]
+            interfaces[name] = (
+                float(layer.get("Permittivity", permittivity)),
+                loss_tangent,
+                float(layer.get("Thickness", thickness)),
+            )
+    substrate = float(fabrication.get("SubstratePermittivity", SUBSTRATE_PERMITTIVITY))
+    return interfaces, substrate
 
 
 def dielectric(
@@ -21,13 +42,14 @@ def dielectric(
     radius,
     automatic,
     edge_elements_per_radius,
+    interfaces=INTERFACES,
 ):
-    permittivity, loss_tangent = INTERFACES[interface_type]
+    permittivity, loss_tangent, thickness = interfaces[interface_type]
     result = {
         "Index": index,
         "Attributes": attributes,
         "Type": interface_type,
-        "Thickness": 2.0e-3,
+        "Thickness": thickness,
         "Permittivity": permittivity,
         "LossTan": loss_tangent,
     }
@@ -59,19 +81,21 @@ def config(
     library,
     radius,
     edge_elements_per_radius,
+    process=(INTERFACES, SUBSTRATE_PERMITTIVITY),
 ):
     refinement = 0 if fabricated else edge_elements_per_radius
+    layers, substrate_permittivity = process
     interfaces = (
         [
-            dielectric(1, [3], "SA", radius, True, refinement),
-            dielectric(2, [2], "MS", radius, True, refinement),
-            dielectric(3, [4], "MA", radius, True, refinement),
+            dielectric(1, [3], "SA", radius, True, refinement, layers),
+            dielectric(2, [2], "MS", radius, True, refinement, layers),
+            dielectric(3, [4], "MA", radius, True, refinement, layers),
         ]
         if fabricated
         else [
-            dielectric(1, [3], "SA", radius, True, refinement),
-            dielectric(2, [2], "MS", radius, True, refinement),
-            dielectric(3, [2], "MA", radius, True, refinement),
+            dielectric(1, [3], "SA", radius, True, refinement, layers),
+            dielectric(2, [2], "MS", radius, True, refinement, layers),
+            dielectric(3, [2], "MA", radius, True, refinement, layers),
         ]
     )
     boundaries = {
@@ -117,7 +141,7 @@ def config(
         },
         "Domains": {
             "Materials": [
-                {"Attributes": [1], "Permittivity": 11.47},
+                {"Attributes": [1], "Permittivity": substrate_permittivity},
                 {"Attributes": [2], "Permittivity": 1.0},
             ],
             "Postprocessing": {
@@ -160,6 +184,7 @@ def main():
     radius = float(json.loads(library.read_text())["MatchingRadius"])
     if radius <= 0.0:
         raise ValueError("The process library MatchingRadius must be positive")
+    process = process_from_library(library)
 
     for name, mesh, fabricated in (
         ("thin-corrected", thin_mesh, False),
@@ -174,6 +199,7 @@ def main():
             library,
             radius,
             args.edge_elements_per_radius,
+            process,
         )
         path = output / f"{name}.json"
         path.write_text(json.dumps(data, indent=2) + "\n")
