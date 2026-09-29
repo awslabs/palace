@@ -136,9 +136,15 @@ RUN --mount=type=secret,id=github_user \
 # Copy the Palace source tree
 COPY . /opt/palace
 
-# palace@develop is pinned to branch="main", so every branch shares a spec
-# hash with different source. Build Palace --no-cache and never push it to the
-# dependency buildcache.
+# .git is excluded from the build context, so `git describe` cannot stamp the
+# version. The build action passes the checked-out commit instead; recording it
+# on the develop spec lets the package embed it (palace.json "GitTag"). Declared
+# after `COPY .` so it does not invalidate the dependency layers.
+ARG PALACE_GIT_COMMIT
+
+# palace@develop is pinned to branch="main" and built from local source, so its
+# spec hash does not identify the source. Build Palace --no-cache and never push
+# it to the dependency buildcache.
 #
 # A source change invalidates everything after `COPY .`, so Palace installation
 # and all runtime cleanup stay in one layer. This avoids retaining intermediate
@@ -155,7 +161,17 @@ RUN set -e; \
     fi; \
     cd {{ paths.environment }}; \
     spack env activate .; \
+    if [ -n "$PALACE_GIT_COMMIT" ]; then \
+      sed -i "s|spec: palace@=develop$|spec: palace@=develop commit=$PALACE_GIT_COMMIT|" spack.yaml; \
+      grep -qF "commit=$PALACE_GIT_COMMIT" spack.yaml; \
+      spack concretize --force; \
+    fi; \
     spack install --only package --no-cache -j$(nproc) --fail-fast; \
+    if [ -n "$PALACE_GIT_COMMIT" ] && \
+      ! grep -rqaF "$PALACE_GIT_COMMIT" "$(spack location -i palace)/bin"; then \
+      echo "ERROR: Palace binary does not embed commit $PALACE_GIT_COMMIT."; \
+      exit 1; \
+    fi; \
     spack gc -y; \
     find /opt/software -type d \
       \( -iname doc -o -iname docs -o -iname documentation \
