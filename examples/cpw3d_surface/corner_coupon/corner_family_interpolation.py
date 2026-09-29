@@ -20,7 +20,12 @@ nearest to it (cubic on four, else quadratic / linear: never across a corner eve
 equal to a node (within the tolerance) is exact — with several coupons at that angle the legacy
 one (the tie triangulation at its own angle, e.g. the recorded 90 / 135 coupons) is preferred,
 else the coupon of the lower-angle segment; legacy coupons (no connectivity record) are never
-interpolated; outside the node range refused (no extrapolation)."""
+interpolated; outside the node range refused (no extrapolation). The node tolerance is closed on
+the exact side and open on the interior side with the same floating-point difference
+(|node - angle| <= tol exact, > tol interior): an angle at the boundary is exact or interior,
+never in no segment (qualification review 2026-09-29 m1). The segment structure (a segment
+across a knot-corner passage, two coupons at one angle, overlapping segments) is checked by
+check_segments = the runtime's CheckCornerFamilySegments, which fails closed at library load."""
 import math
 
 import generate_corner_response as generator
@@ -87,43 +92,9 @@ def lagrange_weights(abscissae, x):
     ]
 
 
-def select_stencil(nodes, angle, topology, ring_size=8,
-                   tolerance=SIGNATURE_ANGLE_TOLERANCE_DEGREES):
-    """The runtime's stencil for `nodes` = [(angle_degrees, connectivity_angle_degrees or
-    None, index), ...]. Returns a dict with `nodes` = [(index, weight), ...], `rule`
-    (exact / linear / quadratic / cubic), `connectivity_angle_degrees`, `base` (the nearest
-    node), or `reason` when refused. Raises ValueError where the runtime fails closed (a
-    segment across a knot-corner passage, two coupons at one angle in a segment, overlapping
-    segments)."""
-    if not nodes:
-        raise ValueError("a corner family stencil needs nodes")
+def _group_segments(nodes, topology, ring_size, tolerance):
+    """(boundaries, {connectivity angle: members sorted by angle}, legacy present)."""
     boundaries = corner_event_angles(topology, ring_size, tolerance)
-
-    def interval(value):
-        return sum(1 for boundary in boundaries if boundary < value - tolerance)
-
-    def on_boundary(value):
-        return any(abs(value - boundary) <= tolerance for boundary in boundaries)
-
-    exact = None
-    for node in nodes:
-        if abs(node[0] - angle) > tolerance:
-            continue
-        if (exact is None or (node[1] is None and exact[1] is not None)
-                or (node[1] is not None and exact[1] is not None and node[1] < exact[1])):
-            exact = node
-    if exact is not None:
-        return {"nodes": [(exact[2], 1.0)], "rule": "exact",
-                "connectivity_angle_degrees": exact[1], "base": exact[2]}
-    low, high = min(n[0] for n in nodes), max(n[0] for n in nodes)
-    convexity = topology
-    if angle < low - tolerance:
-        return {"reason": f"corner angle {angle:g} deg is sharper than the smallest {convexity} "
-                          f"coupon angle {low:g} deg (no extrapolation)"}
-    if angle > high + tolerance:
-        return {"reason": f"corner angle {angle:g} deg is wider than the widest {convexity} "
-                          f"coupon angle {high:g} deg (no extrapolation; the first-order regime "
-                          "needs the straight anchor)"}
     segments = {}
     legacy = False
     for node in nodes:
@@ -136,28 +107,85 @@ def select_stencil(nodes, angle, topology, ring_size=8,
                 break
         else:
             segments[node[1]] = [node]
+    for members in segments.values():
+        members.sort(key=lambda node: node[0])
+    return boundaries, segments, legacy
+
+
+def check_segments(nodes, topology, ring_size=8, tolerance=SIGNATURE_ANGLE_TOLERANCE_DEGREES):
+    """The runtime's CheckCornerFamilySegments (fail closed at library load, ReadProcessLibrary):
+    the reason string, empty when the segment structure is consistent — every segment's
+    connectivity angle off the knot-corner passages and its nodes in one event-free interval with
+    it, one coupon per angle within a segment, segments overlapping at shared node angles only."""
+    boundaries, segments, _ = _group_segments(nodes, topology, ring_size, tolerance)
+
+    def interval(value):
+        return sum(1 for boundary in boundaries if boundary < value - tolerance)
+
+    def on_boundary(value):
+        return any(abs(value - boundary) <= tolerance for boundary in boundaries)
+
     ranges = []
     for key, members in segments.items():
-        members.sort(key=lambda node: node[0])
         if on_boundary(key):
-            raise ValueError(f"segment connectivity angle {key:g} deg lies on a knot-corner passage")
+            return f"segment connectivity angle {key:g} deg lies on a knot-corner passage"
         for member in members:
-            if not (interval(member[0]) == interval(key)
+            if not (abs(member[0] - key) <= tolerance or interval(member[0]) == interval(key)
                     or (on_boundary(member[0]) and interval(member[0]) + 1 == interval(key))):
-                raise ValueError(
-                    f"segment with connectivity angle {key:g} deg has a node at {member[0]:g} deg "
-                    "across a knot-corner passage of the trace basis: split the segment")
+                return (f"segment with connectivity angle {key:g} deg has a node at {member[0]:g} "
+                        "deg across a knot-corner passage of the trace basis: split the segment")
         for previous, following in zip(members, members[1:]):
-            if following[0] - previous[0] <= tolerance:
-                raise ValueError(f"segment has two coupons at {following[0]:g} deg")
+            if not following[0] - previous[0] > tolerance:
+                return f"segment with connectivity angle {key:g} deg has two coupons at {following[0]:g} deg"
         ranges.append((members[0][0], members[-1][0]))
     ranges.sort()
     for previous, following in zip(ranges, ranges[1:]):
-        if following[0] < previous[1] - tolerance:
-            raise ValueError("corner family segments overlap beyond a shared node angle")
+        if not following[0] >= previous[1] - tolerance:
+            return (f"segments [{previous[0]:g}, {previous[1]:g}] and [{following[0]:g}, "
+                    f"{following[1]:g}] deg overlap beyond a shared node angle")
+    return ""
+
+
+def select_stencil(nodes, angle, topology, ring_size=8,
+                   tolerance=SIGNATURE_ANGLE_TOLERANCE_DEGREES):
+    """The runtime's stencil for `nodes` = [(angle_degrees, connectivity_angle_degrees or
+    None, index), ...]. Returns a dict with `nodes` = [(index, weight), ...], `rule`
+    (exact / linear / quadratic / cubic), `connectivity_angle_degrees`, `base` (the nearest
+    node), or `reason` when refused. Raises ValueError where the runtime fails closed (the
+    segment structure of check_segments, verified at library load)."""
+    if not nodes:
+        raise ValueError("a corner family stencil needs nodes")
+
+    def beyond(first, second):
+        return abs(first - second) > tolerance
+
+    exact = None
+    for node in nodes:
+        if beyond(node[0], angle):
+            continue
+        if (exact is None or (node[1] is None and exact[1] is not None)
+                or (node[1] is not None and exact[1] is not None and node[1] < exact[1])):
+            exact = node
+    if exact is not None:
+        return {"nodes": [(exact[2], 1.0)], "rule": "exact",
+                "connectivity_angle_degrees": exact[1], "base": exact[2]}
+    low, high = min(n[0] for n in nodes), max(n[0] for n in nodes)
+    convexity = topology
+    if angle < low:
+        return {"reason": f"corner angle {angle:g} deg is sharper than the smallest {convexity} "
+                          f"coupon angle {low:g} deg (no extrapolation)"}
+    if angle > high:
+        return {"reason": f"corner angle {angle:g} deg is wider than the widest {convexity} "
+                          f"coupon angle {high:g} deg (no extrapolation; the first-order regime "
+                          "needs the straight anchor)"}
+    reason = check_segments(nodes, topology, ring_size, tolerance)
+    if reason:
+        raise ValueError(reason)
+    _, segments, legacy = _group_segments(nodes, topology, ring_size, tolerance)
     segment = None
     for key, members in segments.items():
-        if members[0][0] + tolerance < angle < members[-1][0] - tolerance:
+        if (members[0][0] < angle < members[-1][0] and beyond(members[0][0], angle)
+                and beyond(members[-1][0], angle)):
             segment, segment_key = members, key
     if segment is None:
         if legacy:

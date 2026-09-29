@@ -190,7 +190,10 @@ std::vector<CornerBasisEvent> CornerBasisEvents(bool convex, const CornerTraceBa
 // (the tie triangulation of the recorded 90 / 135 / 180 coupons) is preferred, else the
 // coupon of the lower-angle segment; legacy nodes are never interpolated (their bases jump
 // at every event: refused with the reason); outside the node range refused (no
-// extrapolation). `reason` is empty when a stencil was found.
+// extrapolation). `reason` is empty when a stencil was found. The node tolerance is
+// closed on the exact side and open on the interior side with the same floating-point
+// difference (|node - angle| <= tol exact, > tol interior): an angle at the boundary is
+// never in no segment (qualification review 2026-09-29 m1).
 struct CornerFamilyNode
 {
   double angle_degrees = 0.0;
@@ -212,6 +215,15 @@ CornerFamilyStencil SelectCornerFamilyStencil(const std::vector<CornerFamilyNode
                                               double angle_degrees, bool convex,
                                               const CornerTraceBasisRule &rule,
                                               double angle_tolerance_degrees);
+
+// The structural check of a corner family's segments (decision 137 (1), verified at library
+// load by ReadProcessLibrary, fail closed): every segment's connectivity angle off the
+// knot-corner passages and its nodes in one event-free interval with it, one coupon per
+// angle within a segment, segments overlapping at shared node angles only. Returns the
+// empty string when consistent, else the reason.
+std::string CheckCornerFamilySegments(const std::vector<CornerFamilyNode> &nodes,
+                                      bool convex, const CornerTraceBasisRule &rule,
+                                      double angle_tolerance_degrees);
 
 // The basis gate of a corner coupon (corner-family review 2026-09-29, root cause of the
 // non-90-degree MS / MA over-correction): on every ring that meets the metal (a ring with

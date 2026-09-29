@@ -795,31 +795,69 @@ std::vector<CornerBasisEvent> CornerBasisEvents(bool convex, const CornerTraceBa
   return events;
 }
 
-CornerFamilyStencil SelectCornerFamilyStencil(const std::vector<CornerFamilyNode> &nodes,
-                                              double angle_degrees, bool convex,
-                                              const CornerTraceBasisRule &rule,
-                                              double angle_tolerance_degrees)
+namespace
 {
-  CornerFamilyStencil stencil;
-  MFEM_VERIFY(!nodes.empty(), "A corner family stencil needs nodes!");
-  const double tolerance = angle_tolerance_degrees;
-  stencil.min_angle_degrees = std::numeric_limits<double>::infinity();
-  stencil.max_angle_degrees = -std::numeric_limits<double>::infinity();
-  for (const auto &node : nodes)
-  {
-    stencil.min_angle_degrees = std::min(stencil.min_angle_degrees, node.angle_degrees);
-    stencil.max_angle_degrees = std::max(stencil.max_angle_degrees, node.angle_degrees);
-  }
-  // The corner-passage events: the segment boundaries.
+
+// The segment structure of a corner family: the knot-corner passages (segment boundaries)
+// and the coupons grouped by connectivity angle (sorted by angle), legacy coupons apart.
+struct CornerFamilySegments
+{
   std::vector<double> boundaries;
+  std::map<double, std::vector<const CornerFamilyNode *>> segments;
+  bool legacy = false;
+};
+
+CornerFamilySegments GroupCornerFamilySegments(const std::vector<CornerFamilyNode> &nodes,
+                                               bool convex,
+                                               const CornerTraceBasisRule &rule,
+                                               double tolerance)
+{
+  CornerFamilySegments grouped;
   for (const auto &event : CornerBasisEvents(convex, rule))
   {
-    if (event.corner && (boundaries.empty() ||
-                         event.angle_degrees - boundaries.back() > tolerance))
+    if (event.corner && (grouped.boundaries.empty() ||
+                         event.angle_degrees - grouped.boundaries.back() > tolerance))
     {
-      boundaries.push_back(event.angle_degrees);
+      grouped.boundaries.push_back(event.angle_degrees);
     }
   }
+  for (const auto &node : nodes)
+  {
+    if (!node.connectivity_angle_degrees)
+    {
+      grouped.legacy = true;
+      continue;
+    }
+    bool merged = false;
+    for (auto &[key, members] : grouped.segments)
+    {
+      if (std::abs(key - *node.connectivity_angle_degrees) <= tolerance)
+      {
+        members.push_back(&node);
+        merged = true;
+        break;
+      }
+    }
+    if (!merged)
+    {
+      grouped.segments[*node.connectivity_angle_degrees] = {&node};
+    }
+  }
+  for (auto &[key, members] : grouped.segments)
+  {
+    std::sort(members.begin(), members.end(), [](const auto *a, const auto *b)
+              { return a->angle_degrees < b->angle_degrees; });
+  }
+  return grouped;
+}
+
+// The structural check of the segments (the reason, empty when consistent): every segment
+// in one event-free interval with its connectivity angle, one coupon per angle in a
+// segment, segments overlapping at shared node angles only.
+std::string CornerFamilySegmentsReason(const CornerFamilySegments &grouped,
+                                       double tolerance)
+{
+  const auto &boundaries = grouped.boundaries;
   auto Interval = [&](double angle)
   {
     // The event-free open interval containing `angle` (an angle within the tolerance of an
@@ -842,6 +880,89 @@ CornerFamilyStencil SelectCornerFamilyStencil(const std::vector<CornerFamilyNode
     }
     return false;
   };
+  std::ostringstream text;
+  std::vector<std::pair<double, double>> ranges;
+  for (const auto &[key, members] : grouped.segments)
+  {
+    if (OnBoundary(key))
+    {
+      text << "corner family segment connectivity angle " << key
+           << " deg lies on a knot-corner passage of the trace basis";
+      return text.str();
+    }
+    const std::size_t interval = Interval(key);
+    for (const auto *member : members)
+    {
+      if (!(std::abs(member->angle_degrees - key) <= tolerance ||
+            Interval(member->angle_degrees) == interval ||
+            (OnBoundary(member->angle_degrees) &&
+             (Interval(member->angle_degrees) == interval ||
+              Interval(member->angle_degrees) + 1 == interval))))
+      {
+        text << "corner family segment with connectivity angle " << key
+             << " deg has a node at " << member->angle_degrees
+             << " deg across a knot-corner passage of the trace basis (its band "
+                "triangulation jumps there): the segment must be split";
+        return text.str();
+      }
+    }
+    for (std::size_t i = 1; i < members.size(); i++)
+    {
+      if (!(members[i]->angle_degrees - members[i - 1]->angle_degrees > tolerance))
+      {
+        text << "corner family segment with connectivity angle " << key
+             << " deg has two coupons at " << members[i]->angle_degrees << " deg";
+        return text.str();
+      }
+    }
+    ranges.push_back({members.front()->angle_degrees, members.back()->angle_degrees});
+  }
+  std::sort(ranges.begin(), ranges.end());
+  for (std::size_t i = 1; i < ranges.size(); i++)
+  {
+    if (!(ranges[i].first >= ranges[i - 1].second - tolerance))
+    {
+      text << "corner family segments [" << ranges[i - 1].first << ", "
+           << ranges[i - 1].second << "] and [" << ranges[i].first << ", "
+           << ranges[i].second << "] deg overlap beyond a shared node angle";
+      return text.str();
+    }
+  }
+  return "";
+}
+
+}  // namespace
+
+std::string CheckCornerFamilySegments(const std::vector<CornerFamilyNode> &nodes,
+                                      bool convex, const CornerTraceBasisRule &rule,
+                                      double angle_tolerance_degrees)
+{
+  return CornerFamilySegmentsReason(
+      GroupCornerFamilySegments(nodes, convex, rule, angle_tolerance_degrees),
+      angle_tolerance_degrees);
+}
+
+CornerFamilyStencil SelectCornerFamilyStencil(const std::vector<CornerFamilyNode> &nodes,
+                                              double angle_degrees, bool convex,
+                                              const CornerTraceBasisRule &rule,
+                                              double angle_tolerance_degrees)
+{
+  CornerFamilyStencil stencil;
+  MFEM_VERIFY(!nodes.empty(), "A corner family stencil needs nodes!");
+  const double tolerance = angle_tolerance_degrees;
+  stencil.min_angle_degrees = std::numeric_limits<double>::infinity();
+  stencil.max_angle_degrees = -std::numeric_limits<double>::infinity();
+  for (const auto &node : nodes)
+  {
+    stencil.min_angle_degrees = std::min(stencil.min_angle_degrees, node.angle_degrees);
+    stencil.max_angle_degrees = std::max(stencil.max_angle_degrees, node.angle_degrees);
+  }
+  // Node tolerance (qualification review m1): a node is EXACT when |node - angle| <= tol
+  // and the angle is strictly inside a segment when both end distances are > tol, computed
+  // as the same floating-point differences, so an angle at the tolerance boundary of a
+  // node is exact or interior, never in no segment.
+  auto Beyond = [tolerance](double first, double second)
+  { return std::abs(first - second) > tolerance; };
   auto Weights = [&](const std::vector<const CornerFamilyNode *> &window)
   {
     stencil.nodes.clear();
@@ -874,7 +995,7 @@ CornerFamilyStencil SelectCornerFamilyStencil(const std::vector<CornerFamilyNode
     const CornerFamilyNode *exact = nullptr;
     for (const auto &node : nodes)
     {
-      if (std::abs(node.angle_degrees - angle_degrees) > tolerance)
+      if (Beyond(node.angle_degrees, angle_degrees))
       {
         continue;
       }
@@ -894,7 +1015,7 @@ CornerFamilyStencil SelectCornerFamilyStencil(const std::vector<CornerFamilyNode
       return stencil;
     }
   }
-  if (angle_degrees < stencil.min_angle_degrees - tolerance)
+  if (angle_degrees < stencil.min_angle_degrees)
   {
     std::ostringstream text;
     text << "corner angle " << angle_degrees << " deg is sharper than the smallest "
@@ -903,7 +1024,7 @@ CornerFamilyStencil SelectCornerFamilyStencil(const std::vector<CornerFamilyNode
     stencil.reason = text.str();
     return stencil;
   }
-  if (angle_degrees > stencil.max_angle_degrees + tolerance)
+  if (angle_degrees > stencil.max_angle_degrees)
   {
     std::ostringstream text;
     text << "corner angle " << angle_degrees << " deg is wider than the widest "
@@ -913,74 +1034,22 @@ CornerFamilyStencil SelectCornerFamilyStencil(const std::vector<CornerFamilyNode
     return stencil;
   }
   // Segments: the coupons sharing a connectivity angle, each in one event-free interval
-  // with its connectivity angle (fail closed), ordered and overlapping at shared node
-  // angles only.
-  std::map<double, std::vector<const CornerFamilyNode *>> segments;
-  bool legacy = false;
-  for (const auto &node : nodes)
+  // with its connectivity angle, ordered and overlapping at shared node angles only. The
+  // structure is verified at library load (ReadProcessLibrary, CheckCornerFamilySegments;
+  // decision 137 (1)); the precondition is asserted here.
+  const auto grouped = GroupCornerFamilySegments(nodes, convex, rule, tolerance);
   {
-    if (!node.connectivity_angle_degrees)
-    {
-      legacy = true;
-      continue;
-    }
-    bool merged = false;
-    for (auto &[key, members] : segments)
-    {
-      if (std::abs(key - *node.connectivity_angle_degrees) <= tolerance)
-      {
-        members.push_back(&node);
-        merged = true;
-        break;
-      }
-    }
-    if (!merged)
-    {
-      segments[*node.connectivity_angle_degrees] = {&node};
-    }
-  }
-  std::vector<std::pair<double, double>> ranges;
-  for (auto &[key, members] : segments)
-  {
-    std::sort(members.begin(), members.end(),
-              [](const auto *a, const auto *b) { return a->angle_degrees < b->angle_degrees; });
-    MFEM_VERIFY(!OnBoundary(key),
-                "Corner family segment connectivity angle " << key
-                                                            << " deg lies on a knot-corner "
-                                                               "passage of the trace basis!");
-    const std::size_t interval = Interval(key);
-    for (const auto *member : members)
-    {
-      MFEM_VERIFY(std::abs(member->angle_degrees - key) <= tolerance ||
-                      Interval(member->angle_degrees) == interval ||
-                      (OnBoundary(member->angle_degrees) &&
-                       (Interval(member->angle_degrees) == interval ||
-                        Interval(member->angle_degrees) + 1 == interval)),
-                  "Corner family segment with connectivity angle "
-                      << key << " deg has a node at " << member->angle_degrees
-                      << " deg across a knot-corner passage of the trace basis (its band "
-                         "triangulation jumps there): the segment must be split!");
-    }
-    for (std::size_t i = 1; i < members.size(); i++)
-    {
-      MFEM_VERIFY(members[i]->angle_degrees - members[i - 1]->angle_degrees > tolerance,
-                  "Corner family segment has two coupons at " << members[i]->angle_degrees
-                                                              << " deg!");
-    }
-    ranges.push_back({members.front()->angle_degrees, members.back()->angle_degrees});
-  }
-  std::sort(ranges.begin(), ranges.end());
-  for (std::size_t i = 1; i < ranges.size(); i++)
-  {
-    MFEM_VERIFY(ranges[i].first >= ranges[i - 1].second - tolerance,
-                "Corner family segments overlap beyond a shared node angle!");
+    const std::string reason = CornerFamilySegmentsReason(grouped, tolerance);
+    MFEM_VERIFY(reason.empty(), "Corner family segment structure: " << reason << "!");
   }
   const std::vector<const CornerFamilyNode *> *segment = nullptr;
   double segment_key = 0.0;
-  for (const auto &[key, members] : segments)
+  for (const auto &[key, members] : grouped.segments)
   {
-    if (angle_degrees > members.front()->angle_degrees + tolerance &&
-        angle_degrees < members.back()->angle_degrees - tolerance)
+    if (angle_degrees > members.front()->angle_degrees &&
+        Beyond(members.front()->angle_degrees, angle_degrees) &&
+        angle_degrees < members.back()->angle_degrees &&
+        Beyond(members.back()->angle_degrees, angle_degrees))
     {
       segment = &members;
       segment_key = key;
@@ -989,7 +1058,7 @@ CornerFamilyStencil SelectCornerFamilyStencil(const std::vector<CornerFamilyNode
   if (!segment)
   {
     std::ostringstream text;
-    if (legacy)
+    if (grouped.legacy)
     {
       text << "corner angle " << angle_degrees
            << " deg needs interpolation but the corner family is built without segment "

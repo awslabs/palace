@@ -167,6 +167,58 @@ class StencilTest(unittest.TestCase):
         self.assertEqual(FAMILY.select_stencil(short[:2], 142.5, "convex")["rule"], "linear")
         self.assertIn("no segment", FAMILY.select_stencil(short[:1] + [(75.0, 82.5, 5)], 100.0, "convex")["reason"])
 
+    def test_node_tolerance_boundary_is_exact_or_interior(self):
+        """Qualification review 2026-09-29 m1: an angle at |node - angle| = tolerance (in floating
+        point, however the angle was formed) is exact (<= tol) or interior (> tol) by the same
+        difference, never in no segment; strictly outside the family range by more than the
+        tolerance it is refused, within it exact."""
+        tol = FAMILY.SIGNATURE_ANGLE_TOLERANCE_DEGREES
+        for topology, nodes in (("convex", CONVEX_NODES), ("concave", CONCAVE_NODES)):
+            family = indexed(nodes)
+            angles = set()
+            for node_angle, _ in nodes:
+                angles.update((node_angle + tol, node_angle - tol, float(f"{node_angle + tol:.9g}"),
+                               float(f"{node_angle - tol:.9g}"), node_angle + tol * (1 - 1e-12),
+                               node_angle - tol * (1 - 1e-12), node_angle + tol * (1 + 1e-12),
+                               node_angle - tol * (1 + 1e-12)))
+            angles.update(74.5 + 0.005 * i for i in range(21101)
+                          if any(abs(74.5 + 0.005 * i - a) <= 2 * tol for a, _ in nodes))
+            for angle in sorted(angles):
+                if not 75.0 <= angle <= 180.0 and all(abs(angle - a) > tol for a, _ in nodes):
+                    self.assertIn("than", FAMILY.select_stencil(family, angle, topology)["reason"])
+                    continue
+                stencil = FAMILY.select_stencil(family, angle, topology)
+                self.assertNotIn("reason", stencil, (topology, repr(angle)))
+                exact = any(not abs(a - angle) > tol for a, _ in nodes)
+                self.assertEqual(stencil["rule"] == "exact", exact, (topology, repr(angle)))
+                if not exact:
+                    self.assertEqual(stencil["rule"], "cubic", (topology, repr(angle)))
+
+    def test_check_segments_is_the_load_time_gate(self):
+        """The segment structure (decision 137 (1); the runtime's CheckCornerFamilySegments at
+        library load): the qualified family with or without the legacy tie coupons passes; a
+        segment across a knot-corner passage, a connectivity angle on one, two coupons at one
+        angle in a segment and overlapping segments are refused with the reason."""
+        for topology, nodes in (("convex", CONVEX_NODES), ("concave", CONCAVE_NODES)):
+            family = indexed(nodes)
+            self.assertEqual(FAMILY.check_segments(family, topology), "")
+            legacy_ties = [(90.0, None, 90), (135.0, None, 91), (180.0, None, 92)]
+            self.assertEqual(FAMILY.check_segments(family + legacy_ties, topology), "")
+            self.assertEqual(FAMILY.check_segments(legacy_ties, topology), "")
+        self.assertIn("across a knot-corner passage",
+                      FAMILY.check_segments([(120.0, 112.5, 0), (150.0, 112.5, 1)], "convex"))
+        self.assertIn("lies on a knot-corner passage",
+                      FAMILY.check_segments([(120.0, 135.0, 0), (130.0, 135.0, 1)], "convex"))
+        self.assertIn("two coupons at 105",
+                      FAMILY.check_segments([(105.0, 112.5, 0), (105.0, 112.5, 1), (120.0, 112.5, 2)], "convex"))
+        self.assertIn("overlap beyond a shared node angle",
+                      FAMILY.check_segments([(95.0, 100.0, 0), (125.0, 100.0, 1), (110.0, 115.0, 2), (130.0, 115.0, 3)], "convex"))
+        # A shared node angle between two segments is not an overlap; a legacy coupon in the
+        # segment's range is not a second coupon of the segment.
+        self.assertEqual(FAMILY.check_segments([(90.0, 82.5, 0), (90.0, 112.5, 1), (105.0, 112.5, 2), (105.0, None, 3)], "convex"), "")
+        with self.assertRaises(ValueError):
+            FAMILY.select_stencil([(105.0, 112.5, 0), (105.0, 112.5, 1), (120.0, 112.5, 2)], 110.0, "convex")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1426,6 +1426,7 @@ std::string TopologyIdentifier(LibraryTopology topology);
 void VerifySpatialEdgesInSignatureFrame(const LibraryModel &model, double radius);
 
 std::vector<std::array<double, 3>> ReadBasisPoints(const std::string &path);
+std::vector<std::string> ModelInterfaceNames(const LibraryModel &model);
 
 ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                                   bool nondimensionalize, bool allow_empty_models = false,
@@ -2217,6 +2218,49 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
           "Version-3 fabrication-process response library \""
               << library.name << "\" has a " << ToString(type)
               << " surface response but no matching Fabrication.InterfaceLayers entry!");
+    }
+  }
+  // The segment structure of every corner family (decision 137 (1), fail closed at load):
+  // the sharp trace-basis-rule corner coupons of one topology, interface set and boundary
+  // law (MatchCornerFamily's family) form segments by connectivity angle, each in one
+  // event-free interval with its connectivity angle, one coupon per angle in a segment,
+  // overlapping at shared node angles only (CheckCornerFamilySegments).
+  {
+    std::vector<bool> grouped(library.models.size(), false);
+    for (std::size_t i = 0; i < library.models.size(); i++)
+    {
+      const auto &first = library.models[i];
+      const bool corner = first.topology == LibraryTopology::CONVEX_CORNER ||
+                          first.topology == LibraryTopology::CONCAVE_CORNER;
+      if (grouped[i] || !corner || first.corner_radius != 0.0 || !first.trace_basis)
+      {
+        continue;
+      }
+      std::vector<CornerFamilyNode> family;
+      for (std::size_t j = i; j < library.models.size(); j++)
+      {
+        const auto &model = library.models[j];
+        if (grouped[j] || model.topology != first.topology || model.corner_radius != 0.0 ||
+            !model.trace_basis ||
+            ModelInterfaceNames(model) != ModelInterfaceNames(first) ||
+            !CompatibleBoundaryLaw(model.boundary_condition, first.boundary_condition) ||
+            !CompatibleBoundaryLaw(first.boundary_condition, model.boundary_condition))
+        {
+          continue;
+        }
+        grouped[j] = true;
+        CornerFamilyNode node;
+        node.angle_degrees = model.angle * 180.0 / std::acos(-1.0);
+        node.connectivity_angle_degrees = model.corner_connectivity_angle_degrees;
+        node.index = j;
+        family.push_back(node);
+      }
+      const std::string reason = CheckCornerFamilySegments(
+          family, first.topology == LibraryTopology::CONVEX_CORNER, *first.trace_basis,
+          kSignatureAngleToleranceDegrees);
+      MFEM_VERIFY(reason.empty(), "Fabrication-process response library \""
+                                      << library.name << "\" corner family ("
+                                      << first.name << " ...): " << reason << "!");
     }
   }
   if (auto spans = data.find("CornerRadiusInterpolation"); spans != data.end())
@@ -3879,7 +3923,8 @@ MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &featur
       nodes.size() > (has_anchor ? 1u : 0u) ? nodes[has_anchor ? 1 : 0].first : 0.0;
   // The stencil: exact node, or Lagrange on the nodes of the segment (coupons sharing a
   // connectivity angle) containing the angle, never across a knot-corner passage of the
-  // trace basis (SelectCornerFamilyStencil; legacy coupons are exact matches only).
+  // trace basis (SelectCornerFamilyStencil; legacy coupons are exact matches only). The
+  // segment structure itself was verified at library load (ReadProcessLibrary).
   const auto stencil = SelectCornerFamilyStencil(family, angle, convex, *first.trace_basis,
                                                  kSignatureAngleToleranceDegrees);
   if (!stencil.reason.empty())
