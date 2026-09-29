@@ -132,8 +132,15 @@ KNOT_COINCIDENCE_FRACTION = 1.0e-6
 FIXED_FRACTION_IDENTITY = 1.0e-12
 
 
-def trace_basis_rule(ring_size):
-    return {
+def trace_basis_rule(ring_size, connectivity_angle_degrees=None):
+    """The TraceBasis record. With a connectivity angle the coupon is a node of an
+    interpolation SEGMENT of the corner family (corner-qualification block 2026-09-29): the
+    bands next to its metal rings are triangulated in the merge order of the rule's layout at
+    that angle (connectivity_keys), the same for every coupon of the segment, so the family's
+    hats do not jump between the segment's nodes (they do at every knot passage of a
+    fixed-layout vertex under the perimeter-ordered merge; corner_family_interpolation.py
+    lists the events). Without one the coupon is a legacy node: exact matches only."""
+    record = {
         "Rule": (
             "rings at z = 0 and z = MetalThickness: knots = the two metal-arm crossings "
             "(PEC), MetalInteriorKnots at equal fractions of the metal arc (PEC) and "
@@ -148,6 +155,14 @@ def trace_basis_rule(ring_size):
         "Fractions": FRACTION_PARAMETRISATION,
         "MetalLevels": ["0", "MetalThickness"],
     }
+    if connectivity_angle_degrees is not None:
+        record["ConnectivityAngleDegrees"] = float(connectivity_angle_degrees)
+        record["Connectivity"] = (
+            "the bands next to the metal rings are merged in the perimeter order of the "
+            "rule's layout at ConnectivityAngleDegrees (knots by role, box corners by their "
+            "fraction): one triangulation for every coupon of the interpolation segment"
+        )
+    return record
 
 
 def arm_crossing_fractions(radius, angle_degrees):
@@ -366,6 +381,33 @@ class TraceSurface:
         return [index for index, zero in enumerate(self.knot_zero) if zero]
 
 
+def connectivity_keys(layout, key_layout):
+    """Merge keys of a metal ring's vertices for connect_rings_by_fraction: a knot's key is
+    the perimeter fraction of the SAME ROLE (slot) in `key_layout` (the rule's layout at the
+    segment's connectivity angle), a slave's key is its corner fraction. The band
+    triangulation is then constant over the angles sharing the connectivity angle (the
+    fraction-ordered merge flips a quad's diagonal whenever a knot passes a fixed-ring vertex,
+    a jump of the hats; see CornerTraceBasisRule ConnectivityAngleDegrees). Raises when the
+    key order is not the ring's perimeter order (a knot-corner passage lies between the two
+    angles: the triangles would fold)."""
+    key_by_slot = {slot: fraction for fraction, kind, slot in key_layout if kind != "slave"}
+    keyed = []
+    for fraction, kind, slot in layout:
+        key = fraction if kind == "slave" else key_by_slot[slot]
+        keyed.append((key, fraction, kind, slot))
+    keyed.sort(key=lambda vertex: vertex[0])
+    fractions = [vertex[1] for vertex in keyed]
+    descents = sum(
+        1 for previous, following in zip(fractions, fractions[1:] + fractions[:1])
+        if following < previous
+    )
+    if descents > 1:
+        raise ValueError(
+            "the connectivity angle lies across a knot-corner passage from the ring's angle"
+        )
+    return keyed
+
+
 def build_surface(
     radius,
     ring_size,
@@ -374,11 +416,15 @@ def build_surface(
     angle_degrees=None,
     topology="convex",
     cap_centers=False,
+    connectivity_angle_degrees=None,
 ):
     """The trace surface of a corner coupon (TraceSurface). With an angle, the rings at
     metal_levels follow the trace basis rule (metal_ring_layout); without one (the fine
     held-out / probe surfaces, whose traces vanish on the metal band) every ring is the fixed
-    layout and the result carries no slave vertices."""
+    layout and the result carries no slave vertices. With a connectivity angle the bands next
+    to the metal rings are triangulated in the merge order of the rule's layout at THAT angle
+    (connectivity_keys; the knot positions stay those of angle_degrees), else in the
+    perimeter order at angle_degrees."""
     # Keep the trace triangulation conforming to every fabrication plane that
     # reaches the matching surface. The coupon mesh resolves these intersections
     # so the narrow trace hats across the process zone have active boundary DOFs.
@@ -410,26 +456,34 @@ def build_surface(
             if meets_metal
             else fixed_ring_layout(ring_size)
         )
+        if meets_metal and connectivity_angle_degrees is not None:
+            keyed = connectivity_keys(
+                layout,
+                metal_ring_layout(radius, connectivity_angle_degrees, topology, ring_size),
+            )
+            key_of = {(fraction, slot): key for key, fraction, _, slot in keyed}
+        else:
+            key_of = {(fraction, slot): fraction for fraction, _, slot in layout}
         points = ring_points(half_width, level, layout, ring_size)
         knot_offset = surface.basis_size
         knot_count = sum(1 for _, kind, _ in layout if kind != "slave")
         surface.knot_points.extend([None] * knot_count)
         surface.knot_zero.extend([None] * knot_count)
-        ring = []
+        ring = []  # (fraction, knot index or None, merge key) in perimeter order
         pending_slaves = []
         for (fraction, kind, slot), point in zip(layout, points):
             if kind == "slave":
                 pending_slaves.append((fraction, point, len(ring)))
-                ring.append((fraction, None))
+                ring.append((fraction, None, key_of[(fraction, slot)]))
                 continue
             surface.knot_points[knot_offset + slot] = tuple(point)
             surface.knot_zero[knot_offset + slot] = kind == "zero"
-            ring.append((fraction, knot_offset + slot))
+            ring.append((fraction, knot_offset + slot, key_of[(fraction, slot)]))
         if any(point is None for point in surface.knot_points[knot_offset:]):
             raise ValueError("ring layout does not fill every basis slot")
         surface.contour_groups.append(knot_count)
         knot_positions = [
-            position for position, (_, index) in enumerate(ring) if index is not None
+            position for position, (_, index, _) in enumerate(ring) if index is not None
         ]
         for fraction, point, position in pending_slaves:
             before = [p for p in knot_positions if p < position]
@@ -443,19 +497,19 @@ def build_surface(
                 (tuple(point), ring[previous][1], ring[following][1], weight_a)
             )
         rings.append(ring)
-    # Vertex numbering: knots first (basis order), then the slaves in ring order.
+    # Vertex numbering: knots first (basis order), then the slaves in ring (perimeter) order.
+    # The bands are merged in KEY order (= the perimeter order without a connectivity angle).
     slave_counter = [surface.basis_size]
 
     def ring_vertices(ring):
-        fractions, indices = [], []
-        for fraction, index in ring:
-            fractions.append(fraction)
+        keyed = []
+        for fraction, index, key in ring:
             if index is None:
-                indices.append(slave_counter[0])
+                index = slave_counter[0]
                 slave_counter[0] += 1
-            else:
-                indices.append(index)
-        return np.asarray(fractions), indices
+            keyed.append((key, index))
+        keyed.sort(key=lambda vertex: vertex[0])
+        return np.asarray([key for key, _ in keyed]), [index for _, index in keyed]
 
     resolved_rings = [ring_vertices(ring) for ring in rings]
 
@@ -934,6 +988,10 @@ def write_library(
     model_name = f"{topology}-corner-{angle_degrees:g}deg"
     if corner_radius > 0.0:
         model_name += f"-r{corner_radius:g}um"
+    if trace_basis is not None and "ConnectivityAngleDegrees" in trace_basis:
+        # A segment node (one coupon per side of a knot-corner passage shares the angle):
+        # the name carries the segment's connectivity angle (model names are unique).
+        model_name += f"-c{trace_basis['ConnectivityAngleDegrees']:g}"
     reference = (
         [*corner_center(angle_degrees, corner_radius), 0.0]
         if topology == "convex" and corner_radius > 0.0
@@ -1019,6 +1077,14 @@ def main():
     parser.add_argument("--fabricated-mesh", type=Path, required=True)
     parser.add_argument("--radius", type=float, default=2.0)
     parser.add_argument("--angle", type=float, default=90.0)
+    parser.add_argument(
+        "--connectivity-angle",
+        type=float,
+        default=None,
+        help="segment connectivity angle of a corner family node (degrees; the band merge "
+        "order of the rule's layout at this angle; recorded as TraceBasis "
+        "ConnectivityAngleDegrees); default: the perimeter order at --angle (legacy node)",
+    )
     parser.add_argument("--corner-radius", type=float, default=0.0)
     parser.add_argument("--ring-size", type=int, default=8)
     parser.add_argument("--order", type=int, default=1)
@@ -1046,6 +1112,13 @@ def main():
         parser.error("the straight anchor (--angle 180) has no corner radius")
     if not 0.0 <= args.corner_radius < args.radius:
         parser.error("--corner-radius must lie in [0, radius)")
+    if args.connectivity_angle is not None and (
+        not 0.0 < args.connectivity_angle < 180.0 or args.corner_radius > 0.0
+    ):
+        parser.error(
+            "--connectivity-angle must lie strictly between zero and 180 degrees and is a "
+            "sharp corner family option"
+        )
     tangent_distance = (
         0.0 if is_straight_anchor(args.angle)
         else args.corner_radius / np.tan(0.5 * np.deg2rad(args.angle))
@@ -1124,6 +1197,7 @@ def main():
         args.overetch_depth,
         angle_degrees=args.angle,
         topology=args.topology,
+        connectivity_angle_degrees=args.connectivity_angle,
     )
     points = np.asarray(surface.knot_points)
     contour_groups = surface.contour_groups
@@ -1198,7 +1272,7 @@ def main():
         args.trench_rounding,
         args.substrate_permittivity,
         interface_layers,
-        trace_basis_rule(args.ring_size),
+        trace_basis_rule(args.ring_size, args.connectivity_angle),
     )
 
     fine_surface = build_surface(

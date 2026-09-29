@@ -144,14 +144,86 @@ CornerBoxSeed MakeCornerBoxSeed(double radius, double metal_thickness, double ov
 
 // The trace basis of the family at any corner angle: the node's fixed rings (its own
 // points) and the metal rings laid out by the rule at `angle_radians`, triangulated by
-// perimeter fraction (equal vertex sets reproduce the generator's connect_rings). Used for
-// the runtime model of an interpolated corner (the nodes' knot semantics are the same; the
-// positions at the device angle are the rule's) and, at a node's own angle, to check a
-// coupon's files against the rule.
+// perimeter fraction (equal vertex sets reproduce the generator's connect_rings). With a
+// connectivity angle the bands next to the metal rings are merged in the order of the rule's
+// layout at THAT angle (the generator's connectivity_keys: a knot's key is its role's
+// fraction at the connectivity angle, a slave's its corner), so the triangulation is the
+// same for every angle of a segment (throws when a knot-corner passage lies between the two
+// angles: the triangles would fold). Used for the runtime model of an interpolated corner
+// (the nodes' knot semantics are the same; the positions at the device angle are the
+// rule's, the connectivity the segment's) and, at a node's own angle, to check a coupon's
+// files against the rule.
 ConstructedCornerTraceBasis BuildCornerTraceBasis(
     const std::vector<std::array<double, 3>> &node_points,
     const std::vector<int> &contour_groups, const std::vector<int> &zero_trace_indices,
-    double angle_radians, bool convex, const CornerTraceBasisRule &rule);
+    double angle_radians, bool convex, const CornerTraceBasisRule &rule,
+    std::optional<double> connectivity_angle_radians = std::nullopt);
+
+// Geometric events of the rule's trace basis in the corner angle (corner-qualification
+// block 2026-09-29): a knot of a ring that meets the metal passes a vertex of the fixed
+// layout — a box corner (`corner` true) or a side midpoint (`corner` false). At every such
+// angle the band triangulation of the perimeter-ordered merge flips a quad diagonal and the
+// hats JUMP (measured O(1)); a knot passing a box corner also swaps its order with the
+// corner's slave vertex, so no connectivity is continuous across it. Every event in
+// (0, 180) degrees of every knot (crossings, metal-interior and free), sorted by angle. The
+// `fraction` is the fixed-layout vertex passed.
+struct CornerBasisEvent
+{
+  double angle_degrees = 0.0;
+  std::string role;
+  double fraction = 0.0;
+  bool corner = false;
+};
+
+std::vector<CornerBasisEvent> CornerBasisEvents(bool convex, const CornerTraceBasisRule &rule);
+
+// Angle-interpolation stencil of the corner family (MatchCornerFamily's window rule,
+// mirrored by corner_family_interpolation.py). Nodes are the family's sharp coupons of one
+// convexity: angle and, for coupons built with a segment connectivity (TraceBasis
+// ConnectivityAngleDegrees), that angle; a coupon without one is a LEGACY node (the
+// perimeter-ordered merge at its own angle). Rule: coupons sharing a connectivity angle
+// form a SEGMENT whose node angles must lie in one corner-event-free interval together
+// with the connectivity angle (fail closed otherwise); a device angle strictly inside a
+// segment's node range is interpolated by Lagrange on the segment's nodes nearest to it
+// (cubic on four, else quadratic / linear: never across a corner event); an angle equal to a
+// node (within the tolerance) is exact — with several coupons at that angle the legacy one
+// (the tie triangulation of the recorded 90 / 135 / 180 coupons) is preferred, else the
+// coupon of the lower-angle segment; legacy nodes are never interpolated (their bases jump
+// at every event: refused with the reason); outside the node range refused (no
+// extrapolation). `reason` is empty when a stencil was found. The node tolerance is
+// closed on the exact side and open on the interior side with the same floating-point
+// difference (|node - angle| <= tol exact, > tol interior): an angle at the boundary is
+// never in no segment (qualification review 2026-09-29 m1).
+struct CornerFamilyNode
+{
+  double angle_degrees = 0.0;
+  std::optional<double> connectivity_angle_degrees;
+  std::size_t index = 0;
+};
+
+struct CornerFamilyStencil
+{
+  std::vector<std::pair<std::size_t, double>> nodes;  // (node index, Lagrange weight)
+  std::string rule;                                   // exact / linear / quadratic / cubic
+  std::optional<double> connectivity_angle_degrees;   // the segment's (interpolated)
+  std::size_t base = 0;                               // the nearest node of the stencil
+  double min_angle_degrees = 0.0, max_angle_degrees = 0.0;  // the family's node range
+  std::string reason;
+};
+
+CornerFamilyStencil SelectCornerFamilyStencil(const std::vector<CornerFamilyNode> &nodes,
+                                              double angle_degrees, bool convex,
+                                              const CornerTraceBasisRule &rule,
+                                              double angle_tolerance_degrees);
+
+// The structural check of a corner family's segments (decision 137 (1), verified at library
+// load by ReadProcessLibrary, fail closed): every segment's connectivity angle off the
+// knot-corner passages and its nodes in one event-free interval with it, one coupon per
+// angle within a segment, segments overlapping at shared node angles only. Returns the
+// empty string when consistent, else the reason.
+std::string CheckCornerFamilySegments(const std::vector<CornerFamilyNode> &nodes,
+                                      bool convex, const CornerTraceBasisRule &rule,
+                                      double angle_tolerance_degrees);
 
 // The basis gate of a corner coupon (corner-family review 2026-09-29, root cause of the
 // non-90-degree MS / MA over-correction): on every ring that meets the metal (a ring with

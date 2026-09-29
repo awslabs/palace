@@ -10238,7 +10238,25 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "RingSize 8, MetalInteriorKnots 1, FreeKnots 5, Fractions PerimeterArcLength; "
          "knot coincidence 1e-6 of the perimeter: a free or metal-interior knot within it "
          "of a fixed fraction k / RingSize takes that fraction, a box corner within it of "
-         "any knot gets no slave vertex)"},
+         "any knot gets no slave vertex). Kink-aware interpolation (corner-qualification "
+         "block 2026-09-29): a stencil never straddles a geometric EVENT of the trace basis "
+         "(a knot of a metal ring passing a fixed-layout vertex: the perimeter-ordered band "
+         "triangulation flips a quad diagonal and the hats jump; convex knot-corner "
+         "passages 90 / 135 / 153.434948822922 deg, concave 90 / 135 / 158.198590513648 "
+         "deg; side-midpoint passages convex 141.340191745910, concave 111.801409486352 "
+         "deg); coupons sharing TraceBasis ConnectivityAngleDegrees (the band merge keyed "
+         "by the rule's layout at that angle: one triangulation per SEGMENT, which removes "
+         "the midpoint flips) form a segment with one coupon per side at every knot-corner "
+         "passage; the stencil is Lagrange on the segment's nodes nearest to the angle "
+         "(cubic on four, else the highest order the segment supports), the runtime basis "
+         "constructed with the segment's connectivity; an exact node (|node - angle| <= "
+         "the signature angle tolerance, > it interior: the boundary is never in no "
+         "segment) prefers the legacy coupon at that angle (production libraries carry the "
+         "legacy tie coupons at 90 / 135 / 180, decision 140 (1)), else the lower-angle "
+         "segment's; coupons without the record (legacy) are exact matches only; a segment "
+         "across a passage, two coupons at one angle in a segment or overlapping segments "
+         "fail closed at library load (CheckCornerFamilySegments), a node's trace "
+         "triangulation not the rule's for its connectivity at match time"},
         {"SagittaOverR", kArcSagittaOverRadius},
         {"ArcSampleSpacingOverR", kArcSampleSpacingOverRadius},
         {"ClusterArcChordStepDegrees", kClusterArcChordStepDegrees},
