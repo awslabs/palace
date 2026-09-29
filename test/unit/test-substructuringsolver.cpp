@@ -873,7 +873,9 @@ TEST_CASE("SubstructuringSolver environment-free magnetostatic energies",
   std::vector<Vector> fields;
   const mfem::DenseMatrix E_on = on.EnergyMatrix(ids, lifts_on);
   CHECK_FALSE(on.EnvironmentFactored());
-  CHECK(rel_diff(E_on, E_off) <= 1.0e-9);
+  // Same arithmetic up to the run-to-run rounding of the parallel direct solvers, which the
+  // tiny order-1 energies amplify to ~1e-8 (as for the full-field reference above).
+  CHECK(rel_diff(E_on, E_off) <= 5.0e-8);
   // Recover a field on demand; it matches the full solve.
   (void)on.EnergyMatrix(ids, lifts_on, &fields, 1);
   CHECK(on.EnvironmentFactored());

@@ -41,6 +41,22 @@ namespace palace
 namespace
 {
 
+// MFEM integrator using the quadrature order of Palace's own operators, so the condensed
+// discretization matches the native one also on curved meshes.
+template <typename Integrator>
+class NativeQuadrature : public Integrator
+{
+public:
+  using Integrator::Integrator;
+  void AssembleElementMatrix(const mfem::FiniteElement &el, mfem::ElementTransformation &T,
+                             mfem::DenseMatrix &M) override
+  {
+    this->IntRule =
+        &mfem::IntRules.Get(el.GetGeomType(), fem::DefaultIntegrationOrder::Get(T));
+    Integrator::AssembleElementMatrix(el, T, M);
+  }
+};
+
 // Piecewise-constant (per element attribute) matrix coefficient for anisotropic materials.
 // Attributes absent from the map contribute a zero tensor (e.g. environment attributes when
 // assembling the region operator).
@@ -568,7 +584,7 @@ struct SubstructuringSolver::Impl
     {
       if (with_curl)
       {
-        a.AddDomainIntegrator(new mfem::CurlCurlIntegrator(coef));
+        a.AddDomainIntegrator(new NativeQuadrature<mfem::CurlCurlIntegrator>(coef));
       }
       const int max_attr = parent.attributes.Size() ? parent.attributes.Max() : 1;
       mfem::Vector mass(max_attr);
@@ -583,13 +599,13 @@ struct SubstructuringSolver::Impl
       mfem::PWConstCoefficient mcoef(mass);  // outlives Assemble() below
       if (with_mass)
       {
-        a.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(mcoef));
+        a.AddDomainIntegrator(new NativeQuadrature<mfem::VectorFEMassIntegrator>(mcoef));
       }
       a.Assemble();
       a.Finalize();
       return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
     }
-    a.AddDomainIntegrator(new mfem::DiffusionIntegrator(coef));
+    a.AddDomainIntegrator(new NativeQuadrature<mfem::DiffusionIntegrator>(coef));
     a.Assemble();
     a.Finalize();
     return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
@@ -1420,7 +1436,7 @@ struct SubstructuringSolver::Impl
     mfem::ParBilinearForm a(env_sfes.get());
     if (magnetostatic)
     {
-      a.AddDomainIntegrator(new mfem::CurlCurlIntegrator(coef));
+      a.AddDomainIntegrator(new NativeQuadrature<mfem::CurlCurlIntegrator>(coef));
       const int am = env_submesh->attributes.Size() ? env_submesh->attributes.Max() : 1;
       mfem::Vector mass(am);
       mass = 0.0;
@@ -1429,12 +1445,12 @@ struct SubstructuringSolver::Impl
         mass(attr - 1) = kMagRegularization;
       }
       mfem::PWConstCoefficient mcoef(mass);
-      a.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(mcoef));
+      a.AddDomainIntegrator(new NativeQuadrature<mfem::VectorFEMassIntegrator>(mcoef));
       a.Assemble();
       a.Finalize();
       return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
     }
-    a.AddDomainIntegrator(new mfem::DiffusionIntegrator(coef));
+    a.AddDomainIntegrator(new NativeQuadrature<mfem::DiffusionIntegrator>(coef));
     a.Assemble();
     a.Finalize();
     return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
