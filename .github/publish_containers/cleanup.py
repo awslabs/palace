@@ -102,7 +102,7 @@ def sweep(api, discover_fn) -> Plan:
     enough to keep a racing publish safe: `Publish Containers` only publishes
     from a build that was dispatched on, and authorized against, a branch that
     already existed — so any channel that can land while discovery runs comes
-    from a branch already in `live_before`. The one case a later sample would add
+    from a branch already in that sample. The one case a later sample would add
     is a branch created after this sample, but its build cannot have finished
     publishing yet, so there is nothing of its to delete this run; the next
     scheduled sweep sees it.
