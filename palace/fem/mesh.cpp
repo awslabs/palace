@@ -401,29 +401,30 @@ const CrackSides &Mesh::GetCrackSides(const std::vector<int> &attr_list) const
   {
     return crack_sides;
   }
-  if (mesh::HasHangingEntities(*mesh))
+  const int bdr_attr_max = mesh->bdr_attributes.Size() ? mesh->bdr_attributes.Max() : 0;
+  mfem::Array<int> marker(bdr_attr_max);
+  marker = 0;
+  for (auto attr : key)
   {
-    // For example a nonconforming mesh from a previous adaptive simulation.
+    if (attr > 0 && attr <= bdr_attr_max)
+    {
+      marker[attr - 1] = 1;
+    }
+  }
+  if (!mesh::HasHangingEntities(*mesh))
+  {
+    crack_sides = mesh::ComputeCrackSides(*mesh, marker);
+  }
+  else if (!mesh::ReconstructCrackSides(*mesh, marker, crack_sides))
+  {
+    // The sides of a nonconforming mesh refined in this simulation are inherited through
+    // the refinements, so this is for example a mesh from a previous adaptive simulation.
     Mpi::Warning(mesh->GetComm(),
-                 "Interior boundaries cannot be identified on a nonconforming mesh which "
-                 "was not refined in this simulation, error estimation will assume "
-                 "continuous fluxes across interior boundaries!\n");
+                 "Interior boundaries cannot be identified on this nonconforming mesh, "
+                 "error estimation will assume continuous fluxes across interior "
+                 "boundaries!\n");
     crack_sides.copy.assign(mesh->GetNE(), 0);
     crack_sides.split.assign(mesh->GetNE(), 0);
-  }
-  else
-  {
-    const int bdr_attr_max = mesh->bdr_attributes.Size() ? mesh->bdr_attributes.Max() : 0;
-    mfem::Array<int> marker(bdr_attr_max);
-    marker = 0;
-    for (auto attr : key)
-    {
-      if (attr > 0 && attr <= bdr_attr_max)
-      {
-        marker[attr - 1] = 1;
-      }
-    }
-    crack_sides = mesh::ComputeCrackSides(*mesh, marker);
   }
   crack_attr_list = std::move(key);
   crack_mesh = mesh.get();
