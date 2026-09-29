@@ -31,6 +31,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/surfaceimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/surfacepostoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/surfacerationalimpedanceoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/superconductorsheetoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/timeoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/waveportoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/waveportreducedmodel.cpp
