@@ -41,7 +41,7 @@
       {
         "Attributes": [2],  // Inner and outer conductors
         "PenetrationDepth": 0.4,  // λ, μm
-        "Thickness": 0.1  // t, μm
+        "Thickness": 0.1  // d, μm
       }
     ],
     "SurfaceCurrent":
