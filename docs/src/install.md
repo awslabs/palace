@@ -206,6 +206,9 @@ Additional build options are (with default values in brackets):
   - `PALACE_WITH_GSLIB [ON]` :  Build with GSLIB library for high-order field interpolation
   - `PALACE_WITH_SUNDIALS [ON]` : Build with SUNDIALS ODE solver library
   - `PALACE_BUILD_WITH_SANITIZERS [OFF]` :  Build with AddressSanitizer and UndefinedBehaviorSanitizer
+  - `PALACE_GIT_COMMIT_ID []` :  Version string to embed (reported as `GitTag` in
+    `palace.json`), for builds from a source tree without Git metadata. When empty, the
+    `PALACE_GIT_COMMIT_ID` environment variable is used if set, otherwise `git describe`
 
 The build step is invoked by running (for example with 4 `make` threads)
 
