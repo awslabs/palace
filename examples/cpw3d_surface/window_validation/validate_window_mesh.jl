@@ -67,8 +67,9 @@ function tetrahedron_volume(p1, p2, p3, p4)
     ax, ay, az = p2[1] - p1[1], p2[2] - p1[2], p2[3] - p1[3]
     bx, by, bz = p3[1] - p1[1], p3[2] - p1[2], p3[3] - p1[3]
     cx, cy, cz = p4[1] - p1[1], p4[2] - p1[2], p4[3] - p1[3]
-    return (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) /
-           6
+    return (
+        ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)
+    ) / 6
 end
 
 gmsh.initialize()
@@ -80,9 +81,11 @@ try
         gmsh.model.get_physical_name(dimension, tag) => (dimension, tag) for
         (dimension, tag) in gmsh.model.get_physical_groups()
     )
-    get(groups, "substrate", nothing) == (3, 1) || error("Expected substrate = 3D attribute 1")
+    get(groups, "substrate", nothing) == (3, 1) ||
+        error("Expected substrate = 3D attribute 1")
     get(groups, "vacuum", nothing) == (3, 2) || error("Expected vacuum = 3D attribute 2")
-    surface_groups = sort!([(tag, name) for (name, (dimension, tag)) in groups if dimension == 2])
+    surface_groups =
+        sort!([(tag, name) for (name, (dimension, tag)) in groups if dimension == 2])
     isempty(surface_groups) && error("No physical surfaces")
     rules = Dict(tag => adjacency_rule(name) for (tag, name) in surface_groups)
     name_of = Dict(tag => name for (tag, name) in surface_groups)
@@ -106,7 +109,9 @@ try
         area = 0.0
         for (element_nodes, node_count) in element_blocks(2, tag)
             for offset = 0:node_count:(length(element_nodes) - node_count)
-                a, b, c = element_nodes[offset + 1], element_nodes[offset + 2], element_nodes[offset + 3]
+                a, b, c = element_nodes[offset + 1],
+                element_nodes[offset + 2],
+                element_nodes[offset + 3]
                 face = sorted_face(a, b, c)
                 haskey(surface_index, face) &&
                     error("Surface face in more than one physical group: $face ($name)")
@@ -130,8 +135,10 @@ try
         volume = 0.0
         for (element_nodes, node_count) in element_blocks(3, attribute)
             for offset = 0:node_count:(length(element_nodes) - node_count)
-                a, b, c, d = element_nodes[offset + 1], element_nodes[offset + 2],
-                element_nodes[offset + 3], element_nodes[offset + 4]
+                a, b, c, d = element_nodes[offset + 1],
+                element_nodes[offset + 2],
+                element_nodes[offset + 3],
+                element_nodes[offset + 4]
                 for face in (
                     sorted_face(a, b, c),
                     sorted_face(a, b, d),
@@ -143,7 +150,9 @@ try
                     attribute == 1 ? (substrate_adjacent[index] += 1) :
                     (vacuum_adjacent[index] += 1)
                 end
-                volume += abs(tetrahedron_volume(node_xyz[a], node_xyz[b], node_xyz[c], node_xyz[d]))
+                volume += abs(
+                    tetrahedron_volume(node_xyz[a], node_xyz[b], node_xyz[c], node_xyz[d])
+                )
                 count += 1
             end
         end
@@ -210,7 +219,7 @@ try
     output = replace(MESH, r"\.msh2$" => ".validation.json")
     open(output, "w") do stream
         JSON.print(stream, validation, 2)
-        println(stream)
+        return println(stream)
     end
     println("Validated: ", MESH)
     println("Nodes: ", length(node_tags), ", tetrahedra: ", length(volume_tags))

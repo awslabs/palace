@@ -29,7 +29,8 @@ const DEVICE_LAYOUT_ROOT = get(
 include(joinpath(DEVICE_LAYOUT_ROOT, "examples", "SingleTransmon", "SingleTransmon.jl"))
 using .SingleTransmon
 
-length(ARGS) == 2 || error("Usage: export_transmon_polygon_set.jl TANGENTIAL_UM OUTPUT.json")
+length(ARGS) == 2 ||
+    error("Usage: export_transmon_polygon_set.jl TANGENTIAL_UM OUTPUT.json")
 const TANGENTIAL_UM = parse(Float64, ARGS[1])
 const OUTPUT = abspath(ARGS[2])
 
@@ -46,7 +47,10 @@ inside_surfaces =
     unique(reduce(vcat, (group_surfaces(name) for name in ("metal", "port_1", "port_2"))))
 bounds(name) = reduce(
     (a, b) -> (min.(a[1:3], b[1:3])..., max.(a[4:6], b[4:6])...),
-    (gmsh.model.get_bounding_box(entity...) for entity in SolidModels.dimtags(solid_model[name, 3]))
+    (
+        gmsh.model.get_bounding_box(entity...) for
+        entity in SolidModels.dimtags(solid_model[name, 3])
+    )
 )
 substrate_bounds = bounds("substrate")
 vacuum_bounds = bounds("vacuum")
@@ -104,13 +108,15 @@ function curve_vertices(tag)
     return vcat([start_xy], interior, [end_xy])
 end
 
-signed_area(points) = 0.5 * sum(
-    points[i][1] * points[mod1(i + 1, length(points))][2] -
-    points[mod1(i + 1, length(points))][1] * points[i][2] for i in eachindex(points)
-)
+signed_area(points) =
+    0.5 * sum(
+        points[i][1] * points[mod1(i + 1, length(points))][2] -
+        points[mod1(i + 1, length(points))][1] * points[i][2] for i in eachindex(points)
+    )
 
 function face_loops(face)
-    face_curves = [abs(tag) for (_, tag) in gmsh.model.get_boundary([face], false, false, false)]
+    face_curves =
+        [abs(tag) for (_, tag) in gmsh.model.get_boundary([face], false, false, false)]
     endpoints = Dict(tag => curve_endpoints(tag) for tag in face_curves)
     incident = Dict{Int32, Vector{Int32}}()
     for (tag, (a, b)) in endpoints
@@ -156,8 +162,16 @@ for (index, face) in enumerate(fused)
     holes = loops[order[2:end]]
     loop_area = abs(signed_area(outer)) - sum(abs(signed_area(h)) for h in holes; init=0.0)
     println(
-        "Face ", face[2], ": OCC area ", areas[index], ", polygon area ", loop_area,
-        ", outer vertices ", length(outer), ", holes ", length(holes)
+        "Face ",
+        face[2],
+        ": OCC area ",
+        areas[index],
+        ", polygon area ",
+        loop_area,
+        ", outer vertices ",
+        length(outer),
+        ", holes ",
+        length(holes)
     )
     push!(
         polygons,
@@ -202,7 +216,7 @@ polygon_set = Dict(
 mkpath(dirname(OUTPUT))
 open(OUTPUT, "w") do stream
     JSON.print(stream, polygon_set, 2)
-    println(stream)
+    return println(stream)
 end
 gmsh.finalize()
 println("Saved ", OUTPUT)

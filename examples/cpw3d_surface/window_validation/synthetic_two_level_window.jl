@@ -72,7 +72,10 @@ function synthetic_two_level_window(; scale=1.0, gap_z=4.8, substrate=20.0)
             )
         ],
         "Bumps" => [
-            Dict("Conductor" => "ground", "Footprint" => regular_polygon(15.0s, 8.0s, 4.0s, 16))
+            Dict(
+                "Conductor" => "ground",
+                "Footprint" => regular_polygon(15.0s, 8.0s, 4.0s, 16)
+            )
         ],
         "Vacuum" => Dict("Below" => 0.0, "Above" => 0.0),
         "Terminals" => ["trace_l1", "trace_l2"]
@@ -87,6 +90,6 @@ if abspath(PROGRAM_FILE) == @__FILE__
     scale = isnothing(index) ? 1.0 : parse(Float64, ARGS[index + 1])
     open(positional[1], "w") do stream
         JSON.print(stream, synthetic_two_level_window(; scale=scale), 2)
-        println(stream)
+        return println(stream)
     end
 end

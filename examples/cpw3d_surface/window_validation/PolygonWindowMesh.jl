@@ -145,8 +145,9 @@ function read_polygon_set(data::AbstractDict)
     1 <= length(planes) <= 2 || error("One or two planes are supported")
     sort!(planes; by=p -> p.surface_z)
     if length(planes) == 2
-        planes[1].facing == 1 && planes[2].facing == -1 ||
-            error("Two planes must be a lower plane facing up and an upper plane facing down")
+        planes[1].facing == 1 && planes[2].facing == -1 || error(
+            "Two planes must be a lower plane facing up and an upper plane facing down"
+        )
         planes[2].surface_z - planes[1].surface_z >
         2 * Float64(get(process, "MetalThickness", 0.1)) ||
             error("Planes too close for two metal bands")
@@ -267,13 +268,12 @@ function plan_partitions(spec::PolygonSet)
     rectangle_fragments = Set(fragment_map[1])
     surfaces = sort!(collect(rectangle_fragments))
     n_planes = length(spec.planes)
-    classes = Dict(
-        surface => PartitionClass(fill("", n_planes), 0) for surface in surfaces
-    )
+    classes = Dict(surface => PartitionClass(fill("", n_planes), 0) for surface in surfaces)
     for (tool_index, (plane_index, bump_index, label)) in enumerate(tool_meaning)
         for fragment in fragment_map[tool_index + 1]
-            haskey(classes, fragment) ||
-                error("A polygon of $(label) leaves the plan rectangle (fragment $fragment)")
+            haskey(classes, fragment) || error(
+                "A polygon of $(label) leaves the plan rectangle (fragment $fragment)"
+            )
             class = classes[fragment]
             if plane_index > 0
                 isempty(class.conductors[plane_index]) || error(
@@ -384,8 +384,10 @@ function z_levels(spec::PolygonSet, metal_layers::Int, trench_layers::Int)
         lower, upper = planes
         z_bottom = lower.surface_z - lower.substrate_thickness - spec.vacuum_below
         z_top = upper.surface_z + upper.substrate_thickness + spec.vacuum_above
-        spec.vacuum_below > 0.0 && push!(backsides, lower.surface_z - lower.substrate_thickness)
-        spec.vacuum_above > 0.0 && push!(backsides, upper.surface_z + upper.substrate_thickness)
+        spec.vacuum_below > 0.0 &&
+            push!(backsides, lower.surface_z - lower.substrate_thickness)
+        spec.vacuum_above > 0.0 &&
+            push!(backsides, upper.surface_z + upper.substrate_thickness)
     else
         plane = planes[1]
         s, f = plane.surface_z, plane.facing
@@ -506,9 +508,17 @@ function mesh_plan(
     gmsh.option.set_number("Mesh.BoundaryLayerFanElements", 7)
     gmsh.option.set_number("Mesh.Algorithm", 6)
     verbose && println(
-        "Plan partitions: ", length(copies), ", metal-edge curves: ",
-        length(metal_edge_curves), ", boundary layer first=", radial_um, " um, layers=",
-        radial_layers, ", thickness=", radial_thickness, " um"
+        "Plan partitions: ",
+        length(copies),
+        ", metal-edge curves: ",
+        length(metal_edge_curves),
+        ", boundary layer first=",
+        radial_um,
+        " um, layers=",
+        radial_layers,
+        ", thickness=",
+        radial_thickness,
+        " um"
     )
 
     raw_triangles = Tuple{NTuple{3, Point2}, Int}[]
@@ -536,18 +546,24 @@ function mesh_plan(
         coordinate_by_tag = Dict{UInt64, Point2}()
         for (index, tag) in enumerate(node_tags)
             abs(node_coordinates[3index]) <= 1.0e-6 || error("Plan node is not on z=0")
-            coordinate_by_tag[tag] = (node_coordinates[3index - 2], node_coordinates[3index - 1])
+            coordinate_by_tag[tag] =
+                (node_coordinates[3index - 2], node_coordinates[3index - 1])
         end
         area = 0.0
         element_types, _, nodes_by_type = gmsh.model.mesh.get_elements(2, surface[2])
         for (element_type, element_nodes) in zip(element_types, nodes_by_type)
-            _, dimension, _, node_count, _, primary = gmsh.model.mesh.get_element_properties(element_type)
+            _, dimension, _, node_count, _, primary =
+                gmsh.model.mesh.get_element_properties(element_type)
             dimension == 2 || continue
             primary in (3, 4) || error("Expected triangular or quadrilateral plan elements")
             for offset = 0:node_count:(length(element_nodes) - node_count)
                 corners = [coordinate_by_tag[element_nodes[offset + i]] for i = 1:primary]
-                split = primary == 3 ? ((corners[1], corners[2], corners[3]),) :
-                        ((corners[1], corners[2], corners[3]), (corners[1], corners[3], corners[4]))
+                split =
+                    primary == 3 ? ((corners[1], corners[2], corners[3]),) :
+                    (
+                        (corners[1], corners[2], corners[3]),
+                        (corners[1], corners[3], corners[4])
+                    )
                 for triangle in split
                     area += triangle_area(triangle...)
                     push!(raw_triangles, (triangle, copy_class[copy_index]))
@@ -558,10 +574,20 @@ function mesh_plan(
         abs(area - occ_area) <= 1.0e-6 * max(1.0, occ_area) ||
             error("Partition $(surface[2]) mesh area $area differs from OCC area $occ_area")
         verbose && println(
-            "  partition ", copy_index, "/", length(copies), " surface ", surface[2],
-            " class ", class_list[copy_class[copy_index]].conductors,
-            " bump ", class_list[copy_class[copy_index]].bump, " area ", area,
-            " sources ", length(sources)
+            "  partition ",
+            copy_index,
+            "/",
+            length(copies),
+            " surface ",
+            surface[2],
+            " class ",
+            class_list[copy_class[copy_index]].conductors,
+            " bump ",
+            class_list[copy_class[copy_index]].bump,
+            " area ",
+            area,
+            " sources ",
+            length(sources)
         )
         field == 0 || gmsh.model.mesh.field.remove(field)
         gmsh.model.mesh.clear(copies)
@@ -588,10 +614,15 @@ function mesh_plan(
     triangles = NTuple{3, Int}[]
     triangle_class = Int[]
     for (triangle, class) in raw_triangles
-        push!(triangles, (node_index(triangle[1]), node_index(triangle[2]), node_index(triangle[3])))
+        push!(
+            triangles,
+            (node_index(triangle[1]), node_index(triangle[2]), node_index(triangle[3]))
+        )
         push!(triangle_class, class)
     end
-    return PlanMesh(xy, triangles, triangle_class, class_list), radial_layers, radial_thickness
+    return PlanMesh(xy, triangles, triangle_class, class_list),
+    radial_layers,
+    radial_thickness
 end
 
 # Plan edge -> owning triangles; metal perimeter edges per plane / bump with their conductor.
@@ -641,7 +672,12 @@ function plan_topology(spec::PolygonSet, plan::PlanMesh)
             bump_edge_conductor[edge] = spec.bumps[max(c1.bump, c2.bump)].conductor
         end
     end
-    return PlanTopology(edge_incidence, length(open_edges), plane_edge_conductor, bump_edge_conductor)
+    return PlanTopology(
+        edge_incidence,
+        length(open_edges),
+        plane_edge_conductor,
+        bump_edge_conductor
+    )
 end
 
 function edge_metrics(plan::PlanMesh, topology::PlanTopology, radial_um, tangential_um)
@@ -715,11 +751,15 @@ end
 
 # ---------------------------------------------------------------------------------------------
 
-signed_volume(p1, p2, p3, p4) = (
-    (p2[1] - p1[1]) * ((p3[2] - p1[2]) * (p4[3] - p1[3]) - (p3[3] - p1[3]) * (p4[2] - p1[2])) -
-    (p2[2] - p1[2]) * ((p3[1] - p1[1]) * (p4[3] - p1[3]) - (p3[3] - p1[3]) * (p4[1] - p1[1])) +
-    (p2[3] - p1[3]) * ((p3[1] - p1[1]) * (p4[2] - p1[2]) - (p3[2] - p1[2]) * (p4[1] - p1[1]))
-) / 6
+signed_volume(p1, p2, p3, p4) =
+    (
+        (p2[1] - p1[1]) *
+        ((p3[2] - p1[2]) * (p4[3] - p1[3]) - (p3[3] - p1[3]) * (p4[2] - p1[2])) -
+        (p2[2] - p1[2]) *
+        ((p3[1] - p1[1]) * (p4[3] - p1[3]) - (p3[3] - p1[3]) * (p4[1] - p1[1])) +
+        (p2[3] - p1[3]) *
+        ((p3[1] - p1[1]) * (p4[2] - p1[2]) - (p3[2] - p1[2]) * (p4[1] - p1[1]))
+    ) / 6
 
 function face_area(p1, p2, p3)
     ux, uy, uz = p2[1] - p1[1], p2[2] - p1[2], p2[3] - p1[3]
@@ -764,10 +804,20 @@ function mesh_polygon_window(
         edge_metrics(plan, topology, radial_um, tangential_um)
     components = conductor_components(spec, plan, topology)
     verbose && println(
-        "Plan nodes: ", length(plan.xy), ", triangles: ", length(plan.triangles),
-        ", metal perimeter edges: ", metal_edge_count, "\nTangent (um): ", tangent_summary,
-        "\nFirst-layer normal height (um): ", height_summary, ", outliers > 1.5 r: ",
-        height_outliers, "\nConductor components: ", components
+        "Plan nodes: ",
+        length(plan.xy),
+        ", triangles: ",
+        length(plan.triangles),
+        ", metal perimeter edges: ",
+        metal_edge_count,
+        "\nTangent (um): ",
+        tangent_summary,
+        "\nFirst-layer normal height (um): ",
+        height_summary,
+        ", outliers > 1.5 r: ",
+        height_outliers,
+        "\nConductor components: ",
+        components
     )
     stack = z_levels(spec, metal_layers, trench_layers)
     zs = stack.levels
@@ -785,7 +835,8 @@ function mesh_polygon_window(
         "trench_layers" => trench_layers,
         "planes" => [
             Dict(
-                "name" => p.name, "surface_z_um" => p.surface_z,
+                "name" => p.name,
+                "surface_z_um" => p.surface_z,
                 "facing" => p.facing == 1 ? "up" : "down",
                 "substrate_thickness_um" => p.substrate_thickness
             ) for p in spec.planes
@@ -804,7 +855,8 @@ function mesh_polygon_window(
         "substrate_backsides_z_um" => stack.backsides,
         "z_levels" => zs,
         "attributes" => Dict(
-            name => Dict("dimension" => d, "attribute" => a) for (d, a, name) in physical_names(spec)
+            name => Dict("dimension" => d, "attribute" => a) for
+            (d, a, name) in physical_names(spec)
         )
     )
     plan_only && return manifest
@@ -813,12 +865,13 @@ function mesh_polygon_window(
     n_plan = length(plan.xy)
     n_levels = length(zs)
     material_table = [
-        material(spec, class, 0.5 * (zs[i] + zs[i + 1])) for class in plan.classes,
-        i = 1:(n_levels - 1)
+        material(spec, class, 0.5 * (zs[i] + zs[i + 1])) for
+        class in plan.classes, i = 1:(n_levels - 1)
     ]
     nodes = Vector{NTuple{3, Float64}}(undef, n_plan * n_levels)
     for level = 1:n_levels, index = 1:n_plan
-        nodes[(level - 1) * n_plan + index] = (plan.xy[index][1], plan.xy[index][2], zs[level])
+        nodes[(level - 1) * n_plan + index] =
+            (plan.xy[index][1], plan.xy[index][2], zs[level])
     end
     tetrahedra = NTuple{4, Int32}[]
     tetrahedron_attribute = Int8[]
@@ -848,7 +901,12 @@ function mesh_polygon_window(
             lower = Int32((interval - 1) * n_plan)
             upper = Int32(interval * n_plan)
             push_prism!(
-                lower + t[1], lower + t[2], lower + t[3], upper + t[1], upper + t[2], upper + t[3],
+                lower + t[1],
+                lower + t[2],
+                lower + t[3],
+                upper + t[1],
+                upper + t[2],
+                upper + t[3],
                 attribute
             )
         end
@@ -869,7 +927,8 @@ function mesh_polygon_window(
     sizehint!(face_data, 2 * length(tetrahedra) + length(plan.triangles) * 4)
     for (index, t) in enumerate(tetrahedra)
         attribute = tetrahedron_attribute[index]
-        for face in ((t[1], t[2], t[3]), (t[1], t[2], t[4]), (t[1], t[3], t[4]), (t[2], t[3], t[4]))
+        for face in
+            ((t[1], t[2], t[3]), (t[1], t[2], t[4]), (t[1], t[3], t[4]), (t[2], t[3], t[4]))
             a, b, c = face
             a > b && ((a, b) = (b, a))
             b > c && ((b, c) = (c, b))
@@ -892,10 +951,11 @@ function mesh_polygon_window(
     end
     base_index(node) = mod(Int(node) - 1, n_plan) + 1
     level_index(node) = (Int(node) - 1) ÷ n_plan + 1
-    lower_metal_top = spec.planes[1].surface_z + spec.planes[1].facing * spec.metal_thickness
-    upper_metal_bottom = length(spec.planes) == 2 ?
-                         spec.planes[2].surface_z + spec.planes[2].facing * spec.metal_thickness :
-                         NaN
+    lower_metal_top =
+        spec.planes[1].surface_z + spec.planes[1].facing * spec.metal_thickness
+    upper_metal_bottom =
+        length(spec.planes) == 2 ?
+        spec.planes[2].surface_z + spec.planes[2].facing * spec.metal_thickness : NaN
 
     surface_elements = Tuple{Int, NTuple{3, Int32}}[]
     for (face, (count, attribute_sum)) in face_data
@@ -915,10 +975,12 @@ function mesh_polygon_window(
                         Tuple(sort(unique(base_index.(collect(face))))),
                         0
                     )
-                    class_index > 0 || error("Horizontal face is not a plan triangle at z=$z")
+                    class_index > 0 ||
+                        error("Horizontal face is not a plan triangle at z=$z")
                     class = plan.classes[class_index]
                     label = class.conductors[k]
-                    isempty(label) && error("Horizontal metal face without conductor at z=$z")
+                    isempty(label) &&
+                        error("Horizontal metal face without conductor at z=$z")
                     attribute = side == :air ? table[label][1] : table[label][2]
                 end
             else
@@ -937,12 +999,14 @@ function mesh_polygon_window(
                         d = plane.facing * (zmid - plane.surface_z)
                         if 0.0 < d < spec.metal_thickness
                             label = get(topology.plane_edge_conductor[k], edge, "")
-                            isempty(label) && error("Sidewall face off the metal perimeter at z=$zmid")
+                            isempty(label) &&
+                                error("Sidewall face off the metal perimeter at z=$zmid")
                         end
                     end
                     if isempty(label) && lower_metal_top < zmid < upper_metal_bottom
                         label = get(topology.bump_edge_conductor, edge, "")
-                        isempty(label) && error("Bump sidewall face off a bump perimeter at z=$zmid")
+                        isempty(label) &&
+                            error("Bump sidewall face off a bump perimeter at z=$zmid")
                     end
                     isempty(label) && error("Unclassified vertical face at z=$zmid")
                     attribute = table[label][1]
@@ -976,7 +1040,8 @@ function mesh_polygon_window(
     end
     tetrahedra = [(remap[t[1]], remap[t[2]], remap[t[3]], remap[t[4]]) for t in tetrahedra]
     surface_elements = [
-        (attribute, (remap[f[1]], remap[f[2]], remap[f[3]])) for (attribute, f) in surface_elements
+        (attribute, (remap[f[1]], remap[f[2]], remap[f[3]])) for
+        (attribute, f) in surface_elements
     ]
     nodes = compacted
 
@@ -998,17 +1063,23 @@ function mesh_polygon_window(
         key = string(tetrahedron_attribute[index])
         volume_counts[key] = get(volume_counts, key, 0) + 1
         volumes[key] =
-            get(volumes, key, 0.0) + signed_volume(nodes[t[1]], nodes[t[2]], nodes[t[3]], nodes[t[4]])
+            get(volumes, key, 0.0) +
+            signed_volume(nodes[t[1]], nodes[t[2]], nodes[t[3]], nodes[t[4]])
     end
     for (d, a, name) in names
-        d == 2 && a != 9 && !haskey(surface_counts, string(a)) &&
+        d == 2 &&
+            a != 9 &&
+            !haskey(surface_counts, string(a)) &&
             error("Physical surface $name (attribute $a) is empty")
     end
 
     mkpath(dirname(output))
     open(output, "w") do stream
         print(stream, "\$MeshFormat\n2.2 0 8\n\$EndMeshFormat\n")
-        written_names = filter(entry -> entry[1] == 3 || haskey(surface_counts, string(entry[2])), names)
+        written_names = filter(
+            entry -> entry[1] == 3 || haskey(surface_counts, string(entry[2])),
+            names
+        )
         print(stream, "\$PhysicalNames\n$(length(written_names))\n")
         for (dimension, tag, name) in written_names
             print(stream, "$dimension $tag \"$name\"\n")
@@ -1033,7 +1104,7 @@ function mesh_polygon_window(
                 "$element 4 2 $attribute $attribute $(t[1]) $(t[2]) $(t[3]) $(t[4])\n"
             )
         end
-        print(stream, "\$EndElements\n")
+        return print(stream, "\$EndElements\n")
     end
     merge!(
         manifest,
@@ -1054,12 +1125,23 @@ function mesh_polygon_window(
     )
     open(replace(output, r"\.msh2$" => ".json"), "w") do stream
         JSON.print(stream, manifest, 2)
-        println(stream)
+        return println(stream)
     end
     verbose && println(
-        "Saved ", output, ": nodes ", length(nodes), ", tetrahedra ", length(tetrahedra),
-        ", surface triangles ", length(surface_elements), "\nSurface counts: ", surface_counts,
-        "\nSurface areas (um^2): ", surface_areas, "\nVolumes (um^3): ", volumes
+        "Saved ",
+        output,
+        ": nodes ",
+        length(nodes),
+        ", tetrahedra ",
+        length(tetrahedra),
+        ", surface triangles ",
+        length(surface_elements),
+        "\nSurface counts: ",
+        surface_counts,
+        "\nSurface areas (um^2): ",
+        surface_areas,
+        "\nVolumes (um^3): ",
+        volumes
     )
     return manifest
 end
