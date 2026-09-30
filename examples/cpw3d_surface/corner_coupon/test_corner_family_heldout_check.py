@@ -179,6 +179,11 @@ class CornerFamilyHeldoutCheckTest(unittest.TestCase):
         code, record, _ = self.run_check(self.family_with_basis_points(band), trace="recorded")
         self.assertEqual(record["TraceForms"], ["band"])
         self.assertFalse(record["Gating"])
+        # The band trace recomputed on caches that record option-(c) coefficients (the verdict
+        # reported alongside the gating one).
+        code, record, _ = self.run_check(self.family_with_basis_points(heldout_trace), trace="band")
+        self.assertEqual(code, 0, record)
+        self.assertEqual((record["TraceSource"], record["TraceForms"], record["Gating"]), ("band", ["band"], False))
 
     def test_cubic_segment_reproduces_a_cubic_held_out_coupon(self):
         code, record, _ = self.run_check(self.segment())

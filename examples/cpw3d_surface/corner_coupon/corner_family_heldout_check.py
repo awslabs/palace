@@ -28,7 +28,9 @@ to the free knots next to the metal) or "option-c" (decision 149 (6): zero on th
 only) — or "recorded-unclassified" when it matches neither or the cache has no basis points.
 --trace option-c recomputes the option-(c) coefficients from basis-points.csv + the coupon
 spec with generate_corner_response.heldout_potential (the committed generator), so the verdict
-is a property of the family and not of the generator version that wrote the cache. Which trace
+is a property of the family and not of the generator version that wrote the cache; --trace band
+recomputes the band coefficients likewise (the verdict reported alongside on a family whose
+caches record option-(c) coefficients). Which trace
 GATES a family is a USER decision; the tool records the form it used (TraceForm in the JSON
 record, trace_form in the CSV) and never chooses. Fail closed: a held-out coefficient vector
 whose length differs from the matrix size, or a zero fabricated held-out energy, is an error.
@@ -67,7 +69,7 @@ INTERFACES = {1: "SA", 2: "MS", 3: "MA"}
 DEFECTS = ("domain", "SA", "MS", "MA")
 FABRICATED = ("domain_fab", "SA_fab", "MS_fab", "MA_fab")
 GATED = ("SA_fab", "MS_fab", "MA_fab")
-TRACE_SOURCES = ("recorded", "option-c")
+TRACE_SOURCES = ("recorded", "option-c", "band")
 TRACE_FORM_BAND, TRACE_FORM_OPTION_C, TRACE_FORM_UNCLASSIFIED = "band", "option-c", "recorded-unclassified"
 TRACE_CLASSIFICATION_TOLERANCE = 1.0e-9
 
@@ -126,10 +128,11 @@ def generator_traces(d, spec):
 def heldout_trace(d, spec, trace_source):
     """(trace, TraceForm) for one coupon directory under the requested trace source."""
     forms = generator_traces(d, spec)
-    if trace_source == "option-c":
+    if trace_source in ("option-c", "band"):
         if forms is None:
-            raise FileNotFoundError(f"{d}: --trace option-c needs basis-points.csv to recompute the held-out trace")
-        return forms[TRACE_FORM_OPTION_C], TRACE_FORM_OPTION_C
+            raise FileNotFoundError(f"{d}: --trace {trace_source} needs basis-points.csv to recompute the held-out trace")
+        form = TRACE_FORM_OPTION_C if trace_source == "option-c" else TRACE_FORM_BAND
+        return forms[form], form
     if trace_source != "recorded":
         raise ValueError(f"unknown trace source {trace_source!r}; one of {TRACE_SOURCES}")
     trace = np.loadtxt(d / "heldout-coefficients.csv", delimiter=",", skiprows=1, ndmin=1)
@@ -306,9 +309,9 @@ def main():
                              "TraceBasis.ConnectivityAngleDegrees record")
     parser.add_argument("--trace", choices=TRACE_SOURCES, default="recorded",
                         help="the held-out trace: the cache's heldout-coefficients.csv (classified band | option-c | "
-                             "recorded-unclassified) or the option-(c) coefficients recomputed from basis-points.csv + "
-                             "the coupon spec; the family's VERDICT is the run on the gate file's GatingTrace "
-                             "(option-c, USER decision 161 (2)), any other run is reported alongside")
+                             "recorded-unclassified), or the option-(c) or the band coefficients recomputed from "
+                             "basis-points.csv + the coupon spec; the family's VERDICT is the run on the gate file's "
+                             "GatingTrace (option-c, USER decision 161 (2)), any other run (band) is reported alongside")
     parser.add_argument("--gates", type=Path, default=GATES_FILE)
     parser.add_argument("--json", type=Path, help="the verdict record (the gate file's digest, both forms, the verdict)")
     args = parser.parse_args()
