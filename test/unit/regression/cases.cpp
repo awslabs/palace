@@ -68,18 +68,17 @@ palace::test::CustomCheck TestFarfield(double rtol)
   };
 }
 
-// Generalised magnitude comparison for any CSV with paired
-// "Re{X} (unit)" / "Im{X} (unit)" complex columns. For each Re column
-// it pairs the matching Im (looked up by header_text), then compares
-// |X| = sqrt(Re^2 + Im^2) at the case's tolerances. Real-only columns
-// (frequency, V_inc, etc.) fall through to the same WithinRel ||
-// WithinAbs check the default comparator uses. Used for adaptive
-// frequency sweeps where the ROM-interpolated phase wobbles at zero
-// crossings but |X| tracks the converged response.
-palace::test::CustomCheck CompareComplexMagnitudes(double rtol, double atol)
+// Generalised comparison for any CSV with paired "Re{X} (unit)" / "Im{X} (unit)" complex
+// columns. For each Re column it pairs the matching Im (looked up by header_text), then
+// compares either the magnitudes |X| = sqrt(Re^2 + Im^2), or the complex values with a
+// tolerance relative to |X| (|X_a - X_r| <= rtol * max(|X_a|, |X_r|)), at the case's
+// tolerances. Real-only columns (frequency, V_inc, etc.) fall through to the same
+// WithinRel || WithinAbs check the default comparator uses.
+palace::test::CustomCheck CompareComplexColumns(double rtol, double atol,
+                                                bool magnitude_only)
 {
-  return [rtol, atol](palace::Table &actual, palace::Table &reference,
-                      const std::filesystem::path &)
+  return [rtol, atol, magnitude_only](palace::Table &actual, palace::Table &reference,
+                                      const std::filesystem::path &)
   {
     auto find_by_header = [](palace::Table &t, const std::string &h) -> palace::Column *
     {
@@ -130,8 +129,18 @@ palace::test::CustomCheck CompareComplexMagnitudes(double rtol, double atol)
           const double mag_a = std::sqrt(re_av * re_av + im_av * im_av);
           const double mag_r = std::sqrt(re_rv * re_rv + im_rv * im_rv);
           INFO("row " << r + 1 << " |" << hdr.substr(3, hdr.find('}', 3) - 3) << "|");
-          CHECK_THAT(mag_a, Catch::Matchers::WithinRel(mag_r, rtol) ||
-                                Catch::Matchers::WithinAbs(mag_r, atol));
+          if (magnitude_only)
+          {
+            CHECK_THAT(mag_a, Catch::Matchers::WithinRel(mag_r, rtol) ||
+                                  Catch::Matchers::WithinAbs(mag_r, atol));
+          }
+          else
+          {
+            const double diff = std::hypot(re_av - re_rv, im_av - im_rv);
+            INFO("actual = " << re_av << " + " << im_av << "i, reference = " << re_rv
+                             << " + " << im_rv << "i");
+            CHECK(diff <= std::max(atol, rtol * std::max(mag_a, mag_r)));
+          }
         }
         continue;
       }
@@ -146,6 +155,21 @@ palace::test::CustomCheck CompareComplexMagnitudes(double rtol, double atol)
       }
     }
   };
+}
+
+// Compare the magnitudes of complex columns. Used for adaptive frequency sweeps where the
+// ROM-interpolated phase wobbles at zero crossings but |X| tracks the converged response.
+palace::test::CustomCheck CompareComplexMagnitudes(double rtol, double atol)
+{
+  return CompareComplexColumns(rtol, atol, true);
+}
+
+// Compare complex columns as complex values, relative to their magnitude. Used for probed
+// field components, whose real or imaginary part can be much smaller than their magnitude
+// (near a zero crossing), where the relative error of that part alone is not meaningful.
+palace::test::CustomCheck CompareComplexValues(double rtol, double atol)
+{
+  return CompareComplexColumns(rtol, atol, false);
 }
 
 // Compare port-S.csv as complex scattering amplitudes rather than separately comparing
@@ -1393,6 +1417,8 @@ TEST_CASE("cpw_lumped_uniform", "[Serial][Parallel][GPU][Regression]")
   opts.atol = 1.0e-11;
   opts.excluded_columns = {"Maximum", "Minimum"};
   opts.custom_checks["farfield-rE.csv"] = TestFarfield(opts.rtol);
+  opts.custom_checks["probe-E.csv"] = CompareComplexValues(opts.rtol, opts.atol);
+  opts.custom_checks["probe-B.csv"] = CompareComplexValues(opts.rtol, opts.atol);
   palace::test::RunRegressionCase("cpw", "cpw_lumped_uniform.json", "lumped_uniform", opts);
 }
 
