@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <set>
 #include <sstream>
 #include <string_view>
 #include <fmt/format.h>
@@ -1578,7 +1579,7 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
   std::ostringstream errors;
 
   // Check for duplicate indices across LumpedPort, WavePort, FloquetPort,
-  // SurfaceCurrent, FluxLoop, Terminal.
+  // SurfaceCurrent, FluxLoop, FluxLoopExcitation, Terminal.
   std::map<int, std::string> index_map;
   for (const auto &[idx, data] : boundaries.lumpedport)
   {
@@ -1638,6 +1639,25 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
     if (!inserted)
     {
       errors << "Duplicate \"Index\": " << idx << " in " << it->second << " and Terminal\n";
+    }
+  }
+
+  // FluxLoopExcitation entries must reference distinct, defined FluxLoop indices.
+  for (const auto &[idx, data] : boundaries.fluxloopexcitation)
+  {
+    std::set<int> seen;
+    for (int loop_idx : data.flux_loops)
+    {
+      if (boundaries.fluxloop.find(loop_idx) == boundaries.fluxloop.end())
+      {
+        errors << "FluxLoopExcitation " << idx << " references undefined FluxLoop "
+               << loop_idx << "\n";
+      }
+      if (!seen.insert(loop_idx).second)
+      {
+        errors << "FluxLoopExcitation " << idx << " lists FluxLoop " << loop_idx
+               << " more than once\n";
+      }
     }
   }
 

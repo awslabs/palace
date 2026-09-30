@@ -520,6 +520,26 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
           std::vector<int>{7});
   }
 
+  SECTION("FluxLoopExcitation must reference distinct, defined FluxLoops")
+  {
+    auto make = [](const json &loops)
+    {
+      return json{{"FluxLoop",
+                   {{{"Index", 1},
+                     {"FilmAttributes", {8}},
+                     {"HoleAttributes", {9}},
+                     {"FluxAmounts", {1.0}},
+                     {"Direction", "+Z"}}}},
+                  {"FluxLoopExcitation",
+                   {{{"Index", 2},
+                     {"FluxLoops", loops},
+                     {"FluxAmounts", json::array_t(loops.size(), 1.0)}}}}};
+    };
+    CHECK(!config::Validate(config::BoundaryData(make({1}))).has_value());
+    CHECK(config::Validate(config::BoundaryData(make({3}))).has_value());
+    CHECK(config::Validate(config::BoundaryData(make({1, 1}))).has_value());
+  }
+
   SECTION("SurfaceCurrent Aperture is element-owned, sorted, and normalized")
   {
     json boundaries = {

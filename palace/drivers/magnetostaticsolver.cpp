@@ -537,17 +537,20 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       ksp.Mult(RHS_comb, A_exc);
       if (!ksp.GetConverged())
       {
-        // Diagnostic excitation only: warn and skip. Do NOT touch solve_converged_ (that
-        // gates AMR halting of the inductance sweep).
+        // Warn and skip. Only gate AMR (solve_converged_) when no sweep solves ran, since
+        // the excitations then drive the refinement.
         Mpi::Warning(curlcurl_op.GetComm(),
                      "FluxLoopExcitation {:d} combined solve did not converge; skipping!\n",
                      exc_idx);
+        if (n_step == 0)
+        {
+          solve_converged_ = false;
+        }
         continue;
       }
 
-      // Volume magnetic energy (domain energy is volume-only for flux states). Opt-in field
-      // save, independent of the Save sweep count, into the shared magnetostatic
-      // collection.
+      // Volume magnetic energy (domain energy is volume-only for flux states). The field
+      // save follows SaveField, independent of the Save sweep count.
       Curl.Mult(A_exc, B_exc);
       int step = n_step + exc_counter++;
       if (exc.save_field)
@@ -555,6 +558,10 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         post_op.RequestFieldSave(static_cast<std::size_t>(step));
       }
       double e_mag_volume = post_op.MeasureAndPrintAll(step, A_exc, B_exc, exc_idx);
+      if (n_step == 0)
+      {
+        estimator.AddErrorIndicator(B_exc, e_mag_volume, indicator);
+      }
       if (exc.save_field)
       {
         Mpi::Print("Wrote FluxLoopExcitation {:d} field to {}\n", exc_idx,
@@ -689,8 +696,9 @@ void MagnetostaticSolver::PostprocessTerminals(
   // mutual inductances only between ports that are Open when inactive; other off-diagonals
   // are set to NaN and Minv/Mm are computed over the Open-Open sub-block only.
   int n_current = static_cast<int>(surf_j_op.Size());
-  int n_flux = static_cast<int>(surf_flux_op.Size());
   int n = A.size();
+  // Swept flux steps only: zero when FluxLoopMatrixSweep is off.
+  int n_flux = n - n_current;
 
   // Mark which columns have a well-defined reciprocal mutual (Open-when-inactive ports).
   // Flux loops always share one operator, so they are all reciprocal.
@@ -982,8 +990,11 @@ void MagnetostaticSolver::PostprocessTerminals(
       AddTerminal(idx, j++);
 
     // Add flux loops
-    for (const auto &[idx, data] : surf_flux_op)
-      AddTerminal(idx, j++);
+    if (n_flux > 0)
+    {
+      for (const auto &[idx, data] : surf_flux_op)
+        AddTerminal(idx, j++);
+    }
 
     output.WriteFullTableTrunc();
   };
