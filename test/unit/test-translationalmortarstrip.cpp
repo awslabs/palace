@@ -113,13 +113,15 @@ FabricatedResponse(const SurfaceResponseOperator &response, LaplaceOperator &lap
 // The translational surface mortar (TraceCoupling SurfaceMortar) projects the device trace
 // of every translational patch over the patch's longitudinal cell of its edge portion — the
 // strip of the portion length that the patch's quadrature weight measures — and not in the
-// single cross-section of its quadrature point (decision 152: before the fix the
-// dimensionless Patch.weight = l / CouponDepth was used as the strip length, so every
-// patch was one cross-section). For a potential that is linear along the edge the strip
-// average is the value at the cell midpoint, which differs from the value at the Gauss
-// point: with the isolated-edge quadrature (two Gauss points per portion, cells = the
-// halves) the fabricated surface energy ratio of the longitudinally varying potential to
-// the longitudinally constant one must be the weighted mean of the squared potential
+// single cross-section of its quadrature point nor over a strip of another length (decision
+// 152: before the fix the dimensionless Patch.weight = l / CouponDepth was used as the
+// strip length in the nondimensional mesh coordinates, a strip of l x Lc / CouponDepth
+// centred on the Gauss point: five cells here, 3.8 on the transmon, one cross-section where
+// that length is below the mortar resolution). For a potential that is linear along the
+// edge the strip average is the value at the cell midpoint, which differs from the value at
+// the Gauss point: with the isolated-edge quadrature (two Gauss points per portion, cells =
+// the halves) the fabricated surface energy ratio of the longitudinally varying potential
+// to the longitudinally constant one must be the weighted mean of the squared potential
 // factor at the cell midpoints. The Features construction (the device path) is checked
 // with the recorded strips of the patch dry run; the legacy 3D construction through the
 // patch assignments (its dry run carries no quadrature patches).

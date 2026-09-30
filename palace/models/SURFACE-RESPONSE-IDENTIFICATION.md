@@ -962,11 +962,13 @@ transpose alike): the patch coefficient is the trace's LENGTH-AVERAGE over its c
 patch energy `weight x c^T Q c` is the Jensen lower bound of the strip's energy and the sum
 over a portion is a surface functional of the field over the whole matched perimeter. A
 patch without a cell ({0, 0}: 2D, spatial and vertex models, explicit configuration syntax)
-is one cross-section at its origin. Before bb156715e + this fix the dimensionless weight was
-used as the strip length (`mortar_longitudinal_subdivisions`, `longitudinal_coordinate`), so
-every 3D translational patch was the transverse projection in the single cross-section of its
-Gauss point (realised as a strip only for `CouponDepth` = 1 mesh unit); the fixed-trace and
-self-consistent trace maps both change with the fix.
+is one cross-section at its origin. Before this fix the dimensionless weight was used as the
+strip length in the solver's nondimensional mesh coordinates (`mortar_longitudinal_subdivisions`,
+`longitudinal_coordinate`), i.e. a strip of l_cell x Lc / `CouponDepth` centred on the Gauss
+point (Lc the mesh's characteristic length): 3.8 cells on the transmon (Lc 4 mm, `CouponDepth`
+1055 um; ~3 slices overlapping the neighbouring cells), one cross-section where that length is
+below the mortar resolution (small islands); the fixed-trace and self-consistent trace maps both
+change with the fix wherever the strips were not already single slices.
 
 **Vertex-feature frames** (`Frame` of the manifest, shared by the library builder): corner:
 x = the first arm away from the (virtual) corner, the arms ordered so that the second is

@@ -14359,9 +14359,10 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   // owning rank (one int and one double per element dof: ~0.7 kB at p5 on tetrahedra,
   // 56 dofs; ~2.6 kB on hexahedra, 216 dofs) plus ~50 B of query bookkeeping, so the
   // bound corresponds to ~2.8 TB of stencils at p5 on tetrahedra spread over the ranks. The
-  // translational strips sample their longitudinal cells at the contour resolution: the
-  // transmon device (20,874 translational patches, 35 mm of matched perimeter) needs
-  // ~2e8 points on its initial mesh and ~1e9 after 11 AMR cycles at p5.
+  // translational strips sample their longitudinal cells at the local mortar resolution
+  // (the element size at the patch's first basis point): the transmon device (17,395
+  // translational patches, 35 mm of matched perimeter, 4 mm characteristic length) needs
+  // 4.3e6 points on its initial mesh and 1.0e7 after 11 AMR cycles at p4 (measured).
   constexpr long long int maximum_experimental_mortar_points = 4000000000LL;
   MFEM_VERIFY(config->trace_coupling !=
                       ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR ||
