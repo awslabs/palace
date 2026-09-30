@@ -759,6 +759,44 @@ bool ReferencesSameMemory(const C &c1, const C &c2)
          (m1.DeviceIsValid() && m2.DeviceIsValid() && c1.Read() == c2.Read());
 }
 
+// Apply the essential dofs shared by the operators to their sum, with the highest diagonal
+// policy among them in enum order.
+template <typename Ops, typename SumOperType>
+void SetSumEssentialTrueDofs(const Ops &ops, SumOperType &O)
+{
+  // Extract essential dof pointer from first operator with one.
+  auto it_ess = std::find_if(ops.begin(), ops.end(), [](auto p)
+                             { return p != nullptr && p->GetEssentialTrueDofs(); });
+  if (it_ess == ops.end())
+  {
+    return;
+  }
+  const auto *ess_dofs = (*it_ess)->GetEssentialTrueDofs();
+
+  // Check other existent essential dof arrays are references.
+  MFEM_VERIFY(std::all_of(ops.begin(), ops.end(),
+                          [&](auto p)
+                          {
+                            if (p == nullptr)
+                            {
+                              return true;
+                            }
+                            auto p_ess_dofs = p->GetEssentialTrueDofs();
+                            return p_ess_dofs == nullptr ||
+                                   ReferencesSameMemory(*ess_dofs, *p_ess_dofs);
+                          }),
+              "If essential dofs are set, all suboperators must agree on them!");
+
+  // Use implied ordering of enumeration.
+  Operator::DiagonalPolicy policy = Operator::DiagonalPolicy::DIAG_ZERO;
+  for (auto p : ops)
+  {
+    policy = (p && p->GetEssentialTrueDofs()) ? std::max(policy, p->GetDiagonalPolicy())
+                                              : policy;
+  }
+  O.SetEssentialTrueDofs(*ess_dofs, policy);
+}
+
 // Combine a collection of ParOperator into a weighted summation. If set_essential is true,
 // extract the essential dofs from the operator array, and apply to the summed operator.
 template <std::size_t N>
@@ -789,39 +827,8 @@ BuildParSumOperator(const std::array<double, N> &coeff,
   auto O = std::make_unique<ParOperator>(std::move(sum), fespace);
   if (set_essential)
   {
-    // Extract essential dof pointer from first operator with one.
-    auto it_ess = std::find_if(ops.begin(), ops.end(), [](auto p)
-                               { return p != nullptr && p->GetEssentialTrueDofs(); });
-    if (it_ess == ops.end())
-    {
-      return O;
-    }
-    const auto *ess_dofs = (*it_ess)->GetEssentialTrueDofs();
-
-    // Check other existent essential dof arrays are references.
-    MFEM_VERIFY(std::all_of(ops.begin(), ops.end(),
-                            [&](auto p)
-                            {
-                              if (p == nullptr)
-                              {
-                                return true;
-                              }
-                              auto p_ess_dofs = p->GetEssentialTrueDofs();
-                              return p_ess_dofs == nullptr ||
-                                     ReferencesSameMemory(*ess_dofs, *p_ess_dofs);
-                            }),
-                "If essential dofs are set, all suboperators must agree on them!");
-
-    // Use implied ordering of enumeration.
-    Operator::DiagonalPolicy policy = Operator::DiagonalPolicy::DIAG_ZERO;
-    for (auto p : ops)
-    {
-      policy = (p && p->GetEssentialTrueDofs()) ? std::max(policy, p->GetDiagonalPolicy())
-                                                : policy;
-    }
-    O->SetEssentialTrueDofs(*ess_dofs, policy);
+    SetSumEssentialTrueDofs(ops, *O);
   }
-
   return O;
 }
 
@@ -888,32 +895,7 @@ BuildParSumOperator(const std::vector<std::complex<double>> &coeff,
   auto O = std::make_unique<ComplexParOperator>(std::move(sumr), std::move(sumi), fespace);
   if (set_essential)
   {
-    auto it_ess = std::find_if(ops.begin(), ops.end(), [](auto p)
-                               { return p != nullptr && p->GetEssentialTrueDofs(); });
-    if (it_ess == ops.end())
-    {
-      return O;
-    }
-    const auto *ess_dofs = (*it_ess)->GetEssentialTrueDofs();
-    MFEM_VERIFY(std::all_of(ops.begin(), ops.end(),
-                            [&](auto p)
-                            {
-                              if (p == nullptr)
-                              {
-                                return true;
-                              }
-                              auto p_ess_dofs = p->GetEssentialTrueDofs();
-                              return p_ess_dofs == nullptr ||
-                                     ReferencesSameMemory(*ess_dofs, *p_ess_dofs);
-                            }),
-                "If essential dofs are set, all suboperators must agree on them!");
-    Operator::DiagonalPolicy policy = Operator::DiagonalPolicy::DIAG_ZERO;
-    for (auto p : ops)
-    {
-      policy = (p && p->GetEssentialTrueDofs()) ? std::max(policy, p->GetDiagonalPolicy())
-                                                : policy;
-    }
-    O->SetEssentialTrueDofs(*ess_dofs, policy);
+    SetSumEssentialTrueDofs(ops, *O);
   }
   return O;
 }
