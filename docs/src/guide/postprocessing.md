@@ -105,11 +105,7 @@ file. These include:
     [https://arxiv.org/pdf/1509.01854.pdf](https://arxiv.org/pdf/1509.01854.pdf) or
     [https://aip.scitation.org/doi/10.1063/1.3637047](https://aip.scitation.org/doi/10.1063/1.3637047)
     for more information. The participation ratios and associated quality factors are
-    written to the file `surface-Q.csv` in the specified output directory. On
-    [interior boundaries](boundaries.md#Interior-boundaries) with boundary conditions
-    modeling sheets, such as thin metal sheets, the `"Default"`, `"MA"`, and `"MS"` types
-    sum the contributions of both sides, each with its own dielectric layer; dielectric
-    layers on a substrate-air interface should use the `"SA"` type.
+    written to the file `surface-Q.csv` in the specified output directory.
 
 ## Visualization
 

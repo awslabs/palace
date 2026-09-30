@@ -31,21 +31,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Introduced the `"AbsTol"` option for linear solvers, defaulting to 0.0, to allow using
     an absolute tolerance when defining convergence. SchemaVer 2-1-0
     [PR 734](https://github.com/awslabs/palace/pull/734).
-  - Error estimation for adaptive mesh refinement no longer requires cracking the mesh along
-    interior boundaries such as thin metal sheets: the smooth flux recovery uses finite
-    element spaces which are discontinuous ("broken") across interior boundaries with
-    boundary conditions modeling sheets (PEC, ground, terminal, impedance, conductivity,
-    superconductor, flux loop film, lumped port, and surface current boundaries), giving the
-    same error estimates as a mesh cut along them without modifying the mesh, on conformal
-    and nonconformal meshes (including adapted meshes saved by a previous simulation). See
-    the new section on interior boundaries in the boundary condition guide.
-    [Issue 975](https://github.com/awslabs/palace/issues/975).
-  - Added the `"Crack"` option to `"Impedance"`, `"RationalImpedance"`, and `"Conductivity"`
-    boundaries, which selects the physical model of an interior sheet: a thin film coupling
-    the fields on its two sides (`false`, the mesh is not modified) or a conductor much
-    thicker than its penetration depth with two independent faces (`true`, the mesh is
-    cracked along the boundary). The default is `false`.
-    [Issue 975](https://github.com/awslabs/palace/issues/975).
+  - Error estimation for adaptive mesh refinement now uses broken finite element spaces, allowing
+    discontinuous fields across interior boundaries without cracking the mesh. Mesh cracking
+    is now a per-boundary physical modeling choice (see Interface Changes).
+    [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
 
 #### Interface Changes
 
@@ -54,38 +43,28 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     accepts arrays for `HoleAttributes`/`FluxAmounts`). Existing `FluxLoop` configurations
     must be updated. SchemaVer 2-0-0.
     [PR 929](https://github.com/awslabs/palace/pull/929).
-  - By default, the mesh is now only cracked along interior boundaries with boundary
+  - Added the `"Crack"` option to `"Impedance"`, `"RationalImpedance"`, and `"Conductivity"`
+    boundaries, which selects the physical model of an interior sheet: a thin film coupling
+    the fields on its two sides (`false`, the mesh is not modified) or a conductor much
+    thicker than its penetration depth with two independent faces (`true`, the mesh is
+    cracked along the boundary). The default is `false`.
+    [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
+  - The mesh is now only cracked by default along interior boundaries with boundary
     conditions which apply to either side separately (PMC or zero charge, and absorbing
     boundaries), and along conductivity and impedance boundaries with `"Crack": true`.
     Interior PEC, ground, wave port PEC, impedance, rational impedance, conductivity, and
-    surface current boundaries are no longer cracked. For PEC boundaries this does not
-    change the model, but it removes the extra refinement of the elements next to them
-    required for cracking, which changes results slightly. Interior impedance and
-    conductivity boundaries are now modeled as thin films (for conductivity boundaries with
-    the admittance of both faces, which gives half the conductor loss of the cracked model
-    when the current flows on one face only), and interior surface current sources as single
-    current sheets: cracking them decoupled the fields on the two faces of the source, which
-    overestimated the extracted inductance (by about 30% for the microstrip regression
-    case). Specifying `config["Model"]["CrackInternalBoundaryElements"]` is deprecated:
-    `true` restores the previous behavior of cracking all interior boundaries with boundary
-    conditions except for lumped ports, and `false` disables cracking entirely.
-    SchemaVer 3-0-0.
-    [Issue 975](https://github.com/awslabs/palace/issues/975).
-  - Interface dielectric energies of types `"Default"`, `"MA"`, and `"MS"` on uncracked
-    interior sheets (for example metal sheets surrounded by vacuum on both sides, such as
-    air bridges) sum the energies of both faces, as previously obtained with the cracked
-    mesh, instead of the energy of the average of the fields of both sides. Surface flux
-    postprocessing on these boundaries is unchanged for `"TwoSided": true`, and with
-    `"TwoSided": false` now gives the average of both sides rather than their sum.
-    [Issue 975](https://github.com/awslabs/palace/issues/975).
+    surface current boundaries are no longer cracked. Specifying
+    `config["Model"]["CrackInternalBoundaryElements"]` is deprecated: `true` restores the
+    previous behavior of cracking all interior boundaries with boundary conditions except for
+    lumped ports, and `false` disables cracking entirely. SchemaVer 3-0-0.
+    [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
+  - Surface flux postprocessing with `"TwoSided": false` on interior boundaries which are no
+    longer cracked gives the average of the fluxes on the two sides, instead of the sum of the
+    fluxes of the two faces of the cracked mesh.
+    [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
 
 #### Bug Fixes
 
-  - Fixed interior conductivity boundaries without mesh cracking, which applied the surface
-    impedance of only one of the two conductor surfaces of the sheet. The `"External"`
-    option of conductivity boundaries now only affects the thickness correction, and is
-    ignored (with a warning) on interior boundaries which are not cracked.
-    [Issue 975](https://github.com/awslabs/palace/issues/975).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every
@@ -115,6 +94,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `Column ... not found in table`, because reloaded CSV tables kept stale column-name
     indices.
     [PR 944](https://github.com/awslabs/palace/pull/944).
+  - Fixed interface dielectric energies on uncracked interior metal sheets (with
+    `config["Model"]["CrackInternalBoundaryElements"]` disabled), which used the energy of
+    the average of the fields of both sides for type `"Default"`, and a single face for
+    types `"MA"` and `"MS"` on sheets with the same material on both sides, such as air
+    bridges. They now give the same results as on a cracked mesh.
+    [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
 
 #### Performance Improvements
 
