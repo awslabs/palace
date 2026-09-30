@@ -579,9 +579,6 @@ void IoData::CheckConfiguration()
   {
     solver.linear.mg_smooth_order = std::max(2 * solver.order, 4);
   }
-  // Superconductor sheets declared in the configuration (before the λ→0 flux-loop films are
-  // registered below).
-  const bool user_superconductors = !boundaries.superconductor.empty();
   // A FilmAttributes boundary not declared a Superconductor is the λ→0 London limit:
   // register it as a sheet with small effective L_ksq = λ⊥ = pec_lperp. The sheet
   // inductance is L_ksq = λ·coth(d/λ); take λ = pec_lperp in its thick-film limit d ≫ λ
@@ -746,13 +743,6 @@ void IoData::CheckConfiguration()
                   "Magnetostatic substructuring does not support \"SurfaceCurrent\" "
                   "excitations yet; use \"FluxLoop\" excitations or remove "
                   "\"Solver.Substructuring\"!");
-      // Flux-loop films are clamped exactly (the λ → 0 limit of the London sheet); a finite
-      // penetration depth needs the kinetic sheet term, which substructuring does not
-      // assemble.
-      MFEM_VERIFY(!user_superconductors,
-                  "Magnetostatic substructuring does not support \"Superconductor\" "
-                  "boundaries (finite London penetration depth) yet; flux-loop films are "
-                  "treated as perfect conductors!");
     }
     std::set<int> region_set(sub.region_attributes.begin(), sub.region_attributes.end());
     for (int a : sub.environment_attributes)

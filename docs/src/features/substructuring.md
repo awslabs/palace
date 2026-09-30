@@ -120,20 +120,21 @@ equivalent for the BLAS in use) avoids oversubscribing cores.
 
 Magnetostatic substructuring extracts the inductance matrix from
 [`config["Boundaries"]["FluxLoop"]`](../config/reference.md#config-boundaries-fluxloop)
-excitations. The `"PEC"` boundaries and the flux-loop films (`"FilmAttributes"`) are the
-Dirichlet boundaries of the condensation, and the films are perfect conductors: the result is
-the limit of the full simulation as the films' `"PecPenetrationDepth"` goes to zero (the full
-simulation models them as thin London sheets with that penetration depth, so the two differ by
-a relative amount of the order of `"PecPenetrationDepth"` in mesh units). A small mass
-regularization keeps the curl-curl operator definite; the extracted energies use the
-unregularized operator.
+excitations, including the kinetic inductance of superconducting films. The `"PEC"` boundaries
+are the Dirichlet boundaries of the condensation. The flux-loop films and the
+[`config["Boundaries"]["Superconductor"]`](../config/reference.md#config-boundaries-superconductor)
+films are London sheets, as in a regular simulation: a film without a `"Superconductor"` entry
+has the penetration depth `"PecPenetrationDepth"`, and a `"Superconductor"` film its own. The
+sheet term of each film face is condensed with the part of the domain the face bounds, so films
+may lie in the region, in the environment, or cross the interface. A saved model includes the
+condensed flux-loop excitations of the environment, so an online run needs no environment
+solve as long as the excitations in the environment are unchanged. A small mass regularization
+keeps the curl-curl operator definite; the extracted energies use the unregularized operator.
 
 !!! note
 
-    `"SurfaceCurrent"` excitations and
-    [`config["Boundaries"]["Superconductor"]`](../config/reference.md#config-boundaries-superconductor)
-    films with a finite penetration depth are not supported with substructuring yet: a
-    configuration that uses them is rejected.
+    `"SurfaceCurrent"` excitations are not supported with substructuring yet: a configuration
+    that uses them is rejected.
 
 ## [Example: transmon capacitance](@id substructuring-transmon-example)
 

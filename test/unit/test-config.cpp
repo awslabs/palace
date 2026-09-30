@@ -224,13 +224,11 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
                       {"Environment", {{"Attributes", {2}}}}}}}}};
     };
     CHECK_NOTHROW(IoData(make_config({{"FluxLoop", flux_loop}}), false));
-    // Finite-λ superconducting films need the kinetic sheet term (not assembled).
+    // Finite-λ superconducting films are London sheets in the condensation.
     const json superconductor = {
         {{"Attributes", {6}}, {"PenetrationDepth", 0.1}, {"Thickness", 0.05}}};
-    CHECK_THROWS_WITH(
-        IoData(make_config({{"FluxLoop", flux_loop}, {"Superconductor", superconductor}}),
-               false),
-        Catch::Matchers::ContainsSubstring("does not support \"Superconductor\""));
+    CHECK_NOTHROW(IoData(
+        make_config({{"FluxLoop", flux_loop}, {"Superconductor", superconductor}}), false));
     CHECK_THROWS_WITH(
         IoData(make_config({{"SurfaceCurrent", surface_current}}), false),
         Catch::Matchers::ContainsSubstring("does not support \"SurfaceCurrent\""));

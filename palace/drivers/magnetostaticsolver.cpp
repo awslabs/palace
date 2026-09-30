@@ -140,8 +140,12 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // flux-loop modes are known, e.g. from a saved model); only the fields to be saved
     // (Solver.Magnetostatic.Save) need the environment interior.
     const int n_save = std::min(iodata.solver.magnetostatic.n_post, n);
+    // Every flux-loop film is a London sheet (a film without a Superconductor entry has the
+    // small penetration depth PecPenetrationDepth), driven by its fluxoid generator.
     std::vector<Vector> A;
-    const mfem::DenseMatrix E = sub.EnergyMatrix(idxs, lifts, &A, n_save);
+    const mfem::DenseMatrix E = sub.HasSheets()
+                                    ? sub.SheetEnergyMatrix(idxs, lifts, &A, n_save)
+                                    : sub.EnergyMatrix(idxs, lifts, &A, n_save);
     mfem::DenseMatrix Minv(n);
     for (int i = 0; i < n; i++)
     {

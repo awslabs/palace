@@ -19,6 +19,7 @@
 #include "fem/mesh.hpp"
 #include "fem/substructure.hpp"
 #include "models/substructuringsolver.hpp"
+#include "models/superconductorsheetoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 
@@ -96,6 +97,7 @@ struct RegionDesign
 {
   double patch_y = 1.0;
   std::array<double, 3> block = {0.0, 0.0, 0.0};
+  bool sheet = false;  // interior boundary (attribute 4) on the plane y = 0.5, all x
 };
 
 // A hex cube whose region (x<0.5, attr 1) and environment (x>0.5, attr 2) have independent
@@ -119,7 +121,7 @@ std::unique_ptr<mfem::ParMesh> MakeGradedSplit(int a, int b, int n,
   const int nx = static_cast<int>(xs.size());
   auto vid = [&](int i, int j, int k) { return (i * (n + 1) + j) * (n + 1) + k; };
   mfem::Mesh serial(3, nx * (n + 1) * (n + 1), (nx - 1) * n * n,
-                    2 * n * n + 4 * (nx - 1) * n, 3);
+                    2 * n * n + 4 * (nx - 1) * n + (design.sheet ? (nx - 1) * n : 0), 3);
   for (int i = 0; i < nx; i++)
   {
     for (int j = 0; j <= n; j++)
@@ -180,6 +182,19 @@ std::unique_ptr<mfem::ParMesh> MakeGradedSplit(int a, int b, int n,
       serial.AddBdrQuad(z0, 3);
       int z1[4] = {vid(i, j, n), vid(i, j + 1, n), vid(i + 1, j + 1, n), vid(i + 1, j, n)};
       serial.AddBdrQuad(z1, 3);
+    }
+  }
+  if (design.sheet)
+  {
+    MFEM_VERIFY(n % 2 == 0, "The interior sheet needs an even n!");
+    for (int i = 0; i < nx - 1; i++)
+    {
+      for (int k = 0; k < n; k++)
+      {
+        const int j = n / 2;
+        int q[4] = {vid(i, j, k), vid(i + 1, j, k), vid(i + 1, j, k + 1), vid(i, j, k + 1)};
+        serial.AddBdrQuad(q, 4);
+      }
     }
   }
   serial.FinalizeHexMesh(1, 0, true);
@@ -1486,6 +1501,218 @@ TEST_CASE("SubstructuringSolver grounded PEC boundaries",
       MonolithCapacitance(mesh.back()->Get(), order, eps_by_attr, 1, {2, 3});
   CAPTURE(C(0, 0), C_mono(0, 0));
   CHECK(std::abs(C(0, 0) - C_mono(0, 0)) <= 1.0e-9 * std::abs(C_mono(0, 0)));
+}
+
+TEST_CASE("SubstructuringSolver London sheet energies", "[substructure][Serial][Parallel]")
+{
+  // Magnetostatics with a London superconductor sheet (finite penetration depth) on an
+  // interior plane crossing the interface: region and environment sheet faces, meeting
+  // Gamma along their edges. Two sheet generators a_k drive the sources M_sheet a_k with
+  // the sheet DOFs free; the energy matrix E_ij = u_i^T K_cc u_j + (u_i - a_i)^T M_sheet
+  // (u_j - a_j) must match a monolith of the same operator (curl-curl + sheet +
+  // regularization, with the same refinement step), offline and after reloading the model.
+  const int order = GENERATE(1, 2);
+  CAPTURE(order);
+  const double mu_r = 1.0, mu_e = 4.0, lambda = 0.2, thickness = 0.05;
+  const std::string model_path = "substruct_london_model.bin";
+  auto make_config = [&](const std::string &mode)
+  {
+    json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains",
+                    {{"Materials",
+                      {{{"Attributes", {1}}, {"Permeability", mu_r}},
+                       {{"Attributes", {2}}, {"Permeability", mu_e}}}}}},
+                   {"Boundaries",
+                    {{"PEC", {{"Attributes", {1, 2}}}},
+                     {"Superconductor",
+                      {{{"Attributes", {4}},
+                        {"PenetrationDepth", lambda},
+                        {"Thickness", thickness}}}}}},
+                   {"Solver",
+                    {{"Order", order},
+                     {"Substructuring",
+                      {{"Region", {{"Attributes", {1}}}},
+                       {"Environment", {{"Attributes", {2}}}},
+                       {"Mode", mode},
+                       {"SaveModel", model_path}}}}}};
+    return IoData(config, false);
+  };
+  RegionDesign design;
+  design.sheet = true;
+  IoData iodata = make_config("Offline");
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(MakeGradedSplit(4, 5, 6, design)));
+  auto &pmesh = mesh.back()->Get();
+
+  // Sheet generators with curl on the sheet (an in-plane rotation and a shear, like
+  // flux-loop generators; a gradient would be a zero-energy state), interpolated on the
+  // sheet DOFs.
+  mfem::ND_FECollection fec(order, 3);
+  mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
+  const int maxb = pmesh.bdr_attributes.Max();
+  mfem::Array<int> sheet_marker(maxb), sheet_tdofs;
+  sheet_marker = 0;
+  sheet_marker[3] = 1;
+  pfes.GetEssentialTrueDofs(sheet_marker, sheet_tdofs);
+  std::vector<Vector> a(2, Vector(pfes.GetTrueVSize()));
+  for (int k = 0; k < 2; k++)
+  {
+    mfem::VectorFunctionCoefficient c(3,
+                                      [k](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v.SetSize(3);
+                                        v = 0.0;
+                                        if (k == 0)
+                                        {
+                                          v(0) = -(x(2) - 0.5);
+                                          v(2) = x(0) - 0.5;
+                                        }
+                                        else
+                                        {
+                                          v(2) = x(0);
+                                        }
+                                      });
+    mfem::ParGridFunction g(&pfes);
+    g.ProjectCoefficient(c);
+    Vector full;
+    g.GetTrueDofs(full);
+    a[k] = 0.0;
+    for (int i : sheet_tdofs)
+    {
+      a[k](i) = full(i);
+    }
+  }
+
+  SubstructuringSolver ss(iodata, mesh);
+  ss.CondenseEnvironment();
+  REQUIRE(ss.HasSheets());
+  const mfem::DenseMatrix E = ss.SheetEnergyMatrix({1, 2}, a);
+  // The full-field path (fields requested) gives the same energies.
+  std::vector<Vector> fields;
+  const mfem::DenseMatrix E_full = ss.SheetEnergyMatrix({1, 2}, a, &fields, 2);
+
+  // Monolith: A = K_cc + M_sheet + eps M, u = A^-1 M_sheet a (PEC pinned), one refinement
+  // step, and the energy formula above.
+  const double L_ksq = SuperconductorSheetOperator::KineticSheetInductance(
+      iodata.boundaries.superconductor[0].lambda_L,
+      iodata.boundaries.superconductor[0].thickness);
+  mfem::Vector nu_by_attr(2), eps_by_attr(2), sheet_by_attr(maxb);
+  nu_by_attr(0) = 1.0 / mu_r;
+  nu_by_attr(1) = 1.0 / mu_e;
+  eps_by_attr = 1.0e-3;  // SubstructuringSolver's regularization
+  sheet_by_attr = 0.0;
+  sheet_by_attr(3) = 1.0 / L_ksq;
+  mfem::PWConstCoefficient nu(nu_by_attr), epsc(eps_by_attr), sheetc(sheet_by_attr);
+  auto assemble = [&](bool curl, bool mass, bool sheet)
+  {
+    mfem::ParBilinearForm f(&pfes);
+    if (curl)
+    {
+      f.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
+    }
+    if (mass)
+    {
+      f.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsc));
+    }
+    if (sheet)
+    {
+      f.AddBoundaryIntegrator(new mfem::VectorFEMassIntegrator(sheetc));
+    }
+    f.Assemble();
+    f.Finalize();
+    return std::unique_ptr<mfem::HypreParMatrix>(f.ParallelAssemble());
+  };
+  auto A = assemble(true, true, true), Kcc = assemble(true, false, false),
+       Ms = assemble(false, false, true), Dm = assemble(false, true, false);
+  mfem::Array<int> pec_marker(maxb), pec_tdofs;
+  pec_marker = 0;
+  pec_marker[0] = pec_marker[1] = 1;
+  pfes.GetEssentialTrueDofs(pec_marker, pec_tdofs);
+  std::unique_ptr<mfem::HypreParMatrix> Ae(A->EliminateRowsCols(pec_tdofs));
+  mfem::HypreAMS ams(*A, &pfes);
+  ams.SetPrintLevel(0);
+  mfem::HyprePCG pcg(*A);
+  pcg.SetTol(1.0e-14);
+  pcg.SetMaxIter(5000);
+  pcg.SetPrintLevel(0);
+  pcg.SetPreconditioner(ams);
+  auto solve = [&](Vector rhs)
+  {
+    for (int i : pec_tdofs)
+    {
+      rhs(i) = 0.0;
+    }
+    Vector x(rhs.Size());
+    x = 0.0;
+    pcg.Mult(rhs, x);
+    return x;
+  };
+  std::vector<Vector> u(2), d(2), Md(2);
+  for (int k = 0; k < 2; k++)
+  {
+    Vector b(a[k].Size());
+    Ms->Mult(a[k], b);
+    u[k] = solve(b);
+    Vector r(b.Size());
+    Dm->Mult(u[k], r);
+    u[k] += solve(r);
+    d[k] = u[k];
+    d[k] -= a[k];
+    Md[k].SetSize(b.Size());
+    Ms->Mult(d[k], Md[k]);
+  }
+  mfem::DenseMatrix E_mono(2);
+  Vector t(pfes.GetTrueVSize());
+  for (int j = 0; j < 2; j++)
+  {
+    Kcc->Mult(u[j], t);
+    for (int i = 0; i < 2; i++)
+    {
+      E_mono(i, j) = mfem::InnerProduct(pmesh.GetComm(), u[i], t) +
+                     mfem::InnerProduct(pmesh.GetComm(), d[i], Md[j]);
+    }
+  }
+  double diff = 0.0, m = 0.0;
+  for (int i = 0; i < 2; i++)
+  {
+    for (int j = 0; j < 2; j++)
+    {
+      diff = std::max(diff, std::abs(E(i, j) - E_mono(i, j)));
+      m = std::max(m, std::abs(E_mono(i, j)));
+    }
+  }
+  CAPTURE(E(0, 0), E_mono(0, 0), E(0, 1), E_mono(0, 1), E(1, 1), E_mono(1, 1));
+  CHECK(std::min(E_mono(0, 0), E_mono(1, 1)) >= 1.0e-3 * m);  // no zero-energy state
+  double dfull = 0.0;
+  for (int i = 0; i < 2; i++)
+  {
+    for (int j = 0; j < 2; j++)
+    {
+      dfull = std::max(dfull, std::abs(E_full(i, j) - E_mono(i, j)));
+    }
+  }
+  CAPTURE(E_full(0, 0), E_full(1, 1));
+  CHECK(dfull <= 1.0e-9 * m);
+  CHECK(diff <= 1.0e-9 * m);
+
+  // Online reuse of the saved model.
+  IoData iodata_on = make_config("Online");
+  std::vector<std::unique_ptr<Mesh>> mesh_on;
+  mesh_on.push_back(std::make_unique<Mesh>(MakeGradedSplit(4, 5, 6, design)));
+  SubstructuringSolver on(iodata_on, mesh_on);
+  on.CondenseEnvironment();
+  const mfem::DenseMatrix E_on = on.SheetEnergyMatrix({1, 2}, a);
+  CHECK_FALSE(on.EnvironmentFactored());
+  double don = 0.0;
+  for (int i = 0; i < 2; i++)
+  {
+    for (int j = 0; j < 2; j++)
+    {
+      don = std::max(don, std::abs(E_on(i, j) - E(i, j)));
+    }
+  }
+  CHECK(don <= 1.0e-9 * m);
 }
 
 TEST_CASE("SubstructuringSolver on a nonconforming mesh",

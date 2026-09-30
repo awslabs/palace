@@ -1034,8 +1034,9 @@ TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
 }
 
 // Region-condensed (substructuring) electrostatic solve: the environment (attr 2) is
-// condensed to a Dirichlet-to-Neumann operator and the region (attr 1) is solved against it,
-// producing the terminal capacitance matrix. Exercises the SubstructuringSolver driver path.
+// condensed to a Dirichlet-to-Neumann operator and the region (attr 1) is solved against
+// it, producing the terminal capacitance matrix. Exercises the SubstructuringSolver driver
+// path.
 TEST_CASE("substructuring_electrostatic", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -1046,11 +1047,11 @@ TEST_CASE("substructuring_electrostatic", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
-// Region-condensed (substructuring) magnetostatic solve on the mirror-split double-circular-
-// hole slab: the environment (right hole, attr 2) is condensed to a DtN operator and the
-// region (left hole, attr 1) is solved against it for each flux-loop excitation, giving the
-// 2x2 mutual-inductance matrix. Flux loops are Dirichlet-lifts (divergence-free compatible),
-// so the region-condensed inductance matches the monolithic solve.
+// Region-condensed (substructuring) magnetostatic solve on the mirror-split
+// double-circular- hole slab: the environment (right hole, attr 2) is condensed to a DtN
+// operator and the region (left hole, attr 1) is solved against it for each flux-loop
+// excitation, giving the 2x2 mutual-inductance matrix. The shared film is a London sheet
+// with the small PecPenetrationDepth, as in the native solver, which the result matches.
 TEST_CASE("substructuring_magnetostatic", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -1058,8 +1059,22 @@ TEST_CASE("substructuring_magnetostatic", "[Serial][Parallel][GPU][Regression]")
   opts.atol = 1.0e-16;
   opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
-  palace::test::RunRegressionCase("substructuring_magnetostatic", "magnetostatic.json", "",
-                                  opts);
+  palace::test::RunRegressionCase("substructuring_magnetostatic", "magnetostatic.json",
+                                  "base", opts);
+}
+
+// Magnetostatic substructuring with a finite-penetration-depth London film (λ = 0.4 μm,
+// d = 0.1 μm) shared by both flux loops and crossing the interface: the film is a free
+// London sheet in the condensation, and the total inductance includes the kinetic part.
+TEST_CASE("substructuring_magnetostatic_london", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_london.json", "london", opts);
 }
 
 // Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface

@@ -70,6 +70,19 @@ public:
                                  std::vector<Vector> *fields = nullptr, int n_fields = 0,
                                  std::vector<Vector> *region_fields = nullptr);
 
+  // Magnetostatic energy matrix of London flux states: flux loop k with the (normalized)
+  // fluxoid generator a_k drives the source M_sheet a_k with the superconducting films as
+  // free London sheets, and E_ij = u_i^T K u_j + (u_i - a_i)^T M_sheet (u_j - a_j) as in
+  // the native solver. If fields is non-null, the full fields of the first n_fields states
+  // are returned.
+  mfem::DenseMatrix SheetEnergyMatrix(const std::vector<int> &ids,
+                                      const std::vector<Vector> &a,
+                                      std::vector<Vector> *fields = nullptr,
+                                      int n_fields = 0);
+
+  // Whether the model has London superconductor sheets (magnetostatics).
+  bool HasSheets() const;
+
   // Electrostatic Maxwell capacitance matrix over the given terminals: EnergyMatrix of the
   // terminal unit potentials.
   mfem::DenseMatrix CapacitanceMatrix(const std::vector<int> &terminal_indices,
