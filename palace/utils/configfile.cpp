@@ -1166,7 +1166,7 @@ BoundaryData::BoundaryData(const json &boundaries)
   attributes.shrink_to_fit();
 }
 
-std::vector<int> BoundaryData::GetSheetAttributes(bool conductors_only) const
+std::vector<int> BoundaryData::GetSheetAttributes() const
 {
   std::vector<int> attr_list;
   auto Append = [&attr_list](const std::vector<int> &attrs)
@@ -1178,10 +1178,7 @@ std::vector<int> BoundaryData::GetSheetAttributes(bool conductors_only) const
   }
   for (const auto &data : impedance)
   {
-    if (!conductors_only || data.Rs != 0.0 || data.Ls != 0.0)
-    {
-      Append(data.attributes);
-    }
+    Append(data.attributes);
   }
   for (const auto &data : rational_impedance)
   {
