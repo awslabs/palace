@@ -329,4 +329,8 @@ TEST_CASE("TableCSV_RebuildNameIndexAfterRename", "[tablecsv][Serial]")
   // insert must still notice a duplicate of the renamed column.
   CHECK(!loaded.insert("idx", "f (GHz)"));
   CHECK(loaded.n_cols() == reference.n_cols());
+
+  // Renaming two columns to the same name breaks the one-name-one-column invariant.
+  loaded[1].name = "idx";
+  CHECK_THROWS(loaded.RebuildNameIndex());
 }
