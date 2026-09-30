@@ -432,8 +432,9 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
         }
         PalaceCeedCall(ceed, CeedElemRestrictionCreate(
                                  ceed, static_cast<CeedInt>(indices.size()), num_vtu_pts,
-                                 buffer_num_comp, 1, (CeedSize)buffer_size, CEED_MEM_HOST,
-                                 CEED_COPY_VALUES, offsets.data(), &buffer_out_restr));
+                                 buffer_num_comp, 1, static_cast<CeedSize>(buffer_size),
+                                 CEED_MEM_HOST, CEED_COPY_VALUES, offsets.data(),
+                                 &buffer_out_restr));
       }
       scratch.restrs.push_back(buffer_out_restr);
       CeedOperator buffer_op;

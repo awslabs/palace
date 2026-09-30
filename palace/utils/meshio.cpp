@@ -289,7 +289,8 @@ inline std::string ReadStringComsolBinary(std::istream &input)
   int n;
   input.read(reinterpret_cast<char *>(&n), sizeof(int));
   std::vector<int> vstr(n);
-  input.read(reinterpret_cast<char *>(vstr.data()), (std::streamsize)(n * sizeof(int)));
+  input.read(reinterpret_cast<char *>(vstr.data()),
+             static_cast<std::streamsize>(n * sizeof(int)));
   return std::string(vstr.begin(), vstr.end());
 }
 
@@ -341,7 +342,7 @@ inline void WriteElement(std::ostream &buffer, const int tag, const int type,
   const int data[3] = {tag, geom, geom};
   buffer.write(reinterpret_cast<const char *>(data), 3 * sizeof(int));
   buffer.write(reinterpret_cast<const char *>(nodes),
-               (std::streamsize)(ElemNumNodes[type - 1] * sizeof(int)));
+               static_cast<std::streamsize>(ElemNumNodes[type - 1] * sizeof(int)));
   // No newline for binary data.
 #else
   buffer << tag << ' ' << type << " 2 " << geom << ' ' << geom;
@@ -375,7 +376,7 @@ void WriteGmsh(std::ostream &buffer, const std::vector<double> &node_coords,
   buffer << "$EndMeshFormat\n";
 
   // Write mesh nodes.
-  const int num_nodes = (int)node_coords.size() / 3;
+  const int num_nodes = static_cast<int>(node_coords.size()) / 3;
   MFEM_VERIFY(num_nodes > 0 && node_coords.size() % 3 == 0,
               "Gmsh nodes should always be in 3D space!");
   buffer << "$Nodes\n" << num_nodes << '\n';
@@ -383,7 +384,7 @@ void WriteGmsh(std::ostream &buffer, const std::vector<double> &node_coords,
     if (!node_tags.empty())
     {
       // Use input node tags which should be positive but don't need to be contiguous.
-      MFEM_VERIFY(node_tags.size() == (std::size_t)num_nodes,
+      MFEM_VERIFY(node_tags.size() == static_cast<std::size_t>(num_nodes),
                   "Invalid size for node tags!");
       for (int i = 0; i < num_nodes; i++)
       {
@@ -410,7 +411,7 @@ void WriteGmsh(std::ostream &buffer, const std::vector<double> &node_coords,
   {
     MFEM_VERIFY(elem_type > 0, "Invalid element type writing Gmsh elements!");
     const int &num_elem_nodes = ElemNumNodes[elem_type - 1];
-    tot_num_elem += ((int)nodes.size()) / (num_elem_nodes + 1);
+    tot_num_elem += static_cast<int>(nodes.size()) / (num_elem_nodes + 1);
     MFEM_VERIFY(nodes.size() % (num_elem_nodes + 1) == 0,
                 "Unexpected data size when writing elements!");
   }
@@ -422,7 +423,7 @@ void WriteGmsh(std::ostream &buffer, const std::vector<double> &node_coords,
     {
       const int elem_type_w = use_lo_type ? LOElemTypeGmsh(elem_type) : elem_type;
       const int &num_elem_nodes = ElemNumNodes[elem_type - 1];
-      const int num_elem = (int)nodes.size() / (num_elem_nodes + 1);
+      const int num_elem = static_cast<int>(nodes.size()) / (num_elem_nodes + 1);
 #if defined(GMSH_BIN)
       // For binary output, write the element header for each type. Always have 2 tags
       // (physical + geometry).
@@ -719,7 +720,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
       while (i < num_nodes)
       {
         input.read(reinterpret_cast<char *>(node_coords.data() + 3 * i),
-                   (std::streamsize)(sdim * sizeof(double)));
+                   static_cast<std::streamsize>(sdim * sizeof(double)));
         i++;
       }
     }
@@ -827,7 +828,8 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
               MFEM_VERIFY(elem_nodes.find(elem_type) != elem_nodes.end(),
                           "Can't find expected element type!");
               data = &elem_nodes[elem_type];
-              MFEM_VERIFY(data->size() == (std::size_t)num_elem * (num_elem_nodes + 1),
+              MFEM_VERIFY(data->size() ==
+                              static_cast<std::size_t>(num_elem) * (num_elem_nodes + 1),
                           "Unexpected element data size!");
             }
 
@@ -894,7 +896,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
         while (i < num_elem)
         {
           input.read(reinterpret_cast<char *>(nodes.data()),
-                     (std::streamsize)(num_elem_nodes * sizeof(int)));
+                     static_cast<std::streamsize>(num_elem_nodes * sizeof(int)));
           if (!skip_type)
           {
             for (int j = 0; j < num_elem_nodes; j++)
@@ -1130,12 +1132,12 @@ void ConvertMeshNastran(const std::string &filename, std::ostream &buffer,
         }
 
         // Save the element and its geometry tag.
-        elem_type = HOElemTypeNastran(elem_type, (int)nodes.size());
+        elem_type = HOElemTypeNastran(elem_type, static_cast<int>(nodes.size()));
         const int &num_elem_nodes = ElemNumNodes[elem_type - 1];
-        MFEM_VERIFY((std::size_t)num_elem_nodes == nodes.size(),
+        MFEM_VERIFY(static_cast<std::size_t>(num_elem_nodes) == nodes.size(),
                     "Mismatch between Nastran and Gmsh element types!");
         std::vector<int> &data = elem_nodes[elem_type];
-        const int i = (int)data.size();
+        const int i = static_cast<int>(data.size());
         data.resize(i + 1 + num_elem_nodes);
         data[i] = geom_tag;
         for (int j = 0; j < num_elem_nodes; j++)
