@@ -959,6 +959,11 @@
           "type": "number",
           "description": "Kinetic sheet inductance L_ksq, H/sq, specified directly as an alternative to (PenetrationDepth, Thickness). Mutually exclusive with those two.",
           "default": 0.0
+        },
+        "TwoSided": {
+          "type": "boolean",
+          "description": "Model the film as a two-port (transfer-matrix) sheet: two coupled coincident faces so the tangential field can jump across it, capturing two-sided screening for d >~ lambda. Requires (PenetrationDepth, Thickness) and forces the film to crack.",
+          "default": false
         }
       }
     },
