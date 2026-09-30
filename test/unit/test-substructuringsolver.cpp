@@ -689,6 +689,11 @@ TEST_CASE("SubstructuringSolver saved model rejects a changed environment",
                     Catch::Matchers::ContainsSubstring("The environment differs"));
   CHECK_THROWS_WITH(condense(make_config("Online", 1.0, 10.0), 3, 5),
                     Catch::Matchers::ContainsSubstring("The environment differs"));
+  // So is a changed boundary condition on the environment (its terminal removed).
+  IoData no_env_terminal = make_config("Online", 1.0, 10.0);
+  no_env_terminal.boundaries.terminal.erase(2);
+  CHECK_THROWS_WITH(condense(no_env_terminal, 3, 4),
+                    Catch::Matchers::ContainsSubstring("The environment differs"));
 }
 #endif
 
@@ -1358,7 +1363,8 @@ TEST_CASE("SubstructuringSolver cross-run region re-meshing",
 // attribute i + 1, the others at 0 V), with MFEM directly (independent of substructuring).
 // eps_by_attr: permittivity by element attribute.
 mfem::DenseMatrix MonolithCapacitance(mfem::ParMesh &pmesh, int order,
-                                      const mfem::Vector &eps_by_attr, int n_terminals)
+                                      const mfem::Vector &eps_by_attr, int n_terminals,
+                                      const std::vector<int> &grounded = {})
 {
   mfem::H1_FECollection fec(order, pmesh.Dimension());
   mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
@@ -1381,6 +1387,10 @@ mfem::DenseMatrix MonolithCapacitance(mfem::ParMesh &pmesh, int order,
     for (int t = 0; t < n_terminals; t++)
     {
       ess_bdr[t] = 1;
+    }
+    for (int a : grounded)
+    {
+      ess_bdr[a - 1] = 1;
     }
     mfem::ConstantCoefficient one(1.0);
     x.ProjectBdrCoefficient(one, drive);
@@ -1435,6 +1445,47 @@ std::unique_ptr<mfem::ParMesh> MakeRefinedGradedSplit(int a, int b, int n,
   }
   pmesh->GeneralRefinement(marked, 1);
   return pmesh;
+}
+
+TEST_CASE("SubstructuringSolver grounded PEC boundaries",
+          "[substructure][Serial][Parallel]")
+{
+  // PEC boundaries are grounded (0 V) Dirichlet boundaries, as in the native electrostatic
+  // operator: here on the environment's far face and on the side faces, which cross the
+  // interface. The capacitance of the one terminal must match a monolith with those
+  // boundaries grounded.
+  const int order = GENERATE(1, 2);
+  CAPTURE(order);
+  json config = {
+      {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+      {"Model", {{"Mesh", "test.msh"}}},
+      {"Domains",
+       {{"Materials",
+         {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+          {{"Attributes", {3}}, {"Permittivity", 4.0}},
+          {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+      {"Boundaries",
+       {{"Terminal", {{{"Index", 1}, {"Attributes", {1}}}}},
+        {"PEC", {{"Attributes", {2, 3}}}}}},
+      {"Solver",
+       {{"Order", order},
+        {"Substructuring",
+         {{"Region", {{"Attributes", {1, 3}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+  IoData iodata(config, false);
+  const RegionDesign design{0.5, {0.25, 0.5, 0.5}};
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(MakeGradedSplit(4, 5, 6, design)));
+  SubstructuringSolver ss(iodata, mesh);
+  ss.CondenseEnvironment();
+  const mfem::DenseMatrix C = ss.CapacitanceMatrix({1});
+  mfem::Vector eps_by_attr(3);
+  eps_by_attr(0) = 1.0;
+  eps_by_attr(1) = 10.0;
+  eps_by_attr(2) = 4.0;
+  const mfem::DenseMatrix C_mono =
+      MonolithCapacitance(mesh.back()->Get(), order, eps_by_attr, 1, {2, 3});
+  CAPTURE(C(0, 0), C_mono(0, 0));
+  CHECK(std::abs(C(0, 0) - C_mono(0, 0)) <= 1.0e-9 * std::abs(C_mono(0, 0)));
 }
 
 TEST_CASE("SubstructuringSolver on a nonconforming mesh",

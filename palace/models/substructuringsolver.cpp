@@ -461,6 +461,40 @@ struct SubstructuringSolver::Impl
         }
       }
     }
+    // Grounded and perfectly conducting boundaries, fixed at zero as in the native
+    // operators: PEC and, in magnetostatics, the flux-loop films (their values come from
+    // the flux-loop lifts; clamping them is the λ → 0 limit of the London sheet).
+    {
+      const int maxb = parent.bdr_attributes.Size() ? parent.bdr_attributes.Max() : 0;
+      mfem::Array<int> ess_bdr(maxb), ess;
+      ess_bdr = 0;
+      auto mark = [&](int a)
+      {
+        if (a >= 1 && a <= maxb)
+        {
+          ess_bdr[a - 1] = 1;
+        }
+      };
+      for (int a : iodata.boundaries.pec.attributes)
+      {
+        mark(a);
+      }
+      if (magnetostatic)
+      {
+        for (const auto &[idx, fl] : iodata.boundaries.fluxloop)
+        {
+          for (int a : fl.film_attributes)
+          {
+            mark(a);
+          }
+        }
+      }
+      parent_fes.GetEssentialTrueDofs(ess_bdr, ess);
+      for (int i = 0; i < ess.Size(); i++)
+      {
+        dir_mark[ess[i]] = 1;
+      }
+    }
     for (int i = 0; i < nt; i++)
     {
       if (dir_mark[i])
@@ -952,19 +986,20 @@ struct SubstructuringSolver::Impl
                  MPI_DOUBLE, rows.data(), gamma_nloc * w, MPI_DOUBLE, 0, comm);
   }
 
-  // Model-file sections following S_E: [kEnvFpMagic][environment fingerprint, 3 doubles],
+  // Model-file sections following S_E: [kEnvFpMagic][environment fingerprint, 4 doubles],
   // [kSKenMagic][S^K nG x nG] (magnetostatics) and
   // [kModesMagic][K][ids][fingerprints 2K][has_GK][G nG x K][G^K nG x K if has_GK][Cmode
   // KxK].
-  static constexpr int kSKenMagic = 0x4e454b53;   // "SKEN"
-  static constexpr int kModesMagic = 0x32444f4d;  // "MOD2"
-  static constexpr int kEnvFpMagic = 0x46564e45;  // "ENVF"
-  // Fingerprint of the environment operator: global environment-closure DOF count, trace
-  // and Frobenius norm of A_env. Independent of the region (A_env has no region
-  // contribution), of the partition and of the DOF numbering (and of H(curl) orientation
-  // signs), but it changes with the environment mesh, materials, order or physics.
-  // Collective.
-  std::array<double, 3> EnvironmentFingerprint() const
+  static constexpr int kSKenMagic = 0x4e454b53;     // "SKEN"
+  static constexpr int kModesMagic = 0x32444f4d;    // "MOD2"
+  static constexpr int kEnvFpMagicV1 = 0x46564e45;  // "ENVF" (no Dirichlet count)
+  static constexpr int kEnvFpMagic = 0x32564e45;    // "ENV2"
+  // Fingerprint of the environment: global counts of the environment-closure DOFs and of
+  // its Dirichlet DOFs, and the trace and Frobenius norm of A_env. Independent of the
+  // region (A_env has no region contribution), of the partition and of the DOF numbering
+  // (and of H(curl) orientation signs), but it changes with the environment mesh,
+  // materials, order, physics or Dirichlet boundaries. Collective.
+  std::array<double, 4> EnvironmentFingerprint() const
   {
     mfem::SparseMatrix diag;
     A_env->GetDiag(diag);
@@ -973,23 +1008,31 @@ struct SubstructuringSolver::Impl
     {
       trace += diag.Elem(i, i);
     }
-    double loc[2] = {trace, 0.0};
+    // Environment-closure DOFs: free (interior and interface) and Dirichlet (touched by an
+    // environment element: a nonzero diagonal of A_env, which is assembled with a zero
+    // coefficient on the region).
+    double loc[3] = {trace, 0.0, 0.0};
     for (int i = 0; i < nt; i++)
     {
       loc[1] += (is_env_int[i] || is_gamma[i]) ? 1.0 : 0.0;
     }
-    double glob[2];
-    MPI_Allreduce(loc, glob, 2, MPI_DOUBLE, MPI_SUM, parent_fes.GetComm());
-    return {glob[1], glob[0], A_env->FNorm()};
+    for (int d = 0; d < dbc_tdofs.Size(); d++)
+    {
+      const int i = dbc_tdofs[d];
+      loc[2] += (diag.Elem(i, i) != 0.0) ? 1.0 : 0.0;
+    }
+    double glob[3];
+    MPI_Allreduce(loc, glob, 3, MPI_DOUBLE, MPI_SUM, parent_fes.GetComm());
+    return {glob[1], glob[2], glob[0], A_env->FNorm()};
   }
 
   // Saved-model environment fingerprint (valid when have_env_fp).
-  std::array<double, 3> saved_env_fp = {0.0, 0.0, 0.0};
+  std::array<double, 4> saved_env_fp = {0.0, 0.0, 0.0, 0.0};
   bool have_env_fp = false;
 
   void AppendEnvFingerprint(const std::string &path) const
   {
-    const std::array<double, 3> fp = EnvironmentFingerprint();  // collective
+    const std::array<double, 4> fp = EnvironmentFingerprint();  // collective
     if (Mpi::Root(parent_fes.GetComm()))
     {
       std::ofstream f(path, std::ios::binary | std::ios::app);
@@ -1002,21 +1045,22 @@ struct SubstructuringSolver::Impl
   // one.
   void CheckEnvFingerprint() const
   {
-    const std::array<double, 3> fp = EnvironmentFingerprint();  // collective
+    const std::array<double, 4> fp = EnvironmentFingerprint();  // collective
     if (!have_env_fp)
     {
       return;  // model written before the fingerprint existed
     }
-    bool ok = (fp[0] == saved_env_fp[0]);
-    for (int q = 1; q < 3; q++)
+    bool ok = (fp[0] == saved_env_fp[0] && fp[1] == saved_env_fp[1]);
+    for (int q = 2; q < 4; q++)
     {
       ok = ok && std::abs(fp[q] - saved_env_fp[q]) <=
                      1.0e-10 * std::max(std::abs(fp[q]), std::abs(saved_env_fp[q]));
     }
     MFEM_VERIFY(ok,
                 "The environment differs from the one the saved substructuring model was "
-                "condensed from (environment mesh, materials, order or problem type "
-                "changed): rerun in \"Offline\" mode to condense it again!");
+                "condensed from (environment mesh, materials, boundary conditions, "
+                "order or problem type changed): rerun in \"Offline\" mode to "
+                "condense it again!");
   }
 
   void AppendSK(const std::string &path) const
@@ -1085,8 +1129,16 @@ struct SubstructuringSolver::Impl
           f.read(reinterpret_cast<char *>(saved_env_fp.data()),
                  sizeof(double) * saved_env_fp.size());
         }
-        MPI_Bcast(saved_env_fp.data(), 3, MPI_DOUBLE, 0, comm);
+        MPI_Bcast(saved_env_fp.data(), 4, MPI_DOUBLE, 0, comm);
         have_env_fp = true;
+      }
+      else if (magic == kEnvFpMagicV1)
+      {
+        double legacy[3];  // older fingerprint without the Dirichlet count: not checked
+        if (root)
+        {
+          f.read(reinterpret_cast<char *>(legacy), sizeof(legacy));
+        }
       }
       else if (magic == kSKenMagic)
       {

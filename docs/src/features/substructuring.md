@@ -29,9 +29,10 @@ problem with one extra term on the interface, the environment's Schur complement
 
 a dense ``|\Gamma| \times |\Gamma|`` matrix (the discrete Dirichlet-to-Neumann map of the
 environment). The condensation is an exact algebraic rearrangement: the region solution, and the
-capacitance or inductance matrix, are those of the full solve. Terminals may lie in the region,
-in the environment, or span both; the environment's coupling to its terminals is condensed
-together with ``\bm{S}_E``, so terminal energies need no environment solve.
+capacitance or inductance matrix, are those of the full solve. Terminals and `"PEC"`
+boundaries (grounded, as in a regular electrostatic simulation) may lie in the region, in the
+environment, or span both; the environment's coupling to its terminals is condensed together
+with ``\bm{S}_E``, so terminal energies need no environment solve.
 
 The environment model (``\bm{S}_E`` and the terminal couplings) can be saved to a file. A later
 run loads it and solves only the region, possibly after re-meshing the region: its cost then
@@ -119,16 +120,20 @@ equivalent for the BLAS in use) avoids oversubscribing cores.
 
 Magnetostatic substructuring extracts the inductance matrix from
 [`config["Boundaries"]["FluxLoop"]`](../config/reference.md#config-boundaries-fluxloop)
-excitations. The perfectly conducting boundaries, including the flux-loop films, act as the
-Dirichlet boundaries of the condensation and must be listed as
-[`config["Boundaries"]["Terminal"]`](../config/reference.md#config-boundaries-terminal)
-attributes. A small mass regularization keeps the curl-curl operator definite; the extracted
-energies use the unregularized operator.
+excitations. The `"PEC"` boundaries and the flux-loop films (`"FilmAttributes"`) are the
+Dirichlet boundaries of the condensation, and the films are perfect conductors: the result is
+the limit of the full simulation as the films' `"PecPenetrationDepth"` goes to zero (the full
+simulation models them as thin London sheets with that penetration depth, so the two differ by
+a relative amount of the order of `"PecPenetrationDepth"` in mesh units). A small mass
+regularization keeps the curl-curl operator definite; the extracted energies use the
+unregularized operator.
 
 !!! note
 
-    `"SurfaceCurrent"` excitations are not supported with substructuring yet: a configuration
-    that combines them is rejected.
+    `"SurfaceCurrent"` excitations and
+    [`config["Boundaries"]["Superconductor"]`](../config/reference.md#config-boundaries-superconductor)
+    films with a finite penetration depth are not supported with substructuring yet: a
+    configuration that uses them is rejected.
 
 ## [Example: transmon capacitance](@id substructuring-transmon-example)
 

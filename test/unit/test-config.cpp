@@ -224,6 +224,16 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
                       {"Environment", {{"Attributes", {2}}}}}}}}};
     };
     CHECK_NOTHROW(IoData(make_config({{"FluxLoop", flux_loop}}), false));
+    // Finite-λ superconducting films need the kinetic sheet term (not assembled).
+    const json superconductor = {
+        {{"Attributes", {6}}, {"PenetrationDepth", 0.1}, {"Thickness", 0.05}}};
+    CHECK_THROWS_WITH(
+        IoData(make_config({{"FluxLoop", flux_loop}, {"Superconductor", superconductor}}),
+               false),
+        Catch::Matchers::ContainsSubstring("does not support \"Superconductor\""));
+    CHECK_THROWS_WITH(
+        IoData(make_config({{"SurfaceCurrent", surface_current}}), false),
+        Catch::Matchers::ContainsSubstring("does not support \"SurfaceCurrent\""));
     // A (valid) mixed configuration is rejected, not silently reduced to its flux loops.
     json mixed_current = surface_current;
     mixed_current[0]["Aperture"] = {{"Attributes", {5}}, {"Direction", "+Z"}};
