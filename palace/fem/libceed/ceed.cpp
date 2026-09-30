@@ -164,4 +164,22 @@ mfem::Geometry::Type GetMfemTopology(CeedElemTopology geom)
   }
 }
 
+CeedAssemblyScratch::CeedAssemblyScratch(Ceed ceed_) : ceed(ceed_) {}
+
+CeedAssemblyScratch::~CeedAssemblyScratch()
+{
+  for (auto &v : vecs)
+  {
+    PalaceCeedCall(ceed, CeedVectorDestroy(&v));
+  }
+  for (auto &r : restrictions)
+  {
+    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&r));
+  }
+  for (auto &b : bases)
+  {
+    PalaceCeedCall(ceed, CeedBasisDestroy(&b));
+  }
+}
+
 }  // namespace palace::ceed
