@@ -57,7 +57,8 @@ def main():
     worst = 0.0
     for key, label in (("surface_area_um2", "area"), ("volume_um3", "volume"), ("surface_attribute_counts", "faces"),
                        ("volume_attribute_counts", "tets")):
-        va, vb = a.get(key, {}), merged(b.get(key, {}), merges)
+        va = a.get(key, {})
+        vb = merged(b.get(key, {}), merges) if key.startswith("surface") else b.get(key, {})
         for attribute in sorted(set(va) | set(vb), key=lambda s: int(s)):
             x, y = va.get(attribute), vb.get(attribute)
             rel = relative(x, y) if x is not None and y is not None else None
