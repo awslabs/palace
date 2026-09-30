@@ -220,5 +220,44 @@ class StencilTest(unittest.TestCase):
             FAMILY.select_stencil([(105.0, 112.5, 0), (105.0, 112.5, 1), (120.0, 112.5, 2)], 110.0, "convex")
 
 
+class RefinedRuleTest(unittest.TestCase):
+    """The AllRingsFollowMetal rule (corner-basis refinement 2026-09-30) has no events: one
+    segment per convexity, cubic sliding windows on the four nearest nodes (one-sided at the
+    range ends), no connectivity angle (a coupon carrying one is refused), one coupon per
+    angle — the mirror of the C++ CornerRefinedRuleStencil / CornerRefinedRuleNoEvents."""
+
+    RULE = GENERATOR.REFINED_RULE
+    NODES = [(angle, None, index) for index, angle in enumerate((75.0, 90.0, 105.0, 120.0, 135.0, 150.0, 165.0, 180.0))]
+
+    def test_no_events(self):
+        for topology in ("convex", "concave"):
+            self.assertEqual(FAMILY.basis_events(topology, 16, self.RULE), [])
+            self.assertEqual(FAMILY.corner_event_angles(topology, 16, rule=self.RULE), [])
+        with self.assertRaises(ValueError):
+            FAMILY.basis_events("convex", 8, self.RULE)
+
+    def test_one_segment_cubic_sliding_window(self):
+        for topology in ("convex", "concave"):
+            self.assertEqual(FAMILY.check_segments(self.NODES, topology, 16, rule=self.RULE), "")
+            expectations = {82.5: [75.0, 90.0, 105.0, 120.0], 100.0: [75.0, 90.0, 105.0, 120.0],
+                            127.5: [105.0, 120.0, 135.0, 150.0], 152.0: [135.0, 150.0, 165.0, 180.0],
+                            176.0: [135.0, 150.0, 165.0, 180.0]}
+            for angle, window in expectations.items():
+                stencil = FAMILY.select_stencil(self.NODES, angle, topology, 16, rule=self.RULE)
+                self.assertEqual(stencil["rule"], "cubic", angle)
+                self.assertEqual([self.NODES[i][0] for i, _ in stencil["nodes"]], window, angle)
+                self.assertAlmostEqual(sum(w for _, w in stencil["nodes"]), 1.0, places=12)
+                self.assertIsNone(stencil["connectivity_angle_degrees"])
+            exact = FAMILY.select_stencil(self.NODES, 135.0, topology, 16, rule=self.RULE)
+            self.assertEqual((exact["rule"], exact["nodes"]), ("exact", [(4, 1.0)]))
+            self.assertIn("sharper", FAMILY.select_stencil(self.NODES, 70.0, topology, 16, rule=self.RULE)["reason"])
+            stamped = list(self.NODES)
+            stamped[2] = (105.0, 112.5, 2)
+            with self.assertRaises(ValueError):
+                FAMILY.select_stencil(stamped, 100.0, topology, 16, rule=self.RULE)
+            self.assertIn("two coupons at 105",
+                          FAMILY.check_segments(self.NODES + [(105.0, None, 8)], topology, 16, rule=self.RULE))
+
+
 if __name__ == "__main__":
     unittest.main()

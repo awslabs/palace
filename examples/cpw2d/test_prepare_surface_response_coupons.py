@@ -649,6 +649,94 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                 coupon, args, process_parameters(), Path("unused")
             )
 
+    def test_corner_refined_trace_basis_default_is_sharp_only(self):
+        # The planner's refined default (all-rings-follow-metal) applies to SHARP corners only:
+        # a rounded corner keeps the legacy rule (the refined rule is qualified on sharp
+        # corners only and the runtime's load-time rule check skips rounded ones), and an
+        # explicit refined request on a rounded corner fails closed.
+        def generator_command(coupon, args):
+            calls = []
+
+            def record(command, check=True):
+                calls.append([str(value) for value in command])
+                return 0
+
+            with tempfile.TemporaryDirectory() as directory:
+                cache = Path(directory)
+                with (
+                    mock.patch.object(PREPARE, "run", side_effect=record),
+                    mock.patch.object(
+                        PREPARE,
+                        "run_probe_convergence",
+                        return_value=(1, cache / "p.json", {"Passed": False}),
+                    ),
+                    self.assertRaisesRegex(RuntimeError, "probe convergence failed"),
+                ):
+                    PREPARE.build_corner(coupon, args, process_parameters(), cache)
+                spec = PREPARE.load_json(next(cache.glob("corner-*/coupon-spec.json")))
+            generator = next(
+                command
+                for command in calls
+                if command[1].endswith("generate_corner_response.py")
+            )
+            return (
+                generator[generator.index("--trace-basis") + 1],
+                generator[generator.index("--ring-size") + 1],
+                spec["Response"],
+            )
+
+        def corner(identifier, radius):
+            return {
+                "Id": identifier,
+                "Topology": "ConvexCorner",
+                "Geometry": {"AngleDegrees": 90.0, "CornerRadius": radius},
+                "BoundaryCondition": pec(),
+            }
+
+        def arguments(**overrides):
+            return SimpleNamespace(
+                matching_radius=2.0,
+                orders=[2, 3],
+                corner_lc_fine=0.02,
+                corner_lc_far=0.3,
+                mesh_order=1,
+                min_process_feature_elements=2.0,
+                force=True,
+                julia="julia",
+                julia_project=None,
+                **overrides,
+            )
+
+        sharp = generator_command(corner("sharp-90", 0.0), arguments())
+        self.assertEqual(sharp[:2], ("all-rings-follow-metal", "16"))
+        self.assertEqual(
+            sharp[2], {"RingSize": 16, "TraceBasis": "all-rings-follow-metal"}
+        )
+        rounded = generator_command(corner("rounded-90", 0.5), arguments())
+        self.assertEqual(rounded[:2], ("legacy", "8"))
+        self.assertEqual(rounded[2], {"RingSize": 8, "TraceBasis": "legacy"})
+        # The CLI default (None) resolves the same way; an explicit legacy request is honoured
+        # on a sharp corner; an explicit refined request on a rounded corner is refused.
+        self.assertEqual(
+            generator_command(
+                corner("rounded-90", 0.5), arguments(corner_trace_basis=None)
+            )[0],
+            "legacy",
+        )
+        self.assertEqual(
+            generator_command(
+                corner("sharp-90", 0.0), arguments(corner_trace_basis="legacy")
+            )[:2],
+            ("legacy", "8"),
+        )
+        with self.assertRaisesRegex(ValueError, "qualified on sharp corners only"):
+            PREPARE.build_corner(
+                corner("rounded-90", 0.5),
+                arguments(corner_trace_basis="all-rings-follow-metal"),
+                process_parameters(),
+                Path("unused"),
+            )
+
     def test_corner_mesh_refinement_scales_only_fine_size(self):
         args = SimpleNamespace(
             force=True,

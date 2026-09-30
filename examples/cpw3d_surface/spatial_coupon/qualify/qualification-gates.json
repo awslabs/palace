@@ -1,5 +1,5 @@
 {
-  "Version": 4,
+  "Version": 5,
   "Copyright": "Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
   "SPDX-License-Identifier": "Apache-2.0",
   "Purpose": "Machine-readable qualification gates of a coupon's response matrices against its graded_v2 reference (supervisor decision 48 and the 2026-09-20 gate confirmation): the class statements of the geometry-independence suite's physics table, evaluated on the free view. Changing a threshold means editing this frozen file; every qualification record carries its SHA-256.",
@@ -77,7 +77,9 @@
         "Frobenius": "|| interpolated - actual ||_F / || actual ||_F per matrix"
       },
       "Rule": "USER decision 149 (5): the family is gated on the participation-referenced residual because the device quotes participations, not corrections (the recorded qualified family: worst 0.28 % (convex MA at 127.5 deg) against defect-referenced worst 3.0 %); a family whose nodes carry no segment connectivity records is never interpolated by the runtime and has no held-out verdict",
-      "Scope": "corner_coupon/corner_family_heldout_check.py on the coupon cache directories of one family (nodes = the coupons with TraceBasis.ConnectivityAngleDegrees, or the --nodes ANGLE:CONNECTIVITY list for recorded legacy coupons stamped into a segment; every other coupon is held out); the verdict is recorded next to the family's library (corner-qualification-20260929, user-decisions-149-20260929); synthetic family tests in test_corner_family_heldout_check.py"
+      "Scope": "corner_coupon/corner_family_heldout_check.py on the coupon cache directories of one family (nodes = the coupons with TraceBasis.ConnectivityAngleDegrees, or the --nodes ANGLE:CONNECTIVITY list for recorded legacy coupons stamped into a segment, or the --nodes ANGLE list of an AllRingsFollowMetal family (corner-basis refinement 2026-09-30: no events, one segment); every other coupon is held out); the verdict is recorded next to the family's library (corner-qualification-20260929, user-decisions-149-20260929); synthetic family tests in test_corner_family_heldout_check.py",
+      "GatingTrace": "option-c",
+      "GatingTraceRule": "USER decision 161 (2), 2026-09-30: the option-(c) held-out traces GATE the family (the coefficients of generate_corner_response.heldout_potential at the nodes' basis points: zero on the PEC part of the box only, every free knot excited); the band-trace verdict (the pre-149 (6) metal-band cutoff, blind to the free knots next to the metal) is reported alongside, never gated. corner_family_heldout_check.py records the trace it used (TraceSource / TraceForms) and whether it is the gating trace (Gating); only a run on the gating trace is the family's verdict"
     }
   },
   "Verdicts": {

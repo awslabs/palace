@@ -423,5 +423,153 @@ class HeldoutPotentialTest(unittest.TestCase):
         np.testing.assert_allclose(cutoff, [1.0, (1.0 - 3.0 * THICKNESS / RADIUS) ** 2 * (3.0 - 2.0 * (1.0 - 3.0 * THICKNESS / RADIUS))])
 
 
+class RefinedRuleTest(unittest.TestCase):
+    """The AllRingsFollowMetal rule (corner-basis refinement, USER decision 161 (1),
+    2026-09-30): every ring follows the metal fractions (5 metal-interior + 9 graded free
+    knots, the extra ring at t + d, cap centre slaves), PEC on the metal rings only, no events;
+    the held-out reference surface decoupled from the basis levels. Pinned to the C++ rule
+    (test/unit/test-cornerbasisrefinement.cpp) by the same fractions."""
+
+    RULE = GENERATOR.REFINED_RULE
+
+    def test_rule_record_and_parameters(self):
+        rule = self.RULE
+        self.assertEqual((rule.layout, rule.metal_interior_knots, rule.free_knots, rule.ring_size),
+                         ("AllRingsFollowMetal", 5, 9, 16))
+        self.assertEqual(rule.free_knot_grading, (1.0 / 3.0, 2.0 / 3.0))
+        record = GENERATOR.trace_basis_rule(16, None, rule)
+        self.assertEqual(record["RingLayout"], "AllRingsFollowMetal")
+        self.assertEqual(record["RingSize"], 16)
+        self.assertEqual(record["FreeKnotGrading"], [1.0 / 3.0, 2.0 / 3.0])
+        self.assertEqual(record["ExtraLevelsAboveOverOveretch"], [1.0, 4.0])
+        self.assertEqual(GENERATOR.TraceBasisRule.from_record(record), rule)
+        self.assertEqual(GENERATOR.TraceBasisRule.from_record(GENERATOR.trace_basis_rule(8)), GENERATOR.LEGACY_RULE)
+        with self.assertRaises(ValueError):
+            GENERATOR.trace_basis_rule(16, 112.5, rule)  # no events: no connectivity angle
+        with self.assertRaises(ValueError):
+            GENERATOR.trace_basis_rule(8, None, rule)
+        with self.assertRaises(ValueError):
+            GENERATOR.TraceBasisRule("MetalRingsOnly", 1, 5, (1.0 / 3.0,))
+        with self.assertRaises(ValueError):
+            GENERATOR.TraceBasisRule("AllRingsFollowMetal", 5, 3, (1.0 / 3.0, 2.0 / 3.0))
+        with self.assertRaises(ValueError):
+            GENERATOR.TraceBasisRule("MetalRingsOnly", 1, 5, (), (1,))
+        self.assertEqual(
+            [round(z, 6) for z in rule.levels(RADIUS, THICKNESS, OVERETCH)],
+            [round(z, 6) for z in (-RADIUS, -RADIUS / 3.0, -OVERETCH, 0.0, THICKNESS, THICKNESS + OVERETCH,
+                                   THICKNESS + 4.0 * OVERETCH, RADIUS / 3.0, RADIUS)],
+        )
+
+    def test_layout_pins_shared_with_the_cpp_rule(self):
+        # The same numbers as CornerRefinedRuleLayout in test-cornerbasisrefinement.cpp.
+        pins = {
+            ("convex", 120.0): ([0.905502116982, 0.990696208596, 0.07589030021, 0.161084391824,
+                                 0.246278483438, 0.331472575053, 0.416666666667, 0.458333333333,
+                                 0.5, 0.553694797275, 0.60738959455, 0.661084391824,
+                                 0.714779189099, 0.768473986374, 0.822168783649, 0.863835450315],
+                                [8, 9, 10, 11, 12, 13, 14]),
+            ("concave", 105.0): ([0.5, 0.541666666667, 0.583333333333, 0.602804497065,
+                                  0.622275660796, 0.641746824527, 0.661217988258, 0.680689151989,
+                                  0.700160315721, 0.741826982387, 0.783493649054, 0.902911374212,
+                                  0.022329099369, 0.141746824527, 0.261164549685, 0.380582274842],
+                                 [0, 10, 11, 12, 13, 14, 15]),
+        }
+        for (topology, angle), (fractions, zero_slots) in pins.items():
+            layout = GENERATOR.rule_ring_layout(RADIUS, angle, topology, self.RULE, True)
+            by_slot = {slot: (f, kind) for f, kind, slot in layout if kind != "slave"}
+            self.assertEqual(len(by_slot), 16)
+            self.assertEqual(sum(1 for _, kind, _ in layout if kind == "slave"), 4)
+            for slot in range(16):
+                self.assertAlmostEqual(by_slot[slot][0], fractions[slot], places=9, msg=(topology, angle, slot))
+                self.assertEqual(by_slot[slot][1] == "zero", slot in zero_slots, (topology, angle, slot))
+            self.assertEqual(GENERATOR.zero_slots(topology, self.RULE), zero_slots)
+            off_metal = GENERATOR.rule_ring_layout(RADIUS, angle, topology, self.RULE, False)
+            self.assertTrue(all(kind != "zero" for _, kind, _ in off_metal))
+
+    def test_every_ring_follows_the_metal_fractions(self):
+        for topology in ("convex", "concave"):
+            for angle in ANGLES + (78.0, 176.0):
+                surface = GENERATOR.build_surface(
+                    RADIUS, 16, THICKNESS, OVERETCH, angle_degrees=angle, topology=topology, rule=self.RULE
+                )
+                points = np.asarray(surface.knot_points)
+                self.assertEqual(len(points), 176)
+                self.assertEqual(surface.contour_groups, [16] * 11)
+                self.assertEqual(sum(surface.knot_zero), 14)
+                # PEC knots on the two metal rings only, at the rule's zero slots.
+                zero = np.asarray(surface.knot_zero).reshape(11, 16)
+                for ring in range(11):
+                    z = points[16 * ring, 2]
+                    metal = abs(z) < 1e-12 or abs(z - THICKNESS) < 1e-12
+                    self.assertEqual(list(np.flatnonzero(zero[ring])),
+                                     GENERATOR.zero_slots(topology, self.RULE) if metal else [])
+                # Identical perimeter fractions on every ring (outer and cap): regular columns.
+                fractions = []
+                for ring in range(11):
+                    half_width = np.max(np.abs(points[16 * ring: 16 * ring + 16, :2]))
+                    fractions.append(sorted(
+                        GENERATOR.square_perimeter_fraction(half_width, p) for p in points[16 * ring: 16 * ring + 16]
+                    ))
+                for ring in range(1, 11):
+                    np.testing.assert_allclose(fractions[ring], fractions[0], atol=1e-12)
+                # Slaves: the box corners of every ring that are no knot, plus the two cap
+                # centres at the mean of the crossing knots; a partition of unity.
+                centres = [s for s in surface.slaves if abs(s[0][0]) < 1e-12 and abs(s[0][1]) < 1e-12]
+                self.assertEqual(len(centres), 2)
+                first, second = GENERATOR.arm_crossing_fractions(RADIUS, angle)
+                for point, parent_a, parent_b, weight in centres:
+                    self.assertEqual(weight, 0.5)
+                    for parent, crossing in ((parent_a, first), (parent_b, second % 1.0)):
+                        self.assertAlmostEqual(
+                            GENERATOR.square_perimeter_fraction(RADIUS / 3.0, points[parent]), crossing, places=12)
+                for _, parent_a, parent_b, weight in surface.slaves:
+                    self.assertIsNotNone(parent_a)
+                    self.assertTrue(0.0 <= weight <= 1.0)
+                # No degenerate triangle; no free hat on the PEC contour.
+                vertices = surface.vertex_points()
+                tri = vertices[surface.triangles]
+                areas = 0.5 * np.linalg.norm(np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1)
+                self.assertGreater(areas.min(), 1e-8, (topology, angle))
+                self.assertEqual(
+                    GENERATOR.free_hat_pec_support(points, surface.contour_groups, np.flatnonzero(surface.knot_zero),
+                                                   pec_mask(angle, topology), surface.slaves), [])
+                # The rule's zero set is the PEC footprint of both coupons.
+                np.testing.assert_array_equal(pec_mask(angle, topology)(points), np.asarray(surface.knot_zero))
+
+    def test_no_connectivity_angle_or_cap_centers_option(self):
+        with self.assertRaises(ValueError):
+            GENERATOR.build_surface(RADIUS, 16, THICKNESS, OVERETCH, angle_degrees=120.0, topology="convex",
+                                    rule=self.RULE, connectivity_angle_degrees=112.5)
+        with self.assertRaises(ValueError):
+            GENERATOR.build_surface(RADIUS, 8, THICKNESS, OVERETCH, angle_degrees=120.0, topology="convex",
+                                    rule=self.RULE)
+
+    def test_heldout_reference_levels_are_decoupled_from_the_basis(self):
+        levels = GENERATOR.heldout_reference_levels(RADIUS, THICKNESS, OVERETCH)
+        # Every OveretchDepth across both R / 3 ramps, the t + R / 3 level, the standard levels.
+        for z in (-RADIUS, -RADIUS / 3.0, -OVERETCH, 0.0, THICKNESS, THICKNESS + RADIUS / 3.0, RADIUS / 3.0, RADIUS):
+            self.assertTrue(any(abs(z - level) < 1e-12 for level in levels), z)
+        k = 1
+        while THICKNESS + k * OVERETCH < THICKNESS + RADIUS / 3.0 - 1e-12:
+            self.assertTrue(any(abs(THICKNESS + k * OVERETCH - level) < 1e-12 for level in levels), k)
+            k += 1
+        self.assertEqual(k, 13)  # 0.15 .. 0.70
+        k = 2
+        while -k * OVERETCH > -RADIUS / 3.0 + 1e-12:
+            self.assertTrue(any(abs(-k * OVERETCH - level) < 1e-12 for level in levels), k)
+            k += 1
+        self.assertEqual(k, 13)  # -0.10 .. -0.60
+        self.assertEqual(len(levels), 31)
+        self.assertEqual(GENERATOR.HELDOUT_REFERENCE_RING_SIZE, 64)
+        fine = GENERATOR.build_surface(RADIUS, 64, THICKNESS, OVERETCH, angle_degrees=120.0, topology="convex",
+                                       cap_centers=True, crossing_vertices=True, levels=levels)
+        heights = sorted({round(p[2], 9) for p in fine.vertex_points() if np.max(np.abs(p[:2])) > RADIUS - 1e-9})
+        self.assertEqual(heights, [round(z, 9) for z in levels])
+        values = GENERATOR.heldout_potential(fine.vertex_points(), RADIUS, THICKNESS, 120.0, "convex")
+        pec = pec_mask(120.0, "convex")(fine.vertex_points())
+        np.testing.assert_array_equal(values[pec], 0.0)
+        self.assertTrue(np.all(values[~pec] != 0.0))
+
+
 if __name__ == "__main__":
     unittest.main()

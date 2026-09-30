@@ -69,11 +69,33 @@ with the matching surface. Pass
 from the defaults. Each prescribed
 potential is stored as a triangulated `x,y,z,V,triangle` surface trace.
 
+`--trace-basis all-rings-follow-metal` (the planner's default on SHARP corners since the
+corner-basis refinement of 2026-09-30, USER decision 161 — a rounded corner keeps
+`legacy`, the refined rule being qualified on sharp corners only; `--ring-size 16`) builds the REFINED
+trace basis rule `TraceBasisRule` / `REFINED_RULE` (`RingLayout`
+`AllRingsFollowMetal`): every ring of the box — the outer rings at the standard
+levels plus `MetalThickness + OveretchDepth` and `MetalThickness + 4 OveretchDepth`,
+and the two cap rings — carries the same angle-dependent fractions (the two
+crossings, 5 metal-interior knots, 9 free knots graded at `R / 3` and `2R / 3` from
+each crossing), PEC on the two metal rings only, box corners as slaves, cap centres
+as slaves at the mean of the two crossing knots; 176 knots, no events (one
+interpolation segment, no `--connectivity-angle`). `--trace-basis legacy` (the
+default of the script) is the recorded `MetalRingsOnly` rule (8 knots per ring,
+events, segment connectivity), byte-identical to the recorded coupons in its basis,
+trace mesh, zero set and record; its held-out REFERENCE, however, is now the decoupled
+31-level surface below, so a legacy rebuild is judged against the converged reference
+(the recorded 7-level self-checks were not).
+
 `finalize_corner_response.py` checks the domain and surface matrices, aggregates
 the per-edge response localized to the union of the physical-edge radius-`R`
 tubes into compact matrices, and evaluates a smooth held-out boundary
-excitation defined on a finer matching-surface triangulation (32 vertices per
-ring plus the two metal-arm crossings on the rings that meet the metal). The
+excitation defined on a finer matching-surface triangulation (64 vertices per
+ring plus the two metal-arm crossings on the rings that meet the metal, on a
+level set DECOUPLED from the basis: the standard levels plus rings every
+`OveretchDepth` across both `R / 3` ramps and `MetalThickness + R / 3`, so the
+self-check judges the vertical representation as well as the lateral one —
+supervisor decision 2026-09-30; the recorded 7-level, 32-knot reference was off by
+up to 16 % on the fabricated MA, measured by refining its levels). The
 held-out trace is the polynomial times the smoothstep over `R / 3` of the
 distance to the PEC part of the box (the metal band `z` in `[0, MetalThickness]`
 over the metal arc of the perimeter), so it vanishes exactly on the PEC part of
@@ -105,8 +127,11 @@ verdict is a property of the family, not of the generator version that wrote the
 caches. On the recorded qualified family (2026-09-29) the gate PASSES both
 convexities on the recorded band traces and FAILS both under the option-(c)
 traces (SA +0.62 % at convex 176 degrees, +0.76 % at concave 100 degrees; MS / MA
-within 0.5 %). Which trace gates a family is a USER decision; the tool never
-chooses.
+within 0.5 %). The option-(c) traces GATE the family (USER decision 161 (2),
+2026-09-30; `GatingTrace` in the gate file): the tool records whether the run used
+the gating trace (`Gating`); the band-trace verdict is reported alongside. An
+`AllRingsFollowMetal` family has no connectivity records: its nodes are the
+`--nodes ANGLE ...` list, the stencil the cubic sliding window of the one segment.
 
 Generated response configs enable `AggregateResponseMatrix`, so Palace performs the
 physical-edge sum before storing `surface-response-matrix.csv`. The finalizer still maps

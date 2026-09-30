@@ -33,21 +33,73 @@ namespace palace
 // meet the metal keep the fixed layout (knots at the fractions k / RingSize, the corners
 // among them). Fractions are perimeter arc length from (-R, 0) counterclockwise (down the
 // left side first), the traversal of the generator's square_ring.
+//
+// Two ring LAYOUTS (record TraceBasis.RingLayout). MetalRingsOnly (the recorded rule above,
+// the default when the record has no RingLayout): the two metal rings follow the rule,
+// every other ring is the fixed layout; the family has EVENTS (a knot passing a fixed
+// vertex flips the band triangulation) and interpolates within segments of one
+// connectivity. AllRingsFollowMetal (corner-basis refinement, USER decision 161 (1),
+// 2026-09-30): EVERY ring — the outer rings (the standard levels plus the extra rings at
+// MetalThickness + k OveretchDepth for the rule's extra_levels_above_over_overetch: k = 1
+// mirroring the trench ring, k = 4 right above the metal top) and the two inner cap rings —
+// carries the same angle-dependent fractions, so every band is a regular column grid with
+// one diagonal orientation; the knots are PEC on the two metal rings only; the box corners
+// are slaves on every ring; each cap is a fan from a centre slave at the mean of the cap
+// ring's two crossing-slot knots. No knot ever passes a fixed vertex and a knot passing a
+// corner slave on every ring at once leaves the hats continuous: NO events, one segment per
+// convexity, no connectivity angle. The free knots are GRADED: free_knot_grading lists
+// perimeter distances (over R) from each end of the free arc (both crossings) carrying a
+// knot, the remaining free knots at equal fractions between the innermost graded ones (the
+// option-(c) held-out trace ramps over R / 3 from the metal arc).
+enum class CornerRingLayout : char
+{
+  METAL_RINGS_ONLY,
+  ALL_RINGS_FOLLOW_METAL
+};
+
 struct CornerTraceBasisRule
 {
   int ring_size = 8;
   int metal_interior_knots = 1;
   int free_knots = 5;
   std::string fractions = "PerimeterArcLength";
+  CornerRingLayout ring_layout = CornerRingLayout::METAL_RINGS_ONLY;
+  std::vector<double> free_knot_grading;
+  // Extra outer rings above the metal top at MetalThickness + k OveretchDepth
+  // (AllRingsFollowMetal; k = 1 mirrors the trench ring, k = 4 resolves the trace right
+  // above the metal top over the metal arc: the concave family's fabricated MA read +7 %
+  // without it).
+  std::vector<double> extra_levels_above_over_overetch;
+
+  bool AllRings() const { return ring_layout == CornerRingLayout::ALL_RINGS_FOLLOW_METAL; }
 
   bool operator==(const CornerTraceBasisRule &other) const
   {
     return ring_size == other.ring_size &&
            metal_interior_knots == other.metal_interior_knots &&
-           free_knots == other.free_knots && fractions == other.fractions;
+           free_knots == other.free_knots && fractions == other.fractions &&
+           ring_layout == other.ring_layout &&
+           free_knot_grading == other.free_knot_grading &&
+           extra_levels_above_over_overetch == other.extra_levels_above_over_overetch;
   }
   bool operator!=(const CornerTraceBasisRule &other) const { return !(*this == other); }
 };
+
+// The refined rule of the rebuilt corner family (generate_corner_response.REFINED_RULE;
+// corner-basis-refinement-20260930 Phase 1 candidate C14): 5 metal-interior + 9 graded free
+// knots (R/3, 2R/3 from each crossing), rings at t + d and t + 4d; 11 rings x 16 knots =
+// 176.
+CornerTraceBasisRule RefinedCornerTraceBasisRule();
+
+// The outer ring levels of an AllRingsFollowMetal coupon: -R, -R/3, -d, 0, t, t + k d for
+// the rule's k, R/3, R (sorted).
+std::vector<double> CornerRuleLevels(const CornerTraceBasisRule &rule, double radius,
+                                     double metal_thickness, double overetch_depth);
+
+// The reason a rule is invalid (RingSize = 2 + MetalInteriorKnots + FreeKnots, the
+// fraction parametrisation, an increasing positive grading fitting the free knots, no
+// grading on MetalRingsOnly), empty when valid.
+std::string CheckCornerTraceBasisRule(const CornerTraceBasisRule &rule);
 
 // A vertex of a ring that meets the metal: its perimeter fraction in [0, 1), whether it is
 // a PEC knot, a free knot or a slave (box corner), and for a knot its basis slot in the
@@ -76,7 +128,16 @@ double SquarePerimeterFraction(double half_width, const std::array<double, 3> &p
 // (first, second) with first < second <= first + 1.
 std::pair<double, double> ArmCrossingFractions(double radius, double angle_radians);
 
-// The knots and slave vertices of a ring that meets the metal, in perimeter order.
+// The knots and slave vertices of a ring laid out by the rule, in perimeter order: `pec`
+// true for a ring that meets the metal (crossings and metal-interior knots in the zero
+// set), false for a ring that follows the metal fractions off the metal (every knot free).
+std::vector<CornerRingVertex> CornerRuleRingLayout(double radius, double angle_radians,
+                                                   bool convex,
+                                                   const CornerTraceBasisRule &rule,
+                                                   bool pec);
+
+// The knots and slave vertices of a ring that meets the metal, in perimeter order
+// (CornerRuleRingLayout with pec).
 std::vector<CornerRingVertex> CornerMetalRingLayout(double radius, double angle_radians,
                                                     bool convex,
                                                     const CornerTraceBasisRule &rule);
@@ -129,7 +190,8 @@ CornerBoxRings DescribeCornerBoxRings(const std::vector<std::array<double, 3>> &
                                       const std::vector<int> &zero_trace_indices);
 
 // The generator's box rings before the rule is applied: the fixed layout on every ring
-// (outer rings at z = -R, -R / 3, -OveretchDepth, 0, MetalThickness, R / 3, R, then the top
+// (outer rings at z = -R, -R / 3, -OveretchDepth, 0, MetalThickness, R / 3, R — plus the
+// rule's extra levels above the metal top for the AllRingsFollowMetal layout — then the top
 // and bottom inner cap rings of half width R / 3) with the rule's zero set on the two rings
 // that meet the metal. BuildCornerTraceBasis on this seed gives the rule's basis at any
 // angle (unit tests; the Python generator is the reference for coupon files).
@@ -151,8 +213,11 @@ CornerBoxSeed MakeCornerBoxSeed(double radius, double metal_thickness,
 // rule's layout at THAT angle (the generator's connectivity_keys: a knot's key is its
 // role's fraction at the connectivity angle, a slave's its corner), so the triangulation is
 // the same for every angle of a segment (throws when a knot-corner passage lies between the
-// two angles: the triangles would fold). Used for the runtime model of an interpolated
-// corner (the nodes' knot semantics are the same; the positions at the device angle are the
+// two angles: the triangles would fold). Under the AllRingsFollowMetal layout every ring
+// (the node's ring heights and half widths, the rule's fractions; PEC on the rings the
+// node's zero set marks) is laid out by the rule, the caps are fans from centre slaves and
+// no connectivity angle is accepted. Used for the runtime model of an interpolated corner
+// (the nodes' knot semantics are the same; the positions at the device angle are the
 // rule's, the connectivity the segment's) and, at a node's own angle, to check a coupon's
 // files against the rule.
 ConstructedCornerTraceBasis
@@ -169,7 +234,9 @@ BuildCornerTraceBasis(const std::vector<std::array<double, 3>> &node_points,
 // hats JUMP (measured O(1)); a knot passing a box corner also swaps its order with the
 // corner's slave vertex, so no connectivity is continuous across it. Every event in
 // (0, 180) degrees of every knot (crossings, metal-interior and free), sorted by angle. The
-// `fraction` is the fixed-layout vertex passed.
+// `fraction` is the fixed-layout vertex passed. The AllRingsFollowMetal layout has NO
+// events (no fixed vertex; a knot passing a corner slave on every ring at once is
+// continuous, measured 1e-5 at the MetalRingsOnly event angles): the empty list.
 struct CornerBasisEvent
 {
   double angle_degrees = 0.0;

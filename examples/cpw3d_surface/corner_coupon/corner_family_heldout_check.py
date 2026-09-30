@@ -18,14 +18,19 @@ fabricated energy) and the Frobenius residuals. A held-out angle the stencil rul
 the check.
 
 The held-out TRACE the residuals are evaluated on is recorded (review of decision 154, MAJOR-1:
-the verdict depends on it). --trace recorded (default) uses the cache's heldout-coefficients.csv
+the verdict depends on it). The GATING trace is the gate file's GatingTrace = option-c (USER
+decision 161 (2), 2026-09-30): a run whose trace forms are exactly that one is the family's
+verdict (JSON Gating true), any other run (the band trace of a recorded cache) is reported
+alongside. --trace recorded (the default) uses the cache's heldout-coefficients.csv
 and classifies it from basis-points.csv + coupon-spec.json against the generator's two forms —
 TraceForm "band" (the pre-149 (6) metal-band cutoff: exactly zero on both metal rings, blind
 to the free knots next to the metal) or "option-c" (decision 149 (6): zero on the PEC part
 only) — or "recorded-unclassified" when it matches neither or the cache has no basis points.
 --trace option-c recomputes the option-(c) coefficients from basis-points.csv + the coupon
 spec with generate_corner_response.heldout_potential (the committed generator), so the verdict
-is a property of the family and not of the generator version that wrote the cache. Which trace
+is a property of the family and not of the generator version that wrote the cache; --trace band
+recomputes the band coefficients likewise (the verdict reported alongside on a family whose
+caches record option-(c) coefficients). Which trace
 GATES a family is a USER decision; the tool records the form it used (TraceForm in the JSON
 record, trace_form in the CSV) and never chooses. Fail closed: a held-out coefficient vector
 whose length differs from the matrix size, or a zero fabricated held-out energy, is an error.
@@ -39,7 +44,10 @@ heldout-coefficients.csv, basis-points.csv, postpro/{fabricated,thin}/{domain-re
 surface-response-matrix-aggregate}.csv). Without --nodes the nodes are the coupons whose model
 carries TraceBasis.ConnectivityAngleDegrees; with it, ANGLE:CONNECTIVITY specs select the nodes
 (a recorded coupon without the record is stamped with the connectivity, the caller's
-responsibility: no basis event between the two angles, which the C++ load check verifies)."""
+responsibility: no basis event between the two angles, which the C++ load check verifies). An
+AllRingsFollowMetal family (TraceBasis.RingLayout, corner-basis refinement 2026-09-30) has no
+connectivity records and no events: its nodes are given as plain ANGLE specs (--nodes 75 90 ...),
+the stencil is the cubic sliding window of the one segment."""
 import argparse
 import csv
 import hashlib
@@ -61,7 +69,7 @@ INTERFACES = {1: "SA", 2: "MS", 3: "MA"}
 DEFECTS = ("domain", "SA", "MS", "MA")
 FABRICATED = ("domain_fab", "SA_fab", "MS_fab", "MA_fab")
 GATED = ("SA_fab", "MS_fab", "MA_fab")
-TRACE_SOURCES = ("recorded", "option-c")
+TRACE_SOURCES = ("recorded", "option-c", "band")
 TRACE_FORM_BAND, TRACE_FORM_OPTION_C, TRACE_FORM_UNCLASSIFIED = "band", "option-c", "recorded-unclassified"
 TRACE_CLASSIFICATION_TOLERANCE = 1.0e-9
 
@@ -120,10 +128,11 @@ def generator_traces(d, spec):
 def heldout_trace(d, spec, trace_source):
     """(trace, TraceForm) for one coupon directory under the requested trace source."""
     forms = generator_traces(d, spec)
-    if trace_source == "option-c":
+    if trace_source in ("option-c", "band"):
         if forms is None:
-            raise FileNotFoundError(f"{d}: --trace option-c needs basis-points.csv to recompute the held-out trace")
-        return forms[TRACE_FORM_OPTION_C], TRACE_FORM_OPTION_C
+            raise FileNotFoundError(f"{d}: --trace {trace_source} needs basis-points.csv to recompute the held-out trace")
+        form = TRACE_FORM_OPTION_C if trace_source == "option-c" else TRACE_FORM_BAND
+        return forms[form], form
     if trace_source != "recorded":
         raise ValueError(f"unknown trace source {trace_source!r}; one of {TRACE_SOURCES}")
     trace = np.loadtxt(d / "heldout-coefficients.csv", delimiter=",", skiprows=1, ndmin=1)
@@ -154,19 +163,35 @@ def coupon(directory, trace_source="recorded"):
     if len(trace) != size:
         raise ValueError(f"{d}: {len(trace)} held-out coefficients for {size} basis functions")
     connectivity = spec.get("ConnectivityAngleDegrees")
+    rule = None
     library = d / "process-library.json"
     if library.exists():
         model = json.load(open(library))["Models"][0]
-        connectivity = (model.get("TraceBasis") or {}).get("ConnectivityAngleDegrees", connectivity)
+        record = model.get("TraceBasis") or {}
+        connectivity = record.get("ConnectivityAngleDegrees", connectivity)
+        if "MetalInteriorKnots" in record and "FreeKnots" in record:
+            rule = generator.TraceBasisRule.from_record(record)
     return {
         "topology": spec["Topology"],
         "angle": float(spec["AngleDegrees"]),
         "connectivity": None if connectivity is None else float(connectivity),
+        "rule": rule,
         "quantities": quantities,
         "trace": trace,
         "trace_form": trace_form,
         "dir": str(d),
     }
+
+
+def family_rule(fam):
+    """The one trace basis rule of a family's coupons (None for a family without TraceBasis
+    records); mixed rules are an error (the runtime refuses them too)."""
+    rules = [c["rule"] for c in fam if c["rule"] is not None]
+    if not rules:
+        return None
+    if any(r != rules[0] for r in rules) or len(rules) != len(fam):
+        raise ValueError("the family's coupons are not built on one TraceBasis rule")
+    return rules[0]
 
 
 def convexity_of(topology):
@@ -206,6 +231,10 @@ def evaluate(coupons, node_specs, gate):
     families = {}
     for topology in sorted({c["topology"] for c in coupons}):
         fam = [c for c in coupons if c["topology"] == topology]
+        rule = family_rule(fam)
+        if rule is not None and rule.all_rings and node_specs is None:
+            raise ValueError(f"{topology}: an AllRingsFollowMetal family has no connectivity records to tell "
+                             "the nodes from the held-out coupons: pass --nodes ANGLE ...")
         nodes, held_out = select_nodes(fam, node_specs)
         stencil_nodes = [(a, k, i) for a, k, i, _ in nodes]
         record = {"Topology": topology, "Nodes": [{"AngleDegrees": a, "ConnectivityAngleDegrees": k, "Dir": c["dir"]}
@@ -218,7 +247,8 @@ def evaluate(coupons, node_specs, gate):
                 stencil = {"reason": "the family has no nodes (no coupon with a TraceBasis.ConnectivityAngleDegrees "
                                      "record and no --nodes list): a legacy family is never interpolated"}
             else:
-                stencil = family.select_stencil(stencil_nodes, h["angle"], convexity_of(topology))
+                stencil = family.select_stencil(stencil_nodes, h["angle"], convexity_of(topology),
+                                                ring_size=(rule or generator.LEGACY_RULE).ring_size, rule=rule)
             if "reason" in stencil:
                 record["Refused"].append({"AngleDegrees": h["angle"], "Reason": stencil["reason"], "Dir": h["dir"]})
                 table.append((topology, f"{h['angle']:g}", "refused: " + stencil["reason"], "", "", "", "", "", "", "", "",
@@ -251,7 +281,9 @@ def evaluate(coupons, node_specs, gate):
                     entry["DefectReferencedPercent"][quantity] = energy
                     entry["CorrectedParticipationPercent"][quantity] = over_fab
                 gated = quantity in GATED
-                table.append((topology, f"{h['angle']:g}", stencil["rule"], f"{stencil['connectivity_angle_degrees']:g}",
+                connectivity_text = ("" if stencil["connectivity_angle_degrees"] is None
+                                     else f"{stencil['connectivity_angle_degrees']:g}")
+                table.append((topology, f"{h['angle']:g}", stencil["rule"], connectivity_text,
                               "/".join(f"{c['angle']:g}" for c in window), "/".join(f"{w:+.4f}" for w in weights),
                               quantity, f"{frob:.4f}", f"{energy:+.4f}", f"{over_fab:+.4f}", "yes" if gated else "no",
                               h["trace_form"]))
@@ -277,8 +309,9 @@ def main():
                              "TraceBasis.ConnectivityAngleDegrees record")
     parser.add_argument("--trace", choices=TRACE_SOURCES, default="recorded",
                         help="the held-out trace: the cache's heldout-coefficients.csv (classified band | option-c | "
-                             "recorded-unclassified) or the option-(c) coefficients recomputed from basis-points.csv + "
-                             "the coupon spec")
+                             "recorded-unclassified), or the option-(c) or the band coefficients recomputed from "
+                             "basis-points.csv + the coupon spec; the family's VERDICT is the run on the gate file's "
+                             "GatingTrace (option-c, USER decision 161 (2)), any other run (band) is reported alongside")
     parser.add_argument("--gates", type=Path, default=GATES_FILE)
     parser.add_argument("--json", type=Path, help="the verdict record (the gate file's digest, both forms, the verdict)")
     args = parser.parse_args()
@@ -308,11 +341,15 @@ def main():
             print(f"{topology}: REFUSED held-out angles: {[(r['AngleDegrees'], r['Reason']) for r in f['Refused']]}")
         print(f"{topology}: {len(f['HeldOut'])} held-out coupons, {len(f['Nodes'])} nodes, held-out trace form "
               f"{'/'.join(f['TraceForms'])} -> {'PASS' if f['Passed'] else 'FAIL'}")
-    print(f"{GATE} (participation-referenced, {limit:g} %; USER decision 149 (5)) on the {args.trace} held-out trace: "
+    gating_trace = gate.get("GatingTrace", "option-c")
+    forms_used = sorted({form for f in families.values() for form in f["TraceForms"]})
+    gating = forms_used == [gating_trace]
+    print(f"{GATE} (participation-referenced, {limit:g} %; USER decision 149 (5)) on the {args.trace} held-out trace "
+          f"(forms {'/'.join(forms_used)}; {'the GATING trace' if gating else 'NOT the gating trace ' + gating_trace + ': reported alongside'}): "
           f"{'PASS' if passed else 'FAIL'} -> {args.out}")
     if args.json:
-        record = {"Version": 2, "Gate": GATE, "GatesFile": str(args.gates.resolve()),
-                  "TraceSource": args.trace,
+        record = {"Version": 3, "Gate": GATE, "GatesFile": str(args.gates.resolve()),
+                  "TraceSource": args.trace, "GatingTrace": gating_trace, "Gating": gating,
                   "TraceForms": sorted({form for f in families.values() for form in f["TraceForms"]}),
                   "GatesSHA256": hashlib.sha256(args.gates.read_bytes()).hexdigest(),
                   "GatesVersion": gates.get("Version"),

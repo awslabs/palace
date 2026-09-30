@@ -132,14 +132,187 @@ KNOT_COINCIDENCE_FRACTION = 1.0e-6
 FIXED_FRACTION_IDENTITY = 1.0e-12
 
 
-def trace_basis_rule(ring_size, connectivity_angle_degrees=None):
+class TraceBasisRule:
+    """The knot layout rule of a corner coupon's trace basis (record TraceBasis).
+
+    Two layouts. "MetalRingsOnly" (the recorded rule, corner-basis fix 2026-09-29): the two
+    rings that meet the metal follow the angle-dependent knot semantics above (2 crossings +
+    metal_interior_knots + free_knots at equal fractions), every other ring the fixed layout
+    k / RingSize; the family has events (a knot passing a fixed vertex flips the band
+    triangulation) and needs segment connectivity. "AllRingsFollowMetal" (corner-basis
+    refinement, USER decision 161 (1), 2026-09-30): EVERY ring of the box — the outer rings
+    (the standard levels plus the extra rings at MetalThickness + k OveretchDepth for k in
+    extra_levels_above_over_overetch: k = 1 mirroring the trench ring at -OveretchDepth and
+    k = 4 right above the metal top) and the two inner cap rings — carries the same fractions,
+    so every band is a regular column grid (identical fractions on both rings: one diagonal
+    orientation), the knots are PEC on the two metal rings only, the box corners are slave
+    vertices on every ring and each cap is a fan from a centre slave at the mean of the cap
+    ring's two crossing-slot knots. No knot ever passes a fixed vertex: the basis has NO
+    events (a knot passing a box-corner slave on every ring at once leaves the interpolant
+    continuous), one segment per convexity, no per-side coupons. The free knots are GRADED:
+    free_knot_grading lists perimeter distances (over R) from each end of the free arc
+    (the crossings) where a knot sits (both sides), the remaining free knots at equal
+    fractions between the innermost graded knots — the option-(c) held-out trace ramps over
+    R / 3 from the metal arc and the fixed-fraction layout resolves it to -14 % (measured,
+    corner-basis-refinement-20260930). Rings that follow off the metal have all knots free."""
+
+    LAYOUTS = ("MetalRingsOnly", "AllRingsFollowMetal")
+
+    def __init__(self, layout, metal_interior_knots, free_knots, free_knot_grading=(),
+                 extra_levels_above_over_overetch=()):
+        if layout not in self.LAYOUTS:
+            raise ValueError(f"unknown trace basis layout {layout!r}")
+        grading = tuple(float(g) for g in free_knot_grading)
+        if any(g <= 0.0 for g in grading) or list(grading) != sorted(set(grading)):
+            raise ValueError("free knot grading must be increasing positive distances over R")
+        if 2 * len(grading) > free_knots:
+            raise ValueError("more graded knots than free knots")
+        extra = tuple(float(k) for k in extra_levels_above_over_overetch)
+        if any(k <= 0.0 for k in extra) or list(extra) != sorted(set(extra)):
+            raise ValueError("extra levels must be increasing positive multiples of OveretchDepth")
+        if layout == "MetalRingsOnly" and (grading or extra):
+            raise ValueError("the MetalRingsOnly layout has no free knot grading and no extra levels")
+        self.layout = layout
+        self.metal_interior_knots = int(metal_interior_knots)
+        self.free_knots = int(free_knots)
+        self.free_knot_grading = grading
+        # Extra outer rings above the metal top at MetalThickness + k OveretchDepth
+        # (AllRingsFollowMetal): k = 1 mirrors the trench ring; k = 4 (0.30 um at the recorded
+        # process) resolves the trace right above the metal top over the metal arc, where the
+        # linear ramp from t + d to R / 3 over-estimates the option-(c) smoothstep by 27 % at
+        # z = 0.30 and gives the concave family's fabricated MA a +7 % representation error
+        # (corner-basis-refinement-20260930 section 10: C14, supervisor decision).
+        self.extra_levels_above_over_overetch = extra
+
+    @property
+    def ring_size(self):
+        return 2 + self.metal_interior_knots + self.free_knots
+
+    @property
+    def all_rings(self):
+        return self.layout == "AllRingsFollowMetal"
+
+    def __eq__(self, other):
+        return isinstance(other, TraceBasisRule) and (
+            self.layout, self.metal_interior_knots, self.free_knots, self.free_knot_grading,
+            self.extra_levels_above_over_overetch,
+        ) == (other.layout, other.metal_interior_knots, other.free_knots, other.free_knot_grading,
+              other.extra_levels_above_over_overetch)
+
+    def levels(self, radius, metal_thickness, overetch_depth):
+        """The outer ring heights: the fabrication planes that reach the box and the far
+        rings, plus the rule's extra rings above the metal top."""
+        levels = {
+            -radius,
+            -radius / 3.0,
+            -overetch_depth,
+            0.0,
+            metal_thickness,
+            radius / 3.0,
+            radius,
+        }
+        for k in self.extra_levels_above_over_overetch:
+            levels.add(metal_thickness + k * overetch_depth)
+        return sorted(levels)
+
+    @classmethod
+    def from_record(cls, record):
+        return cls(
+            record.get("RingLayout", "MetalRingsOnly"),
+            record["MetalInteriorKnots"],
+            record["FreeKnots"],
+            record.get("FreeKnotGrading", ()),
+            record.get("ExtraLevelsAboveOverOveretch", ()),
+        )
+
+
+# The recorded rule (corner-basis fix; RingSize 8 = the lane-2 count).
+LEGACY_RULE = TraceBasisRule("MetalRingsOnly", METAL_INTERIOR_KNOTS, FREE_KNOTS)
+# The refined rule (corner-basis refinement 2026-09-30, Phase 1 candidate C14, supervisor
+# decision): against the converged held-out reference every SA / MS / MA of the 7 measured
+# coupons is within 5.3 % (the thin domain within 6.3 %, a known representation error of
+# every all-rings layout: the trace sits 2-4 % low between -R / 3 and -d and above t + R / 3);
+# 11 rings x 16 knots = 176 knots.
+REFINED_RULE = TraceBasisRule("AllRingsFollowMetal", 5, 9, (1.0 / 3.0, 2.0 / 3.0), (1, 4))
+RULES = {"legacy": LEGACY_RULE, "all-rings-follow-metal": REFINED_RULE}
+# The held-out reference surface (option (c); USER decision 161 (2) and the supervisor's
+# decision of 2026-09-30, corner-basis-refinement-20260930 sections 5-9): its z-levels are
+# DECOUPLED from the basis so the self-check judges the vertical representation as well as
+# the lateral one. The (c) cutoff ramps over R / 3 from the PEC band in every direction, so
+# the reference carries rings every OveretchDepth (0.05 um) across both ramps — from the
+# metal top up to and including MetalThickness + R / 3 (where the cutoff reaches 1) and from
+# the trench floor down to -R / 3 — on top of the standard levels, with
+# HELDOUT_REFERENCE_RING_SIZE knots per ring. Measured convergence (7 recorded coupons,
+# 64 knots): the recorded 7-level reference was off by up to 16 % (fabricated MA) and 7 %
+# (MS); this spacing is within 0.4 % of a reference at half the spacing on every energy.
+HELDOUT_REFERENCE_RING_SIZE = 64
+
+
+def heldout_reference_levels(radius, metal_thickness, overetch_depth):
+    ramp = radius / 3.0
+    tolerance = 1.0e-12 * radius
+    levels = set(LEGACY_RULE.levels(radius, metal_thickness, overetch_depth))
+    k = 1
+    while metal_thickness + k * overetch_depth < metal_thickness + ramp - tolerance:
+        levels.add(metal_thickness + k * overetch_depth)
+        k += 1
+    levels.add(metal_thickness + ramp)
+    k = 2
+    while -k * overetch_depth > -ramp + tolerance:
+        levels.add(-k * overetch_depth)
+        k += 1
+    kept = []
+    for level in sorted(levels):
+        if not kept or level - kept[-1] > tolerance:
+            kept.append(level)
+    if kept[-1] > radius + tolerance or kept[0] < -radius - tolerance:
+        raise ValueError("held-out reference levels leave the matching box")
+    return kept
+
+
+def trace_basis_rule(ring_size, connectivity_angle_degrees=None, rule=LEGACY_RULE):
     """The TraceBasis record. With a connectivity angle the coupon is a node of an
     interpolation SEGMENT of the corner family (corner-qualification block 2026-09-29): the
     bands next to its metal rings are triangulated in the merge order of the rule's layout at
     that angle (connectivity_keys), the same for every coupon of the segment, so the family's
     hats do not jump between the segment's nodes (they do at every knot passage of a
     fixed-layout vertex under the perimeter-ordered merge; corner_family_interpolation.py
-    lists the events). Without one the coupon is a legacy node: exact matches only."""
+    lists the events). Without one the coupon is a legacy node: exact matches only. The
+    AllRingsFollowMetal layout has no events and takes no connectivity angle."""
+    if ring_size != rule.ring_size:
+        raise ValueError(
+            f"ring size {ring_size} is not the rule's 2 + MetalInteriorKnots + FreeKnots = "
+            f"{rule.ring_size}"
+        )
+    if rule.all_rings:
+        if connectivity_angle_degrees is not None:
+            raise ValueError("the AllRingsFollowMetal layout has no events: no connectivity angle")
+        record = {
+            "Rule": (
+                "every ring of the box (outer rings at -R, -R/3, -OveretchDepth, 0, "
+                "MetalThickness, MetalThickness + k OveretchDepth for k in "
+                "ExtraLevelsAboveOverOveretch, R/3, R and the two inner cap rings) carries the "
+                "same knot fractions: the two metal-arm crossings, "
+                "MetalInteriorKnots at equal fractions of the metal arc and FreeKnots on the "
+                "free arc (FreeKnotGrading = perimeter distances over R from each crossing, "
+                "the rest at equal fractions between); PEC = crossings + metal-interior knots "
+                "on the rings at z = 0 and z = MetalThickness only; fractions = perimeter arc "
+                "length; box corners that are no knot are slave trace vertices (linear in the "
+                "fraction between the neighbouring knots); each cap is a fan from a centre "
+                "slave at the mean of the cap ring's two crossing knots; no knot passes a "
+                "fixed vertex: no events, one interpolation segment per convexity"
+            ),
+            "RingLayout": rule.layout,
+            "RingSize": int(ring_size),
+            "MetalInteriorKnots": rule.metal_interior_knots,
+            "FreeKnots": rule.free_knots,
+            "FreeKnotGrading": list(rule.free_knot_grading),
+            "Fractions": FRACTION_PARAMETRISATION,
+            "MetalLevels": ["0", "MetalThickness"],
+            "ExtraLevelsAboveOverOveretch": list(rule.extra_levels_above_over_overetch),
+            "CapCentre": "MeanOfCrossingKnots",
+        }
+        return record
     record = {
         "Rule": (
             "rings at z = 0 and z = MetalThickness: knots = the two metal-arm crossings "
@@ -150,8 +323,8 @@ def trace_basis_rule(ring_size, connectivity_angle_degrees=None):
             "k / RingSize"
         ),
         "RingSize": int(ring_size),
-        "MetalInteriorKnots": METAL_INTERIOR_KNOTS,
-        "FreeKnots": FREE_KNOTS,
+        "MetalInteriorKnots": rule.metal_interior_knots,
+        "FreeKnots": rule.free_knots,
         "Fractions": FRACTION_PARAMETRISATION,
         "MetalLevels": ["0", "MetalThickness"],
     }
@@ -242,38 +415,64 @@ def perimeter_arc_distance(fraction, arc):
 
 
 def metal_ring_layout(radius, angle_degrees, topology, ring_size):
-    """Knots and slave vertices of a ring that meets the metal, by the trace basis rule.
+    """Knots and slave vertices of a ring that meets the metal, by the recorded
+    (MetalRingsOnly) trace basis rule: rule_ring_layout with LEGACY_RULE."""
+    if ring_size != LEGACY_RULE.ring_size:
+        raise ValueError(
+            "the trace basis rule needs RingSize = 2 crossings + MetalInteriorKnots + "
+            f"FreeKnots = {LEGACY_RULE.ring_size}"
+        )
+    return rule_ring_layout(radius, angle_degrees, topology, LEGACY_RULE, True)
+
+
+def free_knot_fractions(free_arc, rule):
+    """Unwrapped fractions of the rule's free knots on the free arc (start, end): the graded
+    knots at free_knot_grading x R from both ends, the remaining knots at equal fractions
+    between the innermost graded ones (equal fractions of the whole arc without grading)."""
+    start, end = free_arc
+    if not rule.free_knot_grading:
+        return [start + (end - start) * k / (rule.free_knots + 1) for k in range(1, rule.free_knots + 1)]
+    offsets = [g / 8.0 for g in rule.free_knot_grading]  # perimeter fraction = distance / 8R
+    inner_start, inner_end = start + offsets[-1], end - offsets[-1]
+    if inner_end - inner_start <= KNOT_COINCIDENCE_FRACTION:
+        raise ValueError("the free arc is too short for the free knot grading")
+    remaining = rule.free_knots - 2 * len(offsets)
+    fractions = [start + o for o in offsets] + [end - o for o in offsets]
+    fractions += [
+        inner_start + (inner_end - inner_start) * k / (remaining + 1)
+        for k in range(1, remaining + 1)
+    ]
+    return sorted(fractions)
+
+
+def rule_ring_layout(radius, angle_degrees, topology, rule, metal_ring):
+    """Knots and slave vertices of a ring laid out by the trace basis rule at the angle.
     Returns a list of vertices in perimeter (counterclockwise) order, each (fraction, kind,
     slot) with kind "zero" (PEC knot), "free" (free knot) or "slave" (box corner between two
     knots, slot None); the fraction is in [0, 1). The slot is the knot's basis position
     within the ring, fixed by ROLE so that every node of the family has the same zero set
-    and like-to-like free knots at the same indices: convex rings are ordered free 2, free
-    3, free 4, free 5, first crossing, metal interior, second crossing, free 1 (free k = the
-    k-th free knot counterclockwise from the second crossing), which is the lane-2 order of
-    the 90-degree node (its free 2 lies at (-R, 0), the ring start); concave rings are
-    ordered first crossing, free 1 .. free 5 (counterclockwise from the first crossing),
-    second crossing, metal interior."""
-    if ring_size != 2 + METAL_INTERIOR_KNOTS + FREE_KNOTS:
-        raise ValueError(
-            "the trace basis rule needs RingSize = 2 crossings + MetalInteriorKnots + "
-            f"FreeKnots = {2 + METAL_INTERIOR_KNOTS + FREE_KNOTS}"
-        )
+    and like-to-like free knots at the same indices: convex rings are ordered free 2 .. free
+    F, first crossing, metal interior 1 .. M, second crossing, free 1 (free k = the k-th free
+    knot counterclockwise from the second crossing), which is the lane-2 order of the
+    recorded 90-degree node (its free 2 lies at (-R, 0), the ring start); concave rings are
+    ordered first crossing, free 1 .. free F (counterclockwise from the first crossing),
+    second crossing, metal interior 1 .. M. `metal_ring` False (a ring that follows the
+    metal fractions off the metal, AllRingsFollowMetal): every knot is free."""
+    ring_size = rule.ring_size
     first, second = arm_crossing_fractions(radius, angle_degrees)
     metal, free = metal_arc_fractions(radius, angle_degrees, topology)
     roles = {"crossing1": first, "crossing2": second % 1.0}
-    for m in range(1, METAL_INTERIOR_KNOTS + 1):
+    for m in range(1, rule.metal_interior_knots + 1):
         roles[f"metal{m}"] = snap_fraction(
-            (metal[0] + (metal[1] - metal[0]) * m / (METAL_INTERIOR_KNOTS + 1)) % 1.0,
+            (metal[0] + (metal[1] - metal[0]) * m / (rule.metal_interior_knots + 1)) % 1.0,
             ring_size,
         )
-    for k in range(1, FREE_KNOTS + 1):
-        roles[f"free{k}"] = snap_fraction(
-            (free[0] + (free[1] - free[0]) * k / (FREE_KNOTS + 1)) % 1.0, ring_size
-        )
-    order = ring_role_order(topology)
+    for k, fraction in enumerate(free_knot_fractions(free, rule), start=1):
+        roles[f"free{k}"] = snap_fraction(fraction % 1.0, ring_size)
+    order = ring_role_order(topology, rule)
     knots = []
     for slot, role in enumerate(order):
-        kind = "free" if role.startswith("free") else "zero"
+        kind = "free" if (role.startswith("free") or not metal_ring) else "zero"
         knots.append((roles[role], kind, slot))
     knots.sort(key=lambda knot: knot[0])
     for previous, following in zip(knots, knots[1:]):
@@ -291,19 +490,19 @@ def metal_ring_layout(radius, angle_degrees, topology, ring_size):
     return vertices
 
 
-def ring_role_order(topology):
-    """Basis order of the knot roles within a ring that meets the metal (see
-    metal_ring_layout)."""
-    free = [f"free{k}" for k in range(1, FREE_KNOTS + 1)]
-    metal = [f"metal{m}" for m in range(1, METAL_INTERIOR_KNOTS + 1)]
+def ring_role_order(topology, rule=LEGACY_RULE):
+    """Basis order of the knot roles within a ring laid out by the rule (see
+    rule_ring_layout)."""
+    free = [f"free{k}" for k in range(1, rule.free_knots + 1)]
+    metal = [f"metal{m}" for m in range(1, rule.metal_interior_knots + 1)]
     if topology == "convex":
         return free[1:] + ["crossing1"] + metal + ["crossing2"] + free[:1]
     return ["crossing1"] + free + ["crossing2"] + metal
 
 
-def zero_slots(topology):
+def zero_slots(topology, rule=LEGACY_RULE):
     return [
-        slot for slot, role in enumerate(ring_role_order(topology))
+        slot for slot, role in enumerate(ring_role_order(topology, rule))
         if not role.startswith("free")
     ]
 
@@ -376,6 +575,14 @@ def connect_rings_by_fraction(
             triangles.append((first_vertex, next_second_vertex, second_vertex))
             i += 1
             j += 1
+
+
+def surface_fraction(ring, knot_index):
+    """Perimeter fraction of a knot in a build_surface ring record."""
+    for fraction, index, _ in ring:
+        if index == knot_index:
+            return fraction
+    raise KeyError(knot_index)
 
 
 def cap_ring(triangles, offset, size, reverse):
@@ -463,35 +670,46 @@ def build_surface(
     cap_centers=False,
     connectivity_angle_degrees=None,
     crossing_vertices=False,
+    rule=None,
+    levels=None,
 ):
     """The trace surface of a corner coupon (TraceSurface). With an angle, the rings at
-    metal_levels follow the trace basis rule (metal_ring_layout); without one (the probe
-    surfaces, whose traces vanish on the metal band) every ring is the fixed layout and the
-    result carries no slave vertices. With an angle and crossing_vertices the rings at
-    metal_levels are the fixed layout plus the two metal-arm crossings (heldout_ring_layout:
-    the fine held-out surface, whose trace vanishes on the PEC part of the rings only). With
-    a connectivity angle the bands next to the metal rings are triangulated in the merge
-    order of the rule's layout at THAT angle (connectivity_keys; the knot positions stay
-    those of angle_degrees), else in the perimeter order at angle_degrees."""
+    metal_levels follow the trace basis rule (rule_ring_layout; `rule` None = LEGACY_RULE,
+    MetalRingsOnly); without one (the probe surfaces, whose traces vanish on the metal band)
+    every ring is the fixed layout and the result carries no slave vertices. With an angle
+    and crossing_vertices the rings at metal_levels are the fixed layout plus the two
+    metal-arm crossings (heldout_ring_layout: the fine held-out surface, whose trace
+    vanishes on the PEC part of the rings only; `levels` = its outer ring heights, default
+    the rule's). With a connectivity angle (MetalRingsOnly) the bands next to the metal rings
+    are triangulated in the merge order of the rule's layout at THAT angle
+    (connectivity_keys; the knot positions stay those of angle_degrees), else in the
+    perimeter order at angle_degrees. With an AllRingsFollowMetal rule every ring (the outer
+    rings incl. the extra level and the two cap rings) takes the rule's layout at the angle
+    (PEC on the metal rings only), the caps are fans from centre slaves (TraceBasisRule)."""
+    if rule is None:
+        rule = LEGACY_RULE
     if crossing_vertices and (angle_degrees is None or connectivity_angle_degrees is not None):
         raise ValueError(
             "crossing vertices need an angle and take no connectivity angle (the held-out "
             "surface is not a basis)"
         )
+    if rule.all_rings and (
+        connectivity_angle_degrees is not None or cap_centers or crossing_vertices
+    ):
+        raise ValueError(
+            "the AllRingsFollowMetal layout takes no connectivity angle (it has no events) "
+            "and defines its own cap centres; the held-out surface is built with the legacy "
+            "rule's fixed layout"
+        )
+    all_rings = rule.all_rings and angle_degrees is not None
+    if not crossing_vertices and ring_size != rule.ring_size and angle_degrees is not None:
+        raise ValueError(f"ring size {ring_size} is not the rule's {rule.ring_size}")
     # Keep the trace triangulation conforming to every fabrication plane that
     # reaches the matching surface. The coupon mesh resolves these intersections
     # so the narrow trace hats across the process zone have active boundary DOFs.
-    levels = sorted(
-        {
-            -radius,
-            -radius / 3.0,
-            -overetch_depth,
-            0.0,
-            metal_thickness,
-            radius / 3.0,
-            radius,
-        }
-    )
+    if levels is None:
+        levels = rule.levels(radius, metal_thickness, overetch_depth)
+    levels = sorted(levels)
     tolerance = 1.0e-12 * radius
     surface = TraceSurface()
     rings = []  # per ring: list of (fraction, vertex index) in perimeter order
@@ -504,15 +722,18 @@ def build_surface(
             and half_width == radius
             and any(abs(level - metal) <= tolerance for metal in metal_levels(metal_thickness))
         )
-        layout = (
-            (
-                heldout_ring_layout(radius, angle_degrees, topology, ring_size)
-                if crossing_vertices
-                else metal_ring_layout(radius, angle_degrees, topology, ring_size)
+        if all_rings:
+            layout = rule_ring_layout(radius, angle_degrees, topology, rule, meets_metal)
+        else:
+            layout = (
+                (
+                    heldout_ring_layout(radius, angle_degrees, topology, ring_size)
+                    if crossing_vertices
+                    else metal_ring_layout(radius, angle_degrees, topology, ring_size)
+                )
+                if meets_metal
+                else fixed_ring_layout(ring_size)
             )
-            if meets_metal
-            else fixed_ring_layout(ring_size)
-        )
         if meets_metal and connectivity_angle_degrees is not None:
             keyed = connectivity_keys(
                 layout,
@@ -593,7 +814,30 @@ def build_surface(
     connect(bottom_inner, 0)
     top_indices = resolved_rings[top_inner][1]
     bottom_indices = resolved_rings[bottom_inner][1]
-    if cap_centers:
+    if all_rings:
+        # Cap fans from centre slaves at the mean of the cap ring's two crossing-slot knots
+        # (present at every angle; the recorded fixed cap's fan diagonal (-R/3, 0) - (R/3, 0)
+        # gave the centre that value too). A fan from a ring vertex would be degenerate as
+        # soon as two consecutive vertices share the apex's side (dense layouts).
+        first, second = arm_crossing_fractions(radius, angle_degrees)
+        for ring_index, z, reverse in ((top_inner, radius, False), (bottom_inner, -radius, True)):
+            ring = rings[ring_index]
+            knot_at = {fraction: index for fraction, index, _ in ring if index is not None}
+            parents = tuple(
+                knot_at[min(knot_at, key=lambda f: abs(f - crossing))]
+                for crossing in (first, second % 1.0)
+            )
+            for crossing, parent in zip((first, second % 1.0), parents):
+                if abs(surface_fraction(ring, parent) - crossing) > FIXED_FRACTION_IDENTITY:
+                    raise ValueError("cap ring has no knot at a crossing fraction")
+            center = surface.basis_size + len(surface.slaves)
+            surface.slaves.append(((0.0, 0.0, z), parents[0], parents[1], 0.5))
+            vertices = resolved_rings[ring_index][1]
+            count = len(vertices)
+            for index in range(count):
+                a, b = vertices[index], vertices[(index + 1) % count]
+                surface.triangles.append((b, a, center) if reverse else (a, b, center))
+    elif cap_centers:
         top_center = surface.basis_size + len(surface.slaves)
         bottom_center = top_center + 1
         surface.slaves.append(((0.0, 0.0, radius), None, None, None))
@@ -1179,6 +1423,16 @@ def main():
         "ConnectivityAngleDegrees); default: the perimeter order at --angle (legacy node)",
     )
     parser.add_argument("--corner-radius", type=float, default=0.0)
+    parser.add_argument(
+        "--trace-basis",
+        choices=sorted(RULES),
+        default="legacy",
+        help="the trace basis rule: legacy = MetalRingsOnly (RingSize 8, the recorded "
+        "family; events, segment connectivity); all-rings-follow-metal = the refined rule "
+        "(every ring follows the metal fractions, 5 metal-interior + 9 graded free knots, the "
+        "extra rings at MetalThickness + OveretchDepth and MetalThickness + 4 OveretchDepth; "
+        "no events)",
+    )
     parser.add_argument("--ring-size", type=int, default=8)
     parser.add_argument("--order", type=int, default=1)
     parser.add_argument("--metal-thickness", type=float, default=0.1)
@@ -1212,6 +1466,14 @@ def main():
             "--connectivity-angle must lie strictly between zero and 180 degrees and is a "
             "sharp corner family option"
         )
+    rule = RULES[args.trace_basis]
+    if args.ring_size != rule.ring_size:
+        parser.error(
+            f"--ring-size {args.ring_size} is not the {args.trace_basis} rule's "
+            f"2 + MetalInteriorKnots + FreeKnots = {rule.ring_size}"
+        )
+    if rule.all_rings and args.connectivity_angle is not None:
+        parser.error("the all-rings-follow-metal rule has no events: no --connectivity-angle")
     tangent_distance = (
         0.0 if is_straight_anchor(args.angle)
         else args.corner_radius / np.tan(0.5 * np.deg2rad(args.angle))
@@ -1291,6 +1553,7 @@ def main():
         angle_degrees=args.angle,
         topology=args.topology,
         connectivity_angle_degrees=args.connectivity_angle,
+        rule=rule,
     )
     points = np.asarray(surface.knot_points)
     contour_groups = surface.contour_groups
@@ -1365,18 +1628,25 @@ def main():
         args.trench_rounding,
         args.substrate_permittivity,
         interface_layers,
-        trace_basis_rule(args.ring_size, args.connectivity_angle),
+        trace_basis_rule(args.ring_size, args.connectivity_angle, rule),
     )
 
+    # The held-out reference surface: the fixed layout of HELDOUT_REFERENCE_RING_SIZE knots
+    # per ring plus the crossings on the metal rings, on the reference LEVELS (decoupled from
+    # the basis: the self-check judges the vertical representation as well as the lateral
+    # one; heldout_reference_levels).
     fine_surface = build_surface(
         args.radius,
-        max(16, 4 * args.ring_size),
+        HELDOUT_REFERENCE_RING_SIZE,
         args.metal_thickness,
         args.overetch_depth,
         angle_degrees=args.angle,
         topology=args.topology,
         cap_centers=True,
         crossing_vertices=True,
+        levels=heldout_reference_levels(
+            args.radius, args.metal_thickness, args.overetch_depth
+        ),
     )
     fine_points = fine_surface.vertex_points()
     fine_triangles = fine_surface.triangles
