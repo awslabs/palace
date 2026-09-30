@@ -109,11 +109,17 @@ boundary conditions on interior boundaries model sheets carrying a surface curre
 charge:
 
   - [`"PEC"`](../config/reference.md#config-boundaries-pec) (or
-    [`"Ground"`](../config/reference.md#config-boundaries-ground)),
-    [`"Terminal"`](../config/reference.md#config-boundaries-terminal), and
-    [`"FluxLoop"`](../config/reference.md#config-boundaries-fluxloop) metal boundaries
+    [`"Ground"`](../config/reference.md#config-boundaries-ground)) and
+    [`"Terminal"`](../config/reference.md#config-boundaries-terminal) metal boundaries
     are infinitely thin perfect conductors. The fields on the two sides are not coupled
     through the sheet, since the tangential electric field vanishes on it.
+
+  - [`"Superconductor"`](../config/reference.md#config-boundaries-superconductor)
+    boundaries, and the films of
+    [`"FluxLoop"`](../config/reference.md#config-boundaries-fluxloop) boundaries, are
+    thin superconducting films with a kinetic sheet inductance. The mesh is never cracked
+    along them: the sheet carries a single tangential vector potential, and the sheet
+    current is given by the jump in the tangential magnetic field across the sheet.
 
   - [`"LumpedPort"`](../config/reference.md#config-boundaries-lumpedport) and
     [`"SurfaceCurrent"`](../config/reference.md#config-boundaries-surfacecurrent)
