@@ -129,6 +129,66 @@ std::unique_ptr<mfem::Solver> MakeDirectSolver(const IoData &iodata, MPI_Comm co
 #endif
 }
 
+// Multi-RHS solves with a direct factor whose RHS count is fixed by its first solve (MFEM's
+// SuperLU wrapper does not allow changing it): the block size is set by the first call (or
+// up front), and batches are split and zero-padded to it. Inputs and outputs may alias.
+class BlockedDirectSolver
+{
+public:
+  BlockedDirectSolver(std::unique_ptr<mfem::Solver> &&solver, int block = 0)
+    : solver(std::move(solver)), block(block)
+  {
+  }
+
+  void SetOperator(const mfem::Operator &op) { solver->SetOperator(op); }
+
+  void Mult(const std::vector<const mfem::Vector *> &X,
+            const std::vector<mfem::Vector *> &Y) const
+  {
+    const int n = static_cast<int>(X.size());
+    if (n == 0)
+    {
+      return;
+    }
+    const int size = X[0]->Size();
+    if (block == 0)
+    {
+      block = std::min(kMaxBlock, n);
+    }
+    pad_in.SetSize(size);
+    pad_in = 0.0;
+    pad_out.SetSize(size);
+    mfem::Array<const mfem::Vector *> Xp(block);
+    mfem::Array<mfem::Vector *> Yp(block);
+    for (int c0 = 0; c0 < n; c0 += block)
+    {
+      const int nb = std::min(block, n - c0);
+      for (int k = 0; k < block; k++)
+      {
+        Xp[k] = (k < nb) ? X[c0 + k] : &pad_in;
+        Yp[k] = (k < nb) ? Y[c0 + k] : &pad_out;
+        Yp[k]->SetSize(size);
+      }
+      if (block == 1)
+      {
+        pad_out = *Xp[0];  // the solve may not be done in place
+        solver->Mult(pad_out, *Yp[0]);
+      }
+      else
+      {
+        solver->ArrayMult(Xp, Yp);
+      }
+    }
+  }
+
+  static constexpr int kMaxBlock = 32;
+
+private:
+  std::unique_ptr<mfem::Solver> solver;
+  mutable int block;
+  mutable mfem::Vector pad_in, pad_out;
+};
+
 // Region-condensed system operator: (region operator on region-free true DOFs) + implicit
 // DtN on the interface, with non-region-free true DOFs pinned to identity.
 class RegionCondensedOperator : public mfem::Operator
@@ -280,16 +340,21 @@ struct SubstructuringSolver::Impl
   std::vector<mfem::Array<int>> env_dbc_lists;  // per-level essential DOFs
   std::unique_ptr<mfem::HypreParMatrix> env_A_ee;  // single-level submesh operator
   std::unique_ptr<KspSolver> env_ksp;
-  std::unique_ptr<mfem::Solver> reg_lu;  // direct A_region_free factorization (region pc)
+  // Direct factorization of the region-free block (the region pc, or the exact region solve
+  // when region_exact) and its (local) region-free true DOFs.
+  std::unique_ptr<BlockedDirectSolver> reg_lu;
+  bool region_exact = false;
+  mfem::Array<int> reg_idx;
+  mutable mfem::Vector reg_r, reg_z;
   std::unique_ptr<mfem::HypreParMatrix> env_A_ee_parent;  // parent-space A_EE (eliminated)
-  std::unique_ptr<mfem::Solver> env_lu_parent;            // its direct factor
+  std::unique_ptr<BlockedDirectSolver> env_lu_parent;     // its direct factor
 #if defined(MFEM_USE_MUMPS)
   // MUMPS partial factorization of the environment with Gamma as the Schur variables: gives
   // S_E directly and serves every environment interior solve (set up by MaterializeMumps).
   std::unique_ptr<MumpsSchurSolver> env_mumps;
 #endif
   // Block size of the batched multi-RHS environment solves.
-  static constexpr int kMaterializeBlock = 32;
+  static constexpr int kMaterializeBlock = BlockedDirectSolver::kMaxBlock;
   // Largest interface for which the region preconditioner factors the dense Gamma block of
   // the exact condensed operator (dense block + its fill ~ 3 |Gamma|^2 doubles in total).
   static constexpr int kDirectCondensedMaxInterface = 10000;
@@ -299,11 +364,6 @@ struct SubstructuringSolver::Impl
   static constexpr int kDenseInterfacePerExcitation = 1000;
   bool region_direct = false;          // region pc is a direct factor (created lazily)
   bool region_dense_eligible = false;  // ... and a dense S_E is available for the exact one
-  // RHS count of the direct env factor, fixed by its first solve (MFEM's SuperLU wrapper
-  // does not allow changing it): kMaterializeBlock when S_E is materialized, else the size
-  // of the first excitation batch. Smaller batches are zero-padded to it.
-  mutable int env_block = 0;
-  mutable mfem::Vector env_pad_in, env_pad_out;  // zero input / scratch output (padding)
   mfem::Array<int> non_env_int;  // parent true DOFs that are not environment-interior
   bool env_parent_direct = false;
   mfem::Array<int> env_ess;  // solve-space essential true DOFs (Gamma + env Dirichlet)
@@ -810,32 +870,33 @@ struct SubstructuringSolver::Impl
       a.AddBoundaryIntegrator(
           new NativeQuadrature<mfem::VectorFEMassIntegrator>(sheet_coef));
     }
+    // Domain integrators only on the attributes of coef_by_attr (zero elsewhere).
+    const int max_attr = parent.attributes.Size() ? parent.attributes.Max() : 1;
+    mfem::Array<int> marker(max_attr);
+    marker = 0;
+    for (const auto &[attr, m] : coef_by_attr)
+    {
+      marker[attr - 1] = 1;
+    }
+    mfem::Vector mass(max_attr);
+    mass = mag_eps;
+    mfem::PWConstCoefficient mcoef(mass);
     if (magnetostatic)
     {
       if (with_curl)
       {
-        a.AddDomainIntegrator(new NativeQuadrature<mfem::CurlCurlIntegrator>(coef));
+        a.AddDomainIntegrator(new NativeQuadrature<mfem::CurlCurlIntegrator>(coef), marker);
       }
-      const int max_attr = parent.attributes.Size() ? parent.attributes.Max() : 1;
-      mfem::Vector mass(max_attr);
-      mass = 0.0;
       if (with_mass)
       {
-        for (const auto &[a_attr, m] : coef_by_attr)
-        {
-          mass(a_attr - 1) = mag_eps;
-        }
+        a.AddDomainIntegrator(new NativeQuadrature<mfem::VectorFEMassIntegrator>(mcoef),
+                              marker);
       }
-      mfem::PWConstCoefficient mcoef(mass);  // outlives Assemble() below
-      if (with_mass)
-      {
-        a.AddDomainIntegrator(new NativeQuadrature<mfem::VectorFEMassIntegrator>(mcoef));
-      }
-      a.Assemble();
-      a.Finalize();
-      return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
     }
-    a.AddDomainIntegrator(new NativeQuadrature<mfem::DiffusionIntegrator>(coef));
+    else
+    {
+      a.AddDomainIntegrator(new NativeQuadrature<mfem::DiffusionIntegrator>(coef), marker);
+    }
     a.Assemble();
     a.Finalize();
     return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
@@ -1467,7 +1528,8 @@ struct SubstructuringSolver::Impl
         std::unique_ptr<mfem::HypreParMatrix> e(
             env_A_ee_parent->EliminateRowsCols(non_env_int));
       }
-      env_lu_parent = MakeDirectSolver(iodata, parent_fes.GetComm());
+      env_lu_parent = std::make_unique<BlockedDirectSolver>(
+          MakeDirectSolver(iodata, parent_fes.GetComm()));
       env_lu_parent->SetOperator(*env_A_ee_parent);
       env_parent_direct = true;
       return;
@@ -1720,35 +1782,43 @@ struct SubstructuringSolver::Impl
     return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
   }
 
-  // Interface selection E_Gamma (parent true DOFs x global interface index): E(i, g_i) = 1
-  // for each interface true DOF. Each rank's interface indices are its own contiguous
-  // block, so the matrix is local (diag block only).
-  std::unique_ptr<mfem::HypreParMatrix> AssembleInterfaceSelection() const
+  // Selection matrix E (parent true DOFs x marked DOFs): E(i, k) = 1 for the k-th marked
+  // DOF, numbered globally rank by rank in local order (for the interface, as gamma_global).
+  // Each rank's marked DOFs are its own contiguous block, so the matrix is local.
+  std::unique_ptr<mfem::HypreParMatrix> AssembleSelection(const std::vector<char> &mark) const
   {
     MPI_Comm comm = parent_fes.GetComm();
+    int nloc = 0;
+    for (int i = 0; i < nt; i++)
+    {
+      nloc += mark[i];
+    }
+    int off = 0, nglob = 0;
+    MPI_Exscan(&nloc, &off, 1, MPI_INT, MPI_SUM, comm);
+    MPI_Allreduce(&nloc, &nglob, 1, MPI_INT, MPI_SUM, comm);
     std::vector<int> I(nt + 1, 0);
     std::vector<HYPRE_BigInt> J;
     std::vector<double> V;
     for (int i = 0; i < nt; i++)
     {
-      if (is_gamma[i])
+      if (mark[i])
       {
-        J.push_back(gamma_global[i]);
+        J.push_back(off + static_cast<int>(J.size()));
         V.push_back(1.0);
       }
       I[i + 1] = static_cast<int>(J.size());
     }
-    // Column (interface) partitioning in the layout HYPRE expects for this build.
+    // Column partitioning in the layout HYPRE expects for this build.
     std::vector<HYPRE_BigInt> cols;
     if (HYPRE_AssumedPartitionCheck())
     {
-      cols = {gamma_off, gamma_off + gamma_nloc, nG_global};
+      cols = {off, off + nloc, nglob};
     }
     else
     {
       const int nranks = Mpi::Size(comm);
       std::vector<int> cnt(nranks);
-      MPI_Allgather(&gamma_nloc, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+      MPI_Allgather(&nloc, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
       cols.assign(nranks + 1, 0);
       for (int r = 0; r < nranks; r++)
       {
@@ -1756,33 +1826,95 @@ struct SubstructuringSolver::Impl
       }
     }
     return std::make_unique<mfem::HypreParMatrix>(
-        comm, nt, parent_fes.GlobalTrueVSize(), static_cast<HYPRE_BigInt>(nG_global),
-        I.data(), J.data(), V.data(), parent_fes.GetTrueDofOffsets(), cols.data());
+        comm, nt, parent_fes.GlobalTrueVSize(), static_cast<HYPRE_BigInt>(nglob), I.data(),
+        J.data(), V.data(), parent_fes.GetTrueDofOffsets(), cols.data());
   }
 
   // Create the direct region preconditioner on the first solve batch (n excitations): the
   // exact dense-Gamma factor A_region_free + S_E when the batch amortizes it, else
-  // A_region_free. Created once (destroying a never-factored SuperLU object crashes in
-  // SuperLU_DIST). Collective.
+  // A_region_free, restricted to the region-free DOFs. Created once (destroying a
+  // never-factored SuperLU object crashes in SuperLU_DIST). Collective.
   void EnsureRegionFactor(int n)
   {
     if (!region_direct || reg_lu)
     {
       return;
     }
-    reg_lu = MakeDirectSolver(iodata, parent_fes.GetComm());
-    if (region_dense_eligible &&
-        static_cast<long long>(std::max(n, 1)) * kDenseInterfacePerExcitation >= nG_global)
+    // The exact factor solves each batch directly (one multi-RHS solve), the other one
+    // preconditions CG per excitation.
+    region_exact =
+        region_dense_eligible &&
+        static_cast<long long>(std::max(n, 1)) * kDenseInterfacePerExcitation >= nG_global;
+    reg_lu = std::make_unique<BlockedDirectSolver>(
+        MakeDirectSolver(iodata, parent_fes.GetComm()),
+        region_exact ? std::min(BlockedDirectSolver::kMaxBlock, std::max(n, 1)) : 1);
+    std::unique_ptr<mfem::HypreParMatrix> E = AssembleSelection(is_region_free);
+    std::unique_ptr<mfem::HypreParMatrix> P;
+    if (region_exact)
     {
       std::unique_ptr<mfem::HypreParMatrix> S_mat = AssembleDenseInterface();
-      std::unique_ptr<mfem::HypreParMatrix> P(
+      std::unique_ptr<mfem::HypreParMatrix> A(
           mfem::ParAdd(A_region_free.get(), S_mat.get()));
       S_mat.reset();
-      reg_lu->SetOperator(*P);  // the factor keeps its own copy of P
+      P.reset(mfem::RAP(A.get(), E.get()));
     }
     else
     {
-      reg_lu->SetOperator(*A_region_free);
+      P.reset(mfem::RAP(A_region_free.get(), E.get()));
+    }
+    reg_lu->SetOperator(*P);  // the factor keeps its own copy of P
+    reg_idx.SetSize(0);
+    for (int i = 0; i < nt; i++)
+    {
+      if (is_region_free[i])
+      {
+        reg_idx.Append(i);
+      }
+    }
+    reg_r.SetSize(reg_idx.Size());
+    reg_z.SetSize(reg_idx.Size());
+  }
+
+  // Region preconditioner apply with the direct factor: identity off the region-free DOFs
+  // (A_region_free is identity there), the factor on them.
+  void ApplyRegionFactor(const mfem::Vector &r, mfem::Vector &z) const
+  {
+    z = r;
+    r.GetSubVector(reg_idx, reg_r);
+    reg_lu->Mult({&reg_r}, {&reg_z});
+    z.SetSubVector(reg_idx, reg_z);
+  }
+
+  // Region-condensed solves u_k (parent true DOFs) for right-hand sides b_k that vanish off
+  // the region-free DOFs: one multi-RHS solve with the exact factor, else CG per excitation.
+  // Collective.
+  void SolveRegion(const std::vector<mfem::Vector> &b, std::vector<mfem::Vector> &u) const
+  {
+    const int n = static_cast<int>(b.size());
+    u.assign(n, mfem::Vector(nt));
+    if (!region_exact)
+    {
+      for (int k = 0; k < n; k++)
+      {
+        u[k] = 0.0;
+        region_ksp->Mult(b[k], u[k]);
+      }
+      return;
+    }
+    std::vector<mfem::Vector> r(n, mfem::Vector(reg_idx.Size()));
+    std::vector<const mfem::Vector *> X(n);
+    std::vector<mfem::Vector *> Y(n);
+    for (int k = 0; k < n; k++)
+    {
+      b[k].GetSubVector(reg_idx, r[k]);
+      X[k] = &r[k];
+      Y[k] = &r[k];
+    }
+    reg_lu->Mult(X, Y);
+    for (int k = 0; k < n; k++)
+    {
+      u[k] = 0.0;
+      u[k].SetSubVector(reg_idx, r[k]);
     }
   }
 
@@ -1865,45 +1997,15 @@ struct SubstructuringSolver::Impl
 #endif
     if (env_parent_direct)
     {
-      if (env_block == 0)
+      // The factored operator is [A_EE, 0; 0, I], so only the output is masked.
+      env_lu_parent->Mult(X, Y);
+      for (auto *y : Y)
       {
-        env_block = std::max(1, std::min(kMaterializeBlock, static_cast<int>(X.size())));
-        env_pad_in.SetSize(nt);
-        env_pad_in = 0.0;
-        env_pad_out.SetSize(nt);
-      }
-      // The factored operator is [A_EE, 0; 0, I], so only the output is masked. The tail
-      // block is padded with a zero rhs (SuperLU fixes the RHS count at the first solve).
-      mfem::Array<const mfem::Vector *> Xp(env_block);
-      mfem::Array<mfem::Vector *> Yp(env_block);
-      const int n = static_cast<int>(X.size());
-      for (int c0 = 0; c0 < n; c0 += env_block)
-      {
-        const int nb = std::min(env_block, n - c0);
-        for (int k = 0; k < env_block; k++)
+        for (int i = 0; i < nt; i++)
         {
-          Xp[k] = (k < nb) ? X[c0 + k] : &env_pad_in;
-          Yp[k] = (k < nb) ? Y[c0 + k] : &env_pad_out;
-          Yp[k]->SetSize(nt);
-        }
-        if (env_block == 1)
-        {
-          env_pad_out = *Xp[0];  // the solve may not be done in place
-          env_lu_parent->Mult(env_pad_out, *Yp[0]);
-        }
-        else
-        {
-          env_lu_parent->ArrayMult(Xp, Yp);
-        }
-        for (int k = 0; k < nb; k++)
-        {
-          mfem::Vector &y = *Y[c0 + k];
-          for (int i = 0; i < nt; i++)
+          if (!is_env_int[i])
           {
-            if (!is_env_int[i])
-            {
-              y(i) = 0.0;
-            }
+            (*y)(i) = 0.0;
           }
         }
       }
@@ -2387,7 +2489,7 @@ void SubstructuringSolver::CondenseEnvironment()
       // multi-RHS environment solves (the first solve of a direct factor fixes its block
       // size at kMaterializeBlock), with the thin couplings G = A_env E_Gamma and R =
       // E_Gamma^T A_env. Each rank stores its own rows.
-      std::unique_ptr<mfem::HypreParMatrix> E = impl->AssembleInterfaceSelection();
+      std::unique_ptr<mfem::HypreParMatrix> E = impl->AssembleSelection(impl->is_gamma);
       std::unique_ptr<mfem::HypreParMatrix> G(mfem::ParMult(impl->A_env.get(), E.get()));
       std::unique_ptr<mfem::HypreParMatrix> Et(E->Transpose());
       std::unique_ptr<mfem::HypreParMatrix> R(mfem::ParMult(Et.get(), impl->A_env.get()));
@@ -2624,7 +2726,8 @@ void SubstructuringSolver::CondenseEnvironment()
   }
 
   // Region-condensed solver: CG on A_region_free + S_E, preconditioned by a direct factor,
-  // region-submesh multigrid, or AMS / BoomerAMG on A_region_free.
+  // region-submesh multigrid, or AMS / BoomerAMG on A_region_free (with the exact factor,
+  // SolveRegion bypasses CG).
   {
     std::unique_ptr<Solver<Operator>> pc;
     // Direct factorization when the region fits.
@@ -2648,7 +2751,7 @@ void SubstructuringSolver::CondenseEnvironment()
           !impl->hodlr && nG > 0 && nG <= Impl::kDirectCondensedMaxInterface;
       pc = std::make_unique<CallableSolver>(impl->A_region_free->Height(),
                                             [pi](const mfem::Vector &r, mfem::Vector &z)
-                                            { pi->reg_lu->Mult(r, z); });
+                                            { pi->ApplyRegionFactor(r, z); });
     }
     else if (impl->BuildRegionGmg())
     {
@@ -2815,30 +2918,32 @@ SubstructuringSolver::SolveDirichletBatch(const std::vector<Vector> &dbcs)
   // in the loop). RHS: region Dirichlet elimination + environment load g_E on the
   // interface. Both are complete (assembled) true-DOF vectors, so each rank reads its own
   // entries.
-  std::vector<Vector> u(n, Vector(nt));
+  std::vector<Vector> b(n, Vector(nt)), u;
   {
-    Vector b(nt), tr(nt);
+    Vector tr(nt);
     for (int k = 0; k < n; k++)
     {
       impl->A_region->Mult(dbcs[k], tr);
-      b = 0.0;
+      b[k] = 0.0;
       for (int i = 0; i < nt; i++)
       {
         if (impl->is_region_free[i])
         {
-          b(i) -= tr(i);
+          b[k](i) -= tr(i);
         }
         if (impl->is_gamma[i])
         {
-          b(i) -= gE[k](i);
+          b[k](i) -= gE[k](i);
         }
       }
-      u[k] = 0.0;
-      impl->region_ksp->Mult(b, u[k]);
-      for (int i = 0; i < impl->dbc_tdofs.Size(); i++)
-      {
-        u[k](impl->dbc_tdofs[i]) = dbcs[k](impl->dbc_tdofs[i]);
-      }
+    }
+  }
+  impl->SolveRegion(b, u);
+  for (int k = 0; k < n; k++)
+  {
+    for (int i = 0; i < impl->dbc_tdofs.Size(); i++)
+    {
+      u[k](impl->dbc_tdofs[i]) = dbcs[k](impl->dbc_tdofs[i]);
     }
   }
 
@@ -2885,9 +2990,9 @@ Vector SubstructuringSolver::SolveSource(const Vector &f)
     }
   }
 
-  Vector u(nt);
-  u = 0.0;
-  impl->region_ksp->Mult(b, u);
+  std::vector<Vector> us;
+  impl->SolveRegion({b}, us);
+  Vector &u = us[0];
 
   // Recover environment interior: u_E = A_EE^-1 (f_E - (A_env u)|_E).
   Vector Au(nt), rhs(nt), uE(nt);
@@ -2994,33 +3099,35 @@ mfem::DenseMatrix SubstructuringSolver::SheetEnergyMatrix(const std::vector<int>
   // Region-condensed solve per state (environment interior left at zero): the region source
   // M_sheet^R a_k plus the environment's interface load g_k.
   impl->EnsureRegionFactor(n);
-  std::vector<Vector> u(n, Vector(nt)), Ku(n, Vector(nt)), Su(n, Vector(nt));
+  std::vector<Vector> b(n, Vector(nt)), u, Ku(n, Vector(nt)), Su(n, Vector(nt));
   {
-    Vector b(nt), bR(nt);
+    Vector bR(nt);
     for (int j = 0; j < n; j++)
     {
       impl->M_sheet_region->Mult(a[j], bR);
-      b = 0.0;
+      b[j] = 0.0;
       for (int i = 0; i < nt; i++)
       {
         if (impl->is_region_free[i])
         {
-          b(i) = bR(i);
+          b[j](i) = bR(i);
         }
         if (impl->is_gamma[i])
         {
-          b(i) += impl->SG_rows[row(i) + col[j]];
+          b[j](i) += impl->SG_rows[row(i) + col[j]];
         }
       }
-      u[j] = 0.0;
-      impl->region_ksp->Mult(b, u[j]);
-      for (int d = 0; d < impl->dbc_tdofs.Size(); d++)
-      {
-        u[j](impl->dbc_tdofs[d]) = 0.0;
-      }
-      impl->K_region_e->Mult(u[j], Ku[j]);
-      impl->mat_dtn_K->Mult(u[j], Su[j]);
     }
+  }
+  impl->SolveRegion(b, u);
+  for (int j = 0; j < n; j++)
+  {
+    for (int d = 0; d < impl->dbc_tdofs.Size(); d++)
+    {
+      u[j](impl->dbc_tdofs[d]) = 0.0;
+    }
+    impl->K_region_e->Mult(u[j], Ku[j]);
+    impl->mat_dtn_K->Mult(u[j], Su[j]);
   }
 
   // E_ij = [u_i^T K_R u_j + (u_i - a_i)^T M_sheet^R (u_j - a_j)]  (region)
@@ -3128,34 +3235,36 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrix(const std::vector<int> &ids
   // Region-condensed solve per lift (environment interior left at zero): the interface load
   // is the precomputed g_k, so no environment solve is needed.
   impl->EnsureRegionFactor(n);
-  std::vector<Vector> u(n, Vector(nt)), Ku(n, Vector(nt)), Su(n, Vector(nt));
+  std::vector<Vector> b(n, Vector(nt)), u, Ku(n, Vector(nt)), Su(n, Vector(nt));
   {
-    Vector b(nt), tr(nt);
+    Vector tr(nt);
     for (int j = 0; j < n; j++)
     {
       impl->A_region->Mult(x[j], tr);
-      b = 0.0;
+      b[j] = 0.0;
       for (int i = 0; i < nt; i++)
       {
         if (impl->is_region_free[i])
         {
-          b(i) -= tr(i);
+          b[j](i) -= tr(i);
         }
         if (impl->is_gamma[i])
         {
-          b(i) -= impl->G_rows[row(i) + col[j]];
+          b[j](i) -= impl->G_rows[row(i) + col[j]];
         }
       }
-      u[j] = 0.0;
-      impl->region_ksp->Mult(b, u[j]);
-      for (int d = 0; d < impl->dbc_tdofs.Size(); d++)
-      {
-        const int i = impl->dbc_tdofs[d];
-        u[j](i) = x[j](i);
-      }
-      impl->K_region_e->Mult(u[j], Ku[j]);
-      SK.Mult(u[j], Su[j]);
     }
+  }
+  impl->SolveRegion(b, u);
+  for (int j = 0; j < n; j++)
+  {
+    for (int d = 0; d < impl->dbc_tdofs.Size(); d++)
+    {
+      const int i = impl->dbc_tdofs[d];
+      u[j](i) = x[j](i);
+    }
+    impl->K_region_e->Mult(u[j], Ku[j]);
+    SK.Mult(u[j], Su[j]);
   }
 
   // E_ij = u_i^T K_R u_j + [u_G,i; e_i]^T [S^K, G^K; G^K^T, Cmode] [u_G,j; e_j]: the region
