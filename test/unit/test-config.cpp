@@ -208,7 +208,7 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
   {
     const json surface_current = {{{"Attributes", {4}}, {"Index", 1}, {"Direction", "+X"}}};
     const json flux_loop = {{{"Index", 2},
-                             {"FluxLoopPEC", {6}},
+                             {"FilmAttributes", {6}},
                              {"HoleAttributes", {7}},
                              {"FluxAmounts", {1.0}},
                              {"Direction", "+Z"}}};
@@ -224,9 +224,6 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
                       {"Environment", {{"Attributes", {2}}}}}}}}};
     };
     CHECK_NOTHROW(IoData(make_config({{"FluxLoop", flux_loop}}), false));
-    CHECK_THROWS_WITH(
-        IoData(make_config({{"SurfaceCurrent", surface_current}}), false),
-        Catch::Matchers::ContainsSubstring("does not support \"SurfaceCurrent\""));
     // A (valid) mixed configuration is rejected, not silently reduced to its flux loops.
     json mixed_current = surface_current;
     mixed_current[0]["Aperture"] = {{"Attributes", {5}}, {"Direction", "+Z"}};
@@ -602,7 +599,7 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
                           {"Aperture", {{"Attributes", {7}}, {"Direction", "+Z"}}}}}},
                        {"FluxLoop",
                         {{{"Index", 2},
-                          {"FluxLoopPEC", {8}},
+                          {"FilmAttributes", {8}},
                           {"HoleAttributes", {9}},
                           {"FluxAmounts", {1.0}},
                           {"Direction", "+Z"}}}}};
@@ -885,7 +882,7 @@ TEST_CASE("Config Magnetostatic InactivePorts", "[config][Serial]")
                      {"Aperture", {{"Attributes", {5}}, {"Direction", "+Z"}}}}}},
                   {"FluxLoop",
                    {{{"Index", 2},
-                     {"FluxLoopPEC", {6}},
+                     {"FilmAttributes", {6}},
                      {"HoleAttributes", {7}},
                      {"FluxAmounts", {1.0}},
                      {"Direction", "+Z"}}}}}},

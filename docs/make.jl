@@ -62,6 +62,10 @@ generate_all()
 include(joinpath(@__DIR__, "generate_schema_compatibility.jl"))
 generate_schema_compatibility_table()
 
+# Draw the superconducting coaxial line schematic used by examples/coaxial.md.
+include(joinpath(@__DIR__, "generate_coaxial_schematic.jl"))
+generate_coaxial_schematic()
+
 git_ref = get_git_ref()
 @info "Building documentation with GitHub links pointing to: $git_ref"
 rewrite_github_links(joinpath(@__DIR__, "src"), git_ref)

@@ -1,0 +1,18 @@
+diff --git a/repos/spack_repo/builtin/packages/petsc/package.py b/repos/spack_repo/builtin/packages/petsc/package.py
+--- a/repos/spack_repo/builtin/packages/petsc/package.py
++++ b/repos/spack_repo/builtin/packages/petsc/package.py
+@@ -492,6 +492,14 @@ def configure_options(self):
+         lapack_blas = spec["lapack"].libs + spec["blas"].libs
+         options.extend(["--with-blas-lapack-lib=%s" % lapack_blas.joined()])
+ 
++        # Tell configure whether BLAS/LAPACK use 64-bit integers. Otherwise it runs a test program
++        # and assumes 64-bit integers if the program fails to run, e.g. with +cuda, where it links
++        # against libcuda.so but no GPU driver is installed at build time.
++        blas_lapack = (spec["blas"], spec["lapack"])
++        if all("ilp64" in s.variants for s in blas_lapack):
++            ilp64 = any(s.satisfies("+ilp64") for s in blas_lapack)
++            options.append(f"--known-64-bit-blas-indices={int(ilp64)}")
++
+         if "+batch" in spec:
+             options.append("--with-batch=1")
+         if "+knl" in spec:

@@ -1,0 +1,64 @@
+{
+  "Problem":
+  {
+    "Type": "Magnetostatic",
+    "Verbose": 2,
+    "Output": "postpro/magnetostatic_pec"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/coaxial.msh",
+    "L0": 1.0e-6  // μm: the same mesh as a micro-coax, a = 0.82 μm, b = 2.73 μm, ℓ = 40 μm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0
+      }
+    ],
+    "Postprocessing":
+    {
+      "Energy":
+      [
+        {
+          "Index": 1,
+          "Attributes": [1]
+        }
+      ]
+    }
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2, 4]  // Inner and outer conductors, and the shorted far end
+    },
+    "SurfaceCurrent":
+    [
+      {
+        "Index": 1,
+        "Attributes": [3],
+        "Direction": "+R"  // Radial current across the near end cap
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 3,
+    "Device": "CPU",
+    "Magnetostatic":
+    {
+      "Save": 0
+    },
+    "Linear":
+    {
+      "Type": "AMS",
+      "KSPType": "CG",
+      "Tol": 1.0e-10,
+      "MaxIts": 200
+    }
+  }
+}

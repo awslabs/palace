@@ -99,7 +99,7 @@ inline void GeneratePlaneRotation(const T dx, const T dy, T &cs, T &sn)
   }
   else
   {
-    T u = std::min(safmax, std::max(safmin, std::max(dx1, dy1)));
+    T u = std::clamp(std::max(dx1, dy1), safmin, safmax);
     T dxs = dx / u;
     T dys = dy / u;
     T d = std::sqrt(dxs * dxs + dys * dys);
@@ -146,7 +146,7 @@ inline void GeneratePlaneRotation(const std::complex<T> dx, const std::complex<T
       }
       else
       {
-        T u = std::min(safmax, std::max(safmin, dy1));
+        T u = std::clamp(dy1, safmin, safmax);
         std::complex<T> dys = dy / u;
         sn = std::conj(dys) / std::sqrt(dys.real() * dys.real() + dys.imag() * dys.imag());
       }
@@ -183,12 +183,12 @@ inline void GeneratePlaneRotation(const std::complex<T> dx, const std::complex<T
   }
   else
   {
-    T u = std::min(safmax, std::max(safmin, std::max(dx1, dy1))), w;
+    T u = std::clamp(std::max(dx1, dy1), safmin, safmax), w;
     std::complex<T> dys = dy / u, dxs;
     T dy2 = dys.real() * dys.real() + dys.imag() * dys.imag(), dx2, dz2;
     if (dx1 / u < root_min)
     {
-      T v = std::min(safmax, std::max(safmin, dx1));
+      T v = std::clamp(dx1, safmin, safmax);
       w = v / u;
       dxs = dx / v;
       dx2 = dxs.real() * dxs.real() + dxs.imag() * dxs.imag();
