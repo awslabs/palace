@@ -54,15 +54,16 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(
     {
       for (auto attr : data.attributes)
       {
+        if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
+        {
+          bdr_warn_list.insert(attr);
+          continue;
+        }
         MFEM_VERIFY(!conductivity_marker[attr - 1],
                     "Multiple definitions of conductivity boundary properties for boundary "
                     "attribute "
                         << attr << "!");
         conductivity_marker[attr - 1] = 1;
-        if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
-        {
-          bdr_warn_list.insert(attr);
-        }
       }
     }
     if (!bdr_warn_list.empty())

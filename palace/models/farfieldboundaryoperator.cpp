@@ -57,14 +57,13 @@ mfem::Array<int> FarfieldBoundaryOperator::SetUpBoundaryProperties(
       {
         bdr_warn_list.insert(attr);
       }
-      if (!bdr_warn_list.empty())
-      {
-        Mpi::Print("\n");
-        Mpi::Warning(
-            "Unknown absorbing boundary attributes!\nSolver will just ignore them!");
-        utils::PrettyPrint(bdr_warn_list, "Boundary attribute list:");
-        Mpi::Print("\n");
-      }
+    }
+    if (!bdr_warn_list.empty())
+    {
+      Mpi::Print("\n");
+      Mpi::Warning("Unknown absorbing boundary attributes!\nSolver will just ignore them!");
+      utils::PrettyPrint(bdr_warn_list, "Boundary attribute list:");
+      Mpi::Print("\n");
     }
   }
 
