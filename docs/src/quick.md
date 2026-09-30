@@ -119,13 +119,18 @@ As a user, the simplest way to install *Palace* is with
 [Spack](https://spack.readthedocs.io), a package manager designed for
 high-performance computing applications.
 
-Follow the [instructions on the official
-website](https://spack.readthedocs.io/en/latest/getting_started.html) to install
-Spack. This involves cloning a repository and sourcing a `setup-env` shell
-script. Ensure this shell environment comes with the minimal requirements as
-listed in the [official
-documentation](https://spack.readthedocs.io/en/latest/installing_prerequisites.html).
-Come back here once you are done with that.
+Install Spack by cloning the release series that *Palace* is tested with and
+sourcing its `setup-env` shell script:
+
+```bash
+git clone --depth=2 --branch releases/v1.2 https://github.com/spack/spack.git
+. spack/share/spack/setup-env.sh
+```
+
+The [official instructions](https://spack.readthedocs.io/en/v1.2.0/getting_started.html)
+cover other shells. Ensure your system has the minimal requirements listed in the
+[official
+documentation](https://spack.readthedocs.io/en/v1.2.0/installing_prerequisites.html).
 
 Let's check that Spack is correctly installed on your system. This can be
 accomplished by running:
@@ -143,7 +148,7 @@ nothing # hide
 
 !!! note "spack command not found"
 
-    If you get a `command not found` error, revisit the [Spack instructions](https://spack.readthedocs.io/en/latest/getting_started.html)
+    If you get a `command not found` error, revisit the [Spack instructions](https://spack.readthedocs.io/en/v1.2.0/getting_started.html)
     and ensure you've completed all steps, including sourcing the setup script (the command starting with `.`).
     Consider adding this to your shell initialization file (typically, `.bashrc` or `.zshrc`).
 
