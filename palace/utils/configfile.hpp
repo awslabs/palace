@@ -989,7 +989,8 @@ public:
 
   // Whether to run the per-loop flux-loop inductance-matrix sweep. When false the flux
   // loops are not swept individually (no terminal-M.csv from flux loops); only any
-  // configured FluxLoopExcitation states are solved. Current-source sweeps are unaffected.
+  // configured FluxLoopExcitation states are solved. Current sources are still swept, but
+  // their inductances are then screened by the flux loops.
   bool flux_loop_matrix_sweep = true;
 
   MagnetostaticSolverData() = default;
