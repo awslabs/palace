@@ -216,6 +216,22 @@ TEST_CASE("Config Interior Boundary Sheets", "[config][Serial]")
   CHECK(data.GetMeshCrackAttributes(true) ==
         std::vector<int>{1, 2, 3, 4, 5, 6, 7, 8, 10, 11});
 
+  // Superconductor sheets and flux loop films carry surface currents, but are never
+  // cracked (thin films), and flux loop holes are not sheets.
+  json sc_boundaries = {
+      {"PEC", {{"Attributes", {1}}}},
+      {"Superconductor", {{{"Attributes", {12}}, {"KineticInductance", 1.0e-12}}}},
+      {"FluxLoop",
+       {{{"Index", 1},
+         {"FilmAttributes", {13}},
+         {"HoleAttributes", {14}},
+         {"FluxAmounts", {1.0}}}}}};
+  config::BoundaryData sc_data(sc_boundaries);
+  CHECK(sc_data.GetSheetAttributes() == std::vector<int>{1, 12, 13});
+  CHECK(sc_data.GetSheetAttributes(true) == std::vector<int>{1, 12, 13});
+  CHECK(sc_data.GetMeshCrackAttributes(std::nullopt).empty());
+  CHECK(sc_data.GetMeshCrackAttributes(true) == std::vector<int>{1});
+
   // The option is not available for boundaries which are never cracked.
   json config = {{"Problem", {{"Type", "Eigenmode"}}},
                  {"Model", {{"Mesh", "mesh.msh"}}},
@@ -226,6 +242,13 @@ TEST_CASE("Config Interior Boundary Sheets", "[config][Serial]")
   INFO("schema validation error: " << err);
   CHECK(err.empty());
   config["Boundaries"]["PEC"]["Crack"] = true;
+  CHECK_FALSE(ValidateConfig(config).empty());
+  config["Boundaries"]["PEC"].erase("Crack");
+  config["Problem"]["Type"] = "Magnetostatic";
+  config["Boundaries"]["Superconductor"] = {
+      {{"Attributes", {2}}, {"KineticInductance", 1.0e-12}}};
+  CHECK(ValidateConfig(config).empty());
+  config["Boundaries"]["Superconductor"][0]["Crack"] = true;
   CHECK_FALSE(ValidateConfig(config).empty());
 }
 
