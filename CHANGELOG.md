@@ -34,7 +34,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Error estimation for adaptive mesh refinement now uses broken finite element spaces, allowing
     discontinuous fields across interior boundaries without cracking the mesh. Mesh cracking
     is now a per-boundary physical modeling choice (see Interface Changes).
-    [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
+    [PR 994](https://github.com/awslabs/palace/pull/994).
 
 #### Interface Changes
 
@@ -54,7 +54,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the fields on its two sides (`false`, the mesh is not modified) or a conductor much
     thicker than its penetration depth with two independent faces (`true`, the mesh is
     cracked along the boundary). The default is `false`.
-    [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
+    [PR 994](https://github.com/awslabs/palace/pull/994).
   - The mesh is now only cracked by default along interior boundaries with boundary
     conditions which apply to either side separately (PMC or zero charge, and absorbing
     boundaries), and along conductivity and impedance boundaries with `"Crack": true`.
@@ -63,11 +63,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `config["Model"]["CrackInternalBoundaryElements"]` is deprecated: `true` restores the
     previous behavior of cracking all interior boundaries with boundary conditions except for
     lumped ports, and `false` disables cracking entirely. SchemaVer 3-0-0.
-    [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
+    [PR 994](https://github.com/awslabs/palace/pull/994).
   - Surface flux postprocessing with `"TwoSided": false` on interior boundaries which are no
     longer cracked gives the average of the fluxes on the two sides, instead of the sum of the
     fluxes of the two faces of the cracked mesh.
-    [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
+    [PR 994](https://github.com/awslabs/palace/pull/994).
 
 #### Bug Fixes
 
@@ -150,7 +150,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the average of the fields of both sides for type `"Default"`, and a single face for
     types `"MA"` and `"MS"` on sheets with the same material on both sides, such as air
     bridges. They now give the same results as on a cracked mesh.
-    [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
+    [PR 994](https://github.com/awslabs/palace/pull/994).
 
 #### Performance Improvements
 
