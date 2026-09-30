@@ -27,13 +27,20 @@ source](#Build-from-source) instead.
 ## Build using Spack
 
 *Palace* is a registered package in the built-in Spack package repository. To
-install the solver, follow the [instructions for setting up Spack on your
-system](https://spack.readthedocs.io/en/latest/getting_started.html). Note that
-Spack requires basic system utilities that may not be installed by default on
-certain systems (such as Ubuntu for Windows Subsystem for Linux). Consult the
-[Spack Prerequisites
-page](https://spack.readthedocs.io/en/latest/installing_prerequisites.html) to
-ensure all required utilities are installed.
+install the solver, clone the Spack release series that *Palace* is tested with and
+set up its shell environment:
+
+```bash
+git clone --depth=2 --branch releases/v1.2 https://github.com/spack/spack.git
+. spack/share/spack/setup-env.sh
+```
+
+The [Spack instructions](https://spack.readthedocs.io/en/v1.2.0/getting_started.html)
+cover other shells. Note that Spack requires basic system utilities that may not be
+installed by default on certain systems (such as Ubuntu for Windows Subsystem for
+Linux). Consult the [Spack Prerequisites
+page](https://spack.readthedocs.io/en/v1.2.0/installing_prerequisites.html) to ensure
+all required utilities are installed.
 
 Once you have installed Spack, check that the version of *Palace* you want to
 install is available
