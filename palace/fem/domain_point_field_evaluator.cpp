@@ -9,6 +9,7 @@
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/libceed/basis.hpp"
+#include "fem/libceed/ceed.hpp"
 #include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/functional.hpp"
 #include "fem/libceed/integrator.hpp"
@@ -27,41 +28,6 @@ PalacePragmaDiagnosticPop
 
 namespace palace
 {
-
-namespace
-{
-
-// Holds libCEED object references created during operator assembly for destruction once
-// the assembled operator owns them.
-struct CeedAssemblyScratch
-{
-  Ceed ceed;
-  std::vector<CeedVector> vecs;
-  std::vector<CeedElemRestriction> restrs;
-  std::vector<CeedBasis> bases;
-
-  CeedAssemblyScratch(Ceed ceed) : ceed(ceed) {}
-  CeedAssemblyScratch(const CeedAssemblyScratch &) = delete;
-  CeedAssemblyScratch &operator=(const CeedAssemblyScratch &) = delete;
-
-  ~CeedAssemblyScratch()
-  {
-    for (auto &v : vecs)
-    {
-      PalaceCeedCall(ceed, CeedVectorDestroy(&v));
-    }
-    for (auto &r : restrs)
-    {
-      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&r));
-    }
-    for (auto &b : bases)
-    {
-      PalaceCeedCall(ceed, CeedBasisDestroy(&b));
-    }
-  }
-};
-
-}  // namespace
 
 DomainPointFieldEvaluator::DomainPointFieldEvaluator(
     Kind kind, const Mesh &mesh, const MaterialOperator &mat_op,
@@ -176,7 +142,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
   {
     const mfem::Geometry::Type geom = geom_indices.first;
     const auto &indices = geom_indices.second;
-    CeedAssemblyScratch scratch(ceed);
+    ceed::CeedAssemblyScratch scratch(ceed);
 
     ceed::CeedQFunctionInfo info;
     switch (kind)
@@ -257,7 +223,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
         inputs.push_back(
             {"attr", attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
         scratch.vecs.push_back(attr_vec);
-        scratch.restrs.push_back(attr_restr);
+        scratch.restrictions.push_back(attr_restr);
         scratch.bases.push_back(attr_basis);
       }
       {
@@ -273,7 +239,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
         inputs.push_back(
             {"x", mesh_nodes_vec, mesh_restr, mesh_basis, ceed::EvalMode::Grad});
         scratch.vecs.push_back(mesh_nodes_vec);
-        scratch.restrs.push_back(mesh_restr);
+        scratch.restrictions.push_back(mesh_restr);
         scratch.bases.push_back(mesh_basis);
       }
 
@@ -292,7 +258,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
         inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
         field_sources.emplace_back(name, source);
         scratch.vecs.push_back(vec);
-        scratch.restrs.push_back(restr);
+        scratch.restrictions.push_back(restr);
         scratch.bases.push_back(basis);
       };
       if (kind == Kind::FIELD_E || kind == Kind::FIELD_H1 || kind == Kind::ENERGY_E ||
@@ -311,7 +277,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
       CeedElemRestriction out_restr;
       ceed::InitRestriction(target_fespace, indices, false, /*is_interp*/ true, false, ceed,
                             &out_restr);
-      scratch.restrs.push_back(out_restr);
+      scratch.restrictions.push_back(out_restr);
 
       CeedOperator op;
       ceed::AssembleCeedPointEvaluator(info, ctx.empty() ? nullptr : ctx.data(),
@@ -352,7 +318,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
         buffer_inputs.push_back(
             {"attr", attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
         scratch.vecs.push_back(attr_vec);
-        scratch.restrs.push_back(attr_restr);
+        scratch.restrictions.push_back(attr_restr);
         scratch.bases.push_back(attr_basis);
       }
       {
@@ -368,7 +334,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
         buffer_inputs.push_back(
             {"x", mesh_nodes_vec, mesh_restr, mesh_basis, ceed::EvalMode::Grad});
         scratch.vecs.push_back(mesh_nodes_vec);
-        scratch.restrs.push_back(mesh_restr);
+        scratch.restrictions.push_back(mesh_restr);
         scratch.bases.push_back(mesh_basis);
       }
       auto AddBufferFieldInput = [&](const std::string &name, int source,
@@ -385,7 +351,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
         buffer_inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
         buffer_field_sources.emplace_back(name, source);
         scratch.vecs.push_back(vec);
-        scratch.restrs.push_back(restr);
+        scratch.restrictions.push_back(restr);
         scratch.bases.push_back(basis);
       };
       if (kind == Kind::FIELD_E || kind == Kind::FIELD_H1 || kind == Kind::ENERGY_E ||
@@ -417,7 +383,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
                                  CEED_MEM_HOST, CEED_COPY_VALUES, offsets.data(),
                                  &buffer_out_restr));
       }
-      scratch.restrs.push_back(buffer_out_restr);
+      scratch.restrictions.push_back(buffer_out_restr);
       CeedOperator buffer_op;
       ceed::AssembleCeedPointEvaluator(
           info, ctx.empty() ? nullptr : ctx.data(), ctx.size() * sizeof(CeedIntScalar),

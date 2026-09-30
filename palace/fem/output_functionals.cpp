@@ -21,6 +21,7 @@
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "fem/libceed/basis.hpp"
+#include "fem/libceed/ceed.hpp"
 #include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/functional.hpp"
 #include "fem/libceed/integrator.hpp"
@@ -309,36 +310,6 @@ MakeCanonicalTracePointKey(mfem::Geometry::Type vol_geom, mfem::Geometry::Type f
   AppendPointRuleSignature(key, canonical_pts);
   return key;
 }
-
-// Holds libCEED object references created during operator assembly for destruction once
-// the assembled operator owns them.
-struct CeedAssemblyScratch
-{
-  Ceed ceed;
-  std::vector<CeedVector> vecs;
-  std::vector<CeedElemRestriction> restrs;
-  std::vector<CeedBasis> bases;
-
-  CeedAssemblyScratch(Ceed ceed) : ceed(ceed) {}
-  CeedAssemblyScratch(const CeedAssemblyScratch &) = delete;
-  CeedAssemblyScratch &operator=(const CeedAssemblyScratch &) = delete;
-
-  ~CeedAssemblyScratch()
-  {
-    for (auto &v : vecs)
-    {
-      PalaceCeedCall(ceed, CeedVectorDestroy(&v));
-    }
-    for (auto &r : restrs)
-    {
-      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&r));
-    }
-    for (auto &b : bases)
-    {
-      PalaceCeedCall(ceed, CeedBasisDestroy(&b));
-    }
-  }
-};
 
 }  // namespace
 
@@ -1537,7 +1508,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                                  fem::DefaultIntegrationOrder::Get(pmesh, group.bdr_geom));
 
     // Objects are owned by the assembled operator; scratch destroys our references.
-    CeedAssemblyScratch scratch(ceed);
+    ceed::CeedAssemblyScratch scratch(ceed);
 
     // Assemble the inputs in the order expected by the QFunctions: quadrature weights
     // and boundary element mesh node gradients (surface measure and normal), per-side
@@ -1584,7 +1555,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       ceed::InitCeedVector(data, ceed, &vec);
       inputs.push_back({name, vec, restr, nullptr, ceed::EvalMode::None});
       scratch.vecs.push_back(vec);
-      scratch.restrs.push_back(restr);
+      scratch.restrictions.push_back(restr);
     };
     auto OriginalFaceQ = [&](std::size_t e, int canonical_q)
     {
@@ -1618,7 +1589,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           {"x_f", mesh_nodes_vec, face_mesh_restr, face_mesh_basis, ceed::EvalMode::Grad});
       mesh_node_fields.push_back("grad_x_f");
       scratch.vecs.push_back(mesh_nodes_vec);
-      scratch.restrs.push_back(face_mesh_restr);
+      scratch.restrictions.push_back(face_mesh_restr);
       scratch.bases.push_back(face_mesh_basis);
     }
     else if (needs_face_geom)
@@ -1718,11 +1689,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       if (needs_elem_attr)
       {
         scratch.vecs.push_back(attr_vec);
-        scratch.restrs.push_back(attr_restr);
+        scratch.restrictions.push_back(attr_restr);
         scratch.bases.push_back(attr_basis);
       }
       scratch.vecs.push_back(mesh_nodes_vec);
-      scratch.restrs.push_back(mesh_restr);
+      scratch.restrictions.push_back(mesh_restr);
       scratch.bases.push_back(mesh_basis);
     };
     // Physical-value variant: face-neighbor inputs and materialized traces already
@@ -1796,11 +1767,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       if (needs_elem_attr)
       {
         scratch.vecs.push_back(attr_vec);
-        scratch.restrs.push_back(attr_restr);
+        scratch.restrictions.push_back(attr_restr);
         scratch.bases.push_back(attr_basis);
       }
       scratch.vecs.push_back(ident_vec);
-      scratch.restrs.push_back(ident_restr);
+      scratch.restrictions.push_back(ident_restr);
     };
     if (trace_cache)
     {
@@ -1875,7 +1846,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
       field_sources.emplace_back(name, source);
       scratch.vecs.push_back(vec);
-      scratch.restrs.push_back(restr);
+      scratch.restrictions.push_back(restr);
       scratch.bases.push_back(basis);
     };
     // Ghost (face neighbor) field input: the neighbor's physical field values at the
@@ -1908,7 +1879,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       inputs.push_back({name, vec, restr, nullptr, ceed::EvalMode::None});
       field_sources.emplace_back(name, 4);  // 4 -> imported (see ApplyAddGroupOperators)
       scratch.vecs.push_back(vec);
-      scratch.restrs.push_back(restr);
+      scratch.restrictions.push_back(restr);
     };
     // Trace storage is component-major over the complete side lattice.  The input
     // restriction deliberately uses canonical q (not the ParaView original-q route);
@@ -1954,7 +1925,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       inputs.push_back({name, vec, restr, nullptr, ceed::EvalMode::None});
       field_sources.emplace_back(name, source);
       scratch.vecs.push_back(vec);
-      scratch.restrs.push_back(restr);
+      scratch.restrictions.push_back(restr);
     };
     if (trace_cache)
     {
@@ -2122,7 +2093,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                                reduce_farfield ? 1 : num_marked, local_out.Size(),
                                CEED_MEM_HOST, CEED_COPY_VALUES, out_slots, &out_restr));
     }
-    scratch.restrs.push_back(out_restr);
+    scratch.restrictions.push_back(out_restr);
 
     // Select the QFunction and finalize the (group dependent) context.
     int bdr_attr = 0;
