@@ -67,6 +67,7 @@ TEST_CASE("CgSolver zero residual", "[iterative][Serial][Parallel]")
 
   SECTION("Exact initial guess")
   {
+    // Regression coverage: eps > 0 here, so this passed before the zero-residual fix too.
     Vector b(2), x(2);
     b = 0.0;
     b[0] = 2.0;  // b = A x for x = (1, -2)
@@ -107,6 +108,7 @@ TEST_CASE("GmresSolver zero residual", "[iterative][Serial][Parallel]")
 
   SECTION("Exact initial guess")
   {
+    // Regression coverage: eps > 0 here, so this passed before the zero-residual fix too.
     Vector b(2), x(2);
     b = 0.0;
     b[0] = 2.0;
@@ -127,7 +129,7 @@ TEST_CASE("GmresSolver zero residual", "[iterative][Serial][Parallel]")
 TEST_CASE("FgmresSolver zero residual", "[iterative][Serial][Parallel]")
 {
   SpdTestOperator A;
-  JacobiSmoother<Operator> jacobi(Mpi::World(), 0.0);
+  JacobiSmoother<Operator> jacobi(Mpi::World());
   jacobi.SetOperator(A);
   FgmresSolver<Operator> ksp(Mpi::World(), 0);
   ksp.SetOperator(A);
@@ -147,6 +149,26 @@ TEST_CASE("FgmresSolver zero residual", "[iterative][Serial][Parallel]")
     CHECK(std::isfinite(x[0]));
     CHECK(std::isfinite(x[1]));
   }
+}
+
+// Without a preconditioner, the initial-guess path took the square root of the right-hand
+// side norm, so the relative tolerance was measured against sqrt(||b||) instead of ||b||.
+TEST_CASE("CgSolver initial residual with initial guess", "[iterative][Serial][Parallel]")
+{
+  SpdTestOperator A;
+  CgSolver<Operator> ksp(Mpi::World(), 0);
+  ksp.SetOperator(A);
+  ksp.SetRelTol(1.0e-10);
+  ksp.SetMaxIter(10);
+  ksp.SetInitialGuess(true);
+
+  Vector b(2), x(2);
+  b[0] = 3.0;  // ||b|| = 5 on each rank
+  b[1] = 4.0;
+  x = 0.0;
+  ksp.Mult(b, x);
+  const double b_norm = 5.0 * std::sqrt(Mpi::Size(Mpi::World()));
+  CHECK_THAT(ksp.GetInitialRes(), WithinRel(b_norm, 1.0e-14));
 }
 
 TEST_CASE("CgSolver zero residual (complex)", "[iterative][Serial][Parallel]")

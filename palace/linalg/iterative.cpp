@@ -385,7 +385,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     }
     else
     {
-      beta_rhs = linalg::Norml2(comm, b);
+      beta_rhs = linalg::Dot(comm, b, b);
     }
     CheckDot(beta_rhs, "PCG preconditioner is not positive definite: (Bb, b) = ");
     initial_res = std::sqrt(std::abs(beta_rhs));
