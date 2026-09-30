@@ -65,10 +65,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     conditions which apply to either side separately (PMC or zero charge, and absorbing
     boundaries), and along conductivity and impedance boundaries with `"Crack": true`.
     Interior PEC, ground, wave port PEC, impedance, rational impedance, and surface current
-    boundaries are no longer cracked. For PEC and surface current boundaries this does not
-    change the model, but it removes the extra refinement of the elements next to them
-    required for cracking, which changes results slightly; interior impedance boundaries
-    are now modeled as thin films. Specifying
+    boundaries are no longer cracked. For PEC boundaries this does not change the model, but
+    it removes the extra refinement of the elements next to them required for cracking,
+    which changes results slightly. Interior impedance boundaries are now modeled as thin
+    films, and interior surface current sources as single current sheets: cracking them
+    decoupled the fields on the two faces of the source, which overestimated the extracted
+    inductance (by about 30% for the microstrip regression case). Specifying
     `config["Model"]["CrackInternalBoundaryElements"]` is deprecated: `true` restores the
     previous behavior of cracking all interior boundaries with boundary conditions except
     for lumped ports, and `false` disables cracking entirely. SchemaVer 3-0-0.
