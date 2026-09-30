@@ -286,7 +286,8 @@ writes the total stored energy (volume magnetic plus London kinetic) and per-loo
 inductance-matrix sweep. The two are selectable via
 [`/Solver/Magnetostatic/FluxLoopMatrixSweep`](../config/reference.md#config-solver-magnetostatic)
 (default `true`): keep both, or set it to `false` to skip the N-loop sweep and solve only the
-requested excitation states.
+requested excitation states. Any surface-current ports are still swept, but their inductances
+are then those screened by the flux loops.
 
 !!! note "Flux loop requirements"
 
