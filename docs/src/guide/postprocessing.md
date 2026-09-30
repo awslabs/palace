@@ -107,8 +107,9 @@ file. These include:
     for more information. The participation ratios and associated quality factors are
     written to the file `surface-Q.csv` in the specified output directory. On
     [interior boundaries](boundaries.md#Interior-boundaries) with boundary conditions
-    which separate the fields on their two sides, such as thin metal sheets, the
-    contributions of both sides are summed.
+    modeling sheets, such as thin metal sheets, the `"Default"`, `"MA"`, and `"MS"` types
+    sum the contributions of both sides, each with its own dielectric layer; dielectric
+    layers on a substrate-air interface should use the `"SA"` type.
 
 ## Visualization
 

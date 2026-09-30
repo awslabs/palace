@@ -307,7 +307,7 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
                                          mfem::ParFiniteElementSpace &h1_fespace,
                                          mfem::ParFiniteElementSpace &nd_fespace)
   : SurfacePostOperator(iodata.boundaries.postpro, iodata.problem.type, mat_op, h1_fespace,
-                        nd_fespace, iodata.boundaries.GetSheetAttributes(true))
+                        nd_fespace, iodata.boundaries.GetSheetAttributes())
 {
 }
 

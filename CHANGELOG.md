@@ -70,10 +70,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     for lumped ports, and `false` disables cracking entirely. SchemaVer 3-0-0.
     [Issue 975](https://github.com/awslabs/palace/issues/975).
   - Interface dielectric energies of types `"Default"`, `"MA"`, and `"MS"` on uncracked
-    interior metal sheets (for example metal sheets surrounded by vacuum on both sides, such
-    as air bridges; purely capacitive impedance sheets excluded) sum the energies of both
-    faces, as previously obtained with the cracked mesh, instead of the energy of the
-    average of the fields of both sides. Surface flux
+    interior sheets (for example metal sheets surrounded by vacuum on both sides, such as
+    air bridges) sum the energies of both faces, as previously obtained with the cracked
+    mesh, instead of the energy of the average of the fields of both sides. Surface flux
     postprocessing on these boundaries is unchanged for `"TwoSided": true`, and with
     `"TwoSided": false` now gives the average of both sides rather than their sum.
     [Issue 975](https://github.com/awslabs/palace/issues/975).

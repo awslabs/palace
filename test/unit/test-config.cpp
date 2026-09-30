@@ -205,12 +205,11 @@ TEST_CASE("Config Interior Boundary Sheets", "[config][Serial]")
   CHECK_FALSE(data.conductivity[1].crack);
   CHECK_FALSE(data.rational_impedance[0].crack);
   CHECK(data.GetSheetAttributes() == std::vector<int>{1, 4, 5, 6, 7, 8, 9, 10});
-  // Purely capacitive impedance sheets are dielectric layers, not conductors.
+  // All impedance sheets are sheets, including purely capacitive ones.
   boundaries["Impedance"][0].erase("Ls");
   boundaries["Impedance"][0]["Cs"] = 1.0e-15;
   config::BoundaryData data_cs(boundaries);
-  CHECK(data_cs.GetSheetAttributes(true) == std::vector<int>{1, 5, 6, 7, 8, 9, 10});
-  CHECK(data_cs.GetSheetAttributes(false) == std::vector<int>{1, 4, 5, 6, 7, 8, 9, 10});
+  CHECK(data_cs.GetSheetAttributes() == std::vector<int>{1, 4, 5, 6, 7, 8, 9, 10});
   CHECK(data.GetMeshCrackAttributes(std::nullopt) == std::vector<int>{2, 3, 5, 6});
   CHECK(data.GetMeshCrackAttributes(false).empty());
   CHECK(data.GetMeshCrackAttributes(true) ==
@@ -228,7 +227,6 @@ TEST_CASE("Config Interior Boundary Sheets", "[config][Serial]")
          {"FluxAmounts", {1.0}}}}}};
   config::BoundaryData sc_data(sc_boundaries);
   CHECK(sc_data.GetSheetAttributes() == std::vector<int>{1, 12, 13});
-  CHECK(sc_data.GetSheetAttributes(true) == std::vector<int>{1, 12, 13});
   CHECK(sc_data.GetMeshCrackAttributes(std::nullopt).empty());
   CHECK(sc_data.GetMeshCrackAttributes(true) == std::vector<int>{1});
 

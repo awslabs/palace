@@ -155,9 +155,12 @@ magnetic field by the surface current. The error estimate for
 [adaptive mesh refinement](model.md#Mesh-refinement) therefore allows the recovered fluxes
 to be discontinuous across these interior boundaries, as it does for a cracked mesh.
 Likewise, [interface dielectric](postprocessing.md#Boundary-postprocessing) energies of
-types `"Default"`, `"MA"`, and `"MS"` on uncracked metal sheets sum the contributions of
-both faces, each with its own dielectric layer, as for a cracked mesh (purely capacitive
-impedance sheets model a dielectric layer rather than a metal film, and are excluded).
+types `"Default"`, `"MA"`, and `"MS"` on uncracked sheets sum the contributions of both
+faces, each with its own dielectric layer, as for a cracked mesh (the model of a metal
+film). This applies to all sheets, including impedance boundaries with only a sheet
+capacitance: for a dielectric layer on a substrate-air interface, with or without a sheet
+capacitance, use the `"SA"` type, which evaluates the fields of the substrate and air sides
+separately.
 
 The mesh cracking behavior of previous versions of *Palace*, where all interior boundaries
 with boundary conditions except for lumped ports are cracked, can be restored with the
