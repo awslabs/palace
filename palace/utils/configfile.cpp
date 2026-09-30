@@ -1161,6 +1161,10 @@ std::vector<int> BoundaryData::GetSheetAttributes(bool conductors_only) const
   {
     Append(data.attributes);
   }
+  for (const auto &data : superconductor)
+  {
+    Append(data.attributes);
+  }
   for (const auto &[idx, data] : lumpedport)
   {
     for (const auto &elem : data.elements)
