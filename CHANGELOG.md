@@ -71,7 +71,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     are now modeled as thin films. Specifying
     `config["Model"]["CrackInternalBoundaryElements"]` is deprecated: `true` restores the
     previous behavior of cracking all interior boundaries with boundary conditions except
-    for lumped ports, and `false` disables cracking entirely.
+    for lumped ports, and `false` disables cracking entirely. SchemaVer 3-0-0.
     [Issue 975](https://github.com/awslabs/palace/issues/975).
   - Interface dielectric energies of types `"Default"`, `"MA"`, and `"MS"` on uncracked
     interior metal sheets (for example metal sheets surrounded by vacuum on both sides, such
