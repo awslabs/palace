@@ -196,7 +196,8 @@ std::vector<double> FreeKnotFractions(const std::pair<double, double> &free,
     fractions.push_back(start + g / 8.0);
     fractions.push_back(end - g / 8.0);
   }
-  const int remaining = rule.free_knots - 2 * static_cast<int>(rule.free_knot_grading.size());
+  const int remaining =
+      rule.free_knots - 2 * static_cast<int>(rule.free_knot_grading.size());
   for (int k = 1; k <= remaining; k++)
   {
     fractions.push_back(inner_start + (inner_end - inner_start) * k / (remaining + 1));
@@ -371,7 +372,8 @@ std::vector<CornerRingVertex> CornerMetalRingLayout(double radius, double angle_
 
 std::vector<CornerRingVertex> CornerRuleRingLayout(double radius, double angle_radians,
                                                    bool convex,
-                                                   const CornerTraceBasisRule &rule, bool pec)
+                                                   const CornerTraceBasisRule &rule,
+                                                   bool pec)
 {
   {
     const std::string reason = CheckCornerTraceBasisRule(rule);
@@ -604,7 +606,8 @@ BuildCornerTraceBasis(const std::vector<std::array<double, 3>> &node_points,
                 "A corner coupon ring that meets the metal is not an outer box ring!");
     // The rule's layout (perimeter fractions are scale-free: the cap rings of half width
     // R / 3 share them); PEC knots on the rings the node's zero set marks.
-    const auto layout = CornerRuleRingLayout(radius, angle_radians, convex, rule, ring.metal);
+    const auto layout =
+        CornerRuleRingLayout(radius, angle_radians, convex, rule, ring.metal);
     // Merge keys (the generator's connectivity_keys).
     std::vector<double> keys(layout.size());
     for (std::size_t v = 0; v < layout.size(); v++)
@@ -701,7 +704,8 @@ BuildCornerTraceBasis(const std::vector<std::array<double, 3>> &node_points,
       const double weight_a =
           (f_following - layout[position].fraction) / (f_following - f_previous);
       ConstructedCornerTraceBasis::Vertex slave;
-      slave.point = SquarePerimeterPoint(ring.half_width, ring.z, layout[position].fraction);
+      slave.point =
+          SquarePerimeterPoint(ring.half_width, ring.z, layout[position].fraction);
       slave.basis = -1;
       slave.parent_a = perimeter_vertices[previous];
       slave.parent_b = perimeter_vertices[following];
@@ -786,7 +790,8 @@ BuildCornerTraceBasis(const std::vector<std::array<double, 3>> &node_points,
         crossing2 = slot;
       }
     }
-    MFEM_VERIFY(crossing1 >= 0 && crossing2 >= 0, "Corner trace basis rule without crossings!");
+    MFEM_VERIFY(crossing1 >= 0 && crossing2 >= 0,
+                "Corner trace basis rule without crossings!");
     for (int cap = 0; cap < 2; cap++)
     {
       const auto &ring = box.rings[outer + cap];

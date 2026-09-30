@@ -6,13 +6,14 @@
 // CornerTraceBasisRule): the AllRingsFollowMetal layout — every ring of the box, the extra
 // ring at MetalThickness + OveretchDepth and the two cap rings included, carries the same
 // angle-dependent knot fractions (2 crossings + 5 metal-interior + 9 graded free knots, PEC
-// on the two metal rings only, box corners = slaves, cap centres = slaves at the mean of the
-// two crossing knots), so the basis has NO events: one interpolation segment per convexity,
-// no connectivity angle, hats continuous in the angle. Pinned to the Python generator
-// (generate_corner_response.REFINED_RULE, test_generate_corner_response.py). The load-time
-// check of every coupon against the rule at its angle, the empty event list and the
-// one-segment stencil each fail closed / are exercised here, and the runtime constructs the
-// basis of an interpolated corner from the rule (SurfaceMortar lift with the centre slaves).
+// on the two metal rings only, box corners = slaves, cap centres = slaves at the mean of
+// the two crossing knots), so the basis has NO events: one interpolation segment per
+// convexity, no connectivity angle, hats continuous in the angle. Pinned to the Python
+// generator (generate_corner_response.REFINED_RULE, test_generate_corner_response.py). The
+// load-time check of every coupon against the rule at its angle, the empty event list and
+// the one-segment stencil each fail closed / are exercised here, and the runtime constructs
+// the basis of an interpolated corner from the rule (SurfaceMortar lift with the centre
+// slaves).
 
 #include "fixtures.hpp"
 
@@ -106,8 +107,8 @@ std::vector<double> SampleOuterFaces(const ConstructedCornerTraceBasis &basis,
     const std::array<double, 3> tz = {basis.vertices[t[0]].point[2],
                                       basis.vertices[t[1]].point[2],
                                       basis.vertices[t[2]].point[2]};
-    const double span = *std::max_element(ts.begin(), ts.end()) -
-                        *std::min_element(ts.begin(), ts.end());
+    const double span =
+        *std::max_element(ts.begin(), ts.end()) - *std::min_element(ts.begin(), ts.end());
     if (span > 0.5)
     {
       for (double &f : ts)
@@ -118,7 +119,8 @@ std::vector<double> SampleOuterFaces(const ConstructedCornerTraceBasis &basis,
         }
       }
     }
-    const double det = (tz[1] - tz[2]) * (ts[0] - ts[2]) + (ts[2] - ts[1]) * (tz[0] - tz[2]);
+    const double det =
+        (tz[1] - tz[2]) * (ts[0] - ts[2]) + (ts[2] - ts[1]) * (tz[0] - tz[2]);
     if (std::abs(det) < 1.0e-18)
     {
       continue;
@@ -132,8 +134,10 @@ std::vector<double> SampleOuterFaces(const ConstructedCornerTraceBasis &basis,
       for (const double shift : {0.0, 1.0})
       {
         const double xs = sample_s[i] + shift, z = sample_z[i];
-        const double l1 = ((tz[1] - tz[2]) * (xs - ts[2]) + (ts[2] - ts[1]) * (z - tz[2])) / det;
-        const double l2 = ((tz[2] - tz[0]) * (xs - ts[2]) + (ts[0] - ts[2]) * (z - tz[2])) / det;
+        const double l1 =
+            ((tz[1] - tz[2]) * (xs - ts[2]) + (ts[2] - ts[1]) * (z - tz[2])) / det;
+        const double l2 =
+            ((tz[2] - tz[0]) * (xs - ts[2]) + (ts[0] - ts[2]) * (z - tz[2])) / det;
         const double l3 = 1.0 - l1 - l2;
         if (l1 >= -1.0e-9 && l2 >= -1.0e-9 && l3 >= -1.0e-9)
         {
@@ -173,12 +177,13 @@ double MaxJumpAcross(const CornerTraceBasisRule &rule, double angle, bool convex
   const auto seed = MakeCornerBoxSeed(kR, kT, kOE, convex, rule);
   auto Sample = [&](double a)
   {
-    const auto basis = BuildCornerTraceBasis(seed.points, seed.contour_groups,
-                                             seed.zero_trace_indices, a * kDeg, convex, rule);
+    const auto basis = BuildCornerTraceBasis(
+        seed.points, seed.contour_groups, seed.zero_trace_indices, a * kDeg, convex, rule);
     std::vector<double> ss, zs;
     for (int i = 0; i < 400; i++)
     {
-      for (const double z : {-0.6, -0.3, -0.04, -0.01, 0.02, 0.08, 0.12, 0.2, 0.5, 1.0, 1.5})
+      for (const double z :
+           {-0.6, -0.3, -0.04, -0.01, 0.02, 0.08, 0.12, 0.2, 0.5, 1.0, 1.5})
       {
         ss.push_back(i / 400.0);
         zs.push_back(z);
@@ -209,8 +214,8 @@ struct CouponFiles
 // `perturb_knot` the free knot of that 0-based index is moved 1e-6 R along its ring: a
 // coupon that is NOT the rule's).
 CouponFiles WriteRefinedCoupon(const fs::path &directory, const std::string &tag,
-                               double angle, bool convex, double radius, double t, double oe,
-                               std::optional<int> perturb_knot = std::nullopt)
+                               double angle, bool convex, double radius, double t,
+                               double oe, std::optional<int> perturb_knot = std::nullopt)
 {
   const auto rule = RefinedCornerTraceBasisRule();
   const auto seed = MakeCornerBoxSeed(radius, t, oe, convex, rule);
@@ -409,7 +414,8 @@ TEST_CASE("CornerRefinedRuleLayout", "[cornerbasisrefinement][Serial][Parallel]"
     CHECK_THAT(CheckCornerTraceBasisRule(bad), ContainsSubstring("RingSize"));
     bad = rule;
     bad.extra_levels_above_over_overetch = {4.0, 1.0};
-    CHECK_THAT(CheckCornerTraceBasisRule(bad), ContainsSubstring("ExtraLevelsAboveOverOveretch"));
+    CHECK_THAT(CheckCornerTraceBasisRule(bad),
+               ContainsSubstring("ExtraLevelsAboveOverOveretch"));
     CornerTraceBasisRule legacy_with_extra;
     legacy_with_extra.extra_levels_above_over_overetch = {1.0};
     CHECK_THAT(CheckCornerTraceBasisRule(legacy_with_extra),
@@ -418,16 +424,28 @@ TEST_CASE("CornerRefinedRuleLayout", "[cornerbasisrefinement][Serial][Parallel]"
   // The generator's layout at convex 120 and concave 105 degrees (R = 1.9): the perimeter
   // fractions per slot and the zero slots (generate_corner_response.rule_ring_layout with
   // REFINED_RULE; test_generate_corner_response.py pins the same numbers).
-  const std::vector<double> convex_120 = {
-      0.905502116982, 0.990696208596, 0.07589030021,  0.161084391824,
-      0.246278483438, 0.331472575053, 0.416666666667, 0.458333333333,
-      0.5,            0.553694797275, 0.60738959455,  0.661084391824,
-      0.714779189099, 0.768473986374, 0.822168783649, 0.863835450315};
-  const std::vector<double> concave_105 = {
-      0.5,            0.541666666667, 0.583333333333, 0.602804497065,
-      0.622275660796, 0.641746824527, 0.661217988258, 0.680689151989,
-      0.700160315721, 0.741826982387, 0.783493649054, 0.902911374212,
-      0.022329099369, 0.141746824527, 0.261164549685, 0.380582274842};
+  const std::vector<double> convex_120 = {0.905502116982, 0.990696208596, 0.07589030021,
+                                          0.161084391824, 0.246278483438, 0.331472575053,
+                                          0.416666666667, 0.458333333333, 0.5,
+                                          0.553694797275, 0.60738959455,  0.661084391824,
+                                          0.714779189099, 0.768473986374, 0.822168783649,
+                                          0.863835450315};
+  const std::vector<double> concave_105 = {0.5,
+                                           0.541666666667,
+                                           0.583333333333,
+                                           0.602804497065,
+                                           0.622275660796,
+                                           0.641746824527,
+                                           0.661217988258,
+                                           0.680689151989,
+                                           0.700160315721,
+                                           0.741826982387,
+                                           0.783493649054,
+                                           0.902911374212,
+                                           0.022329099369,
+                                           0.141746824527,
+                                           0.261164549685,
+                                           0.380582274842};
   for (const auto &[convex, angle, pins, zero_slots] :
        std::vector<std::tuple<bool, double, std::vector<double>, std::vector<int>>>{
            {true, 120.0, convex_120, {8, 9, 10, 11, 12, 13, 14}},
@@ -452,7 +470,8 @@ TEST_CASE("CornerRefinedRuleLayout", "[cornerbasisrefinement][Serial][Parallel]"
     for (int slot = 0; slot < 16; slot++)
     {
       CHECK_THAT(by_slot.at(slot).fraction, WithinAbs(pins[slot], 1.0e-9));
-      const bool zero = std::find(zero_slots.begin(), zero_slots.end(), slot) != zero_slots.end();
+      const bool zero =
+          std::find(zero_slots.begin(), zero_slots.end(), slot) != zero_slots.end();
       CHECK((by_slot.at(slot).kind == CornerRingVertex::Kind::ZERO) == zero);
     }
     CHECK(CornerZeroSlots(convex, rule) == zero_slots);
@@ -463,10 +482,10 @@ TEST_CASE("CornerRefinedRuleLayout", "[cornerbasisrefinement][Serial][Parallel]"
     }
   }
   // The constructed basis over the family range: 11 rings (the 7 standard levels, the
-  // extra rings at t + oe and t + 4 oe, the two caps) x 16 knots, PEC on the two metal rings only, the
-  // graded free knots at R/3 and 2R/3 from each crossing along the perimeter, slaves with a
-  // partition of unity, cap centres at the mean of the crossing knots, no degenerate
-  // triangle, every knot on its ring's square.
+  // extra rings at t + oe and t + 4 oe, the two caps) x 16 knots, PEC on the two metal
+  // rings only, the graded free knots at R/3 and 2R/3 from each crossing along the
+  // perimeter, slaves with a partition of unity, cap centres at the mean of the crossing
+  // knots, no degenerate triangle, every knot on its ring's square.
   for (const bool convex : {true, false})
   {
     for (double angle = 75.0; angle <= 180.0 + 1.0e-9; angle += 2.5)
@@ -479,7 +498,8 @@ TEST_CASE("CornerRefinedRuleLayout", "[cornerbasisrefinement][Serial][Parallel]"
       {
         zero += basis.zero[k] ? 1 : 0;
       }
-      CHECK(zero == 14);  // 2 crossings + 5 metal-interior knots on each of the 2 metal rings
+      CHECK(zero ==
+            14);  // 2 crossings + 5 metal-interior knots on each of the 2 metal rings
       std::set<double> levels;
       for (int r = 0; r < 9; r++)
       {
@@ -496,7 +516,8 @@ TEST_CASE("CornerRefinedRuleLayout", "[cornerbasisrefinement][Serial][Parallel]"
         for (int i = 0; i < 16; i++)
         {
           const auto &p = basis.knots[16 * r + i];
-          CHECK_THAT(std::max(std::abs(p[0]), std::abs(p[1])), WithinAbs(half_width, 1.0e-9));
+          CHECK_THAT(std::max(std::abs(p[0]), std::abs(p[1])),
+                     WithinAbs(half_width, 1.0e-9));
           fractions.push_back(SquarePerimeterFraction(half_width, p));
         }
         // A knot at R/3 and one at 2R/3 along the perimeter from each crossing.
@@ -504,14 +525,13 @@ TEST_CASE("CornerRefinedRuleLayout", "[cornerbasisrefinement][Serial][Parallel]"
         {
           for (const double g : {1.0 / 3.0, 2.0 / 3.0})
           {
-            const bool found = std::any_of(fractions.begin(), fractions.end(),
-                                           [&](double f)
-                                           {
-                                             const double d =
-                                                 std::abs(std::fmod(f - crossing + 3.0, 1.0));
-                                             return std::abs(std::min(d, 1.0 - d) - g / 8.0) <
-                                                    1.0e-9;
-                                           });
+            const bool found =
+                std::any_of(fractions.begin(), fractions.end(),
+                            [&](double f)
+                            {
+                              const double d = std::abs(std::fmod(f - crossing + 3.0, 1.0));
+                              return std::abs(std::min(d, 1.0 - d) - g / 8.0) < 1.0e-9;
+                            });
             CHECK(found);
           }
         }
@@ -531,7 +551,8 @@ TEST_CASE("CornerRefinedRuleLayout", "[cornerbasisrefinement][Serial][Parallel]"
           for (const int parent : {vertex.parent_a, vertex.parent_b})
           {
             const auto &p = basis.knots[parent];
-            CHECK_THAT(std::max(std::abs(p[0]), std::abs(p[1])), WithinAbs(kR / 3.0, 1.0e-9));
+            CHECK_THAT(std::max(std::abs(p[0]), std::abs(p[1])),
+                       WithinAbs(kR / 3.0, 1.0e-9));
             const double f = SquarePerimeterFraction(kR / 3.0, p);
             CHECK((std::abs(f - first) < 1.0e-9 ||
                    std::abs(std::fmod(f - second + 2.0, 1.0)) < 1.0e-9 ||
@@ -552,8 +573,8 @@ TEST_CASE("CornerRefinedRuleLayout", "[cornerbasisrefinement][Serial][Parallel]"
   {
     const auto seed = MakeCornerBoxSeed(kR, kT, kOE, true, rule);
     CHECK_THROWS_WITH(BuildCornerTraceBasis(seed.points, seed.contour_groups,
-                                            seed.zero_trace_indices, 100.0 * kDeg, true, rule,
-                                            112.5 * kDeg),
+                                            seed.zero_trace_indices, 100.0 * kDeg, true,
+                                            rule, 112.5 * kDeg),
                       ContainsSubstring("no events"));
   }
 }
@@ -711,26 +732,26 @@ TEST_CASE("CornerRefinedRuleLibraryLoad", "[cornerbasisrefinement][Serial][Paral
            {"Interfaces", {{{"Type", "SA"}, {"Coupon", 1}}}}}}}};
     auto Model = [&](const std::string &tag, double angle, const CouponFiles &files)
     {
-      return json{
-          {"Name", "convex-corner-" + tag},
-          {"Topology", "ConvexCorner"},
-          {"Angle", angle},
-          {"AngleDegrees", angle},
-          {"Convexity", "Convex"},
-          {"AngleTolerance", 1.0e-6},
-          {"CornerRadius", 0.0},
-          {"CornerRadiusTolerance", 0.0},
-          {"FabricatedMatrix", corner_domain.string()},
-          {"ThinMatrix", corner_domain.string()},
-          {"FabricatedSurfaceMatrix", corner_surface.string()},
-          {"ThinSurfaceMatrix", corner_surface.string()},
-          {"BasisPoints", files.points.string()},
-          {"TraceMesh",
-           {{"Vertices", files.vertices.string()}, {"Triangles", files.triangles.string()}}},
-          {"ContourGroups", files.contour_groups},
-          {"ZeroTraceIndices", files.zero_trace_indices},
-          {"Interfaces", {{{"Type", "SA"}, {"Coupon", 1}}}},
-          {"TraceBasis", RefinedTraceBasisRecord()}};
+      return json{{"Name", "convex-corner-" + tag},
+                  {"Topology", "ConvexCorner"},
+                  {"Angle", angle},
+                  {"AngleDegrees", angle},
+                  {"Convexity", "Convex"},
+                  {"AngleTolerance", 1.0e-6},
+                  {"CornerRadius", 0.0},
+                  {"CornerRadiusTolerance", 0.0},
+                  {"FabricatedMatrix", corner_domain.string()},
+                  {"ThinMatrix", corner_domain.string()},
+                  {"FabricatedSurfaceMatrix", corner_surface.string()},
+                  {"ThinSurfaceMatrix", corner_surface.string()},
+                  {"BasisPoints", files.points.string()},
+                  {"TraceMesh",
+                   {{"Vertices", files.vertices.string()},
+                    {"Triangles", files.triangles.string()}}},
+                  {"ContourGroups", files.contour_groups},
+                  {"ZeroTraceIndices", files.zero_trace_indices},
+                  {"Interfaces", {{{"Type", "SA"}, {"Coupon", 1}}}},
+                  {"TraceBasis", RefinedTraceBasisRecord()}};
     };
     auto Write = [&](const std::string &name, const std::vector<json> &corners)
     {
@@ -747,16 +768,17 @@ TEST_CASE("CornerRefinedRuleLibraryLoad", "[cornerbasisrefinement][Serial][Paral
     for (const double angle : {90.0, 105.0, 120.0, 135.0, 150.0, 165.0, 180.0})
     {
       const std::string tag = std::to_string(static_cast<int>(angle));
-      family.push_back(Model(tag, angle, WriteRefinedCoupon(temp.temp_dir, tag, angle, true,
-                                                             R, t, oe)));
+      family.push_back(
+          Model(tag, angle, WriteRefinedCoupon(temp.temp_dir, tag, angle, true, R, t, oe)));
     }
     Write("family", family);
     // A free knot of the 90-degree coupon moved 1e-6 R along its ring (the crossings gate
     // still passes: the crossings are PEC knots and no free knot lies on the metal).
     {
       auto wrong = family;
-      wrong[0] = Model("90", 90.0, WriteRefinedCoupon(temp.temp_dir, "90-wrong", 90.0, true,
-                                                       R, t, oe, 6 * 16 + 0));
+      wrong[0] = Model(
+          "90", 90.0,
+          WriteRefinedCoupon(temp.temp_dir, "90-wrong", 90.0, true, R, t, oe, 6 * 16 + 0));
       Write("wrong-angle", wrong);
     }
     {
@@ -771,9 +793,9 @@ TEST_CASE("CornerRefinedRuleLibraryLoad", "[cornerbasisrefinement][Serial][Paral
       auto one_extra = rule;
       one_extra.extra_levels_above_over_overetch = {1.0};
       const auto seed = MakeCornerBoxSeed(R, t, oe, true, one_extra);
-      const auto basis = BuildCornerTraceBasis(seed.points, seed.contour_groups,
-                                               seed.zero_trace_indices, 105.0 * kDeg, true,
-                                               rule);
+      const auto basis =
+          BuildCornerTraceBasis(seed.points, seed.contour_groups, seed.zero_trace_indices,
+                                105.0 * kDeg, true, rule);
       CouponFiles files;
       files.points = temp.temp_dir / "refined-105-seven-points.csv";
       files.vertices = temp.temp_dir / "refined-105-seven-vertices.csv";

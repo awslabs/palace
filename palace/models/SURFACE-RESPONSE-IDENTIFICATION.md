@@ -1204,6 +1204,73 @@ edge is triangulated), recorded as an UNCERTAINTY of the corner family's MA — 
 (a finer band basis: an extra ring near the metal top or 16 metal-ring knots, decision 140 (3)),
 not a defect of the rule (every stencil is consistent with one triangulation).
 
+**Refined trace basis: `RingLayout` `AllRingsFollowMetal` (corner-basis refinement
+2026-09-30, USER decision 161; `generate_corner_response.TraceBasisRule` / `REFINED_RULE`,
+C++ `CornerRingLayout` / `RefinedCornerTraceBasisRule`; evidence
+`corner-basis-refinement-20260930/REPORT.md`).** Under the option-(c) held-out trace (USER
+decision 149 (6)) 37 of the 40 recorded corner coupons failed the 10 % self-check (decision
+154): the matrices were exact, the coarse basis could not represent a trace nonzero on the
+metal rings. Measured cause (Phase 1, 7 recorded coupons, the coarse interpolant of the (c)
+coefficients solved directly against the fine held-out solve): (i) the fraction MISMATCH
+between a rule ring and its fixed neighbours (spurious band gradients in the 0.05-um band
+next to the metal: the concave thin SA +195 %); (ii) the lateral RESOLUTION of the R / 3 ramp
+next to each crossing with free knots 0.67-1 R apart (the convex 90 node = the fixed layout,
+no mismatch: thin SA -14 / MA -12 %, fab MA -13 % are pure resolution); (iii) the VERTICAL
+structure right above the metal top over the metal arc and below the trench, which the
+recorded self-check could not see because its fine reference shared the basis's seven
+z-levels (the recorded reference was off by up to 16 % on the fabricated MA and 7 % on MS,
+measured by refining its levels). The refined rule: EVERY ring of the box — the outer rings
+at -R, -R/3, -OveretchDepth, 0, MetalThickness, MetalThickness + k OveretchDepth for k in
+`ExtraLevelsAboveOverOveretch` = [1, 4] (0.15 and 0.30 um at the recorded process: the mirror
+of the trench ring, and the ring that resolves the trace right above the metal top over the
+metal arc, without which the concave family's fabricated MA read +7 %), R/3, R, and the two
+inner cap rings — carries the SAME angle-dependent knot fractions: the two crossings,
+`MetalInteriorKnots` = 5 at equal fractions of the metal arc, `FreeKnots` = 9 with
+`FreeKnotGrading` [1/3, 2/3] (a knot at R/3 and one at 2R/3 along the perimeter from each
+crossing on the free side, 5 at equal fractions between); PEC = crossings + metal-interior
+knots on the two metal rings only (14 of 176 knots); the box corners are slaves on every
+ring; each cap is a fan from a centre slave at the mean of the cap ring's two crossing knots
+(the recorded fixed cap's fan diagonal gave the centre that value too; a fan from a ring
+vertex is degenerate as soon as two consecutive dense knots share the apex's side); every
+band is a regular column grid with one diagonal orientation. Consequences: NO events (no
+fixed vertex is ever passed; a knot passing a box-corner slave on every ring at once leaves
+the interpolant continuous — measured 1-3e-5 at the MetalRingsOnly event angles, the
+smooth-angle level; `CornerBasisEvents` returns the empty list), ONE segment per convexity
+(no `ConnectivityAngleDegrees` — a coupon carrying one is refused at library load; no
+per-side coupons, no legacy tie nodes: exact 90 = the single 90 node, the recorded 10.85 %
+per-side MA spread is 0 by construction), the stencil the cubic sliding window on the four
+nearest nodes (one-sided at the range ends: the family's nodes 75 / 90 / 105 / 120 / 135 /
+150 / 165 / 180, held-out 78 / 82.5 / 112.5 / 142.5 / 172.5 / 176). The library load checks
+every AllRingsFollowMetal coupon against the rule at its own angle (`CheckCornerRuleCouponFiles`:
+the outer ring levels, every basis point, the trace mesh's vertices / slave parents /
+triangle set; fail closed). The runtime constructs the basis of an interpolated corner by the
+rule at the device angle as before (all rings, the centre slaves; the SurfaceMortar lift
+through `MortarVertex::ForEachBasis`). Cost: 176 knots (72 before); the coupon's trace solves
+are one operator with many right-hand sides. Recorded Phase-1 measurements (worst |error| of
+the (c) self-check over the 7 coupons against the converged reference): the recorded rule
+195 %, neighbour rings following alone 15.6 % (it uncovers the resolution error), all rings
+with the recorded knots (M1 F5) 16.8 %, M3 F11 graded 7-level 30 % (fab MA against the
+converged reference), the chosen rule 6.3 % — the thin DOMAIN of a concave coupon, a KNOWN
+representation error common to every all-rings candidate (the coarse trace sits 2-4 % low in
+the band -R/3 .. -OveretchDepth, linear in z against the hypot ramp next to the crossings,
+and above MetalThickness + R/3, where no knot sits at the level the cutoff reaches 1; not
+device-gated); every SA / MS / MA within 5.3 %; denser lateral grading (R/6 .. 2R/3, F 11-15)
+and more far-side knots do not move it, more rings below the trench worsen MS (the graded
+knots interpolate the hypot ramp linearly on those rings). **The held-out self-check now
+judges the VERTICAL representation too (supervisor decision 2026-09-30, option (iii)):** the
+reference surface (`heldout_reference_levels`, `HELDOUT_REFERENCE_RING_SIZE` 64) is
+decoupled from the basis levels — the standard levels plus rings every OveretchDepth across
+both R/3 ramps (from the metal top up to and including MetalThickness + R/3, where the (c)
+cutoff reaches 1, and from the trench floor down to -R/3): measured convergence on the 7
+recorded coupons S0 (7 levels) -> S1 (+ t + d): fab MA -5..-16 %; -> S2 (+ t + 2d, -2d): MS
+-3.5..-6, MA -3..-6; -> S3 (+ t + 4d, -4d): MA -1.2..-2.9; -> S4 (+ 0.5, -0.4): domain +2..+3,
+MS +4.8..+7.4 (not monotone: the linear-in-z interpolation misses the smoothstep); -> S5
+(+ 0.4, -0.3): < 0.2 %; -> S6 (0.05-um spacing + t + R/3): domain +1.5..+2.3, MA +1..+2; -> S7
+(0.025-um spacing): < 0.4 % on every energy — the recorded spacing is S6's (within 0.4 % of
+S7). The option-(c) traces GATE the family's interpolation check
+(`qualification-gates.json` Version 5, `GatingTrace`; USER decision 161 (2)); the band-trace
+verdict is reported alongside.
+
 **Library contract.** A model keyed by its `Signature` (the feature's canonical object, `Type`
 included; `Signature.Type` must equal `Topology`) needs no version-1 geometry parameters of its
 own; a model matches every feature of its topology whose parameters lie within the signature

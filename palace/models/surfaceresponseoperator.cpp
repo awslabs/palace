@@ -1430,11 +1430,12 @@ std::vector<std::string> ModelInterfaceNames(const LibraryModel &model);
 // The load-time check of an AllRingsFollowMetal corner coupon's files against the rule at
 // ITS angle (corner-basis refinement 2026-09-30; fail closed in ReadProcessLibrary): the
 // outer ring levels {-R, -R/3, -OveretchDepth, 0, MetalThickness, MetalThickness + k
-// OveretchDepth (the rule's k), R/3, R}, every basis point at the rule's position and the trace mesh
-// (vertices, slave parents, triangle set) equal to the rule's. (A MetalRingsOnly coupon with
-// a segment connectivity is checked the same way at match time, MatchCornerFamily.)
-// Returns the reason, empty when the coupon is the rule's.
-std::string CheckCornerRuleCouponFiles(const LibraryModel &model, double position_tolerance);
+// OveretchDepth (the rule's k), R/3, R}, every basis point at the rule's position and the
+// trace mesh (vertices, slave parents, triangle set) equal to the rule's. (A MetalRingsOnly
+// coupon with a segment connectivity is checked the same way at match time,
+// MatchCornerFamily.) Returns the reason, empty when the coupon is the rule's.
+std::string CheckCornerRuleCouponFiles(const LibraryModel &model,
+                                       double position_tolerance);
 
 ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                                   bool nondimensionalize, bool allow_empty_models = false,
@@ -1966,7 +1967,8 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                                ? CornerRingLayout::ALL_RINGS_FOLLOW_METAL
                                : CornerRingLayout::METAL_RINGS_ONLY;
       }
-      if (auto grading = trace_basis->find("FreeKnotGrading"); grading != trace_basis->end())
+      if (auto grading = trace_basis->find("FreeKnotGrading");
+          grading != trace_basis->end())
       {
         MFEM_VERIFY(grading->is_array(), "Fabrication-process response model \""
                                              << model.name
@@ -1977,17 +1979,19 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
       if (auto extra = trace_basis->find("ExtraLevelsAboveOverOveretch");
           extra != trace_basis->end())
       {
-        MFEM_VERIFY(extra->is_array(), "Fabrication-process response model \""
-                                           << model.name
-                                           << "\" TraceBasis ExtraLevelsAboveOverOveretch must "
-                                              "be an array of multiples of OveretchDepth!");
+        MFEM_VERIFY(extra->is_array(),
+                    "Fabrication-process response model \""
+                        << model.name
+                        << "\" TraceBasis ExtraLevelsAboveOverOveretch must "
+                           "be an array of multiples of OveretchDepth!");
         rule.extra_levels_above_over_overetch = extra->get<std::vector<double>>();
       }
       {
         const std::string reason = CheckCornerTraceBasisRule(rule);
         MFEM_VERIFY(reason.empty(), "Fabrication-process response model \""
-                                        << model.name << "\" has an invalid TraceBasis rule ("
-                                        << reason << ")!");
+                                        << model.name
+                                        << "\" has an invalid TraceBasis rule (" << reason
+                                        << ")!");
       }
       model.trace_basis = rule;
       if (auto connectivity = trace_basis->find("ConnectivityAngleDegrees");
@@ -2200,10 +2204,10 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
       // below, the files at match time (MatchCornerFamily).
       const std::string reason = CheckCornerRuleCouponFiles(
           model, 1.0e-9 * library.matching_radius * coordinate_scale);
-      MFEM_VERIFY(reason.empty(), "Fabrication-process corner response model \""
-                                      << model.name
-                                      << "\" is not its trace basis rule's coupon: " << reason
-                                      << "!");
+      MFEM_VERIFY(reason.empty(),
+                  "Fabrication-process corner response model \""
+                      << model.name << "\" is not its trace basis rule's coupon: " << reason
+                      << "!");
     }
 
     std::set<std::pair<int, InterfaceDielectric>> interface_slots;
@@ -3922,11 +3926,11 @@ MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &featur
     // angle pass exactly when no event lies between their angle and it).
     if (model.corner_connectivity_angle_degrees || model.trace_basis->AllRings())
     {
-      MFEM_VERIFY(!model.response.trace_vertices.empty() &&
-                      !model.response.trace_triangles.empty(),
-                  "Corner family coupon \"" << model.name
-                                            << "\" has a rule-fixed trace triangulation but "
-                                               "no TraceMesh!");
+      MFEM_VERIFY(
+          !model.response.trace_vertices.empty() && !model.response.trace_triangles.empty(),
+          "Corner family coupon \"" << model.name
+                                    << "\" has a rule-fixed trace triangulation but "
+                                       "no TraceMesh!");
       const auto mesh =
           ReadTraceMesh(model.response.trace_vertices, model.response.trace_triangles);
       MFEM_VERIFY(mesh.vertices.size() == rule_basis.vertices.size() &&
@@ -3960,17 +3964,17 @@ MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &featur
         std::sort(triangle.begin(), triangle.end());
         rule_triangles.insert(triangle);
       }
-      MFEM_VERIFY(coupon_triangles == rule_triangles,
-                  "Corner family coupon \""
-                      << model.name
-                      << "\" trace triangulation is not the rule's"
-                      << (model.corner_connectivity_angle_degrees
-                              ? " for its segment connectivity angle " +
-                                    std::to_string(*model.corner_connectivity_angle_degrees) +
-                                    " deg (the band triangulation differs: the coupon "
-                                    "belongs to another segment)"
-                              : " at its angle")
-                      << "!");
+      MFEM_VERIFY(
+          coupon_triangles == rule_triangles,
+          "Corner family coupon \""
+              << model.name << "\" trace triangulation is not the rule's"
+              << (model.corner_connectivity_angle_degrees
+                      ? " for its segment connectivity angle " +
+                            std::to_string(*model.corner_connectivity_angle_degrees) +
+                            " deg (the band triangulation differs: the coupon "
+                            "belongs to another segment)"
+                      : " at its angle")
+              << "!");
     }
     CornerFamilyNode node;
     node.angle_degrees = 180.0 - node_turn;
@@ -12724,8 +12728,8 @@ std::string CheckCornerRuleCouponFiles(const LibraryModel &model, double positio
   const bool convex = model.topology == LibraryTopology::CONVEX_CORNER;
   const auto &rule = *model.trace_basis;
   const auto points = ReadBasisPoints(model.response.basis_points);
-  const CornerBoxRings rings = DescribeCornerBoxRings(
-      points, model.response.contour_groups, model.response.zero_trace_indices);
+  const CornerBoxRings rings = DescribeCornerBoxRings(points, model.response.contour_groups,
+                                                      model.response.zero_trace_indices);
   if (rule.AllRings())
   {
     // The outer ring levels: -R, -R/3, -d, 0, t, t + d, R/3, R with t the upper metal ring
@@ -12777,7 +12781,8 @@ std::string CheckCornerRuleCouponFiles(const LibraryModel &model, double positio
   std::optional<double> connectivity_radians;
   if (model.corner_connectivity_angle_degrees)
   {
-    connectivity_radians = *model.corner_connectivity_angle_degrees * std::acos(-1.0) / 180.0;
+    connectivity_radians =
+        *model.corner_connectivity_angle_degrees * std::acos(-1.0) / 180.0;
   }
   const auto rule_basis = BuildCornerTraceBasis(
       points, model.response.contour_groups, model.response.zero_trace_indices, model.angle,
@@ -12798,7 +12803,8 @@ std::string CheckCornerRuleCouponFiles(const LibraryModel &model, double positio
   {
     return "the rule fixes the trace triangulation but the coupon has no TraceMesh";
   }
-  const auto mesh = ReadTraceMesh(model.response.trace_vertices, model.response.trace_triangles);
+  const auto mesh =
+      ReadTraceMesh(model.response.trace_vertices, model.response.trace_triangles);
   if (mesh.vertices.size() != rule_basis.vertices.size() ||
       mesh.triangles.size() != rule_basis.triangles.size())
   {
@@ -12810,9 +12816,11 @@ std::string CheckCornerRuleCouponFiles(const LibraryModel &model, double positio
     const auto &rule_vertex = rule_basis.vertices[v];
     const std::array<double, 3> point = {vertex.point[0], vertex.point[1], vertex.point[2]};
     if (Distance(point, rule_vertex.point) > position_tolerance ||
-        vertex.basis - 1 != rule_vertex.basis || vertex.parent_a - 1 != rule_vertex.parent_a ||
+        vertex.basis - 1 != rule_vertex.basis ||
+        vertex.parent_a - 1 != rule_vertex.parent_a ||
         vertex.parent_b - 1 != rule_vertex.parent_b ||
-        (rule_vertex.basis < 0 && std::abs(vertex.weight_a - rule_vertex.weight_a) > 1.0e-9))
+        (rule_vertex.basis < 0 &&
+         std::abs(vertex.weight_a - rule_vertex.weight_a) > 1.0e-9))
     {
       return "trace vertex " + std::to_string(v + 1) + " differs from the rule's";
     }
