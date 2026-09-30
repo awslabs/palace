@@ -24,16 +24,18 @@ tool clips every segment of the segment table to the box and reports, from the c
 * the metal bodies (conductors) whose perimeter enters the box, from the perimeter loops of the chip: every
   closed loop of PHYSICAL perimeter segments (assigned or excluded as TruncationCut / SimulationBoundary /
   Port / CrossLayer / Untargeted / UndeterminedProcessSide; NonManifold and NonPlanar segments are walls,
-  not perimeter) on one plane is an island boundary when its containment depth in the other loops of that
-  plane is even (the plane's outermost loop is the ground's outer boundary) and a hole boundary when odd; a
-  hole belongs to the body of its enclosing loop. Bodies are reported with the plan's terminal assignment:
+  not perimeter) on one plane has its metal side decided by the sharp corner features on it (on a loop with
+  metal inside a polygon-convex vertex is a ConvexCorner of the metal, with metal outside a ConcaveCorner;
+  majority vote), a loop without sharp corners takes the opposite side of its enclosing loop, and a
+  parentless one is a hole of the plane's unbounded ground (a flip chip's L1 ground has no outer boundary in
+  the perimeter table). A loop with metal inside is a body (an island, or a plane's outer boundary); a hole
+  belongs to the nearest enclosing body, else to the plane's ground (body index < 0). Bodies are reported with the plan's terminal assignment:
   every body is ground (0 V) or a terminal; the proposed quoted terminal is the island entirely inside the
   box with the largest proxy energy inside, else none (the CPW centre trace open-terminated, chosen at cut
   time); a body whose perimeter crosses a wall is flagged ``CutByWall`` (bridged to ground at the wall
   unless it is the terminal); a perimeter component that does not close (interrupted by NonPlanar / NonManifold
-  edges: airbridge spans, wirebond feet) is reported as ``OpenChain`` with no body assignment. The metal-side parity is cross-checked against the sharp corner
-  features on the loop (an island's polygon-convex vertex is a ConvexCorner of the metal, a hole's a
-  ConcaveCorner; ``MetalSideDisagreements``);
+  edges: airbridge spans, wirebond feet) is reported as ``OpenChain`` with no body assignment. Minority corner
+  votes on a loop are reported as ``MetalSideDisagreements``;
 * the class-(B) mean-separation prediction of plan (b)-4 for every pair / stack with a portion inside: the
   mean separation of the window-interior portions of side 0 to the other sides (sampled at 0.5 R) vs the
   chip's signature separation (``SeparationOverR`` / ``OffsetOverR``), and whether the window reading would
@@ -159,8 +161,8 @@ class PerimeterLoops:
                 self.segment_loop[j] = len(self.loops)
             self.loops.append(loop)
         self._containment()
+        self._metal_side(features)
         self._bodies()
-        self._metal_side_check(features)
 
     def _order(self, component, adjacency):
         """Polyline through the component's points (an ordered traversal; degree-2 loops close exactly)."""
@@ -225,33 +227,49 @@ class PerimeterLoops:
                 self.loops[idx]["Depth"] = depth
 
     def _bodies(self):
-        """Body of a loop: itself when its depth is even (metal inside), else its parent's body."""
+        """Body of a loop: itself when the metal is inside (an island, or a plane's outer boundary), else the
+        nearest enclosing loop with metal inside; a hole with no such ancestor belongs to the plane's unbounded
+        ground (body key ("Ground", plane): the L1 ground of a flip chip whose outer boundary is not in the
+        perimeter table). Open components are their own record."""
+        self.ground_bodies = {}
         for idx, loop in enumerate(self.loops):
-            if loop["Depth"] % 2 == 0 or not loop["Closed"]:
+            if not loop["Closed"] or loop["MetalInside"]:
                 loop["Body"] = idx
-        for idx, loop in enumerate(self.loops):
-            if loop["Body"] is None:
-                loop["Body"] = self.loops[loop["Parent"]]["Body"] if loop["Parent"] is not None else idx
+                continue
+            p = loop["Parent"]
+            while p is not None and not self.loops[p]["MetalInside"]:
+                p = self.loops[p]["Parent"]
+            if p is not None:
+                loop["Body"] = p
+            else:
+                key = ("Ground", loop["Plane"])
+                if key not in self.ground_bodies:
+                    self.ground_bodies[key] = -1 - len(self.ground_bodies)
+                loop["Body"] = self.ground_bodies[key]
 
-    def _metal_side_check(self, features):
-        """Cross-check of the parity rule with the sharp corner features: on an island loop (metal inside) a
-        polygon-convex vertex is a ConvexCorner of the metal, on a hole loop (metal outside) a ConcaveCorner."""
+    def _metal_side(self, features):
+        """Metal side of every closed loop: the sharp corner features on it vote (on a loop with metal inside a
+        polygon-convex vertex is a ConvexCorner of the metal, with metal outside a ConcaveCorner); a loop
+        without sharp corners takes the opposite side of its parent (parity), and a parentless one is a hole
+        of the plane's unbounded ground. Minority votes are reported as MetalSideDisagreements."""
         self.metal_side_checks = 0
         self.metal_side_disagreements = []
         vertex_index = {}
         for loop_index, loop in enumerate(self.loops):
+            loop["MetalInside"] = None
+            loop["CornerVotes"] = [0, 0]  # [metal inside, metal outside]
             if not loop["Closed"] or len(loop["Polygon"]) < 3:
                 continue
             for k, p in enumerate(loop["Polygon"]):
                 vertex_index[(loop["Plane"], p)] = (loop_index, k)
+        votes = []
         for f in features:
             if f["Type"] not in ("ConvexCorner", "ConcaveCorner") or not f.get("Frame"):
                 continue
             if float(f.get("Signature", {}).get("CornerRadiusOverR", 0.0) or 0.0) > 0.0:
                 continue
             origin = f["Frame"]["Origin"]
-            key = (round(float(origin[2]), 3), point_key(origin)[:2])
-            hit = vertex_index.get(key)
+            hit = vertex_index.get((round(float(origin[2]), 3), point_key(origin)[:2]))
             if hit is None:
                 continue
             loop_index, k = hit
@@ -260,12 +278,26 @@ class PerimeterLoops:
             prev_p, v, next_p = poly[k - 1], poly[k], poly[(k + 1) % len(poly)]
             cross = (v[0] - prev_p[0]) * (next_p[1] - v[1]) - (v[1] - prev_p[1]) * (next_p[0] - v[0])
             polygon_convex = (cross > 0.0) == (loop["Area"] > 0.0)
-            island = loop["Depth"] % 2 == 0
-            expected = "ConvexCorner" if polygon_convex == island else "ConcaveCorner"
+            metal_inside = polygon_convex == (f["Type"] == "ConvexCorner")
+            loop["CornerVotes"][0 if metal_inside else 1] += 1
+            votes.append((loop_index, metal_inside, f["Id"], origin, f["Type"]))
             self.metal_side_checks += 1
-            if expected != f["Type"]:
-                self.metal_side_disagreements.append({"Feature": f["Id"], "Type": f["Type"], "Loop": loop_index,
-                                                      "Depth": loop["Depth"], "Origin": origin})
+        for loop in self.loops:
+            inside, outside = loop["CornerVotes"]
+            if inside or outside:
+                loop["MetalInside"] = inside >= outside
+        # loops without votes: parity from the nearest decided ancestor (top down: parents before children)
+        order = sorted(range(len(self.loops)), key=lambda i: self.loops[i]["Depth"])
+        for idx in order:
+            loop = self.loops[idx]
+            if not loop["Closed"] or loop["MetalInside"] is not None:
+                continue
+            p = loop["Parent"]
+            loop["MetalInside"] = (not self.loops[p]["MetalInside"]) if p is not None else False
+        for loop_index, metal_inside, fid, origin, ftype in votes:
+            if metal_inside != self.loops[loop_index]["MetalInside"]:
+                self.metal_side_disagreements.append({"Feature": fid, "Type": ftype, "Loop": loop_index,
+                                                      "Depth": self.loops[loop_index]["Depth"], "Origin": origin})
 
 
 def pair_sides(feature, segments):
@@ -438,24 +470,36 @@ def inventory(manifest, windows, margin, weights, z_range=None):
         # bodies
         bodies = collections.defaultdict(lambda: {"Loops": [], "PerimeterInside": 0.0, "Crossing": False, "Plane": None,
                                                   "Kind": None, "Proxy": 0.0})
+        def body_kind(body_index):
+            if body_index < 0:
+                return "Ground"
+            body = loops.loops[body_index]
+            if not body["Closed"]:
+                return "OpenChain"
+            return "Ground" if body["Parent"] is None else "Island"
+
         for loop_index, entry in loops_inside.items():
             loop = loops.loops[loop_index]
-            body = loops.loops[loop["Body"]]
-            b = bodies[loop["Body"]]
+            body_index = loop["Body"]
+            b = bodies[body_index]
             b["Loops"].append(loop_index)
             b["PerimeterInside"] += entry["Inside"]
             b["Crossing"] = b["Crossing"] or entry["Crossing"]
             b["Plane"] = loop["Plane"]
-            b["Kind"] = ("Ground" if body["Depth"] == 0 else "Island") if body["Closed"] else "OpenChain"
-            b["Area"] = abs(body["Area"])
-            b["BBox"] = body["BBox"]
-            b["Closed"] = body["Closed"]
+            b["Kind"] = body_kind(body_index)
+            if body_index >= 0:
+                body = loops.loops[body_index]
+                b["Area"] = abs(body["Area"])
+                b["BBox"] = body["BBox"]
+                b["Closed"] = body["Closed"]
+            else:
+                b["Area"], b["BBox"], b["Closed"] = None, None, None
         # proxy energy per body from the features inside (feature -> first portion's segment -> loop -> body)
         for row in rows:
             f = feature_by_id[row["Feature"]]
             if f.get("Portions"):
                 loop_index = loops.segment_loop.get(f["Portions"][0][0])
-                if loop_index is not None:
+                if loop_index is not None and loops.loops[loop_index]["Body"] in bodies:
                     bodies[loops.loops[loop_index]["Body"]]["Proxy"] += row["Proxy"]
         body_rows = []
         for body_index, b in bodies.items():

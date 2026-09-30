@@ -118,9 +118,11 @@ class WindowInventory(unittest.TestCase):
         self.assertEqual(len(closed), 3)
         depths = sorted(l["Depth"] for l in closed)
         self.assertEqual(depths, [0, 1, 2])
-        # hole belongs to the ground body (depth 0), island is its own body
+        # the hole (concave metal corners) belongs to the plane's ground: the excluded outer loop carries no
+        # corner feature, so the ground is the synthetic body -1; the island (convex corners) is its own body
         by_depth = {l["Depth"]: l for l in closed}
-        self.assertEqual(by_depth[1]["Body"], loops.loops.index(by_depth[0]))
+        self.assertEqual([l["MetalInside"] for l in (by_depth[0], by_depth[1], by_depth[2])], [False, False, True])
+        self.assertEqual(by_depth[1]["Body"], -1)
         self.assertEqual(by_depth[2]["Body"], loops.loops.index(by_depth[2]))
         self.assertEqual(loops.metal_side_checks, 8)
         self.assertEqual(loops.metal_side_disagreements, [])
