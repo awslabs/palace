@@ -7212,19 +7212,36 @@ LongitudinalQuadratureCells(const mfem::IntegrationRule &quadrature)
   return cells;
 }
 
+// The smallest |cos| between a translational patch's AxisW and the tangent of the segment
+// its sample lies on. AxisW = AxisU x AxisV is parallel to the sample's own segment for an
+// isolated edge, but for a pair or stack AxisU points at the sample's closest foot on the
+// PARTNER side, so AxisW follows the partner's chord (or the sample-to-vertex direction
+// where the foot is clamped at a joint): the identification classifies slow tapers and
+// sub-noise polyline bends as pairs (1 - |cos| of 1e-6..1e-3 there: a 6 um / 100 um taper
+// 4.5e-6, a 1.6 deg chord joint 3.9e-4). The tolerance is the pair regime's own facing
+// threshold (the paired-edge topology's Dot(axis_u, direction) > 0.95 in the 2D and legacy
+// 3D groupings, ~18 deg); anything below it is not a translational frame and fails closed.
+constexpr double kLongitudinalAxisCosineTolerance = 0.95;
+
 // The longitudinal cell of one quadrature patch on a straight portion [a, b] of a segment
 // parametrised from p0 along `tangent`: offsets from the patch origin (at parameter t_q)
-// along the patch's AxisW (= AxisU x AxisV, parallel or antiparallel to the tangent), mesh
-// units, ordered begin <= end.
+// along the patch's AxisW (= AxisU x AxisV), mesh units, ordered begin <= end. The arc
+// cell is projected onto AxisW by Dot(tangent, axis_w) (its sign orients the cell, its
+// magnitude shortens it): the cross-section perpendicular to AxisW at the projected offset
+// contains the segment point at that arc offset (the sample's foot lies in the plane
+// perpendicular to AxisW through the origin), so the slices sweep exactly the sample's
+// cell of its own segment whether or not AxisW is parallel to it.
 std::array<double, 2> LongitudinalCellOffsets(const std::array<double, 2> &unit_cell,
                                               double a, double b, double t_q,
                                               const Point3D &tangent, const Point3D &axis_w)
 {
-  const double sign = Dot(tangent, axis_w);
-  MFEM_VERIFY(std::abs(std::abs(sign) - 1.0) < 1.0e-8,
-              "A translational patch's AxisW must be parallel to its segment!");
-  const double begin = sign * (a + (b - a) * unit_cell[0] - t_q);
-  const double end = sign * (a + (b - a) * unit_cell[1] - t_q);
+  const double projection = Dot(tangent, axis_w);
+  MFEM_VERIFY(std::abs(projection) >= kLongitudinalAxisCosineTolerance,
+              "A translational patch's AxisW must be within |cos| >= "
+                  << kLongitudinalAxisCosineTolerance << " of its segment (found "
+                  << std::abs(projection) << ")!");
+  const double begin = projection * (a + (b - a) * unit_cell[0] - t_q);
+  const double end = projection * (a + (b - a) * unit_cell[1] - t_q);
   return {std::min(begin, end), std::max(begin, end)};
 }
 

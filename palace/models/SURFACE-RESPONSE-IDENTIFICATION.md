@@ -962,7 +962,16 @@ transpose alike): the patch coefficient is the trace's LENGTH-AVERAGE over its c
 patch energy `weight x c^T Q c` is the Jensen lower bound of the strip's energy and the sum
 over a portion is a surface functional of the field over the whole matched perimeter. A
 patch without a cell ({0, 0}: 2D, spatial and vertex models, explicit configuration syntax)
-is one cross-section at its origin. Before this fix the dimensionless weight was used as the
+is one cross-section at its origin. A pair or stack patch's AxisW follows the PARTNER side
+(AxisU points at the sample's closest foot on the other side), so on the slow tapers and
+sub-noise polyline bends the identification classifies as pairs AxisW is not parallel to the
+sample's own segment (1 - |cos| of 1e-6..1e-3): the arc cell is projected onto AxisW by
+Dot(tangent, AxisW) — the sign orients it, the magnitude shortens it — because the
+cross-section perpendicular to AxisW at the projected offset contains the segment point at that
+arc offset (the foot lies in the plane perpendicular to AxisW through the origin), so the slices
+sweep exactly the sample's cell of its own segment (`LongitudinalCellOffsets`); a frame below
+|cos| = 0.95 (`kLongitudinalAxisCosineTolerance`, the paired-edge topology's facing threshold)
+is not a translational frame and fails closed. Before this fix the dimensionless weight was used as the
 strip length in the solver's nondimensional mesh coordinates (`mortar_longitudinal_subdivisions`,
 `longitudinal_coordinate`), i.e. a strip of l_cell x Lc / `CouponDepth` centred on the Gauss
 point (Lc the mesh's characteristic length): 3.8 cells on the transmon (Lc 4 mm, `CouponDepth`
