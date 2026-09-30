@@ -36,7 +36,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     environment solve. Includes optional block low-rank environment factorization with
     MUMPS (`"FactorizationTol"`) and hierarchical compression of the interface operator
     (`"InterfaceOffdiagTol"`). Magnetostatic substructuring supports `"FluxLoop"`
-    excitations. Adds the `examples/transmon` substructuring example.
+    excitations. Adds the `examples/transmon` substructuring example. SchemaVer 2-1-0.
     [PR XXX](https://github.com/awslabs/palace/pull/XXX).
 
 #### Interface Changes
