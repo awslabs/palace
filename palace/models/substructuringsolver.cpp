@@ -44,10 +44,7 @@ namespace palace
 namespace
 {
 
-// MFEM integrator using the quadrature order of Palace's own operators, so the condensed
-// discretization matches the native one also on curved meshes.
-// Coefficient given per (domain or boundary) element, for the integrators on those
-// elements.
+// Coefficient given per (domain or boundary) element.
 class ElementCoefficient : public mfem::Coefficient
 {
   const std::vector<double> &value;
@@ -60,6 +57,8 @@ public:
   }
 };
 
+// MFEM integrator with the quadrature order of Palace's own operators, so the condensed
+// discretization matches the native one also on curved meshes.
 template <typename Integrator>
 class NativeQuadrature : public Integrator
 {
@@ -188,9 +187,8 @@ private:
   mutable mfem::Vector td;
 };
 
-// Preconditioner adapter: forwards Solver::Mult to a callable (used to route the region
-// preconditioner through the region-submesh geometric multigrid). SetOperator is a no-op
-// because the underlying multigrid is built once, up front.
+// Preconditioner forwarding to a callable (the region factor or region-submesh multigrid,
+// both built up front, so SetOperator is a no-op).
 class CallableSolver : public Solver<Operator>
 {
 public:
@@ -206,14 +204,9 @@ private:
   std::function<void(const mfem::Vector &, mfem::Vector &)> apply;
 };
 
-// (MaterializedDtN is defined after the Hodlr helpers below, since it can apply either the
-// dense per-rank row blocks or a compressed hierarchical operator.)
-
 // Materialized DtN: applies the precomputed interface operator S_E to a distributed
-// interface vector. The global interface vector is gathered by an Allreduce, then either
-// each rank multiplies its own dense row block (S_rows) or -- when a compressed Hodlr is
-// supplied -- the replicated hierarchical operator is applied and each rank reads back its
-// interface rows.
+// interface vector (gathered by an Allreduce): each rank multiplies its own dense row block,
+// or applies the replicated HODLR form and reads back its rows.
 class MaterializedDtN : public mfem::Operator
 {
 public:
@@ -240,8 +233,6 @@ public:
     y = 0.0;
     if (hodlr)
     {
-      // Compressed apply: permute to tree order, apply the replicated Hodlr, un-permute,
-      // and read back this rank's interface rows.
       std::vector<double> xp(nG_global), yp(nG_global), yg(nG_global);
       for (int k = 0; k < nG_global; k++)
       {
@@ -288,11 +279,9 @@ private:
 
 }  // namespace
 
-// Parallel region-condensed static solve (electrostatic H1 or magnetostatic H(curl)):
-// region/environment operators assembled on the parent space with domain-restricted
-// material coefficients, interface identified in true-DOF space, environment condensed via
-// a distributed DtN. Magnetostatics uses a small curl-curl mass regularization (see
-// kMagRegularization).
+// Region/environment operators are assembled on the parent space with domain-restricted
+// coefficients; the interface is identified in true-DOF space and the environment condensed
+// onto it (a distributed dense DtN).
 struct SubstructuringSolver::Impl
 {
   const IoData &iodata;
@@ -303,10 +292,9 @@ struct SubstructuringSolver::Impl
   int nt;
 
   std::unique_ptr<mfem::HypreParMatrix> A_region, A_env, A_region_free;
-  // Environment interior solve on the environment submesh (Gamma as an essential boundary):
-  // avoids the all-identity ranks of the parent-space eliminated operator and enables
-  // geometric multigrid on a standard Dirichlet problem.
   mfem::Array<int> ra_arr, ea_arr;
+  // Iterative environment interior solve on the environment submesh (Gamma essential),
+  // with geometric multigrid for higher-order H1.
   std::unique_ptr<mfem::ParSubMesh> env_submesh_owned;    // single-level ownership
   std::vector<std::unique_ptr<Mesh>> env_mesh_vec;        // GMG: [0] owns the ParSubMesh
   mfem::ParSubMesh *env_submesh = nullptr;                // raw ptr to the owned submesh
@@ -315,32 +303,27 @@ struct SubstructuringSolver::Impl
   std::vector<std::unique_ptr<mfem::H1_FECollection>> env_fecs;
   std::unique_ptr<FiniteElementSpaceHierarchy> env_hierarchy;
   std::unique_ptr<MultigridOperator> env_mg_op;
-  std::vector<mfem::Array<int>>
-      env_dbc_lists;  // per-level essential (ParOperator MakeRefs)
+  std::vector<mfem::Array<int>> env_dbc_lists;  // per-level essential DOFs
   std::unique_ptr<mfem::HypreParMatrix> env_A_ee;  // single-level submesh operator
   std::unique_ptr<KspSolver> env_ksp;
 #if defined(MFEM_USE_SUPERLU)
   std::unique_ptr<SuperLUSolver> reg_lu;  // direct A_region_free factorization (region pc)
-  std::unique_ptr<mfem::HypreParMatrix>
-      env_A_ee_parent;  // parent-space env A_EE (eliminated)
-  std::unique_ptr<SuperLUSolver>
-      env_lu_parent;  // parent-space direct env solve (no transfer)
+  std::unique_ptr<mfem::HypreParMatrix> env_A_ee_parent;  // parent-space A_EE (eliminated)
+  std::unique_ptr<SuperLUSolver> env_lu_parent;           // its direct factor
 #endif
 #if defined(MFEM_USE_MUMPS)
   // MUMPS partial factorization of the environment with Gamma as the Schur variables: gives
   // S_E directly and serves every environment interior solve (set up by MaterializeMumps).
   std::unique_ptr<MumpsSchurSolver> env_mumps;
 #endif
-  // Block size for the batched multi-RHS S_E materialization (SuperLU triangular solves are
-  // per-call-overhead bound for a single RHS; ~4x cheaper per column at 32).
+  // Block size of the batched multi-RHS environment solves.
   static constexpr int kMaterializeBlock = 32;
   // Largest interface for which the region preconditioner factors the dense Gamma block of
   // the exact condensed operator (dense block + its fill ~ 3 |Gamma|^2 doubles in total).
   static constexpr int kDirectCondensedMaxInterface = 10000;
-  // The exact dense-Gamma region factor costs ~|Gamma|^3 once, CG on A_region_free ~50
-  // iterations of ~|Gamma|^2 per excitation: the factor pays off from about |Gamma| /
-  // kDenseInterfacePerExcitation excitations in a batch (measured break-even ~4 at |Gamma|
-  // = 3750, ~1 at |Gamma| ~ 1000).
+  // The exact dense-Gamma region factor (~|Gamma|^3 once) pays off against CG on
+  // A_region_free (~|Gamma|^2 per iteration, per excitation) from about |Gamma| /
+  // kDenseInterfacePerExcitation excitations in a batch.
   static constexpr int kDenseInterfacePerExcitation = 1000;
   bool region_direct = false;          // region pc is a SuperLU factor (created lazily)
   bool region_dense_eligible = false;  // ... and a dense S_E is available for the exact one
@@ -348,16 +331,14 @@ struct SubstructuringSolver::Impl
   // does not allow changing it): kMaterializeBlock when S_E is materialized, else the size
   // of the first excitation batch. Smaller batches are zero-padded to it.
   mutable int env_block = 0;
-  mutable mfem::Vector env_pad_in,
-      env_pad_out;               // shared zero input / scratch output (padding)
+  mutable mfem::Vector env_pad_in, env_pad_out;  // zero input / scratch output (padding)
   mfem::Array<int> non_env_int;  // parent true DOFs that are not environment-interior
   bool env_parent_direct = false;
   mfem::Array<int> env_ess;  // solve-space essential true DOFs (Gamma + env Dirichlet)
   mutable mfem::ParGridFunction env_pgf, env_sgf;  // parent / submesh transfer buffers
   mutable mfem::Vector env_srhs, env_ssol;
-  // Region-solve geometric multigrid (Phase C): the region preconditioner runs on the
-  // region ParSubMesh (region Dirichlet terminals essential, interface Gamma free),
-  // avoiding the all-identity ranks of the parent-space region-free operator.
+  // Region preconditioner by geometric multigrid on the region submesh (higher-order H1;
+  // region Dirichlet terminals essential, Gamma free).
   std::vector<std::unique_ptr<Mesh>> reg_mesh_vec;
   mfem::ParSubMesh *reg_submesh = nullptr;
   mfem::ParFiniteElementSpace *reg_solve_fes = nullptr;
@@ -367,11 +348,10 @@ struct SubstructuringSolver::Impl
   std::vector<mfem::Array<int>> reg_dbc_lists;
   std::unique_ptr<KspSolver> reg_gmg_ksp;  // inner GMG solve on the region submesh
   mfem::Array<int> reg_ess;
-  bool region_gmg = false;
   mutable mfem::ParGridFunction reg_pgf, reg_sgf;
   mutable mfem::Vector reg_srhs, reg_ssol;
-  // Energy (QoI) operators. Electrostatic: alias the solve operators. Magnetostatic: pure
-  // curl-curl (no mass), so the magnetic energy / inductance is physical.
+  // Energy operators: the solve operators (electrostatics), the pure curl-curl
+  // (magnetostatics).
   std::unique_ptr<mfem::HypreParMatrix> A_region_energy, A_env_energy;
   mfem::HypreParMatrix *K_region_e = nullptr, *K_env_e = nullptr;
   std::vector<char> is_gamma, is_env_int, is_region_free;
@@ -382,19 +362,13 @@ struct SubstructuringSolver::Impl
   std::unique_ptr<KspSolver> region_ksp;  // Palace CG + wrapped AMG/AMS on the region block
   std::unique_ptr<ImplicitDtN> dtn;
 
-  // Materialized (reusable) interface operator: replicated dense S_E + load g_E over a
-  // global interface enumeration, computed once so region solves need no environment
-  // solves.
+  // Interface operator S_E over a global interface enumeration, distributed by rows: each
+  // rank stores its own rows [gamma_off, gamma_off + gamma_nloc) (row-major, x nG_global).
   std::vector<int> gamma_global;  // owned parent true DOF -> global interface index, or -1
   int nG_global = 0;
-  // Distributed dense interface operator S_E: each rank stores the contiguous block of rows
-  // [gamma_off, gamma_off + gamma_nloc) it owns (row-major, gamma_nloc x nG_global),
-  // instead of the full nG x nG matrix replicated on every rank. Cuts per-rank storage
-  // O(nG^2) -> O(nG^2 / P) and parallelizes the apply.
   std::vector<double> S_rows;
   int gamma_off = 0, gamma_nloc = 0;
-  // Optional compressed (HODLR) form of S_E, used in place of S_rows when interface
-  // compression is requested (replicated across ranks).
+  // Optional compressed (HODLR) form of S_E, replicated, used in place of S_rows.
   std::unique_ptr<Hodlr> hodlr;
   std::unique_ptr<MaterializedDtN> mat_dtn;
 
@@ -405,26 +379,24 @@ struct SubstructuringSolver::Impl
   // equal to A_env for electrostatics, the pure curl-curl for magnetostatics) the
   // environment's exact condensed energy is [u_G; V]^T [S^K, G^K; G^K^T, Cmode] [u_G; V]
   // with S^K = P^T K P = S_E - P^T D P (D = A_env - K_env, P the A-harmonic lifting), G^K
-  // (GK_rows; empty when K_env = A_env) and the replicated Cmode. Each mode carries a
-  // partition-invariant fingerprint (x^T A_env x, |(A_env x)|_Gamma|) so a saved mode is
-  // reused only for the same environment-side lift.
+  // (GK_rows; empty when K_env = A_env) and the replicated Cmode. A partition-invariant
+  // fingerprint per mode (LiftFingerprint) guards reuse.
   std::vector<int> mode_ids;
   std::vector<double> mode_fp;  // 2 per mode
   std::vector<double> G_rows, GK_rows, Cmode;
   bool modes_ready = false;
   bool modes_saved = false;  // appended to the model file in this run
-  // Magnetostatic energy interface operator S^K (distributed like S_rows); empty for
-  // electrostatics (S^K = S_E) or when not materialized (then the environment path is
-  // used).
+  // Magnetostatic energy interface operator S^K (distributed like S_rows), materialized
+  // with a saved model on the direct path; otherwise the energies use environment solves
+  // (electrostatics: S^K = S_E).
   std::vector<double> SK_rows;
   // Rank-independent presence flags (the distributed arrays are empty on ranks that own no
   // interface DOFs, so their emptiness must not gate collectives).
   bool have_sk = false, have_gk = false;
   std::unique_ptr<Hodlr> hodlr_K;
   std::unique_ptr<MaterializedDtN> mat_dtn_K;
-  std::unique_ptr<mfem::HypreParMatrix>
-      D_env;               // A_env - K_env = eps M_env (magnetostatics)
-  bool env_built = false;  // environment interior operator factored / set up
+  std::unique_ptr<mfem::HypreParMatrix> D_env;  // A_env - K_env (magnetostatics)
+  bool env_built = false;  // environment interior solver set up
 
   Impl(const IoData &iodata, mfem::ParMesh &parent)
     : iodata(iodata), parent(parent),
@@ -449,9 +421,8 @@ struct SubstructuringSolver::Impl
     mfem::Array<int> rm, em, im;
     MarkInterfaceTrueDofs(parent_fes, ra, ea, rm, em, im);
 
-    // Terminal Dirichlet true DOFs (per terminal). The Dirichlet DOF *set* is the union of
-    // all terminals and is fixed across excitations; only the prescribed values change, so
-    // the interface/interior partition below is excitation-independent.
+    // Dirichlet true DOFs: the terminals (per terminal) and the grounded boundaries. The set
+    // is fixed across excitations, so the interface/interior partition is too.
     const auto &terminals = iodata.boundaries.terminal;
     mfem::Array<int> dir_mark(nt);
     dir_mark = 0;
@@ -477,9 +448,8 @@ struct SubstructuringSolver::Impl
         }
       }
     }
-    // Grounded and perfectly conducting boundaries, fixed at zero as in the native
-    // operators. Flux-loop films are London sheets (free DOFs with the kinetic sheet term),
-    // not Dirichlet boundaries.
+    // PEC boundaries are fixed at zero, as in the native operators (flux-loop films are
+    // London sheets, not Dirichlet boundaries).
     {
       const int maxb = parent.bdr_attributes.Size() ? parent.bdr_attributes.Max() : 0;
       mfem::Array<int> ess_bdr(maxb), ess;
@@ -533,7 +503,7 @@ struct SubstructuringSolver::Impl
       }
     }
 
-    // Domain-restricted scalar permittivity coefficients (zero outside the subdomain).
+    // Domain-restricted material coefficients (zero outside the subdomain).
     const int max_attr = parent.attributes.Size() ? parent.attributes.Max() : 1;
     const int dim = parent.Dimension();
     auto in = [](const mfem::Array<int> &s, int a)
@@ -547,9 +517,8 @@ struct SubstructuringSolver::Impl
       }
       return false;
     };
-    // Reconstruct the (possibly anisotropic) material tensor per attribute from its eigen-
-    // decomposition: M_ij = sum_k s[k] v[k]_i v[k]_j. For magnetostatics the curl-curl
-    // coefficient is the inverse permeability, so the reconstructed mu tensor is inverted.
+    // Material tensor from its eigendecomposition, M_ij = sum_k s[k] v[k]_i v[k]_j (inverted
+    // for the curl-curl inverse permeability).
     auto tensor = [dim](const config::SymmetricMatrixData<3> &prop, bool invert)
     {
       mfem::DenseMatrix e(dim);
@@ -597,8 +566,7 @@ struct SubstructuringSolver::Impl
     A_env = AssembleParent(env_eps, magnetostatic, true, &sheet_env);
     if (magnetostatic)
     {
-      // Energy operators: the pure curl-curl (the London kinetic energy is added
-      // separately, see SheetEnergyMatrix).
+      // Energy operators: the pure curl-curl (see SheetEnergyMatrix for the London sheets).
       A_region_energy = AssembleParent(region_eps, false);
       A_env_energy = AssembleParent(env_eps, false);
       K_region_e = A_region_energy.get();
@@ -617,20 +585,17 @@ struct SubstructuringSolver::Impl
     }
   }
 
-  // Small mass regularization making the singular magnetostatic curl-curl definite (AMS-
-  // convergent). Exact for divergence-free-compatible excitations (flux loops); a
-  // gauge-free (pseudo-inverse) treatment for general surface currents is a follow-up.
+  // Mass regularization eps M making the singular magnetostatic curl-curl definite; the
+  // energies use the unregularized operator and are stationary, so their error is O(eps^2).
+  // With London sheets, the flux-loop sources are orthogonal to the null space of the
+  // curl-curl + sheet operator (gradients of potentials constant on the sheets), so a much
+  // smaller eps is safe.
   static constexpr double kMagRegularization = 1.0e-3;
-  // With London sheets: the flux-loop sources M_sheet a are orthogonal to the null space
-  // of the curl-curl + sheet operator (gradients of potentials constant on the sheets), so
-  // a much smaller regularization is safe, and the O(eps^2) energy error is negligible.
   static constexpr double kMagRegularizationSheets = 1.0e-7;
   double mag_eps = kMagRegularization;
 
-  // Environment/region size (global true DOFs) below which a sparse-direct factorization is
-  // used by default for the interior solve; above it, fall back to iterative / GMG. Chosen
-  // so typical region-in-chip environments factor comfortably while very large domains do
-  // not exhaust memory on the SuperLU factorization.
+  // Environment/region size (global true DOFs) up to which a sparse direct factorization is
+  // used; above it, iterative solves.
   static constexpr long long kDirectMaxDofs = 2000000;
 
   // London superconductor sheets (magnetostatics): per local boundary element, 1/L_ksq
@@ -674,7 +639,7 @@ struct SubstructuringSolver::Impl
       const bool region = ra.Find(FET.Elem1->Attribute) >= 0 ||
                           (FET.Elem2 && ra.Find(FET.Elem2->Attribute) >= 0);
       (region ? sheet_region : sheet_env)[be] = it->second;
-      sheet_all[be] = it->second;
+      sheet_all[be] = it->second;  // both sides, for M_sheet
       local = 1;
     }
     MPI_Allreduce(&local, &global, 1, MPI_INT, MPI_MAX, parent.GetComm());
@@ -907,9 +872,6 @@ struct SubstructuringSolver::Impl
 
   std::map<int, mfem::DenseMatrix> region_eps, env_eps;
 
-  // Environment interior solver: A_EE^-1 (env-interior with Gamma + env Dirichlet held
-  // fixed), built on the environment submesh so every rank owns real DOFs (no all-identity
-  // ranks).
   // Global number of environment closure DOFs that a direct factorization would carry.
   long long EnvDirectSize() const
   {
@@ -927,10 +889,9 @@ struct SubstructuringSolver::Impl
   }
 
 #if defined(MFEM_USE_MUMPS)
-  // Materialize S_E by ONE MUMPS partial factorization (Schur complement on Gamma) of A_env
-  // with every DOF outside the environment closure-minus-Dirichlet (E + Gamma) eliminated
-  // to identity; the factor is kept as the environment solver. Fills S_rows (owned
-  // interface rows). Collective.
+  // Materialize S_E by one MUMPS partial factorization (Schur complement on Gamma) of A_env
+  // with the DOFs outside E + Gamma eliminated; the factor is kept as the environment
+  // solver. Fills S_rows. Collective.
   void MaterializeMumps()
   {
     MPI_Comm comm = parent_fes.GetComm();
@@ -968,8 +929,8 @@ struct SubstructuringSolver::Impl
   }
 #endif
 
-  // Build (factor) the environment interior solver on first use: an online run that loads
-  // S_E and the terminal modes never needs it unless environment fields are requested.
+  // Set up the environment interior solver on first use (an online run with a saved model
+  // needs it only for environment fields).
   void EnsureEnv()
   {
     if (!env_built)
@@ -1023,15 +984,14 @@ struct SubstructuringSolver::Impl
     return x;
   }
 
-  // Whether the energy operator differs from the solve operator (magnetostatic curl-curl
-  // vs. curl-curl + mass), i.e. the energy needs the D-corrected condensed forms.
+  // Whether the energy operator differs from the solve operator (magnetostatics).
   bool EnergyDiffers() const { return magnetostatic; }
 
   const mfem::HypreParMatrix &Denv()
   {
     if (!D_env)
     {
-      D_env = AssembleParent(env_eps, true, false);  // eps M_env, exactly A_env - K_env
+      D_env = AssembleParent(env_eps, true, false);  // eps M_env
     }
     return *D_env;
   }
@@ -1246,13 +1206,12 @@ struct SubstructuringSolver::Impl
   }
 
   // Model-file sections following S_E: [kEnvFpMagic][environment fingerprint, 4 doubles],
-  // [kSKenMagic][S^K nG x nG] (magnetostatics) and
+  // [kSKenMagic][S^K nG x nG] (magnetostatics),
   // [kModesMagic][K][ids][fingerprints 2K][has_GK][G nG x K][G^K nG x K if has_GK][Cmode
-  // KxK].
-  static constexpr int kSKenMagic = 0x4e454b53;     // "SKEN"
-  static constexpr int kModesMagic = 0x32444f4d;    // "MOD2"
-  static constexpr int kEnvFpMagicV1 = 0x46564e45;  // "ENVF" (no Dirichlet count)
-  static constexpr int kEnvFpMagic = 0x32564e45;    // "ENV2"
+  // KxK], and [kSourceModesMagic][K][ids][fingerprints 2K][g nG x K][h nG x K][c KxK].
+  static constexpr int kSKenMagic = 0x4e454b53;   // "SKEN"
+  static constexpr int kModesMagic = 0x32444f4d;  // "MOD2"
+  static constexpr int kEnvFpMagic = 0x32564e45;  // "ENV2"
   // Fingerprint of the environment: global counts of the environment-closure DOFs and of
   // its Dirichlet DOFs, and the trace and Frobenius norm of A_env. Independent of the
   // region (A_env has no region contribution), of the partition and of the DOF numbering
@@ -1285,7 +1244,7 @@ struct SubstructuringSolver::Impl
     return {glob[1], glob[2], glob[0], A_env->FNorm()};
   }
 
-  // Saved-model environment fingerprint (valid when have_env_fp).
+  // Environment fingerprint of a loaded model.
   std::array<double, 4> saved_env_fp = {0.0, 0.0, 0.0, 0.0};
   bool have_env_fp = false;
 
@@ -1305,10 +1264,8 @@ struct SubstructuringSolver::Impl
   void CheckEnvFingerprint() const
   {
     const std::array<double, 4> fp = EnvironmentFingerprint();  // collective
-    if (!have_env_fp)
-    {
-      return;  // model written before the fingerprint existed
-    }
+    MFEM_VERIFY(have_env_fp, "The saved substructuring model has no environment "
+                             "fingerprint: rerun in \"Offline\" mode to condense it again!");
     bool ok = (fp[0] == saved_env_fp[0] && fp[1] == saved_env_fp[1]);
     for (int q = 2; q < 4; q++)
     {
@@ -1356,11 +1313,10 @@ struct SubstructuringSolver::Impl
     modes_saved = true;
   }
 
-  // Load the optional sections at byte offset `pos` (collective). Interface rows are
-  // re-ordered onto the online numbering like S_E: row g <- saved row perm[g] times sgn[g]
-  // (and S^K columns likewise). Reading stops at the first unknown / missing section; a
-  // later mode section supersedes an earlier one. Modes absent here are recomputed on
-  // demand.
+  // Load the sections at byte offset `pos` (collective). Interface rows are re-ordered onto
+  // the online numbering like S_E: row g <- saved row perm[g] times sgn[g] (S^K columns
+  // likewise). Reading stops at the first unknown section; a later mode section supersedes
+  // an earlier one, and modes absent here are recomputed on demand.
   void LoadSections(const std::string &path, std::streamoff pos,
                     const std::vector<int> &perm, const std::vector<double> &sgn)
   {
@@ -1390,14 +1346,6 @@ struct SubstructuringSolver::Impl
         }
         MPI_Bcast(saved_env_fp.data(), 4, MPI_DOUBLE, 0, comm);
         have_env_fp = true;
-      }
-      else if (magic == kEnvFpMagicV1)
-      {
-        double legacy[3];  // older fingerprint without the Dirichlet count: not checked
-        if (root)
-        {
-          f.read(reinterpret_cast<char *>(legacy), sizeof(legacy));
-        }
       }
       else if (magic == kSKenMagic)
       {
@@ -1543,12 +1491,10 @@ struct SubstructuringSolver::Impl
   {
     const int mg_levels = iodata.solver.linear.mg_max_levels;
 #if defined(MFEM_USE_SUPERLU)
-    // Direct A_EE (default when the environment fits): factor A_env with the
-    // non-env-interior true DOFs eliminated, in PARENT space. SuperLU tolerates the
-    // all-identity ranks that rule out a parent-space *iterative* solve, and no ParSubMesh
-    // transfer is needed per solve (measured ~40% of the S_E materialization). Order >= 2
-    // H(curl) always takes this path: the transfer mishandles higher-order tetrahedral
-    // edge/face orientation across a cut.
+    // Direct A_EE (when the environment fits): factor A_env with the non-environment-interior
+    // true DOFs eliminated, in the parent space (no submesh transfer per solve). Higher-order
+    // H(curl) always takes this path: the submesh transfer mishandles higher-order
+    // tetrahedral edge/face orientation across the cut.
     const bool direct_fits = (EnvDirectSize() <= kDirectMaxDofs);
     if (direct_fits || (magnetostatic && iodata.solver.order > 1))
     {
@@ -1571,13 +1517,11 @@ struct SubstructuringSolver::Impl
       return;
     }
 #endif
-    // Iterative fallback (very large environment, or no SuperLU): environment submesh
-    // solve.
+    // Iterative solve on the environment submesh (very large environment, or no SuperLU).
     const bool use_gmg = !magnetostatic && iodata.solver.order > 1 && mg_levels > 1;
 
-    // Create the environment submesh. For the GMG path it must be owned by a Palace Mesh
-    // (for the CEED attribute maps + the FE-space hierarchy); otherwise a standalone
-    // ParSubMesh suffices for the MFEM assembly + transfer.
+    // The GMG path needs the submesh owned by a Palace Mesh (CEED attribute maps, FE space
+    // hierarchy); otherwise a standalone ParSubMesh suffices.
     if (use_gmg)
     {
       env_mesh_vec.clear();
@@ -1596,8 +1540,7 @@ struct SubstructuringSolver::Impl
 
     if (!(use_gmg && BuildEnvGmg()))
     {
-      // Single-level submesh Dirichlet solve (order 1, magnetostatic H(curl), or GMG
-      // fallback): standalone FE space + wrapped AMG / AMS.
+      // Single-level submesh Dirichlet solve with wrapped AMG / AMS.
       env_sfes = std::make_unique<mfem::ParFiniteElementSpace>(env_submesh, fec.get());
       env_solve_fes = env_sfes.get();
       env_sgf.SetSpace(env_solve_fes);
@@ -1635,9 +1578,8 @@ struct SubstructuringSolver::Impl
     env_ssol.SetSize(env_solve_fes->GetTrueVSize());
   }
 
-  // Essential submesh DOFs = the parent non-(environment-interior) DOFs (interface Gamma +
-  // environment Dirichlet), mapped onto the solve space by transferring the parent marker.
-  // Robust to Palace inserting material-interface boundary elements at Gamma.
+  // Essential submesh DOFs (Gamma and the environment Dirichlet DOFs), from a transfer of
+  // the parent marker onto the solve space.
   void ComputeEnvEss()
   {
     mfem::Vector t(nt);
@@ -1663,28 +1605,20 @@ struct SubstructuringSolver::Impl
 
   // Higher-order H1 environment Dirichlet solve via geometric p-multigrid on the submesh.
   // Returns false (falling back to the single-level solve) if a hierarchy cannot be built.
-  bool BuildEnvGmg()
+  // Boundary attributes of a submesh whose true DOFs all carry the parent true-DOF marker
+  // (1 or 0), from a transfer of the marker. Decided globally, so identical on every rank
+  // (the GMG and single-level paths use different collectives).
+  mfem::Array<int> EssentialSubmeshAttributes(mfem::ParSubMesh &submesh,
+                                              const mfem::Vector &marker)
   {
-    const int order = iodata.solver.order;
-    const int dim = parent.Dimension();
-    const int mg_levels = iodata.solver.linear.mg_max_levels;
-
-    // Identify essential boundary attributes on the submesh (Gamma + env Dirichlet) from a
-    // marker transfer onto a scratch order-p space: a boundary attribute is essential iff
-    // all of its true DOFs lie in the essential set.
-    auto scratch = std::make_unique<mfem::ParFiniteElementSpace>(env_submesh, fec.get());
+    mfem::ParFiniteElementSpace scratch(&submesh, fec.get());
     std::set<int> ess_set;
     {
-      mfem::Vector t(nt);
-      for (int i = 0; i < nt; i++)
-      {
-        t(i) = is_env_int[i] ? 0.0 : 1.0;
-      }
-      mfem::ParGridFunction pg(&parent_fes), sg(scratch.get());
-      pg.SetFromTrueDofs(t);
+      mfem::ParGridFunction pg(&parent_fes), sg(&scratch);
+      pg.SetFromTrueDofs(marker);
       sg = 0.0;
-      env_submesh->Transfer(pg, sg);
-      mfem::Vector st(scratch->GetTrueVSize());
+      submesh.Transfer(pg, sg);
+      mfem::Vector st(scratch.GetTrueVSize());
       sg.GetTrueDofs(st);
       for (int i = 0; i < st.Size(); i++)
       {
@@ -1694,14 +1628,8 @@ struct SubstructuringSolver::Impl
         }
       }
     }
-    mfem::Array<int> ess_attr;
-    // The essential-attribute decision must be identical on every rank (otherwise ranks
-    // diverge between the GMG and single-level paths and deadlock in the collectives
-    // below). An attribute is essential iff, globally, it has DOFs and none of them are
-    // non-essential.
-    MPI_Comm comm = env_submesh->GetComm();
-    const int lbmax =
-        env_submesh->bdr_attributes.Size() ? env_submesh->bdr_attributes.Max() : 0;
+    MPI_Comm comm = submesh.GetComm();
+    const int lbmax = submesh.bdr_attributes.Size() ? submesh.bdr_attributes.Max() : 0;
     int bmax = 0;
     MPI_Allreduce(&lbmax, &bmax, 1, MPI_INT, MPI_MAX, comm);
     std::vector<int> all_in(bmax, 1), has_dofs(bmax, 0);
@@ -1711,11 +1639,8 @@ struct SubstructuringSolver::Impl
       m = 0;
       m[a - 1] = 1;
       mfem::Array<int> adofs;
-      scratch->GetEssentialTrueDofs(m, adofs);
-      if (adofs.Size() > 0)
-      {
-        has_dofs[a - 1] = 1;
-      }
+      scratch.GetEssentialTrueDofs(m, adofs);
+      has_dofs[a - 1] = (adofs.Size() > 0);
       for (int d : adofs)
       {
         if (!ess_set.count(d))
@@ -1728,6 +1653,7 @@ struct SubstructuringSolver::Impl
     std::vector<int> g_all_in(bmax), g_has(bmax);
     MPI_Allreduce(all_in.data(), g_all_in.data(), bmax, MPI_INT, MPI_LAND, comm);
     MPI_Allreduce(has_dofs.data(), g_has.data(), bmax, MPI_INT, MPI_LOR, comm);
+    mfem::Array<int> ess_attr;
     for (int a = 1; a <= bmax; a++)
     {
       if (g_all_in[a - 1] && g_has[a - 1])
@@ -1735,6 +1661,22 @@ struct SubstructuringSolver::Impl
         ess_attr.Append(a);
       }
     }
+    return ess_attr;
+  }
+
+  bool BuildEnvGmg()
+  {
+    const int order = iodata.solver.order;
+    const int dim = parent.Dimension();
+    const int mg_levels = iodata.solver.linear.mg_max_levels;
+
+    // Essential submesh boundary attributes: Gamma and the environment Dirichlet ones.
+    mfem::Vector marker(nt);
+    for (int i = 0; i < nt; i++)
+    {
+      marker(i) = is_env_int[i] ? 0.0 : 1.0;
+    }
+    mfem::Array<int> ess_attr = EssentialSubmeshAttributes(*env_submesh, marker);
     if (ess_attr.Size() == 0)
     {
       return false;
@@ -1756,9 +1698,8 @@ struct SubstructuringSolver::Impl
     }
     env_solve_fes = &env_hierarchy->GetFinestFESpace().Get();
 
-    // Ceed-consistent material coefficient (cf. divfree.cpp): built via a MaterialOperator
-    // on the submesh so the attribute-to-material map matches Palace's local CEED numbering
-    // (a hand-built coefficient keyed by global attribute assembles the interior to zero).
+    // Material coefficient from a MaterialOperator on the submesh, so the attribute map
+    // matches Palace's local CEED numbering.
     MaterialOperator env_mat_op(iodata, *env_mesh_vec[0]);
     MaterialPropertyCoefficient coef(env_mat_op.GetAttributeToMaterial(),
                                      env_mat_op.GetPermittivityReal());
@@ -1780,6 +1721,7 @@ struct SubstructuringSolver::Impl
     auto amg = std::make_unique<MfemWrapperSolver<Operator>>(
         std::make_unique<BoomerAmgSolver>(1, 1, true, 0));
     amg->SetDropSmallEntries(false);
+    MPI_Comm comm = env_submesh->GetComm();
     auto gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
         iodata, comm, std::move(amg), env_hierarchy->GetProlongationOperators());
     auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
@@ -1822,9 +1764,6 @@ struct SubstructuringSolver::Impl
     return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
   }
 
-  // Apply A_EE^-1 to a parent true-DOF vector (nonzero on the environment interior):
-  // transfer to the submesh, solve the Dirichlet problem, transfer back, and restrict to
-  // the environment interior.
   // Interface selection E_Gamma (parent true DOFs x global interface index): E(i, g_i) = 1
   // for each interface true DOF. Each rank's interface indices are its own contiguous
   // block, so the matrix is local (diag block only).
@@ -1866,10 +1805,9 @@ struct SubstructuringSolver::Impl
   }
 
   // Create the direct region preconditioner on the first solve batch (n excitations): the
-  // exact dense-Gamma factor A_region_free + S_E when the batch is large enough to amortize
-  // it, else A_region_free (CG then needs ~50 iterations). Decided once: a SuperLU object
-  // that was never factored must not be destroyed (SuperLU_DIST teardown bug). Collective;
-  // n is the same on all ranks.
+  // exact dense-Gamma factor A_region_free + S_E when the batch amortizes it, else
+  // A_region_free. Created once (destroying a never-factored SuperLU object crashes in
+  // SuperLU_DIST). Collective.
   void EnsureRegionFactor(int n)
   {
 #if defined(MFEM_USE_SUPERLU)
@@ -1894,10 +1832,8 @@ struct SubstructuringSolver::Impl
 #endif
   }
 
-  // S_E as a parent-space HypreParMatrix (dense Gamma x Gamma block, zero elsewhere), for
-  // factoring the exact condensed region operator. Each rank's S_E rows are its own
-  // interface true DOFs; columns map interface index -> global true DOF via a replicated
-  // table.
+  // S_E as a parent-space HypreParMatrix (dense Gamma x Gamma block), for factoring the
+  // exact condensed region operator.
   std::unique_ptr<mfem::HypreParMatrix> AssembleDenseInterface() const
   {
     MPI_Comm comm = parent_fes.GetComm();
@@ -1958,8 +1894,7 @@ struct SubstructuringSolver::Impl
 #if defined(MFEM_USE_MUMPS)
     if (env_mumps)
     {
-      // Internal solve of the Schur factorization: A_EE on the interior (Gamma held at 0,
-      // eliminated DOFs are identity), then masked to the interior like the SuperLU path.
+      // Internal solve of the Schur factorization (Gamma held at 0), masked to E.
       env_mumps->SolveInternal(X, Y);
       for (auto *y : Y)
       {
@@ -1984,10 +1919,8 @@ struct SubstructuringSolver::Impl
         env_pad_in = 0.0;
         env_pad_out.SetSize(nt);
       }
-      // The factored operator is block diagonal [A_EE, 0; 0, I] (non-interior rows/cols
-      // eliminated), so the interior solution depends only on the interior rhs: the inputs
-      // are passed as-is and only the output is masked. The tail block is padded with a
-      // shared zero rhs (SuperLU fixes the RHS count at the first solve).
+      // The factored operator is [A_EE, 0; 0, I], so only the output is masked. The tail
+      // block is padded with a zero rhs (SuperLU fixes the RHS count at the first solve).
       mfem::Array<const mfem::Vector *> Xp(env_block);
       mfem::Array<mfem::Vector *> Yp(env_block);
       const int n = static_cast<int>(X.size());
@@ -2041,8 +1974,7 @@ struct SubstructuringSolver::Impl
 #if defined(MFEM_USE_SUPERLU)
     if (env_parent_direct)
     {
-      // Parent-space direct env interior solve (no submesh transfer), via the batched path
-      // so the factor's fixed RHS count is respected.
+      // Through the batched path, which respects the factor's fixed RHS count.
       ApplyAeeInvMulti({&x_parent}, {&y_parent});
       return;
     }
@@ -2071,8 +2003,8 @@ struct SubstructuringSolver::Impl
     }
   }
 
-  // Region-solve geometric multigrid preconditioner on the region submesh (order>=2 H1).
-  // Returns false to fall back to the single-level wrapped BoomerAMG preconditioner.
+  // Region preconditioner by geometric multigrid on the region submesh (order >= 2 H1).
+  // Returns false to fall back to the single-level preconditioner.
   bool BuildRegionGmg()
   {
     const int order = iodata.solver.order;
@@ -2090,69 +2022,14 @@ struct SubstructuringSolver::Impl
     reg_mesh_vec[0]->RebuildCeedAttributes();
     reg_pgf.SetSpace(&parent_fes);
 
-    // Essential submesh DOFs = the region Dirichlet terminals (Gamma stays free), found by
-    // transferring the parent Dirichlet marker onto a scratch order-p space.
-    auto scratch = std::make_unique<mfem::ParFiniteElementSpace>(reg_submesh, fec.get());
-    std::set<int> ess_set;
+    // Essential submesh boundary attributes: the region Dirichlet ones (Gamma free).
+    mfem::Vector marker(nt);
+    marker = 0.0;
+    for (int i = 0; i < dbc_tdofs.Size(); i++)
     {
-      mfem::Vector t(nt);
-      t = 0.0;
-      for (int i = 0; i < dbc_tdofs.Size(); i++)
-      {
-        t(dbc_tdofs[i]) = 1.0;
-      }
-      mfem::ParGridFunction pg(&parent_fes), sg(scratch.get());
-      pg.SetFromTrueDofs(t);
-      sg = 0.0;
-      reg_submesh->Transfer(pg, sg);
-      mfem::Vector st(scratch->GetTrueVSize());
-      sg.GetTrueDofs(st);
-      for (int i = 0; i < st.Size(); i++)
-      {
-        if (std::abs(st(i)) > 0.5)
-        {
-          ess_set.insert(i);
-        }
-      }
+      marker(dbc_tdofs[i]) = 1.0;
     }
-    // Global essential-attribute decision (identical on every rank, see BuildEnvGmg).
-    MPI_Comm comm = reg_submesh->GetComm();
-    const int lbmax =
-        reg_submesh->bdr_attributes.Size() ? reg_submesh->bdr_attributes.Max() : 0;
-    int bmax = 0;
-    MPI_Allreduce(&lbmax, &bmax, 1, MPI_INT, MPI_MAX, comm);
-    std::vector<int> all_in(bmax, 1), has_dofs(bmax, 0);
-    for (int a = 1; a <= bmax; a++)
-    {
-      mfem::Array<int> m(bmax);
-      m = 0;
-      m[a - 1] = 1;
-      mfem::Array<int> adofs;
-      scratch->GetEssentialTrueDofs(m, adofs);
-      if (adofs.Size() > 0)
-      {
-        has_dofs[a - 1] = 1;
-      }
-      for (int d : adofs)
-      {
-        if (!ess_set.count(d))
-        {
-          all_in[a - 1] = 0;
-          break;
-        }
-      }
-    }
-    std::vector<int> g_all_in(bmax), g_has(bmax);
-    MPI_Allreduce(all_in.data(), g_all_in.data(), bmax, MPI_INT, MPI_LAND, comm);
-    MPI_Allreduce(has_dofs.data(), g_has.data(), bmax, MPI_INT, MPI_LOR, comm);
-    mfem::Array<int> ess_attr;
-    for (int a = 1; a <= bmax; a++)
-    {
-      if (g_all_in[a - 1] && g_has[a - 1])
-      {
-        ess_attr.Append(a);
-      }
-    }
+    mfem::Array<int> ess_attr = EssentialSubmeshAttributes(*reg_submesh, marker);
     if (ess_attr.Size() == 0)
     {
       return false;  // pure-Neumann region block: keep the single-level preconditioner
@@ -2193,6 +2070,7 @@ struct SubstructuringSolver::Impl
     auto amg = std::make_unique<MfemWrapperSolver<Operator>>(
         std::make_unique<BoomerAmgSolver>(1, 1, true, 0));
     amg->SetDropSmallEntries(false);
+    MPI_Comm comm = reg_submesh->GetComm();
     auto gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
         iodata, comm, std::move(amg), reg_hierarchy->GetProlongationOperators());
     auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
@@ -2206,14 +2084,11 @@ struct SubstructuringSolver::Impl
     reg_sgf.SetSpace(reg_solve_fes);
     reg_srhs.SetSize(reg_solve_fes->GetTrueVSize());
     reg_ssol.SetSize(reg_solve_fes->GetTrueVSize());
-    region_gmg = true;
     return true;
   }
 
-  // Region preconditioner apply (approximates A_region_free^-1): identity on the
-  // non-region-free DOFs (A_region_free is identity there), and the region-submesh GMG
-  // solve on the region-free DOFs (transfer parent -> submesh, solve, transfer back,
-  // restrict).
+  // Region preconditioner apply (~ A_region_free^-1): identity off the region-free DOFs,
+  // the region-submesh GMG solve on them.
   void ApplyRegionGmgPc(const mfem::Vector &r, mfem::Vector &z) const
   {
     z.SetSize(nt);
@@ -2258,8 +2133,7 @@ SubstructuringSolver::~SubstructuringSolver() = default;
 
 void SubstructuringSolver::CondenseEnvironment()
 {
-  // The environment interior solver is built lazily (EnsureEnv): an online run that loads
-  // S_E and the terminal modes computes capacitance without ever factoring the environment.
+  // The environment interior solver is set up lazily (EnsureEnv).
   Impl *pi = impl.get();
   impl->dtn = std::make_unique<ImplicitDtN>(
       *impl->A_env, [pi](const mfem::Vector &x, mfem::Vector &y) { pi->ApplyAeeInv(x, y); },
@@ -2280,8 +2154,7 @@ void SubstructuringSolver::CondenseEnvironment()
         impl->A_region_free->EliminateRowsCols(non_rfree));
   }
 
-  // Materialize the interface operator S_E and load g_E once, so region solves reuse them
-  // without any environment solves. Global interface enumeration via MPI_Exscan.
+  // Global interface enumeration.
   MPI_Comm comm = impl->parent_fes.GetComm();
   int nloc = 0;
   for (int i = 0; i < impl->nt; i++)
@@ -2311,8 +2184,7 @@ void SubstructuringSolver::CondenseEnvironment()
   impl->gamma_off = off;
   impl->gamma_nloc = nloc;
   impl->S_rows.assign(static_cast<std::size_t>(nloc) * nG, 0.0);
-  // Per-rank row counts/displacements for gather/scatter of the distributed S_E (row
-  // blocks).
+  // Per-rank counts/displacements of the distributed S_E rows.
   const int nranks = Mpi::Size(comm);
   std::vector<int> row_cnt(nranks), row_disp(nranks);
   {
@@ -2327,11 +2199,10 @@ void SubstructuringSolver::CondenseEnvironment()
     }
   }
 
-  // Interface true-DOF geometric signature (replicated), for re-ordering a saved S_E onto
-  // the current interface after region re-meshing / re-partitioning (fixed Gamma). H1: DOF
-  // coordinates (width 3). H(curl): per-edge moments dof(e_b) (edge vector) and dof(x_a
-  // e_b) (edge_b * mid_a), width 12 -- position + signed orientation, matching edge DOFs up
-  // to an orientation flip.
+  // Interface true-DOF geometric signature (replicated), to re-order a saved S_E onto the
+  // current interface after re-meshing or re-partitioning the region. H1: DOF coordinates.
+  // H(curl): the moments dof(e_b) and dof(x_a e_b), which identify an edge DOF up to an
+  // orientation flip (a flip negates all of them).
   const int sdim = impl->parent.Dimension();
   const int sig_w = impl->magnetostatic ? 12 : 3;
   auto gamma_sig = [&]()
@@ -2369,10 +2240,6 @@ void SubstructuringSolver::CondenseEnvironment()
     }
     else
     {
-      // Edge (tangential-integral) moments: o_b = dof(e_b) = edge vector; and
-      // M[a][b] = dof(x_a e_b) = (edge vector)_b * midpoint_a. Together (12 numbers) these
-      // uniquely identify an edge DOF up to an orientation flip (both are linear in the
-      // tangent, so a flip negates all of them).
       for (int b = 0; b < 3; b++)
       {
         mfem::Vector e(3);
@@ -2399,9 +2266,8 @@ void SubstructuringSolver::CondenseEnvironment()
     return glob;
   };
 
-  // Offline/online: the interface enumeration above is cheap and deterministic to rebuild,
-  // but materializing S_E costs |Gamma| environment solves. In Online mode with a saved
-  // model, load S_E instead; in Offline mode with a path set, materialize and save it.
+  // Online with a saved model: load S_E (and the model's sections); otherwise materialize
+  // S_E, and save it when a path is set.
   const auto &subcfg = *impl->iodata.solver.substructuring;
   const bool online = (subcfg.mode == SubstructuringMode::ONLINE);
   const std::string &model_path = subcfg.save_model;
@@ -2445,8 +2311,8 @@ void SubstructuringSolver::CondenseEnvironment()
       }
       MPI_Bcast(saved_sig.data(), nG * file_w, MPI_DOUBLE, 0, comm);
     }
-    // Rank 0 holds the full saved S_E transiently, re-orders it onto the current interface
-    // numbering, then scatters contiguous row blocks -- no replicated full matrix persists.
+    // Rank 0 reads the saved S_E, re-orders it onto the current numbering and scatters the
+    // rows.
     std::vector<double> S_full;
     if (rank == 0)
     {
@@ -2455,10 +2321,9 @@ void SubstructuringSolver::CondenseEnvironment()
       f.seekg(static_cast<std::streamoff>(2 * sizeof(int) + sizeof(double) * nG * file_w));
       f.read(reinterpret_cast<char *>(S_full.data()), sizeof(double) * nG * nG);
     }
-    // Signature match -> (perm, sgn): online interface index g corresponds to saved index
-    // perm[g] with orientation sgn[g] (sgn=1 for H1; +/-1 for H(curl)). Computed on all
-    // ranks from the replicated signatures. gamma_global stays fresh (contiguous), and S_E
-    // is re-indexed to the online order: S_on[i][j] = sgn_i sgn_j S_off[perm_i][perm_j].
+    // Signature match: online interface index g is saved index perm[g] with orientation
+    // sgn[g] (+1 for H1, +/-1 for H(curl)), and S_on[i][j] = sgn_i sgn_j
+    // S_off[perm_i][perm_j].
     std::vector<int> perm(nG);
     std::iota(perm.begin(), perm.end(), 0);  // identity unless re-ordered by signature
     std::vector<double> sgn(nG, 1.0);
@@ -2522,8 +2387,7 @@ void SubstructuringSolver::CondenseEnvironment()
     MPI_Scatterv(rank == 0 ? S_full.data() : nullptr, row_cnt.data(), row_disp.data(),
                  MPI_DOUBLE, impl->S_rows.data(), nloc * nG, MPI_DOUBLE, 0, comm);
     loaded = true;
-    // Optional sections after S_E: the magnetostatic energy operator S^K and the lift
-    // modes.
+    // Sections after S_E (fingerprint, S^K, modes).
     const std::streamoff sections_pos =
         static_cast<std::streamoff>(2 * sizeof(int)) +
         static_cast<std::streamoff>(sizeof(double)) * nG * file_w +
@@ -2531,10 +2395,9 @@ void SubstructuringSolver::CondenseEnvironment()
     impl->LoadSections(model_path, sections_pos, perm, sgn);
     impl->CheckEnvFingerprint();
   }
-  // MUMPS Schur materialization (one partial factorization, no |Gamma| back-solves) when
-  // available and the environment fits a direct factorization. Not used when the
-  // magnetostatic energy operator S^K is also materialized (its correction needs the lifted
-  // columns, which the batched back-solve path produces anyway).
+  // MUMPS Schur materialization when available and the environment fits a direct
+  // factorization; not when S^K is also materialized (its correction needs the lifted
+  // columns, which the batched back-solve path produces).
   bool mumps_done = false;
 #if defined(MFEM_USE_MUMPS)
   if (!loaded && nG > 0 && !(impl->EnergyDiffers() && !model_path.empty()) &&
@@ -2552,9 +2415,7 @@ void SubstructuringSolver::CondenseEnvironment()
   if (!loaded)
   {
     impl->EnsureEnv();  // no-op after the MUMPS materialization (it is the env solver)
-    // Map each owned interface column (global index in [off, off+nloc)) to its local true
-    // DOF, so each unit-vector RHS is set in O(1) instead of scanning all true DOFs per
-    // column.
+    // Owned interface column -> local true DOF.
     std::vector<int> col_to_dof(nloc, -1);
     for (int i = 0; i < impl->nt; i++)
     {
@@ -2563,9 +2424,8 @@ void SubstructuringSolver::CondenseEnvironment()
         col_to_dof[impl->gamma_global[i] - off] = i;
       }
     }
-    // S_E e_c = (A_env e_c)|_Gamma - (A_env A_EE^-1 (A_env e_c)|_E)|_Gamma. The results are
-    // complete (assembled) true-DOF vectors, so each rank stores its own S_E rows directly
-    // -- no interface Allreduce (O(nG^2) communication) is needed.
+    // S_E e_c = (A_env e_c)|_Gamma - (A_env A_EE^-1 (A_env e_c)|_E)|_Gamma; each rank stores
+    // its own rows.
     auto store_col = [&](int c, const Vector &y)
     {
       for (int r = 0; r < nloc; r++)
@@ -2583,17 +2443,14 @@ void SubstructuringSolver::CondenseEnvironment()
     };
     if (mumps_done)
     {
-      // S_E already materialized by the MUMPS Schur factorization.
+      // S_E from the MUMPS Schur factorization.
     }
 #if defined(MFEM_USE_SUPERLU)
     else if (impl->env_parent_direct)
     {
-      // Batched direct materialization: kMaterializeBlock columns per multi-RHS back-solve
-      // through the (single) environment factor. This is its first solve, which fixes the
-      // factor's block size at kMaterializeBlock for the online excitation batches too.
-      // Thin couplings built once: G = A_env E_Gamma (column c = A_env e_c, supported next
-      // to Gamma) and R = E_Gamma^T A_env (the interface rows), so each column costs O(nnz
-      // near Gamma) instead of two full A_env matvecs.
+      // Batched multi-RHS back-solves through the environment factor (whose first solve
+      // fixes its block size at kMaterializeBlock), with the thin couplings G = A_env
+      // E_Gamma and R = E_Gamma^T A_env.
       std::unique_ptr<mfem::HypreParMatrix> E = impl->AssembleInterfaceSelection();
       std::unique_ptr<mfem::HypreParMatrix> G(mfem::ParMult(impl->A_env.get(), E.get()));
       std::unique_ptr<mfem::HypreParMatrix> Et(E->Transpose());
@@ -2605,9 +2462,8 @@ void SubstructuringSolver::CondenseEnvironment()
       std::vector<const mfem::Vector *> X(B);
       std::vector<mfem::Vector *> Y(B);
       Vector ec(nloc), z(nloc);
-      // Magnetostatic model for reuse: also materialize the energy interface operator
-      // S^K = S_E - P^T D P (one more batched solve per column), so an online run needs no
-      // environment solve for the inductance energies.
+      // A magnetostatic model to save also gets S^K = S_E - P^T D P (one more batched solve
+      // per column).
       const bool with_sk = impl->EnergyDiffers() && !model_path.empty();
       std::vector<Vector> v(with_sk ? B : 0, Vector(impl->nt));
       if (with_sk)
@@ -2698,9 +2554,7 @@ void SubstructuringSolver::CondenseEnvironment()
     }
     if (!impl->magnetostatic)
     {
-      // Terminal modes: K batched env solves (cheap vs. the |Gamma| columns). Magnetostatic
-      // lifts (flux loops) are only known to the driver; their modes are computed (and
-      // appended to the model) at the first EnergyMatrix call.
+      // Terminal modes (flux-loop modes are computed at the first energy matrix call).
       std::vector<int> ids;
       std::vector<Vector> lifts;
       for (const auto &[idx, dofs] : impl->terminal_tdofs)
@@ -2714,7 +2568,7 @@ void SubstructuringSolver::CondenseEnvironment()
     {
       const int sig_type = impl->magnetostatic ? 2 : 1;
       const std::vector<double> sig = gamma_sig();  // collective: all ranks participate
-      // Gather the distributed row blocks to rank 0 to write the full matrix to disk.
+
       std::vector<double> S_full;
       if (rank == 0)
       {
@@ -2742,20 +2596,15 @@ void SubstructuringSolver::CondenseEnvironment()
       }
     }
   }
-  // Optional hierarchical (HODLR) off-diagonal compression of the assembled S_E: the DtN's
-  // well-separated interface-block couplings are low-rank, so this compresses S_E storage +
-  // apply to a controlled relative tolerance while the near-field / diagonal stays exact
-  // (unlike a global low-rank, which fails -- S_E is full rank). Built on rank 0 from the
-  // gathered dense S_E, then broadcast (compressed) and applied replicated on every rank.
+  // Optional HODLR compression of S_E (its well-separated interface blocks are low rank,
+  // although S_E is not): built on rank 0 from the gathered S_E, broadcast, and applied
+  // replicated.
   {
     const double hodlr_tol = impl->iodata.solver.substructuring->interface_offdiag_tol;
     if (hodlr_tol > 0.0 && nG > 0)
     {
-      // Interface DOF coordinates (replicated) for the coordinate-median clustering. Each
-      // true DOF is placed at its interpolation point: H1 -> node coordinate, Nedelec ->
-      // edge midpoint. Computed per element (GetNodes mapped through the element
-      // transformation), reduced onto the owning rank's true DOF, then summed to a
-      // replicated array.
+      // Interface DOF coordinates (replicated) for the clustering: the DOF interpolation
+      // points (H1 nodes, Nedelec edge midpoints).
       std::vector<double> coords_loc(static_cast<std::size_t>(nG) * 3, 0.0),
           coords(static_cast<std::size_t>(nG) * 3, 0.0);
       std::vector<double> tdof_xyz(static_cast<std::size_t>(impl->nt) * 3, 0.0);
@@ -2796,8 +2645,7 @@ void SubstructuringSolver::CondenseEnvironment()
         }
       }
       MPI_Allreduce(coords_loc.data(), coords.data(), nG * 3, MPI_DOUBLE, MPI_SUM, comm);
-      // Gather a dense interface operator to rank 0, build the Hodlr there, broadcast it,
-      // and free the dense row blocks (the compressed operator supplants them).
+      // Compress a dense interface operator, replacing its row blocks.
       auto compress = [&](std::vector<double> &rows, const char *name)
       {
         std::vector<double> S_full;
@@ -2827,9 +2675,9 @@ void SubstructuringSolver::CondenseEnvironment()
         const long long ret = h->Storage();
         rows.clear();
         rows.shrink_to_fit();
-        Mpi::Print("[HODLR] tol={:.1e}: {} storage {:d}/{:d} = {:.3f} of dense\n",
-                   hodlr_tol, name, ret, static_cast<long long>(nG) * nG,
-                   static_cast<double>(ret) / (static_cast<double>(nG) * nG));
+        Mpi::Print(comm, " HODLR compression of {} (tol = {:.1e}): {:.1f}% of dense storage\n",
+                   name, hodlr_tol,
+                   100.0 * static_cast<double>(ret) / (static_cast<double>(nG) * nG));
         return h;
       };
       impl->hodlr = compress(impl->S_rows, "S_E");
@@ -2840,7 +2688,6 @@ void SubstructuringSolver::CondenseEnvironment()
     }
   }
 
-  // g_E is excitation-dependent; it is computed per excitation in the region solve.
   impl->mat_dtn =
       std::make_unique<MaterializedDtN>(impl->S_rows, impl->gamma_off, impl->gamma_global,
                                         impl->nG_global, comm, impl->hodlr.get());
@@ -2851,18 +2698,13 @@ void SubstructuringSolver::CondenseEnvironment()
                                                         comm, impl->hodlr_K.get());
   }
 
-  // Region-condensed solver: Palace CG preconditioned by a wrapped AMS (H(curl)) or
-  // BoomerAMG (H1) on the region-free block. Built once and reused across excitations (the
-  // condensed interface operator S_E is fixed). The region operator carries the same mass
-  // regularization as the environment, so it is definite and AMS is used without the
-  // singular-problem option.
+  // Region-condensed solver: CG on A_region_free + S_E, preconditioned by a direct factor,
+  // region-submesh multigrid, or AMS / BoomerAMG on A_region_free.
   {
     std::unique_ptr<Solver<Operator>> pc;
     bool use_direct = false;
 #if defined(MFEM_USE_SUPERLU)
-    // Default to a direct factorization of A_region_free when the region is small enough to
-    // factor (a near-exact preconditioner -> the outer CG converges in a few iterations);
-    // fall back to GMG / AMG for very large regions.
+    // Direct factorization when the region fits.
     {
       long long reg_loc = 0;
       for (int i = 0; i < impl->nt; i++)
@@ -2880,14 +2722,9 @@ void SubstructuringSolver::CondenseEnvironment()
 #if defined(MFEM_USE_SUPERLU)
     if (use_direct)
     {
-      // Direct factorization of the region preconditioner. When the interface is small
-      // enough for a dense Gamma block (and S_E is dense, not HODLR), factor the EXACT
-      // condensed operator A_region_free + S_E, so the outer CG converges in one iteration:
-      // the non-local DtN cannot be sparsified (truncating it to the interface stencil
-      // makes the preconditioner far worse than omitting it), and A_region_free alone needs
-      // O(50) iterations. Otherwise fall back to A_region_free (S_E omitted).
-      // The factor is created at the first solve batch, once the number of excitations is
-      // known (EnsureRegionFactor chooses the exact dense-Gamma factor or A_region_free).
+      // The exact condensed operator A_region_free + S_E (dense Gamma block; a sparsified
+      // S_E is a worse preconditioner than none) or A_region_free, chosen at the first solve
+      // batch (EnsureRegionFactor).
       impl->region_direct = true;
       impl->region_dense_eligible =
           !impl->hodlr && nG > 0 && nG <= Impl::kDirectCondensedMaxInterface;
@@ -2899,8 +2736,6 @@ void SubstructuringSolver::CondenseEnvironment()
 #endif
         if (impl->BuildRegionGmg())
     {
-      // Order>=2 H1: geometric multigrid on the region submesh, routed through the region
-      // preconditioner apply.
       pc = std::make_unique<CallableSolver>(impl->A_region_free->Height(),
                                             [pi](const mfem::Vector &r, mfem::Vector &z)
                                             { pi->ApplyRegionGmgPc(r, z); });
@@ -3093,13 +2928,6 @@ SubstructuringSolver::SolveDirichletBatch(const std::vector<Vector> &dbcs)
 
   impl->RecoverEnvInterior(u);  // batched: u_E = -A_EE^-1 (A_env u)|_E
   return u;
-}
-
-Vector SubstructuringSolver::SolveRegion()
-{
-  // Default single excitation: drive the lowest-index terminal.
-  MFEM_VERIFY(!impl->terminal_tdofs.empty(), "No terminals configured!");
-  return SolveExcitation(impl->terminal_tdofs.begin()->first);
 }
 
 Vector SubstructuringSolver::SolveSource(const Vector &f)
@@ -3581,7 +3409,7 @@ double SubstructuringSolver::MutualEnergy(const Vector &ui, const Vector &uj) co
   return global;
 }
 
-long long int SubstructuringSolver::RegionGlobalTrueVSize() const
+long long int SubstructuringSolver::GlobalTrueVSize() const
 {
   return impl->parent_fes.GlobalTrueVSize();
 }
@@ -3611,18 +3439,7 @@ void SubstructuringSolver::WriteParaView(const std::string &dir,
 
 double SubstructuringSolver::ElectrostaticEnergy(const Vector &u) const
 {
-  Vector t(impl->nt), t2(impl->nt);
-  impl->K_region_e->Mult(u, t);
-  impl->K_env_e->Mult(u, t2);
-  t += t2;
-  double local = 0.0;
-  for (int i = 0; i < impl->nt; i++)
-  {
-    local += u(i) * t(i);
-  }
-  double global = 0.0;
-  MPI_Allreduce(&local, &global, 1, MPI_DOUBLE, MPI_SUM, impl->parent_fes.GetComm());
-  return 0.5 * global;
+  return 0.5 * MutualEnergy(u, u);
 }
 
 }  // namespace palace

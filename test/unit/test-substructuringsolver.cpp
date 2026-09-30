@@ -3,7 +3,6 @@
 
 #include <array>
 #include <cmath>
-#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -236,11 +235,11 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
     // Region-condensed solve (parent true-DOF solution).
     SubstructuringSolver ss(iodata, mesh);
     ss.CondenseEnvironment();
-    Vector u = ss.SolveRegion();
+    Vector u = ss.SolveExcitation(ss.TerminalIndices()[0]);
 
     // Reuse: a second solve reuses the materialized environment DtN (no re-condensation)
     // and must give an identical result.
-    Vector u2 = ss.SolveRegion();
+    Vector u2 = ss.SolveExcitation(ss.TerminalIndices()[0]);
     {
       Vector d(u2);
       d -= u;
@@ -338,7 +337,7 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
     CHECK(std::abs(c01 - c10) <= 1.0e-9 * std::abs(c00));
     CHECK(std::abs(c00 + c01) <= 1.0e-8 * std::abs(c00));
     CHECK(std::abs(c11 + c10) <= 1.0e-8 * std::abs(c11));
-    // The default SolveRegion excitation drives the lowest terminal, matching phi[0].
+    // u drives the lowest terminal, matching phi[0].
     CHECK(std::abs(2.0 * e_sub - c00) <= 1.0e-9 * std::abs(c00));
   };
 
@@ -503,14 +502,11 @@ TEST_CASE("SubstructuringSolver reproduces full-domain magnetostatic energy",
         1.0e-6 * std::abs(e_mono));  // substructuring == monolith (same operator)
 }
 
-TEST_CASE("SubstructuringSolver magnetostatic Dirichlet (flux-loop-type) excitation",
+TEST_CASE("SubstructuringSolver magnetostatic Dirichlet excitation",
           "[substructure][Serial][Parallel]")
 {
-  // Flux-loop excitations in Palace are Dirichlet-lift (prescribe tangential A on the flux
-  // boundary, RHS = -K*lift). The Dirichlet lift is orthogonal to interior gradients, so
-  // the DtN condensation is consistent. Validate that a magnetostatic Dirichlet excitation
-  // gives the same gauge-invariant energy region-condensed vs monolith (identical solve
-  // approach).
+  // A magnetostatic Dirichlet-lift excitation (prescribed tangential A on a boundary) gives
+  // the same gauge-invariant energy region-condensed and monolithic.
   const int order = 1;
   const double mu_r = 1.0, mu_e = 4.0;
   json config = {
@@ -1022,9 +1018,9 @@ TEST_CASE("SubstructuringSolver block low-rank environment factorization",
 TEST_CASE("SubstructuringSolver capacitance from a model without terminal modes",
           "[substructure][Serial][Parallel]")
 {
-  // A model saved before terminal modes existed (S_E only) must still work: the modes are
-  // recomputed on demand (this needs the environment once) and give the same matrix.
-  const std::string model_path = "substruct_legacy_model.bin";
+  // Modes missing from a saved model are recomputed on demand (this needs the environment
+  // once) and give the same matrix.
+  const std::string model_path = "substruct_nomodes_model.bin";
   auto make_config = [](const std::string &mode)
   {
     json config = {
@@ -1043,7 +1039,7 @@ TEST_CASE("SubstructuringSolver capacitance from a model without terminal modes"
            {{"Region", {{"Attributes", {1}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
-            {"SaveModel", "substruct_legacy_model.bin"}}}}}};
+            {"SaveModel", "substruct_nomodes_model.bin"}}}}}};
     return IoData(config, false);
   };
   const std::vector<int> terms = {1, 2};
@@ -1054,7 +1050,8 @@ TEST_CASE("SubstructuringSolver capacitance from a model without terminal modes"
   off.CondenseEnvironment();
   const mfem::DenseMatrix C_off = off.CapacitanceMatrix(terms);
 
-  // Strip the terminal-mode section: header (2 ints) + signature (nG x 3) + S_E (nG x nG).
+  // Strip the terminal-mode section: keep the header (2 ints), signature (nG x 3), S_E (nG
+  // x nG) and environment fingerprint (1 int + 4 doubles).
   if (Mpi::Root(Mpi::World()))
   {
     int nG = 0;
@@ -1062,11 +1059,10 @@ TEST_CASE("SubstructuringSolver capacitance from a model without terminal modes"
       std::ifstream f(model_path, std::ios::binary);
       f.read(reinterpret_cast<char *>(&nG), sizeof(int));
     }
-    const auto legacy = static_cast<std::uintmax_t>(2 * sizeof(int)) +
-                        static_cast<std::uintmax_t>(sizeof(double)) * nG * 3 +
-                        static_cast<std::uintmax_t>(sizeof(double)) * nG * nG;
-    REQUIRE(std::filesystem::file_size(model_path) > legacy);
-    std::filesystem::resize_file(model_path, legacy);
+    const auto kept = static_cast<std::uintmax_t>(3 * sizeof(int)) +
+                      static_cast<std::uintmax_t>(sizeof(double)) * (nG * 3 + nG * nG + 4);
+    REQUIRE(std::filesystem::file_size(model_path) > kept);
+    std::filesystem::resize_file(model_path, kept);
   }
   Mpi::Barrier(Mpi::World());
 
@@ -1090,10 +1086,9 @@ TEST_CASE("SubstructuringSolver capacitance from a model without terminal modes"
 TEST_CASE("SubstructuringSolver magnetostatic inductance matrix",
           "[substructure][Serial][Parallel]")
 {
-  // Validate the 2x2 inductance-matrix path used by the magnetostatic flux-loop driver:
-  // two Dirichlet excitations, reluctance R(i,j) = A_i^T K A_j / (Phi_i Phi_j), M = R^-1
-  // (pure curl-curl energy). The region-condensed matrix must match a monolith computing
-  // the same quantities, and be symmetric.
+  // Inductance matrix M = R^-1 of two Dirichlet-lift excitations, with the reluctance
+  // R_ij = A_i^T K A_j / (Phi_i Phi_j) (pure curl-curl energy): the region-condensed matrix
+  // must match a monolith and be symmetric.
   const int order = GENERATE(1, 2);
   const bool tet = GENERATE(false, true);
   CAPTURE(order);
@@ -1249,11 +1244,6 @@ TEST_CASE("SubstructuringSolver magnetostatic inductance matrix",
   }
 }
 
-// Interface-operator (S_E) compressibility study: report the singular-value decay and the
-// numerical rank at a few relative tolerances, for a flat half-space interface (worst case
-// for compressibility) vs a compact "column" interface. Informs whether a low-rank / probed
-// S_E is worthwhile (a Phase 2 gate). Characterization only -- asserts basic sanity, not a
-// target rank.
 TEST_CASE("SubstructuringSolver cross-run region re-meshing",
           "[substructure][Serial][Parallel]")
 {
@@ -1509,8 +1499,8 @@ TEST_CASE("SubstructuringSolver London sheet energies", "[substructure][Serial][
   // interior plane crossing the interface: region and environment sheet faces, meeting
   // Gamma along their edges. Two sheet generators a_k drive the sources M_sheet a_k with
   // the sheet DOFs free; the energy matrix E_ij = u_i^T K_cc u_j + (u_i - a_i)^T M_sheet
-  // (u_j - a_j) must match a monolith of the same operator (curl-curl + sheet +
-  // regularization, with the same refinement step), offline and after reloading the model.
+  // (u_j - a_j) must match a monolith (curl-curl + sheet, with a refined regularization),
+  // offline and after reloading the model.
   const int order = GENERATE(1, 2);
   CAPTURE(order);
   const double mu_r = 1.0, mu_e = 4.0, lambda = 0.2, thickness = 0.05;
@@ -1592,15 +1582,15 @@ TEST_CASE("SubstructuringSolver London sheet energies", "[substructure][Serial][
   std::vector<Vector> fields;
   const mfem::DenseMatrix E_full = ss.SheetEnergyMatrix({1, 2}, a, &fields, 2);
 
-  // Monolith: A = K_cc + M_sheet + eps M, u = A^-1 M_sheet a (PEC pinned), one refinement
-  // step, and the energy formula above.
+  // Monolith: A = K_cc + M_sheet + eps M, u = A^-1 M_sheet a (PEC pinned) with one
+  // refinement step for the regularization, and the energy formula above.
   const double L_ksq = SuperconductorSheetOperator::KineticSheetInductance(
       iodata.boundaries.superconductor[0].lambda_L,
       iodata.boundaries.superconductor[0].thickness);
   mfem::Vector nu_by_attr(2), eps_by_attr(2), sheet_by_attr(maxb);
   nu_by_attr(0) = 1.0 / mu_r;
   nu_by_attr(1) = 1.0 / mu_e;
-  eps_by_attr = 1.0e-3;  // SubstructuringSolver's regularization
+  eps_by_attr = 1.0e-3;
   sheet_by_attr = 0.0;
   sheet_by_attr(3) = 1.0 / L_ksq;
   mfem::PWConstCoefficient nu(nu_by_attr), epsc(eps_by_attr), sheetc(sheet_by_attr);
@@ -2254,9 +2244,8 @@ TEST_CASE("SubstructuringSolver magnetostatic cross-run re-meshing",
 TEST_CASE("SubstructuringSolver HODLR off-diagonal compression accuracy vs tolerance",
           "[substructure][Serial]")
 {
-  // Hierarchical (HODLR) off-diagonal low-rank compression of S_E: the DtN's well-separated
-  // interface couplings are low-rank (unlike its full spectrum). Measure region-solve
-  // energy error + reported storage ratio vs the compression tolerance.
+  // HODLR compression of S_E: the region energy converges to the dense one as the
+  // compression tolerance decreases.
   auto energy_at = [](double tol)
   {
     json config = {
@@ -2287,12 +2276,7 @@ TEST_CASE("SubstructuringSolver HODLR off-diagonal compression accuracy vs toler
   double relerr = 1.0;
   for (double tol : {1e-2, 1e-4, 1e-6, 1e-8})
   {
-    const double e = energy_at(tol);
-    relerr = std::abs(e - e_exact) / std::abs(e_exact);
-    if (Mpi::Root(Mpi::World()))
-    {
-      std::printf("[HODLR-acc] tol=%.0e  energy=%.10e  relerr=%.3e\n", tol, e, relerr);
-    }
+    relerr = std::abs(energy_at(tol) - e_exact) / std::abs(e_exact);
   }
   // Tightest tolerance should recover the exact region energy closely.
   CHECK(relerr <= 1.0e-6);
@@ -2371,11 +2355,6 @@ TEST_CASE("SubstructuringSolver HODLR magnetostatic compressed apply matches den
   const double e_dense = energy_at(0.0);
   const double e_comp = energy_at(1.0e-8);
   const double relerr = std::abs(e_comp - e_dense) / std::abs(e_dense);
-  if (Mpi::Root(Mpi::World()))
-  {
-    std::printf("[HODLR-mag] dense=%.10e comp=%.10e relerr=%.3e\n", e_dense, e_comp,
-                relerr);
-  }
   CHECK(std::abs(e_dense) > 1.0e-12);
   CHECK(relerr <= 1.0e-5);
 }

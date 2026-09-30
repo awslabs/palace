@@ -23,9 +23,8 @@ namespace palace
 std::pair<ErrorIndicator, long long int>
 ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
-  // Substructuring (region-condensed) path: condense the environment to a Dirichlet-to-
-  // Neumann boundary operator and solve the region of interest against it, reporting the
-  // electrostatic energy. Phase 1 electrostatic MVP (single excitation).
+  // Substructuring: condense the environment to a Dirichlet-to-Neumann operator on the
+  // interface and solve the region against it.
   if (iodata.solver.substructuring)
   {
     BlockTimer bt(Timer::CONSTRUCT);
@@ -35,10 +34,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     const int n = static_cast<int>(terminals.size());
     MFEM_VERIFY(n > 0, "Substructuring electrostatic solve requires terminals!");
 
-    // Capacitance sweep: the Maxwell capacitance matrix C_ij = phi_i^T K phi_j from region
-    // solves against the condensed environment (S_E + terminal-mode couplings), with no
-    // environment solve. Only the fields to be saved (Solver.Electrostatic.Save) need the
-    // environment interior, which is then recovered on demand.
+    // Maxwell capacitance matrix C_ij = phi_i^T K phi_j from region solves against the
+    // condensed environment; only the fields to be saved need the environment interior.
     Mpi::Print("\nSubstructuring capacitance sweep: {:d} terminal excitation{}\n", n,
                (n > 1) ? "s" : "");
     const int n_save = std::min(iodata.solver.electrostatic.n_post, n);
@@ -78,11 +75,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     Mpi::Print("\nSubstructuring capacitance sweep complete ({:d} terminal{})\n", n,
                (n > 1) ? "s" : "");
-    // Adaptive refinement of the region only (online): indicators from the region fields,
-    // zero on the environment, which stays as condensed.
+    // Adaptive refinement of the region only (the indicators are zero on the environment).
     ErrorIndicator indicator =
         adapt ? sub.RegionErrorIndicator(region_fields, C) : ErrorIndicator();
-    return {indicator, sub.RegionGlobalTrueVSize()};
+    return {indicator, sub.GlobalTrueVSize()};
   }
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding
