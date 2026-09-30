@@ -1429,8 +1429,8 @@ std::vector<std::array<double, 3>> ReadBasisPoints(const std::string &path);
 std::vector<std::string> ModelInterfaceNames(const LibraryModel &model);
 // The load-time check of an AllRingsFollowMetal corner coupon's files against the rule at
 // ITS angle (corner-basis refinement 2026-09-30; fail closed in ReadProcessLibrary): the
-// outer ring levels {-R, -R/3, -OveretchDepth, 0, MetalThickness, MetalThickness +
-// OveretchDepth, R/3, R}, every basis point at the rule's position and the trace mesh
+// outer ring levels {-R, -R/3, -OveretchDepth, 0, MetalThickness, MetalThickness + k
+// OveretchDepth (the rule's k), R/3, R}, every basis point at the rule's position and the trace mesh
 // (vertices, slave parents, triangle set) equal to the rule's. (A MetalRingsOnly coupon with
 // a segment connectivity is checked the same way at match time, MatchCornerFamily.)
 // Returns the reason, empty when the coupon is the rule's.
@@ -1973,6 +1973,15 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                                              << "\" TraceBasis FreeKnotGrading must be an "
                                                 "array of distances over R!");
         rule.free_knot_grading = grading->get<std::vector<double>>();
+      }
+      if (auto extra = trace_basis->find("ExtraLevelsAboveOverOveretch");
+          extra != trace_basis->end())
+      {
+        MFEM_VERIFY(extra->is_array(), "Fabrication-process response model \""
+                                           << model.name
+                                           << "\" TraceBasis ExtraLevelsAboveOverOveretch must "
+                                              "be an array of multiples of OveretchDepth!");
+        rule.extra_levels_above_over_overetch = extra->get<std::vector<double>>();
       }
       {
         const std::string reason = CheckCornerTraceBasisRule(rule);
@@ -12745,8 +12754,7 @@ std::string CheckCornerRuleCouponFiles(const LibraryModel &model, double positio
         d = -z;
       }
     }
-    const std::vector<double> expected = {-radius, -radius / 3.0, -d, 0.0, t, t + d,
-                                          radius / 3.0, radius};
+    const std::vector<double> expected = CornerRuleLevels(rule, radius, t, d);
     bool equal = levels.size() == expected.size();
     for (std::size_t i = 0; equal && i < expected.size(); i++)
     {
@@ -12756,8 +12764,8 @@ std::string CheckCornerRuleCouponFiles(const LibraryModel &model, double positio
     {
       std::ostringstream text;
       text << "the outer ring levels are not the AllRingsFollowMetal set {-R, -R/3, "
-              "-OveretchDepth, 0, MetalThickness, MetalThickness + OveretchDepth, R/3, R} "
-              "(found";
+              "-OveretchDepth, 0, MetalThickness, MetalThickness + k OveretchDepth (k in "
+              "ExtraLevelsAboveOverOveretch), R/3, R} (found";
       for (const double z : levels)
       {
         text << " " << z;

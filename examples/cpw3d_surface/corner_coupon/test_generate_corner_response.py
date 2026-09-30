@@ -441,6 +441,7 @@ class RefinedRuleTest(unittest.TestCase):
         self.assertEqual(record["RingLayout"], "AllRingsFollowMetal")
         self.assertEqual(record["RingSize"], 16)
         self.assertEqual(record["FreeKnotGrading"], [1.0 / 3.0, 2.0 / 3.0])
+        self.assertEqual(record["ExtraLevelsAboveOverOveretch"], [1.0, 4.0])
         self.assertEqual(GENERATOR.TraceBasisRule.from_record(record), rule)
         self.assertEqual(GENERATOR.TraceBasisRule.from_record(GENERATOR.trace_basis_rule(8)), GENERATOR.LEGACY_RULE)
         with self.assertRaises(ValueError):
@@ -451,9 +452,12 @@ class RefinedRuleTest(unittest.TestCase):
             GENERATOR.TraceBasisRule("MetalRingsOnly", 1, 5, (1.0 / 3.0,))
         with self.assertRaises(ValueError):
             GENERATOR.TraceBasisRule("AllRingsFollowMetal", 5, 3, (1.0 / 3.0, 2.0 / 3.0))
+        with self.assertRaises(ValueError):
+            GENERATOR.TraceBasisRule("MetalRingsOnly", 1, 5, (), (1,))
         self.assertEqual(
             [round(z, 6) for z in rule.levels(RADIUS, THICKNESS, OVERETCH)],
-            [round(z, 6) for z in (-RADIUS, -RADIUS / 3.0, -OVERETCH, 0.0, THICKNESS, THICKNESS + OVERETCH, RADIUS / 3.0, RADIUS)],
+            [round(z, 6) for z in (-RADIUS, -RADIUS / 3.0, -OVERETCH, 0.0, THICKNESS, THICKNESS + OVERETCH,
+                                   THICKNESS + 4.0 * OVERETCH, RADIUS / 3.0, RADIUS)],
         )
 
     def test_layout_pins_shared_with_the_cpp_rule(self):
@@ -489,24 +493,24 @@ class RefinedRuleTest(unittest.TestCase):
                     RADIUS, 16, THICKNESS, OVERETCH, angle_degrees=angle, topology=topology, rule=self.RULE
                 )
                 points = np.asarray(surface.knot_points)
-                self.assertEqual(len(points), 160)
-                self.assertEqual(surface.contour_groups, [16] * 10)
+                self.assertEqual(len(points), 176)
+                self.assertEqual(surface.contour_groups, [16] * 11)
                 self.assertEqual(sum(surface.knot_zero), 14)
                 # PEC knots on the two metal rings only, at the rule's zero slots.
-                zero = np.asarray(surface.knot_zero).reshape(10, 16)
-                for ring in range(10):
+                zero = np.asarray(surface.knot_zero).reshape(11, 16)
+                for ring in range(11):
                     z = points[16 * ring, 2]
                     metal = abs(z) < 1e-12 or abs(z - THICKNESS) < 1e-12
                     self.assertEqual(list(np.flatnonzero(zero[ring])),
                                      GENERATOR.zero_slots(topology, self.RULE) if metal else [])
                 # Identical perimeter fractions on every ring (outer and cap): regular columns.
                 fractions = []
-                for ring in range(10):
+                for ring in range(11):
                     half_width = np.max(np.abs(points[16 * ring: 16 * ring + 16, :2]))
                     fractions.append(sorted(
                         GENERATOR.square_perimeter_fraction(half_width, p) for p in points[16 * ring: 16 * ring + 16]
                     ))
-                for ring in range(1, 10):
+                for ring in range(1, 11):
                     np.testing.assert_allclose(fractions[ring], fractions[0], atol=1e-12)
                 # Slaves: the box corners of every ring that are no knot, plus the two cap
                 # centres at the mean of the crossing knots; a partition of unity.

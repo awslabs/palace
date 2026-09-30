@@ -157,7 +157,8 @@ class TraceBasisRule:
 
     LAYOUTS = ("MetalRingsOnly", "AllRingsFollowMetal")
 
-    def __init__(self, layout, metal_interior_knots, free_knots, free_knot_grading=()):
+    def __init__(self, layout, metal_interior_knots, free_knots, free_knot_grading=(),
+                 extra_levels_above_over_overetch=()):
         if layout not in self.LAYOUTS:
             raise ValueError(f"unknown trace basis layout {layout!r}")
         grading = tuple(float(g) for g in free_knot_grading)
@@ -165,12 +166,22 @@ class TraceBasisRule:
             raise ValueError("free knot grading must be increasing positive distances over R")
         if 2 * len(grading) > free_knots:
             raise ValueError("more graded knots than free knots")
-        if layout == "MetalRingsOnly" and grading:
-            raise ValueError("the MetalRingsOnly layout has no free knot grading")
+        extra = tuple(float(k) for k in extra_levels_above_over_overetch)
+        if any(k <= 0.0 for k in extra) or list(extra) != sorted(set(extra)):
+            raise ValueError("extra levels must be increasing positive multiples of OveretchDepth")
+        if layout == "MetalRingsOnly" and (grading or extra):
+            raise ValueError("the MetalRingsOnly layout has no free knot grading and no extra levels")
         self.layout = layout
         self.metal_interior_knots = int(metal_interior_knots)
         self.free_knots = int(free_knots)
         self.free_knot_grading = grading
+        # Extra outer rings above the metal top at MetalThickness + k OveretchDepth
+        # (AllRingsFollowMetal): k = 1 mirrors the trench ring; k = 4 (0.30 um at the recorded
+        # process) resolves the trace right above the metal top over the metal arc, where the
+        # linear ramp from t + d to R / 3 over-estimates the option-(c) smoothstep by 27 % at
+        # z = 0.30 and gives the concave family's fabricated MA a +7 % representation error
+        # (corner-basis-refinement-20260930 section 10: C14, supervisor decision).
+        self.extra_levels_above_over_overetch = extra
 
     @property
     def ring_size(self):
@@ -182,13 +193,14 @@ class TraceBasisRule:
 
     def __eq__(self, other):
         return isinstance(other, TraceBasisRule) and (
-            self.layout, self.metal_interior_knots, self.free_knots, self.free_knot_grading
-        ) == (other.layout, other.metal_interior_knots, other.free_knots, other.free_knot_grading)
+            self.layout, self.metal_interior_knots, self.free_knots, self.free_knot_grading,
+            self.extra_levels_above_over_overetch,
+        ) == (other.layout, other.metal_interior_knots, other.free_knots, other.free_knot_grading,
+              other.extra_levels_above_over_overetch)
 
     def levels(self, radius, metal_thickness, overetch_depth):
         """The outer ring heights: the fabrication planes that reach the box and the far
-        rings; the AllRingsFollowMetal layout adds the mirror of the trench ring above the
-        metal top."""
+        rings, plus the rule's extra rings above the metal top."""
         levels = {
             -radius,
             -radius / 3.0,
@@ -198,8 +210,8 @@ class TraceBasisRule:
             radius / 3.0,
             radius,
         }
-        if self.all_rings:
-            levels.add(metal_thickness + overetch_depth)
+        for k in self.extra_levels_above_over_overetch:
+            levels.add(metal_thickness + k * overetch_depth)
         return sorted(levels)
 
     @classmethod
@@ -209,15 +221,18 @@ class TraceBasisRule:
             record["MetalInteriorKnots"],
             record["FreeKnots"],
             record.get("FreeKnotGrading", ()),
+            record.get("ExtraLevelsAboveOverOveretch", ()),
         )
 
 
 # The recorded rule (corner-basis fix; RingSize 8 = the lane-2 count).
 LEGACY_RULE = TraceBasisRule("MetalRingsOnly", METAL_INTERIOR_KNOTS, FREE_KNOTS)
-# The refined rule (corner-basis refinement 2026-09-30, Phase 1 candidate C6: the option-(c)
-# self-check representation error of every quantity within 3.5 % on the 7 measured coupons
-# against the reference with the same levels; 160 knots).
-REFINED_RULE = TraceBasisRule("AllRingsFollowMetal", 5, 9, (1.0 / 3.0, 2.0 / 3.0))
+# The refined rule (corner-basis refinement 2026-09-30, Phase 1 candidate C14, supervisor
+# decision): against the converged held-out reference every SA / MS / MA of the 7 measured
+# coupons is within 5.3 % (the thin domain within 6.3 %, a known representation error of
+# every all-rings layout: the trace sits 2-4 % low between -R / 3 and -d and above t + R / 3);
+# 11 rings x 16 knots = 176 knots.
+REFINED_RULE = TraceBasisRule("AllRingsFollowMetal", 5, 9, (1.0 / 3.0, 2.0 / 3.0), (1, 4))
 RULES = {"legacy": LEGACY_RULE, "all-rings-follow-metal": REFINED_RULE}
 # The held-out reference surface (option (c); USER decision 161 (2) and the supervisor's
 # decision of 2026-09-30, corner-basis-refinement-20260930 sections 5-9): its z-levels are
@@ -274,8 +289,9 @@ def trace_basis_rule(ring_size, connectivity_angle_degrees=None, rule=LEGACY_RUL
         record = {
             "Rule": (
                 "every ring of the box (outer rings at -R, -R/3, -OveretchDepth, 0, "
-                "MetalThickness, MetalThickness + OveretchDepth, R/3, R and the two inner cap "
-                "rings) carries the same knot fractions: the two metal-arm crossings, "
+                "MetalThickness, MetalThickness + k OveretchDepth for k in "
+                "ExtraLevelsAboveOverOveretch, R/3, R and the two inner cap rings) carries the "
+                "same knot fractions: the two metal-arm crossings, "
                 "MetalInteriorKnots at equal fractions of the metal arc and FreeKnots on the "
                 "free arc (FreeKnotGrading = perimeter distances over R from each crossing, "
                 "the rest at equal fractions between); PEC = crossings + metal-interior knots "
@@ -292,7 +308,7 @@ def trace_basis_rule(ring_size, connectivity_angle_degrees=None, rule=LEGACY_RUL
             "FreeKnotGrading": list(rule.free_knot_grading),
             "Fractions": FRACTION_PARAMETRISATION,
             "MetalLevels": ["0", "MetalThickness"],
-            "ExtraLevels": ["MetalThickness+OveretchDepth"],
+            "ExtraLevelsAboveOverOveretch": list(rule.extra_levels_above_over_overetch),
             "CapCentre": "MeanOfCrossingKnots",
         }
         return record

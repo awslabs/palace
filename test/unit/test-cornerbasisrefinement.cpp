@@ -285,6 +285,7 @@ json RefinedTraceBasisRecord()
           {"MetalInteriorKnots", rule.metal_interior_knots},
           {"FreeKnots", rule.free_knots},
           {"FreeKnotGrading", rule.free_knot_grading},
+          {"ExtraLevelsAboveOverOveretch", rule.extra_levels_above_over_overetch},
           {"Fractions", rule.fractions}};
 }
 
@@ -406,6 +407,13 @@ TEST_CASE("CornerRefinedRuleLayout", "[cornerbasisrefinement][Serial][Parallel]"
     bad = rule;
     bad.ring_size = 15;
     CHECK_THAT(CheckCornerTraceBasisRule(bad), ContainsSubstring("RingSize"));
+    bad = rule;
+    bad.extra_levels_above_over_overetch = {4.0, 1.0};
+    CHECK_THAT(CheckCornerTraceBasisRule(bad), ContainsSubstring("ExtraLevelsAboveOverOveretch"));
+    CornerTraceBasisRule legacy_with_extra;
+    legacy_with_extra.extra_levels_above_over_overetch = {1.0};
+    CHECK_THAT(CheckCornerTraceBasisRule(legacy_with_extra),
+               ContainsSubstring("AllRingsFollowMetal layout option"));
   }
   // The generator's layout at convex 120 and concave 105 degrees (R = 1.9): the perimeter
   // fractions per slot and the zero slots (generate_corner_response.rule_ring_layout with
@@ -454,8 +462,8 @@ TEST_CASE("CornerRefinedRuleLayout", "[cornerbasisrefinement][Serial][Parallel]"
       CHECK(vertex.kind != CornerRingVertex::Kind::ZERO);
     }
   }
-  // The constructed basis over the family range: 10 rings (the 7 standard levels, the
-  // extra ring at t + oe, the two caps) x 16 knots, PEC on the two metal rings only, the
+  // The constructed basis over the family range: 11 rings (the 7 standard levels, the
+  // extra rings at t + oe and t + 4 oe, the two caps) x 16 knots, PEC on the two metal rings only, the
   // graded free knots at R/3 and 2R/3 from each crossing along the perimeter, slaves with a
   // partition of unity, cap centres at the mean of the crossing knots, no degenerate
   // triangle, every knot on its ring's square.
@@ -464,8 +472,8 @@ TEST_CASE("CornerRefinedRuleLayout", "[cornerbasisrefinement][Serial][Parallel]"
     for (double angle = 75.0; angle <= 180.0 + 1.0e-9; angle += 2.5)
     {
       const auto basis = BuildRefined(angle, convex);
-      REQUIRE(basis.knots.size() == 160);
-      REQUIRE(basis.contour_groups.size() == 10);
+      REQUIRE(basis.knots.size() == 176);
+      REQUIRE(basis.contour_groups.size() == 11);
       int zero = 0;
       for (std::size_t k = 0; k < basis.knots.size(); k++)
       {
@@ -473,16 +481,17 @@ TEST_CASE("CornerRefinedRuleLayout", "[cornerbasisrefinement][Serial][Parallel]"
       }
       CHECK(zero == 14);  // 2 crossings + 5 metal-interior knots on each of the 2 metal rings
       std::set<double> levels;
-      for (int r = 0; r < 8; r++)
+      for (int r = 0; r < 9; r++)
       {
         levels.insert(std::round(basis.knots[16 * r][2] * 1.0e9) / 1.0e9);
       }
       CHECK(levels.count(std::round((kT + kOE) * 1.0e9) / 1.0e9) == 1);
+      CHECK(levels.count(std::round((kT + 4.0 * kOE) * 1.0e9) / 1.0e9) == 1);
       CHECK(levels.count(std::round(-kOE * 1.0e9) / 1.0e9) == 1);
       const auto [first, second] = ArmCrossingFractions(kR, angle * kDeg);
-      for (int r = 0; r < 10; r++)
+      for (int r = 0; r < 11; r++)
       {
-        const double half_width = r < 8 ? kR : kR / 3.0;
+        const double half_width = r < 9 ? kR : kR / 3.0;
         std::vector<double> fractions;
         for (int i = 0; i < 16; i++)
         {
@@ -680,7 +689,7 @@ TEST_CASE("CornerRefinedRuleLibraryLoad", "[cornerbasisrefinement][Serial][Paral
           surface << "1,1," << i << "," << j << "," << value << "\n";
         }
       }
-      WriteSyntheticMatrices(corner_domain, corner_surface, 160, 3.0, 0.05, R);
+      WriteSyntheticMatrices(corner_domain, corner_surface, 176, 3.0, 0.05, R);
     }
     const json base = {
         {"Version", 3},
@@ -747,7 +756,7 @@ TEST_CASE("CornerRefinedRuleLibraryLoad", "[cornerbasisrefinement][Serial][Paral
     {
       auto wrong = family;
       wrong[0] = Model("90", 90.0, WriteRefinedCoupon(temp.temp_dir, "90-wrong", 90.0, true,
-                                                       R, t, oe, 3 * 16 + 0));
+                                                       R, t, oe, 6 * 16 + 0));
       Write("wrong-angle", wrong);
     }
     {
@@ -756,13 +765,12 @@ TEST_CASE("CornerRefinedRuleLibraryLoad", "[cornerbasisrefinement][Serial][Paral
       Write("connectivity", stamped);
     }
     {
-      // A coupon of the refined rule's fractions on the 7 standard levels only (the
-      // MetalRingsOnly seed rebuilt with 16 knots per ring by the rule): no ring at t + oe.
+      // A coupon of the refined rule's fractions without the ring at t + 4 oe (the seed of
+      // a rule with the t + oe ring only): the level set is not the rule's.
       auto rule = RefinedCornerTraceBasisRule();
-      auto seven_level = rule;
-      seven_level.ring_layout = CornerRingLayout::METAL_RINGS_ONLY;
-      seven_level.free_knot_grading.clear();
-      const auto seed = MakeCornerBoxSeed(R, t, oe, true, seven_level);
+      auto one_extra = rule;
+      one_extra.extra_levels_above_over_overetch = {1.0};
+      const auto seed = MakeCornerBoxSeed(R, t, oe, true, one_extra);
       const auto basis = BuildCornerTraceBasis(seed.points, seed.contour_groups,
                                                seed.zero_trace_indices, 105.0 * kDeg, true,
                                                rule);

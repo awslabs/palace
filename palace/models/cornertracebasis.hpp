@@ -64,6 +64,10 @@ struct CornerTraceBasisRule
   std::string fractions = "PerimeterArcLength";
   CornerRingLayout ring_layout = CornerRingLayout::METAL_RINGS_ONLY;
   std::vector<double> free_knot_grading;
+  // Extra outer rings above the metal top at MetalThickness + k OveretchDepth
+  // (AllRingsFollowMetal; k = 1 mirrors the trench ring, k = 4 resolves the trace right above
+  // the metal top over the metal arc: the concave family's fabricated MA read +7 % without it).
+  std::vector<double> extra_levels_above_over_overetch;
 
   bool AllRings() const { return ring_layout == CornerRingLayout::ALL_RINGS_FOLLOW_METAL; }
 
@@ -72,14 +76,21 @@ struct CornerTraceBasisRule
     return ring_size == other.ring_size &&
            metal_interior_knots == other.metal_interior_knots &&
            free_knots == other.free_knots && fractions == other.fractions &&
-           ring_layout == other.ring_layout && free_knot_grading == other.free_knot_grading;
+           ring_layout == other.ring_layout && free_knot_grading == other.free_knot_grading &&
+           extra_levels_above_over_overetch == other.extra_levels_above_over_overetch;
   }
   bool operator!=(const CornerTraceBasisRule &other) const { return !(*this == other); }
 };
 
 // The refined rule of the rebuilt corner family (generate_corner_response.REFINED_RULE;
-// corner-basis-refinement-20260930 Phase 1 candidate C6): 16 knots per ring, 160 knots.
+// corner-basis-refinement-20260930 Phase 1 candidate C14): 5 metal-interior + 9 graded free
+// knots (R/3, 2R/3 from each crossing), rings at t + d and t + 4d; 11 rings x 16 knots = 176.
 CornerTraceBasisRule RefinedCornerTraceBasisRule();
+
+// The outer ring levels of an AllRingsFollowMetal coupon: -R, -R/3, -d, 0, t, t + k d for the
+// rule's k, R/3, R (sorted).
+std::vector<double> CornerRuleLevels(const CornerTraceBasisRule &rule, double radius,
+                                     double metal_thickness, double overetch_depth);
 
 // The reason a rule is invalid (RingSize = 2 + MetalInteriorKnots + FreeKnots, the
 // fraction parametrisation, an increasing positive grading fitting the free knots, no
@@ -174,8 +185,8 @@ CornerBoxRings DescribeCornerBoxRings(const std::vector<std::array<double, 3>> &
                                       const std::vector<int> &zero_trace_indices);
 
 // The generator's box rings before the rule is applied: the fixed layout on every ring
-// (outer rings at z = -R, -R / 3, -OveretchDepth, 0, MetalThickness, R / 3, R — plus
-// MetalThickness + OveretchDepth for the AllRingsFollowMetal layout — then the top and
+// (outer rings at z = -R, -R / 3, -OveretchDepth, 0, MetalThickness, R / 3, R — plus the
+// rule's extra levels above the metal top for the AllRingsFollowMetal layout — then the top and
 // bottom inner cap rings of half width R / 3) with the rule's zero set on the two rings
 // that meet the metal. BuildCornerTraceBasis on this seed gives the rule's basis at any
 // angle (unit tests; the Python generator is the reference for coupon files).

@@ -215,7 +215,20 @@ CornerTraceBasisRule RefinedCornerTraceBasisRule()
   rule.free_knots = 9;
   rule.ring_size = 16;
   rule.free_knot_grading = {1.0 / 3.0, 2.0 / 3.0};
+  rule.extra_levels_above_over_overetch = {1.0, 4.0};
   return rule;
+}
+
+std::vector<double> CornerRuleLevels(const CornerTraceBasisRule &rule, double radius,
+                                     double metal_thickness, double overetch_depth)
+{
+  std::set<double> level_set = {-radius,         -radius / 3.0, -overetch_depth, 0.0,
+                                metal_thickness, radius / 3.0,  radius};
+  for (const double k : rule.extra_levels_above_over_overetch)
+  {
+    level_set.insert(metal_thickness + k * overetch_depth);
+  }
+  return std::vector<double>(level_set.begin(), level_set.end());
 }
 
 std::string CheckCornerTraceBasisRule(const CornerTraceBasisRule &rule)
@@ -228,6 +241,23 @@ std::string CheckCornerTraceBasisRule(const CornerTraceBasisRule &rule)
   if (rule.fractions != "PerimeterArcLength")
   {
     return "Fractions must be PerimeterArcLength";
+  }
+  if (!rule.extra_levels_above_over_overetch.empty())
+  {
+    if (!rule.AllRings())
+    {
+      return "ExtraLevelsAboveOverOveretch is an AllRingsFollowMetal layout option";
+    }
+    for (std::size_t k = 0; k < rule.extra_levels_above_over_overetch.size(); k++)
+    {
+      if (!(rule.extra_levels_above_over_overetch[k] > 0.0) ||
+          (k > 0 && !(rule.extra_levels_above_over_overetch[k] >
+                      rule.extra_levels_above_over_overetch[k - 1])))
+      {
+        return "ExtraLevelsAboveOverOveretch must be increasing positive multiples of "
+               "OveretchDepth";
+      }
+    }
   }
   if (!rule.free_knot_grading.empty())
   {
@@ -493,15 +523,8 @@ CornerBoxSeed MakeCornerBoxSeed(double radius, double metal_thickness,
                   overetch_depth >= 0.0 && overetch_depth < radius / 3.0 &&
                   overetch_depth != metal_thickness,
               "Invalid corner box seed dimensions!");
-  std::set<double> level_set = {-radius,         -radius / 3.0, -overetch_depth, 0.0,
-                                metal_thickness, radius / 3.0,  radius};
-  if (rule.AllRings())
-  {
-    // The mirror of the trench ring above the metal top (the generator's
-    // TraceBasisRule.levels).
-    level_set.insert(metal_thickness + overetch_depth);
-  }
-  std::vector<double> levels(level_set.begin(), level_set.end());
+  const std::vector<double> levels =
+      CornerRuleLevels(rule, radius, metal_thickness, overetch_depth);
   CornerBoxSeed seed;
   const auto zero_slots = CornerZeroSlots(convex, rule);
   for (const double level : levels)
