@@ -463,8 +463,8 @@ void PostOperatorCSV<solver_t>::MoveTableValidateReload(TableWithCSVFile &t_csv_
 template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::WriteTable(TableWithCSVFile &table)
 {
-  // Deferred tables are written together at the end of PrintAllCSVData, so every file on
-  // disk ends on the same row.
+  // Deferred tables are written together at a step boundary (the end of PrintAllCSVData
+  // or PrintReducedCSVData), so every file on disk ends on the same row.
   if (!defer_table_writes)
   {
     table.WriteTableIncremental();
@@ -1846,6 +1846,12 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
     PrintModeV();
   }
 
+  MaybeFlushDeferredTables();
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::MaybeFlushDeferredTables()
+{
   // Flush on a step boundary so every table on disk holds the same rows.
   constexpr auto flush_interval = std::chrono::seconds(10);
   if (defer_table_writes &&

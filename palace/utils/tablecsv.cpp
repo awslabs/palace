@@ -318,8 +318,16 @@ TableWithCSVFile::TableWithCSVFile(std::string csv_file_fullpath, bool load_exis
   std::stringstream file_buffer_str;
   file_buffer_str << file_buffer.rdbuf();
   file_buffer.close();
-  table = Table(file_buffer_str.str());
-  rows_on_disk_ = table.n_rows();
+  const std::string contents = file_buffer_str.str();
+  table = Table(contents);
+  // A file cut off after its last value but before the row separator still parses as a
+  // complete row, but appending to it would join two rows on one line. Rewrite it whole
+  // on the next write instead.
+  const auto &sep = table.print_row_separator;
+  const bool ends_with_separator =
+      contents.size() >= sep.size() &&
+      contents.compare(contents.size() - sep.size(), sep.size(), sep) == 0;
+  rows_on_disk_ = ends_with_separator ? table.n_rows() : 0;
 }
 
 void TableWithCSVFile::WriteFullTableTrunc()

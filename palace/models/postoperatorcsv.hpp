@@ -248,6 +248,10 @@ protected:
   std::chrono::steady_clock::time_point last_deferred_flush;
   void FlushDeferredTables();
 
+  // Flush deferred tables if the flush interval has elapsed. Call only at a step boundary,
+  // once every table holds this step's row.
+  void MaybeFlushDeferredTables();
+
   // Dimensionalized measurement cache. Converted from the PostOperator member variable.
   Measurement measurement_cache;
 
@@ -464,6 +468,7 @@ public:
     PrintDomainE();
     PrintPortVI(post_op.fem_op->GetLumpedPortOp(), post_op.units);
     PrintPortS();
+    MaybeFlushDeferredTables();
   }
 
   // Special case of global indicator — init and print all at once.

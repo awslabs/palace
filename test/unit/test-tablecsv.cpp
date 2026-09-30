@@ -525,8 +525,8 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "TableCSV_NewRunOverwritesPreviou
   CHECK(ReadFileToString(path) == run_b.table.format_table());
 }
 
-// If the file disappears under a running table (deleted externally, or a symlink swap),
-// the next write must rebuild it from memory instead of appending into the void.
+// If the file disappears under a running table (for example, deleted externally), the next
+// write must rebuild it from memory instead of appending into the void.
 TEST_CASE_METHOD(palace::test::PerRankTempDir, "TableCSV_WriteRecoversWhenFileVanishes",
                  "[tablecsv][Serial]")
 {
@@ -556,6 +556,86 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "TableCSV_WriteRecoversWhenFileVa
   out.WriteTableIncremental();
 
   CHECK(ReadFileToString(path) == out.table.format_table());
+}
+
+// A restarted run reloads the table from disk and keeps appending: the reloaded rows count
+// as already written, so they are not rendered again. The corrupted byte below survives
+// only if the writer appends.
+TEST_CASE_METHOD(palace::test::PerRankTempDir, "TableCSV_IncrementalAppendsAfterReload",
+                 "[tablecsv][Serial]")
+{
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+  const auto path = temp_dir / "reload.csv";
+  {
+    TableWithCSVFile out(path);
+    out.table.col_options.float_precision = 9;
+    out.table.insert("idx", "f (GHz)", -1);
+    out.table.insert("v_1", "V1 (V)", 0);
+    for (int i = 0; i < 3; i++)
+    {
+      out.table["idx"] << 0.25 * i;
+      out.table["v_1"] << 2.0 * i;
+    }
+    out.WriteTableIncremental();
+  }
+
+  auto content = ReadFileToString(path);
+  TableWithCSVFile reloaded(path, true);
+  REQUIRE(reloaded.table.n_rows() == 3);
+  reloaded.table.col_options.float_precision = 9;
+  const auto header = reloaded.table.format_header();
+  REQUIRE(content.size() > header.size());
+  content[header.size()] = '#';
+  WriteFileFromString(path, content);
+
+  for (int i = 3; i < 5; i++)
+  {
+    reloaded.table[0] << 0.25 * i;
+    reloaded.table[1] << 2.0 * i;
+  }
+  reloaded.WriteTableIncremental();
+  CHECK(ReadFileToString(path) ==
+        content + reloaded.table.format_row(3) + reloaded.table.format_row(4));
+}
+
+// A reloaded file cut off before its final row separator must be rewritten whole on the
+// next write, not appended to, which would join two rows on one line.
+TEST_CASE_METHOD(palace::test::PerRankTempDir, "TableCSV_ReloadWithoutTrailingSeparator",
+                 "[tablecsv][Serial]")
+{
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+  const auto path = temp_dir / "truncated.csv";
+  {
+    TableWithCSVFile out(path);
+    out.table.col_options.float_precision = 9;
+    out.table.insert("idx", "f (GHz)", -1);
+    out.table.insert("v_1", "V1 (V)", 0);
+    for (int i = 0; i < 2; i++)
+    {
+      out.table["idx"] << 0.25 * i;
+      out.table["v_1"] << 2.0 * i;
+    }
+    out.WriteTableIncremental();
+  }
+  auto content = ReadFileToString(path);
+  REQUIRE(!content.empty());
+  REQUIRE(content.back() == '\n');
+  content.pop_back();
+  WriteFileFromString(path, content);
+
+  TableWithCSVFile reloaded(path, true);
+  REQUIRE(reloaded.table.n_rows() == 2);
+  reloaded.table.col_options.float_precision = 9;
+  reloaded.table[0] << 0.5;
+  reloaded.table[1] << 4.0;
+  reloaded.WriteTableIncremental();
+  CHECK(ReadFileToString(path) == reloaded.table.format_table());
 }
 
 // A table with columns but no rows still writes the header, matching a whole-file write,
