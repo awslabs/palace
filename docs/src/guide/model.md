@@ -52,11 +52,7 @@ object. Nonconformal refinement is supported for all mesh types, and additionall
 refinement is supported for simplex meshes. AMR is available for all problem types apart
 from driven problems in the time domain. The error estimates account for the
 discontinuity of the fields across [interior boundaries](boundaries.md#Interior-boundaries)
-such as thin metal sheets, without modifying the mesh. This includes nonconformal meshes
-from a previous adaptive simulation, saved with
-[`config["Model"]["Refinement"]["SaveAdaptMesh"]`](../config/reference.md#config-model-refinement)
-and used as the input mesh, for which the interior boundaries are identified through the
-refinement hierarchy stored with the mesh.
+such as thin metal sheets, without modifying the mesh.
 
 ## Material models
 

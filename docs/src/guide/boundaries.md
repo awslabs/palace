@@ -123,7 +123,8 @@ charge:
 
   - [`"LumpedPort"`](../config/reference.md#config-boundaries-lumpedport) and
     [`"SurfaceCurrent"`](../config/reference.md#config-boundaries-surfacecurrent)
-    boundaries are sheets carrying the port or source surface current.
+    boundaries are sheets carrying the port or source surface current. The mesh is never
+    cracked along them.
 
   - [`"Impedance"`](../config/reference.md#config-boundaries-impedance),
     [`"RationalImpedance"`](../config/reference.md#config-boundaries-rationalimpedance),
@@ -155,13 +156,21 @@ component of the electric flux density jumps by the surface charge and the tange
 magnetic field by the surface current. The error estimate for
 [adaptive mesh refinement](model.md#Mesh-refinement) therefore allows the recovered fluxes
 to be discontinuous across these interior boundaries, as it does for a cracked mesh.
-Likewise, [interface dielectric](postprocessing.md#Boundary-postprocessing) energies of
-types `"Default"`, `"MA"`, and `"MS"` on uncracked sheets sum the contributions of both
-faces, each with its own dielectric layer, as for a cracked mesh (the model of a metal
-film). This applies to all sheets, including impedance boundaries with only a sheet
-capacitance: for a dielectric layer on a substrate-air interface, with or without a sheet
-capacitance, use the `"SA"` type, which evaluates the fields of the substrate and air sides
-separately.
+
+For postprocessing on uncracked sheets:
+
+  - [Interface dielectric](postprocessing.md#Boundary-postprocessing) energies are the same as
+    on a cracked mesh. Types `"MA"` and `"MS"` use the fields on the air side and on the
+    substrate side of a metal sheet, respectively, and type `"Default"` sums the
+    contributions of both faces, each with its own dielectric layer. On a sheet with the
+    same material on both sides, such as an air bridge, the `"MA"` (or `"MS"`) energies of
+    both faces are summed as well. These are models of a metal film: for a dielectric layer
+    on a substrate-air interface, with or without a sheet capacitance, use the `"SA"` type,
+    which evaluates the fields on the substrate and air sides separately.
+  - [Surface flux](postprocessing.md#Boundary-postprocessing) postprocessing with
+    `"TwoSided": true` gives the total flux through both faces of the sheet, as on a cracked
+    mesh, for example the charge on a metal sheet. With `"TwoSided": false`, it gives the
+    average of the fluxes on the two sides.
 
 The mesh cracking behavior of previous versions of *Palace*, where all interior boundaries
 with boundary conditions except for lumped ports are cracked, can be restored with the
