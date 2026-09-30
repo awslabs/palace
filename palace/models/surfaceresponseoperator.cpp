@@ -7180,6 +7180,71 @@ struct FeaturePatchSummary
 // chord / inscribed readings add < 1 %).
 constexpr double kPairPatchSeparationTolerance = 0.10;
 
+// Longitudinal cells of a one-dimensional quadrature rule on the unit interval: the cell of
+// point q is [sum of the weights of the points before it, that sum + w_q] in the order of
+// increasing position, so the cells tile [0, 1] exactly and every cell contains its point
+// (Gauss-Legendre). The translational surface mortar projects the device trace over the
+// cell of each quadrature patch, mapped onto its portion.
+std::vector<std::array<double, 2>>
+LongitudinalQuadratureCells(const mfem::IntegrationRule &quadrature)
+{
+  std::vector<int> order(quadrature.GetNPoints());
+  std::iota(order.begin(), order.end(), 0);
+  std::sort(order.begin(), order.end(), [&](int a, int b)
+            { return quadrature.IntPoint(a).x < quadrature.IntPoint(b).x; });
+  std::vector<std::array<double, 2>> cells(quadrature.GetNPoints());
+  double cumulative = 0.0;
+  for (const int q : order)
+  {
+    const double next = cumulative + quadrature.IntPoint(q).weight;
+    cells[q] = {cumulative, next};
+    cumulative = next;
+  }
+  MFEM_VERIFY(std::abs(cumulative - 1.0) < 1.0e-12,
+              "Longitudinal quadrature weights do not sum to the portion length!");
+  cells[order.back()][1] = 1.0;
+  for (int q = 0; q < quadrature.GetNPoints(); q++)
+  {
+    const double x = quadrature.IntPoint(q).x;
+    MFEM_VERIFY(cells[q][0] <= x && x <= cells[q][1],
+                "A longitudinal quadrature cell does not contain its point!");
+  }
+  return cells;
+}
+
+// The smallest |cos| between a translational patch's AxisW and the tangent of the segment
+// its sample lies on. AxisW = AxisU x AxisV is parallel to the sample's own segment for an
+// isolated edge, but for a pair or stack AxisU points at the sample's closest foot on the
+// PARTNER side, so AxisW follows the partner's chord (or the sample-to-vertex direction
+// where the foot is clamped at a joint): the identification classifies slow tapers and
+// sub-noise polyline bends as pairs (1 - |cos| of 1e-6..1e-3 there: a 6 um / 100 um taper
+// 4.5e-6, a 1.6 deg chord joint 3.9e-4). The tolerance is the pair regime's own facing
+// threshold (the paired-edge topology's Dot(axis_u, direction) > 0.95 in the 2D and legacy
+// 3D groupings, ~18 deg); anything below it is not a translational frame and fails closed.
+constexpr double kLongitudinalAxisCosineTolerance = 0.95;
+
+// The longitudinal cell of one quadrature patch on a straight portion [a, b] of a segment
+// parametrised from p0 along `tangent`: offsets from the patch origin (at parameter t_q)
+// along the patch's AxisW (= AxisU x AxisV), mesh units, ordered begin <= end. The arc
+// cell is projected onto AxisW by Dot(tangent, axis_w) (its sign orients the cell, its
+// magnitude shortens it): the cross-section perpendicular to AxisW at the projected offset
+// contains the segment point at that arc offset (the sample's foot lies in the plane
+// perpendicular to AxisW through the origin), so the slices sweep exactly the sample's
+// cell of its own segment whether or not AxisW is parallel to it.
+std::array<double, 2> LongitudinalCellOffsets(const std::array<double, 2> &unit_cell,
+                                              double a, double b, double t_q,
+                                              const Point3D &tangent, const Point3D &axis_w)
+{
+  const double projection = Dot(tangent, axis_w);
+  MFEM_VERIFY(std::abs(projection) >= kLongitudinalAxisCosineTolerance,
+              "A translational patch's AxisW must be within |cos| >= "
+                  << kLongitudinalAxisCosineTolerance << " of its segment (found "
+                  << std::abs(projection) << ")!");
+  const double begin = projection * (a + (b - a) * unit_cell[0] - t_q);
+  const double end = projection * (a + (b - a) * unit_cell[1] - t_q);
+  return {std::min(begin, end), std::max(begin, end)};
+}
+
 FeaturePatchSummary BuildFeaturePatches(
     const ProcessLibrary &library, const IdentificationResult &identification,
     const std::vector<EdgeSegment3D> &framed_segments,
@@ -7377,7 +7442,10 @@ FeaturePatchSummary BuildFeaturePatches(
   };
   // Longitudinal quadrature over one framed portion: one patch per quadrature point,
   // weight = portion length x quadrature weight x side factor / coupon depth (times the
-  // model weight of a first-order split).
+  // model weight of a first-order split); the patch's longitudinal cell is its quadrature
+  // cell of the portion (the cells tile the portion; a split's co-located patches and the
+  // sides of a pair carry the full cell whatever their weight factors).
+  const auto quadrature_cells = LongitudinalQuadratureCells(quadrature);
   auto Quadrature = [&](const FramedPortion &fp, double side_factor,
                         std::size_t model_index, int runtime,
                         const IdentifiedFeature &feature, const auto &Place,
@@ -7413,6 +7481,8 @@ FeaturePatchSummary BuildFeaturePatches(
         patch.conductor_references = term.conductor_references;
         patch.weight =
             model_weight * side_factor * (fp.b - fp.a) * ip.weight / term.coupon_depth;
+        patch.longitudinal_cell = LongitudinalCellOffsets(
+            quadrature_cells[q], fp.a, fp.b, t, fp.segment->tangent, patch.axis_w);
         patch.provenance.segment = static_cast<int>(fp.geometry_index);
         patch.provenance.s0 = fp.s0;
         patch.provenance.s1 = fp.s1;
@@ -8124,6 +8194,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   }
   const auto &quadrature =
       mfem::IntRules.Get(mfem::Geometry::SEGMENT, 2 * std::max(1, iodata.solver.order));
+  const auto quadrature_cells = LongitudinalQuadratureCells(quadrature);
   ResponseCorrectionData result;
   result.unmatched_policy = request.unmatched_policy;
   result.translational_domain_correction = request.translational_domain_correction;
@@ -11962,6 +12033,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
             patch.maxwell_conductor_anchors = {first_point, *paired_point};
           }
           const double quadrature_weight = (interval_end - interval_begin) * ip.weight;
+          patch.longitudinal_cell = LongitudinalCellOffsets(
+              quadrature_cells[q], interval_begin, interval_end, first_distance,
+              first.tangent, Normalize(Cross(patch.axis_u, patch.axis_v)));
           if (model_selection.IsInterpolated())
           {
             patch.interpolation_group = next_interpolation_group++;
@@ -12058,6 +12132,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                 segments[reference_edge], span.tangent, longitudinal_coordinate));
           }
           const double quadrature_weight = (interval_end - interval_begin) * ip.weight;
+          patch.longitudinal_cell = LongitudinalCellOffsets(
+              quadrature_cells[q], interval_begin, interval_end, first_distance,
+              first.tangent, Normalize(Cross(patch.axis_u, patch.axis_v)));
           for (const auto &weighted_model : selection.response.models)
           {
             const auto &source = library.models[weighted_model.index];
@@ -13336,6 +13413,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                        {"AxisW", patch.axis_w},
                        {"ConductorReferences", patch.conductor_references},
                        {"Weight", patch.weight},
+                       {"LongitudinalCell", patch.longitudinal_cell},
                        {"InterpolationGroup", patch.interpolation_group},
                        {"MaxwellConductorAnchors", patch.maxwell_conductor_anchors},
                        {"MaxwellReferenceIsPEC", patch.maxwell_reference_is_pec}});
@@ -13347,7 +13425,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  output << nlohmann::json{{"Version", 2},
+  output << nlohmann::json{{"Version", 3},
                            {"Models", std::move(models)},
                            {"Patches", std::move(patches)}}
                 .dump(2)
@@ -13361,11 +13439,11 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   MFEM_VERIFY(input, "Unable to read response-geometry cache \"" << path.string() << "\"!");
   nlohmann::json data;
   input >> data;
-  MFEM_VERIFY(data.value("Version", 0) == 2,
+  MFEM_VERIFY(data.value("Version", 0) == 3,
               "Unsupported response-geometry cache version "
                   << data.value("Version", 0)
-                  << " (version 2 carries the curvature-family Blend of every model; "
-                     "delete a stale cache)!");
+                  << " (version 3 carries the longitudinal cell of every patch; delete a "
+                     "stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
@@ -13439,6 +13517,7 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
     patch.axis_w = entry.at("AxisW");
     patch.conductor_references = entry.at("ConductorReferences");
     patch.weight = entry.at("Weight");
+    patch.longitudinal_cell = entry.at("LongitudinalCell");
     patch.interpolation_group = entry.value("InterpolationGroup", 0);
     patch.maxwell_conductor_anchors =
         entry.value("MaxwellConductorAnchors", std::vector<std::array<double, 3>>{});
@@ -13476,7 +13555,7 @@ void WriteSurfaceResponsePatches(const ResponseCorrectionData &data,
   }
   output << "Patch,Feature,Topology,Model,ModelIndex,Weight,ModelWeight,QuadratureWeight,"
             "SideFactor,CouponDepth,Segment,S0,S1,OriginX,OriginY,OriginZ,AxisUX,AxisUY,"
-            "AxisUZ,AxisVX,AxisVY,AxisVZ,AxisWX,AxisWY,AxisWZ\n";
+            "AxisUZ,AxisVX,AxisVY,AxisVZ,AxisWX,AxisWY,AxisWZ,StripBegin,StripEnd\n";
   output << std::setprecision(17);
   for (std::size_t i = 0; i < data.patches.size(); i++)
   {
@@ -13503,6 +13582,12 @@ void WriteSurfaceResponsePatches(const ResponseCorrectionData &data,
       {
         output << ',' << value;
       }
+    }
+    // The longitudinal cell of the surface-mortar strip: offsets along AxisW from the
+    // origin; the cells of one portion tile it.
+    for (const double value : patch.longitudinal_cell)
+    {
+      output << ',' << requirements.ScaleLength(value);
     }
     output << '\n';
   }
@@ -14169,8 +14254,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       continue;
     }
     local_patch_indices.push_back(patch_idx);
+    MFEM_VERIFY(std::isfinite(patch_config.longitudinal_cell[0]) &&
+                    std::isfinite(patch_config.longitudinal_cell[1]) &&
+                    patch_config.longitudinal_cell[0] <= patch_config.longitudinal_cell[1],
+                "Response-correction patch longitudinal cells must be ordered intervals!");
     patches.push_back(Patch{static_cast<int>(patch_idx), model_it->second, 0, basis_size, 0,
-                            1, 0.0, patch_config.weight});
+                            patch_config.longitudinal_cell, 1, 0.0, patch_config.weight});
     basis_size += model.basis_size;
   }
 
@@ -14256,9 +14345,14 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       }
       else
       {
+        // The strip (the patch's longitudinal cell, mesh units) is sampled at the same
+        // resolution as the contour, so that the projection is a surface integral over
+        // the matching strip rather than a line integral in one cross-section.
+        const double strip_length =
+            patch.mortar_longitudinal_strip[1] - patch.mortar_longitudinal_strip[0];
         patch.mortar_longitudinal_subdivisions =
             dimension == 3 ? std::max(1, static_cast<int>(std::ceil(
-                                             patch.weight / patch.mortar_resolution)))
+                                             strip_length / patch.mortar_resolution)))
                            : 1;
         int contour_sample_count = 0;
         for (const auto &segment : model.mortar_segments)
@@ -14278,7 +14372,15 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   global_basis_size = basis_size;
   long long int global_point_count = point_count;
   Mpi::GlobalSum(1, &global_point_count, fespace.GetComm());
-  constexpr long long int maximum_experimental_mortar_points = 300000000;
+  // Runaway guard, not a memory model: every point stores its element stencil on the
+  // owning rank (one int and one double per element dof: ~0.7 kB at p5 on tetrahedra,
+  // 56 dofs; ~2.6 kB on hexahedra, 216 dofs) plus ~50 B of query bookkeeping, so the
+  // bound corresponds to ~2.8 TB of stencils at p5 on tetrahedra spread over the ranks. The
+  // translational strips sample their longitudinal cells at the local mortar resolution
+  // (the element size at the patch's first basis point): the transmon device (17,395
+  // translational patches, 35 mm of matched perimeter, 4 mm characteristic length) needs
+  // 4.3e6 points on its initial mesh and 1.0e7 after 11 AMR cycles at p4 (measured).
+  constexpr long long int maximum_experimental_mortar_points = 4000000000LL;
   MFEM_VERIFY(config->trace_coupling !=
                       ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR ||
                   global_point_count <= maximum_experimental_mortar_points,
@@ -14424,10 +14526,13 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         for (int longitudinal = 0; longitudinal < patch.mortar_longitudinal_subdivisions;
              longitudinal++)
         {
+          // Midpoint of the longitudinal slice within the strip (offset along axis_w).
           const double longitudinal_coordinate =
-              dimension == 3 ? patch.weight * ((static_cast<double>(longitudinal) + 0.5) /
-                                                   patch.mortar_longitudinal_subdivisions -
-                                               0.5)
+              dimension == 3 ? patch.mortar_longitudinal_strip[0] +
+                                   (patch.mortar_longitudinal_strip[1] -
+                                    patch.mortar_longitudinal_strip[0]) *
+                                       (static_cast<double>(longitudinal) + 0.5) /
+                                       patch.mortar_longitudinal_subdivisions
                              : 0.0;
           for (const auto &segment : model.mortar_segments)
           {
@@ -14897,7 +15002,8 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     }
 
     patches.push_back(Patch{static_cast<int>(patches.size()), model_it->second, 0,
-                            basis_size, 0, 1, 0.0, patch_config.weight});
+                            basis_size, 0, patch_config.longitudinal_cell, 1, 0.0,
+                            patch_config.weight});
     basis_size += model.basis_size;
   }
 

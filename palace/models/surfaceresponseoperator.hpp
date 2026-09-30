@@ -196,6 +196,11 @@ private:
     int point_offset = 0;
     int trace_offset = 0;
     int point_count = 0;
+    // Translational surface mortar: the longitudinal strip [begin, end] (offsets along the
+    // patch's AxisW, mesh units; the patch's cell of its feature portion) is sampled in
+    // mortar_longitudinal_subdivisions cross-sections of the local mortar resolution; a
+    // {0, 0} strip is one cross-section at the origin (2D, spatial, explicit patches).
+    std::array<double, 2> mortar_longitudinal_strip = {0.0, 0.0};
     int mortar_longitudinal_subdivisions = 1;
     double mortar_resolution = 0.0;
     double weight = 1.0;

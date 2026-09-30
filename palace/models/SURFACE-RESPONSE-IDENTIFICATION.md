@@ -943,6 +943,42 @@ Patch per class (weights in mesh units; `CouponDepth` = the model's longitudinal
 | `ConvexCorner`, `ConcaveCorner` (sharp or rounded), `Endpoint`, `Junction` | one patch at `Frame.Origin` (the vertex or the virtual corner of a fillet) | `Frame.Axes` (below) | model weight (1) |
 | `SpatialEdgeCluster` | one patch | a model carrying its `Signature` is built in that Signature's canonical frame and is placed with the identity map (m maps to `F.origin + F.axes^T m`; its stored `Edges`, when present, are verified at library load to lie on the Signature's portions — straight portions as segments, arc portions on their circle — within the signature tolerance, each edge on ONE portion whose relabelled `Conductor` is the edge's and whose `Interfaces` set is the set mapped to the edge's `InterfaceSlot` (a mirror-symmetric geometry with asymmetric labels lands on the portions but is refused), `VerifySpatialEdgesInSignatureFrame`, fail closed); a legacy model without a `Signature` maps a model-frame point m to `F.origin + F.axes^T M.axes (m - M.origin)`, M from `CanonicalClusterSignature` of its stored straight edges | model weight (1) |
 
+**Longitudinal cell of a translational patch (`SurfaceMortar` strip; decision 152).** The
+weight is the patch's dimensionless MEASURE (the fraction of the model's `CouponDepth` it
+integrates, times the side and model factors); the strip over which the surface mortar
+projects the device trace is a LENGTH, carried separately as the patch's longitudinal cell:
+the interval of its portion that its quadrature point integrates, as offsets along the patch
+AxisW from the origin in mesh units, ordered begin <= end (`longitudinal_cell`; `StripBegin`,
+`StripEnd` of the dry run in manifest units; `LongitudinalCell` of the geometry cache, version
+3, older caches refused). The cells of one portion tile it exactly — cell q = [cumulative
+Gauss weight before q, + w_q] in order of increasing position, so every cell contains its
+point (`LongitudinalQuadratureCells`; Gauss cells centred on their points would not tile) —
+and every patch built from a quadrature point carries the full cell whatever its weight
+factors (both sides of a pair, every side of a stack, the two co-located patches of a
+first-order split). The mortar samples the strip in ceil(cell length / mortar resolution)
+slices at the slice midpoints, each slice a transverse projection at the contour resolution
+(oversampled by `MortarOversampling`), and averages them with equal weights (lift and
+transpose alike): the patch coefficient is the trace's LENGTH-AVERAGE over its cell, so the
+patch energy `weight x c^T Q c` is the Jensen lower bound of the strip's energy and the sum
+over a portion is a surface functional of the field over the whole matched perimeter. A
+patch without a cell ({0, 0}: 2D, spatial and vertex models, explicit configuration syntax)
+is one cross-section at its origin. A pair or stack patch's AxisW follows the PARTNER side
+(AxisU points at the sample's closest foot on the other side), so on the slow tapers and
+sub-noise polyline bends the identification classifies as pairs AxisW is not parallel to the
+sample's own segment (1 - |cos| of 1e-6..1e-3): the arc cell is projected onto AxisW by
+Dot(tangent, AxisW) — the sign orients it, the magnitude shortens it — because the
+cross-section perpendicular to AxisW at the projected offset contains the segment point at that
+arc offset (the foot lies in the plane perpendicular to AxisW through the origin), so the slices
+sweep exactly the sample's cell of its own segment (`LongitudinalCellOffsets`); a frame below
+|cos| = 0.95 (`kLongitudinalAxisCosineTolerance`, the paired-edge topology's facing threshold)
+is not a translational frame and fails closed. Before this fix the dimensionless weight was used as the
+strip length in the solver's nondimensional mesh coordinates (`mortar_longitudinal_subdivisions`,
+`longitudinal_coordinate`), i.e. a strip of l_cell x Lc / `CouponDepth` centred on the Gauss
+point (Lc the mesh's characteristic length): 3.8 cells on the transmon (Lc 4 mm, `CouponDepth`
+1055 um; ~3 slices overlapping the neighbouring cells), one cross-section where that length is
+below the mortar resolution (small islands); the fixed-trace and self-consistent trace maps both
+change with the fix wherever the strips were not already single slices.
+
 **Vertex-feature frames** (`Frame` of the manifest, shared by the library builder): corner:
 x = the first arm away from the (virtual) corner, the arms ordered so that the second is
 counterclockwise about the process normal (a corner is its own mirror image), y = n x x;
@@ -1197,9 +1233,11 @@ slot; slot k = the k-th distinct target map of the feature's portions in sorted 
 **Patch dry run.** `palace --surface-response-preflight` builds the same patches without a
 field solve and writes `surface-response-patches.csv` next to the manifest: `Patch, Feature,
 Topology, Model, ModelIndex, Weight, ModelWeight, QuadratureWeight, SideFactor, CouponDepth,
-Segment, S0, S1, Origin, AxisU, AxisV, AxisW` (manifest units; `Segment` = the manifest
-segment index, `[S0, S1)` the portion from the segment's canonical key origin; vertex and
-cluster patches carry `Segment` -1 and `CouponDepth` 0). The audit's gates A7: the patched
+Segment, S0, S1, Origin, AxisU, AxisV, AxisW, StripBegin, StripEnd` (manifest units;
+`Segment` = the manifest segment index, `[S0, S1)` the portion from the segment's canonical
+key origin; vertex and cluster patches carry `Segment` -1 and `CouponDepth` 0;
+`[StripBegin, StripEnd]` the longitudinal cell as offsets along AxisW from the origin, the
+cells of one portion tiling it, 0 / 0 for patches without a strip). The audit's gates A7: the patched
 feature set equals the matched set; every portion of a matched longitudinal feature is exactly
 one quadrature interval (sum of quadrature x model weights = 1) and `Weight = ModelWeight x
 QuadratureWeight x (S1 - S0) x SideFactor / CouponDepth` with `SideFactor` = 1 / claimed chains;
