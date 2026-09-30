@@ -76,19 +76,7 @@ void NormalizeReferencePoint(mfem::IntegrationPoint &ip)
 
 bool CanonicalPointLess(const mfem::IntegrationPoint &a, const mfem::IntegrationPoint &b)
 {
-  if (a.x != b.x)
-  {
-    return a.x < b.x;
-  }
-  if (a.y != b.y)
-  {
-    return a.y < b.y;
-  }
-  if (a.z != b.z)
-  {
-    return a.z < b.z;
-  }
-  return a.weight < b.weight;
+  return std::tie(a.x, a.y, a.z, a.weight) < std::tie(b.x, b.y, b.z, b.weight);
 }
 
 int ReferenceFacet(mfem::Geometry::Type geometry,
