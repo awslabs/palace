@@ -402,8 +402,9 @@ public:
   // true, the two faces of the sheet are independent surfaces, each with its own current
   // and no coupling through the sheet (a conductor much thicker than the skin depth), with
   // the surface impedance of the conductor on each face. If false, the boundary is a thin
-  // sheet with a single tangential electric field on it and the admittance of both faces.
-  bool crack = true;
+  // sheet with a single tangential electric field on it and the admittance of both faces
+  // (a film thinner than the skin depth).
+  bool crack = false;
 
   // List of boundary attributes for this surface conductivity boundary condition.
   std::vector<int> attributes = {};
