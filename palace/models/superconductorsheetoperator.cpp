@@ -4,7 +4,7 @@
 #include "superconductorsheetoperator.hpp"
 
 #include <cmath>
-#include <set>
+#include "models/boundaryattributes.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -38,43 +38,10 @@ void SuperconductorSheetOperator::SetUpBoundaryProperties(
     const std::unordered_set<int> &cracked_attributes, const mfem::ParMesh &mesh)
 {
   // Check that superconductor sheet boundary attributes have been specified correctly.
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  mfem::Array<int> bdr_attr_marker;
+  MeshBoundaryAttributes mesh_attrs(mesh);
   if (!superconductor.empty())
   {
-    mfem::Array<int> superconductor_marker(bdr_attr_max);
-    bdr_attr_marker.SetSize(bdr_attr_max);
-    bdr_attr_marker = 0;
-    superconductor_marker = 0;
-    for (auto attr : mesh.bdr_attributes)
-    {
-      bdr_attr_marker[attr - 1] = 1;
-    }
-    std::set<int> bdr_warn_list;
-    for (const auto &data : superconductor)
-    {
-      for (auto attr : data.attributes)
-      {
-        if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
-        {
-          bdr_warn_list.insert(attr);
-          continue;
-        }
-        MFEM_VERIFY(!superconductor_marker[attr - 1],
-                    "Multiple definitions of superconductor sheet boundary properties for "
-                    "boundary attribute "
-                        << attr << "!");
-        superconductor_marker[attr - 1] = 1;
-      }
-    }
-    if (!bdr_warn_list.empty())
-    {
-      Mpi::Print("\n");
-      Mpi::Warning("Unknown superconductor sheet boundary attributes!\nSolver will just "
-                   "ignore them!");
-      utils::PrettyPrint(bdr_warn_list, "Boundary attribute list:");
-      Mpi::Print("\n");
-    }
+    CheckBoundaryAttributes(mesh_attrs, superconductor, "superconductor sheet");
   }
 
   // Kinetic sheet inductance L_ksq [H/sq]: supplied directly, or from (lambda, d) via the
@@ -94,7 +61,7 @@ void SuperconductorSheetOperator::SetUpBoundaryProperties(
     bdr.attr_list.Reserve(static_cast<int>(data.attributes.size()));
     for (auto attr : data.attributes)
     {
-      if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
+      if (!mesh_attrs.Contains(attr))
       {
         continue;  // Can just ignore if wrong
       }

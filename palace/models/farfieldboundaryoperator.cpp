@@ -3,8 +3,9 @@
 
 #include "farfieldboundaryoperator.hpp"
 
-#include <set>
+#include <array>
 #include "linalg/densematrix.hpp"
+#include "models/boundaryattributes.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -40,31 +41,10 @@ mfem::Array<int> FarfieldBoundaryOperator::SetUpBoundaryProperties(
     const mfem::ParMesh &mesh)
 {
   // Check that impedance boundary attributes have been specified correctly.
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  mfem::Array<int> bdr_attr_marker;
+  MeshBoundaryAttributes mesh_attrs(mesh);
   if (!farfield.empty())
   {
-    bdr_attr_marker.SetSize(bdr_attr_max);
-    bdr_attr_marker = 0;
-    for (auto attr : mesh.bdr_attributes)
-    {
-      bdr_attr_marker[attr - 1] = 1;
-    }
-    std::set<int> bdr_warn_list;
-    for (auto attr : farfield.attributes)
-    {
-      if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
-      {
-        bdr_warn_list.insert(attr);
-      }
-    }
-    if (!bdr_warn_list.empty())
-    {
-      Mpi::Print("\n");
-      Mpi::Warning("Unknown absorbing boundary attributes!\nSolver will just ignore them!");
-      utils::PrettyPrint(bdr_warn_list, "Boundary attribute list:");
-      Mpi::Print("\n");
-    }
+    CheckBoundaryAttributes(mesh_attrs, std::array{farfield}, "absorbing", false);
   }
 
   // Set the order of the farfield boundary condition.
@@ -75,7 +55,7 @@ mfem::Array<int> FarfieldBoundaryOperator::SetUpBoundaryProperties(
   farfield_bcs.Reserve(static_cast<int>(farfield.attributes.size()));
   for (auto attr : farfield.attributes)
   {
-    if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
+    if (!mesh_attrs.Contains(attr))
     {
       continue;  // Can just ignore if wrong
     }
