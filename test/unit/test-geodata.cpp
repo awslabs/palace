@@ -560,8 +560,8 @@ TEST_CASE("Interior boundary mesh cracking", "[geodata][Serial]")
   CHECK(NumVertices(Impedance(nullptr), none) == nv);
   CHECK(NumVertices(Impedance(false), none) == nv);
   CHECK(NumVertices(Impedance(true), none) == nv_cut);
-  CHECK(NumVertices(Conductivity(nullptr), none) == nv_cut);
-  CHECK(NumVertices(Conductivity(false), none) == nv);
+  CHECK(NumVertices(Conductivity(nullptr), none) == nv);
+  CHECK(NumVertices(Conductivity(true), none) == nv_cut);
 
   // Perfect conductors are never cracked, one-sided boundary conditions always are.
   CHECK(NumVertices({{"PEC", {{"Attributes", {7}}}}}, none) == nv);
