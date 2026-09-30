@@ -1239,11 +1239,16 @@ smooth-angle level; `CornerBasisEvents` returns the empty list), ONE segment per
 (no `ConnectivityAngleDegrees` — a coupon carrying one is refused at library load; no
 per-side coupons, no legacy tie nodes: exact 90 = the single 90 node, the recorded 10.85 %
 per-side MA spread is 0 by construction), the stencil the cubic sliding window on the four
-nearest nodes (one-sided at the range ends: the family's nodes 75 / 90 / 105 / 120 / 135 /
-150 / 165 / 180, held-out 78 / 82.5 / 112.5 / 142.5 / 172.5 / 176). The library load checks
+nearest nodes (one-sided at the range ends: the family's nodes 75 / 80 / 90 / 105 / 120 /
+135 / 150 / 165 / 180 — the 80 node added after the review of decision 167 so the 78 and 82.5
+held-out angles are bracketed, held-out 78 / 82.5 / 112.5 / 142.5 / 172.5 / 176). The
+planner (`prepare_surface_response_coupons.py --corner-trace-basis`) builds the refined rule
+by default on SHARP corners only; a rounded corner (`CornerRadius` > 0) keeps the legacy rule
+(the refined rule is qualified on sharp corners only; a refined request there is refused). The library load checks
 every AllRingsFollowMetal coupon against the rule at its own angle (`CheckCornerRuleCouponFiles`:
-the outer ring levels, every basis point, the trace mesh's vertices / slave parents /
-triangle set; fail closed). The runtime constructs the basis of an interpolated corner by the
+the outer ring levels, every basis point, every knot's zero flag against `ZeroTraceIndices`,
+the trace mesh's vertices / slave parents /
+triangle set; fail closed; skipped for rounded corners, which carry no refined rule). The runtime constructs the basis of an interpolated corner by the
 rule at the device angle as before (all rings, the centre slaves; the SurfaceMortar lift
 through `MortarVertex::ForEachBasis`). Cost: 176 knots (72 before); the coupon's trace solves
 are one operator with many right-hand sides. Recorded Phase-1 measurements (worst |error| of
@@ -1267,7 +1272,9 @@ recorded coupons S0 (7 levels) -> S1 (+ t + d): fab MA -5..-16 %; -> S2 (+ t + 2
 MS +4.8..+7.4 (not monotone: the linear-in-z interpolation misses the smoothstep); -> S5
 (+ 0.4, -0.3): < 0.2 %; -> S6 (0.05-um spacing + t + R/3): domain +1.5..+2.3, MA +1..+2; -> S7
 (0.025-um spacing): < 0.4 % on every energy — the recorded spacing is S6's (within 0.4 % of
-S7). The option-(c) traces GATE the family's interpolation check
+S7). The reference is the same for every rule: a `--trace-basis legacy` rebuild reproduces the
+recorded coupon's basis, trace mesh and zero set byte-identically but is judged against the
+converged reference, not the recorded 7-level one. The option-(c) traces GATE the family's interpolation check
 (`qualification-gates.json` Version 5, `GatingTrace`; USER decision 161 (2)); the band-trace
 verdict is reported alongside.
 

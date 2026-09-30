@@ -1430,7 +1430,8 @@ std::vector<std::string> ModelInterfaceNames(const LibraryModel &model);
 // The load-time check of an AllRingsFollowMetal corner coupon's files against the rule at
 // ITS angle (corner-basis refinement 2026-09-30; fail closed in ReadProcessLibrary): the
 // outer ring levels {-R, -R/3, -OveretchDepth, 0, MetalThickness, MetalThickness + k
-// OveretchDepth (the rule's k), R/3, R}, every basis point at the rule's position and the
+// OveretchDepth (the rule's k), R/3, R}, every basis point at the rule's position, every
+// knot's zero flag equal to its ZeroTraceIndices membership and the
 // trace mesh (vertices, slave parents, triangle set) equal to the rule's. (A MetalRingsOnly
 // coupon with a segment connectivity is checked the same way at match time,
 // MatchCornerFamily.) Returns the reason, empty when the coupon is the rule's.
@@ -12783,6 +12784,32 @@ std::string CheckCornerRuleCouponFiles(const LibraryModel &model, double positio
   {
     connectivity_radians =
         *model.corner_connectivity_angle_degrees * std::acos(-1.0) / 180.0;
+  }
+  // Every knot's zero flag against ZeroTraceIndices: the rule's PEC knots are the zero
+  // slots of the rings that meet the metal and nothing else (a spuriously zeroed free knot,
+  // or a free metal-interior knot, is refused here rather than caught by the self-check
+  // alone).
+  {
+    const std::set<int> zero_set(model.response.zero_trace_indices.begin(),
+                                 model.response.zero_trace_indices.end());
+    const auto zero_slots = CornerZeroSlots(convex, rule);
+    for (const auto &ring : rings.rings)
+    {
+      for (int slot = 0; slot < ring.size; slot++)
+      {
+        const int k = ring.offset + slot;
+        const bool rule_zero = ring.metal && std::find(zero_slots.begin(), zero_slots.end(),
+                                                       slot) != zero_slots.end();
+        if (rule_zero != (zero_set.count(k) > 0))
+        {
+          return "basis point " + std::to_string(k + 1) +
+                 (rule_zero ? " is a PEC knot of the trace basis rule but is not in "
+                              "ZeroTraceIndices"
+                            : " is in ZeroTraceIndices but is a free knot of the trace "
+                              "basis rule");
+        }
+      }
+    }
   }
   const auto rule_basis = BuildCornerTraceBasis(
       points, model.response.contour_groups, model.response.zero_trace_indices, model.angle,

@@ -4,7 +4,8 @@
 // The corner family's REFINED trace basis (corner-basis refinement, USER decision 161 (1),
 // 2026-09-30; design doc SURFACE-RESPONSE-IDENTIFICATION.md, Conventions
 // CornerTraceBasisRule): the AllRingsFollowMetal layout — every ring of the box, the extra
-// ring at MetalThickness + OveretchDepth and the two cap rings included, carries the same
+// rings at MetalThickness + OveretchDepth and MetalThickness + 4 OveretchDepth and the two
+// cap rings included, carries the same
 // angle-dependent knot fractions (2 crossings + 5 metal-interior + 9 graded free knots, PEC
 // on the two metal rings only, box corners = slaves, cap centres = slaves at the mean of
 // the two crossing knots), so the basis has NO events: one interpolation segment per
@@ -673,7 +674,8 @@ TEST_CASE("CornerRefinedRuleLibraryLoad", "[cornerbasisrefinement][Serial][Paral
   // The load-time check of every coupon against the rule at its angle (ReadProcessLibrary,
   // fail closed): a family of the refined rule loads and its exact 90-degree corners match
   // the 90 node on a square island; a coupon whose basis points are the rule's at another
-  // angle, a coupon carrying a connectivity angle and a coupon without the extra ring are
+  // angle, a coupon carrying a connectivity angle, a coupon without the extra ring and a
+  // coupon with a free knot in ZeroTraceIndices are
   // refused before any corner is matched. The runtime constructs the basis of an
   // interpolated corner (the steep house's 112.5-degree corners, cubic on 90 / 105 / 120 /
   // 135) from the rule and evaluates it under the SurfaceMortar lift (the centre slaves
@@ -688,7 +690,8 @@ TEST_CASE("CornerRefinedRuleLibraryLoad", "[cornerbasisrefinement][Serial][Paral
   const fs::path corner_domain = temp.temp_dir / "corner-domain.csv";
   const fs::path corner_surface = temp.temp_dir / "corner-surface.csv";
   std::map<std::string, fs::path> libraries;
-  for (const std::string name : {"family", "wrong-angle", "connectivity", "no-extra-ring"})
+  for (const std::string name :
+       {"family", "wrong-angle", "connectivity", "no-extra-ring", "spurious-zero"})
   {
     libraries[name] = temp.temp_dir / ("library-" + name + ".json");
   }
@@ -785,6 +788,24 @@ TEST_CASE("CornerRefinedRuleLibraryLoad", "[cornerbasisrefinement][Serial][Paral
       auto stamped = family;
       stamped[1]["TraceBasis"]["ConnectivityAngleDegrees"] = 112.5;
       Write("connectivity", stamped);
+    }
+    {
+      // A free knot of the 120-degree coupon's z = 0 metal ring (ring 3 of the ascending
+      // levels) added to ZeroTraceIndices: the crossings gate still passes (the crossings
+      // are PEC knots and no FREE knot lies on the metal), the level set is the rule's, and
+      // the load-time check refuses the knot's zero flag.
+      const auto zero_slots = CornerZeroSlots(true, RefinedCornerTraceBasisRule());
+      int free_slot = 0;
+      while (std::find(zero_slots.begin(), zero_slots.end(), free_slot) != zero_slots.end())
+      {
+        free_slot++;
+      }
+      auto spurious = family;
+      auto indices = spurious[2]["ZeroTraceIndices"].get<std::vector<int>>();
+      indices.push_back(3 * 16 + free_slot + 1);
+      std::sort(indices.begin(), indices.end());
+      spurious[2]["ZeroTraceIndices"] = indices;
+      Write("spurious-zero", spurious);
     }
     {
       // A coupon of the refined rule's fractions without the ring at t + 4 oe (the seed of
@@ -910,6 +931,9 @@ TEST_CASE("CornerRefinedRuleLibraryLoad", "[cornerbasisrefinement][Serial][Paral
   CHECK_THROWS_WITH(Preflight("no-extra-ring", *square_mesh),
                     ContainsSubstring("is not its trace basis rule's coupon") &&
                         ContainsSubstring("outer ring levels"));
+  CHECK_THROWS_WITH(Preflight("spurious-zero", *square_mesh),
+                    ContainsSubstring("is not its trace basis rule's coupon") &&
+                        ContainsSubstring("is in ZeroTraceIndices but is a free knot"));
   {
     const json manifest = Preflight("family", *square_mesh);
     int corners = 0;

@@ -39,8 +39,9 @@ namespace palace
 // every other ring is the fixed layout; the family has EVENTS (a knot passing a fixed
 // vertex flips the band triangulation) and interpolates within segments of one
 // connectivity. AllRingsFollowMetal (corner-basis refinement, USER decision 161 (1),
-// 2026-09-30): EVERY ring — the outer rings (the standard levels plus the extra ring at
-// MetalThickness + OveretchDepth mirroring the trench ring) and the two inner cap rings —
+// 2026-09-30): EVERY ring — the outer rings (the standard levels plus the extra rings at
+// MetalThickness + k OveretchDepth for the rule's extra_levels_above_over_overetch: k = 1
+// mirroring the trench ring, k = 4 right above the metal top) and the two inner cap rings —
 // carries the same angle-dependent fractions, so every band is a regular column grid with
 // one diagonal orientation; the knots are PEC on the two metal rings only; the box corners
 // are slaves on every ring; each cap is a fan from a centre slave at the mean of the cap

@@ -69,8 +69,9 @@ with the matching surface. Pass
 from the defaults. Each prescribed
 potential is stored as a triangulated `x,y,z,V,triangle` surface trace.
 
-`--trace-basis all-rings-follow-metal` (the planner's default since the corner-basis
-refinement of 2026-09-30, USER decision 161; `--ring-size 16`) builds the REFINED
+`--trace-basis all-rings-follow-metal` (the planner's default on SHARP corners since the
+corner-basis refinement of 2026-09-30, USER decision 161 — a rounded corner keeps
+`legacy`, the refined rule being qualified on sharp corners only; `--ring-size 16`) builds the REFINED
 trace basis rule `TraceBasisRule` / `REFINED_RULE` (`RingLayout`
 `AllRingsFollowMetal`): every ring of the box — the outer rings at the standard
 levels plus `MetalThickness + OveretchDepth` and `MetalThickness + 4 OveretchDepth`,
@@ -80,7 +81,10 @@ each crossing), PEC on the two metal rings only, box corners as slaves, cap cent
 as slaves at the mean of the two crossing knots; 176 knots, no events (one
 interpolation segment, no `--connectivity-angle`). `--trace-basis legacy` (the
 default of the script) is the recorded `MetalRingsOnly` rule (8 knots per ring,
-events, segment connectivity), byte-identical to the recorded coupons.
+events, segment connectivity), byte-identical to the recorded coupons in its basis,
+trace mesh, zero set and record; its held-out REFERENCE, however, is now the decoupled
+31-level surface below, so a legacy rebuild is judged against the converged reference
+(the recorded 7-level self-checks were not).
 
 `finalize_corner_response.py` checks the domain and surface matrices, aggregates
 the per-edge response localized to the union of the physical-edge radius-`R`

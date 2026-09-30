@@ -29,7 +29,11 @@ CORNER_CONVERGENCE = CORNER_ROOT / "run_probe_convergence.py"
 # Knots per ring of the corner trace basis rules (generate_corner_response.RULES: 2 crossings
 # + MetalInteriorKnots + FreeKnots; legacy = the recorded MetalRingsOnly rule).
 CORNER_TRACE_BASIS_RING_SIZES = {"legacy": 8, "all-rings-follow-metal": 16}
+# The default rule of a SHARP corner coupon (corner-basis refinement 2026-09-30, USER decision
+# 161 (1)); a rounded corner (CornerRadius > 0) keeps the legacy rule: the refined rule is
+# qualified on sharp corners only and the runtime's load-time rule check skips rounded ones.
 CORNER_TRACE_BASIS_DEFAULT = "all-rings-follow-metal"
+CORNER_TRACE_BASIS_ROUNDED = "legacy"
 LIBRARY_COMBINER = CORNER_ROOT / "combine_process_libraries.py"
 SPATIAL_ROOT = ROOT.parent / "cpw3d_surface" / "spatial_coupon"
 SPATIAL_FIELD_MESH = SPATIAL_ROOT / "mesh_spatial_coupon.jl"
@@ -1604,6 +1608,31 @@ def generate_corner_meshes(
     return mesh_root, meshes
 
 
+def corner_trace_basis(coupon_id, corner_radius, args):
+    """The trace basis rule of a corner coupon: --corner-trace-basis when given (a refined
+    rule on a rounded corner is refused), else the refined default on a sharp corner and the
+    legacy rule on a rounded one (stated on stdout)."""
+    requested = getattr(args, "corner_trace_basis", None)
+    if requested is None:
+        if corner_radius > 0.0:
+            print(
+                f"{coupon_id}: rounded corner (CornerRadius {corner_radius:g}) keeps the "
+                f"{CORNER_TRACE_BASIS_ROUNDED} trace basis rule (the "
+                f"{CORNER_TRACE_BASIS_DEFAULT} rule is qualified on sharp corners only)"
+            )
+            return CORNER_TRACE_BASIS_ROUNDED
+        return CORNER_TRACE_BASIS_DEFAULT
+    if requested not in CORNER_TRACE_BASIS_RING_SIZES:
+        raise ValueError(f"{coupon_id}: unknown corner trace basis rule {requested!r}")
+    if requested != CORNER_TRACE_BASIS_ROUNDED and corner_radius > 0.0:
+        raise ValueError(
+            f"{coupon_id}: the {requested} trace basis rule is qualified on sharp corners "
+            f"only; a rounded corner (CornerRadius {corner_radius:g}) keeps the "
+            f"{CORNER_TRACE_BASIS_ROUNDED} rule"
+        )
+    return requested
+
+
 def build_corner(coupon, args, parameters, cache):
     require_verified_boundary_conditions(coupon)
     resolution = process_resolution(
@@ -1629,10 +1658,12 @@ def build_corner(coupon, args, parameters, cache):
                 f"{coupon['Id']} ConnectivityAngleDegrees must lie in (0, 180) on a sharp corner"
             )
     # The trace basis rule (corner-basis refinement 2026-09-30, USER decision 161 (1)): the
-    # refined AllRingsFollowMetal layout by default (no events: no connectivity angle), the
-    # recorded MetalRingsOnly layout as "legacy"; part of the coupon spec and Id. The ring
-    # size is the rule's (2 + MetalInteriorKnots + FreeKnots).
-    trace_basis = getattr(args, "corner_trace_basis", CORNER_TRACE_BASIS_DEFAULT)
+    # refined AllRingsFollowMetal layout by default on a SHARP corner (no events: no
+    # connectivity angle), the recorded MetalRingsOnly layout as "legacy" and on every
+    # rounded corner (the refined rule is qualified on sharp corners only; an explicit
+    # refined request on a rounded corner fails closed); part of the coupon spec and Id. The
+    # ring size is the rule's (2 + MetalInteriorKnots + FreeKnots).
+    trace_basis = corner_trace_basis(coupon["Id"], corner_radius, args)
     corner_ring_size = CORNER_TRACE_BASIS_RING_SIZES[trace_basis]
     if trace_basis != "legacy" and connectivity_angle is not None:
         raise ValueError(
@@ -2676,9 +2707,12 @@ def parse_args():
     parser.add_argument(
         "--corner-trace-basis",
         choices=sorted(CORNER_TRACE_BASIS_RING_SIZES),
-        default=CORNER_TRACE_BASIS_DEFAULT,
+        default=None,
         help="trace basis rule of the corner coupons (generate_corner_response.py "
-        "--trace-basis; the ring size is the rule's, --ring-size does not apply to corners)",
+        "--trace-basis; the ring size is the rule's, --ring-size does not apply to corners); "
+        f"default: {CORNER_TRACE_BASIS_DEFAULT} on sharp corners, {CORNER_TRACE_BASIS_ROUNDED} "
+        "on rounded corners (CornerRadius > 0: the refined rule is qualified on sharp corners "
+        "only and cannot be requested for a rounded corner)",
     )
     parser.add_argument("--spatial-ring-size", type=int, default=16)
     parser.add_argument("--coupon-depth", type=float, default=1055.0)

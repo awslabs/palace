@@ -141,8 +141,9 @@ class TraceBasisRule:
     k / RingSize; the family has events (a knot passing a fixed vertex flips the band
     triangulation) and needs segment connectivity. "AllRingsFollowMetal" (corner-basis
     refinement, USER decision 161 (1), 2026-09-30): EVERY ring of the box — the outer rings
-    (the standard levels plus the extra ring at MetalThickness + OveretchDepth mirroring the
-    trench ring at -OveretchDepth) and the two inner cap rings — carries the same fractions,
+    (the standard levels plus the extra rings at MetalThickness + k OveretchDepth for k in
+    extra_levels_above_over_overetch: k = 1 mirroring the trench ring at -OveretchDepth and
+    k = 4 right above the metal top) and the two inner cap rings — carries the same fractions,
     so every band is a regular column grid (identical fractions on both rings: one diagonal
     orientation), the knots are PEC on the two metal rings only, the box corners are slave
     vertices on every ring and each cap is a fan from a centre slave at the mean of the cap
@@ -1429,7 +1430,8 @@ def main():
         help="the trace basis rule: legacy = MetalRingsOnly (RingSize 8, the recorded "
         "family; events, segment connectivity); all-rings-follow-metal = the refined rule "
         "(every ring follows the metal fractions, 5 metal-interior + 9 graded free knots, the "
-        "extra ring at MetalThickness + OveretchDepth; no events)",
+        "extra rings at MetalThickness + OveretchDepth and MetalThickness + 4 OveretchDepth; "
+        "no events)",
     )
     parser.add_argument("--ring-size", type=int, default=8)
     parser.add_argument("--order", type=int, default=1)
