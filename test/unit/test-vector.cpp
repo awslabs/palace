@@ -152,6 +152,33 @@ TEST_CASE("StaticVectorElementAccess", "[Vector][Serial]")
   CHECK_THAT(vec[2], WithinRel(3.0));
 }
 
+TEST_CASE("StaticVectorCopy", "[Vector][Serial]")
+{
+  auto InOwnBuffer = [](const auto &v)
+  {
+    const auto *begin = reinterpret_cast<const char *>(&v);
+    const auto *data = reinterpret_cast<const char *>(v.GetData());
+    return data >= begin && data < begin + sizeof(v);
+  };
+
+  StaticVector<3> vec;
+  vec[0] = 1.0;
+  vec[1] = 2.0;
+  vec[2] = 3.0;
+
+  StaticVector<3> copy(vec);
+  CHECK(InOwnBuffer(copy));
+  CHECK_THAT(copy[2], WithinRel(3.0));
+
+  StaticVector<3> assigned;
+  assigned = vec;
+  CHECK(InOwnBuffer(assigned));
+  CHECK_THAT(assigned[1], WithinRel(2.0));
+
+  copy[0] = -1.0;
+  CHECK_THAT(vec[0], WithinRel(1.0));
+}
+
 TEST_CASE("StaticVectorInterface", "[Vector][Serial]")
 {
   // Test Inheritance from mfem::Vector

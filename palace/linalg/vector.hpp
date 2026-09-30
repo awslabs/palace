@@ -183,6 +183,14 @@ private:
 public:
   StaticVector() : Vector() { SetDataAndSize(buff, N); }
 
+  // The implicit copy constructor would heap-allocate instead of using buff.
+  StaticVector(const StaticVector &other) : StaticVector() { Vector::operator=(other); }
+  StaticVector &operator=(const StaticVector &other)
+  {
+    Vector::operator=(other);
+    return *this;
+  }
+
   ~StaticVector()
   {
     MFEM_ASSERT(GetData() == buff,
