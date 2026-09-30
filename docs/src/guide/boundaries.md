@@ -144,10 +144,11 @@ charge:
         both faces give the same result as the uncut sheet; for conductivity boundaries,
         each face uses the surface impedance of the conductor.
 
-    The default is `false` for impedance boundaries, which usually model thin films
-    (sheet impedances), and `true` for conductivity boundaries, which model conductors
-    thicker than the skin depth. The two models differ when the currents on the two faces
-    of the sheet differ.
+    The default is `false`. The two models give the same result when the currents on the
+    two faces of the sheet are equal, and differ when they are not: for a conductor much
+    thicker than its penetration depth with fields on one side only, for example, the
+    uncracked sheet spreads the current over the conductance of both faces, which halves
+    the conductor loss. Use `"Crack": true` for such conductors.
 
 The fields on the two sides of an uncracked sheet are generally discontinuous: the normal
 component of the electric flux density jumps by the surface charge and the tangential

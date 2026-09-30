@@ -40,12 +40,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     and nonconformal meshes (including adapted meshes saved by a previous simulation). See
     the new section on interior boundaries in the boundary condition guide.
     [Issue 975](https://github.com/awslabs/palace/issues/975).
-  - Added the `"Crack"` option to `"Impedance"`, `"RationalImpedance"`, and
-    `"Conductivity"` boundaries, which selects the physical model of an interior sheet: a
-    thin film coupling the fields on its two sides (`false`, the mesh is not modified) or a
-    conductor much thicker than its penetration depth with two independent faces (`true`,
-    the mesh is cracked along the boundary). The default is `false` for impedance and
-    `true` for conductivity boundaries.
+  - Added the `"Crack"` option to `"Impedance"`, `"RationalImpedance"`, and `"Conductivity"`
+    boundaries, which selects the physical model of an interior sheet: a thin film coupling
+    the fields on its two sides (`false`, the mesh is not modified) or a conductor much
+    thicker than its penetration depth with two independent faces (`true`, the mesh is
+    cracked along the boundary). The default is `false`.
     [Issue 975](https://github.com/awslabs/palace/issues/975).
 
 #### Interface Changes
@@ -58,16 +57,19 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - By default, the mesh is now only cracked along interior boundaries with boundary
     conditions which apply to either side separately (PMC or zero charge, and absorbing
     boundaries), and along conductivity and impedance boundaries with `"Crack": true`.
-    Interior PEC, ground, wave port PEC, impedance, rational impedance, and surface current
-    boundaries are no longer cracked. For PEC boundaries this does not change the model, but
-    it removes the extra refinement of the elements next to them required for cracking,
-    which changes results slightly. Interior impedance boundaries are now modeled as thin
-    films, and interior surface current sources as single current sheets: cracking them
-    decoupled the fields on the two faces of the source, which overestimated the extracted
-    inductance (by about 30% for the microstrip regression case). Specifying
-    `config["Model"]["CrackInternalBoundaryElements"]` is deprecated: `true` restores the
-    previous behavior of cracking all interior boundaries with boundary conditions except
-    for lumped ports, and `false` disables cracking entirely. SchemaVer 3-0-0.
+    Interior PEC, ground, wave port PEC, impedance, rational impedance, conductivity, and
+    surface current boundaries are no longer cracked. For PEC boundaries this does not
+    change the model, but it removes the extra refinement of the elements next to them
+    required for cracking, which changes results slightly. Interior impedance and
+    conductivity boundaries are now modeled as thin films (for conductivity boundaries with
+    the admittance of both faces, which gives half the conductor loss of the cracked model
+    when the current flows on one face only), and interior surface current sources as single
+    current sheets: cracking them decoupled the fields on the two faces of the source, which
+    overestimated the extracted inductance (by about 30% for the microstrip regression
+    case). Specifying `config["Model"]["CrackInternalBoundaryElements"]` is deprecated:
+    `true` restores the previous behavior of cracking all interior boundaries with boundary
+    conditions except for lumped ports, and `false` disables cracking entirely.
+    SchemaVer 3-0-0.
     [Issue 975](https://github.com/awslabs/palace/issues/975).
   - Interface dielectric energies of types `"Default"`, `"MA"`, and `"MS"` on uncracked
     interior sheets (for example metal sheets surrounded by vacuum on both sides, such as

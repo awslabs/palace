@@ -191,7 +191,7 @@ TEST_CASE("Config Interior Boundary Sheets", "[config][Serial]")
         {{"Attributes", {5}}, {"Ls", 1.0e-12}, {"Crack", true}}}},
       {"Conductivity",
        {{{"Attributes", {6}}, {"Conductivity", 1.0e7}},
-        {{"Attributes", {7}}, {"Conductivity", 1.0e7}, {"Crack", false}}}},
+        {{"Attributes", {7}}, {"Conductivity", 1.0e7}, {"Crack", true}}}},
       {"RationalImpedance",
        {{{"Attributes", {8}}, {"Numerator", {1.0}}, {"Denominator", {1.0}}}}},
       {"LumpedPort",
@@ -201,8 +201,8 @@ TEST_CASE("Config Interior Boundary Sheets", "[config][Serial]")
   config::BoundaryData data(boundaries);
   CHECK_FALSE(data.impedance[0].crack);
   CHECK(data.impedance[1].crack);
-  CHECK(data.conductivity[0].crack);
-  CHECK_FALSE(data.conductivity[1].crack);
+  CHECK_FALSE(data.conductivity[0].crack);
+  CHECK(data.conductivity[1].crack);
   CHECK_FALSE(data.rational_impedance[0].crack);
   CHECK(data.GetSheetAttributes() == std::vector<int>{1, 4, 5, 6, 7, 8, 9, 10});
   // All impedance sheets are sheets, including purely capacitive ones.
@@ -210,7 +210,7 @@ TEST_CASE("Config Interior Boundary Sheets", "[config][Serial]")
   boundaries["Impedance"][0]["Cs"] = 1.0e-15;
   config::BoundaryData data_cs(boundaries);
   CHECK(data_cs.GetSheetAttributes() == std::vector<int>{1, 4, 5, 6, 7, 8, 9, 10});
-  CHECK(data.GetMeshCrackAttributes(std::nullopt) == std::vector<int>{2, 3, 5, 6});
+  CHECK(data.GetMeshCrackAttributes(std::nullopt) == std::vector<int>{2, 3, 5, 7});
   CHECK(data.GetMeshCrackAttributes(false).empty());
   CHECK(data.GetMeshCrackAttributes(true) ==
         std::vector<int>{1, 2, 3, 4, 5, 6, 7, 8, 10, 11});
