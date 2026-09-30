@@ -31,6 +31,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Introduced the `"AbsTol"` option for linear solvers, defaulting to 0.0, to allow using
     an absolute tolerance when defining convergence. SchemaVer 2-1-0
     [PR 734](https://github.com/awslabs/palace/pull/734).
+  - Added `Boundaries.Superconductor[].TwoSided`, which models a London film as two coupled
+    coincident faces (the exact two-port response of a slab of thickness `d`), capturing
+    screening on both faces when `d` is comparable to `lambda`. An isolated film reduces to
+    `L_ksq = (mu0 * lambda / 2) * coth(d/(2 * lambda))`. SchemaVer 2-2-0.
+    [PR 992](https://github.com/awslabs/palace/pull/992).
 
 #### Interface Changes
 
