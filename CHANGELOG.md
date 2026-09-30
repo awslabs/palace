@@ -37,7 +37,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     MUMPS (`"FactorizationTol"`) and hierarchical compression of the interface operator
     (`"InterfaceOffdiagTol"`). Magnetostatic substructuring supports `"FluxLoop"`
     excitations, with the films and `"Superconductor"` boundaries as London sheets (kinetic
-    inductance included). Adds the `examples/transmon` substructuring example. SchemaVer 2-1-0.
+    inductance included). Adds substructuring examples in `examples/transmon` and
+    `examples/substructuring` (a 5 x 5 qubit lattice). SchemaVer 2-1-0.
     [PR XXX](https://github.com/awslabs/palace/pull/XXX).
 
 #### Interface Changes

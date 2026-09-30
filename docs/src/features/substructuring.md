@@ -185,3 +185,40 @@ vacuum) with planar features (metal and other boundaries) on that plane, and nee
 and `numpy` Python packages. The online run on the redesigned mesh matches a full simulation
 on the same mesh. It differs from a simulation on the layout tool's own mesh of the new design
 only by the change of mesh, as any two meshes of the same geometry do.
+
+## [Example: qubit lattice](@id substructuring-lattice-example)
+
+The script
+[`examples/substructuring/qubit_lattice.jl`](https://github.com/awslabs/palace/blob/main/examples/substructuring/qubit_lattice.jl)
+generates the mesh of a ``5 \times 5`` lattice of simplified qubits with DeviceLayout.jl: each
+qubit is a pair of rectangular pads in a cutout of the ground plane. The script
+[`examples/substructuring/qubit_lattice_substructuring.py`](https://github.com/awslabs/palace/blob/main/examples/substructuring/qubit_lattice_substructuring.py)
+splits the metal into the ground plane (a `"PEC"` boundary) and the 50 pads (the terminals),
+and assigns the elements in a box around the middle qubit, about 4% of the mesh, to the region:
+
+```bash
+cd examples/substructuring
+julia --project -e 'include("qubit_lattice.jl"); generate_qubit_lattice()'
+python3 qubit_lattice_substructuring.py
+palace qubit_lattice_offline.json   # condense the environment, save the model
+palace qubit_lattice_online.json    # reuse the model: only the region is solved
+```
+
+Both runs write the ``50 \times 50`` Maxwell capacitance matrix to `terminal-C.csv`. With many
+terminals and a small region, the online run is much faster than a regular simulation of the
+device: each terminal costs a solve in the region instead of one in the whole device. The middle
+qubit can be redesigned as in the transmon example, for example with a wider pad gap:
+
+```bash
+julia --project -e 'include("qubit_lattice.jl"); using DeviceLayout: μm;
+    generate_qubit_lattice(center_pad_gap=60μm, mesh_filename="qubit_lattice_redesign.msh2")'
+python3 qubit_lattice_substructuring.py --input mesh/qubit_lattice_redesign.msh2 \
+    --output mesh/qubit_lattice_redesign_labeled.msh2
+python3 remesh_region.py --model mesh/qubit_lattice_substructuring.msh2 \
+    --design mesh/qubit_lattice_redesign_labeled.msh2 \
+    --output mesh/qubit_lattice_substructuring_redesign.msh2
+palace qubit_lattice_redesign.json  # reuses the saved model
+```
+
+The region box stops above the bottom of the substrate, so that the region contains a single
+substrate-vacuum interface, the layout plane, as the re-meshing script requires.

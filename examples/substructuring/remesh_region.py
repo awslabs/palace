@@ -35,8 +35,11 @@ import math
 import struct
 import sys
 
-import gmsh
-import numpy as np
+try:  # only needed for re-meshing (the mesh I/O below is also used by the example scripts)
+    import gmsh
+    import numpy as np
+except ImportError:
+    gmsh = np = None
 
 # Nodes per Gmsh element type (the types that can appear in these meshes).
 NODES_PER_ELEMENT = {1: 2, 2: 3, 4: 4, 8: 3, 9: 6, 11: 10, 15: 1}
@@ -424,6 +427,8 @@ def main():
     )
     parser.add_argument("--plane-z", type=float, default=0.0, help="layout plane z")
     args = parser.parse_args()
+    if gmsh is None:
+        sys.exit("remesh_region.py requires the gmsh and numpy Python packages")
     below, above = args.region_attributes
     region = (below, above)
 
