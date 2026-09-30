@@ -62,9 +62,10 @@ def matrices(angle, scale=1.0, ring_perturbation=0.0):
 
 
 def write_coupon(root, topology, angle, connectivity, scale=1.0, trace=None, basis_points=None,
-                 ring_perturbation=0.0):
+                 ring_perturbation=0.0, trace_basis=None):
     """trace = the recorded heldout-coefficients.csv (default a fixed vector); basis_points =
-    basis-points.csv and the spec entries the generator's held-out traces need."""
+    basis-points.csv and the spec entries the generator's held-out traces need; trace_basis =
+    the model's TraceBasis record (default an empty record, a connectivity angle when given)."""
     d = root / f"{topology}-{angle:g}-{connectivity}"
     for kind in ("thin", "fabricated"):
         (d / "postpro" / kind).mkdir(parents=True)
@@ -85,7 +86,7 @@ def write_coupon(root, topology, angle, connectivity, scale=1.0, trace=None, bas
         spec["MatchingRadius"] = RADIUS
         spec["Fabrication"] = {"metal_thickness": THICKNESS}
         np.savetxt(d / "basis-points.csv", basis_points, delimiter=",", header="x,y,z", comments="", fmt="%.16e")
-    model = {"Name": f"{topology}-{angle:g}", "TraceBasis": {}}
+    model = {"Name": f"{topology}-{angle:g}", "TraceBasis": dict(trace_basis or {})}
     if connectivity is not None:
         spec["ConnectivityAngleDegrees"] = connectivity
         model["TraceBasis"]["ConnectivityAngleDegrees"] = connectivity
@@ -141,6 +142,43 @@ class CornerFamilyHeldoutCheckTest(unittest.TestCase):
         self.assertEqual(GATES["MaximumParticipationReferencedResidual"], 0.005)
         self.assertIn("participation-referenced", GATES["Statement"])
         self.assertIn("DefectReferenced", GATES["ReportedAlongside"])
+        # USER decision 161 (2): the option-(c) traces gate the family.
+        self.assertEqual(GATES["GatingTrace"], "option-c")
+
+    def test_all_rings_family_is_one_segment_with_plain_node_specs(self):
+        # An AllRingsFollowMetal family (no connectivity records, no events): the nodes are
+        # the --nodes ANGLE list, the stencil the cubic sliding window; without --nodes the
+        # nodes cannot be told from the held-out coupons (an error, not a silent verdict); a
+        # run on the band trace is not the gating one (Gating false), the option-c run is.
+        record_all = CHECK.generator.trace_basis_rule(16, None, CHECK.generator.REFINED_RULE)
+        root = Path(tempfile.mkdtemp(dir=self.root))
+        dirs = [write_coupon(root, "convex", a, None, trace_basis=record_all) for a in (75.0, 90.0, 105.0, 120.0, 135.0)]
+        dirs.append(write_coupon(root, "convex", 82.5, None, trace_basis=record_all))
+        code, record, _ = self.run_check(dirs, nodes=["75", "90", "105", "120", "135"])
+        self.assertEqual(code, 0, record)
+        entry = record["Families"]["convex"]["HeldOut"][0]
+        self.assertEqual((entry["AngleDegrees"], entry["Rule"], entry["Stencil"]), (82.5, "cubic", [75.0, 90.0, 105.0, 120.0]))
+        self.assertIsNone(entry["ConnectivityAngleDegrees"])
+        self.assertEqual(record["GatingTrace"], "option-c")
+        self.assertFalse(record["Gating"])  # the recorded (band) trace of these synthetic caches
+        code, record, output = self.run_check(dirs)
+        self.assertEqual(code, 1)
+        self.assertIsNone(record)
+        self.assertIn("pass --nodes ANGLE", output)
+
+    def test_option_c_run_is_the_gating_one(self):
+        heldout_trace = CHECK.generator.heldout_potential(BASIS_POINTS, RADIUS, THICKNESS, 112.0, "convex")
+        code, record, _ = self.run_check(self.family_with_basis_points(heldout_trace), trace="option-c")
+        self.assertEqual(code, 0, record)
+        self.assertEqual(record["TraceForms"], ["option-c"])
+        self.assertTrue(record["Gating"])
+        code, record, _ = self.run_check(self.family_with_basis_points(heldout_trace), trace="recorded")
+        self.assertEqual(code, 0, record)
+        self.assertTrue(record["Gating"])  # the recorded coefficients ARE the option-(c) ones here
+        band = CHECK.generator.metal_band_cutoff(BASIS_POINTS, RADIUS, THICKNESS) * CHECK.generator.heldout_polynomial(BASIS_POINTS, RADIUS)
+        code, record, _ = self.run_check(self.family_with_basis_points(band), trace="recorded")
+        self.assertEqual(record["TraceForms"], ["band"])
+        self.assertFalse(record["Gating"])
 
     def test_cubic_segment_reproduces_a_cubic_held_out_coupon(self):
         code, record, _ = self.run_check(self.segment())

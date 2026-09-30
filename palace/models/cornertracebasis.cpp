@@ -170,7 +170,86 @@ bool OnMetalFootprint(const std::array<double, 3> &point, double angle_radians, 
   return !in_wedge || on_arm;
 }
 
+// The generator's free_knot_fractions: the graded knots at free_knot_grading x R from both
+// ends of the free arc (start, end), the remaining at equal fractions between the innermost
+// graded ones (equal fractions of the whole arc without a grading).
+std::vector<double> FreeKnotFractions(const std::pair<double, double> &free,
+                                      const CornerTraceBasisRule &rule)
+{
+  std::vector<double> fractions;
+  const auto [start, end] = free;
+  if (rule.free_knot_grading.empty())
+  {
+    for (int k = 1; k <= rule.free_knots; k++)
+    {
+      fractions.push_back(start + (end - start) * k / (rule.free_knots + 1));
+    }
+    return fractions;
+  }
+  // A perimeter distance of g R is the fraction g / 8 (the perimeter is 8 R).
+  const double outermost = rule.free_knot_grading.back() / 8.0;
+  const double inner_start = start + outermost, inner_end = end - outermost;
+  MFEM_VERIFY(inner_end - inner_start > kKnotCoincidenceFraction,
+              "The corner trace basis free arc is too short for the free knot grading!");
+  for (const double g : rule.free_knot_grading)
+  {
+    fractions.push_back(start + g / 8.0);
+    fractions.push_back(end - g / 8.0);
+  }
+  const int remaining = rule.free_knots - 2 * static_cast<int>(rule.free_knot_grading.size());
+  for (int k = 1; k <= remaining; k++)
+  {
+    fractions.push_back(inner_start + (inner_end - inner_start) * k / (remaining + 1));
+  }
+  std::sort(fractions.begin(), fractions.end());
+  return fractions;
+}
+
 }  // namespace
+
+CornerTraceBasisRule RefinedCornerTraceBasisRule()
+{
+  CornerTraceBasisRule rule;
+  rule.ring_layout = CornerRingLayout::ALL_RINGS_FOLLOW_METAL;
+  rule.metal_interior_knots = 5;
+  rule.free_knots = 9;
+  rule.ring_size = 16;
+  rule.free_knot_grading = {1.0 / 3.0, 2.0 / 3.0};
+  return rule;
+}
+
+std::string CheckCornerTraceBasisRule(const CornerTraceBasisRule &rule)
+{
+  if (rule.ring_size < 3 || rule.metal_interior_knots < 0 || rule.free_knots < 1 ||
+      rule.ring_size != 2 + rule.metal_interior_knots + rule.free_knots)
+  {
+    return "RingSize must equal 2 + MetalInteriorKnots + FreeKnots";
+  }
+  if (rule.fractions != "PerimeterArcLength")
+  {
+    return "Fractions must be PerimeterArcLength";
+  }
+  if (!rule.free_knot_grading.empty())
+  {
+    if (!rule.AllRings())
+    {
+      return "FreeKnotGrading is an AllRingsFollowMetal layout option";
+    }
+    if (2 * static_cast<int>(rule.free_knot_grading.size()) > rule.free_knots)
+    {
+      return "FreeKnotGrading places more knots than FreeKnots";
+    }
+    for (std::size_t g = 0; g < rule.free_knot_grading.size(); g++)
+    {
+      if (!(rule.free_knot_grading[g] > 0.0) ||
+          (g > 0 && !(rule.free_knot_grading[g] > rule.free_knot_grading[g - 1])))
+      {
+        return "FreeKnotGrading must be increasing positive distances over R";
+      }
+    }
+  }
+  return "";
+}
 
 std::array<double, 3> SquarePerimeterPoint(double half_width, double z, double fraction)
 {
@@ -257,12 +336,17 @@ std::vector<CornerRingVertex> CornerMetalRingLayout(double radius, double angle_
                                                     bool convex,
                                                     const CornerTraceBasisRule &rule)
 {
-  MFEM_VERIFY(rule.ring_size == 2 + rule.metal_interior_knots + rule.free_knots,
-              "The corner trace basis rule needs RingSize = 2 crossings + "
-              "MetalInteriorKnots + FreeKnots!");
-  MFEM_VERIFY(rule.fractions == "PerimeterArcLength",
-              "Unsupported corner trace basis fraction parametrisation \"" << rule.fractions
-                                                                           << "\"!");
+  return CornerRuleRingLayout(radius, angle_radians, convex, rule, true);
+}
+
+std::vector<CornerRingVertex> CornerRuleRingLayout(double radius, double angle_radians,
+                                                   bool convex,
+                                                   const CornerTraceBasisRule &rule, bool pec)
+{
+  {
+    const std::string reason = CheckCornerTraceBasisRule(rule);
+    MFEM_VERIFY(reason.empty(), "Invalid corner trace basis rule: " << reason << "!");
+  }
   const auto [first, second] = ArmCrossingFractions(radius, angle_radians);
   std::pair<double, double> metal, free;
   if (convex)
@@ -284,11 +368,13 @@ std::vector<CornerRingVertex> CornerMetalRingLayout(double radius, double angle_
                                                     (rule.metal_interior_knots + 1)),
                      rule.ring_size);
   }
-  for (int k = 1; k <= rule.free_knots; k++)
   {
-    roles["free" + std::to_string(k)] = SnapFraction(
-        WrapFraction(free.first + (free.second - free.first) * k / (rule.free_knots + 1)),
-        rule.ring_size);
+    const auto fractions = FreeKnotFractions(free, rule);
+    for (int k = 1; k <= rule.free_knots; k++)
+    {
+      roles["free" + std::to_string(k)] =
+          SnapFraction(WrapFraction(fractions[k - 1]), rule.ring_size);
+    }
   }
   std::vector<CornerRingVertex> knots;
   const auto order = RingRoleOrder(convex, rule);
@@ -296,8 +382,8 @@ std::vector<CornerRingVertex> CornerMetalRingLayout(double radius, double angle_
   {
     const auto &role = order[slot];
     knots.push_back({roles.at(role),
-                     role.rfind("free", 0) == 0 ? CornerRingVertex::Kind::FREE
-                                                : CornerRingVertex::Kind::ZERO,
+                     (role.rfind("free", 0) == 0 || !pec) ? CornerRingVertex::Kind::FREE
+                                                          : CornerRingVertex::Kind::ZERO,
                      slot});
   }
   std::sort(knots.begin(), knots.end(),
@@ -409,6 +495,12 @@ CornerBoxSeed MakeCornerBoxSeed(double radius, double metal_thickness,
               "Invalid corner box seed dimensions!");
   std::set<double> level_set = {-radius,         -radius / 3.0, -overetch_depth, 0.0,
                                 metal_thickness, radius / 3.0,  radius};
+  if (rule.AllRings())
+  {
+    // The mirror of the trench ring above the metal top (the generator's
+    // TraceBasisRule.levels).
+    level_set.insert(metal_thickness + overetch_depth);
+  }
   std::vector<double> levels(level_set.begin(), level_set.end());
   CornerBoxSeed seed;
   const auto zero_slots = CornerZeroSlots(convex, rule);
@@ -447,6 +539,10 @@ BuildCornerTraceBasis(const std::vector<std::array<double, 3>> &node_points,
       DescribeCornerBoxRings(node_points, contour_groups, zero_trace_indices);
   const double radius = box.radius;
   const double tolerance = 1.0e-9 * radius;
+  const bool all_rings = rule.AllRings();
+  MFEM_VERIFY(!(all_rings && connectivity_angle_radians),
+              "The AllRingsFollowMetal corner trace basis has no events and takes no "
+              "connectivity angle!");
   ConstructedCornerTraceBasis basis;
   basis.knots.assign(node_points.size(), {});
   basis.zero.assign(node_points.size(), false);
@@ -464,7 +560,7 @@ BuildCornerTraceBasis(const std::vector<std::array<double, 3>> &node_points,
                                                  << ring.size
                                                  << " knots; the trace basis rule needs "
                                                  << rule.ring_size << "!");
-    if (!ring.metal)
+    if (!ring.metal && !all_rings)
     {
       // The fixed layout: the node's own points, at the fractions k / RingSize.
       for (int k = 0; k < ring.size; k++)
@@ -481,9 +577,11 @@ BuildCornerTraceBasis(const std::vector<std::array<double, 3>> &node_points,
       }
       continue;
     }
-    MFEM_VERIFY(std::abs(ring.half_width - radius) <= tolerance,
+    MFEM_VERIFY(!ring.metal || std::abs(ring.half_width - radius) <= tolerance,
                 "A corner coupon ring that meets the metal is not an outer box ring!");
-    const auto layout = CornerMetalRingLayout(radius, angle_radians, convex, rule);
+    // The rule's layout (perimeter fractions are scale-free: the cap rings of half width
+    // R / 3 share them); PEC knots on the rings the node's zero set marks.
+    const auto layout = CornerRuleRingLayout(radius, angle_radians, convex, rule, ring.metal);
     // Merge keys (the generator's connectivity_keys).
     std::vector<double> keys(layout.size());
     for (std::size_t v = 0; v < layout.size(); v++)
@@ -546,7 +644,7 @@ BuildCornerTraceBasis(const std::vector<std::array<double, 3>> &node_points,
         continue;
       }
       const int index = ring.offset + vertex.slot;
-      basis.knots[index] = SquarePerimeterPoint(radius, ring.z, vertex.fraction);
+      basis.knots[index] = SquarePerimeterPoint(ring.half_width, ring.z, vertex.fraction);
       basis.zero[index] = vertex.kind == CornerRingVertex::Kind::ZERO;
       perimeter_vertices[v] = index;
       knot_positions.push_back(static_cast<int>(v));
@@ -580,7 +678,7 @@ BuildCornerTraceBasis(const std::vector<std::array<double, 3>> &node_points,
       const double weight_a =
           (f_following - layout[position].fraction) / (f_following - f_previous);
       ConstructedCornerTraceBasis::Vertex slave;
-      slave.point = SquarePerimeterPoint(radius, ring.z, layout[position].fraction);
+      slave.point = SquarePerimeterPoint(ring.half_width, ring.z, layout[position].fraction);
       slave.basis = -1;
       slave.parent_a = perimeter_vertices[previous];
       slave.parent_b = perimeter_vertices[following];
@@ -647,6 +745,53 @@ BuildCornerTraceBasis(const std::vector<std::array<double, 3>> &node_points,
   Connect(outer + 1, 0);
   const auto &top = ring_vertices[outer];
   const auto &bottom = ring_vertices[outer + 1];
+  if (all_rings)
+  {
+    // Cap fans from centre slaves at the mean of the cap ring's two crossing-slot knots
+    // (the generator's build_surface; a fan from a ring vertex is degenerate as soon as two
+    // consecutive vertices share the apex's side).
+    const auto order = RingRoleOrder(convex, rule);
+    int crossing1 = -1, crossing2 = -1;
+    for (int slot = 0; slot < static_cast<int>(order.size()); slot++)
+    {
+      if (order[slot] == "crossing1")
+      {
+        crossing1 = slot;
+      }
+      if (order[slot] == "crossing2")
+      {
+        crossing2 = slot;
+      }
+    }
+    MFEM_VERIFY(crossing1 >= 0 && crossing2 >= 0, "Corner trace basis rule without crossings!");
+    for (int cap = 0; cap < 2; cap++)
+    {
+      const auto &ring = box.rings[outer + cap];
+      const auto &vertices = cap == 0 ? top : bottom;
+      ConstructedCornerTraceBasis::Vertex centre;
+      centre.point = {0.0, 0.0, ring.z};
+      centre.basis = -1;
+      centre.parent_a = ring.offset + crossing1;
+      centre.parent_b = ring.offset + crossing2;
+      centre.weight_a = 0.5;
+      const int centre_index = static_cast<int>(basis.vertices.size());
+      basis.vertices.push_back(centre);
+      const int count = static_cast<int>(vertices.size());
+      for (int i = 0; i < count; i++)
+      {
+        const int a = vertices[i], b = vertices[(i + 1) % count];
+        if (cap == 0)
+        {
+          basis.triangles.push_back({a, b, centre_index});
+        }
+        else
+        {
+          basis.triangles.push_back({b, a, centre_index});
+        }
+      }
+    }
+    return basis;
+  }
   for (int i = 1; i + 1 < rule.ring_size; i++)
   {
     basis.triangles.push_back({top[0], top[i], top[i + 1]});
@@ -729,6 +874,18 @@ std::string CheckCornerBasisCrossings(const std::vector<std::array<double, 3>> &
 std::vector<CornerBasisEvent> CornerBasisEvents(bool convex,
                                                 const CornerTraceBasisRule &rule)
 {
+  if (rule.AllRings())
+  {
+    // Every ring carries the same fractions: no fixed vertex is ever passed, and a knot
+    // passing a box-corner slave on every ring at once leaves the interpolant continuous
+    // (the slave's value is the linear interpolant of its neighbours on both rings and the
+    // column diagonals keep one orientation). Measured on the option-(c) interpolant at the
+    // MetalRingsOnly event angles: 1-3e-5, the smooth-angle level (corner-basis-refinement
+    // 2026-09-30, hat_continuity_probe).
+    return {};
+  }
+  MFEM_VERIFY(rule.free_knot_grading.empty(),
+              "Corner basis events are defined for the equal-fraction free knots!");
   // Every knot's perimeter fraction is affine in the second crossing's unwrapped fraction
   // s2 in (first, first + 1] (first = 0.5, the +x arm): fraction = a s2 + b (see
   // CornerMetalRingLayout). A knot passes the fixed-layout vertex j / RingSize (+ n) at
@@ -822,6 +979,23 @@ CornerFamilySegments GroupCornerFamilySegments(const std::vector<CornerFamilyNod
     {
       grouped.boundaries.push_back(event.angle_degrees);
     }
+  }
+  if (rule.AllRings())
+  {
+    // No events: the whole family is ONE segment (no connectivity angle; a coupon carrying
+    // one is refused at library load).
+    std::vector<const CornerFamilyNode *> members;
+    for (const auto &node : nodes)
+    {
+      MFEM_VERIFY(!node.connectivity_angle_degrees,
+                  "An AllRingsFollowMetal corner coupon carries a segment connectivity "
+                  "angle (the layout has no events)!");
+      members.push_back(&node);
+    }
+    std::sort(members.begin(), members.end(), [](const auto *a, const auto *b)
+              { return a->angle_degrees < b->angle_degrees; });
+    grouped.segments[0.0] = std::move(members);
+    return grouped;
   }
   for (const auto &node : nodes)
   {
@@ -1095,7 +1269,10 @@ CornerFamilyStencil SelectCornerFamilyStencil(const std::vector<CornerFamilyNode
   }
   Weights(std::vector<const CornerFamilyNode *>(segment->begin() + begin,
                                                 segment->begin() + end));
-  stencil.connectivity_angle_degrees = segment_key;
+  if (!rule.AllRings())
+  {
+    stencil.connectivity_angle_degrees = segment_key;
+  }
   return stencil;
 }
 

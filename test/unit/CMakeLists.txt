@@ -37,6 +37,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-config.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-correctedsolve.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-constants.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-cornerbasisrefinement.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-cornerfamily.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainpostoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-eigensolver.cpp

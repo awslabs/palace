@@ -219,23 +219,32 @@ LEGACY_RULE = TraceBasisRule("MetalRingsOnly", METAL_INTERIOR_KNOTS, FREE_KNOTS)
 # against the reference with the same levels; 160 knots).
 REFINED_RULE = TraceBasisRule("AllRingsFollowMetal", 5, 9, (1.0 / 3.0, 2.0 / 3.0))
 RULES = {"legacy": LEGACY_RULE, "all-rings-follow-metal": REFINED_RULE}
-# The held-out reference surface (option (c), USER decision 161 (2) / supervisor 2026-09-30):
-# its z-levels are DECOUPLED from the basis so the self-check judges the vertical
-# representation too — the standard levels plus rings at MetalThickness + k OveretchDepth
-# above the metal top and -k OveretchDepth below the trench floor for these k (the
-# reference-convergence study of corner-basis-refinement-20260930 section 5: the change per
-# refinement of every energy below 1 %), and 64 knots per ring.
-HELDOUT_REFERENCE_LEVELS_OVER_OVERETCH = {"above": (1, 2, 4, 8), "below": (2, 4, 8)}
+# The held-out reference surface (option (c); USER decision 161 (2) and the supervisor's
+# decision of 2026-09-30, corner-basis-refinement-20260930 sections 5-9): its z-levels are
+# DECOUPLED from the basis so the self-check judges the vertical representation as well as
+# the lateral one. The (c) cutoff ramps over R / 3 from the PEC band in every direction, so
+# the reference carries rings every OveretchDepth (0.05 um) across both ramps — from the
+# metal top up to and including MetalThickness + R / 3 (where the cutoff reaches 1) and from
+# the trench floor down to -R / 3 — on top of the standard levels, with
+# HELDOUT_REFERENCE_RING_SIZE knots per ring. Measured convergence (7 recorded coupons,
+# 64 knots): the recorded 7-level reference was off by up to 16 % (fabricated MA) and 7 %
+# (MS); this spacing is within 0.4 % of a reference at half the spacing on every energy.
 HELDOUT_REFERENCE_RING_SIZE = 64
 
 
 def heldout_reference_levels(radius, metal_thickness, overetch_depth):
-    levels = set(LEGACY_RULE.levels(radius, metal_thickness, overetch_depth))
-    for k in HELDOUT_REFERENCE_LEVELS_OVER_OVERETCH["above"]:
-        levels.add(metal_thickness + k * overetch_depth)
-    for k in HELDOUT_REFERENCE_LEVELS_OVER_OVERETCH["below"]:
-        levels.add(-k * overetch_depth)
+    ramp = radius / 3.0
     tolerance = 1.0e-12 * radius
+    levels = set(LEGACY_RULE.levels(radius, metal_thickness, overetch_depth))
+    k = 1
+    while metal_thickness + k * overetch_depth < metal_thickness + ramp - tolerance:
+        levels.add(metal_thickness + k * overetch_depth)
+        k += 1
+    levels.add(metal_thickness + ramp)
+    k = 2
+    while -k * overetch_depth > -ramp + tolerance:
+        levels.add(-k * overetch_depth)
+        k += 1
     kept = []
     for level in sorted(levels):
         if not kept or level - kept[-1] > tolerance:

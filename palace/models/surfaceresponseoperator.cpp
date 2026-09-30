@@ -1427,6 +1427,14 @@ void VerifySpatialEdgesInSignatureFrame(const LibraryModel &model, double radius
 
 std::vector<std::array<double, 3>> ReadBasisPoints(const std::string &path);
 std::vector<std::string> ModelInterfaceNames(const LibraryModel &model);
+// The load-time check of an AllRingsFollowMetal corner coupon's files against the rule at
+// ITS angle (corner-basis refinement 2026-09-30; fail closed in ReadProcessLibrary): the
+// outer ring levels {-R, -R/3, -OveretchDepth, 0, MetalThickness, MetalThickness +
+// OveretchDepth, R/3, R}, every basis point at the rule's position and the trace mesh
+// (vertices, slave parents, triangle set) equal to the rule's. (A MetalRingsOnly coupon with
+// a segment connectivity is checked the same way at match time, MatchCornerFamily.)
+// Returns the reason, empty when the coupon is the rule's.
+std::string CheckCornerRuleCouponFiles(const LibraryModel &model, double position_tolerance);
 
 ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                                   bool nondimensionalize, bool allow_empty_models = false,
@@ -1947,18 +1955,40 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
       rule.metal_interior_knots = trace_basis->at("MetalInteriorKnots").get<int>();
       rule.free_knots = trace_basis->at("FreeKnots").get<int>();
       rule.fractions = trace_basis->at("Fractions").get<std::string>();
-      MFEM_VERIFY(rule.ring_size >= 3 && rule.metal_interior_knots >= 0 &&
-                      rule.free_knots >= 1 &&
-                      rule.ring_size == 2 + rule.metal_interior_knots + rule.free_knots &&
-                      rule.fractions == "PerimeterArcLength",
-                  "Fabrication-process response model \""
-                      << model.name
-                      << "\" has an invalid TraceBasis rule (RingSize = 2 + "
-                         "MetalInteriorKnots + FreeKnots, Fractions PerimeterArcLength)!");
+      if (auto layout = trace_basis->find("RingLayout"); layout != trace_basis->end())
+      {
+        const std::string name = layout->get<std::string>();
+        MFEM_VERIFY(name == "MetalRingsOnly" || name == "AllRingsFollowMetal",
+                    "Fabrication-process response model \""
+                        << model.name << "\" has an unknown TraceBasis RingLayout \""
+                        << name << "\" (MetalRingsOnly | AllRingsFollowMetal)!");
+        rule.ring_layout = name == "AllRingsFollowMetal"
+                               ? CornerRingLayout::ALL_RINGS_FOLLOW_METAL
+                               : CornerRingLayout::METAL_RINGS_ONLY;
+      }
+      if (auto grading = trace_basis->find("FreeKnotGrading"); grading != trace_basis->end())
+      {
+        MFEM_VERIFY(grading->is_array(), "Fabrication-process response model \""
+                                             << model.name
+                                             << "\" TraceBasis FreeKnotGrading must be an "
+                                                "array of distances over R!");
+        rule.free_knot_grading = grading->get<std::vector<double>>();
+      }
+      {
+        const std::string reason = CheckCornerTraceBasisRule(rule);
+        MFEM_VERIFY(reason.empty(), "Fabrication-process response model \""
+                                        << model.name << "\" has an invalid TraceBasis rule ("
+                                        << reason << ")!");
+      }
       model.trace_basis = rule;
       if (auto connectivity = trace_basis->find("ConnectivityAngleDegrees");
           connectivity != trace_basis->end())
       {
+        MFEM_VERIFY(!rule.AllRings(),
+                    "Fabrication-process response model \""
+                        << model.name
+                        << "\" carries a TraceBasis ConnectivityAngleDegrees on the "
+                           "AllRingsFollowMetal layout, which has no events!");
         MFEM_VERIFY(connectivity->is_number() && connectivity->get<double>() > 0.0 &&
                         connectivity->get<double>() < 180.0,
                     "Fabrication-process response model \""
@@ -2150,6 +2180,21 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
       MFEM_VERIFY(reason.empty(),
                   "Fabrication-process corner response model \""
                       << model.name << "\" fails the trace basis gate: " << reason << "!");
+    }
+    if (corner && spatial_response && model.trace_basis && model.trace_basis->AllRings() &&
+        model.corner_radius == 0.0)
+    {
+      // The coupon's files against its trace basis rule at its own angle (fail closed at
+      // load; corner-basis refinement 2026-09-30): the outer ring levels, the basis points
+      // and the trace mesh (the rule fixes all three under AllRingsFollowMetal). The
+      // MetalRingsOnly coupons keep their recorded checks: the segment structure at load
+      // below, the files at match time (MatchCornerFamily).
+      const std::string reason = CheckCornerRuleCouponFiles(
+          model, 1.0e-9 * library.matching_radius * coordinate_scale);
+      MFEM_VERIFY(reason.empty(), "Fabrication-process corner response model \""
+                                      << model.name
+                                      << "\" is not its trace basis rule's coupon: " << reason
+                                      << "!");
     }
 
     std::set<std::pair<int, InterfaceDielectric>> interface_slots;
@@ -3847,8 +3892,10 @@ MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &featur
     }
     for (const auto &ring : first_rings.rings)
     {
-      if (ring.metal)
+      if (ring.metal || first.trace_basis->AllRings())
       {
+        // Under AllRingsFollowMetal every ring follows the angle (checked knot by knot
+        // above); only the ring structure is shared.
         continue;
       }
       for (int i = 0; i < ring.size; i++)
@@ -3864,13 +3911,13 @@ MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &featur
     // segment node whose bands are triangulated otherwise would blend across a jump of the
     // hats (fail closed; the recorded perimeter-ordered coupons stamped with a connectivity
     // angle pass exactly when no event lies between their angle and it).
-    if (model.corner_connectivity_angle_degrees)
+    if (model.corner_connectivity_angle_degrees || model.trace_basis->AllRings())
     {
       MFEM_VERIFY(!model.response.trace_vertices.empty() &&
                       !model.response.trace_triangles.empty(),
                   "Corner family coupon \"" << model.name
-                                            << "\" has a segment connectivity but no "
-                                               "TraceMesh!");
+                                            << "\" has a rule-fixed trace triangulation but "
+                                               "no TraceMesh!");
       const auto mesh =
           ReadTraceMesh(model.response.trace_vertices, model.response.trace_triangles);
       MFEM_VERIFY(mesh.vertices.size() == rule_basis.vertices.size() &&
@@ -3904,15 +3951,17 @@ MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &featur
         std::sort(triangle.begin(), triangle.end());
         rule_triangles.insert(triangle);
       }
-      MFEM_VERIFY(
-          coupon_triangles == rule_triangles,
-          "Corner family coupon \""
-              << model.name
-              << "\" trace triangulation is not the rule's for its segment "
-                 "connectivity angle "
-              << *model.corner_connectivity_angle_degrees
-              << " deg (the band triangulation differs: the coupon belongs to another "
-                 "segment)!");
+      MFEM_VERIFY(coupon_triangles == rule_triangles,
+                  "Corner family coupon \""
+                      << model.name
+                      << "\" trace triangulation is not the rule's"
+                      << (model.corner_connectivity_angle_degrees
+                              ? " for its segment connectivity angle " +
+                                    std::to_string(*model.corner_connectivity_angle_degrees) +
+                                    " deg (the band triangulation differs: the coupon "
+                                    "belongs to another segment)"
+                              : " at its angle")
+                      << "!");
     }
     CornerFamilyNode node;
     node.angle_degrees = 180.0 - node_turn;
@@ -3956,10 +4005,15 @@ MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &featur
   // groups as every node.
   {
     const auto &base = library.models[match.base];
+    std::optional<double> connectivity_radians;
+    if (stencil.connectivity_angle_degrees)
+    {
+      connectivity_radians = *stencil.connectivity_angle_degrees * std::acos(-1.0) / 180.0;
+    }
     match.constructed = BuildCornerTraceBasis(
         ReadBasisPoints(base.response.basis_points), base.response.contour_groups,
         base.response.zero_trace_indices, angle * std::acos(-1.0) / 180.0, convex,
-        *base.trace_basis, *stencil.connectivity_angle_degrees * std::acos(-1.0) / 180.0);
+        *base.trace_basis, connectivity_radians);
   }
   return match;
 }
@@ -12654,6 +12708,123 @@ std::vector<std::array<double, 3>> ReadBasisPoints(const std::string &path)
   MFEM_VERIFY(!points.empty(),
               "Response-correction basis point file \"" << path << "\" is empty!");
   return points;
+}
+
+std::string CheckCornerRuleCouponFiles(const LibraryModel &model, double position_tolerance)
+{
+  const bool convex = model.topology == LibraryTopology::CONVEX_CORNER;
+  const auto &rule = *model.trace_basis;
+  const auto points = ReadBasisPoints(model.response.basis_points);
+  const CornerBoxRings rings = DescribeCornerBoxRings(
+      points, model.response.contour_groups, model.response.zero_trace_indices);
+  if (rule.AllRings())
+  {
+    // The outer ring levels: -R, -R/3, -d, 0, t, t + d, R/3, R with t the upper metal ring
+    // and d the trench depth (the ring below z = 0); both metal rings at z = 0 and t.
+    std::vector<double> metal_levels, levels;
+    for (int r = 0; r < rings.outer_count; r++)
+    {
+      levels.push_back(rings.rings[r].z);
+      if (rings.rings[r].metal)
+      {
+        metal_levels.push_back(rings.rings[r].z);
+      }
+    }
+    const double radius = rings.radius, tolerance = 1.0e-9 * radius;
+    if (metal_levels.size() != 2 || std::abs(metal_levels[0]) > tolerance ||
+        !(metal_levels[1] > tolerance))
+    {
+      return "the metal rings are not at z = 0 and z = MetalThickness";
+    }
+    const double t = metal_levels[1];
+    double d = 0.0;
+    for (const double z : levels)
+    {
+      if (z < -tolerance && (d == 0.0 || z > -d))
+      {
+        d = -z;
+      }
+    }
+    const std::vector<double> expected = {-radius, -radius / 3.0, -d, 0.0, t, t + d,
+                                          radius / 3.0, radius};
+    bool equal = levels.size() == expected.size();
+    for (std::size_t i = 0; equal && i < expected.size(); i++)
+    {
+      equal = std::abs(levels[i] - expected[i]) <= tolerance;
+    }
+    if (!equal)
+    {
+      std::ostringstream text;
+      text << "the outer ring levels are not the AllRingsFollowMetal set {-R, -R/3, "
+              "-OveretchDepth, 0, MetalThickness, MetalThickness + OveretchDepth, R/3, R} "
+              "(found";
+      for (const double z : levels)
+      {
+        text << " " << z;
+      }
+      text << ")";
+      return text.str();
+    }
+  }
+  std::optional<double> connectivity_radians;
+  if (model.corner_connectivity_angle_degrees)
+  {
+    connectivity_radians = *model.corner_connectivity_angle_degrees * std::acos(-1.0) / 180.0;
+  }
+  const auto rule_basis = BuildCornerTraceBasis(
+      points, model.response.contour_groups, model.response.zero_trace_indices, model.angle,
+      convex, rule, connectivity_radians);
+  for (std::size_t k = 0; k < points.size(); k++)
+  {
+    if (Distance(points[k], rule_basis.knots[k]) > position_tolerance)
+    {
+      return "basis point " + std::to_string(k + 1) +
+             " is not at the trace basis rule's position for the coupon's angle";
+    }
+  }
+  if (!(model.corner_connectivity_angle_degrees || rule.AllRings()))
+  {
+    return "";
+  }
+  if (model.response.trace_vertices.empty() || model.response.trace_triangles.empty())
+  {
+    return "the rule fixes the trace triangulation but the coupon has no TraceMesh";
+  }
+  const auto mesh = ReadTraceMesh(model.response.trace_vertices, model.response.trace_triangles);
+  if (mesh.vertices.size() != rule_basis.vertices.size() ||
+      mesh.triangles.size() != rule_basis.triangles.size())
+  {
+    return "the trace mesh does not have the rule's vertex / triangle counts";
+  }
+  for (std::size_t v = 0; v < mesh.vertices.size(); v++)
+  {
+    const auto &vertex = mesh.vertices[v];
+    const auto &rule_vertex = rule_basis.vertices[v];
+    const std::array<double, 3> point = {vertex.point[0], vertex.point[1], vertex.point[2]};
+    if (Distance(point, rule_vertex.point) > position_tolerance ||
+        vertex.basis - 1 != rule_vertex.basis || vertex.parent_a - 1 != rule_vertex.parent_a ||
+        vertex.parent_b - 1 != rule_vertex.parent_b ||
+        (rule_vertex.basis < 0 && std::abs(vertex.weight_a - rule_vertex.weight_a) > 1.0e-9))
+    {
+      return "trace vertex " + std::to_string(v + 1) + " differs from the rule's";
+    }
+  }
+  std::set<std::array<int, 3>> coupon_triangles, rule_triangles;
+  for (auto triangle : mesh.triangles)
+  {
+    std::sort(triangle.begin(), triangle.end());
+    coupon_triangles.insert(triangle);
+  }
+  for (auto triangle : rule_basis.triangles)
+  {
+    std::sort(triangle.begin(), triangle.end());
+    rule_triangles.insert(triangle);
+  }
+  if (coupon_triangles != rule_triangles)
+  {
+    return "the trace triangulation is not the rule's";
+  }
+  return "";
 }
 
 // A model's basis points: the constructed basis of an angle-interpolated corner model, else

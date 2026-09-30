@@ -34,30 +34,48 @@ SIGNATURE_ANGLE_TOLERANCE_DEGREES = 1.0e-2  # kSignatureAngleToleranceDegrees
 FIRST_CROSSING_FRACTION = 0.5  # the +x arm meets the box at (R, 0)
 
 
-def role_coefficients(topology, ring_size=8):
-    """(a, b) per knot role: the role's unwrapped perimeter fraction is a s2 + b with s2 the
-    second crossing's unwrapped fraction in (0.5, 1.5] (metal_ring_layout)."""
-    if ring_size != 2 + generator.METAL_INTERIOR_KNOTS + generator.FREE_KNOTS:
+def rule_of(ring_size, rule=None):
+    """The trace basis rule of a family: `rule` (a generator.TraceBasisRule) when given, else
+    the recorded MetalRingsOnly rule of that ring size."""
+    if rule is None:
+        rule = generator.LEGACY_RULE
+    if ring_size != rule.ring_size:
         raise ValueError("ring size inconsistent with the trace basis rule")
+    return rule
+
+
+def role_coefficients(topology, ring_size=8, rule=None):
+    """(a, b) per knot role: the role's unwrapped perimeter fraction is a s2 + b with s2 the
+    second crossing's unwrapped fraction in (0.5, 1.5] (rule_ring_layout, equal-fraction
+    free knots)."""
+    rule = rule_of(ring_size, rule)
+    if rule.free_knot_grading:
+        raise ValueError("role coefficients are defined for the equal-fraction free knots")
     first = FIRST_CROSSING_FRACTION
     roles = {"crossing2": (1.0, 0.0)}
-    for m in range(1, generator.METAL_INTERIOR_KNOTS + 1):
-        t = m / (generator.METAL_INTERIOR_KNOTS + 1)
+    for m in range(1, rule.metal_interior_knots + 1):
+        t = m / (rule.metal_interior_knots + 1)
         roles[f"metal{m}"] = (t, first * (1.0 - t)) if topology == "convex" else (
             1.0 - t, (first + 1.0) * t)
-    for k in range(1, generator.FREE_KNOTS + 1):
-        t = k / (generator.FREE_KNOTS + 1)
+    for k in range(1, rule.free_knots + 1):
+        t = k / (rule.free_knots + 1)
         roles[f"free{k}"] = (1.0 - t, (first + 1.0) * t) if topology == "convex" else (
             t, first * (1.0 - t))
     return roles
 
 
-def basis_events(topology, ring_size=8):
+def basis_events(topology, ring_size=8, rule=None):
     """Every event in (0, 180] degrees: dicts angle_degrees / role / fraction (the fixed-layout
-    vertex passed) / corner (a box corner, else a side midpoint), sorted by angle."""
+    vertex passed) / corner (a box corner, else a side midpoint), sorted by angle. The
+    AllRingsFollowMetal layout has NO events (every ring carries the same fractions: no
+    fixed vertex is passed and a knot passing a box-corner slave on every ring at once
+    leaves the hats continuous; the runtime's CornerBasisEvents returns the empty list)."""
+    rule = rule_of(ring_size, rule)
+    if rule.all_rings:
+        return []
     first = FIRST_CROSSING_FRACTION
     events = []
-    for role, (a, b) in role_coefficients(topology, ring_size).items():
+    for role, (a, b) in role_coefficients(topology, ring_size, rule).items():
         for j in range(ring_size):
             c = j / ring_size
             for n in range(3):
@@ -75,10 +93,11 @@ def basis_events(topology, ring_size=8):
     return sorted(events, key=lambda event: (event["angle_degrees"], event["role"]))
 
 
-def corner_event_angles(topology, ring_size=8, tolerance=SIGNATURE_ANGLE_TOLERANCE_DEGREES):
+def corner_event_angles(topology, ring_size=8, tolerance=SIGNATURE_ANGLE_TOLERANCE_DEGREES,
+                        rule=None):
     """The distinct knot-corner passage angles (the segment boundaries)."""
     angles = []
-    for event in basis_events(topology, ring_size):
+    for event in basis_events(topology, ring_size, rule):
         if event["corner"] and (not angles or event["angle_degrees"] - angles[-1] > tolerance):
             angles.append(event["angle_degrees"])
     return angles
@@ -92,9 +111,18 @@ def lagrange_weights(abscissae, x):
     ]
 
 
-def _group_segments(nodes, topology, ring_size, tolerance):
-    """(boundaries, {connectivity angle: members sorted by angle}, legacy present)."""
-    boundaries = corner_event_angles(topology, ring_size, tolerance)
+def _group_segments(nodes, topology, ring_size, tolerance, rule=None):
+    """(boundaries, {connectivity angle: members sorted by angle}, legacy present). Under
+    the AllRingsFollowMetal layout the whole family is ONE segment (no events; a node with a
+    connectivity angle is refused, as at library load)."""
+    rule = rule_of(ring_size, rule)
+    if rule.all_rings:
+        for node in nodes:
+            if node[1] is not None:
+                raise ValueError("an AllRingsFollowMetal corner coupon carries a segment "
+                                 "connectivity angle (the layout has no events)")
+        return [], {0.0: sorted(nodes, key=lambda node: node[0])}, False
+    boundaries = corner_event_angles(topology, ring_size, tolerance, rule)
     segments = {}
     legacy = False
     for node in nodes:
@@ -112,12 +140,14 @@ def _group_segments(nodes, topology, ring_size, tolerance):
     return boundaries, segments, legacy
 
 
-def check_segments(nodes, topology, ring_size=8, tolerance=SIGNATURE_ANGLE_TOLERANCE_DEGREES):
+def check_segments(nodes, topology, ring_size=8, tolerance=SIGNATURE_ANGLE_TOLERANCE_DEGREES,
+                   rule=None):
     """The runtime's CheckCornerFamilySegments (fail closed at library load, ReadProcessLibrary):
     the reason string, empty when the segment structure is consistent — every segment's
     connectivity angle off the knot-corner passages and its nodes in one event-free interval with
-    it, one coupon per angle within a segment, segments overlapping at shared node angles only."""
-    boundaries, segments, _ = _group_segments(nodes, topology, ring_size, tolerance)
+    it, one coupon per angle within a segment, segments overlapping at shared node angles only
+    (one segment, one coupon per angle under AllRingsFollowMetal)."""
+    boundaries, segments, _ = _group_segments(nodes, topology, ring_size, tolerance, rule)
 
     def interval(value):
         return sum(1 for boundary in boundaries if boundary < value - tolerance)
@@ -147,14 +177,16 @@ def check_segments(nodes, topology, ring_size=8, tolerance=SIGNATURE_ANGLE_TOLER
 
 
 def select_stencil(nodes, angle, topology, ring_size=8,
-                   tolerance=SIGNATURE_ANGLE_TOLERANCE_DEGREES):
+                   tolerance=SIGNATURE_ANGLE_TOLERANCE_DEGREES, rule=None):
     """The runtime's stencil for `nodes` = [(angle_degrees, connectivity_angle_degrees or
     None, index), ...]. Returns a dict with `nodes` = [(index, weight), ...], `rule`
-    (exact / linear / quadratic / cubic), `connectivity_angle_degrees`, `base` (the nearest
-    node), or `reason` when refused. Raises ValueError where the runtime fails closed (the
-    segment structure of check_segments, verified at library load)."""
+    (exact / linear / quadratic / cubic), `connectivity_angle_degrees` (None under
+    AllRingsFollowMetal), `base` (the nearest node), or `reason` when refused. Raises
+    ValueError where the runtime fails closed (the segment structure of check_segments,
+    verified at library load)."""
     if not nodes:
         raise ValueError("a corner family stencil needs nodes")
+    basis_rule = rule_of(ring_size, rule)
 
     def beyond(first, second):
         return abs(first - second) > tolerance
@@ -178,10 +210,10 @@ def select_stencil(nodes, angle, topology, ring_size=8,
         return {"reason": f"corner angle {angle:g} deg is wider than the widest {convexity} "
                           f"coupon angle {high:g} deg (no extrapolation; the first-order regime "
                           "needs the straight anchor)"}
-    reason = check_segments(nodes, topology, ring_size, tolerance)
+    reason = check_segments(nodes, topology, ring_size, tolerance, basis_rule)
     if reason:
         raise ValueError(reason)
-    _, segments, legacy = _group_segments(nodes, topology, ring_size, tolerance)
+    _, segments, legacy = _group_segments(nodes, topology, ring_size, tolerance, basis_rule)
     segment = None
     for key, members in segments.items():
         if (members[0][0] < angle < members[-1][0] and beyond(members[0][0], angle)
@@ -209,7 +241,8 @@ def select_stencil(nodes, angle, topology, ring_size=8,
     base = min(window, key=lambda node: abs(node[0] - angle))[2]
     return {"nodes": [(node[2], weight) for node, weight in zip(window, weights)],
             "rule": {4: "cubic", 3: "quadratic", 2: "linear"}[len(window)],
-            "connectivity_angle_degrees": segment_key, "base": base}
+            "connectivity_angle_degrees": None if basis_rule.all_rings else segment_key,
+            "base": base}
 
 
 def segment_reference_angle(low, high):
