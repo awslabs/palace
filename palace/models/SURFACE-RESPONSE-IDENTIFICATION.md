@@ -1241,7 +1241,18 @@ per-side coupons, no legacy tie nodes: exact 90 = the single 90 node, the record
 per-side MA spread is 0 by construction), the stencil the cubic sliding window on the four
 nearest nodes (one-sided at the range ends: the family's nodes 75 / 80 / 90 / 105 / 120 /
 135 / 150 / 165 / 180 — the 80 node added after the review of decision 167 so the 78 and 82.5
-held-out angles are bracketed, held-out 78 / 82.5 / 112.5 / 142.5 / 172.5 / 176). The
+held-out angles are bracketed, held-out 78 / 82.5 / 112.5 / 142.5 / 172.5 / 176). Measured with
+the 80 node (combined-verification-20260930/fixes): the gating option-(c) interpolation gate
+passes both convexities, the 78-deg residuals fall clear (convex MA +0.449 -> -0.121 %), but the
+convex MA at 82.5 reads -0.379 % (0.12 points under the 0.5 % gate; +0.362 before): a coupon MA
+RESOLUTION floor, not the node spacing — the convex fabricated MA matrices change 2.7-3.3 %
+between the coupon mesh factors 2 and 1 at 75-82.5 deg (SA 0.7, MS 0.2 %), i.e. the family's
+MA is h-converged only to ~3 % at the acute end and each coupon's MA carries a few tenths of a
+per cent of coupon-to-coupon scatter that no interpolant between nodes can remove. Open
+follow-up (not blocking): a coupon-MA-resolution study (finer `lc_fine` on the corner coupons).
+The transmon's two 90-deg corner models carry 1.5-1.6 % of its fabricated MA surface energy
+(T p5; the concave 90 ~0), so a 3 % corner MA h-error moves the transmon MA by ~0.05 % — below
+its error bars. The
 planner (`prepare_surface_response_coupons.py --corner-trace-basis`) builds the refined rule
 by default on SHARP corners only; a rounded corner (`CornerRadius` > 0) keeps the legacy rule
 (the refined rule is qualified on sharp corners only; a refined request there is refused). The library load checks
