@@ -712,6 +712,8 @@ void IoData::CheckConfiguration()
                 "problem types!");
     MFEM_VERIFY(!sub.region_attributes.empty() && !sub.environment_attributes.empty(),
                 "Substructuring requires nonempty Region and Environment attribute sets!");
+    MFEM_VERIFY(sub.mode != SubstructuringMode::ONLINE || !sub.save_model.empty(),
+                "\"Online\" substructuring requires the saved model path \"SaveModel\"!");
     // Adaptive refinement refines the region only, in an online run: the environment was
     // condensed on its final mesh, so it must not change. Refine the full model before
     // condensing it instead (adaptive run with "SaveAdaptMesh", then an offline run on the

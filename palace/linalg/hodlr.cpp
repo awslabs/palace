@@ -25,6 +25,11 @@ void SymEig(std::vector<double> &A, int n, std::vector<double> &V, std::vector<d
   }
   auto a = [&](int i, int j) -> double & { return A[static_cast<std::size_t>(i) * n + j]; };
   auto v = [&](int i, int j) -> double & { return V[static_cast<std::size_t>(i) * n + j]; };
+  double norm2 = 0.0;  // squared Frobenius norm, invariant under the rotations
+  for (double x : A)
+  {
+    norm2 += x * x;
+  }
   for (int sweep = 0; sweep < 100; sweep++)
   {
     double off = 0.0;
@@ -35,7 +40,7 @@ void SymEig(std::vector<double> &A, int n, std::vector<double> &V, std::vector<d
         off += a(p, q) * a(p, q);
       }
     }
-    if (off < 1e-30)
+    if (off <= 1e-30 * norm2)
     {
       break;
     }

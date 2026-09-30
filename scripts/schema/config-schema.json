@@ -2888,7 +2888,7 @@
     "Substructuring": {
       "type": "object",
       "title": "Substructuring",
-      "description": "Substructuring for electrostatic and magnetostatic simulations: the environment (the rest of the domain) is condensed onto its interface with the region of interest, and the region is solved against the condensed environment. The condensation is exact; with a saved model, repeated region redesigns reuse it without solving the environment again. Magnetostatic substructuring supports \"FluxLoop\" excitations.",
+      "description": "Substructuring for electrostatic and magnetostatic simulations: the environment (the rest of the domain) is condensed onto its interface with the region of interest, and the region is solved against the condensed environment. With a saved model, repeated region redesigns reuse it without solving the environment again. Magnetostatic substructuring supports \"FluxLoop\" excitations.",
       "additionalProperties": false,
       "required": ["Region", "Environment"],
       "properties": {
@@ -2920,7 +2920,7 @@
         },
         "Mode": {
           "$ref": "#/$defs/SubstructuringMode",
-          "description": "\"Offline\" condenses the environment (and writes \"SaveModel\" if given); \"Online\" loads the model from \"SaveModel\" and solves only the region. The online run may use a re-meshed region, provided the interface is unchanged.",
+          "description": "\"Offline\" condenses the environment (and writes \"SaveModel\" if given); \"Online\" loads the model from \"SaveModel\" (required) and solves only the region. The online run may use a re-meshed region, provided the interface is unchanged.",
           "default": "Offline"
         },
         "SaveModel": {

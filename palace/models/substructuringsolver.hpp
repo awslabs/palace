@@ -103,8 +103,8 @@ public:
   // Global parent true-DOF size.
   long long int GlobalTrueVSize() const;
 
-  // Write full parent-space fields to a ParaView collection under dir, one time step per
-  // excitation (time = excitation index).
+  // Write full parent-space fields (V or A) to a ParaView collection under dir, one time
+  // step per excitation (time = excitation index).
   void WriteParaView(const std::string &dir, const std::vector<int> &terminals,
                      const std::vector<Vector> &fields) const;
 

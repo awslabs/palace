@@ -189,7 +189,8 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
                     {{"Substructuring",
                       {{"Region", {{"Attributes", {1}}}},
                        {"Environment", {{"Attributes", {2}}}},
-                       {"Mode", "Offline"}}}}}};
+                       {"Mode", "Offline"},
+                       {"SaveModel", "environment.model"}}}}}};
     CHECK_THROWS_WITH(IoData(config, false),
                       Catch::Matchers::ContainsSubstring("\"SaveAdaptMesh\""));
     config["Solver"]["Substructuring"]["Mode"] = "Online";
@@ -201,6 +202,23 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     CHECK_THROWS_WITH(IoData(config, false),
                       Catch::Matchers::ContainsSubstring("nonconforming"));
     config["Model"]["Refinement"]["MaxIts"] = 0;
+    CHECK_NOTHROW(IoData(config, false));
+  }
+
+  SECTION("Online substructuring requires a saved model")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver",
+                    {{"Substructuring",
+                      {{"Region", {{"Attributes", {1}}}},
+                       {"Environment", {{"Attributes", {2}}}},
+                       {"Mode", "Online"}}}}}};
+    CHECK_THROWS_WITH(IoData(config, false),
+                      Catch::Matchers::ContainsSubstring("\"SaveModel\""));
+    config["Solver"]["Substructuring"]["SaveModel"] = "environment.model";
     CHECK_NOTHROW(IoData(config, false));
   }
 

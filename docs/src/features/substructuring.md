@@ -29,7 +29,8 @@ problem with one extra term on the interface, the environment's Schur complement
 
 a dense ``|\Gamma| \times |\Gamma|`` matrix (the discrete Dirichlet-to-Neumann map of the
 environment). The condensation is an exact algebraic rearrangement: the region solution, and the
-capacitance or inductance matrix, are those of the full solve. Terminals and `"PEC"`
+capacitance or inductance matrix, are those of the full solve (for magnetostatics up to a small
+regularization, see [Magnetostatics](#Magnetostatics)). Terminals and `"PEC"`
 boundaries (grounded, as in a regular electrostatic simulation) may lie in the region, in the
 environment, or span both; the environment's coupling to its terminals is condensed together
 with ``\bm{S}_E``, so terminal energies need no environment solve.
@@ -111,8 +112,9 @@ substructuring is only available for electrostatics.
 
 ### Solvers
 
-The environment and the region are factored with a sparse direct solver when they fit, and
-solved iteratively otherwise. With MUMPS, the environment Schur complement comes from a single
+The environment and the region are factored with a sparse direct solver (SuperLU_DIST,
+STRUMPACK or MUMPS, whichever Palace is built with) when they fit, and solved iteratively
+otherwise. With MUMPS, the Schur complement of an electrostatic environment comes from a single
 partial factorization. When running MUMPS with MPI, setting `OPENBLAS_NUM_THREADS=1` (or the
 equivalent for the BLAS in use) avoids oversubscribing cores.
 
