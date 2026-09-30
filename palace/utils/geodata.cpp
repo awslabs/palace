@@ -2977,6 +2977,15 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
         cba.erase(std::remove_if(cba.begin(), cba.end(), attr_in_elem), cba.end());
       }
     }
+    // Two-sided (two-port) superconductor films must crack so their two coincident faces
+    // get independent DOFs; they are not otherwise crack candidates.
+    for (const auto &sc : iodata.boundaries.superconductor)
+    {
+      if (sc.two_sided)
+      {
+        cba.insert(cba.end(), sc.attributes.begin(), sc.attributes.end());
+      }
+    }
     return cba;
   }();
 
