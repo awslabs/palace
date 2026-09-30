@@ -866,13 +866,10 @@ public:
   // Return the boundary attributes of boundary conditions which model sheets carrying a
   // surface current or charge (conductors, impedance and superconductor sheets, flux loop
   // films, lumped ports, and surface current sources), across which the fields are
-  // discontinuous when interior. For these,
-  // the error estimator allows discontinuous recovered fluxes. With conductors_only, only
-  // the sheets modeling a metal film are returned (excluding purely capacitive impedance
-  // sheets, which model a dielectric layer), for which interface dielectric energies sum
-  // the contributions of both faces (when cracked, the faces are exterior boundaries
-  // anyway).
-  std::vector<int> GetSheetAttributes(bool conductors_only = false) const;
+  // discontinuous when interior. For these, the error estimator allows discontinuous
+  // recovered fluxes, and interface dielectric energies sum the contributions of both faces
+  // (when cracked, the faces are exterior boundaries anyway).
+  std::vector<int> GetSheetAttributes() const;
 
   // Return the boundary attributes for which the mesh is cracked when interior, given the
   // value of config::ModelData::crack_bdr_elements.
