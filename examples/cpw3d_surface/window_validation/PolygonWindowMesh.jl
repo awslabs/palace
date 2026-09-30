@@ -209,8 +209,11 @@ end
 # ---------------------------------------------------------------------------------------------
 # Plan geometry: the rectangle fragmented by every polygon of every plane and every bump.
 
+# Gmsh's OCC plane surface expects every hole wire with the SAME orientation as the outer
+# wire (it reverses the holes itself), so every loop is passed counterclockwise.
 function add_polygon_surface(occ, outer::Vector{Point2}, holes::Vector{Vector{Point2}})
     function loop(points)
+        polygon_signed_area(points) < 0.0 && (points = reverse(points))
         tags = [occ.add_point(p[1], p[2], 0.0) for p in points]
         lines = [
             occ.add_line(tags[i], tags[mod1(i + 1, length(tags))]) for i in eachindex(tags)
