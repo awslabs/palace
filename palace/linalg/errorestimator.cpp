@@ -109,7 +109,7 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
 // Returns nullptr when the mesh has no such interior boundaries.
 std::unique_ptr<FiniteElementSpaceHierarchy>
 BuildBrokenRecoverySpace(FiniteElementSpaceHierarchy &fespaces,
-                         const std::vector<int> &crack_attr_list, bool use_mg)
+                         const std::vector<int> &crack_attr_list)
 {
   if (crack_attr_list.empty())
   {
@@ -123,12 +123,6 @@ BuildBrokenRecoverySpace(FiniteElementSpaceHierarchy &fespaces,
   if (!broken)
   {
     return nullptr;
-  }
-  if (use_mg)
-  {
-    Mpi::Warning(fespace.GetComm(),
-                 "Multigrid preconditioning is not available for error estimation with "
-                 "flux recovery across interior boundaries, using Jacobi instead!\n");
   }
   return std::make_unique<FiniteElementSpaceHierarchy>(
       std::make_unique<FiniteElementSpace>(fespace, sides));
@@ -310,14 +304,14 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
     FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it, int print,
     bool use_mg, const std::vector<int> &crack_attr_list)
-  : broken_rt_fespaces(BuildBrokenRecoverySpace(rt_fespaces, crack_attr_list, use_mg)),
+  : broken_rt_fespaces(BuildBrokenRecoverySpace(rt_fespaces, crack_attr_list)),
     nd_fespace(nd_fespace),
     rt_fespace(broken_rt_fespaces ? broken_rt_fespaces->GetFinestFESpace()
                                   : rt_fespaces.GetFinestFESpace()),
     projector(MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
                                           mat_op.GetPermittivityReal()),
               broken_rt_fespaces ? *broken_rt_fespaces : rt_fespaces, nd_fespace, tol,
-              max_it, print, use_mg && !broken_rt_fespaces),
+              max_it, print, use_mg),
     integ_op(nd_fespace.GetMesh().GetNE(), nd_fespace.GetVSize()),
     E_gf(nd_fespace.GetVSize()), D(rt_fespace.GetTrueVSize()), D_gf(rt_fespace.GetVSize())
 {
@@ -437,14 +431,14 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpace &rt_fespace,
     FiniteElementSpaceHierarchy &nd_fespaces, double tol, int max_it, int print,
     bool use_mg, const std::vector<int> &crack_attr_list)
-  : broken_nd_fespaces(BuildBrokenRecoverySpace(nd_fespaces, crack_attr_list, use_mg)),
+  : broken_nd_fespaces(BuildBrokenRecoverySpace(nd_fespaces, crack_attr_list)),
     rt_fespace(rt_fespace),
     nd_fespace(broken_nd_fespaces ? broken_nd_fespaces->GetFinestFESpace()
                                   : nd_fespaces.GetFinestFESpace()),
     projector(MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
                                           mat_op.GetCurlCurlInvPermeability()),
               broken_nd_fespaces ? *broken_nd_fespaces : nd_fespaces, rt_fespace, tol,
-              max_it, print, use_mg && !broken_nd_fespaces),
+              max_it, print, use_mg),
     integ_op(nd_fespace.GetMesh().GetNE(), rt_fespace.GetVSize()),
     B_gf(rt_fespace.GetVSize()), H(nd_fespace.GetTrueVSize()), H_gf(nd_fespace.GetVSize())
 {

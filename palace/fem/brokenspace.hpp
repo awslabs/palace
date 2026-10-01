@@ -5,10 +5,9 @@
 #define PALACE_FEM_BROKEN_SPACE_HPP
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 #include <mfem.hpp>
-#include "linalg/operator.hpp"
-#include "linalg/vector.hpp"
 
 namespace palace
 {
@@ -101,41 +100,30 @@ namespace fem
 void GetElementDofEntities(const mfem::FiniteElementSpace &fespace, int e,
                            mfem::Array<int> &entities);
 
-}  // namespace fem
-
-//
-// Prolongation operator from the true DOFs of a broken space to its L-vector. The true DOF
-// vector of the broken space is [x; x_s], with x the true DOFs of the underlying conforming
-// space and x_s the copies of the split true DOFs owned by this process. The L-vector is
-// [y; y_c], with y the L-vector of the conforming space and y_c the copied L-DOFs, so that
-// y = P x and y_c = (P z)[copy], where z = x with the split true DOFs replaced by their
-// copies x_s (constrained L-DOFs can depend on both split and unsplit true DOFs). Parallel
-// communication is that of the conforming prolongation P.
-//
-class BrokenProlongation : public Operator
+// Prolongation of a broken space as a HypreParMatrix, with the global offsets of its rows
+// and columns (in the format of mfem::ParFiniteElementSpace::GetDofOffsets) and the column
+// map of its off-diagonal block, which the matrix references.
+struct BrokenProlongationMatrix
 {
-private:
-  const Operator &P;
-  const mfem::HypreParMatrix *hP;
-  mfem::Array<int> copy_ldofs, split_tdofs;
-  const int vsize, tsize;
-  mutable Vector tx, lx;
-
-  // Transpose of the copy rows: with w = Pᵀ x_c (or |P|ᵀ x_c), x_c scattered into an
-  // L-vector, add a w to y_t for the unsplit true DOFs, and set y_s = a w[split] + b y_s.
-  void AddCopyTranspose(const Vector &x, double a, double b, Vector &y, bool abs) const;
-
-public:
-  BrokenProlongation(const Operator &P, const mfem::Array<int> &copy_ldofs,
-                     const mfem::Array<int> &split_tdofs);
-
-  void Mult(const Vector &x, Vector &y) const override;
-
-  void MultTranspose(const Vector &x, Vector &y) const override;
-
-  // y = a |P_broken|ᵀ x + b y, used for diagonal assembly on nonconforming meshes.
-  void AbsMultTranspose(double a, const Vector &x, double b, Vector &y) const;
+  mfem::Array<HYPRE_BigInt> row_offsets, col_offsets;
+  std::vector<HYPRE_BigInt> col_map;
+  std::unique_ptr<mfem::HypreParMatrix> P;
 };
+
+// Build the prolongation of a broken space from the prolongation P of the underlying space
+// (from its true DOFs to its L-vector). The true DOFs of each process are its true DOFs
+// followed by the copies of its split true DOFs (split_tdofs, local indices), and the
+// L-vector is the L-vector of the underlying space followed by the copied L-DOFs
+// (copy_ldofs, the local indices of the original L-DOFs). The row of a copied L-DOF is the
+// row of its original L-DOF, with the columns of the split true DOFs of all processes
+// replaced by those of their copies (the L-DOFs of constrained entities can depend on both
+// split and unsplit true DOFs). Collective.
+void BuildBrokenProlongation(const mfem::ParMesh &mesh, mfem::HypreParMatrix &P,
+                             const mfem::Array<int> &copy_ldofs,
+                             const mfem::Array<int> &split_tdofs,
+                             BrokenProlongationMatrix &out);
+
+}  // namespace fem
 
 }  // namespace palace
 
