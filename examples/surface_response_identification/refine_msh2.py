@@ -10,7 +10,7 @@ is a binary MSH 2.2 file with the same physical tags, so the identification of t
 mesh can be audited against the refined mesh itself (invariant A5) instead of relying on
 Palace's internal UniformLevels, which leaves no mesh file for the audit.
 
-    python3 -m surface_response_identification.refine_msh2 --mesh M.msh2 --output M_r1.msh2 [--levels 1]
+    python3 -m surface_response_identification.refine_msh2 --mesh M.msh2 --output M_r1.msh2 [--levels 1] [--fraction 0.5]
 """
 
 import argparse
@@ -29,9 +29,18 @@ from .msh2 import LINE, TET, TRIANGLE, read_msh2  # noqa: E402
 POINT = 15
 
 
-def refine_once(coordinates, elements):
+def refine_once(coordinates, elements, fraction=0.5):
     """coordinates: (n, 3); elements: {type: (physical (m,), nodes (m, k) 0-based)} of
-    first-order simplices -> refined (coordinates, elements) in the same format."""
+    first-order simplices -> refined (coordinates, elements) in the same format. The new
+    node of every edge lies at `fraction` of the way from the edge's lower-indexed node to
+    its higher-indexed one (0.5: the midpoint; any other value in (0, 1) is a collinear
+    subdivision at a second, uneven spacing — the collinear-subdivision invariance gate,
+    decision 212). Every child simplex is valid for any fraction in (0, 1): the four corner
+    tetrahedra are cut off by one plane each, and the remaining inner octahedron is the
+    parent intersected with four half-spaces, convex, so its four tetrahedra along the
+    chosen diagonal have positive volume."""
+    if not 0.0 < fraction < 1.0:
+        raise ValueError(f"the edge fraction must lie in (0, 1) (got {fraction})")
     supported = {LINE, TRIANGLE, TET, POINT}
     unsupported = set(elements) - supported
     if unsupported:
@@ -44,7 +53,7 @@ def refine_once(coordinates, elements):
         index = midpoints.get(key)
         if index is None:
             index = len(points)
-            points.append(0.5 * (coordinates[a] + coordinates[b]))
+            points.append((1.0 - fraction) * coordinates[key[0]] + fraction * coordinates[key[1]])
             midpoints[key] = index
         return index
 
@@ -122,12 +131,12 @@ def write_binary_msh2(path, coordinates, elements, physical_names):
         target.write(bytes(out))
 
 
-def refine_file(mesh_path, output_path, levels=1):
+def refine_file(mesh_path, output_path, levels=1, fraction=0.5):
     mesh = read_msh2(mesh_path)
     coordinates = mesh.coordinates
     elements = {t: (np.asarray(mesh.physical_tags(t)), mesh.corner_indices(t)) for t in mesh.elements}
     for _ in range(levels):
-        coordinates, elements = refine_once(coordinates, elements)
+        coordinates, elements = refine_once(coordinates, elements, fraction)
     write_binary_msh2(output_path, coordinates, elements, mesh.physical_names)
     return {"Nodes": int(len(coordinates)), "Elements": {int(t): int(len(v[0])) for t, v in elements.items()}}
 
@@ -137,8 +146,9 @@ def main(argv=None):
     parser.add_argument("--mesh", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--levels", type=int, default=1)
+    parser.add_argument("--fraction", type=float, default=0.5, help="position of the new edge node from the lower-indexed node (default 0.5, the midpoint)")
     args = parser.parse_args(argv)
-    print(refine_file(args.mesh, args.output, args.levels))
+    print(refine_file(args.mesh, args.output, args.levels, args.fraction))
     return 0
 
 

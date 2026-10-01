@@ -196,7 +196,47 @@ smaller endpoint.
    1e-3 R / rho for a 1e-3 R position error) or lying on the circle as a chord (an arc
    starting at a corner that lies on its circle — the sharp end of a rounded slot: the corner
    stays a corner, the arc starts at its next joint; a lead meeting a circular arc at a 90 deg
-   corner is neither, and the corner is never absorbed). A rounded corner keeps the tangent
+   corner is neither, and the corner is never absorbed). **Collinear-subdivision invariance
+   (supervisor decisions 212 / 213, 2026-10-02; VALIDATION-PLAN (h)-8).** The arm whose far
+   vertex the chord test reads is the arm's straight PIECE — from the end joint to the
+   neighbouring joint or the path end, the rigid-run joint — never the adjacent mesh
+   segment: inserting collinear vertices on a chord is a geometric no-op and the reading must
+   not depend on it. Until 2026-10-02 the test read the far end of the mesh segment, so a
+   coarse round pad whose lead attaches through joints above the turn cap (DS-CTX-003 C4:
+   r 23 um, eight 43-deg chords, sagitta 0.86 R; the ground's r 36 hole) was a bend over
+   its interior joints on the chip mesh (one mesh edge per design chord: the attach joint
+   is on the circle) and sharp corners on the thin window mesh subdividing the same chords
+   at 4 um (the first sub-vertex 0.8 um off the circle): 168 um of E1 class D over S4 / C3 /
+   C4 / O1 / O3 / O4. Every other quantity of the arc test (joints, pieces, the every-point
+   clause, the tangent construction) was already a rigid-run quantity: a joint is a
+   non-collinear vertex at the direction quantum (1e-12 on the cosine), the same test that
+   bounds the rigid runs and the extraction's pieces. **First-joint absorbability (decision
+   213).** A chord arm at the range's FIRST joint whose far joint p is itself absorbable —
+   unconsumed, the same sign, below the turn cap, and its own arm consistent with the circle
+   (tangent-noise or a chord; p lies on the circle by the chord-arm clause itself) — is no
+   arm: the range is not maximal at its start and the fit is refused; the scan reaches the
+   arc's real start later (cyclically on a loop). This ends the recorded exposure of the
+   closed-loop start rule below for bends of four or more joints: when the loop's longest
+   piece is a chord INSIDE such a bend (short leads, long chords) the scan started inside it
+   and, on a joint-only mesh, accepted the sub-range anchored at the loop start (its first
+   arm, the previous chord, ends on the circle) and chopped the arc there, while on a
+   subdivided mesh the sub-vertex failed the former mesh-segment test and the whole arc was
+   found from its real start — the two discretisations disagreed, and the two-direction scan
+   rescued the joint-only reading only where one direction's sub-range had fewer than four
+   joints. A corner on the circle whose own arm is neither tangent nor a chord (a lead
+   meeting a round pad at a sub-cap angle) is not absorbable: the arc still starts at its
+   next joint and the corner stays a corner. The LAST joint's chord-arm clause is unchanged:
+   a polyline turning more than 180 deg (the C4 pad) is still cut into <= 180-deg bends
+   there under the current rule — which reading is physically right for such coarse polygons
+   (corners or arc) stays the deferred rule question of decision 184 / D6. Tests: unit case
+   `SurfaceResponseIdentificationCollinearSubdivision` (coarse pads of 10-60 um chords and
+   136-174 deg joints joint-only vs subdivided at 4 um, irregularly and by the mesher; straight
+   edges and sharp corners with subdivided arms; the start-rule loops incl. one whose longest
+   chord lies mid-arc, with every start vertex), the python mirror's
+   `test_arc_groups_collinear_subdivision_and_start_rule`, and the generic
+   "collinear-subdivision invariance" gate (`subdivision_gate.py`: every synthetic layout of
+   the existing gates re-identified with every mesh edge subdivided at two spacings and every
+   closed loop with a rotated start vertex -> identical GeometryDigest / features). A rounded corner keeps the tangent
    construction only (its arms are tangent by construction and its site — virtual corner, arm
    directions — has no meaning otherwise). **Every-point clause (USER decision 184 (2),
    2026-10-01; the E8-3 / E8-4 false arcs of stage 0).** The concyclicity holds at EVERY
@@ -302,8 +342,10 @@ smaller endpoint.
    taken — the seed is the canonical (coordinate-sorted) numbering's first segment of the
    loop and therefore coordinate-dependent — and the tie-break's first-joint position is 0 for
    every arc of a loop. A different start point of a loop is not covered by the two-direction
-   scan; the exposure is a loop whose tied longest pieces lie inside arcs (all-equal chords of
-   a polygon are corners or one circle). Gate: the mirror gate's rotation variant identifies
+   scan; the exposure was a loop whose tied longest pieces lie inside arcs (all-equal chords of
+   a polygon are corners or one circle) — closed for bends of four or more joints by the
+   first-joint absorbability clause above (decision 213), which refuses a sub-arc anchored at
+   the loop start whatever the start vertex. Gate: the mirror gate's rotation variant identifies
    closed filleted loops rotated by 37 deg (and re-numbered) and requires identical content.
    Former recorded
    constants of the arc rule, retired by the sagitta form (`ArcFitToleranceRelative` = 0.05,
