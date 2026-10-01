@@ -1172,7 +1172,7 @@ void BuildBrokenProlongation(const mfem::ParMesh &mesh, mfem::HypreParMatrix &P,
   const int send_size = hypre_ParCSRCommPkgSendMapStart(comm_pkg, num_sends);
   const int num_cols_offd = hypre_CSRMatrixNumCols(hypre_ParCSRMatrixOffd(hP));
   std::vector<HYPRE_Complex> send(send_size), ghost_col(num_cols_offd),
-      ghost_copy(num_cols_offd);
+      ghost_copy(num_cols_offd), ghost_versions(num_cols_offd);
   auto Exchange = [&](auto &&value, std::vector<HYPRE_Complex> &recv)
   {
     for (int k = 0; k < send_size; k++)
@@ -1190,6 +1190,8 @@ void BuildBrokenProlongation(const mfem::ParMesh &mesh, mfem::HypreParMatrix &P,
                                   : HYPRE_Complex(-1.0);
       },
       ghost_copy);
+  Exchange([&](int j) { return static_cast<HYPRE_Complex>(num_versions[j]); },
+           ghost_versions);
 
   // Rows of the original and copied L-DOFs.
   P.HostRead();
@@ -1204,6 +1206,7 @@ void BuildBrokenProlongation(const mfem::ParMesh &mesh, mfem::HypreParMatrix &P,
   std::vector<HYPRE_BigInt> offd_col;
   std::vector<double> diag_a, offd_a;
   diag_i[0] = offd_i[0] = 0;
+  int num_invalid = 0;
   for (int r = 0; r < nrows; r++)
   {
     // Versions of the entries of the row (all 0 for an original L-DOF).
@@ -1211,14 +1214,24 @@ void BuildBrokenProlongation(const mfem::ParMesh &mesh, mfem::HypreParMatrix &P,
     const int i = copy ? copy_ldofs[r - vsize] : r;
     const std::uint8_t *ver =
         copy ? copy_versions.data() + copy_offsets[r - vsize] : nullptr;
+    if (copy)
+    {
+      const int n = ((diag.Height() > 0) ? diag.GetI()[i + 1] - diag.GetI()[i] : 0) +
+                    ((offd.Height() > 0) ? offd.GetI()[i + 1] - offd.GetI()[i] : 0);
+      if (copy_offsets[r - vsize + 1] - copy_offsets[r - vsize] != n)
+      {
+        num_invalid++;
+        ver = nullptr;
+      }
+    }
     int entry = 0;
     if (diag.Height() > 0)
     {
       for (int k = diag.GetI()[i]; k < diag.GetI()[i + 1]; k++)
       {
         const int j = diag.GetJ()[k], v = ver ? ver[entry++] : 0;
-        MFEM_ASSERT(v < num_versions[j], "Invalid version for a broken space true DOF!");
-        diag_j.push_back((v > 0) ? copy_col[j] + v - 1 : j);
+        num_invalid += (v >= num_versions[j]);
+        diag_j.push_back((v > 0 && v < num_versions[j]) ? copy_col[j] + v - 1 : j);
         diag_a.push_back(diag.GetData()[k]);
       }
     }
@@ -1227,19 +1240,21 @@ void BuildBrokenProlongation(const mfem::ParMesh &mesh, mfem::HypreParMatrix &P,
       for (int k = offd.GetI()[i]; k < offd.GetI()[i + 1]; k++)
       {
         const int c = offd.GetJ()[k], v = ver ? ver[entry++] : 0;
-        MFEM_ASSERT(v == 0 || ghost_copy[c] >= 0.0,
-                    "Invalid version for a broken space true DOF!");
-        const double g = (v > 0) ? ghost_copy[c] + v - 1 : ghost_col[c];
+        const bool valid = (v < std::lround(ghost_versions[c]));
+        num_invalid += !valid;
+        const double g = (v > 0 && valid) ? ghost_copy[c] + v - 1 : ghost_col[c];
         offd_col.push_back(static_cast<HYPRE_BigInt>(g));
         offd_a.push_back(offd.GetData()[k]);
       }
     }
-    MFEM_ASSERT(!copy || copy_offsets[r - vsize] + entry == copy_offsets[r - vsize + 1],
-                "Invalid number of versions for a copied L-DOF of a broken space!");
     diag_i[r + 1] = static_cast<int>(diag_j.size());
     offd_i[r + 1] = static_cast<int>(offd_col.size());
   }
   P.HypreRead();
+  Mpi::GlobalSum(1, &num_invalid, comm);
+  MFEM_VERIFY(num_invalid == 0, "Invalid versions of the true DOFs of "
+                                    << num_invalid
+                                    << " entries of the prolongation of a broken space!");
 
   // Off-diagonal block with its own (sorted) column map.
   out.col_map = offd_col;
