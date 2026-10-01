@@ -123,7 +123,28 @@ void ReduceSharedEntities(const mfem::GroupCommunicator &gc,
 
 bool CrackSides::Any() const
 {
-  return std::any_of(copy.begin(), copy.end(), [](auto bits) { return bits != 0; });
+  return std::any_of(split.begin(), split.end(), [](auto bits) { return bits != 0; });
+}
+
+std::uint32_t CrackSides::CopyBits(int e) const
+{
+  std::uint32_t bits = 0;
+  for (int b = 0; b < 32; b++)
+  {
+    if (((split[e] >> b) & 1u) && GetVersion(e, b) > 0)
+    {
+      bits |= (std::uint32_t(1) << b);
+    }
+  }
+  return bits;
+}
+
+void CrackSides::Reset(std::size_t ne)
+{
+  split.assign(ne, 0);
+  version.assign(ne, {0, 0, 0, 0});
+  carrier.assign(ne, 0);
+  side.assign(ne, 0);
 }
 
 namespace mesh
@@ -141,8 +162,7 @@ CrackSides ComputeCrackSides(const mfem::ParMesh &cmesh,
   const int ne = mesh.GetNE(), nf = mesh.GetNumFaces(), nv = mesh.GetNV();
   const int nedges = (dim == 3) ? mesh.GetNEdges() : nf;
   CrackSides sides;
-  sides.copy.assign(ne, 0);
-  sides.split.assign(ne, 0);
+  sides.Reset(ne);
   MFEM_VERIFY(!HasHangingEntities(mesh),
               "Interior boundary sides can only be discovered on a mesh without hanging "
               "entities!");
@@ -556,396 +576,60 @@ CrackSides ComputeCrackSides(const mfem::ParMesh &cmesh,
   auto Split = [&](int type, int ent)
   { return comp_min[type][ent] != comp_max[type][ent]; };
 
-  // The choice of the group keeping the original DOFs has to be consistent between an
-  // entity and the entities of its closure, since a nonconforming mesh constrains the DOFs
-  // of hanging entities on an interior boundary face or edge to those of the face or edge
-  // and its closure. Therefore, groups are identified with regions: sets of elements on the
-  // same side of a connected interior boundary, joined through faces which contain a split
-  // entity. The regions are then two-colored (see below), such that each element keeps the
-  // original DOFs of all of its split entities or reads the copies of all of them.
-  std::vector<int> rparent(ne);
-  std::iota(rparent.begin(), rparent.end(), 0);
-  std::vector<double> rlabel(ne);
-  for (int e = 0; e < ne; e++)
+  // Each group of a split entity reads its own version of the DOFs of the entity: the rank
+  // of its label among those of all groups of the entity, such that the group with the
+  // smallest label reads the original DOFs. The labels are ranked by repeated reductions
+  // of the smallest label larger than the previous one.
+  std::vector<int> version(nn, -1);
   {
-    rlabel[e] = GlobalElement(e);
-  }
-  auto RFind = [&rparent](int e)
-  {
-    while (rparent[e] != e)
+    auto prev = comp_min;
+    for (int k = 0; k < nn; k++)
     {
-      rparent[e] = rparent[rparent[e]];
-      e = rparent[e];
-    }
-    return e;
-  };
-  auto HasSplitEntity = [&](int f)
-  {
-    if (sheet_face[f])
-    {
-      return false;
-    }
-    mesh.GetFaceVertices(f, fv);
-    for (auto v : fv)
-    {
-      if (sheet_vert[v] && Split(VERTEX, v))
+      if (comp[k] == comp_min[node_type[k]][node_ent[k]])
       {
-        return true;
+        version[k] = 0;
       }
     }
-    if (dim == 3)
+    for (int v = 1;; v++)
     {
-      mesh.GetFaceEdges(f, fe, fo);
-      for (auto edge : fe)
-      {
-        if (sheet_edge[edge] && Split(EDGE, edge))
-        {
-          return true;
-        }
-      }
-    }
-    return false;
-  };
-  for (int f = 0; f < nf; f++)
-  {
-    if (is_shared_face[f] || !HasSplitEntity(f))
-    {
-      continue;
-    }
-    int e1, e2;
-    mesh.GetFaceElements(f, &e1, &e2);
-    if (e1 < 0 || e2 < 0)
-    {
-      continue;
-    }
-    const int r1 = RFind(e1), r2 = RFind(e2);
-    if (r1 != r2)
-    {
-      rparent[r1] = r2;
-      rlabel[r2] = std::min(rlabel[r1], rlabel[r2]);
-    }
-  }
-  if (Mpi::Size(comm) > 1)
-  {
-    std::vector<int> slot_elem(shared_faces.size(), -1);
-    for (std::size_t p = 0; p < shared_faces.size(); p++)
-    {
-      const int f = shared_faces[p];
-      if (HasSplitEntity(f))
-      {
-        int e1, e2;
-        mesh.GetFaceElements(f, &e1, &e2);
-        slot_elem[p] = e1;
-      }
-    }
-    std::vector<double> buf(shared_faces.size());
-    while (true)
-    {
-      for (std::size_t p = 0; p < slot_elem.size(); p++)
-      {
-        buf[p] = (slot_elem[p] >= 0) ? rlabel[RFind(slot_elem[p])] : mfem::infinity();
-      }
-      ReduceShared(*gc_face, shared_faces, 1, buf, mfem::GroupCommunicator::Min<double>);
-      int changed = 0;
-      for (std::size_t p = 0; p < slot_elem.size(); p++)
-      {
-        if (slot_elem[p] >= 0)
-        {
-          const int r = RFind(slot_elem[p]);
-          if (buf[p] < rlabel[r])
-          {
-            rlabel[r] = buf[p];
-            changed = 1;
-          }
-        }
-      }
-      Mpi::GlobalMax(1, &changed, comm);
-      if (!changed)
+      int remaining =
+          std::any_of(version.begin(), version.end(), [](int w) { return w < 0; });
+      Mpi::GlobalMax(1, &remaining, comm);
+      if (!remaining)
       {
         break;
       }
-    }
-  }
-  std::vector<double> region(nn);
-  for (int k = 0; k < nn; k++)
-  {
-    region[k] = rlabel[RFind(node_elem[k])];
-  }
-
-  // Two-coloring of a graph gathered on the root process, with nodes identified by labels:
-  // the labels of each of the given pairs to join are in the same set, and the sets of the
-  // labels of each of the given pairs to separate have different colors where possible.
-  // Each connected component is colored from the set with the smallest label. Returns the
-  // pairs of label and color of all given labels, sorted by label. Collective.
-  using LabelPairs = std::set<std::pair<double, double>>;
-  auto ColorLabels = [&](const LabelPairs &join, const LabelPairs &separate)
-  {
-    std::vector<double> send;
-    send.reserve(1 + 2 * (join.size() + separate.size()));
-    send.push_back(static_cast<double>(join.size()));
-    for (const auto &pairs : {&join, &separate})
-    {
-      for (const auto &[a, b] : *pairs)
-      {
-        send.push_back(a);
-        send.push_back(b);
-      }
-    }
-    const int count = static_cast<int>(send.size()), nprocs = Mpi::Size(comm);
-    std::vector<int> counts(nprocs, 0), displs(nprocs, 0);
-    MPI_Gather(&count, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm);
-    std::vector<double> recv;
-    if (Mpi::Root(comm))
-    {
-      for (int p = 1; p < nprocs; p++)
-      {
-        displs[p] = displs[p - 1] + counts[p - 1];
-      }
-      recv.resize(displs[nprocs - 1] + counts[nprocs - 1]);
-    }
-    MPI_Gatherv(send.data(), count, MPI_DOUBLE, recv.data(), counts.data(), displs.data(),
-                MPI_DOUBLE, 0, comm);
-    std::vector<double> colored;
-    if (Mpi::Root(comm))
-    {
-      // Union-find on the labels, with the smallest label of each set as its root.
-      std::map<double, double> parent;
-      auto FindSet = [&parent](double x)
-      {
-        parent.emplace(x, x);
-        while (parent[x] != x)
-        {
-          parent[x] = parent[parent[x]];
-          x = parent[x];
-        }
-        return x;
-      };
-      std::vector<std::pair<double, double>> edges;
-      for (int p = 0; p < nprocs; p++)
-      {
-        const double *data = recv.data() + displs[p];
-        const int num_join = static_cast<int>(data[0]);
-        for (int i = 0; i < num_join; i++)
-        {
-          const double a = FindSet(data[1 + 2 * i]), b = FindSet(data[2 + 2 * i]);
-          parent[std::max(a, b)] = std::min(a, b);
-        }
-        for (int i = 1 + 2 * num_join; i + 1 < counts[p]; i += 2)
-        {
-          edges.emplace_back(data[i], data[i + 1]);
-        }
-      }
-      std::map<double, std::vector<double>> adj;
-      for (const auto &[a, b] : edges)
-      {
-        const double ra = FindSet(a), rb = FindSet(b);
-        adj[ra].push_back(rb);
-        adj[rb].push_back(ra);
-      }
-      for (const auto &entry : parent)
-      {
-        adj[FindSet(entry.first)];
-      }
-      std::map<double, int> set_color;
-      std::vector<double> queue;
-      for (const auto &entry : adj)
-      {
-        if (set_color.count(entry.first))
-        {
-          continue;
-        }
-        set_color[entry.first] = 0;
-        queue.assign(1, entry.first);
-        for (std::size_t q = 0; q < queue.size(); q++)
-        {
-          const int c = set_color[queue[q]];
-          for (auto r : adj[queue[q]])
+      MFEM_VERIFY(v <= CrackSides::max_version,
+                  "Too many sides around an interior boundary entity!");
+      auto next = EntityReduce(
+          [&](int k)
           {
-            if (!set_color.count(r))
-            {
-              set_color[r] = 1 - c;
-              queue.push_back(r);
-            }
-          }
-        }
-      }
-      for (const auto &entry : parent)
-      {
-        colored.push_back(entry.first);
-        colored.push_back(set_color[FindSet(entry.first)]);
-      }
-    }
-    int size = static_cast<int>(colored.size());
-    Mpi::Broadcast(1, &size, 0, comm);
-    colored.resize(size);
-    MPI_Bcast(colored.data(), size, MPI_DOUBLE, 0, comm);
-    return colored;
-  };
-  auto LookupColor = [](const std::vector<double> &colored, double label, int color)
-  {
-    const int n = static_cast<int>(colored.size()) / 2;
-    int lo = 0, hi = n;
-    while (lo < hi)
-    {
-      const int mid = (lo + hi) / 2;
-      if (colored[2 * mid] < label)
-      {
-        lo = mid + 1;
-      }
-      else
-      {
-        hi = mid;
-      }
-    }
-    return (lo < n && colored[2 * lo] == label) ? static_cast<int>(colored[2 * lo + 1])
-                                                : color;
-  };
-
-  // Two-coloring of the regions, which are adjacent when they are on different sides of a
-  // split entity: the regions of the first color keep the original DOFs and those of the
-  // second color read the copies. Each element then reads either the original DOFs of all
-  // of its split entities or the copies of all of them, which is required on
-  // nonconforming meshes, where the DOFs of a hanging entity can be constrained by those of
-  // the split entities of several interior boundaries (for an element between two parallel
-  // interior boundaries, for example). Regions without neighbors (whose split entities
-  // have all of their groups in the region) have the first color.
-  const auto region_min = EntityReduce([&](int k) { return region[k]; }, false);
-  const auto region_max = EntityReduce([&](int k) { return region[k]; }, true);
-  std::vector<int> color(nn, 0);
-  {
-    LabelPairs adjacent;
-    for (int k = 0; k < nn; k++)
-    {
-      const int type = node_type[k], ent = node_ent[k];
-      if (Split(type, ent) && region_min[type][ent] < region_max[type][ent])
-      {
-        adjacent.emplace(region_min[type][ent], region_max[type][ent]);
-      }
-    }
-    const auto region_colors = ColorLabels({}, adjacent);
-    for (int k = 0; k < nn; k++)
-    {
-      color[k] = LookupColor(region_colors, region[k], 0);
-    }
-  }
-  auto ColorCandidate = [&](int k) { return (color[k] == 0) ? comp[k] : std::nan(""); };
-  const auto color_min = EntityReduce(ColorCandidate, false);
-  const auto color_max = EntityReduce(ColorCandidate, true);
-
-  // Split entities without a unique group in the regions of the first color: at junctions
-  // of interior boundaries where the regions cannot be two-colored (three pairwise
-  // adjacent regions), and for an interior boundary whose two sides are in the same
-  // region, joined through the split entities of another interior boundary (an air bridge
-  // standing on a ground plane, for example). The sides of these entities are two-colored
-  // by themselves, with the groups read by the same element on the same side, such that
-  // the choice of the base group is consistent along such an interior boundary, and only
-  // elements next to its junctions with other interior boundaries are inconsistent. Groups
-  // are identified by their labels, which are only shared by groups with a common element.
-  auto Conflict = [&](int type, int ent)
-  { return Split(type, ent) && color_min[type][ent] != color_max[type][ent]; };
-  std::vector<int> side_color(nn, -1);
-  {
-    LabelPairs same_side, other_side;
-    for (int e = 0; e < ne; e++)
-    {
-      double first = std::nan("");
-      for (int k = node_offsets[e]; k < node_offsets[e + 1]; k++)
-      {
-        if (!Conflict(node_type[k], node_ent[k]))
-        {
-          continue;
-        }
-        if (std::isnan(first))
-        {
-          first = comp[k];
-        }
-        else if (comp[k] != first)
-        {
-          same_side.emplace(std::min(first, comp[k]), std::max(first, comp[k]));
-        }
-      }
-    }
-    for (int k = 0; k < nn; k++)
-    {
-      const int type = node_type[k], ent = node_ent[k];
-      if (Conflict(type, ent))
-      {
-        other_side.emplace(comp_min[type][ent], comp_max[type][ent]);
-      }
-    }
-    int any = !other_side.empty();
-    Mpi::GlobalMax(1, &any, comm);
-    if (any)
-    {
-      const auto side_colors = ColorLabels(same_side, other_side);
+            const double p = prev[node_type[k]][node_ent[k]];
+            return (comp[k] > p) ? comp[k] : std::nan("");
+          },
+          false);
       for (int k = 0; k < nn; k++)
       {
-        if (Conflict(node_type[k], node_ent[k]))
+        if (version[k] < 0 && comp[k] == next[node_type[k]][node_ent[k]])
         {
-          side_color[k] = LookupColor(side_colors, comp[k], -1);
+          version[k] = v;
         }
       }
+      prev = std::move(next);
     }
   }
-  auto SideCandidate = [&](int k) { return (side_color[k] == 0) ? comp[k] : std::nan(""); };
-  const auto side_min = EntityReduce(SideCandidate, false);
-  const auto side_max = EntityReduce(SideCandidate, true);
-
-  // For each split entity, the base group is the one in the regions of the first color, or
-  // for the entities above, the one on the side of the first color. Where neither is
-  // unique, the base group is the one in the region with the smallest label (falling back
-  // to the group with the smallest label if that region contains several of its groups).
-  // Elements of all other groups read the copy.
-  auto BaseCandidate = [&](int k)
-  { return (region[k] == region_min[node_type[k]][node_ent[k]]) ? comp[k] : std::nan(""); };
-  const auto base_min = EntityReduce(BaseCandidate, false);
-  const auto base_max = EntityReduce(BaseCandidate, true);
   for (int k = 0; k < nn; k++)
   {
-    const int type = node_type[k], ent = node_ent[k];
-    if (!Split(type, ent))
+    if (Split(node_type[k], node_ent[k]))
     {
-      continue;
-    }
-    sides.split[node_elem[k]] |= (std::uint32_t(1) << node_bit[k]);
-    double base = comp_min[type][ent];
-    if (color_min[type][ent] == color_max[type][ent])
-    {
-      base = color_min[type][ent];
-    }
-    else if (side_min[type][ent] == side_max[type][ent])
-    {
-      base = side_min[type][ent];
-    }
-    else if (base_min[type][ent] == base_max[type][ent])
-    {
-      base = base_min[type][ent];
-    }
-    if (comp[k] != base)
-    {
-      sides.copy[node_elem[k]] |= (std::uint32_t(1) << node_bit[k]);
+      sides.split[node_elem[k]] |= (std::uint32_t(1) << node_bit[k]);
+      sides.SetVersion(node_elem[k], node_bit[k], version[k]);
+      sides.SetCarrier(node_elem[k], node_bit[k], node_type[k]);
     }
   }
-
-  // Elements reading the copies of some of their split entities and the original DOFs of
-  // others, next to junctions of interior boundaries: on a nonconforming mesh, the DOFs of
-  // hanging entities constrained by both kinds of split entities are not recovered
-  // consistently.
-  int num_mixed = 0;
   for (int e = 0; e < ne; e++)
   {
-    num_mixed += (sides.copy[e] != 0 && sides.copy[e] != sides.split[e]);
-  }
-  Mpi::GlobalSum(1, &num_mixed, comm);
-  if (num_mixed > 0 && mesh.Nonconforming())
-  {
-    Mpi::Warning(
-        comm,
-        "The sides of interior boundaries for error estimation could not be chosen "
-        "consistently for {:d} elements next to junctions of interior boundaries "
-        "(for example, at the legs of air bridges standing on a ground plane): on "
-        "nonconforming meshes, the flux recovery may be inaccurate near them!\n",
-        num_mixed);
+    sides.side[e] = elem_offset + e;
   }
   return sides;
 }
@@ -974,10 +658,6 @@ struct ReferenceTopology
 {
   std::vector<std::array<double, 3>> verts;
   std::vector<std::vector<int>> edges, faces;
-
-  // Bitmask of the closure of each local entity (vertices, edges, faces), in the local
-  // entity numbering of interior boundary sides.
-  std::vector<std::uint32_t> closure;
 };
 
 const ReferenceTopology &GetReferenceTopology(mfem::Geometry::Type geom)
@@ -1031,32 +711,6 @@ const ReferenceTopology &GetReferenceTopology(mfem::Geometry::Type geom)
         const int *fv = el->GetFaceVertices(k);
         t->faces.emplace_back(fv, fv + el->GetNFaceVertices(k));
       }
-    }
-    const int nv = static_cast<int>(t->verts.size()),
-              ne = static_cast<int>(t->edges.size());
-    for (int i = 0; i < nv; i++)
-    {
-      t->closure.push_back(std::uint32_t(1) << i);
-    }
-    for (int j = 0; j < ne; j++)
-    {
-      t->closure.push_back((std::uint32_t(1) << (nv + j)) | t->closure[t->edges[j][0]] |
-                           t->closure[t->edges[j][1]]);
-    }
-    for (std::size_t k = 0; k < t->faces.size(); k++)
-    {
-      const auto &fv = t->faces[k];
-      std::uint32_t mask = std::uint32_t(1) << (nv + ne + k);
-      for (int j = 0; j < ne; j++)
-      {
-        // The edges of a face are those with both vertices on the face.
-        if (std::find(fv.begin(), fv.end(), t->edges[j][0]) != fv.end() &&
-            std::find(fv.begin(), fv.end(), t->edges[j][1]) != fv.end())
-        {
-          mask |= t->closure[nv + j];
-        }
-      }
-      t->closure.push_back(mask);
     }
   }
   return *t;
@@ -1126,7 +780,7 @@ CrackSides InheritCrackSides(int dim, const std::vector<mfem::Geometry::Type> &f
   // The embeddings give the geometry of the fine element, but the point matrices are those
   // of the parent geometry, which differ for the tetrahedra of a refined pyramid: a parent
   // is a pyramid if any of its fine elements is, and otherwise has their geometry.
-  std::vector<mfem::Geometry::Type> coarse_geoms(coarse_sides.copy.size(),
+  std::vector<mfem::Geometry::Type> coarse_geoms(coarse_sides.split.size(),
                                                  mfem::Geometry::INVALID);
   for (int e = 0; e < ne; e++)
   {
@@ -1140,15 +794,14 @@ CrackSides InheritCrackSides(int dim, const std::vector<mfem::Geometry::Type> &f
   }
 
   CrackSides sides;
-  sides.copy.assign(ne, 0);
-  sides.split.assign(ne, 0);
+  sides.Reset(ne);
   std::vector<Point> pts, sub, face_pts;
   for (int e = 0; e < ne; e++)
   {
     const auto &emb = cf.embeddings[e];
-    const std::uint32_t coarse_copy = coarse_sides.copy[emb.parent];
+    sides.side[e] = coarse_sides.side[emb.parent];
     const std::uint32_t coarse_split = coarse_sides.split[emb.parent];
-    if (!coarse_copy && !coarse_split)
+    if (!coarse_split)
     {
       continue;
     }
@@ -1223,13 +876,8 @@ CrackSides InheritCrackSides(int dim, const std::vector<mfem::Geometry::Type> &f
       if ((coarse_split >> pb) & 1u)
       {
         sides.split[e] |= (std::uint32_t(1) << b);
-        sides.copy[e] |= (((coarse_copy >> pb) & 1u) << b);
-      }
-      else if (coarse_copy & ct.closure[pb])
-      {
-        // Not split, but possibly constrained to DOFs of split entities which are read as
-        // copies by the parent. Reading copies has no effect for unconstrained entities.
-        sides.copy[e] |= (std::uint32_t(1) << b);
+        sides.SetVersion(e, b, coarse_sides.GetVersion(emb.parent, pb));
+        sides.SetCarrier(e, b, coarse_sides.GetCarrier(emb.parent, pb));
       }
     };
 
@@ -1367,42 +1015,55 @@ bool ReconstructCrackSides(const mfem::ParMesh &mesh,
     gsides = InheritCrackSides(dim, it->fine_geoms, it->cf, gsides);
   }
 
-  // Send the sides of each element back to its process.
+  // Send the sides of each element back to its process: the local element index, the split
+  // entities, the versions, the carriers, and the side label.
+  constexpr int stride = 8;
   const int num_procs = Mpi::Size(comm), gne = static_cast<int>(orig_rank.size());
   std::vector<int> counts(num_procs, 0), displs(num_procs, 0);
   for (int e = 0; e < gne; e++)
   {
-    counts[orig_rank[e]] += 3;
+    counts[orig_rank[e]] += stride;
   }
   for (int p = 1; p < num_procs; p++)
   {
     displs[p] = displs[p - 1] + counts[p - 1];
   }
-  std::vector<std::uint32_t> send(3 * static_cast<std::size_t>(gne)), recv(3 * ne);
+  std::vector<std::int64_t> send(stride * static_cast<std::size_t>(gne)),
+      recv(stride * static_cast<std::size_t>(ne));
   {
     std::vector<int> pos(displs);
     for (int e = 0; e < gne; e++)
     {
       auto *entry = send.data() + pos[orig_rank[e]];
-      entry[0] = static_cast<std::uint32_t>(orig_index[e]);
-      entry[1] = gsides.copy[e];
-      entry[2] = gsides.split[e];
-      pos[orig_rank[e]] += 3;
+      entry[0] = orig_index[e];
+      entry[1] = gsides.split[e];
+      for (int w = 0; w < 4; w++)
+      {
+        entry[2 + w] = gsides.version[e][w];
+      }
+      entry[6] = static_cast<std::int64_t>(gsides.carrier[e]);
+      entry[7] = gsides.side[e];
+      pos[orig_rank[e]] += stride;
     }
   }
   int recv_count = 0;
   MPI_Scatter(counts.data(), 1, MPI_INT, &recv_count, 1, MPI_INT, 0, comm);
-  MFEM_VERIFY(recv_count == 3 * ne,
+  MFEM_VERIFY(recv_count == stride * ne,
               "Unexpected element count when reconstructing interior boundary sides!");
-  MPI_Scatterv(send.data(), counts.data(), displs.data(), MPI_UINT32_T, recv.data(), 3 * ne,
-               MPI_UINT32_T, 0, comm);
-  sides.copy.assign(ne, 0);
-  sides.split.assign(ne, 0);
+  MPI_Scatterv(send.data(), counts.data(), displs.data(), MPI_INT64_T, recv.data(),
+               stride * ne, MPI_INT64_T, 0, comm);
+  sides.Reset(ne);
   for (int i = 0; i < ne; i++)
   {
-    const auto e = recv[3 * i];
-    sides.copy[e] = recv[3 * i + 1];
-    sides.split[e] = recv[3 * i + 2];
+    const auto *entry = recv.data() + stride * static_cast<std::size_t>(i);
+    const auto e = static_cast<std::size_t>(entry[0]);
+    sides.split[e] = static_cast<std::uint32_t>(entry[1]);
+    for (int w = 0; w < 4; w++)
+    {
+      sides.version[e][w] = static_cast<std::uint32_t>(entry[2 + w]);
+    }
+    sides.carrier[e] = static_cast<std::uint64_t>(entry[6]);
+    sides.side[e] = entry[7];
   }
   return true;
 }
@@ -1463,13 +1124,30 @@ void GetElementDofEntities(const mfem::FiniteElementSpace &fespace, int e,
 }
 
 void BuildBrokenProlongation(const mfem::ParMesh &mesh, mfem::HypreParMatrix &P,
-                             const mfem::Array<int> &copy_ldofs,
-                             const mfem::Array<int> &split_tdofs,
+                             const std::vector<int> &copy_ldofs,
+                             const std::vector<int> &copy_offsets,
+                             const std::vector<std::uint8_t> &copy_versions,
+                             const std::vector<int> &num_versions,
                              BrokenProlongationMatrix &out)
 {
   MPI_Comm comm = mesh.GetComm();
   const int vsize = P.Height(), tsize = P.Width();
-  const int nrows = vsize + copy_ldofs.Size(), ncols = tsize + split_tdofs.Size();
+  MFEM_VERIFY(static_cast<int>(num_versions.size()) == tsize &&
+                  copy_offsets.size() == copy_ldofs.size() + 1,
+              "Invalid copies for the prolongation of a broken space!");
+
+  // Local column of the first copy of each true DOF with several versions.
+  std::vector<int> copy_col(tsize, -1);
+  int ncols = tsize;
+  for (int t = 0; t < tsize; t++)
+  {
+    if (num_versions[t] > 1)
+    {
+      copy_col[t] = ncols;
+      ncols += num_versions[t] - 1;
+    }
+  }
+  const int nrows = vsize + static_cast<int>(copy_ldofs.size());
   {
     HYPRE_BigInt sizes[2] = {nrows, ncols};
     mfem::Array<HYPRE_BigInt> *offsets[2] = {&out.row_offsets, &out.col_offsets};
@@ -1481,15 +1159,9 @@ void BuildBrokenProlongation(const mfem::ParMesh &mesh, mfem::HypreParMatrix &P,
   const HYPRE_BigInt global_rows = out.row_offsets[assumed ? 2 : nprocs];
   const HYPRE_BigInt global_cols = out.col_offsets[assumed ? 2 : nprocs];
 
-  // Local column of the copy of each split true DOF.
-  std::vector<int> copy_col(tsize, -1);
-  for (int i = 0; i < split_tdofs.Size(); i++)
-  {
-    copy_col[split_tdofs[i]] = tsize + i;
-  }
-
-  // Global columns of the true DOFs of the off-diagonal columns of P, and of their copies
-  // (or -1), from the processes owning them, through the communication package of P.
+  // Global columns of the true DOFs of the off-diagonal columns of P, and of their first
+  // copies (or -1), from the processes owning them, through the communication package of
+  // P.
   hypre_ParCSRMatrix *hP = P;
   if (!hypre_ParCSRMatrixCommPkg(hP))
   {
@@ -1534,14 +1206,19 @@ void BuildBrokenProlongation(const mfem::ParMesh &mesh, mfem::HypreParMatrix &P,
   diag_i[0] = offd_i[0] = 0;
   for (int r = 0; r < nrows; r++)
   {
+    // Versions of the entries of the row (all 0 for an original L-DOF).
     const bool copy = (r >= vsize);
     const int i = copy ? copy_ldofs[r - vsize] : r;
+    const std::uint8_t *ver =
+        copy ? copy_versions.data() + copy_offsets[r - vsize] : nullptr;
+    int entry = 0;
     if (diag.Height() > 0)
     {
       for (int k = diag.GetI()[i]; k < diag.GetI()[i + 1]; k++)
       {
-        const int j = diag.GetJ()[k];
-        diag_j.push_back((copy && copy_col[j] >= 0) ? copy_col[j] : j);
+        const int j = diag.GetJ()[k], v = ver ? ver[entry++] : 0;
+        MFEM_ASSERT(v < num_versions[j], "Invalid version for a broken space true DOF!");
+        diag_j.push_back((v > 0) ? copy_col[j] + v - 1 : j);
         diag_a.push_back(diag.GetData()[k]);
       }
     }
@@ -1549,12 +1226,16 @@ void BuildBrokenProlongation(const mfem::ParMesh &mesh, mfem::HypreParMatrix &P,
     {
       for (int k = offd.GetI()[i]; k < offd.GetI()[i + 1]; k++)
       {
-        const int c = offd.GetJ()[k];
-        const double g = (copy && ghost_copy[c] >= 0.0) ? ghost_copy[c] : ghost_col[c];
+        const int c = offd.GetJ()[k], v = ver ? ver[entry++] : 0;
+        MFEM_ASSERT(v == 0 || ghost_copy[c] >= 0.0,
+                    "Invalid version for a broken space true DOF!");
+        const double g = (v > 0) ? ghost_copy[c] + v - 1 : ghost_col[c];
         offd_col.push_back(static_cast<HYPRE_BigInt>(g));
         offd_a.push_back(offd.GetData()[k]);
       }
     }
+    MFEM_ASSERT(!copy || copy_offsets[r - vsize] + entry == copy_offsets[r - vsize + 1],
+                "Invalid number of versions for a copied L-DOF of a broken space!");
     diag_i[r + 1] = static_cast<int>(diag_j.size());
     offd_i[r + 1] = static_cast<int>(offd_col.size());
   }
