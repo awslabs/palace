@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <numeric>
 #include <random>
@@ -141,6 +142,74 @@ mfem::Mesh MakeCrackedCubeMesh(int n, mfem::Element::Type type, double y_max = 1
     mesh.AddBdrElement(base.GetBdrElement(be)->Duplicate(&mesh));
   }
   for (auto f : crack_faces)
+  {
+    auto *el = base.GetFace(f)->Duplicate(&mesh);
+    el->SetAttribute(crack_attr);
+    mesh.AddBdrElement(el);
+  }
+  mesh.FinalizeTopology();
+  mesh.Finalize();
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    mesh.SetAttribute(e, 1);
+  }
+  mesh.SetAttributes();
+  return mesh;
+}
+
+// Air bridge standing on a ground plane, as interior boundaries (attribute crack_attr) in
+// a unit cube mesh: the ground plane z = 0.25, and a bridge over the strip
+// 0.25 < x < 0.75, made of the legs x = 0.25 and x = 0.75 for 0.25 < z < 0.625 and of the
+// top z = 0.625, for 0.25 < y < 0.75 (open at both ends).
+mfem::Mesh MakeAirBridgeMesh(int n, mfem::Element::Type type)
+{
+  constexpr double z_ground = 0.25, z_top = 0.625, lo = 0.25, hi = 0.75, eps = 1.0e-12;
+  auto base = mfem::Mesh::MakeCartesian3D(n, n, n, type, 1.0, 1.0, 1.0);
+  auto In = [](double t, double a, double b) { return t > a - eps && t < b + eps; };
+  auto Near = [](double t, double a) { return std::abs(t - a) < eps; };
+  const std::array<std::function<bool(const double *)>, 4> pieces = {
+      [&](const double *x) { return Near(x[2], z_ground); }, [&](const double *x)
+      { return Near(x[2], z_top) && In(x[0], lo, hi) && In(x[1], lo, hi); },
+      [&](const double *x)
+      { return Near(x[0], lo) && In(x[2], z_ground, z_top) && In(x[1], lo, hi); },
+      [&](const double *x)
+      { return Near(x[0], hi) && In(x[2], z_ground, z_top) && In(x[1], lo, hi); }};
+  std::vector<int> sheet_faces;
+  mfem::Array<int> fv;
+  for (int f = 0; f < base.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    base.GetFaceElements(f, &e1, &e2);
+    if (e2 < 0)
+    {
+      continue;
+    }
+    base.GetFaceVertices(f, fv);
+    for (const auto &on_piece : pieces)
+    {
+      if (std::all_of(fv.begin(), fv.end(),
+                      [&](int v) { return on_piece(base.GetVertex(v)); }))
+      {
+        sheet_faces.push_back(f);
+        break;
+      }
+    }
+  }
+  mfem::Mesh mesh(3, base.GetNV(), base.GetNE(),
+                  base.GetNBE() + static_cast<int>(sheet_faces.size()));
+  for (int v = 0; v < base.GetNV(); v++)
+  {
+    mesh.AddVertex(base.GetVertex(v));
+  }
+  for (int e = 0; e < base.GetNE(); e++)
+  {
+    mesh.AddElement(base.GetElement(e)->Duplicate(&mesh));
+  }
+  for (int be = 0; be < base.GetNBE(); be++)
+  {
+    mesh.AddBdrElement(base.GetBdrElement(be)->Duplicate(&mesh));
+  }
+  for (auto f : sheet_faces)
   {
     auto *el = base.GetFace(f)->Duplicate(&mesh);
     el->SetAttribute(crack_attr);
@@ -639,6 +708,42 @@ TEST_CASE("Interior boundary sides", "[brokenspace][Serial][Parallel]")
   }
   Mpi::GlobalSum(1, &num_nonzero, comm);
   CHECK(num_nonzero == 0);
+}
+
+TEST_CASE("Interior boundary sides of an air bridge", "[brokenspace][Serial][Parallel]")
+{
+  // The air under the bridge and above it are a single region, joined through the split
+  // entities of the ground plane next to the legs of the bridge, so the sides of the bridge
+  // cannot be chosen by the two-coloring of the regions. They are still chosen
+  // consistently along the bridge: only elements touching both the bridge and the ground
+  // plane (next to the legs) read the copies for some of their split entities and the
+  // original DOFs for others.
+  const auto comm = MPI_COMM_WORLD;
+  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  auto smesh = MakeAirBridgeMesh(8, type);
+  smesh.EnsureNCMesh(true);
+  auto part = Partition(smesh, Mpi::Size(comm));
+  auto mesh = MakeParMesh(comm, smesh, part);
+  const auto &sides = mesh.GetCrackSides({crack_attr});
+  const auto &pmesh = mesh.Get();
+  int counts[3] = {0, 0, 0};  // Elements reading copies, mixed, mixed away from the ground
+  mfem::Array<int> ev;
+  for (int e = 0; e < pmesh.GetNE(); e++)
+  {
+    counts[0] += (sides.copy[e] != 0);
+    if (sides.copy[e] == 0 || sides.copy[e] == sides.split[e])
+    {
+      continue;
+    }
+    counts[1]++;
+    pmesh.GetElementVertices(e, ev);
+    counts[2] += std::none_of(ev.begin(), ev.end(), [&](int v)
+                              { return std::abs(pmesh.GetVertex(v)[2] - 0.25) < 1.0e-12; });
+  }
+  Mpi::GlobalSum(3, counts, comm);
+  CAPTURE(type, counts[0], counts[1]);
+  CHECK(counts[0] > 0);
+  CHECK(counts[2] == 0);
 }
 
 TEST_CASE("Hanging entities", "[brokenspace][Serial][Parallel]")
