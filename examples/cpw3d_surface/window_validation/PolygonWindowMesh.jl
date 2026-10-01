@@ -980,6 +980,7 @@ function mesh_plan(
             band_record,
             Dict{String, Any}(
                 "fan_turn_angle_deg" => fan_turn_angle_deg,
+                "fan_turn_tolerance_deg" => FAN_TURN_TOLERANCE_DEG,
                 "fan_columns" => FAN_COLUMNS,
                 "corner_clearance_fraction" => CORNER_CLEARANCE_FRACTION,
                 "rows_max" => radial_layers,
@@ -993,6 +994,12 @@ function mesh_plan(
                 "inward_corners" => statistics.inward_corners,
                 "clearance_capped_columns" => statistics.clearance_capped_columns,
                 "clearance_clamped_columns" => statistics.clearance_clamped_columns,
+                "scale_capped_columns" => statistics.scale_capped_columns,
+                "scale_clamped_columns" => statistics.scale_clamped_columns,
+                "max_mitre_scale" => statistics.max_mitre_scale,
+                "max_inward_scale" => statistics.max_inward_scale,
+                "max_wall_end_scale" => statistics.max_wall_end_scale,
+                "region_area_tolerance" => REGION_AREA_TOLERANCE,
                 "wall_end_columns" => statistics.wall_end_columns,
                 "segments_below_2p5r" => statistics.segments_below_2p5r,
                 "quad_min_abs_sin" => statistics.quad_min_abs_sin,
@@ -1351,8 +1358,8 @@ Generate the fabricated reference mesh of a polygon set and write `output` (ASCI
 its JSON manifest next to it. `band_mode=:own` (default) builds the structured boundary-layer
 band itself with the per-segment, per-side band cap (structured_band.jl); `:gmsh` uses Gmsh's
 BoundaryLayer field as the recorded transmon generator did. `fan_turn_angle_deg`: outward
-corners turning more than this get a fan of columns, the others the scaled bisector column (90:
-the recorded corner treatment). Gmsh mode only: `exact_band_thickness=true` passes the exact
+corners turning more than this (by more than `FAN_TURN_TOLERANCE_DEG`) get a fan of columns,
+the others the scaled bisector column (90: the recorded corner treatment). Gmsh mode only: `exact_band_thickness=true` passes the exact
 geometric sum as the boundary-layer Thickness (the recorded transmon generator's formula; see
 the header); `band_cap` applies the local band cap rule (`:none`: the rule is only recorded;
 `:partition`: one band per partition, the minimum over its curves; `:curve`: one BoundaryLayer

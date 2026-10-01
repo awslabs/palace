@@ -67,17 +67,30 @@ Rules:
   - The band cap (`PolygonWindowMesh.jl`, decision 191): at every point of a metal edge the
     boundary-layer band is at most 0.4 x the distance to the nearest facing plan curve (metal
     of any plane or bump, or the box wall) on that side of the edge; the first rows are kept
-    and the outer rows dropped. A writer feature closer than 2.5 r to a facing edge (r = the
-    first-layer height: 0.025 um at r10) cannot be meshed and is refused by the mesher's
-    collision check with its location; the finely polygonised chords of a small convex loop
-    (chord shorter than ~3.2 um at r10, ~3.9 um at r50) cap the band inside that loop, because
-    the next-but-one chord counts as a facing front.
+    and the outer rows dropped. Guarantee (`structured_band.jl`): every band element over a 1D
+    segment lies within 0.4 d of that segment on its band side, d the segment's facing
+    distance — the straight columns by the row rule, the scaled columns (mitre, inward, wall
+    end) by the LENGTH cap h_k x scale <= 0.4 x the smaller facing distance of the two adjacent
+    segments, fans (scale 1) by the corner's rows — so two fronts that see each other can never
+    meet (0.4 + 0.4 < 1), whatever their corner geometry (two convex corners facing diagonally
+    included). The exception is the first row, which is never dropped: a writer feature closer
+    than 2.5 r to a facing edge (r = the first-layer height: 0.025 um at r10, 0.125 um at r50)
+    cannot be meshed and is refused by the mesher's collision check with its location (the
+    backstop checks every band edge regardless). The finely polygonised chords of a small
+    convex loop (chord shorter than ~3.2 um at r10, ~3.9 um at r50) cap the band inside that
+    loop, because the next-but-one chord counts as a facing front.
   - Polygons of one plane must not overlap (a shared edge between two bodies is also refused:
     two conductors must not touch). Polygons of different planes may overlap freely (that is the
     flip-chip stack).
   - Metal that reaches the window wall is represented by vertices ON the wall (a ground plane
     `Outer` equal to the box rectangle with holes is the common case). Edges lying on the wall
-    are not metal edges (no boundary layer; the wall is `exterior_boundary`, attribute 3).
+    are not metal edges (no boundary layer; the wall is `exterior_boundary`, attribute 3). A
+    metal vertex ON the wall must carry an edge ALONG the wall: a polygon that only touches the
+    wall at a vertex (a wedge whose two edges both leave the wall, gap on either side of the
+    vertex along the wall) makes the gap partition touch itself at that vertex (four boundary
+    curves at one point), which the mesher refuses ("Partition ... touches itself at point
+    ..."). Clip such a polygon so that a wall run of positive length remains, or keep it off
+    the wall.
   - Every polygon must lie inside the box (clip at the box BEFORE writing; the mesher refuses a
     polygon that leaves the plan rectangle).
   - Cross-plane reconciliation (supervisor decision on the S1p trial): edges of the two planes

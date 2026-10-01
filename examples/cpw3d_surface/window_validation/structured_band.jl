@@ -16,15 +16,21 @@
 #   * rows per 1D SEGMENT from the facing distance of that segment (the exact distance to every
 #     other plan curve clipped to the half-plane on the band side; curves sharing an endpoint
 #     and collinear continuations excluded; other bodies' corners count), applied to both end
-#     columns of the segment; where neighbouring columns differ in rows the excess rows of the
-#     taller column collapse to triangles on the shorter column's top node (the band top is one
-#     edge per node pair, Gmsh never sees the step);
+#     columns of the segment; a SCALED column (mitre, inward, wall end) is further capped by
+#     its LENGTH: h_k * scale <= 0.4 x the smaller facing distance of its two adjacent
+#     segments (review M1: the mitre tip reaches sqrt 2 h along the diagonal, so two convex
+#     corners facing each other diagonally at D would otherwise reach 1.13 D together); where
+#     neighbouring columns differ in rows the excess rows of the taller column collapse to
+#     triangles on the shorter column's top node (the band top is one edge per node pair, Gmsh
+#     never sees the step);
 #   * corners: a right turn (OUTWARD: the band wraps around a convex metal corner) up to the
 #     fan threshold and every left turn (INWARD: a concave metal corner, a T / X junction of
 #     the cross-plane snap) get the bisector column scaled by 1 / cos(turn / 2), so the row-k
 #     node is exactly h_k from both edge lines — the recorded transmon generator listed no
 #     FanPointsList and its first-layer heights (0.995-1.005 r) are consistent with this
-#     column; a right turn above the threshold gets a fan of FAN_COLUMNS columns; at an inward
+#     column; a right turn above the threshold (compared with the angular tolerance
+#     FAN_TURN_TOLERANCE_DEG, so an exact right angle and one whose 1e-9-rounded coordinates
+#     turn by 90.0000000x deg are both mitred) gets a fan of FAN_COLUMNS columns; at an inward
 #     corner of interior angle theta every column at arc distance s along the two adjacent
 #     curves (the corner column: s = the smaller adjacent spacing) keeps h_k <= 0.5 s tan(theta
 #     / 2) so neighbouring columns never cross (the HANDOFF's half-distance rule);
@@ -37,12 +43,22 @@
 #     deterministic refusal naming the partition and the location;
 #   * the remaining region (band tops + wall curves + end columns) is a fresh built-in-kernel
 #     Gmsh model meshed with Algorithm 6 (transfinite 1 segment per band edge), its triangles
-#     joined to the band triangles; band + region area = the partition's OCC mass.
+#     joined to the band triangles; band + region area = the partition's OCC mass within
+#     REGION_AREA_TOLERANCE (relative).
 
 const FAN_COLUMNS = 7
 const DEFAULT_FAN_TURN_ANGLE_DEG = 90.0
+# A turn fans only if it exceeds the threshold by more than this tolerance: right angles whose
+# coordinates carry the writer's 1e-9 rounding turn by 90.0000000x deg and must stay mitres.
+const FAN_TURN_TOLERANCE_DEG = 1.0e-6
 # Above this turn the mitre column 1 / cos(turn / 2) would exceed 2 x the band: must be a fan.
+# The limit bounds OUTWARD corners only; inward mitres (1 / cos(turn / 2)) and wall-end
+# columns (1 / sin theta) scale without limit (geometrically forced), their LENGTH is capped
+# by the facing distance and the maximum scale is recorded in the manifest.
 const MAX_FAN_TURN_ANGLE_DEG = 120.0
+# Band + region area versus the partition's OCC mass. The construction closes to ~1e-11; the
+# transmon's exported box (1.5e-7 um outside its ground outline, merged by OCC) leaves 8e-11.
+const REGION_AREA_TOLERANCE = 1.0e-9
 const CORNER_CLEARANCE_FRACTION = 0.5
 const COLLINEAR_TOLERANCE_UM = 1.0e-7
 const HALF_PLANE_TOLERANCE_UM = 1.0e-9
@@ -276,14 +292,37 @@ mutable struct BandStatistics
     inward_corners::Int
     clearance_capped_columns::Int
     clearance_clamped_columns::Int
+    scale_capped_columns::Int # scaled columns shortened by the length cap (M1)
+    scale_clamped_columns::Int # scaled columns whose first row already exceeds the cap
     wall_end_columns::Int
     segments_below_2p5r::Int
     quad_min_abs_sin::Float64
     triangle_min_angle_deg::Float64
+    max_mitre_scale::Float64 # outward (mitre) corners: 1 / cos(turn / 2)
+    max_inward_scale::Float64 # inward corners: 1 / cos(turn / 2)
+    max_wall_end_scale::Float64 # wall ends: 1 / sin(theta)
     length_um_by_rows::Dict{Int, Float64}
 end
-BandStatistics() =
-    BandStatistics(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1.0, 180.0, Dict{Int, Float64}())
+BandStatistics() = BandStatistics(
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1.0,
+    180.0,
+    1.0,
+    1.0,
+    1.0,
+    Dict{Int, Float64}()
+)
 
 unit(v::Point2) = (h=hypot(v[1], v[2]); (v[1] / h, v[2] / h))
 left_normal(t::Point2) = (-t[2], t[1])
@@ -394,7 +433,8 @@ function loop_metal_chains(
     return chains
 end
 
-# Rows per segment of a chain from the facing rule (both end columns of a segment).
+# Rows per segment of a chain from the facing rule (both end columns of a segment), and the
+# facing distance of every segment (the length cap of the scaled columns).
 function chain_segment_rows(
     chain::MetalChain,
     curves::Vector{PlanCurve},
@@ -406,6 +446,7 @@ function chain_segment_rows(
     reach = heights[end] / BAND_CAP_FRACTION + 1.0
     n_segments = length(chain.segment_curve)
     rows = Vector{Int}(undef, n_segments)
+    distances = Vector{Float64}(undef, n_segments)
     for s = 1:n_segments
         q1 = chain.bases[s]
         q2 =
@@ -421,17 +462,20 @@ function chain_segment_rows(
             reach
         )
         rows[s] = band_cap_rows(d, radial_um, rows_max)
+        distances[s] = d
         d < 2.5radial_um && (statistics.segments_below_2p5r += 1)
         statistics.length_um_by_rows[rows[s]] =
             get(statistics.length_um_by_rows, rows[s], 0.0) + point_distance(q1, q2)
     end
-    return rows
+    return rows, distances
 end
 
-# Columns of a chain (corners, fans, wall ends, the clearance caps) and the per-column rows.
+# Columns of a chain (corners, fans, wall ends, the clearance caps, the length cap of the
+# scaled columns) and the per-column rows.
 function chain_columns(
     chain::MetalChain,
     segment_rows::Vector{Int},
+    segment_distances::Vector{Float64},
     heights::Vector{Float64},
     fan_turn::Float64,
     statistics::BandStatistics
@@ -448,15 +492,16 @@ function chain_columns(
         q2 = chain.closed ? chain.bases[mod1(s + 1, n)] : chain.bases[s + 1]
         point_distance(q1, q2)
     end
-    # Node rows: the minimum of the adjacent segments.
+    # Node rows: the minimum of the adjacent segments; node facing distance likewise (the
+    # length cap of a scaled column).
     node_rows = Vector{Int}(undef, n)
+    node_distance = Vector{Float64}(undef, n)
     for i = 1:n
         before = chain.closed ? mod1(i - 1, n) : i - 1
         after = chain.closed ? i : (i <= n_segments ? i : 0)
-        candidates = Int[]
-        before >= 1 && push!(candidates, segment_rows[before])
-        after >= 1 && push!(candidates, segment_rows[after])
-        node_rows[i] = minimum(candidates)
+        adjacent = filter(>=(1), (before, after))
+        node_rows[i] = minimum(segment_rows[s] for s in adjacent)
+        node_distance[i] = minimum(segment_distances[s] for s in adjacent)
     end
     # Clearance caps along the two curves adjacent to every inward corner and wall end:
     # h_k <= 0.5 s tan(theta / 2) at arc distance s from the corner.
@@ -528,9 +573,22 @@ function chain_columns(
             statistics.wall_end_columns += 1
         end
     end
-    # Columns.
+    # Columns. A scaled column (scale > 1: mitre, inward, wall end) is capped by its LENGTH,
+    # h_k * scale <= BAND_CAP_FRACTION x the node's facing distance (review M1), so the whole
+    # band over a segment stays within 0.4 x that segment's facing distance.
     columns = BandColumn[]
     column_node = Int[] # chain base index of every column
+    cap_scaled!(i, scale) = begin
+        scale > 1.0 || return nothing
+        rows, clamped =
+            rows_within(heights .* scale, BAND_CAP_FRACTION * node_distance[i])
+        if rows < node_rows[i]
+            node_rows[i] = rows
+            statistics.scale_capped_columns += 1
+        end
+        clamped && (statistics.scale_clamped_columns += 1)
+        return nothing
+    end
     push_column!(i, u, scale) = begin
         p = chain.bases[i]
         push!(
@@ -554,6 +612,9 @@ function chain_columns(
             sin_theta = abs(t[1] * wall[2] - t[2] * wall[1])
             sin_theta > 1.0e-9 ||
                 error("Metal curve at $(chain.bases[i]) runs along the window wall")
+            statistics.max_wall_end_scale =
+                max(statistics.max_wall_end_scale, 1.0 / sin_theta)
+            cap_scaled!(i, 1.0 / sin_theta)
             push_column!(i, wall, 1.0 / sin_theta)
             continue
         end
@@ -561,14 +622,21 @@ function chain_columns(
         t1, t2 = segment_direction(before), segment_direction(i)
         n1, n2 = left_normal(t1), left_normal(t2)
         turn = turns[i]
-        if turn < -fan_turn
+        if turn < -(fan_turn + deg2rad(FAN_TURN_TOLERANCE_DEG))
             statistics.fans += 1
             for j = 0:(FAN_COLUMNS - 1)
                 push_column!(i, rotate(n1, turn * j / (FAN_COLUMNS - 1)), 1.0)
             end
         else
-            chain.corner[i] && turn < 0.0 && (statistics.mitre_corners += 1)
-            push_column!(i, unit((n1[1] + n2[1], n1[2] + n2[2])), 1.0 / cos(turn / 2))
+            scale = 1.0 / cos(turn / 2)
+            if chain.corner[i] && turn < 0.0
+                statistics.mitre_corners += 1
+                statistics.max_mitre_scale = max(statistics.max_mitre_scale, scale)
+            elseif turn > 0.0
+                statistics.max_inward_scale = max(statistics.max_inward_scale, scale)
+            end
+            cap_scaled!(i, scale)
+            push_column!(i, unit((n1[1] + n2[1], n1[2] + n2[2])), scale)
         end
     end
     return columns, column_node, node_rows
@@ -898,9 +966,16 @@ function mesh_partition_band(
         chains = loop_metal_chains(loop, curves, nodes_by_curve)
         tops = Vector{Point2}[]
         for chain in chains
-            segment_rows = chain_segment_rows(chain, curves, heights, radial_um, statistics)
-            columns, _, node_rows =
-                chain_columns(chain, segment_rows, heights, fan_turn, statistics)
+            segment_rows, segment_distances =
+                chain_segment_rows(chain, curves, heights, radial_um, statistics)
+            columns, _, node_rows = chain_columns(
+                chain,
+                segment_rows,
+                segment_distances,
+                heights,
+                fan_turn,
+                statistics
+            )
             minimum_rows = min(minimum_rows, minimum(node_rows))
             for c = 1:(length(columns) - 1)
                 push_band_elements!(band, columns[c], columns[c + 1], statistics, where)
@@ -925,9 +1000,10 @@ function mesh_partition_band(
     region_mesh_area, region_polygon_area =
         mesh_region(partition, loops_edges, class, raw_triangles, plan_model)
     total = band_area + region_mesh_area
-    abs(total - partition.area) <= 1.0e-6 * max(1.0, partition.area) || error(
-        "$where: band $band_area + region $region_mesh_area (polygon $region_polygon_area) " *
-        "= $total differs from the OCC area $(partition.area)"
-    )
+    abs(total - partition.area) <= REGION_AREA_TOLERANCE * max(1.0, partition.area) ||
+        error(
+            "$where: band $band_area + region $region_mesh_area (polygon $region_polygon_area) " *
+            "= $total differs from the OCC area $(partition.area)"
+        )
     return band_area, region_mesh_area, minimum_rows, length(band)
 end

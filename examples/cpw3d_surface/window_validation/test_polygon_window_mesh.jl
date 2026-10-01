@@ -458,10 +458,17 @@ function straight_chain(bases)
     )
 end
 
-function band_of(chain, segment_rows, heights; fan_turn=deg2rad(90.0))
+# `distances`: the facing distance per segment (default: nothing faces the chain).
+function band_of(
+    chain,
+    segment_rows,
+    heights;
+    fan_turn=deg2rad(90.0),
+    distances=fill(Inf, length(segment_rows))
+)
     statistics = PWM.BandStatistics()
     columns, _, node_rows =
-        PWM.chain_columns(chain, segment_rows, heights, fan_turn, statistics)
+        PWM.chain_columns(chain, segment_rows, distances, heights, fan_turn, statistics)
     triangles = NTuple{3, PWM.Point2}[]
     for c = 1:(length(columns) - 1)
         PWM.push_band_elements!(triangles, columns[c], columns[c + 1], statistics, "test")
@@ -537,6 +544,61 @@ end
     @test fanned.quad_min_abs_sin > 0.97
     @test all(t -> PWM.orient(t...) > 0.0, triangles)
     @test PWM.check_band_collisions(triangles, 5.0, "test") > 0
+    # The length cap of the scaled column (review M1): a corner whose adjacent segments face
+    # a front at d keeps only the rows with h_k sqrt 2 <= 0.4 d. At d = 2.0 (r 0.05) the
+    # segment rule allows 4 rows (h_4 = 0.75) but the sqrt 2-scaled column only 3 (0.495);
+    # the straight columns keep their 4 rows and the step collapses.
+    d = 2.0
+    @test PWM.band_cap_rows(d, 0.05, 5) == 4
+    columns, node_rows, triangles, capped =
+        band_of(chain, fill(4, 8), heights; distances=fill(d, 8))
+    @test node_rows == [3, 4, 3, 4, 3, 4, 3, 4]
+    @test capped.scale_capped_columns == 4 && capped.scale_clamped_columns == 0
+    @test capped.max_mitre_scale ≈ sqrt(2.0) && capped.max_inward_scale == 1.0
+    @test hypot(columns[1].nodes[end]...) ≈ 0.35 * sqrt(2.0)
+    @test hypot(columns[1].nodes[end]...) <= 0.4 * d
+    @test capped.collapse_triangles == 8 && all(t -> PWM.orient(t...) > 0.0, triangles)
+    # Fans have scale 1 and are not capped by the length rule.
+    _, fan_rows, _, fan_capped =
+        band_of(chain, fill(4, 8), heights; fan_turn=deg2rad(45.0), distances=fill(d, 8))
+    @test all(fan_rows .== 4) && fan_capped.scale_capped_columns == 0
+end
+
+@testset "fan threshold tolerance" begin
+    # Review M2: a right angle whose 1e-9-rounded coordinates turn by 90.0000001 deg stays a
+    # mitre (tolerance 1e-6 deg); turns beyond the tolerance fan.
+    heights = PWM.band_heights(0.05, 2.0, 5)
+    function corner_chain(turn_deg)
+        # Edge 1 along +x (partition above), edge 2 turning right by turn_deg down to y = 0.
+        phi = deg2rad(turn_deg)
+        t2 = (cos(-phi), sin(-phi))
+        bases = [(0.0, 10.0), (5.0, 10.0), (10.0, 10.0)]
+        push!(bases, (10.0 + 5.0 * t2[1], 10.0 + 5.0 * t2[2]))
+        push!(bases, (10.0 + 10.0 * t2[1], 10.0 + 10.0 * t2[2]))
+        return PWM.MetalChain(
+            false,
+            bases,
+            [1, 1, 2, 2],
+            [false, false, true, false, false],
+            (0.0, 1.0),
+            (1.0, 0.0),
+            1,
+            2
+        )
+    end
+    @test PWM.FAN_TURN_TOLERANCE_DEG == 1.0e-6
+    for turn_deg in (90.0, 90.0000001, 90.0 + 0.9e-6)
+        _, _, _, statistics = band_of(corner_chain(turn_deg), fill(5, 4), heights)
+        @test statistics.fans == 0 && statistics.mitre_corners == 1
+    end
+    for turn_deg in (90.0 + 1.1e-6, 90.00001, 90.01)
+        _, _, _, statistics = band_of(corner_chain(turn_deg), fill(5, 4), heights)
+        @test statistics.fans == 1 && statistics.mitre_corners == 0
+    end
+    # The threshold itself still moves with the option.
+    _, _, _, lowered =
+        band_of(corner_chain(90.0), fill(5, 4), heights; fan_turn=deg2rad(89.0))
+    @test lowered.fans == 1
 end
 
 @testset "inward corners, T junctions and wall ends" begin
@@ -604,6 +666,17 @@ end
     @test near(columns[3].nodes[end], (16.0, 12.0 + 1.27 / 0.8))
     @test near(columns[2].nodes[end], (8.0 - 1.27 * 0.6, 6.0 + 1.27 * 0.8))
     @test all(t -> PWM.orient(t...) > 0.0, triangles)
+    @test oblique_statistics.max_wall_end_scale ≈ 1.25
+    # The wall-end column (scale 1.25) facing a front at 2.0 um keeps h_k x 1.25 <= 0.8: 6
+    # rows (0.7875) instead of 7; the straight column keeps 7 (review M1).
+    _, capped_rows, _, capped = band_of(oblique, [7, 7], heights; distances=[2.0, 2.0])
+    @test capped_rows == [6, 7, 6] && capped.scale_capped_columns == 2
+    # The inward corner above with a front at 0.3 um on the band side: the sqrt 2-scaled
+    # corner column keeps h_k sqrt 2 <= 0.12 (3 rows, 0.099), tighter than the clearance's 4.
+    _, inward_rows, _, inward_capped =
+        band_of(chain, fill(7, 6), heights; distances=fill(0.3, 6))
+    @test inward_rows[4] == 3 && inward_rows[3] == 4
+    @test inward_capped.max_inward_scale ≈ sqrt(2.0)
     # The mitre threshold cannot exceed 120 degrees (the scaled column would exceed 2 bands).
     @test_throws ErrorException mesh_polygon_window(
         read_polygon_set(single_plane_set("x", [[0, 0], [20, 0], [20, 10], [0, 10]])),
@@ -718,4 +791,95 @@ end
     @test chamfer_manifest["band"]["wall_end_columns"] == 4
     @test chamfer_manifest["first_layer_normal_height_um"]["minimum"] ≈ 0.05 rtol = 1.0e-9
     @test chamfer_manifest["first_layer_normal_height_um"]["maximum"] ≈ 0.05 rtol = 1.0e-9
+end
+
+# Two convex metal corners facing each other diagonally at corner-to-corner distance D (a
+# ground square and an island square in a 20 x 20 box): the adjacent segments see each other
+# at exactly D, so the segment rule alone let the two sqrt 2-scaled mitre tips reach 1.13 D
+# (review M1).
+function diagonal_corner_set(D)
+    e = D / sqrt(2.0)
+    return Dict(
+        "Version" => 1,
+        "Name" => "diagonal-corners",
+        "Box" => Dict("X" => [0.0, 20.0], "Y" => [0.0, 20.0]),
+        "Planes" => [
+            Dict(
+                "Name" => "L1",
+                "SurfaceZ" => 0.0,
+                "Facing" => "up",
+                "SubstrateThickness" => 20.0,
+                "Polygons" => [
+                    Dict(
+                        "Conductor" => "ground",
+                        "Outer" => [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]]
+                    ),
+                    Dict(
+                        "Conductor" => "island",
+                        "Outer" => [
+                            [10.0 + e, 10.0 + e],
+                            [20.0, 10.0 + e],
+                            [20.0, 20.0],
+                            [10.0 + e, 20.0]
+                        ]
+                    )
+                ]
+            )
+        ],
+        "Vacuum" => Dict("Below" => 0.0, "Above" => 20.0)
+    )
+end
+
+@testset "diagonally facing convex corners (M1)" begin
+    # The reviewer's refusal windows D in [2.5 h_k, 2.83 h_k): r50 0.9 / 2.0 um, r10 1.6 / 3.2
+    # um were refused by the collision backstop before the length cap; they mesh now, with the
+    # two corner columns shortened and every other column as before.
+    for (radial_um, D) in ((0.05, 0.9), (0.05, 2.0), (0.01, 1.6), (0.01, 3.2))
+        manifest = mesh_polygon_window(
+            read_polygon_set(diagonal_corner_set(D)),
+            radial_um,
+            5.0,
+            tempname() * ".msh2";
+            verbose=false,
+            plan_only=true
+        )
+        band = manifest["band"]
+        @test band["scale_capped_columns"] == 2 && band["scale_clamped_columns"] == 0
+        @test band["mitre_outward_corners"] == 2 && band["fans"] == 0
+        @test band["max_mitre_scale"] ≈ sqrt(2.0)
+        @test manifest["first_layer_normal_height_um"]["minimum"] ≈ radial_um rtol = 1.0e-9
+        @test manifest["first_layer_normal_height_um"]["maximum"] ≈ radial_um rtol = 1.0e-9
+    end
+    # Outside the windows (D = 1.5 um at r50: 3 rows, 0.35 sqrt 2 = 0.495 <= 0.6) nothing is
+    # capped.
+    manifest = mesh_polygon_window(
+        read_polygon_set(diagonal_corner_set(1.5)),
+        0.05,
+        5.0,
+        tempname() * ".msh2";
+        verbose=false,
+        plan_only=true
+    )
+    @test manifest["band"]["scale_capped_columns"] == 0
+end
+
+@testset "wall-touching wedge (writer constraint)" begin
+    # SCHEMA: a metal vertex on the box wall without an edge along the wall makes the gap
+    # partition touch itself at that vertex (four boundary curves): refused with the location.
+    wedge =
+        read_polygon_set(single_plane_set("wedge", [[5.0, 0.0], [9.0, 4.0], [1.0, 4.0]]))
+    message = try
+        mesh_polygon_window(
+            wedge,
+            0.05,
+            5.0,
+            tempname() * ".msh2";
+            verbose=false,
+            plan_only=true
+        )
+        ""
+    catch err
+        sprint(showerror, err)
+    end
+    @test occursin("touches itself", message)
 end
