@@ -107,8 +107,13 @@ reference. See the
 [wave port configuration documentation](../config/reference.md#config-boundaries-waveport)
 for details on `"VoltagePath"`.
 
-|S_{22}| \approx -9.5\text{ dB}``, with``S_{21} = S_{12}`` to within the level of
-attenuation set by the dielectric loss.
+The simulation sweeps ``5``–``15\text{ GHz}`` and writes the standard scattering outputs
+under `postpro/lumped_wave/`: `port-S.csv` (full ``2\times 2`` S-matrix), `port-V.csv`
+and `port-I.csv` (lumped-port voltages and currents), and `port-Z.csv` (wave-port modal
+``Z_{PV}`` and per-excitation total-field impedances). For a ``100\text{ }\Omega``
+mismatch on a matched-impedance line we expect ``|\Gamma| = 1/3``, i.e.
+``|S_{11}| = |S_{22}| \approx -9.5\text{ dB}``, with ``S_{21} = S_{12}`` to within the
+level of attenuation set by the dielectric loss.
 
 ## Kinetic inductance of a superconducting coaxial line
 
