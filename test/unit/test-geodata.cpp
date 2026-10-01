@@ -572,6 +572,19 @@ TEST_CASE("Interior boundary mesh cracking", "[geodata][Serial]")
   CHECK(NumVertices(Impedance(false), legacy) == nv_cut);
   CHECK(NumVertices(Conductivity(nullptr), off) == nv);
   CHECK(NumVertices({{"PMC", {{"Attributes", {7}}}}}, off) == nv);
+
+  // Refinement boxes make the hexahedral mesh nonconformal, which cannot be cracked.
+  const json box = {{"Refinement",
+                     {{"Boxes",
+                       {{{"Levels", 1},
+                         {"BoundingBoxMin", {0.0, 0.0, 0.0}},
+                         {"BoundingBoxMax", {0.5, 0.5, 1.0}}}}}}}};
+  CHECK_THROWS(NumVertices(Impedance(true), box));
+  CHECK_THROWS(NumVertices({{"PMC", {{"Attributes", {7}}}}}, box));
+  CHECK_NOTHROW(NumVertices(Impedance(false), box));
+  CHECK_NOTHROW(NumVertices(
+      {{"PMC", {{"Attributes", {7}}}}},
+      {{"CrackInternalBoundaryElements", false}, {"Refinement", box["Refinement"]}}));
   fs::remove(mesh_path);
 }
 
