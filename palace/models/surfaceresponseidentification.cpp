@@ -146,6 +146,28 @@ constexpr double kClusterArcChordMaxLengthOverRadius = 0.25;
 constexpr double kCurvatureWindowOverRadius = 1.0;
 constexpr double kPairSeparationTolerance = 0.05;
 constexpr int kPairSeparationSamplesPerInterval = 16;
+// Locality of the bent-pair readings (USER decision 184 (3), implementation corrected
+// 2026-10-01): a chain "bends within R" of a sample when a joint with a turn or a fitted
+// bend arc lies within kPairBendProximityOverRadius x R of it ALONG THE CHAIN; there and
+// only there the sample has no exact straight reading and its chord reading is the window
+// maximum over a half-width of max(R, min(local chord, kPairChordWindowCapOverRadius x R))
+// instead of R. The windowed curvature is NOT this test: the curvature rule spreads every
+// joint's turn over its two half-runs, so a 0.1 deg taper kink between a 200 um lead and a
+// 400 um taper run made kappa > 0 over 100 um of the lead, and the former window of a full
+// run length (200 um) read the taper from the lead: the DS-CTX-003 532 um 1 / 2 / 1 um
+// stacks read 2.2 / 2.7 / 2.0 um, the straight leads of the re-mesh gate's 10 R curved
+// stacks mesh-dependent. The cap keeps the window of a coarse chord (beyond 2R: chord
+// readings anyway) from reaching the neighbouring piece.
+constexpr double kPairBendProximityOverRadius = 1.0;
+constexpr double kPairChordWindowCapOverRadius = 2.0;
+// Exact stretches (USER decision 203, 2026-10-02): within a locally constant sub-piece the
+// samples with an exact reading agreeing within the signature parameter tolerance form
+// exact stretches; one splits off as its own exact sub-piece only when its exact samples
+// span at least kExactStretchMinLengthOverRadius x R (a shorter one merges into the
+// adjacent non-exact stretch; a sub-piece that is one exact stretch stays exact at any
+// length). The near-bend samples (not judged) join an adjacent stretch within
+// kPairBendProximityOverRadius x R of its last exact / judged sample.
+constexpr double kExactStretchMinLengthOverRadius = 1.0;
 // Self-pairing (decision 82(2) addition, 2026-09-25): a chain folding back onto itself
 // within 2R through a bend of radius >= R (a hairpin, a meander with smooth bends, the
 // U-turn of a narrow strip whose fold is not a rounded corner) pairs with itself. The
@@ -181,7 +203,10 @@ constexpr std::size_t kClusterExtensionMaxPasses = 12;
 // 2R, the chain length whose windowed bend radius lies within the band of 10R, the vertex
 // count whose turn lies within the band of the corner threshold and the vertex count whose
 // implied chord sagitta lies within the band of 0.05 R, each split into the below / above
-// sides, sampled every kKnifeEdgeSampleSpacingOverR.
+// sides, sampled every kKnifeEdgeSampleSpacingOverR; and (USER decision 184 (4)) the
+// cluster-composition band: the claimed length and count of the clusters whose edge count
+// or member vertices differ when the same perimeter is identified at R (1 -/+ band)
+// (Identifier::ClusterCompositionBand).
 constexpr double kKnifeEdgeBandRelative = 0.01;
 constexpr double kKnifeEdgeSampleSpacingOverRadius = 0.5;
 
@@ -2247,7 +2272,8 @@ class Identifier
 {
 public:
   explicit Identifier(const IdentificationInput &input_)
-    : faces(input_.faces), quantizer(input_.radius), R(input_.radius)
+    : original_input(input_), faces(input_.faces), quantizer(input_.radius),
+      R(input_.radius)
   {
     // Working copy of the segments and vertices: the arc rule (design (b) 4 / 7, decision
     // 82(3)) merges the chains through the corner vertices it absorbs and demotes those
@@ -2257,11 +2283,23 @@ public:
     input.vertices = input_.vertices;
     input.log = input_.log;
   }
+  // The same perimeter identified at another matching radius, silently and without a
+  // census of its own (the knife-edge census's cluster-composition band).
+  Identifier(const IdentificationInput &input_, double radius)
+    : original_input(input_), faces(input_.faces), quantizer(radius), R(radius),
+      census_enabled(false)
+  {
+    input.radius = radius;
+    input.segments = input_.segments;
+    input.vertices = input_.vertices;
+  }
 
   IdentificationResult Identify();
 
 private:
+  const IdentificationInput &original_input;
   IdentificationInput input;
+  bool census_enabled = true;
   const std::vector<IdentificationFace> &faces;
   Quantizer quantizer;
   double R;
@@ -2274,6 +2312,13 @@ private:
   // decision grid): features never span two planes (decision 82(1)); metal of another
   // plane within 2R is the CrossLayer exclusion.
   std::vector<int> run_plane;
+  // Parallel class of every rigid (single-run, non-excluded) run, -1 otherwise
+  // (BuildDirectionClasses): the ONE parallel relation of the identification (USER decision
+  // 184 (1)). Two rigid runs of one plane are parallel iff they share a class; parallel
+  // rigid runs pair by the translational rule and by no other (the bent-pair and the event
+  // rules skip them), so that no pair of rigid runs is handled by two rules or by none.
+  std::vector<int> run_direction_class;
+  std::size_t direction_class_count = 0;
   std::vector<std::vector<Claim>> claims;  // per run
   // Per run: (other chain, interval) of the pieces of a constant-separation pair along a
   // bend with that chain, interacting (a pair feature) or not; their cross-chord
@@ -2802,6 +2847,11 @@ private:
 
   void DetectArcs();
   void ClassifyPlanes();
+  void BuildDirectionClasses();
+  bool ParallelRigidRuns(std::size_t a, std::size_t b) const
+  {
+    return run_direction_class[a] >= 0 && run_direction_class[a] == run_direction_class[b];
+  }
   void ClassifyVertices();
   void BuildArcSites();
   void ComputeCurvature();
@@ -2818,6 +2868,7 @@ private:
   void BuildVertexWindows();
   void Assign(IdentificationResult &result);
   nlohmann::json KnifeEdgeCensus() const;
+  nlohmann::json ClusterCompositionBand(const IdentificationResult &result) const;
   std::vector<Interval> RunIntervalWithin(std::size_t run, const Point3D &a,
                                           const Point3D &b, double distance) const;
   std::vector<Interval>
@@ -3077,6 +3128,126 @@ void Identifier::ClassifyPlanes()
 }
 
 // Corner / endpoint / junction sites at the feature vertices of the non-excluded runs.
+// Parallel classes of the rigid runs (USER decision 184 (1), 2026-10-01). Two straight runs
+// are parallel when their tangents agree within the parallel cosine tolerance
+// (|cos| > 1 - kParallelCosineTolerance: 1.4e-4 rad, the tolerance every other parallel
+// test of the identification uses; dimensionless, so independent of the length unit and
+// of R). The classes are the connected components of that relation per metal plane
+// (single linkage on the run tangents: a mesh-noise tilt of a straight edge (DS-SCT-002:
+// 1.8e-4 um over 186 um, 9e-7 rad) leaves it in the class of its exactly axis-aligned
+// partner). Before this rule the translational stage grouped the runs on the 1e-9
+// DirectionKey grid while the bent-pair and event stages skipped rigid pairs within the
+// cosine tolerance: runs tilted by between 1e-9 and 1.4e-4 rad were paired by NEITHER rule
+// (the E8-1 flux lines: a 3-edge stack + an isolated fourth edge). The components are
+// built from the DirectionKey buckets (a canonical, order-independent partition) sorted by
+// their in-plane angle: consecutive buckets within the tolerance are one class (the wrap
+// at 0 / pi included), so the class of a run does not depend on the input numbering.
+void Identifier::BuildDirectionClasses()
+{
+  run_direction_class.assign(runs.size(), -1);
+  // In-plane orthonormal basis about the reference process normal.
+  Point3D e1{};
+  {
+    int least = 0;
+    for (int d = 1; d < 3; d++)
+    {
+      least = std::abs(n_ref[d]) < std::abs(n_ref[least]) ? d : least;
+    }
+    e1[least] = 1.0;
+    e1 = Normalize(Sub(e1, Scale(Dot(e1, n_ref), n_ref)));
+  }
+  const Point3D e2 = Normalize(Cross(n_ref, e1));
+  struct Bucket
+  {
+    int plane;
+    std::array<long long int, 3> key;
+    Point3D sum{};
+    std::vector<std::size_t> members;
+    Point3D representative{};
+    double angle = 0.0;  // in-plane direction angle in [0, pi)
+  };
+  std::map<std::pair<int, std::array<long long int, 3>>, std::size_t> bucket_index;
+  std::vector<Bucket> buckets;
+  for (std::size_t r = 0; r < runs.size(); r++)
+  {
+    if (runs[r].excluded || !chains[chain_index.at(runs[r].chain)].Rigid())
+    {
+      continue;  // chains with joints pair through the curved-edge chain rule
+    }
+    const Point3D t = SignCanonical(runs[r].tangent);
+    const auto key = std::make_pair(run_plane[r], DirectionKey(t, 1.0e-9));
+    auto it = bucket_index.find(key);
+    if (it == bucket_index.end())
+    {
+      it = bucket_index.emplace(key, buckets.size()).first;
+      buckets.push_back({run_plane[r], key.second, {}, {}, {}, 0.0});
+    }
+    Bucket &bucket = buckets[it->second];
+    bucket.sum = Add(bucket.sum, Scale(runs[r].length, t));
+    bucket.members.push_back(r);
+  }
+  const double pi = std::acos(-1.0);
+  for (auto &bucket : buckets)
+  {
+    bucket.representative = Normalize(bucket.sum);
+    double angle =
+        std::atan2(Dot(bucket.representative, e2), Dot(bucket.representative, e1));
+    if (angle < 0.0)
+    {
+      angle += pi;
+    }
+    bucket.angle = angle >= pi ? angle - pi : angle;
+  }
+  auto Parallel = [](const Point3D &u, const Point3D &v)
+  { return !DirectionLess(std::abs(Dot(u, v)), 1.0 - kParallelCosineTolerance); };
+  // Per plane: the buckets sorted by angle, consecutive ones within the tolerance linked.
+  std::vector<std::size_t> order(buckets.size());
+  std::iota(order.begin(), order.end(), 0);
+  std::sort(order.begin(), order.end(),
+            [&](std::size_t a, std::size_t b)
+            {
+              return std::make_tuple(buckets[a].plane, buckets[a].angle, buckets[a].key) <
+                     std::make_tuple(buckets[b].plane, buckets[b].angle, buckets[b].key);
+            });
+  UnionFind uf(buckets.size());
+  for (std::size_t i = 0; i < order.size();)
+  {
+    std::size_t j = i;
+    while (j < order.size() && buckets[order[j]].plane == buckets[order[i]].plane)
+    {
+      j++;
+    }
+    for (std::size_t k = i; k + 1 < j; k++)
+    {
+      if (Parallel(buckets[order[k]].representative, buckets[order[k + 1]].representative))
+      {
+        uf.Union(order[k], order[k + 1]);
+      }
+    }
+    if (j - i > 2 &&
+        Parallel(buckets[order[i]].representative, buckets[order[j - 1]].representative))
+    {
+      uf.Union(order[i], order[j - 1]);  // the wrap of the direction angle at 0 / pi
+    }
+    i = j;
+  }
+  std::map<std::size_t, int> class_of_root;
+  for (const std::size_t b : order)
+  {
+    const std::size_t root = uf.Find(b);
+    auto it = class_of_root.find(root);
+    if (it == class_of_root.end())
+    {
+      it = class_of_root.emplace(root, static_cast<int>(class_of_root.size())).first;
+    }
+    for (const std::size_t r : buckets[b].members)
+    {
+      run_direction_class[r] = it->second;
+    }
+  }
+  direction_class_count = class_of_root.size();
+}
+
 void Identifier::ClassifyVertices()
 {
   for (std::size_t v = 0; v < input.vertices.size(); v++)
@@ -3431,28 +3602,97 @@ void Identifier::DetectArcs()
       { return DirectionLess(std::cos(joint_turn_cap), std::cos(joint.turn)); };
       // The straight pieces on either side of joint j in the scan direction (between it and
       // the neighbouring joints, or the path ends of an open path).
+      // On a closed path the joint list is rotated (below) so that the scan starts after
+      // the longest piece: the pair of consecutive joints straddling the path's original
+      // start has a negative position difference, wrapped by the path length (formerly
+      // only the pair of the list's first and last joints was wrapped: the pieces of the
+      // straddling pair read negative, which made the joint noise rule of the arc tests
+      // accept any turn there).
+      auto CyclicGap = [&](double gap)
+      { return closed && gap <= 0.0 ? gap + path_length : gap; };
       auto PieceBefore = [&](std::size_t j)
       {
         const std::size_t idx = joints[j].index;
         if (j == 0)
         {
-          return closed ? std::fmod(position[idx] - position[joints[m - 1].index] +
-                                        path_length,
-                                    path_length)
+          return closed ? CyclicGap(position[idx] - position[joints[m - 1].index])
                         : position[idx];
         }
-        return position[idx] - position[joints[j - 1].index];
+        return CyclicGap(position[idx] - position[joints[j - 1].index]);
       };
       auto PieceAfter = [&](std::size_t j)
       {
         const std::size_t idx = joints[j].index;
         if (j + 1 == m)
         {
-          return closed ? std::fmod(position[joints[0].index] - position[idx] + path_length,
-                                    path_length)
+          return closed ? CyclicGap(position[joints[0].index] - position[idx])
                         : path_length - position[idx];
         }
-        return position[joints[j + 1].index] - position[idx];
+        return CyclicGap(position[joints[j + 1].index] - position[idx]);
+      };
+      // The concyclicity test on EVERY point of the range (USER decision 184 (2),
+      // 2026-10-01): the interior points of a piece between two consecutive joints lie on
+      // the chord, off the circle by up to the chord sagitta. That deviation is admissible
+      // where it is below the joint noise resolution (kJointNoiseSagittaOverRadius x R, the
+      // deviation from straight the noise rule cannot resolve: a finely chorded curve) or
+      // where the chord is a design chord of a coarsely discretised curve — one of its end
+      // joints is a real turn (not noise under the geometric joint rule on its shorter
+      // piece; USER decision 122: a coarse polyline of real joints IS the curve whatever
+      // the sagitta, recorded as mesh coarseness). A chord deviating from the circle by
+      // more than the resolution between two NOISE joints is a straight edge: a 5,500 um
+      // straight trace edge whose ends carry two 1.2 / 2.4 deg joints on 12 um pieces
+      // (exactly concyclic by mirror symmetry) read as a 132 mm bend bowing 15 R off the
+      // metal (DS-OSC-003 E8-3: false 2-edge clusters over 3.9 mm; DS-SCT-002 E8-4). For an
+      // inscribed polyline of equal chords the joint's implied sagitta and the chord
+      // sagitta are the same quantity, so a uniformly chorded arc passes iff its joints
+      // pass the noise rule as real joints or its chords are below the resolution — no
+      // new threshold enters. Chords in the range: consecutive joint pairs (cyclic on a
+      // closed circle).
+      auto RealJoint = [&](std::size_t j)
+      {
+        return !JointIsNoise(joints[j].turn, std::min(PieceBefore(j), PieceAfter(j)),
+                             noise_sagitta);
+      };
+      auto ChordsResolved =
+          [&](std::size_t i, std::size_t count, double radius, bool cyclic)
+      {
+        for (std::size_t q = 0; q + (cyclic ? 0 : 1) < count; q++)
+        {
+          const std::size_t j0 = (i + q) % m, j1 = (i + q + 1) % m;
+          const double chord = Distance(input.vertices[joints[j0].vertex].coordinate,
+                                        input.vertices[joints[j1].vertex].coordinate);
+          if (chord >= 2.0 * radius)
+          {
+            return false;
+          }
+          const double sagitta = radius - std::sqrt(radius * radius - 0.25 * chord * chord);
+          if (!quantizer.Less(sagitta, noise_sagitta) && !RealJoint(j0) && !RealJoint(j1))
+          {
+            if (std::getenv("PALACE_IDENTIFICATION_DEBUG_ARCS") && input.log)
+            {
+              std::ostringstream dbg;
+              dbg << std::setprecision(10) << "  DEBUG unresolved chord: range " << i << "+"
+                  << count << " joints " << j0 << " (turn "
+                  << joints[j0].turn * 180.0 / std::acos(-1.0) << " deg, pieces "
+                  << PieceBefore(j0) << " / " << PieceAfter(j0) << ") -> " << j1
+                  << " (turn " << joints[j1].turn * 180.0 / std::acos(-1.0)
+                  << " deg, pieces " << PieceBefore(j1) << " / " << PieceAfter(j1)
+                  << ") chord " << chord << " sagitta " << sagitta / R << " R radius "
+                  << radius / R << " R at ("
+                  << input.vertices[joints[j0].vertex].coordinate[0] << ", "
+                  << input.vertices[joints[j0].vertex].coordinate[1] << ") m " << m
+                  << (closed ? " closed" : " open") << " positions "
+                  << position[joints[j0].index] << " / " << position[joints[j1].index]
+                  << " path length " << path_length << " vertices " << joints[j0].vertex
+                  << " / " << joints[j1].vertex << " j1 at ("
+                  << input.vertices[joints[j1].vertex].coordinate[0] << ", "
+                  << input.vertices[joints[j1].vertex].coordinate[1] << ")\n";
+              input.log(dbg.str());
+            }
+            return false;
+          }
+        }
+        return true;
       };
       // Fit the arc over joints [i, i + count) (cyclic indices on a loop); returns the
       // circle.
@@ -3535,7 +3775,8 @@ void Identifier::DetectArcs()
             tangent_circle = true;
           }
         }
-        if (tangent_circle && JointsOnCircle(range_vertices, center, radius))
+        if (tangent_circle && JointsOnCircle(range_vertices, center, radius) &&
+            ChordsResolved(i, count, radius, false))
         {
           const double sagitta = MaxChordSagitta(range_vertices, radius, false);
           if (std::isfinite(sagitta))
@@ -3603,6 +3844,7 @@ void Identifier::DetectArcs()
         };
         if (LeastSquaresCircle(range_vertices, normal, first.in, center, radius) &&
             !quantizer.Less(radius, R) && JointsOnCircle(range_vertices, center, radius) &&
+            ChordsResolved(i, count, radius, false) &&
             EndJointConsistent(first, first.in, range_vertices[1],
                                path_segments[(first.index + n - 1) % n], center, radius,
                                PieceBefore(i), PieceAfter(i)) &&
@@ -3661,6 +3903,7 @@ void Identifier::DetectArcs()
           double sagitta = 0.0;
           if (LeastSquaresCircle(all_joints, normal, joints.front().in, center, radius) &&
               JointsOnCircle(all_joints, center, radius) &&
+              ChordsResolved(0, m, radius, true) &&
               std::isfinite(sagitta = MaxChordSagitta(all_joints, radius, true)))
           {
             Arc arc;
@@ -4788,9 +5031,13 @@ void Identifier::BuildBentPairs()
   {
     std::size_t run;
     double s, x, d, qx;
-    // Window half-widths for the curve separation: a full chord where the chain bends
-    // (windowed curvature > 0: the chords of an inscribed polyline dip mid-chord), R on a
-    // straight run (no dip; a taper must be read locally).
+    // The partner run the foot lies on: a non-exact stretch is cut where it changes (one
+    // non-exact sub-piece faces one partner run, so both sides are discretised alike).
+    std::size_t foot_run;
+    // Window half-widths for the curve separation: a full chord (capped at
+    // kPairChordWindowCapOverRadius R) where the chain bends within R of the sample / the
+    // foot (a joint or an arc along the chain: the chords of an inscribed polyline dip
+    // mid-chord), R on a straight run (no dip; a taper must be read locally).
     double half_own, half_other;
     // The larger joint turn (radians) at the ends of the sample's run and of the foot's
     // run: the chord reading C and the inscribed-vertex reading C / cos(turn / 2) of the
@@ -4801,6 +5048,11 @@ void Identifier::BuildBentPairs()
     // fitted bend arcs; absent where only the chord reading exists (a polyline bend with
     // chords beyond 2R, a taper, the transition between a lead and an arc).
     std::optional<double> exact;
+    // Either chain bends within kPairBendProximityOverRadius R of the sample / its foot
+    // (BendsWithinR): the sample is read off the chords and, without an exact reading, is
+    // the junction's geometry, not its run's — the sub-piece's exactness is not judged on
+    // it (the end sample of a lead at the joint reads the partner's first chord).
+    bool near_bend;
   };
   // The larger joint turn at the two ends of run k of a chain (0 at an open chain's ends).
   auto LocalTurn = [&](const Chain &chain, std::size_t k)
@@ -4817,6 +5069,80 @@ void Identifier::BuildBentPairs()
     }
     return turn;
   };
+  // The chain bends within R of chain position x (kPairBendProximityOverRadius): a joint
+  // with a turn (not excluded; the wrap joint of a closed chain included) or a fitted bend
+  // arc span within that distance along the chain. Binary searches on the run offsets and
+  // on the chain's arc spans sorted along the chain (built once per chain here: Chain::
+  // arc_spans is in arc order).
+  const double proximity = kPairBendProximityOverRadius * R;
+  std::vector<std::vector<Interval>> sorted_arc_spans(chains.size());
+  for (std::size_t c = 0; c < chains.size(); c++)
+  {
+    for (const auto &[a, x0, x1] : chains[c].arc_spans)
+    {
+      (void)a;
+      sorted_arc_spans[c].emplace_back(x0, x1);
+    }
+    std::sort(sorted_arc_spans[c].begin(), sorted_arc_spans[c].end());
+  }
+  auto BendsWithinR = [&](const Chain &chain, double x)
+  {
+    const std::size_t m = chain.runs.size();
+    if (chain.closed && chain.length > 0.0)
+    {
+      x -= std::floor(x / chain.length) * chain.length;
+    }
+    auto JointNear = [&](std::size_t k, double joint_x)
+    {
+      if (k >= m || chain.joint_turn.empty() || chain.joint_turn[k] <= 0.0 ||
+          chain.joint_excluded[k])
+      {
+        return false;
+      }
+      double dx = std::abs(x - joint_x);
+      if (chain.closed)
+      {
+        dx = std::min(dx, chain.length - dx);
+      }
+      return !quantizer.Less(proximity, dx);
+    };
+    // The joints (before run k, at run_offset[k]) from x - R on, until beyond x + R.
+    const auto first = std::lower_bound(chain.run_offset.begin(), chain.run_offset.end(),
+                                        x - proximity - Tol());
+    for (auto it = first; it != chain.run_offset.end() && *it <= x + proximity + Tol();
+         ++it)
+    {
+      if (JointNear(static_cast<std::size_t>(it - chain.run_offset.begin()), *it))
+      {
+        return true;
+      }
+    }
+    if (chain.closed && m > 0 && JointNear(0, chain.length))
+    {
+      return true;  // the wrap joint seen from the chain's end
+    }
+    // Arc spans [x0, x1] (disjoint, ascending): the last span starting at or before x + R
+    // is the only one that can reach x - R; on a closed chain the spans at either end wrap.
+    const auto &spans = sorted_arc_spans[chain_index.at(chain.id)];
+    const auto after =
+        std::upper_bound(spans.begin(), spans.end(), x + proximity,
+                         [](double value, const Interval &s) { return value < s.first; });
+    if (after != spans.begin() && !quantizer.Less(std::prev(after)->second, x - proximity))
+    {
+      return true;
+    }
+    if (chain.closed && !spans.empty() &&
+        (!quantizer.Less(spans.back().second - chain.length, x - proximity) ||
+         !quantizer.Less(x + proximity - chain.length, spans.front().first)))
+    {
+      return true;
+    }
+    return false;
+  };
+  // Window half-width of the chord reading where the chain bends: a full chord, at least R
+  // and at most kPairChordWindowCapOverRadius R.
+  auto ChordWindow = [&](double chord)
+  { return std::max(R, std::min(chord, kPairChordWindowCapOverRadius * R)); };
   struct Piece
   {
     std::size_t run;
@@ -4831,8 +5157,14 @@ void Identifier::BuildBentPairs()
   // exactly parallel straight runs where neither chain bends within R of the sample / the
   // foot (the leads of a route: the perpendicular distance of their lines; a chord of a
   // coarse polyline bend has a joint within R and is read off the chords like the rest).
-  auto ExactSeparation = [&](std::size_t a, std::size_t b, double kappa_a,
-                             double kappa_b) -> std::optional<double>
+  // The straight reading is the sample's own separation only where its foot is the
+  // perpendicular projection onto run b (the closest-point distance equals the line
+  // distance within the signature tolerance); a foot clamped at an end of run b (the
+  // sample lies past the parallel run, opposite a diverging piece) is no exact reading
+  // (USER decision 184 (3): a piece's separation reflects its own geometry). "Bends within
+  // R" is BendsWithinR (a joint or arc along the chain), not the windowed curvature.
+  auto ExactSeparation = [&](std::size_t a, std::size_t b, bool bends_a, bool bends_b,
+                             double chord_distance) -> std::optional<double>
   {
     if (a == b)
     {
@@ -4858,12 +5190,18 @@ void Identifier::BuildBentPairs()
       }
       return std::nullopt;
     }
-    if (arc_a < 0 && arc_b < 0 && kappa_a <= 0.0 && kappa_b <= 0.0 &&
+    if (arc_a < 0 && arc_b < 0 && !bends_a && !bends_b &&
         !DirectionLess(std::abs(Dot(ra.tangent, rb.tangent)),
                        1.0 - kParallelCosineTolerance))
     {
       const Point3D delta = Sub(rb.start, ra.start);
-      return Norm(Sub(delta, Scale(Dot(delta, ra.tangent), ra.tangent)));
+      const double line_distance =
+          Norm(Sub(delta, Scale(Dot(delta, ra.tangent), ra.tangent)));
+      if (std::abs(chord_distance - line_distance) <
+          kSignatureParameterToleranceOverRadius * R)
+      {
+        return line_distance;
+      }
     }
     return std::nullopt;
   };
@@ -5199,15 +5537,16 @@ void Identifier::BuildBentPairs()
             {
               continue;
             }
-            const double kappa_own = WindowedCurvature(A, x);
-            const double kappa_other = WindowedCurvature(B, q.x);
-            const double half_own = kappa_own > 0.0 ? std::max(R, ra.length) : R;
-            const double half_other =
-                kappa_other > 0.0 ? std::max(R, runs[q.run].length) : R;
+            const bool bends_own = BendsWithinR(A, x);
+            const bool bends_other = BendsWithinR(B, q.x);
+            const double half_own = bends_own ? ChordWindow(ra.length) : R;
+            const double half_other = bends_other ? ChordWindow(runs[q.run].length) : R;
             const double turn =
                 std::max(LocalTurn(A, ka), LocalTurn(B, RunIndexInChain(B, q.run)));
-            result.samples.push_back({a, s, x, q.distance, q.x, half_own, half_other, turn,
-                                      ExactSeparation(a, q.run, kappa_own, kappa_other)});
+            result.samples.push_back(
+                {a, s, x, q.distance, q.x, q.run, half_own, half_other, turn,
+                 ExactSeparation(a, q.run, bends_own, bends_other, q.distance),
+                 bends_own || bends_other});
           }
           pieces.push_back(std::move(result));
         }
@@ -5315,9 +5654,48 @@ void Identifier::BuildBentPairs()
     }
   };
   // Sub-pieces of one status along a piece: consecutive samples with the same (constant,
-  // interacting) flags; the cut between two samples of different status is halfway. The
-  // sub-piece's separation is the mean of its samples' EXACT separations when it has any
-  // (decision 85(1)), else the mean chord reading (`exact` false).
+  // interacting) flags; the cut between two samples of different status is halfway. Such a
+  // block is then cut into STRETCHES (USER decision 203, 2026-10-02, completing decision
+  // 184 (3): a sub-piece's separation reflects its own geometry, and the exactness is
+  // LOCAL along the run like the locality of the readings):
+  //  - an EXACT stretch is a maximal contiguous stretch of samples that HAVE an exact
+  //    reading (ExactSeparation with its perpendicular-foot guard) whose readings all lie
+  //    within the signature parameter tolerance (1e-3 R) of the stretch's exact mean (a
+  //    reading that would take the mean more than the tolerance from any member starts a
+  //    new stretch: an extremely slow taper of chords parallel within the cosine tolerance
+  //    keys a staircase of exact stretches, the parameter-tolerance semantics);
+  //  - the samples WITHOUT an exact reading that are judged (away from any bend within
+  //    kPairBendProximityOverRadius R) form NON-EXACT stretches: their status decides (a
+  //    judged sample lacks an exact reading only where its partner is not parallel within
+  //    the tolerance or its foot is not perpendicular), they are no longer compared with
+  //    the exact mean;
+  //  - the near-bend samples (not judged: the junction's geometry within R of a bend) never
+  //    form, split or decide a stretch on their own: they join an adjacent stretch within
+  //    kPairBendProximityOverRadius R along the run of that stretch's last exact / judged
+  //    sample (between an exact and a non-exact stretch the first R goes to the exact one);
+  //    a short gap of them between two exact stretches whose readings agree is transparent
+  //    (one exact stretch across the partner's noise joint); contiguous near-bend samples
+  //    farther than R from every exact / judged sample form a NON-EXACT stretch (the bend
+  //    exemption is a 1 R zone, not a licence for an unbounded unjudged region: a straight
+  //    run facing a finely chorded one-sided taper, every foot within R of a noise joint,
+  //    read exact at the lead's value over the whole taper before);
+  //  - an exact stretch splits off as its own EXACT sub-piece only when it is at least
+  //    kExactStretchMinLengthOverRadius R long (the span of its exact samples); a shorter
+  //    one merges into the adjacent non-exact stretch(es). A block that is ONE exact
+  //    stretch stays exact whatever its length, as before (the sub-R exact stack ends are
+  //    not re-keyed by this clause); consecutive non-exact stretches are one sub-piece.
+  // The exact sub-piece's separation is the mean of its exact readings; a non-exact
+  // sub-piece reads the length-weighted mean over its samples of the chord readings
+  // (equally spaced samples; the exact reading where a sample has one), not exact. A
+  // straight 450 um run facing a partner that is parallel over 150 um and then tapers
+  // one-sidedly keys the facing part an exact strip and the rest a non-exact strip at its
+  // mean; before (exactness all-or-nothing per block) one judged sample at the far end made
+  // the whole run non-exact at its 450 um chord mean, the lead's exact group had no partner
+  // piece and the 2.0 um strip (0.53 R) read as two IsolatedEdges. Bounded consequence: an
+  // exact stretch absorbs up to R of a slowly changing partner (a mis-keying of at most
+  // slope x R; 0.006 R in that reproducer). Considered alternative, not taken (it changes
+  // the judging globally): judging the near-bend samples too at the tolerance widened by
+  // their discretisation ambiguity d (1 - cos(turn)).
   struct SubPiece
   {
     std::size_t run;
@@ -5328,11 +5706,68 @@ void Identifier::BuildBentPairs()
     bool interacting;
     double separation;
     bool exact;
+    // The one partner run every sample's foot lies on (a non-exact sub-piece after the
+    // partner-run cut; an exact one when its feet happen to lie on one run), else absent.
+    std::optional<std::size_t> foot_run;
   };
+  // Stretch statistics for the stage log: blocks cut into several stretches, exact
+  // stretches, the fragmentation census asked for with the rule (a non-exact stretch
+  // shorter than R between two exact stretches of the same mean) and the pieces moved by
+  // the mutual-facing group invariant.
+  std::size_t stretch_split_blocks = 0, exact_stretch_count = 0, sliver_count = 0,
+              moved_count = 0;
+  double sliver_length = 0.0, moved_length = 0.0;
+  std::ostringstream sliver_sites, moved_sites;
   auto Split = [&](const std::vector<Piece> &pieces, const std::vector<char> &constant,
                    const std::vector<double> &separation, const std::vector<double> &upper,
                    std::vector<SubPiece> &out)
   {
+    const double parameter_tolerance = kSignatureParameterToleranceOverRadius * R;
+    const double min_exact_span = kExactStretchMinLengthOverRadius * R;
+    enum class Kind
+    {
+      Exact,
+      NonExact,
+      NearBend
+    };
+    struct Stretch
+    {
+      Kind kind;
+      std::size_t first, last;  // sample indices (inclusive) within the piece
+      // Exact stretches: the exact readings' statistics and the span of the exact samples.
+      double sum = 0.0, lo = 0.0, hi = 0.0;
+      int count = 0;
+      std::size_t first_exact = 0, last_exact = 0;
+    };
+    // The reading joins the stretch when every member stays within the tolerance of the
+    // new mean.
+    auto Admits = [&](const Stretch &st, double sum, int count, double lo, double hi)
+    {
+      const double mean = (st.sum + sum) / (st.count + count);
+      return quantizer.Less(std::max(st.hi, hi) - mean, parameter_tolerance) &&
+             quantizer.Less(mean - std::min(st.lo, lo), parameter_tolerance);
+    };
+    auto Absorb = [](Stretch &st, const Stretch &other)
+    {
+      if (other.count > 0)
+      {
+        if (st.count == 0)
+        {
+          st.lo = other.lo;
+          st.hi = other.hi;
+          st.first_exact = other.first_exact;
+        }
+        else
+        {
+          st.lo = std::min(st.lo, other.lo);
+          st.hi = std::max(st.hi, other.hi);
+        }
+        st.sum += other.sum;
+        st.count += other.count;
+        st.last_exact = other.last_exact;
+      }
+      st.last = other.last;
+    };
     std::size_t k = 0;
     for (const auto &piece : pieces)
     {
@@ -5343,41 +5778,282 @@ void Identifier::BuildBentPairs()
         const bool c = constant[k + i];
         const bool inter = quantizer.Less(upper[k + i], interaction);
         std::size_t j = i;
-        double chord_sum = 0.0, exact_sum = 0.0;
-        int exact_count = 0;
         while (j < n && constant[k + j] == c &&
                quantizer.Less(upper[k + j], interaction) == inter)
         {
-          chord_sum += separation[k + j];
-          if (piece.samples[j].exact)
-          {
-            exact_sum += *piece.samples[j].exact;
-            exact_count++;
-          }
           j++;
         }
-        const double s_lo = i == 0 ? piece.interval.first
-                                   : 0.5 * (piece.samples[i - 1].s + piece.samples[i].s);
-        const double s_hi = j == n ? piece.interval.second
-                                   : 0.5 * (piece.samples[j - 1].s + piece.samples[j].s);
-        if (s_hi - s_lo > Tol())
+        // Raw stretches of the block: consecutive samples of one kind, the exact ones cut
+        // by the tolerance rule.
+        std::vector<Stretch> raw;
+        for (std::size_t q = i; q < j; q++)
         {
+          const auto &sample = piece.samples[q];
+          const Kind kind = sample.exact       ? Kind::Exact
+                            : sample.near_bend ? Kind::NearBend
+                                               : Kind::NonExact;
+          bool joins = !raw.empty() && raw.back().kind == kind;
+          if (joins && kind == Kind::Exact)
+          {
+            joins = Admits(raw.back(), *sample.exact, 1, *sample.exact, *sample.exact);
+          }
+          if (!joins)
+          {
+            raw.push_back({kind, q, q});
+          }
+          Stretch &st = raw.back();
+          st.last = q;
+          if (kind == Kind::Exact)
+          {
+            Stretch one{kind, q, q, *sample.exact, *sample.exact, *sample.exact, 1, q, q};
+            Absorb(st, one);
+          }
+        }
+        // The near-bend samples within R along the run of a stretch's boundary sample,
+        // measured between the samples' cells (one sample spacing, at most R / 2, added):
+        // the exact samples end just before (joint - R), so the near-bend sample AT the
+        // joint lies R + up to one spacing from the last exact sample.
+        const double spacing =
+            n > 1 ? (piece.interval.second - piece.interval.first) / (n - 1) : 0.0;
+        auto WithinProximity = [&](std::size_t q, std::size_t anchor)
+        {
+          return !quantizer.Less(proximity + spacing,
+                                 std::abs(piece.samples[q].s - piece.samples[anchor].s));
+        };
+        // A short gap of near-bend samples (each within R of an adjacent exact sample)
+        // between two exact stretches whose readings agree is transparent.
+        std::vector<Stretch> merged;
+        for (std::size_t m = 0; m < raw.size(); m++)
+        {
+          if (raw[m].kind == Kind::NearBend && m + 1 < raw.size() && !merged.empty() &&
+              merged.back().kind == Kind::Exact && raw[m + 1].kind == Kind::Exact)
+          {
+            bool transparent = true;
+            for (std::size_t q = raw[m].first; transparent && q <= raw[m].last; q++)
+            {
+              transparent = WithinProximity(q, merged.back().last_exact) ||
+                            WithinProximity(q, raw[m + 1].first_exact);
+            }
+            const Stretch &next = raw[m + 1];
+            if (transparent &&
+                Admits(merged.back(), next.sum, next.count, next.lo, next.hi))
+            {
+              Absorb(merged.back(), raw[m]);
+              Absorb(merged.back(), next);
+              m++;
+              continue;
+            }
+          }
+          merged.push_back(raw[m]);
+        }
+        // The remaining near-bend stretches: a prefix joins the stretch before it and a
+        // suffix the one after it (within R of their boundary samples; the exact side
+        // first, else the nearer); the samples farther than R from both are a non-exact
+        // stretch of their own.
+        std::vector<Stretch> resolved;
+        for (std::size_t m = 0; m < merged.size(); m++)
+        {
+          if (merged[m].kind != Kind::NearBend)
+          {
+            resolved.push_back(merged[m]);
+            continue;
+          }
+          Stretch *left = resolved.empty() ? nullptr : &resolved.back();
+          const Stretch *right = m + 1 < merged.size() ? &merged[m + 1] : nullptr;
+          const std::size_t left_anchor =
+              left ? (left->kind == Kind::Exact ? left->last_exact : left->last) : 0;
+          const std::size_t right_anchor =
+              right ? (right->kind == Kind::Exact ? right->first_exact : right->first) : 0;
+          std::size_t q_lo = merged[m].first, q_hi = merged[m].last + 1;  // the orphans
+          auto ToLeft = [&](std::size_t q)
+          {
+            if (!left || !WithinProximity(q, left_anchor))
+            {
+              return false;
+            }
+            if (!right || !WithinProximity(q, right_anchor))
+            {
+              return true;
+            }
+            if ((left->kind == Kind::Exact) != (right->kind == Kind::Exact))
+            {
+              return left->kind == Kind::Exact;
+            }
+            return piece.samples[q].s - piece.samples[left_anchor].s <=
+                   piece.samples[right_anchor].s - piece.samples[q].s;
+          };
+          while (q_lo < q_hi && ToLeft(q_lo))
+          {
+            left->last = q_lo;
+            q_lo++;
+          }
+          std::size_t right_first = right ? right->first : 0;
+          while (q_lo < q_hi && right && WithinProximity(q_hi - 1, right_anchor))
+          {
+            q_hi--;
+            right_first = q_hi;
+          }
+          if (q_lo < q_hi)
+          {
+            resolved.push_back({Kind::NonExact, q_lo, q_hi - 1});
+          }
+          if (right && right_first < right->first)
+          {
+            merged[m + 1].first = right_first;
+          }
+        }
+        // Exact stretches split off only when their exact samples span at least the
+        // minimum; a block that is one exact stretch stays exact. Consecutive non-exact
+        // stretches are one.
+        std::vector<Stretch> final_stretches;
+        for (const auto &st : resolved)
+        {
+          Stretch item = st;
+          if (item.kind == Kind::Exact && resolved.size() > 1 &&
+              quantizer.Less(piece.samples[item.last_exact].s -
+                                 piece.samples[item.first_exact].s,
+                             min_exact_span))
+          {
+            item.kind = Kind::NonExact;
+          }
+          if (!final_stretches.empty() && final_stretches.back().kind == Kind::NonExact &&
+              item.kind == Kind::NonExact)
+          {
+            final_stretches.back().last = item.last;
+            continue;
+          }
+          final_stretches.push_back(item);
+        }
+        if (final_stretches.size() > 1)
+        {
+          stretch_split_blocks++;
+        }
+        // Emission: an exact stretch is one sub-piece; a non-exact stretch is cut where
+        // its samples' foot crosses a run boundary of the partner chain (one non-exact
+        // sub-piece faces one partner run and reads that run's local chord mean, the value
+        // the partner's own piece reads: the two sides are discretised alike before the
+        // link grouping — one long non-exact stretch over a changing partner, mean 2.58 um
+        // over a 2.0 -> 3.7 um taper, could not pair with the partner's per-run pieces,
+        // whose first 73 um joined the exact 2.0 um group within the 5 % pair tolerance).
+        struct Emitted
+        {
+          std::size_t stretch, first, last;
+        };
+        std::vector<Emitted> emitted;
+        for (std::size_t m = 0; m < final_stretches.size(); m++)
+        {
+          const Stretch &st = final_stretches[m];
+          std::size_t first = st.first;
+          for (std::size_t q = st.first + 1; st.kind == Kind::NonExact && q <= st.last; q++)
+          {
+            if (piece.samples[q].foot_run != piece.samples[q - 1].foot_run)
+            {
+              emitted.push_back({m, first, q - 1});
+              first = q;
+            }
+          }
+          emitted.push_back({m, first, st.last});
+        }
+        for (const Emitted &item : emitted)
+        {
+          const std::size_t m = item.stretch;
+          const Stretch &st = final_stretches[m];
+          const std::size_t lo_q = item.first, hi_q = item.last + 1;
+          const double s_lo =
+              lo_q == 0 ? piece.interval.first
+                        : 0.5 * (piece.samples[lo_q - 1].s + piece.samples[lo_q].s);
+          const double s_hi =
+              hi_q == n ? piece.interval.second
+                        : 0.5 * (piece.samples[hi_q - 1].s + piece.samples[hi_q].s);
+          if (s_hi - s_lo <= Tol())
+          {
+            continue;
+          }
+          const bool exact_piece = st.kind == Kind::Exact;
+          double value = 0.0;
+          if (exact_piece)
+          {
+            value = st.sum / st.count;
+            exact_stretch_count++;  // one sub-piece per exact stretch
+          }
+          else
+          {
+            // Mean of the chord readings over the stretch's samples (equally spaced along
+            // the run: the length-weighted mean), the exact reading where there is one.
+            for (std::size_t q = lo_q; q < hi_q; q++)
+            {
+              const auto &exact = piece.samples[q].exact;
+              value += exact ? *exact : separation[k + q];
+            }
+            value /= static_cast<double>(hi_q - lo_q);
+            // Fragmentation census: a non-exact stretch shorter than R between two exact
+            // stretches of the same mean (counted once per stretch, on its first
+            // sub-piece, with the stretch's span).
+            const double stretch_span =
+                piece.samples[st.last].s - piece.samples[st.first].s + spacing;
+            if (lo_q == st.first && m > 0 && m + 1 < final_stretches.size() &&
+                quantizer.Less(stretch_span, min_exact_span))
+            {
+              const Stretch &before = final_stretches[m - 1],
+                            &after = final_stretches[m + 1];
+              if (before.kind == Kind::Exact && after.kind == Kind::Exact &&
+                  quantizer.Less(
+                      std::abs(before.sum / before.count - after.sum / after.count),
+                      parameter_tolerance))
+              {
+                sliver_count++;
+                sliver_length += stretch_span;
+                if (sliver_count <= 50)
+                {
+                  const Point3D p = runs[piece.run].At(s_lo);
+                  sliver_sites << std::setprecision(6) << " run " << piece.run << " s "
+                               << s_lo << " at (" << p[0] << ", " << p[1] << ", " << p[2]
+                               << ") length " << stretch_span;
+                }
+              }
+            }
+          }
+          if (std::getenv("PALACE_IDENTIFICATION_DEBUG_PIECES") && input.log &&
+              final_stretches.size() > 1)
+          {
+            int n_exact = 0, n_judged = 0, n_near_bend = 0;
+            for (std::size_t q = lo_q; q < hi_q; q++)
+            {
+              (piece.samples[q].exact       ? n_exact
+               : piece.samples[q].near_bend ? n_near_bend
+                                            : n_judged)++;
+            }
+            std::ostringstream dbg;
+            dbg << std::setprecision(10) << "  DEBUG stretch " << m + 1 << " / "
+                << final_stretches.size() << " of run " << piece.run << " s [" << s_lo
+                << ", " << s_hi << "] samples " << lo_q << ".." << hi_q - 1 << " (exact "
+                << n_exact << ", judged " << n_judged << ", near-bend " << n_near_bend
+                << ") " << (exact_piece ? "exact " : "non-exact ") << value << "\n";
+            input.log(dbg.str());
+          }
+          std::optional<std::size_t> foot_run = piece.samples[lo_q].foot_run;
+          for (std::size_t q = lo_q + 1; foot_run && q < hi_q; q++)
+          {
+            if (piece.samples[q].foot_run != *foot_run)
+            {
+              foot_run.reset();
+            }
+          }
           out.push_back({piece.run,
                          {s_lo, s_hi},
                          piece.curved,
                          piece.max_kappa,
                          c,
                          inter,
-                         exact_count > 0 ? exact_sum / exact_count
-                                         : chord_sum / static_cast<double>(j - i),
-                         exact_count > 0});
+                         value,
+                         exact_piece,
+                         foot_run});
         }
         i = j;
       }
       k += n;
     }
   };
-
   std::size_t chain_pairs_examined = 0, chain_pairs_paired = 0, self_pairs = 0;
   std::vector<std::size_t> partners;
   for (std::size_t ca = 0; ca < chains.size(); ca++)
@@ -5416,12 +6092,9 @@ void Identifier::BuildBentPairs()
       {
         continue;  // a pair never spans two metal planes (decision 82(1))
       }
-      if (A.Rigid() && B.Rigid() &&
-          !DirectionLess(
-              std::abs(Dot(runs[A.runs.front()].tangent, runs[B.runs.front()].tangent)),
-              1.0 - kParallelCosineTolerance))
+      if (ParallelRigidRuns(A.runs.front(), B.runs.front()))
       {
-        continue;  // two exactly parallel straight runs: the translational rule
+        continue;  // two parallel straight runs (one class): the translational rule
       }
       bool near = true;
       for (int d = 0; d < 3; d++)
@@ -5517,8 +6190,17 @@ void Identifier::BuildBentPairs()
       // chain (a trace loop) can face the partner at two separations (its near side at the
       // gap, its far side across the strip), and one pair is one separation (the design's
       // "one separation per pair" is exact for a constant pair and the mean of a slow
-      // taper). The groups are split where consecutive mean separations differ by more than
-      // the pair tolerance (the same 5 % as the local constancy).
+      // taper). Grouping (decision 85(1) as amended by USER decision 184 (3),
+      // 2026-10-01): the EXACT pieces agreeing within the signature parameter tolerance
+      // (1e-3 R) form one exact group each (in ascending order of separation); a chord
+      // piece joins the exact group whose separation is within the pair tolerance (5 %,
+      // the same as the local constancy) of its own — the nearest when several — as a
+      // chord reading of that design separation; the remaining chord pieces form chord
+      // groups where consecutive separations differ by at most the pair tolerance. Before
+      // the amendment the pieces were chained by the 5 % step alone, so a slow taper
+      // linked an exact 2 um lead to a 3.7 um strip through its intermediate readings and
+      // the whole link took the exact mean of the lead (the E8-7 key); now a piece's group
+      // holds only pieces within the tolerance of ITS separation.
       struct GroupedPiece
       {
         const SubPiece *piece;
@@ -5540,37 +6222,221 @@ void Identifier::BuildBentPairs()
       std::sort(grouped.begin(), grouped.end(),
                 [](const GroupedPiece &u, const GroupedPiece &v)
                 { return u.mean_separation < v.mean_separation; });
-      std::vector<std::pair<std::size_t, std::size_t>> groups;  // [begin, end) in grouped
-      for (std::size_t i = 0; i < grouped.size();)
+      // Groups as index lists into `grouped` (ascending separation within a group).
+      std::vector<std::vector<std::size_t>> groups;
       {
-        std::size_t j = i + 1;
-        while (j < grouped.size() &&
-               !quantizer.Less(kPairSeparationTolerance * grouped[j - 1].mean_separation,
-                               grouped[j].mean_separation - grouped[j - 1].mean_separation))
+        struct ExactGroup
         {
-          j++;
+          std::vector<std::size_t> members;
+          double value = 0.0;  // length-weighted mean of the exact separations
+          double length = 0.0;
+        };
+        std::vector<ExactGroup> exact_groups;
+        const double parameter_tolerance = kSignatureParameterToleranceOverRadius * R;
+        for (std::size_t i = 0; i < grouped.size(); i++)
+        {
+          if (!grouped[i].piece->exact)
+          {
+            continue;
+          }
+          if (exact_groups.empty() ||
+              !quantizer.Less(
+                  grouped[i].mean_separation -
+                      grouped[exact_groups.back().members.back()].mean_separation,
+                  parameter_tolerance))
+          {
+            exact_groups.push_back({});
+          }
+          auto &group = exact_groups.back();
+          const double length =
+              grouped[i].piece->interval.second - grouped[i].piece->interval.first;
+          group.members.push_back(i);
+          group.value = (group.value * group.length + grouped[i].mean_separation * length) /
+                        (group.length + length);
+          group.length += length;
         }
-        groups.emplace_back(i, j);
-        i = j;
+        std::vector<std::size_t> chord_pieces;
+        for (std::size_t i = 0; i < grouped.size(); i++)
+        {
+          if (grouped[i].piece->exact)
+          {
+            continue;
+          }
+          // The nearest exact group within the pair tolerance of the piece's separation.
+          std::size_t nearest = exact_groups.size();
+          for (std::size_t g = 0; g < exact_groups.size(); g++)
+          {
+            const double gap = std::abs(grouped[i].mean_separation - exact_groups[g].value);
+            if (!quantizer.Less(kPairSeparationTolerance * exact_groups[g].value, gap) &&
+                (nearest == exact_groups.size() ||
+                 gap < std::abs(grouped[i].mean_separation - exact_groups[nearest].value)))
+            {
+              nearest = g;
+            }
+          }
+          if (nearest < exact_groups.size())
+          {
+            exact_groups[nearest].members.push_back(i);
+          }
+          else
+          {
+            chord_pieces.push_back(i);
+          }
+        }
+        for (auto &group : exact_groups)
+        {
+          std::sort(group.members.begin(), group.members.end());
+          groups.push_back(std::move(group.members));
+        }
+        for (std::size_t p = 0; p < chord_pieces.size();)
+        {
+          std::size_t q = p + 1;
+          while (q < chord_pieces.size() &&
+                 !quantizer.Less(kPairSeparationTolerance *
+                                     grouped[chord_pieces[q - 1]].mean_separation,
+                                 grouped[chord_pieces[q]].mean_separation -
+                                     grouped[chord_pieces[q - 1]].mean_separation))
+          {
+            q++;
+          }
+          groups.emplace_back(chord_pieces.begin() + static_cast<std::ptrdiff_t>(p),
+                              chord_pieces.begin() + static_cast<std::ptrdiff_t>(q));
+          p = q;
+        }
+        // Ascending order of the groups' smallest separation (the former group order).
+        std::sort(groups.begin(), groups.end(),
+                  [&](const std::vector<std::size_t> &u, const std::vector<std::size_t> &v)
+                  {
+                    return std::make_pair(grouped[u.front()].mean_separation, u.front()) <
+                           std::make_pair(grouped[v.front()].mean_separation, v.front());
+                  });
+      }
+      // Invariant of the grouping (USER decision 203 follow-up, 2026-10-02): mutually
+      // facing pieces belong to the same group. Two non-exact pieces P and Q on the two
+      // sides face each other mutually when every foot of P lies on Q's run, every foot of
+      // Q on P's run, and each is the only non-exact piece of its run facing the other's
+      // run. Where they straddle a group threshold (the two sides sample one geometry with
+      // different sample sets and agree to ~1e-3 only: at the 5 % boundary of a taper one
+      // side's piece joined the exact group and its facing piece the chord group, leaving
+      // both unpaired, a strip edge read as an IsolatedEdge sliver), the piece sampled over
+      // exactly its own run (interval = the whole run) decides and the other joins its
+      // group; when both or neither span their run, the piece on the lower run index
+      // decides. Each piece is in at most one mutual pair and every move is decided on the
+      // original grouping: deterministic and order-independent. The 5 % grouping itself is
+      // unchanged.
+      if (groups.size() > 1)
+      {
+        std::vector<std::size_t> group_of(grouped.size());
+        for (std::size_t g = 0; g < groups.size(); g++)
+        {
+          for (const std::size_t i : groups[g])
+          {
+            group_of[i] = g;
+          }
+        }
+        // Non-exact pieces per (side, run).
+        std::map<std::pair<int, std::size_t>, std::vector<std::size_t>> by_run;
+        for (std::size_t i = 0; i < grouped.size(); i++)
+        {
+          if (!grouped[i].piece->exact)
+          {
+            by_run[{grouped[i].side, grouped[i].piece->run}].push_back(i);
+          }
+        }
+        // The single non-exact piece of the other side on run `run` whose feet all lie on
+        // `facing`.
+        auto PartnerPiece = [&](int side, std::size_t run,
+                                std::size_t facing) -> std::optional<std::size_t>
+        {
+          const auto it = by_run.find({1 - side, run});
+          if (it == by_run.end())
+          {
+            return std::nullopt;
+          }
+          std::optional<std::size_t> found;
+          for (const std::size_t j : it->second)
+          {
+            if (grouped[j].piece->foot_run && *grouped[j].piece->foot_run == facing)
+            {
+              if (found)
+              {
+                return std::nullopt;  // not the only one
+              }
+              found = j;
+            }
+          }
+          return found;
+        };
+        auto SpansRun = [&](const SubPiece &piece)
+        {
+          return piece.interval.first <= Tol() &&
+                 piece.interval.second >= runs[piece.run].length - Tol();
+        };
+        std::vector<std::pair<std::size_t, std::size_t>> moves;  // (piece, target group)
+        for (std::size_t i = 0; i < grouped.size(); i++)
+        {
+          const SubPiece &P = *grouped[i].piece;
+          if (P.exact || !P.foot_run || self)
+          {
+            continue;
+          }
+          const auto q = PartnerPiece(grouped[i].side, *P.foot_run, P.run);
+          if (!q || group_of[*q] == group_of[i] ||
+              PartnerPiece(grouped[*q].side, P.run, *P.foot_run) != i)
+          {
+            continue;
+          }
+          const SubPiece &Q = *grouped[*q].piece;
+          const bool p_spans = SpansRun(P), q_spans = SpansRun(Q);
+          const bool q_decides = p_spans == q_spans ? Q.run < P.run : q_spans;
+          if (q_decides)
+          {
+            moves.emplace_back(i, group_of[*q]);
+          }
+        }
+        for (const auto &[i, target] : moves)
+        {
+          auto &from = groups[group_of[i]];
+          from.erase(std::find(from.begin(), from.end(), i));
+          groups[target].insert(
+              std::upper_bound(groups[target].begin(), groups[target].end(), i), i);
+          const SubPiece &P = *grouped[i].piece;
+          moved_count++;
+          moved_length += P.interval.second - P.interval.first;
+          if (moved_count <= 50)
+          {
+            const Point3D p = runs[P.run].At(P.interval.first);
+            moved_sites << std::setprecision(6) << " run " << P.run << " s ["
+                        << P.interval.first << ", " << P.interval.second << "] at (" << p[0]
+                        << ", " << p[1] << ", " << p[2] << ") " << P.separation;
+          }
+        }
+        if (!moves.empty())
+        {
+          groups.erase(std::remove_if(groups.begin(), groups.end(),
+                                      [](const std::vector<std::size_t> &g)
+                                      { return g.empty(); }),
+                       groups.end());
+        }
       }
       if (std::getenv("PALACE_IDENTIFICATION_DEBUG_GROUPS") && input.log &&
           groups.size() > 1)
       {
         std::ostringstream dbg;
         dbg << "  DEBUG groups of chains " << A.id << " - " << B.id << ":\n";
-        for (const auto &[g0, g1] : groups)
+        for (const auto &group : groups)
         {
           double length = 0.0;
-          for (std::size_t i = g0; i < g1; i++)
+          for (const std::size_t i : group)
           {
             length += grouped[i].piece->interval.second - grouped[i].piece->interval.first;
           }
-          dbg << "    group mean " << grouped[g0].mean_separation << " .. "
-              << grouped[g1 - 1].mean_separation << " pieces " << (g1 - g0) << " length "
-              << length << "\n";
-          if (g1 - g0 <= 4)
+          dbg << "    group mean " << grouped[group.front()].mean_separation << " .. "
+              << grouped[group.back()].mean_separation << " pieces " << group.size()
+              << " length " << length << "\n";
+          if (group.size() <= 4)
           {
-            for (std::size_t i = g0; i < g1; i++)
+            for (const std::size_t i : group)
             {
               const auto &pc = *grouped[i].piece;
               const Run &rr = runs[pc.run];
@@ -5584,13 +6450,13 @@ void Identifier::BuildBentPairs()
         }
         input.log(dbg.str());
       }
-      for (const auto &[g0, g1] : groups)
+      for (const auto &group : groups)
       {
         // Lead piece (on A when the group has one, else on B) and the lateral A -> B there:
         // the frame of a two-edge feature (side 0 = chain A); a chain facing itself takes
         // its foot outside the self-pair neighbourhood.
         const GroupedPiece *lead = nullptr;
-        for (std::size_t i = g0; i < g1; i++)
+        for (const std::size_t i : group)
         {
           if (!lead || (lead->side == 1 && grouped[i].side == 0))
           {
@@ -5623,7 +6489,7 @@ void Identifier::BuildBentPairs()
         link.run_b = lead_on_a ? qb.run : lead->piece->run;
         link.lateral_ab = lead_on_a ? lateral : Scale(-1.0, lateral);
         link.lead_point = lead_on_a ? pa : runs[qb.run].At(qb.s);
-        for (std::size_t i = g0; i < g1; i++)
+        for (const std::size_t i : group)
         {
           const SubPiece &piece = *grouped[i].piece;
           link.pieces[static_cast<std::size_t>(grouped[i].side)].push_back(
@@ -5671,11 +6537,23 @@ void Identifier::BuildBentPairs()
       }
     }
   }
-  stage.End(std::to_string(chains.size()) + " chains, " +
-            std::to_string(chain_pairs_examined) + " chain pairs within reach, " +
-            std::to_string(chain_pairs_paired) + " with facing pieces, " +
-            std::to_string(pair_links.size()) + " pair links (" +
-            std::to_string(self_pairs) + " of chains facing themselves)");
+  stage.End(
+      std::to_string(chains.size()) + " chains, " + std::to_string(chain_pairs_examined) +
+      " chain pairs within reach, " + std::to_string(chain_pairs_paired) +
+      " with facing pieces, " + std::to_string(pair_links.size()) + " pair links (" +
+      std::to_string(self_pairs) + " of chains facing themselves); exact stretches: " +
+      std::to_string(stretch_split_blocks) + " sub-pieces cut into stretches, " +
+      std::to_string(exact_stretch_count) + " exact stretches, " +
+      std::to_string(sliver_count) +
+      " sub-R non-exact slivers between agreeing exact stretches" +
+      (sliver_count > 0
+           ? " (" + std::to_string(sliver_length) + " length):" + sliver_sites.str()
+           : std::string("")) +
+      "; group invariant: " + std::to_string(moved_count) +
+      " pieces joined their facing partner's group" +
+      (moved_count > 0
+           ? " (" + std::to_string(moved_length) + " length):" + moved_sites.str()
+           : std::string("")));
 }
 
 // Interval of run parameter s where the distance from run(s) to the segment [a, b] is below
@@ -5796,18 +6674,17 @@ void Identifier::BuildTranslationalFeatures()
     double u0, u1, w;
     int gap_sign;
   };
-  // Direction classes per metal plane: parallel runs of two planes never pair (decision
-  // 82(1)); metal of another plane within 2R is the CrossLayer exclusion.
-  std::map<std::pair<int, std::array<long long int, 3>>, std::vector<std::size_t>> classes;
+  // Direction classes (BuildDirectionClasses: the parallel relation within the cosine
+  // tolerance, per metal plane): parallel runs of two planes never pair (decision 82(1));
+  // metal of another plane within 2R is the CrossLayer exclusion.
+  std::map<int, std::vector<std::size_t>> classes;
   for (std::size_t r = 0; r < runs.size(); r++)
   {
-    if (runs[r].excluded || !chains[chain_index.at(runs[r].chain)].Rigid())
+    if (runs[r].excluded || run_direction_class[r] < 0)
     {
       continue;  // chains with joints pair through the curved-edge chain rule
     }
-    classes[std::make_pair(run_plane[r],
-                           DirectionKey(SignCanonical(runs[r].tangent), 1.0e-9))]
-        .push_back(r);
+    classes[run_direction_class[r]].push_back(r);
   }
   const double interaction = kInteractionDistanceOverRadius * R;
   std::size_t total_members = 0, total_spans = 0;
@@ -6193,11 +7070,36 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     for (std::size_t m = 0; m + 1 < span.members.size(); m++)
     {
       const auto &lower = span.members[m], &upper = span.members[m + 1];
-      // Two rigid parallel runs: the lateral offset difference is exact for both classes.
-      const ClassSeparation exact{upper.w - lower.w, true, true};
+      // Two rigid parallel runs: the lateral offset difference is exact for both classes
+      // when it holds over the span within the signature parameter tolerance. The members
+      // of a parallel class may be tilted by up to the cosine tolerance (1.4e-4 rad) and
+      // their lateral offsets are read at the runs' midpoints, so the lines' separation at
+      // the span's ends deviates by the tilt times the half-length (above 1e-3 R beyond
+      // ~7 R of span at the maximum tilt): such a pair reads the midpoint value, not exact
+      // (USER decision 203 follow-up, 2026-10-02).
+      auto LateralAt = [&](const TranslationalSpan::Member &member, double u)
+      {
+        const Run &run = runs[member.run];
+        const double along = Dot(run.tangent, span.axis);
+        const Point3D p =
+            Add(run.start, Scale((u - Dot(run.start, span.axis)) / along, run.tangent));
+        return Dot(p, span.lateral);
+      };
+      const double midpoint_value = upper.w - lower.w;
+      double deviation = 0.0;
+      for (const double u : {span.lo, span.hi})
+      {
+        deviation = std::max(deviation, std::abs(LateralAt(upper, u) - LateralAt(lower, u) -
+                                                 midpoint_value));
+      }
+      const bool tilt_exact =
+          quantizer.Less(deviation, kSignatureParameterToleranceOverRadius * R);
+      const ClassSeparation exact{midpoint_value, tilt_exact, true};
       ELink e{runs[lower.run].chain, runs[upper.run].chain, {exact, exact}, {}};
-      e.pieces[0].push_back({lower.run, lower.interval, false, 0.0, exact.value, true});
-      e.pieces[1].push_back({upper.run, upper.interval, false, 0.0, exact.value, true});
+      e.pieces[0].push_back(
+          {lower.run, lower.interval, false, 0.0, exact.value, tilt_exact});
+      e.pieces[1].push_back(
+          {upper.run, upper.interval, false, 0.0, exact.value, tilt_exact});
       elinks.push_back(std::move(e));
     }
   }
@@ -7267,11 +8169,9 @@ void Identifier::BuildClusters()
         self_partner_on_a = Partner(b0, a0, a1);
       }
       run_pairs_examined++;
-      if (ca.Rigid() && cb.Rigid() &&
-          !DirectionLess(std::abs(Dot(runs[a].tangent, runs[b].tangent)),
-                         1.0 - kParallelCosineTolerance))
+      if (ParallelRigidRuns(a, b))
       {
-        continue;  // parallel straight runs: a translational interaction
+        continue;  // parallel straight runs (one class): a translational interaction
       }
       if (!quantizer.Less(PieceDistance(WholeRunPiece(a), WholeRunPiece(b)), interaction))
       {
@@ -8583,6 +9483,127 @@ nlohmann::json Identifier::KnifeEdgeCensus() const
       {"ArcSagittaOverR", {{ThresholdKey(kArcSagittaOverRadius), at_sagitta.ToJson()}}}};
 }
 
+// Cluster-composition band of the knife-edge census (USER decision 184 (4), 2026-10-01;
+// the E6 finding of stage 0: the DS-CTX-003 loop-end clusters went from 42 to 48 edges at
+// R 1.85 while every distance band stayed quiet). A cluster's membership is the outcome of
+// the whole cluster machinery (events, cores, joins, claims, the extension), not of one
+// distance, so the band is measured the way the stage-0 study measured it: the same
+// perimeter (the input as received: segments, vertices, faces; the vertex classification
+// of the perimeter extraction at R is kept) is identified again at R (1 - band) and at
+// R (1 + band), silently, and every cluster at R is matched to the cluster at the other
+// radius sharing the most claimed perimeter with it. Its composition is unchanged iff the
+// match has the same edge count (Signature.EdgeCount) and the same set of member vertices
+// (corner / endpoint / junction mesh vertices); otherwise the cluster's claimed length
+// counts on the Below (R (1 - band)) or Above (R (1 + band)) side, with the number of
+// clusters affected. Reported like the other bands (Below / Above / Total in length units)
+// and in the identification log; costs two more identifications on the root rank.
+nlohmann::json Identifier::ClusterCompositionBand(const IdentificationResult &result) const
+{
+  struct ClusterRecord
+  {
+    int edge_count = 0;
+    std::vector<std::size_t> vertices;
+    double length = 0.0;
+    std::map<std::size_t, std::vector<Interval>> portions;  // per segment
+  };
+  auto Clusters = [](const IdentificationResult &r)
+  {
+    std::vector<ClusterRecord> records;
+    for (const auto &feature : r.features)
+    {
+      if (feature.type != "SpatialEdgeCluster")
+      {
+        continue;
+      }
+      ClusterRecord record;
+      record.edge_count = feature.signature.value("EdgeCount", 0);
+      record.vertices = feature.vertices;
+      std::sort(record.vertices.begin(), record.vertices.end());
+      record.length = feature.length;
+      for (const auto &portion : feature.portions)
+      {
+        record.portions[portion.segment].emplace_back(std::min(portion.s0, portion.s1),
+                                                      std::max(portion.s0, portion.s1));
+      }
+      records.push_back(std::move(record));
+    }
+    return records;
+  };
+  const std::vector<ClusterRecord> at_R = Clusters(result);
+  nlohmann::json band = {{"BandRelative", kKnifeEdgeBandRelative},
+                         {"Clusters", at_R.size()},
+                         {"Rule",
+                          "the perimeter identified again at R (1 - BandRelative) and at "
+                          "R (1 + BandRelative); every SpatialEdgeCluster at R is matched "
+                          "to the cluster at the other radius sharing the most claimed "
+                          "perimeter with it and is unchanged iff the match has the same "
+                          "EdgeCount and the same member vertices; the claimed length (at "
+                          "R) of the changed clusters on the Below / Above side, and their "
+                          "counts (ClustersBelow / ClustersAbove of Clusters)"}};
+  double below = 0.0, above = 0.0;
+  std::size_t clusters_below = 0, clusters_above = 0;
+  for (const double factor : {1.0 - kKnifeEdgeBandRelative, 1.0 + kKnifeEdgeBandRelative})
+  {
+    Identifier other(original_input, R * factor);
+    const IdentificationResult other_result = other.Identify();
+    const std::vector<ClusterRecord> at_other = Clusters(other_result);
+    std::map<std::size_t, std::vector<std::size_t>> by_segment;  // segment -> clusters
+    for (std::size_t c = 0; c < at_other.size(); c++)
+    {
+      for (const auto &[segment, intervals] : at_other[c].portions)
+      {
+        (void)intervals;
+        by_segment[segment].push_back(c);
+      }
+    }
+    for (const ClusterRecord &cluster : at_R)
+    {
+      std::map<std::size_t, double> shared;
+      for (const auto &[segment, intervals] : cluster.portions)
+      {
+        const auto it = by_segment.find(segment);
+        if (it == by_segment.end())
+        {
+          continue;
+        }
+        for (const std::size_t c : it->second)
+        {
+          for (const auto &[a0, a1] : intervals)
+          {
+            for (const auto &[b0, b1] : at_other[c].portions.at(segment))
+            {
+              shared[c] += std::max(0.0, std::min(a1, b1) - std::max(a0, b0));
+            }
+          }
+        }
+      }
+      const ClusterRecord *match = nullptr;
+      double best = 0.0;
+      for (const auto &[c, length] : shared)
+      {
+        if (length > best)
+        {
+          best = length;
+          match = &at_other[c];
+        }
+      }
+      const bool unchanged = match && match->edge_count == cluster.edge_count &&
+                             match->vertices == cluster.vertices;
+      if (!unchanged)
+      {
+        (factor < 1.0 ? below : above) += cluster.length;
+        (factor < 1.0 ? clusters_below : clusters_above)++;
+      }
+    }
+  }
+  band["Below"] = below;
+  band["Above"] = above;
+  band["Total"] = below + above;
+  band["ClustersBelow"] = clusters_below;
+  band["ClustersAbove"] = clusters_above;
+  return band;
+}
+
 void Identifier::Assign(IdentificationResult &result)
 {
   // Vertex features outside clusters.
@@ -9517,6 +10538,9 @@ IdentificationResult Identifier::Identify()
                 std::to_string(cross_layer_runs) + " runs with cross-layer zones, " +
                 std::to_string(cross_layer_vertices.size()) + " cross-layer vertices");
     }
+    stage.Begin("parallel classes");
+    BuildDirectionClasses();
+    stage.End(std::to_string(direction_class_count) + " parallel classes of rigid runs");
     stage.Begin("vertex sites");
     ClassifyVertices();
     stage.End(std::to_string(sites.size()) + " corner / endpoint / junction sites");
@@ -9664,10 +10688,11 @@ IdentificationResult Identifier::Identify()
   Assign(result);
   stage.End(std::to_string(result.features.size()) + " features, " +
             std::to_string(result.exclusions.size()) + " exclusion classes");
-  if (!runs.empty())
+  if (!runs.empty() && census_enabled)
   {
     stage.Begin("knife-edge census");
-    const nlohmann::json census = KnifeEdgeCensus();
+    nlohmann::json census = KnifeEdgeCensus();
+    census["ClusterComposition"] = ClusterCompositionBand(result);
     result.knife_edge_census = census.dump();
     {
       // The census is in mesh units (the manifest scales it to its length unit); the log
@@ -9675,10 +10700,17 @@ IdentificationResult Identifier::Identify()
       const double at_R = census["Distance"]["R"]["Total"].get<double>();
       const double at_2R = census["Distance"]["2R"]["Total"].get<double>();
       std::ostringstream text;
+      const auto &composition = census["ClusterComposition"];
       text << "distance within " << kKnifeEdgeBandRelative << " R of R: " << at_R
            << " mesh units = " << std::fixed << std::setprecision(1) << at_R / R
            << " R, of 2R: " << std::defaultfloat << at_2R << " mesh units = " << std::fixed
-           << std::setprecision(1) << at_2R / R << " R";
+           << std::setprecision(1) << at_2R / R << " R; cluster composition changing at R "
+           << std::defaultfloat << "(1 -/+ " << kKnifeEdgeBandRelative
+           << "): " << composition["ClustersBelow"].get<std::size_t>() << " / "
+           << composition["ClustersAbove"].get<std::size_t>() << " of "
+           << composition["Clusters"].get<std::size_t>() << " clusters, "
+           << composition["Below"].get<double>() << " / "
+           << composition["Above"].get<double>() << " mesh units";
       stage.End(text.str());
     }
   }
@@ -10050,6 +11082,17 @@ nlohmann::json ScaledCensus(const std::string &text, double length_scale)
   {
     census["SampledLength"] = census["SampledLength"].get<double>() * length_scale;
   }
+  if (census.contains("ClusterComposition"))
+  {
+    auto &entry = census["ClusterComposition"];
+    for (const char *key : {"Below", "Above", "Total"})
+    {
+      if (entry.contains(key))
+      {
+        entry[key] = entry[key].get<double>() * length_scale;
+      }
+    }
+  }
   return census;
 }
 
@@ -10278,6 +11321,28 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"VertexJoinsClusterOverR", kVertexJoinsClusterOverRadius},
         {"VertexWindowOverR", kVertexWindowOverRadius},
         {"ParallelCosineTolerance", kParallelCosineTolerance},
+        {"ParallelClassRule",
+         "one parallel relation for every rule (USER decision 184 (1), 2026-10-01): two "
+         "straight (single-run) runs of one metal plane are parallel iff |cos| of their "
+         "tangents exceeds 1 - ParallelCosineTolerance (1.4e-4 rad; dimensionless), the "
+         "parallel classes are the connected components of that relation per plane (built "
+         "from the runs' 1e-9 direction buckets sorted by their in-plane angle, "
+         "consecutive "
+         "buckets within the tolerance linked, the 0 / pi wrap included: a canonical, "
+         "numbering-independent partition). Parallel rigid runs pair and stack by the "
+         "translational rule ONLY (their class), every other rigid pair by the bent-pair / "
+         "event rules; before this rule the translational stage grouped runs on the 1e-9 "
+         "direction grid while the other two stages skipped rigid pairs within the cosine "
+         "tolerance, so runs tilted by between 1e-9 and 1.4e-4 rad (a mesh-noise wobble of "
+         "1.8e-4 um over a 186 um chip edge) were paired by neither. The linkage is "
+         "transitive (single linkage over the sorted buckets): a dense continuum of "
+         "directions would chain a class beyond the tolerance (not a chip configuration: "
+         "rigid runs are isolated design edges). A class pair's separation (its lateral "
+         "offset difference at the runs' midpoints) is exact only when the lines' "
+         "separation at both ends of the span stays within "
+         "SignatureParameterToleranceOverR "
+         "R of it (tilt x half-length), else the stack reads it with ExactParameters "
+         "false"},
         {"ArcFitToleranceOverR", kArcFitToleranceOverRadius},
         {"ArcMaxJointTurnDegrees", kArcMaxJointTurnDegrees},
         {"CornerTraceBasisRule",
@@ -10376,8 +11441,16 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "ArcMaxJointTurnDegrees (regular polygons such as squares / hexagons stay "
          "corners); "
          "bends and rounded corners alike, whatever the chord sagitta and with no "
-         "piece-length rule. The chord sagitta rho (1 - cos(central angle / 2)) is "
-         "recorded "
+         "piece-length rule, PROVIDED the concyclicity holds at every point of the range "
+         "(USER decision 184 (2), 2026-10-01): the interior points of a chord between two "
+         "consecutive joints deviate from the circle by the chord sagitta, admissible only "
+         "where it is below the joint noise resolution (JointNoiseSagittaOverR x R) or "
+         "where one of the chord's end joints is a real turn (not noise under CornerRule "
+         "on its shorter piece: a design chord of a coarsely discretised curve); a chord "
+         "beyond the resolution between two noise joints is a straight edge and its range "
+         "is no arc (a long straight edge with tiny same-sign end joints, exactly "
+         "concyclic by mirror symmetry, is never a bend). The chord sagitta rho (1 - "
+         "cos(central angle / 2)) is recorded "
          "per arc (Arcs[].MaxChordSagittaOverR) and arcs at or above SagittaOverR x R are "
          "listed in MeshCoarsenessWarning (count, length, worst): a mesh-coarseness "
          "diagnostic, not a membership test. The circle is the one tangent to both arms at "
@@ -10416,18 +11489,60 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"CurvatureWindowOverR", kCurvatureWindowOverRadius},
         {"PairSeparationToleranceRelative", kPairSeparationTolerance},
         {"PairSeparationSamplesPerInterval", kPairSeparationSamplesPerInterval},
+        {"PairBendProximityOverR", kPairBendProximityOverRadius},
+        {"PairChordWindowCapOverR", kPairChordWindowCapOverRadius},
+        {"ExactStretchMinLengthOverR", kExactStretchMinLengthOverRadius},
         {"PairSeparationEstimate",
          "per sample: chord reading C = min over the two chains of the maximum sampled "
-         "closest-point distance within max(R, local chord) of the sample / its foot where "
-         "the chain bends, R on straight runs; inscribed reading C / cos(turn / 2) with "
-         "the larger local joint turn; interacting iff both < 2R (the decision). The "
-         "feature separation (decision 85(1)) per link and curvature class is EXACT where "
-         "the geometry allows: the perpendicular distance of two exactly parallel straight "
-         "runs neither of which bends within R of the sample / foot, or the radius "
-         "difference of two fitted bend arcs whose centres coincide within the parameter "
-         "tolerance; a class with any exact piece takes the length-weighted mean of its "
-         "exact pieces, else the length-weighted mean chord reading (ExactParameters "
-         "false); never a sample-count-weighted mean"},
+         "closest-point distance within max(R, min(local chord, PairChordWindowCapOverR "
+         "R)) of the sample / its foot where the chain bends within PairBendProximityOverR "
+         "R of it along the chain (a joint with a turn or a fitted bend arc; not the "
+         "windowed curvature, which spreads a joint's turn over its two half-runs), R "
+         "elsewhere; inscribed reading C / cos(turn / 2) with the larger local joint turn; "
+         "interacting iff both < 2R (the decision). The feature separation (decision "
+         "85(1), amended by USER decision 184 (3), 2026-10-01) per link and curvature "
+         "class is EXACT where the geometry allows: the perpendicular distance of two "
+         "exactly parallel straight runs neither of which bends within "
+         "PairBendProximityOverR R of the sample / foot and whose foot is the "
+         "perpendicular "
+         "projection (closest-point distance = line distance within the parameter "
+         "tolerance), or the radius difference of two fitted bend arcs whose centres "
+         "coincide within the parameter tolerance. A sub-piece (consecutive samples of one "
+         "constancy / interaction status along a run) is cut into STRETCHES (USER decision "
+         "203, 2026-10-02): an exact stretch = a maximal contiguous stretch of samples "
+         "with "
+         "an exact reading whose readings lie within the parameter tolerance of the "
+         "stretch's exact mean; it splits off as its own exact sub-piece (reading that "
+         "mean) only when its exact samples span at least ExactStretchMinLengthOverR R, "
+         "else it merges into the adjacent non-exact stretch (a sub-piece that is one "
+         "exact "
+         "stretch stays exact at any length); the judged samples without an exact reading "
+         "(away from any bend within PairBendProximityOverR R) form non-exact stretches by "
+         "status; the near-bend samples (not judged) join an adjacent stretch within "
+         "PairBendProximityOverR R along the run of its last exact / judged sample (the "
+         "exact side first; a short agreeing gap between two exact stretches is "
+         "transparent) and farther than that form a non-exact stretch; a non-exact stretch "
+         "is cut where its feet cross a partner run boundary (one non-exact sub-piece "
+         "faces "
+         "one partner run); a non-exact "
+         "sub-piece reads the mean of the chord readings "
+         "(equally spaced samples: the length-weighted mean over the sub-piece) and is not "
+         "exact. The pieces of a chain "
+         "pair are grouped into links so that a link holds ONE separation: exact pieces "
+         "within the "
+         "parameter tolerance of each other form an exact group (value = their "
+         "length-weighted mean), a chord piece joins the exact group within the pair "
+         "tolerance (PairSeparationToleranceRelative) of its own separation (nearest), the "
+         "remaining chord pieces form chord groups by consecutive steps within the pair "
+         "tolerance (value = the length-weighted mean chord reading, ExactParameters "
+         "false); a piece is never keyed by the exact readings of pieces beyond its own "
+         "tolerance (a 3.7 um strip next to a 2 um lead reads 3.7); never a "
+         "sample-count-weighted mean over pieces. Invariant: mutually facing non-exact "
+         "pieces (each the only non-exact piece of its run whose feet all lie on the "
+         "other's run) belong to one group; where they straddle a group threshold the "
+         "piece "
+         "spanning exactly its own run decides (ties: the lower run index) and the other "
+         "joins its group"},
         {"SignatureParameterToleranceOverR", kSignatureParameterToleranceOverRadius},
         {"SignatureAngleToleranceDegrees", kSignatureAngleToleranceDegrees},
         {"SignatureMatching",

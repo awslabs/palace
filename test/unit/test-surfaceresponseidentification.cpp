@@ -9,6 +9,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -1975,5 +1976,623 @@ TEST_CASE("SurfaceResponseIdentificationArcClusters",
       REQUIRE(signature);
       CHECK((*signature)["Portions"].size() == 2);
     }
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationDecision184Fixes",
+          "[surfaceresponseidentification][Serial]")
+{
+  // USER decision 184 (2026-10-01): the three identification defects of the stage-0 audit
+  // (E8-1 / E8-3 / E8-7) and the cluster-composition band of the knife-edge census.
+  const double R = 1.9;
+  auto Counts = [](const IdentificationResult &result)
+  {
+    std::map<std::string, int> counts;
+    for (const auto &feature : result.features)
+    {
+      counts[feature.type]++;
+    }
+    return counts;
+  };
+  SECTION("near-parallel rigid runs: a mesh-noise tilt of one stack edge (E8-1)")
+  {
+    // ground | 2 | trace 2 | 2 | ground over 80 um; the lower ground's top edge is tilted
+    // by 2e-4 um over its 80 um (2.5e-6 rad: the DS-SCT-002 flux lines' 1.8e-4 um wobble
+    // over 186 um), i.e. by more than the 1e-9 DirectionKey grid and less than the parallel
+    // cosine tolerance (1.4e-4 rad). Before the one-class rule the translational stage put
+    // it in another direction class and the bent-pair stage skipped it as "exactly
+    // parallel": a 3-edge stack + an 80 um IsolatedEdge facing it at 1.05 R. Rule: one
+    // 4-edge ParallelEdgeCluster, as for the untilted geometry.
+    std::map<double, std::map<std::string, double>> lengths;  // per tilt, per type
+    for (const double tilt : {0.0, 2.0e-4})
+    {
+      const auto input = MakeInput(
+          {{{{-40.0, -10.0}, {40.0, -10.0}, {40.0, -2.0}, {-40.0, -2.0 - tilt}}, 0, 1.0},
+           {Rectangle(-30.0, 0.0, 30.0, 2.0), 0, 1.0},
+           {Rectangle(-40.0, 4.0, 40.0, 12.0), 0, 1.0}},
+          R);
+      const auto result = IdentifyMetalPerimeter(input);
+      CheckPartition(input, result);
+      INFO("tilt " << tilt);
+      int stacks = 0;
+      for (const auto &feature : result.features)
+      {
+        lengths[tilt][feature.type] += feature.length;
+        if (feature.type == "ParallelEdgeCluster")
+        {
+          INFO(feature.signature.dump());
+          CHECK(feature.signature["Edges"].size() == 4);
+          CHECK(feature.exact_parameters);
+          stacks++;
+        }
+      }
+      CHECK(stacks == 1);
+    }
+    // The tilted geometry reads as the untilted one: the same length per feature type (the
+    // outer ground edges are the only isolated edges; the stack has four sides over the
+    // whole run between the end clusters).
+    REQUIRE(lengths.size() == 2);
+    const auto &untilted = lengths.at(0.0), &tilted = lengths.at(2.0e-4);
+    CHECK(untilted.size() == tilted.size());
+    for (const auto &[type, length] : untilted)
+    {
+      INFO(type);
+      REQUIRE(tilted.count(type) == 1);
+      CHECK_THAT(tilted.at(type), WithinAbs(length, 0.01));
+    }
+    CHECK(untilted.at("IsolatedEdge") >= 2.0 * 80.0);  // the outer ground edges
+    CHECK(untilted.at("ParallelEdgeCluster") >
+          4.0 * 2.0 * (30.0 - std::sqrt(12.0) - 2.0 * R));
+  }
+  SECTION("a long straight edge with tiny same-sign end joints is no arc (E8-3)")
+  {
+    // A 500 um straight island edge whose ends each carry two 1.2 / 2.4 deg joints on 12 um
+    // pieces (the first chords of the bends a chip trace enters; noise under the geometric
+    // joint rule, so one chain; exactly concyclic by mirror symmetry). Before the
+    // every-point clause the four joints alone passed the concyclicity test: a bend of
+    // radius ~4 mm bowing 7.8 um (4 R) off the metal toward the ground edge 10 um away ->
+    // false 2-edge clusters over most of the run (DS-OSC-003 3.9 mm, DS-SCT-002 2.1 mm).
+    // Rule: no arc; the edge and the ground edge are isolated (10 um > 2R apart).
+    const double half = 250.0, piece = 12.0, deg = std::acos(-1.0) / 180.0;
+    const Point2 m0 = {-half, 0.0}, m1 = {half, 0.0};
+    const Point2 q1 = {m1[0] + piece * std::cos(1.2 * deg),
+                       m1[1] + piece * std::sin(1.2 * deg)};
+    const Point2 q2 = {q1[0] + piece * std::cos(3.6 * deg),
+                       q1[1] + piece * std::sin(3.6 * deg)};
+    const Point2 p1 = {-q1[0], q1[1]}, p2 = {-q2[0], q2[1]};
+    const double top = 20.0;
+    const std::vector<Point2> island = {p2, p1, m0, m1, q1, q2, {q2[0], top}, {p2[0], top}};
+    for (const bool with_ground : {false, true})
+    {
+      std::vector<LoopSpec> loops = {{island, 0, 1.0}};
+      if (with_ground)
+      {
+        loops.push_back({Rectangle(-half - 60.0, -30.0, half + 60.0, -10.0), 1, 1.0});
+      }
+      const auto input = MakeInput(loops, R);
+      const auto result = IdentifyMetalPerimeter(input);
+      CheckPartition(input, result);
+      INFO("with ground " << with_ground);
+      for (const auto &arc : result.arcs)
+      {
+        INFO("arc " << arc.kind << " radius " << arc.radius << " joints " << arc.joints
+                    << " sagitta " << arc.max_sagitta_over_R);
+        CHECK(arc.kind != "Bend");
+      }
+      CHECK(result.arcs.empty());
+      const auto counts = Counts(result);
+      CHECK(counts.count("SpatialEdgeCluster") == 0);
+      CHECK(counts.count("CurvedEdge") == 0);
+      CHECK(counts.at("IsolatedEdge") >= 4);
+    }
+  }
+  SECTION("a taper strip reads its own width, not its narrow lead's (E8-7)")
+  {
+    // A 2 um lead (x < 0) widening along a smooth (quadratic) taper to 3.7 um at x = 120
+    // (just under 2R = 3.8), chorded every 5 um: every joint is noise, each side is one
+    // chain of many runs, the chord readings step by < 5 % between consecutive runs (a slow
+    // taper: constant within the pair tolerance). Before the amendment the 5 % steps linked
+    // the lead's exact 2.0 um pieces to every taper piece and the link read the exact mean
+    // 2.0 um (ExactParameters true) over the whole strip up to 3.7 um (the DS-CTX-003
+    // launcher strips keyed 2.0 um at 3.7 um). Rule: a strip feature's separation is the
+    // length-weighted mean of the local width over its portions, and it is exact only where
+    // the width is constant within the parameter tolerance.
+    const double lead = 60.0, taper = 120.0, w0 = 2.0, w1 = 3.7, step = 5.0;
+    auto HalfWidth = [&](double x)
+    {
+      if (x <= 0.0)
+      {
+        return 0.5 * w0;
+      }
+      const double u = std::min(x, taper) / taper;
+      return 0.5 * (w0 + (w1 - w0) * u * u);
+    };
+    std::vector<Point2> bar = {{-lead, -HalfWidth(-lead)}};
+    const int chords = static_cast<int>(std::lround(taper / step));
+    for (int k = 0; k <= chords; k++)
+    {
+      const double x = taper * k / chords;
+      bar.push_back({x, -HalfWidth(x)});
+    }
+    for (int k = chords; k >= 0; k--)
+    {
+      const double x = taper * k / chords;
+      bar.push_back({x, HalfWidth(x)});
+    }
+    bar.push_back({-lead, HalfWidth(-lead)});
+    const auto input = MakeInput({{bar, 0, 1.0}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    double strip_length = 0.0;
+    for (const auto &feature : result.features)
+    {
+      if (feature.type != "SameConductorStrip")
+      {
+        continue;
+      }
+      const double separation = feature.signature["SeparationOverR"].get<double>() * R;
+      double length = 0.0, width_sum = 0.0, width_min = 1.0e300, width_max = 0.0;
+      for (const auto &portion : feature.portions)
+      {
+        const auto &segment = result.segments[portion.segment];
+        const double s = 0.5 * (portion.s0 + portion.s1) / segment.length;
+        const double x = segment.key[0][0] + s * (segment.key[1][0] - segment.key[0][0]);
+        const double width = 2.0 * HalfWidth(x);
+        const double l = portion.s1 - portion.s0;
+        length += l;
+        width_sum += l * width;
+        width_min = std::min(width_min, width);
+        width_max = std::max(width_max, width);
+      }
+      strip_length += length;
+      INFO("strip " << feature.signature.dump() << " exact " << feature.exact_parameters
+                    << " length " << length << " width " << width_min << " .. "
+                    << width_max);
+      // The feature's separation is its own length-weighted mean width (the lateral
+      // chords of a slow taper read the local width within the 5 % pair tolerance).
+      CHECK_THAT(separation, WithinRel(width_sum / length, 0.05));
+      if (feature.exact_parameters)
+      {
+        // Exact only on the constant lead (chord pieces within the pair tolerance of the
+        // exact 2.0 um may join its link: a width within 5 % of the exact value).
+        CHECK(width_max <= 1.05 * separation);
+      }
+    }
+    // The lead and the taper up to the 2R crossing are strip material (the end clusters
+    // and the taper end excepted).
+    CHECK(strip_length > 2.0 * (lead + taper) * 0.6);
+  }
+  SECTION("knife-edge census: cluster-composition band")
+  {
+    // Pads A | 3.0 | B (3 um wide) | 3.82 | C: at R the corners of A's right edge and of B
+    // are one cluster (every gap below 2R = 3.8); at R (1 + 1 %) the gap of 3.82 um is
+    // below 2R = 3.838 and C's left corners join it (edge count / member vertices change);
+    // at R (1 - 1 %) nothing changes. The census reports the cluster's claimed length on
+    // the Above side only.
+    const auto input = MakeInput({{Rectangle(0.0, 0.0, 8.0, 8.0), 0, 1.0},
+                                  {Rectangle(11.0, 0.0, 14.0, 8.0), 1, 1.0},
+                                  {Rectangle(17.82, 0.0, 25.82, 8.0), 2, 1.0}},
+                                 R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    const auto counts = Counts(result);
+    REQUIRE(counts.at("SpatialEdgeCluster") >= 1);
+    const auto census = nlohmann::json::parse(result.knife_edge_census);
+    REQUIRE(census.contains("ClusterComposition"));
+    const auto &band = census["ClusterComposition"];
+    INFO(band.dump());
+    CHECK(band["Clusters"].get<int>() == counts.at("SpatialEdgeCluster"));
+    CHECK(band["ClustersBelow"].get<int>() == 0);
+    CHECK_THAT(band["Below"].get<double>(), WithinAbs(0.0, 1.0e-12));
+    CHECK(band["ClustersAbove"].get<int>() >= 1);
+    CHECK(band["Above"].get<double>() > 0.0);
+    CHECK_THAT(
+        band["Total"].get<double>(),
+        WithinAbs(band["Below"].get<double>() + band["Above"].get<double>(), 1.0e-9));
+    // Stable without a knife edge: the pads 6 um apart report nothing.
+    const auto quiet =
+        IdentifyMetalPerimeter(MakeInput({{Rectangle(0.0, 0.0, 8.0, 8.0), 0, 1.0},
+                                          {Rectangle(11.0, 0.0, 14.0, 8.0), 1, 1.0},
+                                          {Rectangle(20.0, 0.0, 28.0, 8.0), 2, 1.0}},
+                                         R));
+    const auto quiet_band =
+        nlohmann::json::parse(quiet.knife_edge_census)["ClusterComposition"];
+    INFO(quiet_band.dump());
+    CHECK(quiet_band["ClustersBelow"].get<int>() == 0);
+    CHECK(quiet_band["ClustersAbove"].get<int>() == 0);
+  }
+  SECTION("a straight lead next to a slow taper keeps its exact reading (184 (3) locality)")
+  {
+    // ground | 1 | trace 2 | 1 | ground, straight over 80 um (x < 0) and then one LINEAR
+    // taper run of 300 um to 2.5 / 3.5 / 2.5 um (the DS-CTX-003 launcher routes: 0.9-1.3 mm
+    // tapers from 1 / 2 / 1 um to ~4 um); every taper joint is noise (0.14-0.43 deg), so
+    // every edge is one chain of two runs. Before the locality correction the curvature
+    // rule's half-run spreading of the taper joint's turn made kappa > 0 over 40 um of the
+    // lead, the lead's samples there had no exact reading and read a window of the whole
+    // run length (80 um) deep into the taper: the straight 1 / 2 / 1 um stack read
+    // 1 / 2.3 / 1 um and ExactParameters false (the chip's 532 um 6-edge stacks 2.2 / 2.7 /
+    // 2.0 um). Rule: the straight part is one exact 4-edge stack at 0 / 1 / 3 / 4 um; the
+    // taper reads its own mean separations, not exact.
+    const double L = 80.0, T = 300.0, w0 = 1.0, w1 = 1.75, g0 = 1.0, g1 = 2.5, H = 12.0;
+    const auto input = MakeInput(
+        {{{{-L, -w0}, {0.0, -w0}, {T, -w1}, {T, w1}, {0.0, w0}, {-L, w0}}, 0, 1.0},
+         {{{-L, -w0 - g0 - H},
+           {T, -w1 - g1 - H},
+           {T, -w1 - g1},
+           {0.0, -w0 - g0},
+           {-L, -w0 - g0}},
+          0,
+          1.0},
+         {{{-L, w0 + g0},
+           {0.0, w0 + g0},
+           {T, w1 + g1},
+           {T, w1 + g1 + H},
+           {-L, w0 + g0 + H}},
+          0,
+          1.0}},
+        R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    const std::vector<double> design = {0.0, g0 / R, (g0 + 2.0 * w0) / R,
+                                        (2.0 * g0 + 2.0 * w0) / R};
+    double exact_length = 0.0, taper_length = 0.0;
+    for (const auto &feature : result.features)
+    {
+      if (feature.type != "ParallelEdgeCluster")
+      {
+        continue;
+      }
+      const auto &edges = feature.signature["Edges"];
+      INFO(feature.signature.dump()
+           << " exact " << feature.exact_parameters << " length " << feature.length);
+      REQUIRE(edges.size() == 4);
+      if (feature.exact_parameters)
+      {
+        // An exact stack here is the straight part: the design offsets.
+        for (std::size_t k = 0; k < 4; k++)
+        {
+          CHECK_THAT(edges[k]["OffsetOverR"].get<double>(), WithinAbs(design[k], 1.0e-5));
+        }
+        exact_length += feature.length;
+      }
+      else
+      {
+        // The taper: wider than the design everywhere beyond its first 5 %.
+        CHECK(edges[3]["OffsetOverR"].get<double>() > 1.05 * design[3]);
+        taper_length += feature.length;
+      }
+    }
+    // The straight part (less the end cluster at x = -L) is exact; the taper is read.
+    CHECK(exact_length >= 4.0 * (L - 4.0 * R));
+    CHECK(taper_length >= 4.0 * 0.5 * T);
+  }
+  SECTION("a straight lead next to a bend keeps its exact reading (184 (3) locality)")
+  {
+    // Two conductors 2.85 um = 1.5 R apart: straight leads of 60 um, concentric 90 deg
+    // bends of radius 19 / 16.15 um in 4 chords (7.4 / 6.3 um, beyond 2R: coarse) or 18
+    // chords (1.7 / 1.4 um: fine) whose vertices are NOT aligned (the inner polyline's
+    // vertices sit mid-chord of the outer's, as a mesh generator places them), then
+    // straight leads again. An outer vertex (on its circle) is farther from the inner chord
+    // across it than the design separation (3.16 um coarse, 2.865 um fine), so the bend's
+    // sampled distances exceed 1.5 R. Before the correction the lead's samples within half
+    // the lead of the bend joint read a window of the whole run (60 um), which held the
+    // bend's locally constant samples (fine chords; the coarse chords' readings vary by
+    // more than the pair tolerance and were masked): the fine case read the lead's pair
+    // non-exact above 1.5 R. Rule: the leads are the exact 1.5 R pair in both cases (their
+    // samples' own distances are the line distance).
+    const double rho = 19.0, sep = 1.5 * R, lead = 60.0, quarter = 0.5 * std::acos(-1.0);
+    for (const int chords : {4, 18})
+    {
+      std::vector<Point2> outer = {
+          {-lead, -10.0}, {30.0, -10.0}, {30.0, 40.0}, {rho, 40.0}};
+      for (int k = chords; k >= 0; k--)
+      {
+        const double theta = quarter * k / chords;
+        outer.push_back({rho * std::sin(theta), rho - rho * std::cos(theta)});
+      }
+      outer.push_back({-lead, 0.0});
+      std::vector<Point2> inner = {{-lead, sep}, {0.0, sep}};
+      for (int k = 0; k < chords; k++)
+      {
+        const double theta = quarter * (k + 0.5) / chords;
+        inner.push_back(
+            {(rho - sep) * std::sin(theta), rho - (rho - sep) * std::cos(theta)});
+      }
+      inner.push_back({rho - sep, rho});
+      inner.push_back({rho - sep, 40.0});
+      inner.push_back({-lead, 40.0});
+      const auto input = MakeInput({{outer, 0, 1.0}, {inner, 1, 1.0}}, R);
+      const auto result = IdentifyMetalPerimeter(input);
+      CheckPartition(input, result);
+      double exact_length = 0.0;
+      std::ostringstream summary;
+      for (const auto &feature : result.features)
+      {
+        summary << feature.type << " " << feature.length << " exact "
+                << feature.exact_parameters << " bend "
+                << feature.bend_radius_over_R.value_or(0.0) << "; ";
+        if (feature.type != "DifferentConductorGap")
+        {
+          continue;
+        }
+        const double separation = feature.signature["SeparationOverR"].get<double>();
+        INFO("chords " << chords << " " << feature.signature.dump() << " exact "
+                       << feature.exact_parameters << " length " << feature.length
+                       << " bend " << feature.bend_radius_over_R.value_or(0.0));
+        if (feature.exact_parameters)
+        {
+          // Exact only at the design separation (the straight-class pair of the leads; the
+          // bend is the curved type, exact by its concentric fitted arcs).
+          CHECK_THAT(separation, WithinAbs(1.5, 1.0e-5));
+          exact_length += feature.length;
+        }
+      }
+      // The horizontal leads (less the end cluster at x = -lead) and the vertical ones
+      // read exact: more than the two horizontal leads alone.
+      INFO("chords " << chords << ": " << summary.str());
+      CHECK(exact_length >= 2.0 * (lead - 4.0 * R));
+    }
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationDecision203ExactStretches",
+          "[surfaceresponseidentification][Serial]")
+{
+  // USER decision 203 (2026-10-02): the sub-piece exactness is local along the run (exact
+  // stretches), completing decision 184 (3). Before, exactness was all-or-nothing per
+  // sub-piece: a straight run facing a partner that is parallel over part of its length and
+  // then changes separation one-sidedly lost its exact part entirely (one judged sample
+  // made the whole run non-exact at its chord mean; the lead's exact group then had no
+  // partner piece and the strip read as two IsolatedEdges), or — when every non-exact
+  // sample sat within R of a partner joint (finely chorded taper) and was not judged — read
+  // exact at the lead's value over the whole taper (the twin mode, E8-7 again).
+  const double R = 1.9;
+  // A strip island whose LEFT side is one straight run (x = 0) over the whole length and
+  // whose RIGHT side is straight (width w0) for y < 0 and then a quadratic one-sided taper
+  // to w1 at y = taper, chorded every `step` um (noise joints of < 0.01 deg), optionally
+  // followed by a straight part of width w1 over `tail` um. The reviewer's reproducer
+  // (straight 150 um, taper 300 um, w0 2.0 um = 0.53 R, w1 3.7 um < 2R, chords 3 um < 2R
+  // and 10 um > 2R).
+  const double straight = 150.0, taper = 300.0, w0 = 2.0, w1 = 3.7;
+  auto Bar = [&](double step, double tail)
+  {
+    const int chords = static_cast<int>(std::lround(taper / step));
+    std::vector<Point2> right = {{w0, -straight}};
+    for (int k = 0; k <= chords; k++)
+    {
+      const double y = taper * k / chords;
+      right.push_back({w0 + (w1 - w0) * (y / taper) * (y / taper), y});
+    }
+    if (tail > 0.0)
+    {
+      right.push_back({w1, taper + tail});
+    }
+    right.push_back({0.0, taper + tail});
+    right.push_back({0.0, -straight});
+    return right;
+  };
+  // Per feature: the length of its portions on the left edge (x = 0) and on the right side.
+  auto SideLengths =
+      [&](const IdentificationResult &result, const IdentifiedFeature &feature)
+  {
+    std::array<double, 2> lengths = {0.0, 0.0};
+    for (const auto &portion : feature.portions)
+    {
+      const auto &segment = result.segments[portion.segment];
+      const bool left =
+          std::abs(segment.key[0][0]) < 1.0e-9 && std::abs(segment.key[1][0]) < 1.0e-9;
+      lengths[left ? 0 : 1] += portion.s1 - portion.s0;
+    }
+    return lengths;
+  };
+  // The left edge's y range of a feature's portions.
+  auto LeftRange = [&](const IdentificationResult &result, const IdentifiedFeature &feature)
+  {
+    double lo = 1.0e300, hi = -1.0e300;
+    for (const auto &portion : feature.portions)
+    {
+      const auto &segment = result.segments[portion.segment];
+      if (std::abs(segment.key[0][0]) > 1.0e-9 || std::abs(segment.key[1][0]) > 1.0e-9)
+      {
+        continue;
+      }
+      const double y0 = segment.key[0][1], y1 = segment.key[1][1];
+      for (const double s : {portion.s0, portion.s1})
+      {
+        const double y = y0 + (y1 - y0) * s / segment.length;
+        lo = std::min(lo, y);
+        hi = std::max(hi, y);
+      }
+    }
+    return std::make_pair(lo, hi);
+  };
+  auto CheckOneSided = [&](double step, double tail)
+  {
+    INFO("step " << step << " tail " << tail);
+    const auto input = MakeInput({{Bar(step, tail), 0, 1.0}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    double exact_left = 0.0, exact_right = 0.0, taper_left = 0.0, taper_right = 0.0,
+           tail_left = 0.0, isolated = 0.0;
+    std::pair<double, double> exact_range = {0.0, 0.0};
+    for (const auto &feature : result.features)
+    {
+      if (feature.type == "IsolatedEdge")
+      {
+        isolated += feature.length;
+        continue;
+      }
+      if (feature.type != "SameConductorStrip")
+      {
+        continue;
+      }
+      const double separation = feature.signature["SeparationOverR"].get<double>() * R;
+      const auto sides = SideLengths(result, feature);
+      INFO("step " << step << " tail " << tail << " strip " << feature.signature.dump()
+                   << " exact " << feature.exact_parameters << " length " << feature.length
+                   << " left " << sides[0] << " right " << sides[1]);
+      if (feature.exact_parameters && std::abs(separation - w0) < 0.05 * w0)
+      {
+        // The exact strip of the straight part: exactly w0.
+        CHECK_THAT(separation, WithinAbs(w0, 1.0e-5 * R));
+        exact_left += sides[0];
+        exact_right += sides[1];
+        exact_range = LeftRange(result, feature);
+      }
+      else if (feature.exact_parameters)
+      {
+        // Only the tail's straight part can be exact otherwise: exactly w1.
+        CHECK_THAT(separation, WithinAbs(w1, 1.0e-5 * R));
+        tail_left += sides[0];
+      }
+      else
+      {
+        // The taper: its own mean width, wider than w0.
+        CHECK(separation > 1.05 * w0);
+        CHECK(separation < w1);
+        taper_left += sides[0];
+        taper_right += sides[1];
+      }
+    }
+    INFO("step " << step << " tail " << tail << ": exact left " << exact_left << " right "
+                 << exact_right << " taper left " << taper_left << " right " << taper_right
+                 << " tail left " << tail_left << " isolated " << isolated);
+    // The exact strip's left portion is the straight part (less the end cluster at
+    // y = -straight) plus the taper start whose chord pieces lie within the 5 % pair
+    // tolerance of w0 (the established link rule of decision 184 (3): a chord piece joins
+    // the exact group within the pair tolerance of its own separation; here the first
+    // ~73 um of the taper, 2.0 -> 2.1 um, keyed with the exact 2.0 um strip on BOTH
+    // sides — the non-exact stretch is cut at the partner's runs so that both sides are
+    // discretised alike) and at most one partner chord + R beyond.
+    const double five_percent = taper * std::sqrt(0.05 * w0 / (w1 - w0));
+    CHECK(exact_left >= straight - 4.0 * R);
+    CHECK(exact_left <= straight + five_percent + step + R);
+    CHECK(exact_range.second <= five_percent + step + R);
+    CHECK(exact_right >= straight - 4.0 * R);
+    CHECK(exact_right <= straight + five_percent + step + R);
+    CHECK_THAT(exact_left, WithinAbs(exact_right, 2.0 * R));
+    // The taper beyond reads non-exact over the rest of its length on both sides (with a
+    // tail, its end within 5 % of w1 keys with the tail's exact w1 strip likewise).
+    const double five_percent_end =
+        tail > 0.0 ? taper * (1.0 - std::sqrt((0.95 * w1 - w0) / (w1 - w0))) + step : 0.0;
+    CHECK(taper_left >= taper - five_percent - step - five_percent_end - 4.0 * R);
+    CHECK(taper_right >= taper - five_percent - step - five_percent_end - 4.0 * R);
+    CHECK_THAT(taper_left, WithinAbs(taper_right, 2.0 * R));
+    if (tail > 0.0)
+    {
+      CHECK(tail_left >= tail - 4.0 * R - R);
+    }
+    // No part of the strip (0.53 .. 1.95 R wide) is an isolated edge.
+    CHECK(isolated == 0.0);
+  };
+  SECTION("a straight run facing a partner that is parallel then tapers one-sidedly")
+  {
+    // Chords 3 um (every taper point within R of a noise joint: the left run's samples
+    // facing the taper are near-bend, not judged, except one on the last chord) and 10 um
+    // (judged samples mid-chord). Before: the strip's straight part read as two
+    // IsolatedEdges (220 + 217 um) and the taper as a 455 um non-exact strip.
+    for (const double step : {3.0, 10.0})
+    {
+      CheckOneSided(step, 0.0);
+    }
+  }
+  SECTION("the twin mode: a finely chorded one-sided taper ending at a joint")
+  {
+    // Chords 2.5 um: every point of the taper lies within R of a noise joint, the taper
+    // ends at the island's top corner, so NOT ONE sample of the left run facing the taper
+    // is judged. Before: the whole 450 um left run read exact at 2.0 um (the taper's
+    // 300 um keyed at the lead's width, E8-7). Rule: the near-bend samples farther than R
+    // from the exact stretch form a non-exact stretch at its chord mean.
+    CheckOneSided(2.5, 0.0);
+  }
+  SECTION("a finely chorded one-sided taper between two straight parts")
+  {
+    // The taper ends in a straight part of width w1 (1.95 R) over 40 um: two exact
+    // stretches (w0 and w1) with the taper's non-exact stretch between them.
+    CheckOneSided(2.5, 40.0);
+  }
+  SECTION("parallel-class stack: the tilt x half-length exactness guard (MINOR-1)")
+  {
+    // ground | 2 | trace 2 | 2 | ground over 100 um as E8-1, the lower ground's top edge
+    // tilted by 1.2e-4 rad (within the parallel cosine tolerance 1.4e-4 rad: one class,
+    // one 4-edge stack): its lateral offset is read at the run's midpoint, but the lines'
+    // separation at the span's ends deviates by tilt x half-length = 6e-3 um = 3.2e-3 R,
+    // beyond the 1e-3 R signature tolerance -> the stack reads the midpoint offsets with
+    // ExactParameters false. The E8-1 tilt (2.5e-6 rad, 5e-5 R over the half-length) stays
+    // exact.
+    for (const double tilt_rad : {2.5e-6, 1.2e-4})
+    {
+      const double tilt = tilt_rad * 100.0;
+      const auto input = MakeInput(
+          {{{{-50.0, -10.0}, {50.0, -10.0}, {50.0, -2.0}, {-50.0, -2.0 - tilt}}, 0, 1.0},
+           {Rectangle(-40.0, 0.0, 40.0, 2.0), 0, 1.0},
+           {Rectangle(-50.0, 4.0, 50.0, 12.0), 0, 1.0}},
+          R);
+      const auto result = IdentifyMetalPerimeter(input);
+      CheckPartition(input, result);
+      int stacks = 0;
+      for (const auto &feature : result.features)
+      {
+        if (feature.type != "ParallelEdgeCluster" || feature.length < R)
+        {
+          // (The tilted class axis projects the members' ends differently: a 0.02 um
+          // 3-edge sliver at one stack end, below the signature grid's interest.)
+          continue;
+        }
+        INFO("tilt " << tilt_rad << " " << feature.signature.dump() << " exact "
+                     << feature.exact_parameters << " length " << feature.length);
+        CHECK(feature.signature["Edges"].size() == 4);
+        CHECK(feature.exact_parameters == (tilt_rad < 1.0e-5));
+        stacks++;
+      }
+      CHECK(stacks == 1);
+    }
+  }
+  SECTION("no regression: an oblique straight strip with grid-rounded vertices")
+  {
+    // A 2.6 um = 1.37 R strip of 120 um at 23 deg whose vertices (every 10 um on both
+    // edges) are rounded to a 1 nm grid, so the chords carry noise joints of ~1e-4 rad and
+    // facing chords are parallel within the cosine tolerance or not by chance: a mix of
+    // exact stretches and judged (non-exact) samples along one straight run. Reads as at
+    // e2b148f9bd: ONE exact strip over the whole length (less the end clusters) at the
+    // mean of the exact readings, within the parameter tolerance of the design width.
+    const double length = 120.0, width = 2.6, angle = 23.0 * std::acos(-1.0) / 180.0;
+    const Point2 t = {std::cos(angle), std::sin(angle)}, m = {-t[1], t[0]};
+    auto Grid = [](const Point2 &p)
+    {
+      return Point2{std::round(p[0] * 1000.0) / 1000.0, std::round(p[1] * 1000.0) / 1000.0};
+    };
+    std::vector<Point2> strip;
+    const int chords = 12;
+    for (int k = 0; k <= chords; k++)
+    {
+      const double s = length * k / chords;
+      strip.push_back(Grid({t[0] * s, t[1] * s}));
+    }
+    for (int k = chords; k >= 0; k--)
+    {
+      const double s = length * k / chords;
+      strip.push_back(Grid({t[0] * s + m[0] * width, t[1] * s + m[1] * width}));
+    }
+    const auto input = MakeInput({{strip, 0, 1.0}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    int strips = 0;
+    for (const auto &feature : result.features)
+    {
+      INFO(feature.type << " " << feature.signature.dump() << " exact "
+                        << feature.exact_parameters << " length " << feature.length);
+      CHECK(feature.type != "IsolatedEdge");
+      if (feature.type != "SameConductorStrip")
+      {
+        continue;
+      }
+      strips++;
+      const double separation = feature.signature["SeparationOverR"].get<double>() * R;
+      CHECK(feature.exact_parameters);
+      CHECK_THAT(separation, WithinAbs(width, 1.0e-3 * R));
+      CHECK(feature.length >= 2.0 * (length - 4.0 * R));
+    }
+    CHECK(strips == 1);
   }
 }
