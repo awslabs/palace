@@ -38,7 +38,10 @@ private:
   // and permeability, and (optionally) thickness. The attributes are split into those on
   // the exterior of the domain (or on a cracked interior boundary), where the boundary
   // condition applies to one side, and those on an interior boundary (a conducting sheet
-  // with two surfaces), where the surface admittance of both surfaces is applied.
+  // with two surfaces), where the surface admittance of both surfaces is applied. A
+  // boundary with "External" and a finite thickness is split into two groups when it has
+  // both kinds of attributes, since the thickness correction for exterior surfaces does not
+  // apply to the interior ones.
   struct ConductivityData
   {
     double sigma, mu, h;
