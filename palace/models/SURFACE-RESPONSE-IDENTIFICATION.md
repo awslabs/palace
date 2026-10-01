@@ -956,41 +956,50 @@ smaller endpoint.
    A portion within 2R of several owners merges them (union-find over clusters and joined
    vertex features; order independent; the merged cluster is numbered by its smallest
    member). Pairs and stacks are joint descriptions and are never absorbed — with ONE
-   exception (**supervisor decision 224, 2026-10-02, in its ball form**;
-   `Conventions.ClusterExtensionRule`, `Diagnostics.ClusterExtension.TranslationalPiecesAbsorbed`):
-   a maximal contiguous stretch of pair / stack claims along a chain that is adjacent (within
-   the decision quantum) at at least one end to the claimed intervals of ONE cluster and lies
-   ENTIRELY within the cluster ball radius `ClusterBallOverR` x R of that cluster's claimed
-   pieces (the 3D distance sublevel sets of the cluster's own claims, arcs included) is
-   absorbed by that cluster, in the same pass as the single-edge absorptions (the next pass
-   recomposes the stacks around the enlarged claims; the stretch is cut into its runs'
-   intervals; the chain's closed wrap counts as adjacency; the cluster before the stretch is
-   tried first, then the one after). Why: such a stretch is shorter than the interaction
-   distance from the cluster's own claims — every point of it lies inside the ball radius the
-   cluster claims around its events — so the cluster's coupon describes it, while the stack's
-   translational patches would correct the same surface a second time. Two classes, counted
-   separately (`TwoSided` / `OneSided`): TWO-SIDED, adjacent to the cluster at both ends = a
-   stretch shorter than 2R between two claims of one cluster (every point within R of one of
-   its ends; the S1p stage-1 window's 41-edge loop end, key fcdbab7d58ad: its three vertical
-   leads, the loop wire's edges and the ground edge at offsets 0 / 2 / 4 um, were each split
-   into two 5.131 um cluster portions by a 1.738 um piece of the 3-edge stack 69ca648cc16f,
-   the six free ends being claim cuts inside the cluster); ONE-SIDED, the stack-end
-   recomposition piece: when a cluster takes one member of a stack first, the other members
-   continue as a smaller cross-section until the cluster's claims on them start, and that
-   piece — shorter than R — lies inside the cluster's hull (the S1p 3-edge stack end, 3 x 1.0
-   um at y = -136.3 alongside the loop end's claim on the member it took first). A long
-   stack adjacent to a cluster has points beyond the ball and is never absorbed. Earlier
-   form of the same day (superseded before any merge): the two-sided case alone, bounded by
-   length < 2R; it left the one-sided recomposition piece inside the loop end's coupon
-   volume, which the ownership check below would have refused. A translational stretch the
-   rule leaves inside a spatial coupon's volume is a genuinely foreign stretch and fails
-   closed at the placement's ownership check: a translational STRETCH (the identification's
-   portion unit, carried as `IdentifiedPortion::stretch` and the patch provenance `Stretch`
-   / geometry cache version 4) whose every longitudinal cell lies strictly inside one spatial
-   support's box aborts (`FindTranslationalStretchInsideSpatialSupport`; judged per stretch,
-   never per cell: the spatial box extends about R beyond the cluster's claims, so the first
-   cells of every stack portion adjacent to a cluster lie inside its box legitimately; the
-   check lives in the operator constructor — a preflight never runs it). Unit tests
+   exception (**supervisor decision 224, 2026-10-02**; `Conventions.ClusterExtensionRule`,
+   `Diagnostics.ClusterExtension.TranslationalPiecesAbsorbed`): a pair / stack stretch that
+   exists ONLY because a cluster's claim boundary cut it is absorbed by that cluster. A
+   stretch is a maximal contiguous run of one cross-section's claims (one signature key; the
+   stack assembly can emit one feature per mesh segment) along a chain; it must lie ENTIRELY
+   within the cluster ball radius `ClusterBallOverR` x R of the cluster's claimed pieces (the
+   3D distance sublevel sets of the cluster's own claims, arcs included) — shorter than the
+   interaction distance from the cluster's own claims, so the cluster's coupon describes it
+   while the stack's translational patches would correct the same surface a second time —
+   and be one of two classes, counted separately (`TwoSided` / `StackEndRecomposition`):
+   TWO-SIDED, bounded at both ends (within the decision quantum; the chain's closed wrap
+   counts) by claimed intervals of the SAME cluster = a piece shorter than 2R between two of
+   its claims (the S1p stage-1 window's 41-edge loop end, key fcdbab7d58ad: its three
+   vertical leads, the loop wire's edges and the ground edge at offsets 0 / 2 / 4 um, were
+   each split into two 5.131 um cluster portions by a 1.738 um piece of the 3-edge stack
+   69ca648cc16f, the six free ends being claim cuts inside the cluster); STACK-END
+   RECOMPOSITION, adjacent to the cluster at one end and continuing, at the other, a pair /
+   stack claim of a cross-section with strictly more members containing its own = the
+   members a cluster takes later continue past the member it takes first (the S1p 3-edge
+   stack end, 3 x 1.0 um at y = -136.3 between the 4-edge stack and the loop end's claims on
+   the leads, inside the loop end's hull). Absorbed in the same pass as the single-edge
+   absorptions (the next pass recomposes the stacks around the enlarged claims; the stretch
+   is cut into its runs' intervals). NEVER between two DIFFERENT clusters (the placement's
+   spatial-vs-spatial overlap check covers overlapping coupon boxes), never a stretch whose
+   far end is free, a bend or a smaller cross-section: strips and gaps alongside a cluster,
+   the halves of a bent strip and the gap middle between two pad-end clusters are genuine
+   translational features the 2D models describe. On S1p the rule removes 69ca648cc16f
+   entirely (8.21 um -> 0: the two-sided 1.738 um piece and the one-sided 1.0 um stack end;
+   the other leads of each follow as single-edge remainders) and re-keys the loop end to
+   5ed91f8890c0 (38 edges, 197.8757 um). Two broader forms were tried the same day and
+   rejected: the two-sided class alone (left the stack-end piece inside the loop end's
+   coupon volume, which the ownership check below refuses) and the "ball only" form (any
+   stretch adjacent to a cluster and within its ball: it ate 10 identity cells — DS-SCT-001
+   +43.6 um of cluster, the arc bar of syn-arc-r5-step20, the gap middles of the
+   syn-gap-different cells — and the bent-strip halves of the translational mortar strip
+   test). A translational stretch the rule leaves inside a spatial coupon's volume is a
+   genuinely foreign stretch and fails closed at the placement's ownership check: a
+   translational STRETCH (the identification's portion unit, carried as
+   `IdentifiedPortion::stretch` and the patch provenance `Stretch` / geometry cache version
+   4) whose every longitudinal cell lies strictly inside one spatial support's box aborts
+   (`FindTranslationalStretchInsideSpatialSupport`; judged per stretch, never per cell: the
+   spatial box extends about R beyond the cluster's claims, so the first cells of every
+   stack portion adjacent to a cluster lie inside its box legitimately; the check lives in
+   the operator constructor — a preflight never runs it). Unit tests
    `SurfaceResponseIdentificationStackPieceInsideCluster`,
    `SurfaceResponseOperatorTranslationalStretchOwnership`. The extension
    iterates to closure: an enlarged claim moves the stack ends (the stack-end rule
