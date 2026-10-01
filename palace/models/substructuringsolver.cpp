@@ -239,8 +239,8 @@ private:
 };
 
 // Materialized DtN: applies the precomputed interface operator S_E to a distributed
-// interface vector (gathered by an Allreduce): each rank multiplies its own dense row block,
-// or applies the replicated HODLR form and reads back its rows.
+// interface vector (gathered by an Allreduce): each rank multiplies its own dense row
+// block, or applies the replicated HODLR form and reads back its rows.
 class MaterializedDtN : public mfem::Operator
 {
 public:
@@ -337,7 +337,7 @@ struct SubstructuringSolver::Impl
   std::vector<std::unique_ptr<mfem::H1_FECollection>> env_fecs;
   std::unique_ptr<FiniteElementSpaceHierarchy> env_hierarchy;
   std::unique_ptr<MultigridOperator> env_mg_op;
-  std::vector<mfem::Array<int>> env_dbc_lists;  // per-level essential DOFs
+  std::vector<mfem::Array<int>> env_dbc_lists;     // per-level essential DOFs
   std::unique_ptr<mfem::HypreParMatrix> env_A_ee;  // single-level submesh operator
   std::unique_ptr<KspSolver> env_ksp;
   // Direct factorization of the region-free block (the region pc, or the exact region solve
@@ -364,7 +364,7 @@ struct SubstructuringSolver::Impl
   static constexpr int kDenseInterfacePerExcitation = 1000;
   bool region_direct = false;          // region pc is a direct factor (created lazily)
   bool region_dense_eligible = false;  // ... and a dense S_E is available for the exact one
-  mfem::Array<int> non_env_int;  // parent true DOFs that are not environment-interior
+  mfem::Array<int> non_env_int;        // parent true DOFs that are not environment-interior
   bool env_parent_direct = false;
   mfem::Array<int> env_ess;  // solve-space essential true DOFs (Gamma + env Dirichlet)
   mutable mfem::ParGridFunction env_pgf, env_sgf;  // parent / submesh transfer buffers
@@ -427,7 +427,7 @@ struct SubstructuringSolver::Impl
   std::unique_ptr<Hodlr> hodlr_K;
   std::unique_ptr<MaterializedDtN> mat_dtn_K;
   std::unique_ptr<mfem::HypreParMatrix> D_env;  // A_env - K_env (magnetostatics)
-  bool env_built = false;  // environment interior solver set up
+  bool env_built = false;                       // environment interior solver set up
 
   Impl(const IoData &iodata, mfem::ParMesh &parent)
     : iodata(iodata), parent(parent),
@@ -452,8 +452,8 @@ struct SubstructuringSolver::Impl
     mfem::Array<int> rm, em, im;
     MarkInterfaceTrueDofs(parent_fes, ra, ea, rm, em, im);
 
-    // Dirichlet true DOFs: the terminals (per terminal) and the grounded boundaries. The set
-    // is fixed across excitations, so the interface/interior partition is too.
+    // Dirichlet true DOFs: the terminals (per terminal) and the grounded boundaries. The
+    // set is fixed across excitations, so the interface/interior partition is too.
     const auto &terminals = iodata.boundaries.terminal;
     mfem::Array<int> dir_mark(nt);
     dir_mark = 0;
@@ -548,8 +548,8 @@ struct SubstructuringSolver::Impl
       }
       return false;
     };
-    // Material tensor from its eigendecomposition, M_ij = sum_k s[k] v[k]_i v[k]_j (inverted
-    // for the curl-curl inverse permeability).
+    // Material tensor from its eigendecomposition, M_ij = sum_k s[k] v[k]_i v[k]_j
+    // (inverted for the curl-curl inverse permeability).
     auto tensor = [dim](const config::SymmetricMatrixData<3> &prop, bool invert)
     {
       mfem::DenseMatrix e(dim);
@@ -1296,8 +1296,9 @@ struct SubstructuringSolver::Impl
   void CheckEnvFingerprint() const
   {
     const std::array<double, 4> fp = EnvironmentFingerprint();  // collective
-    MFEM_VERIFY(have_env_fp, "The saved substructuring model has no environment "
-                             "fingerprint: rerun in \"Offline\" mode to condense it again!");
+    MFEM_VERIFY(have_env_fp,
+                "The saved substructuring model has no environment "
+                "fingerprint: rerun in \"Offline\" mode to condense it again!");
     bool ok = (fp[0] == saved_env_fp[0] && fp[1] == saved_env_fp[1]);
     for (int q = 2; q < 4; q++)
     {
@@ -1506,10 +1507,10 @@ struct SubstructuringSolver::Impl
   void BuildEnvSubmeshSolver()
   {
     const int mg_levels = iodata.solver.linear.mg_max_levels;
-    // Direct A_EE (when the environment fits): factor A_env with the non-environment-interior
-    // true DOFs eliminated, in the parent space (no submesh transfer per solve). Higher-order
-    // H(curl) always takes this path: the submesh transfer mishandles higher-order
-    // tetrahedral edge/face orientation across the cut.
+    // Direct A_EE (when the environment fits): factor A_env with the
+    // non-environment-interior true DOFs eliminated, in the parent space (no submesh
+    // transfer per solve). Higher-order H(curl) always takes this path: the submesh
+    // transfer mishandles higher-order tetrahedral edge/face orientation across the cut.
     const bool hcurl_high_order = magnetostatic && iodata.solver.order > 1;
     MFEM_VERIFY(kHasDirectSolver || !hcurl_high_order,
                 "Magnetostatic substructuring at order > 1 needs a sparse direct solver!");
@@ -1783,9 +1784,11 @@ struct SubstructuringSolver::Impl
   }
 
   // Selection matrix E (parent true DOFs x marked DOFs): E(i, k) = 1 for the k-th marked
-  // DOF, numbered globally rank by rank in local order (for the interface, as gamma_global).
-  // Each rank's marked DOFs are its own contiguous block, so the matrix is local.
-  std::unique_ptr<mfem::HypreParMatrix> AssembleSelection(const std::vector<char> &mark) const
+  // DOF, numbered globally rank by rank in local order (for the interface, as
+  // gamma_global). Each rank's marked DOFs are its own contiguous block, so the matrix is
+  // local.
+  std::unique_ptr<mfem::HypreParMatrix>
+  AssembleSelection(const std::vector<char> &mark) const
   {
     MPI_Comm comm = parent_fes.GetComm();
     int nloc = 0;
@@ -1886,8 +1889,8 @@ struct SubstructuringSolver::Impl
   }
 
   // Region-condensed solves u_k (parent true DOFs) for right-hand sides b_k that vanish off
-  // the region-free DOFs: one multi-RHS solve with the exact factor, else CG per excitation.
-  // Collective.
+  // the region-free DOFs: one multi-RHS solve with the exact factor, else CG per
+  // excitation. Collective.
   void SolveRegion(const std::vector<mfem::Vector> &b, std::vector<mfem::Vector> &u) const
   {
     const int n = static_cast<int>(b.size());
@@ -2180,6 +2183,8 @@ SubstructuringSolver::SubstructuringSolver(const IoData &iodata,
 {
   MFEM_VERIFY(iodata.solver.substructuring,
               "SubstructuringSolver requires a Solver.Substructuring configuration!");
+  MFEM_VERIFY(!mfem::Device::Allows(mfem::Backend::DEVICE_MASK),
+              "Substructuring runs on CPUs only (no device backend)!");
 }
 
 SubstructuringSolver::~SubstructuringSolver() = default;
@@ -2604,6 +2609,7 @@ void SubstructuringSolver::CondenseEnvironment()
       MPI_Gatherv(impl->S_rows.data(), nloc * nG, MPI_DOUBLE,
                   rank == 0 ? S_full.data() : nullptr, row_cnt.data(), row_disp.data(),
                   MPI_DOUBLE, 0, comm);
+      int written = 1;
       if (rank == 0)
       {
         std::ofstream f(model_path, std::ios::binary);
@@ -2611,7 +2617,11 @@ void SubstructuringSolver::CondenseEnvironment()
         f.write(reinterpret_cast<const char *>(&sig_type), sizeof(int));
         f.write(reinterpret_cast<const char *>(sig.data()), sizeof(double) * nG * sig_w);
         f.write(reinterpret_cast<const char *>(S_full.data()), sizeof(double) * nG * nG);
+        written = f.good() ? 1 : 0;
       }
+      MPI_Bcast(&written, 1, MPI_INT, 0, comm);
+      MFEM_VERIFY(written,
+                  "Cannot write the substructuring model \"" << model_path << "\"!");
       impl->AppendEnvFingerprint(model_path);  // collective
       if (impl->have_sk)
       {
@@ -2702,7 +2712,8 @@ void SubstructuringSolver::CondenseEnvironment()
         const long long ret = h->Storage();
         rows.clear();
         rows.shrink_to_fit();
-        Mpi::Print(comm, " HODLR compression of {} (tol = {:.1e}): {:.1f}% of dense storage\n",
+        Mpi::Print(comm,
+                   " HODLR compression of {} (tol = {:.1e}): {:.1f}% of dense storage\n",
                    name, hodlr_tol,
                    100.0 * static_cast<double>(ret) / (static_cast<double>(nG) * nG));
         return h;
@@ -2744,8 +2755,8 @@ void SubstructuringSolver::CondenseEnvironment()
     if (kHasDirectSolver && reg_glob <= Impl::kDirectMaxDofs)
     {
       // The exact condensed operator A_region_free + S_E (dense Gamma block; a sparsified
-      // S_E is a worse preconditioner than none) or A_region_free, chosen at the first solve
-      // batch (EnsureRegionFactor).
+      // S_E is a worse preconditioner than none) or A_region_free, chosen at the first
+      // solve batch (EnsureRegionFactor).
       impl->region_direct = true;
       impl->region_dense_eligible =
           !impl->hodlr && nG > 0 && nG <= Impl::kDirectCondensedMaxInterface;

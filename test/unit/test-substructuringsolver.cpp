@@ -17,6 +17,7 @@
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
 #include "fem/substructure.hpp"
+#include "fixtures.hpp"
 #include "models/substructuringsolver.hpp"
 #include "models/superconductorsheetoperator.hpp"
 #include "utils/communication.hpp"
@@ -608,10 +609,11 @@ TEST_CASE("SubstructuringSolver magnetostatic Dirichlet excitation",
   CHECK(std::abs(e_sub - e_mono) <= 1.0e-6 * std::abs(e_mono));
 }
 
-TEST_CASE("SubstructuringSolver offline/online model reuse",
-          "[substructure][Serial][Parallel]")
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver offline/online model reuse",
+                 "[substructure][Serial][Parallel]")
 {
-  const std::string model_path = "substruct_model_roundtrip.bin";
+  const std::string model_path = (temp_dir / "substruct_model_roundtrip.bin").string();
   auto make_config = [](const std::string &mode, const std::string &path)
   {
     json config = {
@@ -656,13 +658,14 @@ TEST_CASE("SubstructuringSolver offline/online model reuse",
 }
 
 #if defined(MFEM_USE_EXCEPTIONS)
-TEST_CASE("SubstructuringSolver saved model rejects a changed environment",
-          "[substructure][Serial][Parallel]")
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver saved model rejects a changed environment",
+                 "[substructure][Serial][Parallel]")
 {
   // The model records a fingerprint of the environment operator: loading it with a changed
   // environment (material or mesh) must fail instead of silently reusing a stale S_E, while
   // changes confined to the region are accepted.
-  const std::string model_path = "substruct_env_fingerprint.bin";
+  const std::string model_path = (temp_dir / "substruct_env_fingerprint.bin").string();
   auto make_config =
       [&model_path](const std::string &mode, double eps_region, double eps_env)
   {
@@ -708,8 +711,9 @@ TEST_CASE("SubstructuringSolver saved model rejects a changed environment",
 }
 #endif
 
-TEST_CASE("SubstructuringSolver environment-free capacitance matrix",
-          "[substructure][Serial][Parallel]")
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver environment-free capacitance matrix",
+                 "[substructure][Serial][Parallel]")
 {
   // The electrostatic capacitance matrix from the condensed environment (S_E +
   // terminal-mode couplings g_k, Cmode), with no environment solve, must equal the
@@ -720,7 +724,7 @@ TEST_CASE("SubstructuringSolver environment-free capacitance matrix",
   const int order = GENERATE(1, 2);
   const bool remesh = GENERATE(false, true);
   CAPTURE(order, remesh);
-  const std::string model_path = "substruct_capacitance_model.bin";
+  const std::string model_path = (temp_dir / "substruct_capacitance_model.bin").string();
   auto make_config = [order](const std::string &mode, const std::string &path)
   {
     json config = {
@@ -810,8 +814,9 @@ TEST_CASE("SubstructuringSolver environment-free capacitance matrix",
   CHECK(rel_diff(C_on, full_field_C(on)) <= 1.0e-9);
 }
 
-TEST_CASE("SubstructuringSolver environment-free magnetostatic energies",
-          "[substructure][Serial][Parallel]")
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver environment-free magnetostatic energies",
+                 "[substructure][Serial][Parallel]")
 {
   // Magnetostatics: the energy operator (pure curl-curl K) differs from the solve operator
   // (curl-curl + eps mass, A). The condensed energy uses S^K = S_E - P^T D P (D = A - K)
@@ -824,8 +829,8 @@ TEST_CASE("SubstructuringSolver environment-free magnetostatic energies",
   const int order = GENERATE(1, 2);
   const bool tet = GENERATE(false, true);
   CAPTURE(order, tet);
-  const std::string model_path = "substruct_mag_energy_model.bin";
-  auto make_config = [order](const std::string &mode)
+  const std::string model_path = (temp_dir / "substruct_mag_energy_model.bin").string();
+  auto make_config = [order, &model_path](const std::string &mode)
   {
     json config = {
         {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
@@ -843,7 +848,7 @@ TEST_CASE("SubstructuringSolver environment-free magnetostatic energies",
            {{"Region", {{"Attributes", {1}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
-            {"SaveModel", "substruct_mag_energy_model.bin"}}}}}};
+            {"SaveModel", model_path}}}}}};
     return IoData(config, false);
   };
   auto make_mesh = [tet]() { return tet ? MakeWavyTetSplit(4) : MakeSplitCube(4); };
@@ -908,8 +913,9 @@ TEST_CASE("SubstructuringSolver environment-free magnetostatic energies",
   CHECK(std::sqrt(mfem::InnerProduct(Mpi::World(), d, d)) <= 1.0e-8 * un);
 }
 
-TEST_CASE("SubstructuringSolver magnetostatic energies on a re-meshed region",
-          "[substructure][Serial][Parallel]")
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver magnetostatic energies on a re-meshed region",
+                 "[substructure][Serial][Parallel]")
 {
   // Offline on one region mesh, online on a re-meshed region (fixed Gamma + environment,
   // signed H(curl) re-ordering of S_E, S^K and the lift couplings): the online condensed
@@ -917,7 +923,7 @@ TEST_CASE("SubstructuringSolver magnetostatic energies on a re-meshed region",
   // energies.
   const int order = GENERATE(1, 2);
   CAPTURE(order);
-  auto make_config = [order](const std::string &mode)
+  auto make_config = [this, order](const std::string &mode)
   {
     json config = {
         {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
@@ -935,7 +941,7 @@ TEST_CASE("SubstructuringSolver magnetostatic energies on a re-meshed region",
            {{"Region", {{"Attributes", {1}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
-            {"SaveModel", "substruct_mag_remesh_energy.bin"}}}}}};
+            {"SaveModel", (temp_dir / "substruct_mag_remesh_energy.bin").string()}}}}}};
     return IoData(config, false);
   };
   const std::vector<int> ids = {1, 2};
@@ -1015,13 +1021,14 @@ TEST_CASE("SubstructuringSolver block low-rank environment factorization",
   CHECK(d <= 1.0e-6 * m);
 }
 
-TEST_CASE("SubstructuringSolver capacitance from a model without terminal modes",
-          "[substructure][Serial][Parallel]")
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver capacitance from a model without terminal modes",
+                 "[substructure][Serial][Parallel]")
 {
   // Modes missing from a saved model are recomputed on demand (this needs the environment
   // once) and give the same matrix.
-  const std::string model_path = "substruct_nomodes_model.bin";
-  auto make_config = [](const std::string &mode)
+  const std::string model_path = (temp_dir / "substruct_nomodes_model.bin").string();
+  auto make_config = [&model_path](const std::string &mode)
   {
     json config = {
         {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
@@ -1039,7 +1046,7 @@ TEST_CASE("SubstructuringSolver capacitance from a model without terminal modes"
            {{"Region", {{"Attributes", {1}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
-            {"SaveModel", "substruct_nomodes_model.bin"}}}}}};
+            {"SaveModel", model_path}}}}}};
     return IoData(config, false);
   };
   const std::vector<int> terms = {1, 2};
@@ -1244,15 +1251,16 @@ TEST_CASE("SubstructuringSolver magnetostatic inductance matrix",
   }
 }
 
-TEST_CASE("SubstructuringSolver cross-run region re-meshing",
-          "[substructure][Serial][Parallel]")
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver cross-run region re-meshing",
+                 "[substructure][Serial][Parallel]")
 {
   // Offline: condense the environment on one region mesh and save S_E. Online: RE-MESH the
   // region (different x-resolution) while keeping the interface Gamma and the environment
   // fixed, load and geometrically re-order S_E onto the new interface DOFs, and solve. The
   // re-meshed region-condensed energy must match a monolith on the online mesh (S_E is
   // exact for the fixed environment).
-  const std::string model_path = "substruct_remesh_model.bin";
+  const std::string model_path = (temp_dir / "substruct_remesh_model.bin").string();
   // Several (offline, online) region resolutions: re-mesh finer, coarser, and identical
   // (the identity-reorder sanity case). All must match the monolith on the online mesh.
   const auto res = GENERATE(std::make_pair(4, 8), std::make_pair(8, 4),
@@ -1493,7 +1501,8 @@ TEST_CASE("SubstructuringSolver grounded PEC boundaries",
   CHECK(std::abs(C(0, 0) - C_mono(0, 0)) <= 1.0e-9 * std::abs(C_mono(0, 0)));
 }
 
-TEST_CASE("SubstructuringSolver London sheet energies", "[substructure][Serial][Parallel]")
+TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet energies",
+                 "[substructure][Serial][Parallel]")
 {
   // Magnetostatics with a London superconductor sheet (finite penetration depth) on an
   // interior plane crossing the interface: region and environment sheet faces, meeting
@@ -1504,7 +1513,7 @@ TEST_CASE("SubstructuringSolver London sheet energies", "[substructure][Serial][
   const int order = GENERATE(1, 2);
   CAPTURE(order);
   const double mu_r = 1.0, mu_e = 4.0, lambda = 0.2, thickness = 0.05;
-  const std::string model_path = "substruct_london_model.bin";
+  const std::string model_path = (temp_dir / "substruct_london_model.bin").string();
   auto make_config = [&](const std::string &mode)
   {
     json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
@@ -1705,8 +1714,9 @@ TEST_CASE("SubstructuringSolver London sheet energies", "[substructure][Serial][
   CHECK(don <= 1.0e-9 * m);
 }
 
-TEST_CASE("SubstructuringSolver on a nonconforming mesh",
-          "[substructure][Serial][Parallel]")
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver on a nonconforming mesh",
+                 "[substructure][Serial][Parallel]")
 {
   // Offline condensation on an adapted (nonconforming) mesh must reproduce the monolith on
   // the same mesh, including hanging nodes on the interface from either side. A partial
@@ -1714,7 +1724,7 @@ TEST_CASE("SubstructuringSolver on a nonconforming mesh",
   // faces (a field linear in x would satisfy the constraints trivially).
   const int order = GENERATE(1, 2);
   CAPTURE(order);
-  const std::string model_path = "substruct_nc_model.bin";
+  const std::string model_path = (temp_dir / "substruct_nc_model.bin").string();
   auto make_config = [order, &model_path](const std::string &mode)
   {
     json config = {
@@ -1788,8 +1798,9 @@ TEST_CASE("SubstructuringSolver on a nonconforming mesh",
   CHECK(don <= 1.0e-12 * m);
 }
 
-TEST_CASE("SubstructuringSolver magnetostatic energy on a nonconforming mesh",
-          "[substructure][Serial][Parallel]")
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver magnetostatic energy on a nonconforming mesh",
+                 "[substructure][Serial][Parallel]")
 {
   // H(curl) on an adapted (nonconforming) mesh with hanging edges on the interface: the
   // condensed magnetic energy of a divergence-free current source must match a monolith of
@@ -1797,7 +1808,7 @@ TEST_CASE("SubstructuringSolver magnetostatic energy on a nonconforming mesh",
   const int order = GENERATE(1, 2);
   CAPTURE(order);
   const double mu_r = 1.0, mu_e = 4.0;
-  const std::string model_path = "substruct_nc_mag_model.bin";
+  const std::string model_path = (temp_dir / "substruct_nc_mag_model.bin").string();
   auto make_config = [order, mu_r, mu_e, &model_path](const std::string &mode)
   {
     json config = {
@@ -1920,8 +1931,9 @@ TEST_CASE("SubstructuringSolver magnetostatic energy on a nonconforming mesh",
   CHECK(std::abs(e_on - e_sub) <= 1.0e-7 * std::abs(e_sub));  // iterative region solves
 }
 
-TEST_CASE("SubstructuringSolver online region adaptation",
-          "[substructure][Serial][Parallel]")
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver online region adaptation",
+                 "[substructure][Serial][Parallel]")
 {
   // One step of online adaptive refinement of the region only: the region error indicators
   // are zero on the environment; nonconforming refinement of the marked region elements
@@ -1930,7 +1942,7 @@ TEST_CASE("SubstructuringSolver online region adaptation",
   // the estimated region error decreases.
   const int order = GENERATE(1, 2);
   CAPTURE(order);
-  const std::string model_path = "substruct_amr_model.bin";
+  const std::string model_path = (temp_dir / "substruct_amr_model.bin").string();
   auto make_config = [order, &model_path](const std::string &mode)
   {
     json config = {
@@ -2043,8 +2055,9 @@ TEST_CASE("SubstructuringSolver online region adaptation",
   CHECK(ind1.Norml2(comm) < ind0.Norml2(pm0.GetComm()));
 }
 
-TEST_CASE("SubstructuringSolver geometric redesign of the region",
-          "[substructure][Serial][Parallel]")
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver geometric redesign of the region",
+                 "[substructure][Serial][Parallel]")
 {
   // A real design change inside the region between the offline and online runs: the region
   // conductor (terminal 1) changes shape, a dielectric block inside the region changes
@@ -2054,7 +2067,7 @@ TEST_CASE("SubstructuringSolver geometric redesign of the region",
   // redesigned mesh.
   const int order = GENERATE(1, 2);
   CAPTURE(order);
-  const std::string model_path = "substruct_redesign_model.bin";
+  const std::string model_path = (temp_dir / "substruct_redesign_model.bin").string();
   auto make_config = [order, &model_path](const std::string &mode, double eps_block)
   {
     json config = {
@@ -2166,8 +2179,9 @@ TEST_CASE("SubstructuringSolver geometric redesign of the region",
   CHECK(change >= 1.0e-2 * m);  // the redesign really changed the capacitance
 }
 
-TEST_CASE("SubstructuringSolver magnetostatic cross-run re-meshing",
-          "[substructure][Serial][Parallel]")
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver magnetostatic cross-run re-meshing",
+                 "[substructure][Serial][Parallel]")
 {
   // H(curl) region re-meshing: the environment (attr 2, b=5) is identical between a coarse-
   // region offline run and a re-meshed (finer) online run, so the loaded+reordered S_E (via
@@ -2201,7 +2215,7 @@ TEST_CASE("SubstructuringSolver magnetostatic cross-run re-meshing",
     return IoData(config, false);
   };
 
-  const std::string model_path = "substruct_mag_remesh.bin";
+  const std::string model_path = (temp_dir / "substruct_mag_remesh.bin").string();
   // Offline on the coarse region: materialize + save S_E (signed edge signature).
   {
     IoData io = make_config("Offline", model_path);
@@ -2214,7 +2228,7 @@ TEST_CASE("SubstructuringSolver magnetostatic cross-run re-meshing",
   // Fresh reference on the re-meshed online mesh (materialize S_E on the same environment).
   Vector ref;
   {
-    IoData io = make_config("Offline", "substruct_mag_ref.bin");
+    IoData io = make_config("Offline", (temp_dir / "substruct_mag_ref.bin").string());
     std::vector<std::unique_ptr<Mesh>> m;
     m.push_back(std::make_unique<Mesh>(MakeGradedSplit(a_on, 5, 6)));
     SubstructuringSolver s(io, m);

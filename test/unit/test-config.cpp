@@ -205,6 +205,23 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     CHECK_NOTHROW(IoData(config, false));
   }
 
+  SECTION("Substructuring requires the CPU device")
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver",
+         {{"Device", "GPU"},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    CHECK_THROWS_WITH(IoData(config, false),
+                      Catch::Matchers::ContainsSubstring("\"Solver.Device\": \"CPU\""));
+    config["Solver"]["Device"] = "CPU";
+    CHECK_NOTHROW(IoData(config, false));
+  }
+
   SECTION("Online substructuring requires a saved model")
   {
     json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},

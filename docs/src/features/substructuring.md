@@ -113,10 +113,10 @@ substructuring is only available for electrostatics.
 
 ### Solvers
 
-The environment and the region are factored with a sparse direct solver (SuperLU_DIST,
-STRUMPACK or MUMPS, whichever Palace is built with) when they fit, and solved iteratively
-otherwise. With MUMPS, the Schur complement of an electrostatic environment comes from a single
-partial factorization. When running MUMPS with MPI, setting `OPENBLAS_NUM_THREADS=1` (or the
+Substructuring runs on CPUs (`config["Solver"]["Device"]` `"CPU"`). The environment and the
+region are factored with a sparse direct solver (SuperLU_DIST, STRUMPACK or MUMPS, whichever
+Palace is built with) when they fit, and solved iteratively otherwise. With MUMPS, the Schur
+complement of an electrostatic environment comes from a single partial factorization. When running MUMPS with MPI, setting `OPENBLAS_NUM_THREADS=1` (or the
 equivalent for the BLAS in use) avoids oversubscribing cores.
 
 ## Magnetostatics

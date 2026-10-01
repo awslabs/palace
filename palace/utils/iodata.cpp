@@ -712,6 +712,8 @@ void IoData::CheckConfiguration()
                 "problem types!");
     MFEM_VERIFY(!sub.region_attributes.empty() && !sub.environment_attributes.empty(),
                 "Substructuring requires nonempty Region and Environment attribute sets!");
+    MFEM_VERIFY(solver.device == Device::CPU,
+                "Substructuring requires \"Solver.Device\": \"CPU\"!");
     MFEM_VERIFY(sub.mode != SubstructuringMode::ONLINE || !sub.save_model.empty(),
                 "\"Online\" substructuring requires the saved model path \"SaveModel\"!");
     // Adaptive refinement refines the region only, in an online run: the environment was

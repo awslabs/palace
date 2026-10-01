@@ -4,7 +4,8 @@
 // Regression cases: full Palace solves diffed against test data references.
 // Each case carries [Serial][Parallel][GPU][Regression] (the category
 // tag is orthogonal to execution style — every case is valid at any
-// rank count and on either CPU or GPU). [Long] modifies a regression
+// rank count and on either CPU or GPU), except the substructuring cases,
+// which are CPU-only (no [GPU]). [Long] modifies a regression
 // case to be skipped from the default sweep and run only under the
 // long-tests CI workflow.
 
@@ -1037,7 +1038,7 @@ TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
 // condensed to a Dirichlet-to-Neumann operator and the region (attr 1) is solved against
 // it, producing the terminal capacitance matrix. Exercises the SubstructuringSolver driver
 // path.
-TEST_CASE("substructuring_electrostatic", "[Serial][Parallel][GPU][Regression]")
+TEST_CASE("substructuring_electrostatic", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
@@ -1052,7 +1053,7 @@ TEST_CASE("substructuring_electrostatic", "[Serial][Parallel][GPU][Regression]")
 // operator and the region (left hole, attr 1) is solved against it for each flux-loop
 // excitation, giving the 2x2 mutual-inductance matrix. The shared film is a London sheet
 // with the small PecPenetrationDepth, as in the native solver, which the result matches.
-TEST_CASE("substructuring_magnetostatic", "[Serial][Parallel][GPU][Regression]")
+TEST_CASE("substructuring_magnetostatic", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
@@ -1066,7 +1067,7 @@ TEST_CASE("substructuring_magnetostatic", "[Serial][Parallel][GPU][Regression]")
 // Magnetostatic substructuring with a finite-penetration-depth London film (λ = 0.4 μm,
 // d = 0.1 μm) shared by both flux loops and crossing the interface: the film is a free
 // London sheet in the condensation, and the total inductance includes the kinetic part.
-TEST_CASE("substructuring_magnetostatic_london", "[Serial][Parallel][GPU][Regression]")
+TEST_CASE("substructuring_magnetostatic_london", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;

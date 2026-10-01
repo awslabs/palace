@@ -1,6 +1,6 @@
 {
   "Problem": { "Type": "Magnetostatic", "Output": "postpro/london" },
-  "Model": { "Mesh": "mesh/sheet_split.mesh", "L0": 1.0e-6 },
+  "Model": { "Mesh": "mesh/sheet_split.msh", "L0": 1.0e-6 },
   "Domains": { "Materials": [
     { "Attributes": [1], "Permeability": 1.0 },
     { "Attributes": [2], "Permeability": 1.0 } ] },
