@@ -412,13 +412,15 @@ def inventory(manifest, windows, margin, weights, z_range=None):
                                   "MetalSideChecks": loops.metal_side_checks,
                                   "MetalSideDisagreements": loops.metal_side_disagreements[:20],
                                   "MetalSideDisagreementCount": len(loops.metal_side_disagreements)}}
+    open_setback = 3.0 * radius + margin
     for name, box in windows.items():
         x0, x1, y0, y1 = box
         inner = (x0 + margin, x1 - margin, y0 + margin, y1 - margin)
+        setback_box = (x0 + open_setback, x1 - open_setback, y0 + open_setback, y1 - open_setback)
         per_feature = collections.defaultdict(lambda: {"Inside": 0.0, "InMargin": 0.0, "Portions": []})
         excluded = collections.defaultdict(float)
         per_plane = collections.defaultdict(lambda: {"Assigned": 0.0, "Excluded": 0.0})
-        loops_inside = collections.defaultdict(lambda: {"Inside": 0.0, "Crossing": False})
+        loops_inside = collections.defaultdict(lambda: {"Inside": 0.0, "InsideSetback": 0.0, "Crossing": False})
         for i, s in enumerate(segments):
             p0, p1 = s["Key"][0], s["Key"][1]
             z = round(float(p0[2]), 3)
@@ -438,6 +440,9 @@ def inventory(manifest, windows, margin, weights, z_range=None):
             if loop_index is not None:
                 entry = loops_inside[loop_index]
                 entry["Inside"] += b - a
+                setback_clip = clip_interval(p0, p1, setback_box)
+                if setback_clip is not None:
+                    entry["InsideSetback"] += (setback_clip[1] - setback_clip[0]) * length
                 if (b - a) < length * (1.0 - 1e-9):
                     entry["Crossing"] = True
             if "Exclusion" in s:
@@ -494,8 +499,8 @@ def inventory(manifest, windows, margin, weights, z_range=None):
                  "Planes": sorted(p for p in v["Planes"] if p is not None), "CutFeatures": v["Cut"]}
                 for k, v in sorted(by_key.items(), key=lambda kv: -kv[1]["Proxy"])]
         # bodies
-        bodies = collections.defaultdict(lambda: {"Loops": [], "PerimeterInside": 0.0, "Crossing": False, "Plane": None,
-                                                  "Kind": None, "Proxy": 0.0})
+        bodies = collections.defaultdict(lambda: {"Loops": [], "PerimeterInside": 0.0, "PerimeterInsideSetback": 0.0,
+                                                  "Crossing": False, "Plane": None, "Kind": None, "Proxy": 0.0})
         def body_kind(body_index):
             if body_index < 0:
                 return "Ground"
@@ -510,6 +515,7 @@ def inventory(manifest, windows, margin, weights, z_range=None):
             b = bodies[body_index]
             b["Loops"].append(loop_index)
             b["PerimeterInside"] += entry["Inside"]
+            b["PerimeterInsideSetback"] += entry["InsideSetback"]
             b["Crossing"] = b["Crossing"] or entry["Crossing"]
             b["Plane"] = loop["Plane"]
             b["Kind"] = body_kind(body_index)
@@ -531,8 +537,8 @@ def inventory(manifest, windows, margin, weights, z_range=None):
         for body_index, b in bodies.items():
             entirely_inside = (not b["Crossing"]) and b["Kind"] == "Island"
             body_rows.append({"Body": body_index, "Kind": b["Kind"], "Plane": b["Plane"], "Loops": len(b["Loops"]),
-                              "PerimeterInside": b["PerimeterInside"], "CutByWall": b["Crossing"],
-                              "EntirelyInside": entirely_inside, "Proxy": b["Proxy"], "Area": b.get("Area"),
+                              "PerimeterInside": b["PerimeterInside"], "PerimeterInsideSetback": b["PerimeterInsideSetback"],
+                              "CutByWall": b["Crossing"], "EntirelyInside": entirely_inside, "Proxy": b["Proxy"], "Area": b.get("Area"),
                               "BBox": b.get("BBox"), "LoopClosed": b.get("Closed")})
         body_rows.sort(key=lambda r: (r["Kind"] != "Ground", r["Kind"] == "OpenChain", -r["Proxy"]))
         conductor_rows, footprint_rows = conductor_table(loops, body_rows, box)
@@ -570,12 +576,14 @@ def conductor_table(loops, body_rows, box):
         rec = loops.bodies.get(r["Body"]) if loops.bodies else None
         root = rec["Conductor"] if rec else r["Body"]
         g = groups.setdefault(root, {"Conductor": root, "Bodies": [], "Planes": set(), "Kind": None, "Proxy": 0.0,
-                                      "PerimeterInside": 0.0, "CutByWall": False, "ChipBodies": rec["ConductorBodies"] if rec else 1,
+                                      "PerimeterInside": 0.0, "PerimeterInsideSetback": 0.0, "CutByWall": False,
+                                      "ChipBodies": rec["ConductorBodies"] if rec else 1,
                                       "ChipGround": rec["ConductorGround"] if rec else r["Kind"] == "Ground"})
         g["Bodies"].append(r["Body"])
         g["Planes"].add(r["Plane"])
         g["Proxy"] += r["Proxy"]
         g["PerimeterInside"] += r["PerimeterInside"]
+        g["PerimeterInsideSetback"] += r.get("PerimeterInsideSetback", r["PerimeterInside"])
         g["CutByWall"] = g["CutByWall"] or r["CutByWall"]
         kinds = {kind for kind in (g["Kind"], r["Kind"]) if kind}
         g["Kind"] = "Ground" if "Ground" in kinds or g["ChipGround"] else ("OpenChain" if "OpenChain" in kinds else "Island")
@@ -614,19 +622,26 @@ def terminal_assignment(body_rows, conductor_rows, radius, margin, box):
     islands = [g for g in conductor_rows if g["EntirelyInside"]]
     cut_traces = [g for g in conductor_rows if g["Kind"] == "Island" and not g["EntirelyInside"]]
     open_setback = 3.0 * radius + margin
+    # a cut conductor whose metal edges all lie within the setback band vanishes when open-terminated (O4's wall-hugging
+    # trace): not a realisable terminal
+    realisable_traces = [g for g in cut_traces if g.get("PerimeterInsideSetback", g["PerimeterInside"]) > 0.0]
+    vanishing = [g["Conductor"] for g in cut_traces if g not in realisable_traces]
     if islands:
         terminal = max(islands, key=lambda g: g["Proxy"])
         excitation = {"Kind": "Island", "Conductor": terminal["Conductor"], "Bodies": terminal["Bodies"], "Planes": terminal["Planes"],
                       "Realisable": True, "Rule": "whole island conductor (bump-joined bodies included) at 1 V"}
-    elif cut_traces:
-        terminal = max(cut_traces, key=lambda g: g["Proxy"])
+    elif realisable_traces:
+        terminal = max(realisable_traces, key=lambda g: g["Proxy"])
         excitation = {"Kind": "OpenTerminatedTrace", "Conductor": terminal["Conductor"], "Bodies": terminal["Bodies"],
                       "Planes": terminal["Planes"], "Realisable": True, "OpenSetback": open_setback,
                       "Rule": f"cut non-ground conductor with the largest proxy, open-terminated {open_setback:g} um inside the wall"}
     else:
         terminal = None
         excitation = {"Kind": "None", "Conductor": None, "Bodies": [], "Planes": [], "Realisable": False,
-                      "Rule": "no non-ground conductor in the window: move / resize / drop the window"}
+                      "Rule": "no non-ground conductor in the window: move / resize / drop the window" if not cut_traces else
+                      f"every cut non-ground conductor lies within {open_setback:g} um of a wall: move / resize / drop the window"}
+    if vanishing:
+        excitation["VanishingUnderSetback"] = vanishing
     terminal_bodies = set(terminal["Bodies"]) if terminal else set()
     assignment = []
     for r in body_rows:

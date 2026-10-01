@@ -173,6 +173,18 @@ class WindowInventory(unittest.TestCase):
         # the margin (2 um from the walls) accounts every isolated portion within 2 um of x = 0 / y = +-30 etc.
         self.assertGreater(sum(f["LengthInMargin"] for f in w["Features"]), 0.0)
 
+    def test_wall_hugging_cut_island_is_not_a_realisable_terminal(self):
+        # the island's portion inside (5, 35) lies within the 8-um setback band of the x = 5 wall: open-terminating it
+        # removes all its metal -> no excitation (move / resize / drop), the candidate recorded as vanishing
+        r = WQ.inventory(self.manifest, {"W": (5.0, 35.0, -30.0, 30.0)}, 2.0, WQ.DEFAULT_WEIGHTS)
+        w = r["Windows"]["W"]
+        island = [b for b in w["Bodies"] if b["Kind"] == "Island"][0]
+        self.assertTrue(island["CutByWall"])
+        self.assertAlmostEqual(island["PerimeterInsideSetback"], 0.0, places=12)
+        self.assertEqual(w["Excitation"]["Kind"], "None")
+        self.assertEqual(w["Excitation"]["VanishingUnderSetback"], [island["Body"]])
+        self.assertIsNone(w["ProposedTerminal"])
+
     def test_window_without_the_island(self):
         r = WQ.inventory(self.manifest, {"W": (30.0, 90.0, 50.0, 70.0)}, 2.0, WQ.DEFAULT_WEIGHTS)
         w = r["Windows"]["W"]

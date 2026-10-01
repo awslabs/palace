@@ -297,7 +297,9 @@ def bridge_rectangles(intervals, box, width, grounded, terminal, warnings):
                     warnings.append(f"conductor {c} is adjacent to the terminal along wall {axis}={value}: not bridged on that side")
                     continue
                 if neighbour is None:
-                    warnings.append(f"conductor {c} has no metal neighbour towards the box corner along wall {axis}={value}: bridge to the corner")
+                    warnings.append(f"conductor {c} has no metal neighbour towards the box corner along wall {axis}={value}: "
+                                    "no bridge on that side (a 'ground' label holds it at 0 V regardless)")
+                    continue
                 if g1 - g0 <= 1e-9:
                     continue
                 inner = value + width if value == (box[0] if axis == 0 else box[2]) else value - width
@@ -333,6 +335,23 @@ def bump_columns(footprints, warnings, pairing=0.5):
     return columns
 
 
+def fraction_in_strips(p0, p1, strips):
+    """Fraction of the segment p0 -> p1 lying inside the union of the strip rectangles (exact interval arithmetic)."""
+    intervals = []
+    for r in strips:
+        t = WQ.clip_interval(p0, p1, r)
+        if t is not None and t[1] > t[0]:
+            intervals.append(t)
+    intervals.sort()
+    covered, cursor = 0.0, 0.0
+    for t0, t1 in intervals:
+        t0 = max(t0, cursor)
+        if t1 > t0:
+            covered += t1 - t0
+            cursor = t1
+    return covered
+
+
 def export(args):
     data = np.load(args.triangles, allow_pickle=False)
     nodes, xyz, attribute = data["nodes"], data["xyz"], data["attribute"]
@@ -363,7 +382,7 @@ def export(args):
 
     planes_out, bookkeeping, verification = [], [], {"Planes": {}, "Passed": True}
     bump_attrs = set(chip.get("Bump", []))
-    bumps_out = []
+    bumps_out, bridges_out = [], []
     terminal_label = None
     for plane in chip["Planes"]:
         z = float(plane["SurfaceZ"])
@@ -484,6 +503,7 @@ def export(args):
                                 "OnWall": any(on_wall(rec["Outer"][i], rec["Outer"][(i + 1) % len(rec["Outer"])], box) for i in range(len(rec["Outer"])))})
         planes_out.append({"Name": plane["Name"], "SurfaceZ": z, "Facing": plane["Facing"],
                            "SubstrateThickness": plane["SubstrateThickness"], "Polygons": plane_polygons})
+        bridges_out += [{"Plane": plane["Name"], "Rectangle": r[:4], "ChipConductor": r[4]} for r in rectangles]
         # bump footprints in this plane: union boundary of the bump faces clipped to the box
         bump_pieces = []
         for t in np.nonzero(is_bump_face)[0]:
@@ -526,18 +546,20 @@ def export(args):
             length = math.dist(a, b)
             if on_wall(a, b, box):
                 continue
-            m = (0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1]))
-            if any(inside_rectangle(m, r) for r in strips):
-                excluded_length += length
+            # only the part of the edge outside the bridge / setback strips is a chip metal edge (a chord may
+            # straddle a strip boundary: the strip lines split the pieces but not the setback-box clip)
+            outside = length * (1.0 - fraction_in_strips(a, b, strips))
+            excluded_length += length - outside
+            if outside <= 1e-9:
                 continue
             i = index.on_segment(a, b, tolerance)
             if i is None:
-                unmatched_length += length
+                unmatched_length += outside
                 if len(unmatched_examples) < 20:
                     unmatched_examples.append([list(a), list(b)])
             else:
-                matched_length += length
-                covered[i] += length
+                matched_length += outside
+                covered[i] += outside
         uncovered = []
         uncut = 0
         for i in seg_plane:
@@ -547,26 +569,13 @@ def export(args):
                 continue
             if s.get("Exclusion", {}).get("Class") in ("NonManifold", "NonPlanar"):
                 continue  # bump outlines / airbridge feet are not metal-dielectric edges
-            # the expected coverage = the segment's length outside the bridge / setback strips (union of t-intervals)
+            # the expected coverage = the segment's length outside the bridge / setback strips
             length = float(s["Length"])
-            in_strips = []
-            for r in strips:
-                t = WQ.clip_interval(p0, p1, r)
-                if t is not None and t[1] > t[0]:
-                    in_strips.append(t)
-            in_strips.sort()
-            excluded = 0.0
-            cursor = 0.0
-            for t0, t1 in in_strips:
-                t0 = max(t0, cursor)
-                if t1 > t0:
-                    excluded += (t1 - t0) * length
-                    cursor = t1
-            expected = length - excluded
+            expected = length * (1.0 - fraction_in_strips(p0, p1, strips))
             if expected <= 1e-6:
                 continue
             uncut += 1
-            if covered.get(i, 0.0) < expected - 1e-6:
+            if covered.get(i, 0.0) < expected - tolerance:  # vertex keys are rounded to 1e-6 um: compare at the match tolerance
                 uncovered.append({"Segment": i, "Length": length, "Expected": expected, "Covered": covered.get(i, 0.0), "Key": s["Key"],
                                   "Exclusion": s.get("Exclusion", {}).get("Class")})
         verification["Planes"][plane["Name"]] = {
@@ -589,7 +598,7 @@ def export(args):
            "Terminals": [terminal_label] if terminal_label else [],
            "WindowPolygons": {"Chip": chip.get("Name"), "Mesh": str(data["mesh"]) if "mesh" in data else None,
                               "Extract": args.extract, "E0": args.e0, "Excitation": excitation, "TerminalChipConductor": terminal,
-                              "OpenSetback": setback, "BridgeWidth": bridge_width, "Polygons": bookkeeping,
+                              "OpenSetback": setback, "BridgeWidth": bridge_width, "Polygons": bookkeeping, "Bridges": bridges_out,
                               "BumpFootprints": [{k: v for k, v in b.items() if k != "Footprint"} for b in columns],
                               "BumpHeight": chip.get("BumpHeight"), "Warnings": warnings}}
     verification["Warnings"] = warnings
