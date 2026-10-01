@@ -10,6 +10,8 @@
 #include <optional>
 #include <set>
 #include <sstream>
+#include <string>
+#include <tuple>
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -2596,5 +2598,195 @@ TEST_CASE("SurfaceResponseIdentificationDecision203ExactStretches",
       CHECK(feature.length >= 2.0 * (length - 4.0 * R));
     }
     CHECK(strips == 1);
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationCollinearSubdivision",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Collinear-subdivision invariance (decision 212; VALIDATION-PLAN (h)-8): inserting
+  // collinear vertices on a chord is a geometric no-op, so the identification must read a
+  // joint-only polyline and the same polyline with every chord subdivided (a thin window
+  // mesh at LC 4 um, a second-order mid-edge node) identically, on the CURRENT arc / corner
+  // rule. The defect: a coarse round pad with a straight lead (DS-CTX-003 C4: r 23 um, 8
+  // chords of 43 deg, sagitta 0.86 R; the ground's r 36 hole, 9 chords of 33 deg) read a
+  // Bend over its interior joints on the chip mesh (one mesh edge per chord: the
+  // decision-122 coarse-chord exception) and sharp corners on the thin window mesh. The
+  // lead attaches through two joints above the 50 deg cap, so the bend is the least-squares
+  // fit over the interior joints and its end arms are the first and last chords of the
+  // circle; their end-joint test read the arm's far vertex off the MESH SEGMENT (on the
+  // circle for the design chord, off it for a 4 um sub-chord) instead of the far end of the
+  // arm's straight piece (the rigid-run joint).
+  const double R = 1.9;
+  // A round pad of the given radius with a vertical lead of width 2 w and length L
+  // attached at the top (counter-clockwise, metal inside): the arc between the lead's
+  // attach points in `chords` equal chords (the chip's design polygon).
+  auto RoundPadWithLead = [](double rho, int chords, double w, double L)
+  {
+    const double theta0 = std::atan2(std::sqrt(rho * rho - w * w), w);
+    const double y0 = std::sqrt(rho * rho - w * w);
+    const double a0 = std::acos(-1.0) - theta0, a1 = 2.0 * std::acos(-1.0) + theta0;
+    std::vector<Point2> points = {{w, y0 + L}, {-w, y0 + L}};
+    for (int k = 0; k <= chords; k++)
+    {
+      const double angle = a0 + (a1 - a0) * k / chords;
+      points.push_back({rho * std::cos(angle), rho * std::sin(angle)});
+    }
+    return points;
+  };
+  // Collinear vertices inserted on every chord: uniform pieces of at most `spacing`, or an
+  // irregular pattern (fractions of the chord, rotated from chord to chord).
+  auto Subdivide = [](const std::vector<Point2> &points, double spacing)
+  {
+    std::vector<Point2> result;
+    const std::size_t n = points.size();
+    for (std::size_t i = 0; i < n; i++)
+    {
+      const Point2 a = points[i], b = points[(i + 1) % n];
+      const double length = std::hypot(b[0] - a[0], b[1] - a[1]);
+      const int pieces =
+          std::max(1, static_cast<int>(std::ceil(length / spacing - 1.0e-9)));
+      for (int k = 0; k < pieces; k++)
+      {
+        const double s = static_cast<double>(k) / pieces;
+        result.push_back({a[0] + (b[0] - a[0]) * s, a[1] + (b[1] - a[1]) * s});
+      }
+    }
+    return result;
+  };
+  auto SubdivideIrregularly = [](const std::vector<Point2> &points)
+  {
+    const std::array<double, 4> pattern = {0.11, 0.37, 0.58, 0.83};
+    std::vector<Point2> result;
+    const std::size_t n = points.size();
+    for (std::size_t i = 0; i < n; i++)
+    {
+      const Point2 a = points[i], b = points[(i + 1) % n];
+      result.push_back(a);
+      for (std::size_t k = 0; k < pattern.size(); k++)
+      {
+        const double s = pattern[(k + i) % pattern.size()];
+        result.push_back({a[0] + (b[0] - a[0]) * s, a[1] + (b[1] - a[1]) * s});
+      }
+      // The pattern is rotated per chord, so sort the inserted vertices along the chord.
+      std::sort(result.end() - static_cast<std::ptrdiff_t>(pattern.size()), result.end(),
+                [&](const Point2 &p, const Point2 &q)
+                {
+                  return (p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1]) <
+                         (q[0] - a[0]) * (b[0] - a[0]) + (q[1] - a[1]) * (b[1] - a[1]);
+                });
+    }
+    return result;
+  };
+  struct Reading
+  {
+    std::string digest;
+    std::map<std::pair<std::string, std::string>, double> length;    // per (type, hash)
+    std::vector<std::tuple<std::string, double, std::size_t>> arcs;  // kind, radius, joints
+    std::map<std::string, int> vertex_types;
+    int corners = 0;  // ConvexCorner / ConcaveCorner features
+  };
+  auto Read = [&](const std::vector<LoopSpec> &loops)
+  {
+    const auto input = MakeInput(loops, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    Reading reading;
+    reading.digest = result.geometry_digest;
+    for (const auto &feature : result.features)
+    {
+      reading.length[{feature.type, feature.hash}] += feature.length;
+      reading.corners += feature.type == "ConvexCorner" || feature.type == "ConcaveCorner";
+    }
+    for (const auto &arc : result.arcs)
+    {
+      reading.arcs.emplace_back(arc.kind, std::round(arc.radius / R * 1.0e6), arc.joints);
+    }
+    std::sort(reading.arcs.begin(), reading.arcs.end());
+    for (const auto &vertex : result.vertices)
+    {
+      reading.vertex_types[vertex.type]++;
+    }
+    return reading;
+  };
+  auto CheckSame = [](const Reading &a, const Reading &b)
+  {
+    CHECK(a.digest == b.digest);
+    CHECK(a.arcs == b.arcs);
+    CHECK(a.vertex_types == b.vertex_types);
+    CHECK(a.length.size() == b.length.size());
+    for (const auto &[key, length] : a.length)
+    {
+      INFO(key.first << " " << key.second);
+      CHECK(b.length.count(key) == 1);
+      if (b.length.count(key) == 1)
+      {
+        CHECK_THAT(b.length.at(key), WithinAbs(length, 1.0e-6));
+      }
+    }
+  };
+  const double joint_only = 1.0e9;  // no subdivision by MakeInput
+  SECTION("coarse polygon arcs read alike joint-only and with subdivided chords")
+  {
+    // Pads of 10-60 um chords whose interior joints turn 6-44 deg (174-136 deg corners),
+    // every chord sagitta above the 0.05 R resolution (0.07-0.86 R: the decision-122
+    // coarse-chord regime); the lead's attach joints turn above the 50 deg cap.
+    struct Pad
+    {
+      double radius;
+      int chords;
+    };
+    for (const Pad &pad : {Pad{23.0, 8}, Pad{36.0, 9}, Pad{80.0, 8}, Pad{95.5, 60}})
+    {
+      INFO("pad radius " << pad.radius << " chords " << pad.chords);
+      const auto design = RoundPadWithLead(pad.radius, pad.chords, 2.5, 60.0);
+      const Reading plain = Read({{design, 0, joint_only}});
+      // Joint-only: the interior joints form least-squares bends of the pad's exact radius
+      // (each at most 180 deg of turn under the current rule, the leftover joints corners:
+      // the reading this block preserves); the attach joints and the lead's end corners
+      // are corners.
+      REQUIRE(!plain.arcs.empty());
+      for (const auto &arc : plain.arcs)
+      {
+        CHECK(std::get<0>(arc) == "Bend");
+        CHECK(std::get<1>(arc) == std::round(pad.radius / R * 1.0e6));
+        CHECK(std::get<2>(arc) >= 4);
+      }
+      CHECK(plain.vertex_types.at("BendVertex") >= 4);
+      CHECK(plain.corners >= 4);  // the lead's two end corners and two attach joints
+      const Reading uniform = Read({{Subdivide(design, 4.0), 0, joint_only}});
+      const Reading irregular = Read({{SubdivideIrregularly(design), 0, joint_only}});
+      const Reading meshed = Read({{design, 0, 4.0}});
+      CheckSame(plain, uniform);
+      CheckSame(plain, irregular);
+      CheckSame(plain, meshed);
+    }
+  }
+  SECTION("a straight edge and a genuine sharp corner with subdivided arms")
+  {
+    // A rectangle (four 90 deg corners, straight edges), a rhombus (two 60 deg turns, two
+    // 120 deg turns) and a polygon whose side carries four sub-cap joints (20 / 25 / 30 /
+    // 20 deg on 10-30 um pieces) that are NOT concyclic (least-squares residuals 0.02-0.06
+    // um against the 1.9e-3 um fit tolerance): no arc at any discretisation; the corners
+    // stay corners and the digest, features and lengths are the same.
+    const std::vector<Point2> rhombus = {
+        {0.0, 0.0}, {30.0, -17.32}, {60.0, 0.0}, {30.0, 17.32}};
+    const std::vector<Point2> sub_cap_corners = {
+        {30.0, 0.0},        {39.3969, 3.4202}, {57.0746, 21.0979}, {60.9569, 35.5868},
+        {58.3422, 65.4726}, {-20.0, 65.4726},  {-20.0, 0.0}};
+    for (const auto &design :
+         {Rectangle(-30.0, -10.0, 30.0, 10.0), rhombus, sub_cap_corners})
+    {
+      INFO("polygon of " << design.size() << " vertices");
+      const Reading plain = Read({{design, 0, joint_only}});
+      CHECK(plain.arcs.empty());
+      CHECK(plain.vertex_types.count("BendVertex") == 0);
+      CHECK(plain.vertex_types.count("RoundedCornerVertex") == 0);
+      CHECK(plain.corners == static_cast<int>(design.size()));
+      const Reading uniform = Read({{Subdivide(design, 4.0), 0, joint_only}});
+      const Reading irregular = Read({{SubdivideIrregularly(design), 0, joint_only}});
+      CheckSame(plain, uniform);
+      CheckSame(plain, irregular);
+    }
   }
 }

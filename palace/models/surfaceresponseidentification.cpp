@@ -3815,11 +3815,28 @@ void Identifier::DetectArcs()
         // vertex on the circle within the fit tolerance: an arc starting at a corner that
         // lies on its circle, the sharp end of a rounded slot; the corner stays a corner,
         // the arc starts at its next joint). A lead meeting a circular arc at a 90 deg
-        // corner is neither and the corner is never absorbed as a bend vertex.
+        // corner is neither and the corner is never absorbed as a bend vertex. The arm's
+        // far vertex is the far end of its straight PIECE (the neighbouring joint, or the
+        // path end): the rigid-run joint, not the far end of the adjacent mesh segment —
+        // inserting collinear vertices on the chord is a geometric no-op and must not
+        // change the reading (decision 212; VALIDATION-PLAN (h)-8: a coarse round pad whose
+        // lead attaches through joints above the turn cap read a bend over its interior
+        // joints on the chip mesh, one mesh edge per design chord, and sharp corners on a
+        // thin window mesh subdividing the same chords at 4 um, whose first sub-vertex lies
+        // off the circle by most of the chord sagitta).
+        auto ArmFarVertex = [&](std::size_t j, bool before)
+        {
+          if (before)
+          {
+            return j == 0 && !closed ? path_vertices.front()
+                                     : joints[(j + m - 1) % m].vertex;
+          }
+          return j + 1 == m && !closed ? path_vertices.back() : joints[(j + 1) % m].vertex;
+        };
         auto EndJointConsistent = [&](const Joint &end, const Point3D &arm_direction,
-                                      std::size_t neighbour_vertex, std::size_t arm_segment,
-                                      const Point3D &center, double radius,
-                                      double arm_piece, double first_chord)
+                                      std::size_t neighbour_vertex,
+                                      std::size_t arm_far_vertex, const Point3D &center,
+                                      double radius, double arm_piece, double first_chord)
         {
           const Point3D at = input.vertices[end.vertex].coordinate;
           Point3D circle_tangent = Normalize(Cross(normal, Sub(at, center)));
@@ -3839,17 +3856,16 @@ void Identifier::DetectArcs()
           {
             return true;
           }
-          const Point3D far = input.vertices[Other(arm_segment, end.vertex)].coordinate;
+          const Point3D far = input.vertices[arm_far_vertex].coordinate;
           return quantizer.Less(std::abs(Distance(far, center) - radius), fit_tolerance);
         };
         if (LeastSquaresCircle(range_vertices, normal, first.in, center, radius) &&
             !quantizer.Less(radius, R) && JointsOnCircle(range_vertices, center, radius) &&
             ChordsResolved(i, count, radius, false) &&
-            EndJointConsistent(first, first.in, range_vertices[1],
-                               path_segments[(first.index + n - 1) % n], center, radius,
-                               PieceBefore(i), PieceAfter(i)) &&
+            EndJointConsistent(first, first.in, range_vertices[1], ArmFarVertex(i, true),
+                               center, radius, PieceBefore(i), PieceAfter(i)) &&
             EndJointConsistent(last, last.out, range_vertices[count - 2],
-                               path_segments[last.index % n], center, radius,
+                               ArmFarVertex((i + count - 1) % m, false), center, radius,
                                PieceAfter((i + count - 1) % m),
                                PieceBefore((i + count - 1) % m)))
         {

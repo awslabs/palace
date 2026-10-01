@@ -1233,11 +1233,19 @@ def _scan_arc_path(perimeter, path_edges, path_vertices, closed, normal, radius,
                 return False
         return True
 
-    def end_consistent(j, arm_direction, neighbour, arm_edge, centre, rho, first, arm_piece, first_chord):
+    def arm_far_vertex(j, before):
+        """The far end of the arm's straight piece at joint j (the neighbouring joint or the
+        path end): the rigid-run joint, not the far end of the adjacent mesh edge, so that
+        collinear vertices inserted on the chord do not change the reading (decision 212)."""
+        if before:
+            return path_vertices[0] if j == 0 and not closed else joints[(j - 1) % m][0]
+        return path_vertices[-1] if j + 1 == m and not closed else joints[(j + 1) % m][0]
+
+    def end_consistent(j, arm_direction, neighbour, far_vertex, centre, rho, first, arm_piece, first_chord):
         """The kink between the arm and the circle's tangent at an end joint of a least-squares
         bend is noise under the geometric rule on the shorter of the arm piece and the first
-        chord, or the arm's far vertex lies on the circle (a chord arm: an arc starting at a
-        corner on its circle)."""
+        chord, or the arm's far vertex (the far end of its straight piece) lies on the circle
+        (a chord arm: an arc starting at a corner on its circle)."""
         at = point(j)
         tangent = np.cross(normal, at - centre)
         tangent = tangent / np.linalg.norm(tangent)
@@ -1247,7 +1255,7 @@ def _scan_arc_path(perimeter, path_edges, path_vertices, closed, normal, radius,
         kink = math.acos(max(-1.0, min(1.0, float(arm_direction @ tangent))))
         if joint_is_noise(kink, min(arm_piece, first_chord), radius):
             return True
-        far = perimeter.vertices[_other_vertex(perimeter, arm_edge, joints[j][0])].point
+        far = perimeter.vertices[far_vertex].point
         return abs(float(np.linalg.norm(far - centre)) - rho) < fit_tolerance - quantum
 
     def try_fit(i, count):
@@ -1295,9 +1303,9 @@ def _scan_arc_path(perimeter, path_edges, path_vertices, closed, normal, radius,
         centre, rho = ls
         if rho < radius - quantum or not on_circle(indices, centre, rho) or not chords_resolved(indices, rho, False):
             return None
-        if not end_consistent(i, ta, indices[1], path_edges[(first[1] - 1) % n], centre, rho, True, piece_before(i), piece_after(i)):
+        if not end_consistent(i, ta, indices[1], arm_far_vertex(i, True), centre, rho, True, piece_before(i), piece_after(i)):
             return None
-        if not end_consistent(indices[-1], tb, indices[-2], path_edges[last[1] % n], centre, rho, False, piece_after(indices[-1]), piece_before(indices[-1])):
+        if not end_consistent(indices[-1], tb, indices[-2], arm_far_vertex(indices[-1], False), centre, rho, False, piece_after(indices[-1]), piece_before(indices[-1])):
             return None
         sagitta = max_sagitta(indices, rho, False)
         if not math.isfinite(sagitta):
