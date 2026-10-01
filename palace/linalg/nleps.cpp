@@ -293,21 +293,17 @@ void QuasiNewtonSolver::SetInitialGuess()
       min_error = std::min(min_error, res.get()[i]);
     }
     const double threshold = 100.0 * min_error;
+    // One partition key keeps a strict weak ordering when residuals equal the threshold.
     std::sort(indices.begin(), indices.end(),
               [&](const auto i, const auto j)
               {
-                if (res.get()[i] < threshold && res.get()[j] > threshold)
+                const bool i_small = res.get()[i] <= threshold;
+                const bool j_small = res.get()[j] <= threshold;
+                if (i_small != j_small)
                 {
-                  return true;
+                  return i_small;
                 }
-                else if (res.get()[i] > threshold && res.get()[j] < threshold)
-                {
-                  return false;
-                }
-                else
-                {
-                  return eigenvalues[i].imag() < eigenvalues[j].imag();
-                }
+                return eigenvalues[i].imag() < eigenvalues[j].imag();
               });
   }
   for (int i = 0; i < nev_linear; i++)
