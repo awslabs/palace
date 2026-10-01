@@ -884,9 +884,10 @@ void NewtonInterpolationOperator::Interpolate(const std::complex<double> sigma_m
   frozen_ops.clear();
 
   // Linearly spaced sample points.
+  const auto n_intervals = static_cast<double>(num_points - 1);
   for (int j = 0; j < num_points; j++)
   {
-    points[j] = sigma_min + (double)j * (sigma_max - sigma_min) / (double)(num_points - 1);
+    points[j] = sigma_min + static_cast<double>(j) * (sigma_max - sigma_min) / n_intervals;
   }
 
   // Build divided difference matrices.
@@ -1043,12 +1044,13 @@ bool NewtonInterpolationOperator::DetermineFrozen(
   // plus the frozen value f_frozen(lambda_target).
   const std::complex<double> frozen_target = f_frozen(lambda_target);
   constexpr int n_samples = 101;
+  const auto n_intervals = static_cast<double>(n_samples - 1);
   fit_err = freeze_err = 0.0;
   for (int i = 0; i < n_samples; i++)
   {
     const std::complex<double> lambda =
         points.front() +
-        (double)i * (points.back() - points.front()) / (double)(n_samples - 1);
+        static_cast<double>(i) * (points.back() - points.front()) / n_intervals;
     const std::complex<double> f_exact = f_full(lambda);
     const double scale = std::max(std::abs(f_exact), 1.0e-300);
     fit_err = std::max(fit_err, std::abs(eval(q_full, lambda) - f_exact) / scale);

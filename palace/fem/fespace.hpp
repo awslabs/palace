@@ -151,7 +151,7 @@ public:
   auto &GetTVector() const
   {
     tx.SetSize(GetTrueVSize());
-    if constexpr (std::is_same<VecType, ComplexVector>::value)
+    if constexpr (std::is_same_v<VecType, ComplexVector>)
     {
       return tx;
     }
@@ -165,7 +165,7 @@ public:
   auto &GetLVector() const
   {
     lx.SetSize(GetVSize());
-    if constexpr (std::is_same<VecType, ComplexVector>::value)
+    if constexpr (std::is_same_v<VecType, ComplexVector>)
     {
       return lx;
     }
@@ -179,7 +179,7 @@ public:
   auto &GetLVector2() const
   {
     ly.SetSize(GetVSize());
-    if constexpr (std::is_same<VecType, ComplexVector>::value)
+    if constexpr (std::is_same_v<VecType, ComplexVector>)
     {
       return ly;
     }

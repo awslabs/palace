@@ -17,6 +17,26 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### New Features
+
+  - Added total (geometric + kinetic) inductance extraction for thin-film superconductors. A
+    `Boundaries.Superconductor` sheet carries the one-sided London kinetic sheet inductance
+    `L_ksq = mu0 * lambda * coth(d/lambda)` (via `PenetrationDepth`/`Thickness`, or directly
+    via `KineticInductance`); a `FluxLoop` over such a film imposes a prescribed fluxoid and
+    the total inductance is read from the field energy.
+    [PR 929](https://github.com/awslabs/palace/pull/929).
+  - Added `Solver.Linear.LondonPCShift`, a preconditioner-only gauge shift that keeps the
+    London magnetostatic solve SPD-solvable by AMS.
+    [PR 929](https://github.com/awslabs/palace/pull/929).
+
+#### Interface Changes
+
+  - Renamed the `FluxLoop` keys `FluxLoopPEC` to `FilmAttributes` and `Regularization` to
+    `PecPenetrationDepth`, and limited each `FluxLoop` to a single hole (the schema still
+    accepts arrays for `HoleAttributes`/`FluxAmounts`). Existing `FluxLoop` configurations
+    must be updated. SchemaVer 2-0-0.
+    [PR 929](https://github.com/awslabs/palace/pull/929).
+
 #### Bug Fixes
 
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
@@ -36,6 +56,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the Spack package sets it from the resolved commit (`v<version>` for releases, from the
     next release on), and the containers embed the `git describe` of the built commit.
     [PR 974](https://github.com/awslabs/palace/pull/974).
+  - Corrected the `FluxLoop` hole inductance, which was low in 0.18 (e.g. the `circular_hole`
+    PEC limit moves from 2.00 to 2.85 pH): 0.18 pinned the film's tangential field to a
+    regularized 2D surface-curl solution, whereas the film is now driven by a curl-free cut
+    generator and relaxes freely. Re-run existing `FluxLoop` cases; the regression references
+    were re-baselined. [PR 929](https://github.com/awslabs/palace/pull/929).
+  - Fixed CG, GMRES, and FGMRES returning NaN when the initial residual is exactly zero
+    (e.g. a zero right-hand side) and no absolute tolerance is set.
+    [PR 941](https://github.com/awslabs/palace/pull/941).
+  - Fixed driven-sweep restarts (`"Restart"` > 1) aborting with
+    `Column ... not found in table`, because reloaded CSV tables kept stale column-name
+    indices.
+    [PR 944](https://github.com/awslabs/palace/pull/944).
 
 #### Performance Improvements
 

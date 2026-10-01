@@ -36,12 +36,12 @@ MatrixSymmetry GetPreconditionerMatrixSymmetry(const IoData &iodata);
 template <typename OperType>
 class BaseKspSolver
 {
-  static_assert(std::is_same<OperType, Operator>::value ||
-                    std::is_same<OperType, ComplexOperator>::value,
+  static_assert(std::is_same_v<OperType, Operator> ||
+                    std::is_same_v<OperType, ComplexOperator>,
                 "Solver can only be defined for OperType = Operator or ComplexOperator!");
 
-  using VecType = typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                            ComplexVector, Vector>::type;
+  using VecType =
+      std::conditional_t<std::is_same_v<OperType, ComplexOperator>, ComplexVector, Vector>;
 
 protected:
   // The actual solver and preconditioner objects.
@@ -66,6 +66,9 @@ public:
 
   int NumTotalMult() const { return ksp_mult; }
   int NumTotalMultIterations() const { return ksp_mult_it; }
+
+  // Whether the most recent Mult converged to the requested tolerance.
+  bool GetConverged() const { return ksp->GetConverged(); }
 
   // Forward tolerance access to the underlying iterative solver.
   double GetRelTol() const { return ksp->GetRelTol(); }

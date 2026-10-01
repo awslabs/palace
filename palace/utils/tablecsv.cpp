@@ -113,9 +113,19 @@ bool Table::insert(Column &&column)
   return true;
 }
 
+void Table::RebuildNameIndex()
+{
+  name_to_index.clear();
+  for (std::size_t i = 0; i < cols.size(); i++)
+  {
+    const bool inserted = name_to_index.emplace(cols[i].name, i).second;
+    MFEM_VERIFY(inserted, "Duplicate column name \"" << cols[i].name << "\" in table!");
+  }
+}
+
 Column &Table::operator[](std::string_view name)
 {
-  auto it = name_to_index.find(std::string(name));
+  auto it = name_to_index.find(name);
   if (it == name_to_index.end())
   {
     throw std::out_of_range(fmt::format("Column {} not found in table", name).c_str());

@@ -152,6 +152,8 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                              mat_op.GetCurlCurlInvPermeability());
       BilinearForm m(fespace);
       m.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
+      // Volume magnetic energy only; the London kinetic sheet energy is added explicitly in
+      // the driver, so GetMagneticFieldEnergy stays the physical field energy.
       M_mag = m.PartialAssemble();
       H.SetSize(M_mag->Height());
       H.UseDevice(true);

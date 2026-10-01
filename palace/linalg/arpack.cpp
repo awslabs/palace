@@ -347,8 +347,8 @@ int ArpackEigenvalueSolver::SolveInternal(int n, std::complex<double> *r,
   }
 
   // Print some log information.
-  int num_it = (int)iparam[2];
-  int num_conv = (int)iparam[4];
+  int num_it = static_cast<int>(iparam[2]);
+  int num_conv = static_cast<int>(iparam[4]);
   if (print > 0)
   {
     Mpi::Print(comm,
