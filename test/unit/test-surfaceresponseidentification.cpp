@@ -447,6 +447,22 @@ void CheckPartition(const IdentificationInput &input, const IdentificationResult
   }
 }
 
+// The loop under a rigid motion of the plan view: rotated by the angle about the origin,
+// then shifted.
+std::vector<Point2> RotatedAndShifted(const std::vector<Point2> &points,
+                                      double angle_degrees, const Point2 &shift)
+{
+  const double pi = std::acos(-1.0);
+  const double c = std::cos(angle_degrees * pi / 180.0),
+               s = std::sin(angle_degrees * pi / 180.0);
+  std::vector<Point2> out;
+  for (const auto &p : points)
+  {
+    out.push_back({c * p[0] - s * p[1] + shift[0], s * p[0] + c * p[1] + shift[1]});
+  }
+  return out;
+}
+
 std::multiset<std::pair<std::string, std::string>>
 FeatureHashes(const IdentificationResult &r)
 {
@@ -1005,8 +1021,9 @@ TEST_CASE("SurfaceResponseIdentificationConvexity",
     CHECK(annotated == 2);
   }
   // A curved strip (1.5 R wide along a 5 um bend) records the convexity of its first side
-  // (the edge the coupon's first edge e1 lands on): the inner side of a strip has its metal
-  // outside the bend (Concave), the outer side inside (Convex).
+  // (the edge the coupon's first edge e1 lands on). Its two edges are alike (chirality 0),
+  // so the first side is the outermost edge of the bend (decision 214 (i)), whose metal
+  // lies inside the bend: a symmetric curved strip is Convex, in every frame.
   {
     const auto input = MakeInput({{ArcBar(3.0, 5.0, 90.0, 5.0), 0, 1.0}}, R);
     const auto result = IdentifyMetalPerimeter(input);
@@ -1033,8 +1050,9 @@ TEST_CASE("SurfaceResponseIdentificationConvexity",
       }
       REQUIRE(first_count > 0);
       REQUIRE(other_count > 0);
-      const bool first_inner = first_radius / first_count < other_radius / other_count;
-      CHECK(convexity == (first_inner ? "Concave" : "Convex"));
+      CHECK(feature.chirality == 0);
+      CHECK(first_radius / first_count > other_radius / other_count + 1.0);
+      CHECK(convexity == "Convex");
     }
     CHECK(curved_strips == 1);
   }
@@ -2909,24 +2927,11 @@ TEST_CASE("SurfaceResponseIdentificationSymmetricCurvedStackOrientation",
   // under any numbering of the perimeter (here: the segment order reversed, which gives the
   // outer trace the lower chain ids as a rotation does through the canonical numbering).
   const double R = 2.0;
-  const double pi = std::acos(-1.0);
   struct Stack
   {
     std::string name;
     int traces;
     double rho_over_R;
-  };
-  auto Transform =
-      [&](const std::vector<Point2> &points, double angle_degrees, const Point2 &shift)
-  {
-    const double c = std::cos(angle_degrees * pi / 180.0),
-                 s = std::sin(angle_degrees * pi / 180.0);
-    std::vector<Point2> out;
-    for (const auto &p : points)
-    {
-      out.push_back({c * p[0] - s * p[1] + shift[0], s * p[0] + c * p[1] + shift[1]});
-    }
-    return out;
   };
   struct Reading
   {
@@ -2959,12 +2964,13 @@ TEST_CASE("SurfaceResponseIdentificationSymmetricCurvedStackOrientation",
       std::vector<LoopSpec> loops;
       for (const auto &trace : traces)
       {
-        loops.push_back({Transform(trace, angle_degrees, shift), 0, 1.0});
+        loops.push_back({RotatedAndShifted(trace, angle_degrees, shift), 0, 1.0});
       }
       const auto input = MakeInput(loops, R, reverse_segments);
       const auto result = IdentifyMetalPerimeter(input);
       CheckPartition(input, result);
-      const Point2 bend_centre = Transform({{0.0, centre}}, angle_degrees, shift).front();
+      const Point2 bend_centre =
+          RotatedAndShifted({{0.0, centre}}, angle_degrees, shift).front();
       std::optional<Reading> reading;
       int curved_stacks = 0;
       for (const auto &feature : result.features)
@@ -3016,6 +3022,110 @@ TEST_CASE("SurfaceResponseIdentificationSymmetricCurvedStackOrientation",
     CHECK(base.first_side_outermost);
     // The gate's 37 deg and other angles (one per quadrant, a half turn), the rotated
     // layouts shifted off the origin; the perimeter numbering reversed in every frame.
+    for (const double angle : {0.0, 37.0, 101.0, 180.0, 253.7})
+    {
+      const Point2 shift = angle == 0.0 ? Point2{0.0, 0.0} : Point2{-7.25, 3.5};
+      for (const bool reverse_segments : {false, true})
+      {
+        INFO("angle " << angle << " shift (" << shift[0] << ", " << shift[1]
+                      << ") reversed segment order " << reverse_segments);
+        const Reading other = Read(angle, shift, reverse_segments);
+        CHECK(other.signature == base.signature);
+        CHECK(other.chirality == base.chirality);
+        CHECK(other.convexity == base.convexity);
+        CHECK(other.first_side_outermost);
+      }
+    }
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationSymmetricCurvedPairOrientation",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Decision 214 (i) at k = 2: a curved pair whose two edges are alike (chirality 0) reads
+  // the Convexity of its outermost edge in every frame — a symmetric curved gap is Concave
+  // (the outer edge's metal lies outside the bend), a symmetric curved strip Convex (the
+  // outer edge's metal lies inside it) — under rigid rotations and translations of the
+  // layout and under a reversed perimeter numbering. On the (chain, position) key the same
+  // strip read Concave or Convex with the chain order (the identity gate's
+  // syn-arc-r5-step20 carried both readings of one arc).
+  const double R = 2.0;
+  struct Pair
+  {
+    std::string name;
+    std::string type;
+    std::string convexity;
+    double centre;  // the bend centre (0, centre)
+    std::vector<std::vector<Point2>> loops;
+  };
+  // Gap: two 6 um (3 R) bars of one conductor 2 um (1 R) apart along a 90 deg bend, the
+  // inner bar's inner edge at 3 R, 12 um leads (ArcBar offsets run toward the bend centre,
+  // so the second bar sits outside). Strip: the Convexity test's 3 um bar along a 5 um
+  // bend.
+  const double gap_centre = 3.0 * R + 3.0;
+  const std::vector<Pair> pairs = {
+      {"gap",
+       "CurvedSameConductorGap",
+       "Concave",
+       gap_centre,
+       {ArcBar(6.0, gap_centre, 90.0, 5.0, 12.0, 0.0),
+        ArcBar(6.0, gap_centre, 90.0, 5.0, 12.0, -(3.0 + 2.0 + 3.0))}},
+      {"strip", "CurvedSameConductorStrip", "Convex", 5.0, {ArcBar(3.0, 5.0, 90.0, 5.0)}}};
+  struct Reading
+  {
+    std::string signature;
+    int chirality;
+    std::string convexity;
+    bool first_side_outermost;
+  };
+  for (const Pair &pair : pairs)
+  {
+    INFO(pair.name);
+    auto Read = [&](double angle_degrees, const Point2 &shift, bool reverse_segments)
+    {
+      std::vector<LoopSpec> loops;
+      for (const auto &loop : pair.loops)
+      {
+        loops.push_back({RotatedAndShifted(loop, angle_degrees, shift), 0, 1.0});
+      }
+      const auto input = MakeInput(loops, R, reverse_segments);
+      const auto result = IdentifyMetalPerimeter(input);
+      CheckPartition(input, result);
+      const Point2 bend_centre =
+          RotatedAndShifted({{0.0, pair.centre}}, angle_degrees, shift).front();
+      std::optional<Reading> reading;
+      int curved_pairs = 0;
+      for (const auto &feature : result.features)
+      {
+        if (feature.type != pair.type)
+        {
+          continue;
+        }
+        curved_pairs++;
+        // Mean distance of every side's portions from the bend centre: side 0 (the first
+        // signature edge, chirality 0) must be the outermost edge.
+        std::map<int, std::pair<double, int>> side_radius;
+        for (const auto &portion : feature.portions)
+        {
+          const auto &p0 = input.segments[portion.segment].p0;
+          side_radius[portion.side].first +=
+              std::hypot(p0[0] - bend_centre[0], p0[1] - bend_centre[1]);
+          side_radius[portion.side].second++;
+        }
+        REQUIRE(side_radius.size() == 2);
+        const double first_radius = side_radius.at(0).first / side_radius.at(0).second;
+        const double other_radius = side_radius.at(1).first / side_radius.at(1).second;
+        reading = Reading{feature.signature.dump(), feature.chirality,
+                          feature.signature["Convexity"].get<std::string>(),
+                          first_radius > other_radius + 1.0};
+      }
+      REQUIRE(curved_pairs == 1);
+      return *reading;
+    };
+    const Reading base = Read(0.0, {0.0, 0.0}, false);
+    CHECK(base.chirality == 0);
+    CHECK(base.convexity == pair.convexity);
+    CHECK(base.first_side_outermost);
     for (const double angle : {0.0, 37.0, 101.0, 180.0, 253.7})
     {
       const Point2 shift = angle == 0.0 ? Point2{0.0, 0.0} : Point2{-7.25, 3.5};

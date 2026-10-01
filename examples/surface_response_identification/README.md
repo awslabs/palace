@@ -29,7 +29,7 @@ this block: every disagreement below is a recorded defect for the fix block.
 Tests (`python3 -m unittest discover -s examples/surface_response_identification -p 'test_*.py' -t examples` from the repository
 root, or per module): `test_audit.py` (29, incl. 3 version-2 gate tests, 2 patch-gate tests, the signature-library test and the arc-rule mirror tests), `test_preflight_config.py` (3),
 `test_synthetic_layouts.py` (15), `test_tag_metal_components.py` (5), `test_refine_msh2.py` (2), `test_window_query.py` (10),
-`test_window_extract.py` (2), `test_window_polygons.py` (5), `test_segment_identity.py` (9).
+`test_window_extract.py` (2), `test_window_polygons.py` (5), `test_segment_identity.py` (9), `test_subdivision_gate.py` (3: the exit code over every variant).
 
 Typical use:
 
