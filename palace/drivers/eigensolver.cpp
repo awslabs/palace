@@ -6,6 +6,7 @@
 #include <complex>
 #include <vector>
 #include <mfem.hpp>
+#include "drivers/fluxerrorestimator.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/arpack.hpp"
@@ -415,35 +416,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   eigen->SetLinearSolver(*ksp);
 
   // Initialize structures for storing and reducing the results of error estimation.
-  const bool is_2d = (space_op.GetNDSpace().Dimension() < 3);
-  std::unique_ptr<TimeDependentFluxErrorEstimator<ComplexVector>> estimator_3d;
-  std::unique_ptr<BoundaryModeFluxErrorEstimator<ComplexVector>> estimator_2d;
-  if (is_2d)
-  {
-    estimator_2d = std::make_unique<BoundaryModeFluxErrorEstimator<ComplexVector>>(
-        space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
-        space_op.GetCurlSpace(), space_op.GetH1Spaces(), iodata.solver.linear.estimator_tol,
-        iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg);
-  }
-  else
-  {
-    estimator_3d = std::make_unique<TimeDependentFluxErrorEstimator<ComplexVector>>(
-        space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
-        iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-        iodata.solver.linear.estimator_mg);
-  }
-  auto AddEstimate =
-      [&](const ComplexVector &E, const ComplexVector &B, double Et, ErrorIndicator &ind)
-  {
-    if (is_2d)
-    {
-      estimator_2d->AddErrorIndicator(E, B, Et, ind);
-    }
-    else
-    {
-      estimator_3d->AddErrorIndicator(E, B, Et, ind);
-    }
-  };
+  const FluxErrorEstimator<ComplexVector> estimator(space_op, iodata);
   ErrorIndicator indicator;
 
   // Eigenvalue problem solve.
@@ -599,7 +572,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_report);
     if (i < num_requested)
     {
-      AddEstimate(E, B, total_domain_energy, indicator);
+      estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
     }
   }
   post_op.MeasureFinalize(indicator);

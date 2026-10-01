@@ -9,6 +9,7 @@
 #include <Eigen/Dense>
 #include <fmt/core.h>
 #include <mfem.hpp>
+#include "drivers/fluxerrorestimator.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/errorestimator.hpp"
@@ -108,31 +109,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   B = 0.0;
 
   // Initialize structures for storing and reducing the results of error estimation.
-  const bool is_2d = (space_op.GetNDSpace().Dimension() < 3);
-  std::unique_ptr<TimeDependentFluxErrorEstimator<ComplexVector>> estimator_3d;
-  std::unique_ptr<BoundaryModeFluxErrorEstimator<ComplexVector>> estimator_2d;
-  if (is_2d)
-  {
-    estimator_2d = std::make_unique<BoundaryModeFluxErrorEstimator<ComplexVector>>(
-        space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
-        space_op.GetCurlSpace(), space_op.GetH1Spaces(), iodata.solver.linear.estimator_tol,
-        iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg);
-  }
-  else
-  {
-    estimator_3d = std::make_unique<TimeDependentFluxErrorEstimator<ComplexVector>>(
-        space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
-        iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-        iodata.solver.linear.estimator_mg);
-  }
-  auto AddEstimate =
-      [&](const ComplexVector &E, const ComplexVector &B, double Et, ErrorIndicator &ind)
-  {
-    if (is_2d)
-      estimator_2d->AddErrorIndicator(E, B, Et, ind);
-    else
-      estimator_3d->AddErrorIndicator(E, B, Et, ind);
-  };
+  const FluxErrorEstimator<ComplexVector> estimator(space_op, iodata);
   ErrorIndicator indicator;
 
   // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
@@ -224,7 +201,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
       // Calculate and record the error indicators.
       Mpi::Print(" Updating solution error estimates\n");
-      AddEstimate(E, B, total_domain_energy, indicator);
+      estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
     }
 
     // Final postprocessing & printing.
@@ -264,31 +241,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   B = 0.0;
 
   // Initialize structures for storing and reducing the results of error estimation.
-  const bool is_2d = (space_op.GetNDSpace().Dimension() < 3);
-  std::unique_ptr<TimeDependentFluxErrorEstimator<ComplexVector>> estimator_3d;
-  std::unique_ptr<BoundaryModeFluxErrorEstimator<ComplexVector>> estimator_2d;
-  if (is_2d)
-  {
-    estimator_2d = std::make_unique<BoundaryModeFluxErrorEstimator<ComplexVector>>(
-        space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
-        space_op.GetCurlSpace(), space_op.GetH1Spaces(), iodata.solver.linear.estimator_tol,
-        iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg);
-  }
-  else
-  {
-    estimator_3d = std::make_unique<TimeDependentFluxErrorEstimator<ComplexVector>>(
-        space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
-        iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-        iodata.solver.linear.estimator_mg);
-  }
-  auto AddEstimate =
-      [&](const ComplexVector &E, const ComplexVector &B, double Et, ErrorIndicator &ind)
-  {
-    if (is_2d)
-      estimator_2d->AddErrorIndicator(E, B, Et, ind);
-    else
-      estimator_3d->AddErrorIndicator(E, B, Et, ind);
-  };
+  const FluxErrorEstimator<ComplexVector> estimator(space_op, iodata);
   ErrorIndicator indicator;
 
   // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
@@ -356,7 +309,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     // Measure domain energies for the error indicator only. Don't exchange face_nbr_data,
     // unless printing paraview fields.
     auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(E, B);
-    AddEstimate(E, B, total_domain_energy, indicator);
+    estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
   };
 
   // Loop excitations to add to PROM.
