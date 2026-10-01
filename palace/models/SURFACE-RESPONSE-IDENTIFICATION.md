@@ -955,7 +955,34 @@ smaller endpoint.
    arms of a corner meet through it) makes that vertex a cluster together with the portion.
    A portion within 2R of several owners merges them (union-find over clusters and joined
    vertex features; order independent; the merged cluster is numbered by its smallest
-   member). Pairs and stacks are joint descriptions and are never absorbed. The extension
+   member). Pairs and stacks are joint descriptions and are never absorbed — with ONE
+   exception (**supervisor decision 224, 2026-10-02**; `Conventions.ClusterExtensionRule`,
+   `Diagnostics.ClusterExtension.TranslationalPiecesAbsorbed`): a maximal contiguous stretch
+   of pair / stack claims along a chain whose two ends are adjacent (within the decision
+   quantum) to claimed intervals of ONE cluster and whose length is strictly below the
+   interaction distance 2R is absorbed by that cluster, in the same pass as the single-edge
+   absorptions (the next pass recomposes the stacks around the enlarged claims; the stretch
+   is cut into its runs' intervals; the chain's own closed wrap counts as adjacency). Why:
+   every point of such a stretch lies within `ClusterBallOverR` x R = R of the cluster's
+   claimed perimeter on its own chain — inside the ball radius of the cluster's own claims,
+   whose neighbourhood the cluster describes — and a stack reading shorter than the
+   interaction distance between the claims of one spatial coupon would be corrected twice,
+   by the coupon's volume (which covers the stretch between its claims) and by the stack's
+   translational patches. The S1p stage-1 window's 41-edge loop end (key fcdbab7d58ad): its
+   three vertical leads (the loop wire's edges and the ground edge, offsets 0 / 2 / 4 um)
+   were each split into two 5.131 um cluster portions by a 1.738 um piece of the 3-edge stack
+   69ca648cc16f (its 5.21 um feature), the six free ends being claim cuts inside the
+   cluster; under the rule the pieces join the loop end (the loop end re-keys, the 3-edge
+   stack keeps its 3.00 um stack-end feature only). A longer stretch between the claims of
+   one cluster stays with the stack and is caught by the placement's ownership check: a
+   translational STRETCH (the identification's portion unit, carried as
+   `IdentifiedPortion::stretch` and the patch provenance `Stretch` / geometry cache version
+   4) whose every longitudinal cell lies strictly inside one spatial support's box fails
+   closed (`FindTranslationalStretchInsideSpatialSupport`; judged per stretch, never per
+   cell: the spatial box extends about R beyond the cluster's claims, so the first cells of
+   every stack portion adjacent to a cluster lie inside its box legitimately). Unit tests
+   `SurfaceResponseIdentificationStackPieceInsideCluster`,
+   `SurfaceResponseOperatorTranslationalStretchOwnership`. The extension
    iterates to closure: an enlarged claim moves the stack ends (the stack-end rule
    recomposes the members on the new claims) and the recomposed stacks leave new single-edge
    portions to test; the loop stops when a pass absorbs at most the signature parameter
@@ -1224,7 +1251,8 @@ projects the device trace is a LENGTH, carried separately as the patch's longitu
 the interval of its portion that its quadrature point integrates, as offsets along the patch
 AxisW from the origin in mesh units, ordered begin <= end (`longitudinal_cell`; `StripBegin`,
 `StripEnd` of the dry run in manifest units; `LongitudinalCell` of the geometry cache, version
-3, older caches refused). The cells of one portion tile it exactly — cell q = [cumulative
+3; version 4 adds the patch's `Feature` / `Stretch` provenance for the ownership check of
+decision 224; older caches refused). The cells of one portion tile it exactly — cell q = [cumulative
 Gauss weight before q, + w_q] in order of increasing position, so every cell contains its
 point (`LongitudinalQuadratureCells`; Gauss cells centred on their points would not tile) —
 and every patch built from a quadrature point carries the full cell whatever its weight

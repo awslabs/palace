@@ -92,6 +92,11 @@ struct IdentifiedPortion
   // chain. Not hashed. The first-order curvature term of a straight-like feature is this
   // turn times the family's curvature derivative (design (b)7).
   double turn = 0.0;
+  // The maximal contiguous stretch of this feature side along its chain that the portion
+  // belongs to (index per feature, in chain order; the sliver rule's notion of a portion,
+  // decision 222). Not hashed; the placement's ownership check tests whole stretches
+  // (decision 224).
+  int stretch = -1;
 };
 
 struct IdentifiedFeature
@@ -232,6 +237,12 @@ struct IdentificationResult
     // sub-tolerance pass.
     bool cap_reached = false;
     bool repeat_detected = false;
+    // Pair / stack stretches shorter than 2R bounded on both sides along their chain by the
+    // claims of one cluster, absorbed by it (decision 224; the one exception to "pairs /
+    // stacks are never absorbed"): count, length, longest, mesh units.
+    std::size_t translational_pieces = 0;
+    double translational_length = 0.0;
+    double translational_max_length = 0.0;
   };
   ClusterExtension extension;
   // Knife-edge census (decision 82(4)): the perimeter length whose interaction distance

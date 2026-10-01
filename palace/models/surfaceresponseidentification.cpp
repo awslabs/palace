@@ -2552,6 +2552,10 @@ private:
   std::size_t extension_passes = 0, extension_portions = 0, extension_sites = 0;
   double extension_length = 0.0;
   double stack_end_third_body_length = 0.0;
+  // Translational (pair / stack) stretches absorbed by the cluster bounding them on both
+  // sides (decision 224): count, length, longest.
+  std::size_t extension_translational_pieces = 0;
+  double extension_translational_length = 0.0, extension_translational_max_length = 0.0;
   std::map<std::size_t, int> vertex_feature;  // mesh vertex -> feature id
   // Raw material of the pair / stack assembly (decision 82(2), BuildPairsAndStacks): the
   // locally constant, interacting facing relations of the bent-pair rule (one link per
@@ -8776,6 +8780,7 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
     std::size_t run;
     Interval interval;
     std::vector<std::size_t> owners;
+    bool translational = false;  // a pair / stack stretch (decision 224), else single-edge
   };
   std::vector<Absorption> absorptions;
   for (std::size_t r = 0; r < runs.size(); r++)
@@ -9067,6 +9072,127 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
       absorptions.insert(absorptions.end(), merged.begin(), merged.end());
     }
   }
+  // Decision 224 (the S1p 41-edge loop end): the ONE exception to "pairs / stacks are never
+  // absorbed". A maximal contiguous stretch of pair / stack claims along a chain whose two
+  // ends are adjacent (within the decision quantum) to claimed intervals of ONE cluster and
+  // whose length is strictly below the interaction distance 2R is absorbed by that cluster.
+  // Every point of such a stretch lies within ClusterBallOverR x R = R of the cluster's
+  // claimed perimeter on its own chain — inside the ball radius of the cluster's own
+  // claims, whose neighbourhood the cluster describes — and the stack reading there spans
+  // less than the interaction distance the translational models are built for. Left to the
+  // stack, the spatial coupon (whose volume covers the stretch between its claims) and the
+  // stack's translational patches would correct the same surface twice: on S1p the three
+  // vertical leads of the 41-edge loop end were each split by a 1.738 um piece of the
+  // 3-edge stack (its 5.21 um feature), bounded on both sides by the cluster's 5.131 um
+  // claims. Found and applied per pass like the single-edge absorptions (the next pass
+  // recomposes the stacks around the enlarged claims); the stretch is cut into its runs'
+  // intervals. Counted as Diagnostics.ClusterExtension.TranslationalPiecesAbsorbed. Longer
+  // stretches between claims of one cluster stay with the stack and are caught by the
+  // placement's ownership check (a translational stretch wholly inside a spatial support
+  // fails closed).
+  if (!measure_joint_claims)
+  {
+    std::map<int, std::vector<std::tuple<double, double, std::size_t>>> cluster_on_chain;
+    for (std::size_t c = 0; c < cluster_claimed.size(); c++)
+    {
+      for (const auto &[r, interval] : cluster_claimed[c])
+      {
+        const Chain &C = chains[chain_index.at(runs[r].chain)];
+        const double offset = C.run_offset[runs[r].index_in_chain];
+        cluster_on_chain[C.id].emplace_back(offset + interval.first,
+                                            offset + interval.second, c);
+      }
+    }
+    std::map<int, std::vector<Interval>> translational_on_chain;
+    for (std::size_t r = 0; r < runs.size(); r++)
+    {
+      if (runs[r].excluded)
+      {
+        continue;
+      }
+      const Chain &C = chains[chain_index.at(runs[r].chain)];
+      const double offset = C.run_offset[runs[r].index_in_chain];
+      for (const auto &claim : claims[r])
+      {
+        if (claim.priority == 2)
+        {
+          translational_on_chain[C.id].emplace_back(offset + claim.interval.first,
+                                                    offset + claim.interval.second);
+        }
+      }
+    }
+    for (auto &[chain_id, list] : translational_on_chain)
+    {
+      const auto bounding = cluster_on_chain.find(chain_id);
+      if (bounding == cluster_on_chain.end())
+      {
+        continue;
+      }
+      const Chain &C = chains[chain_index.at(chain_id)];
+      // The cluster whose claim ends at x (a claim ending at the chain's end bounds a
+      // stretch starting at 0 on a closed chain, and vice versa); -1 when none.
+      auto ClusterEndingAt = [&](double x)
+      {
+        for (const auto &[x0, x1, c] : bounding->second)
+        {
+          if (std::abs(x1 - x) <= Tol() ||
+              (C.closed && x <= Tol() && x1 >= C.length - Tol()))
+          {
+            return static_cast<int>(c);
+          }
+        }
+        return -1;
+      };
+      auto ClusterStartingAt = [&](double x)
+      {
+        for (const auto &[x0, x1, c] : bounding->second)
+        {
+          if (std::abs(x0 - x) <= Tol() ||
+              (C.closed && x >= C.length - Tol() && x0 <= Tol()))
+          {
+            return static_cast<int>(c);
+          }
+        }
+        return -1;
+      };
+      for (const auto &stretch : MergeIntervals(std::move(list), Tol()))
+      {
+        if (!quantizer.Less(stretch.second - stretch.first, interaction))
+        {
+          continue;
+        }
+        const int before = ClusterEndingAt(stretch.first);
+        if (before < 0 || before != ClusterStartingAt(stretch.second))
+        {
+          continue;
+        }
+        for (std::size_t k = 0; k < C.runs.size(); k++)
+        {
+          const std::size_t r = C.runs[k];
+          const double offset = C.run_offset[k];
+          const double s0 = std::max(stretch.first, offset) - offset;
+          const double s1 = std::min(stretch.second, offset + runs[r].length) - offset;
+          if (!runs[r].excluded && s1 - s0 > Tol())
+          {
+            absorptions.push_back({r, {s0, s1}, {static_cast<std::size_t>(before)}, true});
+          }
+        }
+        const double length = stretch.second - stretch.first;
+        extension_translational_pieces++;
+        extension_translational_length += length;
+        extension_translational_max_length =
+            std::max(extension_translational_max_length, length);
+        if (std::getenv("PALACE_IDENTIFICATION_DEBUG_EXTENSION") && input.log)
+        {
+          std::ostringstream line;
+          line << std::setprecision(10) << "    translational stretch absorbed: chain "
+               << chain_id << " x [" << stretch.first << ", " << stretch.second
+               << "] (length " << length << ") by cluster " << before << "\n";
+          input.log(line.str());
+        }
+      }
+    }
+  }
   double candidate_length = 0.0;
   for (const auto &absorption : absorptions)
   {
@@ -9165,7 +9291,7 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
                           cluster_sites[owner].end());
     }
   }
-  double absorbed = 0.0;
+  double absorbed = 0.0, absorbed_translational = 0.0;
   const bool debug_extension =
       std::getenv("PALACE_IDENTIFICATION_DEBUG_EXTENSION") && input.log;
   for (const auto &absorption : absorptions)
@@ -9173,7 +9299,14 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
     new_claimed[owner_cluster[absorption.owners[0]]].emplace_back(absorption.run,
                                                                   absorption.interval);
     absorbed += absorption.interval.second - absorption.interval.first;
-    extension_portions++;
+    if (absorption.translational)
+    {
+      absorbed_translational += absorption.interval.second - absorption.interval.first;
+    }
+    else
+    {
+      extension_portions++;
+    }
     if (debug_extension)
     {
       const Run &run = runs[absorption.run];
@@ -9192,7 +9325,7 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
       input.log(line.str() + "\n");
     }
   }
-  extension_length += absorbed;
+  extension_length += absorbed - absorbed_translational;  // single-edge portions
   extension_sites += involved_free_sites.size();
   // Merge the intervals per run inside every cluster.
   for (auto &claimed : new_claimed)
@@ -10178,6 +10311,10 @@ void Identifier::Assign(IdentificationResult &result)
   // numbering-independent: the chain order and the neighbours' lengths decide, never a
   // feature id. Reported as Diagnostics.SubTolerancePortionsJoined (count, length, longest,
   // isolated).
+  // The stretch index of every piece (per feature, in chain order) is recorded on its
+  // portions for the placement's ownership check (a translational stretch wholly inside a
+  // spatial support fails closed, decision 224).
+  std::vector<std::vector<int>> piece_stretch(runs.size());
   {
     const double tolerance = kSignatureParameterToleranceOverRadius * R;
     struct ChainPiece
@@ -10187,12 +10324,13 @@ void Identifier::Assign(IdentificationResult &result)
     };
     struct Stretch
     {
-      std::size_t first, last;  // chain piece indices (inclusive)
+      std::size_t first, last;  // chain piece indices (inclusive; last < first wraps)
       int feature, side;
       double length;
     };
-    std::set<std::size_t> touched_runs;
-    for (const Chain &chain : chains)
+    auto Entry = [&](const ChainPiece &p) -> std::tuple<double, double, int, int> &
+    { return assigned[p.run][p.index]; };
+    auto ChainPieces = [&](const Chain &chain)
     {
       std::vector<ChainPiece> pieces;
       for (const std::size_t r : chain.runs)
@@ -10206,80 +10344,75 @@ void Identifier::Assign(IdentificationResult &result)
           pieces.push_back({r, i});
         }
       }
-      if (pieces.size() < 2)
+      return pieces;
+    };
+    // Piece b follows piece a contiguously along the chain: on one run with touching
+    // intervals, or at the joint of two consecutive non-excluded runs of the chain (a's
+    // interval reaching its run's end, b's starting at its run's start); on a closed chain
+    // the last run's end meets the first run's start.
+    auto Adjacent = [&](const Chain &chain, const ChainPiece &a, const ChainPiece &b)
+    {
+      const double ahi = std::get<1>(Entry(a)), blo = std::get<0>(Entry(b));
+      if (a.run == b.run)
       {
-        if (pieces.size() == 1)
+        return std::abs(ahi - blo) <= Tol();
+      }
+      const std::size_t ka = runs[a.run].index_in_chain, kb = runs[b.run].index_in_chain;
+      const bool consecutive =
+          kb == ka + 1 || (chain.closed && ka + 1 == chain.runs.size() && kb == 0);
+      return consecutive && ahi >= runs[a.run].length - Tol() && blo <= Tol();
+    };
+    auto SameFeature = [&](const ChainPiece &a, const ChainPiece &b)
+    {
+      return std::get<2>(Entry(a)) == std::get<2>(Entry(b)) &&
+             std::get<3>(Entry(a)) == std::get<3>(Entry(b));
+    };
+    auto Length = [&](const ChainPiece &p)
+    { return std::get<1>(Entry(p)) - std::get<0>(Entry(p)); };
+    // Maximal contiguous stretches of one feature side, in chain order; on a closed chain
+    // the first and the last stretch may be one (wraps: the last piece is adjacent to the
+    // first).
+    auto Stretches =
+        [&](const Chain &chain, const std::vector<ChainPiece> &pieces, bool &wraps)
+    {
+      std::vector<Stretch> stretches;
+      for (std::size_t i = 0; i < pieces.size(); i++)
+      {
+        if (!stretches.empty() && Adjacent(chain, pieces[i - 1], pieces[i]) &&
+            SameFeature(pieces[i - 1], pieces[i]))
         {
-          const auto &[lo, hi, feature, side] = assigned[pieces[0].run][pieces[0].index];
-          (void)feature;
-          (void)side;
-          if (hi - lo < tolerance)
-          {
-            result.sub_tolerance_portions.isolated++;
-          }
+          stretches.back().last = i;
+          stretches.back().length += Length(pieces[i]);
         }
+        else
+        {
+          stretches.push_back({i, i, std::get<2>(Entry(pieces[i])),
+                               std::get<3>(Entry(pieces[i])), Length(pieces[i])});
+        }
+      }
+      wraps = chain.closed && pieces.size() > 1 &&
+              Adjacent(chain, pieces.back(), pieces.front());
+      if (wraps && stretches.size() > 1 && SameFeature(pieces.back(), pieces.front()))
+      {
+        stretches.back().last = stretches.front().last;
+        stretches.back().length += stretches.front().length;
+        stretches.erase(stretches.begin());
+      }
+      return stretches;
+    };
+    std::set<std::size_t> touched_runs;
+    for (const Chain &chain : chains)
+    {
+      const std::vector<ChainPiece> pieces = ChainPieces(chain);
+      if (pieces.empty())
+      {
         continue;
       }
-      auto Entry = [&](const ChainPiece &p) -> std::tuple<double, double, int, int> &
-      { return assigned[p.run][p.index]; };
-      // Piece b follows piece a contiguously along the chain: on one run with touching
-      // intervals, or at the joint of two consecutive non-excluded runs of the chain (a's
-      // interval reaching its run's end, b's starting at its run's start); on a closed
-      // chain the last run's end meets the first run's start.
-      auto Adjacent = [&](const ChainPiece &a, const ChainPiece &b)
-      {
-        const auto &[alo, ahi, af, as] = Entry(a);
-        const auto &[blo, bhi, bf, bs] = Entry(b);
-        (void)alo;
-        (void)bhi;
-        (void)af;
-        (void)bf;
-        (void)as;
-        (void)bs;
-        if (a.run == b.run)
-        {
-          return std::abs(ahi - blo) <= Tol();
-        }
-        const std::size_t ka = runs[a.run].index_in_chain, kb = runs[b.run].index_in_chain;
-        const bool consecutive =
-            kb == ka + 1 || (chain.closed && ka + 1 == chain.runs.size() && kb == 0);
-        return consecutive && ahi >= runs[a.run].length - Tol() && blo <= Tol();
-      };
-      auto SameFeature = [&](const ChainPiece &a, const ChainPiece &b)
-      {
-        return std::get<2>(Entry(a)) == std::get<2>(Entry(b)) &&
-               std::get<3>(Entry(a)) == std::get<3>(Entry(b));
-      };
-      auto Length = [&](const ChainPiece &p)
-      { return std::get<1>(Entry(p)) - std::get<0>(Entry(p)); };
       for (bool changed = true; changed;)
       {
         changed = false;
-        // Maximal contiguous stretches of one feature side, in chain order.
-        std::vector<Stretch> stretches;
-        for (std::size_t i = 0; i < pieces.size(); i++)
-        {
-          if (!stretches.empty() && Adjacent(pieces[i - 1], pieces[i]) &&
-              SameFeature(pieces[i - 1], pieces[i]))
-          {
-            stretches.back().last = i;
-            stretches.back().length += Length(pieces[i]);
-          }
-          else
-          {
-            stretches.push_back({i, i, std::get<2>(Entry(pieces[i])),
-                                 std::get<3>(Entry(pieces[i])), Length(pieces[i])});
-          }
-        }
-        // On a closed chain the first and the last stretch may be one.
-        const bool wraps =
-            chain.closed && stretches.size() > 1 && Adjacent(pieces.back(), pieces.front());
-        if (wraps && SameFeature(pieces.back(), pieces.front()))
-        {
-          stretches.back().last = stretches.front().last;
-          stretches.back().length += stretches.front().length;
-          stretches.erase(stretches.begin());
-        }
+        bool wraps = false;
+        const std::vector<Stretch> stretches = Stretches(chain, pieces, wraps);
         const std::size_t n = stretches.size();
         for (std::size_t g = 0; g < n && !changed; g++)
         {
@@ -10295,7 +10428,8 @@ void Identifier::Assign(IdentificationResult &result)
           if (g > 0 || wraps)
           {
             const std::size_t gb = g > 0 ? g - 1 : n - 1;
-            if (gb != g && Adjacent(pieces[stretches[gb].last], pieces[stretch.first]))
+            if (gb != g &&
+                Adjacent(chain, pieces[stretches[gb].last], pieces[stretch.first]))
             {
               before = &stretches[gb];
             }
@@ -10303,7 +10437,8 @@ void Identifier::Assign(IdentificationResult &result)
           if (g + 1 < n || wraps)
           {
             const std::size_t ga = g + 1 < n ? g + 1 : 0;
-            if (ga != g && Adjacent(pieces[stretch.last], pieces[stretches[ga].first]))
+            if (ga != g &&
+                Adjacent(chain, pieces[stretch.last], pieces[stretches[ga].first]))
             {
               after = &stretches[ga];
             }
@@ -10364,6 +10499,29 @@ void Identifier::Assign(IdentificationResult &result)
         }
       }
       pieces = std::move(merged);
+    }
+    // Stretch numbering: per feature, in the order of the chains and along each chain.
+    std::map<int, int> stretches_of_feature;
+    for (std::size_t r = 0; r < runs.size(); r++)
+    {
+      piece_stretch[r].assign(assigned[r].size(), -1);
+    }
+    for (const Chain &chain : chains)
+    {
+      const std::vector<ChainPiece> pieces = ChainPieces(chain);
+      bool wraps = false;
+      for (const Stretch &stretch : Stretches(chain, pieces, wraps))
+      {
+        const int index = stretches_of_feature[stretch.feature]++;
+        for (std::size_t i = stretch.first;; i = (i + 1) % pieces.size())
+        {
+          piece_stretch[pieces[i].run][pieces[i].index] = index;
+          if (i == stretch.last)
+          {
+            break;
+          }
+        }
+      }
     }
   }
 
@@ -10495,8 +10653,9 @@ void Identifier::Assign(IdentificationResult &result)
       };
       const Chain &chain = chains[chain_index.at(runs[r].chain)];
       const double offset = chain.run_offset[RunIndexInChain(chain, r)];
-      for (const auto &[lo, hi, feature, side] : assigned[r])
+      for (std::size_t i = 0; i < assigned[r].size(); i++)
       {
+        const auto &[lo, hi, feature, side] = assigned[r][i];
         const auto portion = SegmentPortion(lo, hi);
         if (!portion)
         {
@@ -10506,7 +10665,8 @@ void Identifier::Assign(IdentificationResult &result)
         table.portions.push_back({s0, s1, static_cast<double>(feature)});
         const double turn =
             SignedTurn(chain, offset + std::max(lo, rs.t0), offset + std::min(hi, rs.t1));
-        features[feature].portions.push_back({rs.segment, s0, s1, side, turn});
+        features[feature].portions.push_back(
+            {rs.segment, s0, s1, side, turn, piece_stretch[r][i]});
         features[feature].length += s1 - s0;
         result.assigned_length += s1 - s0;
       }
@@ -10738,10 +10898,16 @@ void Identifier::Assign(IdentificationResult &result)
   result.stack_geometric_offsets = stack_geometric_offsets;
   result.stack_composition_cap_hits = stack_composition_cap_hits;
   result.stack_images_merged = stack_images_merged;
-  result.extension = {
-      extension_passes,         extension_portions,          extension_sites,
-      extension_length,         stack_end_third_body_length, extension_cap_reached,
-      extension_repeat_detected};
+  result.extension = {extension_passes,
+                      extension_portions,
+                      extension_sites,
+                      extension_length,
+                      stack_end_third_body_length,
+                      extension_cap_reached,
+                      extension_repeat_detected,
+                      extension_translational_pieces,
+                      extension_translational_length,
+                      extension_translational_max_length};
   result.features = features;
   result.radius = R;
   result.reference_process_normal = n_ref;
@@ -11095,6 +11261,9 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
   w.Pod(result.extension.stack_end_third_body_length);
   w.Pod(result.extension.cap_reached);
   w.Pod(result.extension.repeat_detected);
+  w.Size(result.extension.translational_pieces);
+  w.Pod(result.extension.translational_length);
+  w.Pod(result.extension.translational_max_length);
   w.Size(result.stack_images_merged);
   w.Size(result.sub_tolerance_portions.count);
   w.Pod(result.sub_tolerance_portions.length);
@@ -11119,6 +11288,7 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
       w.Pod(p.s1);
       w.Pod(p.side);
       w.Pod(p.turn);
+      w.Pod(p.stretch);
     }
     w.Size(f.vertices.size());
     for (const std::size_t v : f.vertices)
@@ -11212,6 +11382,9 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
   result.extension.stack_end_third_body_length = r.Pod<double>();
   result.extension.cap_reached = r.Pod<bool>();
   result.extension.repeat_detected = r.Pod<bool>();
+  result.extension.translational_pieces = r.Size();
+  result.extension.translational_length = r.Pod<double>();
+  result.extension.translational_max_length = r.Pod<double>();
   result.stack_images_merged = r.Size();
   result.sub_tolerance_portions.count = r.Size();
   result.sub_tolerance_portions.length = r.Pod<double>();
@@ -11236,6 +11409,7 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
       p.s1 = r.Pod<double>();
       p.side = r.Pod<int>();
       p.turn = r.Pod<double>();
+      p.stretch = r.Pod<int>();
     }
     f.vertices.resize(r.Size());
     for (auto &v : f.vertices)
@@ -11888,7 +12062,11 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "the stacks are not recomposed again: sub-tolerance) (ratified as the 'across' "
          "rule, decision 88(2)); pairs / stacks are never absorbed and their claimed "
          "length satisfying the same across rule is Diagnostics.StackEndThirdBodyLength "
-         "(decision 85(2))"},
+         "(decision 85(2)) — with ONE exception (decision 224): a maximal contiguous "
+         "stretch of pair / stack claims along a chain bounded at both ends by claimed "
+         "intervals of one cluster and shorter than InteractionDistanceOverR x R (strict) "
+         "is absorbed by that cluster "
+         "(Diagnostics.ClusterExtension.TranslationalPiecesAbsorbed)"},
         {"MutualSidesOverhangOverSeparation",
          std::sqrt((1.0 + kPairSeparationTolerance) * (1.0 + kPairSeparationTolerance) -
                    1.0)},
@@ -11969,6 +12147,23 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
           {"AbsorbedPortions", extension.portions},
           {"AbsorbedLength", L(extension.length)},
           {"VertexFeaturesJoined", extension.sites},
+          {"TranslationalPiecesAbsorbed",
+           {{"Count", extension.translational_pieces},
+            {"Length", L(extension.translational_length)},
+            {"MaxLength", L(extension.translational_max_length)},
+            {"Rule",
+             "decision 224 (2026-10-02), the ONE exception to 'pairs / stacks are never "
+             "absorbed': a maximal contiguous stretch of pair / stack claims along a chain "
+             "whose two ends are adjacent to claimed intervals of ONE cluster and whose "
+             "length is strictly below InteractionDistanceOverR x R is absorbed by that "
+             "cluster (every point of it lies within ClusterBallOverR x R of the "
+             "cluster's own claims on its chain; a stack reading shorter than the "
+             "interaction distance between the claims of one spatial coupon would be "
+             "corrected twice, by the coupon's volume and by the stack's translational "
+             "patches); applied per pass like the single-edge absorptions, the stacks "
+             "recomposed around the enlarged claims; a longer stretch between the claims "
+             "of one cluster stays with the stack and fails closed at the placement's "
+             "ownership check"}}},
           {"Rule",
            "every single-edge portion (isolated / curved edge remainder) within 2R "
            "(3D, strict) of a cluster's claimed perimeter or of a vertex feature's "

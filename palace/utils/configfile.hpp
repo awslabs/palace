@@ -1045,6 +1045,11 @@ public:
       int segment = -1;
       double s0 = 0.0;
       double s1 = 0.0;
+      // The maximal contiguous stretch of the feature side along its chain that the
+      // portion belongs to (IdentifiedPortion::stretch; -1 for vertex / cluster patches):
+      // the unit of the placement's translational-vs-spatial ownership check (decision
+      // 224), which judges whole stretches, never single cells.
+      int stretch = -1;
       double quadrature_weight = 1.0;
       double model_weight = 1.0;
       // Longitudinal patches: weight = model_weight x quadrature_weight x (s1 - s0) x

@@ -7344,6 +7344,7 @@ FeaturePatchSummary BuildFeaturePatches(
     double s0 = 0.0, s1 = 0.0;
     int side = 0;
     double turn = 0.0;  // signed windowed turn toward the metal (radians)
+    int stretch = -1;   // the chain stretch of the portion (IdentifiedPortion::stretch)
   };
   auto Frame = [&](const IdentifiedPortion &portion)
   {
@@ -7363,6 +7364,7 @@ FeaturePatchSummary BuildFeaturePatches(
     fp.s1 = portion.s1;
     fp.side = portion.side;
     fp.turn = portion.turn;
+    fp.stretch = portion.stretch;
     return fp;
   };
   auto IsPec = [](const EdgeSegment3D &segment)
@@ -7554,6 +7556,7 @@ FeaturePatchSummary BuildFeaturePatches(
         patch.provenance.segment = static_cast<int>(fp.geometry_index);
         patch.provenance.s0 = fp.s0;
         patch.provenance.s1 = fp.s1;
+        patch.provenance.stretch = fp.stretch;
         patch.provenance.quadrature_weight = ip.weight;
         patch.provenance.side_factor = side_factor;
         patch.provenance.coupon_depth = term.coupon_depth;
@@ -13630,7 +13633,9 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                        {"LongitudinalCell", patch.longitudinal_cell},
                        {"InterpolationGroup", patch.interpolation_group},
                        {"MaxwellConductorAnchors", patch.maxwell_conductor_anchors},
-                       {"MaxwellReferenceIsPEC", patch.maxwell_reference_is_pec}});
+                       {"MaxwellReferenceIsPEC", patch.maxwell_reference_is_pec},
+                       {"Feature", patch.provenance.feature},
+                       {"Stretch", patch.provenance.stretch}});
   }
   if (path.has_parent_path())
   {
@@ -13639,7 +13644,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  output << nlohmann::json{{"Version", 3},
+  output << nlohmann::json{{"Version", 4},
                            {"Models", std::move(models)},
                            {"Patches", std::move(patches)}}
                 .dump(2)
@@ -13653,11 +13658,11 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   MFEM_VERIFY(input, "Unable to read response-geometry cache \"" << path.string() << "\"!");
   nlohmann::json data;
   input >> data;
-  MFEM_VERIFY(data.value("Version", 0) == 3,
+  MFEM_VERIFY(data.value("Version", 0) == 4,
               "Unsupported response-geometry cache version "
                   << data.value("Version", 0)
-                  << " (version 3 carries the longitudinal cell of every patch; delete a "
-                     "stale cache)!");
+                  << " (version 4 carries the feature and chain stretch of every patch for "
+                     "the ownership check; delete a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
@@ -13733,6 +13738,8 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
     patch.weight = entry.at("Weight");
     patch.longitudinal_cell = entry.at("LongitudinalCell");
     patch.interpolation_group = entry.value("InterpolationGroup", 0);
+    patch.provenance.feature = entry.at("Feature");
+    patch.provenance.stretch = entry.at("Stretch");
     patch.maxwell_conductor_anchors =
         entry.value("MaxwellConductorAnchors", std::vector<std::array<double, 3>>{});
     patch.maxwell_reference_is_pec = entry.value("MaxwellReferenceIsPEC", true);
@@ -13877,6 +13884,80 @@ struct SurfaceResponseGeometry::Impl
   bool maxwell = false;
   int dimension = 0;
 };
+
+std::optional<TranslationalOwnershipViolation> FindTranslationalStretchInsideSpatialSupport(
+    const std::vector<ResponsePatchData> &patches,
+    const std::vector<SpatialSupportBounds> &supports, int dimension)
+{
+  struct TranslationalStretch
+  {
+    std::vector<std::size_t> patches;
+    std::vector<std::array<double, 3>> ends;
+  };
+  std::map<std::pair<int, int>, TranslationalStretch> stretches;
+  for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
+  {
+    const auto &patch = patches[patch_idx];
+    if (patch.longitudinal_cell[1] <= patch.longitudinal_cell[0] ||
+        patch.provenance.feature < 0 || patch.provenance.stretch < 0)
+    {
+      continue;  // a point-in-z (2D, spatial, explicit) patch, or no provenance
+    }
+    auto &stretch =
+        stretches[std::make_pair(patch.provenance.feature, patch.provenance.stretch)];
+    stretch.patches.push_back(patch_idx);
+    for (const double offset : patch.longitudinal_cell)
+    {
+      std::array<double, 3> end{};
+      for (int d = 0; d < dimension; d++)
+      {
+        end[d] = patch.origin[d] + offset * patch.axis_w[d];
+      }
+      stretch.ends.push_back(end);
+    }
+  }
+  for (const auto &[key, stretch] : stretches)
+  {
+    for (const auto &support : supports)
+    {
+      // Strictly inside: a stretch touching the box face is not inside.
+      const bool inside =
+          std::all_of(stretch.ends.begin(), stretch.ends.end(),
+                      [&](const std::array<double, 3> &end)
+                      {
+                        for (int d = 0; d < dimension; d++)
+                        {
+                          if (!(end[d] > support.min[d] && end[d] < support.max[d]))
+                          {
+                            return false;
+                          }
+                        }
+                        return true;
+                      });
+      if (!inside)
+      {
+        continue;
+      }
+      TranslationalOwnershipViolation violation;
+      violation.feature = key.first;
+      violation.stretch = key.second;
+      violation.first_patch = stretch.patches.front();
+      violation.patch_count = stretch.patches.size();
+      violation.spatial_patch = support.patch;
+      violation.lo = violation.hi = stretch.ends.front();
+      for (const auto &end : stretch.ends)
+      {
+        for (int d = 0; d < 3; d++)
+        {
+          violation.lo[d] = std::min(violation.lo[d], end[d]);
+          violation.hi[d] = std::max(violation.hi[d], end[d]);
+        }
+      }
+      return violation;
+    }
+  }
+  return std::nullopt;
+}
 
 SurfaceResponseOperator::SurfaceResponseOperator(
     const IoData &iodata, const LaplaceOperator &laplace_op,
@@ -14433,6 +14514,39 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                    << ") overlap without complete spatial-cluster ownership. Replace "
                       "them with one coupled spatial model or an explicit nonoverlapping "
                       "partition!");
+      }
+    }
+    // Translational patches against the spatial supports (decision 224): a translational
+    // stretch wholly inside one spatial support fails closed (the S1p 41-edge loop end:
+    // three leads split by 1.738 um pieces of a 3-edge stack between the cluster's claims;
+    // the identification now absorbs such pieces, this check is the net for any it leaves).
+    {
+      std::vector<SpatialSupportBounds> boxes;
+      for (const auto &support : spatial_supports)
+      {
+        boxes.push_back({support.patch, support.box.min, support.box.max});
+      }
+      if (const auto violation = FindTranslationalStretchInsideSpatialSupport(
+              config->patches, boxes, dimension))
+      {
+        const auto &model =
+            models[model_indices.at(config->patches[violation->first_patch].model)];
+        const auto &support_model =
+            models[model_indices.at(config->patches[violation->spatial_patch].model)];
+        MFEM_ABORT("A translational response-correction stretch (feature "
+                   << violation->feature << ", stretch " << violation->stretch << ", model "
+                   << model.name << ", " << violation->patch_count << " patches from patch "
+                   << violation->first_patch + 1 << ", extent [" << violation->lo[0] << ", "
+                   << violation->lo[1] << ", " << violation->lo[2] << "] to ["
+                   << violation->hi[0] << ", " << violation->hi[1] << ", "
+                   << violation->hi[2]
+                   << "] in mesh units) lies wholly inside the matching volume of spatial "
+                      "patch "
+                   << violation->spatial_patch + 1 << " (" << support_model.name
+                   << "): the coupon volume and the translational patches would correct "
+                      "the same surface twice (decision 224). The identification absorbs "
+                      "such a stretch when it is shorter than 2R between two claims of the "
+                      "cluster; a longer one needs an explicit nonoverlapping partition!");
       }
     }
   }

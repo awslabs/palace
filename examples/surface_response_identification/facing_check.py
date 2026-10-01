@@ -54,7 +54,11 @@ exclusions, each reported with its length:
   shorter than 1e-3 R. A sub-tolerance MESH SEGMENT inside a long isolated edge (DS-SCT-001 at
   R 2.0: 896 segments of 1-2 nm on one 2,898 um `IsolatedEdge`, their run neighbours claimed by
   the same feature) is an ordinary portion of that feature and is NOT exempt. No resolvable
-  parameter; bounded to 1e-3 R per such portion, count reported;
+  parameter; bounded to 1e-3 R per such portion, count reported. Since the identification's
+  sliver rule (supervisor decision 222: no portion shorter than 1e-3 R exists, a sub-tolerance
+  stretch joins its adjacent portion; Conventions.SliverRule, Diagnostics.SubTolerancePortionsJoined)
+  such portions no longer occur in manifests of that version: the class stays as the record and
+  for older manifests, and its count is expected to be 0;
 * segments with a recorded manifest exclusion (Port, CrossLayer, NonManifold, ...) are never
   facing candidates.
 Reported metric (decision 88(2), not a gate): `ClusterProximityNotAcross` — the isolated /

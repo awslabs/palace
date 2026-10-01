@@ -8,6 +8,7 @@
 #include <complex>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -16,6 +17,7 @@
 #include <nlohmann/json.hpp>
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "utils/configfile.hpp"
 
 namespace palace
 {
@@ -436,6 +438,35 @@ public:
 // reports exact, interpolated, and missing process-library requirements.
 void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
                                       const std::string &path);
+
+// Ownership check of the translational patches against the spatial supports (decision
+// 224): a spatial coupon volume corrects every surface inside it, so a translational
+// STRETCH — the maximal contiguous stretch of one feature side along its chain (patch
+// provenance feature / stretch), the identification's portion unit — whose every
+// longitudinal cell lies strictly inside one spatial support's box would be corrected
+// twice. Judged per stretch, never per cell: the box extends about R beyond the cluster's
+// claims, so the first cells of every stack portion adjacent to a cluster lie inside its
+// box legitimately. Cell ends are the strip ends along AxisW from the origin (mesh units);
+// boxes are (spatial patch index, min, max) in mesh units. Returns the first violation in
+// (feature, stretch) order, or nullopt. The operator constructor fails closed on one.
+struct TranslationalOwnershipViolation
+{
+  int feature = -1;
+  int stretch = -1;
+  std::size_t first_patch = 0;
+  std::size_t patch_count = 0;
+  std::size_t spatial_patch = 0;
+  std::array<double, 3> lo{}, hi{};  // extent of the stretch's cell ends
+};
+struct SpatialSupportBounds
+{
+  std::size_t patch = 0;
+  std::array<double, 3> min{}, max{};
+};
+std::optional<TranslationalOwnershipViolation> FindTranslationalStretchInsideSpatialSupport(
+    const std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData>
+        &patches,
+    const std::vector<SpatialSupportBounds> &supports, int dimension);
 
 }  // namespace palace
 

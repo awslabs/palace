@@ -1729,7 +1729,7 @@ TEST_CASE_METHOD(
       std::ifstream cache_input(cache_path);
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
-      CHECK(cache["Version"] == 3);
+      CHECK(cache["Version"] == 4);
       REQUIRE(cache["Models"].size() == 2);
       for (auto &model : cache["Models"])
       {
@@ -3019,7 +3019,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator cap-interi
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
       cache_input.close();
-      CHECK(cache["Version"] == 3);
+      CHECK(cache["Version"] == 4);
       int cap_hat_models = 0;
       for (auto &model : cache["Models"])
       {
@@ -6711,6 +6711,71 @@ TEST_CASE_METHOD(
     CHECK(constructed);
   }
 #endif
+}
+
+TEST_CASE("SurfaceResponseOperatorTranslationalStretchOwnership",
+          "[surfaceresponseoperator][Serial]")
+{
+  // Decision 224: a translational STRETCH (every longitudinal cell of one feature stretch)
+  // strictly inside one spatial support's box is a double count and fails closed; a stack
+  // end adjacent to a cluster, whose first cells lie inside the box while the stretch
+  // continues outside, is the ordinary stack-end configuration and passes. Cells of a
+  // 3-cell portion along +x from the origin x = 0: [0, 1], [1, 2.5], [2.5, 4] (mesh units).
+  using Patch = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+  auto Cell = [](int feature, int stretch, double begin, double end, double y = 0.0)
+  {
+    Patch patch;
+    patch.origin = {0.5 * (begin + end), y, 0.0};
+    patch.axis_u = {0.0, 1.0, 0.0};
+    patch.axis_v = {0.0, 0.0, 1.0};
+    patch.axis_w = {1.0, 0.0, 0.0};
+    patch.longitudinal_cell = {begin - patch.origin[0], end - patch.origin[0]};
+    patch.provenance.feature = feature;
+    patch.provenance.stretch = stretch;
+    patch.provenance.segment = 7;
+    return patch;
+  };
+  // A spatial support over x in [-3, 1.5] (its claims end at x = 0, the box reaches R = 1.5
+  // beyond them), |y| <= 3, |z| <= 2.
+  const SpatialSupportBounds box{0, {-3.0, -3.0, -2.0}, {1.5, 3.0, 2.0}};
+  SECTION("a stack end adjacent to the cluster passes")
+  {
+    const std::vector<Patch> patches = {Cell(4, 0, 0.0, 1.0), Cell(4, 0, 1.0, 2.5),
+                                        Cell(4, 0, 2.5, 4.0)};
+    CHECK(!FindTranslationalStretchInsideSpatialSupport(patches, {box}, 3));
+    // Two sides of a pair on one stretch index are judged by their own cells: the far side
+    // outside the box keeps its stretch outside too.
+    std::vector<Patch> sides = patches;
+    sides.push_back(Cell(4, 0, 0.0, 1.0, 2.0));
+    CHECK(!FindTranslationalStretchInsideSpatialSupport(sides, {box}, 3));
+  }
+  SECTION("a stretch wholly inside the box fails closed")
+  {
+    const std::vector<Patch> patches = {Cell(4, 0, 0.0, 1.0), Cell(4, 0, 1.0, 2.5),
+                                        Cell(4, 0, 2.5, 4.0), Cell(4, 1, -2.0, -1.5),
+                                        Cell(4, 1, -1.5, -0.8)};
+    const auto violation = FindTranslationalStretchInsideSpatialSupport(patches, {box}, 3);
+    REQUIRE(violation);
+    CHECK(violation->feature == 4);
+    CHECK(violation->stretch == 1);
+    CHECK(violation->first_patch == 3);
+    CHECK(violation->patch_count == 2);
+    CHECK(violation->spatial_patch == 0);
+    CHECK_THAT(violation->lo[0], WithinAbs(-2.0, 1.0e-12));
+    CHECK_THAT(violation->hi[0], WithinAbs(-0.8, 1.0e-12));
+  }
+  SECTION("touching the box face is not inside")
+  {
+    const std::vector<Patch> patches = {Cell(4, 1, -2.0, -1.5), Cell(4, 1, -1.5, 1.5)};
+    CHECK(!FindTranslationalStretchInsideSpatialSupport(patches, {box}, 3));
+  }
+  SECTION("point-in-z and unattributed patches are never judged")
+  {
+    Patch spatial = Cell(5, 0, -1.0, -1.0);  // {0, 0} cell
+    Patch explicit_patch = Cell(-1, -1, -2.0, -1.0);
+    CHECK(
+        !FindTranslationalStretchInsideSpatialSupport({spatial, explicit_patch}, {box}, 3));
+  }
 }
 
 }  // namespace palace

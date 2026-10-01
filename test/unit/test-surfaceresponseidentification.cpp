@@ -3437,3 +3437,172 @@ TEST_CASE("SurfaceResponseIdentificationSubTolerancePortions",
     CHECK(found);
   }
 }
+
+TEST_CASE("SurfaceResponseIdentificationStackPieceInsideCluster",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Supervisor decision 224 (the S1p 41-edge loop end): a maximal contiguous stretch of
+  // pair / stack claims along a chain bounded at BOTH ends by claimed intervals of ONE
+  // cluster and shorter than 2R is absorbed by that cluster — the one exception to "pairs /
+  // stacks are never absorbed" (the spatial coupon's volume and the stack's translational
+  // patches would otherwise correct the same surface twice). Reproducer: a square loop
+  // wire (2 um) attached to the left ground around a hole, with a ground edge 2 um to the
+  // right of its right side, so that the loop's right side and the ground edge form a
+  // 3-edge stack (0 / 2 / 4 um) between the loop's top and bottom corner clusters; the hole
+  // is short enough for the two corner groups to be ONE cluster and for the stack stretch
+  // between its claims to be shorter than 2R.
+  const double R = 2.0;
+  auto Layout = [&](double half_hole)
+  {
+    // A free square ring wire (outer x in [-2, 8], |y| <= half_hole + 2; hole x in [0, 6],
+    // |y| < half_hole, clockwise = metal outside), a straight ground edge at x = 10 and a
+    // serrated ground to the left (teeth 1 um wide every 2 um reaching x = -3.5, 1.5 um
+    // from the ring): the teeth's corners are events all along the ring's left side, so
+    // the ring's top and bottom corner groups are ONE cluster that wraps around the loop,
+    // while the ring's right side (edges x = 6 / 8) and the ground edge x = 10.5 form a
+    // 3-edge stack (offsets 0 / 1 / 2.25 R) between that cluster's claims.
+    const double h = half_hole, H = half_hole + 2.0;
+    std::vector<Point2> left = {{-20.0, -20.0}, {-4.0, -20.0}};
+    for (double y = -H - 1.0; y < H + 1.0; y += 2.0)
+    {
+      left.push_back({-4.0, y});
+      left.push_back({-3.5, y});
+      left.push_back({-3.5, y + 1.0});
+      left.push_back({-4.0, y + 1.0});
+    }
+    left.push_back({-4.0, 20.0});
+    left.push_back({-20.0, 20.0});
+    std::vector<Point2> ring = {{-2.0, -H}, {8.0, -H}, {8.0, H}, {-2.0, H}};
+    std::vector<Point2> hole = {{0.0, -h}, {0.0, h}, {6.0, h}, {6.0, -h}};
+    // The ground edge at x = 10.5: 2.5 um from the ring (4.5 um from the hole edge, clear
+    // of the exactly-2R knife-edge a ground at x = 10 would sit on).
+    std::vector<Point2> ground = Rectangle(10.5, -20.0, 20.0, 20.0);
+    return MakeInput({{left, 0, 1.0}, {ring, 0, 1.0}, {hole, 0, 1.0}, {ground, 0, 1.0}}, R);
+  };
+  // The stack length on the three lead edges between the cluster's claims (x = 6 / 8 /
+  // 10.5), the clusters, and whether every lead-edge portion between |y| < half_hole - 2
+  // belongs to the single cluster.
+  struct Reading
+  {
+    int clusters = 0;
+    double stack_length = 0.0;
+    std::size_t stack_features = 0;
+    bool leads_owned_by_cluster = true;
+  };
+  auto Read = [&](const IdentificationInput &input, const IdentificationResult &result,
+                  double half_hole)
+  {
+    Reading reading;
+    for (const auto &feature : result.features)
+    {
+      if (feature.type == "SpatialEdgeCluster")
+      {
+        reading.clusters++;
+      }
+      else if (feature.type == "ParallelEdgeCluster")
+      {
+        reading.stack_features++;
+        reading.stack_length += feature.length;
+      }
+      for (const auto &portion : feature.portions)
+      {
+        const auto &segment = input.segments[portion.segment];
+        const bool lead_edge = std::abs(segment.p0[0] - segment.p1[0]) < 1.0e-9 &&
+                               (std::abs(segment.p0[0] - 6.0) < 1.0e-9 ||
+                                std::abs(segment.p0[0] - 8.0) < 1.0e-9 ||
+                                std::abs(segment.p0[0] - 10.5) < 1.0e-9);
+        if (lead_edge && std::abs(segment.p0[1]) < half_hole - 2.0 &&
+            std::abs(segment.p1[1]) < half_hole - 2.0 &&
+            feature.type != "SpatialEdgeCluster")
+        {
+          reading.leads_owned_by_cluster = false;
+        }
+      }
+    }
+    return reading;
+  };
+  SECTION("a stack stretch shorter than 2R between the claims of one cluster is absorbed")
+  {
+    // half_hole 7: the cluster's claims leave a 3.07 um stretch (1.54 R) of the 3-edge
+    // stack on every lead; one cluster bounds it on both sides. Before decision 224 the
+    // stretch stayed a ParallelEdgeCluster (9.2 um over the three edges) inside the
+    // cluster's extent; now the cluster owns the leads entirely.
+    const auto input = Layout(7.0);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    CHECK(SubTolerancePortions(input, result).empty());
+    const Reading reading = Read(input, result, 7.0);
+    CHECK(reading.clusters == 1);
+    CHECK(reading.stack_features == 0);
+    CHECK(reading.leads_owned_by_cluster);
+    // Pass 1 absorbs the one stretch already bounded by the cluster's claims at both ends
+    // (the ring edge x = 8, 3.0718 um); the stack recomposed without it leaves the hole
+    // edge x = 6 and the ground edge x = 10.5 (4.5 um apart: no pair) as single-edge
+    // remainders, which the ordinary extension absorbs in pass 2.
+    CHECK(result.extension.translational_pieces == 1);
+    CHECK_THAT(result.extension.translational_length, WithinAbs(3.0718, 0.001));
+    CHECK_THAT(result.extension.translational_max_length, WithinAbs(3.0718, 0.001));
+    CHECK(result.extension.passes >= 2);
+    // The stretch is cut into its three runs' intervals, all into the one cluster: its
+    // portions on the leads are contiguous stretches from the top claim to the bottom one.
+    for (const auto &feature : result.features)
+    {
+      if (feature.type != "SpatialEdgeCluster")
+      {
+        continue;
+      }
+      std::map<int, std::set<int>> stretches_on_lead;
+      for (const auto &portion : feature.portions)
+      {
+        const auto &segment = input.segments[portion.segment];
+        if (std::abs(segment.p0[0] - segment.p1[0]) < 1.0e-9 &&
+            (std::abs(segment.p0[0] - 6.0) < 1.0e-9 ||
+             std::abs(segment.p0[0] - 8.0) < 1.0e-9))
+        {
+          stretches_on_lead[static_cast<int>(std::lround(segment.p0[0]))].insert(
+              portion.stretch);
+        }
+      }
+      REQUIRE(stretches_on_lead.size() == 2);
+      for (const auto &[x, stretches] : stretches_on_lead)
+      {
+        INFO("lead x = " << x);
+        CHECK(stretches.size() == 1);
+      }
+    }
+  }
+  SECTION("a stretch of 2R or more between the claims of one cluster stays with the stack")
+  {
+    // half_hole 9: a 7.07 um stretch (3.54 R) on every lead; the identification leaves it
+    // to the stack (the placement's ownership check judges it against the coupon volume).
+    const auto input = Layout(9.0);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    const Reading reading = Read(input, result, 9.0);
+    CHECK(reading.clusters == 1);
+    CHECK(reading.stack_features >= 1);
+    CHECK_THAT(reading.stack_length, WithinAbs(3.0 * 7.0718, 0.01));
+    CHECK(!reading.leads_owned_by_cluster);
+    CHECK(result.extension.translational_pieces == 0);
+  }
+  SECTION("a stretch between the claims of two different clusters stays with the stack")
+  {
+    // The ring attached to a plain left ground (no teeth): the top and bottom corner groups
+    // are two clusters, and the 1.07 um stretch between their claims is bounded by claims
+    // of DIFFERENT clusters: not absorbed (half_hole 6).
+    const double h = 6.0, H = 8.0;
+    std::vector<Point2> metal = {{-20.0, -20.0}, {-2.0, -20.0}, {-2.0, -H},
+                                 {8.0, -H},      {8.0, H},      {-2.0, H},
+                                 {-2.0, 20.0},   {-20.0, 20.0}};
+    std::vector<Point2> hole = {{0.0, -h}, {0.0, h}, {6.0, h}, {6.0, -h}};
+    const auto input = MakeInput(
+        {{metal, 0, 1.0}, {hole, 0, 1.0}, {Rectangle(10.5, -20.0, 20.0, 20.0), 0, 1.0}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    const Reading reading = Read(input, result, h);
+    CHECK(reading.clusters == 2);
+    CHECK(reading.stack_features >= 1);
+    CHECK(reading.stack_length > 3.0);
+    CHECK(result.extension.translational_pieces == 0);
+  }
+}
