@@ -131,6 +131,38 @@ def requirement(topology, count, length, geometry, status="Exact", **extra):
     return entry
 
 
+def subdivide_closed_polygon(points, spacing):
+    """Collinear vertices inserted on every edge of a closed polygon: pieces of at most `spacing`."""
+    out = []
+    for i, a in enumerate(points):
+        b = points[(i + 1) % len(points)]
+        pieces = max(1, int(math.ceil(np.linalg.norm(b - a) / spacing - 1.0e-9)))
+        out.extend(a + (b - a) * k / pieces for k in range(pieces))
+    return out
+
+
+def closed_metal_perimeter(points, R):
+    """One closed PEC / MA chain in the plane z = 0 through `points` (counter-clockwise, metal inside), vertices classified."""
+    vertices = [P.PerimeterVertex(point=np.array([p[0], p[1], 0.0])) for p in points]
+    edges = []
+    n = len(points)
+    for i in range(n):
+        j = (i + 1) % n
+        d = vertices[j].point - vertices[i].point
+        edges.append(P.PerimeterEdge(vertices=(i, j), length=float(np.linalg.norm(d)), attributes=(5,), kind="PHYSICAL", conductors=("PEC",), interfaces=((0, "MA"),), inward=np.array([-d[1], d[0], 0.0]) / np.linalg.norm(d), chain=0))
+        vertices[i].edges.append(i)
+        vertices[j].edges.append(i)
+    perimeter = P.Perimeter(vertices=vertices, edges=edges, process_normal=np.array([0.0, 0.0, 1.0]), planes=[0.0], chains=1)
+    P.classify_vertices(perimeter, R)
+    return perimeter
+
+
+def arc_reading(points, R):
+    """The mirror's arc set of the closed polygon as sorted (radius, turn, joints, rounded) tuples."""
+    arcs = P.arc_groups(closed_metal_perimeter(points, R), R)
+    return sorted((round(a["Radius"], 6), round(a["TurnDegrees"], 6), len(a["Joints"]), a["Rounded"]) for a in arcs)
+
+
 class PerimeterTest(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -359,40 +391,47 @@ class PerimeterTest(unittest.TestCase):
             left = [p + h * n for p, n in zip(centre_line, normals)]
             return right + left[::-1]  # counter-clockwise
 
-        def subdivide(points, spacing):
-            out = []
-            for i, a in enumerate(points):
-                b = points[(i + 1) % len(points)]
-                pieces = max(1, int(math.ceil(np.linalg.norm(b - a) / spacing - 1.0e-9)))
-                out.extend(a + (b - a) * k / pieces for k in range(pieces))
-            return out
-
-        def closed_perimeter(points):
-            vertices = [P.PerimeterVertex(point=np.array([p[0], p[1], 0.0])) for p in points]
-            edges = []
-            n = len(points)
-            for i in range(n):
-                j = (i + 1) % n
-                d = vertices[j].point - vertices[i].point
-                edges.append(P.PerimeterEdge(vertices=(i, j), length=float(np.linalg.norm(d)), attributes=(5,), kind="PHYSICAL", conductors=("PEC",), interfaces=((0, "MA"),), inward=np.array([-d[1], d[0], 0.0]) / np.linalg.norm(d), chain=0))
-                vertices[i].edges.append(i)
-                vertices[j].edges.append(i)
-            perimeter = P.Perimeter(vertices=vertices, edges=edges, process_normal=np.array([0.0, 0.0, 1.0]), planes=[0.0], chains=1)
-            P.classify_vertices(perimeter, R)
-            return perimeter
-
         def reading(points):
-            arcs = P.arc_groups(closed_perimeter(points), R)
-            return sorted((round(a["Radius"], 6), round(a["TurnDegrees"], 6), len(a["Joints"]), a["Rounded"]) for a in arcs)
+            return arc_reading(points, R)
 
         design = kinked_bar(8.0, 120.0, [6.0, 7.0, 8.0, 7.0, 6.0, 10.0, 6.0, 7.0, 8.0, 7.0], 6.0, 20.0)
         plain = reading(design)
         self.assertEqual([(r, j, rounded) for r, _, j, rounded in plain], [(116.0, 9, False), (124.0, 9, False)], msg=str(plain))
-        self.assertEqual(reading(subdivide(design, 4.0)), plain)
+        self.assertEqual(reading(subdivide_closed_polygon(design, 4.0)), plain)
         for start in range(1, len(design)):
             rotated = design[start:] + design[:start]
             self.assertEqual(reading(rotated), plain, msg="start vertex %d" % start)
-            self.assertEqual(reading(subdivide(rotated, 4.0)), plain, msg="start vertex %d subdivided" % start)
+            self.assertEqual(reading(subdivide_closed_polygon(rotated, 4.0)), plain, msg="start vertex %d subdivided" % start)
+
+    def test_arc_groups_coarse_pad_collinear_subdivision(self):
+        # Decision 212 fix A alone (the C4 class of the unit section "coarse polygon arcs read
+        # alike joint-only and with subdivided chords"): a round pad of `chords` equal chords
+        # with a 5 um lead attached at the top; the attach joints turn above the 50 deg cap, so
+        # the bend is the least-squares fit over the interior joints and its end arms are the
+        # first and last chords of the circle. Joint-only the arm's far vertex (the attach
+        # joint) is on the circle; subdivided at 4 um the mirror read the far end of the mesh
+        # edge instead, 0.8 um off the circle, and the pads lost their bends (main: [] for the
+        # r 23 / 36 / 80 pads). The reading is the <= 180 deg cutting of the current rule:
+        # r 23 um x 8 chords -> one 4-joint bend (DS-CTX-003 C4), the ground's r 36 x 9 -> two
+        # 4-joint bends; the finely chorded r 95.5 x 60 pad (tangent bends) is the control.
+        R = 1.9
+
+        def round_pad_with_lead(rho, chords, w, L):
+            theta0 = math.atan2(math.sqrt(rho * rho - w * w), w)
+            y0 = math.sqrt(rho * rho - w * w)
+            a0, a1 = math.pi - theta0, 2.0 * math.pi + theta0
+            points = [np.array([w, y0 + L]), np.array([-w, y0 + L])]
+            for k in range(chords + 1):
+                angle = a0 + (a1 - a0) * k / chords
+                points.append(np.array([rho * math.cos(angle), rho * math.sin(angle)]))
+            return points  # counter-clockwise
+
+        for rho, chords, bends in ((23.0, 8, [(23.0, 4)]), (36.0, 9, [(36.0, 4), (36.0, 4)]), (80.0, 8, [(80.0, 4)]), (95.5, 60, [(95.5, 29), (95.5, 30)])):
+            design = round_pad_with_lead(rho, chords, 2.5, 60.0)
+            plain = arc_reading(design, R)
+            self.assertEqual([(r, j) for r, _, j, rounded in plain if not rounded], bends, msg="pad %g x %d: %s" % (rho, chords, plain))
+            self.assertEqual(arc_reading(subdivide_closed_polygon(design, 4.0), R), plain, msg="pad %g x %d subdivided" % (rho, chords))
+            self.assertEqual(arc_reading(subdivide_closed_polygon(design, 1.0), R), plain, msg="pad %g x %d subdivided at 1 um" % (rho, chords))
 
 
 class ManifestTest(unittest.TestCase):

@@ -4083,7 +4083,10 @@ void Identifier::DetectArcs()
     // scans start at the joint after the longest piece (ties: the first such joint from the
     // seed vertex, which the canonical numbering makes coordinate-dependent) and from_end
     // is 0 for every arc; a different start point of a loop is not covered by the
-    // two-direction scan (recorded rule; rotation variant of the mirror gate).
+    // two-direction scan: the exposure (a loop whose longest piece is a chord inside a
+    // bend) is closed for bends of four or more joints by the first-joint absorbability
+    // clause of the end-joint test (decision 213; rotation variants of the mirror and
+    // subdivision gates).
     Point3D path_centroid{};
     std::vector<double> path_position(path_vertices.size(), 0.0);
     {
