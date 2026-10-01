@@ -3706,6 +3706,7 @@ void Identifier::DetectArcs()
         double turn = 0.0;
         double sagitta = 0.0;  // the largest chord sagitta
       };
+      std::vector<bool> consumed(m, false);
       auto TryFit = [&](std::size_t i, std::size_t count) -> Fit
       {
         Fit fit;
@@ -3815,43 +3816,101 @@ void Identifier::DetectArcs()
         // vertex on the circle within the fit tolerance: an arc starting at a corner that
         // lies on its circle, the sharp end of a rounded slot; the corner stays a corner,
         // the arc starts at its next joint). A lead meeting a circular arc at a 90 deg
-        // corner is neither and the corner is never absorbed as a bend vertex.
-        auto EndJointConsistent = [&](const Joint &end, const Point3D &arm_direction,
-                                      std::size_t neighbour_vertex, std::size_t arm_segment,
-                                      const Point3D &center, double radius,
-                                      double arm_piece, double first_chord)
+        // corner is neither and the corner is never absorbed as a bend vertex. The arm's
+        // far vertex is the far end of its straight PIECE (the neighbouring joint, or the
+        // path end): the rigid-run joint, not the far end of the adjacent mesh segment —
+        // inserting collinear vertices on the chord is a geometric no-op and must not
+        // change the reading (decision 212; VALIDATION-PLAN (h)-8: a coarse round pad whose
+        // lead attaches through joints above the turn cap read a bend over its interior
+        // joints on the chip mesh, one mesh edge per design chord, and sharp corners on a
+        // thin window mesh subdividing the same chords at 4 um, whose first sub-vertex lies
+        // off the circle by most of the chord sagitta).
+        auto ArmFarVertex = [&](std::size_t j, bool before)
+        {
+          if (before)
+          {
+            return j == 0 && !closed ? path_vertices.front()
+                                     : joints[(j + m - 1) % m].vertex;
+          }
+          return j + 1 == m && !closed ? path_vertices.back() : joints[(j + 1) % m].vertex;
+        };
+        // The kink between an arm and the circle's tangent at an end joint is noise under
+        // the geometric joint rule on the shorter of the arm piece and the first chord (a
+        // tangent arm); at_start orients the circle tangent along the path (toward the
+        // arc's interior at the first joint, away from it at the last; the arm direction is
+        // the path direction there in both cases).
+        auto ArmKinkIsNoise = [&](const Joint &end, const Point3D &arm_direction,
+                                  std::size_t neighbour_vertex, bool at_start,
+                                  const Point3D &center, double arm_piece,
+                                  double first_chord)
         {
           const Point3D at = input.vertices[end.vertex].coordinate;
           Point3D circle_tangent = Normalize(Cross(normal, Sub(at, center)));
           const Point3D toward_neighbour =
               Sub(input.vertices[neighbour_vertex].coordinate, at);
           const double along = Dot(circle_tangent, toward_neighbour);
-          // Oriented along the path: toward the arc's interior at the first joint, away
-          // from it at the last (the arm direction is the path direction there in both
-          // cases).
-          if ((&end == &first) != (along > 0.0))
+          if (at_start != (along > 0.0))
           {
             circle_tangent = Scale(-1.0, circle_tangent);
           }
           const double kink =
               std::acos(std::clamp(Dot(arm_direction, circle_tangent), -1.0, 1.0));
-          if (JointIsNoise(kink, std::min(arm_piece, first_chord), noise_sagitta))
-          {
-            return true;
-          }
-          const Point3D far = input.vertices[Other(arm_segment, end.vertex)].coordinate;
+          return JointIsNoise(kink, std::min(arm_piece, first_chord), noise_sagitta);
+        };
+        // The arm is a chord of the circle: its far vertex lies on it within the fit
+        // tolerance.
+        auto ArmFarOnCircle =
+            [&](std::size_t arm_far_vertex, const Point3D &center, double radius)
+        {
+          const Point3D far = input.vertices[arm_far_vertex].coordinate;
           return quantizer.Less(std::abs(Distance(far, center) - radius), fit_tolerance);
+        };
+        // A chord arm at the FIRST joint whose far joint p is itself absorbable —
+        // unconsumed, the same sign, below the turn cap, and its own arm consistent with
+        // the circle (tangent or a chord; p lies on the circle: that is the chord-arm
+        // clause itself) — is no arm: the range is not maximal at its start. Without this a
+        // scan starting INSIDE an arc (a closed loop whose longest piece is a chord of the
+        // arc, the recorded exposure of the closed-loop start rule) accepted a sub-arc
+        // anchored at the loop start and chopped the arc there (joint-only meshes; on a
+        // subdivided mesh the sub-vertex failed the former mesh-segment test and the whole
+        // arc was found from its real start: the two discretisations disagreed). The scan
+        // reaches the arc's real start later (cyclically on a loop). A corner on the circle
+        // whose own arm is neither tangent nor a chord (a lead meeting a round pad at a
+        // sub-cap angle) is not absorbable: the arc still starts at its next joint and the
+        // corner stays a corner. At the LAST joint the next joint is a chord arm as before
+        // (a polyline turning more than 180 deg is cut there under the current rule).
+        auto FirstArmJointAbsorbable =
+            [&](std::size_t j, const Point3D &center, double radius)
+        {
+          if (j == 0 && !closed)
+          {
+            return false;
+          }
+          const std::size_t p = (j + m - 1) % m;
+          return !consumed[p] && joints[p].sign == joints[j].sign &&
+                 JointTurnBelowCap(joints[p]) &&
+                 (ArmKinkIsNoise(joints[p], joints[p].in, joints[j].vertex, true, center,
+                                 PieceBefore(p), PieceAfter(p)) ||
+                  ArmFarOnCircle(ArmFarVertex(p, true), center, radius));
+        };
+        auto FirstJointConsistent = [&](std::size_t j, const Point3D &center, double radius)
+        {
+          return ArmKinkIsNoise(joints[j], joints[j].in, range_vertices[1], true, center,
+                                PieceBefore(j), PieceAfter(j)) ||
+                 (!FirstArmJointAbsorbable(j, center, radius) &&
+                  ArmFarOnCircle(ArmFarVertex(j, true), center, radius));
+        };
+        auto LastJointConsistent = [&](std::size_t j, const Point3D &center, double radius)
+        {
+          return ArmKinkIsNoise(joints[j], joints[j].out, range_vertices[count - 2], false,
+                                center, PieceAfter(j), PieceBefore(j)) ||
+                 ArmFarOnCircle(ArmFarVertex(j, false), center, radius);
         };
         if (LeastSquaresCircle(range_vertices, normal, first.in, center, radius) &&
             !quantizer.Less(radius, R) && JointsOnCircle(range_vertices, center, radius) &&
             ChordsResolved(i, count, radius, false) &&
-            EndJointConsistent(first, first.in, range_vertices[1],
-                               path_segments[(first.index + n - 1) % n], center, radius,
-                               PieceBefore(i), PieceAfter(i)) &&
-            EndJointConsistent(last, last.out, range_vertices[count - 2],
-                               path_segments[last.index % n], center, radius,
-                               PieceAfter((i + count - 1) % m),
-                               PieceBefore((i + count - 1) % m)))
+            FirstJointConsistent(i, center, radius) &&
+            LastJointConsistent((i + count - 1) % m, center, radius))
         {
           const double sagitta = MaxChordSagitta(range_vertices, radius, false);
           if (std::isfinite(sagitta))
@@ -3867,7 +3926,6 @@ void Identifier::DetectArcs()
         }
         return fit;
       };
-      std::vector<bool> consumed(m, false);
       // A closed path whose joints all turn one way through 360 deg and lie on one circle
       // (a round pad, hole or via) is ONE arc of total turn 2 pi: a bend of exact radius
       // whatever its radius (the rounded-corner semantics of arms meeting through a fillet
@@ -4025,7 +4083,10 @@ void Identifier::DetectArcs()
     // scans start at the joint after the longest piece (ties: the first such joint from the
     // seed vertex, which the canonical numbering makes coordinate-dependent) and from_end
     // is 0 for every arc; a different start point of a loop is not covered by the
-    // two-direction scan (recorded rule; rotation variant of the mirror gate).
+    // two-direction scan: the exposure (a loop whose longest piece is a chord inside a
+    // bend) is closed for bends of four or more joints by the first-joint absorbability
+    // clause of the end-joint test (decision 213; rotation variants of the mirror and
+    // subdivision gates).
     Point3D path_centroid{};
     std::vector<double> path_position(path_vertices.size(), 0.0);
     {

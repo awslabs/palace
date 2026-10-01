@@ -51,6 +51,42 @@ class RefineTest(unittest.TestCase):
             self.assertEqual(len([e for e in after.edges if e.kind == "PHYSICAL"]), 2 * len([e for e in before.edges if e.kind == "PHYSICAL"]))
             self.assertEqual(sum(1 for v in after.vertices if v.physical_kind == "CORNER"), sum(1 for v in before.vertices if v.physical_kind == "CORNER"))
             self.assertEqual(after.chains, before.chains)
+    def test_uneven_fraction_keeps_volume_orientation_and_perimeter(self):
+        # The collinear-subdivision invariance gate's second spacing (decision 212): the new
+        # edge node at 0.37 of every edge (from the lower-indexed node). The children are
+        # valid (positive volume: the inner octahedron is convex for every fraction), the
+        # volume and the perimeter lengths are conserved, every new perimeter vertex is a
+        # collinear REGULAR vertex (corner count and chains unchanged) and the new nodes lie
+        # at the requested fraction.
+        nodes, elements, names = island_mesh()
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "m.msh2")
+            refined = os.path.join(directory, "r.msh2")
+            write_msh2(source, nodes, elements, names, True)
+            counts = R.refine_file(source, refined, levels=1, fraction=0.37)
+            coarse = read_msh2(source)
+            fine = read_msh2(refined)
+            self.assertEqual(counts["Elements"][4], 8 * len(coarse.physical_tags(4)))
+            fine_volume = tet_volumes(fine.coordinates, fine.corner_indices(4))
+            self.assertTrue(np.all(fine_volume > 0.0))
+            self.assertAlmostEqual(np.abs(tet_volumes(coarse.coordinates, coarse.corner_indices(4))).sum(), fine_volume.sum())
+            # A new node of a coarse edge (a, b), a < b, lies at a + 0.37 (b - a).
+            n = len(coarse.coordinates)
+            edges = set()
+            for element_type in coarse.elements:
+                for element in coarse.corner_indices(element_type):
+                    edges |= {tuple(sorted((int(element[i]), int(element[j])))) for i in range(len(element)) for j in range(i + 1, len(element))}
+            expected = {tuple(np.round(0.63 * coarse.coordinates[a] + 0.37 * coarse.coordinates[b], 9)) for a, b in edges}
+            new_nodes = {tuple(np.round(p, 9)) for p in fine.coordinates[n:]}
+            self.assertEqual(new_nodes, expected)
+            before = P.extract_perimeter(coarse, CONFIG, radius=0.5)
+            after = P.extract_perimeter(fine, CONFIG, radius=0.5)
+            for kind in ("PHYSICAL", "TRUNCATION", "NONPLANAR", "CROSS_LAYER", "NONMANIFOLD"):
+                self.assertAlmostEqual(before.length(kind), after.length(kind), msg=kind)
+            self.assertEqual(sum(1 for v in after.vertices if v.physical_kind == "CORNER"), sum(1 for v in before.vertices if v.physical_kind == "CORNER"))
+            self.assertEqual(after.chains, before.chains)
+        with self.assertRaises(ValueError):
+            R.refine_once(np.zeros((0, 3)), {}, fraction=1.0)
 
 
 if __name__ == "__main__":

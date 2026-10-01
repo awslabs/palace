@@ -559,6 +559,67 @@ def arc_cluster_suite(corner_ratios=ARC_CLUSTER_CORNER_RATIOS, corner_chords=ARC
     return layouts
 
 
+def subdivision_suite():
+    """Collinear-subdivision invariance (supervisor decisions 212 / 213, VALIDATION-PLAN (h)-8):
+    layouts meshed JOINT-ONLY (lc_fine above the longest chord, so every design chord is one
+    mesh edge, as the chip meshes) whose reading depended on the chord subdivision before the
+    fix. ``subdiv-pad-r*-c*``: a round pad of radius r with a 5 um lead attached through two
+    joints above the 50 deg cap (DS-CTX-003 C4: r 23 um in 8 chords of 43 deg, the ground's
+    r 36 hole in 9 chords): the interior joints are least-squares bends whose end arms are the
+    first / last chords. ``subdiv-bar-tangent-r250``: an 8 um bar with 6 um tangent leads along
+    a 250 um bend of six 5 deg chords (the loop's longest pieces: the closed-loop scan starts
+    inside the arc). ``subdiv-bar-kinked-midarc``: the same bar whose leads meet a 120 um bend
+    of ten unequal chords at a 20 deg kink, the longest chord mid-arc (both scan directions
+    started inside it). The gate (subdivision_gate.py) re-identifies every mesh with every
+    mesh edge subdivided (two spacings) and rotated (another loop start) -> identical content."""
+    layouts = []
+
+    def pad_with_lead(rho, chords, half_width=2.5, lead=60.0):
+        y0 = math.sqrt(rho * rho - half_width * half_width)
+        theta0 = math.atan2(y0, half_width)
+        a0, a1 = math.pi - theta0, 2.0 * math.pi + theta0
+        points = [(half_width, y0 + lead), (-half_width, y0 + lead)]
+        points += [(rho * math.cos(a0 + (a1 - a0) * k / chords), rho * math.sin(a0 + (a1 - a0) * k / chords)) for k in range(chords + 1)]
+        return loop(points)
+
+    def recentred(points):
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        cx, cy = 0.5 * (min(xs) + max(xs)), 0.5 * (min(ys) + max(ys))
+        return loop([(x - cx, y - cy) for x, y in points]), float(0.5 * (max(xs) - min(xs))), float(0.5 * (max(ys) - min(ys)))
+
+    def kinked_bar(width, radius, chord_degrees, lead, kink):
+        angles = [0.0]
+        for c in chord_degrees:
+            angles.append(angles[-1] + math.radians(c))
+        a_in, a_out = -math.radians(kink), angles[-1] + math.radians(kink)
+        centreline = [np.array([-lead * math.cos(a_in), -lead * math.sin(a_in)])]
+        normals = [np.array([-math.sin(a_in), math.cos(a_in)])]
+        for a in angles:
+            centreline.append(np.array([radius * math.sin(a), radius - radius * math.cos(a)]))
+            normals.append(np.array([-math.sin(a), math.cos(a)]))
+        centreline.append(centreline[-1] + lead * np.array([math.cos(a_out), math.sin(a_out)]))
+        normals.append(np.array([-math.sin(a_out), math.cos(a_out)]))
+        h = 0.5 * width
+        right = [(float(q[0]), float(q[1])) for q in (p - h * n for p, n in zip(centreline, normals))]
+        left = [(float(q[0]), float(q[1])) for q in (p + h * n for p, n in zip(centreline, normals))]
+        return right + left[::-1]
+
+    lc = 30.0  # above every chord (25.1 um at most): one mesh edge per design chord
+    for rho, chords in ((23.0, 8), (36.0, 9)):
+        pad = pad_with_lead(rho, chords)
+        layouts.append(layout(f"subdiv-pad-r{rho:g}-c{chords}", [sheet(GROUND, pad)], half_x=rho + 30.0, half_y=rho + 90.0, lc_fine=lc, lc_far=2.0 * lc, notes=f"round pad of radius {rho:g} um in {chords} chords with a 5 um lead (attach joints above the cap): least-squares bends over the interior joints, chord arms"))
+        layouts[-1]["Subdivision"] = {"Family": "pad", "Radius": rho, "Chords": chords}
+    bar = arc_bar(8.0, 250.0, 30.0, 5.0, lead=6.0)
+    bar_loop, hx, hy = recentred(bar["Points"])
+    layouts.append(layout("subdiv-bar-tangent-r250", [sheet(GROUND, bar_loop)], half_x=hx + 30.0, half_y=hy + 30.0, lc_fine=lc, lc_far=2.0 * lc, notes="8 um bar, 6 um tangent leads, 250 um bend of six 5 deg chords (the longest pieces): the loop scan starts inside the arc"))
+    layouts[-1]["Subdivision"] = {"Family": "bar", "Radius": 250.0, "Chords": 6}
+    kinked_loop, hx, hy = recentred(kinked_bar(8.0, 120.0, [6.0, 7.0, 8.0, 7.0, 6.0, 10.0, 6.0, 7.0, 8.0, 7.0], 6.0, 20.0))
+    layouts.append(layout("subdiv-bar-kinked-midarc", [sheet(GROUND, kinked_loop)], half_x=hx + 30.0, half_y=hy + 30.0, lc_fine=lc, lc_far=2.0 * lc, notes="8 um bar, 6 um leads at a 20 deg kink, 120 um bend of ten unequal chords with the longest mid-arc: both scan directions started inside it"))
+    layouts[-1]["Subdivision"] = {"Family": "bar", "Radius": 120.0, "Chords": 10}
+    return layouts
+
+
 def decision_82_suite():
     """Oracle cases of the decision-82 rules with their expectation stated before running
     (`Expected`, checked by check_expected): (1) one interaction distance and no cross-plane

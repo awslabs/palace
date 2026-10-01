@@ -10,6 +10,8 @@
 #include <optional>
 #include <set>
 #include <sstream>
+#include <string>
+#include <tuple>
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -2596,5 +2598,300 @@ TEST_CASE("SurfaceResponseIdentificationDecision203ExactStretches",
       CHECK(feature.length >= 2.0 * (length - 4.0 * R));
     }
     CHECK(strips == 1);
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationCollinearSubdivision",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Collinear-subdivision invariance (decision 212; VALIDATION-PLAN (h)-8): inserting
+  // collinear vertices on a chord is a geometric no-op, so the identification must read a
+  // joint-only polyline and the same polyline with every chord subdivided (a thin window
+  // mesh at LC 4 um, a second-order mid-edge node) identically, on the CURRENT arc / corner
+  // rule. The defect: a coarse round pad with a straight lead (DS-CTX-003 C4: r 23 um, 8
+  // chords of 43 deg, sagitta 0.86 R; the ground's r 36 hole, 9 chords of 33 deg) read a
+  // Bend over its interior joints on the chip mesh (one mesh edge per chord: the
+  // decision-122 coarse-chord exception) and sharp corners on the thin window mesh. The
+  // lead attaches through two joints above the 50 deg cap, so the bend is the least-squares
+  // fit over the interior joints and its end arms are the first and last chords of the
+  // circle; their end-joint test read the arm's far vertex off the MESH SEGMENT (on the
+  // circle for the design chord, off it for a 4 um sub-chord) instead of the far end of the
+  // arm's straight piece (the rigid-run joint).
+  const double R = 1.9;
+  // A round pad of the given radius with a vertical lead of width 2 w and length L
+  // attached at the top (counter-clockwise, metal inside): the arc between the lead's
+  // attach points in `chords` equal chords (the chip's design polygon).
+  auto RoundPadWithLead = [](double rho, int chords, double w, double L)
+  {
+    const double theta0 = std::atan2(std::sqrt(rho * rho - w * w), w);
+    const double y0 = std::sqrt(rho * rho - w * w);
+    const double a0 = std::acos(-1.0) - theta0, a1 = 2.0 * std::acos(-1.0) + theta0;
+    std::vector<Point2> points = {{w, y0 + L}, {-w, y0 + L}};
+    for (int k = 0; k <= chords; k++)
+    {
+      const double angle = a0 + (a1 - a0) * k / chords;
+      points.push_back({rho * std::cos(angle), rho * std::sin(angle)});
+    }
+    return points;
+  };
+  // Collinear vertices inserted on every chord: uniform pieces of at most `spacing`, or an
+  // irregular pattern (fractions of the chord, rotated from chord to chord).
+  auto Subdivide = [](const std::vector<Point2> &points, double spacing)
+  {
+    std::vector<Point2> result;
+    const std::size_t n = points.size();
+    for (std::size_t i = 0; i < n; i++)
+    {
+      const Point2 a = points[i], b = points[(i + 1) % n];
+      const double length = std::hypot(b[0] - a[0], b[1] - a[1]);
+      const int pieces =
+          std::max(1, static_cast<int>(std::ceil(length / spacing - 1.0e-9)));
+      for (int k = 0; k < pieces; k++)
+      {
+        const double s = static_cast<double>(k) / pieces;
+        result.push_back({a[0] + (b[0] - a[0]) * s, a[1] + (b[1] - a[1]) * s});
+      }
+    }
+    return result;
+  };
+  auto SubdivideIrregularly = [](const std::vector<Point2> &points)
+  {
+    const std::array<double, 4> pattern = {0.11, 0.37, 0.58, 0.83};
+    std::vector<Point2> result;
+    const std::size_t n = points.size();
+    for (std::size_t i = 0; i < n; i++)
+    {
+      const Point2 a = points[i], b = points[(i + 1) % n];
+      result.push_back(a);
+      for (std::size_t k = 0; k < pattern.size(); k++)
+      {
+        const double s = pattern[(k + i) % pattern.size()];
+        result.push_back({a[0] + (b[0] - a[0]) * s, a[1] + (b[1] - a[1]) * s});
+      }
+      // The pattern is rotated per chord, so sort the inserted vertices along the chord.
+      std::sort(result.end() - static_cast<std::ptrdiff_t>(pattern.size()), result.end(),
+                [&](const Point2 &p, const Point2 &q)
+                {
+                  return (p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1]) <
+                         (q[0] - a[0]) * (b[0] - a[0]) + (q[1] - a[1]) * (b[1] - a[1]);
+                });
+    }
+    return result;
+  };
+  struct Reading
+  {
+    std::string digest;
+    std::map<std::pair<std::string, std::string>, double> length;    // per (type, hash)
+    std::vector<std::tuple<std::string, double, std::size_t>> arcs;  // kind, radius, joints
+    std::map<std::string, int> vertex_types;
+    int corners = 0;  // ConvexCorner / ConcaveCorner features
+  };
+  auto Read = [&](const std::vector<LoopSpec> &loops)
+  {
+    const auto input = MakeInput(loops, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    Reading reading;
+    reading.digest = result.geometry_digest;
+    for (const auto &feature : result.features)
+    {
+      reading.length[{feature.type, feature.hash}] += feature.length;
+      reading.corners += feature.type == "ConvexCorner" || feature.type == "ConcaveCorner";
+    }
+    for (const auto &arc : result.arcs)
+    {
+      reading.arcs.emplace_back(arc.kind, std::round(arc.radius / R * 1.0e6), arc.joints);
+    }
+    std::sort(reading.arcs.begin(), reading.arcs.end());
+    for (const auto &vertex : result.vertices)
+    {
+      reading.vertex_types[vertex.type]++;
+    }
+    return reading;
+  };
+  auto CheckSame = [](const Reading &a, const Reading &b)
+  {
+    CHECK(a.digest == b.digest);
+    CHECK(a.arcs == b.arcs);
+    CHECK(a.vertex_types == b.vertex_types);
+    CHECK(a.length.size() == b.length.size());
+    for (const auto &[key, length] : a.length)
+    {
+      INFO(key.first << " " << key.second);
+      CHECK(b.length.count(key) == 1);
+      if (b.length.count(key) == 1)
+      {
+        CHECK_THAT(b.length.at(key), WithinAbs(length, 1.0e-6));
+      }
+    }
+  };
+  const double joint_only = 1.0e9;  // no subdivision by MakeInput
+  SECTION("coarse polygon arcs read alike joint-only and with subdivided chords")
+  {
+    // Pads of 10-60 um chords whose interior joints turn 6-44 deg (174-136 deg corners),
+    // every chord sagitta above the 0.05 R resolution (0.07-0.86 R: the decision-122
+    // coarse-chord regime); the lead's attach joints turn above the 50 deg cap.
+    struct Pad
+    {
+      double radius;
+      int chords;
+    };
+    for (const Pad &pad : {Pad{23.0, 8}, Pad{36.0, 9}, Pad{80.0, 8}, Pad{95.5, 60}})
+    {
+      INFO("pad radius " << pad.radius << " chords " << pad.chords);
+      const auto design = RoundPadWithLead(pad.radius, pad.chords, 2.5, 60.0);
+      const Reading plain = Read({{design, 0, joint_only}});
+      // Joint-only: the interior joints form least-squares bends of the pad's exact radius
+      // (each at most 180 deg of turn under the current rule, the leftover joints corners:
+      // the reading this block preserves); the attach joints and the lead's end corners
+      // are corners.
+      REQUIRE(!plain.arcs.empty());
+      for (const auto &arc : plain.arcs)
+      {
+        CHECK(std::get<0>(arc) == "Bend");
+        CHECK(std::get<1>(arc) == std::round(pad.radius / R * 1.0e6));
+        CHECK(std::get<2>(arc) >= 4);
+      }
+      CHECK(plain.vertex_types.at("BendVertex") >= 4);
+      CHECK(plain.corners >= 4);  // the lead's two end corners and two attach joints
+      const Reading uniform = Read({{Subdivide(design, 4.0), 0, joint_only}});
+      const Reading irregular = Read({{SubdivideIrregularly(design), 0, joint_only}});
+      const Reading meshed = Read({{design, 0, 4.0}});
+      CheckSame(plain, uniform);
+      CheckSame(plain, irregular);
+      CheckSame(plain, meshed);
+    }
+  }
+  SECTION("a straight edge and a genuine sharp corner with subdivided arms")
+  {
+    // A rectangle (four 90 deg corners, straight edges), a rhombus (two 60 deg turns, two
+    // 120 deg turns) and a polygon whose side carries four sub-cap joints (20 / 25 / 30 /
+    // 20 deg on 10-30 um pieces) that are NOT concyclic (least-squares residuals 0.02-0.06
+    // um against the 1.9e-3 um fit tolerance): no arc at any discretisation; the corners
+    // stay corners and the digest, features and lengths are the same.
+    const std::vector<Point2> rhombus = {
+        {0.0, 0.0}, {30.0, -17.32}, {60.0, 0.0}, {30.0, 17.32}};
+    const std::vector<Point2> sub_cap_corners = {
+        {30.0, 0.0},        {39.3969, 3.4202}, {57.0746, 21.0979}, {60.9569, 35.5868},
+        {58.3422, 65.4726}, {-20.0, 65.4726},  {-20.0, 0.0}};
+    for (const auto &design :
+         {Rectangle(-30.0, -10.0, 30.0, 10.0), rhombus, sub_cap_corners})
+    {
+      INFO("polygon of " << design.size() << " vertices");
+      const Reading plain = Read({{design, 0, joint_only}});
+      CHECK(plain.arcs.empty());
+      CHECK(plain.vertex_types.count("BendVertex") == 0);
+      CHECK(plain.vertex_types.count("RoundedCornerVertex") == 0);
+      CHECK(plain.corners == static_cast<int>(design.size()));
+      const Reading uniform = Read({{Subdivide(design, 4.0), 0, joint_only}});
+      const Reading irregular = Read({{SubdivideIrregularly(design), 0, joint_only}});
+      CheckSame(plain, uniform);
+      CheckSame(plain, irregular);
+    }
+  }
+  SECTION("a closed loop whose longest piece is a chord inside the arc (start rule)")
+  {
+    // The closed-loop scan starts after the loop's LONGEST piece; when that piece is a
+    // chord inside a bend of four or more joints (short leads, long chords) the scan
+    // started inside the arc. Before decision 212 the least-squares sub-range anchored at
+    // that start was accepted on a joint-only mesh (its first arm, the previous chord, ends
+    // on the circle) and the arc was chopped there, while on a subdivided mesh the
+    // sub-vertex failed the mesh-segment test and the whole arc was found from its real
+    // start: the two discretisations disagreed. Rule: a chord arm whose far joint is itself
+    // absorbable is no arm (the range is not maximal at its start), so the scan passes and
+    // finds the whole arc from its real start at every discretisation and whatever the
+    // loop's start vertex. (i) a bar with TANGENT leads (6 um) along a 250 um bend of six 5
+    // deg chords (21.8 um, the longest pieces): one 7-joint tangent bend per side; (ii) a
+    // bar whose 6 um leads meet a 120 um bend of seven unequal chords (8-12 deg, 16.7-25.1
+    // um) at a 20 deg kink (below the cap, same sign; neither tangent nor a chord: not
+    // absorbable): the kink joints stay corners and the six interior joints are one
+    // least-squares bend per side; (iii) the same with ten chords whose longest lies
+    // mid-arc (both scan directions chopped it).
+    auto Rotated = [](const std::vector<Point2> &points, std::size_t start)
+    {
+      std::vector<Point2> result(points.begin() + static_cast<std::ptrdiff_t>(start),
+                                 points.end());
+      result.insert(result.end(), points.begin(),
+                    points.begin() + static_cast<std::ptrdiff_t>(start));
+      return result;
+    };
+    auto KinkedBar = [](double width, double radius,
+                        const std::vector<double> &chord_degrees, double lead,
+                        double kink_degrees)
+    {
+      const double deg = std::acos(-1.0) / 180.0;
+      std::vector<Point2> centreline, normals;
+      double angle = 0.0;  // tangent angle from +x along the left-turning arc
+      std::vector<double> angles = {0.0};
+      for (const double chord : chord_degrees)
+      {
+        angle += chord * deg;
+        angles.push_back(angle);
+      }
+      // Leads rotated by -kink from the tangents at both ends (the junction turns by kink +
+      // half the chord angle, in the arc's sense).
+      const double a_in = -kink_degrees * deg, a_out = angles.back() + kink_degrees * deg;
+      const Point2 p0 = {0.0, 0.0};
+      centreline.push_back({p0[0] - lead * std::cos(a_in), p0[1] - lead * std::sin(a_in)});
+      normals.push_back({-std::sin(a_in), std::cos(a_in)});
+      for (const double a : angles)
+      {
+        centreline.push_back({radius * std::sin(a), radius - radius * std::cos(a)});
+        normals.push_back({-std::sin(a), std::cos(a)});
+      }
+      const Point2 end = centreline.back();
+      centreline.push_back(
+          {end[0] + lead * std::cos(a_out), end[1] + lead * std::sin(a_out)});
+      normals.push_back({-std::sin(a_out), std::cos(a_out)});
+      return BarAroundCentreline(centreline, width, 0.0, normals);
+    };
+    struct Loop
+    {
+      std::string name;
+      std::vector<Point2> points;
+      double radius;
+      std::size_t joints_per_arc;
+      int bend_vertices;  // absorbed CORNER joints (a 2.5 deg tangent end joint is noise)
+      int corners;
+    };
+    const double width = 8.0;
+    for (const Loop &loop :
+         {Loop{"tangent leads", ArcBar(width, 250.0, 30.0, 5.0, 6.0), 250.0, 7, 10, 4},
+          Loop{"kinked leads",
+               KinkedBar(width, 120.0, {8.0, 10.0, 12.0, 10.0, 8.0, 10.0, 11.0}, 6.0, 20.0),
+               120.0, 6, 12, 8},
+          // The longest chord in the MIDDLE of a 9-joint bend: both scan directions start
+          // inside it and both chopped it (5 + 4 joints) before the rule.
+          Loop{"kinked leads, longest chord mid-arc",
+               KinkedBar(width, 120.0, {6.0, 7.0, 8.0, 7.0, 6.0, 10.0, 6.0, 7.0, 8.0, 7.0},
+                         6.0, 20.0),
+               120.0, 9, 18, 8}})
+    {
+      INFO(loop.name);
+      const Reading plain = Read({{loop.points, 0, joint_only}});
+      // One whole bend per side (radius +/- width / 2), all interior joints absorbed.
+      REQUIRE(plain.arcs.size() == 2);
+      for (const auto &arc : plain.arcs)
+      {
+        CHECK(std::get<0>(arc) == "Bend");
+        CHECK(std::get<2>(arc) == loop.joints_per_arc);
+      }
+      CHECK(std::get<1>(plain.arcs[0]) ==
+            std::round((loop.radius - 0.5 * width) / R * 1.0e6));
+      CHECK(std::get<1>(plain.arcs[1]) ==
+            std::round((loop.radius + 0.5 * width) / R * 1.0e6));
+      CHECK(plain.vertex_types.at("BendVertex") == loop.bend_vertices);
+      CHECK(plain.corners == loop.corners);
+      CheckSame(plain, Read({{Subdivide(loop.points, 4.0), 0, joint_only}}));
+      CheckSame(plain, Read({{SubdivideIrregularly(loop.points), 0, joint_only}}));
+      CheckSame(plain, Read({{loop.points, 0, 1.0}}));
+      // Start-vertex invariance: the loop's point list rotated to start at every vertex.
+      for (std::size_t start = 1; start < loop.points.size(); start++)
+      {
+        INFO("start vertex " << start);
+        CheckSame(plain, Read({{Rotated(loop.points, start), 0, joint_only}}));
+        CheckSame(plain, Read({{Rotated(loop.points, start), 0, 4.0}}));
+      }
+    }
   }
 }
