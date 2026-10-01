@@ -45,13 +45,13 @@ private:
   // fem/brokenspace.hpp: element DOF overrides for the element restriction (for local
   // element e, entries [override_offsets[e], override_offsets[e + 1]) give native local
   // DOF indices and their L-vector indices in the copy block), sizes, and the broken
-  // prolongation operator.
+  // prolongation matrix.
   struct BrokenData
   {
     std::vector<int> override_offsets, override_local, override_ldof;
     int vsize = 0, tsize = 0;
     HYPRE_BigInt global_vsize = 0, global_tsize = 0;
-    std::unique_ptr<Operator> P;
+    fem::BrokenProlongationMatrix P;
   };
   std::unique_ptr<BrokenData> broken;
 
@@ -100,10 +100,11 @@ public:
   // fem/brokenspace.hpp). The L-vector of the view is the L-vector of the given space
   // extended with a block of copied L-DOFs, read by the elements on non-base sides, and the
   // true DOF vector is extended with the corresponding copies of the true DOFs. The view
-  // shares the underlying MFEM space, and its prolongation, with the given space, which
-  // must outlive the view and cannot be updated while the view exists. Only element
-  // (domain) restrictions and the prolongation are available for a broken space, and it
-  // cannot be used with MFEM assembly or for MFEM grid functions. Collective.
+  // shares the underlying MFEM space with the given space, which must outlive the view and
+  // cannot be updated while the view exists. Only element (domain) restrictions and the
+  // prolongation (a HypreParMatrix, with the global offsets of the L-DOFs and true DOFs)
+  // are available for a broken space, which cannot be used with MFEM assembly or for MFEM
+  // grid functions. Collective.
   FiniteElementSpace(FiniteElementSpace &fespace, const CrackSides &sides);
 
   virtual ~FiniteElementSpace() { ResetCeedObjects(); }
@@ -137,7 +138,22 @@ public:
 
   const Operator *GetProlongationMatrix() const
   {
-    return broken ? broken->P.get() : Get().GetProlongationMatrix();
+    return broken ? broken->P.P.get() : Get().GetProlongationMatrix();
+  }
+
+  // The prolongation as a HypreParMatrix, and the global offsets of the L-DOFs and of the
+  // true DOFs, as for mfem::ParFiniteElementSpace (for the parallel assembly of operators).
+  const mfem::HypreParMatrix *Dof_TrueDof_Matrix() const
+  {
+    return broken ? broken->P.P.get() : Get().Dof_TrueDof_Matrix();
+  }
+  HYPRE_BigInt *GetDofOffsets() const
+  {
+    return broken ? broken->P.row_offsets.GetData() : Get().GetDofOffsets();
+  }
+  HYPRE_BigInt *GetTrueDofOffsets() const
+  {
+    return broken ? broken->P.col_offsets.GetData() : Get().GetTrueDofOffsets();
   }
   const mfem::SparseMatrix *GetRestrictionMatrix() const
   {

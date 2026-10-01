@@ -1462,174 +1462,130 @@ void GetElementDofEntities(const mfem::FiniteElementSpace &fespace, int e,
   }
 }
 
+void BuildBrokenProlongation(const mfem::ParMesh &mesh, mfem::HypreParMatrix &P,
+                             const mfem::Array<int> &copy_ldofs,
+                             const mfem::Array<int> &split_tdofs,
+                             BrokenProlongationMatrix &out)
+{
+  MPI_Comm comm = mesh.GetComm();
+  const int vsize = P.Height(), tsize = P.Width();
+  const int nrows = vsize + copy_ldofs.Size(), ncols = tsize + split_tdofs.Size();
+  {
+    HYPRE_BigInt sizes[2] = {nrows, ncols};
+    mfem::Array<HYPRE_BigInt> *offsets[2] = {&out.row_offsets, &out.col_offsets};
+    mesh.GenerateOffsets(2, sizes, offsets);
+  }
+  const bool assumed = HYPRE_AssumedPartitionCheck();
+  const int rank = Mpi::Rank(comm), nprocs = Mpi::Size(comm);
+  const HYPRE_BigInt col_begin = out.col_offsets[assumed ? 0 : rank];
+  const HYPRE_BigInt global_rows = out.row_offsets[assumed ? 2 : nprocs];
+  const HYPRE_BigInt global_cols = out.col_offsets[assumed ? 2 : nprocs];
+
+  // Local column of the copy of each split true DOF.
+  std::vector<int> copy_col(tsize, -1);
+  for (int i = 0; i < split_tdofs.Size(); i++)
+  {
+    copy_col[split_tdofs[i]] = tsize + i;
+  }
+
+  // Global columns of the true DOFs of the off-diagonal columns of P, and of their copies
+  // (or -1), from the processes owning them, through the communication package of P.
+  hypre_ParCSRMatrix *hP = P;
+  if (!hypre_ParCSRMatrixCommPkg(hP))
+  {
+    hypre_MatvecCommPkgCreate(hP);
+  }
+  hypre_ParCSRCommPkg *comm_pkg = hypre_ParCSRMatrixCommPkg(hP);
+  const int num_sends = hypre_ParCSRCommPkgNumSends(comm_pkg);
+  const int send_size = hypre_ParCSRCommPkgSendMapStart(comm_pkg, num_sends);
+  const int num_cols_offd = hypre_CSRMatrixNumCols(hypre_ParCSRMatrixOffd(hP));
+  std::vector<HYPRE_Complex> send(send_size), ghost_col(num_cols_offd),
+      ghost_copy(num_cols_offd);
+  auto Exchange = [&](auto &&value, std::vector<HYPRE_Complex> &recv)
+  {
+    for (int k = 0; k < send_size; k++)
+    {
+      send[k] = value(hypre_ParCSRCommPkgSendMapElmt(comm_pkg, k));
+    }
+    auto *handle = hypre_ParCSRCommHandleCreate(1, comm_pkg, send.data(), recv.data());
+    hypre_ParCSRCommHandleDestroy(handle);
+  };
+  Exchange([&](int j) { return static_cast<HYPRE_Complex>(col_begin + j); }, ghost_col);
+  Exchange(
+      [&](int j)
+      {
+        return (copy_col[j] >= 0) ? static_cast<HYPRE_Complex>(col_begin + copy_col[j])
+                                  : HYPRE_Complex(-1.0);
+      },
+      ghost_copy);
+
+  // Rows of the original and copied L-DOFs.
+  P.HostRead();
+  mfem::SparseMatrix diag, offd;
+  HYPRE_BigInt *cmap;
+  P.GetDiag(diag);
+  P.GetOffd(offd, cmap);
+  // The arrays of the CSR blocks are allocated with the host memory type of the device, as
+  // they are owned and deallocated by the matrix.
+  int *diag_i = mfem::Memory<int>(nrows + 1), *offd_i = mfem::Memory<int>(nrows + 1);
+  std::vector<int> diag_j;
+  std::vector<HYPRE_BigInt> offd_col;
+  std::vector<double> diag_a, offd_a;
+  diag_i[0] = offd_i[0] = 0;
+  for (int r = 0; r < nrows; r++)
+  {
+    const bool copy = (r >= vsize);
+    const int i = copy ? copy_ldofs[r - vsize] : r;
+    if (diag.Height() > 0)
+    {
+      for (int k = diag.GetI()[i]; k < diag.GetI()[i + 1]; k++)
+      {
+        const int j = diag.GetJ()[k];
+        diag_j.push_back((copy && copy_col[j] >= 0) ? copy_col[j] : j);
+        diag_a.push_back(diag.GetData()[k]);
+      }
+    }
+    if (offd.Height() > 0)
+    {
+      for (int k = offd.GetI()[i]; k < offd.GetI()[i + 1]; k++)
+      {
+        const int c = offd.GetJ()[k];
+        const double g = (copy && ghost_copy[c] >= 0.0) ? ghost_copy[c] : ghost_col[c];
+        offd_col.push_back(static_cast<HYPRE_BigInt>(g));
+        offd_a.push_back(offd.GetData()[k]);
+      }
+    }
+    diag_i[r + 1] = static_cast<int>(diag_j.size());
+    offd_i[r + 1] = static_cast<int>(offd_col.size());
+  }
+  P.HypreRead();
+
+  // Off-diagonal block with its own (sorted) column map.
+  out.col_map = offd_col;
+  std::sort(out.col_map.begin(), out.col_map.end());
+  out.col_map.erase(std::unique(out.col_map.begin(), out.col_map.end()), out.col_map.end());
+  const int diag_nnz = static_cast<int>(diag_j.size()),
+            offd_nnz = static_cast<int>(offd_col.size());
+  int *diag_jj = mfem::Memory<int>(diag_nnz), *offd_jj = mfem::Memory<int>(offd_nnz);
+  double *diag_aa = mfem::Memory<double>(diag_nnz),
+         *offd_aa = mfem::Memory<double>(offd_nnz);
+  std::copy(diag_j.begin(), diag_j.end(), diag_jj);
+  std::copy(diag_a.begin(), diag_a.end(), diag_aa);
+  std::copy(offd_a.begin(), offd_a.end(), offd_aa);
+  for (std::size_t k = 0; k < offd_col.size(); k++)
+  {
+    offd_jj[k] = static_cast<int>(
+        std::lower_bound(out.col_map.begin(), out.col_map.end(), offd_col[k]) -
+        out.col_map.begin());
+  }
+  auto *new_diag = new mfem::SparseMatrix(diag_i, diag_jj, diag_aa, nrows, ncols);
+  auto *new_offd = new mfem::SparseMatrix(offd_i, offd_jj, offd_aa, nrows,
+                                          static_cast<int>(out.col_map.size()));
+  out.P = std::make_unique<mfem::HypreParMatrix>(
+      comm, global_rows, global_cols, out.row_offsets.GetData(), out.col_offsets.GetData(),
+      new_diag, new_offd, out.col_map.data(), true);
+}
+
 }  // namespace fem
-
-namespace
-{
-
-// Device kernels are in free functions: CUDA does not allow extended device lambdas in
-// private member functions.
-
-// y[idx[i]] = x[i], i = 0, ..., n - 1.
-void Scatter(bool use_dev, const mfem::Array<int> &idx, const double *x, double *y)
-{
-  const auto *I = idx.Read(use_dev);
-  mfem::forall_switch(use_dev, idx.Size(), [=] MFEM_HOST_DEVICE(int i) { y[I[i]] = x[i]; });
-}
-
-// y[i] = a x[idx[i]] + b y[i], i = 0, ..., n - 1 (y is not read for b = 0).
-void Gather(bool use_dev, const mfem::Array<int> &idx, const double *x, double a, double b,
-            double *y)
-{
-  const auto *I = idx.Read(use_dev);
-  if (b == 0.0)
-  {
-    mfem::forall_switch(use_dev, idx.Size(),
-                        [=] MFEM_HOST_DEVICE(int i) { y[i] = a * x[I[i]]; });
-  }
-  else
-  {
-    mfem::forall_switch(use_dev, idx.Size(),
-                        [=] MFEM_HOST_DEVICE(int i) { y[i] = a * x[I[i]] + b * y[i]; });
-  }
-}
-
-// x[idx[i]] = 0, i = 0, ..., n - 1.
-void ZeroIndexed(bool use_dev, const mfem::Array<int> &idx, double *x)
-{
-  const auto *I = idx.Read(use_dev);
-  mfem::forall_switch(use_dev, idx.Size(), [=] MFEM_HOST_DEVICE(int i) { x[I[i]] = 0.0; });
-}
-
-}  // namespace
-
-BrokenProlongation::BrokenProlongation(const Operator &P,
-                                       const mfem::Array<int> &copy_ldofs_,
-                                       const mfem::Array<int> &split_tdofs_)
-  : Operator(P.Height() + copy_ldofs_.Size(), P.Width() + split_tdofs_.Size()), P(P),
-    hP(dynamic_cast<const mfem::HypreParMatrix *>(&P)), vsize(P.Height()), tsize(P.Width())
-{
-  copy_ldofs = copy_ldofs_;
-  split_tdofs = split_tdofs_;
-  tx.SetSize(tsize);
-  lx.SetSize(vsize);
-  tx.UseDevice(true);
-  lx.UseDevice(true);
-}
-
-// The leading (original) blocks of the broken vectors are accessed through sub-vectors
-// (aliases), whose memory validity flags are independent of those of their base vector.
-// The base vectors are made valid where they are used before the aliases are created, and
-// results written through an alias are synchronized back to its base (for example, the
-// HypreParMatrix absolute value products write on the host), before the base is accessed
-// directly. Otherwise, a stale copy of the base would be used on the device.
-
-void BrokenProlongation::Mult(const Vector &x, Vector &y) const
-{
-  MFEM_ASSERT(x.Size() == width && y.Size() == height,
-              "Invalid vector sizes for BrokenProlongation::Mult!");
-  const bool use_dev = x.UseDevice() || y.UseDevice();
-  x.Read(use_dev);
-  y.Write(use_dev);
-  {
-    const Vector xt(const_cast<Vector &>(x), 0, tsize);
-    Vector yl(y, 0, vsize);
-    P.Mult(xt, yl);
-    yl.SyncAliasMemory(y);
-    tx = xt;
-  }
-
-  // Copies: y_c = (P z)[copy], with z = x with the split true DOFs replaced by their
-  // copies. The second application of P is collective, so it is done on every process even
-  // when there are no local copies.
-  Scatter(use_dev, split_tdofs, x.Read(use_dev) + tsize, tx.ReadWrite(use_dev));
-  P.Mult(tx, lx);
-  Gather(use_dev, copy_ldofs, lx.Read(use_dev), 1.0, 0.0, y.ReadWrite(use_dev) + vsize);
-}
-
-void BrokenProlongation::AddCopyTranspose(const Vector &x, double a, double b, Vector &y,
-                                          bool abs) const
-{
-  const bool use_dev = x.UseDevice() || y.UseDevice();
-  lx = 0.0;
-  Scatter(use_dev, copy_ldofs, x.Read(use_dev) + vsize, lx.ReadWrite(use_dev));
-  if (abs && hP)
-  {
-    hP->AbsMultTranspose(1.0, lx, 0.0, tx);
-  }
-  else
-  {
-    // The prolongation of a conforming space (not a HypreParMatrix) has only nonnegative
-    // entries.
-    P.MultTranspose(lx, tx);
-  }
-
-  // Split true DOFs: to the copies; unsplit ones (from constrained copy rows): to y_t.
-  Gather(use_dev, split_tdofs, tx.Read(use_dev), a, b, y.ReadWrite(use_dev) + tsize);
-  ZeroIndexed(use_dev, split_tdofs, tx.ReadWrite(use_dev));
-  Vector yt(y, 0, tsize);
-  yt.Add(a, tx);
-  yt.SyncAliasMemory(y);
-}
-
-void BrokenProlongation::MultTranspose(const Vector &x, Vector &y) const
-{
-  MFEM_ASSERT(x.Size() == height && y.Size() == width,
-              "Invalid vector sizes for BrokenProlongation::MultTranspose!");
-  const bool use_dev = x.UseDevice() || y.UseDevice();
-  x.Read(use_dev);
-  y.Write(use_dev);
-  {
-    const Vector xl(const_cast<Vector &>(x), 0, vsize);
-    Vector yt(y, 0, tsize);
-    P.MultTranspose(xl, yt);
-    yt.SyncAliasMemory(y);
-  }
-  AddCopyTranspose(x, 1.0, 0.0, y, false);
-}
-
-void BrokenProlongation::AbsMultTranspose(double a, const Vector &x, double b,
-                                          Vector &y) const
-{
-  MFEM_ASSERT(x.Size() == height && y.Size() == width,
-              "Invalid vector sizes for BrokenProlongation::AbsMultTranspose!");
-  const bool use_dev = x.UseDevice() || y.UseDevice();
-  x.Read(use_dev);
-  if (b == 0.0)
-  {
-    y.Write(use_dev);
-  }
-  else
-  {
-    y.ReadWrite(use_dev);
-  }
-  {
-    const Vector xl(const_cast<Vector &>(x), 0, vsize);
-    Vector yt(y, 0, tsize);
-    if (hP)
-    {
-      hP->AbsMultTranspose(a, xl, b, yt);
-    }
-    else
-    {
-      // The prolongation of a conforming space (not a HypreParMatrix) has only nonnegative
-      // entries.
-      Vector t(tsize);
-      t.UseDevice(true);
-      P.MultTranspose(xl, t);
-      if (b == 0.0)
-      {
-        yt = 0.0;
-      }
-      else
-      {
-        yt *= b;
-      }
-      yt.Add(a, t);
-    }
-    yt.SyncAliasMemory(y);
-  }
-  AddCopyTranspose(x, a, b, y, true);
-}
 
 }  // namespace palace

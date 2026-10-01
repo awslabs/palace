@@ -172,20 +172,16 @@ void FiniteElementSpace::InitBroken(const CrackSides &sides)
               "Invalid interior boundary sides for broken finite element space!");
   auto data = std::make_unique<BrokenData>();
   const int vsize = fespace.GetVSize(), tsize = fespace.GetTrueVSize();
-  const Operator *P = fespace.GetProlongationMatrix();
-  const auto *hP = dynamic_cast<const mfem::HypreParMatrix *>(P);
+  mfem::HypreParMatrix &P = *fespace.Dof_TrueDof_Matrix();
 
   // Rows of the prolongation which are unit vectors (L-DOFs of unconstrained entities).
-  // Without a HypreParMatrix prolongation (conforming mesh), all rows are.
-  std::vector<char> unit_row;
-  if (hP)
+  std::vector<char> unit_row(vsize, 0);
   {
-    hP->HostRead();
+    P.HostRead();
     mfem::SparseMatrix diag, offd;
     HYPRE_BigInt *cmap;
-    hP->GetDiag(diag);
-    hP->GetOffd(offd, cmap);
-    unit_row.assign(vsize, 0);
+    P.GetDiag(diag);
+    P.GetOffd(offd, cmap);
     for (int i = 0; i < vsize; i++)
     {
       int nnz = 0;
@@ -209,7 +205,7 @@ void FiniteElementSpace::InitBroken(const CrackSides &sides)
       }
       unit_row[i] = (nnz == 1 && std::abs(val) == 1.0);
     }
-    hP->HypreRead();
+    P.HypreRead();
   }
 
   // Each L-DOF read by elements on a non-base side of an interior boundary is copied once.
@@ -261,8 +257,7 @@ void FiniteElementSpace::InitBroken(const CrackSides &sides)
 
   // The true DOFs of split entities are split: the broken space holds one additional true
   // DOF for each of them, owned by the same process. They are identified through the
-  // L-DOFs of unconstrained split entities (the prolongation has only nonnegative entries
-  // when it is not a HypreParMatrix).
+  // L-DOFs of unconstrained split entities.
   mfem::Array<int> split_tdofs;
   {
     Vector lmark(vsize), tmark(tsize);
@@ -270,16 +265,9 @@ void FiniteElementSpace::InitBroken(const CrackSides &sides)
     auto *h_lmark = lmark.HostWrite();
     for (int i = 0; i < vsize; i++)
     {
-      h_lmark[i] = (split_ldof[i] && (!hP || unit_row[i])) ? 1.0 : 0.0;
+      h_lmark[i] = (split_ldof[i] && unit_row[i]) ? 1.0 : 0.0;
     }
-    if (hP)
-    {
-      hP->AbsMultTranspose(1.0, lmark, 0.0, tmark);
-    }
-    else
-    {
-      P->MultTranspose(lmark, tmark);
-    }
+    P.AbsMultTranspose(1.0, lmark, 0.0, tmark);
     const auto *h_tmark = tmark.HostRead();
     for (int i = 0; i < tsize; i++)
     {
@@ -291,11 +279,9 @@ void FiniteElementSpace::InitBroken(const CrackSides &sides)
   }
   data->vsize = vsize + copy_ldofs.Size();
   data->tsize = tsize + split_tdofs.Size();
-  data->global_vsize = data->vsize;
-  data->global_tsize = data->tsize;
-  Mpi::GlobalSum(1, &data->global_vsize, GetParMesh().GetComm());
-  Mpi::GlobalSum(1, &data->global_tsize, GetParMesh().GetComm());
-  data->P = std::make_unique<BrokenProlongation>(*P, copy_ldofs, split_tdofs);
+  fem::BuildBrokenProlongation(GetParMesh(), P, copy_ldofs, split_tdofs, data->P);
+  data->global_vsize = data->P.P->GetGlobalNumRows();
+  data->global_tsize = data->P.P->GetGlobalNumCols();
   broken = std::move(data);
 }
 
