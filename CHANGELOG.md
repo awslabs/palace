@@ -53,11 +53,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     conditions which apply to either side separately (PMC or zero charge, and absorbing
     boundaries), and along conductivity and impedance boundaries with `"Crack": true`.
     Interior PEC, ground, wave port PEC, impedance, rational impedance, conductivity, and
-    surface current boundaries are no longer cracked. Specifying
-    `config["Model"]["CrackInternalBoundaryElements"]` is deprecated: `true` restores the
-    previous behavior of cracking all interior boundaries with boundary conditions except for
-    lumped ports, and `false` disables cracking entirely. SchemaVer 3-0-0.
-    [PR 994](https://github.com/awslabs/palace/pull/994).
+    surface current boundaries are no longer cracked by default. For a conductivity BC much
+    thicker than the skin depth with different currents on its two faces, this lowers the
+    conductor loss compared to the cracked mesh: use `"Crack": true` to keep the previous
+    results. Specifying `config["Model"]["CrackInternalBoundaryElements"]` is deprecated:
+    `true` restores the previous behavior of cracking all interior boundaries with boundary
+    conditions except for lumped ports, and `false` disables cracking entirely.
+    SchemaVer 3-0-0. [PR 994](https://github.com/awslabs/palace/pull/994).
   - Surface flux postprocessing with `"TwoSided": false` on interior boundaries which are no
     longer cracked gives the average of the fluxes on the two sides, instead of the sum of the
     fluxes of the two faces of the cracked mesh.
