@@ -325,6 +325,76 @@ class PerimeterTest(unittest.TestCase):
         self.assertAlmostEqual(rounded[0]["TurnDegrees"], 90.0, places=6)
 
 
+    def test_arc_groups_collinear_subdivision_and_start_rule(self):
+        # Decisions 212 / 213 (VALIDATION-PLAN (h)-8), the audit mirror of the C++ arc test:
+        # (A) the end-joint test of a least-squares bend reads the arm's far vertex off the
+        # arm's straight PIECE (the rigid-run joint), not the adjacent mesh edge, so inserting
+        # collinear vertices on a chord (a thin mesh at LC 4 um) does not change the reading;
+        # (B') a chord arm at the range's first joint whose far joint is itself absorbable is no
+        # arm, so a closed-loop scan starting inside an arc (its longest piece a chord of the
+        # arc) finds the whole arc from its real start instead of chopping it there. Geometry
+        # (the unit section "a closed loop whose longest piece is a chord inside the arc"): an
+        # 8 um bar whose 6 um leads meet a 120 um bend of ten unequal chords (6-10 deg, the
+        # longest mid-arc) at a 20 deg kink; one 9-joint bend per side (radii 116 / 124), the
+        # kink joints corners, identical joint-only, subdivided at 4 um and for every start
+        # vertex of the loop.
+        R = 1.9
+        deg = math.pi / 180.0
+
+        def kinked_bar(width, radius, chord_degrees, lead, kink):
+            angles = [0.0]
+            for c in chord_degrees:
+                angles.append(angles[-1] + c * deg)
+            a_in, a_out = -kink * deg, angles[-1] + kink * deg
+            centre_line = [np.array([-lead * math.cos(a_in), -lead * math.sin(a_in)])]
+            normals = [np.array([-math.sin(a_in), math.cos(a_in)])]
+            for a in angles:
+                centre_line.append(np.array([radius * math.sin(a), radius - radius * math.cos(a)]))
+                normals.append(np.array([-math.sin(a), math.cos(a)]))
+            end = centre_line[-1]
+            centre_line.append(end + lead * np.array([math.cos(a_out), math.sin(a_out)]))
+            normals.append(np.array([-math.sin(a_out), math.cos(a_out)]))
+            h = 0.5 * width
+            right = [p - h * n for p, n in zip(centre_line, normals)]
+            left = [p + h * n for p, n in zip(centre_line, normals)]
+            return right + left[::-1]  # counter-clockwise
+
+        def subdivide(points, spacing):
+            out = []
+            for i, a in enumerate(points):
+                b = points[(i + 1) % len(points)]
+                pieces = max(1, int(math.ceil(np.linalg.norm(b - a) / spacing - 1.0e-9)))
+                out.extend(a + (b - a) * k / pieces for k in range(pieces))
+            return out
+
+        def closed_perimeter(points):
+            vertices = [P.PerimeterVertex(point=np.array([p[0], p[1], 0.0])) for p in points]
+            edges = []
+            n = len(points)
+            for i in range(n):
+                j = (i + 1) % n
+                d = vertices[j].point - vertices[i].point
+                edges.append(P.PerimeterEdge(vertices=(i, j), length=float(np.linalg.norm(d)), attributes=(5,), kind="PHYSICAL", conductors=("PEC",), interfaces=((0, "MA"),), inward=np.array([-d[1], d[0], 0.0]) / np.linalg.norm(d), chain=0))
+                vertices[i].edges.append(i)
+                vertices[j].edges.append(i)
+            perimeter = P.Perimeter(vertices=vertices, edges=edges, process_normal=np.array([0.0, 0.0, 1.0]), planes=[0.0], chains=1)
+            P.classify_vertices(perimeter, R)
+            return perimeter
+
+        def reading(points):
+            arcs = P.arc_groups(closed_perimeter(points), R)
+            return sorted((round(a["Radius"], 6), round(a["TurnDegrees"], 6), len(a["Joints"]), a["Rounded"]) for a in arcs)
+
+        design = kinked_bar(8.0, 120.0, [6.0, 7.0, 8.0, 7.0, 6.0, 10.0, 6.0, 7.0, 8.0, 7.0], 6.0, 20.0)
+        plain = reading(design)
+        self.assertEqual([(r, j, rounded) for r, _, j, rounded in plain], [(116.0, 9, False), (124.0, 9, False)], msg=str(plain))
+        self.assertEqual(reading(subdivide(design, 4.0)), plain)
+        for start in range(1, len(design)):
+            rotated = design[start:] + design[:start]
+            self.assertEqual(reading(rotated), plain, msg="start vertex %d" % start)
+            self.assertEqual(reading(subdivide(rotated, 4.0)), plain, msg="start vertex %d subdivided" % start)
+
+
 class ManifestTest(unittest.TestCase):
     def test_digest_ignores_status_and_library(self):
         a = make_manifest([requirement("IsolatedEdge", 3, 6.0, {"EdgeCount": 1}, "Exact", SelectedModels=[{"Name": "iso", "Topology": "IsolatedEdge", "Weight": 1.0}], NormalizedLibraryDistance=0.0)])
