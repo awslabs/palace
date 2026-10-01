@@ -2877,6 +2877,8 @@ private:
 
   // Curved-edge chain rule helpers on the chain arc length x.
   double WindowedCurvature(const Chain &chain, double x) const;
+  // The signed windowed curvature at x (positive where the chain turns toward its metal).
+  double SignedWindowedCurvature(const Chain &chain, double x) const;
   double MaxCurvature(const Chain &chain, double x0, double x1) const;
   // Integral of the signed windowed curvature over the chain interval [x0, x1]: the signed
   // turn toward the metal (radians; exact on the piecewise-linear nodes).
@@ -4419,25 +4421,7 @@ void Identifier::AccumulateSignedCurvature(const Chain &chain, double x0, double
   }
   auto Read = [&](double x)
   {
-    const auto upper =
-        std::upper_bound(nodes.begin(), nodes.end(), std::make_pair(x, 0.0),
-                         [](const auto &a, const auto &b) { return a.first < b.first; });
-    double value = 0.0;
-    if (upper == nodes.begin())
-    {
-      value = chain.signed_kappa_nodes.front();
-    }
-    else if (upper == nodes.end())
-    {
-      value = chain.signed_kappa_nodes.back();
-    }
-    else
-    {
-      const auto i = static_cast<std::size_t>(upper - nodes.begin()) - 1;
-      const double span = nodes[i + 1].first - nodes[i].first;
-      const double w = span > 0.0 ? (x - nodes[i].first) / span : 0.0;
-      value = (1.0 - w) * chain.signed_kappa_nodes[i] + w * chain.signed_kappa_nodes[i + 1];
-    }
+    const double value = SignedWindowedCurvature(chain, x);
     extremes.toward_metal = std::max(extremes.toward_metal, value);
     extremes.toward_gap = std::max(extremes.toward_gap, -value);
   };
@@ -4450,6 +4434,30 @@ void Identifier::AccumulateSignedCurvature(const Chain &chain, double x0, double
   {
     Read(it->first);
   }
+}
+
+double Identifier::SignedWindowedCurvature(const Chain &chain, double x) const
+{
+  const auto &nodes = chain.kappa_nodes;
+  if (nodes.empty())
+  {
+    return 0.0;
+  }
+  const auto upper =
+      std::upper_bound(nodes.begin(), nodes.end(), std::make_pair(x, 0.0),
+                       [](const auto &a, const auto &b) { return a.first < b.first; });
+  if (upper == nodes.begin())
+  {
+    return chain.signed_kappa_nodes.front();
+  }
+  if (upper == nodes.end())
+  {
+    return chain.signed_kappa_nodes.back();
+  }
+  const auto i = static_cast<std::size_t>(upper - nodes.begin()) - 1;
+  const double span = nodes[i + 1].first - nodes[i].first;
+  const double w = span > 0.0 ? (x - nodes[i].first) / span : 0.0;
+  return (1.0 - w) * chain.signed_kappa_nodes[i] + w * chain.signed_kappa_nodes[i + 1];
 }
 
 std::string Identifier::ConvexityName(const SignedCurvatureExtremes &extremes) const
@@ -7498,12 +7506,41 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
                          [&](const Node &n) { return n.position < lo || n.position > hi; }),
           composition.nodes.end());
     }
-    // Provisional orientation (final: the canonical signature's, below): the member with
-    // the smallest (chain, position along its chain) on side 0 (the two-edge convention:
-    // side 0 = chain A, the lower chain index), which decides only for a cross-section that
-    // is its own mirror image.
+    // Class of the cross-section: curved where a member is curved (the class decides which
+    // separation of every consecutive link enters the offsets, decision 85(1)).
+    for (const Node &node : composition.nodes)
+    {
+      composition.curved = composition.curved || IsCurvedAt(ChainOf(node.chain), node.x);
+    }
+    // Provisional orientation (final: the canonical signature's, below), which decides only
+    // for a cross-section that is its own mirror image (chirality 0). A straight one has no
+    // observable orientation: the member with the smallest (chain, position along its
+    // chain) is side 0 (the two-edge convention: side 0 = chain A, the lower chain index).
+    // A curved one has: the bend tells its inner from its outer edge and the signature's
+    // Convexity is read on side 0, while the chain ids follow the coordinate-sorted
+    // canonical numbering, so that the key would make the Convexity of a symmetric curved
+    // stack a function of the frame (decision 214 (i): the subdivision gate's rotation
+    // variant flipped the k4 / k6 curved stacks Convex <-> Concave). The bend sense orients
+    // it: the lateral axis points toward the centre of curvature (the sum over the members
+    // of the signed windowed curvature toward the metal times the metal side along the
+    // lateral axis), so that side 0 is the outermost edge of the bend; the key decides only
+    // where that sum vanishes.
     auto Key = [](const Node &n) { return std::make_pair(n.chain, n.x); };
-    if (Key(composition.nodes.back()) < Key(composition.nodes.front()))
+    bool reverse = Key(composition.nodes.back()) < Key(composition.nodes.front());
+    if (composition.curved)
+    {
+      double toward_lateral = 0.0;
+      for (const Node &node : composition.nodes)
+      {
+        toward_lateral -= SignedWindowedCurvature(ChainOf(node.chain), node.x) *
+                          Dot(runs[node.run].gap_direction, composition.lateral);
+      }
+      if (toward_lateral != 0.0)
+      {
+        reverse = toward_lateral < 0.0;
+      }
+    }
+    if (reverse)
     {
       std::reverse(composition.nodes.begin(), composition.nodes.end());
       composition.lateral = Scale(-1.0, composition.lateral);
@@ -7511,12 +7548,6 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       {
         n.position = -n.position;
       }
-    }
-    // Class of the cross-section: curved where a member is curved (the class decides which
-    // separation of every consecutive link enters the offsets, decision 85(1)).
-    for (const Node &node : composition.nodes)
-    {
-      composition.curved = composition.curved || IsCurvedAt(ChainOf(node.chain), node.x);
     }
     // Offsets from the consecutive links' separations of the cross-section's class.
     composition.offsets.assign(composition.nodes.size(), 0.0);

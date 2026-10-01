@@ -14,13 +14,18 @@ fillet suites, the arc-cluster set, the stack suite) and the joint-only layouts 
   * ``refine-0.37``: every mesh edge split at 0.37 of its length (a second, uneven spacing);
   * ``rotate-37``: the mesh rotated by 37 deg about the plan-view normal with a seeded
     renumbering (permute_msh2): the canonical, coordinate-sorted numbering gives every closed
-    loop another start vertex (the closed-loop scan's seed), without any subdivision;
+    loop another start vertex (the closed-loop scan's seed) and every chain another id (the
+    tie of a mirror-symmetric cross-section's orientation, decision 214 (i)), without any
+    subdivision;
   * ``rotate-37-refine-0.5``: both.
 
 The gate passes for a layout when every variant has the same GeometryDigest, the same
 multiset of features (Type, Signature, Chirality, Length to 1e-5), the same exclusion classes
 (class, length; the segment count is a mesh quantity), the same vertex types (type, turn) and
-the same arcs (kind, radius, joints) as the base mesh.
+the same arcs (kind, radius, joints) as the base mesh. The exit code is the verdict under
+EVERY variant (the rotation variants included since decision 214 (i): the frame dependence of
+the symmetric curved stacks' Convexity they found is fixed); the collinear-subdivision verdict
+is reported on its own line as well.
 
     python3 -m surface_response_identification.subdivision_gate --output DIR \\
         --meshes DIR [DIR ...] [--subdivision-suite-meshes DIR] [--palace P] [--np 1] \\
@@ -206,7 +211,7 @@ def main(argv=None):
     print(f"SUBDIVISION GATE {subdivision_pass} / {len(rows)} layouts PASS under collinear subdivision ({', '.join(subdivision_only)}); {passed} / {len(rows)} under every variant ({', '.join(labels)}: identical GeometryDigest, features, exclusions, vertices, arcs)")
     with open(os.path.join(args.output, "results.json"), "w") as target:
         json.dump({"Variants": labels, "PerVariant": per_variant, "Rows": rows, "SubdivisionPass": subdivision_pass, "Pass": passed, "Total": len(rows)}, target, indent=1, default=str)
-    return 0 if subdivision_pass == len(rows) else 1
+    return 0 if passed == len(rows) else 1
 
 
 if __name__ == "__main__":
