@@ -225,7 +225,7 @@
     {
       "Name": "general_mesh_audit_producer.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_audit_producer.py",
-      "SHA256": "93d4e57c5a0b9f67ae47b1d48c788cfb05917dbda1235dbd4e81aba3677e4a1f"
+      "SHA256": "1eff89d90cb3b2a7d94c368f6f22f69e981073d1b30320543b7bb500942bcced"
     },
     {
       "Name": "mesh_stage_contract.py",
