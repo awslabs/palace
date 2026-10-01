@@ -199,10 +199,14 @@ def main(argv=None):
                         print("   FAIL", label, json.dumps({k: entry.get(k) for k in ("Same", "OnlyBase", "OnlyVariant", "ArcsBase", "ArcsVariant", "Error")}, default=str)[:600], flush=True)
     passed = sum(1 for r in rows if r["Pass"])
     labels = [v[0] for v in variants(args.fractions, args.rotate_degrees)][1:]
-    print(f"SUBDIVISION GATE {passed} / {len(rows)} layouts PASS (variants {', '.join(labels)}: identical GeometryDigest, features, exclusions, vertices, arcs)")
+    per_variant = {label: sum(1 for r in rows if r["Variants"].get(label, {}).get("Pass")) for label in labels}
+    subdivision_only = [label for label in labels if label.startswith("refine-")]
+    subdivision_pass = sum(1 for r in rows if all(r["Variants"].get(label, {}).get("Pass") for label in subdivision_only))
+    print("per variant: " + ", ".join(f"{label} {n} / {len(rows)}" for label, n in per_variant.items()))
+    print(f"SUBDIVISION GATE {subdivision_pass} / {len(rows)} layouts PASS under collinear subdivision ({', '.join(subdivision_only)}); {passed} / {len(rows)} under every variant ({', '.join(labels)}: identical GeometryDigest, features, exclusions, vertices, arcs)")
     with open(os.path.join(args.output, "results.json"), "w") as target:
-        json.dump({"Variants": labels, "Rows": rows, "Pass": passed, "Total": len(rows)}, target, indent=1, default=str)
-    return 0 if passed == len(rows) else 1
+        json.dump({"Variants": labels, "PerVariant": per_variant, "Rows": rows, "SubdivisionPass": subdivision_pass, "Pass": passed, "Total": len(rows)}, target, indent=1, default=str)
+    return 0 if subdivision_pass == len(rows) else 1
 
 
 if __name__ == "__main__":
