@@ -694,7 +694,78 @@ smaller endpoint.
    the pair-level VALUE estimator for polyline bends; no new constant (the proximity is
    `PairBendProximityOverR`). Otherwise the sub-piece reads the length-weighted mean of the
    chord readings over the sub-piece (equally spaced samples; unchanged by the 2026-10-01
-   correction) and is not exact. The pieces of a chain pair are grouped into links so that a
+   correction) and is not exact.
+   **Exact stretches (USER decision 203, 2026-10-02; the review's MAJOR-1: exactness
+   all-or-nothing per run).** The exactness is LOCAL along the run, like the readings. Within
+   a sub-piece of one constancy / interaction status, an EXACT STRETCH is a maximal
+   contiguous stretch of samples that HAVE an exact reading (the straight reading (a) with
+   its perpendicular-foot guard, or (b)) whose readings all lie within the parameter
+   tolerance (1e-3 R) of the stretch's exact mean (a reading that would take the mean more
+   than the tolerance from any member starts a new stretch). An exact stretch splits off as
+   its own EXACT sub-piece, reading that mean, only when its exact samples span at least
+   `ExactStretchMinLengthOverR` = 1 x R (dimensionless); a shorter one merges into the
+   adjacent non-exact stretch(es). A sub-piece that is ONE exact stretch stays exact whatever
+   its length, as before (the sub-R exact stack ends of the chips are not re-keyed by this
+   clause: the threshold governs splitting only). The judged samples WITHOUT an exact reading
+   (away from any bend within `PairBendProximityOverR` R) form NON-EXACT stretches by their
+   status — they are no longer compared with the exact mean: a judged sample lacks an exact
+   reading only where its partner is not parallel within the cosine tolerance or its foot is
+   not perpendicular, so a coincidental agreement of its distance with the mean must not make
+   it exact. The near-bend samples (not judged) never form, split or decide a stretch on
+   their own: they join an adjacent stretch within `PairBendProximityOverR` R along the run of
+   that stretch's last exact / judged sample — measured between the samples' CELLS, i.e. R
+   plus one sample spacing (at most R / 2): the exact samples end just before (joint - R),
+   so the near-bend sample at the joint lies R + up to one spacing from the last exact
+   sample — (between an exact and a non-exact stretch the first R goes to the exact one; a
+   short gap of them between two exact stretches whose readings agree is transparent, one
+   exact stretch across the partner's noise joint); contiguous near-bend samples farther than
+   R from every exact / judged sample form a NON-EXACT stretch of their own (the bend
+   exemption is a 1 R zone, not a licence for an unbounded unjudged region). Consecutive
+   non-exact stretches are one non-exact stretch reading the length-weighted mean of the
+   chord readings as before. **Partner-run cut.** A non-exact stretch is additionally cut
+   where its samples' foot crosses a run boundary of the partner chain, so that each
+   non-exact sub-piece faces ONE partner run and reads that run's local chord mean — the
+   value the partner's own piece reads; exact stretches are not cut (their exact group holds
+   every agreeing piece). Reason: the two sides of a pair were discretised differently (a
+   taper side per run, a straight side as one stretch over a hundred partner runs), so one
+   long non-exact stretch over a changing partner (mean 2.58 um over a 2.0 -> 3.7 um taper)
+   could not pair with the partner's per-run pieces and both sides read as IsolatedEdges
+   over the taper start. This exposes a consequence of the existing 184 (3) link rule, now
+   written down: chord pieces within the 5 % pair tolerance of an exact group join it, so in
+   the reproducer the first ~73 um of the taper (2.0 -> 2.1 um) key WITH the exact 2.0 um
+   strip, on both sides alike (the established pair tolerance, not a new error).
+   **Invariant of the link grouping: mutually facing pieces belong to the same group.** Two
+   non-exact pieces P and Q on the two sides face each other mutually when every foot of P
+   lies on Q's run, every foot of Q on P's run, and each is the only non-exact piece of its
+   run facing the other's run. The two sides sample one geometry with different sample sets
+   and agree to ~1e-3 only, so at a group threshold (the 5 % boundary of a taper, w = 2.1 um
+   for the 2.0 um exact group) one side's piece joined the exact group and its facing piece
+   the chord group, leaving both unpaired: a strip edge read as an IsolatedEdge sliver of one
+   chord — a misidentification. Where a mutual pair straddles a threshold, the piece sampled
+   over exactly its own run (its interval is the whole run) decides and the other joins its
+   group; when both or neither span their run, the piece on the lower run index decides.
+   Each piece is in at most one mutual pair and every move is decided on the original
+   grouping: deterministic and order-independent. The 5 % grouping itself (the post-pilot
+   taper-reading question D6) is unchanged; the stage log counts the moved pieces with their
+   length and sites.
+   Consequences: a straight
+   run facing a partner that is parallel over part of its length keys that part exact and the
+   rest non-exact (the reviewer's reproducer, a 450 um run facing 150 um of straight 2.0 um
+   strip and a quadratic one-sided taper to 3.7 um: before, one judged sample at the far end
+   made the whole run non-exact at its 450 um chord mean, the 2.0 um exact group had no
+   partner piece and the 0.53 R strip read as two IsolatedEdges; with every taper point
+   within R of a noise joint (chords < 2R) and no judged sample at all, the twin mode: the
+   whole run read exact at the lead's value); an extremely slow taper whose chords are
+   parallel within the cosine tolerance and pass the foot guard keys a staircase of exact
+   stretches, one per 2e-3 R of separation change (the parameter-tolerance semantics; the
+   stage log counts the sub-pieces cut into stretches and the exact stretches per chip); an
+   exact stretch absorbs up to R of a slowly changing partner (a mis-keying of at most the
+   taper's slope x R: 0.006 R in the reproducer). Recorded census (asked for with the rule):
+   the stage log lists the sub-R non-exact stretches that sit between two exact stretches of
+   the same mean (fragmentation), with their sites. Considered alternative, not taken because
+   it changes the judging globally: judging the near-bend samples too at the tolerance
+   widened by their discretisation ambiguity d (1 - cos(turn)).
+   The pieces of a chain pair are grouped into links so that a
    link holds ONE separation: the exact pieces within the parameter tolerance of each other
    form an exact group (value = their length-weighted mean), a chord piece joins the exact
    group within the pair tolerance (`PairSeparationToleranceRelative` = 0.05) of its own

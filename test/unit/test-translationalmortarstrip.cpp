@@ -746,7 +746,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         }
       }
       // The frames the parallel-to-1e-8 rule aborted on: every patch of the taper, at the
-      // cosine of the 0.02 rad between the sides; the one clamped-foot patch of the bend.
+      // cosine of the 0.02 rad between the sides; the clamped-foot region of the bend (the
+      // start of the sheared side, whose feet fall on the partner's straight run across
+      // the kink). Since USER decision 203 (2026-10-02) a non-exact sub-piece is cut where
+      // its feet cross a partner run boundary, so that region is its own portion of the
+      // 0.25 strip and BOTH its Gauss patches are tilted (formerly one portion with the
+      // rest of the sheared side: one tilted patch).
       if (shape.name == "taper")
       {
         CHECK(tilted_frames == static_cast<int>(pairs.size()));
@@ -759,7 +764,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       }
       else
       {
-        CHECK(tilted_frames == 1);
+        CHECK(tilted_frames == 2);
       }
 
       // The operator itself builds and evaluates on the same mesh (the mortar samples the
