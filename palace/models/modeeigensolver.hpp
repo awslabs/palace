@@ -217,7 +217,8 @@ private:
   ComplexVector warm_start;
 
   // Permutation that maps external mode index to eigensolver index, sorted by ascending
-  // Re{kn}. This ensures consistent mode ordering regardless of eigensolver backend.
+  // |kn - kn_target| (see mode_assembly::TargetDistance). This ensures consistent mode
+  // ordering regardless of eigensolver backend.
   std::vector<int> mode_perm;
 
   // Evaluate frequency-dependent Att and Ann from shared components, then build block A

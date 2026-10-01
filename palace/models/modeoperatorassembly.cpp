@@ -4,6 +4,7 @@
 #include "modeoperatorassembly.hpp"
 
 #include <cmath>
+#include <limits>
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
@@ -428,6 +429,12 @@ void ApplyVDBackTransform(ComplexVector &e0, std::complex<double> kn, int nd_siz
   en.Imag().MakeRef(e0.Imag(), nd_size, h1_size);
   const auto ikn_inv = 1.0 / (std::complex<double>(0.0, 1.0) * kn);
   ComplexVector::AXPBY(ikn_inv, en.Real(), en.Imag(), 0.0, en.Real(), en.Imag());
+}
+
+double TargetDistance(std::complex<double> kn, double kn_target)
+{
+  const double distance = std::abs(kn - kn_target);
+  return std::isnan(distance) ? std::numeric_limits<double>::infinity() : distance;
 }
 
 }  // namespace palace::mode_assembly
