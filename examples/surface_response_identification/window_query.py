@@ -543,8 +543,13 @@ def inventory(manifest, windows, margin, weights, z_range=None):
         body_rows.sort(key=lambda r: (r["Kind"] != "Ground", r["Kind"] == "OpenChain", -r["Proxy"]))
         conductor_rows, footprint_rows = conductor_table(loops, body_rows, box)
         terminal, assignment, excitation = terminal_assignment(body_rows, conductor_rows, radius, margin, box)
+        # E1 comparison region (supervisor reply to decision 184 / 190, 2026-10-01): 3 R around every WINDOW-INTRODUCED feature
+        # (walls, wall bridges, open-terminated ends) is excluded -> for an open-terminated terminal the margin is OpenSetback + 3 R
+        e1_margin = max(margin, open_setback + 3.0 * radius) if excitation["Kind"] == "OpenTerminatedTrace" else margin
+        e1_region = (x0 + e1_margin, x1 - e1_margin, y0 + e1_margin, y1 - e1_margin)
         results["Windows"][name] = {
             "Box": list(box), "ComparisonRegion": list(inner),
+            "E1ComparisonRegion": list(e1_region), "E1Margin": e1_margin,
             "Perimeter": {"Total": sum(v["Assigned"] + v["Excluded"] for v in per_plane.values()),
                           "Assigned": sum(v["Assigned"] for v in per_plane.values()),
                           "Excluded": dict(sorted(excluded.items())),

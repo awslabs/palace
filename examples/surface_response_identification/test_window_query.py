@@ -162,6 +162,10 @@ class WindowInventory(unittest.TestCase):
         self.assertEqual(w["ProposedTerminal"], island["Body"])
         self.assertEqual(w["Excitation"]["Kind"], "OpenTerminatedTrace")
         self.assertAlmostEqual(w["Excitation"]["OpenSetback"], 3.0 * R + 2.0, places=12)
+        # the E1 region excludes 3 R around the open end: margin = OpenSetback + 3 R = 14 (the E0 region keeps the margin 2)
+        self.assertAlmostEqual(w["E1Margin"], 14.0, places=12)
+        self.assertEqual(w["E1ComparisonRegion"], [14.0, 16.0, -16.0, 16.0])
+        self.assertEqual(w["ComparisonRegion"], [2.0, 28.0, -28.0, 28.0])
         roles = {a["Kind"]: a["Role"] for a in w["TerminalAssignment"]}
         self.assertIn("open-terminated", roles["Island"])
         # island perimeter inside: the x = 10 side (20) + halves of the y = +-10 sides (10 each) = 40
