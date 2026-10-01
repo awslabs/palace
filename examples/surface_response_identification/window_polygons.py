@@ -312,6 +312,27 @@ def inside_rectangle(p, r, tol=1e-9):
     return r[0] - tol <= p[0] <= r[1] + tol and r[2] - tol <= p[1] <= r[3] + tol
 
 
+def bump_columns(footprints, warnings, pairing=0.5):
+    """One bump object per column: the per-plane footprints (the bump faces drawn in each plane) paired by centroid
+    within ``pairing`` um; the first plane's footprint is emitted, ``Planes`` lists the planes it was seen in and the
+    conductors must agree (lane F's mesher needs the footprint on metal of the same conductor on both planes)."""
+    columns = []
+    for b in footprints:
+        cx, cy = centroid(b["Footprint"])
+        for col in columns:
+            if math.dist((cx, cy), col["Centroid"]) <= pairing and b["Plane"] not in col["Planes"]:
+                col["Planes"].append(b["Plane"])
+                if b["Conductor"] != col["Conductor"]:
+                    warnings.append(f"bump at ({cx:.2f}, {cy:.2f}) lands on {col['Conductor']} in {col['Planes'][0]} and on "
+                                    f"{b['Conductor']} in {b['Plane']}")
+                    col["ConductorConflict"] = True
+                break
+        else:
+            columns.append({"Conductor": b["Conductor"], "Footprint": b["Footprint"], "Planes": [b["Plane"]], "Centroid": [cx, cy],
+                            "ChipConductor": b["ChipConductor"], "Clipped": b["Clipped"], "Vertices": len(b["Footprint"])})
+    return columns
+
+
 def export(args):
     data = np.load(args.triangles, allow_pickle=False)
     nodes, xyz, attribute = data["nodes"], data["xyz"], data["attribute"]
@@ -559,19 +580,21 @@ def export(args):
     if terminal is not None and terminal_label is None:
         warnings.append(f"terminal conductor {terminal} of the E0 excitation produced no polygon")
         verification["Passed"] = False
+    columns = bump_columns(bumps_out, warnings)
     out = {"Version": 1, "Name": args.window[0], "Box": {"X": [box[0], box[1]], "Y": [box[2], box[3]]},
            "Process": chip.get("Process", {"MetalThickness": 0.1, "Overetch": 0.05}),
            "Planes": [{k: v for k, v in p.items()} for p in planes_out],
-           "Bumps": [{"Conductor": b["Conductor"], "Footprint": b["Footprint"]} for b in bumps_out],
+           "Bumps": [{"Conductor": b["Conductor"], "Footprint": b["Footprint"]} for b in columns],
            "Vacuum": chip.get("Vacuum", {"Below": 0.0, "Above": 0.0}),
            "Terminals": [terminal_label] if terminal_label else [],
            "WindowPolygons": {"Chip": chip.get("Name"), "Mesh": str(data["mesh"]) if "mesh" in data else None,
                               "Extract": args.extract, "E0": args.e0, "Excitation": excitation, "TerminalChipConductor": terminal,
                               "OpenSetback": setback, "BridgeWidth": bridge_width, "Polygons": bookkeeping,
-                              "BumpFootprints": [{k: v for k, v in b.items() if k != "Footprint"} for b in bumps_out],
+                              "BumpFootprints": [{k: v for k, v in b.items() if k != "Footprint"} for b in columns],
                               "BumpHeight": chip.get("BumpHeight"), "Warnings": warnings}}
     verification["Warnings"] = warnings
-    verification["Passed"] = verification["Passed"] and not any("did not close" in w or "several conductors" in w for w in warnings)
+    verification["Passed"] = verification["Passed"] and not any("did not close" in w or "several conductors" in w or "lands on" in w
+                                                               for w in warnings)
     return out, verification
 
 
