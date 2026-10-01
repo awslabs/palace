@@ -563,7 +563,8 @@ def conductor_table(loops, body_rows, box):
     conductor = the bodies joined by bump footprints anywhere on the chip (decision 184 M1), else every body is
     its own conductor. A conductor is Ground when one of its bodies (seen or unseen) is a ground, EntirelyInside
     when every body of it is an island entirely inside the window and the chip joins no body the window does not
-    see. Also the bump footprints meeting the window (plane, height, bodies joined, whole / straddling)."""
+    see. Also the bump footprints meeting the window (plane, height, bodies joined, whole / straddling); a closed
+    NonManifold loop without a partner on the other plane is not a bump (the box wall outline) and is skipped."""
     groups = collections.OrderedDict()
     for r in body_rows:
         rec = loops.bodies.get(r["Body"]) if loops.bodies else None
@@ -589,6 +590,8 @@ def conductor_table(loops, body_rows, box):
     footprint_rows = []
     for fp in loops.footprints:
         bb = fp["BBox"]
+        if fp.get("Partner") is None:  # a closed NonManifold loop without a partner is not a bump (the box wall outline)
+            continue
         if bb[1] < box[0] or bb[0] > box[1] or bb[3] < box[2] or bb[2] > box[3]:
             continue
         partner_body = None
