@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <set>
 #include <sstream>
 #include <string_view>
 #include <fmt/format.h>
@@ -944,6 +945,24 @@ FluxLoopData::FluxLoopData(const json &fluxloop)
   }
 }
 
+FluxLoopExcitationData::FluxLoopExcitationData(const json &excitation)
+{
+  MFEM_VERIFY(excitation.find("FluxLoops") != excitation.end(),
+              "Missing \"FluxLoops\" for \"FluxLoopExcitation\" boundary!");
+  flux_loops = excitation.at("FluxLoops").get<std::vector<int>>();
+
+  MFEM_VERIFY(excitation.find("FluxAmounts") != excitation.end(),
+              "Missing \"FluxAmounts\" for \"FluxLoopExcitation\" boundary!");
+  flux_amounts = excitation.at("FluxAmounts").get<std::vector<double>>();
+
+  MFEM_VERIFY(!flux_loops.empty(),
+              "\"FluxLoops\" for \"FluxLoopExcitation\" boundary must be non-empty!");
+  MFEM_VERIFY(flux_loops.size() == flux_amounts.size(),
+              "\"FluxLoops\" and \"FluxAmounts\" arrays must have the same size!");
+
+  save_field = excitation.value("SaveField", true);
+}
+
 BoundaryPostData::BoundaryPostData(const json &postpro)
 {
   flux =
@@ -1027,6 +1046,8 @@ BoundaryData::BoundaryData(const json &boundaries)
   current = ParseOptionalMap<SurfaceCurrentData>(boundaries, "SurfaceCurrent",
                                                  "\"SurfaceCurrent\"");
   fluxloop = ParseOptionalMap<FluxLoopData>(boundaries, "FluxLoop", "\"FluxLoop\"");
+  fluxloopexcitation = ParseOptionalMap<FluxLoopExcitationData>(
+      boundaries, "FluxLoopExcitation", "\"FluxLoopExcitation\"");
   postpro = ParseOptional<BoundaryPostData>(boundaries, "Postprocessing");
 
   // Normalize excitation indices: upgrade excitation=1 to excitation=port_idx when
@@ -1388,6 +1409,8 @@ MagnetostaticSolverData::MagnetostaticSolverData(const json &magnetostatic)
 {
   n_post = magnetostatic.value("Save", n_post);
   inactive_port_mode = magnetostatic.value("InactivePorts", inactive_port_mode);
+  flux_loop_matrix_sweep =
+      magnetostatic.value("FluxLoopMatrixSweep", flux_loop_matrix_sweep);
 }
 
 TransientSolverData::TransientSolverData(const json &transient)
@@ -1556,7 +1579,7 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
   std::ostringstream errors;
 
   // Check for duplicate indices across LumpedPort, WavePort, FloquetPort,
-  // SurfaceCurrent, FluxLoop, Terminal.
+  // SurfaceCurrent, FluxLoop, FluxLoopExcitation, Terminal.
   std::map<int, std::string> index_map;
   for (const auto &[idx, data] : boundaries.lumpedport)
   {
@@ -1592,6 +1615,15 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
       errors << "Duplicate \"Index\": " << idx << " in " << it->second << " and FluxLoop\n";
     }
   }
+  for (const auto &[idx, data] : boundaries.fluxloopexcitation)
+  {
+    auto [it, inserted] = index_map.try_emplace(idx, "FluxLoopExcitation");
+    if (!inserted)
+    {
+      errors << "Duplicate \"Index\": " << idx << " in " << it->second
+             << " and FluxLoopExcitation\n";
+    }
+  }
   for (const auto &[idx, data] : boundaries.floquetport)
   {
     auto [it, inserted] = index_map.try_emplace(idx, "FloquetPort");
@@ -1607,6 +1639,25 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
     if (!inserted)
     {
       errors << "Duplicate \"Index\": " << idx << " in " << it->second << " and Terminal\n";
+    }
+  }
+
+  // FluxLoopExcitation entries must reference distinct, defined FluxLoop indices.
+  for (const auto &[idx, data] : boundaries.fluxloopexcitation)
+  {
+    std::set<int> seen;
+    for (int loop_idx : data.flux_loops)
+    {
+      if (boundaries.fluxloop.find(loop_idx) == boundaries.fluxloop.end())
+      {
+        errors << "FluxLoopExcitation " << idx << " references undefined FluxLoop "
+               << loop_idx << "\n";
+      }
+      if (!seen.insert(loop_idx).second)
+      {
+        errors << "FluxLoopExcitation " << idx << " lists FluxLoop " << loop_idx
+               << " more than once\n";
+      }
     }
   }
 
