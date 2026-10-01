@@ -3,6 +3,11 @@
 
 #include "postoperatorcsv.hpp"
 
+#include <algorithm>
+#include <iterator>
+#include <numbers>
+#include <ranges>
+
 #include <mfem.hpp>
 
 #include "models/curlcurloperator.hpp"
@@ -25,7 +30,7 @@ Measurement Measurement::Dimensionalize(const Units &units,
   Measurement measurement_cache;
   measurement_cache.freq =
       units.Dimensionalize<Units::ValueType::FREQUENCY>(nondim_measurement_cache.freq) /
-      (2 * M_PI);
+      (2 * std::numbers::pi);
   measurement_cache.ex_idx = nondim_measurement_cache.ex_idx;                        // NONE
   measurement_cache.Jcoeff_excitation = nondim_measurement_cache.Jcoeff_excitation;  // NONE
   measurement_cache.eigenmode_Q = nondim_measurement_cache.eigenmode_Q;              // NONE
@@ -80,7 +85,7 @@ Measurement Measurement::Dimensionalize(const Units &units,
 
       dim[k].mode_port_kappa =
           units.Dimensionalize<Units::ValueType::FREQUENCY>(data.mode_port_kappa) /
-          (2 * M_PI);
+          (2 * std::numbers::pi);
       dim[k].quality_factor = data.quality_factor;                                  // NONE
       dim[k].inductive_energy_participation = data.inductive_energy_participation;  // NONE
     }
@@ -169,7 +174,7 @@ Measurement Measurement::Nondimensionalize(const Units &units,
   Measurement measurement_cache;
   measurement_cache.freq =
       units.Nondimensionalize<Units::ValueType::FREQUENCY>(dim_measurement_cache.freq) *
-      (2 * M_PI);
+      (2 * std::numbers::pi);
   measurement_cache.ex_idx = dim_measurement_cache.ex_idx;                        // NONE
   measurement_cache.Jcoeff_excitation = dim_measurement_cache.Jcoeff_excitation;  // NONE
   measurement_cache.eigenmode_Q = dim_measurement_cache.eigenmode_Q;              // NONE
@@ -224,7 +229,7 @@ Measurement Measurement::Nondimensionalize(const Units &units,
 
       dim[k].mode_port_kappa =
           units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.mode_port_kappa) *
-          (2 * M_PI);
+          (2 * std::numbers::pi);
       dim[k].quality_factor = data.quality_factor;                                  // NONE
       dim[k].inductive_energy_participation = data.inductive_energy_participation;  // NONE
     }
@@ -593,7 +598,7 @@ void PostOperatorCSV<solver_t>::PrintDomainE()
 template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeSurfaceF(const SurfacePostOperator &surf_post_op)
 {
-  if (!(surf_post_op.flux_surfs.size() > 0))
+  if (surf_post_op.flux_surfs.empty())
   {
     return;
   }
@@ -674,7 +679,7 @@ void PostOperatorCSV<solver_t>::PrintSurfaceF()
 template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeSurfaceQ(const SurfacePostOperator &surf_post_op)
 {
-  if (!(surf_post_op.eps_surfs.size() > 0))
+  if (surf_post_op.eps_surfs.empty())
   {
     return;
   }
@@ -786,8 +791,8 @@ void PostOperatorCSV<solver_t>::PrintFarFieldE(const SurfacePostOperator &surf_p
     const auto &E_field = measurement_cache.farfield.E_field[i];
 
     // Print as degrees instead of radians.
-    farfield_E->table["theta"] << 180 / M_PI * theta;
-    farfield_E->table["phi"] << 180 / M_PI * phi;
+    farfield_E->table["theta"] << 180 / std::numbers::pi * theta;
+    farfield_E->table["phi"] << 180 / std::numbers::pi * phi;
     for (int i_dim = 0; i_dim < v_dim; i_dim++)
     {
       farfield_E->table[fmt::format("rE{}_re", i_dim)] << E_field[i_dim].real();
@@ -803,7 +808,7 @@ void PostOperatorCSV<solver_t>::InitializeProbeField(
     std::string_view file_name, std::string_view col_prefix, std::string_view label_base,
     std::string_view unit, int v_dim)
 {
-  if (!(interp_op.GetProbes().size() > 0) || v_dim <= 0)
+  if (interp_op.GetProbes().empty() || v_dim <= 0)
   {
     return;
   }
@@ -1176,21 +1181,15 @@ void PostOperatorCSV<solver_t>::InitializePortS(const SpaceOperator &fem_op)
 
   for (const auto ex_idx : ex_idx_v_all)
   {
-    // TODO(C++20): Combine identical loops with ranges + projection.
-    for (const auto &[o_idx, data] : fem_op.GetLumpedPortOp())
+    auto insert_S = [&](int o_idx)
     {
       t.insert(fmt::format("abs_{}_{}", o_idx, ex_idx),
                fmt::format("|S[{}][{}]| (dB)", o_idx, ex_idx), ex_idx);
       t.insert(fmt::format("arg_{}_{}", o_idx, ex_idx),
                fmt::format("arg(S[{}][{}]) (deg.)", o_idx, ex_idx), ex_idx);
-    }
-    for (const auto &[o_idx, data] : fem_op.GetWavePortOp())
-    {
-      t.insert(fmt::format("abs_{}_{}", o_idx, ex_idx),
-               fmt::format("|S[{}][{}]| (dB)", o_idx, ex_idx), ex_idx);
-      t.insert(fmt::format("arg_{}_{}", o_idx, ex_idx),
-               fmt::format("arg(S[{}][{}]) (deg.)", o_idx, ex_idx), ex_idx);
-    }
+    };
+    std::ranges::for_each(fem_op.GetLumpedPortOp() | std::views::keys, insert_S);
+    std::ranges::for_each(fem_op.GetWavePortOp() | std::views::keys, insert_S);
   }
   MoveTableValidateReload(*port_S, std::move(t));
 }
@@ -1459,14 +1458,9 @@ void PostOperatorCSV<solver_t>::InitializeEigPortEPR(
     const LumpedPortOperator &lumped_port_op)
   requires(solver_t == ProblemType::EIGENMODE)
 {
-  // TODO(C++20): Make this a filtered iterator in LumpedPortOp.
-  for (const auto &[idx, data] : lumped_port_op)
-  {
-    if (std::abs(data.L) > 0.0)
-    {
-      ports_with_L.push_back(idx);
-    }
-  }
+  auto has_L = [](const auto &port) { return std::abs(port.second.L) > 0.0; };
+  std::ranges::copy(lumped_port_op | std::views::filter(has_L) | std::views::keys,
+                    std::back_inserter(ports_with_L));
   if (ports_with_L.empty())
   {
     return;
@@ -1502,14 +1496,9 @@ template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeEigPortQ(const LumpedPortOperator &lumped_port_op)
   requires(solver_t == ProblemType::EIGENMODE)
 {
-  // TODO(C++20): Make this a filtered iterator in LumpedPortOp.
-  for (const auto &[idx, data] : lumped_port_op)
-  {
-    if (std::abs(data.R) > 0.0)
-    {
-      ports_with_R.push_back(idx);
-    }
-  }
+  auto has_R = [](const auto &port) { return std::abs(port.second.R) > 0.0; };
+  std::ranges::copy(lumped_port_op | std::views::filter(has_R) | std::views::keys,
+                    std::back_inserter(ports_with_R));
   if (ports_with_R.empty())
   {
     return;
@@ -1854,9 +1843,8 @@ PostOperatorCSV<solver_t>::PostOperatorCSV(const config::ProblemData &problem,
     auto excitation_helper = fem_op.GetPortExcitations();
     ex_idx_v_all.clear();
     ex_idx_v_all.reserve(excitation_helper.Size());
-    std::transform(excitation_helper.begin(), excitation_helper.end(),
-                   std::back_inserter(ex_idx_v_all),
-                   [](const auto &pair) { return pair.first; });
+    std::ranges::transform(excitation_helper, std::back_inserter(ex_idx_v_all),
+                           [](const auto &pair) { return pair.first; });
     // Default to the first excitation.
     ex_idx_i = 0;
     m_ex_idx = ex_idx_v_all.front();

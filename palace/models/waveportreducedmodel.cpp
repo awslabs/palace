@@ -492,8 +492,8 @@ bool WavePortReducedModel::SolveFromGram(
     candidates.push_back({lambda, kn, std::move(y), eta, std::abs(kn.real() - kn_target)});
   }
 
-  std::sort(candidates.begin(), candidates.end(),
-            [](const Candidate &a, const Candidate &b) { return a.distance < b.distance; });
+  std::ranges::sort(candidates, [](const Candidate &a, const Candidate &b)
+                    { return a.distance < b.distance; });
   if (candidates.size() < static_cast<std::size_t>(num_modes))
   {
     return false;

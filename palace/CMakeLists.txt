@@ -108,10 +108,29 @@ endif()
 if(PALACE_WITH_CUDA)
   enable_language(CUDA)
   find_package(CUDAToolkit REQUIRED)
+  # C++20 device code: nvcc supports -std=c++20 from 12.0, and CMake knows it from 3.25.2
+  if(CMAKE_VERSION VERSION_LESS 3.25.2)
+    message(FATAL_ERROR
+      "PALACE_WITH_CUDA requires CMake 3.25.2 or later (found ${CMAKE_VERSION})")
+  endif()
+  if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA" AND
+     CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 12.0)
+    message(FATAL_ERROR
+      "PALACE_WITH_CUDA requires CUDA 12.0 or later (found ${CMAKE_CUDA_COMPILER_VERSION})")
+  endif()
   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-extended-lambda")
 elseif(PALACE_WITH_HIP)
   enable_language(HIP)
 endif()
+
+# Device translation units share headers with host code, so compile them with the same C++
+# standard (otherwise nvcc/hipcc use their own default)
+set(CMAKE_CUDA_STANDARD ${CMAKE_CXX_STANDARD})
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+set(CMAKE_CUDA_EXTENSIONS OFF)
+set(CMAKE_HIP_STANDARD ${CMAKE_CXX_STANDARD})
+set(CMAKE_HIP_STANDARD_REQUIRED ON)
+set(CMAKE_HIP_EXTENSIONS OFF)
 
 # Set a default build type if none was provided
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)

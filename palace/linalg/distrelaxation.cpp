@@ -10,7 +10,7 @@
 namespace palace
 {
 
-template <typename OperType>
+template <OperatorType OperType>
 DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
     MPI_Comm comm, const Operator &G, int smooth_it, int cheby_smooth_it, int cheby_order,
     double cheby_sf_max, double cheby_sf_min, bool cheby_4th_kind)
@@ -35,7 +35,7 @@ DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
   B_G->SetInitialGuess(false);
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void DistRelaxationSmoother<OperType>::SetOperators(const OperType &op,
                                                     const OperType &op_G)
 {
@@ -94,7 +94,7 @@ inline void RealMultTranspose(const Operator &op, const ComplexVector &x, Comple
 
 }  // namespace
 
-template <typename OperType>
+template <OperatorType OperType>
 void DistRelaxationSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r) const
 {
   // Apply smoother.
@@ -117,7 +117,7 @@ void DistRelaxationSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecTy
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void DistRelaxationSmoother<OperType>::MultTranspose2(const VecType &x, VecType &y,
                                                       VecType &r) const
 {

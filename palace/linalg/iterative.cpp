@@ -306,7 +306,7 @@ inline void ApplyBA(PreconditionerSide side, const OperType *A, const Solver<Ope
 
 }  // namespace
 
-template <typename OperType>
+template <OperatorType OperType>
 IterativeSolver<OperType>::IterativeSolver(MPI_Comm comm, int print)
   : Solver<OperType>(), comm(comm), A(nullptr), B(nullptr)
 {
@@ -337,7 +337,7 @@ IterativeSolver<OperType>::IterativeSolver(MPI_Comm comm, int print)
   use_timer = false;
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
 {
   // Set up workspace.
@@ -467,7 +467,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   final_it = it;
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void GmresSolver<OperType>::Initialize() const
 {
   if (!V.empty())
@@ -497,7 +497,7 @@ void GmresSolver<OperType>::Initialize() const
   H.resize(static_cast<std::size_t>(max_dim + 1) * std::min(init_size, max_dim));
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void GmresSolver<OperType>::Update(int j) const
 {
   // Add storage for basis vectors, Hessenberg columns, and rotations in increments.
@@ -522,7 +522,7 @@ void GmresSolver<OperType>::Update(int j) const
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 {
   // Set up workspace.
@@ -590,7 +590,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 
     V[0] = 0.0;
     V[0].Add(1.0 / beta, r);
-    std::fill(s.begin(), s.end(), 0.0);
+    std::ranges::fill(s, 0.0);
     s[0] = beta;
 
     int j = 0;
@@ -686,7 +686,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   final_it = it;
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void FgmresSolver<OperType>::Initialize() const
 {
   GmresSolver<OperType>::Initialize();
@@ -699,7 +699,7 @@ void FgmresSolver<OperType>::Initialize() const
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void FgmresSolver<OperType>::Update(int j) const
 {
   // Add storage for basis vectors in increments.
@@ -712,7 +712,7 @@ void FgmresSolver<OperType>::Update(int j) const
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 {
   // Set up workspace.
@@ -769,7 +769,7 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 
     V[0] = 0.0;
     V[0].Add(1.0 / beta, Z[0]);
-    std::fill(s.begin(), s.end(), 0.0);
+    std::ranges::fill(s, 0.0);
     s[0] = beta;
 
     int j = 0;

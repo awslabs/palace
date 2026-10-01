@@ -42,7 +42,6 @@ public:
     std::vector<int> current_port = {};
     std::vector<int> current_dipole = {};
 
-    // TODO: C++20 to replace this with iterator over joined range.
     auto FlattenPortIndices() const
     {
       std::vector<int> out;

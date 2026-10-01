@@ -244,7 +244,7 @@ public:
   // True if flux loop idx has a London (finite-λ) film. Its flux excitation uses the
   // shifted London sheet penalty ½∫(1/L_ksq)|A_t − a_h|² (RHS = M_sheet·a_h), and the
   // extracted energy is corrected to |A_t − a_h|².
-  bool IsLondonFluxLoop(int idx) const { return london_flux_loops_.count(idx) > 0; }
+  bool IsLondonFluxLoop(int idx) const { return london_flux_loops_.contains(idx); }
 
   // Measure the hole flux ∮A·dl = cᵀA of a candidate London field via the stored fluxoid
   // functional (exact by Stokes; cheaper than integrating B·n over the hole).

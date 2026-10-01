@@ -26,7 +26,7 @@ namespace palace
 // Reference: Hiptmair, Multigrid method for Maxwell's equations, SIAM J. Numer. Anal.
 //            (1998).
 //
-template <typename OperType>
+template <OperatorType OperType>
 class DistRelaxationSmoother : public Solver<OperType>
 {
   using VecType = typename Solver<OperType>::VecType;

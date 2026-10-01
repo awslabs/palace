@@ -11,6 +11,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <numbers>
 #include <numeric>
 #include <string_view>
 #include <tuple>
@@ -80,7 +81,7 @@ constexpr double WAVEPORT_SYNTHESIS_MODAL_PART_FLOOR = 1.0e-10;
 // synthesized matrices by their node label.
 inline long LabelIndex(const std::vector<std::string> &labels, const std::string &target)
 {
-  auto it = std::find(labels.begin(), labels.end(), target);
+  auto it = std::ranges::find(labels, target);
   return (it == labels.end()) ? -1 : static_cast<long>(std::distance(labels.begin(), it));
 }
 
@@ -99,7 +100,7 @@ inline std::vector<double> SampleChebyshevLobatto(double w_lo, double w_hi, int 
   }
   for (int i = 0; i < n; i++)
   {
-    ws[i] = w_mid - w_half * std::cos(M_PI * i / (n - 1));
+    ws[i] = w_mid - w_half * std::cos(std::numbers::pi * i / (n - 1));
   }
   return ws;
 }
@@ -110,7 +111,7 @@ inline std::vector<double> SampleChebyshevGauss(double w_lo, double w_hi, int n)
   std::vector<double> ws(n);
   for (int j = 0; j < n; j++)
   {
-    ws[j] = w_mid - w_half * std::cos(M_PI * (2 * j + 1) / (2.0 * n));
+    ws[j] = w_mid - w_half * std::cos(std::numbers::pi * (2 * j + 1) / (2.0 * n));
   }
   return ws;
 }
@@ -373,8 +374,8 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) co
   const auto S = dim_Q;
   MFEM_VERIFY(S >= 2, "Maximum error can only be found once two sample points have been "
                       "added to the PROM to define the parameter domain!");
-  double start = *std::min_element(z.begin(), z.end());
-  double end = *std::max_element(z.begin(), z.end());
+  double start = *std::ranges::min_element(z);
+  double end = *std::ranges::max_element(z);
   Eigen::Map<const Eigen::VectorXd> z_map(z.data(), S);
 
   // Sample Q on discrete points. The case of N>1 samples is not very useful below. It will
@@ -404,8 +405,7 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) co
     bool partial_full = (queue.size() < N);
     if (partial_full || Q_sample < queue.back().second)
     {
-      auto it_loc = std::upper_bound(queue.begin(), queue.end(), Q_sample,
-                                     [](double q, const q_t &p2) { return q < p2.second; });
+      auto it_loc = std::ranges::upper_bound(queue, Q_sample, {}, &q_t::second);
       queue.insert(it_loc, std::make_pair(z_sample, Q_sample));
       if (!partial_full)
       {
@@ -418,8 +418,7 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) co
                           N, queue.size()));
 
   std::vector<double> vals(N);
-  std::transform(queue.begin(), queue.end(), vals.begin(),
-                 [](const q_t &p) { return p.first.real(); });
+  std::ranges::transform(queue, vals.begin(), [](const q_t &p) { return p.first.real(); });
   return vals;
 }
 
@@ -629,8 +628,8 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   if (!sample_f.empty())
   {
     sweep_omega_samples = sample_f;
-    sweep_omega_min = *std::min_element(sample_f.begin(), sample_f.end());
-    sweep_omega_max = *std::max_element(sample_f.begin(), sample_f.end());
+    sweep_omega_min = *std::ranges::min_element(sample_f);
+    sweep_omega_max = *std::ranges::max_element(sample_f);
   }
   // Floor the fit/rank tolerances at the synthesis EVP accuracy floor: resolving finer than
   // the port modes are solved just chases eigensolver noise (see
@@ -1209,7 +1208,7 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   // Initialize map entries for new ports that haven't been projected yet (first call).
   for (const auto &[port_idx, Mp_hdm] : M_floquet_p_)
   {
-    if (M_floquet_p_r.find(port_idx) == M_floquet_p_r.end())
+    if (!M_floquet_p_r.contains(port_idx))
     {
       auto &Mp_r = M_floquet_p_r[port_idx];
       Mp_r.resize(dim_V_new, dim_V_new);
@@ -1799,8 +1798,8 @@ bool RomOperator::AddAuxBlockDirections(WavePortAuxBlock &blk, const Eigen::Matr
   // weight only for deterministic labels; the factorization itself is order independent.
   std::vector<long> order(static_cast<std::size_t>(eig.eigenvalues().size()));
   std::iota(order.begin(), order.end(), 0);
-  std::stable_sort(
-      order.begin(), order.end(), [&](long a, long b)
+  std::ranges::stable_sort(
+      order, [&](long a, long b)
       { return std::abs(eig.eigenvalues()(a)) > std::abs(eig.eigenvalues()(b)); });
   for (long j : order)
   {
@@ -2113,7 +2112,7 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   long n_waveport_rows = 0;
   for (long j = n_port_modes; j < static_cast<long>(v_node_label.size()); j++)
   {
-    if (v_node_label[j].rfind("waveport_", 0) == 0)
+    if (v_node_label[j].starts_with("waveport_"))
     {
       n_waveport_rows++;
     }
@@ -2426,8 +2425,8 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       Mr_total_corr -= P2_full;
 
       const auto load_label = fmt::format("waveport_{:d}_re", port_idx);
-      auto pl = std::find_if(pending_port_loads.begin(), pending_port_loads.end(),
-                             [&](const auto &p) { return p.label == load_label; });
+      auto pl = std::ranges::find_if(pending_port_loads,
+                                     [&](const auto &p) { return p.label == load_label; });
       if (pl != pending_port_loads.end())
       {
         pl->Kr_corr += P0_full;
@@ -2792,8 +2791,8 @@ void RomOperator::PrintPortReferenceData(const Units &units, const fs::path &pos
     }
     const int wp_idx = port_idx;
     const auto fit_it =
-        std::find_if(matrices.wave_port_fits.begin(), matrices.wave_port_fits.end(),
-                     [wp_idx](const auto &fit) { return fit.port_idx == wp_idx; });
+        std::ranges::find_if(matrices.wave_port_fits,
+                             [wp_idx](const auto &fit) { return fit.port_idx == wp_idx; });
     const auto label = fmt::format("waveport_{:d}_re", port_idx);
     if (fit_it != matrices.wave_port_fits.end() && LabelIndex(v_node_label, label) >= 0)
     {
@@ -2806,7 +2805,7 @@ void RomOperator::PrintPortReferenceData(const Units &units, const fs::path &pos
   }
 
   const double unit_GHz =
-      units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * M_PI);
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * std::numbers::pi);
   const double unit_ohm_inv = 1.0 / units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
 
   // Physical frequency scale s_phys = iω·ω0 with ω0 = unit_henry_inv/unit_ohm_inv, so
@@ -2827,9 +2826,8 @@ void RomOperator::PrintPortReferenceData(const Units &units, const fs::path &pos
     {
       return {0.0, 0.0};
     }
-    const auto load_it =
-        std::find_if(matrices.port_loads.begin(), matrices.port_loads.end(),
-                     [&ref](const auto &pl) { return pl.label == ref.label; });
+    const auto load_it = std::ranges::find_if(matrices.port_loads, [&ref](const auto &pl)
+                                              { return pl.label == ref.label; });
     MFEM_VERIFY(load_it != matrices.port_loads.end(),
                 "Missing wave-port load pencil for port reference output!");
     const long phys = LabelIndex(total_labels, ref.label);
@@ -2953,9 +2951,11 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   // evaluation is collective (prolongation, operator application, norms), so it must
   // also run on every rank before the root-only output below.
   const double fmin_GHz =
-      units.Dimensionalize<Units::ValueType::FREQUENCY>(sweep_omega_min) / (2.0 * M_PI);
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(sweep_omega_min) /
+      (2.0 * std::numbers::pi);
   const double fmax_GHz =
-      units.Dimensionalize<Units::ValueType::FREQUENCY>(sweep_omega_max) / (2.0 * M_PI);
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(sweep_omega_max) /
+      (2.0 * std::numbers::pi);
   auto eigs = ComputeEigenvalueEstimates(*matrices.L_inv, matrices.R_inv.get(), *matrices.C,
                                          fmin_GHz, fmax_GHz);
   ComputeEigenvalueEstimateErrors(units, eigs);
@@ -3001,7 +3001,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
     const long n_lumped = static_cast<long>(NumSynthesisPortModes());
     long n_wave = 0;
     for (long j = n_lumped; j < static_cast<long>(v_node_label.size()) &&
-                            v_node_label[j].rfind("waveport_", 0) == 0;
+                            v_node_label[j].starts_with("waveport_");
          j++)
     {
       n_wave++;
@@ -3117,7 +3117,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
       out.table.insert(fmt::format("im_{}", key), fmt::format("Im{{{}}}", key));
     }
     const double unit_GHz =
-        units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * M_PI);
+        units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * std::numbers::pi);
     for (std::size_t fi = 0; fi < sweep_omega_samples.size(); fi++)
     {
       out.table["f"] << sweep_omega_samples[fi] * unit_GHz;
@@ -3146,7 +3146,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   if (!coupled_g.empty())
   {
     const double unit_GHz =
-        units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * M_PI);
+        units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * std::numbers::pi);
     auto write_coupling = [&](std::string_view filename, bool source)
     {
       auto out = TableWithCSVFile(post_dir / filename);
@@ -3400,8 +3400,8 @@ std::vector<RomOperator::EigenvalueEstimate> RomOperator::ComputeEigenvalueEstim
       continue;
     }
     const std::complex<double> omega_phys = w0 * (s(k) * inv_i);
-    const double f_re = omega_phys.real() / (2.0 * M_PI * 1.0e9);
-    const double f_im = omega_phys.imag() / (2.0 * M_PI * 1.0e9);
+    const double f_re = omega_phys.real() / (2.0 * std::numbers::pi * 1.0e9);
+    const double f_im = omega_phys.imag() / (2.0 * std::numbers::pi * 1.0e9);
     if (f_re < fmin_GHz || f_re > fmax_GHz)
     {
       continue;
@@ -3438,8 +3438,8 @@ std::vector<RomOperator::EigenvalueEstimate> RomOperator::ComputeEigenvalueEstim
     }
     modes.push_back(std::move(est));
   }
-  std::sort(modes.begin(), modes.end(),
-            [](const auto &a, const auto &b) { return a.freq_re_GHz < b.freq_re_GHz; });
+  std::ranges::sort(modes, [](const auto &a, const auto &b)
+                    { return a.freq_re_GHz < b.freq_re_GHz; });
 
   // No frequency-based deduplication: the complex eigenfrequency is not a unique mode
   // identifier (a genuinely degenerate eigenspace yields one QZ eigenvalue per
@@ -3486,7 +3486,7 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
     long n_waveport_rows = 0;
     for (long j = n_port_modes; j < static_cast<long>(v_node_label.size()); j++)
     {
-      if (v_node_label[j].rfind("waveport_", 0) == 0)
+      if (v_node_label[j].starts_with("waveport_"))
       {
         n_waveport_rows++;
       }
@@ -3511,7 +3511,7 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
   u.UseDevice(true);
   res.UseDevice(true);
   const double freq_to_omega_nd =
-      2.0 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(1.0);
+      2.0 * std::numbers::pi * units.Nondimensionalize<Units::ValueType::FREQUENCY>(1.0);
   for (auto &est : estimates)
   {
     // Physical complex frequency f (GHz) → nondimensional complex angular frequency.

@@ -28,7 +28,7 @@ namespace palace
 //
 // The input/output vectors are monolithic (size = block0_size + block1_size).
 //
-template <typename OperType>
+template <OperatorType OperType>
 class BlockDiagonalPreconditioner : public Solver<OperType>
 {
   using VecType = typename Solver<OperType>::VecType;

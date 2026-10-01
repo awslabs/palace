@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <numbers>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -152,21 +153,27 @@ TEST_CASE("Nondimensionalize via IoData", "[nondimensionalize][Serial]")
 
   // Eigenmode frequencies (converted to angular frequency)
   CHECK(iodata.solver.eigenmode.target ==
-        Approx(2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(5.0)));
+        Approx(2 * std::numbers::pi *
+               units.Nondimensionalize<Units::ValueType::FREQUENCY>(5.0)));
   CHECK(iodata.solver.eigenmode.target_upper ==
-        Approx(2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(10.0)));
+        Approx(2 * std::numbers::pi *
+               units.Nondimensionalize<Units::ValueType::FREQUENCY>(10.0)));
 
   // Driven frequencies
   CHECK(iodata.solver.driven.sample_f[0] ==
-        Approx(2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(1.0)));
+        Approx(2 * std::numbers::pi *
+               units.Nondimensionalize<Units::ValueType::FREQUENCY>(1.0)));
   CHECK(iodata.solver.driven.sample_f[1] ==
-        Approx(2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(2.0)));
+        Approx(2 * std::numbers::pi *
+               units.Nondimensionalize<Units::ValueType::FREQUENCY>(2.0)));
   CHECK(iodata.solver.driven.sample_f[2] ==
-        Approx(2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(3.0)));
+        Approx(2 * std::numbers::pi *
+               units.Nondimensionalize<Units::ValueType::FREQUENCY>(3.0)));
 
   // Transient parameters
   CHECK(iodata.solver.transient.pulse_f ==
-        Approx(2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(2.5)));
+        Approx(2 * std::numbers::pi *
+               units.Nondimensionalize<Units::ValueType::FREQUENCY>(2.5)));
   CHECK(iodata.solver.transient.pulse_tau ==
         Approx(units.Nondimensionalize<Units::ValueType::TIME>(1.0)));
   CHECK(iodata.solver.transient.max_t ==
@@ -274,10 +281,11 @@ TEST_CASE("Nondimensionalize free functions", "[nondimensionalize][Serial]")
 
     config::Nondimensionalize(units, data);
 
-    CHECK(data.target ==
-          Approx(2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(5.0)));
+    CHECK(data.target == Approx(2 * std::numbers::pi *
+                                units.Nondimensionalize<Units::ValueType::FREQUENCY>(5.0)));
     CHECK(data.target_upper ==
-          Approx(2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(10.0)));
+          Approx(2 * std::numbers::pi *
+                 units.Nondimensionalize<Units::ValueType::FREQUENCY>(10.0)));
   }
 
   SECTION("TransientSolverData")
@@ -291,7 +299,8 @@ TEST_CASE("Nondimensionalize free functions", "[nondimensionalize][Serial]")
     config::Nondimensionalize(units, data);
 
     CHECK(data.pulse_f ==
-          Approx(2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(2.5)));
+          Approx(2 * std::numbers::pi *
+                 units.Nondimensionalize<Units::ValueType::FREQUENCY>(2.5)));
     CHECK(data.pulse_tau == Approx(units.Nondimensionalize<Units::ValueType::TIME>(1.0)));
     CHECK(data.max_t == Approx(units.Nondimensionalize<Units::ValueType::TIME>(10.0)));
     CHECK(data.delta_t == Approx(units.Nondimensionalize<Units::ValueType::TIME>(0.1)));
@@ -394,11 +403,14 @@ TEST_CASE("Nondimensionalize free functions", "[nondimensionalize][Serial]")
     config::Nondimensionalize(units, data);
 
     CHECK(data.sample_f[0] ==
-          Approx(2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(1.0)));
+          Approx(2 * std::numbers::pi *
+                 units.Nondimensionalize<Units::ValueType::FREQUENCY>(1.0)));
     CHECK(data.sample_f[1] ==
-          Approx(2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(2.0)));
+          Approx(2 * std::numbers::pi *
+                 units.Nondimensionalize<Units::ValueType::FREQUENCY>(2.0)));
     CHECK(data.sample_f[2] ==
-          Approx(2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(3.0)));
+          Approx(2 * std::numbers::pi *
+                 units.Nondimensionalize<Units::ValueType::FREQUENCY>(3.0)));
   }
 }
 

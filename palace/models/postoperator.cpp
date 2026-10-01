@@ -4,9 +4,11 @@
 #include "postoperator.hpp"
 
 #include <algorithm>
+#include <compare>
 #include <complex>
 #include <map>
 #include <memory>
+#include <numbers>
 #include <set>
 #include <string>
 #include <tuple>
@@ -1175,7 +1177,8 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   double paraview_time = time;
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
-    paraview_time = units.Dimensionalize<Units::ValueType::FREQUENCY>(time) / (2.0 * M_PI);
+    paraview_time =
+        units.Dimensionalize<Units::ValueType::FREQUENCY>(time) / (2.0 * std::numbers::pi);
   }
   paraview->SetCycle(step);
   paraview->SetTime(paraview_time);
@@ -1782,7 +1785,7 @@ void PostOperator<solver_t>::MeasureFloquetPorts() const
       // Unitary: |S_RHC|² + |S_LHC|² = |S_TE|² + |S_TM|² (energy conserved).
       if (circular_output)
       {
-        const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
+        const double inv_sqrt2 = 1.0 / std::numbers::sqrt2;
         std::map<std::tuple<int, int, bool>, std::complex<double>> circ;
         std::set<std::pair<int, int>> orders;
         for (const auto &[key, S] : S_all)
@@ -1866,7 +1869,7 @@ void PostOperator<solver_t>::MeasureSParameter() const
     // Cross-type observations require a √2 correction:
     //   - Floquet drives, lumped/wave observes: lumped |b|² = 2×P_avg, divide by √2
     //   - Lumped/wave drives, Floquet observes: Floquet |S|² = P_avg, multiply by √2
-    const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
+    const double inv_sqrt2 = 1.0 / std::numbers::sqrt2;
     const bool floquet_drives = (drive_port_type == PortType::FloquetPort);
     const bool lumped_or_wave_drives =
         (drive_port_type == PortType::LumpedPort || drive_port_type == PortType::WavePort);
@@ -1920,7 +1923,7 @@ void PostOperator<solver_t>::MeasureSParameter() const
       {
         if (lumped_or_wave_drives)
         {
-          S *= std::sqrt(2.0);
+          S *= std::numbers::sqrt2;
         }
         auto [m, n, is_te] = key;
         auto pol = measurement_cache.floquet_circular_output ? (is_te ? "RHC" : "LHC")
@@ -2010,22 +2013,22 @@ void PostOperator<solver_t>::MeasureProbes() const
 #if defined(MFEM_USE_GSLIB)
   if constexpr (HasEGridFunction<solver_t>())
   {
-    if (interp_op.GetProbes().size() > 0 && E)
+    if (!interp_op.GetProbes().empty() && E)
     {
       measurement_cache.probe_E_field = interp_op.ProbeField(*E);
     }
   }
-  if (En && interp_op.GetProbes().size() > 0)
+  if (En && !interp_op.GetProbes().empty())
   {
     measurement_cache.probe_En_field = interp_op.ProbeField(*En);
   }
-  if (Bt_inplane && interp_op.GetProbes().size() > 0)
+  if (Bt_inplane && !interp_op.GetProbes().empty())
   {
     measurement_cache.probe_Bt_field = interp_op.ProbeField(*Bt_inplane);
   }
   if constexpr (HasBGridFunction<solver_t>())
   {
-    if (interp_op.GetProbes().size() > 0 && B)
+    if (!interp_op.GetProbes().empty() && B)
     {
       measurement_cache.probe_B_field = interp_op.ProbeField(*B);
     }
@@ -2052,14 +2055,13 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
   MeasureAllImpl();
 
   std::complex<double> freq =
-      units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI);
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * std::numbers::pi);
   post_op_csv.PrintAllCSVData(*this, measurement_cache, freq.real(), step, ex_idx);
   if (ShouldWriteParaviewFields(step))
   {
     Mpi::Print("\n");
     auto ind = 1 + std::distance(output_save_indices.begin(),
-                                 std::lower_bound(output_save_indices.begin(),
-                                                  output_save_indices.end(), step));
+                                 std::ranges::lower_bound(output_save_indices, step));
     WriteParaviewFields(omega.real(), ind);
     Mpi::Print(" Wrote fields to disk (Paraview) at step {:d}\n", step + 1);
   }
@@ -2067,8 +2069,7 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
   {
     Mpi::Print("\n");
     auto ind = 1 + std::distance(output_save_indices.begin(),
-                                 std::lower_bound(output_save_indices.begin(),
-                                                  output_save_indices.end(), step));
+                                 std::ranges::lower_bound(output_save_indices, step));
     WriteMFEMGridFunctions(freq.real(), ind);
     Mpi::Print(" Wrote fields to disk (grid function) at step {:d}\n", step + 1);
   }
@@ -2279,7 +2280,7 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
   MeasureSParameter();
 
   const std::complex<double> freq =
-      units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI);
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * std::numbers::pi);
   post_op_csv.PrintReducedCSVData(*this, measurement_cache, freq.real(), step, ex_idx);
 }
 
@@ -2312,10 +2313,10 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
     table.insert(Column("idx", "m", idx_pad, {}, {}, "") << step + 1);
     table.insert(Column("f_re", "Re{f} (GHz)")
                  << (units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real())) /
-                        (2 * M_PI));
+                        (2 * std::numbers::pi));
     table.insert(Column("f_im", "Im{f} (GHz)")
                  << (units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.imag())) /
-                        (2 * M_PI));
+                        (2 * std::numbers::pi));
     table.insert(Column("q", "Q") << measurement_cache.eigenmode_Q);
     table.insert(Column("err_back", "Error (Bkwd.)") << error_bkwd);
     table.insert(Column("err_abs", "Error (Abs.)") << error_abs);
@@ -2553,12 +2554,7 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
     std::vector<double> path_data;
     std::vector<int> marker_data;
 
-    bool operator<(const LineIntegralKey &other) const
-    {
-      return std::tie(has_coords, quad_order, path_data, marker_data) <
-             std::tie(other.has_coords, other.quad_order, other.path_data,
-                      other.marker_data);
-    }
+    auto operator<=>(const LineIntegralKey &) const = default;
   };
   auto MakeLineIntegralKey = [](const std::vector<mfem::Vector> &path, bool has_coords,
                                 const mfem::Array<int> &marker, int quad_order)
@@ -2762,7 +2758,7 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
   // Compute voltage for each configured voltage-only entry.
   for (const auto &[idx, cfg] : voltage_postpro)
   {
-    if (filled_voltage_postpro.count(idx))
+    if (filled_voltage_postpro.contains(idx))
     {
       continue;
     }

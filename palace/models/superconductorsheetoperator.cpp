@@ -99,8 +99,7 @@ void SuperconductorSheetOperator::SetUpBoundaryProperties(
       }
       bdr.attr_list.Append(attr);
       // Per-attribute scaling to account for increased area when using mesh cracking.
-      bdr.attr_scaling[attr] =
-          (cracked_attributes.find(attr) != cracked_attributes.end()) ? 2.0 : 1.0;
+      bdr.attr_scaling[attr] = cracked_attributes.contains(attr) ? 2.0 : 1.0;
     }
   }
 }

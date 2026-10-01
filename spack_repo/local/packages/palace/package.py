@@ -97,6 +97,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("cmake@3.18.1:", type="build", when="@0.11")
     depends_on("cmake@3.21:", type="build", when="@0.12:0.14")
     depends_on("cmake@3.24:", type="build", when="@0.15:")
+    # C++20 device code: CMake knows nvcc's -std=c++20 from 3.25.2, and nvcc has it from 12.0
+    depends_on("cmake@3.25.2:", type="build", when="@0.19: +cuda")
+    depends_on("cuda@12:", when="@0.19: +cuda")
     depends_on("pkgconfig", type="build")
     depends_on("mpi")
     depends_on("blas")
@@ -406,9 +409,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("magma~shared", when="~shared")
         depends_on("libceed+magma", when="@0.14:")
 
-    # Umpire 2026.07 requires C++20, while Palace's GPU dependencies use C++17.
-    depends_on("umpire@:2025.12 cxxstd=17", when="@0.16: +cuda")
-    depends_on("umpire@:2025.12 cxxstd=17", when="@0.16: +rocm")
+    # Palace 0.16 to 0.18 build their GPU stack as C++17, and Umpire 2026.07 requires C++20.
+    depends_on("umpire@:2025.12 cxxstd=17", when="@0.16:0.18 +cuda")
+    depends_on("umpire@:2025.12 cxxstd=17", when="@0.16:0.18 +rocm")
+    # From 0.19 Umpire can be C++20. MFEM compiles Umpire's C++ headers, so it has to match;
+    # hypre only uses Umpire's C interface.
+    depends_on("mfem cxxstd=20", when="@0.19: +cuda")
+    depends_on("mfem cxxstd=20", when="@0.19: +rocm")
 
     with when("+cuda"):
         # GPU-aware MPI

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <unordered_set>
 #include <mfem.hpp>
 #include "fem/coefficient.hpp"
@@ -190,7 +191,7 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
       h1_fespace.GetVertexDofs(v, vdofs);
       double s, t;
       inplane(x, s, t);
-      psi(vdofs[0]) = phi * std::atan2(s, -t) / (2.0 * M_PI);
+      psi(vdofs[0]) = phi * std::atan2(s, -t) / (2.0 * std::numbers::pi);
     }
     mfem::Vector t(h1_fespace.GetTrueVSize());
     t.UseDevice(false);
@@ -211,7 +212,7 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
     inplane(x0, s0, t0);
     inplane(x1, s1, t1);
     const double a_angle =
-        phi * std::atan2(s0 * t1 - t0 * s1, s0 * s1 + t0 * t1) / (2.0 * M_PI);
+        phi * std::atan2(s0 * t1 - t0 * s1, s0 * s1 + t0 * t1) / (2.0 * std::numbers::pi);
     nd1_fespace.GetEdgeDofs(e, edofs);
     // cut = Grad ψ - a_angle. ψ is continuous except across the cut half-plane, where it
     // jumps by Φ, so this reproduces the ±Φ step cochain exactly on a conformal mesh.
@@ -333,7 +334,7 @@ double ComputeFluxThroughSurface(const mfem::ParGridFunction &B_gf,
   for (int be = 0; be < nbdr; ++be)
   {
     int attr = pmesh->GetBdrAttribute(be);
-    if (std::find(attributes.begin(), attributes.end(), attr) == attributes.end())
+    if (std::ranges::find(attributes, attr) == attributes.end())
     {
       continue;
     }

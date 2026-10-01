@@ -7,6 +7,7 @@
 #include <chrono>
 #include <map>
 #include <memory>
+#include <numbers>
 #include <optional>
 #include <string_view>
 #include <tuple>
@@ -218,7 +219,10 @@ struct Measurement
                                        const Measurement &dim_measurement_cache);
   // Helpers for converting complex variable to magnitude in dB and phase.
   static double Magnitude(std::complex<double> x) { return 20.0 * std::log10(std::abs(x)); }
-  static double Phase(std::complex<double> x) { return std::arg(x) * 180.0 / M_PI; }
+  static double Phase(std::complex<double> x)
+  {
+    return std::arg(x) * 180.0 / std::numbers::pi;
+  }
 };
 
 namespace _impl
@@ -324,9 +328,6 @@ protected:
   void PrintProbeBt(const InterpolationOperator &interp_op, int v_dim);
   void InitializeProbeB(const InterpolationOperator &interp_op, int v_dim);
   void PrintProbeB(const InterpolationOperator &interp_op, int v_dim);
-
-  // TODO(C++20): Upgrade SFINAE to C++20 concepts to simplify static selection since we can
-  // just use `void Function(...) requires (solver_t == Type::A);`.
 
   // Driven + Transient
   std::optional<TableWithCSVFile> surface_I;
