@@ -64,6 +64,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed CG, GMRES, and FGMRES returning NaN when the initial residual is exactly zero
     (e.g. a zero right-hand side) and no absolute tolerance is set.
     [PR 941](https://github.com/awslabs/palace/pull/941).
+  - Fixed driven-sweep restarts (`"Restart"` > 1) aborting with
+    `Column ... not found in table`, because reloaded CSV tables kept stale column-name
+    indices.
+    [PR 944](https://github.com/awslabs/palace/pull/944).
 
 #### Performance Improvements
 

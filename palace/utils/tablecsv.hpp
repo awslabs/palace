@@ -5,10 +5,11 @@
 #define PALACE_UTILS_TABLECSV_HPP
 
 #include <cstddef>
+#include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
 namespace palace
@@ -82,8 +83,10 @@ class Table
   std::vector<Column> cols;
 
   // Map of column name to column index to avoid duplicate column names and allow
-  // fast retrieval by name.
-  std::unordered_map<std::string, std::size_t> name_to_index;
+  // fast retrieval by name. The transparent std::less<> lets lookups take a
+  // std::string_view without building a std::string (an unordered_map needs C++20 for
+  // that).
+  std::map<std::string, std::size_t, std::less<>> name_to_index;
 
   // Cache value to reserve vector space by default.
   std::size_t reserve_n_rows = 0;
@@ -120,8 +123,12 @@ public:
   // Check if a column with the given name exists.
   [[nodiscard]] bool has(std::string_view name) const
   {
-    return name_to_index.count(std::string(name)) > 0;
+    return name_to_index.find(name) != name_to_index.end();
   }
+
+  // Rebuild the name index from the columns, for callers that reassign Column::name
+  // directly rather than going through insert.
+  void RebuildNameIndex();
 
   // Access columns via vector position or column name.
   inline Column &operator[](std::size_t idx) { return cols.at(idx); }
