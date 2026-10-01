@@ -6,7 +6,8 @@
 # Schema checks, the z-level stack of the transmon reference (29 levels of the recorded
 # r50 / t5 manifest), input refusals (overlapping polygons, a bump off metal), and the tiny
 # synthetic two-level window meshed at r 0.2 um / t 5 um: every attribute area and volume
-# against its analytic value, then validate_window_mesh.jl (adjacency rules, positivity).
+# against its analytic value, then validate_window_mesh.jl (adjacency rules, positivity);
+# the boundary-layer Thickness margin (decision 188) and its explicit exact-sum option.
 
 using Test
 using JSON
@@ -149,6 +150,23 @@ end
     spec = read_polygon_set(synthetic_two_level_window())
     manifest = mesh_polygon_window(spec, 0.2, 5.0, output; verbose=false)
     @test manifest["nonpositive"] == 0
+    # Decision 188: the band Thickness carries the 1e-6 margin by default (3 layers of
+    # first height 0.2: exact sum 1.4); the exact-sum mode is explicit and recorded.
+    @test manifest["radial_layers"] == 3
+    @test manifest["radial_band_thickness_mode"] == "geometric_sum_x_1p000001"
+    @test manifest["radial_band_thickness_um"] ≈ 1.4 * (1.0 + 1.0e-6) rtol = 1.0e-12
+    exact = mesh_polygon_window(
+        spec,
+        0.2,
+        5.0,
+        joinpath(directory, "synthetic_r200_exact.msh2");
+        verbose=false,
+        plan_only=true,
+        exact_band_thickness=true
+    )
+    @test exact["radial_band_thickness_mode"] == "exact_geometric_sum"
+    @test exact["radial_band_thickness_um"] ≈ 1.4 rtol = 1.0e-12
+    @test exact["plan_perimeter_edges"] == manifest["plan_perimeter_edges"]
     @test manifest["first_layer_normal_outliers_above_1p5x_target"] == 0
     @test manifest["first_layer_normal_height_um"]["maximum"] <= 0.22
     @test manifest["perimeter_tangent_length_um"]["maximum"] <= 5.0 + 1.0e-9

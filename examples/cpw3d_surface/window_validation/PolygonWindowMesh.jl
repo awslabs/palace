@@ -36,6 +36,14 @@
 # nodes compacted and the physical attributes written directly to an ASCII MSH2 file with a
 # JSON manifest (counts, per-attribute areas / volumes, first-layer heights, z levels).
 #
+# Deliberate deviation from the recorded transmon generator (supervisor decision 188): the
+# BoundaryLayer Thickness is the geometric sum r (2^n - 1) times (1 + 1e-6) by default. The
+# recorded generator passes the exact sum, so floating-point rounding decides whether a
+# column gets n or n - 1 rows (~8 % of the columns short at r10, ~20 % at r50, also in the
+# recorded meshes), and on Linux that mix fails Gmsh's edge recovery at r10. With the margin
+# every column has exactly n rows on every platform. `exact_band_thickness=true`
+# (`--exact-band-thickness`) reproduces the recorded meshes.
+#
 # Polygon-set JSON (micrometres; `Version` 1):
 #   {"Name": ..., "Box": {"X": [x0, x1], "Y": [y0, y1]},
 #    "Process": {"MetalThickness": 0.1, "Overetch": 0.05},
@@ -441,6 +449,10 @@ end
 
 # ---------------------------------------------------------------------------------------------
 
+# Relative margin on the BoundaryLayer Thickness (decision 188): every column gets exactly
+# `radial_layers` rows instead of n or n - 1 by rounding of the exact geometric sum.
+const BAND_THICKNESS_MARGIN = 1.0e-6
+
 struct PlanMesh
     xy::Vector{Point2}
     triangles::Vector{NTuple{3, Int}}
@@ -454,6 +466,7 @@ function mesh_plan(
     tangential_um::Float64;
     radial_growth::Float64=2.0,
     radial_band_um::Float64=1.55,
+    exact_band_thickness::Bool=false,
     verbose::Bool=true
 )
     surfaces, class_by_surface, metal_edge_curves = plan_partitions(spec)
@@ -491,7 +504,8 @@ function mesh_plan(
 
     radial_layers = max(1, round(Int, log2(1.0 + radial_band_um / radial_um)))
     radial_thickness =
-        radial_um * (radial_growth^radial_layers - 1.0) / (radial_growth - 1.0)
+        radial_um * (radial_growth^radial_layers - 1.0) / (radial_growth - 1.0) *
+        (exact_band_thickness ? 1.0 : 1.0 + BAND_THICKNESS_MARGIN)
     for option in (
         "General.NumThreads",
         "Mesh.MaxNumThreads1D",
@@ -518,7 +532,9 @@ function mesh_plan(
         radial_layers,
         ", thickness=",
         radial_thickness,
-        " um"
+        " um (",
+        exact_band_thickness ? "exact geometric sum" : "geometric sum x (1 + 1e-6)",
+        ")"
     )
 
     raw_triangles = Tuple{NTuple{3, Point2}, Int}[]
@@ -768,10 +784,12 @@ function face_area(p1, p2, p3)
 end
 
 """
-    mesh_polygon_window(spec, radial_um, tangential_um, output; verbose=true) -> manifest
+    mesh_polygon_window(spec, radial_um, tangential_um, output; verbose=true,
+                        plan_only=false, exact_band_thickness=false) -> manifest
 
 Generate the fabricated reference mesh of a polygon set and write `output` (ASCII MSH2) with
-its JSON manifest next to it.
+its JSON manifest next to it. `exact_band_thickness=true` passes the exact geometric sum as
+the boundary-layer Thickness (the recorded transmon generator's formula; see the header).
 """
 function mesh_polygon_window(
     spec::PolygonSet,
@@ -779,7 +797,8 @@ function mesh_polygon_window(
     tangential_um::Float64,
     output::AbstractString;
     verbose::Bool=true,
-    plan_only::Bool=false
+    plan_only::Bool=false,
+    exact_band_thickness::Bool=false
 )
     output = abspath(output)
     metal_layers = max(2, ceil(Int, spec.metal_thickness / radial_um - 1.0e-9))
@@ -788,7 +807,13 @@ function mesh_polygon_window(
     plan, radial_layers, radial_thickness = try
         gmsh.option.set_number("General.Verbosity", 2)
         gmsh.model.add(spec.name)
-        mesh_plan(spec, radial_um, tangential_um; verbose=verbose)
+        mesh_plan(
+            spec,
+            radial_um,
+            tangential_um;
+            exact_band_thickness=exact_band_thickness,
+            verbose=verbose
+        )
     finally
         gmsh.finalize()
     end
@@ -829,6 +854,8 @@ function mesh_polygon_window(
         "radial_growth" => 2.0,
         "radial_layers" => radial_layers,
         "radial_band_thickness_um" => radial_thickness,
+        "radial_band_thickness_mode" =>
+            exact_band_thickness ? "exact_geometric_sum" : "geometric_sum_x_1p000001",
         "metal_thickness_um" => spec.metal_thickness,
         "overetch_um" => spec.overetch,
         "metal_layers" => metal_layers,

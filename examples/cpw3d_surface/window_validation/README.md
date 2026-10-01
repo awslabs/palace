@@ -8,13 +8,14 @@ The single transmon's fabricated reference (`single-transmon-finitemetal-anisotr
 | file | role |
 |---|---|
 | `PolygonWindowMesh.jl` | the mesher (module): schema reader, plan fragmentation and classification, per-partition one-sided boundary-layer meshing, welding, z-level stack, sweep, attribute writing, manifest |
-| `mesh_polygon_window.jl` | CLI: `julia --project=. mesh_polygon_window.jl WINDOW.json RADIAL_UM TANGENTIAL_UM OUT.msh2 [--plan-only]` |
+| `mesh_polygon_window.jl` | CLI: `julia --project=. mesh_polygon_window.jl WINDOW.json RADIAL_UM TANGENTIAL_UM OUT.msh2 [--plan-only] [--exact-band-thickness]` |
 | `validate_window_mesh.jl` | independent validation by physical NAME (adjacency rules, first-order simplices, no shared faces, minSICN, manifest counts, per-attribute areas / volumes) |
 | `export_transmon_polygon_set.jl` | the transmon footprint as a polygon set (SingleTransmon environment; curved edges as their transfinite chords at the tangent target) |
 | `synthetic_two_level_window.jl` | tiny two-level window (two facing CPW stubs + a bump) for the tests |
 | `compare_mesh_validations.py` | two validation manifests of one geometry side by side (counts, areas, volumes) |
 | `test_polygon_window_mesh.jl` | `julia --project=. test_polygon_window_mesh.jl` |
 | `SCHEMA.md` | the polygon-set input schema (fields, units, orientation and clipping rules) for the writer (lane W) |
+| `trial_window_extract_to_polygon_set.jl` | TRIAL-only converter of a lane-W `window_extract.py` extract (chip-wide loops, clipped at the box here by OCC) to a polygon set, for sizing / robustness trials of a window mesh before lane W's schema'd output exists (supervisor decision 187); never a stage-1 reference input |
 
 ## Polygon-set JSON
 
@@ -54,5 +55,9 @@ Metal 0.1 um with vertical sidewalls, overetch 0.05 um of the exposed substrate,
 | 10 / 11, 12 / 13, ... | 2 | further terminals |
 
 SA / MS / MA participations are surface integrals on these shells (Palace `Postprocessing.Dielectric` with `Thickness` 0.002), as in the transmon reference configs; the manifest (`OUT.json`) records the table, counts, per-attribute areas / volumes, first-layer heights, tangent statistics and z levels.
+
+### Boundary-layer Thickness: a deliberate deviation from the recorded transmon generator
+
+The recorded generator passes the Gmsh BoundaryLayer `Thickness` as the exact geometric sum r (2^n - 1) of the n layers, so floating-point rounding decides whether a column gets n or n - 1 rows (~8 % of the columns short at r10, ~20 % at r50, also in the recorded meshes; on Linux that mix fails Gmsh's edge recovery at r10, supervisor decision 188). This mesher passes the sum x (1 + 1e-6) by DEFAULT (every column exactly n rows, deterministic across platforms; manifest `radial_band_thickness_mode` = `geometric_sum_x_1p000001`); `--exact-band-thickness` (`exact_geometric_sum`) reproduces the recorded meshes. The r50 regeneration of the transmon footprint is recorded under both settings (`fabricated-window-mesher-20261002/REPORT.md`); the accepted transmon reference, computed on the recorded meshes, is unaffected.
 
 Memory: the transmon at r50 / t5 needs ~9 GB (16.5 M tets), r10 ~15 GB; window-sized sets are small. Run full-size generations on a cluster node.
