@@ -89,7 +89,8 @@ class WindowPolygons(unittest.TestCase):
         plane = verification["Planes"]["L1"]
         self.assertEqual(plane["UnmatchedLength"], 0.0)
         self.assertEqual(len(plane["Bridges"]), 2)  # gap 30..40 at both walls; the gap 5..20 next to the terminal stays open
-        self.assertEqual(sorted((b[0], b[1]) for b in plane["Bridges"]), [(30.0, 40.0), (30.0, 40.0)])
+        # the bridge runs 3 R = 6 um into the right ground's wall interval (a run of contact, not a vertex)
+        self.assertEqual(sorted((b[0], b[1]) for b in plane["Bridges"]), [(30.0, 46.0), (30.0, 46.0)])
         self.assertEqual(result["Terminals"], ["trace_1"])
         polygons = result["Planes"][0]["Polygons"]
         self.assertEqual(len(polygons), 3)
@@ -112,6 +113,29 @@ class WindowPolygons(unittest.TestCase):
         self.assertEqual(sum(len(p["Holes"]) for p in polygons), 1)
         self.assertEqual(result["Version"], 1)
         self.assertEqual(result["Box"], {"X": [-50.0, 50.0], "Y": [-50.0, 50.0]})
+        # decision 190 (b): the smallest gap between two polygons of the plane is the 5-um slot next to the terminal
+        self.assertAlmostEqual(plane["IntraPlaneClearance"]["Min"], 5.0)
+        self.assertEqual(plane["IntraPlaneClearance"]["Violations"], [])
+        self.assertEqual(verification["CrossPlaneCoincidence"]["Runs"], 0)  # one plane
+
+    def test_decision_190_checks(self):
+        box = (0.0, 100.0, 0.0, 100.0)
+        square = lambda x0, y0, x1, y1: {"Outer": [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], "Holes": []}
+        # (b) two polygons 0.01 um apart are a violation at 0.05 um, a 1-um slot is not
+        best, violations = WP.intra_plane_clearance([square(10, 10, 20, 20), square(20.01, 10, 30, 20)], box, 0.05)
+        self.assertAlmostEqual(best, 0.01)
+        self.assertEqual(len(violations), 8)  # the two vertices of each facing side, each against the facing + the adjacent edge
+        best, violations = WP.intra_plane_clearance([square(10, 10, 20, 20), square(21, 10, 30, 20)], box, 0.05)
+        self.assertAlmostEqual(best, 1.0)
+        self.assertEqual(violations, [])
+        # (c) the L2 edge y = 50.03 from x 30 to 70 is nominally coincident with the L1 edge y = 50 from x 20 to 60: the run is
+        # the overlap 30..60 (30 um) at offset 0.03; the far edges of both squares coincide with nothing
+        l1 = [square(20, 10, 60, 50)]
+        l2 = [square(30, 50.03, 70, 90)]
+        c = WP.cross_plane_coincidence({"L1": l1, "L2": l2}, box, 0.5)
+        self.assertEqual(c["Runs"], 1)
+        self.assertAlmostEqual(c["Length"], 30.0)
+        self.assertAlmostEqual(c["MaxOffset"], 0.03)
 
 
 if __name__ == "__main__":

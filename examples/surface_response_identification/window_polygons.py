@@ -33,7 +33,10 @@ bridged / non-excited conductor, one label for the terminal, ``Bumps`` = the foo
 Verification (``--verification``): every metal boundary edge not on a wall and outside the bridge / setback strips
 must lie on a segment of the chip manifest (the extract) on the same plane within ``--tolerance``; every extract
 segment entirely inside the box (uncut) must be covered by boundary edges over its whole length. Unmatched length,
-uncovered segments and conductor conflicts are reported; ``Passed`` iff all three are zero.
+uncovered segments and conductor conflicts are reported; ``Passed`` iff all three are zero. Decision 190: (b) two polygons of one
+plane closer than 0.025 R (gap or overlap) are refused by the fabricated mesher -> reported as violations (``Passed`` False);
+(c) cross-plane nominally coincident edge runs (the L1 and L2 ground edges drawn by two mesh surfaces with different samplings)
+are recorded with their length and maximum offset (``CrossPlaneCoincidence``); the fabricated mesher snaps them itself.
 """
 
 import argparse
@@ -287,12 +290,14 @@ def bridge_rectangles(intervals, box, width, grounded, terminal, warnings):
             if c in grounded or c == terminal or c is None:
                 continue
             for side in (-1, 1):
+                # the bridge runs from the conductor's wall interval over the gap and ``width`` INTO the neighbour's interval, so
+                # the contact is a run of metal and not a single wall vertex when the neighbour's edge leaves the wall obliquely
                 if side < 0:
                     neighbour = items[k - 1] if k > 0 else None
-                    g0, g1 = (neighbour[1] if neighbour else lo_wall), lo
+                    g0, g1 = (max(neighbour[0], neighbour[1] - width) if neighbour else lo_wall), lo
                 else:
                     neighbour = items[k + 1] if k + 1 < len(items) else None
-                    g0, g1 = hi, (neighbour[0] if neighbour else hi_wall)
+                    g0, g1 = hi, (min(neighbour[1], neighbour[0] + width) if neighbour else hi_wall)
                 if neighbour is not None and neighbour[2] == terminal:
                     warnings.append(f"conductor {c} is adjacent to the terminal along wall {axis}={value}: not bridged on that side")
                     continue
@@ -339,7 +344,7 @@ def fraction_in_strips(p0, p1, strips):
     """Fraction of the segment p0 -> p1 lying inside the union of the strip rectangles (exact interval arithmetic)."""
     intervals = []
     for r in strips:
-        t = WQ.clip_interval(p0, p1, r)
+        t = WQ.clip_interval(p0, p1, (r[0] - 1e-6, r[1] + 1e-6, r[2] - 1e-6, r[3] + 1e-6))  # edges ON a strip line are inside
         if t is not None and t[1] > t[0]:
             intervals.append(t)
     intervals.sort()
@@ -350,6 +355,92 @@ def fraction_in_strips(p0, p1, strips):
             covered += t1 - t0
             cursor = t1
     return covered
+
+
+def plane_edges(polygons, box):
+    """Off-wall edges (a, b) of a plane's polygons (outer loops and holes), with the polygon index."""
+    edges = []
+    for k, poly in enumerate(polygons):
+        for loop in [poly["Outer"]] + poly["Holes"]:
+            n = len(loop)
+            for i in range(n):
+                a, b = tuple(loop[i]), tuple(loop[(i + 1) % n])
+                if on_wall(a, b, box) is None:
+                    edges.append((a, b, k))
+    return edges
+
+
+def intra_plane_clearance(polygons, box, threshold, cell=10.0):
+    """Decision 190 (b): the mesher refuses two polygons of one plane closer than ``threshold`` (gap or overlap < 0.025 R).
+    Returns (min distance between a vertex of one polygon and an edge of another, [violations])."""
+    edges = plane_edges(polygons, box)
+    grid = collections.defaultdict(list)
+    for a, b, k in edges:
+        for gx in range(int(math.floor(min(a[0], b[0]) / cell)), int(math.floor(max(a[0], b[0]) / cell)) + 1):
+            for gy in range(int(math.floor(min(a[1], b[1]) / cell)), int(math.floor(max(a[1], b[1]) / cell)) + 1):
+                grid[(gx, gy)].append((a, b, k))
+    best, violations, seen = math.inf, [], set()
+    for k, poly in enumerate(polygons):
+        for loop in [poly["Outer"]] + poly["Holes"]:
+            for p in loop:
+                gx, gy = int(math.floor(p[0] / cell)), int(math.floor(p[1] / cell))
+                for dx in (-1, 0, 1):
+                    for dy in (-1, 0, 1):
+                        for a, b, k2 in grid.get((gx + dx, gy + dy), []):
+                            if k2 == k or (k, tuple(p), a, b) in seen:
+                                continue
+                            seen.add((k, tuple(p), a, b))
+                            d = WQ._segment_distance(p[0], p[1], a, b)
+                            best = min(best, d)
+                            if d < threshold:
+                                violations.append({"Polygon": k, "Vertex": list(p), "Other": k2, "Distance": d})
+    return best, violations
+
+
+def cross_plane_coincidence(polygons_by_plane, box, offset, cell=10.0):
+    """Decision 190 (c): runs where an edge of one plane is nominally coincident in plan with an edge of the other plane
+    (both endpoints of the shorter edge within ``offset`` of the other edge's line, overlapping in extent): total overlapping
+    length, the maximum perpendicular offset and the per-run list (the geometry-fidelity budget between the thin mesh,
+    which keeps the chip's two samplings, and the fabricated reference, whose mesher snaps them within 0.025 R)."""
+    names = list(polygons_by_plane)
+    if len(names) < 2:
+        return {"Planes": names, "Length": 0.0, "MaxOffset": 0.0, "Runs": 0, "Pairs": []}
+    first, second = [plane_edges(polygons_by_plane[n], box) for n in names[:2]]
+    grid = collections.defaultdict(list)
+    for a, b, k in second:
+        for gx in range(int(math.floor(min(a[0], b[0]) / cell)), int(math.floor(max(a[0], b[0]) / cell)) + 1):
+            for gy in range(int(math.floor(min(a[1], b[1]) / cell)), int(math.floor(max(a[1], b[1]) / cell)) + 1):
+                grid[(gx, gy)].append((a, b))
+    total, worst, pairs = 0.0, 0.0, []
+    for a, b, _ in first:
+        gx, gy = int(math.floor(0.5 * (a[0] + b[0]) / cell)), int(math.floor(0.5 * (a[1] + b[1]) / cell))
+        seen = set()
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for c, d in grid.get((gx + dx, gy + dy), []):
+                    if (c, d) in seen:
+                        continue
+                    seen.add((c, d))
+                    da, db = WQ._segment_distance(a[0], a[1], c, d), WQ._segment_distance(b[0], b[1], c, d)
+                    dc, dd = WQ._segment_distance(c[0], c[1], a, b), WQ._segment_distance(d[0], d[1], a, b)
+                    # the overlap of the two edges: endpoints of either edge within offset of the other edge
+                    close = [p for p, dist in ((a, da), (b, db), (c, dc), (d, dd)) if dist <= offset]
+                    if len(close) < 2:
+                        continue
+                    ux, uy = b[0] - a[0], b[1] - a[1]
+                    norm = math.hypot(ux, uy)
+                    if norm <= 0.0:
+                        continue
+                    ts = sorted(((p[0] - a[0]) * ux + (p[1] - a[1]) * uy) / norm for p in close)
+                    length = ts[-1] - ts[0]
+                    if length <= 1e-9:
+                        continue
+                    run_offset = max(dist for p, dist in ((a, da), (b, db), (c, dc), (d, dd)) if dist <= offset)
+                    total += length
+                    worst = max(worst, run_offset)
+                    if len(pairs) < 200:
+                        pairs.append({"Edge": [list(a), list(b)], "Other": [list(c), list(d)], "Length": length, "Offset": run_offset})
+    return {"Planes": names[:2], "Length": total, "MaxOffset": worst, "Runs": len(pairs), "Pairs": pairs}
 
 
 def export(args):
@@ -590,6 +681,20 @@ def export(args):
         warnings.append(f"terminal conductor {terminal} of the E0 excitation produced no polygon")
         verification["Passed"] = False
     columns = bump_columns(bumps_out, warnings)
+    # decision 190: (b) polygons of one plane closer than 0.025 R are refused by the fabricated mesher -> the writer must
+    # resolve them (none expected: the union of the chip's triangles leaves no sliver gap); (c) cross-plane coincident runs are
+    # recorded (the mesher snaps them within 0.025 R; the thin mesh keeps the chip's samplings)
+    clearance_threshold = 0.025 * radius
+    for p in planes_out:
+        best, violations = intra_plane_clearance(p["Polygons"], box, clearance_threshold)
+        verification["Planes"][p["Name"]]["IntraPlaneClearance"] = {"Threshold": clearance_threshold, "Min": best,
+                                                                    "Violations": violations[:50]}
+        if violations:
+            warnings.append(f"plane {p['Name']}: {len(violations)} polygon vertices within {clearance_threshold:g} um of another "
+                            "polygon (decision 190 (b): refused by the mesher; unresolved)")
+            verification["Passed"] = False
+    verification["CrossPlaneCoincidence"] = cross_plane_coincidence({p["Name"]: p["Polygons"] for p in planes_out}, box,
+                                                                     args.coincidence_offset)
     out = {"Version": 1, "Name": args.window[0], "Box": {"X": [box[0], box[1]], "Y": [box[2], box[3]]},
            "Process": chip.get("Process", {"MetalThickness": 0.1, "Overetch": 0.05}),
            "Planes": [{k: v for k, v in p.items()} for p in planes_out],
@@ -599,6 +704,8 @@ def export(args):
            "WindowPolygons": {"Chip": chip.get("Name"), "Mesh": str(data["mesh"]) if "mesh" in data else None,
                               "Extract": args.extract, "E0": args.e0, "Excitation": excitation, "TerminalChipConductor": terminal,
                               "OpenSetback": setback, "BridgeWidth": bridge_width, "Polygons": bookkeeping, "Bridges": bridges_out,
+                              "CrossPlaneCoincidence": {k: v for k, v in verification["CrossPlaneCoincidence"].items() if k != "Pairs"},
+                              "IntraPlaneClearanceMin": {p: verification["Planes"][p]["IntraPlaneClearance"]["Min"] for p in verification["Planes"]},
                               "BumpFootprints": [{k: v for k, v in b.items() if k != "Footprint"} for b in columns],
                               "BumpHeight": chip.get("BumpHeight"), "Warnings": warnings}}
     verification["Warnings"] = warnings
@@ -618,6 +725,8 @@ def main(argv=None):
     parser.add_argument("--no-bridges", dest="bridges", action="store_false")
     parser.add_argument("--tolerance", type=float, default=1e-4, help="segment match tolerance (um)")
     parser.add_argument("--halo", type=float, default=60.0, help="triangles meeting the box grown by this halo are considered (um)")
+    parser.add_argument("--coincidence-offset", type=float, default=0.5,
+                        help="edges of the two planes within this plan offset are a cross-plane coincident run (um; decision 190 (c))")
     parser.add_argument("--output", required=True)
     parser.add_argument("--verification", default=None)
     args = parser.parse_args(argv)
@@ -630,8 +739,9 @@ def main(argv=None):
     summary = {p: {k: v for k, v in rec.items() if k in ("MetalTriangles", "Components", "Polygons", "MatchedLength", "UnmatchedLength",
                                                           "UncutSegments", "Setback")} | {"Uncovered": len(rec["UncoveredSegments"]), "Bridges": len(rec["Bridges"])}
                for p, rec in verification["Planes"].items()}
+    coincidence = {k: v for k, v in verification["CrossPlaneCoincidence"].items() if k != "Pairs"}
     print(json.dumps({"Window": args.window[0], "Passed": verification["Passed"], "Terminals": out["Terminals"], "Bumps": len(out["Bumps"]),
-                      "Planes": summary, "Warnings": verification["Warnings"][:10]}, indent=None))
+                      "Planes": summary, "CrossPlaneCoincidence": coincidence, "Warnings": verification["Warnings"][:10]}, indent=None))
     return 0 if verification["Passed"] else 1
 
 
