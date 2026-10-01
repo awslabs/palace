@@ -1,20 +1,22 @@
 <!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. -->
+
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # Fabricated reference mesher for validation windows (polygon sets)
 
 The single transmon's fabricated reference (`single-transmon-finitemetal-anisotropic-20260824/generate_shared_plan_mesh.jl`: plan mesh with edge-normal boundary layers and a fixed tangent spacing on every metal edge, swept through explicit z levels, 100-nm vertical metal excluded, 50-nm overetch, conforming metal-air / metal-substrate / substrate-air shells) generalised to the validation plan's windows (`VALIDATION-PLAN.md` section (c), USER decision 184): a polygon set instead of the DeviceLayout geometry, any number of labelled conductors, one or two metal levels, bumps, a truncated box.
 
-| file | role |
-|---|---|
-| `PolygonWindowMesh.jl` | the mesher (module): schema reader, plan fragmentation and classification, per-partition one-sided boundary-layer meshing, welding, z-level stack, sweep, attribute writing, manifest |
-| `mesh_polygon_window.jl` | CLI: `julia --project=. mesh_polygon_window.jl WINDOW.json RADIAL_UM TANGENTIAL_UM OUT.msh2 [--plan-only] [--exact-band-thickness] [--cross-plane-snap-um DELTA]` |
-| `validate_window_mesh.jl` | independent validation by physical NAME (adjacency rules, first-order simplices, no shared faces, minSICN, manifest counts, per-attribute areas / volumes) |
-| `export_transmon_polygon_set.jl` | the transmon footprint as a polygon set (SingleTransmon environment; curved edges as their transfinite chords at the tangent target) |
-| `synthetic_two_level_window.jl` | tiny two-level window (two facing CPW stubs + a bump) for the tests |
-| `compare_mesh_validations.py` | two validation manifests of one geometry side by side (counts, areas, volumes) |
-| `test_polygon_window_mesh.jl` | `julia --project=. test_polygon_window_mesh.jl` |
-| `SCHEMA.md` | the polygon-set input schema (fields, units, orientation and clipping rules) for the writer (lane W) |
+| file                                     | role                                                                                                                                                                                                                                                                               |
+|:---------------------------------------- |:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PolygonWindowMesh.jl`                   | the mesher (module): schema reader, plan fragmentation and classification, per-partition one-sided boundary-layer band (own structured band by default, Gmsh's field on request), welding, z-level stack, sweep, attribute writing, manifest                                       |
+| `structured_band.jl`                     | the own structured boundary-layer band (included by the module): per-segment / per-side facing-distance cap, columns, row termination, corners and fans, wall ends, the collision backstop, the remaining-region Gmsh mesh                                                         |
+| `mesh_polygon_window.jl`                 | CLI: `julia --project=. mesh_polygon_window.jl WINDOW.json RADIAL_UM TANGENTIAL_UM OUT.msh2 [--plan-only] [--band-mode own\|gmsh] [--fan-turn-angle-deg A] [--cross-plane-snap-um DELTA] [--exact-band-thickness] [--band-cap none\|partition\|curve]`                             |
+| `validate_window_mesh.jl`                | independent validation by physical NAME (adjacency rules, boundary closure, first-order simplices, no shared faces, minSICN, manifest counts, per-attribute areas / volumes)                                                                                                       |
+| `export_transmon_polygon_set.jl`         | the transmon footprint as a polygon set (SingleTransmon environment; curved edges as their transfinite chords at the tangent target)                                                                                                                                               |
+| `synthetic_two_level_window.jl`          | tiny two-level window (two facing CPW stubs + a bump) for the tests                                                                                                                                                                                                                |
+| `compare_mesh_validations.py`            | two validation manifests of one geometry side by side (counts, areas, volumes)                                                                                                                                                                                                     |
+| `test_polygon_window_mesh.jl`            | `julia --project=. test_polygon_window_mesh.jl`                                                                                                                                                                                                                                    |
+| `SCHEMA.md`                              | the polygon-set input schema (fields, units, orientation and clipping rules) for the writer (lane W)                                                                                                                                                                               |
 | `trial_window_extract_to_polygon_set.jl` | TRIAL-only converter of a lane-W `window_extract.py` extract (chip-wide loops, clipped at the box here by OCC) to a polygon set, for sizing / robustness trials of a window mesh before lane W's schema'd output exists (supervisor decision 187); never a stage-1 reference input |
 
 ## Polygon-set JSON
@@ -44,24 +46,37 @@ Micrometres, plan-view loops per plane with holes, conductor labels, bump footpr
 
 Metal 0.1 um with vertical sidewalls, overetch 0.05 um of the exposed substrate, metal volume excluded. Boundary layers of first height r (growth 2, band ~1.55 um) on every metal edge of every plane and bump in ONE plan mesh, tangent spacing t; metal and overetch bands resolved at r in z (`max(2, ceil(0.1 / r))` and `max(1, ceil(0.05 / r))` layers); far-field z levels at 0.1 / 0.2 / 0.5 / 1 / 2 / 5 / 10 / 20 / 50 / 100 um into each substrate and 0.15 / 0.2 / 0.3 / 0.5 / 1 / 2 / 5 / ... / 200 um into the vacuum (the transmon reference's stack; between two planes each side grades to the midpoint of the gap). Tetrahedra = plan triangles x (levels - 1) x 3 minus the metal.
 
-| attribute | dim | group |
-|---:|---|---|
-| 1 / 2 | 3 | substrate / vacuum |
-| 3 | 2 | exterior_boundary |
-| 4 / 5 | 2 | ground_air / ground_substrate |
-| 6 | 2 | substrate_air (top surfaces and overetch steps, both planes) |
-| 7 / 8 | 2 | `<terminal 1>_air` / `_substrate` |
-| 9 | 2 | substrate_backside (a substrate backside against vacuum, when `Vacuum` > 0) |
-| 10 / 11, 12 / 13, ... | 2 | further terminals |
+| attribute             | dim | group                                                                       |
+| ---------------------:|:--- |:--------------------------------------------------------------------------- |
+| 1 / 2                 | 3   | substrate / vacuum                                                          |
+| 3                     | 2   | exterior_boundary                                                           |
+| 4 / 5                 | 2   | ground_air / ground_substrate                                               |
+| 6                     | 2   | substrate_air (top surfaces and overetch steps, both planes)                |
+| 7 / 8                 | 2   | `<terminal 1>_air` / `_substrate`                                           |
+| 9                     | 2   | substrate_backside (a substrate backside against vacuum, when `Vacuum` > 0) |
+| 10 / 11, 12 / 13, ... | 2   | further terminals                                                           |
 
-SA / MS / MA participations are surface integrals on these shells (Palace `Postprocessing.Dielectric` with `Thickness` 0.002), as in the transmon reference configs; the manifest (`OUT.json`) records the table, counts, per-attribute areas / volumes, first-layer heights, tangent statistics and z levels.
+SA / MS / MA participations are surface integrals on these shells (Palace `Postprocessing.Dielectric` with `Thickness` 0.002), as in the transmon reference configs; the manifest (`OUT.json`) records the table, counts, per-attribute areas / volumes, first-layer heights, tangent statistics and z levels. Attribute 9 exists only when `Vacuum.Below` / `Above` > 0: with the truncated box of the validation windows (`Vacuum` 0) the substrate backsides are part of `exterior_boundary` (3) and NO `substrate_backside` group is written (the manifest's `attributes` table still lists the name; `surface_attribute_counts` has no `"9"`). The windows' Palace configs must therefore not list attribute 9 in the SA postprocessing (the transmon configs do, because its box carries vacuum beyond the backside).
 
-### Boundary-layer Thickness: a deliberate deviation from the recorded transmon generator
+### The boundary-layer band: our own structured extrusion (`--band-mode own`, default)
 
-The recorded generator passes the Gmsh BoundaryLayer `Thickness` as the exact geometric sum r (2^n - 1) of the n layers, so floating-point rounding decides whether a column gets n or n - 1 rows (~8 % of the columns short at r10, ~20 % at r50, also in the recorded meshes; on Linux that mix fails Gmsh's edge recovery at r10, supervisor decision 188). This mesher passes the sum x (1 + 1e-6) by DEFAULT (every column exactly n rows, deterministic across platforms; manifest `radial_band_thickness_mode` = `geometric_sum_x_1p000001`); `--exact-band-thickness` (`exact_geometric_sum`) reproduces the recorded meshes. The r50 regeneration of the transmon footprint is recorded under both settings (`fabricated-window-mesher-20261002/REPORT.md`); the accepted transmon reference, computed on the recorded meshes, is unaffected.
+Gmsh's BoundaryLayer field cannot realise the band cap of supervisor decision 191 (one Thickness per curve set, layers end only at corners) and its extrusion fails where two fronts overlap (the S1p junction region: 15 / 32 partitions at r10). The mesher therefore builds the band itself (`structured_band.jl`; design in `structured-band-20261002/DESIGN.md`) and Gmsh only triangulates the remaining region of every partition:
+
+  - a column at every transfinite node of every metal edge, rows h_k = r (2^k - 1); the row count of every 1D SEGMENT is capped by the facing distance on that side of the edge (band <= 0.4 x the exact distance to the nearest other plan curve clipped to the band side — metal of every plane and bump, or the box wall; curves sharing an end point and collinear continuations excluded; other bodies' corners count), applied to both end columns; the first rows are never dropped (segments closer than 2.5 r are counted in the manifest, `band.segments_below_2p5r`, and the collision check decides);
+  - where neighbouring columns differ in rows, the excess rows of the taller column collapse to triangles on the shorter column's top node (the band top is one edge per node pair);
+  - corners: the bisector column scaled by 1 / cos(turn / 2), so every row is exactly h_k from both edge lines (the recorded transmon generator's corner treatment: no `FanPointsList`, first-layer heights 0.995-1.005 r); outward corners turning more than `--fan-turn-angle-deg` (default 90, at most 120) get a fan of 7 columns; at inward corners (concave metal corners, the T / X junctions left by the cross-plane snap) every column at arc distance s along the two adjacent curves keeps h_k <= 0.5 s tan(theta / 2) (theta the interior angle), so columns never cross;
+  - a metal edge ending on the window wall: the end column runs along the wall into the partition (scale 1 / sin theta);
+  - backstop: every band quad strictly convex, every band triangle positive, no two band edges of a partition intersecting, every band node inside the box, every end column shorter than its wall curve — a failure is a deterministic refusal naming the partition and the location;
+  - the remaining region (band tops, end columns, wall curves) is meshed with `Mesh.Algorithm` 6 (transfinite 1 segment per band edge, `MeshSizeMin` r, `MeshSizeMax` 30, as before); band + region area = the partition's OCC area (1e-6 relative).
+
+Manifest `band`: fans, mitre (scaled-bisector) outward corners, inward corners, clearance-capped / clamped columns, wall-end columns, quads / collapse / fan triangles, `quad_min_abs_sin` (corner quad quality), `triangle_min_angle_deg`, the per-side edge length per row count (the applied rule) and the capped length; `band_cap` keeps the per-straight-run statistic (what Gmsh's `:curve` mode would apply, labelled `rule_statistic`). First-layer heights are exactly r on every metal edge (the mesher refuses a mesh outside [0.9, 1.1] r). `--band-mode gmsh` keeps the Gmsh-field path (with `--exact-band-thickness` and `--band-cap`) for the recorded transmon reproduction.
+
+### Boundary-layer Thickness in Gmsh mode: a deliberate deviation from the recorded transmon generator
+
+(`--band-mode gmsh` only; the own band has exactly n rows by construction.) The recorded generator passes the Gmsh BoundaryLayer `Thickness` as the exact geometric sum r (2^n - 1) of the n layers, so floating-point rounding decides whether a column gets n or n - 1 rows (~8 % of the columns short at r10, ~20 % at r50, also in the recorded meshes; on Linux that mix fails Gmsh's edge recovery at r10, supervisor decision 188). This mesher passes the sum x (1 + 1e-6) by DEFAULT (every column exactly n rows, deterministic across platforms; manifest `radial_band_thickness_mode` = `geometric_sum_x_1p000001`); `--exact-band-thickness` (`exact_geometric_sum`) reproduces the recorded meshes. The r50 regeneration of the transmon footprint is recorded under both settings (`fabricated-window-mesher-20261002/REPORT.md`); the accepted transmon reference, computed on the recorded meshes, is unaffected.
 
 ### Windows cut through metal: cross-plane reconciliation and boundary-layer ends
 
-Two things the transmon (one plane, closed metal loops) never exercised: (1) edges of the two planes nominally coincident in plan arrive with different vertex samplings (sliver partitions, sub-0.1-um pieces); the mesher snaps the upper plane onto the lower one within delta = 0.05 x `MatchingRadius` and inserts the cross vertices (`SCHEMA.md`; manifest `cross_plane_reconciliation`; same-plane polygons closer than delta are refused). (2) A metal edge ending on the window wall: Gmsh's BoundaryLayer field needs those end points declared (`PointsList`), otherwise it builds the end column from the wall's far-field 1D nodes and produces inverted quads tens of micrometres long; the mesher declares them (manifest `plan_boundary_layer_end_points`).
+Two things the transmon (one plane, closed metal loops) never exercised: (1) edges of the two planes nominally coincident in plan arrive with different vertex samplings (sliver partitions, sub-0.1-um pieces); the mesher snaps the upper plane onto the lower one within delta = 0.05 x `MatchingRadius` and inserts the cross vertices (`SCHEMA.md`; manifest `cross_plane_reconciliation`; same-plane polygons closer than delta are refused). (2) A metal edge ending on the window wall: the own band builds the end column along the wall (manifest `plan_boundary_layer_end_points` = the wall-end columns); in Gmsh mode the BoundaryLayer field needs those end points declared (`PointsList`), otherwise it builds the end column from the wall's far-field 1D nodes and produces inverted quads tens of micrometres long.
 
-Memory: the transmon at r50 / t5 needs ~9 GB (16.5 M tets), r10 ~15 GB; window-sized sets are small. Run full-size generations on a cluster node.
+Memory: the transmon at r50 / t5 needs ~9 GB (16.5 M tets), r10 ~15 GB; window-sized sets are small (S1p r10 / t5: 3.35 M tets, 1.4 GB, 36 s). Run full-size generations on a cluster node.

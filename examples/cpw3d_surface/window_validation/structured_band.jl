@@ -133,7 +133,9 @@ function partition_geometry(surface::Int32, curves::Vector{PlanCurve}, box)
     for k in members
         curves[k].metal ||
             on_box_wall(box, gmsh.model.get_bounding_box(1, curves[k].tag)) ||
-            error("Non-metal plan curve $(curves[k].tag) of partition $surface is off the wall")
+            error(
+                "Non-metal plan curve $(curves[k].tag) of partition $surface is off the wall"
+            )
     end
     visited = Set{Int}()
     loops = PartitionLoop[]
@@ -232,9 +234,7 @@ function segment_facing_distance(
     ymin, ymax = minmax(q1[2], q2[2])
     for other in curves
         other.tag == curve.tag && continue
-        (
-            other.points[1] in curve.points || other.points[2] in curve.points
-        ) && continue
+        (other.points[1] in curve.points || other.points[2] in curve.points) && continue
         min(other.a[1], other.b[1]) > xmax + reach && continue
         max(other.a[1], other.b[1]) < xmin - reach && continue
         min(other.a[2], other.b[2]) > ymax + reach && continue
@@ -282,14 +282,13 @@ mutable struct BandStatistics
     triangle_min_angle_deg::Float64
     length_um_by_rows::Dict{Int, Float64}
 end
-BandStatistics() = BandStatistics(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1.0, 180.0, Dict{Int, Float64}())
+BandStatistics() =
+    BandStatistics(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1.0, 180.0, Dict{Int, Float64}())
 
-unit(v::Point2) = (h = hypot(v[1], v[2]); (v[1] / h, v[2] / h))
+unit(v::Point2) = (h=hypot(v[1], v[2]); (v[1] / h, v[2] / h))
 left_normal(t::Point2) = (-t[2], t[1])
-rotate(v::Point2, angle::Float64) = (
-    v[1] * cos(angle) - v[2] * sin(angle),
-    v[1] * sin(angle) + v[2] * cos(angle)
-)
+rotate(v::Point2, angle::Float64) =
+    (v[1] * cos(angle) - v[2] * sin(angle), v[1] * sin(angle) + v[2] * cos(angle))
 
 # One metal chain of a loop: its base nodes in walking order (a closed chain repeats none),
 # the curve of every segment, and the wall directions at the ends of an open chain.
@@ -330,7 +329,10 @@ function loop_metal_chains(
                 push!(corner, j == 1)
             end
         end
-        push!(chains, MetalChain(true, bases, segment_curve, corner, nothing, nothing, 0, 0))
+        push!(
+            chains,
+            MetalChain(true, bases, segment_curve, corner, nothing, nothing, 0, 0)
+        )
         return chains
     end
     any(is_metal) || return chains
@@ -406,7 +408,9 @@ function chain_segment_rows(
     rows = Vector{Int}(undef, n_segments)
     for s = 1:n_segments
         q1 = chain.bases[s]
-        q2 = chain.closed ? chain.bases[mod1(s + 1, length(chain.bases))] : chain.bases[s + 1]
+        q2 =
+            chain.closed ? chain.bases[mod1(s + 1, length(chain.bases))] :
+            chain.bases[s + 1]
         normal = left_normal(unit((q2[1] - q1[1], q2[2] - q1[2])))
         d = segment_facing_distance(
             q1,
@@ -456,7 +460,13 @@ function chain_columns(
     end
     # Clearance caps along the two curves adjacent to every inward corner and wall end:
     # h_k <= 0.5 s tan(theta / 2) at arc distance s from the corner.
-    function apply_clearance!(i_corner, theta, spacing_at_corner, backward_curve, forward_curve)
+    function apply_clearance!(
+        i_corner,
+        theta,
+        spacing_at_corner,
+        backward_curve,
+        forward_curve
+    )
         limit_at(s) = CORNER_CLEARANCE_FRACTION * s * tan(theta / 2)
         cap!(i, s) = begin
             rows, clamped = rows_within(heights, limit_at(s))
@@ -503,7 +513,8 @@ function chain_columns(
         end
     end
     if !chain.closed
-        for (i, wall, segment) in ((1, chain.wall_start, 1), (n, chain.wall_end, n_segments))
+        for (i, wall, segment) in
+            ((1, chain.wall_start, 1), (n, chain.wall_end, n_segments))
             t = segment_direction(segment)
             i == 1 || (t = (-t[1], -t[2])) # the metal direction away from the wall end
             theta = acos(clamp(t[1] * wall[1] + t[2] * wall[2], -1.0, 1.0))
@@ -526,7 +537,10 @@ function chain_columns(
             columns,
             BandColumn(
                 p,
-                [(p[1] + h * scale * u[1], p[2] + h * scale * u[2]) for h in heights[1:node_rows[i]]]
+                [
+                    (p[1] + h * scale * u[1], p[2] + h * scale * u[2]) for
+                    h in heights[1:node_rows[i]]
+                ]
             )
         )
         push!(column_node, i)
@@ -538,9 +552,8 @@ function chain_columns(
             t = segment_direction(segment)
             i == 1 || (t = (-t[1], -t[2]))
             sin_theta = abs(t[1] * wall[2] - t[2] * wall[1])
-            sin_theta > 1.0e-9 || error(
-                "Metal curve at $(chain.bases[i]) runs along the window wall"
-            )
+            sin_theta > 1.0e-9 ||
+                error("Metal curve at $(chain.bases[i]) runs along the window wall")
             push_column!(i, wall, 1.0 / sin_theta)
             continue
         end
@@ -594,12 +607,11 @@ function push_band_elements!(
     where::String
 )
     function push_triangle!(a, b, c, kind)
-        orient(a, b, c) > 0.0 || error(
-            "Band $kind triangle at $a is not positive ($where); the fronts collide"
-        )
+        orient(a, b, c) > 0.0 ||
+            error("Band $kind triangle at $a is not positive ($where); the fronts collide")
         statistics.triangle_min_angle_deg =
             min(statistics.triangle_min_angle_deg, triangle_min_angle_deg(a, b, c))
-        push!(triangles, (a, b, c))
+        return push!(triangles, (a, b, c))
     end
     function push_quad!(a, b, c, d)
         (
@@ -611,7 +623,7 @@ function push_band_elements!(
         statistics.quad_min_abs_sin =
             min(statistics.quad_min_abs_sin, quad_min_abs_sin(a, b, c, d))
         statistics.quads += 1
-        push!(triangles, (a, b, c), (a, c, d))
+        return push!(triangles, (a, b, c), (a, c, d))
     end
     L, R = left.nodes, right.nodes
     if left.base == right.base
@@ -647,7 +659,8 @@ function segments_touch(a::Point2, b::Point2, c::Point2, d::Point2)
     tolerance = 1.0e-9 * scale
     on(p, u, v) = begin
         abs(orient(u, v, p)) <= tolerance * point_distance(u, v) || return false
-        t = ((p[1] - u[1]) * (v[1] - u[1]) + (p[2] - u[2]) * (v[2] - u[2])) /
+        t =
+            ((p[1] - u[1]) * (v[1] - u[1]) + (p[2] - u[2]) * (v[2] - u[2])) /
             point_distance(u, v)^2
         return -1.0e-9 < t < 1.0 + 1.0e-9
     end
@@ -665,7 +678,7 @@ function check_band_collisions(
     key(p) = (round(Int64, p[1] / BAND_NODE_KEY_UM), round(Int64, p[2] / BAND_NODE_KEY_UM))
     node(p) = get!(index_of, key(p)) do
         push!(xy, p)
-        length(xy)
+        return length(xy)
     end
     edges = Set{Tuple{Int, Int}}()
     for (a, b, c) in triangles
@@ -750,16 +763,34 @@ function region_loop_edges(
             end
             continue
         end
-        p = get(end_top, v, vertex_xy[i])
-        q = get(end_top, w, vertex_xy[mod1(i + 1, m)])
-        direction = (
+        # A straight wall run: consecutive collinear wall curves (the wall is fragmented by
+        # the other plane's wall vertices, which carry no metal) between two metal ends or box
+        # corners become ONE region edge, so an end column may span several fragments.
+        run_start = i
+        direction = unit((
             vertex_xy[mod1(i + 1, m)][1] - vertex_xy[i][1],
             vertex_xy[mod1(i + 1, m)][2] - vertex_xy[i][2]
-        )
+        ))
+        while k < m
+            next_index = order[k + 1]
+            is_metal[next_index] && break
+            haskey(end_top, loop.vertices[next_index]) && break
+            next_direction = unit((
+                vertex_xy[mod1(next_index + 1, m)][1] - vertex_xy[next_index][1],
+                vertex_xy[mod1(next_index + 1, m)][2] - vertex_xy[next_index][2]
+            ))
+            abs(direction[1] * next_direction[2] - direction[2] * next_direction[1]) <=
+            1.0e-9 || break
+            k += 1
+            i = next_index
+        end
+        w = loop.vertices[mod1(i + 1, m)]
+        p = get(end_top, v, vertex_xy[run_start])
+        q = get(end_top, w, vertex_xy[mod1(i + 1, m)])
         remaining = (q[1] - p[1]) * direction[1] + (q[2] - p[2]) * direction[2]
-        remaining > 1.0e-9 * hypot(direction...) || error(
-            "Band end columns overlap along the wall curve $(vertex_xy[i]) - " *
-            "$(vertex_xy[mod1(i + 1, m)]) (remaining $(remaining / hypot(direction...)) um)"
+        remaining > 1.0e-9 || error(
+            "Band end columns overlap along the wall run $(vertex_xy[run_start]) - " *
+            "$(vertex_xy[mod1(i + 1, m)]) (remaining $remaining um)"
         )
         push!(edges, RegionEdge(p, q, false))
         k += 1
@@ -779,7 +810,7 @@ function mesh_region(
     point_tag = Dict{NTuple{2, Int64}, Int32}()
     key(p) = (round(Int64, p[1] / BAND_NODE_KEY_UM), round(Int64, p[2] / BAND_NODE_KEY_UM))
     point(p) = get!(point_tag, key(p)) do
-        geo.add_point(p[1], p[2], 0.0)
+        return geo.add_point(p[1], p[2], 0.0)
     end
     transfinite = Int32[]
     loop_tags = Int32[]
@@ -788,7 +819,9 @@ function mesh_region(
         lines = Int32[]
         for edge in edges
             a, b = point(edge.a), point(edge.b)
-            a != b || error("Degenerate region edge at $(edge.a) of partition $(partition.surface)")
+            a != b || error(
+                "Degenerate region edge at $(edge.a) of partition $(partition.surface)"
+            )
             line = geo.add_line(a, b)
             push!(lines, line)
             edge.transfinite && push!(transfinite, line)
@@ -808,7 +841,8 @@ function mesh_region(
     node_tags, node_coordinates, _ = gmsh.model.mesh.get_nodes()
     coordinate_by_tag = Dict{UInt64, Point2}()
     for (index, tag) in enumerate(node_tags)
-        coordinate_by_tag[tag] = (node_coordinates[3index - 2], node_coordinates[3index - 1])
+        coordinate_by_tag[tag] =
+            (node_coordinates[3index - 2], node_coordinates[3index - 1])
     end
     area = 0.0
     element_types, _, nodes_by_type = gmsh.model.mesh.get_elements(2, surface)

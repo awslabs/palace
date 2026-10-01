@@ -846,7 +846,8 @@ function mesh_plan(
         "fan_turn_angle_deg must lie in [0, $(MAX_FAN_TURN_ANGLE_DEG)]: above it the mitre " *
         "column 1 / cos(turn / 2) exceeds twice the band"
     )
-    band_mode == :gmsh || band_cap == :none ||
+    band_mode == :gmsh ||
+        band_cap == :none ||
         error("band_cap applies to band_mode gmsh only (own mode always applies the rule)")
     radial_layers = max(1, round(Int, log2(1.0 + radial_band_um / radial_um)))
     plan_model = gmsh.model.get_current()
@@ -876,9 +877,10 @@ function mesh_plan(
         "band_mode" => string(band_mode),
         "fraction" => BAND_CAP_FRACTION,
         "rows_max" => radial_layers,
-        "rule_statistic" => "per straight run (minimum along collinear curves; Gmsh " *
-                            ":curve mode), both sides; the own band applies the rule per " *
-                            "1D segment and side: see `band`",
+        "rule_statistic" =>
+            "per straight run (minimum along collinear curves; Gmsh " *
+            ":curve mode), both sides; the own band applies the rule per " *
+            "1D segment and side: see `band`",
         "rule_capped_length_um" => capped_length,
         "rule_minimum_rows" => minimum(keys(length_by_rows)),
         "rule_minimum_band_um" => band_thickness(minimum(keys(length_by_rows))),
@@ -1002,130 +1004,137 @@ function mesh_plan(
         )
         verbose && println("Own band: ", band_record)
     else
-    # One-sided boundary layers need every source curve to bound a single surface: copy each
-    # partition and mesh the copies one at a time (coincident copies never share a Delaunay
-    # problem); the copies' interface nodes are welded by coordinate afterwards.
-    copies = Tuple{Int32, Int32}[]
-    copy_class = Int[]
-    for surface in surfaces
-        append!(copies, gmsh.model.occ.copy([surface]))
-        push!(copy_class, class_index[class_by_surface[surface]])
-    end
-    gmsh.model.occ.synchronize()
-    gmsh.model.set_visibility(gmsh.model.get_entities(), 0, true)
-    gmsh.option.set_number("Mesh.MeshOnlyVisible", 1)
-    copy_curves = unique(gmsh.model.get_boundary(copies, false, false, false))
-    metal_copy_curves = Int32[]
-    for (_, tag) in copy_curves
-        if curve_signature(1, tag) in metal_signatures
-            push!(metal_copy_curves, abs(tag))
-            length_um = gmsh.model.occ.get_mass(1, abs(tag))
-            segments = max(1, ceil(Int, length_um / tangential_um - 1.0e-6))
-            gmsh.model.mesh.set_transfinite_curve(abs(tag), segments + 1)
+        # One-sided boundary layers need every source curve to bound a single surface: copy each
+        # partition and mesh the copies one at a time (coincident copies never share a Delaunay
+        # problem); the copies' interface nodes are welded by coordinate afterwards.
+        copies = Tuple{Int32, Int32}[]
+        copy_class = Int[]
+        for surface in surfaces
+            append!(copies, gmsh.model.occ.copy([surface]))
+            push!(copy_class, class_index[class_by_surface[surface]])
         end
-    end
-    metal_copy_set = Set(metal_copy_curves)
-    length(metal_copy_curves) == 2 * length(metal_edge_curves) || error(
-        "Metal-edge curve copies: $(length(metal_copy_curves)) for " *
-        "$(length(metal_edge_curves)) curves"
-    )
-    for (copy_index, surface) in enumerate(copies)
-        gmsh.model.set_visibility(copies, 0, true)
-        gmsh.model.set_visibility([surface], 1, true)
-        sources = [
-            Float64(abs(tag)) for
-            (_, tag) in gmsh.model.get_boundary([surface], false, false, false) if
-            abs(tag) in metal_copy_set
-        ]
-        # One BoundaryLayer field per row count (the band cap), each with its layer end points
-        # (a metal edge ending on the window wall, a junction with another row count).
-        fields = Int32[]
-        if !isempty(sources)
-            ends = boundary_layer_end_points(sources)
-            boundary_layer_ends += length(ends)
-            curve_rows =
-                [rows_by_signature[curve_signature(1, Int32(tag))] for tag in sources]
-            if band_cap == :none
-                fill!(curve_rows, radial_layers)
-            elseif band_cap == :partition
-                fill!(curve_rows, minimum(curve_rows))
-            end
-            by_rows = Dict{Int, Vector{Float64}}()
-            for (tag, rows) in zip(sources, curve_rows)
-                push!(get!(by_rows, rows, Float64[]), tag)
-            end
-            partition_rows[copy_index] = minimum(curve_rows)
-            for rows in sort!(collect(keys(by_rows)))
-                group = by_rows[rows]
-                field = gmsh.model.mesh.field.add("BoundaryLayer")
-                push!(fields, field)
-                gmsh.model.mesh.field.set_numbers(field, "CurvesList", group)
-                # The field's own layer ends: the wall ends and the junctions with the
-                # curves of another row count (Gmsh needs both declared).
-                group_ends = boundary_layer_end_points(group)
-                isempty(group_ends) ||
-                    gmsh.model.mesh.field.set_numbers(field, "PointsList", group_ends)
-                gmsh.model.mesh.field.set_number(field, "Size", radial_um)
-                gmsh.model.mesh.field.set_number(field, "Ratio", radial_growth)
-                gmsh.model.mesh.field.set_number(field, "Thickness", band_thickness(rows))
-                gmsh.model.mesh.field.set_number(field, "Quads", 1)
-                gmsh.model.mesh.field.set_number(field, "IntersectMetrics", 1)
-                gmsh.model.mesh.field.set_as_boundary_layer(field)
+        gmsh.model.occ.synchronize()
+        gmsh.model.set_visibility(gmsh.model.get_entities(), 0, true)
+        gmsh.option.set_number("Mesh.MeshOnlyVisible", 1)
+        copy_curves = unique(gmsh.model.get_boundary(copies, false, false, false))
+        metal_copy_curves = Int32[]
+        for (_, tag) in copy_curves
+            if curve_signature(1, tag) in metal_signatures
+                push!(metal_copy_curves, abs(tag))
+                length_um = gmsh.model.occ.get_mass(1, abs(tag))
+                segments = max(1, ceil(Int, length_um / tangential_um - 1.0e-6))
+                gmsh.model.mesh.set_transfinite_curve(abs(tag), segments + 1)
             end
         end
-        gmsh.model.mesh.generate(2)
-        node_tags, node_coordinates, _ = gmsh.model.mesh.get_nodes()
-        coordinate_by_tag = Dict{UInt64, Point2}()
-        for (index, tag) in enumerate(node_tags)
-            abs(node_coordinates[3index]) <= 1.0e-6 || error("Plan node is not on z=0")
-            coordinate_by_tag[tag] =
-                (node_coordinates[3index - 2], node_coordinates[3index - 1])
-        end
-        area = 0.0
-        element_types, _, nodes_by_type = gmsh.model.mesh.get_elements(2, surface[2])
-        for (element_type, element_nodes) in zip(element_types, nodes_by_type)
-            _, dimension, _, node_count, _, primary =
-                gmsh.model.mesh.get_element_properties(element_type)
-            dimension == 2 || continue
-            primary in (3, 4) || error("Expected triangular or quadrilateral plan elements")
-            for offset = 0:node_count:(length(element_nodes) - node_count)
-                corners = [coordinate_by_tag[element_nodes[offset + i]] for i = 1:primary]
-                split =
-                    primary == 3 ? ((corners[1], corners[2], corners[3]),) :
-                    (
-                        (corners[1], corners[2], corners[3]),
-                        (corners[1], corners[3], corners[4])
+        metal_copy_set = Set(metal_copy_curves)
+        length(metal_copy_curves) == 2 * length(metal_edge_curves) || error(
+            "Metal-edge curve copies: $(length(metal_copy_curves)) for " *
+            "$(length(metal_edge_curves)) curves"
+        )
+        for (copy_index, surface) in enumerate(copies)
+            gmsh.model.set_visibility(copies, 0, true)
+            gmsh.model.set_visibility([surface], 1, true)
+            sources = [
+                Float64(abs(tag)) for
+                (_, tag) in gmsh.model.get_boundary([surface], false, false, false) if
+                abs(tag) in metal_copy_set
+            ]
+            # One BoundaryLayer field per row count (the band cap), each with its layer end points
+            # (a metal edge ending on the window wall, a junction with another row count).
+            fields = Int32[]
+            if !isempty(sources)
+                ends = boundary_layer_end_points(sources)
+                boundary_layer_ends += length(ends)
+                curve_rows =
+                    [rows_by_signature[curve_signature(1, Int32(tag))] for tag in sources]
+                if band_cap == :none
+                    fill!(curve_rows, radial_layers)
+                elseif band_cap == :partition
+                    fill!(curve_rows, minimum(curve_rows))
+                end
+                by_rows = Dict{Int, Vector{Float64}}()
+                for (tag, rows) in zip(sources, curve_rows)
+                    push!(get!(by_rows, rows, Float64[]), tag)
+                end
+                partition_rows[copy_index] = minimum(curve_rows)
+                for rows in sort!(collect(keys(by_rows)))
+                    group = by_rows[rows]
+                    field = gmsh.model.mesh.field.add("BoundaryLayer")
+                    push!(fields, field)
+                    gmsh.model.mesh.field.set_numbers(field, "CurvesList", group)
+                    # The field's own layer ends: the wall ends and the junctions with the
+                    # curves of another row count (Gmsh needs both declared).
+                    group_ends = boundary_layer_end_points(group)
+                    isempty(group_ends) ||
+                        gmsh.model.mesh.field.set_numbers(field, "PointsList", group_ends)
+                    gmsh.model.mesh.field.set_number(field, "Size", radial_um)
+                    gmsh.model.mesh.field.set_number(field, "Ratio", radial_growth)
+                    gmsh.model.mesh.field.set_number(
+                        field,
+                        "Thickness",
+                        band_thickness(rows)
                     )
-                for triangle in split
-                    area += triangle_area(triangle...)
-                    push!(raw_triangles, (triangle, copy_class[copy_index]))
+                    gmsh.model.mesh.field.set_number(field, "Quads", 1)
+                    gmsh.model.mesh.field.set_number(field, "IntersectMetrics", 1)
+                    gmsh.model.mesh.field.set_as_boundary_layer(field)
                 end
             end
+            gmsh.model.mesh.generate(2)
+            node_tags, node_coordinates, _ = gmsh.model.mesh.get_nodes()
+            coordinate_by_tag = Dict{UInt64, Point2}()
+            for (index, tag) in enumerate(node_tags)
+                abs(node_coordinates[3index]) <= 1.0e-6 || error("Plan node is not on z=0")
+                coordinate_by_tag[tag] =
+                    (node_coordinates[3index - 2], node_coordinates[3index - 1])
+            end
+            area = 0.0
+            element_types, _, nodes_by_type = gmsh.model.mesh.get_elements(2, surface[2])
+            for (element_type, element_nodes) in zip(element_types, nodes_by_type)
+                _, dimension, _, node_count, _, primary =
+                    gmsh.model.mesh.get_element_properties(element_type)
+                dimension == 2 || continue
+                primary in (3, 4) ||
+                    error("Expected triangular or quadrilateral plan elements")
+                for offset = 0:node_count:(length(element_nodes) - node_count)
+                    corners =
+                        [coordinate_by_tag[element_nodes[offset + i]] for i = 1:primary]
+                    split =
+                        primary == 3 ? ((corners[1], corners[2], corners[3]),) :
+                        (
+                            (corners[1], corners[2], corners[3]),
+                            (corners[1], corners[3], corners[4])
+                        )
+                    for triangle in split
+                        area += triangle_area(triangle...)
+                        push!(raw_triangles, (triangle, copy_class[copy_index]))
+                    end
+                end
+            end
+            occ_area = gmsh.model.occ.get_mass(surface...)
+            abs(area - occ_area) <= 1.0e-6 * max(1.0, occ_area) || error(
+                "Partition $(surface[2]) mesh area $area differs from OCC area $occ_area"
+            )
+            verbose && println(
+                "  partition ",
+                copy_index,
+                "/",
+                length(copies),
+                " surface ",
+                surface[2],
+                " class ",
+                class_list[copy_class[copy_index]].conductors,
+                " bump ",
+                class_list[copy_class[copy_index]].bump,
+                " area ",
+                area,
+                " sources ",
+                length(sources)
+            )
+            for field in fields
+                gmsh.model.mesh.field.remove(field)
+            end
+            gmsh.model.mesh.clear(copies)
         end
-        occ_area = gmsh.model.occ.get_mass(surface...)
-        abs(area - occ_area) <= 1.0e-6 * max(1.0, occ_area) ||
-            error("Partition $(surface[2]) mesh area $area differs from OCC area $occ_area")
-        verbose && println(
-            "  partition ",
-            copy_index,
-            "/",
-            length(copies),
-            " surface ",
-            surface[2],
-            " class ",
-            class_list[copy_class[copy_index]].conductors,
-            " bump ",
-            class_list[copy_class[copy_index]].bump,
-            " area ",
-            area,
-            " sources ",
-            length(sources)
-        )
-        for field in fields
-            gmsh.model.mesh.field.remove(field)
-        end
-        gmsh.model.mesh.clear(copies)
-    end
     end # band_mode
     isempty(raw_triangles) && error("No plan triangles extracted")
     band_cap_record["applied_rows_by_partition"] = partition_rows
@@ -1373,20 +1382,24 @@ function mesh_polygon_window(
     metal_layers = max(2, ceil(Int, spec.metal_thickness / radial_um - 1.0e-9))
     trench_layers = max(1, ceil(Int, spec.overetch / radial_um - 1.0e-9))
     gmsh.initialize()
-    plan, radial_layers, radial_thickness, boundary_layer_ends, band_cap_record, band_record =
-        try
-            gmsh.option.set_number("General.Verbosity", 2)
-            gmsh.model.add(spec.name)
-            mesh_plan(
-                spec,
-                radial_um,
-                tangential_um;
-                exact_band_thickness=exact_band_thickness,
-                band_cap=band_cap,
-                band_mode=band_mode,
-                fan_turn_angle_deg=fan_turn_angle_deg,
-                verbose=verbose
-            )
+    plan,
+    radial_layers,
+    radial_thickness,
+    boundary_layer_ends,
+    band_cap_record,
+    band_record = try
+        gmsh.option.set_number("General.Verbosity", 2)
+        gmsh.model.add(spec.name)
+        mesh_plan(
+            spec,
+            radial_um,
+            tangential_um;
+            exact_band_thickness=exact_band_thickness,
+            band_cap=band_cap,
+            band_mode=band_mode,
+            fan_turn_angle_deg=fan_turn_angle_deg,
+            verbose=verbose
+        )
     finally
         gmsh.finalize()
     end

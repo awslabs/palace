@@ -309,8 +309,8 @@ end
     # Inside the 16-gon bump (radius 4, chords 1.56 um) the facing rule sees the next-but-one
     # chord as a front 1.56 um away: 2 rows on the bump's inner band, 3 everywhere else.
     @test manifest["band"]["mode"] == "own" && manifest["band"]["applied_minimum_rows"] == 2
-    @test manifest["band"]["per_side_segment_length_um_by_rows"]["2"] ≈ 16 * 8.0 * sin(pi / 16) rtol =
-        1.0e-9
+    @test manifest["band"]["per_side_segment_length_um_by_rows"]["2"] ≈
+          16 * 8.0 * sin(pi / 16) rtol = 1.0e-9
     @test manifest["first_layer_normal_height_um"]["minimum"] ≈ 0.2 rtol = 1.0e-9
     @test manifest["first_layer_normal_height_um"]["maximum"] ≈ 0.2 rtol = 1.0e-9
     # Gmsh mode (decision 188): the band Thickness carries the 1e-6 margin by default; the
@@ -425,8 +425,7 @@ single_plane_set(name, outer; box_x=[0.0, 20.0], box_y=[0.0, 80.0]) = Dict(
         PWM.PlanCurve(5, (12.0, 0.0), (20.0, 0.0), (7, 8), true),
         PWM.PlanCurve(6, (10.0, 0.0), (10.0, 0.3), (2, 9), true)
     ]
-    d(q1, q2, normal) =
-        PWM.segment_facing_distance(q1, q2, normal, curves[1], curves, 10.0)
+    d(q1, q2, normal) = PWM.segment_facing_distance(q1, q2, normal, curves[1], curves, 10.0)
     # The segment ending at (5, 0) sees the finger corner (review M1: the corner shadow).
     @test d((4.0, 0.0), (5.0, 0.0), (0.0, 1.0)) ≈ 0.75
     # The segment before it sees the corner diagonally (continuous, not Inf).
@@ -508,7 +507,16 @@ end
     )
         push!(bases, a, ((a[1] + b[1]) / 2, (a[2] + b[2]) / 2))
     end
-    chain = PWM.MetalChain(true, bases, [1, 1, 2, 2, 3, 3, 4, 4], [isodd(i) for i = 1:8], nothing, nothing, 0, 0)
+    chain = PWM.MetalChain(
+        true,
+        bases,
+        [1, 1, 2, 2, 3, 3, 4, 4],
+        [isodd(i) for i = 1:8],
+        nothing,
+        nothing,
+        0,
+        0
+    )
     columns, node_rows, triangles, statistics = band_of(chain, fill(5, 8), heights)
     # Default threshold 90: the right-angle corners are scaled bisectors, exactly h_k from
     # both edge lines (the recorded corner treatment), no fan.
@@ -519,7 +527,8 @@ end
     @test all(t -> PWM.orient(t...) > 0.0, triangles)
     @test all(node_rows .== 5)
     # Threshold 45: fans of 7 columns at every corner, row 1 triangles, exact radii.
-    columns, _, triangles, fanned = band_of(chain, fill(5, 8), heights; fan_turn=deg2rad(45.0))
+    columns, _, triangles, fanned =
+        band_of(chain, fill(5, 8), heights; fan_turn=deg2rad(45.0))
     @test fanned.fans == 4 && fanned.fan_triangles == 4 * 6
     @test length(columns) == 4 * 7 + 4
     @test all(hypot(c.nodes[end]...) ≈ 1.55 for c in columns[1:7])
@@ -534,7 +543,15 @@ end
     heights = PWM.band_heights(0.01, 2.0, 7)
     # A 90-degree left turn with 0.5-um segments: the clearance rule h_k <= 0.5 s tan(45)
     # = 0.25 keeps 4 rows at the corner and its neighbours, 7 rows farther away.
-    bases = [(0.0, 0.0), (5.0, 0.0), (10.0, 0.0), (10.5, 0.0), (10.5, 0.5), (10.5, 5.5), (10.5, 10.5)]
+    bases = [
+        (0.0, 0.0),
+        (5.0, 0.0),
+        (10.0, 0.0),
+        (10.5, 0.0),
+        (10.5, 0.5),
+        (10.5, 5.5),
+        (10.5, 10.5)
+    ]
     chain = PWM.MetalChain(
         false,
         bases,
@@ -549,7 +566,8 @@ end
     @test statistics.inward_corners == 1
     @test node_rows[4] == 4 && node_rows[3] == 4 && node_rows[5] == 4
     @test node_rows[2] == 7 && node_rows[6] == 7
-    @test statistics.clearance_capped_columns == 3 && statistics.clearance_clamped_columns == 0
+    @test statistics.clearance_capped_columns == 3 &&
+          statistics.clearance_clamped_columns == 0
     # The corner column is the bisector scaled by sqrt 2: exactly h_k from both edges.
     @test near(columns[4].nodes[end], (10.5 - 0.15, 0.15))
     @test all(t -> PWM.orient(t...) > 0.0, triangles)
@@ -603,12 +621,29 @@ end
     strip = read_polygon_set(
         single_plane_set(
             "strip-1um",
-            [[0, 0], [9.5, 0], [9.5, 70], [10.5, 70], [10.5, 0], [20, 0], [20, 80], [0, 80]]
+            [
+                [0, 0],
+                [9.5, 0],
+                [9.5, 70],
+                [10.5, 70],
+                [10.5, 0],
+                [20, 0],
+                [20, 80],
+                [0, 80]
+            ]
         )
     )
-    manifest = mesh_polygon_window(strip, 0.01, 5.0, tempname() * ".msh2"; verbose=false, plan_only=true)
+    manifest = mesh_polygon_window(
+        strip,
+        0.01,
+        5.0,
+        tempname() * ".msh2";
+        verbose=false,
+        plan_only=true
+    )
     band = manifest["band"]
-    @test band["mode"] == "own" && manifest["radial_band_thickness_mode"] == "own_structured_band"
+    @test band["mode"] == "own" &&
+          manifest["radial_band_thickness_mode"] == "own_structured_band"
     @test band["per_side_segment_length_um_by_rows"] == Dict("7" => 142.0, "5" => 140.0)
     @test band["wall_end_columns"] == 4 && band["fans"] == 0 && band["inward_corners"] == 2
     @test band["segments_below_2p5r"] == 0 && band["clearance_clamped_columns"] == 0
@@ -634,16 +669,34 @@ end
     collision = read_polygon_set(
         single_plane_set(
             "slot-collision",
-            [[0, 0], [9.5, 0], [9.5, 70], [9.65, 70], [9.65, 0], [20, 0], [20, 80], [0, 80]]
+            [
+                [0, 0],
+                [9.5, 0],
+                [9.5, 70],
+                [9.65, 70],
+                [9.65, 0],
+                [20, 0],
+                [20, 80],
+                [0, 80]
+            ]
         )
     )
     message = try
-        mesh_polygon_window(collision, 0.1, 5.0, tempname() * ".msh2"; verbose=false, plan_only=true)
+        mesh_polygon_window(
+            collision,
+            0.1,
+            5.0,
+            tempname() * ".msh2";
+            verbose=false,
+            plan_only=true
+        )
         ""
     catch err
         sprint(showerror, err)
     end
-    @test occursin("collide", message) || occursin("collision", message) || occursin("no region", message)
+    @test occursin("collide", message) ||
+          occursin("collision", message) ||
+          occursin("no region", message)
     @test occursin("partition", message)
     # An oblique wall end and a chamfer: exact plan areas, first-layer heights exactly r.
     chamfer = read_polygon_set(
@@ -654,7 +707,14 @@ end
             box_y=[0.0, 30.0]
         )
     )
-    chamfer_manifest = mesh_polygon_window(chamfer, 0.05, 5.0, tempname() * ".msh2"; verbose=false, plan_only=true)
+    chamfer_manifest = mesh_polygon_window(
+        chamfer,
+        0.05,
+        5.0,
+        tempname() * ".msh2";
+        verbose=false,
+        plan_only=true
+    )
     @test chamfer_manifest["band"]["wall_end_columns"] == 4
     @test chamfer_manifest["first_layer_normal_height_um"]["minimum"] ≈ 0.05 rtol = 1.0e-9
     @test chamfer_manifest["first_layer_normal_height_um"]["maximum"] ≈ 0.05 rtol = 1.0e-9

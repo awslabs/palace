@@ -5,9 +5,11 @@
 # every tagged surface face is checked against the volumes on its two sides by its physical
 # NAME — `exterior_boundary`: exactly one volume; `<conductor>_air`: one vacuum, no substrate;
 # `<conductor>_substrate`: one substrate, no vacuum; `substrate_air` / `substrate_backside`:
-# one of each; `lumped_element`: two vacuum — plus first-order simplices only, no face in two
-# physical groups, no empty group, no nonpositive tetrahedron (minSICN), and the node /
-# element / per-attribute counts of the generation manifest (MESH.json) when present. The
+# one of each; `lumped_element`: two vacuum — plus boundary closure (every face owned by
+# exactly one tetrahedron carries a tag: `untagged_boundary_faces` must be 0), first-order
+# simplices only, no face in two physical groups, no empty group, no nonpositive tetrahedron
+# (minSICN), and the node / element / per-attribute counts of the generation manifest
+# (MESH.json) when present. The
 # per-attribute areas and volumes are recomputed from the node coordinates so two meshes of
 # one geometry can be compared attribute by attribute. Writes MESH.validation.json.
 #
@@ -128,6 +130,8 @@ try
         surface_areas[string(tag)] = area
     end
 
+    # Boundary closure: owner count of every tetrahedron face (1 = a boundary face).
+    face_owners = Dict{NTuple{3, UInt64}, UInt8}()
     volume_counts = Dict{String, Int}()
     volumes = Dict{String, Float64}()
     for attribute = 1:2
@@ -145,6 +149,7 @@ try
                     sorted_face(a, c, d),
                     sorted_face(b, c, d)
                 )
+                    face_owners[face] = get(face_owners, face, UInt8(0)) + UInt8(1)
                     index = get(surface_index, face, Int32(0))
                     index == 0 && continue
                     attribute == 1 ? (substrate_adjacent[index] += 1) :
@@ -159,6 +164,12 @@ try
         volume_counts[string(attribute)] = count
         volumes[string(attribute)] = volume
     end
+
+    untagged_boundary_faces =
+        count(owners == 1 && !haskey(surface_index, face) for (face, owners) in face_owners)
+    face_owners = nothing
+    untagged_boundary_faces == 0 ||
+        error("Boundary not closed: $untagged_boundary_faces boundary faces without a tag")
 
     adjacency_errors = Dict{String, Int}(name => 0 for (_, name) in surface_groups)
     for index in eachindex(surface_attribute)
@@ -204,6 +215,7 @@ try
         "surface_attribute_counts" => surface_counts,
         "surface_area_um2" => surface_areas,
         "surface_adjacency_errors" => adjacency_errors,
+        "untagged_boundary_faces" => untagged_boundary_faces,
         "mesh_quality" => Dict(
             "metric" => "minSICN",
             "minimum" => minimum(qualities),
@@ -224,6 +236,7 @@ try
     println("Validated: ", MESH)
     println("Nodes: ", length(node_tags), ", tetrahedra: ", length(volume_tags))
     println("Surface adjacencies: ", adjacency_errors)
+    println("Untagged boundary faces: ", untagged_boundary_faces)
     println("Surface areas (um^2): ", surface_areas)
     println("Volumes (um^3): ", volumes)
     println("Mesh quality: ", validation["mesh_quality"])

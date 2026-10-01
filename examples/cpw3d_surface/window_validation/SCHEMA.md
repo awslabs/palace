@@ -1,4 +1,5 @@
 <!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. -->
+
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # Polygon-set input of the fabricated window mesher (`Version` 1)
@@ -21,35 +22,35 @@ inconsistent input.
 
 ## Top-level fields
 
-| field | type | required | meaning |
-|---|---|---|---|
-| `Version` | integer | no (default 1) | schema version; only 1 is accepted |
-| `Name` | string | no (default `window`) | the window name (manifest, Gmsh model name) |
-| `Box` | `{"X": [x0, x1], "Y": [y0, y1]}` | yes | the plan rectangle of the truncated box, `x0 < x1`, `y0 < y1`; every polygon must lie inside it (vertices may lie ON the wall; a polygon leaving the box is refused) |
-| `Process` | `{"MetalThickness": 0.1, "Overetch": 0.05}` | no (defaults shown) | metal thickness and overetch recess of the exposed substrate, both planes |
-| `Planes` | array of 1 or 2 plane objects | yes | the metal levels (below) |
-| `Bumps` | array of bump objects | no (default none) | excluded metal columns between the two planes (below); need two planes |
-| `Vacuum` | `{"Below": b, "Above": a}` | no (default 0 / 0) | vacuum beyond the outermost substrate backsides (0 = the backside is the box wall, homogeneous Neumann; > 0 = the backside is a `substrate_backside` face against vacuum). A single `up` plane needs `Above` > the metal thickness (the transmon: `Below` 475, `Above` 1000) |
-| `Terminals` | array of strings | no (default: every non-ground label sorted) | the attribute order of the terminals; must list every non-`ground` conductor label exactly once |
-| `MatchingRadius` | number | with two planes (unless the mesher is run with `--cross-plane-snap-um`) | the identification's matching radius R (um, e.g. 1.9); sets the cross-plane snap distance delta = 0.05 R (below) |
+| field            | type                                        | required                                                                | meaning                                                                                                                                                                                                                                                                      |
+|:---------------- |:------------------------------------------- |:----------------------------------------------------------------------- |:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Version`        | integer                                     | no (default 1)                                                          | schema version; only 1 is accepted                                                                                                                                                                                                                                           |
+| `Name`           | string                                      | no (default `window`)                                                   | the window name (manifest, Gmsh model name)                                                                                                                                                                                                                                  |
+| `Box`            | `{"X": [x0, x1], "Y": [y0, y1]}`            | yes                                                                     | the plan rectangle of the truncated box, `x0 < x1`, `y0 < y1`; every polygon must lie inside it (vertices may lie ON the wall; a polygon leaving the box is refused)                                                                                                         |
+| `Process`        | `{"MetalThickness": 0.1, "Overetch": 0.05}` | no (defaults shown)                                                     | metal thickness and overetch recess of the exposed substrate, both planes                                                                                                                                                                                                    |
+| `Planes`         | array of 1 or 2 plane objects               | yes                                                                     | the metal levels (below)                                                                                                                                                                                                                                                     |
+| `Bumps`          | array of bump objects                       | no (default none)                                                       | excluded metal columns between the two planes (below); need two planes                                                                                                                                                                                                       |
+| `Vacuum`         | `{"Below": b, "Above": a}`                  | no (default 0 / 0)                                                      | vacuum beyond the outermost substrate backsides (0 = the backside is the box wall, homogeneous Neumann; > 0 = the backside is a `substrate_backside` face against vacuum). A single `up` plane needs `Above` > the metal thickness (the transmon: `Below` 475, `Above` 1000) |
+| `Terminals`      | array of strings                            | no (default: every non-ground label sorted)                             | the attribute order of the terminals; must list every non-`ground` conductor label exactly once                                                                                                                                                                              |
+| `MatchingRadius` | number                                      | with two planes (unless the mesher is run with `--cross-plane-snap-um`) | the identification's matching radius R (um, e.g. 1.9); sets the cross-plane snap distance delta = 0.05 R (below)                                                                                                                                                             |
 
 ## Plane object
 
-| field | type | required | meaning |
-|---|---|---|---|
-| `Name` | string | yes | e.g. `L1`, `L2` (used in the manifest's per-plane statistics) |
-| `SurfaceZ` | number | yes | substrate surface z |
-| `Facing` | `"up"` or `"down"` | yes | see units / coordinates; with two planes the lower one must face `up` and the upper one `down`, and their `SurfaceZ` must differ by more than twice the metal thickness |
-| `SubstrateThickness` | number | yes | thickness of this plane's substrate (its backside is at `SurfaceZ -/+ SubstrateThickness` for `up` / `down`) |
-| `Polygons` | array of polygon objects | yes (at least one) | the metal footprint of this plane |
+| field                | type                     | required           | meaning                                                                                                                                                                 |
+|:-------------------- |:------------------------ |:------------------ |:----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Name`               | string                   | yes                | e.g. `L1`, `L2` (used in the manifest's per-plane statistics)                                                                                                           |
+| `SurfaceZ`           | number                   | yes                | substrate surface z                                                                                                                                                     |
+| `Facing`             | `"up"` or `"down"`       | yes                | see units / coordinates; with two planes the lower one must face `up` and the upper one `down`, and their `SurfaceZ` must differ by more than twice the metal thickness |
+| `SubstrateThickness` | number                   | yes                | thickness of this plane's substrate (its backside is at `SurfaceZ -/+ SubstrateThickness` for `up` / `down`)                                                            |
+| `Polygons`           | array of polygon objects | yes (at least one) | the metal footprint of this plane                                                                                                                                       |
 
 ## Polygon object (a metal body of one plane)
 
-| field | type | required | meaning |
-|---|---|---|---|
-| `Conductor` | string | yes | conductor label: `ground` is the shared ground (every plane, every bump; attributes 4 / 5); every other label is a terminal with its own metal-air / metal-substrate attribute pair (7 / 8, 10 / 11, ...). The same label on two planes or in several polygons is ONE conductor (e.g. an L1 ground and an L2 ground, or a body that a bump joins) |
-| `Outer` | `[[x, y], ...]` | yes (>= 3 vertices) | the outer loop, straight edges, not self-intersecting, the last vertex is NOT repeated |
-| `Holes` | `[[[x, y], ...], ...]` | no (default none) | hole loops (>= 3 vertices each), strictly inside the outer loop, pairwise disjoint; the metal is `Outer` minus the holes |
+| field       | type                   | required            | meaning                                                                                                                                                                                                                                                                                                                                           |
+|:----------- |:---------------------- |:------------------- |:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Conductor` | string                 | yes                 | conductor label: `ground` is the shared ground (every plane, every bump; attributes 4 / 5); every other label is a terminal with its own metal-air / metal-substrate attribute pair (7 / 8, 10 / 11, ...). The same label on two planes or in several polygons is ONE conductor (e.g. an L1 ground and an L2 ground, or a body that a bump joins) |
+| `Outer`     | `[[x, y], ...]`        | yes (>= 3 vertices) | the outer loop, straight edges, not self-intersecting, the last vertex is NOT repeated                                                                                                                                                                                                                                                            |
+| `Holes`     | `[[[x, y], ...], ...]` | no (default none)   | hole loops (>= 3 vertices each), strictly inside the outer loop, pairwise disjoint; the metal is `Outer` minus the holes                                                                                                                                                                                                                          |
 
 Rules:
 
@@ -58,8 +59,19 @@ Rules:
     the hole wires in the OUTER wire's orientation). Do not rely on a winding convention.
   - Curved metal edges are polygonised by the writer at (or below) the tangent target t that
     the mesh will be generated with (the transmon export uses the transfinite chords at t = 5):
-    every polygon edge becomes a transfinite curve of `ceil(length / t)` segments, so a chord
-    longer than t is subdivided and a chord shorter than t stays one segment.
+    every polygon edge becomes a transfinite curve of `ceil(length / t - 1e-6)` segments, so a
+    chord longer than t is subdivided and a chord shorter than t stays one segment; the
+    relative guard 1e-6 keeps an edge whose length is an exact multiple of t (within the
+    writer's rounding) from gaining a segment by floating-point rounding (identical to
+    `ceil(length / t)` on every recorded transmon edge: 7,104 perimeter edges).
+  - The band cap (`PolygonWindowMesh.jl`, decision 191): at every point of a metal edge the
+    boundary-layer band is at most 0.4 x the distance to the nearest facing plan curve (metal
+    of any plane or bump, or the box wall) on that side of the edge; the first rows are kept
+    and the outer rows dropped. A writer feature closer than 2.5 r to a facing edge (r = the
+    first-layer height: 0.025 um at r10) cannot be meshed and is refused by the mesher's
+    collision check with its location; the finely polygonised chords of a small convex loop
+    (chord shorter than ~3.2 um at r10, ~3.9 um at r50) cap the band inside that loop, because
+    the next-but-one chord counts as a facing front.
   - Polygons of one plane must not overlap (a shared edge between two bodies is also refused:
     two conductors must not touch). Polygons of different planes may overlap freely (that is the
     flip-chip stack).
@@ -78,17 +90,22 @@ Rules:
     coordinates) and inserts the cross vertices on both chains, so coincident runs become
     identical point sequences; the lower plane's geometry never moves. Within ONE plane
     nothing is snapped: two polygons closer than delta (a sub-delta slot, touching metal) are
-    REFUSED — the writer must resolve them. The manifest records the moved vertices, the
-    maximum displacement, the inserted vertices and the coincident run length
-    (`cross_plane_reconciliation`): the reference differs from the (unreconciled) thin
-    geometry by at most delta on those runs.
+    REFUSED — the writer must resolve them. Scope of that same-plane check: it tests every
+    vertex of one polygon against the segments of every OTHER polygon of the same plane (and
+    only for two-plane sets, where delta is defined); a sub-delta strip between a polygon's
+    outer loop and its own hole, self-proximity within one loop, or a single-plane set are
+    NOT checked here — such features reach the mesher's band construction, where fronts
+    closer than 2.5 r collide and are refused with their location (see the band cap above).
+    The manifest records the moved vertices, the maximum displacement, the inserted vertices
+    and the coincident run length (`cross_plane_reconciliation`): the reference differs from
+    the (unreconciled) thin geometry by at most delta on those runs.
 
 ## Bump object
 
-| field | type | required | meaning |
-|---|---|---|---|
-| `Conductor` | string | no (default `ground`) | the conductor of the column (and thus of the bodies it joins on both planes) |
-| `Footprint` | `[[x, y], ...]` | yes (>= 3 vertices) | the plan footprint; it must lie on metal of the SAME conductor on both planes (a footprint not on metal of both planes is refused) and footprints must not overlap |
+| field       | type            | required              | meaning                                                                                                                                                            |
+|:----------- |:--------------- |:--------------------- |:------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Conductor` | string          | no (default `ground`) | the conductor of the column (and thus of the bodies it joins on both planes)                                                                                       |
+| `Footprint` | `[[x, y], ...]` | yes (>= 3 vertices)   | the plan footprint; it must lie on metal of the SAME conductor on both planes (a footprint not on metal of both planes is refused) and footprints must not overlap |
 
 The bump is an excluded metal column from the L1 metal top (`SurfaceZ_1 + MetalThickness`) to the
 L2 metal bottom (`SurfaceZ_2 - MetalThickness`); its sidewall is a metal-air face of its
