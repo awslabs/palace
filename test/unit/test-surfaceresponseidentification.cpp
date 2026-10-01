@@ -2805,7 +2805,8 @@ TEST_CASE("SurfaceResponseIdentificationCollinearSubdivision",
     // bar whose 6 um leads meet a 120 um bend of seven unequal chords (8-12 deg, 16.7-25.1
     // um) at a 20 deg kink (below the cap, same sign; neither tangent nor a chord: not
     // absorbable): the kink joints stay corners and the six interior joints are one
-    // least-squares bend per side.
+    // least-squares bend per side; (iii) the same with ten chords whose longest lies
+    // mid-arc (both scan directions chopped it).
     auto Rotated = [](const std::vector<Point2> &points, std::size_t start)
     {
       std::vector<Point2> result(points.begin() + static_cast<std::ptrdiff_t>(start),
@@ -2858,7 +2859,13 @@ TEST_CASE("SurfaceResponseIdentificationCollinearSubdivision",
          {Loop{"tangent leads", ArcBar(width, 250.0, 30.0, 5.0, 6.0), 250.0, 7, 10, 4},
           Loop{"kinked leads",
                KinkedBar(width, 120.0, {8.0, 10.0, 12.0, 10.0, 8.0, 10.0, 11.0}, 6.0, 20.0),
-               120.0, 6, 12, 8}})
+               120.0, 6, 12, 8},
+          // The longest chord in the MIDDLE of a 9-joint bend: both scan directions start
+          // inside it and both chopped it (5 + 4 joints) before the rule.
+          Loop{"kinked leads, longest chord mid-arc",
+               KinkedBar(width, 120.0, {6.0, 7.0, 8.0, 7.0, 6.0, 10.0, 6.0, 7.0, 8.0, 7.0},
+                         6.0, 20.0),
+               120.0, 9, 18, 8}})
     {
       INFO(loop.name);
       const Reading plain = Read({{loop.points, 0, joint_only}});
