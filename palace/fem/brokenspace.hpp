@@ -28,11 +28,13 @@ namespace palace
 // (junctions of three or more regions therefore share one copy). Each element then reads
 // either the original degrees of freedom of all of its split entities or the copies of all
 // of them, as required by the constraints of hanging entities on a nonconforming mesh,
-// which can involve the split entities of several interior boundaries. This is not
-// possible where the regions cannot be two-colored: at junctions of three pairwise adjacent
-// regions, and along an interior boundary whose two sides are joined into a single region
-// through the split entities of another one (an air bridge standing on a ground plane, for
-// example).
+// which can involve the split entities of several interior boundaries. Where the regions
+// cannot be two-colored, at junctions of three pairwise adjacent regions or for an interior
+// boundary whose two sides are joined into a single region through the split entities of
+// another one (an air bridge standing on a ground plane, for example), the sides of the
+// affected split entities are two-colored by themselves, consistently along the interior
+// boundary: only the elements next to the junction then read the copies for some of their
+// split entities and the original degrees of freedom for others.
 //
 // The sides are stored as bitmasks per local element, with bit b for the local entity b of
 // the element, where local entities are numbered as vertices [0, nv), then edges

@@ -672,34 +672,24 @@ CrackSides ComputeCrackSides(const mfem::ParMesh &cmesh,
     region[k] = rlabel[RFind(node_elem[k])];
   }
 
-  // Two-coloring of the regions, which are adjacent when they are on different sides of a
-  // split entity: the regions of the first color keep the original DOFs and those of the
-  // second color read the copies. Each element then reads either the original DOFs of all
-  // of its split entities or the copies of all of them, which is required on
-  // nonconforming meshes, where the DOFs of a hanging entity can be constrained by those of
-  // the split entities of several interior boundaries (for an element between two parallel
-  // interior boundaries, for example). The graph of the regions is small: it is gathered
-  // and colored on the root process, from the region with the smallest label in each
-  // connected component.
-  const auto region_min = EntityReduce([&](int k) { return region[k]; }, false);
-  const auto region_max = EntityReduce([&](int k) { return region[k]; }, true);
-  std::vector<int> color(nn, 0);
+  // Two-coloring of a graph gathered on the root process, with nodes identified by labels:
+  // the labels of each of the given pairs to join are in the same set, and the sets of the
+  // labels of each of the given pairs to separate have different colors where possible.
+  // Each connected component is colored from the set with the smallest label. Returns the
+  // pairs of label and color of all given labels, sorted by label. Collective.
+  using LabelPairs = std::set<std::pair<double, double>>;
+  auto ColorLabels = [&](const LabelPairs &join, const LabelPairs &separate)
   {
-    std::set<std::pair<double, double>> local_edges;
-    for (int k = 0; k < nn; k++)
-    {
-      const int type = node_type[k], ent = node_ent[k];
-      if (Split(type, ent) && region_min[type][ent] < region_max[type][ent])
-      {
-        local_edges.emplace(region_min[type][ent], region_max[type][ent]);
-      }
-    }
     std::vector<double> send;
-    send.reserve(2 * local_edges.size());
-    for (const auto &[a, b] : local_edges)
+    send.reserve(1 + 2 * (join.size() + separate.size()));
+    send.push_back(static_cast<double>(join.size()));
+    for (const auto &pairs : {&join, &separate})
     {
-      send.push_back(a);
-      send.push_back(b);
+      for (const auto &[a, b] : *pairs)
+      {
+        send.push_back(a);
+        send.push_back(b);
+      }
     }
     const int count = static_cast<int>(send.size()), nprocs = Mpi::Size(comm);
     std::vector<int> counts(nprocs, 0), displs(nprocs, 0);
@@ -715,81 +705,197 @@ CrackSides ComputeCrackSides(const mfem::ParMesh &cmesh,
     }
     MPI_Gatherv(send.data(), count, MPI_DOUBLE, recv.data(), counts.data(), displs.data(),
                 MPI_DOUBLE, 0, comm);
-    std::vector<double> colored;  // Pairs of region label and color, sorted by label
+    std::vector<double> colored;
     if (Mpi::Root(comm))
     {
-      std::map<double, std::vector<double>> adj;
-      for (std::size_t i = 0; i + 1 < recv.size(); i += 2)
+      // Union-find on the labels, with the smallest label of each set as its root.
+      std::map<double, double> parent;
+      auto FindSet = [&parent](double x)
       {
-        adj[recv[i]].push_back(recv[i + 1]);
-        adj[recv[i + 1]].push_back(recv[i]);
+        parent.emplace(x, x);
+        while (parent[x] != x)
+        {
+          parent[x] = parent[parent[x]];
+          x = parent[x];
+        }
+        return x;
+      };
+      std::vector<std::pair<double, double>> edges;
+      for (int p = 0; p < nprocs; p++)
+      {
+        const double *data = recv.data() + displs[p];
+        const int num_join = static_cast<int>(data[0]);
+        for (int i = 0; i < num_join; i++)
+        {
+          const double a = FindSet(data[1 + 2 * i]), b = FindSet(data[2 + 2 * i]);
+          parent[std::max(a, b)] = std::min(a, b);
+        }
+        for (int i = 1 + 2 * num_join; i + 1 < counts[p]; i += 2)
+        {
+          edges.emplace_back(data[i], data[i + 1]);
+        }
       }
-      std::map<double, int> region_color;
+      std::map<double, std::vector<double>> adj;
+      for (const auto &[a, b] : edges)
+      {
+        const double ra = FindSet(a), rb = FindSet(b);
+        adj[ra].push_back(rb);
+        adj[rb].push_back(ra);
+      }
+      for (const auto &entry : parent)
+      {
+        adj[FindSet(entry.first)];
+      }
+      std::map<double, int> set_color;
       std::vector<double> queue;
       for (const auto &entry : adj)
       {
-        if (region_color.count(entry.first))
+        if (set_color.count(entry.first))
         {
           continue;
         }
-        region_color[entry.first] = 0;
+        set_color[entry.first] = 0;
         queue.assign(1, entry.first);
         for (std::size_t q = 0; q < queue.size(); q++)
         {
-          const int c = region_color[queue[q]];
+          const int c = set_color[queue[q]];
           for (auto r : adj[queue[q]])
           {
-            if (!region_color.count(r))
+            if (!set_color.count(r))
             {
-              region_color[r] = 1 - c;
+              set_color[r] = 1 - c;
               queue.push_back(r);
             }
           }
         }
       }
-      for (const auto &[r, c] : region_color)
+      for (const auto &entry : parent)
       {
-        colored.push_back(r);
-        colored.push_back(c);
+        colored.push_back(entry.first);
+        colored.push_back(set_color[FindSet(entry.first)]);
       }
     }
     int size = static_cast<int>(colored.size());
     Mpi::Broadcast(1, &size, 0, comm);
     colored.resize(size);
     MPI_Bcast(colored.data(), size, MPI_DOUBLE, 0, comm);
-    for (int k = 0; k < nn; k++)
+    return colored;
+  };
+  auto LookupColor = [](const std::vector<double> &colored, double label, int color)
+  {
+    const int n = static_cast<int>(colored.size()) / 2;
+    int lo = 0, hi = n;
+    while (lo < hi)
     {
-      // Regions without neighbors (whose split entities have all of their groups in the
-      // region) have the first color.
-      int lo = 0, hi = size / 2;
-      while (lo < hi)
+      const int mid = (lo + hi) / 2;
+      if (colored[2 * mid] < label)
       {
-        const int mid = (lo + hi) / 2;
-        if (colored[2 * mid] < region[k])
-        {
-          lo = mid + 1;
-        }
-        else
-        {
-          hi = mid;
-        }
+        lo = mid + 1;
       }
-      if (lo < size / 2 && colored[2 * lo] == region[k])
+      else
       {
-        color[k] = static_cast<int>(colored[2 * lo + 1]);
+        hi = mid;
       }
     }
-  }
+    return (lo < n && colored[2 * lo] == label) ? static_cast<int>(colored[2 * lo + 1])
+                                                : color;
+  };
 
-  // For each split entity, the base group is the one in the regions of the first color.
-  // Where this is not unique, at junctions of interior boundaries where the regions cannot
-  // be two-colored (three regions which are pairwise adjacent, for example) or for an
-  // entity with several groups in the same region, the base group is the one in the region
-  // with the smallest label (falling back to the group with the smallest label if that
-  // region contains several of its groups). Elements of all other groups read the copy.
+  // Two-coloring of the regions, which are adjacent when they are on different sides of a
+  // split entity: the regions of the first color keep the original DOFs and those of the
+  // second color read the copies. Each element then reads either the original DOFs of all
+  // of its split entities or the copies of all of them, which is required on
+  // nonconforming meshes, where the DOFs of a hanging entity can be constrained by those of
+  // the split entities of several interior boundaries (for an element between two parallel
+  // interior boundaries, for example). Regions without neighbors (whose split entities
+  // have all of their groups in the region) have the first color.
+  const auto region_min = EntityReduce([&](int k) { return region[k]; }, false);
+  const auto region_max = EntityReduce([&](int k) { return region[k]; }, true);
+  std::vector<int> color(nn, 0);
+  {
+    LabelPairs adjacent;
+    for (int k = 0; k < nn; k++)
+    {
+      const int type = node_type[k], ent = node_ent[k];
+      if (Split(type, ent) && region_min[type][ent] < region_max[type][ent])
+      {
+        adjacent.emplace(region_min[type][ent], region_max[type][ent]);
+      }
+    }
+    const auto region_colors = ColorLabels({}, adjacent);
+    for (int k = 0; k < nn; k++)
+    {
+      color[k] = LookupColor(region_colors, region[k], 0);
+    }
+  }
   auto ColorCandidate = [&](int k) { return (color[k] == 0) ? comp[k] : std::nan(""); };
   const auto color_min = EntityReduce(ColorCandidate, false);
   const auto color_max = EntityReduce(ColorCandidate, true);
+
+  // Split entities without a unique group in the regions of the first color: at junctions
+  // of interior boundaries where the regions cannot be two-colored (three pairwise
+  // adjacent regions), and for an interior boundary whose two sides are in the same
+  // region, joined through the split entities of another interior boundary (an air bridge
+  // standing on a ground plane, for example). The sides of these entities are two-colored
+  // by themselves, with the groups read by the same element on the same side, such that
+  // the choice of the base group is consistent along such an interior boundary, and only
+  // elements next to its junctions with other interior boundaries are inconsistent. Groups
+  // are identified by their labels, which are only shared by groups with a common element.
+  auto Conflict = [&](int type, int ent)
+  { return Split(type, ent) && color_min[type][ent] != color_max[type][ent]; };
+  std::vector<int> side_color(nn, -1);
+  {
+    LabelPairs same_side, other_side;
+    for (int e = 0; e < ne; e++)
+    {
+      double first = std::nan("");
+      for (int k = node_offsets[e]; k < node_offsets[e + 1]; k++)
+      {
+        if (!Conflict(node_type[k], node_ent[k]))
+        {
+          continue;
+        }
+        if (std::isnan(first))
+        {
+          first = comp[k];
+        }
+        else if (comp[k] != first)
+        {
+          same_side.emplace(std::min(first, comp[k]), std::max(first, comp[k]));
+        }
+      }
+    }
+    for (int k = 0; k < nn; k++)
+    {
+      const int type = node_type[k], ent = node_ent[k];
+      if (Conflict(type, ent))
+      {
+        other_side.emplace(comp_min[type][ent], comp_max[type][ent]);
+      }
+    }
+    int any = !other_side.empty();
+    Mpi::GlobalMax(1, &any, comm);
+    if (any)
+    {
+      const auto side_colors = ColorLabels(same_side, other_side);
+      for (int k = 0; k < nn; k++)
+      {
+        if (Conflict(node_type[k], node_ent[k]))
+        {
+          side_color[k] = LookupColor(side_colors, comp[k], -1);
+        }
+      }
+    }
+  }
+  auto SideCandidate = [&](int k) { return (side_color[k] == 0) ? comp[k] : std::nan(""); };
+  const auto side_min = EntityReduce(SideCandidate, false);
+  const auto side_max = EntityReduce(SideCandidate, true);
+
+  // For each split entity, the base group is the one in the regions of the first color, or
+  // for the entities above, the one on the side of the first color. Where neither is
+  // unique, the base group is the one in the region with the smallest label (falling back
+  // to the group with the smallest label if that region contains several of its groups).
+  // Elements of all other groups read the copy.
   auto BaseCandidate = [&](int k)
   { return (region[k] == region_min[node_type[k]][node_ent[k]]) ? comp[k] : std::nan(""); };
   const auto base_min = EntityReduce(BaseCandidate, false);
@@ -802,11 +908,19 @@ CrackSides ComputeCrackSides(const mfem::ParMesh &cmesh,
       continue;
     }
     sides.split[node_elem[k]] |= (std::uint32_t(1) << node_bit[k]);
-    const double base =
-        (color_min[type][ent] == color_max[type][ent])
-            ? color_min[type][ent]
-            : ((base_min[type][ent] == base_max[type][ent]) ? base_min[type][ent]
-                                                            : comp_min[type][ent]);
+    double base = comp_min[type][ent];
+    if (color_min[type][ent] == color_max[type][ent])
+    {
+      base = color_min[type][ent];
+    }
+    else if (side_min[type][ent] == side_max[type][ent])
+    {
+      base = side_min[type][ent];
+    }
+    else if (base_min[type][ent] == base_max[type][ent])
+    {
+      base = base_min[type][ent];
+    }
     if (comp[k] != base)
     {
       sides.copy[node_elem[k]] |= (std::uint32_t(1) << node_bit[k]);
@@ -814,11 +928,9 @@ CrackSides ComputeCrackSides(const mfem::ParMesh &cmesh,
   }
 
   // Elements reading the copies of some of their split entities and the original DOFs of
-  // others, where the regions cannot be two-colored: on a nonconforming mesh, the DOFs of
+  // others, next to junctions of interior boundaries: on a nonconforming mesh, the DOFs of
   // hanging entities constrained by both kinds of split entities are not recovered
-  // consistently. This includes the elements along an interior boundary whose two sides
-  // are in the same region, joined through the split entities of another interior boundary
-  // (an air bridge standing on a ground plane, for example).
+  // consistently.
   int num_mixed = 0;
   for (int e = 0; e < ne; e++)
   {
@@ -830,9 +942,9 @@ CrackSides ComputeCrackSides(const mfem::ParMesh &cmesh,
     Mpi::Warning(
         comm,
         "The sides of interior boundaries for error estimation could not be chosen "
-        "consistently for {:d} elements, where interior boundaries meet (for "
-        "example, air bridges standing on a ground plane): on nonconforming "
-        "meshes, the flux recovery may be inaccurate near them!\n",
+        "consistently for {:d} elements next to junctions of interior boundaries "
+        "(for example, at the legs of air bridges standing on a ground plane): on "
+        "nonconforming meshes, the flux recovery may be inaccurate near them!\n",
         num_mixed);
   }
   return sides;
