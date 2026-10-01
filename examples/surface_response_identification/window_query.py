@@ -420,7 +420,7 @@ def inventory(manifest, windows, margin, weights, z_range=None):
         per_feature = collections.defaultdict(lambda: {"Inside": 0.0, "InMargin": 0.0, "Portions": []})
         excluded = collections.defaultdict(float)
         per_plane = collections.defaultdict(lambda: {"Assigned": 0.0, "Excluded": 0.0})
-        loops_inside = collections.defaultdict(lambda: {"Inside": 0.0, "InsideSetback": 0.0, "Crossing": False})
+        loops_inside = collections.defaultdict(lambda: {"Inside": 0.0, "InsideSetback": 0.0, "Crossing": False, "PortSegments": []})
         for i, s in enumerate(segments):
             p0, p1 = s["Key"][0], s["Key"][1]
             z = round(float(p0[2]), 3)
@@ -445,6 +445,8 @@ def inventory(manifest, windows, margin, weights, z_range=None):
                     entry["InsideSetback"] += (setback_clip[1] - setback_clip[0]) * length
                 if (b - a) < length * (1.0 - 1e-9):
                     entry["Crossing"] = True
+                if s.get("Exclusion", {}).get("Class") == "Port":
+                    entry["PortSegments"].append(i)
             if "Exclusion" in s:
                 excluded[s["Exclusion"]["Class"]] += b - a
                 per_plane[z]["Excluded"] += b - a
@@ -542,7 +544,8 @@ def inventory(manifest, windows, margin, weights, z_range=None):
                               "BBox": b.get("BBox"), "LoopClosed": b.get("Closed")})
         body_rows.sort(key=lambda r: (r["Kind"] != "Ground", r["Kind"] == "OpenChain", -r["Proxy"]))
         conductor_rows, footprint_rows = conductor_table(loops, body_rows, box)
-        terminal, assignment, excitation = terminal_assignment(body_rows, conductor_rows, radius, margin, box)
+        port_lines = port_closed_loops(loops, loops_inside, body_kind)
+        terminal, assignment, excitation = terminal_assignment(body_rows, conductor_rows, radius, margin, box, port_lines)
         # E1 comparison region (supervisor reply to decision 184 / 190, 2026-10-01): 3 R around every WINDOW-INTRODUCED feature
         # (walls, wall bridges, open-terminated ends) is excluded -> for an open-terminated terminal the margin is OpenSetback + 3 R
         e1_margin = max(margin, open_setback + 3.0 * radius) if excitation["Kind"] == "OpenTerminatedTrace" else margin
@@ -561,7 +564,7 @@ def inventory(manifest, windows, margin, weights, z_range=None):
                        for t in sorted({r["Type"] for r in rows})},
             "Keys": keys, "Features": rows,
             "Bodies": body_rows, "Conductors": conductor_rows, "ConductorCount": len(conductor_rows),
-            "BumpFootprints": footprint_rows,
+            "BumpFootprints": footprint_rows, "PortClosedLoops": port_lines,
             "ProposedTerminal": terminal, "Excitation": excitation,
             "TerminalAssignment": assignment,
             "MeanSeparationPredictions": predictions,
@@ -617,15 +620,42 @@ def conductor_table(loops, body_rows, box):
     return conductor_rows, footprint_rows
 
 
-def terminal_assignment(body_rows, conductor_rows, radius, margin, box):
+def port_closed_loops(loops, loops_inside, body_kind):
+    """Body-model convention (review of decision 195, m2): a lumped-port patch is not metal, so the metal edge along it is a
+    ``Port`` segment; when it lies on a closed DIELECTRIC-inside loop, the metal beyond the port reads as the loop's
+    exterior body. That metal is either the ground itself (the ground-side edges of a JJ port: SCT loop 326 / CTX loops 39,
+    91) or a port-terminated LINE fused with the ground by the port closing its gap loop (C4's XY drive line above pad 43,
+    loop 42; S5's stub below the ROA_IN port, loop 22; both read as the unbounded ground -2) -- the body model cannot tell
+    the two apart. Returns one record per such loop meeting the window: the loop, the body (and kind) the metal beyond the
+    port reads as, the Port segments; the terminal rule fails closed when such a loop is the only metal that could have
+    been a candidate."""
+    lines = []
+    for loop_index, entry in sorted(loops_inside.items()):
+        if not entry["PortSegments"]:
+            continue
+        loop = loops.loops[loop_index]
+        if not loop["Closed"] or loop["MetalInside"] is not False:
+            continue  # metal inside (a JJ island closed through its port edges) is a body of its own
+        lines.append({"Loop": loop_index, "Plane": loop["Plane"], "ReadAsBody": loop["Body"], "ReadAsKind": body_kind(loop["Body"]),
+                      "PortSegments": entry["PortSegments"]})
+    return lines
+
+
+def terminal_assignment(body_rows, conductor_rows, radius, margin, box, port_lines=None):
     """Decision-180 terminal rule per conductor: the island conductor entirely inside the box with the largest
     proxy energy is the quoted terminal (1 V); else the cut non-ground conductor (a CPW centre trace / cut island)
     with the largest proxy is the terminal, open-terminated inside the wall (the metal stops 3 R + margin inside
     the box, the trace's other cuts bridged to ground); every other conductor is ground, a cut one bridged to
-    ground at the wall by an explicit metal polygon. A window with no non-ground conductor has no excitation
-    (S3 class: move / resize / drop). Returns (terminal conductor root or None, per-body assignment, excitation)."""
+    ground at the wall by an explicit metal polygon. An UNCUT island conductor with bump-joined bodies the window does
+    not see (``EntirelyInside`` False without ``CutByWall``) is not a terminal candidate of either kind: its extent is
+    unknown (``UncutWithUnseenBodies``). A window with no non-ground conductor has no excitation (S3 class: move /
+    resize / drop); when a port-terminated line read as ground (``port_lines``, m2 convention) is then the only metal
+    that could have been a candidate, the rule FAILS CLOSED with the diagnostic (``Flag``). Returns (terminal
+    conductor root or None, per-body assignment, excitation)."""
     islands = [g for g in conductor_rows if g["EntirelyInside"]]
-    cut_traces = [g for g in conductor_rows if g["Kind"] == "Island" and not g["EntirelyInside"]]
+    cut_traces = [g for g in conductor_rows if g["Kind"] == "Island" and g["CutByWall"]]
+    uncut_unseen = [g for g in conductor_rows if g["Kind"] == "Island" and not g["CutByWall"] and not g["EntirelyInside"]]
+    ground_port_lines = [l for l in (port_lines or []) if l["ReadAsKind"] == "Ground"]  # m2: possibly a line fused with ground
     open_setback = 3.0 * radius + margin
     # a cut conductor whose metal edges all lie within the setback band vanishes when open-terminated (O4's wall-hugging
     # trace): not a realisable terminal
@@ -642,11 +672,27 @@ def terminal_assignment(body_rows, conductor_rows, radius, margin, box):
                       "Rule": f"cut non-ground conductor with the largest proxy, open-terminated {open_setback:g} um inside the wall"}
     else:
         terminal = None
-        excitation = {"Kind": "None", "Conductor": None, "Bodies": [], "Planes": [], "Realisable": False,
-                      "Rule": "no non-ground conductor in the window: move / resize / drop the window" if not cut_traces else
-                      f"every cut non-ground conductor lies within {open_setback:g} um of a wall: move / resize / drop the window"}
+        if cut_traces:
+            rule = f"every cut non-ground conductor lies within {open_setback:g} um of a wall: move / resize / drop the window"
+        elif uncut_unseen:
+            rule = "the only non-ground conductors are uncut islands whose chip conductor has bump-joined bodies the window does " \
+                   "not see (extent unknown): move / resize the window to see the whole conductor, or drop it"
+        else:
+            rule = "no non-ground conductor in the window: move / resize / drop the window"
+        excitation = {"Kind": "None", "Conductor": None, "Bodies": [], "Planes": [], "Realisable": False, "Rule": rule}
+        if ground_port_lines:
+            excitation["Flag"] = "PortTerminatedLineReadAsGround"
+            excitation["Rule"] = (f"FAIL CLOSED: the metal beyond the Port segments of {len(ground_port_lines)} gap loop(s) "
+                                  f"{[l['Loop'] for l in ground_port_lines]} reads as a ground body and is the only metal that could "
+                                  "have been a candidate; the body model cannot tell a port-terminated line (its gap loop closed by "
+                                  "the port) from the ground: fuse the port in the chip model or move the window; " + rule)
     if vanishing:
         excitation["VanishingUnderSetback"] = vanishing
+    if uncut_unseen:
+        excitation["UncutWithUnseenBodies"] = [g["Conductor"] for g in uncut_unseen]
+    if port_lines:
+        excitation["PortClosedLoops"] = [{"Loop": l["Loop"], "ReadAsBody": l["ReadAsBody"], "ReadAsKind": l["ReadAsKind"]}
+                                             for l in port_lines]
     terminal_bodies = set(terminal["Bodies"]) if terminal else set()
     assignment = []
     for r in body_rows:
@@ -661,8 +707,12 @@ def terminal_assignment(body_rows, conductor_rows, radius, margin, box):
             role = "Ground (0 V): cut island / trace bridged to ground at the wall"
         else:
             conductor = [g for g in conductor_rows if r["Body"] in g["Bodies"]][0]
-            role = "Ground (0 V): island bump-joined to a ground / cut conductor" if conductor["Kind"] == "Ground" or conductor["CutByWall"] \
-                else "Ground (0 V): non-excited island (capacitance-matrix convention)"
+            if conductor["Kind"] == "Ground" or conductor["CutByWall"]:
+                role = "Ground (0 V): island bump-joined to a ground / cut conductor"
+            elif not conductor["EntirelyInside"]:
+                role = "Ground (0 V): uncut island whose chip conductor has bump-joined bodies the window does not see (not a terminal candidate)"
+            else:
+                role = "Ground (0 V): non-excited island (capacitance-matrix convention)"
         assignment.append({"Body": r["Body"], "Kind": r["Kind"], "Plane": r["Plane"], "Role": role})
     return (terminal["Conductor"] if terminal else None), assignment, excitation
 

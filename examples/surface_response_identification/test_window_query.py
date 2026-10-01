@@ -234,6 +234,59 @@ class WindowInventory(unittest.TestCase):
             self.assertEqual(len(open(csv_path).read().splitlines()), 1 + result["Windows"]["W"]["FeatureCount"])
             self.assertIn("proposed terminal body", open(md).read())
 
+    @staticmethod
+    def conductor(root, kind, cut, chip_bodies, proxy, perimeter_setback=10.0):
+        bodies = [root]
+        return {"Conductor": root, "Bodies": bodies, "Planes": [0.0], "Kind": kind, "Proxy": proxy, "PerimeterInside": perimeter_setback + 1.0,
+                "PerimeterInsideSetback": perimeter_setback, "CutByWall": cut, "ChipBodies": chip_bodies, "ChipGround": kind == "Ground",
+                "UnseenBodies": max(0, chip_bodies - len(bodies)), "EntirelyInside": kind == "Island" and not cut and chip_bodies <= len(bodies)}
+
+    def test_uncut_island_with_unseen_bump_joined_bodies_is_not_a_terminal(self):
+        # review of decision 195, m3: an uncut island whose chip conductor has a bump-joined body the window does not see is
+        # neither a whole island nor a cut trace: classified UncutWithUnseenBodies, never chosen as OpenTerminatedTrace
+        ground = self.conductor(-1, "Ground", True, 1, 0.0)
+        unseen = self.conductor(7, "Island", False, 2, 500.0)
+        rows = [{"Body": -1, "Kind": "Ground", "Plane": 0.0}, {"Body": 7, "Kind": "Island", "Plane": 0.0, "CutByWall": False}]
+        terminal, assignment, excitation = WQ.terminal_assignment(rows, [ground, unseen], R, 2.0, (0.0, 100.0, 0.0, 100.0))
+        self.assertIsNone(terminal)
+        self.assertEqual(excitation["Kind"], "None")
+        self.assertEqual(excitation["UncutWithUnseenBodies"], [7])
+        self.assertIn("bump-joined bodies the window does not see", excitation["Rule"])
+        self.assertNotIn("Flag", excitation)
+        self.assertIn("not a terminal candidate", [a["Role"] for a in assignment if a["Body"] == 7][0])
+        # with a cut trace of a smaller proxy present, the trace is the terminal (not the larger-proxy unseen island)
+        trace = self.conductor(3, "Island", True, 1, 50.0)
+        terminal, _, excitation = WQ.terminal_assignment(rows + [{"Body": 3, "Kind": "Island", "Plane": 0.0, "CutByWall": True}],
+                                                         [ground, unseen, trace], R, 2.0, (0.0, 100.0, 0.0, 100.0))
+        self.assertEqual((terminal, excitation["Kind"]), (3, "OpenTerminatedTrace"))
+        self.assertEqual(excitation["UncutWithUnseenBodies"], [7])
+
+    def test_port_terminated_line_read_as_ground_fails_closed(self):
+        # review of decision 195, m2: a port-terminated line reads as the unbounded ground body; when it is the only metal
+        # that could have been a candidate the rule fails closed with the diagnostic, otherwise it is only recorded
+        ground = self.conductor(-2, "Ground", True, 1, 0.0)
+        rows = [{"Body": -2, "Kind": "Ground", "Plane": 0.0}]
+        lines = [{"Loop": 42, "Plane": 0.0, "ReadAsBody": -2, "ReadAsKind": "Ground", "PortSegments": [202]}]
+        terminal, _, excitation = WQ.terminal_assignment(rows, [ground], R, 2.0, (0.0, 100.0, 0.0, 100.0), lines)
+        self.assertIsNone(terminal)
+        self.assertEqual(excitation["Kind"], "None")
+        self.assertEqual(excitation["Flag"], "PortTerminatedLineReadAsGround")
+        self.assertTrue(excitation["Rule"].startswith("FAIL CLOSED"))
+        self.assertEqual(excitation["PortClosedLoops"], [{"Loop": 42, "ReadAsBody": -2, "ReadAsKind": "Ground"}])
+        trace = self.conductor(3, "Island", True, 1, 50.0)
+        terminal, _, excitation = WQ.terminal_assignment(rows + [{"Body": 3, "Kind": "Island", "Plane": 0.0, "CutByWall": True}],
+                                                         [ground, trace], R, 2.0, (0.0, 100.0, 0.0, 100.0), lines)
+        self.assertEqual((terminal, excitation["Kind"]), (3, "OpenTerminatedTrace"))
+        self.assertNotIn("Flag", excitation)
+        self.assertEqual(len(excitation["PortClosedLoops"]), 1)
+        # the detection: a closed dielectric-inside loop meeting the window with a Port segment; a metal-inside loop (JJ island) is not
+        loops = WQ.PerimeterLoops.__new__(WQ.PerimeterLoops)
+        loops.loops = {42: {"Closed": True, "MetalInside": False, "Body": -2, "Plane": 0.0},
+                       43: {"Closed": True, "MetalInside": True, "Body": 43, "Plane": 0.0}}
+        inside = {42: {"PortSegments": [202]}, 43: {"PortSegments": [12, 13]}}
+        found = WQ.port_closed_loops(loops, inside, lambda b: "Ground" if b < 0 else "Island")
+        self.assertEqual(found, [{"Loop": 42, "Plane": 0.0, "ReadAsBody": -2, "ReadAsKind": "Ground", "PortSegments": [202]}])
+
 
 if __name__ == "__main__":
     unittest.main()
