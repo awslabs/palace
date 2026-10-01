@@ -239,8 +239,39 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
   // Box / sphere region refinement on the serial mesh, before partitioning. Done here
   // (rather than in parallel RefineMesh) so the user-facing 3D box / sphere geometry
   // stays in sync with the mesh the problem actually solves on — BoundaryMode's
-  // Preprocess may extract a 2D submesh from this refined 3D mesh.
+  // Preprocess may extract a 2D submesh from this refined 3D mesh. Region refinement makes
+  // a mesh with hexahedra, prisms, or pyramids nonconformal, which cannot be cracked along
+  // interior boundaries: this is an error when interior boundaries are to be cracked, since
+  // the cracking is part of the model.
+  const bool conforming = smesh->Conforming();
+  std::set<int> interior_crack_attrs;
+  if (conforming && iodata.model.crack_bdr_elements.value_or(true))
+  {
+    const auto crack_attrs =
+        iodata.boundaries.GetMeshCrackAttributes(iodata.model.crack_bdr_elements);
+    const int bdr_attr_max = smesh->bdr_attributes.Size() ? smesh->bdr_attributes.Max() : 0;
+    const auto crack_marker = mesh::AttrToMarker(bdr_attr_max, crack_attrs, true);
+    for (int be = 0; be < smesh->GetNBE(); be++)
+    {
+      const int attr = smesh->GetBdrAttribute(be);
+      int e1, e2;
+      smesh->GetFaceElements(smesh->GetBdrElementFaceIndex(be), &e1, &e2);
+      if (attr > 0 && attr <= bdr_attr_max && crack_marker[attr - 1] && e1 >= 0 && e2 >= 0)
+      {
+        interior_crack_attrs.insert(attr);
+      }
+    }
+  }
   RegionRefine(refinement, *smesh);
+  MFEM_VERIFY(
+      interior_crack_attrs.empty() || smesh->Conforming(),
+      "Refinement boxes and spheres make a mesh with hexahedra, prisms, or pyramids "
+      "nonconformal, which cannot be cracked along the interior boundaries with "
+      "attributes "
+          << fmt::format("{}", fmt::join(interior_crack_attrs, ", "))
+          << " (with \"Crack\": true, or with boundary conditions applying to "
+             "either side separately)! Remove the refinement regions, or use a "
+             "simplex mesh.");
 
   // Exterior-boundary check and optional material-interface / crack boundary element
   // insertion. Only meaningful on an initial conformal mesh.
@@ -254,6 +285,11 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
         // May require multiple calls due to early exit/retry approach.
       }
     }
+  }
+  else if (conforming)
+  {
+    Mpi::Warning("Refinement boxes and spheres make the mesh nonconformal, skipping mesh "
+                 "modification preprocessing steps!\n\n");
   }
   else
   {
