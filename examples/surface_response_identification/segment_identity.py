@@ -32,6 +32,14 @@ chord has no other-side perimeter within ``--tolerance`` is retried within ``--c
 other mesh's chords lie off this chord by up to the sagitta); a same-Type piece found there is class ``C`` (displaced
 chord), anything else stays ``D``.
 
+Cut-arc exclusions (VALIDATION-PLAN (h)-9, decision 214 (iii)): ``--exclude E0.json WINDOW`` reads the window's
+``E1CutArcExclusions`` written by ``window_query.py`` (the chip arcs cut by a wall / the setback with the reading the
+identification's arc rule predicts for the window: Collapse, DroppedJoint, None, and the pieces to exclude). A sample within
+``--tolerance`` of an excluded piece (A: the chip's own chords / arms; B: the window's identical chords) is class ``Excluded``
+(length reported per direction and per arc, NEVER a defect); its would-be class is kept per arc, and every A or D sample that
+falls on a cut arc's segments OUTSIDE the excluded pieces is a ``PredictionMismatch`` (the rule said the arc reads identically
+there) -> reported, and a defect like any A / D.
+
 Acceptance: 0 length in classes A and D. The output lists per class the length, the count of samples and up
 to 50 examples with coordinates, feature ids, both readings and the parameter deltas.
 """
@@ -92,6 +100,25 @@ class Pieces:
         self.offset = offset
         segments = ident["Segments"]
         exclusions = ident.get("Exclusions", [])
+        self._load(segments, exclusions)
+        self._index(cell)
+
+    @classmethod
+    def from_exclusions(cls, cut_arcs, radius):
+        """Index of the cut-arc exclusion pieces (``window_query`` ``E1CutArcExclusions``), reading = the arc record."""
+        self = cls.__new__(cls)
+        self.radius = radius
+        self.features = {}
+        self.offset = (0.0, 0.0, 0.0)
+        self.pieces = []
+        for arc in cut_arcs.get("Arcs", []):
+            for a, b in arc.get("Pieces", []):
+                self.pieces.append((list(a), list(b), round(a[2], 3), {"Kind": "Excluded", "Arc": arc["Arc"], "Prediction": arc["Prediction"]}))
+        self._index(None)
+        return self
+
+    def _load(self, segments, exclusions):
+        offset = self.offset
         for i, s in enumerate(segments):
             p0 = [s["Key"][0][k] + offset[k] for k in range(3)]
             p1 = [s["Key"][1][k] + offset[k] for k in range(3)]
@@ -114,6 +141,8 @@ class Pieces:
             for s0, s1, ex in s.get("ExcludedPortions", []):
                 a, b = self._sub(p0, p1, length, s0, s1)
                 self.pieces.append((a, b, plane, {"Kind": "Exclusion", "Class": exclusions[ex]["Class"], "Segment": i}))
+
+    def _index(self, cell):
         self.cell = cell or 2.0 * self.radius
         self.grid = collections.defaultdict(list)
         for idx, (a, b, plane, _) in enumerate(self.pieces):
@@ -199,7 +228,10 @@ def is_curved(reading):
 
 
 def compare(pieces_a, pieces_b, region, spacing_over_r=0.25, tolerance_over_r=1e-3, direction="A->B", examples=50,
-            curve_tolerance_over_r=0.5):
+            curve_tolerance_over_r=0.5, excluded=None, arc_of_segment=None, per_arc=None):
+    """``excluded``: a ``Pieces.from_exclusions`` index (samples within the tolerance of its pieces are class Excluded);
+    ``arc_of_segment``: chip segment index -> cut-arc id, for the prediction check (A samples by their own segment, B samples by
+    the nearest A piece's segment); ``per_arc``: dict filled with the excluded length, would-be classes and mismatches per arc."""
     radius = pieces_a.radius
     spacing = spacing_over_r * radius
     tolerance = tolerance_over_r * radius
@@ -207,6 +239,7 @@ def compare(pieces_a, pieces_b, region, spacing_over_r=0.25, tolerance_over_r=1e
     x0, x1, y0, y1 = region
     totals = collections.defaultdict(lambda: {"Length": 0.0, "Samples": 0, "Examples": []})
     pairs = collections.Counter()
+    arc_of_segment = arc_of_segment or {}
     for a, b, plane, reading in pieces_a.pieces:
         length = math.dist(a[:2], b[:2])
         if length <= 0.0:
@@ -230,6 +263,21 @@ def compare(pieces_a, pieces_b, region, spacing_over_r=0.25, tolerance_over_r=1e
                     cls, why = "C", f"re-mesh class: chord displaced by {d / radius:.4f} R (same Type)"
                 else:
                     why += f" (curve piece; nearest other-side perimeter {d / radius:.4f} R away)"
+            chip_segment = reading.get("Segment") if direction == "A->B" else (other or {}).get("Segment")
+            arc = arc_of_segment.get(chip_segment)
+            hit = excluded.nearest(x, y, plane, tolerance)[0] if excluded is not None else None
+            if hit is not None:
+                record = per_arc.setdefault(hit["Arc"], {"Prediction": hit["Prediction"], "Excluded": collections.Counter(),
+                                                         "WouldBe": collections.Counter(), "Mismatch": collections.Counter()})
+                record["Excluded"][direction] += h
+                record["WouldBe"][cls] += h
+                cls, why = "Excluded", f"cut arc {hit['Arc']} ({hit['Prediction']}): would be {cls}"
+            elif arc is not None and per_arc is not None:
+                record = per_arc.setdefault(arc, {"Prediction": None, "Excluded": collections.Counter(), "WouldBe": collections.Counter(),
+                                                  "Mismatch": collections.Counter()})
+                if cls in ("A", "D"):
+                    record["Mismatch"][direction] += h
+                    why += f" [PredictionMismatch: on cut arc {arc} outside its excluded pieces]"
             entry = totals[cls]
             entry["Length"] += h
             entry["Samples"] += 1
@@ -251,11 +299,22 @@ def _brief(reading):
 
 
 def run(manifest_a, manifest_b, region, offset=(0.0, 0.0, 0.0), spacing_over_r=0.25, tolerance_over_r=1e-3, examples=50,
-        curve_tolerance_over_r=0.5):
+        curve_tolerance_over_r=0.5, exclusions=None):
+    """``exclusions``: the window's ``E1CutArcExclusions`` record of ``window_query`` (chip = A), or None."""
     pa = Pieces(manifest_a)
     pb = Pieces(manifest_b, offset)
-    fwd, pairs_fwd = compare(pa, pb, region, spacing_over_r, tolerance_over_r, "A->B", examples, curve_tolerance_over_r)
-    rev, pairs_rev = compare(pb, pa, region, spacing_over_r, tolerance_over_r, "B->A", examples, curve_tolerance_over_r)
+    excluded, arc_of_segment, per_arc = None, {}, {}
+    if exclusions is not None:
+        excluded = Pieces.from_exclusions(exclusions, pa.radius)
+        for arc in exclusions.get("Arcs", []):
+            for i in arc.get("Segments", []):
+                arc_of_segment[i] = arc["Arc"]
+            per_arc[arc["Arc"]] = {"Prediction": arc["Prediction"], "Excluded": collections.Counter(), "WouldBe": collections.Counter(),
+                                   "Mismatch": collections.Counter()}
+    fwd, pairs_fwd = compare(pa, pb, region, spacing_over_r, tolerance_over_r, "A->B", examples, curve_tolerance_over_r,
+                             excluded, arc_of_segment, per_arc)
+    rev, pairs_rev = compare(pb, pa, region, spacing_over_r, tolerance_over_r, "B->A", examples, curve_tolerance_over_r,
+                             excluded, arc_of_segment, per_arc)
     result = {"Region": list(region), "Offset": list(offset), "SpacingOverR": spacing_over_r, "ToleranceOverR": tolerance_over_r,
               "CurveToleranceOverR": curve_tolerance_over_r,
               "MatchingRadius": [pa.radius, pb.radius], "Forward": dict(fwd), "Reverse": dict(rev),
@@ -265,6 +324,15 @@ def run(manifest_a, manifest_b, region, offset=(0.0, 0.0, 0.0), spacing_over_r=0
     result["DefectLength"] = defect
     result["Verdict"] = "PASS" if defect == 0.0 else "FAIL"
     result["Summary"] = {d: {c: {"Length": v["Length"], "Samples": v["Samples"]} for c, v in t.items()} for d, t in (("A->B", fwd), ("B->A", rev))}
+    if exclusions is not None:
+        arcs = []
+        for arc_id, record in sorted(per_arc.items()):
+            arcs.append({"Arc": arc_id, "Prediction": record["Prediction"], "Excluded": dict(record["Excluded"]),
+                         "WouldBe": dict(record["WouldBe"]), "MismatchLength": sum(record["Mismatch"].values())})
+        result["CutArcs"] = {"Rule": exclusions.get("Rule"), "ExcludedLength": {d: fwd.get("Excluded", {"Length": 0.0})["Length"] if d == "A->B"
+                                                                               else rev.get("Excluded", {"Length": 0.0})["Length"] for d in ("A->B", "B->A")},
+                             "Arcs": arcs, "PredictionMismatchLength": sum(a["MismatchLength"] for a in arcs),
+                             "PredictionMismatches": [a["Arc"] for a in arcs if a["MismatchLength"] > 0.0]}
     return result
 
 
@@ -272,9 +340,17 @@ def markdown(result):
     lines = [f"Segment identity over {result['Region']}: **{result['Verdict']}** (class A + D length {result['DefectLength']:.6f})",
              "| direction | class | length | samples |", "|---|---|---|---|"]
     for direction, table in result["Summary"].items():
-        for cls in ("Identical", "A", "B", "C", "D"):
+        for cls in ("Identical", "A", "B", "C", "D", "Excluded"):
             if cls in table:
                 lines.append(f"| {direction} | {cls} | {table[cls]['Length']:.4f} | {table[cls]['Samples']} |")
+    if "CutArcs" in result:
+        ca = result["CutArcs"]
+        lines.append(f"\nCut-arc exclusions ((h)-9): excluded A->B {ca['ExcludedLength']['A->B']:.4f} / B->A {ca['ExcludedLength']['B->A']:.4f} um; "
+                     f"prediction mismatches {len(ca['PredictionMismatches'])} ({ca['PredictionMismatchLength']:.4f} um)")
+        lines += ["| arc | prediction | excluded A->B / B->A | would-be classes | mismatch um |", "|---|---|---|---|---|"]
+        for a in ca["Arcs"]:
+            lines.append(f"| {a['Arc']} | {a['Prediction']} | {a['Excluded'].get('A->B', 0.0):.3f} / {a['Excluded'].get('B->A', 0.0):.3f} | "
+                         f"{ {k: round(v, 3) for k, v in a['WouldBe'].items()} } | {a['MismatchLength']:.3f} |")
     for direction, key in (("A->B", "Forward"), ("B->A", "Reverse")):
         for cls in ("A", "D", "B", "C"):
             entry = result[key].get(cls)
@@ -297,12 +373,15 @@ def main(argv=None):
     parser.add_argument("--curve-tolerance", type=float, default=0.5,
                         help="perimeter match tolerance / R for re-meshed curve pieces (chords displaced by up to the sagitta)")
     parser.add_argument("--examples", type=int, default=50)
+    parser.add_argument("--exclude", nargs=2, default=None, metavar=("E0_JSON", "WINDOW"),
+                        help="window_query E0 output and window name: its E1CutArcExclusions pieces are class Excluded ((h)-9)")
     parser.add_argument("--output", required=True)
     parser.add_argument("--markdown", default=None)
     args = parser.parse_args(argv)
+    exclusions = json.load(open(args.exclude[0]))["Windows"][args.exclude[1]]["E1CutArcExclusions"] if args.exclude else None
     result = run(json.load(open(args.a)), json.load(open(args.b)), tuple(args.region), tuple(args.offset), args.spacing,
-                 args.tolerance, args.examples, args.curve_tolerance)
-    result.update({"A": args.a, "B": args.b})
+                 args.tolerance, args.examples, args.curve_tolerance, exclusions)
+    result.update({"A": args.a, "B": args.b, "Exclude": list(args.exclude) if args.exclude else None})
     with open(args.output, "w") as out:
         json.dump(result, out, indent=1)
     text = markdown(result)

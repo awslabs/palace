@@ -288,5 +288,130 @@ class WindowInventory(unittest.TestCase):
         self.assertEqual(found, [{"Loop": 42, "Plane": 0.0, "ReadAsBody": -2, "ReadAsKind": "Ground", "PortSegments": [202]}])
 
 
+def arc_ident(centre, radius, start_degrees, turn_degrees, joints, arm=30.0, z=0.0, arc_id=0, conventions=None):
+    """A chip chain: straight arm -> ``joints`` joints on the circle (``turn_degrees`` in ``joints - 1`` equal chords) ->
+    straight arm, the arms tangent at the end joints; segments carry the ``Arc`` id as the manifest does."""
+    pts = []
+    for k in range(joints):
+        a = math.radians(start_degrees + turn_degrees * k / (joints - 1))
+        pts.append((centre[0] + radius * math.cos(a), centre[1] + radius * math.sin(a)))
+    sign = 1.0 if turn_degrees > 0 else -1.0
+
+    def tangent(a_deg):
+        a = math.radians(a_deg)
+        return (-math.sin(a) * sign, math.cos(a) * sign)
+
+    t0, t1 = tangent(start_degrees), tangent(start_degrees + turn_degrees)
+    lead = (pts[0][0] - arm * t0[0], pts[0][1] - arm * t0[1])
+    trail = (pts[-1][0] + arm * t1[0], pts[-1][1] + arm * t1[1])
+    chain = [lead] + pts + [trail]
+    segments = []
+    for i in range(len(chain) - 1):
+        a, b = chain[i], chain[i + 1]
+        seg = {"Key": [[a[0], a[1], z], [b[0], b[1], z]], "Length": math.dist(a, b), "Chain": 7, "Portions": [[0.0, math.dist(a, b), 0]]}
+        if 1 <= i <= joints - 1:
+            seg["Arc"] = arc_id
+        segments.append(seg)
+    arcs = [{"Center": [centre[0], centre[1], z], "Joints": joints, "Kind": "Bend", "Radius": radius, "RadiusOverR": radius / R,
+             "Segments": joints - 1, "TurnDegrees": abs(turn_degrees), "MaxChordSagittaOverR": 0.0}]
+    return {"MatchingRadius": R, "Segments": segments, "Arcs": arcs, "Features": [], "Exclusions": [],
+            "Conventions": conventions if conventions is not None else {"JointNoiseSagittaOverR": 0.05}}, chain
+
+
+class CutArcExclusions(unittest.TestCase):
+    """VALIDATION-PLAN (h)-9 (decision 214 (iii)): the identification's arc rule predicts the window's reading of a chip arc
+    cut by a wall / the setback, and the E1 exclusion follows the prediction."""
+
+    @staticmethod
+    def exclusions(ident, box, setback_box=None, terminal=None, conductor=5):
+        return WQ.cut_arc_exclusions(ident, lambda i: conductor, box, setback_box, terminal)
+
+    def test_three_joint_arc_cut_on_its_first_chord_collapses(self):
+        # the S1 / C2 / O4 class: a 3-joint 90-deg bend (r 14, 10.7-um chords), the start joint 2.2 um outside the wall
+        ident, chain = arc_ident((0.0, 0.0), 14.0, 180.0, -90.0, 3)  # joints (-14, 0), (-9.9, 9.9), (0, 14); lead along -y
+        wall_x = chain[1][0] + 2.2
+        out = self.exclusions(ident, (wall_x, 100.0, -100.0, 100.0))
+        self.assertEqual(out["CutArcs"], 1)
+        arc = out["Arcs"][0]
+        self.assertEqual((arc["Prediction"], arc["Clip"], arc["InsideJoints"], arc["DroppedCutAdjacent"], arc["KeptJoints"]),
+                         ("Collapse", "wall", [2], [1], [1]))
+        self.assertTrue(arc["RealTurns"])
+        self.assertEqual(len(arc["Lines"]), 1)
+        self.assertEqual(arc["Lines"][0]["Line"], f"x = {wall_x:g}")
+        self.assertAlmostEqual(arc["Lines"][0]["OutwardToFree"], 2.2, places=9)
+        self.assertAlmostEqual(arc["Lines"][0]["InwardToFree"], 14.0 - 2.2, places=9)
+        # excluded: both chords + 3 R along each arm
+        chords = sum(ident["Segments"][i]["Length"] for i in arc["Segments"])
+        self.assertEqual(len(arc["Pieces"]), 4)
+        self.assertAlmostEqual(arc["ExcludedLength"], chords + 2 * 3.0 * R, places=9)
+        self.assertAlmostEqual(out["ExcludedLength"], arc["ExcludedLength"], places=12)
+        self.assertEqual(out["SetbackHints"], [])  # a wall cut of a non-terminal arc: no setback hint
+
+    def test_six_joint_arc_keeps_its_bend_and_drops_the_cut_adjacent_joint(self):
+        # the C3 2230 class: 6 joints, 18 deg per chord (12.5 um at r 40), the start joint 2.1 um outside the setback line:
+        # the cut arm (10.4 um) is not tangent within the noise rule -> that joint reads as a corner; 4 joints keep the bend
+        ident, chain = arc_ident((0.0, 0.0), 40.0, 180.0, -90.0, 6)  # lead up along x = -40 to (-40, 0), bend to (0, 40)
+        setback = 10.0
+        setback_y = chain[1][1] + 2.1  # the horizontal setback line 2.1 um above the start joint cuts the first chord
+        box = (-100.0, 100.0, setback_y - setback, 100.0)
+        setback_box = (box[0] + setback, box[1] - setback, setback_y, box[3] - setback)
+        out = self.exclusions(ident, box, setback_box, terminal=5)
+        arc = out["Arcs"][0]
+        self.assertEqual((arc["Prediction"], arc["Clip"], arc["Terminal"], arc["InsideJoints"], arc["DroppedCutAdjacent"], arc["KeptJoints"]),
+                         ("DroppedJoint", "setback", True, [5], [1], [4]))
+        # 3 R along the chain on both sides of the dropped joint (its two chords)
+        self.assertEqual(len(arc["Pieces"]), 2)
+        self.assertAlmostEqual(arc["ExcludedLength"], 2 * 3.0 * R, places=9)
+        self.assertEqual(out["SetbackHints"], [])  # no collapse: nothing to hint
+        # the same arc with only three joints inside collapses, and the terminal's hint names the setback that frees it
+        setback_y = chain[3][1] + 0.5  # three joints outside, three inside
+        box = (-100.0, 100.0, setback_y - setback, 100.0)
+        setback_box = (box[0] + setback, box[1] - setback, setback_y, box[3] - setback)
+        out = self.exclusions(ident, box, setback_box, terminal=5)
+        arc = out["Arcs"][0]
+        self.assertEqual((arc["Prediction"], arc["InsideJoints"], arc["KeptJoints"]), ("Collapse", [3], [2]))
+        self.assertEqual(len(out["SetbackHints"]), 1)
+        hint = out["SetbackHints"][0]
+        self.assertEqual(hint["Line"], f"y = {setback_y:g}")
+        self.assertAlmostEqual(hint["InwardToFree"], chain[-2][1] - setback_y, places=9)
+        self.assertAlmostEqual(hint["SetbackToFree"], setback + (chain[-2][1] - setback_y), places=9)
+
+    def test_noise_level_arc_has_no_effect(self):
+        # the S5 class: r 1,680, 4 joints turning 0.48 deg each on 14-um chords: (c / 2) tan(t / 4) = 0.015 um < 0.05 R
+        ident, chain = arc_ident((0.0, -1680.0), 1680.0, 90.0, 1.4515, 4)  # joints at x = 0, -14.2, -28.4, -42.6
+        wall_x = chain[1][0] - 3.0  # the window keeps x <= wall_x: the start joint is outside, three joints inside
+        out = self.exclusions(ident, (-1000.0, wall_x, -1000.0, 1000.0))
+        self.assertEqual(out["CutArcs"], 1)
+        arc = out["Arcs"][0]
+        self.assertEqual((arc["Prediction"], arc["RealTurns"], arc["Pieces"], arc["ExcludedLength"]), ("None", False, [], 0.0))
+        self.assertIn("noise", arc["Reason"])
+
+    def test_tangent_noise_cut_arm_keeps_the_joint(self):
+        # the O3 spiral class: r 100, 10-um chords (5.7 deg per joint, a real turn): the cut arm meets the tangent at half the
+        # chord's central angle (2.9 deg), noise on any arm shorter than 16 um -> the cut-adjacent joint stays; with >= 4 joints
+        # inside the bend survives (None), with 3 it collapses
+        ident, chain = arc_ident((0.0, 0.0), 100.0, 180.0, -5.7296 * 19, 20)
+        joints = chain[1:-1]
+        for n_inside, expected in ((6, "None"), (3, "Collapse")):
+            cut_x = joints[-n_inside][0] - 4.0  # 4 um of the chord before the first inside joint stays inside
+            out = self.exclusions(ident, (cut_x, 200.0, -200.0, 200.0))
+            arc = out["Arcs"][0]
+            self.assertEqual((arc["Prediction"], arc["InsideJoints"], arc["DroppedCutAdjacent"], arc["KeptJoints"]),
+                             (expected, [n_inside], [0], [n_inside]), msg=f"{n_inside} inside")
+            self.assertTrue(arc["RealTurns"])
+            if expected == "None":
+                self.assertIn("tangent within the noise rule", arc["Reason"])
+                self.assertEqual(arc["Pieces"], [])
+
+    def test_uncut_and_outside_arcs_are_not_listed_and_inventory_emits_the_record(self):
+        ident, chain = arc_ident((0.0, 0.0), 14.0, 180.0, -90.0, 3)
+        self.assertEqual(self.exclusions(ident, (-100.0, 100.0, -100.0, 100.0))["CutArcs"], 0)  # whole arc inside
+        self.assertEqual(self.exclusions(ident, (50.0, 100.0, -100.0, 100.0))["CutArcs"], 0)  # whole arc outside
+        result = WQ.inventory(build(), {"W": (-30.0, 30.0, -30.0, 30.0)}, None, dict(WQ.DEFAULT_WEIGHTS))
+        record = result["Windows"]["W"]["E1CutArcExclusions"]
+        self.assertEqual((record["CutArcs"], record["ExcludedLength"], record["Arcs"], record["SetbackHints"]), (0, 0.0, [], []))
+        self.assertEqual(record["MarginOverR"], 3.0)
+
+
 if __name__ == "__main__":
     unittest.main()

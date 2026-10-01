@@ -8,6 +8,7 @@ import json
 import math
 import os
 import sys
+import tempfile
 import unittest
 
 if __package__ in (None, ""):
@@ -15,6 +16,7 @@ if __package__ in (None, ""):
     __package__ = "surface_response_identification"
 
 from . import segment_identity as SI  # noqa: E402
+from . import window_query as WQ  # noqa: E402
 
 R = 2.0
 LAW = '{"Type":"PEC"}'
@@ -144,6 +146,81 @@ class SegmentIdentity(unittest.TestCase):
         sig = {"Type": "SameConductorStrip", "SeparationOverR": 1.05, "Edges": [{"Conductor": 1, "GapSide": -1, "OffsetOverR": 0.0}]}
         self.assertEqual(json.loads(SI.topology_key(sig)), {"Type": "SameConductorStrip", "Edges": [{"Conductor": 1, "GapSide": -1}]})
         self.assertEqual(SI.parameters(sig), {"SeparationOverR": 1.05, "Edges.[0].OffsetOverR": 0.0})
+
+    def cut_arc_layout(self):
+        """The chip (A): a chain lead -> 3-joint 90-deg bend (r 14, two 10.7-um chords) -> trail, one IsolatedEdge (the bend
+        inside its chain); the window (B) cut 2.2 um beyond the start joint: the two joints that remain read as 135 / 157.5-deg
+        corners (the collapse the arc rule predicts); region = x >= -8 (the wall at x = -11.8 plus the margin)."""
+        j0, j1, j2 = (-14.0, 0.0), (-14.0 * math.cos(math.radians(45)), 14.0 * math.sin(math.radians(45))), (0.0, 14.0)
+        lead, trail = (-14.0, -30.0), (30.0, 14.0)
+        chord = math.dist(j0, j1)
+        a = manifest([(lead, j0, 0), (j0, j1, 0), (j1, j2, 0), (j2, trail, 0)], {0: ISO})
+        for i in (1, 2):
+            a["Identification"]["Segments"][i]["Arc"] = 0
+        a["Identification"]["Arcs"] = [{"Center": [0.0, 0.0, 0.0], "Joints": 3, "Kind": "Bend", "Radius": 14.0, "RadiusOverR": 7.0,
+                                        "Segments": 2, "TurnDegrees": 90.0, "MaxChordSagittaOverR": 0.5}]
+        a["Identification"]["Conventions"] = {"JointNoiseSagittaOverR": 0.05}
+        corner1 = {"Type": "ConvexCorner", "Hash": "c135", "Signature": {"AngleDegrees": 135.0, "CornerRadiusOverR": 0.0}}
+        corner2 = {"Type": "ConvexCorner", "Hash": "c157", "Signature": {"AngleDegrees": 157.5, "CornerRadiusOverR": 0.0}}
+        b = manifest([(j0, j1, [(0.0, chord - R, 0), (chord - R, chord, 1)]),
+                      (j1, j2, [(0.0, R, 1), (R, chord - R, 0), (chord - R, chord, 2)]),
+                      (j2, trail, [(0.0, R, 2), (R, 30.0, 0)])], {0: ISO, 1: corner1, 2: corner2})
+        box = (-11.8, 100.0, -100.0, 100.0)
+        exclusions = WQ.cut_arc_exclusions(a["Identification"], lambda i: 5, box, None, None)
+        return a, b, (-8.0, 100.0, -100.0, 100.0), exclusions
+
+    def test_cut_arc_exclusion_is_reported_never_a_defect(self):
+        # VALIDATION-PLAN (h)-9: without the exclusions the two corners are class D (2 x 2 R per direction); with them the
+        # cut arc's chords + 3 R along the arms are class Excluded, the per-arc record keeps the would-be classes, PASS
+        a, b, region, exclusions = self.cut_arc_layout()
+        self.assertEqual(exclusions["Arcs"][0]["Prediction"], "Collapse")
+        plain = SI.run(a, b, region)
+        self.assertEqual(plain["Verdict"], "FAIL")
+        self.assertAlmostEqual(plain["Forward"]["D"]["Length"], 2 * R, delta=0.1)  # the 157.5-deg corner (the 135-deg one is at x < -8)
+        self.assertNotIn("CutArcs", plain)
+        r = SI.run(a, b, region, exclusions=exclusions)
+        self.assertEqual(r["Verdict"], "PASS")
+        self.assertNotIn("D", r["Forward"])
+        self.assertNotIn("D", r["Reverse"])
+        j1x = a["Identification"]["Segments"][2]["Key"][0][0]
+        chord2 = a["Identification"]["Segments"][2]["Length"]
+        inside_region = chord2 * (0.0 - (-8.0)) / (0.0 - j1x)  # the first chord and the start of the second lie at x < -8
+        self.assertAlmostEqual(r["Forward"]["Excluded"]["Length"], inside_region + 3.0 * R, delta=0.3)  # + 3 R along the trail arm
+        self.assertAlmostEqual(r["Reverse"]["Excluded"]["Length"], r["Forward"]["Excluded"]["Length"], delta=0.3)
+        self.assertEqual(r["Summary"]["A->B"]["Excluded"]["Samples"], r["Forward"]["Excluded"]["Samples"])
+        arcs = r["CutArcs"]["Arcs"]
+        self.assertEqual([(x["Arc"], x["Prediction"], x["MismatchLength"]) for x in arcs], [(0, "Collapse", 0.0)])
+        self.assertAlmostEqual(arcs[0]["WouldBe"]["D"], 2 * 2 * R, delta=0.2)  # the corner, both directions
+        self.assertEqual(r["CutArcs"]["PredictionMismatches"], [])
+        self.assertAlmostEqual(r["CutArcs"]["ExcludedLength"]["A->B"], r["Forward"]["Excluded"]["Length"], places=12)
+        self.assertIn("Cut-arc exclusions", SI.markdown(r))
+        self.assertIn("| Excluded |", SI.markdown(r).replace("| A->B | Excluded |", "| Excluded |"))
+
+    def test_prediction_mismatch_is_flagged_and_stays_a_defect(self):
+        # a cut arc the rule predicts unchanged ("None", no pieces) that reads differently: the D samples on its segments are
+        # reported as PredictionMismatch and the verdict stays FAIL
+        a, b, region, exclusions = self.cut_arc_layout()
+        arc = exclusions["Arcs"][0]
+        arc.update({"Prediction": "None", "Pieces": [], "ExcludedLength": 0.0})
+        r = SI.run(a, b, region, exclusions=exclusions)
+        self.assertEqual(r["Verdict"], "FAIL")
+        self.assertNotIn("Excluded", r["Forward"])
+        self.assertEqual(r["CutArcs"]["PredictionMismatches"], [0])
+        self.assertGreater(r["CutArcs"]["PredictionMismatchLength"], 0.0)
+        self.assertTrue(any("PredictionMismatch" in e["Why"] for e in r["Forward"]["D"]["Examples"]))
+
+    def test_cli_exclude_reads_the_window_record(self):
+        a, b, region, exclusions = self.cut_arc_layout()
+        with tempfile.TemporaryDirectory() as tmp:
+            pa, pb, pe, out = (os.path.join(tmp, n) for n in ("a.json", "b.json", "e0.json", "out.json"))
+            json.dump(a, open(pa, "w"))
+            json.dump(b, open(pb, "w"))
+            json.dump({"Windows": {"W": {"E1CutArcExclusions": exclusions}}}, open(pe, "w"))
+            rc = SI.main(["--a", pa, "--b", pb, "--region", *[str(v) for v in region], "--exclude", pe, "W", "--output", out])
+            self.assertEqual(rc, 0)
+            result = json.load(open(out))
+            self.assertEqual((result["Verdict"], result["Exclude"]), ("PASS", [pe, "W"]))
+            self.assertEqual(result["CutArcs"]["PredictionMismatches"], [])
 
 
 if __name__ == "__main__":
