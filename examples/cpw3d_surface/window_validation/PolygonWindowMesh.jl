@@ -70,7 +70,7 @@ using Printf
 using SHA
 using Statistics
 
-export read_polygon_set, mesh_polygon_window, plan_partitions
+export read_polygon_set, mesh_polygon_window, plan_partitions, reconcile_planes
 
 const Point2 = NTuple{2, Float64}
 
@@ -103,6 +103,7 @@ struct PolygonSet
     vacuum_below::Float64
     vacuum_above::Float64
     terminals::Vector{String}
+    matching_radius::Float64 # the identification's R (um); NaN when the set has none
 end
 
 const GROUND = "ground"
@@ -182,11 +183,250 @@ function read_polygon_set(data::AbstractDict)
         bumps,
         Float64(get(vacuum, "Below", 0.0)),
         Float64(get(vacuum, "Above", 0.0)),
-        terminals
+        terminals,
+        haskey(data, "MatchingRadius") ? Float64(data["MatchingRadius"]) : NaN
     )
 end
 
 read_polygon_set(path::AbstractString) = read_polygon_set(JSON.parsefile(path))
+
+# ---------------------------------------------------------------------------------------------
+# Cross-plane reconciliation (supervisor decision on the S1p trial, 2026-10-01): edges of the
+# two planes that are nominally coincident in plan (the aligned ground edges and rounded
+# corners of both chips) arrive with different vertex samplings (chip-mesh nodes, chords), and
+# the fragmentation then produces sliver partitions and sub-0.1-um pieces that break the
+# boundary layers. Before meshing, every vertex of the UPPER plane within delta of a vertex
+# (first) or else a segment of the lower plane is moved onto it (ties by coordinates, so the
+# result does not depend on the input order); then every upper vertex lying exactly on a lower
+# segment is inserted into the lower chain, and every lower vertex within delta of an upper
+# segment is inserted into the upper chain (bending that edge by at most delta): coincident
+# runs become identical point sequences. The lower plane's geometry never moves.
+# delta = CROSS_PLANE_SNAP_FRACTION x MatchingRadius (0.025 R = 0.0475 um at R = 1.9 um: below
+# the identification's joint noise of 0.05 R and below the metal thickness); an explicit
+# `cross_plane_snap_um` override is recorded in the manifest. Within ONE plane nothing is
+# snapped: two polygons closer than delta (a sub-delta slot or touching metal) are refused and
+# the writer resolves them. The reference therefore differs from the thin (chip-mesh) geometry
+# by at most delta on the reconciled runs; the manifest records the moved vertices, the maximum
+# displacement, the inserted vertices and the coincident run length.
+
+const CROSS_PLANE_SNAP_FRACTION = 0.025
+const ON_SEGMENT_TOLERANCE_UM = 1.0e-9
+
+point_distance(p::Point2, q::Point2) = hypot(p[1] - q[1], p[2] - q[2])
+
+# Distance from p to the segment ab, the clamped parameter and the foot point.
+function segment_projection(p::Point2, a::Point2, b::Point2)
+    abx, aby = b[1] - a[1], b[2] - a[2]
+    length2 = abx^2 + aby^2
+    t =
+        length2 == 0.0 ? 0.0 :
+        clamp(((p[1] - a[1]) * abx + (p[2] - a[2]) * aby) / length2, 0.0, 1.0)
+    foot = (a[1] + t * abx, a[2] + t * aby)
+    return point_distance(p, foot), t, foot
+end
+
+plane_loops(plane::Plane) =
+    [loop for polygon in plane.polygons for loop in (polygon.outer, polygon.holes...)]
+
+loop_segments(loop::Vector{Point2}) =
+    [(loop[i], loop[mod1(i + 1, length(loop))]) for i in eachindex(loop)]
+
+# Polygons of one plane closer than delta (a sub-delta slot or touching metal): refused.
+function check_same_plane_separation(plane::Plane, delta::Float64)
+    for (i, a) in enumerate(plane.polygons), (j, b) in enumerate(plane.polygons)
+        i == j && continue
+        for loop in (a.outer, a.holes...), v in loop
+            for other in (b.outer, b.holes...), (p, q) in loop_segments(other)
+                distance, _, _ = segment_projection(v, p, q)
+                distance < delta && error(
+                    "Plane $(plane.name): polygons $i ($(a.conductor)) and $j " *
+                    "($(b.conductor)) are $distance um apart at $v, closer than the " *
+                    "cross-plane snap distance $delta um (a sub-delta slot or touching " *
+                    "metal; the writer must resolve it)"
+                )
+            end
+        end
+    end
+end
+
+# Move v onto the nearest target vertex within delta, else onto the nearest target segment
+# within delta (equal distances: the lexicographically smallest target point); else keep v.
+function snap_point(v::Point2, vertices::Vector{Point2}, segments, delta::Float64)
+    best, best_distance = v, Inf
+    for q in vertices
+        d = point_distance(v, q)
+        d <= delta || continue
+        if d < best_distance - ON_SEGMENT_TOLERANCE_UM ||
+           (abs(d - best_distance) <= ON_SEGMENT_TOLERANCE_UM && q < best)
+            best, best_distance = q, d
+        end
+    end
+    isfinite(best_distance) && return best
+    for (a, b) in segments
+        d, _, foot = segment_projection(v, a, b)
+        d <= delta || continue
+        if d < best_distance - ON_SEGMENT_TOLERANCE_UM ||
+           (abs(d - best_distance) <= ON_SEGMENT_TOLERANCE_UM && foot < best)
+            best, best_distance = foot, d
+        end
+    end
+    return best
+end
+
+function drop_repeated_vertices(loop::Vector{Point2})
+    cleaned = Point2[]
+    for p in loop
+        isempty(cleaned) || p != cleaned[end] || continue
+        push!(cleaned, p)
+    end
+    while length(cleaned) > 1 && cleaned[end] == cleaned[1]
+        pop!(cleaned)
+    end
+    return cleaned
+end
+
+# Insert every point within `tolerance` of the interior of a segment of `loop` into the loop
+# (by parameter); returns the loop, the number of inserted points and the largest distance by
+# which an inserted point bends its segment.
+function insert_points_on_segments(
+    loop::Vector{Point2},
+    points::Vector{Point2},
+    tolerance::Float64
+)
+    result = Point2[]
+    inserted, max_bend = 0, 0.0
+    for (a, b) in loop_segments(loop)
+        push!(result, a)
+        hits = Tuple{Float64, Float64, Point2}[]
+        for p in points
+            d, t, _ = segment_projection(p, a, b)
+            d <= tolerance && 0.0 < t < 1.0 && p != a && p != b || continue
+            push!(hits, (t, d, p))
+        end
+        sort!(hits)
+        for (_, d, p) in hits
+            p == result[end] && continue
+            push!(result, p)
+            inserted += 1
+            max_bend = max(max_bend, d)
+        end
+    end
+    return drop_repeated_vertices(result), inserted, max_bend
+end
+
+function rebuild_plane(plane::Plane, loops::Vector{Vector{Point2}})
+    polygons = Polygon[]
+    k = 0
+    for polygon in plane.polygons
+        outer = loops[k + 1]
+        holes = loops[(k + 2):(k + 1 + length(polygon.holes))]
+        k += 1 + length(polygon.holes)
+        all(l -> length(l) >= 3, (outer, holes...)) ||
+            error("Polygon of plane $(plane.name) degenerated by the reconciliation")
+        push!(polygons, Polygon(polygon.conductor, outer, holes))
+    end
+    return Plane(
+        plane.name,
+        plane.surface_z,
+        plane.facing,
+        plane.substrate_thickness,
+        polygons
+    )
+end
+
+"""
+    reconcile_planes(spec, delta) -> (reconciled spec, report)
+
+Snap the upper plane's vertices within `delta` onto the lower plane (vertices first, then
+segments), insert the cross vertices on both planes (exactly into the lower chains, within
+`delta` into the upper chains), refuse same-plane polygons closer than `delta`. A single-plane
+set is returned unchanged.
+"""
+function reconcile_planes(spec::PolygonSet, delta::Float64)
+    report = Dict{String, Any}("applied" => false)
+    length(spec.planes) == 2 || return spec, report
+    delta > 0.0 || error("Cross-plane snap distance must be positive")
+    lower, upper = spec.planes
+    for plane in spec.planes
+        check_same_plane_separation(plane, delta)
+    end
+    lower_loops = [copy(loop) for loop in plane_loops(lower)]
+    upper_loops = [copy(loop) for loop in plane_loops(upper)]
+    lower_vertices = reduce(vcat, lower_loops)
+    lower_segments = reduce(vcat, loop_segments.(lower_loops))
+    moved, max_displacement = 0, 0.0
+    for (k, loop) in enumerate(upper_loops)
+        snapped = Point2[]
+        for v in loop
+            w = snap_point(v, lower_vertices, lower_segments, delta)
+            if w != v
+                moved += 1
+                max_displacement = max(max_displacement, point_distance(v, w))
+            end
+            push!(snapped, w)
+        end
+        upper_loops[k] = drop_repeated_vertices(snapped)
+    end
+    upper_vertices = reduce(vcat, upper_loops)
+    inserted_lower, inserted_upper = 0, 0
+    for (k, loop) in enumerate(lower_loops)
+        lower_loops[k], n, _ =
+            insert_points_on_segments(loop, upper_vertices, ON_SEGMENT_TOLERANCE_UM)
+        inserted_lower += n
+    end
+    lower_vertices = reduce(vcat, lower_loops)
+    for (k, loop) in enumerate(upper_loops)
+        upper_loops[k], n, bend = insert_points_on_segments(loop, lower_vertices, delta)
+        inserted_upper += n
+        max_displacement = max(max_displacement, bend)
+    end
+    # Coincident metal runs (segments on the box wall are not metal edges and not counted).
+    box = spec.box
+    on_wall((a, b)) =
+        (a[1] == b[1] && a[1] in (box[1], box[2])) ||
+        (a[2] == b[2] && a[2] in (box[3], box[4]))
+    lower_set = Set(minmax(a, b) for (a, b) in reduce(vcat, loop_segments.(lower_loops)))
+    coincident = [
+        (a, b) for (a, b) in reduce(vcat, loop_segments.(upper_loops)) if
+        minmax(a, b) in lower_set && !on_wall((a, b))
+    ]
+    report = Dict{String, Any}(
+        "applied" => true,
+        "delta_um" => delta,
+        "moved_vertices" => moved,
+        "max_displacement_um" => max_displacement,
+        "inserted_vertices" =>
+            Dict(lower.name => inserted_lower, upper.name => inserted_upper),
+        "coincident_segments" => length(coincident),
+        "coincident_run_length_um" =>
+            sum(point_distance(a, b) for (a, b) in coincident; init=0.0)
+    )
+    reconciled = PolygonSet(
+        spec.name,
+        spec.box,
+        spec.metal_thickness,
+        spec.overetch,
+        [rebuild_plane(lower, lower_loops), rebuild_plane(upper, upper_loops)],
+        spec.bumps,
+        spec.vacuum_below,
+        spec.vacuum_above,
+        spec.terminals,
+        spec.matching_radius
+    )
+    return reconciled, report
+end
+
+# The snap distance of a set: the rule 0.025 R, or an explicit override (recorded).
+function cross_plane_snap_distance(spec::PolygonSet, override::Float64)
+    length(spec.planes) == 2 || return NaN, "none"
+    isnan(override) || return override, "override"
+    isnan(spec.matching_radius) && error(
+        "Two planes need MatchingRadius (um) in the polygon set (delta = " *
+        "$(CROSS_PLANE_SNAP_FRACTION) R) or an explicit cross_plane_snap_um"
+    )
+    return CROSS_PLANE_SNAP_FRACTION * spec.matching_radius,
+    "$(CROSS_PLANE_SNAP_FRACTION) x MatchingRadius"
+end
 
 # Attribute table: 4 / 5 ground, 7 / 8 the first terminal, 10 / 11 the second, ...
 function attribute_table(spec::PolygonSet)
@@ -538,6 +778,7 @@ function mesh_plan(
     )
 
     raw_triangles = Tuple{NTuple{3, Point2}, Int}[]
+    boundary_layer_ends = 0
     for (copy_index, surface) in enumerate(copies)
         gmsh.model.set_visibility(copies, 0, true)
         gmsh.model.set_visibility([surface], 1, true)
@@ -548,8 +789,11 @@ function mesh_plan(
         ]
         field = 0
         if !isempty(sources)
+            ends = boundary_layer_end_points(sources)
+            boundary_layer_ends += length(ends)
             field = gmsh.model.mesh.field.add("BoundaryLayer")
             gmsh.model.mesh.field.set_numbers(field, "CurvesList", sources)
+            isempty(ends) || gmsh.model.mesh.field.set_numbers(field, "PointsList", ends)
             gmsh.model.mesh.field.set_number(field, "Size", radial_um)
             gmsh.model.mesh.field.set_number(field, "Ratio", radial_growth)
             gmsh.model.mesh.field.set_number(field, "Thickness", radial_thickness)
@@ -638,7 +882,24 @@ function mesh_plan(
     end
     return PlanMesh(xy, triangles, triangle_class, class_list),
     radial_layers,
-    radial_thickness
+    radial_thickness,
+    boundary_layer_ends
+end
+
+# Points where a metal edge of the partition ends against a non-metal boundary curve (the
+# window wall cutting a conductor): the end of exactly one source curve. Declared to the
+# BoundaryLayer field as `PointsList`, Gmsh terminates the layer there with a column of the
+# layer's own heights along the wall; undeclared, it reuses the wall's far-field 1D nodes for
+# that column and produces inverted quads tens of micrometres long. A closed metal loop (the
+# transmon, the synthetic window) has no such point.
+function boundary_layer_end_points(sources::Vector{Float64})
+    counts = Dict{Int32, Int}()
+    for tag in sources,
+        (_, point) in gmsh.model.get_boundary([(1, Int32(tag))], false, false, false)
+
+        counts[abs(point)] = get(counts, abs(point), 0) + 1
+    end
+    return sort!([Float64(point) for (point, count) in counts if count == 1])
 end
 
 # Plan edge -> owning triangles; metal perimeter edges per plane / bump with their conductor.
@@ -785,11 +1046,14 @@ end
 
 """
     mesh_polygon_window(spec, radial_um, tangential_um, output; verbose=true,
-                        plan_only=false, exact_band_thickness=false) -> manifest
+                        plan_only=false, exact_band_thickness=false,
+                        cross_plane_snap_um=NaN) -> manifest
 
 Generate the fabricated reference mesh of a polygon set and write `output` (ASCII MSH2) with
 its JSON manifest next to it. `exact_band_thickness=true` passes the exact geometric sum as
 the boundary-layer Thickness (the recorded transmon generator's formula; see the header).
+`cross_plane_snap_um` overrides the cross-plane snap distance 0.025 x MatchingRadius of a
+two-plane set (see `reconcile_planes`).
 """
 function mesh_polygon_window(
     spec::PolygonSet,
@@ -798,13 +1062,22 @@ function mesh_polygon_window(
     output::AbstractString;
     verbose::Bool=true,
     plan_only::Bool=false,
-    exact_band_thickness::Bool=false
+    exact_band_thickness::Bool=false,
+    cross_plane_snap_um::Float64=NaN
 )
     output = abspath(output)
+    snap_delta, snap_rule = cross_plane_snap_distance(spec, cross_plane_snap_um)
+    spec, reconciliation = reconcile_planes(spec, snap_delta)
+    reconciliation["rule"] = snap_rule
+    reconciliation["matching_radius_um"] =
+        isnan(spec.matching_radius) ? nothing : spec.matching_radius
+    verbose &&
+        reconciliation["applied"] &&
+        println("Cross-plane reconciliation: ", reconciliation)
     metal_layers = max(2, ceil(Int, spec.metal_thickness / radial_um - 1.0e-9))
     trench_layers = max(1, ceil(Int, spec.overetch / radial_um - 1.0e-9))
     gmsh.initialize()
-    plan, radial_layers, radial_thickness = try
+    plan, radial_layers, radial_thickness, boundary_layer_ends = try
         gmsh.option.set_number("General.Verbosity", 2)
         gmsh.model.add(spec.name)
         mesh_plan(
@@ -872,8 +1145,10 @@ function mesh_polygon_window(
         "plan_nodes" => length(plan.xy),
         "plan_triangles" => length(plan.triangles),
         "plan_partition_classes" => length(plan.classes),
+        "cross_plane_reconciliation" => reconciliation,
         "plan_open_outer_edges" => topology.open_edges,
         "plan_perimeter_edges" => metal_edge_count,
+        "plan_boundary_layer_end_points" => boundary_layer_ends,
         "perimeter_tangent_length_um" => tangent_summary,
         "first_layer_normal_height_um" => height_summary,
         "first_layer_normal_outliers_above_1p5x_target" => height_outliers,

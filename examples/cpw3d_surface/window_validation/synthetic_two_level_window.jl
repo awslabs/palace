@@ -31,6 +31,7 @@ function synthetic_two_level_window(; scale=1.0, gap_z=4.8, substrate=20.0)
     return Dict(
         "Version" => 1,
         "Name" => "synthetic-two-level",
+        "MatchingRadius" => 1.9,
         "Box" => Dict("X" => [0.0, 80.0s], "Y" => [0.0, 60.0s]),
         "Process" => Dict("MetalThickness" => 0.1, "Overetch" => 0.05),
         "Planes" => [

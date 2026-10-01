@@ -31,6 +31,7 @@ inconsistent input.
 | `Bumps` | array of bump objects | no (default none) | excluded metal columns between the two planes (below); need two planes |
 | `Vacuum` | `{"Below": b, "Above": a}` | no (default 0 / 0) | vacuum beyond the outermost substrate backsides (0 = the backside is the box wall, homogeneous Neumann; > 0 = the backside is a `substrate_backside` face against vacuum). A single `up` plane needs `Above` > the metal thickness (the transmon: `Below` 475, `Above` 1000) |
 | `Terminals` | array of strings | no (default: every non-ground label sorted) | the attribute order of the terminals; must list every non-`ground` conductor label exactly once |
+| `MatchingRadius` | number | with two planes (unless the mesher is run with `--cross-plane-snap-um`) | the identification's matching radius R (um, e.g. 1.9); sets the cross-plane snap distance delta = 0.025 R (below) |
 
 ## Plane object
 
@@ -67,6 +68,18 @@ Rules:
     are not metal edges (no boundary layer; the wall is `exterior_boundary`, attribute 3).
   - Every polygon must lie inside the box (clip at the box BEFORE writing; the mesher refuses a
     polygon that leaves the plan rectangle).
+  - Cross-plane reconciliation (supervisor decision on the S1p trial): edges of the two planes
+    that are nominally coincident in plan (aligned ground edges, the rounded corners of both
+    chips) usually arrive with different vertex samplings and produce sliver partitions. The
+    mesher snaps every vertex of the UPPER plane within delta = 0.025 x `MatchingRadius`
+    (0.0475 um at R = 1.9) onto the lower plane (vertices first, then segments; ties by
+    coordinates) and inserts the cross vertices on both chains, so coincident runs become
+    identical point sequences; the lower plane's geometry never moves. Within ONE plane
+    nothing is snapped: two polygons closer than delta (a sub-delta slot, touching metal) are
+    REFUSED — the writer must resolve them. The manifest records the moved vertices, the
+    maximum displacement, the inserted vertices and the coincident run length
+    (`cross_plane_reconciliation`): the reference differs from the (unreconciled) thin
+    geometry by at most delta on those runs.
 
 ## Bump object
 

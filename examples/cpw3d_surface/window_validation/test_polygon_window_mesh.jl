@@ -7,7 +7,9 @@
 # r50 / t5 manifest), input refusals (overlapping polygons, a bump off metal), and the tiny
 # synthetic two-level window meshed at r 0.2 um / t 5 um: every attribute area and volume
 # against its analytic value, then validate_window_mesh.jl (adjacency rules, positivity);
-# the boundary-layer Thickness margin (decision 188) and its explicit exact-sum option.
+# the boundary-layer Thickness margin (decision 188) and its explicit exact-sum option; the
+# cross-plane reconciliation of coincident two-plane edges (snap rule, order independence,
+# tie-breaking, the same-plane refusal).
 
 using Test
 using JSON
@@ -111,6 +113,154 @@ end
     @test PWM.material(two, PWM.PartitionClass(["", ""], 0), 4.825) == 2
     @test PWM.material(two, PWM.PartitionClass(["", "ground"], 0), 4.825) == 1
     @test PWM.material(two, PWM.PartitionClass(["", "ground"], 0), 4.75) == 0
+end
+
+# Two planes whose ground edges are nominally coincident along y = 10 (different vertex
+# samplings) and share a chamfer sampled as one chord (L1) versus two chords (L2, the middle
+# vertex 0.03 um off the chord); L2's vertices are listed in a different order.
+function coincident_edge_set(; l2_rotation=0, l2_polygon_order=[1, 2])
+    l2_ground = [
+        [0.0, 0.0],
+        [40.0, 0.0],
+        [40.0, 10.0],
+        [25.0, 10.0],
+        [15.0, 10.0],
+        [10.0, 10.0],
+        [5.0, 12.5 + 0.03],
+        [0.0, 15.0]
+    ]
+    l2_ground = circshift(l2_ground, l2_rotation)
+    l2_polygons = [
+        Dict("Conductor" => "ground", "Outer" => l2_ground),
+        Dict(
+            "Conductor" => "island",
+            "Outer" => [[10.0, 20.0], [30.0, 20.0], [30.0, 25.0], [10.0, 25.0]]
+        )
+    ][l2_polygon_order]
+    return Dict(
+        "Version" => 1,
+        "Name" => "coincident",
+        "MatchingRadius" => 1.9,
+        "Box" => Dict("X" => [0.0, 40.0], "Y" => [0.0, 30.0]),
+        "Planes" => [
+            Dict(
+                "Name" => "L1",
+                "SurfaceZ" => 0.0,
+                "Facing" => "up",
+                "SubstrateThickness" => 20.0,
+                "Polygons" => [
+                    Dict(
+                        "Conductor" => "ground",
+                        "Outer" => [
+                            [0.0, 0.0],
+                            [40.0, 0.0],
+                            [40.0, 10.0],
+                            [30.0, 10.0],
+                            [20.0, 10.0 + 0.02],
+                            [10.0, 10.0],
+                            [0.0, 15.0]
+                        ]
+                    )
+                ]
+            ),
+            Dict(
+                "Name" => "L2",
+                "SurfaceZ" => 4.8,
+                "Facing" => "down",
+                "SubstrateThickness" => 20.0,
+                "Polygons" => l2_polygons
+            )
+        ]
+    )
+end
+
+@testset "cross-plane reconciliation" begin
+    spec = read_polygon_set(coincident_edge_set())
+    delta, rule = PWM.cross_plane_snap_distance(spec, NaN)
+    @test delta ≈ 0.0475 && rule == "0.025 x MatchingRadius"
+    @test PWM.cross_plane_snap_distance(spec, 0.1) == (0.1, "override")
+    @test PWM.cross_plane_snap_distance(
+        read_polygon_set(synthetic_two_level_window()),
+        NaN
+    )[1] ≈ 0.0475
+    reconciled, report = reconcile_planes(spec, delta)
+    l1 = reconciled.planes[1].polygons[1].outer
+    l2 = reconciled.planes[2].polygons[1].outer
+    # The L1 vertex (20, 10.02) is fixed (the lower plane never moves); L2's (25, 10) and
+    # (15, 10) snap onto the L1 segments through it (0.01 um off the line y = 10) and L2's
+    # chamfer midpoint snaps onto L1's chord (its foot, 0.027 um away); then L1 receives
+    # L2's three snapped vertices exactly and L2 receives L1's (30, 10) and (20, 10.02)
+    # within delta, so the run (40, 10) -> (0, 15) is one identical point sequence.
+    @test report["applied"] && report["moved_vertices"] == 3
+    @test report["max_displacement_um"] ≈ 0.03 / hypot(2.0, 1.0) * 2.0 atol = 1.0e-6
+    @test report["inserted_vertices"] == Dict("L1" => 3, "L2" => 2)
+    run(points) = points[findfirst(==((40.0, 10.0)), points):end]
+    @test run(l1) == run(l2)
+    @test length(run(l1)) == 8 && (30.0, 10.0) in run(l2) && (20.0, 10.02) in run(l2)
+    @test all(p -> abs(p[2] - 10.0) <= 0.02 + 1.0e-12, run(l2)[2:6])
+    @test report["coincident_segments"] == 7
+    @test report["coincident_run_length_um"] ≈ 30.0 + hypot(10.0, 5.0) rtol = 1.0e-3
+    # Order independence: L2's loop rotated and its polygons permuted give the same chains.
+    for (rotation, order) in ((3, [1, 2]), (5, [2, 1]))
+        other, other_report = reconcile_planes(
+            read_polygon_set(
+                coincident_edge_set(; l2_rotation=rotation, l2_polygon_order=order)
+            ),
+            delta
+        )
+        @test Set(other.planes[1].polygons[1].outer) == Set(l1)
+        ground = other.planes[2].polygons[order[1] == 1 ? 1 : 2].outer
+        @test Set(ground) == Set(l2)
+        @test other_report["moved_vertices"] == 3 &&
+              other_report["coincident_segments"] == 7
+    end
+    # Tie: an L2 vertex equidistant from two L1 vertices goes to the smaller coordinates.
+    tie = read_polygon_set(
+        Dict(
+            "Version" => 1,
+            "MatchingRadius" => 1.9,
+            "Box" => Dict("X" => [0.0, 10.0], "Y" => [0.0, 10.0]),
+            "Planes" => [
+                Dict(
+                    "Name" => "L1",
+                    "SurfaceZ" => 0.0,
+                    "Facing" => "up",
+                    "SubstrateThickness" => 5.0,
+                    "Polygons" => [
+                        Dict(
+                            "Conductor" => "ground",
+                            "Outer" => [[0.0, 0.0], [10.0, 0.0], [10.0, 2.0], [0.0, 2.0]]
+                        ),
+                        Dict(
+                            "Conductor" => "ground",
+                            "Outer" => [[0.0, 2.04], [10.0, 2.04], [10.0, 4.0], [0.0, 4.0]]
+                        )
+                    ]
+                ),
+                Dict(
+                    "Name" => "L2",
+                    "SurfaceZ" => 4.8,
+                    "Facing" => "down",
+                    "SubstrateThickness" => 5.0,
+                    "Polygons" => [
+                        Dict(
+                            "Conductor" => "ground",
+                            "Outer" => [[0.0, 2.02], [10.0, 2.02], [10.0, 6.0], [0.0, 6.0]]
+                        )
+                    ]
+                )
+            ]
+        )
+    )
+    # The same-plane slot of 0.04 um is refused at delta 0.0475 ...
+    @test_throws ErrorException reconcile_planes(tie, 0.0475)
+    # ... and with a smaller override the equidistant L2 vertices take the lower L1 edge.
+    snapped, _ = reconcile_planes(tie, 0.03)
+    @test snapped.planes[2].polygons[1].outer[1:2] == [(0.0, 2.0), (10.0, 2.0)]
+    # A two-plane set without MatchingRadius and without an override is refused.
+    bare = coincident_edge_set()
+    delete!(bare, "MatchingRadius")
+    @test_throws ErrorException PWM.cross_plane_snap_distance(read_polygon_set(bare), NaN)
 end
 
 @testset "input refusals" begin

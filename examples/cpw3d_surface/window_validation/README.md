@@ -8,7 +8,7 @@ The single transmon's fabricated reference (`single-transmon-finitemetal-anisotr
 | file | role |
 |---|---|
 | `PolygonWindowMesh.jl` | the mesher (module): schema reader, plan fragmentation and classification, per-partition one-sided boundary-layer meshing, welding, z-level stack, sweep, attribute writing, manifest |
-| `mesh_polygon_window.jl` | CLI: `julia --project=. mesh_polygon_window.jl WINDOW.json RADIAL_UM TANGENTIAL_UM OUT.msh2 [--plan-only] [--exact-band-thickness]` |
+| `mesh_polygon_window.jl` | CLI: `julia --project=. mesh_polygon_window.jl WINDOW.json RADIAL_UM TANGENTIAL_UM OUT.msh2 [--plan-only] [--exact-band-thickness] [--cross-plane-snap-um DELTA]` |
 | `validate_window_mesh.jl` | independent validation by physical NAME (adjacency rules, first-order simplices, no shared faces, minSICN, manifest counts, per-attribute areas / volumes) |
 | `export_transmon_polygon_set.jl` | the transmon footprint as a polygon set (SingleTransmon environment; curved edges as their transfinite chords at the tangent target) |
 | `synthetic_two_level_window.jl` | tiny two-level window (two facing CPW stubs + a bump) for the tests |
@@ -59,5 +59,9 @@ SA / MS / MA participations are surface integrals on these shells (Palace `Postp
 ### Boundary-layer Thickness: a deliberate deviation from the recorded transmon generator
 
 The recorded generator passes the Gmsh BoundaryLayer `Thickness` as the exact geometric sum r (2^n - 1) of the n layers, so floating-point rounding decides whether a column gets n or n - 1 rows (~8 % of the columns short at r10, ~20 % at r50, also in the recorded meshes; on Linux that mix fails Gmsh's edge recovery at r10, supervisor decision 188). This mesher passes the sum x (1 + 1e-6) by DEFAULT (every column exactly n rows, deterministic across platforms; manifest `radial_band_thickness_mode` = `geometric_sum_x_1p000001`); `--exact-band-thickness` (`exact_geometric_sum`) reproduces the recorded meshes. The r50 regeneration of the transmon footprint is recorded under both settings (`fabricated-window-mesher-20261002/REPORT.md`); the accepted transmon reference, computed on the recorded meshes, is unaffected.
+
+### Windows cut through metal: cross-plane reconciliation and boundary-layer ends
+
+Two things the transmon (one plane, closed metal loops) never exercised: (1) edges of the two planes nominally coincident in plan arrive with different vertex samplings (sliver partitions, sub-0.1-um pieces); the mesher snaps the upper plane onto the lower one within delta = 0.025 x `MatchingRadius` and inserts the cross vertices (`SCHEMA.md`; manifest `cross_plane_reconciliation`; same-plane polygons closer than delta are refused). (2) A metal edge ending on the window wall: Gmsh's BoundaryLayer field needs those end points declared (`PointsList`), otherwise it builds the end column from the wall's far-field 1D nodes and produces inverted quads tens of micrometres long; the mesher declares them (manifest `plan_boundary_layer_end_points`).
 
 Memory: the transmon at r50 / t5 needs ~9 GB (16.5 M tets), r10 ~15 GB; window-sized sets are small. Run full-size generations on a cluster node.

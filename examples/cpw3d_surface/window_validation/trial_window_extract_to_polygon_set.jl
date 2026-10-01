@@ -287,6 +287,7 @@ function main()
     set = Dict(
         "Version" => 1,
         "Name" => "TRIAL-$(window["Chip"])-$(window["Window"])",
+        "MatchingRadius" => Float64(extract["Identification"]["MatchingRadius"]),
         "Box" => Dict("X" => [box[1], box[2]], "Y" => [box[3], box[4]]),
         "Process" => Dict("MetalThickness" => 0.1, "Overetch" => 0.05),
         "Planes" => planes,
