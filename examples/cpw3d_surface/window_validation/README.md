@@ -14,10 +14,11 @@ The single transmon's fabricated reference (`single-transmon-finitemetal-anisotr
 | `synthetic_two_level_window.jl` | tiny two-level window (two facing CPW stubs + a bump) for the tests |
 | `compare_mesh_validations.py` | two validation manifests of one geometry side by side (counts, areas, volumes) |
 | `test_polygon_window_mesh.jl` | `julia --project=. test_polygon_window_mesh.jl` |
+| `SCHEMA.md` | the polygon-set input schema (fields, units, orientation and clipping rules) for the writer (lane W) |
 
 ## Polygon-set JSON
 
-Micrometres, plan-view loops per plane with holes, conductor labels, bump footprints:
+Micrometres, plan-view loops per plane with holes, conductor labels, bump footprints (the full schema: `SCHEMA.md`):
 
 ```json
 {"Version": 1, "Name": "S1p",
