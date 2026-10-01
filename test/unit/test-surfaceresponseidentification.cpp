@@ -2895,3 +2895,140 @@ TEST_CASE("SurfaceResponseIdentificationCollinearSubdivision",
     }
   }
 }
+
+TEST_CASE("SurfaceResponseIdentificationSymmetricCurvedStackOrientation",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Decision 214 (i): the Convexity of a curved stack whose cross-section is its own mirror
+  // image (chirality 0: two or three equal traces along one bend) is read on side 0, and
+  // side 0 of a symmetric cross-section was the member with the lowest chain id, a
+  // coordinate-sorted (frame-dependent) numbering: the subdivision gate's rotation variant
+  // flipped the k4 / k6 curved stacks Convex <-> Concave. The bend sense now orients a
+  // curved symmetric cross-section (side 0 = the outermost edge of the bend), so the
+  // signature is the same under every rigid rotation and translation of the layout and
+  // under any numbering of the perimeter (here: the segment order reversed, which gives the
+  // outer trace the lower chain ids as a rotation does through the canonical numbering).
+  const double R = 2.0;
+  const double pi = std::acos(-1.0);
+  struct Stack
+  {
+    std::string name;
+    int traces;
+    double rho_over_R;
+  };
+  auto Transform =
+      [&](const std::vector<Point2> &points, double angle_degrees, const Point2 &shift)
+  {
+    const double c = std::cos(angle_degrees * pi / 180.0),
+                 s = std::sin(angle_degrees * pi / 180.0);
+    std::vector<Point2> out;
+    for (const auto &p : points)
+    {
+      out.push_back({c * p[0] - s * p[1] + shift[0], s * p[0] + c * p[1] + shift[1]});
+    }
+    return out;
+  };
+  struct Reading
+  {
+    std::string signature;
+    int chirality;
+    std::string convexity;
+    bool first_side_outermost;
+  };
+  for (const Stack &stack : {Stack{"k4-rho3", 2, 3.0}, Stack{"k4-rho8", 2, 8.0},
+                             Stack{"k6-rho3", 3, 3.0}, Stack{"k6-rho8", 3, 8.0}})
+  {
+    INFO(stack.name);
+    // 3 um traces 2 um apart along a 90 deg bend with 12 um leads, the innermost trace's
+    // inner edge at rho (as the gate's stack-curved-k4 / k6 layouts); ArcBar offsets run
+    // toward the bend centre (0, centre), so the further traces sit outside.
+    const double centre = stack.rho_over_R * R + 1.5;
+    std::vector<std::vector<Point2>> traces;
+    for (int t = 0; t < stack.traces; t++)
+    {
+      traces.push_back(ArcBar(3.0, centre, 90.0, 5.0, 12.0, -5.0 * t));
+    }
+    std::vector<double> wanted_offsets;
+    for (int t = 0; t < stack.traces; t++)
+    {
+      wanted_offsets.push_back(2.5 * t);
+      wanted_offsets.push_back(2.5 * t + 1.5);
+    }
+    auto Read = [&](double angle_degrees, const Point2 &shift, bool reverse_segments)
+    {
+      std::vector<LoopSpec> loops;
+      for (const auto &trace : traces)
+      {
+        loops.push_back({Transform(trace, angle_degrees, shift), 0, 1.0});
+      }
+      const auto input = MakeInput(loops, R, reverse_segments);
+      const auto result = IdentifyMetalPerimeter(input);
+      CheckPartition(input, result);
+      const Point2 bend_centre = Transform({{0.0, centre}}, angle_degrees, shift).front();
+      std::optional<Reading> reading;
+      int curved_stacks = 0;
+      for (const auto &feature : result.features)
+      {
+        if (feature.type != "CurvedParallelEdgeCluster")
+        {
+          continue;
+        }
+        curved_stacks++;
+        std::vector<double> offsets;
+        for (const auto &edge : feature.signature["Edges"])
+        {
+          offsets.push_back(edge["OffsetOverR"].get<double>());
+        }
+        REQUIRE(offsets.size() == wanted_offsets.size());
+        for (std::size_t i = 0; i < offsets.size(); i++)
+        {
+          CHECK_THAT(offsets[i], WithinAbs(wanted_offsets[i], 0.02));
+        }
+        CHECK_THAT(feature.signature["RadiusOverR"].get<double>(),
+                   WithinAbs(stack.rho_over_R, 0.15));
+        // Mean distance of every side's portions from the bend centre: side 0 (the first
+        // signature edge, chirality 0) must be the outermost edge.
+        std::map<int, std::pair<double, int>> side_radius;
+        for (const auto &portion : feature.portions)
+        {
+          const auto &p0 = input.segments[portion.segment].p0;
+          side_radius[portion.side].first +=
+              std::hypot(p0[0] - bend_centre[0], p0[1] - bend_centre[1]);
+          side_radius[portion.side].second++;
+        }
+        REQUIRE(side_radius.size() == wanted_offsets.size());
+        const double first_radius = side_radius.at(0).first / side_radius.at(0).second;
+        bool outermost = true;
+        for (const auto &[side, sum_count] : side_radius)
+        {
+          outermost = outermost && (side == 0 || sum_count.first / sum_count.second <
+                                                     first_radius - 1.0);
+        }
+        reading = Reading{feature.signature.dump(), feature.chirality,
+                          feature.signature["Convexity"].get<std::string>(), outermost};
+      }
+      REQUIRE(curved_stacks == 1);
+      return *reading;
+    };
+    const Reading base = Read(0.0, {0.0, 0.0}, false);
+    CHECK(base.chirality == 0);
+    CHECK(base.convexity == "Convex");  // the outermost trace edge bends around its metal
+    CHECK(base.first_side_outermost);
+    // The gate's 37 deg and other angles (one per quadrant, a half turn), the rotated
+    // layouts shifted off the origin; the perimeter numbering reversed in every frame.
+    for (const double angle : {0.0, 37.0, 101.0, 180.0, 253.7})
+    {
+      const Point2 shift = angle == 0.0 ? Point2{0.0, 0.0} : Point2{-7.25, 3.5};
+      for (const bool reverse_segments : {false, true})
+      {
+        INFO("angle " << angle << " shift (" << shift[0] << ", " << shift[1]
+                      << ") reversed segment order " << reverse_segments);
+        const Reading other = Read(angle, shift, reverse_segments);
+        CHECK(other.signature == base.signature);
+        CHECK(other.chirality == base.chirality);
+        CHECK(other.convexity == base.convexity);
+        CHECK(other.first_side_outermost);
+      }
+    }
+  }
+}

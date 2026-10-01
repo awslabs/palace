@@ -596,8 +596,10 @@ smaller endpoint.
      the edge the library model's first edge e1 is placed on), read on that side's pieces
      or, when it carries no curvature of its own, as the opposite of the far side's
      (concentric edges bend in opposite senses relative to their gaps: for a gap the inner
-     edge is convex, for a strip the inner edge is concave); curved stacks
-     (`CurvedParallelEdgeCluster`) record it the same way, and when neither outer side of
+     edge is convex, for a strip the inner edge is concave; for a cross-section that is its
+     own mirror image, chirality 0, side 0 is the outermost edge of the bend — decision 214
+     (i) — so a symmetric curved gap reads Concave and a symmetric curved strip Convex); curved
+     stacks (`CurvedParallelEdgeCluster`) record it the same way, and when neither outer side of
      a k > 2 stack carries curvature (the bent side is an interior one) the first interior
      side that does is read, related to the first edge through the signature's `GapSide`s
      (same convexity when the gaps point the same way, opposite otherwise; review J/C4 m5 —
@@ -645,8 +647,19 @@ smaller endpoint.
    sums of the CONSECUTIVE links' separations (a non-consecutive link within 2R, e.g. the
    outer edges of a 4-edge stack at 4 um and R = 2.1 um, does not enter), the gap sides and
    conductors are read at the members; sides in the canonical signature order (chirality +1
-   for every asymmetric cross-section; a symmetric one, chirality 0, puts the member with the
-   smallest (chain, position) on side 0); one feature per (type, signature, curvature class,
+   for every asymmetric cross-section; a symmetric one, chirality 0, has no observable
+   orientation when straight and puts the member with the smallest (chain, position) on side
+   0 — but a CURVED symmetric cross-section has one, since its `Convexity` is read on side 0
+   and the chain ids follow the coordinate-sorted canonical numbering: that key made the
+   Convexity of the two- and three-trace curved stacks a function of the frame (decision 214
+   (i), found by the subdivision gate's rotation variant: Convex <-> Concave at 37 deg; no
+   chip carries a symmetric curved pair or stack). The bend sense orients a curved symmetric
+   cross-section instead: the lateral axis points toward the centre of curvature (the sum
+   over the members of the signed windowed curvature toward the metal times the metal side
+   along the lateral axis), so side 0 is the OUTERMOST edge of the bend — the key decides
+   only where that sum vanishes; a rotation, a translation and any numbering of the perimeter
+   then read the same signature, and the Frame's lateral axis of such a feature is canonical
+   too); one feature per (type, signature, curvature class,
    member chains) — a straight stack on the two leads of a bend is ONE feature, the bend a
    second. **Stack-end rule:** a member taken by a cluster portion or a vertex window is not
    part of the cross-section and is not traversed: the stack ends at the claim boundary and
