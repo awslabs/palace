@@ -290,14 +290,14 @@ def bridge_rectangles(intervals, box, width, grounded, terminal, warnings):
             if c in grounded or c == terminal or c is None:
                 continue
             for side in (-1, 1):
-                # the bridge runs from the conductor's wall interval over the gap and ``width`` INTO the neighbour's interval, so
-                # the contact is a run of metal and not a single wall vertex when the neighbour's edge leaves the wall obliquely
+                # the bridge runs ``width`` INTO the conductor's wall interval, over the gap and ``width`` INTO the neighbour's,
+                # so both contacts are runs of metal and not single wall vertices (either edge may leave the wall obliquely)
                 if side < 0:
                     neighbour = items[k - 1] if k > 0 else None
-                    g0, g1 = (max(neighbour[0], neighbour[1] - width) if neighbour else lo_wall), lo
+                    g0, g1 = (max(neighbour[0], neighbour[1] - width) if neighbour else lo_wall), min(hi, lo + width)
                 else:
                     neighbour = items[k + 1] if k + 1 < len(items) else None
-                    g0, g1 = hi, (min(neighbour[1], neighbour[0] + width) if neighbour else hi_wall)
+                    g0, g1 = max(lo, hi - width), (min(neighbour[1], neighbour[0] + width) if neighbour else hi_wall)
                 if neighbour is not None and neighbour[2] == terminal:
                     warnings.append(f"conductor {c} is adjacent to the terminal along wall {axis}={value}: not bridged on that side")
                     continue
@@ -577,6 +577,10 @@ def export(args):
         polys, unplaced = polygons_with_holes(loops)
         if unplaced:
             warnings.append(f"plane {plane['Name']}: {len(unplaced)} hole loops without an enclosing outer loop")
+        pinched = sum(1 for l in loops if len(set(l)) < len(l))
+        if pinched:  # a loop visiting a vertex twice is self-touching: the schema wants simple loops (a bridge ending on a vertex)
+            warnings.append(f"plane {plane['Name']}: {pinched} self-touching loops (pinch vertex)")
+            verification["Passed"] = False
         plane_polygons = []
         for rec in polys:
             votes = collections.Counter(edge_conductor.get((rec["Outer"][i], rec["Outer"][(i + 1) % len(rec["Outer"])]))

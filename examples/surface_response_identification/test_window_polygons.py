@@ -89,8 +89,8 @@ class WindowPolygons(unittest.TestCase):
         plane = verification["Planes"]["L1"]
         self.assertEqual(plane["UnmatchedLength"], 0.0)
         self.assertEqual(len(plane["Bridges"]), 2)  # gap 30..40 at both walls; the gap 5..20 next to the terminal stays open
-        # the bridge runs 3 R = 6 um into the right ground's wall interval (a run of contact, not a vertex)
-        self.assertEqual(sorted((b[0], b[1]) for b in plane["Bridges"]), [(30.0, 46.0), (30.0, 46.0)])
+        # the bridge runs 3 R = 6 um into trace 2's and into the right ground's wall intervals (runs of contact, not vertices)
+        self.assertEqual(sorted((b[0], b[1]) for b in plane["Bridges"]), [(24.0, 46.0), (24.0, 46.0)])
         self.assertEqual(result["Terminals"], ["trace_1"])
         polygons = result["Planes"][0]["Polygons"]
         self.assertEqual(len(polygons), 3)
