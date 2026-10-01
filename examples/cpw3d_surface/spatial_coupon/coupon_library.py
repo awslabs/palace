@@ -8,7 +8,7 @@
   coupon_library.py build [--register CASE_ID=SOURCE_DIR ... --footprint {bound,producer-default}
                            --inventory-status STATUS [--mesh-recipe PATH] [--provenance TEXT]] [--no-thin]
                           [--device PALACE_CONFIG --palace PATH [--device-output DIR] [--ring-size N]
-                           [--cap-triangulation METHOD] [--cap-interior-spacing X]]
+                           [--cap-triangulation METHOD] [--cap-interior-spacing X] [--omit-requirement HASH_PREFIX ...]]
                           [--case ID ...] [--jobs N] [--build-limit N] [--root DIR] [--output PATH] [--manifest PATH]
   coupon_library.py qualify --build-record library-build.json --reference <campaign dir or none>
                             --remote HOST:ROOT [--orders p5] --controls p3,p5 --max-jobs N
@@ -103,6 +103,10 @@ def build_parser():
                        default=device_coupons.DEFAULT_CAP_TRIANGULATION,
                        help="matching-box cap triangulation of the device basis: delaunay (default; no needle ears, "
                             "decisions 54b / 57) or ear-clipping (the gallery producer's)")
+    build.add_argument("--omit-requirement", action="append", default=[], metavar="HASH_PREFIX",
+                       help="with --device: the Missing requirement(s) whose Hash starts with this prefix get no discovery "
+                            "placeholder and are not built (repeatable); they stay Missing against the library and are "
+                            "recorded out of scope with Method OmittedRequirement (a prefix matching nothing fails closed)")
     qualify = commands.add_parser("qualify", help="physics qualification of the built coupons against their references")
     qualify_library.add_arguments(qualify)
     continuity = commands.add_parser("continuity", help="library continuity gate (decision 82(4)): a pair / stack model at 2R "
@@ -127,6 +131,8 @@ def main(argv=None):
                      "declaration)")
     if args.device is not None and args.palace is None:
         parser.error("--device requires --palace (the discovery preflights)")
+    if args.omit_requirement and args.device is None:
+        parser.error("--omit-requirement applies to the --device discovery only")
     registered = []
     extra = None
     if args.device is not None:
@@ -137,7 +143,7 @@ def main(argv=None):
             device_record = device_coupons.prepare_device_sources(
                 args.device, palace=args.palace, output=device_output, manifest_path=args.manifest, ring_size=args.ring_size,
                 cap_triangulation=args.cap_triangulation, cap_interior_spacing=args.cap_interior_spacing,
-                python=args.python)
+                python=args.python, omit_requirements=args.omit_requirement)
             device_coupons.register_device_sources(device_record, manifest_path=args.manifest, mesh_recipe=args.mesh_recipe,
                                                    work=(args.work or device_output / "register"), python=args.python,
                                                    julia=args.julia, jobs=args.register_jobs, thin=not args.no_thin)

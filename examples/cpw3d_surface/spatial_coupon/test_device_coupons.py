@@ -104,6 +104,17 @@ class DeviceBasisDefaultTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             parser.parse_args(common + ["--cap-triangulation", "fan"])
 
+    def test_omit_requirement_is_a_repeatable_device_option(self):
+        """`build --device --omit-requirement HASH_PREFIX` (repeatable) reaches the discovery; it
+        is refused without --device (it only names discovery placeholders)."""
+        parser = coupon_library.build_parser()
+        common = ["build", "--device", "device.json", "--palace", "palace", "--root", "root"]
+        self.assertEqual(parser.parse_args(common).omit_requirement, [])
+        self.assertEqual(parser.parse_args(common + ["--omit-requirement", "69ca648cc16f", "--omit-requirement", "abcd"])
+                         .omit_requirement, ["69ca648cc16f", "abcd"])
+        with self.assertRaises(SystemExit):
+            coupon_library.main(["build", "--manifest", "m.json", "--omit-requirement", "69ca648cc16f"])
+
 
 @unittest.skipUnless(available(), "the Palace executable and the transmon fixture are needed")
 class DeviceCouponsTest(unittest.TestCase):
@@ -195,6 +206,38 @@ class DeviceCouponsTest(unittest.TestCase):
                 x, y = float(row["X"]), float(row["Y"])
                 self.assertTrue(any(abs((x - px) * ty - (y - py) * tx) <= 1e-6 for (px, py), (tx, ty) in lines),
                                 f"{coupon['Case']}: physical boundary vertex ({x}, {y}) off every edge line")
+
+    def test_omitted_requirement_is_recorded_out_of_scope_and_not_built(self):
+        """prepare_device_sources(omit_requirements=[prefix]): the discovery gives the matching
+        Missing requirement no placeholder, the adapter builds no source directory for it (whatever
+        its family) and records it out of scope with Method OmittedRequirement, its family method
+        and the prefix; the device record's Discovery lists it; every other coupon is unchanged."""
+        omitted = min(self.record["Coupons"], key=lambda coupon: coupon["Sources"])
+        closure = json.loads(Path(self.record["Discovery"]["Manifest"]).read_text())
+        by_id = {planner.coupon_id(requirement): requirement for requirement in closure["Requirements"]}
+        prefix = by_id[omitted["Requirement"]]["Hash"][:12]
+        record = device_coupons.prepare_device_sources(self.device, palace=PALACE, output=self.tmp / "device-omit",
+                                                       manifest_path=self.manifest_path, log=lambda message: None,
+                                                       omit_requirements=[prefix])
+        self.assertEqual([coupon["Case"] for coupon in record["Coupons"]],
+                         [coupon["Case"] for coupon in self.record["Coupons"] if coupon["Case"] != omitted["Case"]])
+        self.assertFalse((self.tmp / "device-omit" / "sources" / omitted["Case"]).exists())
+        out_of_scope = [item for item in record["OutOfScope"] if item["Method"] == device_coupons.OMITTED_METHOD]
+        self.assertEqual(len(out_of_scope), 1)
+        self.assertEqual(out_of_scope[0]["Id"], omitted["Requirement"])
+        self.assertEqual(out_of_scope[0]["FamilyMethod"], device_coupons.SPATIAL_METHOD)
+        self.assertEqual(out_of_scope[0]["Hash"][:12], prefix)
+        self.assertIn(prefix, out_of_scope[0]["Reason"])
+        self.assertEqual([item["Hash"][:12] for item in record["Discovery"]["OmittedRequirements"]], [prefix])
+        self.assertEqual(record["Discovery"]["OmittedRequirements"][0]["Topology"], "SpatialEdgeCluster")
+        closure_omit = json.loads(Path(record["Discovery"]["Manifest"]).read_text())
+        self.assertEqual([item["Hash"] for item in closure_omit["OmittedRequirements"]],
+                         [record["Discovery"]["OmittedRequirements"][0]["Hash"]])
+        self.assertEqual({requirement["Status"] for requirement in closure_omit["Requirements"]
+                          if requirement.get("Hash", "").startswith(prefix)}, {"Missing"})
+        history = json.loads((self.tmp / "device-omit" / "discovery" / "closure-history.json").read_text())
+        self.assertNotIn(by_id[omitted["Requirement"]]["Hash"][:16],
+                         {placeholder["Id"] for entry in history["Passes"] for placeholder in entry["AddedPlaceholders"]})
 
     def test_rerun_is_idempotent_by_content(self):
         again = device_coupons.prepare_device_sources(self.device, palace=PALACE, output=self.tmp / "device",

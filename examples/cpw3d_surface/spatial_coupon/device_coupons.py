@@ -87,11 +87,14 @@ class DeviceAdapterError(ValueError):
     """A fail-closed stop of the device -> coupon mapping (the missing piece is named)."""
 
 
-def run_discovery(device_config, output, palace, python=sys.executable):
-    """The closure manifest of the device (discover_surface_response_requirements.py)."""
+def run_discovery(device_config, output, palace, python=sys.executable, omit_requirements=()):
+    """The closure manifest of the device (discover_surface_response_requirements.py);
+    `omit_requirements` = its --omit-requirement Hash prefixes (no placeholder, stays Missing)."""
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     command = [python, str(DISCOVERY), str(device_config), "--output", str(output), "--palace", str(palace)]
+    for prefix in omit_requirements:
+        command += ["--omit-requirement", str(prefix)]
     with open(output / "discovery.log", "w") as log:
         result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT)
     manifest_path = output / "surface-response-requirements.json"
@@ -205,19 +208,27 @@ def content_hash(directory):
     return hashlib.sha256(payload).hexdigest(), digests
 
 
+OMITTED_METHOD = "OmittedRequirement"
+
+
 def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODUCTION_MANIFEST, ring_size=DEFAULT_RING_SIZE,
                            cap_triangulation=DEFAULT_CAP_TRIANGULATION,
-                           cap_interior_spacing=DEFAULT_CAP_INTERIOR_SPACING, python=sys.executable, log=print):
+                           cap_interior_spacing=DEFAULT_CAP_INTERIOR_SPACING, python=sys.executable, log=print,
+                           omit_requirements=()):
     """Steps 1-3: the source directories of every spatial coupon of the device under
-    output/sources/<case id>; returns the device record (written to output/device-coupons.json)."""
+    output/sources/<case id>; returns the device record (written to output/device-coupons.json).
+    `omit_requirements`: Hash prefixes of Missing requirements the discovery gives no
+    placeholder (they stay Missing); an omitted requirement is never built here, whatever its
+    family: it is recorded out of scope with Method OmittedRequirement."""
     device_config = Path(device_config).resolve()
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=True)
     manifest_path = Path(manifest_path).resolve()
     commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=HERE, text=True).strip()
     log(f"device {device_config}: discovery with {palace}")
-    closure = run_discovery(device_config, output / "discovery", palace, python)
+    closure = run_discovery(device_config, output / "discovery", palace, python, omit_requirements=omit_requirements)
     closure_manifest = json.loads(closure.read_text())
+    omitted = {record["Hash"]: record for record in closure_manifest.get("OmittedRequirements", [])}
     library_path = Path(closure_manifest["Library"]["Path"])
     library = json.loads(library_path.read_text())
     parameters = planner.process_parameters(library)
@@ -234,7 +245,8 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
               "ProcessLibrary": {"Path": str(library_path), "SHA256": sha256(library_path), "MatchingRadius": radius,
                                  "Fabrication": library.get("Fabrication")},
               "Discovery": {"Manifest": str(closure), "SHA256": sha256(closure), "Summary": closure_manifest["Summary"],
-                            "Complete": closure_manifest.get("Complete")},
+                            "Complete": closure_manifest.get("Complete"),
+                            "OmittedRequirements": [omitted[key] for key in sorted(omitted)]},
               "Plan": {"Path": str(output / "coupon-plan.json"), "Summary": plan["Summary"]},
               "TraceBasis": {"RingSize": ring_size, "CapTriangulation": cap_triangulation,
                              "DefaultCapTriangulation": DEFAULT_CAP_TRIANGULATION,
@@ -252,6 +264,15 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
               "Coupons": [], "OutOfScope": []}
     for coupon in plan["Coupons"]:
         method = coupon["Preparation"]["Method"]
+        if coupon.get("Hash") in omitted:
+            record["OutOfScope"].append({"Id": coupon["Id"], "Topology": coupon["Topology"], "Method": OMITTED_METHOD,
+                                         "Reason": f"omitted by --omit-requirement {omitted[coupon['Hash']]['Prefix']}",
+                                         "FamilyMethod": method, "Hash": coupon["Hash"],
+                                         "DeviceOccurrences": coupon["DeviceOccurrences"],
+                                         "DeviceEdgeLength": coupon["DeviceEdgeLength"],
+                                         "Rule": "an omitted requirement got no discovery placeholder and is not built by "
+                                                 "this call: it stays Missing against the library (recorded, never silent)"})
+            continue
         if method != SPATIAL_METHOD:
             record["OutOfScope"].append({"Id": coupon["Id"], "Topology": coupon["Topology"], "Method": method,
                                          "Reason": coupon["Preparation"].get("Reason"),
@@ -430,6 +451,9 @@ def main(argv=None):
                         help="spacing (x R) of the interior cap hats within R of the claimed portions "
                              f"(generate_spatial_response.py --cap-interior-spacing; default {DEFAULT_CAP_INTERIOR_SPACING}; "
                              "0 = the ring-only basis)")
+    parser.add_argument("--omit-requirement", action="append", default=[], metavar="HASH_PREFIX",
+                        help="Missing requirement(s) whose Hash starts with this prefix get no discovery placeholder and "
+                             "are not built (repeatable; recorded out of scope with Method OmittedRequirement)")
     parser.add_argument("--register", action="store_true", help="register the produced directories into --manifest")
     parser.add_argument("--work", type=Path, help="parent of the registration work directories")
     parser.add_argument("--julia", default=shutil.which("julia"))
@@ -441,7 +465,8 @@ def main(argv=None):
     try:
         record = prepare_device_sources(args.device_config, palace=args.palace, output=args.output, manifest_path=args.manifest,
                                         ring_size=args.ring_size, cap_triangulation=args.cap_triangulation,
-                                        cap_interior_spacing=args.cap_interior_spacing, python=args.python)
+                                        cap_interior_spacing=args.cap_interior_spacing, python=args.python,
+                                        omit_requirements=args.omit_requirement)
         if args.register:
             register_device_sources(record, manifest_path=args.manifest, mesh_recipe=args.mesh_recipe, work=args.work,
                                     python=args.python, julia=args.julia, jobs=args.register_jobs)
