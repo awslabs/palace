@@ -114,8 +114,21 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
   if (!use_R)
   {
     const mfem::HypreParMatrix *Rt = test_fespace.Dof_TrueDof_Matrix();
-    RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAPKT(*Rt, hA, *P, 1, 1),
-                                                 true);
+    if (trial_fespace.IsBroken() || test_fespace.IsBroken())
+    {
+      // hypre_ParCSRMatrixRAPKT reads out of bounds when a process has more columns of Rt
+      // (true DOFs) than rows of A (L-DOFs) and no off-diagonal columns of A P, which can
+      // happen for broken spaces, where a process owns the copies of split true DOFs which
+      // are read only by other processes. Compute Rtᵀ (A P) instead.
+      hypre_ParCSRMatrix *AP = hypre_ParCSRMatMat(hA, *P);
+      RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRTMatMatKT(*Rt, AP, 1), true);
+      hypre_ParCSRMatrixDestroy(AP);
+    }
+    else
+    {
+      RAP = std::make_unique<mfem::HypreParMatrix>(
+          hypre_ParCSRMatrixRAPKT(*Rt, hA, *P, 1, 1), true);
+    }
   }
   else
   {
