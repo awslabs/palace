@@ -123,10 +123,12 @@ embedded sheets, mesh preparation):
   - `StraightBendRadiusOverR` = 10 (decision 75; phase 2 used 20).
   - **Pairs along bends by local constancy, decided on the curve separation**
     (`PairConstancyWindowOverR` = 1, `PairSampleSpacingOverR` = 0.5, `PairCandidateReachOverR` = 2.1,
-    `PairSeparationEstimate`): a chain's facing region is sampled (<= R / 2 apart); a sample is
-    constant when the distances within R of it vary by <= 5 %; its curve separation is the
-    smaller of the two directional window maxima (half-width max(R, chord) where the chain bends,
-    R on straight runs) — the chord reading C, exact for an offset polyline; two polylines
+    `PairBendProximityOverR` = 1, `PairChordWindowCapOverR` = 2, `PairSeparationEstimate`): a
+    chain's facing region is sampled (<= R / 2 apart); a sample is constant when the distances
+    within R of it vary by <= 5 %; its curve separation is the smaller of the two directional
+    window maxima (half-width max(R, min(chord, 2R)) where the chain bends within R of the sample
+    / the foot along the chain — a joint with a turn or a fitted arc, not the windowed
+    curvature —, R elsewhere) — the chord reading C, exact for an offset polyline; two polylines
     inscribed in the curves at aligned angles read C = w cos(turn / 2) and cannot be told apart
     from an offset pair of separation C, so the inscribed reading C / cos(turn / 2) (larger local
     joint turn) is the other bound; it interacts iff both readings are below 2R on the quantized
