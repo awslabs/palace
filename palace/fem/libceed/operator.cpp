@@ -121,15 +121,10 @@ void Operator::DestroyAssemblyData() const
 void Operator::AssembleDiagonal(Vector &diag) const
 {
   Ceed ceed;
-  CeedMemType mem;
   MFEM_VERIFY(diag.Size() == height, "Invalid size for diagonal vector!");
   diag = 0.0;
   PalaceCeedCallBackend(CeedOperatorGetCeed(op[0], &ceed));
-  PalaceCeedCall(ceed, CeedGetPreferredMemType(ceed, &mem));
-  if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && mem == CEED_MEM_DEVICE)
-  {
-    mem = CEED_MEM_HOST;
-  }
+  const CeedMemType mem = GetUsableMemType(ceed);
   auto *diag_data = diag.ReadWrite(mem == CEED_MEM_DEVICE);
 
   PalacePragmaOmp(parallel if (op.size() > 1))
@@ -155,13 +150,8 @@ inline void CeedAddMult(const std::vector<CeedOperator> &op,
                         const Vector &x, Vector &y)
 {
   Ceed ceed;
-  CeedMemType mem;
   PalaceCeedCallBackend(CeedOperatorGetCeed(op[0], &ceed));
-  PalaceCeedCall(ceed, CeedGetPreferredMemType(ceed, &mem));
-  if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && mem == CEED_MEM_DEVICE)
-  {
-    mem = CEED_MEM_HOST;
-  }
+  const CeedMemType mem = GetUsableMemType(ceed);
   const auto *x_data = x.Read(mem == CEED_MEM_DEVICE);
   auto *y_data = y.ReadWrite(mem == CEED_MEM_DEVICE);
 

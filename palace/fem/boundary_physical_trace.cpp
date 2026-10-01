@@ -553,12 +553,7 @@ void BoundaryPhysicalTraceCache::ApplyUnionRoutes(Entry &entry, const Vector &u,
     // Routing vectors are created unbound. Detach after every apply below so the
     // next source (real/imaginary or a new save generation) can attach directly.
     ceed::InitCeedVector(input, route.ceed, &route.in_vec, false, false);
-    CeedMemType mem;
-    PalaceCeedCall(route.ceed, CeedGetPreferredMemType(route.ceed, &mem));
-    if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && mem == CEED_MEM_DEVICE)
-    {
-      mem = CEED_MEM_HOST;
-    }
+    const CeedMemType mem = ceed::GetUsableMemType(route.ceed);
     double *output_data = output.ReadWrite(mem == CEED_MEM_DEVICE);
     PalaceCeedCall(route.ceed,
                    CeedVectorSetArray(route.out_vec, mem, CEED_USE_POINTER, output_data));
