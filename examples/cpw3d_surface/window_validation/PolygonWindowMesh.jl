@@ -693,6 +693,129 @@ end
 # `radial_layers` rows instead of n or n - 1 by rounding of the exact geometric sum.
 const BAND_THICKNESS_MARGIN = 1.0e-6
 
+# ---------------------------------------------------------------------------------------------
+# Local band cap (supervisor decision on the S1p trial, 2026-10-01): Gmsh's 2D boundary-layer
+# extrusion fails ("Edge not recovered" on the layer front, or inverted quads) where the fronts
+# of two facing metal edges overlap — a 1-um slot at r10 with the 1.27-um band, the SCT junction
+# region (2-um fingers, L1 / L2 edges 0.75 um apart in plan). Resolution rule, not a failure
+# fallback: at every point of a metal edge the band thickness is at most BAND_CAP_FRACTION times
+# the local facing distance = the distance to the nearest NON-ADJACENT metal edge of any plane
+# in the shared plan (curves sharing an endpoint are corners, not facing fronts). The first rows
+# r, 2r, 4r, ... stay; only the outer graded rows are dropped: rows(d) = floor(log2(1 + 0.4 d /
+# r)) capped at the global row count. Gmsh's field takes one Thickness per curve and terminates
+# a layer only at a corner (the end column runs along the adjacent curve), so the row count is
+# the minimum along every straight run of collinear curves and changes only at corners; the
+# curves of a partition are grouped into one BoundaryLayer field per row count, each with its
+# layer ends declared. Applied symmetrically (the rule is per curve, both facing fronts see the
+# same distance). Manifest: capped length, the minimum band, length per row count.
+const BAND_CAP_FRACTION = 0.4
+const BAND_CAP_SAMPLE_SPACING_UM = 0.5
+const BAND_CAP_COLLINEARITY = 1.0e-3 # |sin| of the angle between curves of one straight run
+
+struct MetalCurve
+    tag::Int32
+    a::Point2
+    b::Point2
+    points::NTuple{2, Int32} # endpoint tags (adjacency)
+end
+
+function metal_curves(metal_edge_curves)
+    curves = MetalCurve[]
+    for tag in sort!(collect(metal_edge_curves))
+        gmsh.model.get_type(1, tag) == "Line" ||
+            error("Plan curve $tag is not a straight line")
+        points =
+            [abs(p) for (_, p) in gmsh.model.get_boundary([(1, tag)], false, false, false)]
+        length(points) == 2 || error("Plan curve $tag has $(length(points)) end points")
+        bounds = gmsh.model.get_parametrization_bounds(1, tag)
+        a = gmsh.model.get_value(1, tag, [bounds[1][1]])
+        b = gmsh.model.get_value(1, tag, [bounds[2][1]])
+        push!(curves, MetalCurve(tag, (a[1], a[2]), (b[1], b[2]), (points[1], points[2])))
+    end
+    return curves
+end
+
+# Distance from p (on curve `index`) to the nearest metal curve that faces it: p's foot lies
+# inside the other curve, and the other curve is not on the line through p (a piece of the
+# same straight run, or a collinear edge ahead: the layers are normal to the run, never meet).
+function facing_distance(p::Point2, index::Int, curves::Vector{MetalCurve})
+    best = Inf
+    for (j, other) in enumerate(curves)
+        j == index && continue
+        dx, dy = other.b[1] - other.a[1], other.b[2] - other.a[2]
+        line_distance =
+            abs((p[1] - other.a[1]) * dy - (p[2] - other.a[2]) * dx) / hypot(dx, dy)
+        line_distance <= ON_SEGMENT_TOLERANCE_UM && continue
+        d, t, _ = segment_projection(p, other.a, other.b)
+        # Facing means the foot of p lies inside the other curve (a corner-adjacent curve at
+        # an obtuse or right angle is not facing; a V-shaped sliver's other side is).
+        1.0e-7 < t < 1.0 - 1.0e-7 || continue
+        best = min(best, d)
+    end
+    return best
+end
+
+band_cap_rows(distance::Float64, radial_um::Float64, rows_max::Int) =
+    isfinite(distance) ?
+    clamp(floor(Int, log2(1.0 + BAND_CAP_FRACTION * distance / radial_um)), 1, rows_max) :
+    rows_max
+
+"""
+    band_cap_rows_by_curve(metal_edge_curves, radial_um, rows_max) -> rows by curve signature
+
+Row count of every fragmented metal curve: the minimum over its samples of the facing-distance
+rule, then the minimum along every straight run (collinear curves joined at a point of degree
+two), because Gmsh terminates a layer of one thickness only at a corner — the end column runs
+along the adjacent curve — so the row count may change at corners (fans) but not along a run.
+"""
+function band_cap_rows_by_curve(metal_edge_curves, radial_um::Float64, rows_max::Int)
+    curves = metal_curves(metal_edge_curves)
+    rows = Int[]
+    for (index, curve) in enumerate(curves)
+        length_um = point_distance(curve.a, curve.b)
+        n = max(1, ceil(Int, length_um / BAND_CAP_SAMPLE_SPACING_UM))
+        at(t) = (
+            curve.a[1] + t * (curve.b[1] - curve.a[1]),
+            curve.a[2] + t * (curve.b[2] - curve.a[2])
+        )
+        push!(
+            rows,
+            minimum(
+                band_cap_rows(
+                    facing_distance(at(k / n), index, curves),
+                    radial_um,
+                    rows_max
+                ) for k = 0:n
+            )
+        )
+    end
+    # Straight runs: union of collinear curve pairs meeting at a point of degree two.
+    by_point = Dict{Int32, Vector{Int}}()
+    for (index, curve) in enumerate(curves), point in curve.points
+        push!(get!(by_point, point, Int[]), index)
+    end
+    parent = collect(1:length(curves))
+    find(i) = parent[i] == i ? i : (parent[i] = find(parent[i]))
+    for (_, members) in by_point
+        length(members) == 2 || continue
+        u, v = curves[members[1]], curves[members[2]]
+        du = (u.b[1] - u.a[1], u.b[2] - u.a[2])
+        dv = (v.b[1] - v.a[1], v.b[2] - v.a[2])
+        cross = du[1] * dv[2] - du[2] * dv[1]
+        abs(cross) <= BAND_CAP_COLLINEARITY * hypot(du...) * hypot(dv...) || continue
+        parent[find(members[1])] = find(members[2])
+    end
+    run_rows = Dict{Int, Int}()
+    for index in eachindex(curves)
+        root = find(index)
+        run_rows[root] = min(get(run_rows, root, rows_max), rows[index])
+    end
+    return Dict{Any, Int}(
+        curve_signature(1, curve.tag) => run_rows[find(index)] for
+        (index, curve) in enumerate(curves)
+    )
+end
+
 struct PlanMesh
     xy::Vector{Point2}
     triangles::Vector{NTuple{3, Int}}
@@ -707,9 +830,14 @@ function mesh_plan(
     radial_growth::Float64=2.0,
     radial_band_um::Float64=1.55,
     exact_band_thickness::Bool=false,
+    band_cap::Symbol=:none,
     verbose::Bool=true
 )
+    band_cap in (:none, :partition, :curve) ||
+        error("band_cap must be :none, :partition or :curve")
+    radial_layers = max(1, round(Int, log2(1.0 + radial_band_um / radial_um)))
     surfaces, class_by_surface, metal_edge_curves = plan_partitions(spec)
+    rows_by_signature = band_cap_rows_by_curve(metal_edge_curves, radial_um, radial_layers)
     metal_signatures = Set(curve_signature(1, tag) for tag in metal_edge_curves)
     class_list = unique(class_by_surface[s] for s in surfaces)
     class_index = Dict(class => i for (i, class) in enumerate(class_list))
@@ -742,10 +870,27 @@ function mesh_plan(
         "$(length(metal_edge_curves)) curves"
     )
 
-    radial_layers = max(1, round(Int, log2(1.0 + radial_band_um / radial_um)))
-    radial_thickness =
-        radial_um * (radial_growth^radial_layers - 1.0) / (radial_growth - 1.0) *
+    band_thickness(rows) =
+        radial_um * (radial_growth^rows - 1.0) / (radial_growth - 1.0) *
         (exact_band_thickness ? 1.0 : 1.0 + BAND_THICKNESS_MARGIN)
+    radial_thickness = band_thickness(radial_layers)
+    # Band-cap record: metal-edge length per row count (every curve once).
+    length_by_rows = Dict{Int, Float64}()
+    for curve in metal_curves(metal_edge_curves)
+        rows = rows_by_signature[curve_signature(1, curve.tag)]
+        length_by_rows[rows] =
+            get(length_by_rows, rows, 0.0) + point_distance(curve.a, curve.b)
+    end
+    capped_length = sum(l for (rows, l) in length_by_rows if rows < radial_layers; init=0.0)
+    band_cap_record = Dict{String, Any}(
+        "mode" => string(band_cap),
+        "fraction" => BAND_CAP_FRACTION,
+        "rows_max" => radial_layers,
+        "rule_capped_length_um" => capped_length,
+        "rule_minimum_rows" => minimum(keys(length_by_rows)),
+        "rule_minimum_band_um" => band_thickness(minimum(keys(length_by_rows))),
+        "rule_length_um_by_rows" => Dict(string(k) => v for (k, v) in length_by_rows)
+    )
     for option in (
         "General.NumThreads",
         "Mesh.MaxNumThreads1D",
@@ -774,11 +919,13 @@ function mesh_plan(
         radial_thickness,
         " um (",
         exact_band_thickness ? "exact geometric sum" : "geometric sum x (1 + 1e-6)",
-        ")"
+        "); band cap: ",
+        band_cap_record
     )
 
     raw_triangles = Tuple{NTuple{3, Point2}, Int}[]
     boundary_layer_ends = 0
+    partition_rows = fill(radial_layers, length(copies))
     for (copy_index, surface) in enumerate(copies)
         gmsh.model.set_visibility(copies, 0, true)
         gmsh.model.set_visibility([surface], 1, true)
@@ -787,19 +934,41 @@ function mesh_plan(
             (_, tag) in gmsh.model.get_boundary([surface], false, false, false) if
             abs(tag) in metal_copy_set
         ]
-        field = 0
+        # One BoundaryLayer field per row count (the band cap), each with its layer end points
+        # (a metal edge ending on the window wall, a junction with another row count).
+        fields = Int32[]
         if !isempty(sources)
             ends = boundary_layer_end_points(sources)
             boundary_layer_ends += length(ends)
-            field = gmsh.model.mesh.field.add("BoundaryLayer")
-            gmsh.model.mesh.field.set_numbers(field, "CurvesList", sources)
-            isempty(ends) || gmsh.model.mesh.field.set_numbers(field, "PointsList", ends)
-            gmsh.model.mesh.field.set_number(field, "Size", radial_um)
-            gmsh.model.mesh.field.set_number(field, "Ratio", radial_growth)
-            gmsh.model.mesh.field.set_number(field, "Thickness", radial_thickness)
-            gmsh.model.mesh.field.set_number(field, "Quads", 1)
-            gmsh.model.mesh.field.set_number(field, "IntersectMetrics", 1)
-            gmsh.model.mesh.field.set_as_boundary_layer(field)
+            curve_rows =
+                [rows_by_signature[curve_signature(1, Int32(tag))] for tag in sources]
+            if band_cap == :none
+                fill!(curve_rows, radial_layers)
+            elseif band_cap == :partition
+                fill!(curve_rows, minimum(curve_rows))
+            end
+            by_rows = Dict{Int, Vector{Float64}}()
+            for (tag, rows) in zip(sources, curve_rows)
+                push!(get!(by_rows, rows, Float64[]), tag)
+            end
+            partition_rows[copy_index] = minimum(curve_rows)
+            for rows in sort!(collect(keys(by_rows)))
+                group = by_rows[rows]
+                field = gmsh.model.mesh.field.add("BoundaryLayer")
+                push!(fields, field)
+                gmsh.model.mesh.field.set_numbers(field, "CurvesList", group)
+                # The field's own layer ends: the wall ends and the junctions with the
+                # curves of another row count (Gmsh needs both declared).
+                group_ends = boundary_layer_end_points(group)
+                isempty(group_ends) ||
+                    gmsh.model.mesh.field.set_numbers(field, "PointsList", group_ends)
+                gmsh.model.mesh.field.set_number(field, "Size", radial_um)
+                gmsh.model.mesh.field.set_number(field, "Ratio", radial_growth)
+                gmsh.model.mesh.field.set_number(field, "Thickness", band_thickness(rows))
+                gmsh.model.mesh.field.set_number(field, "Quads", 1)
+                gmsh.model.mesh.field.set_number(field, "IntersectMetrics", 1)
+                gmsh.model.mesh.field.set_as_boundary_layer(field)
+            end
         end
         gmsh.model.mesh.generate(2)
         node_tags, node_coordinates, _ = gmsh.model.mesh.get_nodes()
@@ -849,10 +1018,14 @@ function mesh_plan(
             " sources ",
             length(sources)
         )
-        field == 0 || gmsh.model.mesh.field.remove(field)
+        for field in fields
+            gmsh.model.mesh.field.remove(field)
+        end
         gmsh.model.mesh.clear(copies)
     end
     isempty(raw_triangles) && error("No plan triangles extracted")
+    band_cap_record["applied_rows_by_partition"] = partition_rows
+    band_cap_record["applied_minimum_rows"] = minimum(partition_rows)
 
     merge_tolerance = 1.0e-6
     coordinate_index = Dict{NTuple{2, Int64}, Int}()
@@ -883,7 +1056,8 @@ function mesh_plan(
     return PlanMesh(xy, triangles, triangle_class, class_list),
     radial_layers,
     radial_thickness,
-    boundary_layer_ends
+    boundary_layer_ends,
+    band_cap_record
 end
 
 # Points where a metal edge of the partition ends against a non-metal boundary curve (the
@@ -1053,7 +1227,9 @@ Generate the fabricated reference mesh of a polygon set and write `output` (ASCI
 its JSON manifest next to it. `exact_band_thickness=true` passes the exact geometric sum as
 the boundary-layer Thickness (the recorded transmon generator's formula; see the header).
 `cross_plane_snap_um` overrides the cross-plane snap distance 0.025 x MatchingRadius of a
-two-plane set (see `reconcile_planes`).
+two-plane set (see `reconcile_planes`). `band_cap` applies the local band cap rule (`:none`:
+the rule is only recorded; `:partition`: one band per partition, the minimum over its curves;
+`:curve`: one BoundaryLayer field per row count — Gmsh fails on many of its transitions).
 """
 function mesh_polygon_window(
     spec::PolygonSet,
@@ -1063,7 +1239,8 @@ function mesh_polygon_window(
     verbose::Bool=true,
     plan_only::Bool=false,
     exact_band_thickness::Bool=false,
-    cross_plane_snap_um::Float64=NaN
+    cross_plane_snap_um::Float64=NaN,
+    band_cap::Symbol=:none
 )
     output = abspath(output)
     snap_delta, snap_rule = cross_plane_snap_distance(spec, cross_plane_snap_um)
@@ -1077,7 +1254,7 @@ function mesh_polygon_window(
     metal_layers = max(2, ceil(Int, spec.metal_thickness / radial_um - 1.0e-9))
     trench_layers = max(1, ceil(Int, spec.overetch / radial_um - 1.0e-9))
     gmsh.initialize()
-    plan, radial_layers, radial_thickness, boundary_layer_ends = try
+    plan, radial_layers, radial_thickness, boundary_layer_ends, band_cap_record = try
         gmsh.option.set_number("General.Verbosity", 2)
         gmsh.model.add(spec.name)
         mesh_plan(
@@ -1085,6 +1262,7 @@ function mesh_polygon_window(
             radial_um,
             tangential_um;
             exact_band_thickness=exact_band_thickness,
+            band_cap=band_cap,
             verbose=verbose
         )
     finally
@@ -1149,6 +1327,7 @@ function mesh_polygon_window(
         "plan_open_outer_edges" => topology.open_edges,
         "plan_perimeter_edges" => metal_edge_count,
         "plan_boundary_layer_end_points" => boundary_layer_ends,
+        "band_cap" => band_cap_record,
         "perimeter_tangent_length_um" => tangent_summary,
         "first_layer_normal_height_um" => height_summary,
         "first_layer_normal_outliers_above_1p5x_target" => height_outliers,
