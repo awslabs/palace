@@ -2499,10 +2499,12 @@ TEST_CASE("SurfaceResponseIdentificationDecision203ExactStretches",
   SECTION("the twin mode: a finely chorded one-sided taper ending at a joint")
   {
     // Chords 2.5 um: every point of the taper lies within R of a noise joint, the taper
-    // ends at the island's top corner, so NOT ONE sample of the left run facing the taper
-    // is judged. Before: the whole 450 um left run read exact at 2.0 um (the taper's
-    // 300 um keyed at the lead's width, E8-7). Rule: the near-bend samples farther than R
-    // from the exact stretch form a non-exact stretch at its chord mean.
+    // ends at the island's top corner, so the left run's samples facing the taper are
+    // near-bend, not judged, except the last one at the island's corner (stretch log
+    // "exact 0, judged 1, near-bend 2" for the final cells; it lies in the non-exact
+    // stretch either way). Before: the whole 450 um left run read exact at 2.0 um (the
+    // taper's 300 um keyed at the lead's width, E8-7). Rule: the near-bend samples farther
+    // than R from the exact stretch form a non-exact stretch at its chord mean.
     CheckOneSided(2.5, 0.0);
   }
   SECTION("a finely chorded one-sided taper between two straight parts")
