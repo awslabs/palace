@@ -1927,58 +1927,59 @@ template void AddSubMeshInternalBoundaryElements<mfem::SubMesh>(mfem::SubMesh &,
 template void AddSubMeshInternalBoundaryElements<mfem::ParSubMesh>(
     mfem::ParSubMesh &, const mfem::Array<int> &, const std::vector<int> &);
 
-double GetSurfaceArea(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
+namespace
 {
-  double area = 0.0;
-  PalacePragmaOmp(parallel reduction(+ : area))
+
+// Surface area (bdr == true) or volume of the mesh regions selected by marker.
+double GetMeasure(const mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr)
+{
+  double measure = 0.0;
+  PalacePragmaOmp(parallel reduction(+ : measure))
   {
     mfem::IsoparametricTransformation T;
+    const int ne = bdr ? mesh.GetNBE() : mesh.GetNE();
     PalacePragmaOmp(for schedule(static))
-    for (int i = 0; i < mesh.GetNBE(); i++)
+    for (int i = 0; i < ne; i++)
     {
-      if (!marker[mesh.GetBdrAttribute(i) - 1])
+      if (bdr)
       {
-        continue;
+        if (!marker[mesh.GetBdrAttribute(i) - 1])
+        {
+          continue;
+        }
+        mesh.GetBdrElementTransformation(i, &T);
       }
-      mesh.GetBdrElementTransformation(i, &T);
+      else
+      {
+        if (!marker[mesh.GetAttribute(i) - 1])
+        {
+          continue;
+        }
+        mesh.GetElementTransformation(i, &T);
+      }
       const mfem::IntegrationRule &ir = mfem::IntRules.Get(T.GetGeometryType(), T.OrderJ());
       for (int j = 0; j < ir.GetNPoints(); j++)
       {
         const mfem::IntegrationPoint &ip = ir.IntPoint(j);
         T.SetIntPoint(&ip);
-        area += ip.weight * T.Weight();
+        measure += ip.weight * T.Weight();
       }
     }
   }
-  Mpi::GlobalSum(1, &area, mesh.GetComm());
-  return area;
+  Mpi::GlobalSum(1, &measure, mesh.GetComm());
+  return measure;
+}
+
+}  // namespace
+
+double GetSurfaceArea(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
+{
+  return GetMeasure(mesh, marker, true);
 }
 
 double GetVolume(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
 {
-  double volume = 0.0;
-  PalacePragmaOmp(parallel reduction(+ : volume))
-  {
-    mfem::IsoparametricTransformation T;
-    PalacePragmaOmp(for schedule(static))
-    for (int i = 0; i < mesh.GetNE(); i++)
-    {
-      if (!marker[mesh.GetAttribute(i) - 1])
-      {
-        continue;
-      }
-      mesh.GetElementTransformation(i, &T);
-      const mfem::IntegrationRule &ir = mfem::IntRules.Get(T.GetGeometryType(), T.OrderJ());
-      for (int j = 0; j < ir.GetNPoints(); j++)
-      {
-        const mfem::IntegrationPoint &ip = ir.IntPoint(j);
-        T.SetIntPoint(&ip);
-        volume += ip.weight * T.Weight();
-      }
-    }
-  }
-  Mpi::GlobalSum(1, &volume, mesh.GetComm());
-  return volume;
+  return GetMeasure(mesh, marker, false);
 }
 
 std::unique_ptr<mfem::ParMesh> DistributeSerialMesh(MPI_Comm comm,
