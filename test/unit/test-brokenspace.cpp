@@ -455,6 +455,26 @@ double GlobalMax(MPI_Comm comm, const Vector &v)
   return max;
 }
 
+// Refine the elements selected by the predicate on their center, nonconformingly, as in an
+// adaptive loop (without the final mesh update, to allow for rebalancing first).
+template <typename Predicate>
+void RefineWhere(Mesh &mesh, Predicate &&pred)
+{
+  auto &pmesh = mesh.Get();
+  mfem::Array<int> marked;
+  mfem::Vector c(pmesh.SpaceDimension());
+  for (int e = 0; e < pmesh.GetNE(); e++)
+  {
+    pmesh.GetElementCenter(e, c);
+    if (pred(c))
+    {
+      marked.Append(e);
+    }
+  }
+  pmesh.GeneralRefinement(marked, 1, 0);
+  mesh.RefineCrackSides();
+}
+
 }  // namespace
 
 TEST_CASE("Interior boundary sides", "[brokenspace][Serial][Parallel]")
@@ -631,17 +651,33 @@ TEST_CASE("Interior boundary sides through refinement", "[brokenspace][Serial][P
   CHECK((num_same_copy == num_split || num_flipped_copy == num_split));
 }
 
-TEST_CASE("Broken space prolongation", "[brokenspace][Serial][Parallel]")
+TEST_CASE("Broken space prolongation", "[brokenspace][Serial][Parallel][GPU]")
 {
   const auto comm = MPI_COMM_WORLD;
   const int order = GENERATE(1, 2);
+  const bool nonconforming = GENERATE(false, true);
   auto smesh = MakeCrackedCubeMesh(4, mfem::Element::TETRAHEDRON);
+  if (nonconforming)
+  {
+    smesh.EnsureNCMesh(true);
+  }
   auto part = Partition(smesh, Mpi::Size(comm));
   auto mesh = MakeParMesh(comm, smesh, part);
+  const std::vector<int> attr_list = {crack_attr};
+  if (nonconforming)
+  {
+    // Refinement ending on the interior boundary, with hanging entities on it, for which
+    // the prolongation is a HypreParMatrix (the sides are computed before the refinement,
+    // as by an estimator in an adaptive loop).
+    mesh.GetCrackSides(attr_list);
+    RefineWhere(mesh, [](const mfem::Vector &c)
+                { return std::abs(c(0) - x_crack) < 0.25 && c(1) < 0.5; });
+    mesh.Update();
+    REQUIRE(mesh::HasHangingEntities(mesh.Get()));
+  }
   mfem::ND_FECollection nd_fec(order, 3);
   mfem::RT_FECollection rt_fec(order - 1, 3);
   mfem::H1_FECollection h1_fec(order, 3);
-  const std::vector<int> attr_list = {crack_attr};
   for (const mfem::FiniteElementCollection *fec :
        std::vector<const mfem::FiniteElementCollection *>{&nd_fec, &rt_fec, &h1_fec})
   {
@@ -658,31 +694,114 @@ TEST_CASE("Broken space prolongation", "[brokenspace][Serial][Parallel]")
     CHECK(base_fespace.GetProlongationMatrix() != fespace.GetProlongationMatrix());
 
     // Compare with the global size of the space on the cut mesh.
-    auto cut = CutMesh(smesh);
-    auto cut_mesh = MakeParMesh(comm, cut, part);
-    FiniteElementSpace cut_fespace(cut_mesh, fec);
-    CHECK(fespace.GlobalTrueVSize() == cut_fespace.GlobalTrueVSize());
+    if (!nonconforming)
+    {
+      auto cut = CutMesh(smesh);
+      auto cut_mesh = MakeParMesh(comm, cut, part);
+      FiniteElementSpace cut_fespace(cut_mesh, fec);
+      CHECK(fespace.GlobalTrueVSize() == cut_fespace.GlobalTrueVSize());
+    }
 
-    // Adjointness of the prolongation and its transpose.
+    // The vectors are used on the device. The results must not depend on where the output
+    // vectors are valid before the products (only on the host, or only on the device with
+    // stale contents), as the original blocks of the broken vectors are accessed through
+    // aliases.
     const Operator &P = *fespace.GetProlongationMatrix();
-    Vector x(P.Width()), y(P.Height()), Px(P.Height()), Pty(P.Width());
+    const auto *bP = dynamic_cast<const BrokenProlongation *>(&P);
+    REQUIRE(bP);
+    if (nonconforming)
+    {
+      CHECK(dynamic_cast<const mfem::HypreParMatrix *>(
+                base_fespace.GetProlongationMatrix()) != nullptr);
+    }
     std::mt19937 gen(Mpi::Rank(comm) + 1);
     std::uniform_real_distribution<double> dist(-1.0, 1.0);
-    for (int i = 0; i < x.Size(); i++)
+    Vector x(P.Width()), y(P.Height()), ones(P.Height());
+    std::array<Vector, 2> Px, Pty, absPt1;
+    for (int k = 0; k < 2; k++)
     {
-      x(i) = dist(gen);
+      Px[k].SetSize(P.Height());
+      Pty[k].SetSize(P.Width());
+      absPt1[k].SetSize(P.Width());
     }
-    for (int i = 0; i < y.Size(); i++)
+    for (Vector *v :
+         {&x, &y, &ones, &Px[0], &Px[1], &Pty[0], &Pty[1], &absPt1[0], &absPt1[1]})
     {
-      y(i) = dist(gen);
+      v->UseDevice(true);
     }
-    P.Mult(x, Px);
-    P.MultTranspose(y, Pty);
-    // The L-vector inner product is not a global inner product (shared L-DOFs are counted
-    // on each process), but y · P x = Pᵀ y · x holds summed over processes.
-    double dots[2] = {y * Px, Pty * x};
+    for (Vector *v : {&x, &y})
+    {
+      auto *h_v = v->HostWrite();
+      for (int i = 0; i < v->Size(); i++)
+      {
+        h_v[i] = dist(gen);
+      }
+    }
+    ones = 1.0;
+    Px[1] = 1.0e30;
+    Pty[1] = 1.0e30;
+    absPt1[1] = 1.0e30;
+    for (int k = 0; k < 2; k++)
+    {
+      P.Mult(x, Px[k]);
+      P.MultTranspose(y, Pty[k]);
+      bP->AbsMultTranspose(1.0, ones, 0.0, absPt1[k]);
+    }
+    // Reductions on the host, after synchronization (the debug device does not support
+    // device reductions).
+    auto MaxDiff = [&](const Vector &a, const Vector &b)
+    {
+      const auto *A = a.HostRead();
+      const auto *B = b.HostRead();
+      double max = 0.0;
+      for (int i = 0; i < a.Size(); i++)
+      {
+        max = std::max(max, std::abs(A[i] - B[i]));
+      }
+      Mpi::GlobalMax(1, &max, comm);
+      return max;
+    };
+    auto Dot = [](const Vector &a, const Vector &b)
+    {
+      const auto *A = a.HostRead();
+      const auto *B = b.HostRead();
+      double dot = 0.0;
+      for (int i = 0; i < a.Size(); i++)
+      {
+        dot += A[i] * B[i];
+      }
+      return dot;
+    };
+    CHECK(MaxDiff(Px[0], Px[1]) <= 1.0e-12);
+    CHECK(MaxDiff(Pty[0], Pty[1]) <= 1.0e-12);
+    CHECK(MaxDiff(absPt1[0], absPt1[1]) == 0.0);
+
+    // Adjointness of the prolongation and its transpose. The L-vector inner product is not
+    // a global inner product (shared L-DOFs are counted on each process), but
+    // y · P x = Pᵀ y · x holds summed over processes.
+    double dots[2] = {Dot(y, Px[0]), Dot(Pty[0], x)};
     Mpi::GlobalSum(2, dots, comm);
     CHECK_THAT(dots[0], WithinRel(dots[1], 1.0e-12));
+
+    // Each true DOF, including the copies, has an L-DOF with a unit prolongation entry, so
+    // |P|ᵀ 1 >= 1 (a positive diagonal for Jacobi smoothing).
+    double min = 1.0, max = 0.0;
+    {
+      const auto *D = absPt1[0].HostRead();
+      for (int i = 0; i < absPt1[0].Size(); i++)
+      {
+        min = std::min(min, D[i]);
+        max = std::max(max, D[i]);
+      }
+    }
+    Mpi::GlobalMin(1, &min, comm);
+    Mpi::GlobalMax(1, &max, comm);
+    CHECK(min >= 1.0 - 1.0e-12);
+
+    // y = a |P|ᵀ x + b y.
+    bP->AbsMultTranspose(2.0, ones, 0.5, absPt1[1]);
+    absPt1[0] *= 2.5;
+    CHECK(MaxDiff(absPt1[0], absPt1[1]) <= 2.5e-12 * max);
   }
 }
 
@@ -789,26 +908,6 @@ double GlobalSumSquares(MPI_Comm comm, const Vector &v)
   double sum = v * v;
   Mpi::GlobalSum(1, &sum, comm);
   return sum;
-}
-
-// Refine the elements selected by the predicate on their center, nonconformingly, as in an
-// adaptive loop (without the final mesh update, to allow for rebalancing first).
-template <typename Predicate>
-void RefineWhere(Mesh &mesh, Predicate &&pred)
-{
-  auto &pmesh = mesh.Get();
-  mfem::Array<int> marked;
-  mfem::Vector c(pmesh.SpaceDimension());
-  for (int e = 0; e < pmesh.GetNE(); e++)
-  {
-    pmesh.GetElementCenter(e, c);
-    if (pred(c))
-    {
-      marked.Append(e);
-    }
-  }
-  pmesh.GeneralRefinement(marked, 1, 0);
-  mesh.RefineCrackSides();
 }
 
 // Complete a mesh modification: update the mesh and the finite element spaces.
