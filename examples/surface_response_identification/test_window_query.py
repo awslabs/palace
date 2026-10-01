@@ -386,6 +386,64 @@ class CutArcExclusions(unittest.TestCase):
         self.assertEqual((arc["Prediction"], arc["RealTurns"], arc["Pieces"], arc["ExcludedLength"]), ("None", False, [], 0.0))
         self.assertIn("noise", arc["Reason"])
 
+    def test_wall_bridge_strip_shortens_the_cut_arm_and_keeps_the_joint(self):
+        # the C3 812 class (review d215 MAJOR-1): r 197, 28-um chords at 8.2 deg (kink 4.09 deg); the window's ground arm at the
+        # first inside joint ends on the inner edge of the wall bridge strip (BridgeWidth 3 R inside the wall), not on the wall:
+        # arm 12.7 um -> implied sagitta 0.113 > 0.1 R would drop the joint, the bridge shortens it to 4.8 um -> 0.04, kept
+        ident, chain = arc_ident((0.0, 0.0), 197.0, 135.0, -90.0, 12)
+        start, first = chain[1], chain[2]
+        direction = ((first[0] - start[0]) / math.dist(start, first), (first[1] - start[1]) / math.dist(start, first))
+        wall_x = first[0] - 12.7 * direction[0]  # the wall cuts the first chord 12.7 um from the first inside joint
+        box = (wall_x, 300.0, -300.0, 300.0)
+        without = self.exclusions(ident, box)["Arcs"][0]
+        self.assertEqual((without["Prediction"], without["Clip"], without["InsideJoints"], without["DroppedCutAdjacent"], without["KeptJoints"]),
+                         ("DroppedJoint", "wall", [11], [1], [10]))
+        self.assertEqual(without["CutAdjacent"][0]["ExitOn"], f"x = {wall_x:g}")
+        self.assertAlmostEqual(without["CutAdjacent"][0]["Arm"], 12.7, places=9)
+        self.assertGreater(without["CutAdjacent"][0]["ImpliedSagitta"], 0.05 * R)
+        bridge = [wall_x, wall_x + 3.0 * R, 100.0, 200.0]  # WindowPolygons.Bridges rectangle on the arc's plane
+        out = WQ.cut_arc_exclusions(ident, lambda i: 5, box, None, None, bridges=[(0.0, bridge), (4.8, [wall_x, wall_x + 6.0, -50.0, 50.0])])
+        arc = out["Arcs"][0]
+        self.assertEqual((arc["Prediction"], arc["Clip"], arc["InsideJoints"], arc["DroppedCutAdjacent"], arc["KeptJoints"]),
+                         ("None", "wall+bridge", [11], [0], [11]))
+        test = arc["CutAdjacent"][0]
+        self.assertEqual((test["ExitOn"], test["Kept"]), ("bridge 0", True))
+        self.assertAlmostEqual(test["Arm"], 12.7 - 3.0 * R / direction[0], places=9)
+        self.assertLess(test["ImpliedSagitta"], 0.05 * R)
+        self.assertEqual(arc["BridgeCuts"], [{"Bridge": 0, "Rectangle": bridge}])
+        self.assertEqual((arc["Pieces"], arc["ExcludedLength"]), ([], 0.0))
+        self.assertEqual(out["Bridges"], [{"Plane": 0.0, "Rectangle": bridge}, {"Plane": 4.8, "Rectangle": [wall_x, wall_x + 6.0, -50.0, 50.0]}])
+        # a chord vertex strictly inside a strip is swallowed by the bridge metal: the arc is cut on the strip's edge
+        swallowing = [wall_x, first[0] + 1.0, 100.0, 200.0]
+        arc = WQ.cut_arc_exclusions(ident, lambda i: 5, box, None, None, bridges=[(0.0, swallowing)])["Arcs"][0]
+        self.assertEqual((arc["InsideJoints"], arc["BridgeCuts"]), ([10], [{"Bridge": 0, "Rectangle": swallowing}]))
+        self.assertEqual(arc["CutAdjacent"][0]["ExitOn"], "bridge 0")
+
+    def test_dropped_joint_takes_the_full_margin_along_the_chain(self):
+        # review d215 MINOR-2: chords shorter than 3 R (r 14, 22.5 deg, 5.46 um); the dropped cut-adjacent joint's pieces run the
+        # full 3 R along the chain on both sides (into the next chord of the arc and along the lead), as the Collapse branch does
+        ident, chain = arc_ident((0.0, 0.0), 14.0, 180.0, -135.0, 7)
+        start, first = chain[1], chain[2]
+        direction = ((first[0] - start[0]) / math.dist(start, first), (first[1] - start[1]) / math.dist(start, first))
+        cut_y = first[1] - 4.8 * direction[1]  # a horizontal wall cutting the first chord 4.8 um from the first inside joint
+        out = self.exclusions(ident, (-100.0, 100.0, cut_y, 100.0))
+        arc = out["Arcs"][0]
+        self.assertEqual((arc["Prediction"], arc["InsideJoints"], arc["DroppedCutAdjacent"], arc["KeptJoints"]), ("DroppedJoint", [6], [1], [5]))
+        self.assertLess(math.dist(start, first), 3.0 * R)
+        self.assertEqual(len(arc["Pieces"]), 4)
+        self.assertAlmostEqual(arc["ExcludedLength"], 2 * 3.0 * R, places=9)
+        self.assertEqual(arc["MarginTruncations"], [])
+
+    def test_margin_walk_records_its_truncation(self):
+        # review d215 MINOR-3: the 3 R walk along the chain stops short at a chain end (here 2-um arms), fails closed, recorded
+        ident, chain = arc_ident((0.0, 0.0), 14.0, 180.0, -90.0, 3, arm=2.0)
+        arc = self.exclusions(ident, (chain[1][0] + 2.2, 100.0, -100.0, 100.0))["Arcs"][0]
+        self.assertEqual(arc["Prediction"], "Collapse")
+        chords = sum(ident["Segments"][i]["Length"] for i in arc["Segments"])
+        self.assertAlmostEqual(arc["ExcludedLength"], chords + 2 * 2.0, places=9)
+        self.assertEqual([(t["Reason"], round(t["MarginNotTaken"], 9)) for t in arc["MarginTruncations"]],
+                         [("chain end", 3.0 * R - 2.0)] * 2)
+
     def test_tangent_noise_cut_arm_keeps_the_joint(self):
         # the O3 spiral class: r 100, 10-um chords (5.7 deg per joint, a real turn): the cut arm meets the tangent at half the
         # chord's central angle (2.9 deg), noise on any arm shorter than 16 um -> the cut-adjacent joint stays; with >= 4 joints
@@ -409,8 +467,24 @@ class CutArcExclusions(unittest.TestCase):
         self.assertEqual(self.exclusions(ident, (50.0, 100.0, -100.0, 100.0))["CutArcs"], 0)  # whole arc outside
         result = WQ.inventory(build(), {"W": (-30.0, 30.0, -30.0, 30.0)}, None, dict(WQ.DEFAULT_WEIGHTS))
         record = result["Windows"]["W"]["E1CutArcExclusions"]
-        self.assertEqual((record["CutArcs"], record["ExcludedLength"], record["Arcs"], record["SetbackHints"]), (0, 0.0, [], []))
+        self.assertEqual((record["CutArcs"], record["ExcludedLength"], record["Arcs"], record["SetbackHints"], record["Bridges"]), (0, 0.0, [], [], []))
         self.assertEqual(record["MarginOverR"], 3.0)
+
+    def test_cli_takes_the_bridges_from_the_window_polygon_set(self):
+        polygon_set = {"Name": "W", "Planes": [{"Name": "L1", "SurfaceZ": 0.0}],
+                       "WindowPolygons": {"Bridges": [{"Plane": "L1", "Rectangle": [-30.0, -24.0, 5.0, 12.0], "ChipConductor": 2}]}}
+        self.assertEqual(WQ.polygon_set_bridges(polygon_set), ("W", [(0.0, [-30.0, -24.0, 5.0, 12.0])]))
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest, polygons, out = (os.path.join(tmp, n) for n in ("m.json", "W.json", "out.json"))
+            json.dump(build(), open(manifest, "w"))
+            json.dump(polygon_set, open(polygons, "w"))
+            rc = WQ.main(["--manifest", manifest, "--window", "W", "-30", "30", "-30", "30", "--polygons", polygons, "--output", out])
+            self.assertEqual(rc, 0)
+            result = json.load(open(out))
+            self.assertEqual(result["PolygonSets"], [polygons])
+            self.assertEqual(result["Windows"]["W"]["E1CutArcExclusions"]["Bridges"], [{"Plane": 0.0, "Rectangle": [-30.0, -24.0, 5.0, 12.0]}])
+            with self.assertRaises(SystemExit):  # a polygon set of a window not requested
+                WQ.main(["--manifest", manifest, "--window", "V", "-30", "30", "-30", "30", "--polygons", polygons, "--output", out])
 
 
 if __name__ == "__main__":
