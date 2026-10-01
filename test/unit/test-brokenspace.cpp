@@ -38,6 +38,7 @@ namespace
 
 constexpr int crack_attr = 7;
 constexpr double x_crack = 0.5;
+constexpr double x_sheet = 0.25;  // Second interior boundary, for tests with two of them
 
 // Unit cube mesh of hexahedra for x < x_crack and pyramids for x > x_crack (each hexahedron
 // split into six pyramids with their apex at its center).
@@ -87,9 +88,11 @@ mfem::Mesh MakeHexPyramidMesh(int n)
 }
 
 // Unit cube (or square) mesh with interior boundary elements (attribute crack_attr) on the
-// plane x = x_crack, for y <= y_max (the interior boundary has a free edge for y_max < 1).
-// For type mfem::Element::PYRAMID, the mesh is that of MakeHexPyramidMesh.
-mfem::Mesh MakeCrackedCubeMesh(int n, mfem::Element::Type type, double y_max = 1.0)
+// plane x = x_crack (or on the given planes), for y <= y_max (the interior boundary has a
+// free edge for y_max < 1). For type mfem::Element::PYRAMID, the mesh is that of
+// MakeHexPyramidMesh.
+mfem::Mesh MakeCrackedCubeMesh(int n, mfem::Element::Type type, double y_max = 1.0,
+                               const std::vector<double> &x_planes = {x_crack})
 {
   const bool is_2d =
       (type == mfem::Element::TRIANGLE || type == mfem::Element::QUADRILATERAL);
@@ -109,15 +112,18 @@ mfem::Mesh MakeCrackedCubeMesh(int n, mfem::Element::Type type, double y_max = 1
       continue;
     }
     base.GetFaceVertices(f, fv);
-    bool on_plane = true;
-    for (auto v : fv)
+    for (auto x_plane : x_planes)
     {
-      on_plane = on_plane && (std::abs(base.GetVertex(v)[0] - x_crack) < 1.0e-12) &&
-                 (base.GetVertex(v)[1] < y_max + 1.0e-12);
-    }
-    if (on_plane)
-    {
-      crack_faces.push_back(f);
+      bool on_plane = true;
+      for (auto v : fv)
+      {
+        on_plane = on_plane && (std::abs(base.GetVertex(v)[0] - x_plane) < 1.0e-12) &&
+                   (base.GetVertex(v)[1] < y_max + 1.0e-12);
+      }
+      if (on_plane)
+      {
+        crack_faces.push_back(f);
+      }
     }
   }
   mfem::Mesh mesh(dim, base.GetNV(), base.GetNE(),
@@ -242,6 +248,38 @@ mfem::Mesh CutMesh(const mfem::Mesh &mesh, double y_max = 1.0)
 
 // Partition such that process boundaries both coincide with the interior boundary and
 // cross it.
+// The same mesh with the elements selected by the predicate on their center numbered
+// first.
+template <typename Predicate>
+mfem::Mesh ReorderElements(const mfem::Mesh &mesh, Predicate &&first)
+{
+  mfem::Mesh out(mesh.Dimension(), mesh.GetNV(), mesh.GetNE(), mesh.GetNBE());
+  for (int v = 0; v < mesh.GetNV(); v++)
+  {
+    out.AddVertex(mesh.GetVertex(v));
+  }
+  mfem::Vector c(mesh.SpaceDimension());
+  for (bool pass : {true, false})
+  {
+    for (int e = 0; e < mesh.GetNE(); e++)
+    {
+      const_cast<mfem::Mesh &>(mesh).GetElementCenter(e, c);
+      if (first(c) == pass)
+      {
+        out.AddElement(mesh.GetElement(e)->Duplicate(&out));
+      }
+    }
+  }
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    out.AddBdrElement(mesh.GetBdrElement(be)->Duplicate(&out));
+  }
+  out.FinalizeTopology();
+  out.Finalize();
+  out.SetAttributes();
+  return out;
+}
+
 std::vector<int> Partition(const mfem::Mesh &mesh, int num_procs)
 {
   std::vector<int> part(mesh.GetNE());
@@ -341,6 +379,27 @@ void JumpB(const mfem::Vector &x, mfem::Vector &B)
   B(0) = 0.75;
   B(1) = 1.0 - 2.0 * Jump(x(0));
   B(2) = 0.5 * Jump(x(0));
+}
+
+// Piecewise constant fields with jumps across the two interior boundaries x = x_sheet and
+// x = x_crack (different values in the three regions).
+double Jump2(double x)
+{
+  return ((x > x_sheet) ? 1.0 : 0.0) + 2.0 * Jump(x);
+}
+
+void JumpE2(const mfem::Vector &x, mfem::Vector &E)
+{
+  E(0) = 1.0 + Jump2(x(0));
+  E(1) = 0.5;
+  E(2) = -0.25;
+}
+
+void JumpB2(const mfem::Vector &x, mfem::Vector &B)
+{
+  B(0) = 0.75;
+  B(1) = 1.0 - 2.0 * Jump2(x(0));
+  B(2) = 0.5 * Jump2(x(0));
 }
 
 // The parallel runs of the estimator tests cover a subset of the orders and element types
@@ -1144,6 +1203,70 @@ TEST_CASE("Broken space error estimators (saved nonconforming mesh)",
   Compare(curl_loaded, curl_ref, "curl flux (loaded vs. refined)");
   CHECK(std::abs(GlobalSumSquares(comm, grad_cont) - GlobalSumSquares(comm, grad_ref)) >
         1.0e-3 * GlobalSumSquares(comm, grad_ref));
+}
+
+TEST_CASE("Broken space error estimators (two interior boundaries)",
+          "[brokenspace][errorestimator][Serial][Parallel]")
+{
+  // Two parallel interior boundaries with a single layer of elements between them. With a
+  // nonconforming refinement of part of the layer, the DOFs of hanging entities are
+  // constrained by those of both interior boundaries, so the elements of the layer have to
+  // read either the original DOFs of both or the copies of both. The recovery of a
+  // piecewise constant field with jumps across both boundaries is then exact, independently
+  // of the numbering of the elements and of the partitioning.
+  const auto comm = MPI_COMM_WORLD;
+  const int order = GENERATE_COPY(from_range(SerialOrParallel<int>(comm, {1, 2}, {1})));
+  const auto type = GENERATE_COPY(from_range(SerialOrParallel<mfem::Element::Type>(
+      comm, {mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON},
+      {mfem::Element::HEXAHEDRON})));
+  const bool nonconforming =
+      GENERATE_COPY(from_range(SerialOrParallel<int>(comm, {0, 1}, {1})));
+  const bool layer_first = GENERATE(false, true);
+  const bool swap_ranks =
+      GENERATE_COPY(from_range(SerialOrParallel<int>(comm, {0}, {0, 1})));
+  fem::DefaultIntegrationOrder::p_trial = order;
+  config::MaterialData material;
+  material.attributes = {1};
+  material.epsilon_r.s = {2.0, 3.0, 4.0};
+  material.mu_r.s = {1.0, 1.5, 2.0};
+  config::PeriodicBoundaryData periodic;
+
+  auto InLayer = [](const mfem::Vector &c) { return c(0) > x_sheet && c(0) < x_crack; };
+  auto smesh = MakeCrackedCubeMesh(4, type, 1.0, {x_sheet, x_crack});
+  if (layer_first)
+  {
+    smesh = ReorderElements(smesh, InLayer);
+  }
+  if (nonconforming)
+  {
+    smesh.EnsureNCMesh(true);
+  }
+  auto part = Partition(smesh, Mpi::Size(comm));
+  if (swap_ranks)
+  {
+    for (auto &p : part)
+    {
+      p = Mpi::Size(comm) - 1 - p;
+    }
+  }
+  EstimatorSetup setup(comm, smesh, part, order, material, periodic);
+  const std::vector<int> attr_list = {crack_attr}, no_attr_list = {};
+  setup.mesh.GetCrackSides(attr_list);
+  if (nonconforming)
+  {
+    RefineWhere(setup.mesh,
+                [&](const mfem::Vector &c) { return InLayer(c) && c(1) < 0.5; });
+    UpdateSetup(setup.mesh, setup.nd_fespaces, setup.rt_fespaces);
+    REQUIRE(mesh::HasHangingEntities(setup.mesh.Get()));
+  }
+  const auto [grad_broken, curl_broken] = setup.Estimate(JumpE2, JumpB2, attr_list);
+  const auto [grad_cont, curl_cont] = setup.Estimate(JumpE2, JumpB2, no_attr_list);
+  const double grad_max = GlobalMax(comm, grad_cont), curl_max = GlobalMax(comm, curl_cont);
+  CAPTURE(order, type, nonconforming, layer_first, swap_ranks);
+  CHECK(grad_max > 1.0e-4);
+  CHECK(curl_max > 1.0e-4);
+  CHECK(GlobalMax(comm, grad_broken) < 1.0e-6 * grad_max);
+  CHECK(GlobalMax(comm, curl_broken) < 1.0e-6 * curl_max);
 }
 
 TEST_CASE("Broken space error estimators (partial interior boundary)",

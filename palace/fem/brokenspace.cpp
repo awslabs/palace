@@ -7,8 +7,10 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <memory>
 #include <numeric>
+#include <set>
 #include "utils/communication.hpp"
 
 namespace palace
@@ -559,8 +561,8 @@ CrackSides ComputeCrackSides(const mfem::ParMesh &cmesh,
   // of hanging entities on an interior boundary face or edge to those of the face or edge
   // and its closure. Therefore, groups are identified with regions: sets of elements on the
   // same side of a connected interior boundary, joined through faces which contain a split
-  // entity. The region with the smallest label keeps the original DOFs. Only at junctions
-  // of three or more regions this can still be inconsistent.
+  // entity. The regions are then two-colored (see below), such that each element keeps the
+  // original DOFs of all of its split entities or reads the copies of all of them.
   std::vector<int> rparent(ne);
   std::iota(rparent.begin(), rparent.end(), 0);
   std::vector<double> rlabel(ne);
@@ -670,10 +672,124 @@ CrackSides ComputeCrackSides(const mfem::ParMesh &cmesh,
     region[k] = rlabel[RFind(node_elem[k])];
   }
 
-  // For each split entity, the base group is the one in the region with the smallest label
-  // (falling back to the group with the smallest label if that region contains several of
-  // its groups). Elements of all other groups read the copy.
+  // Two-coloring of the regions, which are adjacent when they are on different sides of a
+  // split entity: the regions of the first color keep the original DOFs and those of the
+  // second color read the copies. Each element then reads either the original DOFs of all
+  // of its split entities or the copies of all of them, which is required on
+  // nonconforming meshes, where the DOFs of a hanging entity can be constrained by those of
+  // the split entities of several interior boundaries (for an element between two parallel
+  // interior boundaries, for example). The graph of the regions is small: it is gathered
+  // and colored on the root process, from the region with the smallest label in each
+  // connected component.
   const auto region_min = EntityReduce([&](int k) { return region[k]; }, false);
+  const auto region_max = EntityReduce([&](int k) { return region[k]; }, true);
+  std::vector<int> color(nn, 0);
+  {
+    std::set<std::pair<double, double>> local_edges;
+    for (int k = 0; k < nn; k++)
+    {
+      const int type = node_type[k], ent = node_ent[k];
+      if (Split(type, ent) && region_min[type][ent] < region_max[type][ent])
+      {
+        local_edges.emplace(region_min[type][ent], region_max[type][ent]);
+      }
+    }
+    std::vector<double> send;
+    send.reserve(2 * local_edges.size());
+    for (const auto &[a, b] : local_edges)
+    {
+      send.push_back(a);
+      send.push_back(b);
+    }
+    const int count = static_cast<int>(send.size()), nprocs = Mpi::Size(comm);
+    std::vector<int> counts(nprocs, 0), displs(nprocs, 0);
+    MPI_Gather(&count, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm);
+    std::vector<double> recv;
+    if (Mpi::Root(comm))
+    {
+      for (int p = 1; p < nprocs; p++)
+      {
+        displs[p] = displs[p - 1] + counts[p - 1];
+      }
+      recv.resize(displs[nprocs - 1] + counts[nprocs - 1]);
+    }
+    MPI_Gatherv(send.data(), count, MPI_DOUBLE, recv.data(), counts.data(), displs.data(),
+                MPI_DOUBLE, 0, comm);
+    std::vector<double> colored;  // Pairs of region label and color, sorted by label
+    if (Mpi::Root(comm))
+    {
+      std::map<double, std::vector<double>> adj;
+      for (std::size_t i = 0; i + 1 < recv.size(); i += 2)
+      {
+        adj[recv[i]].push_back(recv[i + 1]);
+        adj[recv[i + 1]].push_back(recv[i]);
+      }
+      std::map<double, int> region_color;
+      std::vector<double> queue;
+      for (const auto &entry : adj)
+      {
+        if (region_color.count(entry.first))
+        {
+          continue;
+        }
+        region_color[entry.first] = 0;
+        queue.assign(1, entry.first);
+        for (std::size_t q = 0; q < queue.size(); q++)
+        {
+          const int c = region_color[queue[q]];
+          for (auto r : adj[queue[q]])
+          {
+            if (!region_color.count(r))
+            {
+              region_color[r] = 1 - c;
+              queue.push_back(r);
+            }
+          }
+        }
+      }
+      for (const auto &[r, c] : region_color)
+      {
+        colored.push_back(r);
+        colored.push_back(c);
+      }
+    }
+    int size = static_cast<int>(colored.size());
+    Mpi::Broadcast(1, &size, 0, comm);
+    colored.resize(size);
+    MPI_Bcast(colored.data(), size, MPI_DOUBLE, 0, comm);
+    for (int k = 0; k < nn; k++)
+    {
+      // Regions without neighbors (whose split entities have all of their groups in the
+      // region) have the first color.
+      int lo = 0, hi = size / 2;
+      while (lo < hi)
+      {
+        const int mid = (lo + hi) / 2;
+        if (colored[2 * mid] < region[k])
+        {
+          lo = mid + 1;
+        }
+        else
+        {
+          hi = mid;
+        }
+      }
+      if (lo < size / 2 && colored[2 * lo] == region[k])
+      {
+        color[k] = static_cast<int>(colored[2 * lo + 1]);
+      }
+    }
+  }
+
+  // For each split entity, the base group is the one in the regions of the first color.
+  // Where this is not unique, at junctions of interior boundaries where the regions cannot
+  // be two-colored (three regions which are pairwise adjacent, for example) or for an
+  // entity with several groups in the same region, the base group is the one in the region
+  // with the smallest label (falling back to the group with the smallest label if that
+  // region contains several of its groups). Elements of all other groups read the copy.
+  auto ColorCandidate = [&](int k) { return (color[k] == 0) ? comp[k] : std::nan(""); };
+  const auto color_min = EntityReduce(ColorCandidate, false);
+  const auto color_max = EntityReduce(ColorCandidate, true);
   auto BaseCandidate = [&](int k)
   { return (region[k] == region_min[node_type[k]][node_ent[k]]) ? comp[k] : std::nan(""); };
   const auto base_min = EntityReduce(BaseCandidate, false);
@@ -686,12 +802,38 @@ CrackSides ComputeCrackSides(const mfem::ParMesh &cmesh,
       continue;
     }
     sides.split[node_elem[k]] |= (std::uint32_t(1) << node_bit[k]);
-    const double base = (base_min[type][ent] == base_max[type][ent]) ? base_min[type][ent]
-                                                                     : comp_min[type][ent];
+    const double base =
+        (color_min[type][ent] == color_max[type][ent])
+            ? color_min[type][ent]
+            : ((base_min[type][ent] == base_max[type][ent]) ? base_min[type][ent]
+                                                            : comp_min[type][ent]);
     if (comp[k] != base)
     {
       sides.copy[node_elem[k]] |= (std::uint32_t(1) << node_bit[k]);
     }
+  }
+
+  // Elements reading the copies of some of their split entities and the original DOFs of
+  // others, where the regions cannot be two-colored: on a nonconforming mesh, the DOFs of
+  // hanging entities constrained by both kinds of split entities are not recovered
+  // consistently. This includes the elements along an interior boundary whose two sides
+  // are in the same region, joined through the split entities of another interior boundary
+  // (an air bridge standing on a ground plane, for example).
+  int num_mixed = 0;
+  for (int e = 0; e < ne; e++)
+  {
+    num_mixed += (sides.copy[e] != 0 && sides.copy[e] != sides.split[e]);
+  }
+  Mpi::GlobalSum(1, &num_mixed, comm);
+  if (num_mixed > 0 && mesh.Nonconforming())
+  {
+    Mpi::Warning(
+        comm,
+        "The sides of interior boundaries for error estimation could not be chosen "
+        "consistently for {:d} elements, where interior boundaries meet (for "
+        "example, air bridges standing on a ground plane): on nonconforming "
+        "meshes, the flux recovery may be inaccurate near them!\n",
+        num_mixed);
   }
   return sides;
 }
