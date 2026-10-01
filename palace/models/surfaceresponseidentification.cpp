@@ -2554,11 +2554,9 @@ private:
   double stack_end_third_body_length = 0.0;
   // Translational (pair / stack) stretches absorbed by the cluster bounding them on both
   // sides (decision 224): count, length, longest.
-  std::size_t extension_translational_pieces = 0, extension_translational_two_sided = 0,
-              extension_translational_shared = 0;
+  std::size_t extension_translational_pieces = 0, extension_translational_two_sided = 0;
   double extension_translational_length = 0.0, extension_translational_max_length = 0.0,
-         extension_translational_two_sided_length = 0.0,
-         extension_translational_shared_length = 0.0;
+         extension_translational_two_sided_length = 0.0;
   std::map<std::size_t, int> vertex_feature;  // mesh vertex -> feature id
   // Raw material of the pair / stack assembly (decision 82(2), BuildPairsAndStacks): the
   // locally constant, interacting facing relations of the bent-pair rule (one link per
@@ -9075,26 +9073,32 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
       absorptions.insert(absorptions.end(), merged.begin(), merged.end());
     }
   }
-  // Decision 224 (the S1p 41-edge loop end; ball form 2026-10-02): the ONE exception to
-  // "pairs / stacks are never absorbed". A maximal contiguous stretch of ONE
-  // cross-section's pair / stack claims along a chain (one signature key: the stack-end
-  // recomposition piece follows the longer stack's claim and is judged on its own, while
-  // consecutive claims of one cross-section are one stretch whatever their feature ids)
-  // that is adjacent (within the decision quantum) at at least one end to the claimed
-  // intervals of ONE cluster and lies ENTIRELY within the cluster ball radius
-  // ClusterBallOverR x R of that cluster's claims (3D distance to its claimed pieces, the
-  // same sublevel sets as the cluster's own claims) is absorbed by that cluster. Such a
-  // stretch is shorter than the interaction distance from the cluster's own claims — every
-  // point of it lies inside the ball radius the cluster claims around its events — so the
-  // cluster's coupon describes it, while the stack's translational patches would correct
-  // the same surface a second time. Two classes, both counted: TWO-SIDED (adjacent to the
-  // cluster at both ends: a stretch shorter than 2R between two claims of one cluster — on
-  // S1p the three leads of the loop end were each split by a 1.738 um piece of the 3-edge
-  // stack between the cluster's 5.131 um claims) and ONE-SIDED (the stack-end recomposition
-  // piece: the members a cluster takes later continue for less than R past the member it
-  // takes first — the S1p 3-edge stack end of 3 x 1.0 um at y = -136.3 inside the loop
-  // end's hull). A long stack adjacent to a cluster has points beyond the ball and is never
-  // absorbed. Applied per pass like the single-edge absorptions (the next pass recomposes
+  // Decision 224 (the S1p 41-edge loop end, 2026-10-02): the ONE exception to "pairs /
+  // stacks are never absorbed" — pair / stack stretches that exist ONLY because a cluster's
+  // claim boundary cut them are absorbed by that cluster. A stretch is a maximal contiguous
+  // run of one cross-section's claims (one signature key) along a chain: the stack-end
+  // recomposition piece follows the longer stack's claim on the same chain and is judged
+  // on its own, while consecutive claims of one cross-section are one stretch whatever
+  // their feature ids (the stack assembly can emit one feature per mesh segment). It must
+  // lie ENTIRELY within the cluster ball radius ClusterBallOverR x R of the cluster's
+  // claimed pieces (3D distance, the same sublevel sets as the cluster's own claims, arcs
+  // included) — shorter than the interaction distance from the cluster's own claims, so the
+  // cluster's coupon describes it while the stack's translational patches would correct the
+  // same surface a second time — and be one of two classes, counted separately:
+  // TWO-SIDED, bounded at both ends (within the decision quantum) by claimed intervals of
+  // the SAME cluster: a piece shorter than 2R between two of its claims (on S1p the three
+  // leads of the loop end were each split by a 1.738 um piece of the 3-edge stack between
+  // the cluster's 5.131 um claims); STACK-END RECOMPOSITION, adjacent to the cluster at one
+  // end and continuing, at the other, a pair / stack claim of a cross-section with strictly
+  // more members containing its own — the members the cluster takes later continue past
+  // the member it takes first (the S1p 3-edge stack end, 3 x 1.0 um at y = -136.3, between
+  // the 4-edge stack and the loop end's claims on the leads). Never between two DIFFERENT
+  // clusters (the placement's spatial-vs-spatial overlap check covers overlapping coupon
+  // boxes), never a stretch whose far end is free, a bend or a smaller cross-section:
+  // strips and gaps alongside a cluster, bent-strip halves and the gap between two pad-end
+  // clusters are genuine translational features the 2D models describe (the broader "ball
+  // only" form tried the same day ate them: 10 identity cells, DS-SCT-001 +43.6 um of
+  // cluster). Applied per pass like the single-edge absorptions (the next pass recomposes
   // the stacks around the enlarged claims); the stretch is cut into its runs' intervals.
   // Diagnostics.ClusterExtension.TranslationalPiecesAbsorbed. A translational stretch the
   // rule leaves inside a spatial coupon's volume is a genuinely foreign stretch and fails
@@ -9118,6 +9122,10 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
     // longer stack's claim on the same chain and is judged on its own; consecutive claims
     // of one cross-section are one stretch whatever their feature ids).
     std::map<std::pair<int, std::string>, std::vector<Interval>> translational_on_chain;
+    // Every pair / stack claim per chain with its feature, and every feature's member
+    // chains (the chains its claims lie on): the stack-end recomposition test.
+    std::map<int, std::vector<std::tuple<double, double, int>>> translational_claims;
+    std::map<int, std::set<int>> feature_members;
     for (std::size_t r = 0; r < runs.size(); r++)
     {
       if (runs[r].excluded)
@@ -9134,6 +9142,9 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
                                      C.id, features[static_cast<std::size_t>(claim.feature)]
                                                .signature_key)]
               .emplace_back(offset + claim.interval.first, offset + claim.interval.second);
+          translational_claims[C.id].emplace_back(
+              offset + claim.interval.first, offset + claim.interval.second, claim.feature);
+          feature_members[claim.feature].insert(C.id);
         }
       }
     }
@@ -9170,12 +9181,49 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
     for (auto &[chain_feature, list] : translational_on_chain)
     {
       const int chain_id = chain_feature.first;
+      const std::string &cross_section = chain_feature.second;
       const auto bounding = cluster_on_chain.find(chain_id);
       if (bounding == cluster_on_chain.end())
       {
         continue;
       }
       const Chain &C = chains[chain_index.at(chain_id)];
+      const auto &chain_claims = translational_claims.at(chain_id);
+      // The stretch's members: the union of the member chains of the features whose claims
+      // form it; the stretch at x_far continues a larger stack when a claim of another
+      // cross-section with strictly more members, containing them all, ends (or starts)
+      // there.
+      auto ContinuesLargerStack = [&](const Interval &stretch, double x_far)
+      {
+        std::set<int> members;
+        for (const auto &[x0, x1, feature] : chain_claims)
+        {
+          if (x0 >= stretch.first - Tol() && x1 <= stretch.second + Tol() &&
+              features[static_cast<std::size_t>(feature)].signature_key == cross_section)
+          {
+            const auto &chains_of = feature_members[feature];
+            members.insert(chains_of.begin(), chains_of.end());
+          }
+        }
+        for (const auto &[x0, x1, feature] : chain_claims)
+        {
+          const bool adjacent =
+              std::abs(x1 - x_far) <= Tol() || std::abs(x0 - x_far) <= Tol();
+          const bool inside = x0 >= stretch.first - Tol() && x1 <= stretch.second + Tol();
+          if (!adjacent || inside ||
+              features[static_cast<std::size_t>(feature)].signature_key == cross_section)
+          {
+            continue;  // not at the far end, or one of the stretch's own claims
+          }
+          const auto &larger = feature_members[feature];
+          if (larger.size() > members.size() &&
+              std::includes(larger.begin(), larger.end(), members.begin(), members.end()))
+          {
+            return true;
+          }
+        }
+        return false;
+      };
       // The cluster whose claim ends at x (a claim ending at the chain's end bounds a
       // stretch starting at 0 on a closed chain, and vice versa); -1 when none.
       auto ClusterEndingAt = [&](double x)
@@ -9222,92 +9270,32 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
             on_runs.emplace_back(r, Interval{s0, s1});
           }
         }
-        // Candidates whose ball covers the whole stretch; a stretch inside the balls of the
-        // two DIFFERENT clusters bounding it (a short pair between two pad-end clusters) is
-        // SHARED: split where the distances to the two clusters' claims are equal (the
-        // nearest-claim rule — symmetric, so a mirrored or renumbered mesh reads the same),
-        // the part before the split to the cluster before, the rest to the cluster after.
-        const bool covered_before =
-            before >= 0 && WithinBall(static_cast<std::size_t>(before), on_runs);
-        const bool covered_after = after >= 0 && after != before &&
-                                   WithinBall(static_cast<std::size_t>(after), on_runs);
-        if (!covered_before && !covered_after)
+        // The owner: the same cluster at both ends (two-sided), or the cluster at one end
+        // when the other end continues the larger stack the stretch's members belong to
+        // (stack-end recomposition). Two different clusters at the two ends: no absorption.
+        int owner = -1;
+        bool two_sided = false;
+        if (before >= 0 && before == after)
+        {
+          owner = before;
+          two_sided = true;
+        }
+        else if (before >= 0 && after < 0 && ContinuesLargerStack(stretch, stretch.second))
+        {
+          owner = before;
+        }
+        else if (after >= 0 && before < 0 && ContinuesLargerStack(stretch, stretch.first))
+        {
+          owner = after;
+        }
+        if (owner < 0 || !WithinBall(static_cast<std::size_t>(owner), on_runs))
         {
           continue;
         }
-        const bool two_sided = covered_before && before == after;
-        const bool shared = covered_before && covered_after;
-        double split = stretch.second;  // the cluster before takes [first, split)
-        if (shared)
-        {
-          auto DistanceTo = [&](std::size_t c, double x)
-          {
-            const Point3D p = ChainAt(C, x);
-            double nearest = std::numeric_limits<double>::infinity();
-            for (const std::size_t i : piece_grid.Query(p, p, ball + 2.0 * Tol()))
-            {
-              const Piece &piece = pieces[i];
-              if (piece.owner != c || runs[piece.run].excluded)
-              {
-                continue;
-              }
-              nearest = std::min(
-                  nearest, PointPieceDistance(p, RunPiece(piece.run, piece.interval.first,
-                                                          piece.interval.second)));
-            }
-            return nearest;
-          };
-          // Along the stretch the distance to the cluster before grows and the distance to
-          // the cluster after shrinks: one root of their difference, bisected to the
-          // decision quantum.
-          auto Difference = [&](double x)
-          {
-            return DistanceTo(static_cast<std::size_t>(before), x) -
-                   DistanceTo(static_cast<std::size_t>(after), x);
-          };
-          double lo = stretch.first, hi = stretch.second;
-          if (Difference(lo) >= 0.0)
-          {
-            split = lo;
-          }
-          else if (Difference(hi) <= 0.0)
-          {
-            split = hi;
-          }
-          else
-          {
-            while (hi - lo > Tol())
-            {
-              const double mid = 0.5 * (lo + hi);
-              (Difference(mid) < 0.0 ? lo : hi) = mid;
-            }
-            // On the decision grid (a root within half a quantum of a mesh vertex — the
-            // symmetry plane of two mirror-image clusters — cuts at the vertex, not a
-            // sub-quantum sliver before it).
-            split =
-                std::clamp(quantizer.Snap(0.5 * (lo + hi)), stretch.first, stretch.second);
-          }
-        }
-        else if (!covered_before)
-        {
-          split = stretch.first;  // the cluster after takes everything
-        }
         for (const auto &[r, interval] : on_runs)
         {
-          const double offset = C.run_offset[runs[r].index_in_chain];
-          const double cut = std::clamp(split - offset, interval.first, interval.second);
-          if (cut - interval.first > Tol())
-          {
-            absorptions.push_back(
-                {r, {interval.first, cut}, {static_cast<std::size_t>(before)}, true});
-          }
-          if (interval.second - cut > Tol())
-          {
-            absorptions.push_back(
-                {r, {cut, interval.second}, {static_cast<std::size_t>(after)}, true});
-          }
+          absorptions.push_back({r, interval, {static_cast<std::size_t>(owner)}, true});
         }
-        const int owner = covered_before ? before : after;
         const double length = stretch.second - stretch.first;
         extension_translational_pieces++;
         extension_translational_length += length;
@@ -9318,22 +9306,13 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
           extension_translational_two_sided++;
           extension_translational_two_sided_length += length;
         }
-        if (shared)
-        {
-          extension_translational_shared++;
-          extension_translational_shared_length += length;
-        }
         if (std::getenv("PALACE_IDENTIFICATION_DEBUG_EXTENSION") && input.log)
         {
           std::ostringstream line;
           line << std::setprecision(10) << "    translational stretch absorbed ("
-               << (two_sided ? "two-sided" : (shared ? "shared" : "one-sided"))
-               << "): chain " << chain_id << " x [" << stretch.first << ", "
-               << stretch.second << "] (length " << length << ") by cluster " << owner
-               << (shared ? " split at " + std::to_string(split) + " with cluster " +
-                                std::to_string(after)
-                          : "")
-               << "\n";
+               << (two_sided ? "two-sided" : "stack-end recomposition") << "): chain "
+               << chain_id << " x [" << stretch.first << ", " << stretch.second
+               << "] (length " << length << ") by cluster " << owner << "\n";
           input.log(line.str());
         }
       }
@@ -11055,9 +11034,7 @@ void Identifier::Assign(IdentificationResult &result)
                       extension_translational_length,
                       extension_translational_max_length,
                       extension_translational_two_sided,
-                      extension_translational_two_sided_length,
-                      extension_translational_shared,
-                      extension_translational_shared_length};
+                      extension_translational_two_sided_length};
   result.features = features;
   result.radius = R;
   result.reference_process_normal = n_ref;
@@ -11416,8 +11393,6 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
   w.Pod(result.extension.translational_max_length);
   w.Size(result.extension.translational_two_sided);
   w.Pod(result.extension.translational_two_sided_length);
-  w.Size(result.extension.translational_shared);
-  w.Pod(result.extension.translational_shared_length);
   w.Size(result.stack_images_merged);
   w.Size(result.sub_tolerance_portions.count);
   w.Pod(result.sub_tolerance_portions.length);
@@ -11541,8 +11516,6 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
   result.extension.translational_max_length = r.Pod<double>();
   result.extension.translational_two_sided = r.Size();
   result.extension.translational_two_sided_length = r.Pod<double>();
-  result.extension.translational_shared = r.Size();
-  result.extension.translational_shared_length = r.Pod<double>();
   result.stack_images_merged = r.Size();
   result.sub_tolerance_portions.count = r.Size();
   result.sub_tolerance_portions.length = r.Pod<double>();
@@ -12220,12 +12193,14 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "the stacks are not recomposed again: sub-tolerance) (ratified as the 'across' "
          "rule, decision 88(2)); pairs / stacks are never absorbed and their claimed "
          "length satisfying the same across rule is Diagnostics.StackEndThirdBodyLength "
-         "(decision 85(2)) — with ONE exception (decision 224, ball form): a maximal "
-         "contiguous stretch of pair / stack claims along a chain adjacent at at least one "
-         "end to the claimed intervals of one cluster and lying entirely within "
+         "(decision 85(2)) — with ONE exception (decision 224): a stretch of one "
+         "cross-section's pair / stack claims along a chain that exists only because a "
+         "cluster's claim boundary cut it — bounded at both ends by claims of the same "
+         "cluster, or adjacent to the cluster at one end and continuing a larger stack "
+         "containing its members at the other — and lying entirely within "
          "ClusterBallOverR x R of that cluster's claimed pieces is absorbed by that "
          "cluster (Diagnostics.ClusterExtension.TranslationalPiecesAbsorbed, by class "
-         "TwoSided / OneSided)"},
+         "TwoSided / StackEndRecomposition)"},
         {"MutualSidesOverhangOverSeparation",
          std::sqrt((1.0 + kPairSeparationTolerance) * (1.0 + kPairSeparationTolerance) -
                    1.0)},
@@ -12313,33 +12288,33 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
             {"TwoSided",
              {{"Count", extension.translational_two_sided},
               {"Length", L(extension.translational_two_sided_length)}}},
-            {"OneSided",
-             {{"Count", extension.translational_pieces - extension.translational_two_sided -
-                            extension.translational_shared},
-              {"Length",
-               L(extension.translational_length - extension.translational_two_sided_length -
-                 extension.translational_shared_length)}}},
-            {"Shared",
-             {{"Count", extension.translational_shared},
-              {"Length", L(extension.translational_shared_length)}}},
+            {"StackEndRecomposition",
+             {{"Count", extension.translational_pieces - extension.translational_two_sided},
+              {"Length", L(extension.translational_length -
+                           extension.translational_two_sided_length)}}},
             {"Rule",
-             "decision 224 (2026-10-02, ball form), the ONE exception to 'pairs / stacks "
-             "are never absorbed': a maximal contiguous stretch of pair / stack claims "
-             "along a chain adjacent at at least one end to the claimed intervals of ONE "
-             "cluster and lying entirely within ClusterBallOverR x R (3D) of that "
-             "cluster's claimed pieces is absorbed by that cluster: it is shorter than the "
-             "interaction distance from the cluster's own claims, so the cluster's coupon "
-             "describes it, while the stack's translational patches would correct the "
-             "same surface twice. TwoSided = adjacent to the cluster at both ends (a "
-             "stretch shorter than 2R between two claims of one cluster), OneSided = the "
-             "stack-end recomposition piece (members the cluster takes later continuing "
-             "less than R past the member it takes first), Shared = inside the balls of "
-             "the two different clusters bounding it, split where the distances to their "
-             "claims are equal (symmetric under mirroring / renumbering). A stretch is one "
-             "cross-section's claims (one signature key) along the chain. Applied per pass "
-             "like the single-edge absorptions, the stacks recomposed around the enlarged "
-             "claims; a stretch the rule leaves inside a spatial coupon's volume fails "
-             "closed at the placement's ownership check"}}},
+             "decision 224 (2026-10-02), the ONE exception to 'pairs / stacks are never "
+             "absorbed': pair / stack stretches that exist ONLY because a cluster's claim "
+             "boundary cut them are absorbed by that cluster. A stretch is a maximal "
+             "contiguous run of one cross-section's claims (one signature key) along a "
+             "chain; it must lie entirely within ClusterBallOverR x R (3D) of the "
+             "cluster's "
+             "claimed pieces (shorter than the interaction distance from the cluster's own "
+             "claims: the cluster's coupon describes it, the stack's translational patches "
+             "would correct the same surface twice) and be either TwoSided = bounded at "
+             "both ends by claims of the SAME cluster (a piece shorter than 2R between two "
+             "of its claims) or a StackEndRecomposition piece = adjacent to the cluster at "
+             "one end and continuing, at the other, a pair / stack claim of a "
+             "cross-section "
+             "with strictly more members containing its own (the members the cluster takes "
+             "later, continuing past the member it takes first). Never between two "
+             "different clusters (the placement's spatial-vs-spatial overlap check covers "
+             "overlapping coupon boxes), never a stretch whose far end is free, a bend or "
+             "a smaller cross-section: strips and gaps alongside a cluster are genuine "
+             "translational features. Applied per pass like the single-edge absorptions, "
+             "the stacks recomposed around the enlarged claims; a stretch the rule leaves "
+             "inside a spatial coupon's volume fails closed at the placement's ownership "
+             "check"}}},
           {"Rule",
            "every single-edge portion (isolated / curved edge remainder) within 2R "
            "(3D, strict) of a cluster's claimed perimeter or of a vertex feature's "

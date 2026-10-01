@@ -523,15 +523,7 @@ TEST_CASE("SurfaceResponseIdentification", "[surfaceresponseidentification][Seri
       counts[feature.type]++;
     }
     CHECK(counts["SpatialEdgeCluster"] == 2);
-    // The gap middle left by the two clusters' claims is a 1.07 um same-conductor gap
-    // inside the ball radius of both clusters: decision 224 (ball form) shares it between
-    // them, split at equal distance to their claims (so the two clusters stay mirror images
-    // with one signature); before that decision it was a SameConductorGap feature of its
-    // own.
-    CHECK(counts["SameConductorGap"] == 0);
-    CHECK(result.extension.translational_shared == 2);  // one stretch per gap edge
-    CHECK_THAT(result.extension.translational_shared_length,
-               WithinAbs(2.0 * 1.0718, 0.001));
+    CHECK(counts["SameConductorGap"] == 1);
     CHECK(counts["ConvexCorner"] == 4);
     CHECK(counts["IsolatedEdge"] == 6);
     std::set<std::string> cluster_hashes;
@@ -542,21 +534,18 @@ TEST_CASE("SurfaceResponseIdentification", "[surfaceresponseidentification][Seri
         cluster_hashes.insert(feature.hash);
         CHECK(feature.vertices.size() == 2);
         CHECK(feature.signature["EdgeCount"] == 4);
-        // Both gap edges are claimed by both clusters, each up to the gap middle.
+      }
+      if (feature.type == "SameConductorGap")
+      {
+        CHECK_THAT(feature.signature["SeparationOverR"].get<double>(),
+                   WithinAbs(1.0, 1.0e-12));
+        // Both partner edges are claimed (design (b) 2).
         std::set<int> chains;
-        double gap_length = 0.0;
         for (const auto &portion : feature.portions)
         {
-          const auto &segment = input.segments[portion.segment];
-          if (std::abs(std::abs(segment.p0[0]) - 1.0) < 1.0e-9 &&
-              std::abs(std::abs(segment.p1[0]) - 1.0) < 1.0e-9)
-          {
-            chains.insert(segment.chain);
-            gap_length += portion.s1 - portion.s0;
-          }
+          chains.insert(input.segments[portion.segment].chain);
         }
         CHECK(chains.size() == 2);
-        CHECK_THAT(gap_length, WithinAbs(12.0, 1.0e-6));
       }
     }
     CHECK(cluster_hashes.size() == 1);
@@ -3452,14 +3441,15 @@ TEST_CASE("SurfaceResponseIdentificationSubTolerancePortions",
 TEST_CASE("SurfaceResponseIdentificationStackPieceInsideCluster",
           "[surfaceresponseidentification][Serial]")
 {
-  // Supervisor decision 224 (the S1p 41-edge loop end; ball form): a maximal contiguous
-  // stretch of one pair / stack feature's claims along a chain, adjacent at at least one
-  // end to the claimed intervals of ONE cluster and lying entirely within the cluster ball
-  // radius R of that cluster's claims, is absorbed by that cluster — the one exception to
-  // "pairs / stacks are never absorbed" (the spatial coupon's volume and the stack's
-  // translational patches would otherwise correct the same surface twice); two-sided when
-  // the cluster bounds both ends (a stretch shorter than 2R between two of its claims),
-  // one-sided otherwise (the stack-end recomposition piece). Reproducer: a square loop
+  // Supervisor decision 224 (the S1p 41-edge loop end): pair / stack stretches that exist
+  // only because a cluster's claim boundary cut them are absorbed by that cluster — the one
+  // exception to "pairs / stacks are never absorbed" (the spatial coupon's volume and the
+  // stack's translational patches would otherwise correct the same surface twice): a
+  // stretch of one cross-section's claims, within the cluster ball radius R of the
+  // cluster's claims, bounded at both ends by the SAME cluster (two-sided) or adjacent to
+  // it at one end and continuing a larger stack at the other (stack-end recomposition).
+  // Never between two different clusters, never a genuine pair whose far end is free or a
+  // bend. Reproducer: a square loop
   // wire (2 um) attached to the left ground around a hole, with a ground edge 2 um to the
   // right of its right side, so that the loop's right side and the ground edge form a
   // 3-edge stack (0 / 2 / 4 um) between the loop's top and bottom corner clusters; the hole
@@ -3603,16 +3593,13 @@ TEST_CASE("SurfaceResponseIdentificationStackPieceInsideCluster",
     CHECK(!reading.leads_owned_by_cluster);
     CHECK(result.extension.translational_pieces == 0);
   }
-  SECTION("a short stretch between two different clusters is shared, then the rest merges")
+  SECTION("a stretch between the claims of two different clusters stays with the stack")
   {
     // The ring attached to a plain left ground (no teeth): the top and bottom corner groups
-    // are two clusters, and the 1.07 um stretch of the 3-edge stack between their claims
-    // lies within the ball radius of both: SHARED, split where the distances to the two
-    // clusters' claims are equal (the symmetry plane y = 0) in pass 1. The stack recomposed
-    // without the ring edge leaves the hole edge and the ground edge as single-edge
-    // remainders within 2R of both clusters, which the ordinary extension absorbs in pass 2
-    // — merging the two clusters (the existing several-owners rule). The pads case of
-    // TEST_CASE SurfaceResponseIdentification keeps the two clusters apart (half_hole 6).
+    // are two clusters, and the 1.07 um stretch of the 3-edge stack between their claims is
+    // bounded by claims of DIFFERENT clusters: a genuine stack between two clusters, not a
+    // claim-boundary artefact of one of them — never absorbed (the placement's
+    // spatial-vs-spatial check covers overlapping coupon boxes); half_hole 6.
     const double h = 6.0, H = 8.0;
     std::vector<Point2> metal = {{-20.0, -20.0}, {-2.0, -20.0}, {-2.0, -H},
                                  {8.0, -H},      {8.0, H},      {-2.0, H},
@@ -3623,13 +3610,35 @@ TEST_CASE("SurfaceResponseIdentificationStackPieceInsideCluster",
     const auto result = IdentifyMetalPerimeter(input);
     CheckPartition(input, result);
     const Reading reading = Read(input, result, h);
-    CHECK(reading.clusters == 1);
-    CHECK(reading.stack_features == 0);
-    CHECK(reading.leads_owned_by_cluster);
-    CHECK(result.extension.translational_pieces == 1);
-    CHECK(result.extension.translational_two_sided == 0);
-    CHECK(result.extension.translational_shared == 1);
-    CHECK_THAT(result.extension.translational_shared_length, WithinAbs(1.0718, 0.001));
-    CHECK(result.extension.passes >= 2);
+    CHECK(reading.clusters == 2);
+    CHECK(reading.stack_features >= 1);
+    CHECK_THAT(reading.stack_length, WithinAbs(3.0 * 1.0718, 0.01));
+    CHECK(!reading.leads_owned_by_cluster);
+    CHECK(result.extension.translational_pieces == 0);
+  }
+  SECTION("a bent strip's halves next to their end clusters are genuine pairs")
+  {
+    // A 2.5 um strip (1.25 R) of 7.5 um between its own end corners, bent by 8 deg at
+    // mid-length: each half is its own cross-section, adjacent to an end-corner cluster and
+    // shorter than R beyond it — but its far end is the bend, not a larger stack, so the
+    // halves stay SameConductorStrip features (the translational mortar strip test of
+    // test-surfaceresponseoperator.cpp relies on it).
+    const double half = 1.25, length = 7.5, tilt = std::tan(8.0 * std::acos(-1.0) / 180.0);
+    const std::vector<Point2> strip = {{-half, 0.0},
+                                       {half, 0.0},
+                                       {half, 0.5 * length},
+                                       {half + tilt * 0.5 * length, length},
+                                       {-half + tilt * 0.5 * length, length},
+                                       {-half, 0.5 * length}};
+    const auto input = MakeInput({{strip, 0, 0.5}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    int strips = 0;
+    for (const auto &feature : result.features)
+    {
+      strips += feature.type == "SameConductorStrip" ? 1 : 0;
+    }
+    CHECK(strips >= 1);
+    CHECK(result.extension.translational_pieces == 0);
   }
 }
