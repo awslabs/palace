@@ -39,7 +39,29 @@ tool clips every segment of the segment table to the box and reports, from the c
 * the class-(B) mean-separation prediction of plan (b)-4 for every pair / stack with a portion inside: the
   mean separation of the window-interior portions of side 0 to the other sides (sampled at 0.5 R) vs the
   chip's signature separation (``SeparationOverR`` / ``OffsetOverR``), and whether the window reading would
-  change the signature key (difference beyond the 1e-3 R signature tolerance).
+  change the signature key (difference beyond the 1e-3 R signature tolerance);
+* the cut-arc exclusions of the E1 comparison region (``E1CutArcExclusions``, VALIDATION-PLAN (h)-9, decision 214 (iii)): a chip
+  arc (``Arcs``, the segments' ``Arc`` id) is CUT when one of the three window-introduced lines crosses it: a window wall, the
+  setback line (the open-terminated terminal's metal is clipped to the setback box) or the edge of a wall BRIDGE strip (the metal
+  rectangles ``window_polygons.py`` lays over the gaps next to a bridged conductor's wall interval, 3 R into the box: the chip
+  edges inside a strip vanish, so the arm of a cut-adjacent joint ends on the strip's edge, not on the wall). The bridges are
+  taken from the window's polygon set (``--polygons``: ``WindowPolygons.Bridges``, the one source of that geometry); without it
+  the clip region is the box alone, which is conservative (a bridge edge only SHORTENS a wall-cut arm, so more joints are kept).
+  The identification's own concyclicity rule predicts the window's reading of a cut arc: at a cut-adjacent joint the arm is the
+  cut chord, whose far end is off the circle, so the joint stays an end joint only when that arm meets the circle's tangent
+  within the joint noise rule (CornerRule: ``(c / 2) tan(kink / 4) < JointNoiseSagittaOverR x R`` on the shorter of the arm and
+  the first chord, kink = half the chord's central angle); a dropped cut-adjacent joint becomes a corner (``DroppedJoint``: 3 R
+  along the chain on both sides of it excluded); the bend survives on the kept joints only when at least four remain (the
+  least-squares clause), else every kept joint becomes a corner (``Collapse``: the arc's chords and 3 R along both arms
+  excluded); an arc whose joints are all noise-level reads straight in both meshes (``None``). The 3 R walk along the chain
+  stops short at a branching vertex, a chain end or after the first chord of another arc (less exclusion: fails closed); every
+  such stop is recorded per arc in ``MarginTruncations``. Limit: a CLOSED arc cut by a wall whose inside run turns more than
+  180 degrees cannot be one arc in the window (the identification's <= 180-degree clause) while the tool predicts from the kept
+  joints alone (``None`` when they are all tangent-noise); such a window reading surfaces as a ``PredictionMismatch`` (none on
+  record: S1b 10211 keeps 25 of 161 joints, 56 degrees). The pieces are consumed by ``segment_identity.py --exclude`` (class
+  ``Excluded``, reported, never a defect) and the prediction is checked there against the observed classes. ``SetbackHints``
+  lists, for the terminal's collapsing arcs, the setback that would cut the arc away whole (information for the stage-2 window
+  placement; nothing is moved).
 
 Coordinates are the manifest's (absolute chip coordinates); a segment clipped to the box contributes only
 its inside length. The tool reads the manifest once for any number of windows.
@@ -59,6 +81,9 @@ PERIMETER_EXCLUSIONS = ("TruncationCut", "SimulationBoundary", "Port", "PortCut"
                         "UndeterminedProcessSide")
 SIGNATURE_TOLERANCE_OVER_R = 1e-3
 POINT_DECIMALS = 6
+LEAST_SQUARES_BEND_JOINTS = 4  # ArcRule: a least-squares bend needs four joints (three points are always concyclic)
+JOINT_NOISE_SAGITTA_OVER_R_DEFAULT = 0.05  # CornerRule's JointNoiseSagittaOverR when the manifest carries no Conventions
+CUT_ARC_MARGIN_OVER_R = 3.0  # (h)-1: 3 R around every window-introduced feature
 
 
 def clip_interval(p0, p1, box):
@@ -396,7 +421,285 @@ def mean_separation_prediction(feature, inside_portions, segments, radius):
             "KeyMayChange": abs(mean - chip_sep) / radius > SIGNATURE_TOLERANCE_OVER_R}
 
 
-def inventory(manifest, windows, margin, weights, z_range=None):
+def joint_turn_is_noise(prev, vertex, nxt, noise_sagitta):
+    """CornerRule: a joint turning by t between two pieces is noise when (c / 2) tan(t / 4) of the SHORTER piece c is below
+    JointNoiseSagittaOverR x R (``noise_sagitta``); such a joint is never a corner."""
+    d0 = (vertex[0] - prev[0], vertex[1] - prev[1])
+    d1 = (nxt[0] - vertex[0], nxt[1] - vertex[1])
+    l0, l1 = math.hypot(*d0), math.hypot(*d1)
+    if l0 <= 0.0 or l1 <= 0.0:
+        return True
+    cos_t = max(-1.0, min(1.0, (d0[0] * d1[0] + d0[1] * d1[1]) / (l0 * l1)))
+    return (min(l0, l1) / 2.0) * math.tan(math.acos(cos_t) / 4.0) < noise_sagitta
+
+
+class ClipRegion:
+    """The clip region of one plane of a window: the box (the setback box for the open-terminated terminal) minus the wall bridge
+    strips of that plane (``window_polygons.py`` ``WindowPolygons.Bridges``: rectangles [x0, x1, y0, y1] of metal over the gaps
+    next to a bridged conductor's wall interval, BridgeWidth = 3 R into the box). A chip chord vertex strictly inside a strip is
+    swallowed by the bridge metal, so the chord is cut on the strip's edge; a vertex on a box wall or on a strip edge is inside."""
+
+    def __init__(self, box, bridges=(), tol=1e-9):
+        self.box = tuple(float(v) for v in box)
+        self.bridges = [tuple(float(v) for v in r[:4]) for r in bridges]
+        self.tol = tol
+
+    def in_box(self, p):
+        b, tol = self.box, self.tol
+        return b[0] - tol <= p[0] <= b[1] + tol and b[2] - tol <= p[1] <= b[3] + tol
+
+    def bridge_index(self, p):
+        """The bridge strip holding ``p`` strictly inside, else None."""
+        tol = self.tol
+        for k, r in enumerate(self.bridges):
+            if r[0] + tol < p[0] < r[1] - tol and r[2] + tol < p[1] < r[3] - tol:
+                return k
+        return None
+
+    def contains(self, p):
+        return self.in_box(p) and self.bridge_index(p) is None
+
+    def exit(self, inside_point, outside_point):
+        """Where the chord inside -> outside leaves the region and on what: (point, ``"x = ..."`` / ``"y = ..."`` for a box wall,
+        ``"bridge k"`` for the first bridge strip the chord enters)."""
+        t_exit, source = 1.0, "chord end"
+        for axis, value in ((0, self.box[0]), (0, self.box[1]), (1, self.box[2]), (1, self.box[3])):
+            if (inside_point[axis] - value) * (outside_point[axis] - value) < 0.0:
+                t = (value - inside_point[axis]) / (outside_point[axis] - inside_point[axis])
+                if t < t_exit:
+                    t_exit, source = t, f"{'xy'[axis]} = {value:g}"
+        for k, r in enumerate(self.bridges):
+            interval = clip_interval(inside_point, outside_point, r)
+            if interval is not None and interval[1] > interval[0] + self.tol and interval[0] < t_exit:
+                t_exit, source = interval[0], f"bridge {k}"
+        return (inside_point[0] + t_exit * (outside_point[0] - inside_point[0]), inside_point[1] + t_exit * (outside_point[1] - inside_point[1])), source
+
+
+def cut_arm_is_tangent_noise(vertex, outside_neighbour, first_inside_neighbour, arc_radius, clip, noise_sagitta):
+    """ArcRule end-joint test at a cut-adjacent joint: its arm is the cut chord (vertex -> the ``clip`` region's exit), which meets
+    the circle's tangent at the vertex at half the chord's central angle; noise on the shorter of the arm and the first chord
+    keeps the joint. Returns the record of the test: {Joint, ExitOn, Arm, KinkDegrees, ImpliedSagitta, Kept}."""
+    exit_point, source = clip.exit(vertex, outside_neighbour)
+    arm = math.dist(vertex[:2], exit_point)
+    first_chord = math.dist(vertex[:2], first_inside_neighbour[:2]) if first_inside_neighbour is not None else arm
+    kink = math.asin(max(-1.0, min(1.0, math.dist(vertex[:2], outside_neighbour[:2]) / (2.0 * arc_radius))))
+    sagitta = (min(arm, first_chord) / 2.0) * math.tan(kink / 4.0)
+    return {"Joint": [vertex[0], vertex[1]], "ExitOn": source, "Arm": arm, "KinkDegrees": math.degrees(kink),
+            "ImpliedSagitta": sagitta, "Kept": sagitta < noise_sagitta}
+
+
+def _arc_vertices(segment_indices, segments):
+    """The arc's chord vertices in chain order (a closed arc returns first == last)."""
+    adjacency = collections.defaultdict(list)
+    for i in segment_indices:
+        a, b = tuple(segments[i]["Key"][0][:2]), tuple(segments[i]["Key"][1][:2])
+        adjacency[a].append(b)
+        adjacency[b].append(a)
+    ends = [v for v, n in adjacency.items() if len(n) == 1]
+    start = ends[0] if ends else min(adjacency)
+    out, prev = [start], None
+    while True:
+        nxt = [v for v in adjacency[out[-1]] if v != prev]
+        if not nxt:
+            break
+        prev = out[-1]
+        out.append(nxt[0])
+        if nxt[0] == start or len(out) > len(segment_indices) + 1:
+            break
+    return out
+
+
+def _inside_runs(vertices, clip):
+    """Maximal runs of consecutive chord vertices inside the ``clip`` region: [(run, cut-adjacent vertices, their outside
+    neighbours)]."""
+    closed = len(vertices) > 1 and vertices[0] == vertices[-1]
+    ring = vertices[:-1] if closed else vertices
+    n = len(ring)
+    inside = [clip.contains(v) for v in ring]
+    if all(inside):
+        return [(ring, [], [])]
+    start = 0
+    if closed:
+        while inside[start]:
+            start += 1
+    runs, current = [], []
+    for k in range(n):
+        idx = (start + k) % n
+        if inside[idx]:
+            current.append(idx)
+        elif current:
+            runs.append(current)
+            current = []
+    if current:
+        runs.append(current)
+    out = []
+    for run in runs:
+        cut_adjacent, outside = [], []
+        if closed or run[0] != 0:
+            cut_adjacent.append(ring[run[0]])
+            outside.append(ring[(run[0] - 1) % n])
+        if (closed or run[-1] != n - 1) and run[-1] != run[0]:
+            cut_adjacent.append(ring[run[-1]])
+            outside.append(ring[(run[-1] + 1) % n])
+        out.append(([ring[k] for k in run], cut_adjacent, outside))
+    return out
+
+
+def cut_arc_exclusions(ident, conductor_of_segment, box, setback_box, terminal, bridges=(), margin_over_r=CUT_ARC_MARGIN_OVER_R):
+    """E1 cut-arc exclusions of one window (VALIDATION-PLAN (h)-9; module docstring): every chip arc cut by a wall (the
+    setback line for the open-terminated ``terminal``) or by the edge of a wall bridge strip (``bridges``: [(plane z,
+    rectangle [x0, x1, y0, y1])] from the polygon set's ``WindowPolygons.Bridges``), its predicted window reading (``Collapse``
+    / ``DroppedJoint`` / ``None``), the pieces to exclude (absolute coordinates, ``margin_over_r`` R along the chain) and the
+    setback hints."""
+    segments = ident["Segments"]
+    arcs = ident.get("Arcs", [])
+    radius = float(ident["MatchingRadius"])
+    conventions = ident.get("Conventions") or {}
+    noise_over_r = float(conventions.get("JointNoiseSagittaOverR", JOINT_NOISE_SAGITTA_OVER_R_DEFAULT))
+    noise_sagitta = noise_over_r * radius
+    margin = margin_over_r * radius
+    at_point = collections.defaultdict(list)
+    by_arc = collections.defaultdict(list)
+    for i, s in enumerate(segments):
+        for p in s["Key"]:
+            at_point[(point_key(p[:2]), round(float(p[2]), 3))].append(i)
+        if s.get("Arc") is not None:
+            by_arc[s["Arc"]].append(i)
+    records, hints = [], []
+    total_excluded = 0.0
+
+    def piece(i, s0, s1):
+        s = segments[i]
+        p0, p1 = s["Key"][0], s["Key"][1]
+        length = float(s["Length"])
+        t0, t1 = (s0 / length, s1 / length) if length > 0.0 else (0.0, 1.0)
+        return [[p0[k] + t0 * (p1[k] - p0[k]) for k in range(3)], [p0[k] + t1 * (p1[k] - p0[k]) for k in range(3)]]
+
+    def along_chain(vertex, plane, forbidden, budget, pieces, truncations, through_arc=None):
+        """Follow the chain from a vertex through segments not in ``forbidden`` for ``budget`` um, collecting pieces. The walk
+        stops short (less exclusion: fails closed) at a branching vertex, at a chain end, or after the first chord of an arc
+        other than ``through_arc``; the stop is appended to ``truncations`` with the margin not taken."""
+        v, seen = vertex, set(forbidden)
+        while budget > 1e-9:
+            candidates = [j for j in at_point[(point_key(v[:2]), plane)] if j not in seen]
+            if len(candidates) != 1:
+                truncations.append({"At": [v[0], v[1], v[2] if len(v) > 2 else plane], "MarginNotTaken": budget,
+                                    "Reason": "chain end" if not candidates else f"branching vertex ({len(candidates)} segments)"})
+                return
+            j = candidates[0]
+            seen.add(j)
+            s = segments[j]
+            length = float(s["Length"])
+            take = min(length, budget)
+            starts_here = point_key(s["Key"][0][:2]) == point_key(v[:2])
+            pieces.append(piece(j, 0.0, take) if starts_here else piece(j, length - take, length))
+            budget -= take
+            v = s["Key"][1] if starts_here else s["Key"][0]
+            if s.get("Arc") is not None and s["Arc"] != through_arc and budget > 1e-9:
+                truncations.append({"At": [v[0], v[1], v[2]], "MarginNotTaken": budget, "Reason": f"next arc {s['Arc']}"})
+                return
+
+    for arc_id, arc_segments in sorted(by_arc.items()):
+        conductors = {conductor_of_segment(i) for i in arc_segments}
+        is_terminal = terminal is not None and conductors == {terminal}
+        clip_kind = "setback" if (is_terminal and setback_box is not None) else "wall"
+        plane = round(float(segments[arc_segments[0]]["Key"][0][2]), 3)
+        plane_bridges = [r for z, r in bridges if abs(float(z) - plane) < 1e-6]
+        clip = ClipRegion(setback_box if clip_kind == "setback" else box, plane_bridges)
+        vertices = _arc_vertices(arc_segments, segments)
+        runs = _inside_runs(vertices, clip)
+        n_inside = sum(len(run) for run, _, _ in runs)
+        if n_inside == 0 or (len(runs) == 1 and not runs[0][1] and n_inside == len(set(vertices))):
+            continue  # entirely outside or entirely inside: not cut
+        arc = arcs[arc_id]
+        arc_radius = float(arc["Radius"])
+        closed = len(vertices) > 1 and vertices[0] == vertices[-1]
+        ring = vertices[:-1] if closed else vertices
+        interior = range(len(ring)) if closed else range(1, len(ring) - 1)
+        real_turns = any(not joint_turn_is_noise(ring[k - 1], ring[k], ring[(k + 1) % len(ring)], noise_sagitta) for k in interior)
+        dropped, kept, cut_adjacent_records = [], [], []
+        for run, cut_adjacent, outside in runs:
+            d = []
+            for v, u in zip(cut_adjacent, outside):
+                others = [w for w in run if w != v]
+                nearest = min(others, key=lambda q: math.dist(q, v)) if others else None
+                test = cut_arm_is_tangent_noise(v, u, nearest, arc_radius, clip, noise_sagitta)
+                cut_adjacent_records.append(test)
+                if not test["Kept"]:
+                    d.append(v)
+            dropped.append(d)
+            kept.append(len(run) - len(d))
+        lines = []
+        for axis, value in ((0, clip.box[0]), (0, clip.box[1]), (1, clip.box[2]), (1, clip.box[3])):
+            values = [v[axis] for v in ring]
+            if min(values) < value - 1e-9 < max(values):
+                lines.append({"Line": f"{'xy'[axis]} = {value:g}", "OutwardToFree": value - min(values), "InwardToFree": max(values) - value})
+        # the third window-introduced cut: a cut arm ending on a bridge strip's edge, or a chord vertex swallowed by a strip
+        swallowed = {clip.bridge_index(v) for v in ring if clip.in_box(v)} - {None}
+        bridge_cuts = sorted(swallowed | {int(t["ExitOn"].split()[1]) for t in cut_adjacent_records if t["ExitOn"].startswith("bridge")})
+        if bridge_cuts:
+            clip_kind += "+bridge"
+        pieces, truncations = [], []
+        if not real_turns:
+            prediction, reason = "None", "every joint of the arc is noise under the CornerRule: straight edges in both readings"
+        elif any(k < LEAST_SQUARES_BEND_JOINTS for k in kept):
+            prediction = "Collapse"
+            reason = f"fewer than {LEAST_SQUARES_BEND_JOINTS} joints kept inside the clip region: every kept joint reads as a corner"
+            for i in arc_segments:
+                pieces.append(piece(i, 0.0, float(segments[i]["Length"])))
+            if not closed:
+                for end in (vertices[0], vertices[-1]):
+                    along_chain(end, plane, arc_segments, margin, pieces, truncations)
+        elif any(dropped):
+            prediction = "DroppedJoint"
+            reason = "a cut-adjacent joint whose cut arm is not tangent within the noise rule leaves the bend and reads as a corner"
+            for d in dropped:
+                for v in d:
+                    # the full margin along the chain on each side of the dropped joint (its own chords included), as the
+                    # Collapse branch takes it along the arms
+                    at_v = at_point[(point_key(v[:2]), plane)]
+                    for j in at_v:
+                        along_chain(v, plane, [k for k in at_v if k != j], margin, pieces, truncations, through_arc=arc_id)
+        else:
+            prediction, reason = "None", "every cut-adjacent arm is tangent within the noise rule and at least four joints are kept"
+        excluded_length = sum(math.dist(p[0][:2], p[1][:2]) for p in pieces)
+        total_excluded += excluded_length
+        records.append({"Arc": arc_id, "Kind": arc["Kind"], "Radius": arc_radius, "Joints": arc["Joints"],
+                        "TurnDegrees": arc["TurnDegrees"], "Plane": plane, "Conductor": sorted(conductors, key=str),
+                        "Terminal": is_terminal, "Clip": clip_kind, "Lines": lines,
+                        "BridgeCuts": [{"Bridge": k, "Rectangle": list(clip.bridges[k])} for k in bridge_cuts],
+                        "CutAdjacent": cut_adjacent_records,
+                        "Segments": arc_segments, "InsideJoints": [len(run) for run, _, _ in runs],
+                        "DroppedCutAdjacent": [len(d) for d in dropped], "KeptJoints": kept, "RealTurns": real_turns,
+                        "Prediction": prediction, "Reason": reason, "ExcludedLength": excluded_length, "Pieces": pieces,
+                        "MarginTruncations": truncations})
+        if is_terminal and prediction == "Collapse" and setback_box is not None:
+            for line in lines:
+                hints.append({"Arc": arc_id, "Line": line["Line"], "InwardToFree": line["InwardToFree"],
+                              "SetbackToFree": (setback_box[0] - box[0]) + line["InwardToFree"],
+                              "Note": "the setback that cuts the arc away whole (the terminal then ends on the arm beyond it); "
+                                      "information for the window placement, nothing is moved"})
+    return {"Rule": "VALIDATION-PLAN (h)-9 cut-arc exclusion: Collapse = the arc's chords + margin along both arms; DroppedJoint = "
+                    "margin along the chain on both sides of the dropped cut-adjacent joint; None = nothing; the margin walk stops "
+                    "short at a branching vertex / chain end / the next arc (MarginTruncations)",
+            "ClipModel": "box (the setback box for the open-terminated terminal) minus the wall bridge strips of the plane",
+            "Bridges": [{"Plane": z, "Rectangle": list(r[:4])} for z, r in bridges],
+            "MarginOverR": margin_over_r, "JointNoiseSagittaOverR": noise_over_r, "LeastSquaresBendJoints": LEAST_SQUARES_BEND_JOINTS,
+            "CutArcs": len(records), "Predictions": dict(collections.Counter(r["Prediction"] for r in records)),
+            "ExcludedLength": total_excluded, "Arcs": records, "SetbackHints": hints}
+
+
+def polygon_set_bridges(polygon_set):
+    """(window name, [(plane z, bridge rectangle)]) of a ``window_polygons.py`` polygon set (``WindowPolygons.Bridges`` named by
+    plane, resolved to the plane's ``SurfaceZ``)."""
+    z_of_plane = {p["Name"]: float(p["SurfaceZ"]) for p in polygon_set["Planes"]}
+    bridges = [(z_of_plane[b["Plane"]], [float(v) for v in b["Rectangle"]]) for b in polygon_set["WindowPolygons"]["Bridges"]]
+    return polygon_set["Name"], bridges
+
+
+def inventory(manifest, windows, margin, weights, z_range=None, bridges=None):
+    """``bridges``: {window name: [(plane z, bridge rectangle)]} (``polygon_set_bridges``) for the cut-arc clip model; a window
+    without an entry is clipped by the box alone (conservative: no bridge edge shortens a wall-cut arm)."""
     ident = manifest["Identification"]
     radius = float(ident["MatchingRadius"])
     segments = ident["Segments"]
@@ -550,9 +853,21 @@ def inventory(manifest, windows, margin, weights, z_range=None):
         # (walls, wall bridges, open-terminated ends) is excluded -> for an open-terminated terminal the margin is OpenSetback + 3 R
         e1_margin = max(margin, open_setback + 3.0 * radius) if excitation["Kind"] == "OpenTerminatedTrace" else margin
         e1_region = (x0 + e1_margin, x1 - e1_margin, y0 + e1_margin, y1 - e1_margin)
+
+        def conductor_of_segment(i):
+            loop_index = loops.segment_loop.get(i)
+            if loop_index is None:
+                return None
+            body = loops.loops[loop_index]["Body"]
+            rec = loops.bodies.get(body) if loops.bodies else None
+            return rec["Conductor"] if rec else body
+
+        cut_arcs = cut_arc_exclusions(ident, conductor_of_segment, box,
+                                      setback_box if excitation["Kind"] == "OpenTerminatedTrace" else None, terminal,
+                                      bridges=(bridges or {}).get(name, ()))
         results["Windows"][name] = {
             "Box": list(box), "ComparisonRegion": list(inner),
-            "E1ComparisonRegion": list(e1_region), "E1Margin": e1_margin,
+            "E1ComparisonRegion": list(e1_region), "E1Margin": e1_margin, "E1CutArcExclusions": cut_arcs,
             "Perimeter": {"Total": sum(v["Assigned"] + v["Excluded"] for v in per_plane.values()),
                           "Assigned": sum(v["Assigned"] for v in per_plane.values()),
                           "Excluded": dict(sorted(excluded.items())),
@@ -644,8 +959,9 @@ def port_closed_loops(loops, loops_inside, body_kind):
 def terminal_assignment(body_rows, conductor_rows, radius, margin, box, port_lines=None):
     """Decision-180 terminal rule per conductor: the island conductor entirely inside the box with the largest
     proxy energy is the quoted terminal (1 V); else the cut non-ground conductor (a CPW centre trace / cut island)
-    with the largest proxy is the terminal, open-terminated inside the wall (the metal stops 3 R + margin inside
-    the box, the trace's other cuts bridged to ground); every other conductor is ground, a cut one bridged to
+    with the largest proxy is the terminal, open-terminated inside the wall (its metal is clipped to the setback box, 3 R +
+    margin inside every wall, so EVERY cut of the terminal is open-terminated — ``window_polygons.py`` bridges no cut of the
+    terminal and leaves its neighbours unbridged on the terminal's side); every other conductor is ground, a cut one bridged to
     ground at the wall by an explicit metal polygon. An UNCUT island conductor with bump-joined bodies the window does
     not see (``EntirelyInside`` False without ``CutByWall``) is not a terminal candidate of either kind: its extent is
     unknown (``UncutWithUnseenBodies``). A window with no non-ground conductor has no excitation (S3 class: move /
@@ -770,6 +1086,8 @@ def main(argv=None):
     parser.add_argument("--margin", type=float, default=None, help="exclusion margin from every wall (default 10 R)")
     parser.add_argument("--z", nargs=2, type=float, default=None, metavar=("ZMIN", "ZMAX"))
     parser.add_argument("--weights", default=None, help="JSON {Type: per-length proxy weight}")
+    parser.add_argument("--polygons", action="append", default=[], metavar="POLYGON_SET",
+                        help="window_polygons.py polygon set (its Name selects the window): the wall bridge strips of the cut-arc clip model")
     parser.add_argument("--output", required=True)
     parser.add_argument("--csv", default=None)
     parser.add_argument("--markdown", default=None)
@@ -779,8 +1097,13 @@ def main(argv=None):
         weights.update(json.load(open(args.weights)))
     windows = {w[0]: tuple(float(v) for v in w[1:]) for w in args.window}
     manifest = json.load(open(args.manifest))
-    results = inventory(manifest, windows, args.margin, weights, args.z)
+    bridges = dict(polygon_set_bridges(json.load(open(path))) for path in args.polygons)
+    unknown = sorted(set(bridges) - set(windows))
+    if unknown:
+        parser.error(f"--polygons for windows not requested: {unknown}")
+    results = inventory(manifest, windows, args.margin, weights, args.z, bridges)
     results["Manifest"] = args.manifest
+    results["PolygonSets"] = list(args.polygons)
     with open(args.output, "w") as out:
         json.dump(results, out, indent=1, default=list)
     if args.csv:
