@@ -112,9 +112,8 @@ bool HasHangingEntities(const mfem::ParMesh &mesh);
 
 // Interior boundary sides after a refinement of the mesh, given the sides of the coarse
 // elements before refinement: an entity of a fine element lying on a split entity of its
-// parent element inherits its split and copy flags, and one lying on the boundary of the
-// parent element otherwise reads copies if the parent does for any entity in the closure
-// of the smallest parent entity containing it (refinement moves no element across an
+// parent element is split, with the version and the carrier of the parent entity, and the
+// fine elements have the side label of their parent (refinement moves no element across an
 // interior boundary). The coarse-to-fine transformations are those returned by
 // mfem::Mesh::GetRefinementTransforms. Not collective.
 CrackSides InheritCrackSides(const mfem::Mesh &fine_mesh,
