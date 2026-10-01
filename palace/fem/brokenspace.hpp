@@ -4,6 +4,7 @@
 #ifndef PALACE_FEM_BROKEN_SPACE_HPP
 #define PALACE_FEM_BROKEN_SPACE_HPP
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -18,40 +19,75 @@ namespace palace
 //
 // An interior boundary ("crack") is the set of interior faces carrying one of a given list
 // of boundary attributes. Every mesh entity (vertex, edge, face) lying on such a face is
-// split into one copy per group of neighboring elements which are connected to each other
-// without crossing the interior boundary, unless there is only one such group (for example
-// at the free edge of an interior boundary). The groups on the same side of a connected
-// interior boundary form a region. The regions, adjacent when they are on different sides
-// of a split entity, are two-colored: those of the first color keep the original degrees
-// of freedom of their split entities, while those of the second color read a single copy
-// (junctions of three or more regions therefore share one copy). Each element then reads
-// either the original degrees of freedom of all of its split entities or the copies of all
-// of them, as required by the constraints of hanging entities on a nonconforming mesh,
-// which can involve the split entities of several interior boundaries. Where the regions
-// cannot be two-colored, at junctions of three pairwise adjacent regions or for an interior
-// boundary whose two sides are joined into a single region through the split entities of
-// another one (an air bridge standing on a ground plane, for example), the sides of the
-// affected split entities are two-colored by themselves, consistently along the interior
-// boundary: only the elements next to the junction then read the copies for some of their
-// split entities and the original degrees of freedom for others.
+// split into one version per group of neighboring elements which are connected to each
+// other without crossing the interior boundary, unless there is only one such group (for
+// example at the free edge of an interior boundary). The group with the smallest label
+// reads the original degrees of freedom (version 0), and each other group its own copy
+// (versions 1, 2, ...), also at junctions of three or more groups, as on a cracked mesh.
 //
-// The sides are stored as bitmasks per local element, with bit b for the local entity b of
-// the element, where local entities are numbered as vertices [0, nv), then edges
-// [nv, nv + ne), then (3D only) faces [nv + ne, nv + ne + nf), in the local ordering of
-// mfem::Mesh::GetElementVertices, GetElementEdges, and GetElementFaces.
+// On a nonconforming mesh, the degrees of freedom of a hanging entity are constrained by
+// those of the entities of the closure of its master entity, possibly split, which a broken
+// space has to read in the version of the side of the element reading the hanging entity.
+// Each element therefore also carries a side label, the global number of its ancestor on
+// the mesh on which the sides were computed: all elements with the same label are on the
+// same side of every split entity of the closure of the ancestor, which contains the
+// master entities of their hanging entities.
+//
+// The sides are stored per local element, with bit (or 4-bit version) b for the local
+// entity b of the element, where local entities are numbered as vertices [0, nv), then
+// edges [nv, nv + ne), then (3D only) faces [nv + ne, nv + ne + nf), in the local ordering
+// of mfem::Mesh::GetElementVertices, GetElementEdges, and GetElementFaces.
 //
 struct CrackSides
 {
-  // Bit b of copy[e] is set when element e reads the copy of the DOFs of its local entity
-  // b. On a nonconforming mesh, this also includes entities which are not split, but whose
-  // DOFs are constrained to those of split entities (hanging entities next to an interior
-  // boundary): these read the copies of the split DOFs in their constraints.
-  std::vector<std::uint32_t> copy;
-
   // Bit b of split[e] is set when the local entity b of element e is split.
   std::vector<std::uint32_t> split;
 
-  // Return whether any local element reads copies.
+  // Version of the DOFs of each split local entity read by the element (0 for the original
+  // DOFs, k > 0 for the k-th copy), 4 bits per local entity.
+  std::vector<std::array<std::uint32_t, 4>> version;
+
+  // Dimension of the entity of the mesh on which the sides were computed which carries each
+  // split local entity of the element (the entity itself, or the one it was refined from),
+  // 2 bits per local entity. The DOFs of a hanging entity are constrained by those of the
+  // entities of the closure of its master entity, whose versions are those of its carrier
+  // for its own DOFs, but can differ for the entities of lower dimension of its closure.
+  std::vector<std::uint64_t> carrier;
+
+  // Side label of each element (the global number of its ancestor on the mesh on which the
+  // sides were computed).
+  std::vector<std::int64_t> side;
+
+  static constexpr int max_version = 15;
+
+  int GetCarrier(int e, int b) const
+  {
+    return static_cast<int>((carrier[e] >> (2 * b)) & 0x3u);
+  }
+  void SetCarrier(int e, int b, int d)
+  {
+    carrier[e] = (carrier[e] & ~(std::uint64_t(0x3) << (2 * b))) |
+                 (static_cast<std::uint64_t>(d) << (2 * b));
+  }
+
+  int GetVersion(int e, int b) const
+  {
+    return static_cast<int>((version[e][b / 8] >> (4 * (b % 8))) & 0xFu);
+  }
+  void SetVersion(int e, int b, int v)
+  {
+    auto &word = version[e][b / 8];
+    word = (word & ~(std::uint32_t(0xF) << (4 * (b % 8)))) |
+           (static_cast<std::uint32_t>(v) << (4 * (b % 8)));
+  }
+
+  // Bitmask of the local entities of element e read as a copy (version > 0).
+  std::uint32_t CopyBits(int e) const;
+
+  // Resize for the given number of local elements, with no split entities and zero labels.
+  void Reset(std::size_t ne);
+
+  // Return whether any local entity is split.
   bool Any() const;
 };
 
@@ -112,15 +148,18 @@ struct BrokenProlongationMatrix
 
 // Build the prolongation of a broken space from the prolongation P of the underlying space
 // (from its true DOFs to its L-vector). The true DOFs of each process are its true DOFs
-// followed by the copies of its split true DOFs (split_tdofs, local indices), and the
-// L-vector is the L-vector of the underlying space followed by the copied L-DOFs
-// (copy_ldofs, the local indices of the original L-DOFs). The row of a copied L-DOF is the
-// row of its original L-DOF, with the columns of the split true DOFs of all processes
-// replaced by those of their copies (the L-DOFs of constrained entities can depend on both
-// split and unsplit true DOFs). Collective.
+// followed by the copies of its true DOFs with several versions (num_versions[t] - 1 copies
+// of the local true DOF t, contiguous), and the L-vector is the L-vector of the underlying
+// space followed by the copied L-DOFs. The row of the copied L-DOF c is the row of its
+// original L-DOF copy_ldofs[c], with the version given for each of its entries (in the
+// order of the diagonal then off-diagonal entries of the row of P) in
+// copy_versions[copy_offsets[c], copy_offsets[c + 1]), the L-DOFs of constrained entities
+// depending on several true DOFs, possibly in different versions. Collective.
 void BuildBrokenProlongation(const mfem::ParMesh &mesh, mfem::HypreParMatrix &P,
-                             const mfem::Array<int> &copy_ldofs,
-                             const mfem::Array<int> &split_tdofs,
+                             const std::vector<int> &copy_ldofs,
+                             const std::vector<int> &copy_offsets,
+                             const std::vector<std::uint8_t> &copy_versions,
+                             const std::vector<int> &num_versions,
                              BrokenProlongationMatrix &out);
 
 }  // namespace fem
