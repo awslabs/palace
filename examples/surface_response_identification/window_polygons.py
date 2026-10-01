@@ -30,13 +30,21 @@ schema (``examples/cpw3d_surface/window_validation/README.md``, Version 1): ``gr
 bridged / non-excited conductor, one label for the terminal, ``Bumps`` = the footprints with their conductor,
 ``Terminals``. ``WindowPolygons`` holds the extra bookkeeping (chip conductor per polygon, bridges, setback, heights).
 
-Verification (``--verification``): every metal boundary edge not on a wall and outside the bridge / setback strips
-must lie on a segment of the chip manifest (the extract) on the same plane within ``--tolerance``; every extract
-segment entirely inside the box (uncut) must be covered by boundary edges over its whole length. Unmatched length,
-uncovered segments and conductor conflicts are reported; ``Passed`` iff all three are zero. Decision 190: (b) two polygons of one
-plane closer than 0.025 R (gap or overlap) are refused by the fabricated mesher -> reported as violations (``Passed`` False);
+Verification (``--verification``): every metal boundary edge not on a wall and outside the bridge strips (and, for the
+TERMINAL conductor's edges only, outside the setback strips) must lie on a segment of the chip manifest (the extract) on the
+same plane within ``--tolerance``; every extract segment entirely inside the box (uncut) must be covered by boundary edges over
+its whole length (the terminal's own segments over their length outside the setback band). The ground geometry in the setback
+band is exported unclipped and verified like everywhere else. Unmatched length, uncovered segments and conductor conflicts are
+reported; ``Passed`` iff all three are zero. Decision 190: (b) two polygons of one
+plane closer than 0.025 R (gap or overlap) are refused by the fabricated mesher -> reported as violations (``Passed`` False); a
+clearance with no other polygon within the 10-um search radius is reported as "> 10 um";
 (c) cross-plane nominally coincident edge runs (the L1 and L2 ground edges drawn by two mesh surfaces with different samplings)
 are recorded with their length and maximum offset (``CrossPlaneCoincidence``); the fabricated mesher snaps them itself.
+
+Coordinates: a chip mesh node is emitted with its ORIGINAL float64 coordinates (identity by node; the npz carries the node
+tags and doubles); only clipping-introduced intersections (walls, setback box, bridge strip lines) are computed, in double and
+unrounded. The 1e-6-um rounded key is used for vertex identity only and is never emitted: the identification's signature
+quantisation (6 decimals, no hysteresis) flips hashes on 1e-6-um coordinate changes (review of decision 195, M1).
 """
 
 import argparse
@@ -49,16 +57,31 @@ import numpy as np
 
 from . import window_query as WQ
 
-DECIMALS = 6  # vertex keys: 1e-6 um
+DECIMALS = 6  # vertex IDENTITY key quantum: 1e-6 um (matching only; emitted coordinates are never rounded)
 
 
 def key(p):
+    """Identity key of a vertex (rounded); used to recognise one vertex drawn twice, never as a coordinate."""
     return (round(float(p[0]), DECIMALS), round(float(p[1]), DECIMALS))
 
 
-def clip_half_plane(polygon, axis, value, keep_greater):
+class VertexIdentity:
+    """Vertex identity for the union by edge counting: a chip mesh node keeps its original float64 coordinates (one
+    vertex per node, registered first), a clipping-introduced intersection within the key quantum of a registered vertex IS
+    that vertex (a node 1e-9 um off a wall is not duplicated by a 1e-9-um sliver), any other intersection is registered with
+    the double computed. The rounded key is only ever looked up; the coordinates emitted are the registered doubles."""
+
+    def __init__(self):
+        self.canonical = {}
+
+    def register(self, p):
+        p = (float(p[0]), float(p[1]))
+        return self.canonical.setdefault(key(p), p)
+
+
+def clip_half_plane(polygon, axis, value, keep_greater, identity=None):
     """Sutherland-Hodgman against x (axis 0) or y (axis 1) = value, keeping the side >= value (or <= value).
-    Intersections are computed from the lexicographically smaller endpoint so shared edges clip identically."""
+    Intersections are computed in double from the lexicographically smaller endpoint so shared edges clip identically."""
     out = []
     n = len(polygon)
     for i in range(n):
@@ -72,7 +95,7 @@ def clip_half_plane(polygon, axis, value, keep_greater):
             out.append(intersection(a, b, axis, value))
         elif ina != inb and (abs(da) <= 1e-12 or abs(db) <= 1e-12):
             pass  # the crossing point is an endpoint already emitted (a) or to be emitted (b on the next step)
-    return dedupe(out)
+    return dedupe(out, identity)
 
 
 def intersection(a, b, axis, value):
@@ -80,13 +103,14 @@ def intersection(a, b, axis, value):
     t = (value - lo[axis]) / (hi[axis] - lo[axis])
     p = [lo[0] + t * (hi[0] - lo[0]), lo[1] + t * (hi[1] - lo[1])]
     p[axis] = value
-    return (round(p[0], DECIMALS), round(p[1], DECIMALS))
+    return (p[0], p[1])
 
 
-def dedupe(polygon):
+def dedupe(polygon, identity=None):
+    """Consecutive duplicates removed; with a ``VertexIdentity`` every point is replaced by its registered vertex."""
     out = []
     for p in polygon:
-        p = key(p)
+        p = identity.register(p) if identity is not None else (float(p[0]), float(p[1]))
         if not out or out[-1] != p:
             out.append(p)
     if len(out) > 1 and out[0] == out[-1]:
@@ -94,11 +118,11 @@ def dedupe(polygon):
     return out
 
 
-def split_by_line(polygon, axis, value):
+def split_by_line(polygon, axis, value, identity=None):
     """Both sides of the line (pieces with < 3 vertices dropped)."""
     pieces = []
     for keep_greater in (True, False):
-        part = clip_half_plane(polygon, axis, value, keep_greater)
+        part = clip_half_plane(polygon, axis, value, keep_greater, identity)
         if len(part) >= 3 and abs(signed_area(part)) > 1e-14:
             pieces.append(part)
     return pieces
@@ -370,9 +394,14 @@ def plane_edges(polygons, box):
     return edges
 
 
-def intra_plane_clearance(polygons, box, threshold, cell=10.0):
+CLEARANCE_SEARCH_RADIUS = 10.0  # um: the grid cell; a vertex sees every edge of another polygon within this distance
+
+
+def intra_plane_clearance(polygons, box, threshold, cell=CLEARANCE_SEARCH_RADIUS):
     """Decision 190 (b): the mesher refuses two polygons of one plane closer than ``threshold`` (gap or overlap < 0.025 R).
-    Returns (min distance between a vertex of one polygon and an edge of another, [violations])."""
+    Returns (min distance between a vertex of one polygon and an edge of another, [violations]); the minimum is None when no
+    vertex of any polygon has an edge of another polygon within the search radius ``cell`` (the 3 x 3 grid neighbourhood
+    covers every point within ``cell`` of the vertex): the clearance is then "> cell", also for a plane with one polygon."""
     edges = plane_edges(polygons, box)
     grid = collections.defaultdict(list)
     for a, b, k in edges:
@@ -394,7 +423,12 @@ def intra_plane_clearance(polygons, box, threshold, cell=10.0):
                             best = min(best, d)
                             if d < threshold:
                                 violations.append({"Polygon": k, "Vertex": list(p), "Other": k2, "Distance": d})
-    return (None if math.isinf(best) else best), violations  # None: a single polygon (JSON has no infinity)
+    return (None if math.isinf(best) else best), violations  # None: nothing within the search radius (JSON has no infinity)
+
+
+def clearance_label(best, radius=CLEARANCE_SEARCH_RADIUS):
+    """The clearance as reported: the number, or "> radius um" when no other polygon lies within the search radius."""
+    return f"> {radius:g} um" if best is None else best
 
 
 def cross_plane_coincidence(polygons_by_plane, box, offset, cell=10.0):
@@ -484,10 +518,13 @@ def export(args):
         is_bump_face = in_plane & np.isin(attribute, list(bump_attrs))
         metal_index = np.nonzero(is_metal)[0]
         xy_all = xyz[:, :, :2]
-        # orient every triangle counter-clockwise so the union boundary is oriented
+        # every triangle with its nodes' ORIGINAL float64 coordinates (one vertex per node: a node's doubles are identical in
+        # every triangle of the mesh), oriented counter-clockwise so the union boundary is oriented; the identity registers
+        # the nodes first so a clipping intersection within the key quantum of a node resolves to the node
+        identity = VertexIdentity()
         tri_xy = []
         for t in range(len(nodes)):
-            poly = [key(p) for p in xy_all[t]]
+            poly = [identity.register(p) for p in xy_all[t]]
             tri_xy.append(poly if signed_area(poly) > 0 else poly[::-1])
         # components of the metal, identified with the chip's conductors through their boundary edges
         comp_of = components(nodes[metal_index])
@@ -526,7 +563,7 @@ def export(args):
         for poly, c in full:
             p = poly
             for axis, value, greater in ((0, box[0], True), (0, box[1], False), (1, box[2], True), (1, box[3], False)):
-                p = clip_half_plane(p, axis, value, greater)
+                p = clip_half_plane(p, axis, value, greater, identity)
                 if len(p) < 3:
                     break
             if len(p) >= 3 and abs(signed_area(p)) > 1e-14:
@@ -542,7 +579,7 @@ def export(args):
             b = setback_box if (metal and c == terminal and setback > 0.0) else box
             p = poly
             for axis, value, greater in ((0, b[0], True), (0, b[1], False), (1, b[2], True), (1, b[3], False)):
-                p = clip_half_plane(p, axis, value, greater)
+                p = clip_half_plane(p, axis, value, greater, identity)
                 if len(p) < 3:
                     break
             if len(p) < 3 or abs(signed_area(p)) <= 1e-14:
@@ -550,7 +587,7 @@ def export(args):
             parts = [p]
             for r in rectangles:
                 for axis, value in ((0, r[0]), (0, r[1]), (1, r[2]), (1, r[3])):
-                    parts = [q for part in parts for q in split_by_line(part, axis, value)]
+                    parts = [q for part in parts for q in split_by_line(part, axis, value, identity)]
             for q in parts:
                 if metal:
                     pieces.append((q, c, True))
@@ -604,7 +641,7 @@ def export(args):
         for t in np.nonzero(is_bump_face)[0]:
             p = tri_xy[t]
             for axis, value, greater in ((0, box[0], True), (0, box[1], False), (1, box[2], True), (1, box[3], False)):
-                p = clip_half_plane(p, axis, value, greater)
+                p = clip_half_plane(p, axis, value, greater, identity)
                 if len(p) < 3:
                     break
             if len(p) >= 3 and abs(signed_area(p)) > 1e-14:
@@ -629,21 +666,28 @@ def export(args):
             label = "ground" if root is None or root != terminal else terminal_label
             bumps_out.append({"Conductor": label, "Footprint": [list(p) for p in l], "Plane": plane["Name"], "ChipConductor": root,
                               "Clipped": any(on_wall(l[i], l[(i + 1) % len(l)], box) for i in range(len(l)))})
-        # verification against the chip manifest (the extract): boundary edges off the walls and outside the
-        # bridge / setback strips vs the segments; uncut segments covered
-        strips = [r[:4] for r in rectangles]
+        # verification against the chip manifest (the extract): boundary edges off the walls and outside the bridge strips
+        # vs the segments; uncut segments covered. The setback strips are excluded for the TERMINAL conductor's edges only
+        # (its metal is the only metal clipped to the setback box): the ground geometry in the band is verified like
+        # everywhere else.
+        bridge_strips = [r[:4] for r in rectangles]
+        setback_strips = []
         if setback > 0.0:
-            strips += [[box[0], box[0] + setback, box[2], box[3]], [box[1] - setback, box[1], box[2], box[3]],
-                       [box[0], box[1], box[2], box[2] + setback], [box[0], box[1], box[3] - setback, box[3]]]
+            setback_strips = [[box[0], box[0] + setback, box[2], box[3]], [box[1] - setback, box[1], box[2], box[3]],
+                              [box[0], box[1], box[2], box[2] + setback], [box[0], box[1], box[3] - setback, box[3]]]
+
+        def strips_of(conductor):
+            return bridge_strips + (setback_strips if conductor == terminal and terminal is not None else [])
+
         covered = collections.defaultdict(float)
         unmatched_length, matched_length, excluded_length, unmatched_examples = 0.0, 0.0, 0.0, []
         for a, b, c in boundary:
             length = math.dist(a, b)
             if on_wall(a, b, box):
                 continue
-            # only the part of the edge outside the bridge / setback strips is a chip metal edge (a chord may
-            # straddle a strip boundary: the strip lines split the pieces but not the setback-box clip)
-            outside = length * (1.0 - fraction_in_strips(a, b, strips))
+            # only the part of the edge outside the strips is a chip metal edge (a chord may straddle a strip boundary: the
+            # strip lines split the pieces but not the setback-box clip)
+            outside = length * (1.0 - fraction_in_strips(a, b, strips_of(c)))
             excluded_length += length - outside
             if outside <= 1e-9:
                 continue
@@ -664,21 +708,24 @@ def export(args):
                 continue
             if s.get("Exclusion", {}).get("Class") in ("NonManifold", "NonPlanar"):
                 continue  # bump outlines / airbridge feet are not metal-dielectric edges
-            # the expected coverage = the segment's length outside the bridge / setback strips
+            # the expected coverage = the segment's length outside the bridge strips (and the setback strips for the terminal's
+            # own edges: segment -> loop -> body -> chip conductor)
+            loop_index = loops_model.segment_loop.get(i)
+            segment_conductor = conductor_of_body(loops_model.loops[loop_index]["Body"])[0] if loop_index is not None else None
             length = float(s["Length"])
-            expected = length * (1.0 - fraction_in_strips(p0, p1, strips))
+            expected = length * (1.0 - fraction_in_strips(p0, p1, strips_of(segment_conductor)))
             if expected <= 1e-6:
                 continue
             uncut += 1
-            if covered.get(i, 0.0) < expected - tolerance:  # vertex keys are rounded to 1e-6 um: compare at the match tolerance
+            if covered.get(i, 0.0) < expected - tolerance:  # covered lengths are sums of chord lengths: compare at the match tolerance
                 uncovered.append({"Segment": i, "Length": length, "Expected": expected, "Covered": covered.get(i, 0.0), "Key": s["Key"],
                                   "Exclusion": s.get("Exclusion", {}).get("Class")})
         verification["Planes"][plane["Name"]] = {
             "MetalTriangles": int(len(metal_index)), "GapTriangles": int(is_gap.sum()), "Components": len(set(comp_of)),
             "Polygons": len(plane_polygons), "BoundaryEdges": len(boundary), "MatchedLength": matched_length,
             "UnmatchedLength": unmatched_length, "UnmatchedExamples": unmatched_examples,
-            "ExcludedLength (bridges / setback)": excluded_length, "UncutSegments": uncut, "UncoveredSegments": uncovered,
-            "Bridges": rectangles, "Setback": setback}
+            "ExcludedLength (bridges / terminal setback)": excluded_length, "UncutSegments": uncut, "UncoveredSegments": uncovered,
+            "Bridges": rectangles, "Setback": setback, "SetbackExclusionScope": "terminal conductor edges only"}
         if unmatched_length > 1e-6 or uncovered:
             verification["Passed"] = False
     if terminal is not None and terminal_label is None:
@@ -691,8 +738,9 @@ def export(args):
     clearance_threshold = 0.025 * radius
     for p in planes_out:
         best, violations = intra_plane_clearance(p["Polygons"], box, clearance_threshold)
-        verification["Planes"][p["Name"]]["IntraPlaneClearance"] = {"Threshold": clearance_threshold, "Min": best,
-                                                                    "Violations": violations[:50]}
+        verification["Planes"][p["Name"]]["IntraPlaneClearance"] = {
+            "Threshold": clearance_threshold, "Min": best, "SearchRadius": CLEARANCE_SEARCH_RADIUS,
+            "Label": clearance_label(best), "Violations": violations[:50]}
         if violations:
             warnings.append(f"plane {p['Name']}: {len(violations)} polygon vertices within {clearance_threshold:g} um of another "
                             "polygon (decision 190 (b): refused by the mesher; unresolved)")
@@ -709,7 +757,8 @@ def export(args):
                               "Extract": args.extract, "E0": args.e0, "Excitation": excitation, "TerminalChipConductor": terminal,
                               "OpenSetback": setback, "BridgeWidth": bridge_width, "Polygons": bookkeeping, "Bridges": bridges_out,
                               "CrossPlaneCoincidence": {k: v for k, v in verification["CrossPlaneCoincidence"].items() if k != "Pairs"},
-                              "IntraPlaneClearanceMin": {p: verification["Planes"][p]["IntraPlaneClearance"]["Min"] for p in verification["Planes"]},
+                              "IntraPlaneClearanceMin": {p: verification["Planes"][p]["IntraPlaneClearance"]["Label"] for p in verification["Planes"]},
+                              "IntraPlaneClearanceSearchRadius": CLEARANCE_SEARCH_RADIUS,
                               "BumpFootprints": [{k: v for k, v in b.items() if k != "Footprint"} for b in columns],
                               "BumpHeight": chip.get("BumpHeight"), "Warnings": warnings}}
     verification["Warnings"] = warnings
