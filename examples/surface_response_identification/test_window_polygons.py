@@ -136,6 +136,7 @@ class WindowPolygons(unittest.TestCase):
         self.assertEqual(c["Runs"], 1)
         self.assertAlmostEqual(c["Length"], 30.0)
         self.assertAlmostEqual(c["MaxOffset"], 0.03)
+        self.assertEqual(WP.intra_plane_clearance(l1, box, 0.05), (None, []))  # one polygon: no clearance (JSON-safe)
 
 
 if __name__ == "__main__":

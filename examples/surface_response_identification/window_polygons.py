@@ -394,7 +394,7 @@ def intra_plane_clearance(polygons, box, threshold, cell=10.0):
                             best = min(best, d)
                             if d < threshold:
                                 violations.append({"Polygon": k, "Vertex": list(p), "Other": k2, "Distance": d})
-    return best, violations
+    return (None if math.isinf(best) else best), violations  # None: a single polygon (JSON has no infinity)
 
 
 def cross_plane_coincidence(polygons_by_plane, box, offset, cell=10.0):
