@@ -317,8 +317,6 @@ mfem::Mesh CutMesh(const mfem::Mesh &mesh, double y_max = 1.0)
   return cut;
 }
 
-// Partition such that process boundaries both coincide with the interior boundary and
-// cross it.
 // The same mesh with the elements selected by the predicate on their center numbered
 // first.
 template <typename Predicate>
@@ -351,6 +349,8 @@ mfem::Mesh ReorderElements(const mfem::Mesh &mesh, Predicate &&first)
   return out;
 }
 
+// Partition such that process boundaries both coincide with the interior boundary and
+// cross it.
 std::vector<int> Partition(const mfem::Mesh &mesh, int num_procs)
 {
   std::vector<int> part(mesh.GetNE());
