@@ -209,10 +209,11 @@ public:
   {
     if (ops.size() == 1)
     {
-      ops.front().first->Mult(x, y);
-      if (ops.front().second != ScalarType{1.0})
+      const auto &[op, c] = ops.front();
+      op->Mult(x, y);
+      if (c != ScalarType{1.0})
       {
-        y *= ops.front().second;
+        y *= c;
       }
       return;
     }
@@ -224,10 +225,11 @@ public:
   {
     if (ops.size() == 1)
     {
-      ops.front().first->MultTranspose(x, y);
-      if (ops.front().second != ScalarType{1.0})
+      const auto &[op, c] = ops.front();
+      op->MultTranspose(x, y);
+      if (c != ScalarType{1.0})
       {
-        y *= ops.front().second;
+        y *= c;
       }
       return;
     }
