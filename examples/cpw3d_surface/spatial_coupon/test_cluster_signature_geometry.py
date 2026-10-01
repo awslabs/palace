@@ -108,6 +108,135 @@ class TwoConductorFingersTest(unittest.TestCase):
         self.assertEqual([e["Conductor"] for e in edges], [1, 1, 2, 2])
 
 
+def box_of(coupon, radius):
+    """The generator's box (x0, y0), (x1, y1) and its rotation for a coupon (as cluster_coupon computes it)."""
+    import generate_spatial_response as spatial_generator
+    frame, local_edges, _ = spatial_generator.normalize_geometry(
+        {**coupon, "Geometry": {**coupon["Geometry"], "PlanViewFacets": []}}, radius)
+    lower, upper = spatial_generator.coupon_bounds(local_edges, radius, 0.1, 0.05)
+    return (lower, upper), np.asarray(frame)[:2, :2]
+
+
+class InteriorCutTest(unittest.TestCase):
+    """A chain cut INSIDE the cluster (S1p's 41-edge loop end, stage 1): the vertical edge x = 0
+    (metal at x < 0) is claimed as two pieces, y in [-3, -0.5] and [0.5, 2], the piece between
+    them being another feature's (a translational stack piece); the upper piece turns at the
+    corner (0, 2) into the horizontal y = 2 toward +x (metal above), and a second chain y = 4
+    (metal below) crosses the box. Extending the two facing free ends straight to the box
+    would run the lower piece's extension across the y = 4 chain (the fail-before); bridging
+    them keeps the mask: metal = {y < 4} minus {x > 0, y < 2}."""
+    R = 1.0
+
+    def record(self):
+        return record([portion((0.0, -3.0, 0.0, -0.5), (1.0, 0.0)), portion((0.0, 0.5, 0.0, 2.0), (1.0, 0.0)),
+                       portion((0.0, 2.0, 3.0, 2.0), (0.0, -1.0)), portion((-3.0, 4.0, 3.0, 4.0), (0.0, 1.0))],
+                      [{"P": [0.0, 2.0], "TurnDegrees": 90.0, "Type": "ConvexCorner"}])
+
+    def test_facing_free_ends_are_bridged_in_the_mask_only(self):
+        rec = self.record()
+        portions = csg.portions_from_signature(rec["Signature"], self.R)
+        states = csg.end_states(portions, csg.vertex_points(rec["Signature"], self.R), self.R)
+        self.assertEqual(states, [(True, True), (True, False), (False, True), (True, True)])
+        bridges, bridged = csg.interior_bridges(portions, states, self.R)
+        self.assertEqual(bridges, [(0, 1, 1, 0)])
+        self.assertEqual(bridged, [(True, False), (False, False), (False, True), (True, True)])
+        # Fail-before: without the bridge the lower piece's extension crosses the y = 4 chain.
+        coupon_unbridged = {"Topology": "SpatialEdgeCluster", "Interfaces": INTERFACES, "BoundaryCondition": {"Type": "PEC"},
+                            "Geometry": {"EdgeCount": 4, "Signature": rec["Signature"],
+                                         "Edges": csg.edge_rows(portions, states, self.R, INTERFACES, {"Type": "PEC"})}}
+        (lower, upper), rotation = box_of(coupon_unbridged, self.R)
+        box = ((float(lower[0]), float(lower[1])), (float(upper[0]), float(upper[1])))
+        local = [{**p, "P0": rotation @ p["P0"], "P1": rotation @ p["P1"], "Gap": rotation @ p["Gap"]} for p in portions]
+        with self.assertRaisesRegex(csg.SignatureGeometryError, "cross inside the coupon box"):
+            csg.plan_view_faces(csg.extended_chain_segments(local, states, box, self.R), box, self.R)
+        coupon, edges = csg.cluster_coupon(rec, self.R, 0.1, 0.05)
+        # The rows and the model's Edges are the claimed portions: the bridged ends keep their
+        # length (the cut piece is not claimed by this model), the outer free ends are lengthened.
+        rows = coupon["Geometry"]["Edges"]
+        self.assertEqual(len(rows), 4)
+        self.assertEqual(len(edges), 4)
+        lower_row, upper_row = rows[0], rows[1]
+        self.assertEqual([round(v, 9) for v in upper_row["Interval"]], [-0.75, 0.75])      # both ends connected: half length
+        self.assertEqual([round(v, 9) for v in lower_row["Interval"]], [-1.25, 1.25])      # half length 1.25 >= R on both ends
+        for edge, entry in zip(edges, rec["Signature"]["Portions"]):
+            tangent = np.cross(np.asarray(edge["GapDirection"]), np.asarray(edge["ProcessNormal"]))
+            ends = sorted(tuple(np.round((np.asarray(edge["Point"]) + s * tangent)[:2], 9)) for s in edge["Interval"])
+            expected = sorted([tuple(np.round(np.asarray(entry["P"][:2]) * self.R, 9)), tuple(np.round(np.asarray(entry["P"][2:]) * self.R, 9))])
+            self.assertEqual(ends, expected)
+        # The mask: metal = {y < 4} minus {x > 0, y < 2} in the canonical frame (the generator's
+        # frame is a rotation; the areas are invariant).
+        (lower, upper), rotation = box_of(coupon, self.R)
+        corner = rotation @ np.asarray([0.0, 2.0])
+        top = rotation @ np.asarray([0.0, 4.0])
+        axis = int(np.argmax(np.abs(rotation @ np.asarray([1.0, 0.0]))))     # the canonical x axis in the local frame
+        other = 1 - axis
+        sign_x = np.sign((rotation @ np.asarray([1.0, 0.0]))[axis])
+        sign_y = np.sign((rotation @ np.asarray([0.0, 1.0]))[other])
+        extent_x = (upper[axis] - corner[axis]) if sign_x > 0 else (corner[axis] - lower[axis])
+        depth_y = (corner[other] - lower[other]) if sign_y > 0 else (upper[other] - corner[other])
+        above_y = (upper[other] - top[other]) if sign_y > 0 else (top[other] - lower[other])
+        box_area = float((upper[0] - lower[0]) * (upper[1] - lower[1]))
+        width = float(upper[axis] - lower[axis])
+        self.assertAlmostEqual(mask_area(coupon, 1), box_area - float(extent_x * depth_y) - float(width * above_y), places=6)
+        self.assertEqual(coupon["Geometry"]["InteriorCuts"], [{"Portions": [0, 1], "Ends": [[0.0, -0.5], [0.0, 0.5]], "LengthOverR": 1.0}])
+
+    def test_interior_cut_needs_the_same_chain(self):
+        # The facing piece of another conductor is not a continuation: both ends stay free and
+        # the lower piece's extension still crosses the y = 4 chain (fail closed, as before).
+        rec = self.record()
+        rec["Signature"]["Portions"][1]["Conductor"] = 2
+        rec["Signature"]["Portions"][2]["Conductor"] = 2
+        with self.assertRaisesRegex(csg.SignatureGeometryError, "cross inside the coupon box"):
+            csg.cluster_coupon(rec, self.R, 0.1, 0.05)
+        # A gap longer than the cluster's event reach (2R) is not an interior cut either.
+        rec = self.record()
+        rec["Signature"]["Portions"][0]["P"] = [0.0, -6.0, 0.0, -2.5]
+        portions = csg.portions_from_signature(rec["Signature"], self.R)
+        states = csg.end_states(portions, csg.vertex_points(rec["Signature"], self.R), self.R)
+        bridges, _ = csg.interior_bridges(portions, states, self.R)
+        self.assertEqual(bridges, [])
+
+
+class OneQuantumJointTest(unittest.TestCase):
+    """Two portions meeting at a corner whose ends differ by one signature quantum (1e-6 R:
+    an arc end from its centre and radius against the rounded straight end it meets, S1p's
+    loop end): end_states connects them within COINCIDENCE_OVER_R and the arrangement must
+    see one node too (the fail-before: a micro-gap leaks the face and the bounding chains
+    disagree on the metal side). The mask equals the exactly-joined corner's."""
+    R = 1.9
+
+    def test_ends_one_quantum_apart_build_the_same_mask(self):
+        # Arms of 2R and 3R (not exactly 2R: the generator's box rule extends a row end at
+        # exactly R from its midpoint, so a one-quantum shorter arm would move the box).
+        exact = record([portion((-2.0, 0.0, 0.0, 0.0), (0.0, 1.0)), portion((0.0, 0.0, 0.0, 3.0), (-1.0, 0.0))],
+                       [{"P": [0.0, 0.0], "TurnDegrees": 90.0, "Type": "ConcaveCorner"}])
+        offset = record([portion((-2.0, 0.0, 0.0, 0.0), (0.0, 1.0)), portion((1.0e-6, 1.0e-6, 0.0, 3.0), (-1.0, 0.0))],
+                        [{"P": [0.0, 0.0], "TurnDegrees": 90.0, "Type": "ConcaveCorner"}])
+        portions = csg.portions_from_signature(offset["Signature"], self.R)
+        self.assertEqual(csg.end_states(portions, csg.vertex_points(offset["Signature"], self.R), self.R),
+                         [(True, False), (False, True)])
+        segments = [{"P0": p["P0"], "P1": p["P1"], "Gap": p["Gap"], "Conductor": 1} for p in portions]
+        snapped = csg.snap_chain_ends(segments, self.R)
+        self.assertEqual(snapped[1]["P0"].tolist(), snapped[0]["P1"].tolist())
+        self.assertEqual(snapped[0]["P1"].tolist(), portions[0]["P1"].tolist())     # the first end seen is the representative
+        # Fail-before: without the snap the one-quantum gap leaks the face.
+        snap = csg.snap_chain_ends
+        try:
+            csg.snap_chain_ends = lambda segments, radius: segments
+            with self.assertRaises(csg.SignatureGeometryError):
+                csg.cluster_coupon(offset, self.R, 0.1, 0.05)
+        finally:
+            csg.snap_chain_ends = snap
+        exact_coupon, _ = csg.cluster_coupon(exact, self.R, 0.1, 0.05)
+        offset_coupon, offset_edges = csg.cluster_coupon(offset, self.R, 0.1, 0.05)
+        # The one-quantum tilt of the second arm moves its box end by ~1e-6 R x 5: the areas
+        # agree to 1e-4 um^2 (the geometry's own difference, not a leak).
+        self.assertAlmostEqual(mask_area(offset_coupon, 1), mask_area(exact_coupon, 1), places=4)
+        self.assertEqual(len(offset_coupon["Geometry"]["PlanViewBoundary"][0]["Segments"]), 6)
+        # The model's Edges keep the signature's own coordinates (the snap is the mask's).
+        self.assertEqual(offset_edges[1]["Point"][:2], [1.0e-6 * self.R, 1.0e-6 * self.R])
+
+
 class FailClosedTest(unittest.TestCase):
     R = 2.0
 
