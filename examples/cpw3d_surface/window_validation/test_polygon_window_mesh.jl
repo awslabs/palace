@@ -177,12 +177,12 @@ end
 @testset "cross-plane reconciliation" begin
     spec = read_polygon_set(coincident_edge_set())
     delta, rule = PWM.cross_plane_snap_distance(spec, NaN)
-    @test delta ≈ 0.0475 && rule == "0.025 x MatchingRadius"
+    @test delta ≈ 0.095 && rule == "0.05 x MatchingRadius"
     @test PWM.cross_plane_snap_distance(spec, 0.1) == (0.1, "override")
     @test PWM.cross_plane_snap_distance(
         read_polygon_set(synthetic_two_level_window()),
         NaN
-    )[1] ≈ 0.0475
+    )[1] ≈ 0.095
     reconciled, report = reconcile_planes(spec, delta)
     l1 = reconciled.planes[1].polygons[1].outer
     l2 = reconciled.planes[2].polygons[1].outer
@@ -252,8 +252,8 @@ end
             ]
         )
     )
-    # The same-plane slot of 0.04 um is refused at delta 0.0475 ...
-    @test_throws ErrorException reconcile_planes(tie, 0.0475)
+    # The same-plane slot of 0.04 um is refused at delta 0.095 ...
+    @test_throws ErrorException reconcile_planes(tie, 0.095)
     # ... and with a smaller override the equidistant L2 vertices take the lower L1 edge.
     snapped, _ = reconcile_planes(tie, 0.03)
     @test snapped.planes[2].polygons[1].outer[1:2] == [(0.0, 2.0), (10.0, 2.0)]

@@ -201,15 +201,17 @@ read_polygon_set(path::AbstractString) = read_polygon_set(JSON.parsefile(path))
 # segment is inserted into the lower chain, and every lower vertex within delta of an upper
 # segment is inserted into the upper chain (bending that edge by at most delta): coincident
 # runs become identical point sequences. The lower plane's geometry never moves.
-# delta = CROSS_PLANE_SNAP_FRACTION x MatchingRadius (0.025 R = 0.0475 um at R = 1.9 um: below
-# the identification's joint noise of 0.05 R and below the metal thickness); an explicit
+# delta = CROSS_PLANE_SNAP_FRACTION x MatchingRadius = 0.05 R (0.095 um at R = 1.9 um: the
+# identification's own joint-noise resolution; cross-plane edges are separated vertically by the
+# chip gap, so smaller plan offsets between them are physically irrelevant. Raised from 0.025 R
+# after the S1p chamfers left a 0.029-R needle, supervisor decision 2026-10-01); an explicit
 # `cross_plane_snap_um` override is recorded in the manifest. Within ONE plane nothing is
 # snapped: two polygons closer than delta (a sub-delta slot or touching metal) are refused and
 # the writer resolves them. The reference therefore differs from the thin (chip-mesh) geometry
 # by at most delta on the reconciled runs; the manifest records the moved vertices, the maximum
 # displacement, the inserted vertices and the coincident run length.
 
-const CROSS_PLANE_SNAP_FRACTION = 0.025
+const CROSS_PLANE_SNAP_FRACTION = 0.05
 const ON_SEGMENT_TOLERANCE_UM = 1.0e-9
 
 point_distance(p::Point2, q::Point2) = hypot(p[1] - q[1], p[2] - q[2])
@@ -416,7 +418,7 @@ function reconcile_planes(spec::PolygonSet, delta::Float64)
     return reconciled, report
 end
 
-# The snap distance of a set: the rule 0.025 R, or an explicit override (recorded).
+# The snap distance of a set: the rule 0.05 R, or an explicit override (recorded).
 function cross_plane_snap_distance(spec::PolygonSet, override::Float64)
     length(spec.planes) == 2 || return NaN, "none"
     isnan(override) || return override, "override"
@@ -1226,7 +1228,7 @@ end
 Generate the fabricated reference mesh of a polygon set and write `output` (ASCII MSH2) with
 its JSON manifest next to it. `exact_band_thickness=true` passes the exact geometric sum as
 the boundary-layer Thickness (the recorded transmon generator's formula; see the header).
-`cross_plane_snap_um` overrides the cross-plane snap distance 0.025 x MatchingRadius of a
+`cross_plane_snap_um` overrides the cross-plane snap distance 0.05 x MatchingRadius of a
 two-plane set (see `reconcile_planes`). `band_cap` applies the local band cap rule (`:none`:
 the rule is only recorded; `:partition`: one band per partition, the minimum over its curves;
 `:curve`: one BoundaryLayer field per row count — Gmsh fails on many of its transitions).
