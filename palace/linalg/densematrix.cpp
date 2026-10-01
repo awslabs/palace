@@ -3,7 +3,6 @@
 
 #include "densematrix.hpp"
 
-#include <functional>
 #include <limits>
 #include <mfem.hpp>
 #include <mfem/linalg/kernels.hpp>
@@ -17,8 +16,8 @@ namespace
 // Compute matrix functions for symmetric real-valued 1x1, 2x2, or 3x3 matrices. Returns
 // the matrix U * f(Λ) * U' for input U * Λ * U', evaluated from the eigendecomposition
 // computed by mfem::DenseMatrix::CalcEigenvalues.
-mfem::DenseMatrix MatrixFunction(const mfem::DenseMatrix &M,
-                                 const std::function<double(const double &)> &functor)
+template <typename F>
+mfem::DenseMatrix MatrixFunction(const mfem::DenseMatrix &M, F &&functor)
 {
   MFEM_ASSERT(M.Height() == M.Width(),
               "MatrixFunction only available for square matrices!");
