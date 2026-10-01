@@ -818,6 +818,8 @@ function band_cap_rows_by_curve(metal_edge_curves, radial_um::Float64, rows_max:
     )
 end
 
+include("structured_band.jl")
+
 struct PlanMesh
     xy::Vector{Point2}
     triangles::Vector{NTuple{3, Int}}
@@ -833,17 +835,173 @@ function mesh_plan(
     radial_band_um::Float64=1.55,
     exact_band_thickness::Bool=false,
     band_cap::Symbol=:none,
+    band_mode::Symbol=:own,
+    fan_turn_angle_deg::Float64=DEFAULT_FAN_TURN_ANGLE_DEG,
     verbose::Bool=true
 )
     band_cap in (:none, :partition, :curve) ||
         error("band_cap must be :none, :partition or :curve")
+    band_mode in (:own, :gmsh) || error("band_mode must be :own or :gmsh")
+    0.0 <= fan_turn_angle_deg <= MAX_FAN_TURN_ANGLE_DEG || error(
+        "fan_turn_angle_deg must lie in [0, $(MAX_FAN_TURN_ANGLE_DEG)]: above it the mitre " *
+        "column 1 / cos(turn / 2) exceeds twice the band"
+    )
+    band_mode == :gmsh || band_cap == :none ||
+        error("band_cap applies to band_mode gmsh only (own mode always applies the rule)")
     radial_layers = max(1, round(Int, log2(1.0 + radial_band_um / radial_um)))
+    plan_model = gmsh.model.get_current()
     surfaces, class_by_surface, metal_edge_curves = plan_partitions(spec)
     rows_by_signature = band_cap_rows_by_curve(metal_edge_curves, radial_um, radial_layers)
     metal_signatures = Set(curve_signature(1, tag) for tag in metal_edge_curves)
     class_list = unique(class_by_surface[s] for s in surfaces)
     class_index = Dict(class => i for (i, class) in enumerate(class_list))
 
+    # Own mode: the band is exactly radial_layers rows of h_k = r (2^k - 1) by construction.
+    band_thickness(rows) =
+        radial_um * (radial_growth^rows - 1.0) / (radial_growth - 1.0) *
+        (exact_band_thickness || band_mode == :own ? 1.0 : 1.0 + BAND_THICKNESS_MARGIN)
+    radial_thickness = band_thickness(radial_layers)
+    # Band-cap record, PER STRAIGHT RUN (the minimum along collinear curves = what Gmsh's
+    # `:curve` mode can apply; the own band applies the rule per 1D segment and side, recorded
+    # under `band`): metal-edge length per row count (every curve once).
+    length_by_rows = Dict{Int, Float64}()
+    for curve in metal_curves(metal_edge_curves)
+        rows = rows_by_signature[curve_signature(1, curve.tag)]
+        length_by_rows[rows] =
+            get(length_by_rows, rows, 0.0) + point_distance(curve.a, curve.b)
+    end
+    capped_length = sum(l for (rows, l) in length_by_rows if rows < radial_layers; init=0.0)
+    band_cap_record = Dict{String, Any}(
+        "mode" => string(band_cap),
+        "band_mode" => string(band_mode),
+        "fraction" => BAND_CAP_FRACTION,
+        "rows_max" => radial_layers,
+        "rule_statistic" => "per straight run (minimum along collinear curves; Gmsh " *
+                            ":curve mode), both sides; the own band applies the rule per " *
+                            "1D segment and side: see `band`",
+        "rule_capped_length_um" => capped_length,
+        "rule_minimum_rows" => minimum(keys(length_by_rows)),
+        "rule_minimum_band_um" => band_thickness(minimum(keys(length_by_rows))),
+        "rule_length_um_by_rows" => Dict(string(k) => v for (k, v) in length_by_rows)
+    )
+    for option in (
+        "General.NumThreads",
+        "Mesh.MaxNumThreads1D",
+        "Mesh.MaxNumThreads2D",
+        "Mesh.MaxNumThreads3D"
+    )
+        gmsh.option.set_number(option, 1)
+    end
+    gmsh.option.set_number("Mesh.MeshSizeFromPoints", 0)
+    gmsh.option.set_number("Mesh.MeshSizeFromCurvature", 0)
+    gmsh.option.set_number("Mesh.MeshSizeExtendFromBoundary", 0)
+    gmsh.option.set_number("Mesh.MeshSizeMin", radial_um)
+    gmsh.option.set_number("Mesh.MeshSizeMax", 30.0)
+    gmsh.option.set_number("Mesh.BoundaryLayerFanElements", 7)
+    gmsh.option.set_number("Mesh.Algorithm", 6)
+    verbose && println(
+        "Plan partitions: ",
+        length(surfaces),
+        ", metal-edge curves: ",
+        length(metal_edge_curves),
+        ", boundary layer first=",
+        radial_um,
+        " um, layers=",
+        radial_layers,
+        ", thickness=",
+        radial_thickness,
+        " um (",
+        band_mode == :own ? "own structured band" :
+        exact_band_thickness ? "exact geometric sum" : "geometric sum x (1 + 1e-6)",
+        "); band cap (per run): ",
+        band_cap_record
+    )
+
+    raw_triangles = Tuple{NTuple{3, Point2}, Int}[]
+    boundary_layer_ends = 0
+    partition_rows = fill(radial_layers, length(surfaces))
+    band_record = Dict{String, Any}("mode" => string(band_mode))
+    if band_mode == :own
+        heights = band_heights(radial_um, radial_growth, radial_layers)
+        curves = plan_curves(surfaces, metal_edge_curves)
+        nodes_by_curve = Dict(
+            k => curve_transfinite_nodes(curve, tangential_um) for
+            (k, curve) in enumerate(curves) if curve.metal
+        )
+        statistics = BandStatistics()
+        band_triangles = 0
+        for (index, surface) in enumerate(surfaces)
+            partition = partition_geometry(surface[2], curves, spec.box)
+            class = class_index[class_by_surface[surface]]
+            band_area, region_area, minimum_rows, triangles = mesh_partition_band(
+                partition,
+                curves,
+                nodes_by_curve,
+                heights,
+                radial_um,
+                deg2rad(fan_turn_angle_deg),
+                spec.box,
+                class,
+                raw_triangles,
+                statistics,
+                plan_model,
+                max(2.0 * heights[end], tangential_um)
+            )
+            partition_rows[index] = minimum_rows
+            band_triangles += triangles
+            verbose && println(
+                "  partition ",
+                index,
+                "/",
+                length(surfaces),
+                " surface ",
+                surface[2],
+                " class ",
+                class_list[class].conductors,
+                " bump ",
+                class_list[class].bump,
+                " band area ",
+                band_area,
+                " region area ",
+                region_area,
+                " loops ",
+                length(partition.loops),
+                " minimum rows ",
+                minimum_rows
+            )
+        end
+        boundary_layer_ends = statistics.wall_end_columns
+        merge!(
+            band_record,
+            Dict{String, Any}(
+                "fan_turn_angle_deg" => fan_turn_angle_deg,
+                "fan_columns" => FAN_COLUMNS,
+                "corner_clearance_fraction" => CORNER_CLEARANCE_FRACTION,
+                "rows_max" => radial_layers,
+                "heights_um" => heights,
+                "band_triangles" => band_triangles,
+                "quads" => statistics.quads,
+                "collapse_triangles" => statistics.collapse_triangles,
+                "fan_triangles" => statistics.fan_triangles,
+                "fans" => statistics.fans,
+                "mitre_outward_corners" => statistics.mitre_corners,
+                "inward_corners" => statistics.inward_corners,
+                "clearance_capped_columns" => statistics.clearance_capped_columns,
+                "clearance_clamped_columns" => statistics.clearance_clamped_columns,
+                "wall_end_columns" => statistics.wall_end_columns,
+                "segments_below_2p5r" => statistics.segments_below_2p5r,
+                "quad_min_abs_sin" => statistics.quad_min_abs_sin,
+                "triangle_min_angle_deg" => statistics.triangle_min_angle_deg,
+                "per_side_segment_length_um_by_rows" =>
+                    Dict(string(k) => v for (k, v) in statistics.length_um_by_rows),
+                "per_side_capped_length_um" => sum(
+                    l for (rows, l) in statistics.length_um_by_rows if rows < radial_layers;
+                    init=0.0
+                )
+            )
+        )
+        verbose && println("Own band: ", band_record)
+    else
     # One-sided boundary layers need every source curve to bound a single surface: copy each
     # partition and mesh the copies one at a time (coincident copies never share a Delaunay
     # problem); the copies' interface nodes are welded by coordinate afterwards.
@@ -871,63 +1029,6 @@ function mesh_plan(
         "Metal-edge curve copies: $(length(metal_copy_curves)) for " *
         "$(length(metal_edge_curves)) curves"
     )
-
-    band_thickness(rows) =
-        radial_um * (radial_growth^rows - 1.0) / (radial_growth - 1.0) *
-        (exact_band_thickness ? 1.0 : 1.0 + BAND_THICKNESS_MARGIN)
-    radial_thickness = band_thickness(radial_layers)
-    # Band-cap record: metal-edge length per row count (every curve once).
-    length_by_rows = Dict{Int, Float64}()
-    for curve in metal_curves(metal_edge_curves)
-        rows = rows_by_signature[curve_signature(1, curve.tag)]
-        length_by_rows[rows] =
-            get(length_by_rows, rows, 0.0) + point_distance(curve.a, curve.b)
-    end
-    capped_length = sum(l for (rows, l) in length_by_rows if rows < radial_layers; init=0.0)
-    band_cap_record = Dict{String, Any}(
-        "mode" => string(band_cap),
-        "fraction" => BAND_CAP_FRACTION,
-        "rows_max" => radial_layers,
-        "rule_capped_length_um" => capped_length,
-        "rule_minimum_rows" => minimum(keys(length_by_rows)),
-        "rule_minimum_band_um" => band_thickness(minimum(keys(length_by_rows))),
-        "rule_length_um_by_rows" => Dict(string(k) => v for (k, v) in length_by_rows)
-    )
-    for option in (
-        "General.NumThreads",
-        "Mesh.MaxNumThreads1D",
-        "Mesh.MaxNumThreads2D",
-        "Mesh.MaxNumThreads3D"
-    )
-        gmsh.option.set_number(option, 1)
-    end
-    gmsh.option.set_number("Mesh.MeshSizeFromPoints", 0)
-    gmsh.option.set_number("Mesh.MeshSizeFromCurvature", 0)
-    gmsh.option.set_number("Mesh.MeshSizeExtendFromBoundary", 0)
-    gmsh.option.set_number("Mesh.MeshSizeMin", radial_um)
-    gmsh.option.set_number("Mesh.MeshSizeMax", 30.0)
-    gmsh.option.set_number("Mesh.BoundaryLayerFanElements", 7)
-    gmsh.option.set_number("Mesh.Algorithm", 6)
-    verbose && println(
-        "Plan partitions: ",
-        length(copies),
-        ", metal-edge curves: ",
-        length(metal_edge_curves),
-        ", boundary layer first=",
-        radial_um,
-        " um, layers=",
-        radial_layers,
-        ", thickness=",
-        radial_thickness,
-        " um (",
-        exact_band_thickness ? "exact geometric sum" : "geometric sum x (1 + 1e-6)",
-        "); band cap: ",
-        band_cap_record
-    )
-
-    raw_triangles = Tuple{NTuple{3, Point2}, Int}[]
-    boundary_layer_ends = 0
-    partition_rows = fill(radial_layers, length(copies))
     for (copy_index, surface) in enumerate(copies)
         gmsh.model.set_visibility(copies, 0, true)
         gmsh.model.set_visibility([surface], 1, true)
@@ -1025,9 +1126,12 @@ function mesh_plan(
         end
         gmsh.model.mesh.clear(copies)
     end
+    end # band_mode
     isempty(raw_triangles) && error("No plan triangles extracted")
     band_cap_record["applied_rows_by_partition"] = partition_rows
     band_cap_record["applied_minimum_rows"] = minimum(partition_rows)
+    band_record["applied_rows_by_partition"] = partition_rows
+    band_record["applied_minimum_rows"] = minimum(partition_rows)
 
     merge_tolerance = 1.0e-6
     coordinate_index = Dict{NTuple{2, Int64}, Int}()
@@ -1059,7 +1163,8 @@ function mesh_plan(
     radial_layers,
     radial_thickness,
     boundary_layer_ends,
-    band_cap_record
+    band_cap_record,
+    band_record
 end
 
 # Points where a metal edge of the partition ends against a non-metal boundary curve (the
@@ -1160,6 +1265,10 @@ function edge_metrics(plan::PlanMesh, topology::PlanTopology, radial_um, tangent
         error("Metal-edge tangent target was not enforced: $tangent_summary")
     height_summary["maximum"] <= 1.1radial_um ||
         error("Metal-edge first-layer normal target was not enforced: $height_summary")
+    height_summary["minimum"] >= 0.9radial_um || error(
+        "Metal-edge first-layer normal height below 0.9 x the target (compressed fronts): " *
+        "$height_summary"
+    )
     return length(metal_edges), tangent_summary, height_summary, outliers
 end
 
@@ -1222,16 +1331,22 @@ end
 
 """
     mesh_polygon_window(spec, radial_um, tangential_um, output; verbose=true,
-                        plan_only=false, exact_band_thickness=false,
-                        cross_plane_snap_um=NaN) -> manifest
+                        plan_only=false, band_mode=:own, fan_turn_angle_deg=90.0,
+                        exact_band_thickness=false, cross_plane_snap_um=NaN,
+                        band_cap=:none) -> manifest
 
 Generate the fabricated reference mesh of a polygon set and write `output` (ASCII MSH2) with
-its JSON manifest next to it. `exact_band_thickness=true` passes the exact geometric sum as
-the boundary-layer Thickness (the recorded transmon generator's formula; see the header).
-`cross_plane_snap_um` overrides the cross-plane snap distance 0.05 x MatchingRadius of a
-two-plane set (see `reconcile_planes`). `band_cap` applies the local band cap rule (`:none`:
-the rule is only recorded; `:partition`: one band per partition, the minimum over its curves;
-`:curve`: one BoundaryLayer field per row count — Gmsh fails on many of its transitions).
+its JSON manifest next to it. `band_mode=:own` (default) builds the structured boundary-layer
+band itself with the per-segment, per-side band cap (structured_band.jl); `:gmsh` uses Gmsh's
+BoundaryLayer field as the recorded transmon generator did. `fan_turn_angle_deg`: outward
+corners turning more than this get a fan of columns, the others the scaled bisector column (90:
+the recorded corner treatment). Gmsh mode only: `exact_band_thickness=true` passes the exact
+geometric sum as the boundary-layer Thickness (the recorded transmon generator's formula; see
+the header); `band_cap` applies the local band cap rule (`:none`: the rule is only recorded;
+`:partition`: one band per partition, the minimum over its curves; `:curve`: one BoundaryLayer
+field per row count — Gmsh fails on many of its transitions). `cross_plane_snap_um` overrides
+the cross-plane snap distance 0.05 x MatchingRadius of a two-plane set (see
+`reconcile_planes`).
 """
 function mesh_polygon_window(
     spec::PolygonSet,
@@ -1242,7 +1357,9 @@ function mesh_polygon_window(
     plan_only::Bool=false,
     exact_band_thickness::Bool=false,
     cross_plane_snap_um::Float64=NaN,
-    band_cap::Symbol=:none
+    band_cap::Symbol=:none,
+    band_mode::Symbol=:own,
+    fan_turn_angle_deg::Float64=DEFAULT_FAN_TURN_ANGLE_DEG
 )
     output = abspath(output)
     snap_delta, snap_rule = cross_plane_snap_distance(spec, cross_plane_snap_um)
@@ -1256,17 +1373,20 @@ function mesh_polygon_window(
     metal_layers = max(2, ceil(Int, spec.metal_thickness / radial_um - 1.0e-9))
     trench_layers = max(1, ceil(Int, spec.overetch / radial_um - 1.0e-9))
     gmsh.initialize()
-    plan, radial_layers, radial_thickness, boundary_layer_ends, band_cap_record = try
-        gmsh.option.set_number("General.Verbosity", 2)
-        gmsh.model.add(spec.name)
-        mesh_plan(
-            spec,
-            radial_um,
-            tangential_um;
-            exact_band_thickness=exact_band_thickness,
-            band_cap=band_cap,
-            verbose=verbose
-        )
+    plan, radial_layers, radial_thickness, boundary_layer_ends, band_cap_record, band_record =
+        try
+            gmsh.option.set_number("General.Verbosity", 2)
+            gmsh.model.add(spec.name)
+            mesh_plan(
+                spec,
+                radial_um,
+                tangential_um;
+                exact_band_thickness=exact_band_thickness,
+                band_cap=band_cap,
+                band_mode=band_mode,
+                fan_turn_angle_deg=fan_turn_angle_deg,
+                verbose=verbose
+            )
     finally
         gmsh.finalize()
     end
@@ -1308,6 +1428,7 @@ function mesh_polygon_window(
         "radial_layers" => radial_layers,
         "radial_band_thickness_um" => radial_thickness,
         "radial_band_thickness_mode" =>
+            band_mode == :own ? "own_structured_band" :
             exact_band_thickness ? "exact_geometric_sum" : "geometric_sum_x_1p000001",
         "metal_thickness_um" => spec.metal_thickness,
         "overetch_um" => spec.overetch,
@@ -1330,6 +1451,7 @@ function mesh_polygon_window(
         "plan_perimeter_edges" => metal_edge_count,
         "plan_boundary_layer_end_points" => boundary_layer_ends,
         "band_cap" => band_cap_record,
+        "band" => band_record,
         "perimeter_tangent_length_um" => tangent_summary,
         "first_layer_normal_height_um" => height_summary,
         "first_layer_normal_outliers_above_1p5x_target" => height_outliers,
