@@ -2116,8 +2116,9 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
   const auto *coarse = dynamic_cast<const ComplexParOperator *>(&mg->GetOperatorAtLevel(0));
   REQUIRE(fine);
   REQUIRE(coarse);
-  REQUIRE(dynamic_cast<const hypre::HypreCSRMatrix *>(coarse->LocalOperator().Real()));
-  REQUIRE(IsOriginalComplexWrapper(coarse->LocalOperator()));
+  // The coarsest level is sparse and represented by separate real and imaginary parallel
+  // operators; only the partially assembled fine level participates in complex packing.
+  REQUIRE(coarse->Real());
   const auto &aux =
       dynamic_cast<const ComplexParOperator &>(mg->GetFinestAuxiliaryOperator());
   REQUIRE(IsOriginalComplexWrapper(aux.LocalOperator()));

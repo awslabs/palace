@@ -100,15 +100,17 @@ private:
   void AddRealMassBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
   void AddImagMassCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddAbsMassCoefficients(double coeff, MaterialPropertyCoefficient &f);
-  void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &dfbr,
+  // Add every separately frequency-dependent boundary contribution and report whether any
+  // such operator is configured. The report is conservative when its coefficient happens
+  // to vanish, so it can safely govern reuse of the fixed preconditioner terms.
+  bool AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &dfbr,
                                      MaterialPropertyCoefficient &dfbi,
                                      MaterialPropertyCoefficient &fbr,
                                      MaterialPropertyCoefficient &fbi,
                                      bool include_wave_ports = true);
-  // Complex-ω overload: dispatches to the farfield / surf-σ / wave-port complex
-  // AddExtraSystemBdrCoefficients overloads for the eigenmode nonlinear solve and its
-  // matching preconditioner. Reduces to the double overload for real ω.
-  void AddExtraSystemBdrCoefficients(std::complex<double> omega,
+  // Complex-ω overload for the eigenmode nonlinear solve and its matching preconditioner.
+  // Reduces to the double overload for real ω; Floquet ports are absent from this path.
+  bool AddExtraSystemBdrCoefficients(std::complex<double> omega,
                                      MaterialPropertyCoefficient &dfbr,
                                      MaterialPropertyCoefficient &dfbi,
                                      MaterialPropertyCoefficient &fbr,
@@ -132,7 +134,11 @@ private:
                               std::vector<std::unique_ptr<Operator>> &br_vec,
                               std::vector<std::unique_ptr<Operator>> &br_aux_vec,
                               std::vector<std::unique_ptr<Operator>> &bi_vec,
-                              std::vector<std::unique_ptr<Operator>> &bi_aux_vec);
+                              std::vector<std::unique_ptr<Operator>> &bi_aux_vec,
+                              std::vector<ComplexVector> &diag_vec,
+                              std::vector<ComplexVector> &diag_aux_vec,
+                              std::unique_ptr<mfem::HypreParMatrix> &coarse_r,
+                              std::unique_ptr<mfem::HypreParMatrix> &coarse_i);
   template <typename A3Type>
   void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
                               std::complex<double> a2, A3Type a3,
@@ -141,6 +147,57 @@ private:
   void AssemblePreconditioner(double a0, double a1, double a2, double a3,
                               std::vector<std::unique_ptr<Operator>> &br_vec,
                               std::vector<std::unique_ptr<Operator>> &br_aux_vec);
+
+protected:
+  // One named shape for every representation of the frequency-independent preconditioner
+  // terms. The periodic terms use a distinct integrator path but remain fixed spatial
+  // operators whose frequency dependence is entirely in these scalars.
+  template <typename T>
+  struct PreconditionerTerm
+  {
+    T stiffness, damping, real_mass, imag_mass, floquet_mass, floquet_curl;
+  };
+  using PreconditionerTermScalars = PreconditionerTerm<double>;
+  using PreconditionerTermDiagonals = PreconditionerTerm<std::vector<Vector>>;
+  using PreconditionerTermMatrices =
+      PreconditionerTerm<std::unique_ptr<mfem::HypreParMatrix>>;
+  struct PreconditionerScalars
+  {
+    PreconditionerTermScalars real, imag;
+  };
+
+  // Cached diagonals on every level above the coarsest, for both hierarchies, and cached
+  // uneliminated matrices on the coarsest ND level. Empty terms have empty storage. These
+  // members are protected only so tests can expose and verify the once-only cache lifetime.
+  PreconditionerTermDiagonals pc_term_diag, pc_term_diag_aux;
+  PreconditionerTermMatrices pc_term_coarse;
+  bool pc_terms_built = false;
+
+private:
+  // The scalings for both complex parts, shared by coefficient construction and cached
+  // combination so their algebra cannot drift apart.
+  PreconditionerScalars GetPreconditionerScalars(std::complex<double> a0,
+                                                 std::complex<double> a1,
+                                                 std::complex<double> a2) const;
+
+  // Assemble and cache the term diagonals and the coarsest level term matrices, once for
+  // the lifetime of this object.
+  void BuildPreconditionerTerms();
+
+  // The diagonal of each level above the coarsest, before essential true dof elimination,
+  // as the linear combination of the cached term diagonals with the given scalings. Level 0
+  // is left empty.
+  void CombinePreconditionerTermDiagonals(const PreconditionerScalars &s,
+                                          std::vector<ComplexVector> &diag_vec,
+                                          std::vector<ComplexVector> &diag_aux_vec) const;
+
+  // The two parts of the coarsest level matrix, before essential true dof elimination, as
+  // the linear combination of the cached term matrices with the given scalings. Both are
+  // empty if no term has a coefficient.
+  void
+  CombinePreconditionerTermMatrices(const PreconditionerScalars &s,
+                                    std::unique_ptr<mfem::HypreParMatrix> &coarse_r,
+                                    std::unique_ptr<mfem::HypreParMatrix> &coarse_i) const;
 
 public:
   SpaceOperator(const config::SolverData &solver, const config::DomainData &domains,
