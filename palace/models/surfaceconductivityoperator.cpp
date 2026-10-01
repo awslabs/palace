@@ -100,27 +100,17 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(
                 "Conductivity boundary has no conductivity or no "
                 "permeability defined!");
     MFEM_VERIFY(data.h >= 0.0, "Conductivity boundary should have non-negative thickness!");
-    auto &bdr = boundaries.emplace_back();
-    bdr.sigma = data.sigma;
-    bdr.mu = data.mu_r;
-    bdr.h = data.h;
-    if (data.external)
-    {
-      // External surfaces have twice the effective thickness since the BC is applied at one
-      // side.
-      bdr.h *= 2.0;
-    }
-    bdr.attr_list.Reserve(static_cast<int>(data.attributes.size()));
+    mfem::Array<int> attr_list, ext_attr_list, int_attr_list;
     for (auto attr : data.attributes)
     {
       if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
       {
         continue;  // Can just ignore if wrong
       }
-      bdr.attr_list.Append(attr);
+      attr_list.Append(attr);
       if (!int_marker[attr - 1])
       {
-        bdr.int_attr_list.Append(attr);
+        int_attr_list.Append(attr);
         if (data.external)
         {
           external_warn_list.insert(attr);
@@ -128,12 +118,40 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(
       }
       else
       {
-        bdr.ext_attr_list.Append(attr);
+        ext_attr_list.Append(attr);
         if (!any_int_marker[attr - 1])
         {
           mixed_warn_list.insert(attr);
         }
       }
+    }
+
+    // External surfaces have twice the effective thickness since the BC is applied at one
+    // side. This does not apply to the interior boundaries (conducting sheets with two
+    // surfaces), so with a finite thickness, these are separated into a group of their own,
+    // with a single surface impedance per group.
+    auto AddGroup = [&](const mfem::Array<int> &attrs, const mfem::Array<int> &ext_attrs,
+                        const mfem::Array<int> &int_attrs, double h)
+    {
+      auto &bdr = boundaries.emplace_back();
+      bdr.sigma = data.sigma;
+      bdr.mu = data.mu_r;
+      bdr.h = h;
+      bdr.attr_list = attrs;
+      bdr.ext_attr_list = ext_attrs;
+      bdr.int_attr_list = int_attrs;
+    };
+    const mfem::Array<int> none;
+    if (data.external && data.h > 0.0 && ext_attr_list.Size() > 0 &&
+        int_attr_list.Size() > 0)
+    {
+      AddGroup(ext_attr_list, ext_attr_list, none, 2.0 * data.h);
+      AddGroup(int_attr_list, none, int_attr_list, data.h);
+    }
+    else
+    {
+      AddGroup(attr_list, ext_attr_list, int_attr_list,
+               (data.external && ext_attr_list.Size() > 0) ? 2.0 * data.h : data.h);
     }
   }
   if (!external_warn_list.empty())
