@@ -178,6 +178,32 @@ def extract_triangles(path, attributes, windows):
     return triangles, (np.concatenate(tags) if tags else np.zeros(0, np.int32)), (np.concatenate(heights) if heights else np.zeros(0))
 
 
+def extract_window_triangles(path, attributes, windows):
+    """Exact window extraction for the polygon export (``window_polygons.py``): the triangles of the attributes whose
+    bounding box meets one of the windows, with their corner NODE TAGS (shared edges stay identifiable), float64
+    corner coordinates and attribute."""
+    data, coordinates, names, elements = open_mesh(path)
+    kept_nodes, kept_xyz, tags = [], [], []
+    for element_type, physical, corners in iter_elements(data, elements, dimensions=(2,)):
+        if element_type not in TRIANGLE_TYPES:
+            continue
+        select = np.isin(physical, attributes)
+        if not select.any():
+            continue
+        nodes = corners[select]
+        xyz = coordinates[nodes]
+        xy = xyz[:, :, :2]
+        inside = np.zeros(len(xy), dtype=bool)
+        for x0, x1, y0, y1 in windows:
+            inside |= (xy[:, :, 0].max(1) >= x0) & (xy[:, :, 0].min(1) <= x1) & (xy[:, :, 1].max(1) >= y0) & (xy[:, :, 1].min(1) <= y1)
+        kept_nodes.append(nodes[inside].astype(np.int64))
+        kept_xyz.append(xyz[inside])
+        tags.append(physical[select][inside].astype(np.int32))
+    if not kept_nodes:
+        return np.zeros((0, 3), np.int64), np.zeros((0, 3, 3)), np.zeros(0, np.int32), names
+    return np.concatenate(kept_nodes), np.concatenate(kept_xyz), np.concatenate(tags), names
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("mesh")
@@ -185,8 +211,17 @@ def main(argv=None):
     parser.add_argument("--extract", type=int, nargs="+", help="surface attributes whose triangles are written (npz: xy, attribute)")
     parser.add_argument("--window", type=float, nargs=4, action="append", default=[], metavar=("X0", "X1", "Y0", "Y1"),
                         help="keep only triangles overlapping one of these xy windows (default: all)")
+    parser.add_argument("--nodes", action="store_true",
+                        help="with --extract: exact export (node tags, float64 xyz, attribute, physical names) for window_polygons.py")
     args = parser.parse_args(argv)
-    if args.extract:
+    if args.extract and args.nodes:
+        windows = args.window or [[-np.inf, np.inf, -np.inf, np.inf]]
+        nodes, xyz, tags, names = extract_window_triangles(args.mesh, args.extract, windows)
+        surface_names = json.dumps({str(tag): name for (dim, tag), name in names.items() if dim == 2})
+        np.savez_compressed(args.output, nodes=nodes, xyz=xyz, attribute=tags, windows=np.asarray(windows, dtype=np.float64),
+                            names=np.asarray(surface_names), mesh=np.asarray(args.mesh))
+        print(json.dumps({"Triangles": int(len(nodes)), "Output": args.output}))
+    elif args.extract:
         windows = args.window or [[-np.inf, np.inf, -np.inf, np.inf]]
         triangles, tags, heights = extract_triangles(args.mesh, args.extract, windows)
         np.savez_compressed(args.output, xy=triangles, attribute=tags, z=heights, windows=np.asarray(windows, dtype=np.float64))
