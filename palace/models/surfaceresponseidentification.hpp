@@ -237,12 +237,20 @@ struct IdentificationResult
     // sub-tolerance pass.
     bool cap_reached = false;
     bool repeat_detected = false;
-    // Pair / stack stretches shorter than 2R bounded on both sides along their chain by the
-    // claims of one cluster, absorbed by it (decision 224; the one exception to "pairs /
-    // stacks are never absorbed"): count, length, longest, mesh units.
+    // Pair / stack stretches adjacent to one cluster's claims and lying entirely within the
+    // cluster ball radius of them, absorbed by it (decision 224, ball form; the one
+    // exception to "pairs / stacks are never absorbed"): count, length, longest, mesh
+    // units; the two-sided class (adjacent to the cluster at both ends) separately, the
+    // rest being one-sided stack-end recomposition pieces.
     std::size_t translational_pieces = 0;
     double translational_length = 0.0;
     double translational_max_length = 0.0;
+    std::size_t translational_two_sided = 0;
+    double translational_two_sided_length = 0.0;
+    // Shared: inside the balls of the two different clusters bounding it, split between
+    // them at equal distance to their claims.
+    std::size_t translational_shared = 0;
+    double translational_shared_length = 0.0;
   };
   ClusterExtension extension;
   // Knife-edge census (decision 82(4)): the perimeter length whose interaction distance
