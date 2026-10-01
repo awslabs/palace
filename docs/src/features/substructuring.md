@@ -222,3 +222,23 @@ palace qubit_lattice_redesign.json  # reuses the saved model
 
 The region box stops above the bottom of the substrate, so that the region contains a single
 substrate-vacuum interface, the layout plane, as the re-meshing script requires.
+
+## [Example: flux-loop lattice](@id substructuring-flux-lattice-example)
+
+The script
+[`examples/substructuring/flux_lattice.jl`](https://github.com/awslabs/palace/blob/main/examples/substructuring/flux_lattice.jl)
+generates the mesh of a ``5 \times 5`` lattice of superconducting rings with Gmsh: each ring is
+an annular London film with a flux hole. The elements in a box around the middle ring are the
+region. Each ring is a [`"FluxLoop"`](../config/reference.md#config-boundaries-fluxloop)
+excitation, and all films are `"Superconductor"` boundaries:
+
+```bash
+cd examples/substructuring
+julia --project -e 'include("flux_lattice.jl"); generate_flux_lattice()'
+palace flux_lattice_offline.json   # condense the environment, save the model
+palace flux_lattice_online.json    # reuse the model: only the region is solved
+```
+
+Both runs write the ``25 \times 25`` inductance matrix to `terminal-M.csv`. The saved model
+includes the condensed flux-loop excitations of the environment, so the online run needs no
+environment solve.
