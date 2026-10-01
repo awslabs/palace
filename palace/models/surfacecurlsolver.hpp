@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_DRIVERS_SURFACE_CURL_SOLVER_HPP
-#define PALACE_DRIVERS_SURFACE_CURL_SOLVER_HPP
+#ifndef PALACE_MODELS_SURFACE_CURL_SOLVER_HPP
+#define PALACE_MODELS_SURFACE_CURL_SOLVER_HPP
 
 #include <vector>
 #include "linalg/vector.hpp"
@@ -42,4 +42,4 @@ double ComputeFluxThroughSurface(const mfem::ParGridFunction &B_gf,
 
 }  // namespace palace
 
-#endif  // PALACE_DRIVERS_SURFACE_CURL_SOLVER_HPP
+#endif  // PALACE_MODELS_SURFACE_CURL_SOLVER_HPP
