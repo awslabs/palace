@@ -504,15 +504,110 @@ void ClonePackedBasis(Ceed ceed, const PackedLeaf &leaf, CeedBasis *packed)
   }
 }
 
-void AddPackedPair(Ceed ceed, const PackedLeaf &real, const PackedLeaf &imag, int size,
-                   Operator &packed)
+// The active subset of a finite element space's element list, when the imaginary leaf of a
+// pair covers it and the real leaf covers the full list. The geometry data positions the
+// subset inside the full list in mesh order.
+struct PackedSubset
 {
-  ScopedRestriction restriction;
+  const CeedGeomFactorData *data = nullptr;
+  mfem::Geometry::Type geom = mfem::Geometry::INVALID;
+};
+
+// Identify the shared element subset covered by an imaginary leaf whose element restriction
+// differs from that of the real leaf it would pair with. The restriction handles cached by
+// the finite element space tie the two leaves to its full element list and to the subset of
+// that list, in the same mesh order and with the same orientation maps, so the recorded
+// positions address the real leaf's elements. Anything else stays unmatched.
+PackedSubset MatchPackedSubset(Ceed ceed, const FiniteElementSpace &fespace,
+                               const PackedLeaf &real, const PackedLeaf &imag)
+{
+  CeedElemTopology topology;
+  PalaceCeedCall(ceed, CeedBasisGetTopology(real.active.basis.value, &topology));
+  const auto geom = GetMfemTopology(topology);
+  const auto &geom_data_map = fespace.GetMesh().GetCeedGeomFactorData(ceed);
+  const auto it = geom_data_map.find(geom);
+  if (it == geom_data_map.end())
+  {
+    return {};
+  }
+  const auto &data = it->second;
+  if (data.indices.size() != static_cast<std::size_t>(real.elements) ||
+      data.active_indices.size() != static_cast<std::size_t>(imag.elements) ||
+      data.active_indices.empty() || data.active_indices.size() >= data.indices.size())
+  {
+    return {};
+  }
+  // The subset views of the real leaf's QData are derived from its strided layout.
+  bool strided;
+  PalaceCeedCall(ceed,
+                 CeedElemRestrictionIsStrided(real.qdata.restriction.value, &strided));
+  if (!strided)
+  {
+    return {};
+  }
+  if (real.active.restriction.value !=
+          fespace.GetCeedElemRestriction(ceed, geom, data, CeedElementSubset::Full) ||
+      imag.active.restriction.value !=
+          fespace.GetCeedElemRestriction(ceed, geom, data, CeedElementSubset::Active))
+  {
+    return {};
+  }
+  return {&data, geom};
+}
+
+// Read the QData of a subset of a leaf's elements without copying any of it. Each offset
+// addresses the first component at one quadrature point of a subset element in the leaf's
+// full QData vector; the component stride then selects the remaining components at that
+// point. The vector layout is the backend's, queried from the strided restriction (as
+// [nodes, components, elements] strides) rather than assumed, as for the shared geometry
+// factor vector in Mesh::GetCeedGeomFactorData.
+void CreateSubsetQDataRestriction(Ceed ceed, CeedElemRestriction full,
+                                  const std::vector<int> &positions,
+                                  CeedElemRestriction *subset)
+{
+  bool strided;
+  CeedInt num_qpts, num_comp, layout[3];
+  CeedSize length;
+  PalaceCeedCall(ceed, CeedElemRestrictionIsStrided(full, &strided));
+  MFEM_ASSERT(strided, "Packed QData subset views require a strided QData layout!");
+  PalaceCeedCall(ceed, CeedElemRestrictionGetElementSize(full, &num_qpts));
+  PalaceCeedCall(ceed, CeedElemRestrictionGetNumComponents(full, &num_comp));
+  PalaceCeedCall(ceed, CeedElemRestrictionGetLVectorSize(full, &length));
+  PalaceCeedCall(ceed, CeedElemRestrictionGetLLayout(full, layout));
+  std::vector<CeedInt> offsets(positions.size() * num_qpts);
+  for (std::size_t k = 0; k < positions.size(); k++)
+  {
+    const CeedInt elem_offset = positions[k] * layout[2];
+    for (CeedInt q = 0; q < num_qpts; q++)
+    {
+      offsets[k * num_qpts + q] = elem_offset + q * layout[0];
+    }
+  }
+  PalaceCeedCall(
+      ceed, CeedElemRestrictionCreate(ceed, static_cast<CeedInt>(positions.size()),
+                                      num_qpts, num_comp, layout[1], length, CEED_MEM_HOST,
+                                      CEED_COPY_VALUES, offsets.data(), subset));
+}
+
+void AddPackedPair(Ceed ceed, const PackedLeaf &real, const PackedLeaf &imag, int size,
+                   const PackedSubset &subset, Operator &packed)
+{
+  ScopedRestriction restriction, qdata;
   ScopedBasis basis;
   ScopedQFunction qf;
   ScopedOperator op;
-  ClonePackedRestriction(ceed, real, size, &restriction.value);
+  // The pair is applied over the imaginary leaf's elements: either the same element list as
+  // the real leaf, or the active subset of it. Both leaves share the basis, so the node
+  // count matches, and the cloned orientation maps coincide with the real leaf's on the
+  // subset elements because both restrictions derive from the same space's element list.
+  ClonePackedRestriction(ceed, imag, size, &restriction.value);
   ClonePackedBasis(ceed, real, &basis.value);
+  if (subset.data)
+  {
+    // The real coefficients of the subset elements, in place in the real leaf's QData.
+    CreateSubsetQDataRestriction(ceed, real.qdata.restriction.value,
+                                 subset.data->active_indices, &qdata.value);
+  }
   // Both kernels implement complex mass. Only f_apply_complex_33 adds curl-curl,
   // with a real tensor acting independently on Re(x) and Im(x). The pairing loop
   // must therefore leave imaginary curl leaves in the remainder.
@@ -533,8 +628,10 @@ void AddPackedPair(Ceed ceed, const PackedLeaf &real, const PackedLeaf &imag, in
   }
   PalaceCeedCall(ceed, CeedOperatorCreate(ceed, qf.value, CEED_QFUNCTION_NONE,
                                           CEED_QFUNCTION_NONE, &op.value));
-  PalaceCeedCall(ceed, CeedOperatorSetField(op.value, "qr", real.qdata.restriction.value,
-                                            CEED_BASIS_NONE, real.qdata.vector.value));
+  PalaceCeedCall(
+      ceed, CeedOperatorSetField(op.value, "qr",
+                                 qdata.value ? qdata.value : real.qdata.restriction.value,
+                                 CEED_BASIS_NONE, real.qdata.vector.value));
   PalaceCeedCall(ceed, CeedOperatorSetField(op.value, "qi", imag.qdata.restriction.value,
                                             CEED_BASIS_NONE, imag.qdata.vector.value));
   for (const auto *field : {"u", "v", "curl_u", "curl_v"})
@@ -547,6 +644,65 @@ void AddPackedPair(Ceed ceed, const PackedLeaf &real, const PackedLeaf &imag, in
   }
   PalaceCeedCall(ceed, CeedOperatorCheckReady(op.value));
   packed.AddSubOperator(std::exchange(op.value, nullptr));
+}
+
+// Reproduce a real leaf's action over the elements outside the subset its pair was packed
+// over, so that the two together cover each of its elements exactly once. The leaf's own
+// QFunction, field names, bases and QData vector are reused unchanged; only the element
+// restrictions are replaced by those of the complement subset.
+void AddPackedComplement(Ceed ceed, const FiniteElementSpace &fespace,
+                         const PackedSubset &subset, CeedOperator leaf, Operator &remainder)
+{
+  // Derive the complement only for this CPU packing path rather than storing it on every
+  // mesh and finite element space.
+  std::vector<int> positions, elements;
+  positions.reserve(subset.data->indices.size() - subset.data->active_indices.size());
+  elements.reserve(positions.capacity());
+  auto active = subset.data->active_indices.begin();
+  for (std::size_t i = 0; i < subset.data->indices.size(); i++)
+  {
+    if (active != subset.data->active_indices.end() && *active == static_cast<int>(i))
+    {
+      ++active;
+    }
+    else
+    {
+      positions.push_back(static_cast<int>(i));
+      elements.push_back(subset.data->indices[i]);
+    }
+  }
+  MFEM_ASSERT(!positions.empty(), "Empty packed-operator complement!");
+
+  ScopedRestriction restriction, qdata;
+  ScopedQFunction qf;
+  ScopedOperator op;
+  restriction.value =
+      FiniteElementSpace::BuildCeedElemRestriction(fespace, ceed, subset.geom, elements);
+  CeedInt ni, no;
+  CeedOperatorField *inputs, *outputs;
+  PalaceCeedCall(ceed, CeedOperatorGetQFunction(leaf, &qf.value));
+  PalaceCeedCall(ceed, CeedOperatorGetFields(leaf, &ni, &inputs, &no, &outputs));
+  PalaceCeedCall(ceed, CeedOperatorCreate(ceed, qf.value, CEED_QFUNCTION_NONE,
+                                          CEED_QFUNCTION_NONE, &op.value));
+  // InspectPackedLeaf validated the field layout: the QData is the first input, and every
+  // other field is active on the leaf's single element restriction and basis.
+  for (CeedInt j = 0; j < ni + no; j++)
+  {
+    auto op_field = j < ni ? inputs[j] : outputs[j - ni];
+    const char *name;
+    PackedField field;
+    field.Read(ceed, op_field);
+    PalaceCeedCall(ceed, CeedOperatorFieldGetName(op_field, &name));
+    if (j == 0)
+    {
+      CreateSubsetQDataRestriction(ceed, field.restriction.value, positions, &qdata.value);
+    }
+    PalaceCeedCall(ceed, CeedOperatorSetField(op.value, name,
+                                              j == 0 ? qdata.value : restriction.value,
+                                              field.basis.value, field.vector.value));
+  }
+  PalaceCeedCall(ceed, CeedOperatorCheckReady(op.value));
+  remainder.AddSubOperator(std::exchange(op.value, nullptr));
 }
 
 // The base owns the finalized originals for diagonal, transpose, full assembly, and
@@ -621,9 +777,12 @@ public:
 // Apply compatible terms of (Ar + i Ai)x through shared two-component restriction
 // and basis work for the real and imaginary parts, avoiding separate wrapper
 // applications. The packed QFunctions preserve the original mass/curl algebra.
+// The finite element space the leaves were assembled from identifies its own element
+// restrictions, so that a pair over one of its element subsets can be recognized.
 std::unique_ptr<ComplexWrapperOperator>
 PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
-                    std::unique_ptr<palace::Operator> &Ai)
+                    std::unique_ptr<palace::Operator> &Ai,
+                    const FiniteElementSpace &fespace)
 {
   // Require one host CEED context and one OpenMP thread per MPI process;
   // utils::InParallel() checks for an active OpenMP region.
@@ -684,6 +843,7 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
   // Requiring both identities ties each pair to the same quadrature, element ordering,
   // and orientation maps. Separately constructed equivalents remain unmatched.
   std::unique_ptr<Operator> packed;
+  std::vector<std::pair<CeedOperator, PackedSubset>> complements;
   for (std::size_t r = 0; r < fields[0].size(); r++)
   {
     if (!fields[0][r])
@@ -693,16 +853,32 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
     for (std::size_t i = 0; i < fields[1].size(); i++)
     {
       if (matched[1][i] || !fields[1][i] || fields[1][i]->curl ||
-          fields[0][r]->active.basis.value != fields[1][i]->active.basis.value ||
-          fields[0][r]->active.restriction.value != fields[1][i]->active.restriction.value)
+          fields[0][r]->active.basis.value != fields[1][i]->active.basis.value)
       {
         continue;
+      }
+      // The two leaves either cover the same elements, or the imaginary leaf covers the
+      // space's shared active subset of the real leaf's full element list. In the latter
+      // case the pair is applied over the subset and the real leaf's remaining elements
+      // are applied on their own below.
+      PackedSubset subset;
+      if (fields[0][r]->active.restriction.value != fields[1][i]->active.restriction.value)
+      {
+        subset = MatchPackedSubset(ceed, fespace, *fields[0][r], *fields[1][i]);
+        if (!subset.data)
+        {
+          continue;
+        }
       }
       if (!packed)
       {
         packed = std::make_unique<Operator>(2 * size, 2 * size);
       }
-      AddPackedPair(ceed, *fields[0][r], *fields[1][i], size, *packed);
+      AddPackedPair(ceed, *fields[0][r], *fields[1][i], size, subset, *packed);
+      if (subset.data)
+      {
+        complements.emplace_back(children[0][r], subset);
+      }
       matched[0][r] = matched[1][i] = true;
       break;
     }
@@ -732,6 +908,18 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
         remainder->AddSubOperator(copy);
       }
     }
+    if (part == 0)
+    {
+      // A real leaf packed over a subset still owes the elements that subset leaves out.
+      for (const auto &[leaf, subset] : complements)
+      {
+        if (!remainder)
+        {
+          remainder = std::make_unique<Operator>(size, size);
+        }
+        AddPackedComplement(ceed, fespace, subset, leaf, *remainder);
+      }
+    }
     if (remainder)
     {
       remainder->Finalize();
@@ -757,9 +945,10 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
 // A rejected packing attempt leaves ownership intact for the ordinary wrapper.
 std::unique_ptr<ComplexWrapperOperator>
 CreateComplexOperator(std::unique_ptr<palace::Operator> &&Ar,
-                      std::unique_ptr<palace::Operator> &&Ai)
+                      std::unique_ptr<palace::Operator> &&Ai,
+                      const FiniteElementSpace &fespace)
 {
-  auto packed = PackComplexOperator(Ar, Ai);
+  auto packed = PackComplexOperator(Ar, Ai, fespace);
   if (packed)
   {
     return packed;
@@ -1058,10 +1247,24 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
     PalaceCeedCall(ceed, CeedOperatorGetActiveBasis(op_fine, &basis_fine));
     PalaceCeedCall(ceed, CeedBasisGetTopology(basis_fine, &geom));
 
+    // The coarse operator reuses the fine operator's quadrature data, so its finite element
+    // restriction must consume the identical element subset in the same mesh order.
+    const auto mfem_geom = GetMfemTopology(geom);
     const auto &geom_data =
-        fespace_coarse.GetMesh().GetCeedGeomFactorData(ceed).at(GetMfemTopology(geom));
-    CeedElemRestriction restr_coarse = fespace_coarse.GetCeedElemRestriction(
-        ceed, GetMfemTopology(geom), geom_data.indices);
+        fespace_coarse.GetMesh().GetCeedGeomFactorData(ceed).at(mfem_geom);
+    CeedElemRestriction restr_fine;
+    CeedInt num_elem;
+    PalaceCeedCall(ceed, CeedOperatorGetActiveElemRestriction(op_fine, &restr_fine));
+    PalaceCeedCall(ceed, CeedElemRestrictionGetNumElements(restr_fine, &num_elem));
+    CeedElementSubset subset = CeedElementSubset::Full;
+    if (num_elem != static_cast<CeedInt>(geom_data.indices.size()))
+    {
+      MFEM_VERIFY(num_elem == static_cast<CeedInt>(geom_data.active_indices.size()),
+                  "Fine operator uses an unknown element subset in CeedOperatorCoarsen!");
+      subset = CeedElementSubset::Active;
+    }
+    CeedElemRestriction restr_coarse =
+        fespace_coarse.GetCeedElemRestriction(ceed, mfem_geom, geom_data, subset);
     CeedBasis basis_coarse = fespace_coarse.GetCeedBasis(ceed, GetMfemTopology(geom));
 
     PalaceCeedCall(ceed, CeedOperatorMultigridLevelCreate(op_fine, nullptr, restr_coarse,
@@ -1099,7 +1302,8 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
     {
       CeedOperator sub_op_coarse;
       SingleOperatorCoarsen(ceed, sub_ops_fine[k], &sub_op_coarse);
-      op_coarse->AddSubOperator(sub_op_coarse);  // Sub-operator owned by ceed::Operator
+      // Sub-operator owned by ceed::Operator.
+      op_coarse->AddSubOperator(sub_op_coarse);
     }
   }
 

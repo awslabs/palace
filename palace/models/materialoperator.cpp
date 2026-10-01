@@ -609,6 +609,32 @@ bool MaterialPropertyCoefficient::IsExactlyZero() const
   return true;
 }
 
+void MaterialPropertyCoefficient::AddNonzeroAttributes(std::vector<int> &attr_list) const
+{
+  const int mat_size = mat_coeff.SizeI() * mat_coeff.SizeJ();
+  const auto *data = mat_coeff.Data();
+  for (int i = 0; i < attr_mat.Size(); i++)
+  {
+    const int k = attr_mat[i];
+    if (k < 0)
+    {
+      // Attributes with no assigned material use a zero coefficient.
+      continue;
+    }
+    MFEM_ASSERT(k < mat_coeff.SizeK(),
+                "Invalid attribute material property for MaterialPropertyCoefficient ("
+                    << k << " vs. " << mat_coeff.SizeK() << ")!");
+    for (int j = 0; j < mat_size; j++)
+    {
+      if (data[mat_size * k + j] != 0.0)
+      {
+        attr_list.push_back(i + 1);
+        break;
+      }
+    }
+  }
+}
+
 namespace
 {
 

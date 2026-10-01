@@ -27,28 +27,48 @@ CeedBasis FiniteElementSpace::GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom)
 
 CeedElemRestriction
 FiniteElementSpace::GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
-                                           const std::vector<int> &indices) const
+                                           const ceed::CeedGeomFactorData &data,
+                                           ceed::CeedElementSubset subset) const
 {
-  auto it = restr.find(ceed);
-  MFEM_ASSERT(it != restr.end(), "Unknown Ceed context in GetCeedElemRestriction!");
-  auto &restr_map = it->second;
-  auto restr_it = restr_map.find(geom);
-  if (restr_it != restr_map.end())
+  const bool use_active = subset == ceed::CeedElementSubset::Active &&
+                          data.active_indices.size() < data.indices.size();
+  MFEM_ASSERT(!use_active || !data.active_indices.empty(),
+              "Empty active subset in GetCeedElemRestriction!");
+  auto &restr_map = use_active ? active_restr : restr;
+  auto it = restr_map.find(ceed);
+  MFEM_ASSERT(it != restr_map.end(), "Unknown Ceed context in GetCeedElemRestriction!");
+  auto &geom_restr = it->second;
+  auto restr_it = geom_restr.find(geom);
+  if (restr_it != geom_restr.end())
   {
     return restr_it->second;
   }
-  return restr_map.emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, indices))
+
+  if (use_active)
+  {
+    std::vector<int> indices;
+    indices.reserve(data.active_indices.size());
+    for (auto i : data.active_indices)
+    {
+      MFEM_ASSERT(i >= 0 && static_cast<std::size_t>(i) < data.indices.size(),
+                  "Invalid element subset index!");
+      indices.push_back(data.indices[i]);
+    }
+    return geom_restr.emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, indices))
+        .first->second;
+  }
+  return geom_restr.emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, data.indices))
       .first->second;
 }
 
 CeedElemRestriction
 FiniteElementSpace::GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
-                                                 const std::vector<int> &indices) const
+                                                 const ceed::CeedGeomFactorData &data) const
 {
   const mfem::FiniteElement &fe = *GetFEColl().FiniteElementForGeometry(geom);
   if (!HasUniqueInterpRestriction(fe))
   {
-    return GetCeedElemRestriction(ceed, geom, indices);
+    return GetCeedElemRestriction(ceed, geom, data);
   }
   auto it = interp_restr.find(ceed);
   MFEM_ASSERT(it != interp_restr.end(),
@@ -60,18 +80,17 @@ FiniteElementSpace::GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type
     return restr_it->second;
   }
   return restr_map
-      .emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, indices, true, false))
+      .emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, data.indices, true, false))
       .first->second;
 }
 
-CeedElemRestriction
-FiniteElementSpace::GetInterpRangeCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
-                                                      const std::vector<int> &indices) const
+CeedElemRestriction FiniteElementSpace::GetInterpRangeCeedElemRestriction(
+    Ceed ceed, mfem::Geometry::Type geom, const ceed::CeedGeomFactorData &data) const
 {
   const mfem::FiniteElement &fe = *GetFEColl().FiniteElementForGeometry(geom);
   if (!HasUniqueInterpRangeRestriction(fe))
   {
-    return GetInterpCeedElemRestriction(ceed, geom, indices);
+    return GetInterpCeedElemRestriction(ceed, geom, data);
   }
   auto it = interp_range_restr.find(ceed);
   MFEM_ASSERT(it != interp_range_restr.end(),
@@ -83,7 +102,7 @@ FiniteElementSpace::GetInterpRangeCeedElemRestriction(Ceed ceed, mfem::Geometry:
     return restr_it->second;
   }
   return restr_map
-      .emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, indices, true, true))
+      .emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, data.indices, true, true))
       .first->second;
 }
 
@@ -96,29 +115,23 @@ void FiniteElementSpace::ResetCeedObjects()
       PalaceCeedCall(ceed, CeedBasisDestroy(&val));
     }
   }
-  for (auto &[ceed, restr_map] : restr)
+  auto DestroyRestrictions = [](auto &restrictions)
   {
-    for (auto &[key, val] : restr_map)
+    for (auto &[ceed, restr_map] : restrictions)
     {
-      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val));
+      for (auto &[key, val] : restr_map)
+      {
+        PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val));
+      }
     }
-  }
-  for (auto &[ceed, restr_map] : interp_restr)
-  {
-    for (auto &[key, val] : restr_map)
-    {
-      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val));
-    }
-  }
-  for (auto &[ceed, restr_map] : interp_range_restr)
-  {
-    for (auto &[key, val] : restr_map)
-    {
-      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val));
-    }
-  }
+  };
+  DestroyRestrictions(restr);
+  DestroyRestrictions(active_restr);
+  DestroyRestrictions(interp_restr);
+  DestroyRestrictions(interp_range_restr);
   basis.clear();
   restr.clear();
+  active_restr.clear();
   interp_restr.clear();
   interp_range_restr.clear();
   for (std::size_t i = 0; i < ceed::internal::GetCeedObjects().size(); i++)
@@ -126,6 +139,7 @@ void FiniteElementSpace::ResetCeedObjects()
     Ceed ceed = ceed::internal::GetCeedObjects()[i];
     basis.emplace(ceed, ceed::GeometryObjectMap<CeedBasis>());
     restr.emplace(ceed, ceed::GeometryObjectMap<CeedElemRestriction>());
+    active_restr.emplace(ceed, ceed::GeometryObjectMap<CeedElemRestriction>());
     interp_restr.emplace(ceed, ceed::GeometryObjectMap<CeedElemRestriction>());
     interp_range_restr.emplace(ceed, ceed::GeometryObjectMap<CeedElemRestriction>());
   }

@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 #include "fem/libceed/ceed.hpp"
+#include "fem/mesh.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 
@@ -82,12 +83,16 @@ public:
 
 // Wrap finalized, owned real/imaginary operators, packing compatible QData-assembled
 // volume terms on CPU. Other terms and unsupported operators keep their original action.
-// The inputs must remain structurally unchanged and unrescaled after ownership transfer,
-// including through retained aliases or raw CEED handles. Passive QData values remain
-// shared and may be updated. Borrowed operators should use ComplexWrapperOperator.
+// Compatible leaves assembled over an element subset of the given finite element space (the
+// one both operators were assembled from) are packed over that subset, with the elements
+// they leave out applied separately. The inputs must remain structurally unchanged and
+// unrescaled after ownership transfer, including through retained aliases or raw CEED
+// handles. Passive QData values remain shared and may be updated. Borrowed operators should
+// use ComplexWrapperOperator.
 std::unique_ptr<ComplexWrapperOperator>
 CreateComplexOperator(std::unique_ptr<palace::Operator> &&Ar,
-                      std::unique_ptr<palace::Operator> &&Ai);
+                      std::unique_ptr<palace::Operator> &&Ai,
+                      const FiniteElementSpace &fespace);
 
 // Assemble a ceed::Operator as a CSR matrix.
 std::unique_ptr<hypre::HypreCSRMatrix> CeedOperatorFullAssemble(const Operator &op,
