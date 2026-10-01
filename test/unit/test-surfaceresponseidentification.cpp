@@ -9,6 +9,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -2199,5 +2200,137 @@ TEST_CASE("SurfaceResponseIdentificationDecision184Fixes",
     INFO(quiet_band.dump());
     CHECK(quiet_band["ClustersBelow"].get<int>() == 0);
     CHECK(quiet_band["ClustersAbove"].get<int>() == 0);
+  }
+  SECTION("a straight lead next to a slow taper keeps its exact reading (184 (3) locality)")
+  {
+    // ground | 1 | trace 2 | 1 | ground, straight over 80 um (x < 0) and then one LINEAR
+    // taper run of 300 um to 2.5 / 3.5 / 2.5 um (the DS-CTX-003 launcher routes: 0.9-1.3 mm
+    // tapers from 1 / 2 / 1 um to ~4 um); every taper joint is noise (0.14-0.43 deg), so
+    // every edge is one chain of two runs. Before the locality correction the curvature
+    // rule's half-run spreading of the taper joint's turn made kappa > 0 over 40 um of the
+    // lead, the lead's samples there had no exact reading and read a window of the whole
+    // run length (80 um) deep into the taper: the straight 1 / 2 / 1 um stack read
+    // 1 / 2.3 / 1 um and ExactParameters false (the chip's 532 um 6-edge stacks 2.2 / 2.7 /
+    // 2.0 um). Rule: the straight part is one exact 4-edge stack at 0 / 1 / 3 / 4 um; the
+    // taper reads its own mean separations, not exact.
+    const double L = 80.0, T = 300.0, w0 = 1.0, w1 = 1.75, g0 = 1.0, g1 = 2.5, H = 12.0;
+    const auto input = MakeInput(
+        {{{{-L, -w0}, {0.0, -w0}, {T, -w1}, {T, w1}, {0.0, w0}, {-L, w0}}, 0, 1.0},
+         {{{-L, -w0 - g0 - H},
+           {T, -w1 - g1 - H},
+           {T, -w1 - g1},
+           {0.0, -w0 - g0},
+           {-L, -w0 - g0}},
+          0,
+          1.0},
+         {{{-L, w0 + g0},
+           {0.0, w0 + g0},
+           {T, w1 + g1},
+           {T, w1 + g1 + H},
+           {-L, w0 + g0 + H}},
+          0,
+          1.0}},
+        R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    const std::vector<double> design = {0.0, g0 / R, (g0 + 2.0 * w0) / R,
+                                        (2.0 * g0 + 2.0 * w0) / R};
+    double exact_length = 0.0, taper_length = 0.0;
+    for (const auto &feature : result.features)
+    {
+      if (feature.type != "ParallelEdgeCluster")
+      {
+        continue;
+      }
+      const auto &edges = feature.signature["Edges"];
+      INFO(feature.signature.dump()
+           << " exact " << feature.exact_parameters << " length " << feature.length);
+      REQUIRE(edges.size() == 4);
+      if (feature.exact_parameters)
+      {
+        // An exact stack here is the straight part: the design offsets.
+        for (std::size_t k = 0; k < 4; k++)
+        {
+          CHECK_THAT(edges[k]["OffsetOverR"].get<double>(), WithinAbs(design[k], 1.0e-5));
+        }
+        exact_length += feature.length;
+      }
+      else
+      {
+        // The taper: wider than the design everywhere beyond its first 5 %.
+        CHECK(edges[3]["OffsetOverR"].get<double>() > 1.05 * design[3]);
+        taper_length += feature.length;
+      }
+    }
+    // The straight part (less the end cluster at x = -L) is exact; the taper is read.
+    CHECK(exact_length >= 4.0 * (L - 4.0 * R));
+    CHECK(taper_length >= 4.0 * 0.5 * T);
+  }
+  SECTION("a straight lead next to a bend keeps its exact reading (184 (3) locality)")
+  {
+    // Two conductors 2.85 um = 1.5 R apart: straight leads of 60 um, concentric 90 deg
+    // bends of radius 19 / 16.15 um in 4 chords (7.4 / 6.3 um, beyond 2R: coarse) or 18
+    // chords (1.7 / 1.4 um: fine) whose vertices are NOT aligned (the inner polyline's
+    // vertices sit mid-chord of the outer's, as a mesh generator places them), then
+    // straight leads again. An outer vertex (on its circle) is farther from the inner chord
+    // across it than the design separation (3.16 um coarse, 2.865 um fine), so the bend's
+    // sampled distances exceed 1.5 R. Before the correction the lead's samples within half
+    // the lead of the bend joint read a window of the whole run (60 um), which held the
+    // bend's locally constant samples (fine chords; the coarse chords' readings vary by
+    // more than the pair tolerance and were masked): the fine case read the lead's pair
+    // non-exact above 1.5 R. Rule: the leads are the exact 1.5 R pair in both cases (their
+    // samples' own distances are the line distance).
+    const double rho = 19.0, sep = 1.5 * R, lead = 60.0, quarter = 0.5 * std::acos(-1.0);
+    for (const int chords : {4, 18})
+    {
+      std::vector<Point2> outer = {
+          {-lead, -10.0}, {30.0, -10.0}, {30.0, 40.0}, {rho, 40.0}};
+      for (int k = chords; k >= 0; k--)
+      {
+        const double theta = quarter * k / chords;
+        outer.push_back({rho * std::sin(theta), rho - rho * std::cos(theta)});
+      }
+      outer.push_back({-lead, 0.0});
+      std::vector<Point2> inner = {{-lead, sep}, {0.0, sep}};
+      for (int k = 0; k < chords; k++)
+      {
+        const double theta = quarter * (k + 0.5) / chords;
+        inner.push_back(
+            {(rho - sep) * std::sin(theta), rho - (rho - sep) * std::cos(theta)});
+      }
+      inner.push_back({rho - sep, rho});
+      inner.push_back({rho - sep, 40.0});
+      inner.push_back({-lead, 40.0});
+      const auto input = MakeInput({{outer, 0, 1.0}, {inner, 1, 1.0}}, R);
+      const auto result = IdentifyMetalPerimeter(input);
+      CheckPartition(input, result);
+      double exact_length = 0.0;
+      std::ostringstream summary;
+      for (const auto &feature : result.features)
+      {
+        summary << feature.type << " " << feature.length << " exact "
+                << feature.exact_parameters << " bend "
+                << feature.bend_radius_over_R.value_or(0.0) << "; ";
+        if (feature.type != "DifferentConductorGap")
+        {
+          continue;
+        }
+        const double separation = feature.signature["SeparationOverR"].get<double>();
+        INFO("chords " << chords << " " << feature.signature.dump() << " exact "
+                       << feature.exact_parameters << " length " << feature.length
+                       << " bend " << feature.bend_radius_over_R.value_or(0.0));
+        if (feature.exact_parameters)
+        {
+          // Exact only at the design separation (the straight-class pair of the leads; the
+          // bend is the curved type, exact by its concentric fitted arcs).
+          CHECK_THAT(separation, WithinAbs(1.5, 1.0e-5));
+          exact_length += feature.length;
+        }
+      }
+      // The horizontal leads (less the end cluster at x = -lead) and the vertical ones
+      // read exact: more than the two horizontal leads alone.
+      INFO("chords " << chords << ": " << summary.str());
+      CHECK(exact_length >= 2.0 * (lead - 4.0 * R));
+    }
   }
 }

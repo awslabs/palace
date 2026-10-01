@@ -146,6 +146,20 @@ constexpr double kClusterArcChordMaxLengthOverRadius = 0.25;
 constexpr double kCurvatureWindowOverRadius = 1.0;
 constexpr double kPairSeparationTolerance = 0.05;
 constexpr int kPairSeparationSamplesPerInterval = 16;
+// Locality of the bent-pair readings (USER decision 184 (3), implementation corrected
+// 2026-10-01): a chain "bends within R" of a sample when a joint with a turn or a fitted
+// bend arc lies within kPairBendProximityOverRadius x R of it ALONG THE CHAIN; there and
+// only there the sample has no exact straight reading and its chord reading is the window
+// maximum over a half-width of max(R, min(local chord, kPairChordWindowCapOverRadius x R))
+// instead of R. The windowed curvature is NOT this test: the curvature rule spreads every
+// joint's turn over its two half-runs, so a 0.1 deg taper kink between a 200 um lead and a
+// 400 um taper run made kappa > 0 over 100 um of the lead, and the former window of a full
+// run length (200 um) read the taper from the lead: the DS-CTX-003 532 um 1 / 2 / 1 um
+// stacks read 2.2 / 2.7 / 2.0 um, the straight leads of the re-mesh gate's 10 R curved
+// stacks mesh-dependent. The cap keeps the window of a coarse chord (beyond 2R: chord
+// readings anyway) from reaching the neighbouring piece.
+constexpr double kPairBendProximityOverRadius = 1.0;
+constexpr double kPairChordWindowCapOverRadius = 2.0;
 // Self-pairing (decision 82(2) addition, 2026-09-25): a chain folding back onto itself
 // within 2R through a bend of radius >= R (a hairpin, a meander with smooth bends, the
 // U-turn of a narrow strip whose fold is not a rounded corner) pairs with itself. The
@@ -5009,9 +5023,10 @@ void Identifier::BuildBentPairs()
   {
     std::size_t run;
     double s, x, d, qx;
-    // Window half-widths for the curve separation: a full chord where the chain bends
-    // (windowed curvature > 0: the chords of an inscribed polyline dip mid-chord), R on a
-    // straight run (no dip; a taper must be read locally).
+    // Window half-widths for the curve separation: a full chord (capped at
+    // kPairChordWindowCapOverRadius R) where the chain bends within R of the sample / the
+    // foot (a joint or an arc along the chain: the chords of an inscribed polyline dip
+    // mid-chord), R on a straight run (no dip; a taper must be read locally).
     double half_own, half_other;
     // The larger joint turn (radians) at the ends of the sample's run and of the foot's
     // run: the chord reading C and the inscribed-vertex reading C / cos(turn / 2) of the
@@ -5022,6 +5037,11 @@ void Identifier::BuildBentPairs()
     // fitted bend arcs; absent where only the chord reading exists (a polyline bend with
     // chords beyond 2R, a taper, the transition between a lead and an arc).
     std::optional<double> exact;
+    // Either chain bends within kPairBendProximityOverRadius R of the sample / its foot
+    // (BendsWithinR): the sample is read off the chords and, without an exact reading, is
+    // the junction's geometry, not its run's — the sub-piece's exactness is not judged on
+    // it (the end sample of a lead at the joint reads the partner's first chord).
+    bool near_bend;
   };
   // The larger joint turn at the two ends of run k of a chain (0 at an open chain's ends).
   auto LocalTurn = [&](const Chain &chain, std::size_t k)
@@ -5038,6 +5058,80 @@ void Identifier::BuildBentPairs()
     }
     return turn;
   };
+  // The chain bends within R of chain position x (kPairBendProximityOverRadius): a joint
+  // with a turn (not excluded; the wrap joint of a closed chain included) or a fitted bend
+  // arc span within that distance along the chain. Binary searches on the run offsets and
+  // on the chain's arc spans sorted along the chain (built once per chain here: Chain::
+  // arc_spans is in arc order).
+  const double proximity = kPairBendProximityOverRadius * R;
+  std::vector<std::vector<Interval>> sorted_arc_spans(chains.size());
+  for (std::size_t c = 0; c < chains.size(); c++)
+  {
+    for (const auto &[a, x0, x1] : chains[c].arc_spans)
+    {
+      (void)a;
+      sorted_arc_spans[c].emplace_back(x0, x1);
+    }
+    std::sort(sorted_arc_spans[c].begin(), sorted_arc_spans[c].end());
+  }
+  auto BendsWithinR = [&](const Chain &chain, double x)
+  {
+    const std::size_t m = chain.runs.size();
+    if (chain.closed && chain.length > 0.0)
+    {
+      x -= std::floor(x / chain.length) * chain.length;
+    }
+    auto JointNear = [&](std::size_t k, double joint_x)
+    {
+      if (k >= m || chain.joint_turn.empty() || chain.joint_turn[k] <= 0.0 ||
+          chain.joint_excluded[k])
+      {
+        return false;
+      }
+      double dx = std::abs(x - joint_x);
+      if (chain.closed)
+      {
+        dx = std::min(dx, chain.length - dx);
+      }
+      return !quantizer.Less(proximity, dx);
+    };
+    // The joints (before run k, at run_offset[k]) from x - R on, until beyond x + R.
+    const auto first = std::lower_bound(chain.run_offset.begin(), chain.run_offset.end(),
+                                        x - proximity - Tol());
+    for (auto it = first; it != chain.run_offset.end() && *it <= x + proximity + Tol();
+         ++it)
+    {
+      if (JointNear(static_cast<std::size_t>(it - chain.run_offset.begin()), *it))
+      {
+        return true;
+      }
+    }
+    if (chain.closed && m > 0 && JointNear(0, chain.length))
+    {
+      return true;  // the wrap joint seen from the chain's end
+    }
+    // Arc spans [x0, x1] (disjoint, ascending): the last span starting at or before x + R
+    // is the only one that can reach x - R; on a closed chain the spans at either end wrap.
+    const auto &spans = sorted_arc_spans[chain_index.at(chain.id)];
+    const auto after =
+        std::upper_bound(spans.begin(), spans.end(), x + proximity,
+                         [](double value, const Interval &s) { return value < s.first; });
+    if (after != spans.begin() && !quantizer.Less(std::prev(after)->second, x - proximity))
+    {
+      return true;
+    }
+    if (chain.closed && !spans.empty() &&
+        (!quantizer.Less(spans.back().second - chain.length, x - proximity) ||
+         !quantizer.Less(x + proximity - chain.length, spans.front().first)))
+    {
+      return true;
+    }
+    return false;
+  };
+  // Window half-width of the chord reading where the chain bends: a full chord, at least R
+  // and at most kPairChordWindowCapOverRadius R.
+  auto ChordWindow = [&](double chord)
+  { return std::max(R, std::min(chord, kPairChordWindowCapOverRadius * R)); };
   struct Piece
   {
     std::size_t run;
@@ -5056,8 +5150,9 @@ void Identifier::BuildBentPairs()
   // perpendicular projection onto run b (the closest-point distance equals the line
   // distance within the signature tolerance); a foot clamped at an end of run b (the
   // sample lies past the parallel run, opposite a diverging piece) is no exact reading
-  // (USER decision 184 (3): a piece's separation reflects its own geometry).
-  auto ExactSeparation = [&](std::size_t a, std::size_t b, double kappa_a, double kappa_b,
+  // (USER decision 184 (3): a piece's separation reflects its own geometry). "Bends within
+  // R" is BendsWithinR (a joint or arc along the chain), not the windowed curvature.
+  auto ExactSeparation = [&](std::size_t a, std::size_t b, bool bends_a, bool bends_b,
                              double chord_distance) -> std::optional<double>
   {
     if (a == b)
@@ -5084,7 +5179,7 @@ void Identifier::BuildBentPairs()
       }
       return std::nullopt;
     }
-    if (arc_a < 0 && arc_b < 0 && kappa_a <= 0.0 && kappa_b <= 0.0 &&
+    if (arc_a < 0 && arc_b < 0 && !bends_a && !bends_b &&
         !DirectionLess(std::abs(Dot(ra.tangent, rb.tangent)),
                        1.0 - kParallelCosineTolerance))
     {
@@ -5431,16 +5526,16 @@ void Identifier::BuildBentPairs()
             {
               continue;
             }
-            const double kappa_own = WindowedCurvature(A, x);
-            const double kappa_other = WindowedCurvature(B, q.x);
-            const double half_own = kappa_own > 0.0 ? std::max(R, ra.length) : R;
-            const double half_other =
-                kappa_other > 0.0 ? std::max(R, runs[q.run].length) : R;
+            const bool bends_own = BendsWithinR(A, x);
+            const bool bends_other = BendsWithinR(B, q.x);
+            const double half_own = bends_own ? ChordWindow(ra.length) : R;
+            const double half_other = bends_other ? ChordWindow(runs[q.run].length) : R;
             const double turn =
                 std::max(LocalTurn(A, ka), LocalTurn(B, RunIndexInChain(B, q.run)));
             result.samples.push_back(
                 {a, s, x, q.distance, q.x, half_own, half_other, turn,
-                 ExactSeparation(a, q.run, kappa_own, kappa_other, q.distance)});
+                 ExactSeparation(a, q.run, bends_own, bends_other, q.distance),
+                 bends_own || bends_other});
           }
           pieces.push_back(std::move(result));
         }
@@ -5552,14 +5647,15 @@ void Identifier::BuildBentPairs()
   // sub-piece's separation reflects its own geometry (USER decision 184 (3), 2026-10-01,
   // amending decision 85(1)'s "mean of the exact samples"): it is the EXACT value (the
   // mean of the exact samples) only when the sub-piece has an exact sample and EVERY
-  // sample's local separation (the exact reading where the sample has one, else its chord
-  // reading) agrees with it within the signature parameter tolerance — the samples within R
-  // of a bend on a straight lead have no exact reading of their own but read the lead's
-  // separation off the chords; else it is the length-weighted mean over the sub-piece of
-  // the local separations (equally spaced samples) and not exact. A sub-piece holding a few
-  // exact samples at its narrow end and chord readings 85 % wider elsewhere (a 3.7 um
-  // launcher strip next to a 2 um lead, DS-CTX-003 E8-7) reads its own width, not the
-  // lead's.
+  // sample's OWN local separation (the exact reading where the sample has one, else, away
+  // from any bend within R, its closest-point distance) agrees with it within the signature
+  // parameter tolerance — the chord-read samples within R of a bend or a taper kink are the
+  // junction's geometry (the end sample of a lead at the joint reads the partner's first
+  // chord) and are not judged; else it is the length-weighted mean over the sub-piece of
+  // the chord readings (equally spaced samples) and not exact. A
+  // sub-piece holding a few exact samples at its narrow end and chord readings 85 % wider
+  // elsewhere (a 3.7 um launcher strip next to a 2 um lead, DS-CTX-003 E8-7) reads its own
+  // width, not the lead's.
   struct SubPiece
   {
     std::size_t run;
@@ -5596,10 +5692,10 @@ void Identifier::BuildBentPairs()
                                    : 0.5 * (piece.samples[j - 1].s + piece.samples[j].s);
         if (s_hi - s_lo > Tol())
         {
-          // Mean of the local separations over the sub-piece's samples (equally spaced
-          // along the run: the length-weighted mean over the sub-piece) and of the exact
-          // ones; exact iff every local separation lies within the parameter tolerance of
-          // the exact mean.
+          // Mean of the chord readings over the sub-piece's samples (equally spaced along
+          // the run: the length-weighted mean over the sub-piece) and of the exact ones;
+          // exact iff every sample's own local separation lies within the parameter
+          // tolerance of the exact mean.
           double local_sum = 0.0, exact_sum = 0.0;
           int exact_count = 0;
           for (std::size_t q = i; q < j; q++)
@@ -5618,9 +5714,28 @@ void Identifier::BuildBentPairs()
           for (std::size_t q = i; exact_piece && q < j; q++)
           {
             const auto &exact = piece.samples[q].exact;
-            const double local = exact ? *exact : separation[k + q];
+            if (!exact && piece.samples[q].near_bend)
+            {
+              continue;  // read off the chords; the junction's geometry, not judged
+            }
+            // The sample's own geometry: its exact reading, else its own closest-point
+            // distance (the chord reading is a window maximum that, within R of a bend or
+            // a taper kink, holds the neighbouring piece's distances).
+            const double local = exact ? *exact : piece.samples[q].d;
             exact_piece = quantizer.Less(std::abs(local - exact_mean),
                                          kSignatureParameterToleranceOverRadius * R);
+            if (!exact_piece && std::getenv("PALACE_IDENTIFICATION_DEBUG_PIECES") &&
+                input.log)
+            {
+              std::ostringstream dbg;
+              dbg << std::setprecision(10) << "  DEBUG sub-piece of run " << piece.run
+                  << " not exact: sample s " << piece.samples[q].s << " x "
+                  << piece.samples[q].x << " d " << piece.samples[q].d << " chord "
+                  << separation[k + q] << (exact ? " exact " : " no exact reading ")
+                  << "vs exact mean " << exact_mean << " of " << exact_count
+                  << " exact samples\n";
+              input.log(dbg.str());
+            }
           }
           out.push_back({piece.run,
                          {s_lo, s_hi},
@@ -10919,24 +11034,32 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"CurvatureWindowOverR", kCurvatureWindowOverRadius},
         {"PairSeparationToleranceRelative", kPairSeparationTolerance},
         {"PairSeparationSamplesPerInterval", kPairSeparationSamplesPerInterval},
+        {"PairBendProximityOverR", kPairBendProximityOverRadius},
+        {"PairChordWindowCapOverR", kPairChordWindowCapOverRadius},
         {"PairSeparationEstimate",
          "per sample: chord reading C = min over the two chains of the maximum sampled "
-         "closest-point distance within max(R, local chord) of the sample / its foot where "
-         "the chain bends, R on straight runs; inscribed reading C / cos(turn / 2) with "
-         "the larger local joint turn; interacting iff both < 2R (the decision). The "
-         "feature separation (decision 85(1), amended by USER decision 184 (3), "
-         "2026-10-01) per link and curvature class is EXACT where the geometry allows: "
-         "the perpendicular distance of two exactly parallel straight runs neither of "
-         "which bends within R of the sample / foot and whose foot is the perpendicular "
+         "closest-point distance within max(R, min(local chord, PairChordWindowCapOverR "
+         "R)) of the sample / its foot where the chain bends within PairBendProximityOverR "
+         "R of it along the chain (a joint with a turn or a fitted bend arc; not the "
+         "windowed curvature, which spreads a joint's turn over its two half-runs), R "
+         "elsewhere; inscribed reading C / cos(turn / 2) with the larger local joint turn; "
+         "interacting iff both < 2R (the decision). The feature separation (decision "
+         "85(1), amended by USER decision 184 (3), 2026-10-01) per link and curvature "
+         "class is EXACT where the geometry allows: the perpendicular distance of two "
+         "exactly parallel straight runs neither of which bends within "
+         "PairBendProximityOverR R of the sample / foot and whose foot is the "
+         "perpendicular "
          "projection (closest-point distance = line distance within the parameter "
          "tolerance), or the radius difference of two fitted bend arcs whose centres "
          "coincide within the parameter tolerance. A sub-piece (consecutive samples of one "
          "constancy / interaction status along a run) is exact only when it has an exact "
-         "sample and every sample's local separation (exact where the sample has one, else "
-         "chord) lies within the parameter tolerance of the exact mean, which it then "
-         "reads; "
-         "else it reads the mean of the local separations (equally spaced samples: the "
-         "length-weighted mean over the sub-piece) and is not exact. The pieces of a chain "
+         "sample and every sample's own local separation (its exact reading where it has "
+         "one, else, away from any bend within PairBendProximityOverR R, its closest-point "
+         "distance; the chord-read samples next to a bend are not judged) lies within the "
+         "parameter tolerance of the exact mean, which it then reads; else it reads the "
+         "mean of the chord readings "
+         "(equally spaced samples: the length-weighted mean over the sub-piece) and is not "
+         "exact. The pieces of a chain "
          "pair are grouped into links so that a link holds ONE separation: exact pieces "
          "within the "
          "parameter tolerance of each other form an exact group (value = their "

@@ -504,10 +504,22 @@ smaller endpoint.
      at up to w / cos(turn / 2). In both constructions the sampled closest-point distance from
      one chain to the other reaches the curve separation w as its maximum on the side whose
      maximum is smaller: a sample's separation = min over the two chains of the maximum
-     sampled distance within a window of half-width max(R, local chord) where the chain bends
-     (windowed curvature > 0: the window holds a vertex of an inscribed polyline and a full
-     chord of an offset polyline) and R on straight runs (no dip; a taper is read locally),
-     about the sample on its own chain and about its foot on the other chain. That chord
+     sampled distance within a window of half-width max(R, min(local chord,
+     `PairChordWindowCapOverR` = 2 x R)) where the chain bends within `PairBendProximityOverR`
+     = 1 x R of the sample / the foot along the chain (a joint with a turn or a fitted bend
+     arc: the window holds a vertex of an inscribed polyline and a full chord of an offset
+     polyline) and R elsewhere (no dip; a taper is read locally), about the sample on its own
+     chain and about its foot on the other chain. Both constants are dimensionless multiples
+     of R. The locality is NOT the windowed curvature (implementation corrected 2026-10-01,
+     USER decision 184 (3) as approved): the curvature rule spreads every joint's turn over
+     its two half-runs, so a 0.1 deg taper kink between a 200 um lead and a 400 um taper run
+     makes kappa > 0 over 100 um of the lead; the former "bends where kappa > 0" test with a
+     window of the whole run length read the taper from the lead (the DS-CTX-003 532 um
+     1 / 2 / 1 um stacks read 2.2 / 2.7 / 2.0 um once the sub-piece rule below stopped
+     averaging the exact samples only; the straight leads of the re-mesh gate's 10 R curved
+     stacks were mesh-dependent). The half-run spreading itself is unchanged: it is the
+     curvature rule's density (the curved class, the bend radius annotation, the signed turn
+     of a portion, the BendRadius census band). That chord
      reading C is exact for an offset polyline; two polylines inscribed in the curves at
      aligned angles are C = w cos(turn / 2) apart everywhere (chords and vertex-to-polyline
      alike) for a curve separation w, and the polyline pair alone cannot tell the two
@@ -654,9 +666,11 @@ smaller endpoint.
    rounded-corner radii from the tangent lengths, bend radii from the least-squares circle
    of the joints, and the pair / stack separations per link and curvature class as (a) the
    perpendicular distance of two exactly parallel straight runs neither of which bends
-   within R of the sample or its foot (the leads of a route: constant and exact for the
-   design lines; a chord of a coarse polyline bend has a joint within R and is not read
-   this way — aligned inscribed chords of a 370 um bend are 31 nm inside the circle), or
+   within `PairBendProximityOverR` = 1 x R of the sample or its foot along its chain — a
+   joint with a turn or a fitted bend arc, not the windowed curvature — (the leads of a
+   route: constant and exact for the design lines; a chord of a coarse polyline bend has a
+   joint within R and is not read this way — aligned inscribed chords of a 370 um bend are
+   31 nm inside the circle), or
    (b) the radius difference of two fitted bend arcs whose centres coincide within the
    parameter tolerance (the centre offset bounds the error of the difference; two local
    circles of a spline fitted piecewise are not concentric). **Separation of a sub-piece and
@@ -668,12 +682,19 @@ smaller endpoint.
    distance within the parameter tolerance; a foot clamped at a run end, opposite a
    diverging piece, is no exact reading). A sub-piece (the consecutive samples of one
    constancy / interaction status along a run) is EXACT only when it has an exact sample
-   and every sample's local separation — the exact reading where the sample has one, else
-   its chord reading — lies within the parameter tolerance (1e-3 R) of the exact mean,
-   which it then reads (the samples within R of a bend on a straight lead have no exact
-   reading of their own but read the lead's separation off the chords); otherwise it reads
-   the length-weighted mean of the local separations over the sub-piece (equally spaced
-   samples) and is not exact. The pieces of a chain pair are grouped into links so that a
+   and every sample's OWN local separation — its exact reading where it has one, else, away
+   from any bend within `PairBendProximityOverR` R of the sample / its foot, its
+   closest-point distance to the partner chain — lies within the parameter tolerance
+   (1e-3 R) of the exact mean, which it then reads. The chord-read samples next to a bend or
+   a taper kink are not judged: they have no exact reading of their own, their window-max
+   chord reading (reaching up to `PairChordWindowCapOverR` R past the joint) holds the
+   neighbouring piece's distances, and the end sample of a lead at the joint reads the
+   partner's first chord (2.85 cos(2.5 deg) for a fine bend: 1.4e-3 R off the line) — they
+   are the junction's geometry, read off the chords like the bend. The chord reading stays
+   the pair-level VALUE estimator for polyline bends; no new constant (the proximity is
+   `PairBendProximityOverR`). Otherwise the sub-piece reads the length-weighted mean of the
+   chord readings over the sub-piece (equally spaced samples; unchanged by the 2026-10-01
+   correction) and is not exact. The pieces of a chain pair are grouped into links so that a
    link holds ONE separation: the exact pieces within the parameter tolerance of each other
    form an exact group (value = their length-weighted mean), a chord piece joins the exact
    group within the pair tolerance (`PairSeparationToleranceRelative` = 0.05) of its own
@@ -1460,8 +1481,9 @@ matching pass). The new top-level `Identification` object carries the contract:
                   "SignatureLengthQuantumOverR": 1e-6, "SignatureAngleQuantumDegrees": 1e-6,
                   "StraightBendRadiusOverR": 10, "CurvatureWindowOverR": 1,
                   "PairSeparationToleranceRelative": 0.05, "PairSeparationSamplesPerInterval": 16,
-                  "PairSeparationEstimate": "per sample: chord reading C = min over the two chains of the maximum sampled closest-point distance within max(R, local chord) of the sample / its foot where the chain bends, R on straight runs; inscribed reading C / cos(turn / 2) with the larger local joint turn; interacting iff both < 2R; feature separation = mean C",
+                  "PairSeparationEstimate": "per sample: chord reading C = min over the two chains of the maximum sampled closest-point distance within max(R, min(local chord, PairChordWindowCapOverR R)) of the sample / its foot where the chain bends within PairBendProximityOverR R of it along the chain, R elsewhere; inscribed reading C / cos(turn / 2) with the larger local joint turn; interacting iff both < 2R; feature separation = mean C",
                   "PairConstancyWindowOverR": 1, "PairSampleSpacingOverR": 0.5,
+                  "PairBendProximityOverR": 1, "PairChordWindowCapOverR": 2,
                   "PairCandidateReachOverR": 2.1, "SamplingMargins": "...", "CrossLayerReachOverR": 2,
                   "SelfPairNeighbourhoodOverR": 3.14159, "StackRule": "...",
                   "StackCompositionCap": 64, "ClusterExtensionWedgeCapDegrees": 30,
