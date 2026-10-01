@@ -538,9 +538,8 @@ void FiniteElementSpace::InitBroken(const CrackSides &sides)
           }
           const std::array<std::int64_t, 3> key = {g, sides.side[e], -1};
           const auto it = std::lower_bound(needed.begin(), needed.end(), key);
-          MFEM_ASSERT(it != needed.end() && (*it)[0] == g && (*it)[1] == sides.side[e],
-                      "Missing version query for a broken space true DOF!");
-          if ((*it)[2] < 0)
+          if (it == needed.end() || (*it)[0] != g || (*it)[1] != sides.side[e] ||
+              (*it)[2] < 0 || (*it)[2] >= NumVersions(g))
           {
             num_unresolved++;
           }
@@ -571,15 +570,14 @@ void FiniteElementSpace::InitBroken(const CrackSides &sides)
   }
   data->override_offsets[ne] = static_cast<int>(data->override_local.size());
   {
+    // Inconsistent versions from records of the same priority, or versions which could not
+    // be resolved, would give wrong broken spaces.
     int counts[2] = {num_conflicts, num_unresolved};
     Mpi::GlobalSum(2, counts, comm);
-    if (counts[0] > 0 || counts[1] > 0)
-    {
-      Mpi::Warning(comm,
-                   "Inconsistent ({:d}) or missing ({:d}) versions of degrees of freedom "
-                   "of interior boundaries for a broken finite element space!\n",
-                   counts[0], counts[1]);
-    }
+    MFEM_VERIFY(counts[0] == 0 && counts[1] == 0,
+                "Inconsistent (" << counts[0] << ") or missing (" << counts[1]
+                                 << ") versions of the DOFs of interior boundaries for a "
+                                    "broken finite element space!");
   }
 
   // The broken prolongation.
