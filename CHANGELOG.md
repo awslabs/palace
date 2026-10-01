@@ -82,14 +82,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     mesh (such as a mesh saved by an adaptive mesh refinement run), which lost all boundary
     conditions of the cross-section.
     [PR 1023](https://github.com/awslabs/palace/pull/1023).
-  - Fixed numeric wave-port and boundary-mode solves on lossy cross-sections (e.g. with
+  - Fixed numeric wave-port and boundary-mode mode ordering on lossy cross-sections (e.g. with
     absorbing or finite-conductivity boundaries) that could select a strongly evanescent
-    mode instead of the intended propagating mode. Candidate modes were ranked by the
-    distance of only the real part of the propagation constant from the eigenvalue solver
-    target, so the outcome depended on which extra eigenpairs converged (for wave ports,
-    also on the frequency sweep history). Exact and reduced (adaptive sweep) mode solves now
-    rank modes by the complex distance of the propagation constant from the target.
-    [Issue 996](https://github.com/awslabs/palace/issues/996).
+    mode instead of the intended propagating mode. Exact and reduced (adaptive sweep) mode
+    solves now rank modes by the complex distance of the propagation constant from the target.
+    [PR 1019](https://github.com/awslabs/palace/pull/1019).
 
 #### Performance Improvements
 
