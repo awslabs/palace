@@ -41,7 +41,7 @@ class Builder:
         fid = len(self.features)
         record = {"Id": fid, "Type": ftype, "Signature": dict(signature, Type=ftype), "Hash": f"{ftype}-{fid:04d}" + "0" * 40,
                   "Chirality": 1, "ExactParameters": True, "Length": length, "Portions": portions, "Vertices": [],
-                  "Frame": {"Origin": [origin[0], origin[1], 0.0], "Axes": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}}
+                  "Frame": {"Origin": [origin[0], origin[1], origin[2] if len(origin) > 2 else 0.0], "Axes": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}}
         record.update(extra)
         self.features.append(record)
         return fid
@@ -70,7 +70,7 @@ class Builder:
                 else:
                     portions.append([si, self.segments[si]["Length"] - R, self.segments[si]["Length"]])
             fid = self.feature(corner_type, {"AngleDegrees": 90.0, "CornerRadiusOverR": 0.0, "Interfaces": ["SA"], "Law": LAW},
-                               c, 2 * R, portions)
+                               (c[0], c[1], segments[0]["Key"][0][2]), 2 * R, portions)
             for si, s0, s1 in portions:
                 self.segments[si]["Portions"].append([s0, s1, fid])
         for k in range(4):
@@ -114,7 +114,7 @@ class WindowInventory(unittest.TestCase):
     def test_loops_bodies_and_metal_side(self):
         ident = self.manifest["Identification"]
         loops = WQ.PerimeterLoops(ident["Segments"], ident["Features"], R)
-        closed = [l for l in loops.loops if l["Closed"]]
+        closed = [l for l in loops.loops.values() if l["Closed"]]
         self.assertEqual(len(closed), 3)
         depths = sorted(l["Depth"] for l in closed)
         self.assertEqual(depths, [0, 1, 2])
@@ -123,7 +123,7 @@ class WindowInventory(unittest.TestCase):
         by_depth = {l["Depth"]: l for l in closed}
         self.assertEqual([l["MetalInside"] for l in (by_depth[0], by_depth[1], by_depth[2])], [False, False, True])
         self.assertEqual(by_depth[1]["Body"], -1)
-        self.assertEqual(by_depth[2]["Body"], loops.loops.index(by_depth[2]))
+        self.assertEqual(by_depth[2]["Body"], [k for k, l in loops.loops.items() if l is by_depth[2]][0])
         self.assertEqual(loops.metal_side_checks, 8)
         self.assertEqual(loops.metal_side_disagreements, [])
 
@@ -157,9 +157,13 @@ class WindowInventory(unittest.TestCase):
         island = [b for b in w["Bodies"] if b["Kind"] == "Island"][0]
         self.assertTrue(island["CutByWall"])
         self.assertFalse(island["EntirelyInside"])
-        self.assertIsNone(w["ProposedTerminal"])
+        # decision-180 rule (M2): no whole island -> the cut non-ground conductor is the terminal, open-terminated
+        # 3 R + margin inside the wall
+        self.assertEqual(w["ProposedTerminal"], island["Body"])
+        self.assertEqual(w["Excitation"]["Kind"], "OpenTerminatedTrace")
+        self.assertAlmostEqual(w["Excitation"]["OpenSetback"], 3.0 * R + 2.0, places=12)
         roles = {a["Kind"]: a["Role"] for a in w["TerminalAssignment"]}
-        self.assertIn("bridged", roles["Island"])
+        self.assertIn("open-terminated", roles["Island"])
         # island perimeter inside: the x = 10 side (20) + halves of the y = +-10 sides (10 each) = 40
         self.assertAlmostEqual(island["PerimeterInside"], 40.0, places=9)
         # the isolated edges along y = +-10 are cut by the wall at x = 0 -> CutByWall on those features

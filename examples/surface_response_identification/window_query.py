@@ -115,8 +115,34 @@ class PerimeterLoops:
         self.segments = segments
         self.radius = radius
         self.segment_loop = {}
-        self.loops = []  # dicts: Plane, Segments, Polygon, Area, BBox, Depth, Parent, Body, Closed
-        self._build(features)
+        self.loops = {}  # index -> dict: Plane, Segments, Polygon, Area, BBox, Depth, Parent, Body, Closed, MetalInside
+        self.ground_bodies = {}
+        self.metal_side_checks = 0
+        self.metal_side_disagreements = []
+        self.bodies = None  # window_extract body records (chip conductors) when built from an extract
+        self.footprints = []
+        if segments is not None:
+            self._build(features)
+
+    @classmethod
+    def from_extract(cls, manifest):
+        """The CHIP's loop / body model restricted to a window extract (``window_extract.py``): the loops keep their
+        chip indices (sparse), ``segment_loop`` maps extract segment indices, ``bodies`` holds the extract's body
+        records (Kind, Plane, chip Conductor, ConductorBodies, ConductorGround) and ``footprints`` the bump footprints."""
+        we = manifest["WindowExtract"]
+        model = cls(None, None, float(manifest["Identification"]["MatchingRadius"]))
+        model.segments = manifest["Identification"]["Segments"]
+        for rec in we["Loops"]:
+            loop = dict(rec)
+            idx = loop.pop("Index")
+            loop["Segments"] = [j for j in rec["Segments"] if j >= 0]
+            for j in loop["Segments"]:
+                model.segment_loop[j] = idx
+            model.loops[idx] = loop
+        model.ground_bodies = {("Ground", float(p)): v for p, v in we.get("GroundBodies", {}).items()}
+        model.bodies = {int(k): v for k, v in we["Bodies"].items()}
+        model.footprints = we["Footprints"]
+        return model
 
     def _build(self, features):
         by_plane = collections.defaultdict(dict)  # plane -> point -> [segment indices]
@@ -159,7 +185,7 @@ class PerimeterLoops:
                     "BBox": [min(xs), max(xs), min(ys), max(ys)], "Depth": 0, "Parent": None, "Body": None}
             for j in component:
                 self.segment_loop[j] = len(self.loops)
-            self.loops.append(loop)
+            self.loops[len(self.loops)] = loop
         self._containment()
         self._metal_side(features)
         self._bodies()
@@ -195,7 +221,7 @@ class PerimeterLoops:
 
     def _containment(self):
         by_plane = collections.defaultdict(list)
-        for idx, loop in enumerate(self.loops):
+        for idx, loop in self.loops.items():
             by_plane[loop["Plane"]].append(idx)
         for plane, indices in by_plane.items():
             indices.sort(key=lambda k: abs(self.loops[k]["Area"]))  # smallest first
@@ -232,7 +258,7 @@ class PerimeterLoops:
         ground (body key ("Ground", plane): the L1 ground of a flip chip whose outer boundary is not in the
         perimeter table). Open components are their own record."""
         self.ground_bodies = {}
-        for idx, loop in enumerate(self.loops):
+        for idx, loop in self.loops.items():
             if not loop["Closed"] or loop["MetalInside"]:
                 loop["Body"] = idx
                 continue
@@ -252,10 +278,8 @@ class PerimeterLoops:
         polygon-convex vertex is a ConvexCorner of the metal, with metal outside a ConcaveCorner); a loop
         without sharp corners takes the opposite side of its parent (parity), and a parentless one is a hole
         of the plane's unbounded ground. Minority votes are reported as MetalSideDisagreements."""
-        self.metal_side_checks = 0
-        self.metal_side_disagreements = []
         vertex_index = {}
-        for loop_index, loop in enumerate(self.loops):
+        for loop_index, loop in self.loops.items():
             loop["MetalInside"] = None
             loop["CornerVotes"] = [0, 0]  # [metal inside, metal outside]
             if not loop["Closed"] or len(loop["Polygon"]) < 3:
@@ -282,12 +306,12 @@ class PerimeterLoops:
             loop["CornerVotes"][0 if metal_inside else 1] += 1
             votes.append((loop_index, metal_inside, f["Id"], origin, f["Type"]))
             self.metal_side_checks += 1
-        for loop in self.loops:
+        for loop in self.loops.values():
             inside, outside = loop["CornerVotes"]
             if inside or outside:
                 loop["MetalInside"] = inside >= outside
         # loops without votes: parity from the nearest decided ancestor (top down: parents before children)
-        order = sorted(range(len(self.loops)), key=lambda i: self.loops[i]["Depth"])
+        order = sorted(self.loops, key=lambda i: self.loops[i]["Depth"])
         for idx in order:
             loop = self.loops[idx]
             if not loop["Closed"] or loop["MetalInside"] is not None:
@@ -378,11 +402,13 @@ def inventory(manifest, windows, margin, weights, z_range=None):
     segments = ident["Segments"]
     features = ident["Features"]
     feature_by_id = {f["Id"]: f for f in features}
-    loops = PerimeterLoops(segments, features, radius)
+    from_extract = "WindowExtract" in manifest
+    loops = PerimeterLoops.from_extract(manifest) if from_extract else PerimeterLoops(segments, features, radius)
     if margin is None:
         margin = 10.0 * radius
     results = {"MatchingRadius": radius, "Margin": margin, "Weights": weights, "Windows": {},
-               "PerimeterLoops": {"Count": len(loops.loops), "Closed": sum(1 for l in loops.loops if l["Closed"]),
+               "BodyModel": "chip (window_extract: bump-joined conductors)" if from_extract else "manifest (per plane, no bumps)",
+               "PerimeterLoops": {"Count": len(loops.loops), "Closed": sum(1 for l in loops.loops.values() if l["Closed"]),
                                   "MetalSideChecks": loops.metal_side_checks,
                                   "MetalSideDisagreements": loops.metal_side_disagreements[:20],
                                   "MetalSideDisagreementCount": len(loops.metal_side_disagreements)}}
@@ -509,21 +535,8 @@ def inventory(manifest, windows, margin, weights, z_range=None):
                               "EntirelyInside": entirely_inside, "Proxy": b["Proxy"], "Area": b.get("Area"),
                               "BBox": b.get("BBox"), "LoopClosed": b.get("Closed")})
         body_rows.sort(key=lambda r: (r["Kind"] != "Ground", r["Kind"] == "OpenChain", -r["Proxy"]))
-        islands_inside = [r for r in body_rows if r["EntirelyInside"]]
-        terminal = max(islands_inside, key=lambda r: r["Proxy"]) if islands_inside else None
-        assignment = []
-        for r in body_rows:
-            if terminal is not None and r["Body"] == terminal["Body"]:
-                role = "Terminal (1 V, quoted)"
-            elif r["Kind"] == "Ground":
-                role = "Ground (0 V)"
-            elif r["Kind"] == "OpenChain":
-                role = "unresolved: perimeter interrupted by walls / non-manifold edges (body from the mesh connectivity at cut time)"
-            elif r["CutByWall"]:
-                role = "Ground (0 V): cut island / trace bridged to ground at the wall"
-            else:
-                role = "Ground (0 V): non-excited island (capacitance-matrix convention)"
-            assignment.append({"Body": r["Body"], "Kind": r["Kind"], "Plane": r["Plane"], "Role": role})
+        conductor_rows, footprint_rows = conductor_table(loops, body_rows, box)
+        terminal, assignment, excitation = terminal_assignment(body_rows, conductor_rows, radius, margin, box)
         results["Windows"][name] = {
             "Box": list(box), "ComparisonRegion": list(inner),
             "Perimeter": {"Total": sum(v["Assigned"] + v["Excluded"] for v in per_plane.values()),
@@ -536,12 +549,99 @@ def inventory(manifest, windows, margin, weights, z_range=None):
                            "Proxy": sum(r["Proxy"] for r in rows if r["Type"] == t)}
                        for t in sorted({r["Type"] for r in rows})},
             "Keys": keys, "Features": rows,
-            "Bodies": body_rows, "ConductorCount": len(body_rows),
-            "ProposedTerminal": terminal["Body"] if terminal else None,
+            "Bodies": body_rows, "Conductors": conductor_rows, "ConductorCount": len(conductor_rows),
+            "BumpFootprints": footprint_rows,
+            "ProposedTerminal": terminal, "Excitation": excitation,
             "TerminalAssignment": assignment,
             "MeanSeparationPredictions": predictions,
         }
     return results
+
+
+def conductor_table(loops, body_rows, box):
+    """Bodies of the window grouped into conductors: with a chip model (``PerimeterLoops.from_extract``) a
+    conductor = the bodies joined by bump footprints anywhere on the chip (decision 184 M1), else every body is
+    its own conductor. A conductor is Ground when one of its bodies (seen or unseen) is a ground, EntirelyInside
+    when every body of it is an island entirely inside the window and the chip joins no body the window does not
+    see. Also the bump footprints meeting the window (plane, height, bodies joined, whole / straddling)."""
+    groups = collections.OrderedDict()
+    for r in body_rows:
+        rec = loops.bodies.get(r["Body"]) if loops.bodies else None
+        root = rec["Conductor"] if rec else r["Body"]
+        g = groups.setdefault(root, {"Conductor": root, "Bodies": [], "Planes": set(), "Kind": None, "Proxy": 0.0,
+                                      "PerimeterInside": 0.0, "CutByWall": False, "ChipBodies": rec["ConductorBodies"] if rec else 1,
+                                      "ChipGround": rec["ConductorGround"] if rec else r["Kind"] == "Ground"})
+        g["Bodies"].append(r["Body"])
+        g["Planes"].add(r["Plane"])
+        g["Proxy"] += r["Proxy"]
+        g["PerimeterInside"] += r["PerimeterInside"]
+        g["CutByWall"] = g["CutByWall"] or r["CutByWall"]
+        kinds = {kind for kind in (g["Kind"], r["Kind"]) if kind}
+        g["Kind"] = "Ground" if "Ground" in kinds or g["ChipGround"] else ("OpenChain" if "OpenChain" in kinds else "Island")
+    conductor_rows = []
+    for g in groups.values():
+        seen_all = len(g["Bodies"]) >= g["ChipBodies"]
+        g["UnseenBodies"] = max(0, g["ChipBodies"] - len(g["Bodies"]))
+        g["EntirelyInside"] = g["Kind"] == "Island" and not g["CutByWall"] and seen_all
+        g["Planes"] = sorted(p for p in g["Planes"] if p is not None)
+        conductor_rows.append(g)
+    conductor_rows.sort(key=lambda g: (g["Kind"] != "Ground", g["Kind"] == "OpenChain", -g["Proxy"]))
+    footprint_rows = []
+    for fp in loops.footprints:
+        bb = fp["BBox"]
+        if bb[1] < box[0] or bb[0] > box[1] or bb[3] < box[2] or bb[2] > box[3]:
+            continue
+        partner_body = None
+        if fp.get("Partner") is not None:
+            partner = [q for q in loops.footprints if q.get("Index") == fp["Partner"]]
+            partner_body = partner[0]["Body"] if partner else "unseen"
+        footprint_rows.append({"Index": fp.get("Index"), "Plane": fp["Plane"], "Height": fp.get("Height"), "Body": fp["Body"],
+                               "PartnerBody": partner_body, "Centroid": fp["Centroid"], "Area": fp["Area"],
+                               "Inside": bool(fp.get("Inside")), "Straddles": bool(fp.get("Straddles"))})
+    return conductor_rows, footprint_rows
+
+
+def terminal_assignment(body_rows, conductor_rows, radius, margin, box):
+    """Decision-180 terminal rule per conductor: the island conductor entirely inside the box with the largest
+    proxy energy is the quoted terminal (1 V); else the cut non-ground conductor (a CPW centre trace / cut island)
+    with the largest proxy is the terminal, open-terminated inside the wall (the metal stops 3 R + margin inside
+    the box, the trace's other cuts bridged to ground); every other conductor is ground, a cut one bridged to
+    ground at the wall by an explicit metal polygon. A window with no non-ground conductor has no excitation
+    (S3 class: move / resize / drop). Returns (terminal conductor root or None, per-body assignment, excitation)."""
+    islands = [g for g in conductor_rows if g["EntirelyInside"]]
+    cut_traces = [g for g in conductor_rows if g["Kind"] == "Island" and not g["EntirelyInside"]]
+    open_setback = 3.0 * radius + margin
+    if islands:
+        terminal = max(islands, key=lambda g: g["Proxy"])
+        excitation = {"Kind": "Island", "Conductor": terminal["Conductor"], "Bodies": terminal["Bodies"], "Planes": terminal["Planes"],
+                      "Realisable": True, "Rule": "whole island conductor (bump-joined bodies included) at 1 V"}
+    elif cut_traces:
+        terminal = max(cut_traces, key=lambda g: g["Proxy"])
+        excitation = {"Kind": "OpenTerminatedTrace", "Conductor": terminal["Conductor"], "Bodies": terminal["Bodies"],
+                      "Planes": terminal["Planes"], "Realisable": True, "OpenSetback": open_setback,
+                      "Rule": f"cut non-ground conductor with the largest proxy, open-terminated {open_setback:g} um inside the wall"}
+    else:
+        terminal = None
+        excitation = {"Kind": "None", "Conductor": None, "Bodies": [], "Planes": [], "Realisable": False,
+                      "Rule": "no non-ground conductor in the window: move / resize / drop the window"}
+    terminal_bodies = set(terminal["Bodies"]) if terminal else set()
+    assignment = []
+    for r in body_rows:
+        if r["Body"] in terminal_bodies:
+            role = "Terminal (1 V, quoted)" if excitation["Kind"] == "Island" else \
+                f"Terminal (1 V, quoted): trace open-terminated {open_setback:g} um inside the wall"
+        elif r["Kind"] == "OpenChain":
+            role = "unresolved: perimeter interrupted by walls / non-manifold edges (body from the mesh connectivity at cut time)"
+        elif r["Kind"] == "Ground":
+            role = "Ground (0 V)"
+        elif r["CutByWall"]:
+            role = "Ground (0 V): cut island / trace bridged to ground at the wall"
+        else:
+            conductor = [g for g in conductor_rows if r["Body"] in g["Bodies"]][0]
+            role = "Ground (0 V): island bump-joined to a ground / cut conductor" if conductor["Kind"] == "Ground" or conductor["CutByWall"] \
+                else "Ground (0 V): non-excited island (capacitance-matrix convention)"
+        assignment.append({"Body": r["Body"], "Kind": r["Kind"], "Plane": r["Plane"], "Role": role})
+    return (terminal["Conductor"] if terminal else None), assignment, excitation
 
 
 def write_csv(results, path):
