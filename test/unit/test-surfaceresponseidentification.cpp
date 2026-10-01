@@ -2789,4 +2789,102 @@ TEST_CASE("SurfaceResponseIdentificationCollinearSubdivision",
       CheckSame(plain, irregular);
     }
   }
+  SECTION("a closed loop whose longest piece is a chord inside the arc (start rule)")
+  {
+    // The closed-loop scan starts after the loop's LONGEST piece; when that piece is a
+    // chord inside a bend of four or more joints (short leads, long chords) the scan
+    // started inside the arc. Before decision 212 the least-squares sub-range anchored at
+    // that start was accepted on a joint-only mesh (its first arm, the previous chord, ends
+    // on the circle) and the arc was chopped there, while on a subdivided mesh the
+    // sub-vertex failed the mesh-segment test and the whole arc was found from its real
+    // start: the two discretisations disagreed. Rule: a chord arm whose far joint is itself
+    // absorbable is no arm (the range is not maximal at its start), so the scan passes and
+    // finds the whole arc from its real start at every discretisation and whatever the
+    // loop's start vertex. (i) a bar with TANGENT leads (6 um) along a 250 um bend of six 5
+    // deg chords (21.8 um, the longest pieces): one 7-joint tangent bend per side; (ii) a
+    // bar whose 6 um leads meet a 120 um bend of seven unequal chords (8-12 deg, 16.7-25.1
+    // um) at a 20 deg kink (below the cap, same sign; neither tangent nor a chord: not
+    // absorbable): the kink joints stay corners and the six interior joints are one
+    // least-squares bend per side.
+    auto Rotated = [](const std::vector<Point2> &points, std::size_t start)
+    {
+      std::vector<Point2> result(points.begin() + static_cast<std::ptrdiff_t>(start),
+                                 points.end());
+      result.insert(result.end(), points.begin(),
+                    points.begin() + static_cast<std::ptrdiff_t>(start));
+      return result;
+    };
+    auto KinkedBar = [](double width, double radius,
+                        const std::vector<double> &chord_degrees, double lead,
+                        double kink_degrees)
+    {
+      const double deg = std::acos(-1.0) / 180.0;
+      std::vector<Point2> centreline, normals;
+      double angle = 0.0;  // tangent angle from +x along the left-turning arc
+      std::vector<double> angles = {0.0};
+      for (const double chord : chord_degrees)
+      {
+        angle += chord * deg;
+        angles.push_back(angle);
+      }
+      // Leads rotated by -kink from the tangents at both ends (the junction turns by kink +
+      // half the chord angle, in the arc's sense).
+      const double a_in = -kink_degrees * deg, a_out = angles.back() + kink_degrees * deg;
+      const Point2 p0 = {0.0, 0.0};
+      centreline.push_back({p0[0] - lead * std::cos(a_in), p0[1] - lead * std::sin(a_in)});
+      normals.push_back({-std::sin(a_in), std::cos(a_in)});
+      for (const double a : angles)
+      {
+        centreline.push_back({radius * std::sin(a), radius - radius * std::cos(a)});
+        normals.push_back({-std::sin(a), std::cos(a)});
+      }
+      const Point2 end = centreline.back();
+      centreline.push_back(
+          {end[0] + lead * std::cos(a_out), end[1] + lead * std::sin(a_out)});
+      normals.push_back({-std::sin(a_out), std::cos(a_out)});
+      return BarAroundCentreline(centreline, width, 0.0, normals);
+    };
+    struct Loop
+    {
+      std::string name;
+      std::vector<Point2> points;
+      double radius;
+      std::size_t joints_per_arc;
+      int bend_vertices;  // absorbed CORNER joints (a 2.5 deg tangent end joint is noise)
+      int corners;
+    };
+    const double width = 8.0;
+    for (const Loop &loop :
+         {Loop{"tangent leads", ArcBar(width, 250.0, 30.0, 5.0, 6.0), 250.0, 7, 10, 4},
+          Loop{"kinked leads",
+               KinkedBar(width, 120.0, {8.0, 10.0, 12.0, 10.0, 8.0, 10.0, 11.0}, 6.0, 20.0),
+               120.0, 6, 12, 8}})
+    {
+      INFO(loop.name);
+      const Reading plain = Read({{loop.points, 0, joint_only}});
+      // One whole bend per side (radius +/- width / 2), all interior joints absorbed.
+      REQUIRE(plain.arcs.size() == 2);
+      for (const auto &arc : plain.arcs)
+      {
+        CHECK(std::get<0>(arc) == "Bend");
+        CHECK(std::get<2>(arc) == loop.joints_per_arc);
+      }
+      CHECK(std::get<1>(plain.arcs[0]) ==
+            std::round((loop.radius - 0.5 * width) / R * 1.0e6));
+      CHECK(std::get<1>(plain.arcs[1]) ==
+            std::round((loop.radius + 0.5 * width) / R * 1.0e6));
+      CHECK(plain.vertex_types.at("BendVertex") == loop.bend_vertices);
+      CHECK(plain.corners == loop.corners);
+      CheckSame(plain, Read({{Subdivide(loop.points, 4.0), 0, joint_only}}));
+      CheckSame(plain, Read({{SubdivideIrregularly(loop.points), 0, joint_only}}));
+      CheckSame(plain, Read({{loop.points, 0, 1.0}}));
+      // Start-vertex invariance: the loop's point list rotated to start at every vertex.
+      for (std::size_t start = 1; start < loop.points.size(); start++)
+      {
+        INFO("start vertex " << start);
+        CheckSame(plain, Read({{Rotated(loop.points, start), 0, joint_only}}));
+        CheckSame(plain, Read({{Rotated(loop.points, start), 0, 4.0}}));
+      }
+    }
+  }
 }
