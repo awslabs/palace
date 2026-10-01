@@ -98,13 +98,14 @@ public:
   // Construct a view of the given space which is broken (discontinuous) across interior
   // boundaries, given the interior boundary sides of each local element (see
   // fem/brokenspace.hpp). The L-vector of the view is the L-vector of the given space
-  // extended with a block of copied L-DOFs, read by the elements on non-base sides, and the
-  // true DOF vector is extended with the corresponding copies of the true DOFs. The view
-  // shares the underlying MFEM space with the given space, which must outlive the view and
-  // cannot be updated while the view exists. Only element (domain) restrictions and the
-  // prolongation (a HypreParMatrix, with the global offsets of the L-DOFs and true DOFs)
-  // are available for a broken space, which cannot be used with MFEM assembly or for MFEM
-  // grid functions. Collective.
+  // extended with a block of copied L-DOFs, one for each version of the true DOFs of its
+  // row read by the elements on the sides of split entities other than the first, and the
+  // true DOF vector is extended with the copies of the true DOFs of split entities (one per
+  // side other than the first). The view shares the underlying MFEM space with the given
+  // space, which must outlive the view and cannot be updated while the view exists. Only
+  // element (domain) restrictions and the prolongation (a HypreParMatrix, with the global
+  // offsets of the L-DOFs and true DOFs) are available for a broken space, which cannot be
+  // used with MFEM assembly or for MFEM grid functions. Collective.
   FiniteElementSpace(FiniteElementSpace &fespace, const CrackSides &sides);
 
   virtual ~FiniteElementSpace() { ResetCeedObjects(); }

@@ -159,21 +159,23 @@ mfem::Mesh MakeCrackedCubeMesh(int n, mfem::Element::Type type, double y_max = 1
 
 // Air bridge standing on a ground plane, as interior boundaries (attribute crack_attr) in
 // a unit cube mesh: the ground plane z = 0.25, and a bridge over the strip
-// 0.25 < x < 0.75, made of the legs x = 0.25 and x = 0.75 for 0.25 < z < 0.625 and of the
-// top z = 0.625, for 0.25 < y < 0.75 (open at both ends).
-mfem::Mesh MakeAirBridgeMesh(int n, mfem::Element::Type type)
+// 0.25 < x < 0.75, made of the legs x = 0.25 and x = 0.75 for 0.25 < z < z_top and of the
+// top z = z_top, for y_lo < y < y_hi (open at both ends, or a tunnel through the domain for
+// y_lo = 0 and y_hi = 1).
+mfem::Mesh MakeAirBridgeMesh(int n, mfem::Element::Type type, double y_lo = 0.25,
+                             double y_hi = 0.75, double z_top = 0.625)
 {
-  constexpr double z_ground = 0.25, z_top = 0.625, lo = 0.25, hi = 0.75, eps = 1.0e-12;
+  constexpr double z_ground = 0.25, lo = 0.25, hi = 0.75, eps = 1.0e-12;
   auto base = mfem::Mesh::MakeCartesian3D(n, n, n, type, 1.0, 1.0, 1.0);
   auto In = [](double t, double a, double b) { return t > a - eps && t < b + eps; };
   auto Near = [](double t, double a) { return std::abs(t - a) < eps; };
   const std::array<std::function<bool(const double *)>, 4> pieces = {
       [&](const double *x) { return Near(x[2], z_ground); }, [&](const double *x)
-      { return Near(x[2], z_top) && In(x[0], lo, hi) && In(x[1], lo, hi); },
+      { return Near(x[2], z_top) && In(x[0], lo, hi) && In(x[1], y_lo, y_hi); },
       [&](const double *x)
-      { return Near(x[0], lo) && In(x[2], z_ground, z_top) && In(x[1], lo, hi); },
+      { return Near(x[0], lo) && In(x[2], z_ground, z_top) && In(x[1], y_lo, y_hi); },
       [&](const double *x)
-      { return Near(x[0], hi) && In(x[2], z_ground, z_top) && In(x[1], lo, hi); }};
+      { return Near(x[0], hi) && In(x[2], z_ground, z_top) && In(x[1], y_lo, y_hi); }};
   std::vector<int> sheet_faces;
   mfem::Array<int> fv;
   for (int f = 0; f < base.GetNumFaces(); f++)
@@ -471,6 +473,34 @@ void JumpB2(const mfem::Vector &x, mfem::Vector &B)
   B(2) = 0.5 * Jump2(x(0));
 }
 
+// Piecewise constant fields for the tunnel of MakeAirBridgeMesh (y_lo = 0, y_hi = 1, and
+// z_top = 0.75): the tangential component B_y (and so H_y) differs in the three regions
+// below the ground plane, in the tunnel, and above, with junctions of the three regions at
+// the footprints of the legs. The normal component D_z jumps across the ground plane.
+int TunnelRegion(const mfem::Vector &x)
+{
+  if (x(2) < 0.25)
+  {
+    return 0;
+  }
+  return (x(0) > 0.25 && x(0) < 0.75 && x(2) < 0.75) ? 1 : 2;
+}
+
+void JumpETunnel(const mfem::Vector &x, mfem::Vector &E)
+{
+  E(0) = 0.5;
+  E(1) = -0.25;
+  E(2) = (TunnelRegion(x) == 0) ? 1.0 : 2.0;
+}
+
+void JumpBTunnel(const mfem::Vector &x, mfem::Vector &B)
+{
+  constexpr double By[3] = {1.0, -0.5, 2.0};
+  B(0) = 0.75;
+  B(1) = By[TunnelRegion(x)];
+  B(2) = 0.5;
+}
+
 // The parallel runs of the estimator tests cover a subset of the orders and element types
 // of the serial runs: their parallel aspects (interior boundaries on process boundaries,
 // shared and constrained entities, rebalancing and the reconstruction of the sides) do not
@@ -631,15 +661,15 @@ TEST_CASE("Interior boundary sides", "[brokenspace][Serial][Parallel]")
 
   const std::vector<int> attr_list = {crack_attr};
   const auto &sides = mesh.GetCrackSides(attr_list);
-  REQUIRE(sides.copy.size() == static_cast<std::size_t>(pmesh.GetNE()));
   REQUIRE(sides.split.size() == static_cast<std::size_t>(pmesh.GetNE()));
+  REQUIRE(sides.version.size() == static_cast<std::size_t>(pmesh.GetNE()));
+  REQUIRE(sides.side.size() == static_cast<std::size_t>(pmesh.GetNE()));
 
   // For a plane spanning the domain, exactly one side of every interior boundary entity
   // reads the copy: all elements on one side of the plane touching an entity of the plane
-  // have the corresponding bit set and those on the other side do not. The base side of an
-  // entity is the one with the smallest global element number, which depends on the
-  // partitioning, but the global number of elements with a set bit for a vertex of the
-  // plane plus those without must equal the number of elements touching it.
+  // read version 1 and those on the other side version 0. The side reading the original
+  // DOFs of an entity is the one with the smallest global element number, which depends on
+  // the partitioning.
   mfem::Array<int> ev, ee, eo, ef, efo;
   mfem::Vector c(3);
   int num_bad = 0, num_set = 0;
@@ -689,10 +719,14 @@ TEST_CASE("Interior boundary sides", "[brokenspace][Serial][Parallel]")
         on_plane |= (1u << (nv_e + ne_e + i));
       }
     }
-    // Bits are only set for entities on the plane (all of which are split).
-    num_bad += ((sides.copy[e] & ~on_plane) != 0) + (sides.split[e] != on_plane) +
-               ((sides.copy[e] & ~sides.split[e]) != 0);
-    num_set += (sides.copy[e] != 0);
+    // Only entities on the plane are split, with versions 0 and 1.
+    const auto copy = sides.CopyBits(e);
+    num_bad += ((copy & ~on_plane) != 0) + (sides.split[e] != on_plane);
+    for (int b = 0; b < 32; b++)
+    {
+      num_bad += (((sides.split[e] >> b) & 1u) && sides.GetVersion(e, b) > 1);
+    }
+    num_set += (copy != 0);
   }
   Mpi::GlobalSum(1, &num_bad, comm);
   Mpi::GlobalSum(1, &num_set, comm);
@@ -703,9 +737,9 @@ TEST_CASE("Interior boundary sides", "[brokenspace][Serial][Parallel]")
   const std::vector<int> other_list = {1};
   const auto &no_sides = mesh.GetCrackSides(other_list);
   int num_nonzero = 0;
-  for (std::size_t e = 0; e < no_sides.copy.size(); e++)
+  for (std::size_t e = 0; e < no_sides.split.size(); e++)
   {
-    num_nonzero += (no_sides.copy[e] != 0) + (no_sides.split[e] != 0);
+    num_nonzero += (no_sides.split[e] != 0) + (no_sides.CopyBits(static_cast<int>(e)) != 0);
   }
   Mpi::GlobalSum(1, &num_nonzero, comm);
   CHECK(num_nonzero == 0);
@@ -713,38 +747,56 @@ TEST_CASE("Interior boundary sides", "[brokenspace][Serial][Parallel]")
 
 TEST_CASE("Interior boundary sides of an air bridge", "[brokenspace][Serial][Parallel]")
 {
-  // The air under the bridge and above it are a single region, joined through the split
-  // entities of the ground plane next to the legs of the bridge, so the sides of the bridge
-  // cannot be chosen by the two-coloring of the regions. They are still chosen
-  // consistently along the bridge: only elements touching both the bridge and the ground
-  // plane (next to the legs) read the copies for some of their split entities and the
-  // original DOFs for others.
+  // The edges of the footprints of the legs of the bridge on the ground plane have three
+  // sides (below the ground plane, under and above the bridge), each reading its own
+  // version of their DOFs, and the other split entities two.
   const auto comm = MPI_COMM_WORLD;
   const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
   auto smesh = MakeAirBridgeMesh(8, type);
-  smesh.EnsureNCMesh(true);
   auto part = Partition(smesh, Mpi::Size(comm));
   auto mesh = MakeParMesh(comm, smesh, part);
   const auto &sides = mesh.GetCrackSides({crack_attr});
   const auto &pmesh = mesh.Get();
-  int counts[3] = {0, 0, 0};  // Elements reading copies, mixed, mixed away from the ground
-  mfem::Array<int> ev;
+  int counts[4] = {0, 0, 0, 0};  // Versions 0, 1, 2 of footprint edges, other versions
+  mfem::Array<int> ee, eo, verts;
   for (int e = 0; e < pmesh.GetNE(); e++)
   {
-    counts[0] += (sides.copy[e] != 0);
-    if (sides.copy[e] == 0 || sides.copy[e] == sides.split[e])
+    const auto geom = pmesh.GetElementGeometry(e);
+    const int nv_e = mfem::Geometry::NumVerts[geom];
+    pmesh.GetElementEdges(e, ee, eo);
+    for (int i = 0; i < ee.Size(); i++)
     {
-      continue;
+      const int b = nv_e + i;
+      if (!((sides.split[e] >> b) & 1u))
+      {
+        continue;
+      }
+      pmesh.GetEdgeVertices(ee[i], verts);
+      bool footprint = true;
+      for (auto v : verts)
+      {
+        const double *x = pmesh.GetVertex(v);
+        footprint = footprint && std::abs(x[2] - 0.25) < 1.0e-12 &&
+                    (std::abs(x[0] - 0.25) < 1.0e-12 || std::abs(x[0] - 0.75) < 1.0e-12) &&
+                    x[1] > 0.25 - 1.0e-12 && x[1] < 0.75 + 1.0e-12;
+      }
+      const int v = sides.GetVersion(e, b);
+      if (footprint && v <= 2)
+      {
+        counts[v]++;
+      }
+      else if (!footprint && v > 1)
+      {
+        counts[3]++;
+      }
     }
-    counts[1]++;
-    pmesh.GetElementVertices(e, ev);
-    counts[2] += std::none_of(ev.begin(), ev.end(), [&](int v)
-                              { return std::abs(pmesh.GetVertex(v)[2] - 0.25) < 1.0e-12; });
   }
-  Mpi::GlobalSum(3, counts, comm);
-  CAPTURE(type, counts[0], counts[1]);
+  Mpi::GlobalSum(4, counts, comm);
+  CAPTURE(type, counts[0], counts[1], counts[2], counts[3]);
   CHECK(counts[0] > 0);
-  CHECK(counts[2] == 0);
+  CHECK(counts[1] > 0);
+  CHECK(counts[2] > 0);
+  CHECK(counts[3] == 0);
 }
 
 TEST_CASE("Hanging entities", "[brokenspace][Serial][Parallel]")
@@ -800,22 +852,25 @@ TEST_CASE("Interior boundary sides through refinement", "[brokenspace][Serial][P
   const auto computed = mesh::ComputeCrackSides(pmesh, marker);
 
   // The split entities agree, and so do the copies of split entities, on every element or
-  // on none (the base side is the other one). The inherited sides may also read copies of
-  // entities which are not split in the closure of split entities of the parent, which has
-  // no effect when they are not constrained (there are no hanging entities).
-  int num_split = 0, num_diff_split = 0, num_same_copy = 0, num_flipped_copy = 0;
+  // on none (the base side is the other one), and the side labels are those of the parents.
+  int num_split = 0, num_diff_split = 0, num_same_copy = 0, num_flipped_copy = 0,
+      num_diff_side = 0;
+  const auto &cf = pmesh.GetRefinementTransforms();
   for (int e = 0; e < pmesh.GetNE(); e++)
   {
     const auto split = computed.split[e];
     num_split += (split != 0);
     num_diff_split += (inherited.split[e] != split);
+    num_diff_side += (inherited.side[e] != coarse_sides.side[cf.embeddings[e].parent]);
     if (split)
     {
-      const auto copy = inherited.copy[e] & split;
-      num_same_copy += (copy == computed.copy[e]);
-      num_flipped_copy += (copy == (split & ~computed.copy[e]));
+      const auto copy = inherited.CopyBits(e);
+      num_same_copy += (copy == computed.CopyBits(e));
+      num_flipped_copy += (copy == (split & ~computed.CopyBits(e)));
     }
   }
+  Mpi::GlobalSum(1, &num_diff_side, comm);
+  CHECK(num_diff_side == 0);
   Mpi::GlobalSum(1, &num_split, comm);
   Mpi::GlobalSum(1, &num_diff_split, comm);
   Mpi::GlobalSum(1, &num_same_copy, comm);
@@ -1383,6 +1438,54 @@ TEST_CASE("Broken space error estimators (two interior boundaries)",
   const auto [grad_cont, curl_cont] = setup.Estimate(JumpE2, JumpB2, no_attr_list);
   const double grad_max = GlobalMax(comm, grad_cont), curl_max = GlobalMax(comm, curl_cont);
   CAPTURE(order, type, nonconforming, layer_first, swap_ranks);
+  CHECK(grad_max > 1.0e-4);
+  CHECK(curl_max > 1.0e-4);
+  CHECK(GlobalMax(comm, grad_broken) < 1.0e-6 * grad_max);
+  CHECK(GlobalMax(comm, curl_broken) < 1.0e-6 * curl_max);
+}
+
+TEST_CASE("Broken space error estimators (junctions)",
+          "[brokenspace][errorestimator][Serial][Parallel]")
+{
+  // A tunnel through a ground plane: its legs meet the ground plane at junctions of three
+  // regions, each of which reads its own version of the DOFs of the junction edges. The
+  // recovery of piecewise constant fields with different values in the three regions is
+  // exact, also with a nonconforming refinement next to a junction on one side only (with
+  // hanging entities constrained by the DOFs of the junction edges).
+  const auto comm = MPI_COMM_WORLD;
+  const int order = GENERATE_COPY(from_range(SerialOrParallel<int>(comm, {1, 2}, {2})));
+  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  const bool nonconforming = GENERATE(false, true);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  config::MaterialData material;
+  material.attributes = {1};
+  material.epsilon_r.s = {2.0, 3.0, 4.0};
+  material.mu_r.s = {1.0, 1.5, 2.0};
+  config::PeriodicBoundaryData periodic;
+
+  auto smesh = MakeAirBridgeMesh(4, type, 0.0, 1.0, 0.75);
+  if (nonconforming)
+  {
+    smesh.EnsureNCMesh(true);
+  }
+  auto part = Partition(smesh, Mpi::Size(comm));
+  EstimatorSetup setup(comm, smesh, part, order, material, periodic);
+  const std::vector<int> attr_list = {crack_attr}, no_attr_list = {};
+  setup.mesh.GetCrackSides(attr_list);
+  if (nonconforming)
+  {
+    // The elements in the tunnel next to the junction x = 0.25, z = 0.25.
+    RefineWhere(setup.mesh, [](const mfem::Vector &c)
+                { return c(0) > 0.25 && c(0) < 0.5 && c(2) > 0.25 && c(2) < 0.5; });
+    UpdateSetup(setup.mesh, setup.nd_fespaces, setup.rt_fespaces);
+    REQUIRE(mesh::HasHangingEntities(setup.mesh.Get()));
+  }
+  const auto [grad_broken, curl_broken] =
+      setup.Estimate(JumpETunnel, JumpBTunnel, attr_list);
+  const auto [grad_cont, curl_cont] =
+      setup.Estimate(JumpETunnel, JumpBTunnel, no_attr_list);
+  const double grad_max = GlobalMax(comm, grad_cont), curl_max = GlobalMax(comm, curl_cont);
+  CAPTURE(order, type, nonconforming);
   CHECK(grad_max > 1.0e-4);
   CHECK(curl_max > 1.0e-4);
   CHECK(GlobalMax(comm, grad_broken) < 1.0e-6 * grad_max);
