@@ -108,11 +108,7 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
   }
 
   // Store boundary attributes.
-  attr_list.SetSize(static_cast<int>(data.attributes.size()));
-  for (int i = 0; i < attr_list.Size(); i++)
-  {
-    attr_list[i] = data.attributes[i];
-  }
+  attr_list.Append(data.attributes.data(), static_cast<int>(data.attributes.size()));
 
   // Floquet ports require periodic boundary conditions in the transverse directions.
   // The periodic mesh provides DOF identification on opposite faces, and the Floquet
@@ -217,16 +213,7 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
     for (int be = 0; be < mesh.GetNBE(); be++)
     {
       int battr = mesh.GetBdrAttribute(be);
-      bool on_port = false;
-      for (int i = 0; i < attr_list.Size(); i++)
-      {
-        if (battr == attr_list[i])
-        {
-          on_port = true;
-          break;
-        }
-      }
-      if (!on_port)
+      if (attr_list.Find(battr) < 0)
       {
         continue;
       }
