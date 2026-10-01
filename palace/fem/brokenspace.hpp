@@ -22,12 +22,17 @@ namespace palace
 // split into one copy per group of neighboring elements which are connected to each other
 // without crossing the interior boundary, unless there is only one such group (for example
 // at the free edge of an interior boundary). The groups on the same side of a connected
-// interior boundary form a region, and the region with the smallest global element number
-// keeps the original degrees of freedom of all of its split entities, while all other
-// regions read a single copy (junctions of three or more regions therefore share one
-// copy). Choosing the copies by region makes them consistent between an entity and the
-// entities of its closure, as required by the constraints of hanging entities on a
-// nonconforming mesh.
+// interior boundary form a region. The regions, adjacent when they are on different sides
+// of a split entity, are two-colored: those of the first color keep the original degrees
+// of freedom of their split entities, while those of the second color read a single copy
+// (junctions of three or more regions therefore share one copy). Each element then reads
+// either the original degrees of freedom of all of its split entities or the copies of all
+// of them, as required by the constraints of hanging entities on a nonconforming mesh,
+// which can involve the split entities of several interior boundaries. This is not
+// possible where the regions cannot be two-colored: at junctions of three pairwise adjacent
+// regions, and along an interior boundary whose two sides are joined into a single region
+// through the split entities of another one (an air bridge standing on a ground plane, for
+// example).
 //
 // The sides are stored as bitmasks per local element, with bit b for the local entity b of
 // the element, where local entities are numbered as vertices [0, nv), then edges
