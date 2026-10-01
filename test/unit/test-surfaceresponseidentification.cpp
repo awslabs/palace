@@ -2511,6 +2511,43 @@ TEST_CASE("SurfaceResponseIdentificationDecision203ExactStretches",
     // stretches (w0 and w1) with the taper's non-exact stretch between them.
     CheckOneSided(2.5, 40.0);
   }
+  SECTION("parallel-class stack: the tilt x half-length exactness guard (MINOR-1)")
+  {
+    // ground | 2 | trace 2 | 2 | ground over 100 um as E8-1, the lower ground's top edge
+    // tilted by 1.2e-4 rad (within the parallel cosine tolerance 1.4e-4 rad: one class,
+    // one 4-edge stack): its lateral offset is read at the run's midpoint, but the lines'
+    // separation at the span's ends deviates by tilt x half-length = 6e-3 um = 3.2e-3 R,
+    // beyond the 1e-3 R signature tolerance -> the stack reads the midpoint offsets with
+    // ExactParameters false. The E8-1 tilt (2.5e-6 rad, 5e-5 R over the half-length) stays
+    // exact.
+    for (const double tilt_rad : {2.5e-6, 1.2e-4})
+    {
+      const double tilt = tilt_rad * 100.0;
+      const auto input = MakeInput(
+          {{{{-50.0, -10.0}, {50.0, -10.0}, {50.0, -2.0}, {-50.0, -2.0 - tilt}}, 0, 1.0},
+           {Rectangle(-40.0, 0.0, 40.0, 2.0), 0, 1.0},
+           {Rectangle(-50.0, 4.0, 50.0, 12.0), 0, 1.0}},
+          R);
+      const auto result = IdentifyMetalPerimeter(input);
+      CheckPartition(input, result);
+      int stacks = 0;
+      for (const auto &feature : result.features)
+      {
+        if (feature.type != "ParallelEdgeCluster" || feature.length < R)
+        {
+          // (The tilted class axis projects the members' ends differently: a 0.02 um
+          // 3-edge sliver at one stack end, below the signature grid's interest.)
+          continue;
+        }
+        INFO("tilt " << tilt_rad << " " << feature.signature.dump() << " exact "
+                     << feature.exact_parameters << " length " << feature.length);
+        CHECK(feature.signature["Edges"].size() == 4);
+        CHECK(feature.exact_parameters == (tilt_rad < 1.0e-5));
+        stacks++;
+      }
+      CHECK(stacks == 1);
+    }
+  }
   SECTION("no regression: an oblique straight strip with grid-rounded vertices")
   {
     // A 2.6 um = 1.37 R strip of 120 um at 23 deg whose vertices (every 10 um on both
