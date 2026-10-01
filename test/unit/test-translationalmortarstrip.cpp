@@ -557,7 +557,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // library builder's workflow: the requirements manifest of a first dry run names the
   // separation; the signature match admits 1e-3 R).
   const auto library_path = temp.temp_dir / "fabrication-process-strip-pairs-3d.json";
-  auto WriteLibrary = [&](double separation)
+  // One strip model per identified separation (the bend shape reads two exact strips).
+  auto WriteLibrary = [&](const std::vector<double> &separations)
   {
     if (Mpi::Root(Mpi::World()))
     {
@@ -565,14 +566,29 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       REQUIRE(input);
       json library = json::parse(input);
       library["Name"] = "unit-test-process-strip-pairs-3d";
+      json models = json::array();
       for (auto &model : library["Models"])
       {
         model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
         if (model["Topology"] == "SameConductorStrip")
         {
-          model["Separation"] = separation;
+          for (std::size_t i = 0; i < separations.size(); i++)
+          {
+            json copy = model;
+            copy["Separation"] = separations[i];
+            if (i > 0)
+            {
+              copy["Name"] = model["Name"].get<std::string>() + "-" + std::to_string(i);
+            }
+            models.push_back(copy);
+          }
+        }
+        else
+        {
+          models.push_back(model);
         }
       }
+      library["Models"] = models;
       std::ofstream output(library_path);
       output << library.dump(2) << "\n";
     }
@@ -624,9 +640,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       const auto manifest_path =
           temp.temp_dir / ("surface-response-requirements-" + shape.name + ".json");
       const auto patches_path = temp.temp_dir / "surface-response-patches.csv";
-      // First dry run: the identified strip and its separation (the nominal 0.25 shifted by
-      // the taper's asymmetric portion / the bend's chord reading beyond the 1e-3 R match).
-      WriteLibrary(0.25);
+      // First dry run: the identified strip(s) and their separations. The taper is one
+      // strip at its mean width (the nominal 0.25 shifted by the taper's asymmetric
+      // portion, beyond the 1e-3 R match); the bend is TWO exact strips (USER decision 184
+      // (3), 2026-10-01: a piece's separation is its own geometry, exact groups within
+      // 1e-3 R): the straight half at 0.25 and the sheared half at the perpendicular width
+      // 0.25 cos(8 deg) of a pure shear, 1 % apart.
+      WriteLibrary({0.25});
       IoData requirements_iodata(config, false);
       requirements_iodata.boundaries.cracked_attributes.insert(9);
       {
@@ -635,24 +655,25 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                                          manifest_path.string());
       }
       Mpi::Barrier(Mpi::World());
-      double separation = 0.0;
+      std::vector<double> separations;
       {
         std::ifstream input(manifest_path);
         REQUIRE(input);
         const json manifest = json::parse(input);
-        int strips = 0;
         for (const auto &requirement : manifest["Requirements"])
         {
           if (requirement["Topology"] == "SameConductorStrip")
           {
-            separation = requirement["Geometry"]["Separation"].get<double>();
-            strips++;
+            separations.push_back(requirement["Geometry"]["Separation"].get<double>());
           }
         }
-        REQUIRE(strips == 1);
+        REQUIRE(separations.size() == (shape.name == "taper" ? 1 : 2));
       }
-      CHECK_THAT(separation, WithinAbs(0.25, 0.005));
-      WriteLibrary(separation);
+      for (const double separation : separations)
+      {
+        CHECK_THAT(separation, WithinAbs(0.25, 0.005));
+      }
+      WriteLibrary(separations);
       IoData iodata(config, false);
       iodata.boundaries.cracked_attributes.insert(9);
       {
