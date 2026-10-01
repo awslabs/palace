@@ -76,9 +76,9 @@ CEED_QFUNCTION(f_eval_poynting_22)(void *__restrict__ ctx_, CeedInt Q,
   return 0;
 }
 
-// Boundary-mode normal Poynting density on a 2D cross-section, matching
-// ModeSnCoefficient's sign convention: v = scale * Re{-Ex Hy* + Ey Hx*}, with
-// Ht = mu^{-1}_{zz} Bt. This qfunction is applied separately to real and imaginary
+// Boundary-mode normal Poynting density on a 2D cross-section: v = scale * Re{-Ex Hy* +
+// Ey Hx*}, with Ht = mu^{-1}_{zz} Bt and no 1/2 factor, as in the 3D
+// PoyntingVectorCoefficient. This qfunction is applied separately to real and imaginary
 // parts and accumulated.
 CEED_QFUNCTION(f_eval_mode_sn_22)(void *__restrict__ ctx_, CeedInt Q,
                                   const CeedScalar *const *in, CeedScalar *const *out)
