@@ -198,7 +198,28 @@ smaller endpoint.
    stays a corner, the arc starts at its next joint; a lead meeting a circular arc at a 90 deg
    corner is neither, and the corner is never absorbed). A rounded corner keeps the tangent
    construction only (its arms are tangent by construction and its site — virtual corner, arm
-   directions — has no meaning otherwise). Every joint that no arc absorbs and that is not
+   directions — has no meaning otherwise). **Every-point clause (USER decision 184 (2),
+   2026-10-01; the E8-3 / E8-4 false arcs of stage 0).** The concyclicity holds at EVERY
+   point of the range, not only at its joint vertices: the interior points of the chord
+   between two consecutive joints lie off the circle by the chord's sagitta on it, which is
+   admissible only where it is below the joint noise resolution (`JointNoiseSagittaOverR` R
+   = 0.05 R, the deviation from straight the noise rule itself cannot resolve: a finely
+   chorded curve) or where one of the chord's end joints is a REAL joint (not noise under
+   the geometric rule on its shorter piece: the design chord of a coarsely discretised
+   curve, which decision 122 reads as the curve whatever its sagitta). A chord deviating
+   from the circle by more than the resolution between two NOISE joints is a straight
+   edge and its range is no arc (`ChordsResolved`, applied to the tangent circle, the
+   least-squares bend and the closed circle alike): a 5,500 um straight trace edge whose
+   ends carry two 1.2 / 2.4 deg joints on 12 um pieces — the first chords of the bends the
+   run enters, exactly concyclic by mirror symmetry — read as a 132 mm bend bowing 15 R off
+   the metal, and the arc-aware cluster geometry found that bow within 2R of the parallel
+   ground edge 16 um away (DS-OSC-003: 3.9 mm of false 2-edge clusters; DS-SCT-002: 2.1 mm).
+   For an inscribed polyline of equal chords the joint's implied sagitta and the chord
+   sagitta are one quantity, so a uniformly chorded arc passes iff its joints are real or
+   its chords are below the resolution: no new threshold enters. On a closed path the
+   piece lengths wrap at every straddling joint pair (`CyclicGap`; formerly only the pair of
+   the list's first and last joints wrapped, so the pieces of the pair straddling the
+   path's start read negative and the noise rule accepted any turn there). Every joint that no arc absorbs and that is not
    noise under the joint noise rule (item 1) is a corner feature — a two-joint chamfer, a
    square strip end (the diameter chord of a semicircle cannot be told from a one-chord
    arc), a polygon of 50 deg joints, the 90 deg lead-end corner of a rounded slot. Recorded
@@ -446,8 +467,23 @@ smaller endpoint.
    * a fillet at a corner (radius < R; the run-based rounded-corner rule of item 4, computed
      from the arms' accumulated turn and the tangent distances, hence refinement-invariant)
      is a rounded corner and takes no part in the curvature;
-   * **pairs along bends** (phase 3: local constancy): two chains that are not two exactly
-     parallel straight runs (those keep the translational rule of item 2) are sampled over
+   * **pairs along bends** (phase 3: local constancy): two chains that are not two
+     parallel straight runs (those keep the translational rule of item 2; **one parallel
+     relation for every rule**, USER decision 184 (1), 2026-10-01: two rigid runs of one
+     plane are parallel iff |cos| of their tangents exceeds 1 - `ParallelCosineTolerance`
+     = 1 - 1e-8, i.e. within 1.4e-4 rad — dimensionless, hence independent of the length
+     unit and of R — and the *parallel classes* are the connected components of that
+     relation per plane, built from the runs' 1e-9 `DirectionKey` buckets sorted by their
+     in-plane angle with consecutive buckets within the tolerance linked, the 0 / pi wrap
+     included: a canonical, numbering-independent partition (`BuildDirectionClasses`,
+     `ParallelRigidRuns`). Parallel rigid runs pair and stack by the translational rule
+     ONLY; every other rigid pair goes through the bent-pair and event rules. Before this
+     rule the translational stage grouped the runs on the 1e-9 grid while the two other
+     stages skipped rigid pairs within the cosine tolerance, so runs tilted by between
+     1e-9 and 1.4e-4 rad — a mesh-noise wobble of 1.8e-4 um over a 186 um chip edge next
+     to an exactly axis-aligned partner — were paired by NEITHER: the DS-SCT-002 flux
+     lines read as a 3-edge stack plus an isolated fourth edge facing it at 1.05 R over
+     12 x 175.7 um (stage-0 E8-1)) are sampled over
      their candidate facing regions — the points within `PairCandidateReachOverR` = 2 (1 + 0.05)
      R of the other chain, not beyond either end of it (the half-plane past a chain end along
      its outward tangent), outside the 2R zones of shared vertices, cut at the curved
@@ -623,11 +659,39 @@ smaller endpoint.
    this way — aligned inscribed chords of a 370 um bend are 31 nm inside the circle), or
    (b) the radius difference of two fitted bend arcs whose centres coincide within the
    parameter tolerance (the centre offset bounds the error of the difference; two local
-   circles of a spline fitted piecewise are not concentric). A class with any exact piece
-   takes the length-weighted mean of its exact pieces; otherwise it takes the
-   length-weighted mean chord reading of the bent-pair rule (a slow taper, a spline route
-   with chords beyond 2R) and the feature carries `ExactParameters` false (an annotation,
-   not hashed). Sample-count weighting is gone. The stack offsets are the sums of the
+   circles of a spline fitted piecewise are not concentric). **Separation of a sub-piece and
+   of a link (decision 85(1) as AMENDED by USER decision 184 (3), 2026-10-01; the stage-0
+   E8-7 finding: DS-CTX-003 launcher strips 3.68-3.79 um wide keyed as the 2.0 um strip,
+   `ExactParameters` true, over 36 x ~46 um).** A piece's separation reflects its OWN
+   geometry. The straight reading (a) is exact at a sample only where the sample's foot is
+   the perpendicular projection onto the partner run (closest-point distance = line
+   distance within the parameter tolerance; a foot clamped at a run end, opposite a
+   diverging piece, is no exact reading). A sub-piece (the consecutive samples of one
+   constancy / interaction status along a run) is EXACT only when it has an exact sample
+   and every sample's local separation — the exact reading where the sample has one, else
+   its chord reading — lies within the parameter tolerance (1e-3 R) of the exact mean,
+   which it then reads (the samples within R of a bend on a straight lead have no exact
+   reading of their own but read the lead's separation off the chords); otherwise it reads
+   the length-weighted mean of the local separations over the sub-piece (equally spaced
+   samples) and is not exact. The pieces of a chain pair are grouped into links so that a
+   link holds ONE separation: the exact pieces within the parameter tolerance of each other
+   form an exact group (value = their length-weighted mean), a chord piece joins the exact
+   group within the pair tolerance (`PairSeparationToleranceRelative` = 0.05) of its own
+   separation (the nearest when several: a chord reading of that design separation), and
+   the remaining chord pieces form chord groups by consecutive steps within the pair
+   tolerance (value = the length-weighted mean chord reading, `ExactParameters` false). A
+   piece is never keyed by the exact readings of pieces beyond its own tolerance: formerly
+   the pieces were chained by the 5 % step alone and "a class with any exact piece takes
+   the mean of its exact pieces", so a slow taper linked an exact 2 um lead to a 3.7 um
+   strip through its intermediate readings and the whole link took the lead's 2.0 um. A
+   slow taper is still a pair described by its mean separation (the recorded limitation
+   above); the taper READING rule (where the pair ends, the taper joints) is a USER
+   question after the pilots, not settled here. Superseded text kept for the record: "A
+   class with any exact piece takes the length-weighted mean of its exact pieces; otherwise
+   it takes the length-weighted mean chord reading of the bent-pair rule (a slow taper, a
+   spline route with chords beyond 2R) and the feature carries `ExactParameters` false (an
+   annotation, not hashed)." Sample-count weighting is gone. The stack offsets are the sums
+   of the
    consecutive links' separations of the cross-section's class (a straight stack on the
    leads no longer carries the bend's readings). The chord reading keeps its recorded
    discretisation ambiguity (order c^2 / (8 rho) of the coarser chords), which the
@@ -907,7 +971,21 @@ whose implied sagitta (c / 2) tan(turn / 4) on the SHORTER run lies within 1 % o
 within 1 % of `ArcMaxJointTurnDegrees` (the arc rule's cap, `ArcMaxJointTurnDegrees`) and
 whose LONGER run, read as a chord at the joint's turn, has a sagitta within 1 % of
 `SagittaOverR` R (the mesh-coarseness diagnostic, `ArcSagittaOverR`), each split into the
-below / above sides (samples every 0.5 R). DS-SCT-001 at R = 2 um: 7,247 um within 1 % of R
+below / above sides (samples every 0.5 R); and (USER decision 184 (4), 2026-10-01; the
+stage-0 E6 finding: the DS-CTX-003 loop-end clusters went from 42 to 48 edges at R 1.85 while
+every distance band stayed quiet) the **cluster-composition band**
+(`KnifeEdgeCensus.ClusterComposition`): a cluster's membership is the outcome of the whole
+cluster machinery (events, cores, joins, claims, the extension), not of one distance, so the
+band is measured the way the E6 study measured it — the same perimeter (the input as
+received, the vertex classification at R kept) is identified again at R (1 - 0.01) and at
+R (1 + 0.01), silently (no census of its own, root rank only), every `SpatialEdgeCluster` at
+R is matched to the cluster at the other radius sharing the most claimed perimeter with it,
+and its composition is unchanged iff the match has the same `EdgeCount` and the same set of
+member vertices (corner / endpoint / junction mesh vertices). The claimed length at R of the
+changed clusters is reported on the Below / Above side (Total = both) with the counts
+`ClustersBelow` / `ClustersAbove` of `Clusters`, and in the identification log. Clusters
+that exist only at the other radius are not counted (their perimeter's interaction
+distances are the distance bands' business). DS-SCT-001 at R = 2 um: 7,247 um within 1 % of R
 and 7,175 um within 1 % of 2R (the 2 / 2 / 2 um flux lines). The library continuity gate
 (`coupon_library.py continuity`, `qualification-gates.json` LibraryContinuity Version 3, USER
 decisions 117(3) and 2026-09-28 on the decision-117 review MAJOR-2: a pair / stack model
@@ -1373,7 +1451,8 @@ matching pass). The new top-level `Identification` object carries the contract:
   "Conventions": {"JointNoiseSagittaOverR": 0.05, "CornerRule": "...", "InteractionDistanceOverR": 2,
                   "ThroughVertexZoneOverR": 2, "ClusterBallOverR": 1,
                   "VertexJoinsClusterOverR": 2, "VertexWindowOverR": 1,
-                  "ParallelCosineTolerance": 1e-8, "ArcFitToleranceOverR": 1e-3,
+                  "ParallelCosineTolerance": 1e-8, "ParallelClassRule": "...",
+                  "ArcFitToleranceOverR": 1e-3,
                   "ArcMaxJointTurnDegrees": 50, "SagittaOverR": 0.05,
                   "ArcRule": "...",
                   "ArcSampleSpacingOverR": 0.05, "ClusterArcChordStepDegrees": 5,
@@ -1420,7 +1499,10 @@ matching pass). The new top-level `Identification` object carries the contract:
   "KnifeEdgeCensus": {"BandRelative": 0.01, "SampleSpacingOverR": 0.5, "SampledLength": L,
                       "Distance": {"R": {"Below": L, "Above": L, "Total": L}, "2R": {...}},
                       "BendRadius": {"10R": {...}}, "JointNoiseSagittaOverR": {"0.05": {...}},
-                      "ArcMaxJointTurnDegrees": {"50": {...}}, "ArcSagittaOverR": {"0.05": {...}}},
+                      "ArcMaxJointTurnDegrees": {"50": {...}}, "ArcSagittaOverR": {"0.05": {...}},
+                      "ClusterComposition": {"BandRelative": 0.01, "Clusters": n, "ClustersBelow": n,
+                                             "ClustersAbove": n, "Below": L, "Above": L, "Total": L,
+                                             "Rule": "..."}},
   "GeometryDigest": "sha256"
 }
 ```
