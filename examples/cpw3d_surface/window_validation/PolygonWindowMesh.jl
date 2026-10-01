@@ -27,17 +27,20 @@
 # height r (geometric growth 2, band ~1.55 um) on every metal edge of every plane and bump,
 # tangent spacing t along the edges, r-resolved metal and overetch bands in z.
 #
-# Method (unchanged from generate_shared_plan_mesh.jl): the plan rectangle is fragmented by
-# every polygon (all planes) and bump footprint; each resulting partition is classified by
-# the fragment map (conductor per plane, bump); each partition is copied and meshed alone
-# with a one-sided Gmsh BoundaryLayer field on its metal-edge curves (transfinite tangent
-# spacing), the copies' coincident nodes are welded by coordinate, the plan is swept through
+# Method (as generate_shared_plan_mesh.jl): the plan rectangle is fragmented by every polygon
+# (all planes) and bump footprint; each resulting partition is classified by the fragment map
+# (conductor per plane, bump); each partition gets a one-sided boundary-layer band on its
+# metal-edge curves (transfinite tangent spacing) — by default OUR OWN structured band
+# (structured_band.jl, `band_mode=:own`: per-segment / per-side band cap, deterministic, Gmsh
+# triangulates only the remaining region; supervisor decisions 191 / 196 / 198), or Gmsh's
+# BoundaryLayer field on the partition's copy (`band_mode=:gmsh`, the recorded generator's
+# path) — the partitions' coincident nodes are welded by coordinate, the plan is swept through
 # the z levels, prisms are split conformally into tetrahedra, the metal is omitted, unused
 # nodes compacted and the physical attributes written directly to an ASCII MSH2 file with a
 # JSON manifest (counts, per-attribute areas / volumes, first-layer heights, z levels).
 #
-# Deliberate deviation from the recorded transmon generator (supervisor decision 188): the
-# BoundaryLayer Thickness is the geometric sum r (2^n - 1) times (1 + 1e-6) by default. The
+# Deliberate deviation from the recorded transmon generator in Gmsh mode (supervisor decision
+# 188): the BoundaryLayer Thickness is the geometric sum r (2^n - 1) times (1 + 1e-6). The
 # recorded generator passes the exact sum, so floating-point rounding decides whether a
 # column gets n or n - 1 rows (~8 % of the columns short at r10, ~20 % at r50, also in the
 # recorded meshes), and on Linux that mix fails Gmsh's edge recovery at r10. With the margin
