@@ -271,6 +271,60 @@ class PerimeterTest(unittest.TestCase):
         self.assertAlmostEqual([r for r in runs if not r["Rounded"]][0]["TotalTurnDegrees"], 45.0, places=9)
 
 
+    def test_arc_groups_resolve_every_chord(self):
+        # The every-point clause of the arc rule (USER decision 184 (2), C++ ChordsResolved;
+        # the audit mirror lacked it: lane-I follow-up, decision 203 MAJOR-2). A 500 um
+        # straight island edge whose ends each carry two 1.2 / 2.4 deg noise joints on 12 um
+        # pieces (exactly concyclic by mirror symmetry; the E8-3 unit geometry) is NO arc: the
+        # 500 um chord between two noise joints bows 7.8 um off the ~4 mm circle. The 90 deg
+        # fillet of radius 1.0 um = R / 1.9 in two chords (points on the circle; its 22.5 /
+        # 45 deg joints on 0.77 um chords are noise too) that follows the far noise joint is a rounded corner of its
+        # own: before, the joints-only concyclicity read the straight edge and its noise
+        # joints as a false 4 mm bend (DS-OSC-003 / DS-SCT-002 false clusters) and, at the
+        # DS-CTX-003 loop ends, swallowed such a fillet into a false 26.6 R bend, so the audit
+        # counted 8,486 rounded corners against the classifier's 8,490.
+        R = 1.9
+        half, piece, deg = 250.0, 12.0, math.pi / 180.0
+        m0, m1 = np.array([-half, 0.0, 0.0]), np.array([half, 0.0, 0.0])
+        q1 = m1 + piece * np.array([math.cos(1.2 * deg), math.sin(1.2 * deg), 0.0])
+        q2 = q1 + piece * np.array([math.cos(3.6 * deg), math.sin(3.6 * deg), 0.0])
+        p1 = np.array([-q1[0], q1[1], 0.0])
+        p2 = np.array([-q2[0], q2[1], 0.0])
+        points = [np.array([p2[0] - 20.0, p2[1] - 20.0, 0.0]), p2, p1, m0, m1, q1, q2]
+        # A straight lead of 6 um along the last piece's direction, then the fillet (radius
+        # 1.0, 90 deg toward +y in 2 chords) and a 6 um arm.
+        t = (q2 - q1) / np.linalg.norm(q2 - q1)
+        n = np.array([-t[1], t[0], 0.0])
+        lead_end = q2 + 6.0 * t
+        points.append(lead_end)
+        centre = lead_end + 1.0 * n
+        for k in (1, 2):
+            theta = 0.5 * math.pi * k / 2
+            points.append(centre - 1.0 * n * math.cos(theta) + 1.0 * t * math.sin(theta))
+        points.append(points[-1] + 6.0 * n)
+        vertices = [P.PerimeterVertex(point=p) for p in points]
+        edges = []
+        for i in range(len(points) - 1):
+            d = points[i + 1] - points[i]
+            edges.append(P.PerimeterEdge(vertices=(i, i + 1), length=float(np.linalg.norm(d)), attributes=(5,), kind="PHYSICAL", conductors=("PEC",), interfaces=((0, "MA"),), inward=np.array([-d[1], d[0], 0.0]) / np.linalg.norm(d), chain=0))
+            vertices[i].edges.append(i)
+            vertices[i + 1].edges.append(i)
+        perimeter = P.Perimeter(vertices=vertices, edges=edges, process_normal=np.array([0.0, 0.0, 1.0]), planes=[0.0], chains=1)
+        P.classify_vertices(perimeter, R)
+        kinds = [v.physical_kind for v in vertices]
+        # The 1.2 / 2.4 deg joints on 12 um pieces and the fillet's 22.5 / 45 deg joints on
+        # 0.77 um chords are all noise under the geometric joint rule (implied sagitta below
+        # 0.05 R): one chain, regular vertices; the arc rule tells them apart.
+        self.assertEqual(kinds[2:10], ["REGULAR"] * 8, msg=str(kinds))
+        arcs = P.arc_groups(perimeter, R)
+        bends = [a for a in arcs if not a["Rounded"]]
+        rounded = [a for a in arcs if a["Rounded"]]
+        self.assertEqual(bends, [], msg=str(arcs))
+        self.assertEqual(len(rounded), 1, msg=str(arcs))
+        self.assertAlmostEqual(rounded[0]["Radius"], 1.0, places=6)
+        self.assertAlmostEqual(rounded[0]["TurnDegrees"], 90.0, places=6)
+
+
 class ManifestTest(unittest.TestCase):
     def test_digest_ignores_status_and_library(self):
         a = make_manifest([requirement("IsolatedEdge", 3, 6.0, {"EdgeCount": 1}, "Exact", SelectedModels=[{"Name": "iso", "Topology": "IsolatedEdge", "Weight": 1.0}], NormalizedLibraryDistance=0.0)])

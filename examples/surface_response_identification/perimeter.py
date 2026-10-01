@@ -980,8 +980,10 @@ def arc_groups(perimeter, radius):
     vertices; from every unconsumed joint the largest range of at least three following joints
     turning the same way, each by less than ARC_MAX_JOINT_TURN_DEGREES, and totalling at most
     180 deg is an arc iff its joint vertices lie on one circle within ARC_FIT_TOLERANCE_OVER_R
-    x R — whatever the chord sagitta, which is recorded per arc (MaxChordSagittaOverR; at or
-    above SAGITTA_OVER_R it is the mesh-coarseness diagnostic). The circle is the one tangent
+    x R AND every chord of the range is resolved (USER decision 184 (2): a chord whose sagitta
+    on the circle reaches the joint noise resolution needs a real end joint) — the chord
+    sagitta is otherwise recorded per arc (MaxChordSagittaOverR; at or above SAGITTA_OVER_R it
+    is the mesh-coarseness diagnostic). The circle is the one tangent
     to both arms at the end joints when every joint lies on it (tangent-length radius);
     otherwise, for a radius >= R over at least four joints, the least-squares circle of the
     joints, each arm meeting the circle's tangent at its end joint within the geometric joint
@@ -1188,17 +1190,48 @@ def _scan_arc_path(perimeter, path_edges, path_vertices, closed, normal, radius,
     def below_cap(j):
         return _quantize(math.cos(joint_turn_cap)) < _quantize(math.cos(joints[j][4]))
 
+    def cyclic_gap(gap):
+        # On a closed path the joint list is rotated to start after the longest piece, so the
+        # consecutive pair straddling the path's original start has a negative position
+        # difference, wrapped by the path length (C++ CyclicGap, USER decision 184 (2); formerly
+        # only the list's first / last pair was wrapped).
+        return gap + length if closed and gap <= 0.0 else gap
+
     def piece_before(j):
         idx = joints[j][1]
         if j == 0:
-            return (position[idx] - position[joints[m - 1][1]] + length) % length if closed else position[idx]
-        return position[idx] - position[joints[j - 1][1]]
+            return cyclic_gap(position[idx] - position[joints[m - 1][1]]) if closed else position[idx]
+        return cyclic_gap(position[idx] - position[joints[j - 1][1]])
 
     def piece_after(j):
         idx = joints[j][1]
         if j + 1 == m:
-            return (position[joints[0][1]] - position[idx] + length) % length if closed else length - position[idx]
-        return position[joints[j + 1][1]] - position[idx]
+            return cyclic_gap(position[joints[0][1]] - position[idx]) if closed else length - position[idx]
+        return cyclic_gap(position[joints[j + 1][1]] - position[idx])
+
+    noise_sagitta = JOINT_NOISE_SAGITTA_OVER_R * radius
+
+    def real_joint(j):
+        return not joint_is_noise(joints[j][4], min(piece_before(j), piece_after(j)), radius)
+
+    def chords_resolved(indices, rho, cyclic):
+        """The concyclicity test on EVERY point of the range (C++ ChordsResolved, USER decision
+        184 (2)): a chord whose sagitta on the circle reaches the joint noise resolution
+        (JOINT_NOISE_SAGITTA_OVER_R x R) needs a REAL end joint (not noise under the geometric
+        joint rule on its shorter piece; the design chord of a coarse polyline, decision 122);
+        a longer chord between two noise joints is a straight edge, not an arc chord (the false
+        ~100 mm bends on long straight edges with concyclic noise end joints, E8-3 / E8-4; the
+        DS-CTX-003 loop-end fillets those false bends swallowed)."""
+        count = len(indices)
+        for q in range(count if cyclic else count - 1):
+            j0, j1 = indices[q], indices[(q + 1) % count]
+            chord = float(np.linalg.norm(point(j0) - point(j1)))
+            if chord >= 2.0 * rho:
+                return False
+            sagitta = rho - math.sqrt(rho * rho - 0.25 * chord * chord)
+            if not (round(sagitta / quantum) < round(noise_sagitta / quantum)) and not real_joint(j0) and not real_joint(j1):
+                return False
+        return True
 
     def end_consistent(j, arm_direction, neighbour, arm_edge, centre, rho, first, arm_piece, first_chord):
         """The kink between the arm and the circle's tangent at an end joint of a least-squares
@@ -1248,7 +1281,7 @@ def _scan_arc_path(perimeter, path_edges, path_vertices, closed, normal, radius,
                 rho = 0.5 * across
                 centre = Ta + rho * na
                 tangent_circle = True
-        if tangent_circle and on_circle(indices, centre, rho):
+        if tangent_circle and on_circle(indices, centre, rho) and chords_resolved(indices, rho, False):
             sagitta = max_sagitta(indices, rho, False)
             if math.isfinite(sagitta):
                 return {"Radius": rho, "Turn": turn, "Centre": centre, "Tangent": True, "Sagitta": sagitta}
@@ -1260,7 +1293,7 @@ def _scan_arc_path(perimeter, path_edges, path_vertices, closed, normal, radius,
         if ls is None:
             return None
         centre, rho = ls
-        if rho < radius - quantum or not on_circle(indices, centre, rho):
+        if rho < radius - quantum or not on_circle(indices, centre, rho) or not chords_resolved(indices, rho, False):
             return None
         if not end_consistent(i, ta, indices[1], path_edges[(first[1] - 1) % n], centre, rho, True, piece_before(i), piece_after(i)):
             return None
@@ -1282,7 +1315,7 @@ def _scan_arc_path(perimeter, path_edges, path_vertices, closed, normal, radius,
             fit = least_squares_circle([point(j) for j in range(m)], joints[0][2])
             if fit is not None:
                 centre, rho = fit
-                if on_circle(list(range(m)), centre, rho):
+                if on_circle(list(range(m)), centre, rho) and chords_resolved(list(range(m)), rho, True):
                     sagitta = max_sagitta(list(range(m)), rho, True)
                     if math.isfinite(sagitta):
                         found.append({"Joints": [j[0] for j in joints], "Radius": rho, "Turn": 2.0 * math.pi, "Centre": centre, "Tangent": False, "Sagitta": sagitta})
