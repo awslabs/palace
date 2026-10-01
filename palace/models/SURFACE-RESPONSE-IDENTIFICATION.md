@@ -598,7 +598,12 @@ smaller endpoint.
      (concentric edges bend in opposite senses relative to their gaps: for a gap the inner
      edge is convex, for a strip the inner edge is concave; for a cross-section that is its
      own mirror image, chirality 0, side 0 is the outermost edge of the bend — decision 214
-     (i) — so a symmetric curved gap reads Concave and a symmetric curved strip Convex); curved
+     (i) — so the field is DERIVED there: a symmetric curved gap reads Concave, a symmetric
+     curved strip Convex, a symmetric curved stack the convexity of its outermost edge, Convex
+     when that edge's `GapSide` is -1 (gap away from the stack) and Concave when +1; the field
+     is kept in every curved signature, chirality 0 included, for one schema, and carries
+     independent information for chiral cross-sections only, whose side 0 is fixed by the
+     edge pattern whatever the bend sense); curved
      stacks (`CurvedParallelEdgeCluster`) record it the same way, and when neither outer side of
      a k > 2 stack carries curvature (the bent side is an interior one) the first interior
      side that does is read, related to the first edge through the signature's `GapSide`s
