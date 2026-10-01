@@ -33,6 +33,12 @@ namespace palace
 // same side of every split entity of the closure of the ancestor, which contains the
 // master entities of their hanging entities.
 //
+// Unlike on a cracked mesh, an interior boundary face refined on one side only remains a
+// master face for the hanging entities on the refined side, which read their own version of
+// its DOFs but are still constrained by them: the recovery on the refined side is limited
+// along the interior boundary to the trace of the coarse face, which makes the error
+// estimate larger (more conservative) there.
+//
 // The sides are stored per local element, with bit (or 4-bit version) b for the local
 // entity b of the element, where local entities are numbered as vertices [0, nv), then
 // edges [nv, nv + ne), then (3D only) faces [nv + ne, nv + ne + nf), in the local ordering

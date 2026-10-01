@@ -155,7 +155,11 @@ The fields on the two sides of an uncracked sheet are generally discontinuous: t
 component of the electric flux density jumps by the surface charge and the tangential
 magnetic field by the surface current. The error estimate for
 [adaptive mesh refinement](model.md#Mesh-refinement) therefore allows the recovered fluxes
-to be discontinuous across these interior boundaries, as it does for a cracked mesh.
+to be discontinuous across these interior boundaries, as it does for a cracked mesh. One
+difference remains with nonconformal refinement: where the elements on only one side of a
+sheet are refined, the recovered fluxes on the refined side are limited along the sheet to
+the resolution of the other side, which makes the error estimate larger there than on a
+cracked mesh.
 
 For postprocessing on uncracked sheets:
 
