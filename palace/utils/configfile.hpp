@@ -1047,8 +1047,8 @@ public:
       double s1 = 0.0;
       // The maximal contiguous stretch of the feature side along its chain that the
       // portion belongs to (IdentifiedPortion::stretch; -1 for vertex / cluster patches):
-      // the unit of the placement's translational-vs-spatial ownership check (decision
-      // 224), which judges whole stretches, never single cells.
+      // the unit of the placement's translational-vs-spatial ownership record (decisions
+      // 224 / 236), which judges whole stretches, never single cells.
       int stretch = -1;
       double quadrature_weight = 1.0;
       double model_weight = 1.0;
@@ -1058,6 +1058,18 @@ public:
       // carry coupon_depth = 0 and weight = model_weight.
       double side_factor = 1.0;
       double coupon_depth = 0.0;
+      // The claimed portions of a spatial cluster patch (every other patch carries none):
+      // the mesh segment each lies on and its ends as global points (patch length units).
+      // The placement's ownership record classifies a translational stretch inside the
+      // cluster's box as the continuation of one of these claims (the same segment cut by
+      // the claim boundary, or parallel and abutting its end along the chain) or as foreign
+      // (decision 236).
+      struct Claim
+      {
+        int segment = -1;
+        std::array<double, 3> p0{}, p1{};
+      };
+      std::vector<Claim> claims;
     };
     Provenance provenance;
   };
@@ -1243,6 +1255,10 @@ public:
     // may represent one isolated edge or a coupled cluster of nearby edges.
     std::vector<ResponseCorrectionModelData> models;
     std::vector<ResponseCorrectionPatchData> patches;
+
+    // Internal (automatic matching): the library's matching radius R in patch length units,
+    // the scale of the ownership record's continuation tolerance; 0 for explicit models.
+    double matching_radius = 0.0;
 
     bool IsAutomatic() const { return !library.empty(); }
     bool IncludesPostprocessing() const

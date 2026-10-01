@@ -9101,8 +9101,8 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
   // cluster). Applied per pass like the single-edge absorptions (the next pass recomposes
   // the stacks around the enlarged claims); the stretch is cut into its runs' intervals.
   // Diagnostics.ClusterExtension.TranslationalPiecesAbsorbed. A translational stretch the
-  // rule leaves inside a spatial coupon's volume is a genuinely foreign stretch and fails
-  // closed at the placement's ownership check.
+  // rule leaves inside a spatial coupon's volume is recorded by the placement's ownership
+  // record (decision 236: Continuation / Foreign, never an abort).
   if (!measure_joint_claims)
   {
     const double ball = kClusterBallOverRadius * R;
@@ -10437,8 +10437,8 @@ void Identifier::Assign(IdentificationResult &result)
   // feature id. Reported as Diagnostics.SubTolerancePortionsJoined (count, length, longest,
   // isolated).
   // The stretch index of every piece (per feature, in chain order) is recorded on its
-  // portions for the placement's ownership check (a translational stretch wholly inside a
-  // spatial support fails closed, decision 224).
+  // portions for the placement's ownership record (a translational stretch wholly inside a
+  // spatial support is recorded, decisions 224 / 236).
   std::vector<std::vector<int>> piece_stretch(runs.size());
   {
     const double tolerance = kSignatureParameterToleranceOverRadius * R;
@@ -12313,8 +12313,8 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
              "a smaller cross-section: strips and gaps alongside a cluster are genuine "
              "translational features. Applied per pass like the single-edge absorptions, "
              "the stacks recomposed around the enlarged claims; a stretch the rule leaves "
-             "inside a spatial coupon's volume fails closed at the placement's ownership "
-             "check"}}},
+             "inside a spatial coupon's volume is recorded by the placement's ownership "
+             "record (decision 236: Continuation / Foreign, never an abort)"}}},
           {"Rule",
            "every single-edge portion (isolated / curved edge remainder) within 2R "
            "(3D, strict) of a cluster's claimed perimeter or of a vertex feature's "

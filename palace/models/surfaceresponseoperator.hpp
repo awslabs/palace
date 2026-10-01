@@ -6,6 +6,7 @@
 
 #include <array>
 #include <complex>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -262,6 +263,9 @@ private:
   // Mesh-independent matching statistics are cached with the automatic geometry. The
   // remaining counters describe this mesh-specific interpolation and runtime operator.
   nlohmann::json automatic_statistics;
+  // The ownership records of the translational stretches inside the spatial supports
+  // (decision 236), reported under Diagnostics with the statistics.
+  nlohmann::json ownership_diagnostics;
   long long int candidate_query_count = 0;
   long long int fallback_query_count = 0;
   long long int point_send_peer_count = 0;
@@ -439,34 +443,67 @@ public:
 void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
                                       const std::string &path);
 
-// Ownership check of the translational patches against the spatial supports (decision
-// 224): a spatial coupon volume corrects every surface inside it, so a translational
-// STRETCH — the maximal contiguous stretch of one feature side along its chain (patch
-// provenance feature / stretch), the identification's portion unit — whose every
-// longitudinal cell lies strictly inside one spatial support's box would be corrected
-// twice. Judged per stretch, never per cell: the box extends about R beyond the cluster's
-// claims, so the first cells of every stack portion adjacent to a cluster lie inside its
-// box legitimately. Cell ends are the strip ends along AxisW from the origin (mesh units);
-// boxes are (spatial patch index, min, max) in mesh units. Returns the first violation in
-// (feature, stretch) order, or nullopt. The operator constructor fails closed on one.
-struct TranslationalOwnershipViolation
+// Ownership record of the translational patches against the spatial supports (decisions
+// 224 / 236): a translational STRETCH — the maximal contiguous stretch of one feature side
+// along its chain (patch provenance feature / stretch), the identification's portion unit —
+// whose every longitudinal cell lies strictly inside one spatial support's box is RECORDED
+// (manifest / metadata Diagnostics.TranslationalStretchesInsideSpatialSupport and a
+// warning), never an abort: the coupon is calibrated on the cluster's claims and their
+// straight continuations to the box face, so a stretch that continues one of the cluster's
+// claims through its claim cut (class Continuation) is corrected by both the coupon and its
+// own patches, while any other stretch (class Foreign) is absent from the coupon's twins —
+// a model mismatch, not a double count. A stretch continues a claim when one of its cells
+// lies on the claim's mesh segment (the claim boundary cut that segment) or when it runs
+// parallel to the claim (within the signature angle tolerance) and one of its ends abuts a
+// claim end along the chain within continuation_tolerance, within R of it transversely (a
+// claim boundary snapped onto a mesh vertex); the cells of a pair sit on the pair's
+// midline, so collinearity with the edge is not tested. Judged per stretch, never per cell:
+// the box extends 3R past every claim-cut end along its edge (2R continuation + R padding;
+// 2R transversely), so the first cells of every stack portion adjacent to a cluster lie
+// inside its box legitimately. Cell ends are the strip ends along AxisW from the origin
+// (patch units); boxes are (spatial patch index, min, max, claims) in patch units;
+// continuation_tolerance is the abutment tolerance along the chain (the signature parameter
+// tolerance 1e-3 R). Records in (feature, stretch, spatial patch) order.
+struct TranslationalOwnershipRecord
 {
   int feature = -1;
   int stretch = -1;
   std::size_t first_patch = 0;
   std::size_t patch_count = 0;
   std::size_t spatial_patch = 0;
+  double length = 0.0;               // sum of the stretch's cell lengths
   std::array<double, 3> lo{}, hi{};  // extent of the stretch's cell ends
+  bool continuation = false;
 };
 struct SpatialSupportBounds
 {
   std::size_t patch = 0;
   std::array<double, 3> min{}, max{};
+  std::vector<
+      config::ElectrostaticSolverData::ResponseCorrectionPatchData::Provenance::Claim>
+      claims;
 };
-std::optional<TranslationalOwnershipViolation> FindTranslationalStretchInsideSpatialSupport(
+std::vector<TranslationalOwnershipRecord> FindTranslationalStretchInsideSpatialSupport(
     const std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData>
         &patches,
-    const std::vector<SpatialSupportBounds> &supports, int dimension);
+    const std::vector<SpatialSupportBounds> &supports, int dimension,
+    double continuation_tolerance);
+
+// The spatial supports of a response configuration: the bounding box of every spatial
+// model's basis points (mesh units) placed by its patch frame, with the cluster's claims;
+// models without basis points (preflight placeholders) are reported by name in skipped.
+std::vector<SpatialSupportBounds> CollectSpatialSupports(
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    const std::function<const std::vector<std::array<double, 3>> *(int model_idx)>
+        &basis_points,
+    double coordinate_scale, int dimension, std::vector<std::string> *skipped = nullptr);
+
+// The Diagnostics entry of the ownership records (lengths and coordinates in mesh units).
+nlohmann::json DescribeTranslationalOwnershipRecords(
+    const std::vector<TranslationalOwnershipRecord> &records,
+    const std::vector<SpatialSupportBounds> &supports,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    double coordinate_scale, const std::vector<std::string> &skipped);
 
 }  // namespace palace
 
