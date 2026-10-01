@@ -29,16 +29,19 @@ Y0, Y1 = -100.0, 100.0
 
 JITTER = math.pi * 1e-5  # a coordinate offset with more than 6 decimals (3.14159e-5 um)
 ISLAND = (8.0, 17.0, -20.0, 20.0)  # an uncut island inside the gap column 5 < x < 20 (island=True)
+OTHER_PLANE_Z = 4.8  # a second metal plane the chip description does not list (other_plane=True)
+SHADOW = -1e-7  # below the 1e-6 identity quantum: an other-plane node this close to an in-plane node shares its key
 
 
-def build(tmp, jitter=0.0, island=False):
+def build(tmp, jitter=0.0, island=False, other_plane=False):
     """Column edges shifted by ``jitter`` (every metal edge then sits on coordinates with more than 6 decimals); with
     ``island`` the gap column 5..20 is re-triangulated around a 9 x 40 metal island (the gap rectangles below / above / left /
-    right of it share the island's corner nodes)."""
+    right of it share the island's corner nodes); with ``other_plane`` a metal triangle at z = ``OTHER_PLANE_Z`` is listed FIRST
+    whose corner lies ``SHADOW`` from the island's lower-left corner (same 1e-6 key, different double)."""
     node_tag = {}
 
-    def tag(x, y):
-        return node_tag.setdefault((x, y), len(node_tag) + 1)
+    def tag(x, y, z=0.0):
+        return node_tag.setdefault((x, y, z), len(node_tag) + 1)
 
     nodes, xyz, attribute = [], [], []
 
@@ -50,6 +53,11 @@ def build(tmp, jitter=0.0, island=False):
             attribute.append(attr)
 
     ix0, ix1, iy0, iy1 = (v + jitter for v in ISLAND)
+    if other_plane:
+        shadow = [(ix0 + SHADOW, iy0 + SHADOW), (ix0 + 3.0, iy0 + SHADOW), (ix0 + SHADOW, iy0 + 3.0)]
+        nodes.append([tag(x, y, OTHER_PLANE_Z) for x, y in shadow])
+        xyz.append([[x, y, OTHER_PLANE_Z] for x, y in shadow])
+        attribute.append(METAL)
     for x0, x1, attr in COLUMNS:
         x0, x1 = x0 + jitter, x1 + jitter
         if island and attr == GAP and x0 < ix0 < x1:
@@ -216,6 +224,37 @@ class WindowPolygons(unittest.TestCase):
         self.assertEqual(plane["UncutSegments"], 4)  # the island's four edges, covered over their whole length
         self.assertEqual(plane["IntraPlaneClearance"]["Label"], plane["IntraPlaneClearance"]["Min"])
         self.assertAlmostEqual(plane["IntraPlaneClearance"]["Min"], 3.0)  # island to trace 1 / trace 2
+        self.assertEqual(result["MatchingRadius"], 2.0)  # SCHEMA: the chip manifest's identification radius, per set
+
+    def test_in_plane_vertex_identity(self):
+        """Review of decision 201, r3: the vertex identity registers only the exported plane's triangles, so a node of another
+        plane within the 1e-6 key quantum of an in-plane node (but not bitwise equal) is never the double emitted."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tris, chip, extract, e0 = build(tmp, jitter=JITTER, island=True, other_plane=True)
+            out, ver = os.path.join(tmp, "out.json"), os.path.join(tmp, "ver.json")
+            rc = WP.main(["--triangles", tris, "--chip", chip, "--extract", extract, "--e0", e0, "--window", "W", "-50", "50", "-50", "50",
+                          "--bridge-width", "6", "--halo", "10", "--output", out, "--verification", ver])
+            self.assertEqual(rc, 0)
+            result = json.load(open(out))
+            verification = json.load(open(ver))
+            data = np.load(tris)
+        self.assertTrue(verification["Passed"])
+        corner = (ISLAND[0] + JITTER, ISLAND[2] + JITTER)
+        shadow = (corner[0] + SHADOW, corner[1] + SHADOW)
+        self.assertEqual(WP.key(corner), WP.key(shadow))  # the two doubles share one identity key
+        self.assertNotEqual(corner, shadow)
+        other = [tuple(p[:2]) for tri in data["xyz"] for p in tri if p[2] == OTHER_PLANE_Z]
+        self.assertIn(shadow, other)  # the shadowing node is listed before every in-plane node
+        self.assertEqual(float(data["xyz"][0][0][2]), OTHER_PLANE_Z)
+        island = [p for p in result["Planes"][0]["Polygons"] if min(v[0] for v in p["Outer"]) > 5.0 and max(v[0] for v in p["Outer"]) < 20.0]
+        self.assertEqual(len(island), 1)
+        emitted = {tuple(v) for v in island[0]["Outer"]}
+        self.assertIn(corner, emitted)
+        self.assertNotIn(shadow, emitted)
+        in_plane = {(float(p[0]), float(p[1])) for tri in data["xyz"] for p in tri if p[2] == 0.0}
+        for poly in result["Planes"][0]["Polygons"]:
+            for v in poly["Outer"]:
+                self.assertNotIn(tuple(v), set(other) - in_plane)
 
 
 if __name__ == "__main__":

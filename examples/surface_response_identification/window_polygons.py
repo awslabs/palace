@@ -42,9 +42,11 @@ clearance with no other polygon within the 10-um search radius is reported as ">
 are recorded with their length and maximum offset (``CrossPlaneCoincidence``); the fabricated mesher snaps them itself.
 
 Coordinates: a chip mesh node is emitted with its ORIGINAL float64 coordinates (identity by node; the npz carries the node
-tags and doubles); only clipping-introduced intersections (walls, setback box, bridge strip lines) are computed, in double and
-unrounded. The 1e-6-um rounded key is used for vertex identity only and is never emitted: the identification's signature
-quantisation (6 decimals, no hysteresis) flips hashes on 1e-6-um coordinate changes (review of decision 195, M1).
+tags and doubles; only the triangles of the plane being exported are registered, so a node of another plane within the key
+quantum can never shadow an in-plane node); only clipping-introduced intersections (walls, setback box, bridge strip lines) are
+computed, in double and unrounded. The 1e-6-um rounded key is used for vertex identity only and is never emitted: the
+identification's signature quantisation (6 decimals, no hysteresis) flips hashes on 1e-6-um coordinate changes (review of
+decision 195, M1). ``MatchingRadius`` = the chip manifest's identification radius (the process library's R), as the schema asks.
 """
 
 import argparse
@@ -518,14 +520,16 @@ def export(args):
         is_bump_face = in_plane & np.isin(attribute, list(bump_attrs))
         metal_index = np.nonzero(is_metal)[0]
         xy_all = xyz[:, :, :2]
-        # every triangle with its nodes' ORIGINAL float64 coordinates (one vertex per node: a node's doubles are identical in
-        # every triangle of the mesh), oriented counter-clockwise so the union boundary is oriented; the identity registers
-        # the nodes first so a clipping intersection within the key quantum of a node resolves to the node
+        # every IN-PLANE triangle with its nodes' ORIGINAL float64 coordinates (one vertex per node: a node's doubles are
+        # identical in every triangle of the mesh), oriented counter-clockwise so the union boundary is oriented; the identity
+        # registers the nodes first so a clipping intersection within the key quantum of a node resolves to the node. Only this
+        # plane's triangles are registered (review of decision 201, r3): a node of ANOTHER plane within the key quantum of an
+        # in-plane node, but not bitwise equal to it, must never be the double emitted for this plane
         identity = VertexIdentity()
-        tri_xy = []
-        for t in range(len(nodes)):
+        tri_xy = [None] * len(nodes)
+        for t in np.nonzero(in_plane)[0]:
             poly = [identity.register(p) for p in xy_all[t]]
-            tri_xy.append(poly if signed_area(poly) > 0 else poly[::-1])
+            tri_xy[t] = poly if signed_area(poly) > 0 else poly[::-1]
         # components of the metal, identified with the chip's conductors through their boundary edges
         comp_of = components(nodes[metal_index])
         seg_plane = [i for i, s in enumerate(segments) if abs(float(s["Key"][0][2]) - z) < 1e-6]
@@ -747,7 +751,10 @@ def export(args):
             verification["Passed"] = False
     verification["CrossPlaneCoincidence"] = cross_plane_coincidence({p["Name"]: p["Polygons"] for p in planes_out}, box,
                                                                      args.coincidence_offset)
+    # MatchingRadius (SCHEMA): the identification's R of the chip manifest the extract was cut from (the process library's
+    # radius, not a literal); the fabricated mesher derives its cross-plane snap distance 0.05 R from it
     out = {"Version": 1, "Name": args.window[0], "Box": {"X": [box[0], box[1]], "Y": [box[2], box[3]]},
+           "MatchingRadius": radius,
            "Process": chip.get("Process", {"MetalThickness": 0.1, "Overetch": 0.05}),
            "Planes": [{k: v for k, v in p.items()} for p in planes_out],
            "Bumps": [{"Conductor": b["Conductor"], "Footprint": b["Footprint"]} for b in columns],
