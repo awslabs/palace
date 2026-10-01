@@ -43,8 +43,12 @@ end
 
 function bbox_within(bounds, x0, x1, y0, y1, z0, z1, tol)
     xmin, ymin, zmin, xmax, ymax, zmax = bounds
-    return xmin >= x0 - tol && xmax <= x1 + tol && ymin >= y0 - tol && ymax <= y1 + tol &&
-           zmin >= z0 - tol && zmax <= z1 + tol
+    return xmin >= x0 - tol &&
+           xmax <= x1 + tol &&
+           ymin >= y0 - tol &&
+           ymax <= y1 + tol &&
+           zmin >= z0 - tol &&
+           zmax <= z1 + tol
 end
 
 function on_box_wall(bounds, x0, x1, y0, y1, z0, z1, tol)
@@ -64,8 +68,9 @@ function mesh_thin_window(window_path, chip_path, output, lc_fine, lc_far)
     y0, y1 = Float64.(spec["Box"]["Y"])
     planes = spec["Planes"]
     chip_planes = chip["Planes"]
-    length(planes) == length(chip_planes) ||
-        error("the polygon set has $(length(planes)) planes, the chip description $(length(chip_planes))")
+    length(planes) == length(chip_planes) || error(
+        "the polygon set has $(length(planes)) planes, the chip description $(length(chip_planes))"
+    )
     vacuum = get(spec, "Vacuum", Dict("Below" => 0.0, "Above" => 0.0))
     below, above = Float64(get(vacuum, "Below", 0.0)), Float64(get(vacuum, "Above", 0.0))
     volumes = chip["Volumes"]
@@ -141,7 +146,10 @@ function mesh_thin_window(window_path, chip_path, output, lc_fine, lc_far)
             push!(tool_labels, (k, String(polygon["Conductor"])))
         end
     end
-    objects = vcat([(Int32(3), t) for t in substrate_boxes], [(Int32(3), t) for t in vacuum_boxes])
+    objects = vcat(
+        [(Int32(3), t) for t in substrate_boxes],
+        [(Int32(3), t) for t in vacuum_boxes]
+    )
     _, domain_map = occ.fragment(objects, tools)
     occ.synchronize()
     n_objects = length(objects)
@@ -151,7 +159,10 @@ function mesh_thin_window(window_path, chip_path, output, lc_fine, lc_far)
     end
     vacuum_tags = Int32[]
     for j = 1:length(vacuum_boxes)
-        append!(vacuum_tags, [tag for (dim, tag) in domain_map[length(planes) + j] if dim == 3])
+        append!(
+            vacuum_tags,
+            [tag for (dim, tag) in domain_map[length(planes) + j] if dim == 3]
+        )
     end
     tol = 1.0e-6 * max(x1 - x0, y1 - y0, zmax_all - zmin_all)
     # metal faces per (plane, label); bump faces (planar footprint faces re-assigned, sidewalls by bounding box)
@@ -210,7 +221,12 @@ function mesh_thin_window(window_path, chip_path, output, lc_fine, lc_far)
     attributes = Dict{String, Any}()
     for (k, plane) in enumerate(planes)
         a = Int(volumes["Substrate"][k])
-        gmsh.model.addPhysicalGroup(3, substrate_tags[k], a, "substrate_$(lowercase(plane["Name"]))")
+        gmsh.model.addPhysicalGroup(
+            3,
+            substrate_tags[k],
+            a,
+            "substrate_$(lowercase(plane["Name"]))"
+        )
         attributes["substrate_$(lowercase(plane["Name"]))"] = a
     end
     gmsh.model.addPhysicalGroup(3, vacuum_tags, Int(volumes["Vacuum"]), "vacuum")
@@ -220,26 +236,35 @@ function mesh_thin_window(window_path, chip_path, output, lc_fine, lc_far)
     metal_curves = Int32[]
     for (k, plane) in enumerate(planes)
         name = plane["Name"]
-        isempty(gap[k]) || gmsh.model.addPhysicalGroup(2, gap[k], Int(chip_planes[k]["Gap"][1]), "gap_$(name)")
+        isempty(gap[k]) || gmsh.model.addPhysicalGroup(
+            2,
+            gap[k],
+            Int(chip_planes[k]["Gap"][1]),
+            "gap_$(name)"
+        )
         attributes["gap_$(name)"] = Int(chip_planes[k]["Gap"][1])
-        for ((kk, label), tags) in sort!(collect(metal); by = first)
+        for ((kk, label), tags) in sort!(collect(metal); by=first)
             kk == k || continue
             isempty(tags) && continue
-            attribute = label == "ground" ? Int(chip_planes[k]["Attributes"][1]) :
-                        base + k + 10 * (findfirst(==(label), terminals) - 1)
+            attribute =
+                label == "ground" ? Int(chip_planes[k]["Attributes"][1]) :
+                base + k + 10 * (findfirst(==(label), terminals) - 1)
             gmsh.model.addPhysicalGroup(2, tags, attribute, "$(label)_$(name)")
             attributes["$(label)_$(name)"] = attribute
-            for (dim, curve) in gmsh.model.getBoundary([(2, t) for t in tags], false, false, false)
+            for (dim, curve) in
+                gmsh.model.getBoundary([(2, t) for t in tags], false, false, false)
                 dim == 1 || continue
                 bounds = gmsh.model.getBoundingBox(dim, curve)
-                on_box_wall(bounds, x0, x1, y0, y1, zmin_all, zmax_all, tol) || push!(metal_curves, abs(curve))
+                on_box_wall(bounds, x0, x1, y0, y1, zmin_all, zmax_all, tol) ||
+                    push!(metal_curves, abs(curve))
             end
         end
     end
     if !isempty(bump_faces)
         gmsh.model.addPhysicalGroup(2, bump_faces, Int(chip["Bump"][1]), "bump_surface")
         attributes["bump_surface"] = Int(chip["Bump"][1])
-        for (dim, curve) in gmsh.model.getBoundary([(2, t) for t in bump_faces], false, false, false)
+        for (dim, curve) in
+            gmsh.model.getBoundary([(2, t) for t in bump_faces], false, false, false)
             dim == 1 && push!(metal_curves, abs(curve))
         end
     end
@@ -276,7 +301,7 @@ function mesh_thin_window(window_path, chip_path, output, lc_fine, lc_far)
         n = 0
         for entity in gmsh.model.getEntitiesForPhysicalGroup(dim, tag)
             types, element_tags, _ = gmsh.model.mesh.getElements(dim, entity)
-            n += sum(length.(element_tags); init = 0)
+            n += sum(length.(element_tags); init=0)
         end
         counts[name] = Dict("Dimension" => dim, "Attribute" => tag, "Elements" => n)
     end
@@ -289,7 +314,9 @@ function mesh_thin_window(window_path, chip_path, output, lc_fine, lc_far)
         "Bytes" => filesize(output),
         "Nodes" => length(node_tags),
         "Box" => Dict("X" => [x0, x1], "Y" => [y0, y1], "Z" => [zmin_all, zmax_all]),
-        "Planes" => [Dict("Name" => p["Name"], "SurfaceZ" => p["SurfaceZ"], "Facing" => p["Facing"]) for p in planes],
+        "Planes" => [
+            Dict("Name" => p["Name"], "SurfaceZ" => p["SurfaceZ"], "Facing" => p["Facing"]) for p in planes
+        ],
         "Bumps" => length(bumps),
         "Terminals" => terminals,
         "Attributes" => attributes,
@@ -300,20 +327,31 @@ function mesh_thin_window(window_path, chip_path, output, lc_fine, lc_far)
     )
     open(replace(output, r"\.msh2$" => ".json"), "w") do stream
         JSON.print(stream, manifest, 1)
-        println(stream)
+        return println(stream)
     end
     gmsh.finalize()
     return manifest
 end
 
 function main(args)
-    length(args) >= 3 || error("usage: mesh_thin_window.jl WINDOW.json CHIP.json OUTPUT.msh2 [LC_FINE LC_FAR]")
+    length(args) >= 3 || error(
+        "usage: mesh_thin_window.jl WINDOW.json CHIP.json OUTPUT.msh2 [LC_FINE LC_FAR]"
+    )
     lc_fine = length(args) >= 4 ? parse(Float64, args[4]) : 4.0
     lc_far = length(args) >= 5 ? parse(Float64, args[5]) : 40.0
     manifest = mesh_thin_window(args[1], args[2], args[3], lc_fine, lc_far)
     println(
-        "Saved ", args[3], ": nodes ", manifest["Nodes"], ", groups ",
-        join(sort!(["$(k)=$(v["Attribute"]):$(v["Elements"])" for (k, v) in manifest["Groups"]]), " ")
+        "Saved ",
+        args[3],
+        ": nodes ",
+        manifest["Nodes"],
+        ", groups ",
+        join(
+            sort!([
+                "$(k)=$(v["Attribute"]):$(v["Elements"])" for (k, v) in manifest["Groups"]
+            ]),
+            " "
+        )
     )
     return 0
 end
